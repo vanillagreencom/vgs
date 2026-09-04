@@ -195,9 +195,10 @@ gg_blob_is_binary() { # FILE LABEL — 0 when a NUL falls in the leading bytes
 # clean verdict over content it never read. Each is NAMED here and counted
 # apart from the clean total, in GG_WALK_SKIPPED.
 #
-# Needs gg_tmpdir and the configured globs already loaded. ON_FILE runs in
-# the caller's own shell, as `ON_FILE PATH BLOBFILE`, so it may set the
-# caller's counters.
+# Needs gg_tmpdir and the configured globs already loaded, and the excludes
+# list where the lane has one — an empty list excludes nothing. ON_FILE runs
+# in the caller's own shell, as `ON_FILE PATH BLOBFILE SHA`, so it may set
+# the caller's counters.
 #
 # The tally is of PATHS, which is what the verdict line claims — and one path
 # reaches the sniff once per scan that lists it, so a check running several
@@ -247,6 +248,7 @@ gg_walk_configured_paths() { # NOUN UNREAD-NOUN ON_FILE
     # Record shape: "<mode> <sha> <stage>\t<path>".
     f="${rec#*"$GG_TAB"}"
     gg_matches_path_glob "$f" || continue
+    gg_is_excluded "$f" && continue
     mode="${rec%% *}"
     rest="${rec#* }"
     sha="${rest%% *}"
@@ -265,7 +267,7 @@ gg_walk_configured_paths() { # NOUN UNREAD-NOUN ON_FILE
       gg_note_skip "$f" "binary content, not $noun"
       continue
     fi
-    "$on_file" "$f" "$GG_TMP/blob"
+    "$on_file" "$f" "$GG_TMP/blob" "$sha"
   done <"$GG_TMP/files.z"
 }
 
@@ -323,10 +325,14 @@ gg_policy_content() { # FILE — content on stdout; 1 = the commit has no such f
 
 # Shell glob matched against the full repo-relative path (`*` crosses `/`);
 # blank lines and `#` comments are ignored; a pattern without a reason is a
-# config error. A missing file is an empty list.
-gg_load_excludes() { # FILE — fills GG_EXCLUDE_PATTERNS
-  local file="$1" line lineno pat reason content status=0
+# config error. A missing file is an empty list. A `!` pattern CARVES its
+# matches back into the scanned set and beats every exclusion row whatever the
+# order (DEVELOPMENT.md § Excludes format). A row naming a path that begins
+# with `!` escapes it as `\!foo`, which stays an exclusion.
+gg_load_excludes() { # FILE — fills GG_EXCLUDE_PATTERNS and GG_EXCLUDE_CARVES
+  local file="$1" line lineno pat reason carve content status=0
   GG_EXCLUDE_PATTERNS=()
+  GG_EXCLUDE_CARVES=()
   # The read runs in a command substitution, so a gg_collection_error inside
   # it dies in that SUBSHELL and arrives here as a status. Only status 1 is
   # the answer "the commit has no such file" (an empty list); anything else
@@ -349,12 +355,21 @@ gg_load_excludes() { # FILE — fills GG_EXCLUDE_PATTERNS
     if [ "$pat" = "$line" ] || [ -z "$pat" ] || [ -z "$reason" ]; then
       gg_config_error "$(gg_shown "$file"):$lineno: expected 'pattern<TAB>reason' (every exclusion carries its justification)"
     fi
-    GG_EXCLUDE_PATTERNS+=("$pat")
+    case "$pat" in
+      "!"*)
+        carve="${pat#!}"
+        [ -n "$carve" ] \
+          || gg_config_error "$(gg_shown "$file"):$lineno: '!' carves matching paths back into the scanned set and needs a pattern after it"
+        GG_EXCLUDE_CARVES+=("$carve")
+        ;;
+      *) GG_EXCLUDE_PATTERNS+=("$pat") ;;
+    esac
   done <<<"$content"
 }
 
-gg_is_excluded() { # PATH — 0 when some exclusion glob matches the full path
-  # The loaded list, matched by the one spelling above. Guarded expansion: an
+gg_is_excluded() { # PATH — 0 when an exclusion glob matches and no `!` row carves it back
+  # The loaded lists, matched by the one spelling above. Guarded expansion: an
   # empty array is an unbound variable under Bash 3.2 with set -u.
-  gg_path_matches "$1" ${GG_EXCLUDE_PATTERNS[@]+"${GG_EXCLUDE_PATTERNS[@]}"}
+  gg_path_matches "$1" ${GG_EXCLUDE_PATTERNS[@]+"${GG_EXCLUDE_PATTERNS[@]}"} || return 1
+  ! gg_path_matches "$1" ${GG_EXCLUDE_CARVES[@]+"${GG_EXCLUDE_CARVES[@]}"}
 }

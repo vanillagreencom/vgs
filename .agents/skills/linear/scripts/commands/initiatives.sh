@@ -5,7 +5,6 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/../lib/common.sh"
 
 show_help() {
     cat << 'EOF'
@@ -54,30 +53,9 @@ Examples:
   initiatives.sh delete <id>
 EOF
 }
+case "${1:-help}" in help|--help|-h) show_help; exit 0 ;; esac
 
-resolve_project_id() {
-    local project_ref="$1"
-
-    # Check if it's already a UUID
-    if [[ "$project_ref" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
-        echo "$project_ref"
-        return 0
-    fi
-
-    # Look up by name
-    local query='query GetProject($name: String!) { projects(filter: {name: {eq: $name}}) { nodes { id } } }'
-    local result
-    result=$(graphql_query "$query" "{\"name\": \"$project_ref\"}")
-    local project_id
-    project_id=$(echo "$result" | jq -r '.projects.nodes[0].id // empty')
-
-    if [ -z "$project_id" ]; then
-        echo "" >&2
-        return 1
-    fi
-
-    echo "$project_id"
-}
+source "$SCRIPT_DIR/../lib/common.sh"
 
 list_initiatives() {
     local status=""
@@ -349,10 +327,10 @@ add_project() {
         return 1
     fi
 
+    # resolve_project_id names the failure itself — not found, only-canceled
+    # matches, or an API failure — so it is not re-reported here.
     local project_id
-    project_id=$(resolve_project_id "$project")
-    if [ -z "$project_id" ]; then
-        echo "{\"error\": \"Project not found: $project\"}" >&2
+    if ! project_id=$(resolve_project_id "$project"); then
         return 1
     fi
 
@@ -394,10 +372,10 @@ remove_project() {
         return 1
     fi
 
+    # resolve_project_id names the failure itself — not found, only-canceled
+    # matches, or an API failure — so it is not re-reported here.
     local project_id
-    project_id=$(resolve_project_id "$project")
-    if [ -z "$project_id" ]; then
-        echo "{\"error\": \"Project not found: $project\"}" >&2
+    if ! project_id=$(resolve_project_id "$project"); then
         return 1
     fi
 

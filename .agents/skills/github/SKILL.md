@@ -38,11 +38,11 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 | `pr-list-failing [--all] [--format=safe\|table]` | List PRs with CI failures |
 | `pr-create [--title T] [--body B \| --body-file PATH] [--draft] [--dry-run] [--force]` | Create PR as bot. Safety checks: not main, has commits, pushed; `--force` skips them. |
 | `pr-edit-body <N> --body-file PATH` | Update an existing PR body through the sanitized router. |
-| `pr-merge <N> [--check\|--force\|--auto]` | Merge PR. `--check` reports readiness as JSON on stdout plus a one-word verdict and `head-run: <ids>` (the run scope of the CI classification) on stderr; `--auto` queues a currently-blocked PR. Three exit codes, the review-thread gate, and `--force` — see *PR Merge Outcomes*. |
+| `pr-merge <N> [--check\|--force\|--admin\|--auto]` | Merge PR. `--check` reports readiness as JSON on stdout plus a one-word verdict and `head-run: <ids>` (the run scope of the CI classification) on stderr; `--auto` queues a currently-blocked PR. Three exit codes, the review-thread gate, and `--force`/`--admin`. See *PR Merge Outcomes*. |
 | `ci-classify-refusal <N>` | Name the cause of a pr-merge refusal on one `cause:` line (`fetch_error`, `merge_conflict`, `changes_requested`, `threads`, `ci_failed`, `ci_pending`, `computing`, `merged`, `closed`, `none`; an issue prefix outside that vocabulary becomes the cause word itself, and `none` means the checks pass now); `ci_failed` adds `fail:` lines run-correlated to the authoritative run and `superseded:` lines naming runs whose checks were not counted. `--help` |
 | `pr-cross-check [N...] [--quick\|--verify]` | Cross-PR analysis. `--verify`: full build+test (auto-detects build system). |
 | `pr-issue <N> [--format=safe\|text]` | Extract issue ID from PR branch (configurable via `GH_ISSUE_PATTERN`) |
-| `label-add <PR-or-issue> <label> [--issue] [--required\|--optional]` | Add a label after checking the live inventory. Mode semantics and exit codes: *Label application contract*. |
+| `label-add <PR-or-issue> <label> [--issue] [--required\|--optional]` | Add a label after checking the live inventory. Mode semantics and exit codes: `label-add --help`. |
 | `label-remove <PR-or-issue> <label> [--issue]` | Remove a label through the sanitized router. |
 | `await-mergeable <N> [--interval S] [--max-iter N] [--quiet]` | Block until GitHub resolves a PR's merge state. Polls `state` + `mergeStateStatus`. Exit 0 + JSON on resolve, 124 on timeout. |
 | `ci-logs <N> [--lines N] [--format=safe\|text]` | Get CI failure logs for PR |
@@ -56,54 +56,28 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 | `edit-comment <id> [body \| --body-file PATH]` | Edit existing comment. |
 | `sticky-comment <PR> [--verdict\|--analysis\|--body]` | Get bot sticky comment. `--verdict`: quick pass/fail. `--analysis`: deep recommendation. |
 
-CI waiting belongs to `.agents/skills/orch/scripts/ci-wait`; `await-mergeable`
-waits for merge-state resolution.
+CI waiting belongs to `.agents/skills/orch/scripts/ci-wait`; `await-mergeable` waits for merge-state resolution.
 
-### Label application contract
-
-Label modes and failures: `label-add --help`.
-
-### Git HTTPS Auth Helper
-
-Contract: `git-https-auth --help`.
-
-### Diff Summary Helper
-
-Contract: `git-diff-summary --help`.
+Contracts: `label-add --help`, `git-https-auth --help`, `git-diff-summary --help`.
 
 ### PR Merge Outcomes
 
-Full contract: `pr-merge --help`.
-Exit `75` is volatile, so keep a watcher running until `MERGED`.
-If `can_merge` is false with no `issues`, read `state`.
-The thread gate is **Policy, not mechanism.** `--force` is its only override.
+Full contract: `pr-merge --help`. Exit `75` is volatile, so keep a watcher running until `MERGED`. If `can_merge` is false with no `issues`, read `state`. The thread gate is **Policy, not mechanism.** `--force` and the explicit-user-only `--admin` are its overrides.
 
 ### PR blocked with no visible conversations
 
-Under `required_conversation_resolution`, an outdated thread can become
-unreachable in the UI while still blocking the merge: after a rebase or
-force-push the commented commits are gone, clicking the unresolved conversation
-404s, and the PR shows zero visible conversations yet refuses to merge. GraphQL
-`resolveReviewThread` still acts on threads the UI cannot render, so this skill
-is the escape hatch:
+Under `required_conversation_resolution`, an outdated thread can block a merge while the UI shows none; `resolve-thread` reaches it by id.
 
 ```bash
 github.sh pr-threads 42                  # complete list, outdated included
 github.sh resolve-thread PRRT_kwDO...    # resolve by thread id
 ```
 
-`pr-threads` follows every page and fails rather than returning a partial list,
-so a thread id absent from its output is genuinely absent. Repeat
-`resolve-thread` per blocking id until the merge clears.
+`pr-threads` follows every page and fails rather than returning a partial list, so a thread id absent from its output is genuinely absent. Repeat `resolve-thread` per blocking id until the merge clears.
 
 ### Waiting for merge state
 
-**Never gate termination on `gh pr view --json mergeable`.** That field stays
-`UNKNOWN` permanently after a merge. Use `await-mergeable` (resolution rules
-and exit codes: `await-mergeable --help`). To watch MANY PRs, do not
-hand-roll a poll loop keyed on state transitions — use the review-gate
-skill's reducer when installed
-(`.agents/skills/review-gate/scripts/pr-watch.sh`).
+**Never gate termination on `gh pr view --json mergeable`.** That field stays `UNKNOWN` permanently after a merge. Use `await-mergeable` (resolution rules and exit codes: `await-mergeable --help`). To watch MANY PRs, do not hand-roll a poll loop keyed on state transitions. Use the review-gate skill's reducer when installed (`.agents/skills/review-gate/scripts/pr-watch.sh`).
 
 ## Output Formats
 
@@ -111,8 +85,7 @@ Formats and flag rules: `github.sh --help`.
 
 ## Configuration
 
-Keep secrets in `.env.local`; commit non-secret defaults to
-`kendex.settings.toml` under `[env]`. Other contracts: `github.sh --help`.
+Keep secrets in `.env.local`; commit non-secret defaults to `kendex.settings.toml` under `[env]`. Other contracts: `github.sh --help`.
 
 ## Troubleshooting
 

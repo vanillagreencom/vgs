@@ -35,6 +35,7 @@ Options:
                    ci-classify-refusal names the cause.
   --force          Skip checks and merge (requires explicit user decision;
                    cannot be combined with --auto)
+  --admin          Explicit current-user admin merge; skips checks; conflicts with --auto
   --auto           If immediate merge is blocked, enable GitHub auto-merge
                    (will fire when CI + branch protection clear). Exits 75.
                    Never bypasses actionable unresolved review threads.
@@ -45,7 +46,7 @@ Options:
 Modes:
   (default)        Run checks, block if critical issues, merge if pass
   --check          Run checks, output JSON for workflow to parse
-  --force          Deliberately skip all checks, including review threads
+  --force/--admin  Deliberately skip all checks; --admin passes --admin to GitHub
   --auto           Enable auto-merge when immediate merge is blocked
 
 Merge-mode exit codes:
@@ -67,8 +68,8 @@ Merge-mode exit codes:
   blocked or CLOSED. Argument or dispatch failures before JSON remain nonzero.
 
 Exit 75 is volatile:
-  A queue ejection can disarm merge state. Launch the prepared .agents/skills/orch/scripts/merge-queue-watch before returning; it binds repository, PR, expected head, and watch generation.
-  Its one-shot worker writes a durable verdict and claims one recovery action. Route verdicts through README.md "Exit 75 recovery"; the review-gate reducer still reports fleet attention.
+  A queue ejection can disarm merge state. Block on .agents/skills/orch/scripts/queue-wait <N> <poll> <budget> --json before returning; it produces the verdict for the head just armed. Size the poll and budget as orch merge-pr.md § 5 step 1 does: the default budget outlives any foreground call an agent harness holds, so a call without them is killed before the verdict.
+  Route verdicts through README.md "Exit 75 recovery"; the review-gate reducer still reports fleet attention.
   Re-arm only through github.sh pr-merge <N> --auto after that route.
   await-mergeable is not the lifecycle watcher; it stops when GitHub computes state.
 
@@ -92,10 +93,10 @@ Review-thread gate:
   gh pr merge call or the GitHub UI Merge button bypasses it.
 
 Force rules:
-  --force is the only deliberate override. It skips every check, including the
-  thread gate. It is immediate-only and cannot be combined with --auto. A
-  failed force mutation remains BLOCKED unless the exact-head post-state is
-  MERGED; a pre-existing queue entry or auto-merge request is not success.
+  --force and --admin skip every check, including the thread gate. --admin also
+  requests GitHub's branch-protection bypass. Both are immediate-only and
+  conflict with --auto. A failed override remains BLOCKED unless the exact-head
+  post-state is MERGED; pending merge state is not success.
 
 --check JSON:
   stdout is one object with these fields:
@@ -129,7 +130,8 @@ Examples:
   github.sh pr-merge 42 --check          # Check only, JSON output
   github.sh pr-merge 42                  # Check + merge if pass
   github.sh pr-merge 42 --auto           # Merge now or queue auto-merge
-  github.sh pr-merge 42 --force          # Skip checks, merge (DANGEROUS)
+  github.sh pr-merge 42 --force          # Explicit local override (DANGEROUS)
+  github.sh pr-merge 42 --admin          # Explicit admin override (DANGEROUS)
 EOF
 }
 
@@ -363,7 +365,7 @@ print_blocked() {
         echo "Hint: github.sh await-mergeable $pr_num && retry" >&2
     fi
     if echo "$check_result" | jq -e '[.issues[] | select(test("^(unresolved_threads|review_threads_fetch_failed):"))] | length > 0' >/dev/null 2>&1; then
-        echo "Resolve the review-thread gate and retry. Use --force only after an explicit decision to override it." >&2
+        echo "Resolve the review-thread gate and retry. Use --force or --admin only after an explicit decision to override it." >&2
     else
         echo "Use --auto to queue for auto-merge, or --force after an explicit decision to override safety checks." >&2
     fi
@@ -425,7 +427,7 @@ volatile_note() {
     echo "  NOTE: queue/auto-merge state is VOLATILE — an ejection or a failed protection check disarms it silently; follow orch merge-pr.md § 5 for PR #$pr_num" >&2
     local reducer="GH_REPO=$repo .agents/skills/review-gate/scripts/pr-watch.sh (disarmed lines)"
     [ -n "$repo" ] || reducer=".agents/skills/review-gate/scripts/pr-watch.sh with GH_REPO set to the repository (not resolvable locally here)"
-    echo "  Launch the prepared .agents/skills/orch/scripts/merge-queue-watch once; route its claimed action by orch merge-pr.md § 5 step 1, and never re-arm an unrecognized verdict. The fleet reducer is $reducer; repair what the cause names before re-arming with .agents/skills/github/scripts/github.sh pr-merge $pr_num --auto" >&2
+    echo "  Block on .agents/skills/orch/scripts/queue-wait $pr_num --json once, with a poll interval and budget sized as orch merge-pr.md § 5 step 1 does; route its verdict by that same step, and never re-arm an unrecognized verdict. The fleet reducer is $reducer; repair what the cause names before re-arming with .agents/skills/github/scripts/github.sh pr-merge $pr_num --auto" >&2
 }
 
 post_merge_snapshot() {
@@ -478,7 +480,7 @@ post_merge_snapshot() {
 
 main() {
     local pr_num="" method="--squash" delete_branch=true
-    local check_only=false force=false dry_run=false auto=false supplied_head=""
+    local check_only=false force=false admin=false dry_run=false auto=false supplied_head=""
 
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -506,10 +508,8 @@ main() {
             check_only=true
             shift
             ;;
-        --force)
-            force=true
-            shift
-            ;;
+        --force) force=true; shift ;;
+        --admin) admin=true; force=true; shift ;;
         --auto)
             auto=true
             shift
@@ -535,7 +535,7 @@ main() {
     done
 
     if [ "$force" = true ] && [ "$auto" = true ]; then
-        echo "Error: --force and --auto cannot be combined; --force is immediate-only" >&2
+        echo "Error: --force/--admin and --auto cannot be combined; overrides are immediate-only" >&2
         exit 1
     fi
 
@@ -543,6 +543,7 @@ main() {
         echo '{"error": "PR number required"}' >&2
         exit 1
     fi
+    [ "$admin" = false ] || unset GH_TOKEN GITHUB_TOKEN
     if [ -n "$supplied_head" ] && ! [[ "$supplied_head" =~ ^[0-9a-fA-F]{40}$ ]]; then
         echo "Error: --expected-head must be a 40-character commit SHA" >&2; exit 1
     fi
@@ -562,8 +563,7 @@ main() {
             "$(jq -r '.mergedAt // ""' <<<"$PR_STATE_JSON")"
     fi
 
-    local token
-    token=$(load_bot_token)
+    local token; if [ "$admin" = true ]; then token=""; else token=$(load_bot_token); fi
 
     local check_result=""
     if [ "$force" = false ]; then
@@ -600,12 +600,13 @@ main() {
             echo "$check_result" | jq -r '.warnings[]' | sed 's/^/  ⚠ /' >&2
         fi
     else
-        echo "⚠ --force: Skipping safety checks" >&2
+        if [ "$admin" = true ]; then echo "⚠ current-user admin mode: Skipping safety checks" >&2; else echo "⚠ override: Skipping safety checks" >&2; fi
     fi
 
     if [ "$dry_run" = true ]; then
         local token_status="not configured"
         [ -n "$token" ] && token_status="configured"
+        [ "$admin" = false ] || token_status="current-user admin mode"
         local mode="immediate"
         [ "$auto" = true ] && mode="auto-merge fallback"
         echo "Would merge PR #$pr_num ($method, mode=$mode, delete_branch=$delete_branch, token=$token_status)"
@@ -625,13 +626,13 @@ main() {
     fi
 
     local -a cmd=(pr merge "$pr_num" "$method" --match-head-commit "$expected_head")
-    [ "$auto" = true ] && cmd+=(--auto)
+    [ "$auto" = true ] && cmd+=(--auto); [ "$admin" = true ] && cmd+=(--admin)
 
     local merge_output merge_exit=0
     if [ -n "$token" ]; then
         merge_output=$(gh_with_token "$token" "${cmd[@]}" 2>&1) || merge_exit=$?
     else
-        echo "Warning: GH_BOT_TOKEN not configured, using current user" >&2
+        [ "$admin" = true ] || echo "Warning: GH_BOT_TOKEN not configured, using current user" >&2
         merge_output=$(gh_with_token "" "${cmd[@]}" 2>&1) || merge_exit=$?
     fi
 

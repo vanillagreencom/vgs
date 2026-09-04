@@ -19,8 +19,7 @@ On-demand review of local changes: review, present findings, and offer to fix th
 
 Use the outputs as `BRANCH`, `ISSUE_ID` (empty means skip every workflow-state step), and `BASE_BRANCH`; `WT_PATH` is `git-context repo-root .`.
 
-Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`.
-`[DIR]` is the `.` the line above resolves `WT_PATH` from.
+Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`. `[DIR]` is the `.` the line above resolves `WT_PATH` from.
 
 | Argument | `DIFF_RANGE` |
 |----------|-------------|
@@ -51,7 +50,7 @@ A failed check omits the path and carries `- decision index lookup failed for [D
 
 ## 2. Launch Reviewers
 
-`[AGENTS]` is every `reviewer-*` agent this harness exposes. Resolve the reviewer mode per [SKILL.md § Agent Lifecycle](../SKILL.md#agent-lifecycle):
+`[AGENTS]` is every `reviewer-*` agent this harness exposes. Resolve the reviewer mode per [references/skill-rules.md § Agent Lifecycle](../references/skill-rules.md#agent-lifecycle):
 
 ```bash
 .agents/skills/orch/scripts/orch-env REVIEWER_SLOT_BUDGET 0

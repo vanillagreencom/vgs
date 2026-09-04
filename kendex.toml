@@ -145,6 +145,15 @@ enabled = true
 source = "kendex"
 enabled = true
 
+[skills.arch-docs]
+source = "kendex"
+harnesses = [
+    "claude",
+    "opencode",
+    "codex",
+    "pi",
+]
+
 [hooks.block-bare-cd]
 source = "kendex"
 enabled = true
@@ -164,6 +173,33 @@ enabled = true
 [hooks.task-completed-check]
 source = "kendex"
 enabled = true
+
+[hooks.doc-drift-check]
+source = "kendex"
+harnesses = [
+    "claude",
+    "opencode",
+    "codex",
+    "pi",
+]
+
+[hooks.reviewer-read-only]
+source = "kendex"
+harnesses = [
+    "claude",
+    "opencode",
+    "codex",
+    "pi",
+]
+
+[hooks.reviewer-stop-check]
+source = "kendex"
+harnesses = [
+    "claude",
+    "opencode",
+    "codex",
+    "pi",
+]
 
 [agent-skills]
 generalist = [
@@ -204,16 +240,9 @@ all = "Problems with a kendex-owned skill go through `kendex report`; check owne
 linear = '''
 ## Tracker policy: Linear is canonical; GitHub Issues is intake-only
 
-Create, label, and work issues ONLY in Linear (team vg-shell, identifiers
-VGS-<n>). GitHub Issues stays as intake, and nothing syncs back. Before creating
-a Linear issue, dedupe across BOTH trackers (`gh issue list --search` + Linear
-cache) — never file the same problem twice.
+Create, label, and work issues ONLY in Linear (team vg-shell, identifiers VGS-<n>). GitHub Issues stays as intake, and nothing syncs back. Before creating a Linear issue, dedupe across BOTH trackers (`gh issue list --search` + Linear cache) — never file the same problem twice.
 
-Mirroring GitHub intake into Linear is a MANUAL triage step. No automation does
-it: there is no sync workflow under `.github/` and no Linear-side GitHub
-integration creating issues, so an unmirrored GitHub issue never reaches the
-canonical tracker and can sit unseen indefinitely. Run the triage pass when
-picking up work:
+Mirroring GitHub intake into Linear is a MANUAL triage step. No automation does it: there is no sync workflow under `.github/` and no Linear-side GitHub integration creating issues, so an unmirrored GitHub issue never reaches the canonical tracker and can sit unseen indefinitely. Run the triage pass when picking up work:
 
 ```bash
 gh issue list --state open --limit 50 --json number,title,url,createdAt \
@@ -221,15 +250,9 @@ gh issue list --state open --limit 50 --json number,title,url,createdAt \
 .agents/skills/linear/scripts/linear.sh cache issues list --all-projects
 ```
 
-The two listings are chained: a `gh issue list` that fails prints nothing, and
-unchained the Linear listing's success becomes the block's — an empty GitHub
-column then reads as "nothing to mirror", the exact false-clean this pass exists
-to prevent.
+The two listings are chained: a `gh issue list` that fails prints nothing, and unchained the Linear listing's success becomes the block's — an empty GitHub column then reads as "nothing to mirror", the exact false-clean this pass exists to prevent.
 
-For each GitHub issue with no Linear counterpart, fetch title, body and url in
-one call and build the description — the full body plus a provenance line back
-to the GitHub issue — then create it in team vg-shell and work the Linear issue
-rather than the GitHub one:
+For each GitHub issue with no Linear counterpart, fetch title, body and url in one call and build the description — the full body plus a provenance line back to the GitHub issue — then create it in team vg-shell and work the Linear issue rather than the GitHub one:
 
 ```bash
 gh_json= gh_body= &&
@@ -250,64 +273,25 @@ done
 ( exit "$(( created ? created : cleaned ))" )
 ```
 
-Run that block as a UNIT, in one shell — the `mktemp` paths live in variables,
-so a command run on its own would find them empty and redirect to nothing.
+Run that block as a UNIT, in one shell — the `mktemp` paths live in variables, so a command run on its own would find them empty and redirect to nothing.
 
-NO STEP'S FAILURE MAY BE MASKED BY A LATER STEP'S SUCCESS. Every producing step
-is chained with `&&`, so the first failure short-circuits the rest and becomes
-the list's status; `created=$?` captures it, the cleanup loop runs on every path,
-and `( exit ... )` re-raises it. That direction is the worst one here — this is
-the manual GitHub-to-Linear step, so a masked failure means work never filed and
-never noticed. Each shape below was a real silent failure before it was written
-this way:
+NO STEP'S FAILURE MAY BE MASKED BY A LATER STEP'S SUCCESS. Every producing step is chained with `&&`, so the first failure short-circuits the rest and becomes the list's status; `created=$?` captures it, the cleanup loop runs on every path, and `( exit ... )` re-raises it. That direction is the worst one here — this is the manual GitHub-to-Linear step, so a masked failure means work never filed and never noticed. Each shape below was a real silent failure before it was written this way:
 
-* `rm -f` last made ITS status the block's, and `rm -f` almost always succeeds:
-  a create that failed on credentials, validation or an API error reported
-  success and the agent believed the issue was filed.
-* `gh issue view` and the description `jq` ran unchecked, so the create ran on
-  whatever landed in the file — an empty description, the GitHub body and the
-  provenance line lost, reported as success.
-* the title `jq` ran inside the create's own argument list, where a command
-  substitution's status is discarded whatever it exits with; hoisting it into
-  `title=` is what makes that status visible.
-* `[ -s "$gh_body" ]` because a status is a PROXY — what must be true is that
-  the file has CONTENT — and it speaks when it refuses, since an
-  empty-but-succeeded producer prints no diagnostic of its own.
-* the cleanup itself ran unchecked, so a `rm` that failed after a successful
-  create left the issue JSON and the rendered body on disk while the block
-  reported success. `cleaned` records it, the loop names the file that survived,
-  and the status is `created` when the create failed and `cleaned` otherwise —
-  the create's failure is the more important one and still wins, but a cleanup
-  failure cannot vanish behind it.
+* `rm -f` last made ITS status the block's, and `rm -f` almost always succeeds: a create that failed on credentials, validation or an API error reported success and the agent believed the issue was filed.
+* `gh issue view` and the description `jq` ran unchecked, so the create ran on whatever landed in the file — an empty description, the GitHub body and the provenance line lost, reported as success.
+* the title `jq` ran inside the create's own argument list, where a command substitution's status is discarded whatever it exits with; hoisting it into `title=` is what makes that status visible.
+* `[ -s "$gh_body" ]` because a status is a PROXY — what must be true is that the file has CONTENT — and it speaks when it refuses, since an empty-but-succeeded producer prints no diagnostic of its own.
+* the cleanup itself ran unchecked, so a `rm` that failed after a successful create left the issue JSON and the rendered body on disk while the block reported success. `cleaned` records it, the loop names the file that survived, and the status is `created` when the create failed and `cleaned` otherwise — the create's failure is the more important one and still wins, but a cleanup failure cannot vanish behind it.
 
-`gh_json= gh_body=` BEFORE the first `mktemp`, and this one is about the
-operator's own shell rather than about statuses. You paste this block into an
-interactive shell, where `set -u` is off and both names may already be in use.
-If the FIRST `mktemp` fails, the `&&` chain stops before `gh_body` is ever
-assigned — and the cleanup at the bottom still runs, expanding whatever
-`gh_body` happened to mean in your session and `rm`-ing a file this block never
-created. Initializing both to empty first is what makes that impossible, and the
-loop skips an empty path rather than passing it to `rm`. A runbook a person
-pastes into their own shell must not be able to delete a file they named.
+`gh_json= gh_body=` BEFORE the first `mktemp`, and this one is about the operator's own shell rather than about statuses. You paste this block into an interactive shell, where `set -u` is off and both names may already be in use. If the FIRST `mktemp` fails, the `&&` chain stops before `gh_body` is ever assigned — and the cleanup at the bottom still runs, expanding whatever `gh_body` happened to mean in your session and `rm`-ing a file this block never created. Initializing both to empty first is what makes that impossible, and the loop skips an empty path rather than passing it to `rm`. A runbook a person pastes into their own shell must not be able to delete a file they named.
 
-`( exit ... )` rather than a bare `exit`, which would close an operator's
-interactive shell, and rather than a `trap ... EXIT`, which would linger in that
-shell for the rest of the session. `mktemp`, not `/tmp/gh-<n>.json`: that path is
-fully predictable from the issue number, so two lanes mirroring the same issue
-overwrite each other's file, and a pre-created symlink there would be followed by
-the redirect.
+`( exit ... )` rather than a bare `exit`, which would close an operator's interactive shell, and rather than a `trap ... EXIT`, which would linger in that shell for the rest of the session. `mktemp`, not `/tmp/gh-<n>.json`: that path is fully predictable from the issue number, so two lanes mirroring the same issue overwrite each other's file, and a pre-created symlink there would be followed by the redirect.
 
-The list query carries `url` so the triage table is actionable; `body` is
-fetched per issue rather than for all 50, and every field the description needs
-comes from these commands alone — no extra lookup.
+The list query carries `url` so the triage table is actionable; `body` is fetched per issue rather than for all 50, and every field the description needs comes from these commands alone — no extra lookup.
 
-Automating this needs owner action (Linear workspace admin, or a LINEAR_API_KEY
-repo secret) — see docs/decisions/D002-github-linear-intake-sync.md.
+Automating this needs owner action (Linear workspace admin, or a LINEAR_API_KEY repo secret) — see docs/decisions/D002-github-linear-intake-sync.md.
 
-Link work to its issue through the branch name: `vgs-<n>-<slug>`. Linear's
-GitHub integration matches that to attach the PR, and `GH_ISSUE_PATTERN` in
-kendex.settings.toml reads the same shape. Commit subjects carry the identifier
-as the scope — `area(VGS-12): imperative summary` — per AGENTS.md § Conventions.
+Link work to its issue through the branch name: `vgs-<n>-<slug>`. Linear's GitHub integration matches that to attach the PR, and `GH_ISSUE_PATTERN` in kendex.settings.toml reads the same shape. Commit subjects carry the identifier as the scope — `area(VGS-12): imperative summary` — per AGENTS.md § Conventions.
 
 Issue labels are live Linear issue labels. Inventory source of truth:
 
@@ -316,25 +300,16 @@ Issue labels are live Linear issue labels. Inventory source of truth:
 .agents/skills/linear/scripts/linear.sh sync --reconcile
 ```
 
-Chained for the same reason: a `cache labels list` that fails prints no labels,
-and unchained the reconcile's success becomes the block's — leaving an agent
-believing it read the live inventory when it read nothing.
+Chained for the same reason: a `cache labels list` that fails prints no labels, and unchained the reconcile's success becomes the block's — leaving an agent believing it read the live inventory when it read nothing.
 
-Use the project-management label taxonomy when assigning labels. If the
-taxonomy and live inventory disagree, stop before mutation and report the
-missing/extra label; do not substitute a nearby label. Never create labels
-without explicit user authorization.
+Use the project-management label taxonomy when assigning labels. If the taxonomy and live inventory disagree, stop before mutation and report the missing/extra label; do not substitute a nearby label. Never create labels without explicit user authorization.
 
-`issues create/update --labels` replaces the full issue label set. For label
-updates, compute the intended final full set from current labels: replace only
-the target exclusive category (`agent:*`), preserve unrelated
-classification/workflow labels, then pass the full validated set.
+`issues create/update --labels` replaces the full issue label set. For label updates, compute the intended final full set from current labels: replace only the target exclusive category (`agent:*`), preserve unrelated classification/workflow labels, then pass the full validated set.
 '''
 project-management = """
 ## Linear projects
 
-Every new non-mirror issue gets exactly one project. The set (all team
-vg-shell):
+Every new non-mirror issue gets exactly one project. The set (all team vg-shell):
 
 | Project | Scope |
 |---------|-------|
@@ -345,26 +320,19 @@ vg-shell):
 | `Packaging & Install Channels` | install.sh, distro packages (Arch/Debian/Fedora/Gentoo/Void/Nix), release verification, channel upkeep. |
 | `Cloud Sync` | Supervised rclone, accounts/OAuth, sync modes and safety rails, watcher, FUSE mounts, Cloud Sync app/widget. |
 
-A bug inside a feature area goes to that area's project, not Tech Debt & Bugs;
-the hygiene project is for cross-cutting debt and pre-existing discoveries.
-Synced `nightly-ci:` mirrors arrive with no project — route them to
-`Tech Debt & Bugs` on first triage. Creating a new project is an owner
-decision: propose it, do not create it unprompted.
+A bug inside a feature area goes to that area's project, not Tech Debt & Bugs; the hygiene project is for cross-cutting debt and pre-existing discoveries. Synced `nightly-ci:` mirrors arrive with no project — route them to `Tech Debt & Bugs` on first triage. Creating a new project is an owner decision: propose it, do not create it unprompted.
 
 ## Project issue label taxonomy
 
-Use this taxonomy with the linear skill's label-inventory preflight for roadmap
-creation, audit-created issues, research issues, and any other issue
-create/update path.
+Use this taxonomy with the linear skill's label-inventory preflight for roadmap creation, audit-created issues, research issues, and any other issue create/update path.
 
 Required for new non-historical issues:
+
 - Exactly one Agent label.
 - Classification and Workflow labels are optional and additive.
 - Domain labels apply when the work clearly sits in that domain.
 
-Label creation rule: if a label listed here is missing from live Linear
-inventory, stop and ask for explicit user authorization to create it. Do not
-create labels automatically and do not silently omit or substitute labels.
+Label creation rule: if a label listed here is missing from live Linear inventory, stop and ask for explicit user authorization to create it. Do not create labels automatically and do not silently omit or substitute labels.
 
 ### Agent labels (exclusive; choose exactly one)
 
@@ -375,8 +343,7 @@ create labels automatically and do not silently omit or substitute labels.
 | `agent:human` | Manual/user-owned work, external dependency/vendor action, or work intentionally not delegated to an AI agent. |
 | `agent:researcher` | Research issue owned by the researcher workflow/agent. Must be paired with `research`. |
 
-`agent:iced` and `agent:rust` are workspace-level labels inherited by every
-team; they serve other projects (hyprtrade), so never assign them in VGS.
+`agent:iced` and `agent:rust` are workspace-level labels inherited by every team; they serve other projects (hyprtrade), so never assign them in VGS.
 
 ### Domain labels (non-exclusive; choose all that apply)
 
@@ -389,10 +356,7 @@ team; they serve other projects (hyprtrade), so never assign them in VGS.
 | `component` | Reusable widget/control work, especially primitives in `quickshell/vshell/Widgets/`. |
 | `releases` | Cutting a release, versioning, and publishing to the distribution channels — the work the vgs-release and vgs-distro-publish skills own. |
 
-Priority rule: `ci-infra` implies Urgent unless the issue deliberately records
-why it is lower. Everything VGS uses to decide whether a change is safe to merge
-lives in that category, so a defect there invalidates the evidence behind every
-other issue's "verified" claim.
+Priority rule: `ci-infra` implies Urgent unless the issue deliberately records why it is lower. Everything VGS uses to decide whether a change is safe to merge lives in that category, so a defect there invalidates the evidence behind every other issue's "verified" claim.
 
 ### Classification labels (non-exclusive; additive)
 
@@ -421,16 +385,11 @@ other issue's "verified" claim.
 | `hardware-blocked` | Blocked on physical hardware or device/OS access — a second monitor, a fingerprint reader, an Apple display — rather than on a decision or another issue. |
 | `re-triage` | Request one triage-janitor pass (Linear Loop 2) over an issue whose labels, project, or priority look wrong. The automation REMOVES it when the pass completes, so it is a trigger, not a state — an issue carrying it long-term means the loop did not run. Expect zero issues to carry it at rest. |
 
-`ci-nightly` marks CI-failure mirrors; the taxonomy above does not apply to
-mirrored issues — do not retitle or relabel them to satisfy it. Note there is
-no automated ingest: mirroring GitHub intake into Linear is manual, per the
-tracker policy in the linear skill instructions.
+`ci-nightly` marks CI-failure mirrors; the taxonomy above does not apply to mirrored issues — do not retitle or relabel them to satisfy it. Note there is no automated ingest: mirroring GitHub intake into Linear is manual, per the tracker policy in the linear skill instructions.
 
 ### Never-use labels
 
-These are live in the workspace and must never be assigned in VGS. The reason
-matters as much as the verdict: a label omitted with no explanation reads as an
-oversight, and gets "fixed" by someone assigning it.
+These are live in the workspace and must never be assigned in VGS. The reason matters as much as the verdict: a label omitted with no explanation reads as an oversight, and gets "fixed" by someone assigning it.
 
 | Label | Why never |
 |-------|-----------|
@@ -451,17 +410,7 @@ oversight, and gets "fixed" by someone assigning it.
 reviewer = """
 ## VGS review policy
 
-Risk-classed review depth and the regression-test expectation live in
-`review-bots.md` (repo root, § Risk classes and § Regression-test
-expectation) — that file is the source; apply both. In short: every
-bug-fix PR carries a check or test that failed before the fix; a
-bug-fix PR without one gets that as a standing finding (docs-only fixes
-exempt). Findings on high-risk classes — gate/CI machinery,
-lock/session/idle surfaces, packaging/publish install channels, and
-privileged operations (elevation or system writes, WHEREVER they live —
-not only `backend/`) — are merge-blocking by default. The class
-definitions and derivation commands stay in review-bots.md; do not
-re-derive them from this summary.
+Risk-classed review depth and the regression-test expectation live in `review-bots.md` (repo root, § Risk classes and § Regression-test expectation) — that file is the source; apply both. In short: every bug-fix PR carries a check or test that failed before the fix; a bug-fix PR without one gets that as a standing finding (docs-only fixes exempt). Findings on high-risk classes — gate/CI machinery, lock/session/idle surfaces, packaging/publish install channels, and privileged operations (elevation or system writes, WHEREVER they live — not only `backend/`) — are merge-blocking by default. The class definitions and derivation commands stay in review-bots.md; do not re-derive them from this summary.
 """
 
 [agent-frontmatter.claude.generalist]
@@ -1078,3 +1027,6 @@ pane = false
 
 [agent-additional-instructions]
 all = "Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first."
+
+[pi-extensions."@vanillagreen/pi-nested-agents-md"]
+source = "kendex"

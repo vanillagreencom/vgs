@@ -13,6 +13,7 @@
 # accepted on the return message plus the pushed fix commit rather than on a
 # stale artifact.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 CHECK="$REPO_ROOT/skills/orch/scripts/dev-artifact-check"
@@ -80,9 +81,6 @@ export ORCH_STATE_DIR="$worktree/tmp"
 valid_impl='{"schema_version":1,"round_id":"1750000000-4242","kind":"implement","issue":"issue-770","branch":"issue-770","commit":"abc123f","baseline_lines":1,"validate":"pass","qa_labels":["needs-review"],"summary_posted":true,"summary":null,"bundled":false,"items":[]}'
 # A complete fix-kind receipt with items[] (n = 1,2).
 valid_fix='{"schema_version":1,"round_id":"1750000000-4242","kind":"fix","issue":"issue-770","branch":"issue-770","commit":"def456a","validate":"FAILING: lint","summary_posted":true,"summary":null,"bundled":false,"items":[{"n":1,"decision":"Applied","reasoning":"fixed nil deref"},{"n":2,"decision":"Skipped","reasoning":"contradicts D010"}]}'
-# A complete analysis-kind receipt (kendex#952): read-only round, NO commit /
-# validate / validate_note keys, recommendation in summary.
-valid_analysis='{"schema_version":1,"round_id":"1750000000-4242","kind":"analysis","issue":"issue-770","branch":"issue-770","qa_labels":[],"summary_posted":false,"summary":"Recommend: close with reasoning; premise invalidated by merge X.","bundled":false,"items":[]}'
 
 # --- missing: no artifact at the round-scoped path ---
 set +e
@@ -171,39 +169,6 @@ assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id "$R")" "i
 # single implement with items:[] → valid (implement without bundled tolerates empty items)
 printf '%s' "$valid_impl" > "$artifact"
 assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id "$R")" "valid" "single implement with items:[] stays valid"
-
-# --- kendex#952: analysis kind — complete-without-code, inverse commit/validate rule ---
-printf '%s' "$valid_analysis" > "$artifact"
-out="$("$CHECK" --worktree "$worktree" --issue "$issue" --round-id "$R")"
-rc=$?
-assert_eq "$rc" "0" "flagless analysis receipt exits 0"
-assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "flagless analysis receipt reports reason=valid"
-assert_eq "$(jq -r '.validate' <<<"$out")" "null" "analysis receipt echoes validate=null (no validation ran)"
-# The inverse rule: a commit/validate/validate_note key PRESENT on an analysis
-# artifact is a fabricated claim about a round that ran none → invalid, even
-# when the value looks plausible, and even when it is null.
-printf '%s' "$valid_analysis" | jq -c '.commit="abc123f"' > "$artifact"
-assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id "$R")" "invalid" "analysis smuggling a commit reports reason=invalid"
-printf '%s' "$valid_analysis" | jq -c '.validate="pass"' > "$artifact"
-assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id "$R")" "invalid" "analysis smuggling validate=pass reports reason=invalid"
-printf '%s' "$valid_analysis" | jq -c '.validate_note="looked fine"' > "$artifact"
-assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id "$R")" "invalid" "analysis smuggling a validate_note reports reason=invalid"
-printf '%s' "$valid_analysis" | jq -c '.commit=null' > "$artifact"
-assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id "$R")" "invalid" "analysis with a null commit key still reports reason=invalid (presence, not value)"
-# The recommendation is the round's deliverable: a missing/empty/wrong-typed
-# summary proves the round ended, not what it concluded → incomplete.
-printf '%s' "$valid_analysis" | jq -c 'del(.summary)' > "$artifact"
-assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id "$R")" "incomplete" "analysis with no summary reports reason=incomplete"
-printf '%s' "$valid_analysis" | jq -c '.summary=null' > "$artifact"
-assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id "$R")" "incomplete" "analysis with null summary reports reason=incomplete"
-printf '%s' "$valid_analysis" | jq -c '.summary=""' > "$artifact"
-assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id "$R")" "incomplete" "analysis with empty summary reports reason=incomplete"
-# Round-id identity applies to analysis exactly as to the other kinds.
-printf '%s' "$valid_analysis" | jq -c '.round_id="OTHER-1"' > "$artifact"
-assert_eq "$(reason --worktree "$worktree" --issue "$issue" --round-id "$R")" "invalid" "analysis with internal round_id mismatch reports reason=invalid"
-# An analysis artifact can never satisfy a delegated item set.
-printf '%s' "$valid_analysis" > "$artifact"
-assert_eq "$(reason --file "$artifact" --expect-items 1,2)" "incomplete" "analysis cannot satisfy file-mode --expect-items → incomplete"
 
 # --- gate ordering: invalid (scalars/round) beats incomplete (items) ---
 printf '%s' "$valid_fix" | jq -c 'del(.commit) | .items=[]' > "$artifact"
@@ -301,9 +266,6 @@ assert_eq "$("$STATE" --state-dir "$rt_wt/tmp" get issue-9 .pr.baseline_lines)" 
   "the baseline has one authoritative workflow-state value"
 "$WRITE" --worktree "$rt_wt" --kind fix --issue issue-9 --round-id 7-8 --branch b --commit c --validate pass --item 1 Applied a --item 2 Skipped b >/dev/null
 assert_eq "$(reason --file "$rt_wt/tmp/dev-return-issue-9-7-8.json" --expect-items 1,2)" "valid" "writer fix output round-trips through file-mode --expect-items"
-printf 'Recommend: re-scope; seam moved in refactor.\n' > "$rt_wt/analysis.md"
-"$WRITE" --worktree "$rt_wt" --kind analysis --issue issue-9 --round-id 9-10 --branch b --summary-file "$rt_wt/analysis.md" --no-summary >/dev/null
-assert_eq "$(reason --worktree "$rt_wt" --issue issue-9 --round-id 9-10)" "valid" "writer analysis output round-trips as valid (kendex#952)"
 
 # --- kendex#1230: --expect-items-from-round reads the persisted round record ---
 # The delegated item set is persisted at delegation time (dev-round-write →
@@ -462,23 +424,8 @@ move_head="$(git -C "$adds_wt" rev-parse HEAD)"
   --validate pass --item 1 Applied done >/dev/null
 assert_eq "$(reason --worktree "$adds_wt" --issue issue-826 --round-id 3-3 --expect-items-from-round)" "valid" \
   "a moved file is not treated as an addition"
-diverge_wt="$TMP_ROOT/diverge"
-mkdir -p "$diverge_wt"
-git -C "$diverge_wt" init -q -b main
-git -C "$diverge_wt" config user.email test@example.com
-git -C "$diverge_wt" config user.name Test
-git -C "$diverge_wt" config commit.gpgsign false
-git -C "$diverge_wt" commit -q --allow-empty -m base
-init_growth_state "$STATE" "$diverge_wt" issue-826 seed 1000000
-"$ROUND_WRITE" --worktree "$diverge_wt" --issue issue-826 --round-id 4-4 --item 1 compare "tools/guard on a staged render" >/dev/null
-git -C "$diverge_wt" checkout -q --orphan divergent
-git -C "$diverge_wt" commit -q --allow-empty -m divergent
-diverge_head="$(git -C "$diverge_wt" rev-parse HEAD)"
-"$WRITE" --worktree "$diverge_wt" --kind fix --issue issue-826 --round-id 4-4 --branch divergent \
-  --commit "$diverge_head" --validate pass --item 1 Applied done >/dev/null
-diverge_out="$("$CHECK" --worktree "$diverge_wt" --issue issue-826 --round-id 4-4 --expect-items-from-round)"
-assert_eq "$(jq -r '.reason' <<<"$diverge_out")" "valid" \
-  "direct snapshot comparison accepts histories with no merge base"
+# A probe git cannot run is its own refusal, never a file list; the shim fails
+# every `git diff`, on the live-base round above so the probe is reached.
 git_shim_dir="$TMP_ROOT/git-shim"
 mkdir -p "$git_shim_dir"
 cat > "$git_shim_dir/git" <<'EOF'
@@ -492,25 +439,93 @@ chmod +x "$git_shim_dir/git"
 real_git="$(command -v git)"
 set +e
 comparison_out="$(REAL_GIT="$real_git" PATH="$git_shim_dir:$PATH" "$CHECK" \
-  --worktree "$diverge_wt" --issue issue-826 --round-id 4-4 --expect-items-from-round 2>/dev/null)"
+  --worktree "$adds_wt" --issue issue-826 --round-id 3-3 --expect-items-from-round 2>/dev/null)"
 comparison_rc=$?
 set -e
-assert_eq "$comparison_rc" "1" "a failed direct snapshot probe refuses acceptance"
+assert_eq "$comparison_rc" "1" "a failed snapshot probe refuses acceptance"
 assert_eq "$(jq -r '.reason' <<<"$comparison_out")" "comparison_failed" \
-  "failed direct snapshot probe keeps the distinct reason"
-routing_mutant="$TMP_ROOT/routing-mutant"
-cp "$CHECK" "$routing_mutant"
+  "a failed snapshot probe keeps the distinct reason"
+# A mutant takes the whole scripts directory: the check sources a sibling lib.
+mutant_scripts="$TMP_ROOT/mutant-scripts"
+mkdir -p "$mutant_scripts"
+cp -R "$REPO_ROOT/skills/orch/scripts" "$mutant_scripts/"
+routing_mutant="$mutant_scripts/scripts/dev-artifact-check"
 sed -i.bak 's/emit false "$file" "comparison_failed"/emit false "$file" "unapproved_additions"/' "$routing_mutant"
 chmod +x "$routing_mutant"
 set +e
 routing_mutant_out="$(REAL_GIT="$real_git" PATH="$git_shim_dir:$PATH" "$routing_mutant" \
-  --worktree "$diverge_wt" --issue issue-826 --round-id 4-4 --expect-items-from-round 2>/dev/null)"
+  --worktree "$adds_wt" --issue issue-826 --round-id 3-3 --expect-items-from-round 2>/dev/null)"
 set -e
-if [[ "$(jq -r '.reason' <<<"$routing_mutant_out")" == "comparison_failed" ]]; then
-  FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "routing control detects a comparison-failure misroute"
-else
-  PASS=$((PASS + 1)); printf '  ok    %s\n' "routing control detects a comparison-failure misroute"
-fi
+# The misroute must show as the reason the mutation names. Asserting only
+# "not comparison_failed" would also pass for a mutant that never ran.
+assert_eq "$(jq -r '.reason' <<<"$routing_mutant_out")" "unapproved_additions" \
+  "routing control detects a comparison-failure misroute"
+
+# --- kendex#944: a rebase stops the gate rather than misattributing to it ---
+# base_sha still resolves after a restack, so comparing against it would read
+# the base branch's whole advance as this round's own additions.
+rebase_wt="$TMP_ROOT/rebase"
+mkdir -p "$rebase_wt"
+git -C "$rebase_wt" init -q -b main
+git -C "$rebase_wt" config user.email test@example.com
+git -C "$rebase_wt" config user.name Test
+git -C "$rebase_wt" config commit.gpgsign false
+git -C "$rebase_wt" commit -q --allow-empty -m base
+init_growth_state "$STATE" "$rebase_wt" issue-944 seed 1000000
+git -C "$rebase_wt" checkout -q -b feature
+printf 'branch work\n' > "$rebase_wt/branch.md"
+git -C "$rebase_wt" add branch.md
+git -C "$rebase_wt" commit -q -m branch-work
+"$ROUND_WRITE" --worktree "$rebase_wt" --issue issue-944 --round-id 1-1 --item 1 "fix finding" "tools/guard on a staged render" >/dev/null
+git -C "$rebase_wt" checkout -q main
+mkdir -p "$rebase_wt/crates/upstream"
+printf 'upstream\n' > "$rebase_wt/crates/upstream/lib.rs"
+git -C "$rebase_wt" add crates/upstream/lib.rs
+git -C "$rebase_wt" commit -q -m upstream-advance
+git -C "$rebase_wt" checkout -q feature
+git -C "$rebase_wt" rebase -q main >/dev/null
+"$WRITE" --worktree "$rebase_wt" --kind fix --issue issue-944 --round-id 1-1 --branch feature \
+  --commit "$(git -C "$rebase_wt" rev-parse HEAD)" --validate pass --item 1 Applied done >/dev/null
+set +e
+rebase_out="$("$CHECK" --worktree "$rebase_wt" --issue issue-944 --round-id 1-1 --expect-items-from-round 2>"$TMP_ROOT/rebase.err")"
+set -e
+# Refused, and naming nothing: an accept would lose the gate rather than defer
+# it, and a file list would accuse the round of what it cannot be shown to own.
+assert_eq "$(jq -c '[.ok, .verdict, .reason, .files]' <<<"$rebase_out")" '[false,"retry","additions_unattributable",[]]' \
+  "an orphaned base refuses the round and names no file"
+assert_eq "$(grep -cF 'no comparison can attribute an addition to this round' "$TMP_ROOT/rebase.err")" "1" \
+  "and says on stderr why it could not compare"
+
+# Must-fail control: without the stop, the round is billed the file main merged,
+# which also proves the fixture still orphans that base. Pristine copy first.
+stop_mutant="$mutant_scripts/scripts/dev-artifact-check"
+cp "$CHECK" "$stop_mutant"
+assert_eq "$(grep -cF 'if ! git -C "$repo" merge-base --is-ancestor "$base_sha" HEAD >/dev/null 2>&1; then' "$stop_mutant")" "1" \
+  "control finds exactly one orphaned-base stop to remove"
+sed -i.bak 's/if ! git -C "\$repo" merge-base --is-ancestor "\$base_sha" HEAD >\/dev\/null 2>&1; then/if false; then/' "$stop_mutant"
+chmod +x "$stop_mutant"
+set +e
+stop_mutant_out="$("$stop_mutant" --worktree "$rebase_wt" --issue issue-944 --round-id 1-1 --expect-items-from-round 2>/dev/null)"
+set -e
+assert_eq "$(jq -c '.files' <<<"$stop_mutant_out")" '["crates/upstream/lib.rs"]' \
+  "control: without the stop, the round is billed main's addition"
+
+# The stop is for the orphaned base alone: a round delegated after the restack
+# has a live base, and an unlisted protected file it adds is refused.
+"$ROUND_WRITE" --worktree "$rebase_wt" --issue issue-944 --round-id 2-2 --item 1 "fix finding" "tools/guard on a staged render" >/dev/null
+mkdir -p "$rebase_wt/tools"
+printf 'round machinery\n' > "$rebase_wt/tools/round-tool"
+git -C "$rebase_wt" add tools/round-tool
+git -C "$rebase_wt" commit -q -m round-addition
+rebase_head2="$(git -C "$rebase_wt" rev-parse HEAD)"
+"$WRITE" --worktree "$rebase_wt" --kind fix --issue issue-944 --round-id 2-2 --branch feature \
+  --commit "$rebase_head2" --validate pass --item 1 Applied done >/dev/null
+set +e
+rebase_bites="$("$CHECK" --worktree "$rebase_wt" --issue issue-944 --round-id 2-2 --expect-items-from-round 2>/dev/null)"
+set -e
+assert_eq "$(jq -c '[.reason, .files]' <<<"$rebase_bites")" '["unapproved_additions",["tools/round-tool"]]' \
+  "a round whose base survived the restack is still gated, and named its addition alone"
+
 # --- kendex#994: the recorded commit must name a real object in the worktree's repo ---
 gitwt="$TMP_ROOT/gitwt"
 mkdir -p "$gitwt/tmp"
@@ -554,12 +569,6 @@ assert_eq "$rc" "0" "orphaned-but-real commit still exits 0 (non-fatal per kende
 assert_eq "$(jq -r '.ok' <<<"$out")" "true" "orphaned commit reports ok=true"
 assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "orphaned commit reports reason=valid"
 assert_eq "$(jq -r '.warning' <<<"$out")" "commit_unreachable" "orphaned commit reports warning=commit_unreachable"
-
-# analysis artifact (no commit key) in a git worktree → unaffected by the commit gates
-printf '%s' "$valid_analysis" > "$gartifact"
-out="$("$CHECK" --worktree "$gitwt" --issue "$issue" --round-id "$R")"
-assert_eq "$(jq -r '.reason' <<<"$out")" "valid" "commit-less analysis artifact in a git worktree stays valid"
-assert_eq "$(jq -r '.warning' <<<"$out")" "null" "commit-less analysis artifact reports warning=null"
 
 # gate ordering: scalar invalid beats the commit gates; commit_unresolvable beats incomplete
 printf '%s' "$valid_impl" | jq -c 'del(.commit)' > "$gartifact"
@@ -641,6 +650,12 @@ assert_file_contains "$ci_fix" "$ROUND_STAMP" "ci-fix § 3.2 mints a fresh dev_r
 # carries the previous token and can never be mistaken for this round's.
 assert_file_not_contains "$ci_fix" "$LEGACY_CHECK" "ci-fix § 3.2 no longer uses the legacy positional dev-artifact-check call"
 
+# kendex#944: the restack cycle asks the owner of the live-round predicate.
+# The pin is the call site; the arms are worktree_push.sh's to prove.
+restack="$REPO_ROOT/skills/orch/workflows/merge-pr-restack.md"
+assert_file_contains "$restack" "worktree-push --check-live-round --worktree [WT_PATH] --issue [ISSUE]" \
+  "merge-pr-restack § 2 asks worktree-push before the restack"
+
 # The removed legacy positional call must not survive in any orch workflow.
 for wf in dev-start dev-fix review-pr-comments ci-fix; do
   assert_file_not_contains "$REPO_ROOT/skills/orch/workflows/$wf.md" "$LEGACY_CHECK" "$wf.md carries no legacy positional dev-artifact-check call"
@@ -653,14 +668,14 @@ done
 # dev_delegated_at must arm the watchdog. kendex#818 re-homed both mandates into
 # the numbered "orchestrator owns round closure" list (same requirements, new
 # wording) and made that list the primary path rather than a recovery fallback.
-# The two bolded list items are the anchors.
-orch_skill="$REPO_ROOT/skills/orch/SKILL.md"
-assert_file_contains "$orch_skill" "Run the check on every wake and at the deadline" "SKILL mandates the per-wake and deadline check"
-assert_file_contains "$orch_skill" '`verdict`' "SKILL names the one-word verdict acceptance reads"
-assert_file_contains "$orch_skill" "Arm a single-shot wall-clock watchdog" "SKILL mandates a wall-clock watchdog independent of sub-agent wakes (kendex#803)"
-for wf in dev-start dev-fix review-pr-comments ci-fix; do
-  wf_doc="$REPO_ROOT/skills/orch/workflows/$wf.md"
-  assert_file_contains "$wf_doc" "SKILL.md#round-closure" "$wf.md routes the watchdog contract to the canonical section"
+# The two bolded list items are the anchors, now in references/skill-rules.md.
+orch_rules="$REPO_ROOT/skills/orch/references/skill-rules.md"
+assert_file_contains "$orch_rules" "Run the check on every wake and at the deadline" "skill-rules mandates the per-wake and deadline check"; assert_file_contains "$orch_rules" '`verdict`' "skill-rules names the one-word verdict acceptance reads"
+assert_file_contains "$orch_rules" "Arm a single-shot wall-clock watchdog" "skill-rules mandates a wall-clock watchdog independent of sub-agent wakes (kendex#803)"
+assert_file_contains "$REPO_ROOT/skills/orch/SKILL.md" "references/skill-rules.md" "SKILL.md routes the moved rules to the reference"
+for wf in dev-start dev-fix review-pr-comments ci-fix; do  # needles are the RESOLVABLE relative path: a bare filename matches an unresolvable one too
+  assert_file_contains "$REPO_ROOT/skills/orch/workflows/$wf.md" "../references/skill-rules.md#round-closure" "$wf.md routes the watchdog contract to the canonical section"
+  case "$wf" in dev-fix | review-pr-comments) assert_file_contains "$REPO_ROOT/skills/orch/workflows/$wf.md" "../references/skill-rules.md#format-tags-are-literal" "$wf.md routes the literal-format rule to the canonical section" ;; esac
 done
 
 # --- doc wiring: dev workflows write the completion artifact via dev-return-write with --round-id ---
@@ -675,16 +690,6 @@ assert_file_contains "$dev_fix" "dev-return-write --worktree [WORKTREE_PATH] --k
 # persisted round record instead of guessing (or depending on the orchestrator's
 # context surviving).
 assert_file_contains "$dev_fix" "dev-round-[ARTIFACT_KEY]-[DEV_ROUND_ID].json" "dev-fix § 6 points a respawned agent at the persisted round record"
-
-# --- kendex#952 doc wiring: analysis rounds have a truthful spelling everywhere ---
-# The dev workflows must offer --kind analysis for read-only rounds (never a
-# forced implement/fix, never a skipped artifact), and the orch decision tables
-# must say what acceptance of an analysis artifact means (read the
-# recommendation and decide; no commit/validate gate for the round).
-assert_file_contains "$dev_implement" "--kind analysis" "dev-implement § 10 offers --kind analysis for read-only rounds"
-assert_file_contains "$dev_fix" "--kind analysis" "dev-fix § 6 offers --kind analysis for read-only rounds"
-assert_file_contains "$dev_start" "Analysis round" "dev-start § 3 carries the analysis acceptance rule"
-assert_file_contains "$orch_dev_fix" "Analysis round" "orch dev-fix § 2 carries the analysis acceptance rule"
 
 # --- schema docs carry the round-id / dev_round_id contract ---
 dev_return_schema="$REPO_ROOT/skills/orch/schemas/dev-return.md"
@@ -767,7 +772,6 @@ assert_eq "$(jq -r '.validate' <<<"$out")" "null" "a missing artifact reports va
 assert_eq "$(jq -r '.validate_note' <<<"$out")" "null" "a missing artifact reports validate_note=null"
 
 assert_file_contains "$dev_return_schema" "validate_note" "dev-return schema documents validate_note"
-assert_file_contains "$dev_return_schema" "Analysis rounds" "dev-return schema documents analysis rounds (kendex#952)"
 
 echo "=== --wait blocking mode ==="
 

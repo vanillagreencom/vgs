@@ -6,13 +6,6 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# Cache queries are local reads. Source common helpers without resolving
-# LINEAR_API_KEY/op:// secrets so cache access works without 1Password auth.
-LINEAR_SKIP_API_KEY_RESOLUTION=1
-source "$SCRIPT_DIR/../lib/common.sh"
-unset LINEAR_SKIP_API_KEY_RESOLUTION
-source "$SCRIPT_DIR/../lib/cache.sh"
-source "$SCRIPT_DIR/../lib/attachments.sh"
 
 show_help() {
     cat <<'EOF'
@@ -71,6 +64,15 @@ Examples:
   cache-query.sh status
 EOF
 }
+case "${1:-help}" in help|--help|-h) show_help; exit 0 ;; esac
+# Cache queries are local reads. Source common helpers without resolving
+# LINEAR_API_KEY/op:// secrets so cache access works without 1Password auth.
+LINEAR_SKIP_API_KEY_RESOLUTION=1
+source "$SCRIPT_DIR/../lib/common.sh"
+unset LINEAR_SKIP_API_KEY_RESOLUTION
+source "$SCRIPT_DIR/../lib/cache.sh"
+source "$SCRIPT_DIR/../lib/cache-dates.sh"
+source "$SCRIPT_DIR/../lib/attachments.sh"
 
 # =============================================================================
 # ISSUES
@@ -230,23 +232,25 @@ cache_list_issues() {
         local cycle_id=""
         case "$cycle" in
         current | previous | next)
-            local today_iso cycles_file="$CACHE_DIR/cycles.json"
-            today_iso=$(date -Iseconds)
+            local cycles_file="$CACHE_DIR/cycles.json"
             if [[ -f "$cycles_file" ]]; then
-                local working
-                working=$(cache_jq_file "$cycles_file" "null" --arg today "$today_iso" \
-                    '[.[] | select(.startsAt <= $today and .progress < 1)] | sort_by(.startsAt) | last // null')
+                local all_cycles working
+                all_cycles=$(cache_jq_file "$cycles_file" "[]" '.') || return 1
+                working=$(cache_working_cycle <<<"$all_cycles")
+                # The helpers answer with no cycle running too — they cut at
+                # today — so these arms hand `working` straight over rather than
+                # guarding on it. Guarding here gave one concept two answers:
+                # `cycles list --type past` named a cycle while `--cycle
+                # previous` refused, off the same cache.
                 case "$cycle" in
                 current)
                     cycle_id=$(echo "$working" | jq -r '.id // empty')
                     ;;
                 previous)
-                    cycle_id=$(cache_jq_file "$cycles_file" "null" -r --argjson w "$working" \
-                        'if $w then ([.[] | select(.startsAt < $w.startsAt)] | sort_by(.startsAt) | last | .id) // empty else empty end')
+                    cycle_id=$(cache_cycles_before "$working" <<<"$all_cycles" | jq -r 'first | .id // empty')
                     ;;
                 next)
-                    cycle_id=$(cache_jq_file "$cycles_file" "null" -r --argjson w "$working" \
-                        'if $w then ([.[] | select(.startsAt > $w.startsAt)] | sort_by(.startsAt) | first | .id) // empty else empty end')
+                    cycle_id=$(cache_cycles_after "$working" <<<"$all_cycles" | jq -r 'first | .id // empty')
                     ;;
                 esac
             fi
@@ -280,9 +284,8 @@ cache_list_issues() {
 
     # Filter by updated-since
     if [[ -n "$updated_since" ]]; then
-        local days="${updated_since%d}"
         local threshold
-        threshold=$(date -d "-$days days" -Iseconds 2>/dev/null || date -v-"${days}"d -Iseconds)
+        threshold=$(cache_utc_days_ago "${updated_since%d}")
         jq_filter="$jq_filter | [.[] | select(.updatedAt >= $(echo "$threshold" | jq -R '.'))]"
     fi
 
@@ -712,12 +715,34 @@ cache_get_project() {
         return 1
     fi
 
-    local project
-    project=$(cache_jq_file "$CACHE_DIR/projects.json" "" --arg ref "$project_ref" \
-        '.[] | select(.id == $ref or .name == $ref)') || return 1
+    # Linear keeps a canceled project under the name a live one reuses
+    # (KEN-1022), and `.[] | select(.id == $ref or .name == $ref)` emitted one
+    # top-level object PER match: `cache projects get "<name>" | jq -r '.id'`
+    # read two ids at rc 0 and the safe formatter shaped each object (KEN-1153).
+    # The selection below is the cache-side spelling of lib/common.sh
+    # resolve_project_id's rule, so both spellings of `projects get` answer
+    # alike: an id match wins outright whatever its state, a canceled match
+    # otherwise loses to every live one, and an all-canceled match set is
+    # refused. One pass, so the refusal's list is the selection's complement
+    # rather than a second predicate that can drift from it.
+    local matches project
+    matches=$(cache_jq_file "$CACHE_DIR/projects.json" "[]" --arg ref "$project_ref" \
+        '[.[] | select(.id == $ref or .name == $ref)]') || return 1
+    project=$(echo "$matches" | jq -c --arg ref "$project_ref" '
+        [.[] | select(.id == $ref)] as $by_id
+        | if ($by_id | length) > 0 then $by_id[0]
+          else [.[] | select((.state // "" | ascii_downcase) != "canceled")][0] // empty
+          end')
 
-    if [[ -z "$project" || "$project" == "null" ]]; then
-        echo "{\"error\": \"Project not found in cache: $project_ref\"}" >&2
+    if [[ -z "$project" ]]; then
+        # Naming each rejected UUID and its state is what lets a deliberate
+        # read of a canceled project pass one.
+        echo "$matches" | jq -c --arg ref "$project_ref" \
+            'if length == 0 then {error: ("Project not found in cache: " + $ref)}
+             else {error: ("Project not found in cache: " + $ref
+                 + " (no live project has this name; matches: "
+                 + (map(.id + " (" + (.state // "") + ")") | join(", "))
+                 + "; pass a project UUID to target one)")} end' >&2
         return 1
     fi
 
@@ -943,7 +968,11 @@ cache_list_cycles() {
         --team)
             team="$2"
             shift 2
-            ;; # ignored — cache is team-scoped
+            ;;
+        --team=*)
+            team="${1#--team=}"
+            shift
+            ;;
         --limit)
             limit="$2"
             shift 2
@@ -963,35 +992,25 @@ cache_list_cycles() {
     local cycles
     cycles=$(cache_jq_file "$CACHE_DIR/cycles.json" "[]" '.') || return 1
 
+    # Team first. sync scopes cycles to a team only when one is configured, so
+    # with none configured the cache holds every team's, and the type selection
+    # below works off whatever set it is handed.
+    if [[ -n "$team" ]]; then
+        cycles=$(echo "$cycles" | jq --arg t "$team" '[.[] | select(.team.name == $t)]')
+    fi
+
     # Apply type filter (date-based: "current" = most recent started + incomplete)
-    local today_iso
-    today_iso=$(date -Iseconds)
+    local working
+    working=$(cache_working_cycle <<<"$cycles")
     case "$cycle_type" in
     current)
-        cycles=$(echo "$cycles" | jq --arg today "$today_iso" \
-            '[.[] | select(.startsAt <= $today and .progress < 1)] | sort_by(.startsAt) | [last // empty]')
+        cycles=$(jq -n --argjson w "$working" '[$w // empty]')
         ;;
     upcoming | next)
-        local working
-        working=$(echo "$cycles" | jq --arg today "$today_iso" \
-            '[.[] | select(.startsAt <= $today and .progress < 1)] | sort_by(.startsAt) | last // null')
-        if [[ "$working" != "null" ]]; then
-            cycles=$(echo "$cycles" | jq --argjson w "$working" \
-                '[.[] | select(.startsAt > $w.startsAt)] | sort_by(.startsAt) | [first // empty]')
-        else
-            cycles=$(echo "$cycles" | jq 'sort_by(.startsAt) | [first // empty]')
-        fi
+        cycles=$(cache_cycles_after "$working" <<<"$cycles" | jq '[first // empty]')
         ;;
     past)
-        local working_start
-        working_start=$(echo "$cycles" | jq -r --arg today "$today_iso" \
-            '[.[] | select(.startsAt <= $today and .progress < 1)] | sort_by(.startsAt) | last // null | .startsAt // ""')
-        if [[ -n "$working_start" ]]; then
-            cycles=$(echo "$cycles" | jq --arg ws "$working_start" \
-                '[.[] | select(.startsAt < $ws)] | sort_by(.startsAt) | reverse')
-        else
-            cycles=$(echo "$cycles" | jq 'sort_by(.startsAt) | reverse')
-        fi
+        cycles=$(cache_cycles_before "$working" <<<"$cycles")
         ;;
     esac
 
@@ -1025,7 +1044,7 @@ main() {
         case "$arg" in
         --project | --project-id | --state | --status | --label | --labels | --cycle | \
             --updated-since | --created-since | --search | --limit | --format | --team | \
-            --assignee | --include-children-of)
+            --assignee | --include-children-of | --type)
             skip_value="true"
             ;;
         --help | -h)
