@@ -8,7 +8,7 @@
 # which arm caught it — with an unmutated control proving none of them fire on
 # the real file. Importing the guard rather than exec'ing it is what lets the
 # fixture be swapped in without building a whole fake repo: every other path it
-# reads (ci.yml, the instruction tables, scripts/) stays real.
+# reads (ci.yml, the root instruction file, scripts/) stays real.
 set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -112,7 +112,6 @@ GUARD_ONLY_MESSAGES=(
   "must be anchored exactly once"
   "anchors an empty validate area list"
   "could not read"
-  "has no table introduced by"
   "does not act on it"
   "the runner's derivation and the definition have drifted"
   "CI coverage was NOT checked"
@@ -198,7 +197,7 @@ echo "=== check-validation-inventory.py manifest arms ==="
 # mutated runner or doc while every other path it touches (ci.yml, scripts/)
 # stays real. That injection point is why the library takes explicit paths.
 #
-# Usage: run_guard [VAR=PATH ...]   VAR in RUNNER_PATH AGENTS_PATH TABLES_PATH
+# Usage: run_guard [VAR=PATH ...]   VAR in RUNNER_PATH AGENTS_PATH CI_PATH
 #                                   GRAMMAR_PATH PYTHONPATH
 # Sets: guard_out, guard_rc
 #
@@ -249,13 +248,12 @@ spec.loader.exec_module(mod)
 for var, attr in (
     ("RUNNER_PATH", "RUNNER"),
     ("AGENTS_PATH", "AGENTS"),
-    ("TABLES_PATH", "TABLES_DOC"),
     ("CI_PATH", "CI"),
 ):
     if os.environ.get(var):
         setattr(mod, attr, pathlib.Path(os.environ[var]))
 # AREA_ENUMERATING_DOCS captured the originals at import time.
-mod.AREA_ENUMERATING_DOCS = (mod.AGENTS, mod.TABLES_DOC, mod.SKILL_DOC)
+mod.AREA_ENUMERATING_DOCS = (mod.AGENTS,)
 buf = io.StringIO()
 status = 0
 try:
@@ -914,11 +912,8 @@ expect_refused "backtick in an opening info string" 'omits `docs`'
 expect_absent "$guard_out" "never closed" "backtick in an opening info string"
 ok "a run whose info string carries a backtick is prose, so the list it appears to fence stays live"
 
-# AN INDENTED FENCE IS NOT A FENCE HERE, and the contract paragraph in
-# scripts/AGENTS.md says so in those
-# words. Pinned rather than left incidental: markers demonstrated inside a
-# bullet-indented block are read as the real thing, which refuses LOUDLY — the
-# right direction, but only if the limit stays where the doc claims it is.
+# The area parser recognizes only unindented backtick fences. Markers inside
+# an indented example still count and must cause a duplicate-anchor refusal.
 # shellcheck disable=SC2016  # backticks are markdown quoting in the fixture prose
 {
   printf 'areas: <!-- validate-areas -->`go`, `qml`, `helper`, `packaging`, `docs`, `all`<!-- /validate-areas -->\n\n'
@@ -1356,17 +1351,6 @@ print(f"  ok    the decoder round-trips all {len(dump.splitlines())} dumped reco
 DUMP
 ok "the guard's grammar is exactly what the runner dumped, with nothing supplied"
 
-# The table lead-in the local-only/reached-indirectly comparison keys on.
-no_table="$tmp/no-table.md"
-python3 - "$repo_root/scripts/AGENTS.md" >"$no_table" <<'MUT'
-import sys
-t = open(sys.argv[1], encoding="utf-8").read()
-print(t.replace("**Local-only — CI cannot run these at all:**", "**Local-only:**"), end="")
-MUT
-run_guard "TABLES_PATH=$no_table"
-expect_refused "missing table lead-in" "has no table introduced by"
-ok "a table whose lead-in changed is reported"
-
 # WITHOUT PyYAML the module must still import, every non-YAML parser must still
 # work, and the ci.yml parse must fail with the concise prerequisite line rather
 # than a traceback. This was raised at module scope, so the failure fired during
@@ -1599,7 +1583,6 @@ def participate():
 for label, call in (
     ("ROWS", lambda: mod.manifest_rows(nowhere)),
     ("PROSE", lambda: mod.prose_areas(nowhere, mod.grammar(runner))),
-    ("TABLE", lambda: mod.documented_table(nowhere, "**Local-only")),
     ("LOGIC", lambda: mod.runner_logic(nowhere)),
     ("CI", lambda: mod.ci_run_commands(nowhere)),
     ("PARTICIPATE", participate),
@@ -1611,7 +1594,7 @@ for label, call in (
         print(f"{label} {error}")
 UNREADABLE
 )"
-for label in ROWS PROSE TABLE LOGIC PARTICIPATE; do
+for label in ROWS PROSE LOGIC PARTICIPATE; do
   expect_contains "$unreadable_out" "$label could not read" "unreadable surface"
 done
 if [[ $have_yaml -eq 1 ]]; then

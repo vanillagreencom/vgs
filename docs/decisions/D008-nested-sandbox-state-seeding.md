@@ -33,7 +33,7 @@ Deciding for the repo then killed the host copy outright, in two steps and for o
 |---------|----------------|--------------------------------|
 | Reproducible across machines | Yes — the same bytes on every checkout | No — the result depends on whose config it ran on |
 | Reproducible across runs | Yes | No — the operator edits their config between runs |
-| Forecloses running in CI | No | Yes — a runner has no `~/.config/vshell` at all. Neither column runs in CI *today*: per `scripts/AGENTS.md` § "What continuous integration covers, and what it cannot", only the static half of `qml-smoke.sh` runs there and `--nested` is local-only, needing Hyprland and `quickshell` on PATH |
+| Forecloses running in CI | No | Yes — a runner has no `~/.config/vshell` at all. Neither column runs in CI *today*: per `scripts/check-validation-inventory.py`, only the static half of `qml-smoke.sh` runs there and `--nested` is local-only, needing Hyprland and `quickshell` on PATH |
 | Covers what VGS ships | Yes — the shipped defaults are what a new user gets | Only incidentally |
 | Catches "my config breaks the shell" | No | Yes, but only for one person's config, and it is not what this smoke is for |
 
@@ -84,7 +84,7 @@ A passing run prints `seeded settings check passed`. Two must-fail controls, bot
 - Set a sentinel equal to the value already in the shipped default: the stamp step must refuse it rather than seeding a witness that cannot discriminate.
 - Plant a runtime QML error *and* suppress a stamp: the run must still print the log-scan findings, because rule 4's log scan runs regardless of the phase verdicts.
 
-**This assertion is local-only by construction.** `--nested` needs Hyprland and `quickshell` on PATH, so CI runs only the static half of `qml-smoke.sh` (`scripts/AGENTS.md` § "What continuous integration covers, and what it cannot"). Nothing in CI enforces D008; a green PR is not evidence the sandbox seeded correctly, and the command above has to be run locally before finishing QML work.
+**This assertion is local-only by construction.** `--nested` needs Hyprland and `quickshell` on PATH, so CI runs only the static half of `qml-smoke.sh` (`scripts/check-validation-inventory.py`). Nothing in CI enforces D008; a green PR is not evidence the sandbox seeded correctly, and the command above has to be run locally before finishing QML work.
 
 ## References
 
