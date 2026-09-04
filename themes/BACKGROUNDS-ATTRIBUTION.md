@@ -1,22 +1,16 @@
 # Background attribution
 
-Provenance for every wallpaper shipped in `themes/<name>/backgrounds/`. File-
-name suffixes encode origin: `-wh-<id>` = Wallhaven, `-rpd-` = Rosé Pine dark
-upstream, `-bauhaus-` = Bauhaus upstream, `-aurora`/`-nightfall` = VGS-
-generated. Everything else is imported from Omarchy.
+Provenance for every wallpaper shipped in `themes/<name>/backgrounds/`. File- name suffixes encode origin: `-wh-<id>` = Wallhaven, `-rpd-` = Rosé Pine dark upstream, `-bauhaus-` = Bauhaus upstream, `-aurora`/`-nightfall` = VGS- generated. Everything else is imported from Omarchy.
 
 ## Omarchy — [basecamp/omarchy](https://github.com/basecamp/omarchy) (MIT, © 37signals)
 
-Built-in theme packages import their wallpapers from Omarchy's matching theme;
-VGS variants reuse a family theme's Omarchy set. Themes with Omarchy-sourced
-backgrounds:
+Built-in theme packages import their wallpapers from Omarchy's matching theme; VGS variants reuse a family theme's Omarchy set. Themes with Omarchy-sourced backgrounds:
 
 `catppuccin`, `catppuccin-frappe`, `catppuccin-latte`, `catppuccin-macchiato`, `ethereal`, `everforest`, `flexoki-light`, `gruvbox`, `hackerman`, `kanagawa`, `kanagawa-dragon`, `lumon`, `matte-black`, `miasma`, `nord`, `osaka-jade`, `retro-82`, `ristretto`, `rose-pine`, `tokyo-night`, `tokyo-night-moon`, `tokyo-night-storm`, `vantablack`, `white`
 
 ## Rosé Pine dark — [guilhermetk/omarchy-rose-pine-dark](https://github.com/guilhermetk/omarchy-rose-pine-dark)
 
-Dark Rosé Pine wallpapers (Omarchy / Rosé Pine lineage; upstream repo ships no
-explicit license). AI-upscaled to 6K locally (Real-ESRGAN x4plus → Lanczos).
+Dark Rosé Pine wallpapers (Omarchy / Rosé Pine lineage; upstream repo ships no explicit license). AI-upscaled to 6K locally (Real-ESRGAN x4plus → Lanczos).
 
 - `rose-pine-main/1-rpd-plants.jpg`
 - `rose-pine-main/2-rpd-dots.jpg`
@@ -37,10 +31,7 @@ AI-upscaled to 6K locally (Real-ESRGAN x4plus → Lanczos).
 
 ## Community Omarchy themes
 
-Base wallpapers for these packages are imported from their source
-Omarchy theme repositories (per-theme repo + license listed in
-`themes/THEMES-ATTRIBUTION.md`); additional abstract backgrounds are
-from Wallhaven (below).
+Base wallpapers for these packages are imported from their source Omarchy theme repositories (per-theme repo + license listed in `themes/THEMES-ATTRIBUTION.md`); additional abstract backgrounds are from Wallhaven (below).
 
 `akane`, `amberbyte`, `arc-blueberry`, `arc-raiders`, `archwave`, `artzen`, `biscuit-de-mar`, `brutalism`, `coppernight`, `cpunk`, `delorean`, `ember-n-ash`, `event-horizon`, `fireside`, `frankenstein`, `ghost-pastel`, `greek-noir`, `gruvy-glass`, `harbordark`, `inkypinky`, `kurayami`, `lowlight`, `lunar`, `mechanoonna`, `monokai`, `moon-orbit`, `nagai-twilight`, `nebulite`, `oxford`, `pmndrs`, `reddcs`, `reverie`, `roseofdune`, `saga`, `sapphire`, `snow`, `soho`, `synthwave84`, `thegreek`, `tycho`, `untitled`, `vengeance`, `vice-city`, `void`, `vurple`, `x-1632`
 

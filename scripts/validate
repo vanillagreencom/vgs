@@ -56,13 +56,8 @@
 # `bin/vshell_niri_kdl.py` and `bin/vshell_theme_color.py` likewise stay
 # importable modules with no shebang and no `__main__`.
 #
-# WHICH OF THESE CI CAN RUN is not restated here — one enforced copy only.
-# `.github/instructions/validation-scripts.instructions.md` § "What CI covers,
-# and what it cannot" holds it, and `scripts/check-validation-inventory.py`
-# machine-compares its tables against that file's `LOCAL_ONLY`/`INDIRECT_IN_CI`
-# maps, so a second prose copy in this header could only drift. The measured
-# economics behind the single CI job are in
-# `docs/decisions/D007-ci-single-job-economics.md`.
+# CI coverage exceptions and their reasons are owned by
+# `scripts/check-validation-inventory.py`, which compares this manifest to CI.
 #
 # What is true of THIS runner: the nested QML smoke and the surface smoke are
 # tagged `qml` and neither can run in CI, so only a run that includes the qml

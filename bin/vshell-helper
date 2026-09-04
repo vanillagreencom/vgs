@@ -9051,7 +9051,7 @@ def cmd_scratchpad(argv: List[str]) -> int:
         return 1
 
     # Which backend answers. Two generators and two toggles, one schema — see
-    # docs/architecture/scratchpads.md § Niri for why this is not a translation.
+    # docs/architecture/helper.md § Invariants for why this is not a translation.
     on_niri = compositor == "niri"
 
     if action == "apply":
@@ -10661,7 +10661,7 @@ def _scratchpad_focused_monitor() -> str:
 # Not a port of the Hyprland generator. Niri has no special workspaces — nothing
 # that overlays the current view and hides again — so the model is a PERSISTENT
 # NAMED WORKSPACE per pad plus window rules, and the toggle focuses that
-# workspace and focuses back. See docs/architecture/scratchpads.md § Niri.
+# workspace and focuses back. See docs/architecture/helper.md § Invariants.
 #
 # The persisted pad record is unchanged, which was VGS-62's point: anchor +
 # percentage geometry is compositor-agnostic. Niri resolves both itself
@@ -10692,10 +10692,8 @@ SCRATCHPAD_NIRI_ANCHORS = {
 }
 
 
-# Shell operators. A command carrying one was being INTERPRETED by `sh -c`
-# rather than executed, which is what AGENTS.md § Backend rules forbids ("exec
-# external tools with argv arrays") — and on Niri a preloaded pad runs its
-# command at login, not only when the user presses the keybind.
+# Preloaded Niri scratchpads run at login. Reject shell operators rather than
+# interpreting a configured command through a shell.
 _SCRATCHPAD_SHELL_OPERATORS = re.compile(r"(?:\|\||&&|>>|[;|&<>()$])")
 # Substitutions and expansions. Unlike an operator these survive shlex as part
 # of a token, and as argv they are passed through LITERALLY — safe, but not what
@@ -11750,7 +11748,7 @@ def _hyprland_blur_script(enabled: bool, strength: float, glass: bool, opacity: 
     # result, so "it paints something small" is not the test. Whole-output
     # painters, the popouts' `:background` dismiss windows and
     # backdrop-less-by-design menus stay out: docs/architecture/design-language.md
-    # § Popout surfaces are screen-tall, enforced by
+    # § Invariants, enforced by
     # scripts/check-vshell-helper.py::test_hyprland_blur_script.
     blurred_namespaces = [
         "battery",
@@ -12010,9 +12008,8 @@ def ensure_root_for(argv: List[str], terminal: bool = False) -> int | None:
 # VGS has exactly one terminal resolver and it is this section. QML, plugin JS,
 # bash and the Go backend all reach it through `vshell terminal ...` instead of
 # invoking a terminal — or `xdg-terminal-exec` — themselves, so the ordering
-# below is the only ordering in the tree. See
-# docs/architecture/overlay-and-dependencies.md § Terminal and file-manager
-# resolution.
+# below is the only ordering in the tree. The terminal contract is in
+# docs/architecture/helper.md § Invariants.
 TERMINAL_CANDIDATES = ("ghostty", "kitty", "alacritty", "foot", "wezterm", "konsole", "gnome-terminal", "xterm")
 
 # Per-terminal argv shape.
@@ -13578,7 +13575,7 @@ def _launcher_folder_openers() -> List[Dict[str, str]]:
     # A wrapper script that exists only in someone's dotfiles must not be probed
     # for by name here — configure it through the launcherFolderOpenCommand
     # setting, which the "Preferred app" opener passes through as --command. See
-    # docs/architecture/overlay-and-dependencies.md § Probing rules.
+    # docs/architecture/plugins.md § Invariants (the probing rules).
     #
     openers = [{"id": "default", "label": "Preferred app", "icon": "open_in_new"}]
     # Yazi is a TUI, so it is only openable with a terminal spawner. Advertise it

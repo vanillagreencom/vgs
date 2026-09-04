@@ -121,7 +121,7 @@ Singleton {
     //               on having ever seen a toplevel, and that was a REGRESSION:
     //               on a seat with no windows open the condition never becomes
     //               true, so paste was refused outright on Hyprland where it had
-    //               always worked. AGENTS.md § Mission requires Niri support to
+    //               always worked. AGENTS.md requires Niri support to
     //               be additive, and that broke it.
     //
     //               So the ambiguity is resolved toward the answer VGS can give:
@@ -159,7 +159,7 @@ Singleton {
     // from the active toplevel (see `NiriService.sortToplevels`), and consumers
     // of focus already skip `activeToplevelChanged` there in favour of Niri's
     // own events — so the Niri branch reads Niri's IPC-maintained focus. The
-    // Hyprland path is untouched: this is additive, per AGENTS.md § Mission.
+    // Hyprland path is untouched: this is additive, as AGENTS.md requires.
     //
     // The first match is THE match: `NiriService.markFocusedWindow` keeps at
     // most one window carrying `is_focused`, so this `find()` is not choosing

@@ -1,10 +1,6 @@
 # Built-in theme provenance (Omarchy community imports)
 
-VGS theme packages listed below were ported from community Omarchy theme
-repositories. Palettes, curated `neovim.lua` colorscheme specs, `btop.theme`,
-and bundled VS Code color-themes are taken from the source; per-file author
-credits inside those files are preserved verbatim. Wallpapers are the source
-backgrounds plus additional Wallhaven abstracts (see BACKGROUNDS-ATTRIBUTION.md).
+VGS theme packages listed below were ported from community Omarchy theme repositories. Palettes, curated `neovim.lua` colorscheme specs, `btop.theme`, and bundled VS Code color-themes are taken from the source; per-file author credits inside those files are preserved verbatim. Wallpapers are the source backgrounds plus additional Wallhaven abstracts (see BACKGROUNDS-ATTRIBUTION.md).
 
 | VGS theme | Source repository | License |
 |-----------|-------------------|---------|

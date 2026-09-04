@@ -777,11 +777,8 @@ AREA_ANCHOR_CLOSE = "<!-- /validate-areas -->"
 
 # A FENCE LINE, and its RUN LENGTH, which is what decides pairing below.
 #
-# ONLY AN UNINDENTED BACKTICK FENCE, and the contract paragraph in
-# .github/instructions/validation-scripts.instructions.md says so in those
-# words. A fence opened under a list bullet, and a `~~~` fence, are not matched
-# here, so markers inside one are read as the real thing — which fails LOUDLY
-# (two anchored regions) rather than quietly, and is the direction to keep.
+# Only unindented backtick fences hide area markers. Indented or tilde-fenced
+# examples still count, so repeating an anchor there fails as a duplicate.
 _FENCE_LINE = re.compile(r"(```+)(.*)$")
 
 def _strip_fenced_blocks(path: Path, text: str, spaces: re.Pattern[str]) -> str:
@@ -1247,32 +1244,3 @@ def ci_runs(ci_text: str, path: str) -> bool:
         if found:
             return True
     return False
-
-
-def documented_table(doc: Path, lead_in: str) -> set[str]:
-    """Script basenames named in the first column of the table after `lead_in`."""
-    text = _read(doc, "a documented-table surface")
-    start = text.find(lead_in)
-    if start == -1:
-        raise ManifestError(f"{doc.name} has no table introduced by {lead_in!r}")
-    names: set[str] = set()
-    seen_rows = False
-    for line in text[start + len(lead_in):].splitlines():
-        stripped = line.strip()
-        if not stripped:
-            if seen_rows:
-                break
-            continue
-        if not stripped.startswith("|"):
-            break
-        cells = stripped.split("|")
-        if len(cells) < 2:
-            continue
-        first = cells[1].strip()
-        if set(first) <= {"-", ":", " "}:  # the header underline
-            continue
-        match = re.search(r"`scripts/([A-Za-z0-9._-]+)`", first)
-        if match:
-            names.add(match.group(1))
-            seen_rows = True
-    return names

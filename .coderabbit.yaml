@@ -211,7 +211,7 @@ reviews:
     - path: "backend/**/*.go"
       instructions: >-
         Every registered backend method must map to a documented capability in
-        `docs/architecture/backend-methods.json` —
+        `backend/methods.json` —
         `scripts/check-backend-inventory.py` enforces this on both the Go and
         QML sides, so a new method without a manifest entry is a hard failure,
         not a nit. QML must gate features on advertised `capabilities`/`methods`
@@ -282,9 +282,8 @@ reviews:
         distinct and deliberately non-overlapping: the product/user-facing set
         is exactly `README.md`, `packaging/README.md` (which owns per-channel
         packaging detail) and `packaging/ubuntu/README.md`.
-        `docs/architecture/**` are agent reference docs; `AGENTS.md` and
-        `.github/instructions/project-skills.instructions.md` are process;
-        `AGENTS.local.md` is
+        `docs/architecture/**` are agent reference docs; the root and nested
+        `AGENTS.md` files are process instruction; `AGENTS.local.md` is
         AGENTS.md's machine-local companion, untracked by design, so a PR
         never contains it.
 
@@ -297,7 +296,7 @@ reviews:
         Architecture references for agents, not user documentation — do not
         request README cross-posting or changelog entries. Verify described
         behavior against the implementation and flag drift; that is the main
-        value here. `docs/architecture/backend-methods.json` is a machine-read
+        value here. `backend/methods.json` is a machine-read
         manifest enforced by `scripts/check-backend-inventory.py`, not prose.
 
     - path: "kendex*.toml"

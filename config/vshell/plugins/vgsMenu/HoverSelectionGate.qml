@@ -6,8 +6,8 @@ import "./HoverSelectionGate.js" as Latch
 // test both live. Nothing is decided here.
 //
 // It lives beside its one consumer rather than in `Widgets/Launcher/`, which
-// holds shared components only (docs/architecture/shell-architecture.md §
-// "Core and the vgsMenu plugin"). The app-picker delegates solve the same
+// holds shared components only (docs/architecture/shell.md §
+// "Decisions"). The app-picker delegates solve the same
 // problem their own way; if they ever adopt this, it moves there then.
 QtObject {
     property var latchState: Latch.emptyState()

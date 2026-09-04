@@ -744,7 +744,7 @@ BLUR_MUST_MATCH = (
     "vshell:plugins:aiUsage vshell:tooltip"
 ).split()
 # Whole-output painters; backdrop-less-by-design surfaces (they pass
-# blurAvailable: false, see design-language.md § Tooltips); a prefix collision;
+# blurAvailable: false, see design-language.md § Invariants); a prefix collision;
 # bar chrome; and two `:background` dismiss windows, which the $ anchor and the
 # [^:]+ plugins arm are what keep out.
 BLUR_MUST_NOT_MATCH = (
@@ -782,7 +782,7 @@ def assert_blur_namespace_rule(script, source):
                 f"{source}: the rule matches {namespace}, which must not be blurred. A namespace "
                 "belongs in blurred_namespaces only when its whole surface rectangle is an "
                 "acceptable per-frame live-blur region — docs/architecture/design-language.md "
-                "§ Popout surfaces are screen-tall (and frosted)."
+                "§ Invariants."
             )
 
 

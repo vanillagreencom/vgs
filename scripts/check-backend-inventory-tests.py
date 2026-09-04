@@ -22,7 +22,7 @@ def write(path: Path, text: str) -> None:
 def make_fixture() -> Path:
     root = Path(tempfile.mkdtemp(prefix="vgs-inventory-test-"))
     write(
-        root / "docs" / "architecture" / "backend-methods.json",
+        root / "backend" / "methods.json",
         json.dumps(
             {
                 "capabilities": [
