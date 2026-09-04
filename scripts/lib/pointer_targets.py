@@ -8,7 +8,7 @@ rather than the parser's.
 ```
 `docs/architecture/design-language.md` § …   repo-relative path
 [D001](../decisions/D001-x.md) § …           link, resolved against the citer
-validation-scripts.instructions.md § …       basename, when exactly one carries it
+helper.md § …                                basename, when exactly one carries it
 D008 § …                                     decision id, by basename prefix
 ```
 

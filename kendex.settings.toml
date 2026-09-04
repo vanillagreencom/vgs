@@ -24,14 +24,11 @@ GIT_HOST_CLI = ".agents/skills/github/scripts/github.sh"
 LINEAR_FORMAT = "safe"
 ORCH_STATE_DIR = "tmp"
 
-# File-size ratchet: NO KEY HERE, deliberately (VGS-111; fleet ruling
-# 2026-08-10, adopt size-ratchet and never hand-roll a size gate). The shipped
-# path classes decide every threshold, and the baseline and excludes files sit
-# where the package already looks. A key repeating a default holds the old
-# number through an upgrade that moves it, and nobody reads it again (KEN-839).
+# File-size ratchet: NO KEY HERE, deliberately. The shipped path classes decide
+# every threshold; a key repeating a default holds a stale number through one.
 
 SECOND_OPINION_CLAUDE_CMD = "claude -p --no-session-persistence --model opus --effort max --allowedTools Bash(read-only:true),Read,Glob,Grep"
-SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-5.5 -s read-only -c model_reasoning_effort=xhigh --ephemeral"
+SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-6-astra -s read-only -c model_reasoning_effort=xhigh --ephemeral"
 SECOND_OPINION_TIMEOUT = "1080"
 WORKTREE_BASE_DIR = "~/dev/.worktrees/vshell"
 WORKTREE_CLI = ".agents/skills/worktree/scripts/worktree"
@@ -317,9 +314,9 @@ REVIEW_GATE_API_ATTEMPTS = "1"
 
 REVIEW_GATE_API_RETRY_DELAY_SECONDS = "2"
 
-# Repo instruction files appended to the review prompt (repo-rule lens).
-# Empty disables.
-SECOND_OPINION_REVIEW_INSTRUCTIONS = "AGENTS.md review-bots.md .github/instructions/*.instructions.md .github/copilot-instructions.md"
+# Repo instruction files appended to the review prompt: the root map, the nested
+# AGENTS.md files carrying the path-scoped rules, and both bot-context surfaces.
+SECOND_OPINION_REVIEW_INSTRUCTIONS = "AGENTS.md backend/AGENTS.md bin/AGENTS.md scripts/AGENTS.md themes/AGENTS.md quickshell/vshell/AGENTS.md config/vshell/AGENTS.md .github/workflows/AGENTS.md review-bots.md .github/copilot-instructions.md"
 
 # Seconds per brief-delivery verification pass on tmux handoff lanes.
 ORCH_TMUX_VERIFY_SECS = "15"
@@ -390,6 +387,9 @@ SECOND_OPINION_ARTIFACT_DIR = "tmp/second-opinion"
 # else "could not complete"); any nonzero blocks the commit, and so does a
 # missing or non-executable value. Empty = no repo-local check.
 GROWTH_GUARDS_PRE_COMMIT_LOCAL = ""
+
+# Markdown lanes judge every tracked file their globs name minus tools/md-excludes.
+GROWTH_GUARDS_MD_SCOPE = "all"
 
 # Max re-review cycles per issue before the verdict pass; the re-review
 # re-entry refuses once cycles is past it.

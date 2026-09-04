@@ -1,0 +1,22 @@
+# kendex-guard-dialect: legacy-glob
+# Markdown-lane exclusion list — pattern<TAB>reason, glob against the full
+# repo-relative path, `*` crosses `/`. A `!` row carves matching paths back into
+# the scanned set. Read by the md-format, md-refs and prose lanes and by
+# md-reflow. See .agents/skills/growth-guards/CHECKS.md.
+#
+# Two classes only: bytes this repository does not author, and bytes a
+# reformatting would damage. Everything VGS writes is held to the format.
+backend/vendor/*	vendored Go modules for offline builds; the tree must match upstream exactly or vendor verification fails
+config/vshell/nvim/colorschemes/*	vendored upstream colourscheme plugins, carried verbatim
+!config/vshell/nvim/colorschemes/ATTRIBUTION.md	VGS-authored: maps each vendored plugin to its upstream and licence, maintained here
+quickshell/vshell/assets/sounds/plasma/*	vendored upstream sound theme, carried verbatim
+quickshell/vshell/LICENSE_CHANGE_12_11_2025.md	licence notice; reflowing legal text would alter a document meant to stay verbatim
+.agents/*	kendex render output, owned upstream; a local reflow is erased by the next refresh
+!.agents/skills/vgs-distro-publish/*	VGS-owned in-place skill, declared source = "in-place" in kendex.toml
+!.agents/skills/vgs-release/*	VGS-owned in-place skill, declared source = "in-place" in kendex.toml
+!.agents/skills/vshell-dev/*	VGS-owned in-place skill, declared source = "in-place" in kendex.toml
+.claude/*	kendex render output, owned upstream
+.codex/*	kendex render output, owned upstream
+.opencode/*	kendex render output, owned upstream
+.pi/*	kendex render output, owned upstream
+.cursor/*	kendex render output, owned upstream

@@ -677,7 +677,7 @@ const browser = { id: 3, app_id: "firefox", workspace_id: 2, is_focused: false }
     // The regression control. An earlier arm gated this on having ever seen a
     // toplevel, which never becomes true on a seat with no windows open — so
     // paste was refused outright on Hyprland, where it had always worked. That
-    // broke AGENTS.md § Mission: Niri support must be additive. A Hyprland
+    // broke AGENTS.md: Niri support must be additive. A Hyprland
     // session must never be made unready by a condition this PR introduced.
     for (const compositor of ["hyprland", "unknown"]) {
         const empty = shell({ ToplevelManager: { activeToplevel: null, toplevels: { values: [] } } });

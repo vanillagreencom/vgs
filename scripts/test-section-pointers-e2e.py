@@ -92,8 +92,8 @@ def clean_tree(*, with_pointers: bool = True) -> dict[str, bytes | str]:
     """
     anchor = check.SWEEP_ANCHORS[0]
     # One document under each anchor ROOT, derived rather than named: the roots
-    # exist precisely because no filename under them survives VGS-125, so a
-    # fixture that named one would carry the defect this closed.
+    # exist precisely because no filename under them survives a consolidation of
+    # that tree, so a fixture that named one would carry the defect this closed.
     under_roots = tuple(f"{root}anchored.md" for root in check.ANCHOR_ROOTS)
     documents = (*check.SWEEP_ANCHORS, *check.TARGET_ANCHORS, *under_roots, DECISION)
     tree: dict[str, bytes | str] = {

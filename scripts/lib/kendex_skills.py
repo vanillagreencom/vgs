@@ -20,8 +20,7 @@ consumers each re-deriving one definition.
 WHAT A SCRIPT CANNOT GENERATE — `.coderabbit.yaml`'s three skill path lists,
 `.github/copilot-instructions.md` and `review-bots.md` — is held to this
 register by `scripts/check-owned-skills.py`, which also owns this module's
-must-fail controls. `.github/instructions/project-skills.instructions.md` is
-NOT among them: it names no skill, it points at this module's `__main__`.
+must-fail controls. `scripts/AGENTS.md` is NOT among them: it names no skill.
 
 `tomllib` READS IT, stdlib since 3.11. The register is ordinary TOML and a
 hand-rolled line scanner only adds shapes to get wrong.

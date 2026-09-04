@@ -1,8 +1,6 @@
 # Vendored nvim colorschemes
 
-Third-party Neovim colorscheme plugins vendored verbatim so VGS themes have no
-external plugin dependency. Each keeps its upstream LICENSE. Referenced from a
-theme's `apps/neovim.lua` via `vgs_vendored = "<dir>"`.
+Third-party Neovim colorscheme plugins vendored verbatim so VGS themes have no external plugin dependency. Each keeps its upstream LICENSE. Referenced from a theme's `apps/neovim.lua` via `vgs_vendored = "<dir>"`.
 
 | Vendored dir | Upstream | License |
 |---|---|---|

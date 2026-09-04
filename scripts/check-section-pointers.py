@@ -153,13 +153,13 @@ SELECTOR = (
     + " plus " + ", ".join(OWNED_ROOTS)
 )
 
-# Files whose absence means the sweep narrowed rather than that the repo
-# changed: one per surface class. They double as the heading-parser anchors,
-# each carrying several `##` headings, so a parser that stopped matching cannot
-# leave them looking merely heading-less.
+# Files whose absence means the sweep narrowed rather than that the repo changed:
+# one per surface class, each carrying several `##` headings, so a parser that
+# stopped matching cannot leave them looking merely heading-less. Their BASENAMES
+# differ so the e2e control can isolate the heading arm on the uncited anchor.
 SWEEP_ANCHORS = (
     "AGENTS.md",
-    ".github/instructions/validation-scripts.instructions.md",
+    "review-bots.md",
 )
 
 # Every way a pointer can name its target, each asserted to be exercised in the

@@ -13,7 +13,8 @@ PROSE="$SKILL_DIR/scripts/prose"
 . "$TEST_DIR/lib/harness.bash"
 
 # Hermetic: a leaked setting would mask every case below.
-unset GROWTH_GUARDS_PROSE_PATHS GROWTH_GUARDS_SETTINGS_FILE 2>/dev/null || true
+unset GROWTH_GUARDS_PROSE_PATHS GROWTH_GUARDS_PROSE_REVISION_WORDS \
+  GROWTH_GUARDS_SETTINGS_FILE 2>/dev/null || true
 
 PASS=0
 FAIL=0
@@ -71,6 +72,14 @@ run_prose
 put SKILL.md 'NO LONGER is shouted the same way.'
 run_prose
 [ "$RC" -eq 1 ] && ok "an all-caps history word fails too" || bad "all-caps word fails" "rc=$RC out=$OUT"
+put SKILL.md 'This rule was previously called legacy.'
+OUT="$(cd "$R" && GROWTH_GUARDS_PROSE_REVISION_WORDS=legacy "$PROSE" 2>&1)" && RC=0 || RC=$?
+[ "$RC" -eq 1 ] && case "$OUT" in *"legacy"*) true ;; *) false ;; esac \
+  && ok "the configured prose word list replaces the default" \
+  || bad "configured prose words" "rc=$RC out=$OUT"
+OUT="$(cd "$R" && GROWTH_GUARDS_PROSE_REVISION_WORDS= "$PROSE" 2>&1)" && RC=0 || RC=$?
+[ "$RC" -eq 0 ] && ok "an empty prose word list disables only the word class" \
+  || bad "empty prose word list" "rc=$RC out=$OUT"
 
 echo "=== a word glued inside a longer word never fires ==="
 put SKILL.md 'An incidental unreverted originality is not history.'
@@ -145,6 +154,21 @@ run_prose
 [ "$RC" -eq 0 ] && case "$OUT" in *"prose: OK — no history references in 10 scanned file(s)"*) true ;; *) false ;; esac \
   && ok "README, CHECKS, docs, CHANGELOG, references and a workflows-named file keep their history, with the ten scoped files still read" \
   || bad "out-of-scope files keep their history" "rc=$RC out=$OUT"
+
+echo "=== the markdown excludes list carves a vendored skill out ==="
+new_repo excluded
+put SKILL.md 'clean'
+put .agents/skills/vendored/SKILL.md 'Seeded 2026-08-12.'
+run_prose
+[ "$RC" -eq 1 ] && case "$OUT" in *"history reference: .agents/skills/vendored/SKILL.md:1:"*) true ;; *) false ;; esac \
+  && ok "control: a vendored skill is scanned before it is excluded" || bad "control: vendored skill scanned" "rc=$RC out=$OUT"
+mkdir -p "$R/tools"
+printf '.agents/skills/vendored/**\tthird-party skill pinned by hash\n' >"$R/tools/md-excludes"
+git -C "$R" add tools/md-excludes
+run_prose
+[ "$RC" -eq 0 ] && ok "an excludes row carves the vendored skill out of the prose scan" \
+  || bad "excludes row honoured" "rc=$RC out=$OUT"
+git -C "$R" rm -qf tools/md-excludes
 
 echo "=== GROWTH_GUARDS_PROSE_PATHS REPLACES the list (and that is provable) ==="
 new_repo override

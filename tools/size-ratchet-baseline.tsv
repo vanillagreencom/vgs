@@ -1,4 +1,4 @@
-.github/workflows/ci.yml	481
+.github/workflows/ci.yml	480
 backend/internal/services/bluez/bluez.go	744
 backend/internal/services/clipboard/clipboard.go	635
 backend/internal/services/cloudsync/cloudsync.go	1115
@@ -21,7 +21,7 @@ bin/codexbar	1311
 bin/vshell	476
 bin/vshell-capture-screenrecording	593
 bin/vshell-capture-screenshot	741
-bin/vshell-helper	16178
+bin/vshell-helper	16175
 bin/vshell_niri.py	1110
 config/vshell/icons/Yaru/cursors/half-busy	10208
 config/vshell/icons/Yaru/cursors/half-busy.ani	3364
@@ -37,19 +37,10 @@ config/vshell/plugins/sysUpdate/SysUpdateWidget.qml	729
 config/vshell/plugins/tailscale/TailscaleWidget.qml	804
 config/vshell/plugins/vgsMenu/VGSMenu.qml	2319
 config/vshell/settings.default.json	754
-docs/architecture/design-language.md	23232b
-docs/architecture/idle-lock-screensaver.md	18569b
-docs/architecture/notification-ownership.md	17530b
-docs/architecture/overlay-and-dependencies.md	19354b
-docs/architecture/remote-desktop.md	19653b
-docs/architecture/scratchpads.md	22255b
-docs/architecture/shell-architecture.md	24084b
-docs/architecture/theme-architecture.md	41889b
 docs/media/vgs-demo-poster.jpg	1197
 docs/media/vgs-demo.mp4	30319
 kendex.settings.toml	429
 kendex.toml	1032
-packaging/README.md	20206b
 packaging/optional-packages.json	594
 quickshell/vshell-preview/shell.qml	456
 quickshell/vshell/Common/KeybindActions.js	1430
@@ -215,12 +206,11 @@ scripts/check-notification-takeover.js	454
 scripts/check-paste-injection.py	897
 scripts/check-section-pointers.py	594
 scripts/check-settings-migration.js	964
-scripts/check-validation-inventory.py	423
 scripts/check-vshell-helper.py	5930
 scripts/check-vshell-niri.py	678
 scripts/gen-package-metadata.py	993
 scripts/lib/section_pointers_selftest.py	515
-scripts/lib/validation_manifest.py	1278
+scripts/lib/validation_manifest.py	1246
 scripts/qml-smoke.sh	1826
 scripts/test-compositor-focus.js	791
 scripts/test-launcher-hover-latch.js	492
@@ -234,5 +224,5 @@ scripts/test-section-pointers.py	515
 scripts/test-switcher-selection.js	774
 scripts/test-toast-actions.js	607
 scripts/test-validate.sh	538
-scripts/test-validation-inventory.sh	2371
-scripts/validate	1065
+scripts/test-validation-inventory.sh	2354
+scripts/validate	1060

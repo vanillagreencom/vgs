@@ -15,9 +15,7 @@ So: every executable check under `scripts/` must be invoked by the manifest and
 by the CI workflow, or carry a written exclusion here; and every command in the
 manifest must be runnable exactly as written.
 
-The manifest moved out of AGENTS.md § Validation into `scripts/validate`
-(VGS-123), so this parses the runner; the tables it cross-compares against moved
-with it, to `.github/instructions/validation-scripts.instructions.md`.
+The manifest lives in `scripts/validate`; CI exceptions and reasons live here.
 """
 
 from __future__ import annotations
@@ -33,7 +31,6 @@ from validation_manifest import (  # noqa: E402
     ManifestError,
     ci_run_commands,
     ci_runs,
-    documented_table,
     manifest_rows,
     prose_areas,
     grammar,
@@ -43,9 +40,7 @@ from validation_manifest import (  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 AGENTS = REPO_ROOT / "AGENTS.md"
-SKILL_DOC = REPO_ROOT / ".agents" / "skills" / "vshell-dev" / "SKILL.md"
 RUNNER = REPO_ROOT / "scripts" / "validate"
-TABLES_DOC = REPO_ROOT / ".github" / "instructions" / "validation-scripts.instructions.md"
 CI = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 SCRIPTS = REPO_ROOT / "scripts"
 
@@ -63,9 +58,6 @@ NOT_A_SUITE_CHECK = {
 }
 
 # Checks the suite runs but CI cannot, with the reason CI cannot run them.
-# validation-scripts.instructions.md § "What CI covers, and what it cannot"
-# documents these at length; this is the machine-readable half, so the two
-# cannot disagree silently.
 LOCAL_ONLY = {
     "smoke-surfaces.sh": "needs a live Hyprland VGS session and reads `hyprctl layers`",
     "check-label-taxonomy.py": "reads live Linear label inventory; CI has no Linear credentials and no local cache",
@@ -81,24 +73,13 @@ INDIRECT_IN_CI = {
 # runner's own AREAS. Membership is the decision: a doc that should point at
 # `scripts/validate --list` instead is removed from this tuple in the same edit,
 # which is a recorded choice rather than a regex that quietly stopped matching.
-AREA_ENUMERATING_DOCS = (AGENTS, TABLES_DOC, SKILL_DOC)
+AREA_ENUMERATING_DOCS = (AGENTS,)
 
 # Interpreter invocations that syntax-CHECK a file rather than run it. These are
 # not a mode problem: `node --check`, `bash -n` and `python3 -m py_compile` have
 # no bare equivalent, so the prefix is the command, not a workaround for a
 # missing executable bit.
 SYNTAX_CHECK_FLAGS = {"--check", "-n", "py_compile"}
-
-
-# The prose tables in validation-scripts.instructions.md § What CI covers, keyed
-# by the bold lead-in above each. Claiming the doc and the code cannot
-# disagree is only true if something compares them; before this, nothing did,
-# and the table had drifted (it listed qml-smoke.sh, which is reached
-# indirectly rather than being local-only).
-DOC_TABLES = {
-    "LOCAL_ONLY": "**Local-only — CI cannot run these at all:**",
-    "INDIRECT_IN_CI": "**Reached indirectly — CI runs these through another entry, not by name:**",
-}
 
 
 def executable_checks() -> list[str]:
@@ -388,20 +369,6 @@ def main() -> int:
                 f".github/workflows/ci.yml. "
                 f"Add it to the workflow, record it in LOCAL_ONLY with the reason CI cannot run it, "
                 f"or in INDIRECT_IN_CI naming the entry that reaches it."
-            )
-
-    # --- the prose tables and the maps above must agree ----------------------
-    for map_name, lead_in in DOC_TABLES.items():
-        coded = set(globals()[map_name])
-        documented_names = documented_table(TABLES_DOC, lead_in)
-        for name in sorted(coded - documented_names):
-            problems.append(
-                f"scripts/{name} is in {map_name} but not in the "
-                f"validation-scripts.instructions.md table introduced by {lead_in!r}"
-            )
-        for name in sorted(documented_names - coded):
-            problems.append(
-                f"scripts/{name} is in that instruction-file table but not in {map_name}"
             )
 
     # --- exclusions that no longer name a real file --------------------------

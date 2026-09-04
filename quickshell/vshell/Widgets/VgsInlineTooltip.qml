@@ -15,7 +15,7 @@ import qs.Widgets.Tooltip
 // inside it.
 //
 // For a bar/dock/pill surface too small to contain a tooltip, use VgsTooltip
-// instead — see docs/architecture/design-language.md § Tooltips.
+// instead — see docs/architecture/design-language.md § Invariants.
 Item {
     id: root
 

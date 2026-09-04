@@ -6,7 +6,7 @@ import qs.Widgets
 // What a tooltip looks like, defined once.
 //
 // VGS has to host tooltips two ways (see docs/architecture/design-language.md
-// § Tooltips): a bar or dock pill needs its own layer surface to draw outside a
+// § Invariants): a bar or dock pill needs its own layer surface to draw outside a
 // ~40px strip, while content inside a FloatingWindow can only use an in-window
 // popup, because a Wayland client cannot know where its own toplevel sits on
 // screen. Those are different *hosts*. They are not different *looks*, and
