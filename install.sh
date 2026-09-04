@@ -43,8 +43,7 @@ cli_link="$HOME/.local/bin/vshell"
 shell_link="$config_home/quickshell/vshell"
 service_path="$config_home/systemd/user/vshell.service"
 
-# Preflight. Every guard that can abort runs here, before anything the user owns
-# is touched, so a refusal is a true no-op instead of a half-applied install.
+# Check destination ownership before replacing installed files.
 if [[ -L "$install_root" ]]; then
   echo "install.sh: refusing symlinked install root: $install_root" >&2
   exit 1
@@ -56,14 +55,14 @@ case "$(readlink -m "$version_root")" in
 esac
 
 vgs_owned() {
-  # True when $1 resolves inside the VGS install root, i.e. VGS put it there.
+  # Treat paths resolving inside the install root as VGS-managed.
   local target
   target="$(readlink -m "$1")"
   [[ "$target" == "$install_root_real" || "$target" == "$install_root_real"/* ]]
 }
 
 check_managed_link() {
-  # Paths VGS owns as symlinks into the install root.
+  # Refuse occupied paths unless they are replaceable managed links.
   local path="$1"
   if [[ -L "$path" ]]; then
     vgs_owned "$path" && return 0

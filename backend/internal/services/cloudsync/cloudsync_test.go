@@ -22,9 +22,7 @@ func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
 }
 
-// testManager builds a Manager backed by a throwaway HOME. No rclone process is
-// started: every test here exercises logic that must hold before the daemon is
-// involved.
+// testManager uses a temporary HOME and does not start rclone.
 func testManager(t *testing.T) *Manager {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
@@ -80,7 +78,7 @@ func TestRemotePathsOverlap(t *testing.T) {
 		{"Docs", "Docs", true},
 		{"Docs", "Docs/Work", true},
 		{"Docs", "Photos", false},
-		{"", "Docs", true}, // whole-remote against a subfolder
+		{"", "Docs", true},
 		{"Docs", "Docs2", false},
 	}
 	for _, tc := range cases {
@@ -308,7 +306,7 @@ func TestStoreRoundTrip(t *testing.T) {
 	if reloaded.snapshotSettings().BandwidthUp != "2M" {
 		t.Fatal("settings did not round-trip")
 	}
-	// Defaults must be re-applied for fields an older config never wrote.
+	// Defaults must apply when the config omits these fields.
 	if reloaded.snapshotSettings().Transfers != defaultSettings().Transfers {
 		t.Fatal("missing settings should fall back to defaults")
 	}
@@ -398,7 +396,7 @@ func TestTransferDirection(t *testing.T) {
 
 func TestNextDelayBacksOffAndIsFloored(t *testing.T) {
 	m := testManager(t)
-	folder := Folder{ID: "f1", IntervalSeconds: 60} // below the floor
+	folder := Folder{ID: "f1", IntervalSeconds: 60}
 
 	if got := m.nextDelay(folder); got != minInterval {
 		t.Fatalf("interval should be floored to %v, got %v", minInterval, got)
@@ -574,7 +572,6 @@ func TestWatcherDebouncesBurstsIntoOneSync(t *testing.T) {
 		t.Fatal("watcher never reported the change")
 	}
 
-	// The burst must coalesce: a second callback would mean one sync per write.
 	select {
 	case <-fired:
 		t.Fatal("watcher fired more than once for a single burst")
@@ -817,8 +814,6 @@ func TestMoveFileFallsBackAcrossFilesystems(t *testing.T) {
 		t.Fatal("source should be gone after a move")
 	}
 
-	// A move of something that is not there must report the real error rather
-	// than silently succeeding.
 	if err := moveFile(filepath.Join(dir, "missing"), dst); err == nil {
 		t.Fatal("expected an error moving a missing file")
 	}
@@ -852,8 +847,6 @@ func TestDecodeStringMap(t *testing.T) {
 		t.Fatal("nil params should decode to an empty map")
 	}
 }
-
-// --- Accounts ---------------------------------------------------------------
 
 // fakeRC wires a Manager's rc client to an httptest server whose routes are
 // given as path -> handler. Anything unrouted answers 404, which the client
@@ -998,7 +991,6 @@ func TestCheckAccountFallsBackToListingThenReportsFailure(t *testing.T) {
 	m := testManager(t)
 	m.accounts = []Account{{Name: "dav", Health: HealthUnknown}}
 
-	// Backend without about support: the listing decides health.
 	listed := false
 	fakeRC(t, m, map[string]http.HandlerFunc{
 		"operations/about": errorRoute("command not found"),
@@ -1020,7 +1012,6 @@ func TestCheckAccountFallsBackToListingThenReportsFailure(t *testing.T) {
 		t.Fatalf("health = %q, want ok when the listing succeeds", health)
 	}
 
-	// Both probes failing is a genuinely unreachable account.
 	fakeRC(t, m, map[string]http.HandlerFunc{
 		"operations/about": errorRoute("command not found"),
 		"operations/list":  errorRoute("no such host"),
@@ -1039,9 +1030,8 @@ func TestCheckAccountFallsBackToListingThenReportsFailure(t *testing.T) {
 	}
 }
 
-// Disconnecting an account whose folders are still configured would leave them
-// pointing at credentials that no longer exist, so it is refused until the
-// caller confirms — and then removes them cleanly.
+// Account removal requires acknowledgement of dependent folder removal because
+// those folders need its credentials to run.
 func TestRemoveRemoteRefusesToStrandFoldersThenRemovesThem(t *testing.T) {
 	m := testManager(t)
 	if err := m.store.putFolder(Folder{ID: "f1", Remote: "gdrive", LocalPath: "/tmp/a", Mode: ModeBackup}); err != nil {
@@ -1121,7 +1111,6 @@ func TestSetAccountLabelValidatesAndPersists(t *testing.T) {
 		t.Fatalf("state label = %q", inState)
 	}
 
-	// Clearing the label drops the entry rather than persisting an empty one.
 	if err := m.setAccountLabel("gdrive", ""); err != nil {
 		t.Fatalf("clear label: %v", err)
 	}
@@ -1209,8 +1198,8 @@ func TestCarryOverAccounts(t *testing.T) {
 	}
 }
 
-// refreshAccounts and a health check racing each other must not trip the race
-// detector; the package has no other concurrency coverage.
+// Account refresh and health updates share state and must remain safe when run
+// concurrently.
 func TestRefreshAccountsRacesHealthCheckCleanly(t *testing.T) {
 	m := testManager(t)
 	fakeRC(t, m, map[string]http.HandlerFunc{
@@ -1462,8 +1451,8 @@ func TestNormalizeFolderRejectsInlineRemote(t *testing.T) {
 }
 
 func TestBackendEnvPrefix(t *testing.T) {
-	// Verified against rclone v1.74: the generic RCLONE_CLIENT_ID is ignored by
-	// `rclone authorize`, so the backend-scoped form is the only one that works.
+	// rclone authorize needs the backend-specific client credential prefix to match
+	// the credentials written to the account config.
 	for in, want := range map[string]string{
 		"drive":              "RCLONE_DRIVE_",
 		"googlecloudstorage": "RCLONE_GOOGLECLOUDSTORAGE_",
@@ -1474,8 +1463,6 @@ func TestBackendEnvPrefix(t *testing.T) {
 		}
 	}
 }
-
-// --- Lifecycle and failure handling -----------------------------------------
 
 // A timer that had already fired when Close stopped it must not launch a sync
 // that nothing will ever poll or cancel.
@@ -1505,8 +1492,8 @@ func TestStartSyncRefusesDuringShutdown(t *testing.T) {
 	}
 }
 
-// finishJob for a folder that no longer exists must reclaim its runtime state
-// rather than re-creating a record nothing ever cleans up.
+// finishJob must reclaim runtime state when the folder is absent from
+// configuration.
 func TestFinishJobDropsStateForRemovedFolder(t *testing.T) {
 	m := testManager(t)
 	m.statuses["gone"] = &FolderStatus{ID: "gone", State: StateSyncing}
@@ -1528,8 +1515,8 @@ func TestFinishJobDropsStateForRemovedFolder(t *testing.T) {
 	}
 }
 
-// A job whose status can no longer be read must be finished rather than polled
-// forever, which left the folder pinned on "Syncing" with every action gated.
+// Unreadable job status must end the run as interrupted so the folder does not
+// remain stuck on Syncing.
 func TestPollJobGivesUpAfterRepeatedStatusFailures(t *testing.T) {
 	m := testManager(t)
 	local := t.TempDir()
@@ -1585,7 +1572,6 @@ func TestResolveKeepBothUndoesAPartialRename(t *testing.T) {
 	if err := os.WriteFile(localCopy, []byte("mine"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	// The cloud copy deliberately does not exist, so the second rename fails.
 	cloudCopy := filepath.Join(local, "notes.txt"+suffixCloud)
 
 	m.mu.Lock()
@@ -1611,8 +1597,8 @@ func TestResolveKeepBothUndoesAPartialRename(t *testing.T) {
 	}
 }
 
-// Real-time watching that dies mid-session must reach state; the doc promises a
-// degraded report rather than a folder that silently stops syncing.
+// Watcher failure must reach folder state so the UI reports that real-time sync
+// is unavailable.
 func TestWatcherDegradeNotifiesAndRecordsReason(t *testing.T) {
 	w, err := newWatcher(discardLogger(), nil)
 	if err != nil {

@@ -2,8 +2,7 @@ import QtQuick
 import qs.Common
 import qs.Widgets
 
-// Modal sheet used by every Cloud Sync flow: scrim, centered card, fixed
-// header/footer with a scrolling body between them.
+// Shared Cloud Sync dialog with fixed header/footer and a scrolling body.
 Item {
     id: root
 
@@ -19,8 +18,7 @@ Item {
     property real maxDialogHeight: 860
     property alias footerExtra: footerExtraLoader.sourceComponent
 
-    // `.data` (not `.children`) so dialogs can also declare non-visual elements
-    // such as Connections alongside their visible content.
+    // Use data so dialogs can contain Connections and other nonvisual declarations.
     default property alias dialogContent: bodyColumn.data
 
     signal confirmed
@@ -33,8 +31,7 @@ Item {
     anchors.fill: parent
     z: 100
 
-    // Scrim: clicking outside cancels, matching every other dismissable surface
-    // in the shell.
+
     Rectangle {
         anchors.fill: parent
         color: Theme.withAlpha("#000000", 0.45)
@@ -49,8 +46,7 @@ Item {
         id: card
 
         anchors.centerIn: parent
-        // Clamped so a window narrower than the dialog cannot collapse it to a
-        // negative size (which renders as nothing at all).
+        // Clamp width so a narrow window does not produce negative dialog geometry.
         width: Math.max(0, Math.min(root.dialogWidth, parent.width - Theme.spacingL * 2))
         height: Math.max(0, Math.min(root.maxDialogHeight, parent.height - Theme.spacingL * 2, headerColumn.implicitHeight + bodyFlick.contentHeight + footer.height + Theme.spacingXL * 2 + Theme.spacingL * 2))
         radius: Theme.cornerRadius

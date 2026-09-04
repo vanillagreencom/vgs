@@ -1,72 +1,27 @@
 #!/usr/bin/env node
 
-// Guards the focus target CompositorService publishes to the paste path, on BOTH
-// supported compositors, and from the first paste after startup rather than only
-// once focus has moved.
-//
-// Paste injects a keystroke, and the right keystroke depends on the window it
-// lands in — so a focus target that resolves to "" is the stray-input bug
-// VGS-119 fixed, reappearing. Two ways it can resolve to nothing:
-//
-//   - Wrong source. Hyprland's focus arrives as the seat's active toplevel; Niri
-//     does not populate that the same way, and everywhere else in the tree Niri
-//     activation is read from `NiriService.windows[].is_focused` instead. An
-//     unbranched toplevel read passes every Hyprland test while leaving every
-//     Niri paste with no target at all.
-//   - Never seeded. Focus already in place when the service is constructed fires
-//     no change signal, so a remembered value maintained only from listeners
-//     stays empty until focus next MOVES. The paste surface taking keyboard
-//     focus is itself what empties the live value, so the first paste of a
-//     session would fall back to Ctrl+V.
-//   - Guessed compositor. Detection is asynchronous, and `isNiri` reads false
-//     both before it answers and when it answers "cannot tell" — so a property
-//     branching on that boolean resolves those two states through the Hyprland
-//     arm. `focusSource` carries them apart, and what each one resolves to is a
-//     decision stated in the QML; this file exercises the decisions rather than
-//     rediscovering them.
-//
-// `scripts/check-paste-injection.py` pins the SHAPE of the wiring — that each
-// property branches per compositor and that each remembered value is
-// liveness-gated and maintained. This runs the shipped expressions and asks what
-// they RESOLVE TO, which no structural rule can answer: a branch can be
-// correctly shaped and still read the wrong field, and a value can be correctly
-// maintained and never initialised.
-//
-// The bindings, the handler bodies and the construction path are extracted from
-// the QML rather than restated, so a test passing here is a statement about the
-// code the shell ships. None of this is reachable from
-// `scripts/qml-smoke.sh --nested`, which starts a shell with no windows in it.
-//
-// LIMIT, stated because it matters: this models each compositor's focus state
-// from the shapes `NiriService` and Quickshell's `ToplevelManager` present. It
-// does not prove niri itself reports what the model assumes — that needs a live
-// Niri session.
+// Execute extracted compositor focus bindings, handlers, and startup logic for paste targeting.
+// Focus must come from the selected compositor and seed state before the first change event.
+// Detection readiness and Niri snapshot readiness are separate.
+// This models reported compositor state; it does not verify a live Niri server's event contract.
 
 "use strict";
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-// Comment- and string-aware, so a brace inside either cannot truncate a body
-// and leave the test silently covering nothing. See scripts/lib/qml-block.js.
+// Use the shared comment-aware and string-aware brace reader to prevent truncated extraction.
 const { extractBlock } = require("./lib/qml-block.js");
 
 const QML = path.join(__dirname, "..", "quickshell", "vshell", "Services", "CompositorService.qml");
 const source = fs.readFileSync(QML, "utf8");
-// Readiness on Niri turns on a flag NiriService owns, so the flag's upkeep is
-// read from there rather than assumed: a snapshot that is never marked received
-// leaves paste waiting, and one marked without the event leaves it pasting into
-// a window list that is still the empty default.
+// Read Niri snapshot-flag maintenance from its service so readiness cannot be granted by fixture assumption.
 const NIRI_QML = path.join(__dirname, "..", "quickshell", "vshell", "Services", "NiriService.qml");
 const niriSource = fs.readFileSync(NIRI_QML, "utf8");
 
-// ---- extract the shipped expressions --------------------------------------
 
-// A binding spans QML's continuation lines: the lines below it that are indented
-// further belong to it, and a blank line or a dedent ends it. Reading only the
-// declaration's own line would extract `isNiri` and drop both branches — the
-// test would then pass on nothing, which is the failure mode it exists to catch,
-// so every extraction is asserted on below.
+
+// Include continuation lines in binding extraction. A declaration line alone can omit both branches.
 function bindingExpression(name, kind = "string") {
     const opener = new RegExp(`^([ \\t]*)(?:readonly[ \\t]+)?property[ \\t]+${kind}[ \\t]+${name}[ \\t]*:(.*)$`, "m");
     const match = source.match(opener);
@@ -100,17 +55,14 @@ const bodies = {
     windowOpenedOrChanged: extractBlock(niriSource, "function handleWindowOpenedOrChanged(data)"),
 };
 
-// An extraction that came back short would leave the branch each test exists to
-// exercise unexamined while every case still passed.
+// Assert expected content so a truncated binding cannot pass without exercising its branch.
 for (const [label, text, needles] of [
     ["focusSource", FOCUS_SOURCE, ["compositorDetected", "pending", "niri", "hyprland", "unknown"]],
     ["focusReady", FOCUS_READY, ["focusSource", "NiriService.", "pending"]],
     ["handleNiriEvent", bodies.niriEvent, ["WindowsChanged", "windowsSnapshotReceived"]],
     ["onConnectionStateChanged", bodies.niriLinkChanged, ["windowsSnapshotReceived", "linkUp"]],
     ["markFocusedWindow", bodies.markFocusedWindow, ["is_focused", "window.id === id"]],
-    // Identifying needles only — enough to prove the right block was extracted,
-    // never the shape of the fix. A needle naming the fix would fail a control
-    // before its behaviour case could, which hides whether the case works.
+    // Use identification needles independent of the fix so behavior controls reach their assertions.
     ["handleWorkspaceActiveWindowChanged", bodies.workspaceActiveWindowChanged, ["active_window_id"]],
     ["handleWindowFocusChanged", bodies.windowFocusChanged, ["updateWorkspace"]],
     ["handleWindowOpenedOrChanged", bodies.windowOpenedOrChanged, ["sortWindowsByLayout"]],
@@ -127,21 +79,14 @@ for (const [label, text, needles] of [
         assert.ok(text.includes(needle), `the extracted ${label} must contain ${needle}`);
 }
 
-// ---- the model -------------------------------------------------------------
 
-// QML resolves an unqualified name in a component's function against that
-// component, so the shipped bodies say `isNiri` and `rememberNiriFocus()` with
-// no receiver. `with` is the one JS construct with those semantics, which is why
-// it is used here: the alternative is rewriting the extracted source before
-// running it, and a test that edits its subject proves something about the edit.
+
+// with models QML's unqualified component lookup without rewriting the extracted function bodies.
 function call(body, root, parameters = [], args = []) {
     return new Function("root", ...parameters, `with (root) {\n${body}\n}`)(root, ...args);
 }
 
-// A handler that belongs to a child object — a socket's own `linkUp` — reads
-// names from that object AND assigns through `root` to the component. Layering
-// the scopes is what keeps the assignment landing on the component instead of
-// shadowing it on a throwaway, which would make the handler look like it worked.
+// Layer child-object and root scopes so socket handlers write component state instead of a fixture shadow.
 function callInScope(body, root, scope) {
     return new Function("root", "scope", `with (scope) { with (root) {\n${body}\n} }`)(root, scope);
 }
@@ -150,7 +95,7 @@ const foot = { id: 7, app_id: "foot", is_focused: true };
 const kitty = { id: 9, app_id: "kitty", is_focused: false };
 const unfocused = (window) => Object.assign({}, window, { is_focused: false });
 
-// Only the state the shipped code reads, plus the seams it calls out through.
+
 function shell(overrides = {}) {
     const root = Object.assign({
         isHyprland: false,
@@ -167,24 +112,14 @@ function shell(overrides = {}) {
 
     root.refreshToplevels = () => root.calls.push("refreshToplevels");
     root.randrDataReady = () => root.calls.push("randrDataReady");
-    // Asynchronous in the shell: it shells out and applies the result later, so
-    // construction never sees a compositor. That gap is the point of the second
-    // seeding call, and a model that resolved detection synchronously would hide
-    // it.
+    // Keep compositor detection asynchronous in the model; synchronous resolution would conceal startup gaps.
     root.detectCompositor = () => root.calls.push("detectCompositor");
 
-    // NiriService's own state, and the event handler that maintains it. The
-    // snapshot flag is modelled through the shipped handler rather than set by
-    // hand, so a WindowsChanged event is what makes Niri ready here exactly as
-    // it is in the shell.
+    // Set snapshot readiness through the shipped WindowsChanged handler.
     root.NiriService.windowsSnapshotReceived = root.NiriService.windowsSnapshotReceived ?? false;
     root.NiriService.eventStreamUp = root.NiriService.eventStreamUp ?? false;
     root.NiriService.sortWindowsByLayout = list => list;
-    // The focus marker's own maintenance, shipped rather than stubbed. These are
-    // where the at-most-one-focused invariant is established, so a test that set
-    // `is_focused` by hand would be testing its own arrangement — and a state
-    // with ONE focused window cannot distinguish a sound rule from an unsound
-    // one, which is why this defect survived every earlier test on this path.
+    // Drive shipped focus-marker handlers. Hand-setting one focused window cannot expose ambiguous markers.
     root.NiriService.focusedWorkspaceId = root.NiriService.focusedWorkspaceId ?? null;
     root.NiriService.workspaceUpdates = [];
     root.NiriService.updateWorkspace = (id, changes) => root.NiriService.workspaceUpdates.push([id, changes]);
@@ -198,8 +133,7 @@ function shell(overrides = {}) {
         root.NiriService[name] = (data) => call(body, root.NiriService, ["data"], [data]);
     root.niriEvent = (event) => call(bodies.niriEvent, root.NiriService, ["event"], [event]);
     root.NiriService.fetchOutputs = () => {};
-    // The link changing, run as the socket runs it: `linkUp` is the socket's,
-    // the snapshot flag is the service's.
+    // The socket owns linkUp; its handler assigns snapshot state on the service.
     root.niriLink = (up) => {
         root.NiriService.eventStreamUp = up;
         callInScope(bodies.niriLinkChanged, root.NiriService, { linkUp: up, send: () => {} });
@@ -212,9 +146,7 @@ function shell(overrides = {}) {
     root.focusChanged = () => call(bodies.activeToplevelChanged, root);
     root.windowsChanged = () => call(bodies.windowsChanged, root);
 
-    // A binding, not a value: the focus properties read it on every evaluation,
-    // and half of what this file tests is that it changes underneath them as
-    // detection lands.
+    // Model this as a binding so reads observe detection changes.
     Object.defineProperty(root, "focusSource", { get: () => call(`return (${FOCUS_SOURCE});`, root) });
     Object.defineProperty(root, "focusReady", { get: () => call(`return (${FOCUS_READY});`, root) });
 
@@ -223,12 +155,7 @@ function shell(overrides = {}) {
     return root;
 }
 
-// A session past compositor detection — the state every case is about except
-// the startup ones below, which begin from shell() and drive detection
-// themselves. Spelled out rather than defaulted into shell(), because "before
-// detection answered" is a real state of the component and a model that could
-// not represent it would be unable to test the half of this file that matters
-// most.
+// Keep pre-detection startup representable instead of assuming a ready compositor in shell().
 function settled(compositor, overrides = {}) {
     const root = shell(Object.assign({
         compositorDetected: true,
@@ -236,16 +163,13 @@ function settled(compositor, overrides = {}) {
         isNiri: compositor === "niri",
         compositor,
     }, overrides));
-    // Past detection AND past the point the source can answer. On Niri those are
-    // two different moments and the gap between them is what the readiness cases
-    // below are about, so it is spelled out here rather than folded into
-    // detection. On the toplevel path they are the same moment, by decision.
+    // Niri detection can finish before its source can answer. Represent both stages separately.
     root.NiriService.eventStreamUp = true;
     root.NiriService.windowsSnapshotReceived = true;
     return root;
 }
 
-// ---- Hyprland: the live value ----------------------------------------------
+
 
 {
     const toplevel = { appId: "foot" };
@@ -256,13 +180,12 @@ function settled(compositor, overrides = {}) {
     assert.equal(settled("hyprland").focusedAppId(), "", "no active toplevel is unknown, not a target");
 }
 {
-    // The branch is a branch: Niri's list must not leak into the Hyprland path,
-    // or a stale Niri window would name the target on the wrong compositor.
+    // Niri windows must not supply focus on the Hyprland path.
     const root = settled("hyprland", { NiriService: { windows: [foot] } });
     assert.equal(root.focusedAppId(), "", "Hyprland does not read Niri's focused window");
 }
 
-// ---- Hyprland: the remembered fallback -------------------------------------
+
 
 {
     const toplevel = { appId: "foot" };
@@ -272,7 +195,7 @@ function settled(compositor, overrides = {}) {
     assert.equal(closed.lastFocusedAppId(), "", "a remembered window that closed is not a target");
 }
 {
-    // Focus arriving after construction is the case the listener covers.
+
     const root = shell();
     root.construct();
     root.detected("hyprland");
@@ -284,35 +207,29 @@ function settled(compositor, overrides = {}) {
     assert.equal(root.lastFocusedAppId(), "foot", "losing focus does not clear the remembered window");
 }
 
-// ---- Hyprland: focus that was already there at startup ---------------------
+
 
 {
-    // The startup hole: a terminal focused before the shell started fires no
-    // change signal, so a value maintained only from the listener stays null.
-    // The first paste is then the one that misfires.
+    // A window focused before startup emits no new focus change; construction must seed its target.
     const toplevel = { appId: "foot" };
     const root = shell({ ToplevelManager: { activeToplevel: toplevel, toplevels: { values: [toplevel] } } });
     root.construct();
     assert.equal(root._lastFocusedToplevel, toplevel, "construction seeds the focus already in place");
 
-    // Compositor detection returns later, and by then the seat may already be
-    // empty — a shell surface grabs focus early. Seeding twice must not be a way
-    // to overwrite a good target with nothing.
+    // Later detection must not replace a valid seed with an empty seat after a shell surface takes focus.
     root.ToplevelManager.activeToplevel = null;
     root.detected("hyprland");
     assert.equal(root._lastFocusedToplevel, toplevel, "detection does not clear what construction seeded");
     root.ToplevelManager.activeToplevel = toplevel;
 
-    // The paste surface takes keyboard focus. No non-null focus change has EVER
-    // fired, so only the seed can answer here.
+    // Only the seed can supply a fallback if no non-null focus change occurred.
     root.ToplevelManager.activeToplevel = null;
     root.focusChanged();
     assert.equal(root.focusedAppId(), "", "the shell surface emptied the live value");
     assert.equal(root.lastFocusedAppId(), "foot", "the first paste of the session still resolves its target");
 }
 {
-    // Nothing focused at startup must not be recorded as a target, and must not
-    // fabricate one out of a null.
+
     const root = shell();
     root.construct();
     root.detected("hyprland");
@@ -320,15 +237,14 @@ function settled(compositor, overrides = {}) {
     assert.equal(root.lastFocusedAppId(), "", "and resolves to no target");
 }
 
-// ---- Niri: the live focused app id -----------------------------------------
+
 
 {
     const root = settled("niri", { NiriService: { windows: [kitty, foot] } });
     assert.equal(root.focusedAppId(), "foot", "Niri resolves the window carrying is_focused");
 }
 {
-    // WindowFocusChanged with no window clears every is_focused. The live value
-    // is then unknown — which is precisely when the fallback has to carry.
+    // A focus-clear event empties the live value, leaving the remembered target to answer.
     const root = settled("niri", { NiriService: { windows: [kitty] } });
     assert.equal(root.focusedAppId(), "", "no focused Niri window is unknown, not a target");
 }
@@ -337,9 +253,7 @@ function settled(compositor, overrides = {}) {
     assert.equal(root.focusedAppId(), "", "an empty Niri window list resolves to no target");
 }
 {
-    // The regression the per-compositor branch is about: on Niri the active
-    // toplevel is not the focus source, so reading it would resolve the wrong
-    // window — or, when it is empty, no window at all.
+    // On Niri, an active toplevel is not the focus source.
     const kittyToplevel = { appId: "kitty" };
     const root = settled("niri", {
         NiriService: { windows: [foot] },
@@ -356,7 +270,7 @@ function settled(compositor, overrides = {}) {
     assert.equal(root.focusedAppId(), "", "an active toplevel does not stand in for Niri focus");
 }
 
-// ---- Niri: the remembered fallback -----------------------------------------
+
 
 {
     const root = settled("niri", { NiriService: { windows: [kitty, foot] } });
@@ -364,26 +278,21 @@ function settled(compositor, overrides = {}) {
     assert.equal(root._lastFocusedNiriWindowId, foot.id, "the focused window's id is remembered");
     assert.equal(root.lastFocusedAppId(), "foot", "the remembered window resolves to its app id");
 
-    // A shell surface takes keyboard focus: niri reports no focused window, and
-    // the live value empties. The remembered one must survive that, or the paste
-    // fires with no target — the bug, one layer down.
+    // A shell surface can clear live focus; the remembered target must survive while its window exists.
     root.NiriService.windows = [kitty, unfocused(foot)];
     root.windowsChanged();
     assert.equal(root.focusedAppId(), "", "focus left every Niri window");
     assert.equal(root._lastFocusedNiriWindowId, foot.id, "losing focus does not clear the remembered window");
     assert.equal(root.lastFocusedAppId(), "foot", "the fallback carries the target across the gap");
 
-    // WindowClosed drops it from the list, and the fallback must empty with it:
-    // held on, it would name a dead window and paste a terminal's keystroke into
-    // whatever replaced it.
+    // Remove a closed window from fallback targeting to avoid applying its keystroke to a replacement window.
     root.NiriService.windows = [kitty];
     root.windowsChanged();
     assert.equal(root.lastFocusedAppId(), "", "a remembered Niri window that closed is not a target");
     assert.equal(root.focusedAppId(), "", "and nothing else resolves in its place");
 }
 {
-    // Focus moving on is recorded, so the fallback names the newest window
-    // rather than the first one ever focused.
+
     const root = settled("niri", { NiriService: { windows: [kitty, foot] } });
     root.windowsChanged();
     root.NiriService.windows = [Object.assign({}, kitty, { is_focused: true }), unfocused(foot)];
@@ -391,24 +300,20 @@ function settled(compositor, overrides = {}) {
     assert.equal(root.lastFocusedAppId(), "kitty", "the remembered window follows focus");
 }
 {
-    // An id from an earlier session, or one never seen, must not resolve.
+
     const root = settled("niri", { NiriService: { windows: [kitty] }, _lastFocusedNiriWindowId: 404 });
     assert.equal(root.lastFocusedAppId(), "", "an id no live window carries resolves to nothing");
 }
 {
-    // Nothing remembered yet, and a window whose id the model leaves undefined:
-    // a null id must not match by accident and name an arbitrary window.
+    // An absent remembered ID must not match a window with an undefined ID.
     const root = settled("niri", { NiriService: { windows: [{ app_id: "foot", is_focused: true }] } });
     assert.equal(root.lastFocusedAppId(), "", "an unset remembered id matches no window");
 }
 
-// ---- Niri: focus that was already there when detection landed --------------
+
 
 {
-    // Niri's own listener cannot cover this window on its own: it is gated on
-    // isNiri, and at construction the compositor is not yet known. Whatever
-    // niri already reported by the time detection lands has to be picked up
-    // where it lands.
+    // Niri events before compositor detection cannot update an isNiri-gated listener. Seed when detection resolves.
     const root = shell({ NiriService: { windows: [kitty, foot] } });
     root.construct();
     assert.equal(root._lastFocusedNiriWindowId, null, "construction predates detection, so nothing Niri is seeded yet");
@@ -417,21 +322,18 @@ function settled(compositor, overrides = {}) {
     assert.equal(root.isNiri, true, "detection applied");
     assert.equal(root._lastFocusedNiriWindowId, foot.id, "detection seeds the focus niri already reported");
 
-    // The event stream comes up and niri sends the list. Detection completing is
-    // NOT that moment, which is the whole point of the readiness cases below.
+    // Snapshot delivery follows socket connection independently of compositor detection.
     root.NiriService.eventStreamUp = true;
     root.niriEvent({ WindowsChanged: { windows: [kitty, foot] } });
 
-    // And the first paste: the surface takes focus, niri clears is_focused, and
-    // only the seeded value can name the terminal.
+
     root.niriEvent({ WindowsChanged: { windows: [kitty, unfocused(foot)] } });
     root.windowsChanged();
     assert.equal(root.focusedAppId(), "", "the shell surface emptied the live value");
     assert.equal(root.lastFocusedAppId(), "foot", "the first paste of the session still resolves its target");
 }
 {
-    // Detection landing on Niri with nothing focused must seed nothing rather
-    // than record an absence as a target.
+
     const root = shell({ NiriService: { windows: [kitty] } });
     root.construct();
     root.detected("niri");
@@ -442,8 +344,7 @@ function settled(compositor, overrides = {}) {
     assert.equal(root.lastFocusedAppId(), "", "and resolves to no target");
 }
 {
-    // Seeding must not cross compositors: detection landing on Hyprland must not
-    // adopt a Niri window, which would name a target that cannot be pasted into.
+    // A Hyprland detection result must not seed a Niri target.
     const kittyToplevel = { appId: "kitty" };
     const root = shell({
         NiriService: { windows: [foot] },
@@ -455,12 +356,10 @@ function settled(compositor, overrides = {}) {
     assert.equal(root.focusedAppId(), "kitty", "and resolves its own source instead");
 }
 
-// ---- detection: pending is its own state, not a third meaning of Hyprland --
+
 
 {
-    // The state machine itself. `isHyprland`/`isNiri` are both false before
-    // detection answers AND when it answers "cannot tell", which is exactly why
-    // a two-state read of them resolves both through the Hyprland arm.
+    // Pending and failed detection both have false compositor booleans but require distinct states.
     const root = shell();
     assert.equal(root.focusSource, "pending", "nothing has been asked yet");
     root.detected("hyprland");
@@ -477,10 +376,7 @@ function settled(compositor, overrides = {}) {
     assert.notEqual(failed.focusSource, "pending", "which is an answer, not a wait");
 }
 {
-    // A paste beating detection: a terminal is focused and remembered, and both
-    // compositors' state says so — but VGS does not yet know which one is
-    // reporting it, so it names no target rather than guessing one. Ctrl+V into
-    // that terminal is the bug; waiting is not.
+    // While detection is pending, neither compositor's available state authorizes a paste target.
     const toplevel = { appId: "foot" };
     const root = shell({
         _lastFocusedToplevel: toplevel,
@@ -492,20 +388,15 @@ function settled(compositor, overrides = {}) {
     assert.equal(root.focusedAppId(), "", "no live target before the compositor is known");
     assert.equal(root.lastFocusedAppId(), "", "and no remembered one either");
 
-    // The wait is short and it ends. Same state, one answer later, and both
-    // properties resolve — which is what makes waiting the right answer rather
-    // than a way to lose the paste.
+    // After detection answers, the same state must resolve without losing the pending paste.
     root.detected("hyprland");
     assert.equal(root.focusedAppId(), "foot", "the live target resolves once detection answers");
     assert.equal(root.lastFocusedAppId(), "foot", "and so does the remembered one");
 }
 
-// ---- at most one window is focused -----------------------------------------
 
-// Every case here has TWO windows and drives the shipped event handlers,
-// because a case with one focused window cannot fail whatever the resolution
-// rule is — which is exactly how a first-match `find()` over an ambiguous
-// marker survived every earlier test on this path.
+
+// Use competing windows and shipped event handlers. One window cannot reveal ambiguous focus markers.
 
 function niriSession(windows, focusedWorkspaceId) {
     const root = shell();
@@ -518,15 +409,13 @@ function niriSession(windows, focusedWorkspaceId) {
 
 const focusedCount = (root) => root.NiriService.windows.filter(window => window.is_focused).length;
 
-// Two workspaces: 1 is focused and holds the terminal, 2 is in the background.
+
 const term = { id: 1, app_id: "foot", workspace_id: 1, is_focused: true };
 const editor = { id: 2, app_id: "code", workspace_id: 2, is_focused: false };
 const browser = { id: 3, app_id: "firefox", workspace_id: 2, is_focused: false };
 
 {
-    // The reported defect. A background workspace's active window changing is
-    // not a focus change, and marking it left the terminal marked too — after
-    // which `find()` returned whichever sorted first.
+    // A background workspace's active-window change must not mark it globally focused.
     const root = niriSession([editor, term], 1);
     assert.equal(root.focusedAppId(), "foot", "the terminal holds focus");
 
@@ -537,17 +426,14 @@ const browser = { id: 3, app_id: "firefox", workspace_id: 2, is_focused: false }
     assert.equal(root.NiriService.windows.find(window => window.is_focused).id, term.id, "and it is the window the seat actually focuses");
 }
 {
-    // Array order is what made the old behaviour arbitrary, so the same event
-    // with the background window FIRST must give the same answer. Under the old
-    // rule this case and the one above disagreed.
+    // Reverse window order so first-match lookup cannot conceal competing focus markers.
     const root = niriSession([editor, browser, term], 1);
     root.niriEvent({ WorkspaceActiveWindowChanged: { workspace_id: 2, active_window_id: browser.id } });
     assert.equal(root.focusedAppId(), "foot", "the answer does not depend on where the window sits in the list");
     assert.equal(focusedCount(root), 1, "with still exactly one marked");
 }
 {
-    // The same event for the FOCUSED workspace is a real focus change, so it
-    // must still move the marker — the fix must not simply ignore the event.
+    // The same event on the focused workspace must still move focus.
     const root = niriSession([term, editor], 1);
     const second = { id: 4, app_id: "kitty", workspace_id: 1, is_focused: false };
     root.niriEvent({ WindowsChanged: { windows: [term, editor, second] } });
@@ -556,9 +442,7 @@ const browser = { id: 3, app_id: "firefox", workspace_id: 2, is_focused: false }
     assert.equal(focusedCount(root), 1, "and still exactly one window is marked");
 }
 {
-    // A window arriving already focused, which niri sends as the whole window.
-    // If WindowOpenedOrChanged lands before WindowFocusChanged, the incoming
-    // window and the outgoing one both carry the marker.
+    // An incoming focused window can precede WindowFocusChanged; its handler must clear the outgoing marker.
     const root = niriSession([term, editor], 1);
     const popup = { id: 5, app_id: "kitty", workspace_id: 1, is_focused: true };
     root.niriEvent({ WindowOpenedOrChanged: { window: popup } });
@@ -566,8 +450,7 @@ const browser = { id: 3, app_id: "firefox", workspace_id: 2, is_focused: false }
     assert.equal(root.focusedAppId(), "kitty", "and it is the one that arrived focused");
 }
 {
-    // The global focus event still clears everywhere, including across
-    // workspaces, and focus leaving every window leaves none marked.
+
     const root = niriSession([term, editor], 1);
     root.niriEvent({ WindowFocusChanged: { id: editor.id } });
     assert.equal(focusedCount(root), 1, "focus moving across workspaces marks one window");
@@ -577,9 +460,7 @@ const browser = { id: 3, app_id: "firefox", workspace_id: 2, is_focused: false }
     assert.equal(root.focusedAppId(), "", "which resolves to no target");
 }
 {
-    // The sticky fallback is the second consumer and reads the same collection,
-    // so the invariant has to carry it too: a remembered terminal must not be
-    // displaced by a background workspace's active window.
+    // The remembered fallback must also ignore active-window changes in background workspaces.
     const root = niriSession([term, editor], 1);
     root.windowsChanged();
     assert.equal(root.lastFocusedAppId(), "foot", "the terminal is remembered");
@@ -588,50 +469,40 @@ const browser = { id: 3, app_id: "firefox", workspace_id: 2, is_focused: false }
     root.windowsChanged();
     assert.equal(root.lastFocusedAppId(), "foot", "and stays remembered through a background workspace's change");
 
-    // Focus really leaving it: the live value empties, the fallback still names
-    // the terminal, and neither names the background window.
+
     root.niriEvent({ WindowFocusChanged: { id: null } });
     root.windowsChanged();
     assert.equal(root.focusedAppId(), "", "nothing is focused");
     assert.equal(root.lastFocusedAppId(), "foot", "and the remembered target is still the terminal");
 }
 
-// ---- readiness: detection answering is not the source answering ------------
+
 
 {
-    // The finding this round is about. On Niri, detection completing and the
-    // window list arriving are two moments, and the gap between them is real:
-    // `windows` is [] until niri's event stream delivers the snapshot, which is
-    // its own round trip after the socket connects. A paste in that gap used to
-    // end its wait, resolve nothing, and press Ctrl+V.
+    // Niri detection can finish before the initial window snapshot. That gap must remain unready for paste.
     const root = shell();
     root.construct();
     root.detected("niri");
     assert.equal(root.focusSource, "niri", "detection has answered");
     assert.equal(root.focusReady, false, "but the source cannot answer yet");
 
-    // The link alone is not it either: connected says the socket is open, not
-    // that niri has said anything.
+    // An open socket does not prove that the initial window list arrived.
     root.niriLink(true);
     assert.equal(root.focusReady, false, "an open socket is not an answer");
 
-    // The snapshot is what makes the list an answer, and it is marked from the
-    // shipped event handler rather than by hand.
+    // Use the shipped snapshot handler to establish readiness.
     root.niriEvent({ WindowsChanged: { windows: [foot] } });
     assert.equal(root.NiriService.windowsSnapshotReceived, true, "the WindowsChanged event marks it received");
     assert.equal(root.focusReady, true, "now the source can answer");
     assert.equal(root.focusedAppId(), "foot", "and it names the focused window");
 
-    // A dropped link is its own disqualification, before anything touches the
-    // snapshot: the list may be intact and still describe a session VGS is no
-    // longer being told about.
+    // A dropped link makes retained window data stale immediately.
     root.NiriService.eventStreamUp = false;
     assert.equal(root.NiriService.windowsSnapshotReceived, true, "the snapshot flag is untouched so far");
     assert.equal(root.focusReady, false, "but a dropped link is not an answer");
     assert.equal(root.focusedAppId(), "", "and names no target while it is down");
 
-    // And the drop clears the snapshot through the shipped handler, so a
-    // reconnect cannot resolve from the list the old connection left behind.
+    // Link loss must clear snapshot state so reconnection cannot authorize the old list.
     root.niriLink(false);
     assert.equal(root.NiriService.windowsSnapshotReceived, false, "the link transition invalidated it");
     root.niriLink(true);
@@ -641,9 +512,7 @@ const browser = { id: 3, app_id: "firefox", workspace_id: 2, is_focused: false }
     assert.equal(root.focusReady, true, "which the reconnected stream delivers");
 }
 {
-    // An empty snapshot is still an ANSWER: niri said there are no windows.
-    // Readiness must not confuse that with silence, or a paste on an empty seat
-    // would wait for a list that already came.
+    // An empty snapshot is a completed answer and must not be confused with no snapshot.
     const root = shell();
     root.detected("niri");
     root.niriLink(true);
@@ -652,8 +521,7 @@ const browser = { id: 3, app_id: "firefox", workspace_id: 2, is_focused: false }
     assert.equal(root.focusedAppId(), "", "and the answer is that nothing is focused");
 }
 {
-    // An event that is not the snapshot must not stand in for one — it carries
-    // one window, not the list, so the list is still the empty default.
+    // An individual window event cannot substitute for the full snapshot.
     const root = shell();
     root.detected("niri");
     root.niriLink(true);
@@ -662,10 +530,7 @@ const browser = { id: 3, app_id: "firefox", workspace_id: 2, is_focused: false }
     assert.equal(root.focusReady, false, "a single-window event is not the snapshot");
 }
 {
-    // The Hyprland arm, and the decision behind it. Its emptiness cannot be told
-    // apart from its silence — Quickshell surfaces no "initial list delivered"
-    // signal — so VGS resolves the ambiguity toward the answer it can give: no
-    // toplevel means nothing is focused.
+    // Quickshell exposes no initial-list signal for the toplevel path. An empty list there resolves as no focus.
     const root = shell();
     root.construct();
     root.detected("hyprland");
@@ -674,11 +539,7 @@ const browser = { id: 3, app_id: "firefox", workspace_id: 2, is_focused: false }
     assert.equal(root.lastFocusedAppId(), "", "with nothing remembered either");
 }
 {
-    // The regression control. An earlier arm gated this on having ever seen a
-    // toplevel, which never becomes true on a seat with no windows open — so
-    // paste was refused outright on Hyprland, where it had always worked. That
-    // broke AGENTS.md: Niri support must be additive. A Hyprland
-    // session must never be made unready by a condition this PR introduced.
+    // An empty Hyprland seat must remain ready even though it has never exposed a toplevel.
     for (const compositor of ["hyprland", "unknown"]) {
         const empty = shell({ ToplevelManager: { activeToplevel: null, toplevels: { values: [] } } });
         empty.construct();
@@ -689,8 +550,7 @@ const browser = { id: 3, app_id: "firefox", workspace_id: 2, is_focused: false }
     }
 }
 {
-    // And with a window, the same arm resolves it — readiness was never what
-    // stood between the toplevel path and its answer.
+
     const toplevel = { appId: "foot" };
     const root = shell({ ToplevelManager: { activeToplevel: toplevel, toplevels: { values: [toplevel] } } });
     root.construct();
@@ -699,8 +559,7 @@ const browser = { id: 3, app_id: "firefox", workspace_id: 2, is_focused: false }
     assert.equal(root.focusedAppId(), "foot", "and it names the focused window");
 }
 {
-    // The failed-detection state, which follows the toplevel arm by the decision
-    // recorded in CompositorService: the same question, answered the same way.
+    // Failed detection follows the service's toplevel fallback decision.
     const toplevel = { appId: "foot" };
     const root = shell({ ToplevelManager: { activeToplevel: toplevel, toplevels: { values: [toplevel] } } });
     root.detected("unknown");
@@ -708,9 +567,7 @@ const browser = { id: 3, app_id: "firefox", workspace_id: 2, is_focused: false }
     assert.equal(root.focusedAppId(), "foot", "resolving through the toplevel path");
 }
 {
-    // The asymmetry is the point, and it is not an accident: Niri gets the
-    // strict arm because it HAS the observable that settles the same ambiguity.
-    // An empty list before its snapshot is silence; after it, it is an answer.
+    // Niri can distinguish an empty snapshot from silence, so it uses the stricter readiness check.
     const niri = shell();
     niri.detected("niri");
     assert.equal(niri.focusReady, false, "Niri waits, because it can tell the difference");
@@ -719,8 +576,7 @@ const browser = { id: 3, app_id: "firefox", workspace_id: 2, is_focused: false }
     assert.equal(hyprland.focusReady, true, "the toplevel path does not, because it cannot");
 }
 {
-    // Readiness is never true while pending, whatever else is in place — the
-    // source has not been identified, so there is nothing to be ready.
+
     const toplevel = { appId: "foot" };
     const root = shell({
         NiriService: { windows: [foot], eventStreamUp: true, windowsSnapshotReceived: true },
@@ -730,13 +586,10 @@ const browser = { id: 3, app_id: "firefox", workspace_id: 2, is_focused: false }
     assert.equal(root.focusReady, false, "so nothing is ready, however much data is lying around");
 }
 
-// ---- detection failing: the stated decision, exercised ---------------------
+
 
 {
-    // Decided in CompositorService and asserted here so the decision cannot
-    // drift silently: a detection that could not tell resolves through the
-    // toplevel path — the behaviour every target had before VGS-119 — rather
-    // than disabling paste or waiting for an answer that already came.
+    // Failed detection resolves through the declared toplevel fallback rather than waiting for another answer.
     const toplevel = { appId: "foot" };
     const root = shell({
         _lastFocusedToplevel: toplevel,
@@ -746,27 +599,22 @@ const browser = { id: 3, app_id: "firefox", workspace_id: 2, is_focused: false }
     assert.equal(root.focusedAppId(), "foot", "a failed detection still resolves the active toplevel");
     assert.equal(root.lastFocusedAppId(), "foot", "and the remembered window with it");
 
-    // Still liveness-gated: the failure mode being accepted is a MISSING target,
-    // never a dead one.
+    // The fallback can be absent but must never name a dead window.
     root.ToplevelManager.toplevels.values = [];
     assert.equal(root.lastFocusedAppId(), "", "a closed window is not a target on this path either");
 }
 {
-    // And it does not reach for Niri's list, which is empty anyway when
-    // detection failed: NiriService only connects its socket once isNiri is
-    // true. That is the reason the decision costs nothing to make either way on
-    // Niri, and it is worth pinning rather than restating.
+    // Failed detection must not consult Niri's list; that service connects only after positive Niri detection.
     const root = shell({ NiriService: { windows: [foot] } });
     root.detected("unknown");
     assert.equal(root.focusedAppId(), "", "a failed detection resolves no Niri window");
     assert.equal(root.lastFocusedAppId(), "", "not even a remembered one");
 }
 
-// ---- the wiring ------------------------------------------------------------
+
 
 {
-    // The handler is what keeps the Niri fallback current between seeds. Reached
-    // only on Niri, so Hyprland pays nothing for it.
+
     const root = shell({ NiriService: { windows: [foot] } });
     root.windowsChanged();
     assert.equal(root._lastFocusedNiriWindowId, null, "Hyprland does not run the Niri focus bookkeeping");
@@ -777,9 +625,7 @@ const browser = { id: 3, app_id: "firefox", workspace_id: 2, is_focused: false }
     assert.deepEqual(root.calls, ["refreshToplevels"], "and refreshes the toplevel list");
 }
 {
-    // `with` assigns to a property only when the object already has it; a
-    // misspelled one would silently become a global and the assertion above it
-    // would read a stale value forever.
+    // with assigns to an object only for an existing property. Assert against accidental global writes.
     const root = shell();
     root.construct();
     root.detected("niri");

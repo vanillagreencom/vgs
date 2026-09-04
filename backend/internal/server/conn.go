@@ -57,8 +57,8 @@ func (c *conn) send(resp protocol.Response) {
 	}
 	_ = c.uc.SetWriteDeadline(time.Now().Add(writeTimeout))
 	if _, err := c.uc.Write(b); err != nil {
-		// Peer-gone is normal on a same-uid local socket; log at debug so an
-		// unexpected write failure (e.g. ENOBUFS, timeout) is still recoverable.
+		// Peer disconnects are expected. Debug logging keeps other write errors
+		// available for diagnosis.
 		c.log.Debug("connection write failed, dropping", "err", err)
 		c.closed = true
 		c.uc.Close()

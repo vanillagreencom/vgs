@@ -1,24 +1,8 @@
 #!/usr/bin/env python3
-"""End-to-end controls: scripts/check-section-pointers.py run as a PROGRAM.
+"""Run section-pointer checks as processes over isolated git repositories.
 
-Its sibling `scripts/test-section-pointers.py` drives each arm as a function,
-which leaves the wiring between them — `audit`, `main`, and the `problems.extend`
-calls that assemble a verdict — guarded by nothing: eight mutants of that shape
-once survived with both the suite and the guard green. The worst,
-`if problems:` -> `if False:`, makes the CI step permanently green while the
-suite still prints "all reporting". Only a real exit status sees it, so this
-file builds throwaway git repos and runs the guard against them. That is a
-different kind of test rather than a longer one — it writes trees, creates
-symlinks, runs `git init` and reads process statuses — which is why it is a peer
-script.
-
-ONE TREE PER ARM, each isolating its arm AND asserting the diagnostic it
-expects, because a dropped `problems.extend` is invisible when another arm
-reports anyway. The arms are enumerated by the trees below rather than counted
-here; that count went stale twice. Two further trees pin the rule underneath
-them all — the guard judges TRACKED BLOBS, never the working tree — one through
-a symlink out of the repo, one through a file clean in the index and dead on
-disk. The mutation set is recorded in `scripts/test-section-pointers.py`.
+Each tree isolates a check and requires its status and diagnostic. Index and
+symlink fixtures distinguish blob reads from working-tree reads.
 """
 
 from __future__ import annotations
@@ -43,24 +27,16 @@ _SPEC = importlib.util.spec_from_file_location(
 check = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(check)
 
-# The stand-in entry for an EMPTY HISTORICAL_SECTIONS, imported rather than
-# restated: `scripts/test-section-pointers.py` owns it, drives the same two
-# staleness arms in-process, and a second literal here would drift the day one
-# of them is reworded. The table ships empty because KEN-839 deleted
-# check-doc-growth.py, this repo's last citer of a removed section.
+# Import the same fallback exemption entry used by in-process controls.
 _UNIT_SPEC = importlib.util.spec_from_file_location(
     "test_section_pointers", HERE / "test-section-pointers.py"
 )
 _unit = importlib.util.module_from_spec(_UNIT_SPEC)
 _UNIT_SPEC.loader.exec_module(_unit)
 FIXTURE_HISTORICAL = _unit.FIXTURE_HISTORICAL
-# The declaration the copied guard carries, patched in run_guard when the
-# shipped table is empty. Spelled out so a rename fails the run rather than
-# silently skipping the patch.
+# Require the copied declaration to match before installing the fixture entry.
 EMPTY_TABLE = "HISTORICAL_SECTIONS: dict[tuple[str, str, str], str] = {}\n"
-# READ ONCE, BEFORE THE INSTALL BELOW, because it is what decides whether the
-# copied guard needs patching too — after the install the in-process table is
-# never empty and that question can no longer be asked.
+# Capture emptiness before installing the fallback in the imported module.
 SHIPPED_HISTORICAL = dict(check.HISTORICAL_SECTIONS)
 if not SHIPPED_HISTORICAL:
     # end_to_end_controls() calls check.audit() in-process on the same trees the
@@ -74,11 +50,6 @@ def historical_entries() -> dict[tuple[str, str, str], str]:
     return dict(check.HISTORICAL_SECTIONS)
 
 
-# A tree the guard must pass end to end: every SWEEP_ANCHOR present with
-# headings, every GRAMMAR_SPELLINGS arm exercised, and the HISTORICAL_SECTIONS
-# citer carrying the pointers those entries exempt. Built from the check's own
-# tables, not from a second copy of them, so adding an anchor or a spelling
-# fails here until this tree covers it.
 DECISION = "docs/decisions/D001-fixture-record.md"
 
 
@@ -91,9 +62,7 @@ def clean_tree(*, with_pointers: bool = True) -> dict[str, bytes | str]:
     anchor or a spelling fails here until this tree covers it.
     """
     anchor = check.SWEEP_ANCHORS[0]
-    # One document under each anchor ROOT, derived rather than named: the roots
-    # exist precisely because no filename under them survives a consolidation of
-    # that tree, so a fixture that named one would carry the defect this closed.
+    # Use root-derived paths so fixture filenames do not constrain document renames.
     under_roots = tuple(f"{root}anchored.md" for root in check.ANCHOR_ROOTS)
     documents = (*check.SWEEP_ANCHORS, *check.TARGET_ANCHORS, *under_roots, DECISION)
     tree: dict[str, bytes | str] = {
@@ -122,24 +91,13 @@ def clean_tree(*, with_pointers: bool = True) -> dict[str, bytes | str]:
         tree[citer] = f'{tree[citer]}# recorded: `{target}` {SECTION_MARK} "{name}" gone\n'
     for rel in check.FIXTURE_FILES:
         tree.setdefault(rel, "")
-    # One document under each OWNED_ROOT, derived the same way: the carve-out
-    # arm fails on a tree with none, so a root added there fails here until
-    # this tree covers it.
     for root in check.OWNED_ROOTS:
         tree.setdefault(f"{root}SKILL.md", f"# {root}\n\n## Live section\n")
     return tree
 
 
 def end_to_end_controls() -> list[str]:
-    """The wiring that assembles the arms into a verdict, which no arm observes.
-
-    Every other control drives one function. That left `audit`, `main` and the
-    `problems.extend` calls between them unguarded, and eight wiring
-    mutants survived with both the suite and the guard green — worst among them
-    `if problems:` -> `if False:`, which makes the CI step permanently green
-    while this file still prints "all reporting". Only a real exit status sees
-    that one, so the guard is also run as a process against a throwaway repo.
-    """
+    """Check audit and main failure propagation through process results."""
     failures: list[str] = []
     clean = clean_tree()
     dirty = dict(clean, **{"citer.md": f"# C\n\n`AGENTS.md` {SECTION_MARK} Gone.\n"})
@@ -155,9 +113,7 @@ def end_to_end_controls() -> list[str]:
             "dropped between the arm and the caller"
         )
 
-    # ONE TREE PER ARM main() ASSEMBLES, each isolating that arm: a dropped
-    # `problems.extend` is otherwise invisible, since every other arm stays
-    # silent and the exit status is the only thing that can see the omission.
+    # Isolate each assembled check so another failure cannot hide an omitted call.
     fixture_untracked = {
         rel: text for rel, text in clean.items() if rel not in check.FIXTURE_FILES
     }
@@ -168,9 +124,7 @@ def end_to_end_controls() -> list[str]:
     exemption_unused = dict(clean)
     for citer, _target, _name in historical_entries():
         exemption_unused[citer] = "# nothing is cited here\n"
-    # The anchor no pointer in clean_tree names, by PATH OR BASENAME — the first
-    # attempt matched on path alone and picked one cited by basename, so the
-    # pointer arm answered first and the tree stayed rc=1 under both mutants.
+    # Choose an anchor cited by neither path nor basename to isolate heading checks.
     documents = {*check.SWEEP_ANCHORS, *check.TARGET_ANCHORS, DECISION}
     prose = "".join(
         text
@@ -183,8 +137,7 @@ def end_to_end_controls() -> list[str]:
         if rel not in prose and rel.rsplit("/", 1)[-1] not in prose
     )
     heading_gone = dict(clean, **{uncited: "no heading in this file\n"})
-    # EACH ROW NAMES THE FINDING IT EXPECTS, not just an exit status: rc alone
-    # let a tree tripping a DIFFERENT arm pass as if it had proved its own.
+    # Require the expected diagnostic as well as failure status.
     for case, tree, want, expect in (
         ("clean", clean, 0, ""),
         ("with a dead pointer", dirty, 1, "has no such heading"),
@@ -201,10 +154,7 @@ def end_to_end_controls() -> list[str]:
             dict(clean, **{"x.md": b"# \xff\n"}), 1, "none of its headings could be parsed",
         ),
         (
-            # THE SAME BLOB INSIDE AN OWNED TREE. `is_citer` carves those out of
-            # a skipped root, and this arm used to ask the question its own way
-            # — so the sweep dropped the file and the arm skipped it, and the
-            # guard reported clean on a first-party document it could not read.
+            # Unreadable owned-skill documents must use the same scope as the sweep.
             "with an unreadable markdown blob inside an owned skill tree",
             dict(clean, **{f"{check.OWNED_ROOTS[0]}notes.md": b"# \xff\n"})
             if check.OWNED_ROOTS
@@ -221,10 +171,7 @@ def end_to_end_controls() -> list[str]:
             heading_gone, 1, "expected member(s) are absent",
         ),
         (
-            # The ambiguity check asked only the PARSED documents, so a duplicate
-            # basename whose twin is a symlink was invisible to it and the
-            # readable one answered for the name. Only the guard's own
-            # construction of the target set can be seen from out here.
+            # Only process controls exercise the guard construction of unreadable candidates.
             "with a duplicate basename whose twin is a tracked symlink",
             dict(clean, **{
                 "a/dup.md": "# A\n\n## Live section\n",
@@ -234,9 +181,7 @@ def end_to_end_controls() -> list[str]:
             "tracked documents share",
         ),
         (
-            # Without the cause map a pointer at a tracked symlinked .md gets
-            # "not a tracked markdown file", which is false — it IS tracked. The
-            # other symlink fixture cannot see this: nothing in it CITES a link.
+            # A cited symlink tests its cause map; an uncited symlink does not.
             "with a citer naming a tracked markdown symlink",
             dict(clean, **{
                 "citer.md": f"# C\n\n`link.md` {SECTION_MARK} Live section.\n",
@@ -294,11 +239,7 @@ def end_to_end_controls() -> list[str]:
                 f"some other arm and proves nothing about the one it names: {output}"
             )
 
-    # THE REGISTER IS A PREREQUISITE, NOT AN INPUT WHOSE ABSENCE MEANS "NONE".
-    # Every skill root the guard carves out of `.agents/` comes from
-    # `kendex.toml`; without it the sweep would skip that whole tree and the ok
-    # line would print. Asserted on the diagnostic, since rc=1 alone is what a
-    # traceback also gives.
+    # An absent register must report a prerequisite error, not an empty owned scope.
     status, output = run_guard(clean, register=False)
     if status == 0 or "yielded no" not in output and "could not be read" not in output:
         failures.append(
@@ -308,9 +249,7 @@ def end_to_end_controls() -> list[str]:
             f"skill tree: {output}"
         )
 
-    # THE GUARD JUDGES TRACKED BLOBS, NOT THE WORKING TREE, and each half of
-    # that has its own fixture. Both are paired against `dirty` above — the same
-    # dead pointer, tracked, asserted rc=1 — so neither can pass by being inert.
+    # Pair index and working-tree cases with the same dead pointer indexed.
     dead = f"# Outside\n\n`AGENTS.md` {SECTION_MARK} Gone section.\n"
     for case, kwargs in (
         (
@@ -321,9 +260,7 @@ def end_to_end_controls() -> list[str]:
             {"symlinks": {"link.md": "../outside.md"}, "outside": dead},
         ),
         (
-            # Tracked and clean in the index, dead on disk. Reading the working
-            # tree judges bytes no reviewer approved and no PR contains; it is
-            # also what silently swallowed a file absent from the checkout.
+            # The working copy differs from the indexed content under test.
             "judged the working tree instead of the tracked blob",
             {"after_add": {"AGENTS.md": dead}},
         ),
@@ -332,11 +269,8 @@ def end_to_end_controls() -> list[str]:
         if status != 0:
             failures.append(f"the guard {case}: {output}")
 
-    # THE FIXTURE STAYS INSIDE ITS TEMPDIR. An absolute GIT_INDEX_FILE in the
-    # environment redirects `git -C <fixture> add -A` into whatever repository it
-    # names — this rewrote THIS worktree's index during review, staging 21,050
-    # deletions while the suite exited 0. The victim's index is read before and
-    # after and must be byte-identical.
+    # An absolute GIT_INDEX_FILE can redirect fixture writes to another repository.
+    # Require that repository index to remain byte-identical.
     with tempfile.TemporaryDirectory() as workdir:
         victim = Path(workdir) / "victim"
         victim.mkdir()
@@ -351,9 +285,7 @@ def end_to_end_controls() -> list[str]:
         try:
             status, output = run_guard(clean)
         finally:
-            # RESTORED, not deleted: the ambient value is the exact condition
-            # this control exists for, and dropping it would leave every later
-            # control in this process running without it.
+            # Restore the ambient value so subsequent controls keep the same environment.
             if prior is None:
                 os.environ.pop("GIT_INDEX_FILE", None)
             else:
@@ -370,17 +302,10 @@ def end_to_end_controls() -> list[str]:
                 "repository's index while reporting ok"
             )
 
-    # SKIP_ROOTS FILTERS CITERS, NOT TARGETS. A vendored doc is not ours to
-    # EDIT, which says nothing about whether it can be NAMED — and blaming a
-    # correct pointer at one on its citer ("not a tracked markdown file. Repoint
-    # it") is wrong in every clause. Both halves are asserted: naming a vendored
-    # heading passes, and a dead pointer INSIDE that tree is not read at all.
+    # Skipped citer roots still provide target headings; test both directions.
     vendored = check.SKIP_ROOTS[0]
     anchor = check.SWEEP_ANCHORS[0]
-    # NAMED, NOT AN IndexError. OWNED_ROOTS is derived from kendex.toml's
-    # `source = "in-place"` rows, so an empty one means the register stopped
-    # naming any skill as this repo's — a finding, and indexing it for the rows
-    # below would report that as a traceback with no sentence in it.
+    # An empty owned-root set needs a diagnostic before fixtures index it.
     if not check.OWNED_ROOTS:
         return failures + [
             "OWNED_ROOTS is empty, so no tree under a skipped root is read for "
@@ -442,20 +367,11 @@ def run_guard(
     after_add: dict[str, str] | None = None,
     register: bool = True,
 ) -> tuple[int, str]:
-    """Run the real check as a PROCESS over a throwaway repo, returning (rc, output).
+    """Run the guard over a temporary repository and return status and output.
 
-    The scripts are copied in so the check's `REPO_ROOT`, derived from its own
-    location, lands on the fixture repo rather than on this one. `symlinks` are
-    tracked links; `outside` writes a file BESIDE the repo for one to point at.
-
-    EVERY SUBPROCESS GETS A SCRUBBED ENVIRONMENT, the guard included, because it
-    shells out to git itself. Inherited, an ABSOLUTE `GIT_DIR` or
-    `GIT_INDEX_FILE` makes `git -C <fixture> add -A` write the fixture's paths
-    into whatever repository the variable names, leaving that one's index
-    referencing blobs it does not have — this happened to this worktree during
-    review. `tracked_blobs.git_env` is the one definition of what to remove; the
-    hermetic form also silences user and system config, so `git add -A` cannot
-    inherit a `core.excludesFile` that declines to add a fixture.
+    Copy scripts so their root resolves to the fixture. Scrub git redirects for
+    every child process, including the guard. Isolate configuration so host
+    exclusion rules cannot suppress fixture staging.
     """
     with tempfile.TemporaryDirectory() as workdir:
         root = Path(workdir) / "repo"
@@ -474,9 +390,7 @@ def run_guard(
         env = tracked_blobs.git_env(hermetic=True)
         subprocess.run(["git", "-C", str(root), "init", "-q"], check=True, env=env)
         subprocess.run(["git", "-C", str(root), "add", "-A"], check=True, env=env)
-        # THE FIXTURE SET IS A COLLECTION TOO, and it was the one never asserted:
-        # `git add -A` can decline a path, so a control could pass on a tree that
-        # never held its fixture at all.
+        # Require every fixture path to be staged; git add can exclude a file.
         staged = set(
             subprocess.run(
                 ["git", "-C", str(root), "ls-files"],
@@ -492,11 +406,7 @@ def run_guard(
         # does not sweep its own source: these files carry real pointers into
         # this repo's docs, none of which exist in a fixture tree.
         shutil.copytree(HERE, root / "scripts", dirs_exist_ok=True)
-        # AN EMPTY SHIPPED TABLE IS PATCHED, because every tree above cites the
-        # section its entry exempts: with no entry the guard reads those
-        # citations as DEAD POINTERS and each case fails on the wrong arm. The
-        # copy gets the same fixture entry the trees were built from, and is
-        # left alone whenever the shipped table has entries of its own.
+        # Install the fallback exemption only when the copied guard table is empty.
         if not SHIPPED_HISTORICAL:
             copied = root / "scripts" / "check-section-pointers.py"
             source = copied.read_text(encoding="utf-8")
@@ -506,12 +416,8 @@ def run_guard(
             if patched == source:
                 return -1, "the empty HISTORICAL_SECTIONS declaration was not found to patch"
             copied.write_text(patched, encoding="utf-8")
-        # AND THE REGISTER BESIDE THEM, untracked for the same reason. OWNED_ROOTS
-        # is read from `kendex.toml`, so the fixture repo needs this repo's own
-        # copy for the carve-out under test to be the one the trees are built
-        # from. `register=False` withholds it, which is its own control: a guard
-        # that cannot read the register must refuse rather than sweep with no
-        # carve-out at all.
+        # Copy the register untracked so its owned roots match the fixture trees.
+        # The missing-register control explicitly withholds it.
         if register:
             shutil.copy(REPO_ROOT / "kendex.toml", root / "kendex.toml")
         done = subprocess.run(

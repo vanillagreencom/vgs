@@ -7,22 +7,13 @@ import Quickshell.Io
 import qs.Common
 import qs.Services
 
-// Scratchpads: apps parked on hidden special workspaces that one keybind slides
-// in and out. This service is a thin seam onto `vshell scratchpad ...` — every
-// piece of real work (percentage resolution, config generation, the runtime
-// toggle) lives in bin/vshell-helper, because generating compositor config is
-// exactly the "heavy work / large template renderer" that must not sit in QML.
-//
-// See docs/architecture/scratchpads.md.
+// The helper owns scratchpad generation and runtime toggles; this service exposes those actions and results to QML.
 Singleton {
     id: root
     readonly property var log: Log.scoped("ScratchpadService")
 
-    // Two backends, one schema. Hyprland is the reference implementation; Niri
-    // has its own generator and its own toggle (VGS-83) because it has no
-    // special workspaces — a pad there is a named workspace, not an overlay.
-    // The helper decides for itself which one answers; this flag only keeps the
-    // UI honest rather than being the thing that enforces it.
+    // Hyprland uses special workspaces; Niri uses named workspaces.
+    // The helper selects the backend, and this flag controls UI availability.
     readonly property bool supported: CompositorService.isHyprland || CompositorService.isNiri
     readonly property bool onNiri: CompositorService.isNiri
 
@@ -55,9 +46,7 @@ Singleton {
     property bool applying: false
     property bool _applyPending: false
 
-    // Why the last apply failed, or "" when it succeeded. A failed apply used
-    // to leave the previous status on screen and say nothing, so the page kept
-    // reporting rules that were never written.
+    // The last apply error, or an empty string after success.
     property string lastError: ""
 
     // Pads the helper could not use, each with the reason. A rejected pad
@@ -136,18 +125,8 @@ Singleton {
         }
     }
 
-    // What each pad's pattern currently claims, keyed by pad id. A class match
-    // applies to every instance of the application, and nothing showed that —
-    // so a pad configured for a terminal quietly claimed every window of it.
-    //
-    // Each entry is {state, count, error} with state one of:
-    //   "known"   - count is meaningful
-    //   "unknown" - nothing to ask (no session, or the query never answered)
-    //   "error"   - the pattern itself is broken; `error` says how
-    // Three states, not a number with sentinels: an unevaluable pattern
-    // rendered as "0 windows match" reads as a working pattern that happens to
-    // match nothing, which is precisely the failure this feature exists to
-    // surface.
+    // Pattern matches by pad id: {state, count, error}.
+    // Count is meaningful only for known state; unknown means no answer, and error means the pattern is invalid.
     property var matchStates: ({})
 
     function _setMatchState(padId, state, count, error) {
@@ -200,10 +179,7 @@ Singleton {
         root._statusAnswered = false;
         statusProc.command = [Paths.vshellCli, "scratchpad", "status"];
         statusProc.running = true;
-        // A command that cannot start emits no `exited` AND no running->false
-        // transition, so the handler below never fires and the include state
-        // would keep its previous value — the same stale-authority bug finding 1
-        // fixed, reached through a different door. Route it to the same place.
+        // A failed start emits no exit or running transition; route it through completion so include state becomes unknown.
         if (!statusProc.running)
             root._markStatusUnknown("scratchpad status helper could not be started");
     }
@@ -228,37 +204,13 @@ Singleton {
         Quickshell.execDetached([Paths.vshellCli, "scratchpad", "toggle", String(padId)]);
     }
 
-    // ---- dismissOnFocusLoss ------------------------------------------------
-    //
-    // Hide a pad when focus leaves it. The subscription is NOT ours: compositor
-    // focus has exactly one owner in this shell, CompositorService, which
-    // attaches to Quickshell's process-wide `ToplevelManager` / `Hyprland`
-    // singletons. This service reads two facts it publishes — which special
-    // workspaces are on screen, and where the focused window lives — and never
-    // opens an event subscription of its own. See docs/architecture/scratchpads.md.
-    //
-    // `hide`, not `toggle`: a toggle evaluated against state that has moved on
-    // would REVEAL the pad the user just dismissed. The direction is never
-    // inferred here.
-    // The trigger is the focus TRANSITION off a pad's workspace, not "the pad
-    // is visible and unfocused". Visibility would have to come from a monitor's
-    // special-workspace field, which Quickshell only refreshes on request and
-    // asynchronously — so it is stale at precisely the moment a pad is being
-    // revealed or hidden. Where the focused window lives is maintained live
-    // from the event socket instead, and a window's workspace does not change
-    // when focus moves, so the two values being compared are both settled.
-    // NOT filtered on `enabled`. Dismissal only ever HIDES, and hiding a
-    // disabled pad is exactly what must keep working: disabling a pad while it
-    // is on screen would otherwise strand it visible with no keybind left to
-    // dismiss it. The helper allows the same thing for the same reason, and
-    // skipping disabled pads here would put the two halves in disagreement.
+    // Use shared CompositorService focus transitions to hide pads when focus leaves their workspace.
+    // Monitor visibility snapshots can be stale during a reveal.
+    // Use hide rather than toggle, and permit dismissal of disabled pads so they cannot remain stranded on screen.
     readonly property var dismissOnFocusLossPads: (SettingsData.scratchpads || []).filter(pad => pad && pad.dismissOnFocusLoss)
 
     property string _lastFocusedWorkspace: ""
-    // Every pad awaiting dismissal, not just the most recent. On multiple
-    // monitors two pads can be on screen at once, and focus can leave both
-    // before the settle delay expires; keeping one id silently dropped the
-    // other dismissal.
+    // Keep every pending pad id because focus can leave pads on different monitors before the settle timer fires.
     property var _pendingDismissIds: []
 
     Connections {
@@ -304,10 +256,7 @@ Singleton {
             if (pending.length === 0)
                 return;
             const focused = CompositorService.activeWorkspaceName;
-            // Same rule as on the way in, and it has to hold here too: an
-            // unknown focus is not "focus is elsewhere". Treating it as such
-            // dismissed every pending pad on any hiccup — which is the exact
-            // thing the entry path refuses to do.
+            // Unknown focus does not prove that focus left a pad; retain pending state until a usable answer arrives.
             if (!focused) {
                 root.log.debug("Focus is unknown at expiry; dismissing nothing");
                 return;
@@ -329,20 +278,8 @@ Singleton {
         }
     }
 
-    // Move a pad's window back to the active workspace, and report whether it
-    // worked. Called just before a pad is deleted, so its window is never
-    // stranded on a special workspace that no longer has a keybind or a rule
-    // pointing at it.
-    //
-    // Both match criteria are passed in rather than looked up: the caller is
-    // about to rewrite the settings the helper would read them from, and they
-    // travel together because releasing on the class alone would drag a
-    // same-class window the user excluded from the pad onto their active
-    // workspace. Release must own exactly the windows the placement rule owned.
-    //
-    // NOT execDetached: the caller deletes the record only if this succeeds, so
-    // the result has to come back. A discarded result meant the record was
-    // deleted whether or not the window ever moved.
+    // Move matching pad windows to the active workspace and return success before deleting the pad.
+    // Pass class and title criteria together because settings may change before the helper reads them.
     function release(padId, classRegex, titleExclude, onDone) {
         if (!supported || !padId) {
             if (onDone)
@@ -410,10 +347,7 @@ Singleton {
     }
 
     Component.onCompleted: {
-        // Seed the remembered workspace, so a service constructed while focus
-        // is already on a pad does not miss that pad's first transition:
-        // without it the first `_onFocusMoved` had no `previous` to compare
-        // against and threw the transition away.
+        // Seed current workspace at startup so the first focus transition has a previous workspace to compare.
         root._lastFocusedWorkspace = CompositorService.activeWorkspaceName;
         refreshStatus();
     }
@@ -602,15 +536,7 @@ Singleton {
             }
         }
 
-        // A status query that produced no answer must not leave the previous one
-        // standing as though it were fresh. Logging alone was not enough: the
-        // stale value stayed in `status.included`, and a stale `true` silences
-        // the include banner — the one whose entire job is to say "your rules
-        // are not wired up" — on the strength of an answer that never arrived.
-        //
-        // `included: null` is the third state, distinct from false. The page
-        // says it does not know, rather than picking one of the two answers it
-        // has no evidence for.
+        // Invalidate unanswered include queries with included: null so stale success cannot hide the include warning.
         onRunningChanged: {
             if (running || root._statusAnswered)
                 return;

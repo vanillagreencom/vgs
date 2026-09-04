@@ -4,8 +4,7 @@ import QtQuick
 import qs.Common
 import qs.Widgets
 
-// Directory-only browser. The shared FileBrowser is file-oriented; sync needs a
-// folder, and offering files would only produce errors later.
+// Directory-only browser for selecting a local sync root.
 Item {
     id: root
 

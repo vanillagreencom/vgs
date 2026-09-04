@@ -20,22 +20,16 @@ bundle="$stage/$name"
 mkdir -p "$bundle/bin" "$out"
 
 cp -a "$root/quickshell" "$root/config" "$root/systemd" "$root/third_party" "$bundle/"
-# The vendored icon themes are ~48 MiB and ship only with the extras bundle.
+# Vendored icons ship in the extras bundle.
 rm -rf -- "${bundle:?}/config/vshell/icons"
-# Themes: the core set only. The other ~1.0 GiB is scripts/build-assets.sh's
-# artifact, and the shell downloads individual themes on demand from the pinned
-# catalog. The core set here must match install-system.sh's `core` arm.
+# The core theme set must match install-system.sh's core bundle.
 mkdir -p "$bundle/themes"
 cp -a "$root/themes/coppernight" "$root/themes/targets" "$bundle/themes/"
 cp "$root/themes/catalog.json" "$root/themes"/*.md "$bundle/themes/"
-# Every other theme's screenshot, so the download browser can SHOW what it
-# offers. install-system.sh derives these by scanning the theme tree, which this
-# bundle deliberately no longer carries, so they are generated here instead and
-# the installer copies them when they are already present.
+# The core archive omits the theme trees that the installer uses to derive previews.
+# Include previews so the download browser can display those themes.
 mkdir -p "$bundle/themes/catalog-previews"
-# `theme_name`, NOT `name`: this script's `name` holds the bundle's own
-# directory and archive name, and reusing it here silently renamed the artifact
-# to whichever theme happened to be last.
+# Keep name reserved for the archive name.
 for theme in "$root"/themes/*/; do
   theme_name="$(basename "$theme")"
   [[ -f "$theme/theme.json" ]] || continue

@@ -9,20 +9,14 @@
 
 ;;; Commentary:
 
-;; An enhanced theme using VGS theme roles integrated with VGS ANSI colors:
-;; - Rich color palette from the VGS palette for vibrant syntax highlighting
-;; - Improved contrast and readability
-;; - Better source block distinction with refined backgrounds
-;; - Enhanced org-mode styling with hidden asterisks
-;; - Superior visual hierarchy and modern aesthetics
+;; Emacs theme rendered from VGS theme roles and ANSI colors.
 
 ;;; Code:
 
 (deftheme vgs-theme "Enhanced theme using VGS theme roles with VGS ANSI color integration.")
 
-;; Define all the color variables (replaced by template processor)
 (let* ((bg "{background}")
-      (err "{color1}")  ; Red from the VGS palette
+      (err "{color1}")
       (err-container "{errorContainer}")
       (on-background "{foreground}")
       (on-err "{onError}")
@@ -52,30 +46,27 @@
       (tertiary "{tertiary}")
       (tertiary-container "{tertiaryContainer}")
 
-      ;; Enhanced VGS ANSI colors for better syntax highlighting
-      (vgs-red "{color1}")          ; Bright red
-      (vgs-red-alt "{color9}")      ; Alternative red
-      (vgs-green "{color2}")        ; Vibrant green
-      (vgs-green-bright "{color10}") ; Bright green
-      (vgs-yellow "{color3}")       ; Warm yellow
-      (vgs-yellow-bright "{color11}") ; Bright yellow
-      (vgs-blue "{color4}")         ; Blue-green
-      (vgs-magenta "{color5}")      ; Teal-magenta
-      (vgs-cyan "{color6}")         ; Bright cyan
-      (vgs-cyan-bright "{color12}") ; Brightest cyan
-      (vgs-cyan-dark "{color13}")   ; Dark cyan
-      (vgs-teal "{color14}")        ; Dark teal
-      (vgs-fg "{color7}")           ; Light foreground
-      (vgs-gray "{color8}")         ; Gray
-      (vgs-white "{color15}")       ; White
+      (vgs-red "{color1}")
+      (vgs-red-alt "{color9}")
+      (vgs-green "{color2}")
+      (vgs-green-bright "{color10}")
+      (vgs-yellow "{color3}")
+      (vgs-yellow-bright "{color11}")
+      (vgs-blue "{color4}")
+      (vgs-magenta "{color5}")
+      (vgs-cyan "{color6}")
+      (vgs-cyan-bright "{color12}")
+      (vgs-cyan-dark "{color13}")
+      (vgs-teal "{color14}")
+      (vgs-fg "{color7}")
+      (vgs-gray "{color8}")
+      (vgs-white "{color15}")
 
-      ;; Map success colors to green
       (success "{color2}")
       (on-success "{onTertiary}")
       (success-container "{tertiaryContainer}")
       (on-success-container "{onTertiaryContainer}")
 
-      ;; Map fixed colors
       (primary-fixed "{primaryContainer}")
       (primary-fixed-dim "{primary}")
       (secondary-fixed "{secondaryContainer}")
@@ -89,12 +80,10 @@
       (on-tertiary-fixed "{onTertiaryContainer}")
       (on-tertiary-fixed-variant "{onTertiaryContainer}")
 
-      ;; Map inverse colors
       (inverse-on-surface "{inverseOnSurface}")
       (inverse-primary "{inversePrimary}")
       (inverse-surface "{inverseSurface}")
 
-      ;; Terminal colors from the VGS palette
       (term0 "{color0}")
       (term1 "{color1}")
       (term2 "{color2}")
@@ -114,7 +103,6 @@
 
   (custom-theme-set-faces
    'vgs-theme
-   ;; Basic faces
    `(default ((t (:background ,bg :foreground ,on-background))))
    `(cursor ((t (:background ,vgs-cyan-bright))))
    `(highlight ((t (:background ,primary-container :foreground ,on-primary-container))))
@@ -133,7 +121,6 @@
    `(error ((t (:foreground ,err))))
    `(match ((t (:background ,vgs-yellow :foreground ,bg :weight bold))))
 
-   ;; Font-lock - enhanced with VGS ANSI colors for vibrant syntax highlighting
    `(font-lock-builtin-face ((t (:foreground ,vgs-cyan-bright))))
    `(font-lock-comment-face ((t (:foreground ,vgs-gray :slant italic))))
    `(font-lock-comment-delimiter-face ((t (:foreground ,outline-variant))))
@@ -148,18 +135,15 @@
    `(font-lock-preprocessor-face ((t (:foreground ,vgs-teal))))
    `(font-lock-negation-char-face ((t (:foreground ,vgs-red))))
 
-   ;; Show paren
    `(show-paren-match ((t (:background ,primary-container :foreground ,vgs-cyan-bright :weight bold))))
    `(show-paren-mismatch ((t (:background ,err-container :foreground ,on-err-container :weight bold))))
 
-   ;; Mode line - improved status bar styling
    `(mode-line ((t (:background ,surface-container :foreground ,on-surface :box nil))))
    `(mode-line-inactive ((t (:background ,surface :foreground ,vgs-gray :box nil))))
    `(mode-line-buffer-id ((t (:foreground ,vgs-cyan :weight bold))))
    `(mode-line-emphasis ((t (:foreground ,vgs-cyan :weight bold))))
    `(mode-line-highlight ((t (:foreground ,vgs-cyan-bright :box nil))))
 
-   ;; Improved Source blocks - seamless integration
    `(org-block ((t (:background ,surface-container-low :extend t :inherit fixed-pitch))))
    `(org-block-begin-line ((t (:background ,surface-container-low :foreground ,vgs-teal :extend t :slant italic :inherit fixed-pitch))))
    `(org-block-end-line ((t (:background ,surface-container-low :foreground ,vgs-teal :extend t :slant italic :inherit fixed-pitch))))
@@ -167,7 +151,6 @@
    `(org-verbatim ((t (:background ,surface-container-low :foreground ,vgs-cyan :inherit fixed-pitch))))
    `(org-meta-line ((t (:foreground ,vgs-gray :slant italic))))
 
-   ;; Org mode with enhanced colors and hidden asterisks
    `(org-level-1 ((t (:foreground ,vgs-cyan :weight bold :height 1.2))))
    `(org-level-2 ((t (:foreground ,vgs-blue :weight bold :height 1.1))))
    `(org-level-3 ((t (:foreground ,vgs-magenta :weight bold))))
@@ -190,7 +173,6 @@
    `(org-special-keyword ((t (:foreground ,vgs-gray :slant italic))))
    `(org-tag ((t (:foreground ,vgs-gray :weight normal))))
 
-   ;; Magit with enhanced diff colors
    `(magit-section-highlight ((t (:background ,surface-container-low))))
    `(magit-diff-hunk-heading ((t (:background ,surface-container :foreground ,vgs-gray))))
    `(magit-diff-hunk-heading-highlight ((t (:background ,surface-container-high :foreground ,on-surface))))
@@ -204,7 +186,6 @@
    `(magit-branch-local ((t (:foreground ,vgs-blue :weight bold))))
    `(magit-branch-remote ((t (:foreground ,vgs-cyan :weight bold))))
 
-   ;; Company
    `(company-tooltip ((t (:background ,surface-container :foreground ,on-surface))))
    `(company-tooltip-selection ((t (:background ,primary-container :foreground ,vgs-cyan-bright))))
    `(company-tooltip-common ((t (:foreground ,vgs-cyan))))
@@ -215,14 +196,12 @@
    `(company-preview ((t (:foreground ,vgs-gray :slant italic))))
    `(company-preview-common ((t (:foreground ,vgs-cyan :slant italic))))
 
-   ;; Ido
    `(ido-first-match ((t (:foreground ,vgs-cyan :weight bold))))
    `(ido-only-match ((t (:foreground ,vgs-green :weight bold))))
    `(ido-subdir ((t (:foreground ,vgs-blue))))
    `(ido-indicator ((t (:foreground ,vgs-red))))
    `(ido-virtual ((t (:foreground ,vgs-gray))))
 
-   ;; Helm
    `(helm-selection ((t (:background ,primary-container :foreground ,vgs-cyan-bright))))
    `(helm-match ((t (:foreground ,vgs-cyan :weight bold))))
    `(helm-source-header ((t (:background ,surface-container-high :foreground ,vgs-cyan :weight bold :height 1.1))))
@@ -231,26 +210,21 @@
    `(helm-ff-file ((t (:foreground ,on-surface))))
    `(helm-ff-executable ((t (:foreground ,vgs-green))))
 
-   ;; corfu
    `(corfu-default ((t (:background ,surface-container :foreground ,on-surface))))
    `(corfu-current ((t (:background ,primary-container :foreground ,vgs-cyan-bright))))
 
-   ;; Which-key
    `(which-key-key-face ((t (:foreground ,vgs-cyan :weight bold))))
    `(which-key-separator-face ((t (:foreground ,outline-variant))))
    `(which-key-command-description-face ((t (:foreground ,on-surface))))
    `(which-key-group-description-face ((t (:foreground ,vgs-blue))))
    `(which-key-special-key-face ((t (:foreground ,vgs-yellow :weight bold))))
 
-   ;; Line numbers
    `(line-number ((t (:foreground ,vgs-gray :inherit default))))
    `(line-number-current-line ((t (:foreground ,vgs-cyan :weight bold :inherit default))))
 
-   ;; Parenthesis matching
    `(sp-show-pair-match-face ((t (:background ,primary-container :foreground ,vgs-cyan-bright))))
    `(sp-show-pair-mismatch-face ((t (:background ,err-container :foreground ,on-err-container))))
 
-   ;; Rainbow delimiters - vibrant colors
    `(rainbow-delimiters-depth-1-face ((t (:foreground ,vgs-cyan))))
    `(rainbow-delimiters-depth-2-face ((t (:foreground ,vgs-yellow))))
    `(rainbow-delimiters-depth-3-face ((t (:foreground ,vgs-green))))
@@ -263,7 +237,6 @@
    `(rainbow-delimiters-mismatched-face ((t (:foreground ,err :weight bold))))
    `(rainbow-delimiters-unmatched-face ((t (:foreground ,err :weight bold))))
 
-   ;; Dired
    `(dired-directory ((t (:foreground ,vgs-cyan :weight bold))))
    `(dired-ignored ((t (:foreground ,vgs-gray))))
    `(dired-flagged ((t (:foreground ,vgs-red))))
@@ -271,7 +244,6 @@
    `(dired-symlink ((t (:foreground ,vgs-magenta :slant italic))))
    `(dired-header ((t (:foreground ,vgs-cyan :weight bold :height 1.1))))
 
-   ;; Terminal colors
    `(term-color-black ((t (:foreground ,term0 :background ,term0))))
    `(term-color-red ((t (:foreground ,term1 :background ,term1))))
    `(term-color-green ((t (:foreground ,term2 :background ,term2))))
@@ -281,7 +253,6 @@
    `(term-color-cyan ((t (:foreground ,term6 :background ,term6))))
    `(term-color-white ((t (:foreground ,term7 :background ,term7))))
 
-   ;; EShell
    `(eshell-prompt ((t (:foreground ,vgs-cyan :weight bold))))
    `(eshell-ls-directory ((t (:foreground ,vgs-cyan :weight bold))))
    `(eshell-ls-symlink ((t (:foreground ,vgs-magenta :slant italic))))
@@ -295,7 +266,6 @@
    `(eshell-ls-special ((t (:foreground ,vgs-blue))))
    `(eshell-ls-unreadable ((t (:foreground ,vgs-gray))))
 
-   ;; Improved markdown mode
    `(markdown-header-face ((t (:foreground ,vgs-cyan :weight bold))))
    `(markdown-header-face-1 ((t (:foreground ,vgs-cyan :weight bold :height 1.2))))
    `(markdown-header-face-2 ((t (:foreground ,vgs-blue :weight bold :height 1.1))))
@@ -306,7 +276,6 @@
    `(markdown-pre-face ((t (:background ,surface-container-low :inherit fixed-pitch))))
    `(markdown-table-face ((t (:foreground ,vgs-magenta :inherit fixed-pitch))))
 
-   ;; Web mode
    `(web-mode-html-tag-face ((t (:foreground ,vgs-cyan))))
    `(web-mode-html-tag-bracket-face ((t (:foreground ,vgs-gray))))
    `(web-mode-html-attr-name-face ((t (:foreground ,vgs-yellow))))
@@ -315,7 +284,6 @@
    `(web-mode-css-property-name-face ((t (:foreground ,vgs-blue))))
    `(web-mode-css-string-face ((t (:foreground ,vgs-green))))
 
-   ;; Flycheck
    `(flycheck-error ((t (:underline (:style wave :color ,err)))))
    `(flycheck-warning ((t (:underline (:style wave :color ,vgs-yellow)))))
    `(flycheck-info ((t (:underline (:style wave :color ,vgs-blue)))))
@@ -323,15 +291,12 @@
    `(flycheck-fringe-warning ((t (:foreground ,vgs-yellow))))
    `(flycheck-fringe-info ((t (:foreground ,vgs-blue))))
 
-   ;; Mini-buffer customization
    `(minibuffer-prompt ((t (:foreground ,vgs-cyan :weight bold))))
 
-   ;; Improved search highlighting
    `(lsp-face-highlight-textual ((t (:background ,primary-container :foreground ,vgs-cyan-bright :weight bold))))
    `(lsp-face-highlight-read ((t (:background ,secondary-container :foreground ,vgs-yellow-bright :weight bold))))
    `(lsp-face-highlight-write ((t (:background ,tertiary-container :foreground ,vgs-green-bright :weight bold))))
 
-   ;; Info and help modes
    `(info-title-1 ((t (:foreground ,vgs-cyan :weight bold :height 1.3))))
    `(info-title-2 ((t (:foreground ,vgs-blue :weight bold :height 1.2))))
    `(info-title-3 ((t (:foreground ,vgs-magenta :weight bold :height 1.1))))
@@ -341,7 +306,6 @@
    `(info-menu-star ((t (:foreground ,vgs-cyan))))
    `(info-node ((t (:foreground ,vgs-blue :weight bold))))
 
-   ;; Tabs
    `(tab-bar ((t (:background ,surface-container :foreground ,on-surface :box nil))))
    `(tab-bar-tab ((t (:background ,surface-container-high :foreground ,vgs-cyan :weight bold :box nil))))
    `(tab-bar-tab-inactive ((t (:background ,surface :foreground ,vgs-gray :box nil))))
@@ -359,15 +323,12 @@
    `(centaur-tabs-unselected-modified ((t (:background ,surface :foreground ,vgs-yellow))))
    `(centaur-tabs-active-bar-face ((t (:background ,vgs-cyan))))
 
-   ;; Fixed-pitch faces
    `(fixed-pitch ((t (:family "monospace"))))
    `(fixed-pitch-serif ((t (:family "monospace serif"))))
 
-   ;; Variable-pitch face
    `(variable-pitch ((t (:family "sans serif"))))
    ))
 
-;; Add org-mode hooks for hiding leading stars
 (with-eval-after-load 'org
   (setq org-hide-leading-stars t)
   (setq org-startup-indented t))

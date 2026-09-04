@@ -1,20 +1,7 @@
-"""Self-test for `prose_blocks`, run as `python3 scripts/lib/prose_blocks_selftest.py`.
+"""Controls for prose joining, structure boundaries and hidden headings.
 
-Kept beside the library, in the same shape as `qml_source_selftest.py`: these
-shapes change when the reading of wrapped prose is wrong, the helpers change
-when a caller needs a new distinction, and only one of the two is imported.
-
-The mutation set is recorded in `scripts/test-section-pointers.py`. Every
-control here is a PAIR, because "silent" alone proves nothing about why:
-each boundary rule is asserted silent where the boundary holds AND reported
-where the same text has none. The wrap controls are asserted on what the finding
-SAYS rather than that one exists — asserting mere existence let all three
-survive a `blocks()` that flushes after every line, each degrading into a
-different path that satisfied the same weak assertion.
-
-The findings are read through `pointer_problems`, one layer up, because that is
-where a joined block becomes something a person can be wrong about. A block
-reader has no verdict of its own to assert.
+Valid and invalid pairs distinguish correct boundaries from empty readers.
+Finding text identifies the rule exercised when another rule could also fail.
 """
 
 import sys
@@ -24,7 +11,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from prose_blocks import fence_left_open, headings  # noqa: E402
 from section_pointers import SECTION_MARK, pointer_problems  # noqa: E402
 
-# The SAME fixture in every control file; test-section-pointers.py says why.
 DOC = (
     "# Doc\n\n## Live section\n\n## Popout surfaces are screen-tall (and frosted)\n\n"
     "## `dismissOnFocusLoss`, and who owns focus\n"
@@ -45,9 +31,7 @@ def cited(citer: str) -> list[str]:
 def selftest() -> int:
     """Pin what joining, and refusing to join, must each produce."""
     failures: list[str] = []
-    # LINE JOINING, asserted by what the finding SAYS. Asserting only that
-    # something was reported let all three survive a blocks() that flushes every
-    # line — each degraded into a different path satisfying the same assertion.
+    # Require the intended diagnostic; a broken join can produce a different finding.
     for case, citer, wanted in (
         (
             "a target on the previous line",
@@ -71,9 +55,7 @@ def selftest() -> int:
                 f"pointer was judged against the wrong document or not at all"
             )
 
-    # BLOCK BOUNDARIES are the other half of joining, and each is asserted as a
-    # PAIR — silent where the boundary holds, reported where the same text has
-    # no boundary — or "silent" proves nothing about why.
+    # Pair boundaries with the same text joined so silence tests the boundary.
     for case, path, held, absent, wanted in (
         (
             # One bullet's target must not leak into the next. Written as two
@@ -102,9 +84,7 @@ def selftest() -> int:
                 f"so the control above passes on a reader that joins nothing"
             )
 
-    # A FENCE THAT NEVER CLOSES loses the rest of the file, in both readers and
-    # in both file types. Each case is paired with the balanced form, or
-    # "reported" would prove only that the fixture had a dead pointer in it.
+    # Pair unclosed fences with balanced forms to isolate the fence failure.
     for case, unbalanced, balanced in (
         (
             "a markdown fence",
@@ -128,11 +108,7 @@ def selftest() -> int:
         if headings(unbalanced) and not headings(balanced):
             failures.append(f"{case}: the heading reader disagrees about what a fence is")
 
-    # A HEADING INSIDE A FENCE IS NOT A HEADING, pinned on `headings()` directly
-    # and with NO heading outside the fence — the earlier pair began with one, so
-    # both sides were truthy and the assertion above could not fire either way.
-    # The fail-open direction is the one that matters: a fenced illustration
-    # would otherwise satisfy a pointer whose real heading had been deleted.
+    # No heading sits outside the fence, so finding any heading is an error.
     fenced_only = "```\n## Fenced only\n```\n"
     if headings(fenced_only):
         failures.append(
@@ -146,11 +122,7 @@ def selftest() -> int:
             "passes on a reader that finds no headings at all"
         )
 
-    # A HEADING THAT IS NOT RENDERED CANNOT SATISFY A POINTER — every way this
-    # reader has been caught calling one real, each PAIRED with the same heading
-    # written for real and asserted to resolve, or all of them pass on a reader
-    # that finds no headings at all. The stakes are section_pointers.py's four
-    # deliberately unfenced illustrations: safe only if this is right.
+    # Pair hidden headings with real ones so an empty reader cannot pass.
     for case, doc in (
         ("inside a fence", "# D\n\n```\n## Live section\n```\n"),
         ("inside a four-space indented code block", "# D\n\n    ## Live section\n"),
@@ -183,9 +155,7 @@ def selftest() -> int:
                 f"{case} control passes on a reader that finds no headings"
             )
 
-    # THE COMMENT MUST ALSO CLOSE, the half its own fixture cannot show: a state
-    # machine that opens on `<!--` and never closes swallows the rest of the
-    # document and reports the same untroubled emptiness.
+    # Closing comments must restore prose reading after the hidden region.
     for case, doc in (
         ("closed on a later line", "# D\n\n<!--\nx\n-->\n\n## Live section\n"),
         ("opened and closed on one line", "# D\n\n<!-- x -->\n\n## Live section\n"),
@@ -197,17 +167,9 @@ def selftest() -> int:
                 f"the document reads as one that had none: {headings(doc)}"
             )
 
-    # ONE PAIR PER STRUCTURAL KIND, the only shape that could have caught either
-    # half of this rule's history: `_structure` names which marker can repeat
-    # inside ONE piece of prose (the blockquote's, alone), both earlier spellings
-    # were right for one kind and wrong for its neighbours, and a control on one
-    # kind proved nothing about the rest. CONTINUED asserts the wrapped pointer
-    # still names doc.md; SIBLING asserts the bare mark does NOT inherit.
-    # EVERY CONTINUED ARM CARRIES THE TRAP: the citer holds `## Gone section`
-    # itself, so a lost target does not misname the finding — the pointer
-    # resolves intra-document and DISAPPEARS, which is the shape that shipped
-    # twice. Each is paired with the same wrap naming a LIVE heading, asserted
-    # silent, so none passes on a reader that reports everything.
+    # Test continuation and sibling boundaries for each structure. The citer carries
+    # the missing target heading, so losing a target makes a finding disappear.
+    # Valid twins must remain silent.
     live, gone = f"{SECTION_MARK} Live section", f"{SECTION_MARK} Gone section"
     trap = "# C\n\n## Gone section\n\n"
     for kind, continued, sibling in (
@@ -230,10 +192,7 @@ def selftest() -> int:
             f"# C\n\n1. `doc.md` {live}\n2. see {live}\n",
         ),
         (
-            # THE REGRESSION, and the one kind whose marker repeats inside one
-            # sentence: a wrapped quote carries `>` on every line, so both lines
-            # were structural and were flushed apart. Its sibling needs a blank
-            # line, never a marker.
+            # A wrapped quote repeats its marker; a sibling quote needs a blank line.
             "a block quote",
             f"{trap}> see `doc.md`\n> {gone}.\n",
             f"# C\n\n> `doc.md` {live}\n\n> see {live}\n",
@@ -310,11 +269,7 @@ def selftest() -> int:
             "pointer lost its target"
         )
 
-    # INDENT IS MEASURED IN COLUMNS, so a TAB reaches four as surely as four
-    # spaces do. The rule was written for spaces and CommonMark advances a tab to
-    # the next four-column stop, so every one of these hid the heading from the
-    # space form and showed it from the tab forms. Each is paired with the
-    # unindented twin asserted FOUND.
+    # Tabs advance to column stops. Pair indented forms with an unindented heading.
     for case, indent in (
         ("four spaces", "    "), ("one tab", "\t"),
         ("a space then a tab", " \t"), ("two spaces then a tab", "  \t"),
@@ -339,11 +294,7 @@ def selftest() -> int:
     if not fence_left_open("# D\n\n```\n", is_markdown=True):
         failures.append("an unindented unclosed fence stopped being detected")
 
-    # THE FOUR FENCE AND FLUSH FIELDS THAT NO CONTROL COULD FAIL. Each sits
-    # beside a sibling that IS pinned, which is how they were missed.
-    #
-    # (1) A closing fence carries no INFO STRING: ```python inside a ``` block is
-    #     content, so a heading after it stays hidden.
+    # An info string makes this fence-shaped line content rather than a closer.
     info = "# D\n\n```\n```python\n## Live section\n```\n"
     if headings(info) != [["D"]]:
         failures.append(
@@ -353,7 +304,6 @@ def selftest() -> int:
     if headings(info.replace("```python", "text")) != [["D"]]:
         failures.append("the same document without the info string changed meaning")
 
-    # (2) A FOUR-SPACE-INDENTED fence line does not open one in markdown.
     indented_fence = "# D\n\nprose\n\n    ```\n\n## Live section\n"
     if [["D"], ["Live", "section"]] != headings(indented_fence):
         failures.append(
@@ -363,8 +313,7 @@ def selftest() -> int:
     if fence_left_open(indented_fence, is_markdown=True):
         failures.append("an indented ``` was reported as an unclosed fence")
 
-    # (3) The PRE-flush: a paragraph line must not join the structural line under
-    #     it, or a mark on that line inherits the paragraph's target.
+    # A new structural line must not inherit the preceding paragraph target.
     pre = f"# C\n\nsee `doc.md` {SECTION_MARK} Live section\n## {SECTION_MARK} Gone section\n"
     if not any(problem.startswith("citer.md:") for problem in cited(pre)):
         failures.append(
@@ -372,10 +321,8 @@ def selftest() -> int:
             "inherited that paragraph's target"
         )
 
-    # (4) INDENTED_CODE is markdown-only: an indented comment continuation in a
-    #     source file is prose, and a mark there must still be judged.
-    # The indented comment STARTS its block, so the continuation rule cannot
-    # cover it and only the is_markdown guard keeps it prose.
+    # An indented source comment starts a block; only the file-type rule keeps
+    # it prose instead of markdown code.
     py = f"#     `doc.md` {SECTION_MARK} Gone section.\n"
     indented = cited_in("citer.py", py)
     if not any("cites `doc.md" in problem for problem in indented):

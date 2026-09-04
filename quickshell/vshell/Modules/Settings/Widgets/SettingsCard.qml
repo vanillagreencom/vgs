@@ -22,8 +22,7 @@ StyledRect {
     property bool expanded: true
     property real headerLeftPadding: 0
 
-    // `.data` (not `.children`) so cards can also hold non-visual declarations
-    // (Timer, Connections); visual children still lay out in the Column as before.
+    // Use data so cards accept nonvisual Timer and Connections declarations as well as visual children.
     default property alias content: contentColumn.data
     property alias headerActions: headerActionsRow.children
 
@@ -40,7 +39,7 @@ StyledRect {
             h += headerRow.height + Theme.spacingM;
         return h;
     }
-    // Large settings cards rely on the fill step, without a resting border.
+
     radius: Theme.cornerRadius
     color: Theme.popupSurfaceColor(Theme.surfaceContainerHigh)
 

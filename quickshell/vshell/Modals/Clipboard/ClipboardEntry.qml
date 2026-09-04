@@ -33,18 +33,12 @@ Rectangle {
     readonly property bool showEditAction: visibleEntryActions.includes("edit")
     readonly property bool showDeleteAction: visibleEntryActions.includes("delete")
     readonly property bool showPinnedIndicator: hasPinnedDuplicate && !showPinAction
-    // Image entries (screenshots etc.) can be opened in the default viewer.
+
     readonly property bool showOpenAction: entryType === "image" && !!entry.path
     readonly property bool showAnyAction: showCopyAction || showPasteAction || showPinAction || showEditAction || showDeleteAction || showPinnedIndicator || showOpenAction
 
-    // Rows fit their content: a one-line text entry stays at the compact minimum,
-    // a long entry reserves room for previewMaxLines. This is derived from the line
-    // metric and the *maximum* line count (a per-type constant), NOT the measured
-    // content, so the height is final the instant the delegate is created. If it
-    // depended on the preview Text growing after layout, the ListView would place
-    // the next row against the delegate's initial (short) height and never reflow,
-    // leaving long entries overlapping their neighbour. The +1 covers the header
-    // line above the preview.
+    // Reserve row height from the preview line limit before layout.
+    // Measuring the child Text afterward can leave ListView rows overlapping. The +1 is the header line above the preview.
     implicitHeight: Math.max(ClipboardConstants.itemHeight, (root.previewMaxLines + 1) * fmPreview.lineSpacing + Theme.spacingXS + Theme.spacingM * 2)
 
     radius: Theme.cornerRadius
@@ -81,7 +75,7 @@ Rectangle {
             height: 40
             visible: root.showPinnedIndicator
 
-            // Status indicator only; the Pin action remains hidden.
+
             VgsIcon {
                 anchors.centerIn: parent
                 name: "push_pin"
@@ -161,15 +155,11 @@ Rectangle {
         anchors.leftMargin: Theme.spacingM
         anchors.right: root.showAnyAction ? actionButtons.left : parent.right
         anchors.rightMargin: root.showAnyAction ? Theme.spacingM : Theme.spacingS
-        // Fill the row vertically rather than clip to an exact measured height:
-        // the row's implicitHeight already reserves the content height plus
-        // symmetric padding, and text can paint a hair past its measured
-        // implicitHeight, so a tight clip here shaved the last line's descenders.
+        // Leave vertical padding around text: glyph descenders can extend past the measured implicitHeight.
         anchors.top: parent.top
         anchors.bottom: parent.bottom
 
-        // Image entries show their thumbnail; text entries carry no leading
-        // icon so the text spans the full row.
+
         ClipboardThumbnail {
             id: thumbnail
             anchors.left: parent.left
@@ -216,17 +206,10 @@ Rectangle {
                 font.pixelSize: Theme.fontSizeMedium
                 color: Theme.surfaceText
                 width: parent.width
-                // Wrap at word boundaries, but break mid-token when a "word" is
-                // longer than the row (e.g. a no-space link/URL). Plain WordWrap
-                // refuses to break such tokens and lays them on one line at their
-                // full natural width — painting over the action buttons and the
-                // neighbouring entry. Text.Wrap keeps them inside the container.
+                // Text.Wrap can break long unspaced URLs; WordWrap can paint them over neighboring controls.
                 wrapMode: Text.Wrap
                 maximumLineCount: root.previewMaxLines
-                // Single-line previews elide with a trailing ellipsis. Multi-line
-                // previews must NOT elide: an elided, wrapped, line-capped Text
-                // reports an unreliable implicitHeight, which let long entries
-                // overflow into the next row.
+                // Do not elide multiline previews: combining elision, wrapping and line limits gives unreliable implicitHeight.
                 elide: root.previewMaxLines > 1 ? Text.ElideNone : Text.ElideRight
                 textFormat: Text.PlainText
             }

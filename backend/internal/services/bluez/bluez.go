@@ -466,8 +466,6 @@ func (m *Manager) handlePairingSubmit(params json.RawMessage) (any, error) {
 	return ok("pairing response submitted"), nil
 }
 
-// takePending removes and returns the reply channel for token, clearing the
-// current-prompt marker when it matches.
 func (m *Manager) takePending(token string) (chan promptReply, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -517,11 +515,8 @@ func (m *Manager) deviceFromParams(params json.RawMessage) (dbus.BusObject, erro
 	return m.conn.Object(bluezDest, path), nil
 }
 
-// broadcastSoon requests a debounced state broadcast. The kick channel holds at
-// most one pending request, so a burst of D-Bus signals collapses into one
-// GetManagedObjects sweep instead of a goroutine per signal, and broadcastLoop
-// serializes the sweeps so an older snapshot can never be broadcast after a
-// newer one.
+// broadcastSoon coalesces pending D-Bus events. broadcastLoop serializes its
+// state reads and broadcasts so those reads cannot complete out of order.
 func (m *Manager) broadcastSoon() {
 	select {
 	case m.kick <- struct{}{}:
@@ -536,7 +531,6 @@ func (m *Manager) broadcastLoop() {
 			return
 		case <-m.kick:
 		}
-		// Let the signal burst settle before the sweep.
 		select {
 		case <-m.stop:
 			return

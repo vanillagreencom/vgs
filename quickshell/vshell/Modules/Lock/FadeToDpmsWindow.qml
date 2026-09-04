@@ -74,8 +74,7 @@ PanelWindow {
     MouseArea {
         anchors.fill: parent
         enabled: root.active
-        // A pointer floating on an all-black screen is just noise; the fade
-        // still cancels on any press or key, which restores the normal cursor.
+        // Hide the cursor during blackout. Press or key cancellation restores it.
         cursorShape: (root.active && SettingsData.hideCursorWhenBlanked) ? Qt.BlankCursor : Qt.ArrowCursor
         onClicked: root.cancelFade()
         onPressed: root.cancelFade()

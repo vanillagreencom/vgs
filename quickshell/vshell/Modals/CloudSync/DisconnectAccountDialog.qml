@@ -6,14 +6,8 @@ import qs.Services
 import qs.Widgets
 import "CloudSyncIcons.js" as CloudIcons
 
-// Confirms disconnecting an account.
-//
-// This is the most destructive thing in the app, and its blast radius is not
-// obvious: the account's credentials go away, so every folder that syncs
-// through it stops working. Those folders are listed by name and removed with
-// the account rather than left behind pointing at a remote that no longer
-// exists. Files on this computer are never touched, which is the fact people
-// most need stated out loud before they press the red button.
+// Confirm account removal and list dependent folders that will also be removed from sync configuration.
+// The removal leaves local files in place.
 CloudSyncDialog {
     id: dialog
 
@@ -24,8 +18,7 @@ CloudSyncDialog {
     readonly property var affected: CloudSyncService.foldersForAccount(account)
     readonly property bool hasFolders: affected.length > 0
 
-    // Typing the account's name is required only when folders would be removed;
-    // a bare confirm is enough when nothing is at stake.
+    // Require the account name when removal affects configured folders.
     property string typed: ""
     readonly property string expected: CloudSyncService.accountName(accountData)
     readonly property bool acknowledged: !hasFolders || typed.trim().toLowerCase() === expected.trim().toLowerCase()
@@ -53,10 +46,7 @@ CloudSyncDialog {
         });
     }
 
-    // A dialog whose subject vanished (disconnected elsewhere, or removed with
-    // the rclone CLI) describes nothing. Disconnect is the one that matters:
-    // with no account, hasFolders goes false, the type-to-confirm rail hides
-    // and the destructive button silently enables.
+    // Close if the account disappears; otherwise its missing folder list could remove the typed-confirmation requirement.
     Connections {
         target: CloudSyncService
 
@@ -74,7 +64,7 @@ CloudSyncDialog {
         subtitle: CloudSyncService.accountDetail(dialog.accountData)
     }
 
-    // ---- What goes away ----
+
     Column {
         width: parent.width
         spacing: Theme.spacingXS
@@ -114,7 +104,7 @@ CloudSyncDialog {
         color: Theme.surfaceVariantText
     }
 
-    // ---- Deliberate confirmation ----
+
     Column {
         width: parent.width
         spacing: Theme.spacingXS

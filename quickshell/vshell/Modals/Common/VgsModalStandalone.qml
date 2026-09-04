@@ -38,8 +38,7 @@ Item {
     property color backgroundColor: Theme.popupSurfaceColor(Theme.surfaceContainer)
     property real cornerRadius: Theme.cornerRadius
     property bool enableShadow: true
-    // Full-bleed surfaces (the switchers) turn this off: a window border
-    // traced around the whole screen is a frame with nothing outside it.
+    // Full-screen switchers disable the window border because their content reaches the output edges.
     property bool enableBorder: true
     property alias modalFocusScope: focusScope
     property bool shouldBeVisible: false
@@ -201,12 +200,7 @@ Item {
         id: clickCatcher
         visible: false
         color: "transparent"
-        // Rendered even with nothing to draw (VGS-208): a mapped layer surface
-        // Quickshell never renders stalls the QML animation driver, and the
-        // animation-backed `closeTimer` below is what unmaps a closing modal —
-        // gating this on `useBackground` left every modal stuck on screen with
-        // `modalDarkenBackground` off. See scripts/qml-smoke.sh switcher_check.
-
+        // Keep rendering the mapped background even when transparent: the animation driver must advance closeTimer to unmap the modal. Covered by switcher_check in scripts/qml-smoke.sh.
         WlrLayershell.namespace: root.layerNamespace + ":clickcatcher"
         WlrLayershell.layer: WlrLayershell.Top
         WlrLayershell.exclusiveZone: -1
@@ -261,7 +255,7 @@ Item {
         WindowBlur {
             targetWindow: contentWindow
             readonly property real s: Math.min(1, modalContainer.scaleValue)
-            // Blur tracks the surface's scaled rect during modal animation.
+
             blurX: modalContainer.x + modalContainer.width * (1 - s) * 0.5 + Theme.snap(modalContainer.animX, root.dpr)
             blurY: modalContainer.y + modalContainer.height * (1 - s) * 0.5 + Theme.snap(modalContainer.animY, root.dpr)
             blurWidth: root.shouldBeVisible ? modalContainer.width * s : 0
@@ -385,7 +379,7 @@ Item {
                         anchors.fill: parent
                         radius: root.cornerRadius
                         surfaceColor: root.backgroundColor
-                        // Native-style window border matching Hyprland's active border.
+
                         drawBorder: root.enableBorder
                         borderColor: Theme.windowBorderActive
                         borderWidth: Theme.windowBorderWidth

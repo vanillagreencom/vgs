@@ -220,9 +220,7 @@ Singleton {
                 categories: ["Network", "Utility"],
                 defaultTrigger: "",
                 isLauncher: false,
-                // Hidden unless rclone is installed, matching the bar widget:
-                // a launcher entry that opens an "install rclone" screen is a
-                // dead end, not a feature.
+                // Hide cloud sync unless its rclone dependency is available.
                 requiresCapability: "cloudsync"
             },
             "vgs_settings_search": {
@@ -252,8 +250,7 @@ Singleton {
         return SettingsData.getBuiltInPluginSetting(pluginId, "trigger", plugin.defaultTrigger);
     }
 
-    // capabilityAvailable gates a built-in on its backing service actually being
-    // present, so the launcher never offers an app that can only show an error.
+    // Gate built-in launcher entries on their backing service availability.
     function capabilityAvailable(capability) {
         if (!capability)
             return true;
@@ -740,7 +737,6 @@ Singleton {
         })
 
     function getCategoryIcon(category) {
-        // Check if it's a plugin category
         const pluginIcon = getPluginCategoryIcon(category);
         if (pluginIcon) {
             return pluginIcon;
@@ -758,7 +754,6 @@ Singleton {
             appCategories.forEach(cat => categories.add(cat));
         }
 
-        // Include categories from core apps (e.g. VGS Settings)
         for (const app of coreApps) {
             const appCategories = getCategoriesForApp(app);
             appCategories.forEach(cat => categories.add(cat));
@@ -786,7 +781,6 @@ Singleton {
         });
     }
 
-    // Plugin launcher support functions
     function getPluginCategories() {
         if (typeof PluginService === "undefined") {
             return [];

@@ -1,18 +1,5 @@
-// The fixture machinery the region-guard self-tests are built from. TWO jobs, and
-// the second is not a detail of the first:
-//
-//   PLANTING AND RUNNING a fixture — plantSuite, withGuardedSuite, fixtureEnv,
-//   hangingRegion, guardPath. Hand-rolling this per block is how one block ends
-//   up without the cleanup.
-//
-//   /proc FORENSICS AND KILLING — cmdlineOf, pidRunning, orphanDiagnostics,
-//   reapGuardChildren, reapUntilQuiet, plus sleepSync and waitFor. This half
-//   decides which processes on this box belong to a fixture and SIGKILLs them. It
-//   belongs here because this module created them, but it is named up front
-//   rather than left to be inferred from the export list.
-//
-// Its own checks are scripts/lib/qml-region-testkit-selftest.js. The map of the
-// whole subsystem is in scripts/lib/qml-region.js, beside module.exports.
+// Create guarded fixtures and clean up their child processes.
+// Cleanup identifies fixture ownership through /proc before sending SIGKILL.
 
 "use strict";
 
@@ -23,21 +10,13 @@ const path = require("node:path");
 
 const { CHILD_ARGV_MARKER } = require("./qml-region.js").internals;
 
-// ================= planting and running a fixture =================
 
-// The path a planted suite requires to reach the guard. Resolved rather than
-// exported by the guard itself: the fixtures sit in its directory, so asking is
-// free and the guard keeps one less thing on its public surface.
+
+// Resolve the guard beside this helper so planted fixtures can require it.
 const guardPath = require.resolve("./qml-region.js");
 
-// The environment a fixture runs in, and NOTHING the environment brought with it.
-// Every bound this guard has is an env override, so an ambient
-// VGS_REGION_CHILD_DEADLINE_MS or VGS_REGION_ARM_CONFIRM_MS silently re-tunes
-// checks that never asked for it: with a 300ms deadline exported, the hang checks
-// died of the CHILD's bound at 300ms instead of the supervisor's kill at 1000ms
-// and still passed, and a 1ms arm budget broke the suite outright. Stripping the
-// whole prefix rather than pinning the knobs one by one is what keeps that true
-// for the next bound anyone adds.
+// Remove ambient VGS_REGION_ settings before applying fixture overrides.
+// Otherwise exported deadlines can change which process terminates a fixture.
 function fixtureEnv(overrides) {
     const base = {};
     for (const [key, value] of Object.entries(process.env))
@@ -46,7 +25,7 @@ function fixtureEnv(overrides) {
     return Object.assign(base, overrides || {});
 }
 
-// Write a one-off suite that can reach the guard, and answer its path.
+// Write a fixture suite and return its path.
 function plantSuite(dir, body) {
     const suite = path.join(dir, "suite.js");
     fs.writeFileSync(suite, [
@@ -57,15 +36,8 @@ function plantSuite(dir, body) {
     return suite;
 }
 
-// Plant a one-off suite, run it as a supervisor, and hand `check` what happened:
-// a planted body, an environment, and a verdict read off exit status and stderr.
-//
-// Note what is NOT a parameter: the role. It is the argv marker guardChild()
-// adds, so a fixture cannot forget to ask for a supervisor and silently get an
-// unguarded child instead — which is what every fixture had to remember while an
-// inherited env var decided the role.
-//
-// The child inherits the supervisor's stdio, so one pipe captures both accounts.
+// Run a planted suite as supervisor and pass its result to check.
+// The child inherits stdio, so the capture contains both supervisor and child diagnostics.
 function withGuardedSuite(options, check) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), options.prefix));
     let suite;
@@ -92,7 +64,7 @@ function withGuardedSuite(options, check) {
     }
 }
 
-// A planted region that never returns, in the shape guardChild() is built for.
+// Create a marked region that never returns.
 function hangingRegion(label) {
     return [
         "const region = ['// BEGIN T', 'function boom() { while (true) {} return 1; }',",
@@ -102,20 +74,14 @@ function hangingRegion(label) {
     ];
 }
 
-// ========== /proc forensics, and taking a fixture's children down ==========
 
-// --- waiting on another PROCESS, from synchronous test code ---
-//
-// The self-tests that call this are synchronous, and what they wait on runs in a
-// different PROCESS, so parking this thread costs nothing that matters: the thing
-// being waited for makes progress regardless of this event loop.
+
+// Synchronous waiting is safe here because the awaited work runs in another process.
 function sleepSync(ms) {
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
-// Poll until `read` answers truthily, or give up and answer undefined. Giving up
-// has to be visible to the caller — a waiter that returns quietly when the thing
-// never happened is how a test passes on nothing.
+// Poll read until it returns a truthy value; return undefined on timeout.
 function waitFor(read, limitMs) {
     const until = Date.now() + limitMs;
     for (;;) {
@@ -128,11 +94,8 @@ function waitFor(read, limitMs) {
     }
 }
 
-// Whether a pid is a process that is still RUNNING. kill(pid, 0) alone cannot
-// answer that: a SIGKILLed process stays visible as a zombie until something
-// reaps it, and on a box whose pid 1 does not reap an orphan, a zombie would read
-// as a child that ignored its deadline. Linux can tell them apart; where /proc is
-// not readable, kill(pid, 0) is all there is and the answer stays conservative.
+// Report whether the PID is running. A killed zombie remains visible to kill(pid, 0),
+// so read its Linux process state when available and remain conservative on read failure.
 function pidRunning(pid) {
     try {
         process.kill(pid, 0);
@@ -149,11 +112,7 @@ function pidRunning(pid) {
     }
 }
 
-// The command line the kernel holds for a pid, argv-split — [] when there is no
-// such process, and NULL when it could not be read at all. Those last two must
-// not collapse: "provably not ours" and "we could not look" lead to opposite
-// actions, and folding them into one silent skip is how a reaper stops reaping
-// without anything going red. ENOENT is a readable answer, not a failure to look.
+// Read argv from /proc. Return [] for a vanished process and null for an unreadable command line.
 function cmdlineOf(pid) {
     try {
         return fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0").filter(Boolean);
@@ -162,11 +121,7 @@ function cmdlineOf(pid) {
     }
 }
 
-// What a still-running orphan looks like from outside, for a failure message that
-// would otherwise name no cause. Ordered by what a reader acts on: state R is the
-// definitive "still running", and the thread count is the hint next to it — Node
-// carries a pool of its own, so the number is read against a healthy child's, not
-// against 1.
+// Describe an orphan process for failure diagnostics, including state and thread count.
 function orphanDiagnostics(pid, errLog) {
     const read = file => {
         try {
@@ -186,38 +141,10 @@ function orphanDiagnostics(pid, errLog) {
         `; raw stat ${JSON.stringify(stat)}`;
 }
 
-// The ONE reaper, used by every fixture here and by the orphan check next door.
-//
-// spawnSync's timeout kills the SUPERVISOR; the guard child under it is
-// reparented and keeps running. In production its own deadline ends it — but a
-// check that is failing is exactly the case where that deadline may be the thing
-// that is broken, and a self-test for a 100%-CPU orphan must not be able to leave
-// one behind. Verified the hard way: a run with the child's deadline mutated
-// stranded a node process at 100% for seven minutes, on a deleted script, with
-// systemd as its parent — the VGS-198 signature exactly.
-//
-// Attribution is the fixture's own mkdtemp DIRECTORY, not one filename. That
-// covers every script a body plants — the descendant probe writes its own
-// inner.js, and a guard child of THAT is exactly the shape this exists for — it
-// cannot drift from plantSuite's naming, and because a directory is unique to one
-// fixture it can never match another run's child, so no pid is signalled on the
-// strength of a number that may already have been recycled. The marker is
-// required as well, so nothing but a guard child is ever signalled.
-//
-// It answers three ways per pid, never two: matched (kill), readable and not ours
-// (skip), unreadable (count, and say so at the end). A stray that could not be
-// attributed must not look identical to a clean exit.
-//
-// RETURN CONTRACT, because reapUntilQuiet has to tell two zeroes apart: the count
-// of pids SELECTED, or null when /proc could not be listed at all. Falling off the
-// end here returned undefined, and `undefined === 0` is false, so the caller's
-// loop re-listed a /proc that would never list — 160 repeats of a warning it had
-// already made, ending with "still appearing", which was never what happened.
-// `io` is a seam for scripts/lib/qml-region-testkit-selftest.js, and only that.
-// This function SIGKILLs processes off a /proc scan, so its three answers have to
-// be checkable directly; two of them — an unlistable /proc and an unreadable
-// entry — cannot be provoked on a healthy box, and a reaper whose failure modes
-// are only reachable through another check failing is not tested at all.
+// Kill marked guard children whose script path is inside the fixture directory.
+// A failed guard can outlive its supervisor, so fixture cleanup cannot rely on the guard deadline.
+// Return the selected PID count, or null if /proc cannot be listed. Report unreadable entries.
+// The injected I/O lets tests exercise permission failures without depending on host policy.
 function reapGuardChildren(dir, label, io) {
     const list = (io && io.list) || (() => fs.readdirSync("/proc"));
     const read = (io && io.read) || cmdlineOf;
@@ -227,8 +154,7 @@ function reapGuardChildren(dir, label, io) {
     try {
         entries = list();
     } catch (err) {
-        // Must not throw: this runs in a finally, where it would replace the real
-        // assertion failure with an unrelated errno AND skip the cleanup below it.
+        // This runs in finally. A thrown cleanup error would replace the assertion and skip directory removal.
         warn(`qml-region testkit: could not list /proc (${err.code || err.message}), so a guard ` +
             `child of ${label || dir} may still be running. An orphaned one spins at 100%.\n`);
         return null;
@@ -243,11 +169,7 @@ function reapGuardChildren(dir, label, io) {
             unreadable += 1;
             continue;
         }
-        // A path BOUNDARY, not a prefix. `startsWith(dir)` also matched a sibling
-        // whose name merely extends this one's, which is not what the comment
-        // above claims and not what may authorise a SIGKILL. mkdtemp's fixed-width
-        // suffix makes that unreachable today; the next fixture to build a
-        // directory name by hand reopens it.
+        // Require a path boundary so a sibling with the same name prefix cannot match.
         if (!argv.includes(CHILD_ARGV_MARKER) ||
                 !argv.some(arg => arg === dir || arg.startsWith(dir + path.sep)))
             continue;
@@ -264,23 +186,16 @@ function reapGuardChildren(dir, label, io) {
     return selected;
 }
 
-// How long the converging sweep keeps trying before it gives up and says so.
+
 const REAP_DEADLINE_MS = 8000;
 
-// Sweep until a sweep finds nothing. One pass is not enough against a chain that
-// is still SPAWNING: a regressed idempotence flag re-execs at every level, and a
-// single pass in a finally raced it — one run cleared all 260 processes, another
-// left ~130 alive that drained a minute later on their own. Each fixture also
-// pins a short child timeout so a chain unwinds from the top, and this closes the
-// window between the last kill and the last birth.
+// Repeat cleanup until a sweep finds no children or the budget expires.
+// A child can create another process during a cleanup sweep.
 function reapUntilQuiet(dir, label, io) {
     const budget = (io && io.deadlineMs) || REAP_DEADLINE_MS;
     const until = Date.now() + budget;
     for (;;) {
-        // Stop on anything that is not a POSITIVE count. 0 is a clean sweep; null
-        // is "could not look", which has already reported its own cause once and
-        // which re-listing cannot improve. Only a sweep that actually took
-        // something is evidence there may be more.
+        // Retry only after a positive match count. Null already reports an unreadable process table.
         if (!(reapGuardChildren(dir, label, io) > 0))
             return;
         if (Date.now() >= until) {

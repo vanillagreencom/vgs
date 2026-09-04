@@ -1,14 +1,7 @@
 #!/usr/bin/env python3
-"""Generate themes/catalog.json — the download catalog for every built-in theme.
+"""Generate the theme download catalog with metadata and per-file checksums.
 
-The `core` bundle ships one theme (see packaging/install-system.sh), so the
-settings theme browser would otherwise be a browser over a single entry. This
-catalog is what the download browser lists: name, mode, palette and a verified
-file manifest per theme, so `vshell theme catalog install <name>` can fetch a
-theme that is not installed and check every byte it wrote.
-
-Run with --write after adding, removing or editing a theme package;
-scripts/check-package-assets.sh runs --check to keep it honest.
+Run with --write after theme changes. check-package-assets.sh runs --check.
 """
 from __future__ import annotations
 
@@ -31,11 +24,7 @@ REPO_SLUG = "vanillagreencom/vgs"
 FALLBACK_REF = "main"
 CATALOG_VERSION = 1
 
-# Which files may be catalogued is decided by the installer's own validator
-# (`vshell-helper::_catalog_check_relpath`), never by a second copy of the rule
-# here: a generator that emitted paths the installer refuses would produce a
-# catalog entry that passes every freshness check and can never be installed.
-# A theme package is data; nothing in it is ever executed by VGS.
+# Use the installer path validator so generated entries have accepted paths.
 
 
 def load_helper() -> Any:
@@ -126,11 +115,8 @@ def build_catalog(ref: str) -> Dict[str, Any]:
     themes = []
     for meta in sorted(THEMES_DIR.glob("*/theme.json")):
         themes.append(theme_entry(helper, meta.parent))
-    # Two locations, in order. The checksums are taken from the working tree
-    # while the primary ref is a release tag, so a theme edited after the tag is
-    # served correctly only by the moving ref — which is exactly what a
-    # `vgs-shell-git` install off `main` needs. The checksums stay the sole
-    # authority: a location that serves the wrong bytes is rejected, not trusted.
+    # Checksums describe the working tree. The moving ref can serve edits absent
+    # from the release tag; downloaded bytes must still match the checksum.
     refs = [ref] + ([FALLBACK_REF] if ref != FALLBACK_REF else [])
     return {
         "version": CATALOG_VERSION,
@@ -164,12 +150,9 @@ def theme_paths_changed_since(ref: str) -> List[str] | None:
 
 
 def check_source_drift(catalog: Dict[str, Any]) -> int:
-    """Fail when no declared location can serve the content the manifest describes.
+    """Check whether a declared ref can serve the manifest content.
 
-    The manifest is generated from the working tree, so its checksums describe
-    *this* tree. Whether a download works therefore depends on whether some
-    declared ref serves this tree's bytes — which is what this checks, rather
-    than the far weaker "the ref string looks right".
+    Checksums describe the working tree, so ref names alone cannot establish this.
     """
     source = catalog.get("source") or {}
     primary = str(source.get("ref") or "")
@@ -197,7 +180,7 @@ def check_source_drift(catalog: Dict[str, Any]) -> int:
 
 
 def check_release_pin(catalog: Dict[str, Any], version: str) -> int:
-    """Release gate: the tag about to be cut must serve exactly this tree."""
+    """Check that release theme content agrees with the tree to be tagged."""
     source = catalog.get("source") or {}
     ref = str(source.get("ref") or "")
     if ref != f"v{version}":

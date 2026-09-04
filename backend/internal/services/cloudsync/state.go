@@ -11,8 +11,7 @@ import (
 	"time"
 )
 
-// historyLimit bounds the persisted run log. Enough for the Activity view's
-// "last few days" feel without growing without bound.
+// historyLimit bounds the persisted activity log.
 const historyLimit = 200
 
 // configFile is the on-disk shape of ~/.config/vshell/cloudsync.json.
@@ -31,7 +30,8 @@ type AccountMeta struct {
 	Label string `json:"label"`
 }
 
-// store owns every path the service persists to and serializes access to them.
+// store owns VGS configuration, history, and local cache paths. Its mutex
+// serializes in-process state access.
 type store struct {
 	mu sync.Mutex
 
@@ -47,9 +47,8 @@ type store struct {
 	accounts map[string]AccountMeta
 	history  []HistoryEntry
 
-	// rejected names folders dropped by load() because their remote was not a
-	// safe, fully validated sync pair. Surfaced once at startup rather than
-	// silently activating or deleting them.
+	// rejected lists folders refused during load. Publish the list at startup so
+	// invalid pairs do not disappear without an explanation.
 	rejected []string
 	warnings []string
 	// protectConfig backs up a suspect cloudsync.json before the first rewrite,
@@ -90,9 +89,8 @@ func newStore() (*store, error) {
 	return s, nil
 }
 
-// load reads config and history. Missing files are normal first-run state. A
-// corrupt or unsafe file is not fatal, but it is recorded and protected from
-// silent overwrite until persistConfig has made a backup.
+// load records invalid or unreadable configuration and history. Each file must
+// be backed up before a later write replaces it.
 func (s *store) load() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -299,8 +297,8 @@ func validateLoadedFolderPair(f Folder, existing []Folder) error {
 	return nil
 }
 
-// mergeSettings fills zero values from an older or partial config with the
-// current defaults, so adding a setting never breaks an existing install.
+// mergeSettings fills non-positive concurrency and retention values from
+// defaults.
 func mergeSettings(in Settings) Settings {
 	out := in
 	def := defaultSettings()
@@ -386,8 +384,6 @@ func (s *store) deleteFolder(id string) (Folder, error) {
 	return removed, s.persistConfig()
 }
 
-// accountMeta returns the presentation state for one remote. A remote with no
-// entry is normal: it simply has no user-chosen label.
 func (s *store) accountMeta(name string) AccountMeta {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -408,9 +404,8 @@ func (s *store) putAccountMeta(name string, meta AccountMeta) error {
 	return s.persistConfig()
 }
 
-// pruneAccountMeta drops presentation state for remotes that no longer exist.
-// Only called with a list built from a successful config/listremotes, so a
-// failed listing can never wipe every label.
+// pruneAccountMeta removes labels for absent remotes. Only a successful remote
+// listing may drive pruning; a failed listing must preserve labels.
 func (s *store) pruneAccountMeta(live map[string]bool) error {
 	s.mu.Lock()
 	removed := false
@@ -438,8 +433,6 @@ func (s *store) deleteAccountMeta(name string) error {
 	return s.persistConfig()
 }
 
-// foldersForRemote lists every sync pair pointing at one account. Used to warn
-// before a disconnect, which would otherwise leave those pairs unrunnable.
 func (s *store) foldersForRemote(remote string) []Folder {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -558,9 +551,8 @@ func (s *store) snapshotHistory() []HistoryEntry {
 	return out
 }
 
-// localTrash is the recycle bin for a folder's local side. Overwrites and
-// deletes land here instead of vanishing, which is what makes two-way sync
-// recoverable.
+// localTrash stores deleted and overwritten files for recovery until retention
+// pruning or explicit emptying.
 func (s *store) localTrash(folderID string) string {
 	return filepath.Join(s.trashDir, folderID)
 }
@@ -569,7 +561,6 @@ func (s *store) bisyncWorkdir(folderID string) string {
 	return filepath.Join(s.bisyncDir, folderID)
 }
 
-// pruneTrash deletes local trash entries older than the retention window.
 func (s *store) pruneTrash(olderThanUnix int64) {
 	entries, err := os.ReadDir(s.trashDir)
 	if err != nil {
@@ -601,12 +592,12 @@ func pruneTrashTree(root string, olderThanUnix int64) {
 	// Deepest first, so emptied directories collapse in one pass.
 	sort.Slice(dirs, func(i, j int) bool { return len(dirs[i]) > len(dirs[j]) })
 	for _, dir := range dirs {
-		_ = os.Remove(dir) // fails harmlessly when the directory still has files
+		_ = os.Remove(dir) // Non-empty directories remain in place.
 	}
 }
 
-// writeJSONAtomic writes via a temp file + rename so a crash mid-write can
-// never leave a truncated config behind.
+// writeJSONAtomic replaces the destination only after the temporary file is
+// written and closed. It does not sync data to durable storage.
 func writeJSONAtomic(path string, value any) error {
 	raw, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {

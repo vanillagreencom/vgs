@@ -1,16 +1,6 @@
 #!/usr/bin/env bash
-# Build the architecture-independent extras bundle: every theme the core bundle
-# leaves out, plus the vendored icon themes.
-#
-# WHY IT IS ITS OWN ARTIFACT. The extras are ~1.05 GiB against a ~79 MiB shell,
-# and nothing about them is architecture-specific. Shipping them inside each
-# per-architecture bundle made every download, every distribution build and every
-# `install.sh` run pay for wallpapers most installs never use — while the shell
-# already downloads individual themes on demand from the pinned catalog.
-#
-# It carries packaging/install-system.sh so it is self-sufficient: a recipe
-# extracts this bundle and runs `VGS_THEME_BUNDLE=extras` against it directly,
-# without needing the core tree.
+# The extras bundle is architecture independent. It includes its own installer.
+# Consumers must run packaging/install-system.sh with VGS_THEME_BUNDLE=extras.
 set -euo pipefail
 
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -23,8 +13,7 @@ trap 'rm -rf "$stage"' EXIT
 bundle="$stage/$name"
 mkdir -p "$bundle/themes" "$bundle/packaging" "$out"
 
-# Every theme except the one the core bundle already installs. The skip list
-# must match install-system.sh's `extras` arm, which skips the same theme.
+# The exclusions must match install-system.sh's extras bundle.
 shopt -s nullglob
 for theme in "$root"/themes/*/; do
   name_theme="$(basename "$theme")"
@@ -38,10 +27,7 @@ cp -a "$root/config/vshell/icons" "$bundle/config/vshell/"
 cp "$root/packaging/install-system.sh" "$bundle/packaging/"
 cp "$root/LICENSE" "$root/VERSION" "$bundle/"
 
-# An incomplete bundle tars and uploads exactly like a complete one, so the
-# staged count must equal the eligible source count rather than merely being
-# non-empty: a loop that silently dropped 70 of 78 themes would otherwise ship,
-# and the only symptom would be themes missing from a user's install.
+# An archive can succeed with missing themes. Compare the staged set size with all eligible sources.
 staged="$(find "$bundle/themes" -mindepth 1 -maxdepth 1 -type d | wc -l)"
 eligible=0
 for theme in "$root"/themes/*/; do

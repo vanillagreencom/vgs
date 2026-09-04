@@ -5,10 +5,8 @@ root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 dest="${DESTDIR:-}"
 prefix="${PREFIX:-/usr}"
 lib="$dest$prefix/lib/vshell"
-# Default to the small bundle on purpose: `all` costs ~1.1 GiB of themes and
-# icons, so a packaging recipe that forgets VGS_THEME_BUNDLE should ship too
-# little rather than too much. scripts/check-package-assets.sh enforces that
-# every in-repo caller states its bundle explicitly.
+# Default to the core bundle to avoid fetching optional assets implicitly.
+# scripts/check-package-assets.sh checks callers for explicit bundle selection.
 theme_bundle="${VGS_THEME_BUNDLE:-core}"
 
 case "$theme_bundle" in
@@ -19,15 +17,10 @@ case "$theme_bundle" in
     ;;
 esac
 
-# Screenshots of the themes this bundle does not install, so `vshell theme
-# catalog` can show them before they are downloaded. `all` needs none of this:
-# every theme ships its own preview.png.
+# Install catalog previews so uninstalled themes are visible before download.
 install_catalog_previews() {
-  # The release bundle ships these already generated, because it deliberately
-  # does not carry the themes they are screenshots OF — scripts/build-release.sh
-  # renders them from the full tree at build time. A source checkout still has
-  # that tree, so it derives them below. Copying when they exist is what lets one
-  # installer serve both.
+  # Release bundles carry prebuilt previews without the source theme trees.
+  # Source checkouts derive those previews from their themes below.
   if [[ -d "$root/themes/catalog-previews" ]]; then
     cp -a "$root/themes/catalog-previews" "$lib/themes/"
     return
@@ -54,13 +47,10 @@ install_themes() {
       cp -a "$root/themes/coppernight" "$root/themes/targets" "$lib/themes/"
       install -Dm644 "$root/themes/BACKGROUNDS-ATTRIBUTION.md" "$lib/themes/BACKGROUNDS-ATTRIBUTION.md"
       install -Dm644 "$root/themes/THEMES-ATTRIBUTION.md" "$lib/themes/THEMES-ATTRIBUTION.md"
-      # The download catalog: what `vshell theme catalog` lists, and the pinned,
-      # checksummed manifest it verifies every downloaded file against.
+      # Catalog checksums govern verification of downloaded theme files.
       install -Dm644 "$root/themes/catalog.json" "$lib/themes/catalog.json"
-      # Every theme's screenshot, ~23 MiB, against the ~1.1 GiB of wallpapers
-      # that motivated the split. Without them the download browser can list the
-      # other themes but not show any of them, so they belong in the base
-      # package even though their palettes and wallpapers do not.
+      # Ship previews with the core package so the download browser can show
+      # themes whose palettes and wallpapers are not installed.
       install_catalog_previews
       ;;
     extras)

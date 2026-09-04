@@ -275,7 +275,7 @@ Item {
                     spacing: Theme.spacingS
                     width: parent.width
 
-                    // The DASH tab, deliberately — see WallpaperTab.qml.
+
                     VgsButton {
                         variant: "secondary"
                         text: I18n.tr("Browse Themes")
@@ -286,7 +286,7 @@ Item {
                         }
                     }
 
-                    // Fresh installs ship one theme; this exposes the catalog.
+
                     VgsButton {
                         variant: "secondary"
                         iconName: "cloud_download"
@@ -511,9 +511,7 @@ Item {
                     VgsButton {
                         variant: "secondary"
                         text: I18n.tr("Clear Wallpaper")
-                        // `clear-wallpaper` and `set-wallpaper` are separate helper
-                        // runs. Block clear during apply so the older apply cannot
-                        // finish last and restore what the user cleared (VGS-211).
+                        // Clear and apply use separate helper runs. Block clear during apply so an older apply cannot restore the cleared wallpaper.
                         enabled: !VGSThemeService.applyInFlight && (root.selectedWallpaper !== "" || SessionData.wallpaperPath !== "")
                         onClicked: {
                             root.selectedWallpaper = "";

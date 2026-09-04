@@ -1,7 +1,5 @@
-// ===== wp_parallax_scroll.frag =====
-// Parallax scrolling wallpaper shader: samples a single pre-scaled texture
-// and applies a CPU-computed UV offset (scrollX/scrollY) along the overflow
-// axis. Independent of the transition-effect shaders.
+// Sample a pre-scaled texture with CPU-computed scroll offsets along the overflow axis.
+// This shader is independent of wallpaper transitions.
 #version 450
 
 layout(location = 0) in vec2 qt_TexCoord0;
@@ -24,7 +22,6 @@ layout(std140, binding = 0) uniform buf {
 void main() {
     vec2 uv = qt_TexCoord0;
 
-    // Apply UV scale and scroll offset
     vec2 scrollOffset = vec2(
         ubuf.scrollRangeX * (ubuf.scrollX / 100.0),
         ubuf.scrollRangeY * (ubuf.scrollY / 100.0)

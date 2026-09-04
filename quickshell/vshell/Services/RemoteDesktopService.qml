@@ -7,39 +7,9 @@ import Quickshell
 import Quickshell.Io
 import qs.Common
 
-// Sunshine remote-desktop host state for the `remoteDesktop` bar plugin.
-//
-// Two things this service exists to get right:
-//
-// 1. **Listening and streaming are different states.** A host that is up is not
-//    the same as a host somebody is watching, and collapsing them into one "on"
-//    would hide a live capture of the user's screen behind an indicator that
-//    looks identical to an idle one. `running` and `streaming` are separate.
-//
-//    Every axis of that answer carries its own "do we know?" flag, and they are
-//    named and reset together — `_markStatusUnknown()` drops all three at once,
-//    because leaving one standing renders half an answer as a whole one:
-//
-//    | Axis | Value | Known? |
-//    |------|-------|--------|
-//    | host | `installed`, `running` | `statusKnown` |
-//    | session | `streaming`, `sessionCount` | `sessionKnown` |
-//    | virtual output | `outputPresent` | `outputKnown` |
-//    | paired devices | `pairedClients` | `pairedClientsKnown` |
-//
-//    `streaming` is the one exception to "unknown clears it": a capture that may
-//    still be live is never downgraded to a question mark. It stays set, and the
-//    UI marks the reading uncertain instead.
-//
-// 2. **It is event-driven, and says so when it stops being.** VGS-63 was a
-//    widget that fetched once and sat on the answer for the whole session. Here
-//    `vshell remote-desktop watch` is the trigger and
-//    `vshell remote-desktop status --json` is the truth: every event schedules
-//    an authoritative resync, and the two connect/disconnect events additionally
-//    flip the indicator immediately, because that is the one piece of state
-//    where a second of lag matters. When the watch dies, `watchLive` goes false
-//    and stays false until a restart succeeds — the UI renders that rather than
-//    presenting the last known values as current.
+// Track Sunshine host, streaming, virtual-output, and paired-client state with separate known flags.
+// Preserve last-known streaming when a read fails, and mark it unconfirmed.
+// Watch events trigger authoritative status reads. A dead watch marks its state stale until recovery.
 Singleton {
     id: root
 
@@ -49,7 +19,6 @@ Singleton {
     // it runs only while something is actually displaying this state.
     property int refCount: 0
 
-    // --- Host state (authoritative, from `vshell remote-desktop status`) -----
     property bool statusKnown: false
     property bool installed: false
     property bool running: false
@@ -59,9 +28,7 @@ Singleton {
     property string compositor: ""
     property string webUi: ""
     property var pairedClients: []
-    // A fourth knowledge axis, joining the table below. Sunshine's state file
-    // can be malformed independently of everything else, and one unreadable
-    // field must not be rendered as "no paired devices".
+    // Paired-client state can be unreadable independently of host state; do not display that as no paired devices.
     property bool pairedClientsKnown: false
     property string pairedClientsError: ""
     // Names the helper dropped because the state file held bytes that are not
@@ -79,14 +46,9 @@ Singleton {
     // symptom, so the widget shows it as a warning.
     property bool captureFallback: false
 
-    // --- Session state -------------------------------------------------------
     property bool streaming: false
     property int sessionCount: 0
-    // The COUNT is its own sub-axis of the session. A `connected` event proves
-    // a capture is live but says nothing about how many clients there are, so
-    // optimistic LIVE must not drag a count along with it: rendering the stale
-    // 0 beside "streaming now" showed a live capture with no clients listed,
-    // which reads as a fact rather than as the gap it is.
+    // A connect event proves streaming, but not the client count. Invalidate the count until status confirms it.
     property bool sessionCountKnown: false
     property string sessionSince: ""
     property string sessionCodec: ""
@@ -140,13 +102,7 @@ Singleton {
         root.statusKnown = false;
         root.outputKnown = false;
         root.pairedClientsKnown = false;
-        // captureFallback is an ASSERTION -- "the host is capturing a real
-        // monitor right now" -- and it is derived from output presence, which
-        // has just gone unknown. Keeping it would let the popout go on warning
-        // about a DP-1 fallback nothing can still confirm, which is the same
-        // defect as a stale LIVE. `streaming` is the deliberate exception
-        // below; this is not one, because a warning nobody can substantiate
-        // costs the user trust in every other warning.
+        // Clear captureFallback when output presence becomes unknown; only streaming retains an unconfirmed last-known value.
         root.captureFallback = false;
         root.statusError = reason;
         root._markSessionUnknown(reason);
@@ -192,23 +148,14 @@ Singleton {
     }
 
     property string _pendingAction: ""
-    // Whether the finished lifecycle command has already told the user how it
-    // went. A start/stop/toggle that cannot be spawned produces no stdout, so
-    // the JSON branch below never runs -- and the user, who pressed a toggle,
-    // sees the switch spring back with no state change and no reason. Every
-    // other failure path in this service reports; this one has to as well.
+    // Track whether a lifecycle command reported its outcome, including spawn failures that produce no output.
     property bool _lifecycleReported: false
     // The exit code the finished lifecycle command reported, or -1 when it
     // never exited at all — which is what a command that could not be spawned
     // looks like. Recorded rather than acted on immediately; see
     // lifecycleUnansweredTimer.
     property int _lifecycleExitCode: -1
-    // Which action the pending verdict belongs to. `_lifecycleExitCode` and
-    // `_lifecycleReported` are shared, so without this a verdict armed by
-    // action A could fire after action B reset them and report B's name over
-    // A's outcome — the deferred verdict that stopped successes being reported
-    // as failures would instead have attributed one action's failure to
-    // another. Same tag-the-work shape as `_statusProbeGeneration` above.
+    // Associate deferred verdicts with their action so a newer action cannot inherit an earlier failure.
     property int _lifecycleGeneration: 0
 
     function _runLifecycle(action) {
@@ -218,18 +165,13 @@ Singleton {
         root._lifecycleReported = false;
         root._lifecycleExitCode = -1;
         root._lifecycleGeneration++;
-        // The tag already stops a stale tick misattributing its verdict, but an
-        // armed timer nobody wants is still a needless wakeup and one more
-        // thing that can fire in an unexpected order. Same stop-on-start the
-        // status probe does.
         lifecycleUnansweredTimer.stop();
         root.busy = true;
         lifecycleProc.running = true;
     }
 
-    // Pure decision function. `scripts/test-remote-desktop-state.js` extracts
-    // THIS source text between the markers and exercises it directly.
     // BEGIN SESSION DECISION
+    // scripts/test-remote-desktop-state.js evaluates the code between these markers in Node.
     function sessionApplyDecision(session) {
         const block = session || {};
         // `active: false` beside `readable: false` is NOT "nobody is watching".
@@ -332,38 +274,16 @@ Singleton {
         root.sessionColorDepth = session.colorDepth || "";
     }
 
-    // Which watch events invalidate the displayed session COUNT.
-    //
-    // Pure decision function. `scripts/test-remote-desktop-state.js` extracts
-    // THIS source text between the markers and exercises every token.
-    //
-    // Every event means "re-read the status", but only some of them imply the
-    // number of clients may have changed — and marking the count unknown has a
-    // visible cost, since the popout reads "confirming…" until the resync
-    // lands. So this is not simply "all of them":
-    //
-    // * `connected` / `disconnected` — a client arrived or left, so the number
-    //   on screen is stale by construction. Symmetric: it was asymmetric once,
-    //   and the disconnect side rendered a superseded count as authoritative.
-    // * `lifecycle` — the host is starting or stopping, which ends every
-    //   session it had. A count from before that transition describes a host
-    //   that no longer exists.
-    // * `session` — an encoder or bitrate change WITHIN the current set of
-    //   clients. Nothing about it says a client arrived or left, and a client
-    //   change would carry its own connect/disconnect event, so the last
-    //   confirmed count is still the best answer available. Blanking it here
-    //   would be flicker with no information behind it.
+    // Connect, disconnect, and lifecycle events invalidate the client count.
+    // Session encoder or bitrate events retain it because they do not imply a client change.
     // BEGIN EVENT DECISION
+    // scripts/test-remote-desktop-state.js evaluates the code between these markers in Node.
     function countInvalidatingEvent(event) {
         return event === "connected" || event === "disconnected" || event === "lifecycle";
     }
     // END EVENT DECISION
 
-    // The watch emits normalised tokens, never Sunshine's own wording: the log
-    // format is parsed once, in the helper. Every token means "re-read the
-    // status"; they are distinguished only so the streaming indicator can flip
-    // without waiting for that read — "someone is watching my screen" is the
-    // one fact worth showing a beat early.
+    // The helper normalizes watch events. Every event schedules status refresh; connect can also mark streaming immediately.
     function _handleWatchToken(token) {
         const event = (token || "").trim();
         if (!event)
@@ -507,22 +427,7 @@ Singleton {
         onRunningChanged: {
             if (running)
                 return;
-            // `busy` is deliberately NOT cleared here. It is what the toggle
-            // keys `enabled` on, and re-enabling the control while this
-            // action's outcome is still unknown is its own small lie — as well
-            // as being what let the user launch a second action inside the
-            // verdict window. It is cleared by the timer, with the verdict.
-            //
-            // Deliberately does NOT report here either. `running` going false is not
-            // evidence the command failed: this repo's own precedent says the
-            // process usually stops A MOMENT BEFORE its output is collected
-            // (NotificationService.qml, both probes), so reporting on the spot
-            // announced "start failed" for commands that had in fact succeeded
-            // and whose JSON simply had not arrived yet. A user who sees that
-            // on a host that started will retry and stop it.
-            //
-            // So: give the collector the same grace period the ownership probe
-            // gives its own, and decide once it has expired.
+            // Keep busy until the result grace period ends. Process shutdown can precede JSON collection, so defer the verdict.
             lifecycleUnansweredTimer.armedFor = root._lifecycleGeneration;
             lifecycleUnansweredTimer.restart();
             // Creating the output, starting the unit and Sunshine settling are
@@ -578,9 +483,7 @@ Singleton {
             root._markSessionUnknown(I18n.tr("the host event watch stopped"));
             if (root.refCount <= 0)
                 return;
-            // The watch is the only thing keeping this state current. Losing it
-            // silently is the VGS-63 defect, so retry with backoff and leave
-            // watchLive false until a restart actually succeeds.
+            // Retry a dead watch with backoff and keep watchLive false until it runs again.
             if (!root.watchError)
                 root.watchError = I18n.tr("the host event watch stopped");
             root.log.warn("host event watch stopped; retrying in " + watchRestart.backoffMs + "ms");
@@ -605,9 +508,7 @@ Singleton {
 
     Timer {
         id: watchStable
-        // The backoff is reset only by a watch that SURVIVED this long, which
-        // is what makes 2s -> 60s actually reachable for a persistently failing
-        // one. Same shape as the VGS-63 supervisor.
+        // Reset backoff only after the watch survives the stability interval.
         interval: 60000
         repeat: false
         onTriggered: watchRestart.backoffMs = 2000
@@ -643,10 +544,7 @@ Singleton {
             if (root._lifecycleReported)
                 return;
             if (root._lifecycleExitCode === 0) {
-                // It SUCCEEDED. The JSON either never arrived or did not parse,
-                // which costs us the detail, not the outcome -- and reporting a
-                // failure here is precisely the bug this timer exists to
-                // prevent. The settle refresh shows the new state.
+                // A zero exit code confirms success even if JSON details are unavailable; status refresh supplies the resulting state.
                 root._lifecycleReported = true;
                 root.log.warn("remote-desktop " + root._pendingAction + " succeeded but returned no readable JSON");
                 return;

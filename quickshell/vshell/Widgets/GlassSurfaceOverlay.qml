@@ -1,9 +1,7 @@
 import QtQuick
 import qs.Common
 
-// iOS-style glass chrome: specular gradient rim plus interior sheen, rendered
-// in a single SDF pass. Nested panels (e.g. sidebars inside a glass window)
-// should set rimEnabled: false so interior seams don't read as borders.
+// Glass rim and interior sheen share a shader pass. Nested panels should disable rimEnabled to avoid interior borders.
 Item {
     id: root
 

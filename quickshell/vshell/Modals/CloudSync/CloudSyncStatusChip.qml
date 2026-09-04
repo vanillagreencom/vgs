@@ -2,10 +2,7 @@ import QtQuick
 import qs.Common
 import qs.Widgets
 
-// The one status pill used by every Cloud Sync surface: folder state, account
-// health, anything else with a colour and a word. It existed three times by
-// hand — two folder copies and an account copy — which meant a new state or a
-// changed token could land in one and not the others.
+// Shared status pill for folder state and account health.
 Rectangle {
     id: root
 

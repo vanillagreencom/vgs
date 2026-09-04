@@ -18,13 +18,9 @@ import (
 
 const (
 	timeout = 8 * time.Second
-	// Why the ddcutil chain never reaches this bound: the helper runs its
-	// probes pipe-isolated (bin/vshell-helper _run_timeout and run use
-	// stdout=PIPE, stderr=PIPE, and Python's close_fds default), so a D-state
-	// ddcutil holds the helper's pipes, not the backend's, and the context
-	// timeout releases them at the deadline. Probes that can D-state must
-	// therefore stay in helper subprocesses, never in the helper's own
-	// process. What the bound does cover is in the execbound package doc.
+	// Keep probes in helper subprocesses with separate pipes. A blocked probe then
+	// holds the helper pipes rather than the backend pipes. execbound limits
+	// backend pipe reads if a descendant inherits them.
 	waitDelay = execbound.DefaultWaitDelay
 )
 

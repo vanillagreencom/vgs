@@ -50,8 +50,7 @@ def configure(runtime: DevToolsRuntime) -> None:
 
 MISE_STUB_MARKER = "# vshell mise stub"
 MISE_STUBS_REMOVED = "mise-stubs-removed"
-# mise withholds releases younger than its cooldown. A harness that ships a
-# fix today would otherwise wait days; every mise call VGS makes opts out.
+# Disable mise release cooldown so tool requests can use newly published releases.
 MISE_RELEASE_AGE_ENV = {"MISE_MINIMUM_RELEASE_AGE": "0"}
 
 

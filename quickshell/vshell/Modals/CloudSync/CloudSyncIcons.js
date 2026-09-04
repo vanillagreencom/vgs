@@ -1,9 +1,6 @@
 .pragma library
 
-// Provider presentation. Material Symbols has no brand glyphs, so providers are
-// distinguished by a shape that matches what the backend *is* (consumer drive,
-// object store, protocol endpoint) rather than by a logo. The label carries the
-// brand.
+// Material Symbols lack provider logos. Use service-type icons and identify the brand in the label.
 var PROVIDER_ICONS = {
     "drive": "add_to_drive",
     "dropbox": "cloud",

@@ -10,8 +10,7 @@ MouseArea {
     property var tooltipText: null
     property string tooltipSide: "bottom"
     property bool enableRipple: typeof SettingsData !== "undefined" ? (SettingsData.enableRippleEffects ?? true) : true
-    // Keeps click/press feedback while suppressing the resting hover wash —
-    // for large rows where a hover highlight reads as noise.
+    // Keep press feedback without a resting hover wash on large rows.
     property bool hoverHighlight: true
 
     readonly property real stateOpacity: disabled ? 0 : pressed ? 0.12 : (containsMouse && hoverHighlight) ? 0.08 : 0

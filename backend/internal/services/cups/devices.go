@@ -14,10 +14,8 @@ func parseDevices(out []byte) []Device {
 		if line == "" {
 			continue
 		}
-		// class + URI only: a device URI never contains a space, so any further
-		// tokens are a human-readable description. Folding them into the URI
-		// would fail deviceURI validation later with a confusing complaint
-		// about the address rather than about the parse.
+		// Device URI fields cannot contain raw spaces. Remaining lpinfo tokens
+		// describe the device and must not be included in its URI.
 		fields := strings.Fields(line)
 		if len(fields) < 2 {
 			continue

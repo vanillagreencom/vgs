@@ -383,12 +383,7 @@ var SPEC = {
     screensaverTimeout: { def: 240 },
     screensaverType: { def: "ascii" },
     screensaverVideoPath: { def: "" },
-    // Empty means "use the bundled VGS logo" — bin/vshell-screensaver falls back
-    // to the pre-rendered config/vshell/branding/screensaver.txt. Kept empty
-    // rather than pointing at the bundled file so the default survives a move of
-    // the asset and needs no migration. resolve_branding reads this key back out
-    // of settings.json, so clearing it really does return to the logo instead of
-    // stranding the art generated from the old picture.
+    // Empty selects the bundled screensaver logo without storing its installation path.
     screensaverAsciiImagePath: { def: "" },
     fadeToLockEnabled: { def: true },
     fadeToLockGracePeriod: { def: 5 },
@@ -606,17 +601,8 @@ var SPEC = {
     // settings/BarWidgets.js.
     removedBarWidgets: { def: [] },
 
-    // Named special-workspace scratchpads. One record per pad; the schema and
-    // every field's meaning live in bin/vshell-helper (SCRATCHPAD_* /
-    // normalize_scratchpad), which is the only thing that renders them into
-    // compositor config. Writing this list regenerates that config.
-    //
-    // `dismissOnFocusLoss` was carried here with no Settings control until
-    // VGS-82, because nothing watched focus and the toggle would have set a
-    // value that did nothing. It is implemented now — ScratchpadService reads
-    // CompositorService, the shell's single owner of compositor focus — so the
-    // control is back in Modules/Settings/ScratchpadRow.qml. Keeping the field
-    // through that gap is why implementing it needed no second migration.
+    // Scratchpad records use the schema in the helper, which renders compositor rules.
+    // ScratchpadService reads shared compositor focus to apply dismissOnFocusLoss.
     scratchpads: { def: [], onChange: "updateScratchpads" },
 
     desktopClockEnabled: { def: false },

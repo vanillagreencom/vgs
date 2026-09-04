@@ -1,25 +1,8 @@
 #!/usr/bin/env node
 
-// Pins DisplayService's brightness scan bookkeeping: which terminal scan
-// response may count toward the quarantine, which may commit state, and which
-// must be discarded as out of order (VGS-228).
-//
-// No other check can see this. `qml-smoke.sh --nested` loads the service but
-// never races two scans, and the failure mode here is pure ORDERING: on a dead
-// bus a scan takes 6-8s to fail while the hotplug/resume ladders launch a new
-// one every few seconds, so most failures arrive superseded, and a CLI
-// fallback response can arrive after a newer scan already settled the
-// opposite verdict.
-//
-// TWO HALVES:
-//
-//   1. The decision, EXECUTED. DisplayService.qml marks it off between
-//      `// BEGIN SCAN VERDICT DECISION` and its END; every input is an
-//      argument, so this runs the same program the shell runs.
-//
-//   2. The wiring, as a lint. The verdict proves nothing if failScan counts
-//      without consulting it, the success path applies stale state, or the
-//      write-success branch stops lifting the quarantine.
+// Test which brightness scan results count toward quarantine and which can commit state.
+// Slow failed scans can be superseded, and an older CLI fallback can arrive after a newer result.
+// Execute the marked decision region and inspect its use by success and failure paths.
 
 "use strict";
 
@@ -27,12 +10,10 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 
-// The marked region comes from a repo file and is EXECUTED here, so it runs
-// inside a child bounded by a wall clock — scripts/lib/qml-region.js says
-// what that bounds and what it does not.
+// Extracted code runs under qml-region process deadlines.
 const { evaluateMarked, guardChild } = require("./lib/qml-region.js");
 
-// Returns only in the child; the parent exits with its status.
+
 guardChild();
 
 const SERVICE = path.join(
@@ -40,9 +21,7 @@ const SERVICE = path.join(
 );
 const serviceSource = fs.readFileSync(SERVICE, "utf8");
 
-// Comments are blanked before any wiring assertion so a comment naming a call
-// can never satisfy a lint; the BEGIN/END markers are themselves comments, so
-// region extraction uses the raw text.
+// Blank comments for wiring checks; extract the marked region from raw source because markers are comments.
 function stripComments(src) {
     let out = "";
     let i = 0;
@@ -90,16 +69,14 @@ function stripComments(src) {
 
 const serviceCode = stripComments(serviceSource);
 
-// --- half 1: the decision, executed -----------------------------------------
+
 
 const { scanVerdict, writeLiftsQuarantine } = evaluateMarked(
     serviceSource, "SCAN VERDICT DECISION",
     ["scanVerdict", "writeLiftsQuarantine"], "DisplayService.qml"
 );
 
-// The bounds the doc claims, derived from the service itself rather than a
-// second copy here. A miss means the extractor broke, not that the service
-// lost its threshold.
+// Derive the attempt bound from the service. A missing match means extraction failed.
 const thresholdMatch = serviceCode.match(/readonly property int scanQuarantineThreshold: (\d+)/);
 assert.ok(thresholdMatch, "scanQuarantineThreshold extractor found no property");
 const threshold = Number(thresholdMatch[1]);
@@ -111,10 +88,7 @@ assert.ok(
         "failed ladder latches the quarantine on a display that is merely slow to wake"
 );
 
-// A tiny fold applying the verdict the way rescanDevices does — count bumps
-// the counter, a committed failure settles and clears state, a committed
-// success settles and lifts (new episode). Half 2 pins that the QML applies
-// verdicts the same way.
+// Fold verdicts into model state as rescanDevices does; source checks below verify that connection.
 function makeService() {
     return {
         epoch: 0, latest: 0, settled: 0, failures: 0, quarantined: false,
@@ -153,8 +127,7 @@ function succeed(s, scan) {
     lift(s);
 }
 
-// The delegated regression: an older CLI-fallback success arriving after a
-// newer scan committed the opposite verdict must not restore devices or lift.
+// An older fallback success must not restore devices after a newer committed failure.
 {
     const s = makeService();
     const older = launch(s);
@@ -168,8 +141,7 @@ function succeed(s, scan) {
     assert.equal(s.settled, newer.generation, "the newer verdict stays settled");
 }
 
-// The mirror ordering stays fixed: a stale failure after a newer success
-// neither clears state nor counts (the success started a new episode).
+// A stale failure after success belongs to the prior episode and must not clear or count.
 {
     const s = makeService();
     const older = launch(s);
@@ -181,10 +153,7 @@ function succeed(s, scan) {
     assert.equal(s.quarantined, false, "a stale failure must not quarantine");
 }
 
-// Every superseded failure inside one episode counts, in-order or out of
-// order: a dead bus fails slowly while the ladder keeps launching, and
-// discarding predecessors is how the quarantine never engaged on the exact
-// D3hot scenario it was built for.
+// Superseded failures within the same episode must count even when slow scans complete out of order.
 for (const order of [[0, 1, 2], [2, 0, 1]]) {
     const s = makeService();
     const scans = [launch(s), launch(s), launch(s)];
@@ -200,25 +169,21 @@ for (const order of [[0, 1, 2], [2, 0, 1]]) {
     assert.ok(launch(s), "a lift resumes scanning");
 }
 
-// A write proves only the path it took: the quarantine lifts on ddc evidence
-// covering the scanned i2c bus and holds for cheap-path or unknown writes,
-// or a laptop-backlight key repeat re-arms doomed D-state probes of a dead
-// external bus.
+// Only write evidence covering the scanned I2C bus can lift quarantine.
+// A backlight write cannot establish that an external DDC bus recovered.
 assert.equal(writeLiftsQuarantine("ddc"), true, "a ddc write covers the i2c bus and lifts");
 for (const cls of ["backlight", "apple", "", undefined])
     assert.equal(writeLiftsQuarantine(cls), false,
         `a ${cls || "classless"} write must leave the quarantine held`);
 
-// --- half 2: the wiring, as a lint ------------------------------------------
+
 
 const once = (re, why) => {
     const hits = serviceCode.match(new RegExp(re.source, re.flags + "g")) || [];
     assert.equal(hits.length, 1, `${why} (found ${hits.length} matches for ${re})`);
 };
 
-// failScan consults the extracted verdict, counts only on its say-so, and a
-// success dispatches on the same function — a re-derived guard here is how the
-// executed region and the shipped branch drift apart.
+// Failure counting and successful commits must consult the extracted verdict.
 once(/const verdict = scanVerdict\(true, myGeneration, myEpoch, scanGeneration, scanEpoch, settledScanGeneration\);/,
     "failScan must consult scanVerdict for failures");
 once(/if \(verdict\.count\) \{\s*recordScanFailure\(\);/,
@@ -228,25 +193,19 @@ once(/scanVerdict\(false, myGeneration, myEpoch, scanGeneration, scanEpoch, sett
 assert.equal((serviceCode.match(/recordScanFailure\(\)/g) || []).length, 2,
     "recordScanFailure has exactly its definition and the verdict-gated call");
 
-// Both retry ladders read the shared attempt bound the threshold assertion
-// derives, so neither can outgrow the quarantine budget unnoticed.
+// Retry ladders must use the same attempt bound as quarantine.
 once(/rescanAttempt < scanRetryLadderAttempts/,
     "the hotplug ladder must read scanRetryLadderAttempts");
 once(/resumeRecoveryAttempt < scanRetryLadderAttempts/,
     "the resume ladder must read scanRetryLadderAttempts");
 
-// The lift is the episode boundary, and a covering write success is one of
-// the lift events: the dismissCategory success prologue must consult the
-// extracted class gate before the result.device dispatch, or the lift either
-// vanishes or goes back to firing for cheap-path writes.
+// A qualifying write starts a new episode. Check its class before dispatching by result device.
 once(/function liftScanQuarantine\(\) \{\s*consecutiveScanFailures = 0;\s*scanQuarantined = false;\s*scanEpoch\+\+;\s*scanRecoveryRetriesUsed = 0;\s*scanRecoveryTimer\.stop\(\);/,
     "liftScanQuarantine must reset the counter, the flag, the retry budget, " +
         "the pending retry, and open a new episode");
 
-// A committed failure clear arms the bounded recovery retry, adjacent to the
-// state clear so it cannot fire for failures that neither count nor commit;
-// without it, the availability-gated write entry points make the cleared
-// state unrecoverable on a machine with no lifecycle events.
+// A committed failure clear needs bounded recovery retries because availability-gated writes
+// cannot recover cleared state without another lifecycle event.
 once(/brightnessVersion\+\+;\s*if \(scanRecoveryRetriesUsed < scanRecoveryRetryBudget\) \{\s*scanRecoveryRetriesUsed\+\+;\s*scanRecoveryTimer\.restart\(\);/,
     "a committed failure clear must arm the bounded recovery retry");
 once(/if \(writeLiftsQuarantine\(writtenClass\)\) \{\s*liftScanQuarantine\(\);/,

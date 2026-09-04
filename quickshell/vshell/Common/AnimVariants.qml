@@ -37,7 +37,6 @@ Singleton {
     readonly property real variantEnterDurationFactor: _enterDurationFactors[_variant] !== undefined ? _enterDurationFactors[_variant] : 1.0
     readonly property real variantExitDurationFactor: _exitDurationFactors[_variant] !== undefined ? _exitDurationFactors[_variant] : 1.0
 
-    // Fluent: opacity at ~55% of duration; Material/Dynamic: 1:1 with position
     readonly property real variantOpacityDurationScale: _variant === 1 ? 0.55 : 1.0
 
     function variantDuration(baseDuration, entering) {

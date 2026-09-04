@@ -9,12 +9,8 @@ import qs.Modules.Plugins
 PluginComponent {
     id: root
 
-    // --- Settings-backed config ---
-    // Normalised, so a settings file carrying anything else degrades to the
-    // default instead of leaving the widget inert: an unknown provider is
-    // rejected as a launch tag, so every payload would be discarded and nothing
-    // would ever relaunch, with no way back but editing settings by hand. It is
-    // also what keeps the argv the helper receives a known provider.
+    // Normalize settings before using a provider as a launch tag. Unknown tags
+    // would reject every payload and prevent the widget from recovering.
     readonly property string provider: logic.normalizeProvider(pluginData.provider) || "claude"
     property int refreshSeconds: pluginData.refreshSeconds || 300
     // How the bar number is derived from the pool. "pool" = mean of each
@@ -35,10 +31,8 @@ PluginComponent {
             cur.push(id);
         else
             cur.splice(at, 1);
-        // Persist only. Assigning the property here would destroy its binding to
-        // pluginData for this instance, and aiUsage is instantiated once per bar
-        // — the other bar would keep following pluginDataChanged while this one
-        // stopped, so one persisted setting would show two different states.
+        // Persist without assigning the bound property. Each bar instance must
+        // continue to receive pluginData updates.
         if (root.pluginService)
             root.pluginService.savePluginData("aiUsage", "hiddenAccounts", cur);
     }
@@ -47,14 +41,10 @@ PluginComponent {
             root.pluginService.savePluginData("aiUsage", "headlineMode", m);
     }
 
-    // Provider identity, headline arithmetic and pill composition. Extracted so
-    // scripts/test-ai-usage-provider.js runs the shipped code; the wrappers
-    // below just bind the widget's settings to it.
     AiUsageLogic {
         id: logic
     }
 
-    // Meters, status classes and the date/money formatting the popout renders.
     AiUsageFormat {
         id: fmt
     }
@@ -63,39 +53,26 @@ PluginComponent {
         return logic.shownIn(list, root.hiddenAccounts);
     }
 
-    // --- Live state ---
-    //
-    // ONE accepted payload, for the provider that is selected. Everything the
-    // popout renders is a binding off it, so a provider switch invalidates all
-    // of it by clearing this single property — there is no hand-maintained
-    // mirror to forget a field in, which is how the previous provider's numbers
-    // used to survive a switch (VGS-118).
+    // The selected payload is the source for popout bindings. Clearing it
+    // invalidates provider-specific display state on a switch.
     property var current: null
-    // The filing stamp of what `current` holds, so the promotion path can ask
-    // the same newer-success question the failure paths ask.
+    // Filing sequence of current, used to reject older promotions.
     property int currentFiledAt: 0
     // Why the last fetch for the selected provider could not deliver a payload.
     // Non-empty means what `current` holds is no longer trustworthy.
     property string fetchError: ""
     property bool loading: true
 
-    // Everything the popout shows about the payload, from one function that has
-    // already taken the hidden accounts out. The payload's own top-level fields
-    // describe the first LIVE account the backend found, hidden or not, so they
-    // are only trustworthy for the older shape that reports no accounts at all.
+    // Top-level payload fields can describe a hidden account. The view derives
+    // its display state from the visible accounts.
     readonly property var view: logic.popoutView(root.current, root.hiddenAccounts, root.loading)
 
     readonly property bool ok: root.fetchError === "" && root.view.ok
     readonly property string errorText: root.fetchError !== "" ? root.fetchError : root.view.error
     readonly property string plan: root.view.plan
-    // Still fetching, which the popout must not render as a failure.
     readonly property bool pending: root.fetchError === "" && root.view.pending
 
-    // --- Multi-account state ---
-    // People run several subscriptions side by side (one config dir per wrapper
-    // script). One account keeps the single-account view; several render a card
-    // each, carrying their own label, plan and error — which is why the card path
-    // follows what the payload REPORTED, not what is left after hiding.
+    // Choose card layout from reported accounts, before filtering hidden ones.
     readonly property var accounts: (root.current && root.current.accounts) || []
     readonly property bool multiAccount: root.view.cards
     // The payload reported accounts and the user is hiding all of them: nothing
@@ -105,11 +82,8 @@ PluginComponent {
     readonly property int pillFontSize: Theme.barTextSize(
         root.barThickness, root.barConfig?.fontScale, root.barConfig?.maximizeWidgetText)
 
-    // THE headline for what the popout is showing, from the same function the
-    // pill slots use, so the bar, the vertical bar and the popout header cannot
-    // disagree. Null when the payload yields no number — including the case where
-    // the user has hidden every account it reported, where the old per-surface
-    // arithmetic showed an error, 60% and "0 accounts · 60% used" at once.
+    // Use the same headline calculation as the pill slots. Null means no
+    // visible account and no payload-level lane supplies a usable number.
     readonly property var currentHead: logic.headOf(root.current, root.headlineMode, root.hiddenAccounts)
     readonly property bool hasHeadline: root.currentHead !== null
     readonly property int headlinePct: root.currentHead ? root.currentHead.pct : 0
@@ -164,25 +138,14 @@ PluginComponent {
         return classColor(fmt.percentageClass(pct));
     }
 
-    // The last payload PER PROVIDER, keyed by provider name so the pill can show
-    // both without the popout having to be on that tab. Kept raw rather than
-    // reduced to a number, because the headline mode and the hidden-account list
-    // can change between polls and the pill has to follow them without waiting
-    // for a refetch.
-    //
-    // A map rather than two properties, so filing is a keyed write and there is
-    // no branch that could file an unidentifiable payload under a guess — the
-    // guessing is what mixed the two providers up (VGS-118).
+    // Keep raw payloads keyed by provider so headline and visibility settings
+    // can update the pills between polls.
     property var providerData: ({})
 
     readonly property var claudeHead: logic.headOf(root.providerData.claude, root.headlineMode, root.hiddenAccounts)
     readonly property var codexHead: logic.headOf(root.providerData.codex, root.headlineMode, root.hiddenAccounts)
 
-    // File a payload under the provider IT names, never under the provider the
-    // fetch was launched for or the one currently selected.
-    // A monotonic stamp per filing, and the stamp each provider's entry carries.
-    // That is the only ordering evidence the failure path needs: whether the
-    // payload now filed for a provider arrived after the failing fetch launched.
+    // Filing sequences order payloads against fetch launches and provider switches.
     property int fileSeq: 0
     property var providerFiledAt: ({})
 
@@ -227,71 +190,43 @@ PluginComponent {
     }
 
     readonly property string aiUsageCommand: Paths.vshellCli
-    // The provider the popout is NOT showing. Only its headline is kept, so the
-    // pill can show both without doubling the popout's state.
+    // The unselected provider still needs a fetch channel for its pill slot.
     readonly property string otherProvider: root.provider === "codex" ? "claude" : "codex"
-    // Base spacing between retries, multiplied by the attempt number. One second
-    // is long enough to be a pause rather than a burst and short enough that a
-    // blip still resolves well inside a poll interval.
+    // Space retries by attempt count to allow transient failures to recover.
     readonly property int retryDelayMs: 1000
     // Cap on a failure reason before it reaches the popout and the shell log:
     // the text comes from whichever backend is installed, and a log people paste
     // into bug reports should not accumulate arbitrary backend output.
     readonly property int maxIssueChars: 200
 
-    // One record per fetch channel — and the channel OWNS its process, its
-    // collectors and the provider it wants. Threading that tuple by hand through
-    // every call site is how a cross-channel mix-up gets written by accident:
-    // one handler reaching for the other channel's stderr or process is a typo,
-    // not a design error, and nothing structural would have caught it. Here the
-    // pairing cannot be crossed, and every handler is written once.
+    // Each fetch channel owns its process, collectors, and requested provider.
     component FetchChannel: QtObject {
         id: chan
 
-        // The provider this channel fetches. A binding at the instantiation
-        // site, so the command follows the selection.
         property string want: ""
-        // The channel whose payload the popout shows. The other one keeps only
-        // its provider's headline.
+        // Whether this channel supplies the selected-provider popout.
         property bool primary: false
 
-        // The provider this channel's process was LAUNCHED for, empty when
-        // nothing is running. A running process keeps the argument it started
-        // with, so the tag says what it actually got — while the payload's own
-        // `provider` field is what decides where its data may be filed, because
-        // a tag can be reassigned while the process holding it is still running.
+        // Provider used to launch this fetch. Keep the tag until settlement even
+        // if selection changes or the process stops before its exit arrives.
         property string inFlight: ""
-        // The provider whose payload this channel last filed. The relaunch
-        // decision is "is this what is selected now?", never "did the selection
-        // move?".
+        // Provider last filed by this channel, used to decide whether it owes a fetch.
         property string loaded: ""
         property int retries: 0
-        // Whether the launch now finishing produced a payload this channel could
-        // use, and why it did not. Per channel, so one channel's failure can
-        // never be shown as the other's cause.
+        // Keep acceptance and failure reason with the channel that produced them.
         property bool accepted: false
         property string issue: ""
-        // Captured when the stream ends rather than read at exit time, which is
-        // the repo idiom (Common/settings/Processes.qml): StdioCollector only
-        // fills `text` once the stream has closed, and hanging the cause off an
-        // ordering assumption loses it silently when the assumption slips.
+        // StdioCollector text becomes complete only when the stream closes;
+        // exit and stream-close signals need not arrive in the same order.
         property string errorOut: ""
-        // A launch asked for while the previous process was still stopping, to
-        // be applied when it actually stops.
+        // A deferred launch waits for the preceding process to finish stopping.
         property bool pending: false
-        // Whether THIS launch produced a process — `started` is the signal for
-        // "exec succeeded", and a launch that never gets there is the only thing
-        // the watchdog is for. See AiUsageLogic.watchdogArms.
+        // Only a launch without a started signal belongs to the failed-start watchdog.
         property bool sawProcess: false
-        // The filing stamp this launch started at, so its failure can tell a
-        // payload that predates it from one filed while it was running.
+        // Launch sequence distinguishes older data from payloads filed during this fetch.
         property int launchSeq: 0
-        // The two halves of a finished fetch. Nothing orders stdout closing
-        // against the exit, so a fetch settles only once BOTH have landed:
-        // settling on the exit alone cleared the tag acceptPayload decodes
-        // against, and a VALID payload arriving second was then discarded as a
-        // provider mismatch and refetched — the inverse of the rule this issue
-        // exists to enforce, and a retry spent on a fetch that succeeded.
+        // Keep the tag until both stdout and exit arrive. Clearing it at exit
+        // would reject a valid payload whose stream closes later.
         property bool outDone: false
         property bool exitDone: false
 
@@ -315,91 +250,45 @@ PluginComponent {
             onRunningChanged: {
                 if (running)
                     return;
-                // THE INVARIANT, and why it is asked first: a stop with a tag
-                // still set must leave something that will settle this channel —
-                // an armed watchdog here, or the exit still coming for a process
-                // that did run. Draining `pending` ahead of it could swallow the
-                // arming, because launch() re-parks a request while the tag is
-                // owned: nothing started, nothing armed, and this handler never
-                // runs again once the process has stopped — so the channel would
-                // hold its tag with no settle path at all, the pill on the
-                // in-flight ellipsis and no fetch for it until a provider switch.
-                //
-                // Arming means the start itself failed: Qt starts a process
-                // asynchronously and reports nothing when the executable cannot be
-                // run. A launch that DID produce a process is not this timer's
-                // business, whichever of `exited` and `runningChanged` lands
-                // first. Deferred all the same, and failLaunch re-checks, because
-                // `started` is not ordered against this signal either.
+                // A stopped tagged launch needs a settlement path before pending work can
+                // run. Failed starts use the watchdog; processes that ran owe an exit.
+                // Defer the watchdog and re-check because started can arrive after stop.
                 if (logic.watchdogArms(chan.inFlight, chan.sawProcess)) {
                     stallTimer.restart();
                     return;
                 }
-                // A parked request runs only once the channel can actually take
-                // it. A tag that is still set is owned until the settle path
-                // clears it, and settleFetch drains `pending` when it does.
+                // Drain parked work only after settlement releases the launch tag.
                 if (chan.inFlight === "" && chan.pending)
                     root.launch(chan);
             }
         }
 
-        // Long enough that a `started` arriving after the stop still wins, short
-        // enough that a broken command is reported rather than waited out. It is
-        // NOT sized against the exit: a launch that produced a process never arms
-        // it, so a slow helper cannot be reported as one that never ran.
+        // Allow a delayed started signal before reporting a failed launch.
+        // A process that ran does not arm this timer.
         property Timer stallTimer: Timer {
             id: stallTimer
             interval: 1000
             onTriggered: root.failLaunch(chan)
         }
 
-        // The grace an exit gives stdout to close, and the only reason waiting for
-        // both halves cannot hang: a helper can leave its stdout open in a child
-        // it spawned, so the payload half may never arrive at all. Long enough
-        // that an ordinary close always wins it, short enough that a fetch is not
-        // left sitting on one that never comes.
+        // A child can inherit stdout and keep it open after the helper exits.
+        // Bound the stream-close wait so that fetch still settles.
         property Timer flushTimer: Timer {
             id: flushTimer
             interval: 1000
             onTriggered: root.settleFetch(chan)
         }
 
-        // A retry waits. Deferring it to the next event-loop turn spent the whole
-        // budget in consecutive turns — four calls to a provider usage API as
-        // fast as the loop turns, once per configured bar — which gives a
-        // transient failure no time to pass. settleFetch sets the interval from
-        // the retry count, so the attempts are spaced 1s, 2s, 3s.
+        // Delay retries by attempt count so a transient failure has time to clear.
         property Timer retryTimer: Timer {
             id: retryTimer
             interval: root.retryDelayMs
             onTriggered: root.launch(chan)
         }
 
-        // What a provider switch invalidates. The switch is this branch's
-        // generation boundary, so nothing armed before it may act after it: both
-        // timers stop here, and a request parked for the previous selection goes
-        // with them, since clearProviderState refreshes anyway.
-        //
-        // The TAG is the deliberate part, and the question is whether ANYTHING
-        // can still settle this fetch — not whether a process was seen. A tag
-        // kept with nothing coming owns the channel for good: launchDecision
-        // answers "pend" for an owned tag with no running process, so every
-        // refresh and every poll parks, and a later switch takes this same
-        // branch again. Asking "was a process seen?" got the flush grace exactly
-        // wrong: mid-grace a process HAS run and exited, so that question kept
-        // the tag while this function stopped the grace — the last thing left
-        // that would have settled it.
-        //
-        // What is still owed is the whole of it, and it is one question:
-        // settleIsComing. A running process delivers an exit that must settle
-        // its own fetch, and its payload is attributed by the payload's own
-        // provider rather than by this channel's rebound `want`, so nothing it
-        // does can be read as the new provider's; a process that already ran
-        // still owes its exit until one arrives, and clearing the tag there
-        // would let that late exit settle whatever fetch is running by then.
-        // Everything else — a launch that never produced a process, and one
-        // whose exit landed while stdout never closed — was waiting on a timer
-        // this function just stopped, so the switch settles it.
+        // Stop work armed for the previous selection. Retain a launch tag only
+        // when settleIsComing says a process still owes settlement; otherwise the
+        // switch must settle work whose only remaining timer was stopped.
         function reset() {
             loaded = "";
             retries = 0;
@@ -425,26 +314,16 @@ PluginComponent {
         want: root.otherProvider
     }
 
-    // Immediate relaunches allowed before a channel gives up and waits for the
-    // poll timer. Spent per channel; restored only by a payload that SATISFIES
-    // that channel and by a provider switch. When it is spent is
-    // AiUsageLogic.shouldRelaunch's to say, and only its comment says it — two
-    // copies of that rule is how this one drifted.
+    // Retry budget per channel. shouldRelaunch decides whether to spend it;
+    // a satisfying payload or provider switch restores it.
     readonly property int maxFetchRetries: 3
 
-    // A provider switch makes every provider-scoped answer wrong at once: the
-    // payload, the failure text, and both channels' "what do we hold" state. One
-    // path clears all of it, so the popout shows a loading state rather than the
-    // previous provider's accounts, plan and errors. `providerData` is kept: it
-    // is keyed BY provider, so neither entry can be read as the other's.
+    // Clear selected-provider state on a switch. Preserve providerData because
+    // its entries remain keyed by payload identity.
     function clearProviderState() {
         root.current = null;
-        // The BARRIER, not zero: providerData survives a switch on purpose (the
-        // pill keeps both slots), so comparing against 0 promoted the previous
-        // session's payload for the newly selected provider — stale data on a
-        // switch, which is the symptom this issue exists to fix. Holding the
-        // stamp the switch happened at says "only what is filed from here on",
-        // and needs no second counter: the switch IS the generation boundary.
+        // Use the switch sequence as a barrier: cached data remains in the pills,
+        // but only a later filing may populate the selected-provider popout.
         root.currentFiledAt = root.fileSeq;
         root.fetchError = "";
         root.loading = true;
@@ -456,39 +335,27 @@ PluginComponent {
     function setProvider(p) {
         if (root.provider === p)
             return;
-        // Persist only. The refresh is driven by onProviderChanged below, which
-        // runs in EVERY live instance rather than only in the one whose setter
-        // was clicked — and which is also correct on desktop widgets, where the
-        // instance-scoped pluginService emits pluginDataChanged via
-        // Qt.callLater, so root.provider has NOT moved yet when this returns.
+        // Persist and let onProviderChanged refresh every live instance.
+        // Desktop widgets can deliver pluginDataChanged after this setter returns.
         if (root.pluginService)
             root.pluginService.savePluginData("aiUsage", "provider", p);
     }
 
-    // aiUsage is instantiated once per configured bar and the provider is one
-    // shared setting, so the change — not the click — is what has to drive the
-    // refetch. Refreshing inside setProvider left every other bar showing the
-    // PREVIOUS provider's accounts and plan under the new provider's label
-    // until its own poll timer fired, up to refreshSeconds later.
+    // React to the shared setting change so every bar instance refreshes.
     onProviderChanged: {
         root.clearProviderState();
         root.refresh();
     }
 
-    // Both channels, for the poll and for a provider switch. A retry relaunches
-    // its own channel directly — restarting both would spend one channel's
-    // budget on the other's process, and every launch shells out to a provider
-    // usage API once per configured bar.
+    // Refresh both channels for a poll or provider switch. Retries launch only
+    // their own channel and spend only its budget.
     function refresh() {
         root.launch(otherFetch);
         root.launch(usageFetch);
     }
 
-    // A tag is only set when a process actually starts. `running = true` on a
-    // Process that has not finished stopping is a no-op, so that case parks the
-    // request on the channel and onRunningChanged applies it — a tag set for a
-    // launch that never happened would show a fetch that does not exist and
-    // block every later refresh until the poll timer.
+    // Set the tag only when starting. A process still stopping can ignore
+    // running = true, so park its request until settlement.
     function launch(ch) {
         const decision = logic.launchDecision(ch.inFlight, ch.proc.running);
         if (decision === "skip")
@@ -499,10 +366,7 @@ PluginComponent {
         }
         ch.pending = false;
         ch.inFlight = ch.want;
-        // Per-fetch, like the tag: the previous launch's process says nothing
-        // about whether this one gets off the ground.
         ch.sawProcess = false;
-        // Everything filed after this point is newer than this fetch.
         ch.launchSeq = root.fileSeq;
         ch.accepted = false;
         ch.issue = "";
@@ -510,26 +374,16 @@ PluginComponent {
         ch.outDone = false;
         ch.exitDone = false;
         ch.flushTimer.stop();
-        // The previous launch's watchdog is armed in exactly the state this one
-        // starts from — tag set, process not running — so leaving it running let
-        // it fire against THIS fetch: "could not run" for a healthy process,
-        // whose payload was then discarded as a mismatch and whose retry was
-        // spent. It is per-fetch state like everything above it.
+        // A watchdog belongs to its launch. Stop it before another fetch reuses the channel.
         ch.stallTimer.stop();
-        // This launch supersedes any retry that was still waiting to fire.
         ch.retryTimer.stop();
         ch.proc.running = true;
     }
 
-    // The process stopped. `exitStatus` is Qt's: non-zero means the helper did
-    // not exit on its own terms (a signal, an OOM kill), which has to name
-    // itself — otherwise the reason left standing is the "parse error" recorded
-    // for the empty output it never wrote.
+    // Record abnormal process termination as the cause, ahead of an empty-output
+    // parse error from a helper killed before it could reply.
     function finishFetch(ch, exitCode, exitStatus) {
-        // Symmetric with failLaunch: whichever path settles the fetch first owns
-        // it. Without this an exit arriving after the watchdog already settled
-        // reported a second time, and could overwrite the reason of — and settle
-        // — a relaunch that was by then running.
+        // Ignore an exit after this fetch has already settled.
         if (ch.inFlight === "")
             return;
         ch.exitDone = true;
@@ -542,11 +396,8 @@ PluginComponent {
         root.completeFetch(ch);
     }
 
-    // Both halves of a finished fetch, in whichever order they land. The tag has
-    // to outlive the payload path, because that is what the payload is decoded
-    // against; settling on the exit alone made a valid payload look like another
-    // provider's. Whichever half lands last settles, and an exit that lands first
-    // gives stdout a bounded grace rather than an open-ended wait.
+    // Settle after both exit and stdout. The tag must survive payload decoding;
+    // an exit arriving first starts a bounded stream-close wait.
     function completeFetch(ch) {
         if (ch.inFlight === "")
             return;
@@ -558,14 +409,9 @@ PluginComponent {
         root.settleFetch(ch);
     }
 
-    // A start that never produced a running process. Same failure path as an
-    // exit, so a missing or unrunnable CLI is reported and retried exactly like
-    // a helper that ran and failed, instead of leaving the widget waiting.
+    // Report and retry a launch that never produced a running process.
     function failLaunch(ch) {
-        // The arming rule, asked again at the moment it would report: the fetch
-        // may have settled while the timer waited, or the process may have
-        // started after the stop. One function, two consumers — a second copy of
-        // the condition here is how it would drift.
+        // Re-check at timer delivery: the fetch may have settled or started.
         if (!logic.watchdogArms(ch.inFlight, ch.sawProcess))
             return;
         ch.issue = "could not run " + root.aiUsageCommand;
@@ -573,24 +419,15 @@ PluginComponent {
         root.settleFetch(ch);
     }
 
-    // What a finished fetch means, however it finished.
+    // Settle the channel and schedule any remaining retry or parked request.
     function settleFetch(ch) {
         if (ch.inFlight === "")
             return;
         ch.stallTimer.stop();
         ch.flushTimer.stop();
 
-        // Relaunch whenever this channel is not holding the provider it should
-        // be, or this fetch delivered nothing — misattributed, arrived after the
-        // user switched away, never parsed, or the helper never ran. Comparing
-        // the launch tag to the selection instead dropped the replacement fetch
-        // on a claude -> codex -> claude toggle (VGS-118). Decided BEFORE the tag
-        // is cleared, since the tag is one of the fields the decision reads. The
-        // retry then WAITS: a `running = true` assigned while the process is
-        // still stopping is a no-op, and beyond that a transient failure needs
-        // time to pass rather than the next event-loop turn. launch() parks the
-        // attempt if the process is still stopping and onRunningChanged applies
-        // it then.
+        // Decide retry eligibility before clearing the tag it reads. Delay retry
+        // until the process can start and the transient failure has had time to clear.
         const relaunch = logic.shouldRelaunch(ch, root.maxFetchRetries);
         ch.inFlight = "";
         if (relaunch) {
@@ -599,34 +436,21 @@ PluginComponent {
             ch.retryTimer.restart();
             return;
         }
-        // A request parked while this launch was unsettled runs now that the tag
-        // is clear. Deferred: the process may still be stopping, in which case
-        // launch() parks it again and onRunningChanged applies it.
+        // A parked request may still find a stopping process; launch will park it again.
         if (ch.pending)
             Qt.callLater(() => root.launch(ch));
 
-        // Either there is still nothing for what this channel wants, or this
-        // fetch produced no payload and what is held is now stale — the same
-        // kind of failure: say so rather than sitting on "loading" or on numbers
-        // no fetch stands behind.
+        // Report a missing requested payload or an unsuccessful fetch as unavailable.
         if (ch.loaded !== ch.want || !ch.accepted) {
             const why = ch.issue !== "" ? ch.issue : "usage unavailable";
-            // ONE decision, consulted by every write below: a newer successful
-            // result for a provider always wins over an older failure. The other
-            // channel files by payload identity, so mid-switch it can land a good
-            // payload for the provider this one is failing at. Guarding only the
-            // headline write left the popout claiming an error over those
-            // numbers — two guard sites is what let that drift, so there is one.
+            // A newer successful filing wins over an older failed fetch, including
+            // one delivered by the other channel during a provider switch.
             const authoritative = logic.failureWins(
                 root.providerData[ch.want], root.providerFiledAt[ch.want], ch.launchSeq);
             if (authoritative)
                 root.storeHeadline(ch.want, { ok: false, provider: ch.want, error: why });
             if (ch.primary) {
-                // Loading ends either way: this fetch settled and none is coming
-                // before the poll, so leaving it set would keep the popout saying
-                // it is checking when nothing is. Only the failure TEXT is
-                // conditional — an unauthoritative failure reports nothing rather
-                // than contradicting the payload that beat it.
+                // Settlement ends loading even if newer data suppresses this failure text.
                 root.loading = false;
                 if (authoritative)
                     root.fetchError = why;
@@ -634,11 +458,8 @@ PluginComponent {
         }
     }
 
-    // Both channels accept through one path: decode, record the reason on THIS
-    // channel, then apply the outcome AiUsageLogic decided. Filing a payload and
-    // satisfying a channel are separate answers — a result that lands after the
-    // user switched still updates its own provider's pill slot, but leaves the
-    // channel owing a fetch for what is selected now.
+    // File by payload identity. A result can update its pill while the channel
+    // still owes a fetch for a different selected provider.
     function acceptPayload(ch, txt) {
         const got = logic.decodePayload(ch.inFlight, txt);
         ch.issue = got.issue;
@@ -648,10 +469,7 @@ PluginComponent {
         const outcome = logic.acceptOutcome(logic.payloadProvider(got.data), ch.want);
         if (outcome.file)
             root.noteHeadline(got.data);
-        // The promotion path, third consumer of the newer-success rule: a good
-        // payload for the SELECTED provider belongs in the popout whichever
-        // channel fetched it. Gating on ch.primary left the popout empty after a
-        // switch, when the other channel files for what is now selected.
+        // Either channel can file for the selected provider during a switch.
         root.promoteSelected();
         if (!outcome.satisfies)
             return;
@@ -659,19 +477,12 @@ PluginComponent {
         ch.retries = 0;
     }
 
-    // The popout shows whatever is filed for the selected provider, promoted here
-    // rather than written by whichever channel happened to fetch it. Adding a
-    // lane later means adding it to the payload and to AiUsageFormat.flatMeters —
-    // never to a mirror here that a switch has to remember to clear.
+    // Promote the selected provider from filed data, independent of fetch channel.
     function promoteSelected() {
         const filed = root.providerData[root.provider];
         const filedAt = root.providerFiledAt[root.provider];
-        // Any ACCEPTED payload, not only a successful one: an ok:false payload is
-        // the provider answering — signed out, backend missing — and the popout
-        // has an error path for it. Storing is an ordering question; `ok` only
-        // decides what is rendered. Success-only left a signed-out provider
-        // showing nothing at all, because settleFetch skips its failure branch
-        // for a channel that IS accepted and loaded.
+        // Accept provider error payloads too. Their sequence controls promotion;
+        // the popout renders their error instead of waiting for a success.
         if (!logic.newerAccepted(filed, filedAt, root.currentFiledAt))
             return;
         root.current = filed;
@@ -682,9 +493,8 @@ PluginComponent {
 
     Timer {
         id: pollTimer
-        // Each refresh walks every account in turn, so the floor scales with how
-        // many there are: one account may poll every 60s, five no faster than
-        // every 300s. The configured interval still wins when it is longer.
+        // Polling visits accounts sequentially, so scale the minimum interval with
+        // the reported account count.
         interval: Math.max(60 * Math.max(1, (root.accounts || []).length), root.refreshSeconds) * 1000
         repeat: true
         running: true
@@ -692,10 +502,7 @@ PluginComponent {
         onTriggered: root.refresh()
     }
 
-    // One slot per provider, each carrying its own icon. The icon is what makes
-    // a slot readable on its own: with a single leading icon and a bare "x / y",
-    // a provider with no number dropped its slot entirely and the other value
-    // slid left, changing meaning with nothing on screen to say so.
+    // Keep each provider icon with its slot when another provider has no number.
     horizontalBarPill: Component {
         Row {
             spacing: Theme.spacingXS
@@ -711,8 +518,6 @@ PluginComponent {
                     VgsIcon {
                         name: modelData.icon
                         size: root.iconSize
-                        // The selected provider — the one the popout and the
-                        // click target belong to — reads at full strength.
                         color: modelData.selected ? Theme.surfaceText : Theme.surfaceVariantText
                         anchors.verticalCenter: parent.verticalCenter
                     }
@@ -742,8 +547,6 @@ PluginComponent {
                 anchors.horizontalCenter: parent.horizontalCenter
             }
 
-            // The same slot the horizontal pill renders for this provider, so
-            // the two bar forms cannot say different things about one payload.
             StyledText {
                 text: root.selectedSlot.text
                 font.pixelSize: root.pillFontSize
@@ -760,16 +563,12 @@ PluginComponent {
         PopoutComponent {
             id: popout
 
-            // Which page of the pager is showing: 0 usage, 1 display settings.
-            // Transient view state, deliberately not persisted — reopening a
-            // popout on a settings page you left open days ago is disorienting.
+            // Transient page state: usage is the opening page, display settings the next.
             property int page: 0
             readonly property bool onSettings: popout.page === 1
 
-            // The pushed-page contract PluginPopout looks for: it owns keyboard
-            // focus, so Escape can only reach a pushed page through this, and it
-            // is also what resets the pager when the popout is dismissed. Two
-            // members, no key handler. (VGS-88)
+            // PluginPopout owns keyboard focus and uses this contract for Escape and
+            // for resetting a pushed page when the popout closes.
             readonly property bool canPopBack: popout.page > 0
             function popBack() {
                 popout.page = Math.max(0, popout.page - 1);
@@ -781,30 +580,21 @@ PluginComponent {
                     return "How the bar number is chosen, and which accounts count.";
                 if (!root.ok)
                     return root.pending ? "Checking usage…" : (root.errorText || "Unavailable");
-                // Every account hidden: a number over them is the leak this closes.
                 if (root.allHidden)
                     return logic.accountCount(root.view.totalCount) + " hidden";
                 if (!root.multiAccount)
                     return root.plan || "";
-                // Counted over what is actually on screen — saying "5 accounts"
-                // beside a number derived from four of them is just wrong.
                 const unavailable = root.view.shownCount - root.view.liveCount;
                 let suffix = unavailable > 0 ? (" · " + unavailable + " unavailable") : "";
                 if (root.view.hiddenCount > 0)
                     suffix += " · " + root.view.hiddenCount + " hidden";
-                // No headline means no number: several accounts on screen and not
-                // one of them ok. The pill already renders its placeholder there.
                 const used = root.hasHeadline ? (" · " + root.headlinePct + "% used") : "";
                 return logic.accountCount(root.view.liveCount) + used + suffix;
             }
             showCloseButton: true
 
-            // Sits left of the close button; same 32x32 hit target so the two
-            // read as a pair. It is the disclosure control and the back control
-            // both — the header has no left-hand slot to put a back chevron in,
-            // and adding one would mean changing PopoutComponent for every
-            // plugin that uses it. Swapping the icon in place keeps the
-            // affordance where the user's pointer already is.
+            // Reuse the header action position for disclosure and back navigation;
+            // PopoutComponent has no separate leading action slot.
             headerActions: Component {
                 Rectangle {
                     width: 32
@@ -830,13 +620,8 @@ PluginComponent {
                 }
             }
 
-            // --- pager -------------------------------------------------------
-            // The settings used to expand inline, pushing the account cards
-            // down inside a popout that is already dense. They are a page now:
-            // the two sit side by side in a clipped viewport that slides, and
-            // the viewport takes the height of whichever page is showing, so
-            // the popout grows TO the settings page rather than growing BY it.
-            // (VGS-73)
+            // The viewport follows the active page height so settings replace the
+            // usage content instead of increasing its total height.
             Item {
                 id: pager
 
@@ -854,7 +639,6 @@ PluginComponent {
                 Row {
                     id: pages
                     spacing: 0
-                    // One viewport width per page; page 0 is the resting state.
                     x: -popout.page * pager.width
 
                     Behavior on x {
@@ -869,9 +653,7 @@ PluginComponent {
                         width: pager.width
                         spacing: Theme.spacingM
 
-                        // The tabs sat flush against the header and the first card.
-                        // Wrapping rather than adding Column spacers keeps the gap to
-                        // the neighbouring cards unchanged.
+                        // Wrap the tabs to add space without changing gaps between account cards.
                         Item {
                             width: parent.width
                             height: providerRow.implicitHeight + 10
@@ -882,9 +664,6 @@ PluginComponent {
                                 anchors.verticalCenter: parent.verticalCenter
                                 spacing: Theme.spacingS
 
-                            // Driven from the same identity source as the pill
-                            // slots, so a tab's label and icon cannot disagree
-                            // with the number the bar shows for that provider.
                             Repeater {
                                 model: logic.providerOrder()
 
@@ -903,7 +682,6 @@ PluginComponent {
                             }
                         }
 
-                        // Single account: unchanged full-detail cards.
                         Repeater {
                             model: (root.ok && !root.multiAccount) ? root.primaryMeters : []
 
@@ -922,14 +700,12 @@ PluginComponent {
                                     host: root
                                     meter: modelData
                                     labelWeight: Font.Medium
-                                    // A credit pool reports an amount, not a countdown.
+                                    // A credit pool reports an amount instead of a reset countdown.
                                     detailText: root.formatSpendExact(modelData) || root.resetLabel(modelData)
                                 }
                             }
                         }
 
-                        // Several accounts: one compact row each, expanding in place to
-                        // the same full-detail cards a single account gets.
                         Repeater {
                             model: root.multiAccount ? root.shownAccounts(root.accounts) : []
 
@@ -966,9 +742,6 @@ PluginComponent {
 
                                     Item {
                                         width: parent.width
-                                        // +5 with the text pinned to the top, so the extra
-                                        // height reads as space under the account line
-                                        // rather than padding on both sides of it.
                                         height: Math.max(emailText.implicitHeight, planText.implicitHeight) + 5
 
                                         StyledText {
@@ -994,7 +767,6 @@ PluginComponent {
                                         }
                                     }
 
-                                    // Collapsed: slim one-line-per-window summary.
                                     Repeater {
                                         model: accountCard.expanded ? [] : accountCard.meters
 
@@ -1008,7 +780,6 @@ PluginComponent {
                                         }
                                     }
 
-                                    // Expanded: the full card treatment, one per window.
                                     Repeater {
                                         model: accountCard.expanded ? accountCard.meters : []
 

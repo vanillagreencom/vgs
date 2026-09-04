@@ -174,7 +174,7 @@ StyledRect {
             if (root.ignoreLeftRightKeys) {
                 event.accepted = true;
             } else {
-                // Allow normal TextInput cursor movement
+
                 event.accepted = false;
             }
         }

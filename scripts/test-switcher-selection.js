@@ -1,84 +1,8 @@
 #!/usr/bin/env node
 
-// Pins the decision logic behind the full-screen switchers (VGS-208): where the
-// selection lands, what Enter does, and which reply a switcher's error toast is
-// allowed to be about.
-//
-// Nothing else reaches it. `switcher_check` in scripts/qml-smoke.sh witnesses
-// map/toggle/Escape/unmap and never inspects a selection, and it lives behind
-// `--nested`, which CI never passes (.github/workflows/ci.yml runs
-// scripts/check-validation-safety.sh --require-static). So the whole guard was
-// invisible to the merge gate while a user pressing Enter could apply the wrong
-// entry, or lose the surface with nothing applied.
-//
-// TWO HALVES, both here:
-//
-//   1. The arithmetic, EXECUTED. FullScreenSwitcher.qml marks it off between
-//      `// BEGIN SWITCHER SELECTION DECISION` and its END; every input is an
-//      argument, so this runs the same program the shell runs rather than a
-//      transcript of it.
-//
-//   2. The wiring, as a lint. A pure region proves nothing if the QML calls it
-//      in the wrong branch, or not at all.
-//
-// THE SEAM IS INSIDE THE REGION on purpose, and it moved twice. A first shape
-// asserted on source text for the Enter outcome, which a mutant keeping the
-// token and removing the behaviour walks straight past; `enterOutcome` is now a
-// function this file calls, leaving one dispatch in `applyCurrent` for section 2
-// to pin by BRANCH and ORDER — the statement a call sits before, not merely its
-// presence. The INTENT LATCH then went the same way: `userMoved` was set at four
-// call sites, each pinned by a raw regex that `if (false) userMoved = true;`
-// satisfies, so the latch could be made inert with the guard green. The decision
-// is now `latchesIntent`, which this file EXECUTES, and ONE adapter (`navigate`)
-// that section 2 pins by exact occurrence and by order.
-//
-// The residual, stated because it is real: `if (false) root.userMoved = true;`
-// inside that adapter still survives, and no source-text pin can reach a dead
-// branch. What changed is the SIZE of what a pin has to cover — one adapter line
-// instead of four call sites, with the empty-pager rule, the filter exception and
-// every landing index now executed rather than described.
-//
-// Section 2 itself was half a guard before this round. Its predicates ran raw
-// regexes over `stripComments(wholeFile)`, which deliberately KEEPS string
-// literals: `property string decoy: "onActiveKeyChanged: reseedIfUntouched()"`
-// satisfied the pin with the real edge deleted, and every positive pin was in
-// that class. Positive pins now go through `qmlSource(...).requires(...)`, which
-// searches the literal view and confirms each hit is CODE at the same offset,
-// scoped to a NAMED block and counted — so a decoy string, a copy in a comment,
-// and a second call site all fail. Raw regexes are kept only for BANS (which
-// must see literals) and for ORDER across a whole file.
-//
-// MUST-FAIL CONTROLS, each seen red, applied one at a time to the shipped tree.
-// In-region: `wrapIndex` returning a bare modulo (negative index); `clampIndex`
-// using `>` for `>=`; `seedIndex` returning the LAST match instead of the first;
-// `shouldReseed` dropping the `!moved` conjunct; `enterOutcome` answering "apply"
-// for a null entry, and answering "apply" while canApply is false;
-// `latchesIntent` answering true on an EMPTY pager (the Home/End defect);
-// `navIndex` transposing "first" and "last".
-// Across the seam: a SECOND `root.userMoved` write added to `navigate()`, and one
-// added to `handleKey` (both killed by the exact count and the block-scoped ban);
-// Home routed to "last"; `updateFilter` dropping its unconditional latch, and a filter
-// key writing `filterQuery` directly instead of routing through it; a decoy
-// string literal carrying `onActiveKeyChanged: reseedIfUntouched()` with the real
-// edge deleted; an apply run under a NAMED Proc id, which coalesces two applies
-// into one callback again; the request id reverted to the bare Proc command id;
-// `_beginApply` resurrecting a per-command-id owner map; the `setWallpaper`
-// success path writing SessionData without `_ownsWallpaperSlot`, and that test
-// keyed back on the PATH rather than the request; the wallpaper slot never
-// released in `_finishApply` or in `clearWallpaper`; either apply resolving its
-// success INSIDE the try whose catch resolves it again; the post-parse remainder
-// of either apply left unguarded; `userMoved` never cleared in `onOpened`; the
-// base's per-open reset moved back to a root-level `onOpened:` (the derived-
-// handler hazard item #5 closed); `onActiveKeyChanged` deleted; the clamp moved
-// below the re-seed; `applied()` hoisted above the blocked branch;
-// `applyBlockedTimer.stop()` dropped from `onCanApplyChanged`; `canApply`
-// reverted to `!VGSThemeService.busy`; a subclass calling `track()` with a
-// literal instead of the service call's return; `ThemeApplyReporter` consuming
-// any `applyFinished` rather than its own request id; `track()` arming on a falsy
-// id; `applyBlueprint`/`setWallpaper` returning nothing on refusal;
-// `_finishApply` emitting before clearing the in-flight key; `applyInFlight`
-// derived from `inflight`; the `setWallpaper` rollback dropping its ownership
-// guard; the preview-check branch setting `blueprintsLoadFailed` again.
+// Execute shipped switcher selection decisions and inspect adapters and apply-result correlation.
+// Nested switcher smoke measures mapping and dismissal, not selected entries.
+// Source checks require code occurrences and order, but do not prove reachability inside dead branches.
 
 "use strict";
 
@@ -98,17 +22,14 @@ const THEMES_TAB = path.join(repoRoot, "quickshell", "vshell", "Modules", "Setti
 const CAROUSEL = path.join(SWITCHER, "SwitcherCarousel.qml");
 const SHORTCUT_ROW = path.join(repoRoot, "quickshell", "vshell", "Modules", "Settings", "Widgets", "SwitcherShortcutRow.qml");
 
-// This text comes from repo files and is EXECUTED here, so it runs inside a
-// child bounded by a wall clock — scripts/lib/qml-region.js says what that
-// bounds and what it does not.
+// Extracted code runs under qml-region process deadlines.
 const { evaluateMarked, regionOf, guardChild } = require("./lib/qml-region.js");
 const qmlSource = require("./lib/qml-source.js");
 
-// Returns only in the child; the parent exits with its status.
+
 guardChild();
 
-// Prove the reader before it reads anything: that a token surviving only in a
-// comment pins nothing.
+// Run source-reader controls before relying on extracted assertions.
 qmlSource.selfTest();
 
 const read = file => fs.readFileSync(file, "utf8");
@@ -124,15 +45,14 @@ const shortcutRowSource = read(SHORTCUT_ROW);
 
 const MARKER = "SWITCHER SELECTION DECISION";
 
-// --- 1. The shipped arithmetic, executed -----------------------------------
+
 
 const sel = evaluateMarked(baseSource, MARKER, [
     "wrapIndex", "clampIndex", "seedIndex", "shouldReseed", "enterOutcome",
     "latchesIntent", "navIndex", "wheelSteps", "preserveIndex"
 ], "FullScreenSwitcher.qml");
 
-// The extracted block must be free of QML, or this harness tests a different
-// program than the shell runs.
+// Keep extracted decisions independent of QML state.
 {
     const region = qmlSource.stripComments(regionOf(baseSource, MARKER, "FullScreenSwitcher.qml"));
     for (const forbidden of ["root.", "Theme.", "I18n.", "Qt."]) {
@@ -142,7 +62,7 @@ const sel = evaluateMarked(baseSource, MARKER, [
     }
 }
 
-// wrapIndex: a pager with no visible list edge wraps rather than dying at one.
+
 assert.equal(sel.wrapIndex(0, 0), 0, "an empty pager has no index to wrap to");
 assert.equal(sel.wrapIndex(5, 0), 0, "an empty pager must not answer with an out-of-range index");
 assert.equal(sel.wrapIndex(-3, 0), 0, "an empty pager must not answer with a negative index");
@@ -153,7 +73,7 @@ assert.equal(sel.wrapIndex(-1, 4), 3, "stepping back off the top lands on the la
 assert.equal(sel.wrapIndex(4, 4), 0, "stepping forward off the end lands on the first entry");
 assert.equal(sel.wrapIndex(-5, 4), 3, "a multi-lap negative index still lands in range");
 
-// clampIndex: a reload can reshape the list without changing its length.
+// A reload can change entries without changing list length.
 assert.equal(sel.clampIndex(7, 0), 0, "an empty list clamps to 0");
 assert.equal(sel.clampIndex(7, 3), 2, "an index past the end clamps to the last entry");
 assert.equal(sel.clampIndex(3, 3), 2,
@@ -161,7 +81,7 @@ assert.equal(sel.clampIndex(3, 3), 2,
 assert.equal(sel.clampIndex(2, 3), 2, "the last valid index is not clamped away");
 assert.equal(sel.clampIndex(-1, 3), 0, "a negative index clamps to the first entry");
 
-// seedIndex: open on the entry in use, or the top when it is not in this list.
+
 const list = [{ key: "a" }, { key: "b" }, { key: "c" }];
 assert.equal(sel.seedIndex(list, "b"), 1, "seeding must land on the entry whose key is active");
 assert.equal(sel.seedIndex(list, "a"), 0, "the first entry is a valid seed, not a fallback");
@@ -172,32 +92,28 @@ assert.equal(sel.seedIndex(null, "b"), 0, "a list that has not arrived seeds to 
 assert.equal(sel.seedIndex([{ key: "b" }, { key: "b" }], "b"), 0,
     "a duplicated key seeds on the FIRST match, so the seed is stable across reloads");
 
-// shouldReseed: the latch is user intent, not data arrival. An empty first list
-// must NOT freeze the seed — that is the round-2 regression this replaces.
+// Reseeding follows user intent; an initially empty list must not latch it.
 assert.equal(sel.shouldReseed(true, false), true, "an untouched open surface re-seeds on new data");
 assert.equal(sel.shouldReseed(true, true), false,
     "a background reload must not snap the selection off what the user paged to");
 assert.equal(sel.shouldReseed(false, false), false, "a hidden surface must not seed against its next open");
 assert.equal(sel.shouldReseed(false, true), false, "a hidden, moved surface stays put");
 
-// enterOutcome: three answers, and "blocked" keeps the surface up.
+
 assert.equal(sel.enterOutcome(true, null), "none", "Enter on nothing selected must apply nothing");
 assert.equal(sel.enterOutcome(false, null), "none", "Enter on nothing selected must not report a block either");
 assert.equal(sel.enterOutcome(false, { key: "a" }), "blocked",
     "Enter while an apply is in flight must block, not dismiss the surface with nothing applied");
 assert.equal(sel.enterOutcome(true, { key: "a" }), "apply", "Enter on a selected entry applies it");
 
-// latchesIntent: the Home/End defect. Paging only — typing a filter latches
-// unconditionally, said in one statement at its own call site and pinned below.
-// Both show() paths dispatch their read and open() in the same tick, so every
-// open has a window where the pager is empty — guaranteed on the first
-// wallpaper-switcher open of a session.
+// An opened pager can be empty while its asynchronous read is pending. Paging there must
+// not latch intent, while typed filter edits latch independently.
 assert.equal(sel.latchesIntent(0), false,
     "paging an EMPTY pager moved nothing, so it must not latch: the latch would then be " +
     "set when the list and activeKey land, and the switcher sits on index 0 for the whole open");
 assert.equal(sel.latchesIntent(3), true, "paging over a populated pager takes the selection over");
 
-// navIndex: where each paging input lands once it is allowed to act.
+
 assert.equal(sel.navIndex("first", 2, 4, 0), 0, "Home goes to the first entry");
 assert.equal(sel.navIndex("last", 0, 4, 0), 3, "End goes to the last entry");
 assert.equal(sel.navIndex("last", 0, 1, 0), 0, "End on a single-item pager stays on it");
@@ -208,10 +124,7 @@ for (const kind of ["step", "first", "last"]) {
         `${kind} on an empty pager must answer an in-range index even though nothing may act on it`);
 }
 
-// preserveIndex: a filter must not cost the user their place. The index alone
-// does not survive one — this is the reported defect: with B selected in
-// [A,B,C], filtering to C clamps to index 0, and CLEARING the filter leaves
-// index 0 pointing at A.
+// Preserve entry identity across filtering; a clamped numeric index can select a different entry after clearing.
 {
     const abc = [{ key: "a" }, { key: "b" }, { key: "c" }];
     assert.equal(sel.preserveIndex(abc, "b", 0), 1, "the held key wins over the index it was found at");
@@ -228,9 +141,7 @@ for (const kind of ["step", "first", "last"]) {
         "a duplicated key resolves to the FIRST match, as seeding does");
 }
 
-// wheelSteps: the leftover is CARRIED, not rounded away. A touchpad sends a
-// stream of fractions of a notch, so a version that truncates and drops the
-// remainder pages on none of them and the switcher ignores the wheel entirely.
+// Carry fractional wheel steps across events so touchpad movement is not discarded by truncation.
 assert.deepEqual(sel.wheelSteps(120, 120), { steps: 1, remainder: 0 }, "one notch pages one entry");
 assert.deepEqual(sel.wheelSteps(-120, 120), { steps: -1, remainder: 0 }, "and one notch the other way pages back");
 assert.deepEqual(sel.wheelSteps(360, 120), { steps: 3, remainder: 0 }, "a fast flick pages by as many notches as it carried");
@@ -243,18 +154,8 @@ assert.deepEqual(sel.wheelSteps(-200, 120), { steps: -1, remainder: -80 },
     "the carry keeps its SIGN, or a scroll back accumulates against itself");
 assert.deepEqual(sel.wheelSteps(120, 0), { steps: 0, remainder: 0 }, "a zero notch cannot page, and must not divide");
 
-// --- 2. The wiring ----------------------------------------------------------
-//
-// POSITIVE pins go through `qmlSource(...).requires(...)`: it searches the
-// comment-blanked view (where literals are intact) and confirms every hit is
-// CODE at the same offset, scoped to a NAMED block and counted. That is what
-// kills the three mutants a raw regex over the whole file walks past — a decoy
-// STRING carrying the statement's text, a copy left in a COMMENT, and a second
-// call site the pin never meant to allow.
-//
-// Raw regexes are kept for exactly two jobs a `requires` pin cannot do: BANS,
-// which must see string literals to ban them, and ORDER, which compares two
-// positions. Both are scoped to a block wherever a block exists.
+// Require positive tokens at the same code offset in named blocks, with exact counts where needed.
+// Use literal-preserving text for bans and compare positions for ordering.
 
 const sources = new Map([
     ["FullScreenSwitcher.qml", baseSource],
@@ -284,22 +185,19 @@ function body(file) {
     return qmlSource.stripComments(source);
 }
 
-// The sole handler named `name`, as a block or as its own line. `handlers()`
-// finds them on the structure-only view, so a comment or a string MENTIONING one
-// is not mistaken for it — and requiring exactly one means a second copy fails
-// rather than being silently ignored.
+// Read a unique handler on the structure view, accepting a block or single expression.
 function handler(file, name) {
     const found = q(file).handlers(name);
     assert.equal(found.length, 1, `${file} must declare exactly one ${name} handler, found ${found.length}`);
     return found[0];
 }
 
-// Bans only: this SEES string literals, which is the point.
+
 function mustNot(file, pattern, why) {
     assert.doesNotMatch(body(file), pattern, `${file}: ${why}`);
 }
 
-// Order of two statements inside one block, which no presence pin can express.
+// Check statement order within one block.
 function mustPrecedeIn(block, label, first, second, why) {
     const view = qmlSource.stripComments(block);
     const a = view.search(first);
@@ -307,8 +205,7 @@ function mustPrecedeIn(block, label, first, second, why) {
     assert.ok(a >= 0 && b >= 0 && a < b, `${label}: ${why}`);
 }
 
-// The base: one intent-latch adapter, the re-seed edges, the Enter dispatch, and
-// the blocked message's life.
+
 {
     const base = q("FullScreenSwitcher.qml");
 
@@ -364,10 +261,7 @@ function mustPrecedeIn(block, label, first, second, why) {
             "landing after they clear it must not re-seed over it. Pinned as source, not routed " +
             "through a predicate that could only answer true", 1],
         ["root.filterQuery = nextQuery;", "and the filter itself is still applied", 1]]);
-    // Every typed edit goes through that one function. There is no input box any
-    // more — the filter keys are decoded in handleKey() — so a direct write
-    // there is how the latch gets skipped for some of them, which is the
-    // four-site shape `updateFilter` replaced.
+    // Route typed filter edits through the shared function so no direct write can bypass intent latching.
     assert.doesNotMatch(qmlSource.stripComments(base.body("handleKey")), /filterQuery\s*=/,
         "FullScreenSwitcher.qml: no key may write the filter directly — every edit routes through " +
         "updateFilter(), which is where the intent latch lives");
@@ -389,9 +283,7 @@ function mustPrecedeIn(block, label, first, second, why) {
     base.requires(base.body("onDialogClosed"), "the base's per-close reset",
         [["root.userMoved = false;", "closing clears the intent latch", 1]]);
 
-    // The base's per-open reset lives in a self-targeted Connections. A derived
-    // `onOpened:` REPLACES an inline base handler and takes the reset with it,
-    // invisibly to the parse, the nested load and switcher_check.
+    // Keep the base per-open reset in self-targeted Connections. A subclass onOpened replaces an inline base handler.
     mustNot("FullScreenSwitcher.qml", /^\s*onOpened:/m,
         "the base must not use an inline onOpened: — a subclass handler would replace it and silently drop the seeding");
     mustNot("FullScreenSwitcher.qml", /^\s*onDialogClosed:/m,
@@ -451,8 +343,7 @@ function mustPrecedeIn(block, label, first, second, why) {
     ]);
 }
 
-// The reporter: one apply, one reply, matched by request id — and a gate that
-// says in its own name that it is service-wide.
+// Correlate each apply reply by request ID and retain the service-wide busy gate.
 {
     const rep = q("ThemeApplyReporter.qml");
 
@@ -485,10 +376,7 @@ function mustPrecedeIn(block, label, first, second, why) {
         "pendingRequest for a request that IS still running is how a real failure went untoasted");
 }
 
-// Both subclasses: the reporter is the single owner, and the tracked id is the
-// service call's own return rather than a restatement of it. The wallpaper
-// modal's Enter BRANCHES on scope (VGS-212); its branch and screen route are
-// scripts/test-switcher-scope.js's to pin, the service route's id stays here.
+// Subclasses must track the service call's returned ID. The wallpaper screen route is covered by the scope suite.
 for (const [file, trackPin] of [
     ["ThemeSwitcherModal.qml", "onApplied: item => applyReporter.track(VGSThemeService.applyBlueprint(item.key))"],
     ["WallpaperSwitcherModal.qml", "applyReporter.track(VGSThemeService.setWallpaper(item.key));"]
@@ -511,9 +399,7 @@ q("ThemeSwitcherModal.qml").requires(themeSource, "ThemeSwitcherModal.qml",
     ["staleNotice: VGSThemeService.blueprintsLoadFailed ?",
         "a theme list left browsable after a failed refresh must say so on the surface", 1]]);
 
-// The wallpaper wording is the SERVICE's, because the dash tab shows the same
-// retained list. Round 3 gave the switcher a banner and left the dash asserting
-// theme A's wallpapers as theme B's current set.
+// Keep retained-wallpaper wording in the service because both switcher and dash display that list.
 q("WallpaperSwitcherModal.qml").requires(wallpaperSource, "WallpaperSwitcherModal.qml", [
     ["VGSThemeService.wallpapersLoadError",
         "the failure detail must come from the read's own slot, not the shared lastError"],
@@ -535,14 +421,12 @@ q("WallpaperSwitcherModal.qml").requires(wallpaperSource, "WallpaperSwitcherModa
     ]);
 }
 
-// The empty state must test the filter first: with a populated list, zero
-// matches is a fact about the filter, never about the read.
+// With a loaded list, zero filter matches describe the filter, not a failed list read.
 mustPrecedeIn(handler("ThemeSwitcherModal.qml", "emptyText"), "ThemeSwitcherModal emptyText",
     /root\.items\.length > 0/, /blueprintsLoadFailed/,
     "a populated list with zero visible entries is the filter's doing: the read-failure flag must not outrank it");
 
-// The service: per-CALL correlation, resolved supersession, honest refusal,
-// guarded wallpaper writes.
+
 {
     const svc = q("VGSThemeService.qml");
 
@@ -562,10 +446,8 @@ mustPrecedeIn(handler("ThemeSwitcherModal.qml", "emptyText"), "ThemeSwitcherModa
             "and it is derived from the label plus the sequence, so a reply is still readable", 1]
     ]);
 
-    // Applies must not be coalesced. Proc folds same-id calls into ONE callback
-    // only inside its window (interval 0 — the same event-loop tick), so
-    // inferring launch state from a newer request dropped a still-running
-    // apply's token and let its genuine FAILURE reach no surface at all.
+    // Each apply needs its own callback. Coalescing command IDs within one event-loop turn
+    // can leave a still-running request without a reporter for its failure.
     svc.requires(svc.body("_runApply"), "_runApply()", [
         ['_run(requestId, args, callback, undefined, false, "");',
             "an apply books itself under its unique request id and passes an EMPTY Proc id, so Proc " +
@@ -615,10 +497,8 @@ mustPrecedeIn(handler("ThemeSwitcherModal.qml", "emptyText"), "ThemeSwitcherModa
             "and a parse failure keeps its own cause: the single catch this splits claimed a parse " +
             "failure for anything thrown after the parse succeeded", 1]]);
 
-    // Ownership is keyed on the REQUEST. Keyed on the PATH, any background
-    // `theme current --json` falsified it mid-apply (refreshCurrent writes
-    // selectedWallpaper too), so a SUCCESSFUL apply skipped SessionData and
-    // never reached the monitors, under a success toast.
+    // Key wallpaper ownership by request. A background current-theme refresh can change the path
+    // without superseding the apply that must update SessionData.
     svc.requires(svc.body("_ownsWallpaperSlot"), "_ownsWallpaperSlot()",
         [["return _wallpaperSlotOwner === requestId;",
             "one ownership test, keyed on the request, used by both the rollback and the persist", 1]]);
@@ -641,12 +521,8 @@ mustPrecedeIn(handler("ThemeSwitcherModal.qml", "emptyText"), "ThemeSwitcherModa
             "the retained list has to know whose it is: after a theme switch whose re-read failed it " +
             "belongs to the PREVIOUS theme, which is what the notice names", 1]]);
 
-    // Item #10, the checkable half. Routing all 43 emissions through
-    // _finishApply would restate applyCompleted's meaning for 19 operations the
-    // switchers never touch, so the guard is a COUNT instead: a new bare
-    // `applyCompleted(` moves it and fails here, which is the direction that
-    // otherwise fails silently — a reporter can start such an operation and its
-    // reply never arrives.
+    // Count bare applyCompleted emissions so added operations require explicit reporter coverage.
+    // This count does not establish that every existing emission uses the tracked apply path.
     const APPLY_COMPLETED_SITES = 44;
     svc.requires(serviceSource, "VGSThemeService.qml", [
         ["applyCompleted(",
@@ -670,10 +546,7 @@ mustPrecedeIn(handler("ThemeSwitcherModal.qml", "emptyText"), "ThemeSwitcherModa
     }
 }
 
-// The two ways in. A keybind reaches a switcher through its IPC target, which
-// switcher_check already exercises; the other is the per-page shortcut row,
-// one line in a settings tab — exactly the shape that gets dropped by a merge
-// and noticed by nobody, because nothing else fails when it goes.
+// Check settings shortcut entrypoints as well as IPC paths covered by switcher smoke.
 {
     for (const file of ["WallpaperSwitcherModal.qml", "ThemeSwitcherModal.qml"]) {
         q(file).requires(body(file), file,
@@ -703,8 +576,7 @@ mustPrecedeIn(handler("ThemeSwitcherModal.qml", "emptyText"), "ThemeSwitcherModa
     ]);
 }
 
-// What review found, pinned so it cannot come back. Each of these was a
-// mechanism that looked bounded or safe and was not.
+// Reject alternative ownership and completion paths that bypass request correlation.
 {
     q("SwitcherCarousel.qml").requires(carouselSource, "SwitcherCarousel.qml", [
         ["source: slice.retained ? carousel.thumbUrlFor(slice.index) : \"\"",

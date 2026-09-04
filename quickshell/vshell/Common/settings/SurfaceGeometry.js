@@ -2,8 +2,7 @@
 
 function normalizeTarget(value) {
     var target = String(value || "sync");
-    // "hyprland" is the persisted pre-Niri spelling of the compositor-only
-    // option. Accept it indefinitely while exposing a compositor-neutral UI.
+    // Accept the persisted hyprland value as the compositor-only option.
     if (target === "hyprland")
         return "compositor";
     if (target === "quickshell" || target === "compositor")

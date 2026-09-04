@@ -7,11 +7,7 @@ import Quickshell.Wayland
 import qs.Common
 import qs.Services
 
-// Native video screensaver overlay — one per screen, gated on
-// ScreensaverService.videoActive (see the Variants in VGS.qml). A layer
-// surface, NOT a fullscreen window, so the compositor's `idle_inhibit
-// fullscreen` rule does not fire and the idle timeline (lock, displays-off)
-// keeps running behind it. Any key or real mouse movement dismisses it.
+// Use a layer surface so compositor fullscreen idle inhibition does not stop the lock/display-power timeline.
 PanelWindow {
     id: root
 
@@ -56,10 +52,10 @@ PanelWindow {
     Item {
         anchors.fill: parent
         focus: true
-        // A genuine key press is always intentional — dismiss immediately, don't
-        // wait for the arm window (that only guards against stale pointer motion).
+
         Keys.onPressed: event => {
             event.accepted = true;
+            // Keys skip the arm window; it only guards against stale pointer motion.
             ScreensaverService.stop();
         }
     }
@@ -78,7 +74,7 @@ PanelWindow {
             if (Math.abs(mouse.x - lastPos.x) + Math.abs(mouse.y - lastPos.y) > 12)
                 ScreensaverService.stop();
         }
-        // A real mouse-button press is intentional — dismiss immediately.
+
         onPressed: ScreensaverService.stop()
     }
 }

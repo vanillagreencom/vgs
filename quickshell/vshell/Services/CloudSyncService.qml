@@ -5,9 +5,7 @@ import QtQuick
 import Quickshell
 import qs.Common
 
-// CloudSyncService mirrors the backend "cloudsync" capability: rclone-backed
-// cloud file sync. All state is owned by the Go service; this singleton is a
-// read model plus a thin action surface, following the TailscaleService shape.
+// The backend owns cloud sync state and rclone processes. This singleton exposes state and actions to QML.
 Singleton {
     id: root
 
@@ -37,7 +35,6 @@ Singleton {
             getState();
     }
 
-    // ---- Raw backend state ----
     property bool available: false
     property bool stateInitialized: false
     property bool daemonRunning: false
@@ -57,7 +54,6 @@ Singleton {
     property var settings: ({})
     property var oauth: ({})
 
-    // ---- Derived presentation state ----
 
     readonly property bool hasAccounts: accounts.length > 0
     readonly property bool hasFolders: folders.length > 0
@@ -102,7 +98,6 @@ Singleton {
         return Math.min(1, (globalStats.bytes || 0) / total);
     }
 
-    // overallStatus is the single value the bar widget renders from.
     readonly property string overallStatus: {
         if (!available)
             return "unavailable";
@@ -125,7 +120,6 @@ Singleton {
     readonly property string oauthUrl: oauth.authUrl || ""
     readonly property string oauthError: oauth.error || ""
     readonly property string oauthAccount: oauth.name || ""
-    // A reconnect is a repair, not a new account; the copy differs.
     readonly property bool oauthReconnect: oauth.reconnect === true
 
     function folderById(id) {
@@ -204,8 +198,6 @@ Singleton {
         return account ? accountName(account) : (remoteName || "");
     }
 
-    // stateColor and healthColor live beside their labels so a state's word and
-    // its colour can never drift apart in one surface but not another.
     function stateColor(state) {
         switch (state) {
         case "error":
@@ -259,9 +251,7 @@ Singleton {
         return I18n.tr("Not checked yet", "Cloud account status before the first check completes");
     }
 
-    // A failed check on an OAuth account is nearly always an expired token, and
-    // Reconnect is the fix — so the card says that instead of showing rclone's
-    // wording as the only explanation.
+    // Offer reconnect for OAuth accounts when credential verification fails.
     function accountHealthHint(account) {
         if (!account || account.health !== "error")
             return "";
@@ -318,9 +308,7 @@ Singleton {
             ensureSubscription();
     }
 
-    // ---- Notifications ----
-    // The backend cannot raise toasts, so the shell watches state transitions
-    // and reports the ones the user asked to hear about.
+    // The shell reports backend state transitions through the user-enabled toasts.
     property string _lastNotifiedError: ""
     property int _lastHistoryTop: 0
     property string _lastWarningSignature: ""
@@ -387,10 +375,7 @@ Singleton {
                 updateState(response.result);
                 return;
             }
-            // stateInitialized is set before the call, so a swallowed failure
-            // here was never retried: the app opened showing "No accounts yet"
-            // on a fully configured machine. Clearing it lets the next
-            // capability or connection event try again.
+            // Clear initialization on failure so the next capability or connection event can retry.
             root.log.warn("cloudsync.getState failed: " + (response.error || "no result"));
             stateInitialized = false;
         });
@@ -433,7 +418,6 @@ Singleton {
         });
     }
 
-    // ---- Accounts ----
     function listProviders(callback) {
         query("cloudsync.listProviders", null, callback);
     }
@@ -511,7 +495,6 @@ Singleton {
         }, callback);
     }
 
-    // ---- Folders ----
     function addFolder(folder, callback) {
         sendAction("cloudsync.addFolder", folder, callback);
     }
@@ -541,9 +524,7 @@ Singleton {
         }, callback);
     }
 
-    // blockedByDeleteGuard identifies the one failure the user can clear
-    // themselves, so the folder list can offer the override instead of a
-    // dead end.
+    // Identify a delete-guard failure before offering the explicit override.
     function blockedByDeleteGuard(status) {
         if (!status || !status.lastError)
             return false;
@@ -591,7 +572,6 @@ Singleton {
         }, callback);
     }
 
-    // ---- Conflicts, settings, maintenance ----
     function resolveConflict(id, action, callback) {
         sendAction("cloudsync.resolveConflict", {
             "id": id,
@@ -620,7 +600,6 @@ Singleton {
         sendAction("cloudsync.restartDaemon", null, callback);
     }
 
-    // ---- Formatting helpers shared by every cloud sync surface ----
 
     function formatBytes(bytes) {
         const value = bytes || 0;
@@ -676,8 +655,6 @@ Singleton {
         return Math.floor(delta / 86400) + I18n.tr("d ago", "Short suffix for days elapsed");
     }
 
-    // modeLabel and modeDescription keep the four sync modes described in the
-    // same plain language everywhere they appear.
     function modeLabel(mode) {
         switch (mode) {
         case "twoway":

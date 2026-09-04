@@ -1,24 +1,10 @@
 # yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
 #
-# CodeRabbit configuration for VGS (VanillaGreen Shell).
-#
-# THIS FILE SUPERSEDES THE ORG/REPO UI SETTINGS ENTIRELY. It is not a delta:
-# anything configured only in the CodeRabbit dashboard stops applying the moment
-# this file lands. Every setting we depend on is therefore written out here even
-# where it matches the schema default, and the UI is documentation at best.
-#
-# Nothing here is wired into a merge gate. CodeRabbit publishes its completion
-# evidence as a commit STATUS named "CodeRabbit" (not a check-run — the GitHub
-# checks rollup hides that distinction), and orch's PR_REVIEW_CHECK is
-# deliberately empty because both reviewers on this repo submit review objects.
-# See kendex.settings.toml for that reasoning.
+# This file overrides dashboard settings; required settings are explicit.
 
 language: en-US
 
-# HARD LIMIT: 250 characters (CodeRabbit schema `tone_instructions.maxLength`).
-# Over it, CodeRabbit rejects the WHOLE file and reviews with default settings,
-# saying nothing on the PR. scripts/check-coderabbit-config.py enforces this and
-# every other documented limit against the vendored schema.
+# scripts/check-coderabbit-config.py checks this file against the pinned schema.
 tone_instructions: >-
   Terse and technical. Give the defect, its triggering input, and the
   consequence. No praise, diff restatement, or summary. One finding per thread.
@@ -35,16 +21,12 @@ reviews:
   # changes-requested review converges without a human dismissing it.
   request_changes_workflow: true
 
-  # Evidence surfaces. Kept on because they are cheap and the repo's tooling
-  # reads the commit status; do not turn these off without checking
-  # kendex.settings.toml first.
+  # Keep review evidence enabled for tools that read completion status.
   review_status: true
   commit_status: true
   fail_commit_status: false
 
-  # Everything below duplicates or decorates. Findings and threads are the
-  # product; a second bot (Qodo) is also posting on these PRs, and two summaries
-  # of the same diff is worse than none.
+  # Keep findings in threads; disable duplicate summaries and decorations.
   high_level_summary: false
   high_level_summary_in_walkthrough: false
   changed_files_summary: false
@@ -64,8 +46,7 @@ reviews:
   review_progress: true
   abort_on_close: true
 
-  # This repo has no bot-driven merge choreography; pre-merge checks would only
-  # add advisory noise next to the real gate (orch + unresolved threads).
+  # The repository review gate owns merge checks.
   pre_merge_checks:
     title:
       mode: "off"
@@ -102,22 +83,11 @@ reviews:
     base_branches:
       - ".*"
 
-  # Exclude almost nothing. Vendored CODE stays reviewable on purpose — a
-  # reviewer reading a vendored bundle can find a real upstream bug, and the
-  # path_instructions below tell it to frame such findings as upstream issues
-  # rather than in-repo patches. Only unreviewable asset blobs are filtered:
-  # raster icons, cursors, wallpapers, and the bulk of the vendored Yaru icon
-  # theme (its ATTRIBUTION.md and any code stay in scope).
+  # Vendored source remains reviewable for upstream reports. Filter asset blobs.
   path_filters:
-    # Harness render: `kendex refresh` output, owned upstream in
-    # vanillagreencom/kendex. A defect here is fixed at the source and
-    # re-rendered, so a review comment on these paths cannot be acted on here.
-    # EXCLUSION-ONLY (a positive entry flips this into an allowlist), and plain
-    # globs only (the schema feeds these same patterns to `git sparse-checkout`).
-    # So: every `.agents/skills/<name>` `kendex.toml` does not mark `in-place`.
-    # `scripts/check-owned-skills.py` holds this list and the in-place one below
-    # to those rows — unheld, the next refresh renders an unexcluded skill into
-    # review scope, silently.
+    # Exclude upstream harness renders. Use only negative plain globs; a positive
+    # entry changes this list into an allowlist. scripts/check-owned-skills.py
+    # checks skill paths against the in-place declarations in kendex.toml.
     - "!.agents/skills/arch-docs/**"
     - "!.agents/skills/code-quality/**"
     - "!.agents/skills/decider/**"
@@ -335,13 +305,11 @@ reviews:
         locally, so "this change has no CI coverage" is not a useful finding.
 
   tools:
-    # Security scanning: keep on. The repo carries a gitignored .env.local and a
-    # committed .env.local.example, and a leaked key is the failure that matters.
+    # Scan for credentials, including accidental additions from local environment files.
     gitleaks:
       enabled: true
     trufflehog:
       enabled: true
-    # Primary linters for the languages actually written here.
     shellcheck:
       enabled: true
     golangci-lint:
@@ -356,12 +324,12 @@ reviews:
       enabled: true
     semgrep:
       enabled: true
-    # Redundant with ruff — three Python linters triple-report one defect.
+    # Ruff covers these Python lint checks.
     flake8:
       enabled: false
     pylint:
       enabled: false
-    # Prose/style nits on ~110 hand-wrapped markdown docs crowd out findings.
+    # Keep automated review focused on defects rather than prose style.
     markdownlint:
       enabled: false
     languagetool:
@@ -370,12 +338,11 @@ reviews:
 chat:
   auto_reply: true
   art: false
-  # Private repo in a trusted org; keep chat scoped to org members.
+  # Limit chat to organization members.
   allow_non_org_members: false
 
 knowledge_base:
   opt_out: false
-  # Keep everything learned from this repo scoped to this repo.
   learnings:
     scope: local
   issues:
@@ -388,7 +355,7 @@ knowledge_base:
       - "AGENTS.md"
       - "docs/architecture/**"
       - ".agents/skills/vshell-dev/**"
-  # Linear is this repo's tracker (team vg-shell, identifiers VGS-<n>).
+  # Linear owns the project issue tracker.
   linear:
     usage: enabled
     team_keys:

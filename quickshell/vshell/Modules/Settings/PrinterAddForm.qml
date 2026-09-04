@@ -16,10 +16,7 @@ Column {
 
     property bool showAdvanced: false
 
-    // Two printers can derive the same display name (identical USB models with
-    // no serial), so the dropdown is keyed on entries carrying their group
-    // rather than on the name alone — resolving by name would make every
-    // duplicate row select the first group.
+    // Identical printer models may share a display name. Resolve dropdown entries by group rather than name.
     readonly property var deviceOptions: {
         const seen = ({});
         return CupsService.discoveredPrinters.map(group => {
@@ -106,10 +103,7 @@ Column {
                     tab.manualEntryMode = false;
                     tab.testConnectionResult = null;
                     tab.testingConnection = false;
-                    // A completed manual test leaves the endpoint selected; the
-                    // discovery picker cannot show it as an option, so leaving it
-                    // armed would create the old manual address from a screen
-                    // that never names it.
+                    // A successful manual test keeps its endpoint selected. Clear it when discovery resumes so Create cannot use an unseen address.
                     tab.selectedDevice = null;
                     tab.selectedDeviceUri = "";
                 }

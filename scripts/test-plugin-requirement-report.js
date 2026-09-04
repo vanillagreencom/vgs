@@ -1,35 +1,9 @@
 #!/usr/bin/env node
 
-// Exercises the rule that decides when a plugin is REPORTED as refused on its
-// declared `requires_shell` (VGS-89).
-//
-// The requirement is enforced in exactly one place — `_gateThenSwap` — reached
-// only for a package declaring itself the override of a bundled id, or one
-// displacing a package already loaded under that id. `runStartupGate()`,
-// `loadPlugin()` and `reloadPlugin()` never look at it, so a unique-id user or
-// system package with an impossible requirement simply loads. Verified in the
-// nested sandbox: a fixture declaring `>=99.0.0` against a 0.1.0 shell answered
-// `plugin-scan status` with `loaded`, identically to a control with a
-// satisfiable requirement and one with none at all.
-//
-// That makes the rule narrow in a way that is easy to get wrong in both
-// directions, and it has been wrong in both:
-//
-//   * report a bundled id's unmet declaration and every user sees every shipped
-//     module marked unavailable while it is loaded and working;
-//   * report any non-bundled package's unmet declaration and a loaded, working
-//     plugin is labelled refused for an enforcement that never ran;
-//   * examine only the package that WON the id and the one configuration that
-//     is genuinely refused — a demoted override — is never seen, which is the
-//     configuration VGS-76 was about.
-//
-// Nothing in the QML smoke can see any of it: the smoke loads the bundled
-// directory, whose ids are precisely the exempt case.
-//
-// The rule is extracted verbatim from the shipped QML between its
-// BEGIN/END REQUIREMENT REPORT POLICY markers, and the compatibility verdict it
-// is fed comes from ShellVersionService's own VERSION POLICY comparator,
-// extracted the same way. Neither is re-implemented here.
+// Test requirement-refusal reporting with the shipped policy and runtime version comparator.
+// The requirement gate applies to bundled-ID overrides and displacement of loaded packages.
+// A declaration alone does not prove refusal: unique-ID packages can load without that gate.
+// Inspect demoted manifests too, because the refused override need not be the winning package.
 
 "use strict";
 
@@ -56,22 +30,19 @@ const { parseVersion, checkVersionRequirement } =
 
 const SHELL = fs.readFileSync(path.join(REPO, "VERSION"), "utf8").trim();
 
-// The same composition the runtime uses: PluginService.checkPluginCompatibility
-// is `checkVersionRequirement(requires, parsedShellVersion)`.
+// Compose compatibility with the runtime comparator and parsed shell version.
 function compatible(requires, shellSemver) {
     if (!requires)
         return true;
     return checkVersionRequirement(requires, parseVersion(shellSemver));
 }
 
-// `meta` is a knownManifests entry:
-// {source, requiresShell, demoted, refusedOnRequirement}.
+
 function judge(meta, shellSemver) {
     return withheld(meta, shellSemver, compatible(meta.refusedOnRequirement, shellSemver));
 }
 
-// A constraint this shell cannot satisfy, and one it trivially can, both
-// derived from VERSION so the fixtures cannot drift away from the repo.
+// Derive satisfiable and incompatible requirements from VERSION so fixture intent survives releases.
 const major = parseVersion(SHELL).major;
 const IMPOSSIBLE = `>=${major + 1}.0.0`;
 const SATISFIED = ">=0.0.1";
@@ -130,10 +101,7 @@ assert.equal(
     "a path with no manifest record is not a refused package"
 );
 
-// The shipped manifests, judged the same way. None of them may report as
-// refused: they are all bundled, and the exemption above is what guarantees it
-// — if a bundled manifest ever started reporting, every user would see every
-// shipped module marked unavailable in Settings.
+// Bundled manifests must not report refusal because their requirement declarations are not enforced there.
 const pluginsDir = path.join(REPO, "config", "vshell", "plugins");
 const shipped = fs.readdirSync(pluginsDir, { withFileTypes: true })
     .filter(entry => entry.isDirectory())

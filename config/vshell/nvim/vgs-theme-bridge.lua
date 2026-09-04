@@ -222,11 +222,8 @@ local function spec_plugins()
         out[#out + 1] = plugin
       else
         local repo = entry[1]
-        -- Legacy form: an "owner/repo" GitHub plugin. Shallow-copy the WHOLE
-        -- entry so we preserve everything the theme configured — crucially
-        -- `opts` (many themes pass their palette to a shared colorscheme via
-        -- opts.colors) and any version pin (branch/tag/version/commit). Dropping
-        -- opts made the colorscheme render its own default palette.
+        -- Copy the full external-plugin specification to retain palette options
+        -- and version pins.
         if type(repo) == "string" and repo:find("/", 1, true) and repo ~= "LazyVim/LazyVim" then
           local plugin = {}
           for k, v in pairs(entry) do
@@ -340,7 +337,6 @@ local vgs_theme_watcher
 local vgs_theme_timer
 
 local function reload_vgs_theme()
-  -- Curated spec first (real upstream colorscheme), roles fallback.
   vgs_spec_active = false
   local name = spec_colorscheme_name()
   if name then
@@ -418,10 +414,8 @@ local plugins = {
   },
 }
 
--- Append the current theme's curated colorscheme plugin(s) so lazy installs the
--- real upstream colorscheme (e.g. eldritch.nvim, bauhaus.nvim) instead of only
--- naming it. base16-nvim's config still runs colorscheme-first with a roles
--- fallback, so this degrades safely when the spec is absent.
+-- Include curated plugins so lazy can load the named colorscheme.
+-- Absent specifications retain the role-based fallback.
 for _, plugin in ipairs(spec_plugins()) do
   plugins[#plugins + 1] = plugin
 end

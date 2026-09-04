@@ -16,8 +16,8 @@ type Request struct {
 	Params json.RawMessage `json:"params,omitempty"`
 }
 
-// Response is the reply to a Request (Result xor Error), or — with no ID and a
-// Result holding an Event — a subscription push.
+// Response carries either a request result or an error. With no ID and an Event
+// in Result, it carries a subscription push.
 type Response struct {
 	ID     json.RawMessage `json:"id,omitempty"`
 	Result any             `json:"result,omitempty"`

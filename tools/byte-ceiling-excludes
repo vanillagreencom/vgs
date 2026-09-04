@@ -4,3 +4,4 @@
 .agents/*	vendored kendex install, reviewed upstream (bundled tool scripts exceed the ceiling)
 bin/vshell-helper	single-file Python helper and theme engine; over the ceiling before the guard existed, and splitting it is its own work
 scripts/check-vshell-helper.py	the helper suite mirrors bin/vshell-helper, itself excluded; over the ceiling before the guard existed
+themes/catalog.json	generated theme download catalog, rewritten whole by scripts/gen-theme-catalog.py; over the ceiling before the guard existed and bounded by the theme set, not by edits

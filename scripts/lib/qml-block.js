@@ -1,31 +1,7 @@
-// Extract a brace-delimited body out of a QML file, for tests that want to run
-// the SHIPPED code rather than a copy of it.
-//
-// Naive brace counting is not good enough here. A `{` or `}` inside a comment or
-// a string would truncate the extracted body, and a test that quietly stops
-// covering its subject is exactly the failure mode these tests exist to prevent
-// — it goes green while checking nothing. So the scanner skips line comments,
-// block comments, and all three string forms (including `${...}` interpolation,
-// which can nest code and further strings), and counts braces only in real code.
-//
-// WHAT THIS ESTABLISHES. Handled exactly: line and block comments, all three
-// string delimiters, and `${...}` interpolation nesting code and further
-// strings — swept and confirmed, the backtick has its own branch rather than
-// being the third form a two-of-three scanner forgets.
-//
-// KNOWN LIMIT: regex literals are not recognised. Telling `/` as division from
-// `/` as a regex delimiter needs a real JS lexer, so a regex literal containing
-// an unbalanced brace (`/[{]/`) would confuse the scan. No body extracted by
-// these tests contains one. This is a real DIVERGENCE from the Python
-// scrubber, `scripts/lib/qml_scrub.py`, which does recognise them since a
-// regex holding a quote once hid 377 lines of a file from every rule built on
-// it; anyone choosing between the two should know this one stops short there.
-// When the scan does go wrong it fails loudly rather than silently: an
-// unterminated string or unbalanced brace throws, and every caller
-// additionally asserts on content it expects the body to contain.
-//
-// Not attempted: containment beyond the braces — which statement a condition
-// governs, whether a region returns — which is `qml_source.py`'s job.
+// Extract brace-delimited QML bodies for tests that evaluate the shipped source.
+// Comments, quoted strings, and nested template interpolation do not contribute braces.
+// Regex literals are not recognized: an unbalanced brace inside a regex can corrupt extraction.
+// Unterminated strings or blocks throw; callers must also assert expected body content.
 
 "use strict";
 
@@ -44,7 +20,7 @@ function extractBlock(text, opener, fromIndex = 0) {
     const open = text.indexOf("{", start);
     if (open === -1) throw new Error(`no opening brace after ${JSON.stringify(opener)}`);
 
-    // skipBalanced returns the index just past the matching `}`.
+
     const end = skipBalanced(text, open, opener);
     return text.slice(open + 1, end - 1);
 }
@@ -99,7 +75,7 @@ function skipQuoted(text, i, quote) {
             continue;
         }
         if (c === quote) return j + 1;
-        if (c === "\n") break; // neither form may span a line unescaped
+        if (c === "\n") break;
         j++;
     }
     throw new Error("unterminated string literal");
@@ -116,9 +92,7 @@ function skipTemplate(text, i) {
         }
         if (c === "`") return j + 1;
         if (c === "$" && text[j + 1] === "{") {
-            // The interpolation is ordinary code: hand it to the brace scanner,
-            // which will itself skip any nested strings or comments, then carry
-            // on inside the template.
+            // Template interpolation contains code and can contain further strings and comments.
             j = skipBalanced(text, j + 1, "${");
             continue;
         }

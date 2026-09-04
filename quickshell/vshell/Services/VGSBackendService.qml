@@ -24,9 +24,7 @@ Singleton {
     readonly property int expectedVgsApiVersion: 1
     property var availablePlugins: []
     property var installedPlugins: []
-    // Derived from the request socket's live link state so it can never drift
-    // from reality (an imperatively-assigned bool was observed reverting under
-    // heavy binding load). Everything else reads this; nothing writes it.
+    // Bind backend availability to the request socket link so readers share its live state.
     readonly property bool isConnected: requestSocket.linkUp
     property bool isConnecting: false
     property bool subscribeConnected: false

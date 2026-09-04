@@ -16,23 +16,9 @@ import qs.Modules.Lock
 ShellRoot {
     id: entrypoint
 
-    // FIRST CHILD, and that is an invariant rather than a preference.
-    // `ReloadPropagator::onReload` matches `mChildren` BY INDEX and never
-    // consults `reloadableId` (quickshell 0.3.0, src/core/reload.cpp), so if
-    // anything is inserted above this and saved WHILE THE SESSION IS LOCKED,
-    // Lock's index shifts, the old object at the new index is not a
-    // ReloadPropagator, and the whole lock subtree reloads with a null old
-    // instance — a fresh SessionLockManager, the previous one destroyed still
-    // owning the ext-session-lock, and a qFatal on the next lock request.
-    // Keeping it first means added children land at index 1+ and cannot move
-    // it. scripts/check-lock-reload-order.py enforces this.
-    //
-    // The session lock also cannot sit under either Loader below: a Loader is
-    // not Reloadable, so reload propagation stops there and nothing beneath
-    // it is ever matched (the full mechanism is in Modules/Lock/Lock.qml).
-    // It is therefore always built — in the greeter too, and in a shell the
-    // duplicate guard is about to refuse — and `active` gates the behaviour:
-    // an inactive Lock takes no lock and registers no lock IPC.
+    // Keep Lock as the first direct child: reload propagation matches child indices, not reloadableId. scripts/check-lock-reload-order.py enforces the order.
+    // Moving it can discard the live session-lock manager during reload. Loaders stop reload propagation.
+    // The active gate prevents an inactive Lock from taking the lock or registering lock IPC.
     Lock {
         active: !entrypoint.runGreeter && entrypoint.shellAllowed
     }
@@ -41,31 +27,10 @@ ShellRoot {
     readonly property bool runGreeter: Quickshell.env("VSHELL_RUN_GREETER") === "1" || Quickshell.env("VSHELL_RUN_GREETER") === "true"
     readonly property bool disableHotReload: Quickshell.env("VSHELL_DISABLE_HOT_RELOAD") === "1" || Quickshell.env("VSHELL_DISABLE_HOT_RELOAD") === "true"
 
-    // Duplicate-instance guard. A second full VGS shell on the same Wayland
-    // session fights the first one for session-global resources — WlSessionLock,
-    // the fade-to-lock overlay, the idle/DPMS tiers — and leaves orphaned
-    // full-screen layer surfaces behind when it is killed. Validation must use
-    // scripts/qml-smoke.sh; this is the runtime backstop for someone who runs
-    // `qs -c vshell` or `qs -p quickshell/vshell` by hand rather than the script.
-    //
-    // Only a shell that a live peer *provably* predates ever yields, and every
-    // unknown (no CLI, no registry, unprovable age, slow answer) fails open, so
-    // this can never keep the session shell from starting.
-    //
-    // The verdict gates the load rather than only tearing a duplicate down
-    // afterwards: a shell that loads first would already have built its bar,
-    // dock, and fade-to-lock surfaces and could win WlSessionLock before the
-    // teardown lands, which is the damage this guard exists to avoid. The cost
-    // is one subprocess round trip on the startup path — measured at ~0.13 s
-    // warm, bounded by the 2 s deadline below — during which nothing is drawn.
-    //
-    // Hot reload rebuilds this tree in the *same* process, which already passed
-    // the check and already owns the session; re-running it there would only add
-    // latency and a needless window with no shell loaded. Only a freshly started
-    // process consults the guard.
-    // Biased towards "fresh": misreading a slow cold start as a reload would
-    // silently drop the guard, while re-running it on an unusually early reload
-    // only costs that one reload a moment with nothing loaded.
+    // Check for a provably older live peer before loading session-global resources.
+    // Unknown peer state permits startup; the deadline bounds the wait.
+    // Skip the probe on hot reload because the same process already owns those resources.
+    // Bias toward fresh: a false reload skips the guard, a false fresh only costs one probe.
     readonly property bool isReload: {
         const launched = Quickshell.launchTime;
         if (!launched)
@@ -77,9 +42,7 @@ ShellRoot {
     property bool guardDuplicate: false
     readonly property bool shellAllowed: (guardDisabled || guardResolved) && !guardDuplicate
 
-    // Every give-up path says why. A guard that quietly stops working looks
-    // exactly like "no duplicate found", which would hide the regression this
-    // whole mechanism exists to catch.
+    // Report each inconclusive guard outcome so it remains distinct from confirmed peer absence.
     function failOpen(why: string): void {
         if (guardResolved)
             return;
@@ -105,9 +68,7 @@ ShellRoot {
         // must not carry a second copy of that rule.
         command: [Paths.vshellCli, "instances", "guard", "--pid", String(Quickshell.processId), "--shell-id", Quickshell.shellId]
 
-        // StdioCollector is fully populated by the time exited() fires, verified
-        // against Quickshell 0.3.0; the exit code has to be read here, so this
-        // does not use onStreamFinished like the read-only collectors elsewhere.
+        // Read the collector with the exit code so the guard evaluates one completed process result.
         stdout: StdioCollector {
             id: guardOutput
         }
@@ -140,10 +101,8 @@ ShellRoot {
             entrypoint.resolveGuard(true);
         }
 
-        // A command that never starts emits no exited(), which would otherwise
-        // leave the shell dark until the deadline below. exited() is emitted
-        // before running goes false (verified on Quickshell 0.3.0), so a normal
-        // run has always resolved by the time this fires.
+        // A failed start emits no exited signal. Handle its stopped state before the startup deadline.
+        // exited() fires before running goes false on Quickshell 0.3.0, so a completed run has already resolved when this fires.
         onRunningChanged: {
             if (running || entrypoint.guardDisabled)
                 return;

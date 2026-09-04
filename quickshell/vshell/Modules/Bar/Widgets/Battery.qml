@@ -186,7 +186,8 @@ BasePill {
             if (delta === 0)
                 return;
 
-            // Check if this is a touchpad
+
+            // A wheel notch is ±120; any other delta is touchpad scrolling, accumulated below.
             if (delta !== 120 && delta !== -120) {
                 touchpadAccumulator += delta;
                 if (Math.abs(touchpadAccumulator) < 500)

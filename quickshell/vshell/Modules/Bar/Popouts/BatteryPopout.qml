@@ -347,7 +347,7 @@ VgsPopout {
                     }
                 }
 
-                // Individual battery details for multiple batteries
+
                 Column {
                     width: parent.width
                     spacing: Theme.spacingS
@@ -381,7 +381,7 @@ VgsPopout {
                                 anchors.margins: Theme.spacingM
                                 spacing: Theme.spacingS
 
-                                // Top row: name and percentage
+
                                 Row {
                                     width: parent.width
                                     spacing: Theme.spacingM
@@ -433,7 +433,7 @@ VgsPopout {
                                     }
                                 }
 
-                                // Bottom row: Health, Capacity and Time
+
                                 Flow {
                                     width: parent.width
                                     spacing: Theme.spacingS

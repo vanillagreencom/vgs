@@ -1,16 +1,12 @@
-# Accent and UI colors
 accent = "#8bc9eb"
 active_border_color = "#f2fcff"
 active_tab_background = "#6fb8e3"
 
-# Cursor colors
 cursor = "#f2fcff"
 
-# Primary colors
 foreground = "#d6e2ee"
 background = "#16242d"
 
-# Selection colors
 selection_foreground = "#1b2d40"
 selection_background = "#4d9ed3"
 

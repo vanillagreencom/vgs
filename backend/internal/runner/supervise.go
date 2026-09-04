@@ -8,9 +8,8 @@ import (
 	"time"
 )
 
-// Supervision policy: restart the backend child with capped backoff, but stop
-// after breakerLimit exits inside breakerWindow — a persistently crashing
-// backend must degrade the shell to backend-unavailable, not thrash forever.
+// Capped backoff limits restart frequency. breakerLimit exits inside
+// breakerWindow stop supervision and leave the backend unavailable.
 const (
 	backoffInitial = 500 * time.Millisecond
 	backoffMax     = 5 * time.Second
@@ -18,14 +17,10 @@ const (
 	breakerLimit   = 5
 )
 
-// superviseBackend runs `vshell-backend serve` as a child on the inherited
-// listener FD and restarts it when it dies. The runner keeps ownership of the
-// listener, so the socket never disappears across backend restarts: connects
-// made while the child is down queue in the accept backlog and are served by
-// the next instance. Returns when stop is closed or the crash-loop breaker
-// trips; onGiveUp runs on a breaker trip (or unrecoverable start failure) so
-// the runner can tear the socket down and clients fail fast instead of
-// hanging on a never-accepted connection. The caller owns lnFile.
+// superviseBackend restarts the backend on the inherited listener until stop
+// closes or the crash limit is reached. The caller owns lnFile and keeps the
+// socket open during restarts. onGiveUp lets the caller close it so clients do
+// not wait on an unserved backlog.
 func superviseBackend(lnFile *os.File, socketPath string, stop <-chan struct{}, log *slog.Logger, onGiveUp func()) {
 	exe, err := os.Executable()
 	if err != nil {
@@ -90,7 +85,6 @@ func superviseBackend(lnFile *os.File, socketPath string, stop <-chan struct{}, 
 			return
 		}
 
-		// A child that ran healthily for a while earns a fresh backoff.
 		if time.Since(started) > breakerWindow {
 			backoff = backoffInitial
 		}

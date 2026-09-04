@@ -17,8 +17,7 @@ StyledRect {
 
     signal activated
 
-    // Even padding on every side: swatch height + 2×padding sets the tile height,
-    // and the same padding is the Row inset, so top/bottom/left all match.
+
     readonly property int swatchSize: 30
     readonly property int pad: Theme.spacingS
     height: swatchSize + pad * 2

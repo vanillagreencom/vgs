@@ -1,4 +1,3 @@
-// ===== wp_disc.frag =====
 #version 450
 
 layout(location = 0) in vec2 qt_TexCoord0;
@@ -85,12 +84,9 @@ vec4 sampleWithFillMode(sampler2D tex, vec2 uv, float imgWidth, float imgHeight)
 void main() {
     vec2 uv = qt_TexCoord0;
 
-    // Sample textures with fill mode
     vec4 color1 = sampleWithFillMode(source1, uv, ubuf.imageWidth1, ubuf.imageHeight1);
     vec4 color2 = sampleWithFillMode(source2, uv, ubuf.imageWidth2, ubuf.imageHeight2);
 
-    // Map smoothness from 0.0-1.0 to 0.001-0.5 range
-    // Using a non-linear mapping for better control
     float mappedSmoothness = mix(0.001, 0.5, ubuf.smoothness * ubuf.smoothness);
 
     // Adjust UV coordinates to compensate for aspect ratio
@@ -98,7 +94,6 @@ void main() {
     vec2 adjustedUV = vec2(uv.x * ubuf.aspectRatio, uv.y);
     vec2 adjustedCenter = vec2(ubuf.centerX * ubuf.aspectRatio, ubuf.centerY);
 
-    // Calculate distance in aspect-corrected space
     float dist = distance(adjustedUV, adjustedCenter);
 
     // Calculate the maximum possible distance (corner to corner)
@@ -114,10 +109,8 @@ void main() {
     float adjustedSmoothness = mappedSmoothness * max(1.0, ubuf.aspectRatio);
     float radius = ubuf.progress * (maxDist + adjustedSmoothness);
 
-    // Use smoothstep for a smooth edge transition
     float factor = smoothstep(radius - adjustedSmoothness, radius + adjustedSmoothness, dist);
 
-    // Mix the textures (factor = 0 inside disc, 1 outside)
     fragColor = mix(color2, color1, factor);
 
     if (ubuf.progress <= 0.0) fragColor = color1;

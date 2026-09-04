@@ -3,33 +3,15 @@ import qs.Common
 import qs.Modals.Common
 import qs.Widgets
 
-// Confirmation for the one irreversible-by-accident thing the shell can do:
-// installing a permanent passwordless-sudo rule.
-//
-// This replaces a toast that asked the user to move the pointer off the bar
-// pill and click it again (VGS-55). That gesture was undiscoverable, had no
-// interactive affordance, and repeated on every grant forever. A modal is
-// strictly stronger than the pointer heuristics it replaces: hover cannot
-// reach it, and confirming takes an explicit activation of a control that says
-// what it does. The second click of a double-click on the pill lands on the
-// modal background, which declines — it can dismiss the prompt, but it can
-// never grant.
-//
-// Two safety properties are deliberate and must survive edits:
-//   * Cancel is the default action. `selectedButton` starts at `cancelButton`,
-//     so Return, Escape, a background click and the close button all decline.
-//     The destructive control is never the focused one.
-//   * "Don't ask me again" is only honoured when the user *confirms*. Ticking
-//     it and then cancelling changes nothing — see `_finish`.
+// Confirm installation of a persistent passwordless-sudo rule.
+// Start with Cancel selected. Only confirmation can persist the do-not-ask-again choice.
 VgsModal {
     id: root
 
     readonly property int cancelButton: 0
     readonly property int confirmButton: 1
 
-    // The drop-in `vshell sudo-toggle` will write, reported by
-    // `sudo-toggle status --json`. Shown so the rule is inspectable and
-    // removable outside the shell; empty until the probe has answered.
+    // Rule path reported by sudo-toggle status, shown for inspection and external removal. Empty until the probe returns.
     property string dropinPath: ""
     property bool dontAskAgain: false
     property int selectedButton: cancelButton
@@ -98,8 +80,7 @@ VgsModal {
             break;
         case Qt.Key_Return:
         case Qt.Key_Enter:
-            // Whatever is focused — which is Cancel unless the user moved to
-            // the grant control on purpose.
+
             root._finish(root.selectedButton);
             event.accepted = true;
             break;
@@ -197,7 +178,7 @@ VgsModal {
                     anchors.right: parent.right
                     spacing: Theme.spacingS
 
-                    // Cancel: outline button, and the one that carries focus.
+
                     Rectangle {
                         width: Math.max(110, cancelLabel.contentWidth + Theme.spacingL * 2)
                         height: 40
@@ -226,8 +207,7 @@ VgsModal {
                         }
                     }
 
-                    // The destructive control, labelled with what it does
-                    // rather than "OK". Never the default.
+                    // Keep the grant action out of the default selection.
                     Rectangle {
                         width: Math.max(150, confirmLabel.contentWidth + Theme.spacingL * 2)
                         height: 40

@@ -68,9 +68,7 @@ Variants {
             property bool scrollingEnabled: scrollMode === "Scrolling"
             property int currentWorkspaceIndex: 0
             property int totalWorkspaces: 1
-            // Also requires the image to overflow on the compositor's scroll
-            // axis — niri scrolls Y, Hyprland scrolls X — otherwise the
-            // currentWallpaper Fill fallback handles it.
+            // Scroll only when the image exceeds the output on the compositor's scroll axis; otherwise use Fill.
             property bool effectiveScrolling: scrollingEnabled && totalWorkspaces > 1 && (!imageMetrics.ready || (CompositorService.isNiri && imageMetrics.nativeWidth / imageMetrics.nativeHeight < root.textureWidth / root.textureHeight - 0.01) || (CompositorService.isHyprland && imageMetrics.nativeWidth / imageMetrics.nativeHeight > root.textureWidth / root.textureHeight + 0.01))
 
             Connections {
@@ -382,13 +380,13 @@ Variants {
                         return;
                     }
 
-                    // First update: use much stiffer spring for quick snap-to
+
                     if (root.firstScrollUpdate) {
                         root.firstScrollUpdate = false;
                         damping = 200.0;
                         stiffness = 8000.0;
                     } else {
-                        // Restore normal spring parameters
+
                         damping = CompositorService.isNiri ? 63.25 : 89.44;
                         stiffness = CompositorService.isNiri ? 1000.0 : 2000.0;
                     }
@@ -414,7 +412,7 @@ Variants {
                 if (effectiveScrolling) {
                     SessionData.setMonitorScrollPosition(modelData.name, currentScrollX, currentScrollY);
                 } else {
-                    // Not scrolling - publish centered (50, 50)
+
                     SessionData.setMonitorScrollPosition(modelData.name, 50, 50);
                 }
             }
@@ -429,9 +427,7 @@ Variants {
                     if (running) {
                         currentTime = Date.now() / 1000.0;
                     } else {
-                        root.publishScrollPosition();  // Animation settled
-                        // Hold the render loop open so the final settled frame
-                        // commits before updatesEnabled drops out from under us.
+                        root.publishScrollPosition();  // Keep rendering until the final settled frame commits before disabling updates.
                         root.invalidate();
                     }
                 }
@@ -464,12 +460,10 @@ Variants {
 
                 Qt.callLater(publishScrollPosition);
 
-                // Detect rebind via _seenScreens; schedule surface re-attach
-                // (deferred to unlock if locked).
+
                 const wasSeen = variants._seenScreens[modelData.name] === true;
                 variants._seenScreens[modelData.name] = true;
-                // If currently locked, the unlock handler will re-attach;
-                // otherwise re-attach now.
+
                 if (wasSeen && root.effectiveScrolling && !IdleService.isShellLocked) {
                     surfaceReattach.restart();
                 }
@@ -526,7 +520,7 @@ Variants {
                 currentWallpaper.source = newSource;
                 nextWallpaper.source = "";
 
-                // Reset scroll state for new image - will snap to correct position on first update
+
                 if (scrollingEnabled) {
                     firstScrollUpdate = true;
                     currentScrollX = 0.0;
@@ -765,7 +759,7 @@ Variants {
                 recursive: false
             }
 
-            // Parallax scrolling pipeline — bypasses transition machinery.
+
             Image {
                 id: parallaxImage
                 visible: false
@@ -789,23 +783,22 @@ Variants {
                 textureSize: Qt.size(imageMetrics.canvasWidth, imageMetrics.canvasHeight)
             }
 
-            // Pre-computed UV parameters for shader
+
             QtObject {
                 id: parallaxUV
                 readonly property real imageAspect: imageMetrics.ready ? imageMetrics.canvasWidth / imageMetrics.canvasHeight : 1.0
                 readonly property real screenAspect: root.textureWidth / root.textureHeight
 
-                // Scale factor to fit image to screen (preserving aspect, cropping excess)
+
                 readonly property real scale: Math.max(root.textureWidth / imageMetrics.canvasWidth, root.textureHeight / imageMetrics.canvasHeight)
                 readonly property real scaledWidth: imageMetrics.canvasWidth * scale
                 readonly property real scaledHeight: imageMetrics.canvasHeight * scale
 
-                // UV scale: portion of texture visible on screen
+
                 readonly property real uvScaleX: root.textureWidth / scaledWidth
                 readonly property real uvScaleY: root.textureHeight / scaledHeight
 
-                // Scroll range: how much UV space we can scroll through
-                // Only allow scrolling in the dimension where image exceeds screen
+                // Only the texture dimension that exceeds the output has a scroll range.
                 readonly property real scrollRangeX: imageAspect > screenAspect + 0.01 ? (1.0 - uvScaleX) : (1.0 - uvScaleX) * 0.5
                 readonly property real scrollRangeY: imageAspect < screenAspect - 0.01 ? (1.0 - uvScaleY) : (1.0 - uvScaleY) * 0.5
                 readonly property bool scrollsHorizontal: imageAspect > screenAspect + 0.01

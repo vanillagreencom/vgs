@@ -2,17 +2,15 @@
 // in the initial "server" subscription event.
 package registry
 
-// Version stamps. apiVersion is the upstream-compatible ordinal and MUST stay
-// truthful: it is 0 until the backend actually ships methods that behave like a
-// given upstream release. Feature presence is expressed through Capabilities and
-// Methods, never by inflating apiVersion. vgsApiVersion tracks VGS protocol
-// revisions and is what the QML client uses for its compatibility check.
+// APIVersion is the compatibility ordinal. VGSAPIVersion identifies the VGS
+// protocol. Clients detect features through Capabilities and Methods.
 const (
 	APIVersion    = 0
 	VGSAPIVersion = 1
 )
 
-// CLIVersion is overridable at build time via -ldflags "-X .../registry.cliVersion=...".
+// cliVersion accepts a build identifier through -ldflags "-X
+// .../registry.cliVersion=...".
 var cliVersion = "dev"
 
 // CLIVersion returns the backend build identifier.

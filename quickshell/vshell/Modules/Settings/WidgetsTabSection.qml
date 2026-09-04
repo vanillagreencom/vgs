@@ -23,8 +23,7 @@ Column {
     signal removeWidget(string sectionId, int widgetIndex)
     signal widgetSettingChanged(string sectionId, int widgetIndex, string settingName, var value)
 
-    // Compatibility signals retained for callers while all option edits now use
-    // the single widgetSettingChanged path.
+    // Compatibility signals for callers; option edits use widgetSettingChanged.
     signal spacerSizeChanged(string sectionId, int widgetIndex, int newSize)
     signal compactModeChanged(string widgetId, var value)
     signal widgetSizeChanged(string widgetId, var value)

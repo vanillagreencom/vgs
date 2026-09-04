@@ -1,8 +1,7 @@
-// Package execbound constructs one-shot external commands whose Wait cannot
-// outlive the context indefinitely, and owns every terminal condition that
-// bound introduces. A call site runs the command through this package and
-// tests the returned error; it never inspects ctx.Err() or exec.ErrWaitDelay
-// itself, so the deadline-versus-salvage ordering exists in one place.
+// Package execbound bounds pipe reads for one-shot external commands and
+// classifies their exit errors. Callers use the returned error so deadline and
+// output-recovery precedence stays in one place. WaitDelay cannot bound a child
+// stuck in uninterruptible sleep.
 package execbound
 
 import (
@@ -15,29 +14,22 @@ import (
 	"time"
 )
 
-// DefaultWaitDelay bounds how long Output and CombinedOutput keep reading the
-// stdout/stderr pipes after the context deadline kills the child. A descendant
-// that inherited those pipes holds them open once the child is gone, and Wait
-// reads toward an EOF that never arrives — the backend request wedges forever
-// instead of failing at its timeout. The bound cannot abandon a child that is
-// itself in uninterruptible sleep: Wait blocks in wait4 regardless.
+// DefaultWaitDelay limits pipe reads after the context ends or the child exits.
+// Descendants can hold inherited pipes open after the child is gone. It does not
+// bound wait4 for a child in uninterruptible sleep.
 const DefaultWaitDelay = 2 * time.Second
 
-// ErrTimeout classifies a run the context deadline ended. Call sites wrap it
-// with their own tool name — "nmcli timed out", "hyprctl monitors timed out" —
-// rather than surfacing this text. The context's own error stays in the chain,
-// so errors.Is(err, context.DeadlineExceeded) still holds.
+// ErrTimeout classifies a run whose context deadline ended. Callers add the tool
+// name. The error chain also contains context.DeadlineExceeded.
 var ErrTimeout = errors.New("timed out")
 
 // Result is what a bounded run produced.
 type Result struct {
 	// Out is everything read from the pipes.
 	Out []byte
-	// Salvaged reports that the child exited cleanly but a descendant held its
-	// pipes open until the bound expired, so Out is the child's complete output
-	// and the run cost an extra WaitDelay. A descendant that outlived the child
-	// may also have appended its own writes to Out. The run logs one Warn for
-	// it; a caller reads this field only to say so in its own error.
+	// Salvaged reports a clean child exit whose pipe reads ended at WaitDelay. Out
+	// contains the bytes read and may include writes from descendants. The run logs
+	// a warning because those descendants can remain alive.
 	Salvaged bool
 }
 
@@ -65,10 +57,9 @@ func Command(ctx context.Context, name string, args ...string) *Cmd {
 	return CommandWithDelay(ctx, DefaultWaitDelay, name, args...)
 }
 
-// CommandWithDelay is Command with a caller-chosen bound, for a test that pins
-// the timeout-versus-delay race. A non-positive delay is clamped to
-// DefaultWaitDelay: os/exec reads a zero WaitDelay as no bound at all, which is
-// the wedge this package exists to prevent.
+// CommandWithDelay builds a command with a caller-supplied pipe-read bound.
+// Non-positive delays use DefaultWaitDelay because os/exec treats a zero
+// WaitDelay as unbounded.
 func CommandWithDelay(ctx context.Context, delay time.Duration, name string, args ...string) *Cmd {
 	if delay <= 0 {
 		delay = DefaultWaitDelay
@@ -82,20 +73,11 @@ func CommandWithDelay(ctx context.Context, delay time.Duration, name string, arg
 // SysProcAttr or Env. Do not run it directly: the classification lives here.
 func (c *Cmd) Exec() *exec.Cmd { return c.cmd }
 
-// Output runs the command and classifies the result. CombinedOutput is the
-// same for cmd.CombinedOutput. Both return the bytes read either way, so a
-// caller that wants partial output on failure still gets it.
-//
-// Error precedence is os/exec's: a non-zero exit or a failed wait always beats
-// the WaitDelay overrun, so *exec.ExitError reaches callers keying on exit
-// codes or Stderr exactly as before. A bare exec.ErrWaitDelay means the child
-// itself exited successfully and only a descendant still held its pipes open;
-// that is Result.Salvaged with a nil error, because discarding a complete
-// result because an unrelated descendant is slow to exit is the worse failure.
-// Both outrank the deadline: a child that reached its own exit status inside
-// the straddle window did not time out, whether that status was 0 or not. Only
-// a child with no exit status of its own — one the deadline killed by signal —
-// classifies as ErrTimeout.
+// Output runs the command and returns the bytes read, including partial output
+// on failure. A non-zero exit status takes precedence over context errors. A
+// bare exec.ErrWaitDelay becomes a successful Result with Salvaged set.
+// Otherwise, an ended context supplies the error; a deadline produces
+// ErrTimeout.
 func (c *Cmd) Output() (Result, error) {
 	out, err := c.cmd.Output()
 	return c.report(classify(c.ctx, out, err))
@@ -107,10 +89,8 @@ func (c *Cmd) CombinedOutput() (Result, error) {
 	return c.report(classify(c.ctx, out, err))
 }
 
-// report emits the one Warn a salvage is worth. Logging here rather than at the
-// call site is what keeps it from being forgotten: without it the leaked
-// descendant this package bounds, which also costs the request an extra
-// WaitDelay, leaves no trace in production.
+// Keep the warning here so callers cannot omit the report of a descendant
+// holding pipes open.
 func (c *Cmd) report(res Result, err error) (Result, error) {
 	if res.Salvaged {
 		c.log.Warn("command exited but a descendant held its pipes open; output may include the descendant's writes",
@@ -119,8 +99,7 @@ func (c *Cmd) report(res Result, err error) (Result, error) {
 	return res, err
 }
 
-// Interrupted reports whether the context ended the run — its deadline or its
-// cancellation — rather than the tool failing on its own.
+// Interrupted reports a classified timeout or context cancellation.
 func Interrupted(err error) bool {
 	return errors.Is(err, ErrTimeout) || errors.Is(err, context.Canceled)
 }
@@ -138,11 +117,8 @@ func classify(ctx context.Context, out []byte, err error) (Result, error) {
 		res.Salvaged = true
 		return res, nil
 	}
-	// An exit status the child reached on its own outranks the deadline. The
-	// two are told apart by the status itself: CommandContext ends a child by
-	// signal, so its ExitError reports no exit code, while a command that failed
-	// independently carries a real one — even if a descendant then held the
-	// pipes past the deadline and only the WaitDelay released Wait.
+	// A real exit code takes precedence over a later deadline while descendants
+	// hold pipes. CommandContext kills by signal, which produces no exit code.
 	if errors.As(err, &exitErr) && exitErr.ExitCode() >= 0 {
 		return res, err
 	}

@@ -6,12 +6,7 @@ import qs.Services
 import qs.Widgets
 import "CloudSyncIcons.js" as CloudIcons
 
-// Renames an account for display only.
-//
-// rclone's remote name is the identity every synced folder stores, so it is
-// immutable — renaming it would leave those folders pointing at nothing. The
-// label is ours and is safe to change at any time, which is what people
-// actually want when they have two accounts on the same service.
+// Change the display label while preserving the remote name used by configured folders.
 CloudSyncDialog {
     id: dialog
 

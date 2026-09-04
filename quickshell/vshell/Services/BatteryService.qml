@@ -24,7 +24,6 @@ Singleton {
 
     readonly property string preferredBatteryOverride: Quickshell.env("VGS_PREFERRED_BATTERY")
 
-    // List of laptop batteries
     readonly property var batteries: UPower.devices.values.filter(dev => dev.isLaptopBattery)
 
     readonly property var readyBatteries: batteries.filter(b => b.ready)
@@ -61,7 +60,7 @@ Singleton {
         return stateKnownBatteries.some(b => b.state === UPowerDeviceState.Charging);
     }
 
-    // Main battery (for backward compatibility)
+    // The primary battery for consumers that require a single device.
     readonly property UPowerDevice device: {
         if (usePreferred) {
             if (preferredDeviceKnown)
@@ -70,7 +69,6 @@ Singleton {
         }
         return stateKnownBatteries[0] || readyBatteries[0] || batteries[0] || null;
     }
-    // Whether at least one battery is available
     readonly property bool batteryAvailable: batteries.length > 0
     // Aggregated charge level (percentage)
     readonly property real batteryLevel: {
@@ -102,7 +100,6 @@ Singleton {
     }
     readonly property bool isCharging: _hasKnownChargingState ? _currentIsCharging : _lastIsCharging
 
-    // Is the system plugged in (Is not running on battery)
     readonly property bool isPluggedIn: !UPower.onBattery
     readonly property bool isLowBattery: batteryAvailable && batteryLevel <= SettingsData.batteryLowThreshold
     readonly property bool isCriticalBattery: batteryAvailable && batteryLevel <= SettingsData.batteryCriticalThreshold
@@ -149,7 +146,6 @@ Singleton {
             return;
         }
 
-        // Critical battery check (higher priority)
         if (isCriticalBattery) {
             if (!_hasNotifiedCriticalBattery && SettingsData.batteryNotifyCritical) {
                 _hasNotifiedCriticalBattery = true;
@@ -162,7 +158,6 @@ Singleton {
             _hasNotifiedCriticalBattery = false;
         }
 
-        // Low battery check
         if (isLowBattery) {
             if (!_hasNotifiedLowBattery && SettingsData.batteryNotifyLow) {
                 _hasNotifiedLowBattery = true;
@@ -301,7 +296,6 @@ Singleton {
         }
     }
 
-    // Aggregated battery status
     readonly property string batteryStatus: {
         if (!batteryAvailable) {
             return I18n.tr("No battery", "battery status");

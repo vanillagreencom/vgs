@@ -75,7 +75,7 @@ Item {
             anchors.horizontalCenter: parent.horizontalCenter
             spacing: Theme.spacingXL
 
-            // ASCII Art Header
+
             StyledRect {
                 width: parent.width
                 height: asciiSection.implicitHeight + Theme.spacingL * 2
@@ -572,5 +572,5 @@ Item {
         }
     }
 
-    // Community tooltip - positioned absolutely above everything
+
 }

@@ -43,9 +43,9 @@ Item {
     }
 
     readonly property string imageHash: normalizedPath ? djb2Hash(normalizedPath) : ""
-    // Plain filesystem path (for test/ffmpegthumbnailer/saveToFile) …
+
     readonly property string cachePath: imageHash && !isRemoteUrl && !isAnimated ? `${Paths.strip(Paths.imagecache)}/${imageHash}@${maxCacheSize}x${maxCacheSize}.png` : ""
-    // … and the file:// form Image.source resolves to.
+
     readonly property string cacheUrl: cachePath ? "file://" + cachePath : ""
     readonly property string encodedImagePath: {
         if (!normalizedPath)

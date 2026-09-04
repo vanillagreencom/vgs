@@ -78,7 +78,6 @@ Singleton {
     readonly property var forcedFprintAvailable: envFlag("VSHELL_FORCE_FPRINT_AVAILABLE")
     readonly property var forcedU2fAvailable: envFlag("VSHELL_FORCE_U2F_AVAILABLE")
 
-    // --- Derived auth probe state ---
 
     readonly property bool pamFprintSupportDetected: pamProbeFinalized && pamProbeOutput.includes("pam_fprintd.so:true")
     readonly property bool pamU2fSupportDetected: pamProbeFinalized && pamProbeOutput.includes("pam_u2f.so:true")
@@ -91,7 +90,6 @@ Singleton {
         return parseFingerprintProbe(fingerprintProbeExitCode, fingerprintProbeOutput, pamFprintSupportDetected);
     }
 
-    // --- Lock fingerprint capabilities ---
 
     readonly property bool lockFingerprintCanEnable: {
         if (forcedFprintAvailable !== null)
@@ -117,7 +115,6 @@ Singleton {
         return fingerprintProbeState;
     }
 
-    // --- Greeter fingerprint capabilities ---
 
     readonly property bool greeterFingerprintCanEnable: {
         if (forcedFprintAvailable !== null)
@@ -171,7 +168,6 @@ Singleton {
         }
     }
 
-    // --- Lock U2F capabilities ---
 
     readonly property bool lockU2fReady: {
         if (forcedU2fAvailable !== null)
@@ -195,7 +191,6 @@ Singleton {
         return "missing_pam_support";
     }
 
-    // --- Greeter U2F capabilities ---
 
     readonly property bool greeterU2fReady: {
         if (forcedU2fAvailable !== null)
@@ -235,12 +230,10 @@ Singleton {
         return "none";
     }
 
-    // --- Aggregates ---
 
     readonly property bool fprintdAvailable: lockFingerprintReady || greeterFingerprintReady
     readonly property bool u2fAvailable: lockU2fReady || greeterU2fReady
 
-    // --- Auth detection ---
 
     readonly property var _fprintProbeCommand: ["sh", "-c", "if command -v fprintd-list >/dev/null 2>&1; then fprintd-list \"${USER:-$(id -un)}\" 2>&1; else printf '__missing_command__\\n'; exit 127; fi"]
     readonly property var _pamProbeCommand: ["sh", "-c", "for module in pam_fprintd.so pam_u2f.so; do found=false; for dir in /usr/lib64/security /usr/lib/security /lib/security /lib/x86_64-linux-gnu/security /usr/lib/x86_64-linux-gnu/security /usr/lib/aarch64-linux-gnu/security /run/current-system/sw/lib/security; do if [ -f \"$dir/$module\" ]; then found=true; break; fi; done; printf '%s:%s\\n' \"$module\" \"$found\"; done"]
@@ -270,7 +263,6 @@ Singleton {
         detectAuthCapabilities();
     }
 
-    // --- Auth apply pipeline ---
 
     property bool authApplyRunning: false
     property bool authApplyQueued: false
@@ -325,7 +317,6 @@ Singleton {
             authApplyDebounce.restart();
     }
 
-    // --- Greeter auto-login sync pipeline ---
 
     property bool greeterAutoLoginSyncRunning: false
     property bool greeterAutoLoginSyncQueued: false
@@ -371,7 +362,6 @@ Singleton {
 
     function greeterAutoLoginSyncSuccessToast(details) {
         const enabling = settingsRoot && settingsRoot.greeterAutoLogin;
-        // Clear the sticky in-progress toast, then confirm with an auto-dismissing toast.
         ToastService.dismissCategory("greeter-autologin-sync");
         if (enabling) {
             ToastService.showWarning(I18n.tr("Auto-login enabled"), I18n.tr("You'll skip the greeter password after the next reboot. The lock screen and signing out still require your password.") + (details ? "\n\n" + details : ""));
@@ -388,7 +378,6 @@ Singleton {
             greeterAutoLoginSyncDebounce.restart();
     }
 
-    // --- PAM parsing helpers ---
 
     function stripPamComment(line) {
         if (!line)
@@ -442,7 +431,6 @@ Singleton {
         return false;
     }
 
-    // --- Fingerprint probe output parsing ---
 
     function hasEnrolledFingerprintOutput(output) {
         const lower = (output || "").toLowerCase();
@@ -483,7 +471,6 @@ Singleton {
         return pamFprintDetected ? "probe_failed" : "missing_pam_support";
     }
 
-    // --- Qt tools detection ---
 
     function detectQtTools() {
         qtToolsDetectionProcess.running = true;

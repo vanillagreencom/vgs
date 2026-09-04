@@ -22,9 +22,7 @@ import shlex
 import sys
 from pathlib import Path
 
-# The comment- and string-aware shell scanner is shared: counting braces or
-# hunting for `conflicts=` with a plain regex gets fooled by a `}` in a comment
-# or a `)` in a string, and every check that reads a PKGBUILD wants it right.
+# Shared masking keeps quoted and commented delimiters out of recipe structure.
 sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
 from shell_scan import assignments as shell_assignments  # noqa: E402
 from shell_scan import split_scopes  # noqa: E402
@@ -36,26 +34,17 @@ MAPPING = ROOT / "packaging" / "optional-packages.json"
 # Channels with a weak-dependency mechanism, so they carry both the generated
 # hard dependencies and the generated optional ones.
 DISTROS = ("arch", "debian", "fedora", "gentoo")
-# Channels that get hard dependencies only. Void has no weak-dependency
-# mechanism at all (its optional tools are covered by INSTALL.msg and
-# `vshell deps status`), and the Nix wrapper is a PATH, not a package relation.
-# They were hand-maintained until VGS-53, which is how Void kept shipping
-# `depends="quickshell jq python3"` after every other channel had been fixed.
+# Void has no weak-dependency relation; the Nix wrapper provides a PATH.
 REQUIRED_ONLY = ("void", "nix")
 REQUIRED_DISTROS = DISTROS + REQUIRED_ONLY
 
-# The Gentoo recipe's filename carries its version, so a hardcoded path here
-# breaks at every release rename. Glob for it, and refuse to guess when
-# packaging/gentoo does not hold exactly one ebuild.
+# Gentoo recipe filenames change with versions; require a unique ebuild.
 _gentoo_ebuilds = sorted((ROOT / "packaging/gentoo").glob("vgs-shell-*.ebuild"))
 if len(_gentoo_ebuilds) != 1:
     raise SystemExit(f"gen-package-metadata: expected one packaging/gentoo ebuild, found {len(_gentoo_ebuilds)}")
 GENTOO_EBUILD = str(_gentoo_ebuilds[0].relative_to(ROOT))
 
-# Every packaging channel this repo ships, and where its recipe lives. A
-# directory under packaging/ that appears in neither table fails the run: a new
-# channel must state whether its dependencies are generated, rather than being
-# quietly left out the way Void was.
+# Every packaging directory must declare whether dependencies are generated.
 CHANNEL_RECIPES = {
     "arch": "packaging/arch/PKGBUILD",
     "debian": "packaging/debian/control",
@@ -64,9 +53,7 @@ CHANNEL_RECIPES = {
     "void": "packaging/void/template",
     "nix": "flake.nix",
 }
-# Every file that has to declare the notification-daemon conflicts, which is not
-# the same set as CHANNEL_RECIPES: Arch alone ships four, and the three that are
-# NOT packaging/arch/PKGBUILD are precisely the ones published to the AUR.
+# Conflict declarations include the AUR recipes as well as distribution recipes.
 CONFLICT_RECIPES = {
     "arch": (
         "packaging/arch/PKGBUILD",
@@ -114,25 +101,15 @@ def feature_commands(feature: dict) -> list[str]:
 
 
 def conflict_packages(mapping: dict) -> tuple[dict[str, list[str]], list[tuple[str, str, str]]]:
-    """Return ({channel: [package]}, waivers) for the daemons VGS conflicts with.
-
-    Same shape and same rule as required_packages(): a daemon with no package
-    on a channel must be waived by name with a reason. The channels had already
-    drifted apart before this existed — Fedora named four daemons, Arch and
-    Debian three, Gentoo and Void a different three (VGS-56).
-    """
+    """Return conflicting packages by channel and their explicit waivers."""
     section = mapping.get("conflicts")
     if section is None:
         raise GenError('packaging/optional-packages.json has no "conflicts" section')
     daemons = section.get("daemons", {})
     unsupported = section.get("unsupported", {})
 
-    # Nix installs into a profile rather than a distribution package set, so it
-    # has no package-relation to express a conflict with. Validating waivers
-    # against the SAME tuple the loop below walks is the point: validating
-    # against REQUIRED_DISTROS accepted a `nix` waiver that was then never
-    # honoured and never printed — a silent state, which is exactly what the
-    # stale-waiver check exists to prevent.
+    # Nix profiles provide no package conflict relation. Validate waivers against
+    # the same channels whose declarations are checked.
     channels = tuple(channel for channel in REQUIRED_DISTROS if channel != "nix")
 
     for daemon, waived in unsupported.items():
@@ -181,7 +158,7 @@ def conflict_packages(mapping: dict) -> tuple[dict[str, list[str]], list[tuple[s
 
 
 def _strip_relation(atom: str) -> str:
-    """`mako>=0`, `vgs-shell=0.1.0-4` and `mako-notifier (<< 1.0)` all name mako."""
+    """Return the package name without its version constraint."""
     return re.split(r"[<>=(\s]", atom.strip(), maxsplit=1)[0].strip()
 
 
@@ -237,15 +214,7 @@ def _shell_assignment(text: str, name: str, path: Path) -> set[str] | None:
 
 
 def _pkgbuild_conflicts(text: str, path: Path) -> set[str]:
-    """The main package's conflicts in a (possibly split) PKGBUILD.
-
-    makepkg runs each `package_*()` in its own scope over the top-level
-    variables, so a function that assigns `conflicts` replaces the global one
-    and a function that does not inherits it. Aggregating every function's
-    conflicts instead — what this used to do — lets a daemon moved to a
-    subpackage keep satisfying the check for the package that no longer
-    conflicts with it.
-    """
+    """Read main-package conflicts with package-function overrides and inheritance."""
     # Without pkgbase, makepkg takes the FIRST pkgname as the base, so the order
     # matters and these have to stay lists.
     names = _shell_ordered(text, "pkgbase", path) or _shell_ordered(text, "pkgname", path)
@@ -397,16 +366,7 @@ def _template_conflicts(text: str, path: Path) -> set[str]:
 
 
 def declared_conflicts(path: Path) -> set[str]:
-    """The packages the recipe's MAIN package declares a conflict with.
-
-    Reading the declaration rather than searching the file: a package name in a
-    comment, a Suggests: line or a URL is not a conflict, and a check that
-    accepts one reports success over ground it never examined — the same defect
-    this script exists to catch, one level up. Scope is the other half of that:
-    every format here can ship several packages from one recipe, and a conflict
-    declared by the assets subpackage does not make installing the shell
-    conflict with anything.
-    """
+    """Return conflicts declared for the main package rather than its subpackages."""
     text = path.read_text()
 
     if path.name == "PKGBUILD":
@@ -428,18 +388,10 @@ def declared_conflicts(path: Path) -> set[str]:
 
 
 def check_conflicts(conflicts: dict[str, list[str]]) -> None:
-    """Verify every shipped recipe's MAIN package declares the whole list.
+    """Check each shipped main package against the required conflict list.
 
-    Only Gentoo's blockers are generated (they live inside the generated
-    RDEPEND). The others sit in channel-specific shapes — `conflicts=()` inside
-    a package_* function, a `Conflicts:` field, an xbps `conflicts=` line — that
-    are not worth templating, but they still have to agree with the one list,
-    or the divergence this check exists to catch simply comes back.
-
-    Main package, not recipe: the shell is what claims
-    org.freedesktop.Notifications, so the conflict has to be on the package a
-    user installs to get the shell. An assets subpackage declaring it changes
-    nothing.
+    Only Gentoo blockers are generated here. A subpackage conflict does not
+    protect the shell package that claims the notification bus name.
     """
     missing: list[str] = []
     for channel, packages in conflicts.items():
@@ -458,15 +410,7 @@ def check_conflicts(conflicts: dict[str, list[str]]) -> None:
 
 
 def check_channels(required: dict[str, list[str]]) -> None:
-    """Fail unless every packaging channel this repo ships is accounted for.
-
-    Void is why this exists. It was hand-maintained, the generator skipped it,
-    and it kept `depends="quickshell jq python3"` through two rounds of
-    packaging fixes — the VGS-53 defect still live on a shipped channel while
-    every generated one was correct. Nothing detected that, because nothing was
-    looking. A channel now has to be either generated or declared unGenerated
-    with a reason; a new directory under packaging/ that is neither fails here.
-    """
+    """Require each packaging channel to be generated or explicitly excluded."""
     declared = set(CHANNEL_RECIPES) | set(UNGENERATED_CHANNELS)
     found = {entry.name for entry in (ROOT / "packaging").iterdir() if entry.is_dir()}
 
@@ -491,17 +435,10 @@ def check_channels(required: dict[str, list[str]]) -> None:
 
 
 def required_packages(mapping: dict) -> tuple[dict[str, list[str]], list[tuple[str, str, str]]]:
-    """Return ({distro: [package]}, waivers) for the commands behind first-class UI.
+    """Return packages for required commands and explicit unsupported-channel waivers.
 
-    optdepends and Suggests are advisory: no package manager installs them by
-    default. A command that a default bar button or modal points at therefore
-    has to be a real dependency, or a stock install ships UI that reports
-    missing tools (VGS-53).
-
-    A required command with no package on one of the generated distributions is
-    NOT quietly left out — that would ship the same broken stock install one
-    distribution down. It has to be waived by name in `required.unsupported`,
-    with a reason, and every run prints the waivers it honoured.
+    Advisory dependencies do not ensure tools for default UI are installed.
+    Missing mappings need named reasons, which are printed on each run.
     """
     section = mapping.get("required")
     if section is None:
@@ -606,9 +543,9 @@ def collect(
         label = labels[name]
         for command in feature_commands(feature):
             if command.startswith("${VSHELL_ROOT}"):
-                continue  # shipped inside the package
+                continue
             if command in required_commands:
-                continue  # a hard dependency; see required_packages()
+                continue
             entry = commands.get(command)
             if entry is None:
                 raise GenError(
@@ -644,8 +581,6 @@ def collect(
                     if text not in descriptions:
                         descriptions.append(text)
 
-    # A command-level description replaces the feature labels for that package:
-    # "hyprland: Hyprland compositor support" beats listing five feature groups.
     for distro in DISTROS:
         for package, descriptions in overrides[distro].items():
             result[distro][package] = descriptions
@@ -884,8 +819,6 @@ def targets(
     )
     out.append((path, replace_block(path, text, render_gentoo(collected["gentoo"]))))
 
-    # Hard dependencies only below: neither channel has a weak-dependency
-    # mechanism to carry the optional list.
     path = ROOT / "packaging/void/template"
     out.append(
         (
@@ -979,9 +912,7 @@ def main() -> int:
     )
     for channel, reason in UNGENERATED_CHANNELS.items():
         print(f"  not generated: {channel} — {reason}")
-    # Printed every run, not only when they change: each line is a recipe that
-    # ships without a tool VGS considers first-class, and that should be
-    # visible in the log rather than buried in a JSON file.
+    # Print waivers on every run so missing required tools remain visible.
     for command, distro, reason in waivers:
         print(f"  waived: {distro} cannot require {command} — {reason}")
     for daemon, channel, reason in conflict_waivers:

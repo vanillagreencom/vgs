@@ -11,7 +11,6 @@ import (
 // remote, so it is more generous than a plain status call.
 const mountCallTimeout = 45 * time.Second
 
-// fuseAvailable reports whether stream (on-demand) folders can work at all.
 func fuseAvailable() bool {
 	for _, binary := range []string{"fusermount3", "fusermount"} {
 		if _, err := exec.LookPath(binary); err == nil {
@@ -21,8 +20,8 @@ func fuseAvailable() bool {
 	return false
 }
 
-// mountFolder exposes a remote as an on-demand FUSE mount. Nothing is copied to
-// disk: files download when opened and live in rclone's VFS cache.
+// mountFolder exposes a remote through FUSE. Files are fetched on demand into
+// the local VFS cache.
 func (m *Manager) mountFolder(folderID string) error {
 	folder, ok := m.store.folder(folderID)
 	if !ok {
@@ -41,13 +40,8 @@ func (m *Manager) mountFolder(folderID string) error {
 	if err := os.MkdirAll(folder.LocalPath, 0o700); err != nil {
 		return fmt.Errorf("create mount point: %w", err)
 	}
-	// A non-empty mount point usually means a stale mount or leftover files;
-	// mounting over them would hide the user's data.
-	//
-	// A ReadDir *error* is not an all-clear: the likeliest cause on a mount
-	// point is a stale FUSE handle (EIO/ENOTCONN), which is precisely the case
-	// this check exists to catch. Previously it was gated on err == nil and so
-	// skipped exactly then.
+	// A non-empty mount point would hide existing files. ReadDir errors also block
+	// mounting because a stale FUSE handle can cause EIO or ENOTCONN.
 	entries, readErr := os.ReadDir(folder.LocalPath)
 	switch {
 	case readErr != nil:
@@ -105,7 +99,6 @@ func (m *Manager) mountFolder(folderID string) error {
 	return nil
 }
 
-// unmountFolder releases a streamed folder's mount point.
 func (m *Manager) unmountFolder(folderID string) error {
 	folder, ok := m.store.folder(folderID)
 	if !ok {
@@ -129,7 +122,6 @@ func (m *Manager) unmountFolder(folderID string) error {
 	return err
 }
 
-// isMounted asks rclone whether it currently owns this mount point.
 func (m *Manager) isMounted(mountPoint string) bool {
 	var mounts rcMounts
 	if err := m.client.callTimeout("mount/listmounts", nil, &mounts, 5*time.Second); err != nil {
@@ -176,8 +168,8 @@ func (m *Manager) refreshMountStates() {
 	}
 }
 
-// mountConfiguredFolders brings up every streamed folder. Called once the
-// daemon is ready so mounts survive an rclone restart.
+// mountConfiguredFolders requests configured mounts after daemon startup,
+// including restarts.
 func (m *Manager) mountConfiguredFolders() {
 	settings := m.store.snapshotSettings()
 	for _, folder := range m.store.snapshotFolders() {
@@ -190,8 +182,7 @@ func (m *Manager) mountConfiguredFolders() {
 	}
 }
 
-// unmountAll releases every mount on shutdown. Leaving them behind would strand
-// a dead mount point in the user's home directory.
+// unmountAll requests release of mounts on shutdown to avoid stale mount points.
 func (m *Manager) unmountAll() {
 	if !m.client.ready() {
 		return

@@ -1,12 +1,7 @@
 name: publish-gentoo
 
-# Publishing is MANUAL: `scripts/publish-gentoo.sh`. Deploy keys are disabled for
-# this organisation by enterprise policy, and an App was more setup than the one
-# command it replaces.
-#
-# This workflow is the half that needs no credential: it reads the overlay over
-# HTTPS and fails when it has drifted from packaging/gentoo/. Without it a stale
-# overlay is invisible — it emerges and installs perfectly well (VGS-204).
+# Publish with scripts/publish-gentoo.sh. This workflow checks remote drift
+# without publication credentials.
 
 on:
   schedule:

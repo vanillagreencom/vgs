@@ -4,8 +4,7 @@ on:
   push:
     tags: ["v*"]
 
-# Least privilege for every job that does not raise it. `publish` needs
-# contents: write to create the release; nothing else does.
+# Jobs opt into release-write permission only where needed.
 permissions:
   contents: read
 
@@ -32,9 +31,7 @@ jobs:
           name: vgs-${{ matrix.arch }}
           path: dist/*.tar.gz
 
-  # The extras are architecture-independent and ~1.0 GiB, so they are built once
-  # rather than once per architecture — which is the whole point of splitting
-  # them out of the per-architecture bundles.
+  # Assets are architecture-independent, so build a shared archive.
   assets:
     permissions:
       contents: read
@@ -75,10 +72,7 @@ jobs:
             dist/*.tar.gz
             dist/SHA256SUMS
 
-  # packaging/arch/PKGBUILD points source_* at the tarballs the job above
-  # uploads, so the AUR can only be updated once they exist. Without this step
-  # the recipe stays whatever was last pushed by hand, which is how VGS-5 and
-  # VGS-53 shipped a stale package for two releases running.
+  # AUR recipes can reference the release tarballs only after publication.
   aur:
     needs: publish
     # The called workflow's own permissions are capped by what this job grants,

@@ -40,15 +40,10 @@ Item {
     property real popoutHeight: 0
     property var pillClickAction: null
     property var pillRightClickAction: null
-    // Whether hovering the pill may run pillClickAction. Opt-in, because the
-    // widgets that declare a pillClickAction are exactly the ones whose pill
-    // does something rather than opening a popout — so hover-activation is
-    // wrong for them by default and a widget author has to think about it.
+    // Hover activation of pillClickAction requires opt-in because the action may change state.
     property bool pillClickOnHover: false
-    // How the current pill action invocation was reached. Only the pills'
-    // onClicked/onRightClicked handlers say "click"; hover says "hover" and the
-    // IPC widget toggle says nothing. Default is empty so a caller that forgets
-    // to say cannot be mistaken for a user pressing the button.
+    // Action origin: click handlers set click, hover sets hover, and an unspecified caller remains empty.
+    // An omitted origin must not count as a pointer press.
     property string pillActionOrigin: ""
 
     property Component controlCenterWidget: null
@@ -70,11 +65,8 @@ Item {
     readonly property bool hasHorizontalPill: horizontalBarPill !== null
     readonly property bool hasVerticalPill: verticalBarPill !== null
     readonly property bool hasPopout: popoutContent !== null
-    // What triggerHoverPopout will actually do, as a property the bar can read
-    // before arming a hover cycle. Mirrors the two branches below: run the pill
-    // action if the widget opted in, otherwise open the popout if there is one.
-    // Every PluginComponent exposes triggerHoverPopout, so its mere existence
-    // says nothing about whether hovering has an effect — this does.
+    // Advertise whether hover runs an opted-in pill action or opens a popout.
+    // Method presence alone cannot express this: every PluginComponent has triggerHoverPopout.
     readonly property bool respondsToHover: (pillClickAction && pillClickOnHover) || hasPopout
 
     readonly property int iconSize: Theme.barIconSize(barThickness, -4, root.barConfig?.maximizeWidgetIcons, root.barConfig?.iconScale)
@@ -227,7 +219,7 @@ Item {
 
         onClicked: {
             if (pillClickAction) {
-                // The only place a genuine pointer press is announced.
+
                 root._runPillAction(pillClickAction, "click", horizontalPill);
             } else if (hasPopout) {
                 pluginPopout.toggle();
@@ -271,7 +263,7 @@ Item {
 
         onClicked: {
             if (pillClickAction) {
-                // The only place a genuine pointer press is announced.
+
                 root._runPillAction(pillClickAction, "click", verticalPill);
             } else if (hasPopout) {
                 pluginPopout.toggle();
@@ -280,11 +272,7 @@ Item {
         onRightClicked: root._runPillAction(pillRightClickAction, "click", verticalPill)
     }
 
-    // Single invocation path for pill actions. Every caller names how the action
-    // was reached and the action can read it back, so a widget whose action is
-    // destructive or privileged can refuse anything that is not a real pointer
-    // press. Routing all the call sites through here is what stops a new branch
-    // from invoking an action without declaring an origin.
+    // Single invocation path for pill actions: every call site must pass an origin here so a protected action can require "click".
     function _runPillAction(action, origin, pill) {
         if (!action)
             return;
@@ -332,10 +320,7 @@ Item {
     }
 
     function triggerHoverPopout(widgetHostId) {
-        // BarHoverController reaches every PluginComponent through here, so for
-        // a pill whose action changes state this turned "the pointer crossed the
-        // bar" into "the user activated the control". Fall through to the popout
-        // branch unless the widget opted in.
+        // Pill actions may change state, so hover requires explicit opt-in.
         if (pillClickAction && pillClickOnHover) {
             triggerPopout("hover");
             return;

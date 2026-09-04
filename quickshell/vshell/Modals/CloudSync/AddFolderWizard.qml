@@ -5,15 +5,12 @@ import qs.Widgets
 import qs.Modules.Settings.Widgets
 import "CloudSyncIcons.js" as CloudIcons
 
-// Add-folder flow. The sync mode is deliberately unset until the user picks
-// one: the four modes behave very differently and a default would quietly make
-// that decision for them.
+// Require an explicit sync mode because the modes change which files the backend writes or removes.
 CloudSyncDialog {
     id: wizard
 
     property var parentModal: null
-    // Set when the wizard is opened from one account's card: the account is
-    // already chosen, so asking again would be a step that answers itself.
+    // An account-card entry point supplies the account so the wizard can skip account selection.
     property string presetAccount: ""
 
     readonly property int firstStep: wizard.presetAccount.length > 0 ? 1 : 0
@@ -131,7 +128,7 @@ CloudSyncDialog {
         });
     }
 
-    // ---- Step 0: account ----
+
     Repeater {
         model: wizard.step === 0 ? CloudSyncService.accounts : []
 
@@ -160,7 +157,7 @@ CloudSyncDialog {
         }
     }
 
-    // ---- Step 1: mode ----
+
     Repeater {
         model: wizard.step === 1 ? wizard.modeChoices : []
 
@@ -202,7 +199,7 @@ CloudSyncDialog {
         color: Theme.warning
     }
 
-    // ---- Step 2: cloud folder ----
+
     RemoteFolderPicker {
         id: remotePicker
 
@@ -213,7 +210,7 @@ CloudSyncDialog {
         onCurrentPathChanged: wizard.remotePath = currentPath
     }
 
-    // ---- Step 3: local folder or mount name ----
+
     LocalFolderPicker {
         id: localPicker
 
@@ -243,7 +240,7 @@ CloudSyncDialog {
         onTextEdited: wizard.folderName = text
     }
 
-    // ---- Step 4: schedule and filters ----
+
     CloudSyncDropdownRow {
         visible: wizard.step === 4 && !wizard.isStream
         text: I18n.tr("Sync schedule", "Setting label for how often a folder syncs")
@@ -309,7 +306,7 @@ CloudSyncDialog {
         color: Theme.surfaceVariantText
     }
 
-    // ---- Running summary, visible from the cloud-folder step onward ----
+
     CloudSyncRow {
         visible: wizard.step >= 2
         iconName: CloudIcons.modeIcon(wizard.mode)

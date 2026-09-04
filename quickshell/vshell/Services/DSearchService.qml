@@ -6,9 +6,7 @@ import Quickshell
 import qs.Common
 import qs.Services
 
-// Live launcher search. The historical name is retained so existing imports do
-// not churn, but search is VGS-owned and backed by fd + ripgrep rather than the
-// stale external dsearch index.
+// Launcher file search uses the VGS helper with fd and ripgrep.
 Singleton {
     id: root
 
@@ -18,22 +16,9 @@ Singleton {
     property string backendName: "fd + ripgrep"
     property bool fdAvailable: false
     property bool ripgrepAvailable: false
-    // "pending" only while the FIRST probe is outstanding, then "ready", or
-    // "retrying" from the first failure until the attempts are spent, then
-    // "failed". The tool flags mean nothing outside "ready", so no caller may
-    // report a tool as missing on their strength alone.
-    //
-    // Everything past the first failure is honestly "nobody knows" rather than
-    // "checking", and that distinction buys exactly one thing: text search
-    // resumes dispatching at the first failure instead of waiting out the
-    // retries. An fd-backed name search stays refused until the probe settles,
-    // because dispatching it unproven would silently buy the helper's full
-    // directory walk. (Path completion and zoxide never waited on any of this:
-    // backendStateFor answers the first before it reads a probe state, and no
-    // probe covers the second.)
-    //
-    // A state that reached "ready" is never demoted by a later failure —
-    // probeFailureOutcome.
+    // Tool flags are valid only in the ready state. Pending waits for the first probe response.
+    // Retrying and failed mean availability is unknown, so text searches may reach the helper.
+    // Name searches remain gated to avoid an unconfirmed fallback to a full directory walk.
     property string statusState: "pending"
     property string statusError: ""
     property int _statusAttempts: 0
@@ -125,14 +110,7 @@ Singleton {
             root.statusError = reason;
         root.statusState = outcome.state;
         if (outcome.retry) {
-            // Bounded backoff, one budget per episode. One failed probe used to
-            // leave search unanswerable for the life of the shell; retrying
-            // forever would spawn a process a second for the same lifetime.
-            //
-            // Where there is no earlier answer, the state leaves "pending" on
-            // the FIRST failure rather than at the end of the sequence: the
-            // answer is already unknown, so the kinds that need no fd fallback
-            // stop waiting out the ~12s the retries take.
+            // Bound retries to one episode. Leave pending after the first failure so searches without an fd fallback can proceed.
             statusRetryTimer.interval = 1000 * root._statusAttempts;
             statusRetryTimer.start();
             return;
@@ -141,14 +119,10 @@ Singleton {
             root.errorOccurred(I18n.tr("Unable to read launcher search status"));
     }
 
-    // The single owner of "which tool does this search need, and do we have it".
-    // Every gate, message and icon in the launcher surfaces reads these; the
-    // functions are pure so scripts/test-launcher-search-gate.js runs this exact
-    // source rather than a re-implementation.
     // BEGIN SEARCH BACKEND DECISION
-    // The command a kind shells out to, or "" when no probed tool decides it.
-    // Unlisted kinds are deliberately NOT fd's: "zoxide" belongs to the
-    // launcher-zoxide feature and a typo must not inherit an answer.
+    // scripts/test-launcher-search-gate.js evaluates the code between these markers in Node; keep it pure.
+    // The command required by a search kind, or an empty string for kinds without a probed tool.
+    // Unlisted kinds must not inherit the fd requirement.
     function backendCommandFor(kind) {
         switch (kind) {
         case "text":
@@ -186,26 +160,12 @@ Singleton {
         return kind === "folders" && /^[~/]/.test(String(query || "").trim());
     }
 
-    // The one owner of "long enough to search", for every launcher surface that
-    // decides whether to run a file search or to say why it did not. Each of
-    // them used to carry the literal, and a threshold changed in all but one
-    // leaves that one believing a search ran that never did.
-    //
-    // ADVISORY, not enforced: search() dispatches whatever it is given, because
-    // vgsMenu's zoxide and explicit-folder-path legs deliberately run below the
-    // threshold. It answers "would a plain name search run", nothing more.
+    // Advisory minimum for plain name queries. search() permits shorter zoxide and explicit-path queries.
     function queryIsDispatchable(query) {
         return String(query || "").trim().length >= 2;
     }
 
-    // The same question asked for a KIND, which is what every launcher gate
-    // actually wants: long enough, OR a path the helper completes without fd.
-    // "~" and "/" are one character and are the first keystroke of a path, so
-    // the length rule alone refuses the very capability pathCompletion exists to
-    // allow — the surface then reports "type at least two characters" for a
-    // query the helper can answer. Three predicates read this rather than
-    // composing their own, so the gate, the retry and the message cannot
-    // disagree about what a searchable query is.
+    // Accept sufficiently long queries or explicit paths that the helper can complete without fd.
     function queryIsSearchable(kind, query) {
         return queryIsDispatchable(query) || pathCompletion(kind, query);
     }
@@ -262,10 +222,7 @@ Singleton {
         return state === "missing" && !helperHasFallback(kind);
     }
 
-    // One entry point per decision, each over the same named snapshot. The
-    // fields are named rather than positional on purpose: two adjacent booleans
-    // transposed at a call site reads correctly and reinstates the original
-    // defect, while `fd: ripgrepAvailable` is visible on sight.
+    // Use a named probe snapshot so callers cannot confuse positional tool-availability flags.
     function canDispatchFor(kind, query, probe) {
         return dispatchAllowed(backendStateFor(kind, query, probe), kind);
     }
@@ -404,8 +361,7 @@ Singleton {
         const args = [Paths.vshellCli, "launcher-search", "preview", "--lines", "700"];
         if (line)
             args.push("--line", String(line));
-        // Joined, because the highlight query is the user's search text and a
-        // text search for "-n" now returns hits to preview.
+        // Join the highlight option and value so a query beginning with a dash remains a value.
         if (query)
             args.push("--query=" + String(query));
         // Same shape as search(): a path can begin with "-" too.

@@ -1,20 +1,5 @@
-// Toast queue policy: the three ways an entry can leave the queue without
-// having been shown, in one place so the property they share can be tested
-// rather than described.
-//
-// That property is REACHABILITY: after a drop, the removed entry must not be
-// reachable from the queue the service goes on to hold. It is not "must use
-// filter" and it is not "must not use splice" -- `Array.prototype.splice()`
-// removes the array's reference just as a filter does, so banning it forbids a
-// correct implementation without proving anything. Every function here returns
-// the queue the caller assigns back, and scripts/test-toast-actions.js checks
-// the reachability property against this implementation, against a splice-based
-// one, and against a leaky one, so the check is known to accept both correct
-// forms and reject the incorrect one.
-//
-// The other rule these encode: some categories must never be dropped by a trim
-// at all. `undroppableCategories` is ToastService's list, passed in as a
-// predicate so this file stays free of policy about which categories those are.
+// Queue operations must release references to dropped entries.
+// The caller supplies protected categories, which trimming must retain.
 
 // Every entry except those in `category`. Used when a category supersedes its
 // own queued entry, and when one is dismissed on request.

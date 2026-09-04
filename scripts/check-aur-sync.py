@@ -1,26 +1,9 @@
 #!/usr/bin/env python3
-"""Prove the in-repo Arch recipes are the ones the AUR actually ships.
+"""Compare local AUR recipe metadata and, with --remote, published recipe files.
 
-The AUR holds its own git repository per package, and nothing about
-`source=('git+…')` makes it pull the PKGBUILD from here: only the *source tree*
-tracks this repo, the recipe does not. Twice now a packaging fix landed on main,
-the issue was closed, and every AUR user kept the old behaviour — the missing
-`VGS_THEME_BUNDLE` (VGS-5) and then all 38 `optdepends` (VGS-53).
-
-Two checks, and it matters which one ran:
-
-  local  (always) — PKGBUILD and .SRCINFO agree inside this repo. .SRCINFO is
-                    what the AUR web UI and the RPC that paru/yay query serve,
-                    so a stale one hides correct depends from every user even
-                    when the PKGBUILD is right.
-  remote (opt-in) — the published AUR repository is byte-for-byte what this
-                    repo holds. Needs network, so it never runs implicitly;
-                    without it this script says so rather than implying the
-                    published package was checked.
-
-Usage:
-  scripts/check-aur-sync.py             # local agreement only, loud skip notice
-  scripts/check-aur-sync.py --remote    # also diff against aur.archlinux.org
+The local check compares PKGBUILD and .SRCINFO. The remote check requires
+network access and compares the published AUR repository with this tree.
+Without --remote, the script reports that publication was not checked.
 """
 
 from __future__ import annotations
@@ -37,19 +20,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 AUR_REMOTE = "https://aur.archlinux.org"
 
-# Every file the AUR repository for a package is expected to carry, relative to
-# the in-repo directory that owns it. A file added here without being published
-# is drift the remote check reports.
+# Files compared with each published AUR repository.
 PACKAGES = {
     "vgs-shell": ("packaging/arch", ("PKGBUILD", ".SRCINFO", "vgs-shell.install")),
     "vgs-shell-git": (
         "packaging/arch/vgs-shell-git",
         ("PKGBUILD", ".SRCINFO", "vgs-shell-git.install"),
     ),
-    # Its own pkgbase rather than a split package of vgs-shell: makepkg fetches a
-    # pkgbase's sources before it knows which split package was requested, so the
-    # base install would otherwise download the ~1.0 GiB of extras it does not
-    # install. No .install scriptlet — it activates nothing.
+    # A separate pkgbase keeps makepkg from fetching extras for a base install.
     "vgs-shell-assets": ("packaging/arch/vgs-shell-assets", ("PKGBUILD", ".SRCINFO")),
 }
 
@@ -115,8 +93,6 @@ def parse_pkgbuild(path: Path) -> tuple[dict[str, list[str]], dict[str, dict[str
     scalars: dict[str, str] = {}
     fields: dict[str, list[str]] = {}
 
-    # Top level only: everything from the first function definition onward
-    # belongs to a package_*/build/prepare body.
     body_start = re.search(r"^\w[\w-]*\(\)\s*\{", text, re.MULTILINE)
     header = text[: body_start.start()] if body_start else text
 
@@ -143,11 +119,7 @@ def parse_pkgbuild(path: Path) -> tuple[dict[str, list[str]], dict[str, dict[str
             overrides[key] = [expand(value, scoped) for value in raw]
         splits[name] = overrides
 
-    # A NON-split PKGBUILD has a plain `package()` and one `pkgname`, so the loop
-    # above finds nothing while .SRCINFO still carries its single pkgname stanza.
-    # Comparing those directly would report drift on every such recipe. makepkg
-    # treats that stanza as the pkgbase's own fields, and so does this: one
-    # stanza, no overrides.
+    # For a non-split package, makepkg uses the pkgname stanza as pkgbase fields.
     if not splits and re.search(r"^package\(\)\s*\{", text, re.MULTILINE):
         only = scalars.get("pkgname")
         if only:
@@ -181,13 +153,9 @@ def array_end(text: str, start: int) -> int:
 
 
 def scalar_end(text: str, start: int) -> int:
-    """Index just past a non-array value, continuations and quotes included.
+    """Return the index after a scalar value, including quotes and continuations.
 
-    A scalar does not always end at the next newline: `pkgdesc='a\nb'` and a
-    trailing backslash both continue onto the following line. Stopping at the
-    first \\n truncates the first and hands shlex an unterminated quote for the
-    second, which would fail this check — one that gates CI — on a PKGBUILD
-    makepkg reads happily.
+    A quoted newline or a trailing backslash continues the value onto another line.
     """
     quote, index = "", start
     while index < len(text):
@@ -198,7 +166,7 @@ def scalar_end(text: str, start: int) -> int:
         elif char in "'\"":
             quote = char
         elif char == "\\" and index + 1 < len(text):
-            index += 1  # escaped character, newline included
+            index += 1
         elif char == "\n":
             return index
         index += 1
@@ -347,17 +315,10 @@ def remote_sources(directory: Path) -> list[str]:
 
 
 def remote_source_checksums(directory: Path) -> list[tuple[str, str]]:
-    """Each http(s) source paired with the sha256 the recipe declares for it.
+    """Pair each HTTP(S) source with its declared SHA-256 digest.
 
-    A recipe can name a release that exists and still be unusable: between a
-    version bump and the checksum pin, `source_x86_64` points at the new
-    tarball while `sha256sums_x86_64` still holds the previous release's digest,
-    and `makepkg` fails validity checking for every user. Existence and
-    correctness are different questions, so the caller gets to ask both.
-
-    makepkg pairs the two arrays by INDEX within an architecture suffix, which
-    is why this cannot just zip the flattened lists: a recipe with two x86_64
-    sources and one aarch64 source would silently pair the wrong digests.
+    makepkg pairs source and checksum arrays by index within each architecture
+    suffix. Flattening the arrays first can pair a source with the wrong digest.
     """
     fields, _ = parse_pkgbuild(directory / "PKGBUILD")
     paired = []

@@ -24,7 +24,6 @@ type Manager struct {
 	log       *slog.Logger
 	tailscale string
 
-	// ipn bus watcher (watch.go)
 	watchCtx   context.Context
 	watchStop  context.CancelFunc
 	watchAlive atomic.Bool
@@ -44,11 +43,8 @@ type State struct {
 	ExitNodeAllowLanAccess bool   `json:"exitNodeAllowLanAccess"`
 	AcceptRoutes           bool   `json:"acceptRoutes"`
 	AuthURL                string `json:"authUrl"`
-	// WatcherActive is this backend's own health, not tailscaled's: true while
-	// an ipn bus watcher is running and pushes can be expected. The shell reads
-	// it to choose how often to re-ask. Absent on a backend without the watcher,
-	// where it decodes as false — which is exactly right, since that backend
-	// never pushes either.
+	// WatcherActive reports whether the backend watcher child is running. The shell
+	// uses it to choose a refresh interval. An absent field decodes as false.
 	WatcherActive bool     `json:"watcherActive"`
 	Health        []string `json:"health"`
 	Self          *Peer    `json:"self"`

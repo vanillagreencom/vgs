@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
-"""The wallpaper thumbnail BUILD ladder: Pillow, then ImageMagick, then ffmpeg.
+"""Controls for the Pillow, ImageMagick and ffmpeg thumbnail build ladder.
 
-Only the Pillow rung names its output format explicitly; the other two read it
-off the destination's final extension, which is why the temp path's `.jpg` is
-load-bearing. Cache housekeeping is a separate contract — see
-scripts/test-wallpaper-thumb-cache.py.
+The temporary destination needs a JPEG suffix for decoders that infer format.
+Cache pruning has separate controls in test-wallpaper-thumb-cache.py.
 """
 from __future__ import annotations
 
@@ -31,9 +29,7 @@ def main() -> int:
     exercised = 0
     real_runs = 0
 
-    # Always-on layer: the ladder's own argv and rename path, with the tools
-    # stubbed. This is what makes the suite meaningful on a bare CI runner
-    # instead of skipping every rung and reading as a pass.
+    # Stub decoders keep argv and rename checks active without installed tools.
     for rung in ("magick", "ffmpeg"):
         recorded: list[list[str]] = []
         out = build_stubbed(src, rung, recorded)
@@ -54,8 +50,7 @@ def main() -> int:
         else:
             ok(f"the {rung} rung asks for the budget, writes to .jpg and renames into place")
 
-    # Control for that layer: plant the shipped shape and require the rung to
-    # break, so the assertion above cannot be vacuously true.
+    # Remove the required suffix to verify that the stub control fails.
     recorded = []
     real_temp = thumbs.temp_path
     thumbs.temp_path = lambda out: out.with_name(f".{out.name}.0.1")
@@ -69,10 +64,7 @@ def main() -> int:
     else:
         ok("control: a destination with no .jpg suffix is refused")
 
-    # A rung that CANNOT decode must not end the build. Pillow's codec set
-    # depends on how it was built, so a valid wallpaper in a format it cannot
-    # open (JXL, AVIF, HEIF are all accepted by the picker) must still reach
-    # ImageMagick. Break Pillow deliberately and require a later rung to answer.
+    # Pillow codec support varies by build. A decode failure must reach another rung.
     if thumbs.Image is not None:
         recorded = []
         out_dir = Path(tempfile.mkdtemp())
@@ -131,10 +123,8 @@ def main() -> int:
                 ok(f"the {rung} rung writes a JPEG at {width}x{height}, "
                    f"inside the budget and in aspect")
 
-    # Control: prove the budget assertion DISCRIMINATES. Widen the budget past
-    # the source so the rung effectively does not resize, and require the result
-    # to fall outside the real budget. Without this, "writes a JPEG" and "writes
-    # a pre-sized JPEG" are indistinguishable and dropping the resize ships green.
+    # Widen the budget beyond the source to test whether dimension assertions
+    # distinguish a resized image from an unchanged JPEG.
     if thumbs.Image is not None:
         real_w, real_h = thumbs.WIDTH, thumbs.HEIGHT
         source_width, source_height = jpeg_size(src)
@@ -166,7 +156,6 @@ def main() -> int:
     cache = Path(tempfile.mkdtemp())
 
     def deleting_runner(cmd, **kwargs):
-        # Stand in for the decoder, and delete the source while it "runs".
         dest = Path(cmd[-1])
         dest.write_bytes(TINY_JPEG)
         doomed_src.unlink()
@@ -190,11 +179,9 @@ def main() -> int:
     else:
         ok("a build whose source is deleted mid-decode publishes nothing")
 
-    # The control, run LAST so a green above cannot be the fix being absent:
-    # strip the suffix the way the shipped bug did and require a rung to break.
+    # Run the suffix-removal control after successful builds.
     if shutil.which("ffmpeg") and thumbs.Image is not None:
         real_temp = thumbs.temp_path
-        # Exactly the shipped shape: name ends in a timestamp, no extension.
         thumbs.temp_path = lambda out: out.with_name(f".{out.name}.0.{1}")
         try:
             broken = build_with(src, "ffmpeg")
@@ -207,11 +194,8 @@ def main() -> int:
         else:
             ok("control: without the .jpg suffix the ffmpeg rung produces nothing")
 
-    # An empty run is NOT a pass. The stubbed layer always runs, so `exercised`
-    # can never be zero — the honest guard is that it ran at all, and a separate
-    # NOTE when no real decoder was present, since the dimension and aspect
-    # assertions are the part a stub cannot stand in for. The resize contract
-    # itself is pinned in both layers, so a bare runner is not blind to it.
+    # An empty run fails. Stub tests cannot verify real image dimensions or aspect
+    # ratio, so report separately when no real decoder ran.
     if exercised == 0:
         fail("nothing was exercised at all: this suite proved nothing and must "
              "not read as a pass")

@@ -61,11 +61,7 @@ Item {
             panelExited();
     }
 
-    // Panels are placed from the Dash's own screen coordinates. This overlay
-    // fills the full-screen background window, so its bounds are the output's;
-    // clamp into them or a Dash sitting against a clamp-window edge (VGS-12
-    // zone anchoring pins it there for every edge-section trigger) pushes the
-    // panel partly off-screen. Same 10px inset the other VGS menus use.
+    // This overlay spans the output. Clamp panels to it so edge-anchored Dash panels stay on screen.
     readonly property real __panelMargin: 10
 
     function __panelX(panelWidth) {

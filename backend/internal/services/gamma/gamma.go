@@ -148,9 +148,8 @@ func (m *Manager) GetState() State {
 }
 
 func (m *Manager) handleGetState(json.RawMessage) (any, error) {
-	// SunPosition is time-derived and drifts between transitions; recompute
-	// it so a getState is never stale (temperature changes are owned by the
-	// transition timer).
+	// SunPosition changes between timer transitions, so recompute it for each state
+	// request. The timer owns temperature changes.
 	m.mu.Lock()
 	m.state.SunPosition = sunPosition(m.state.SunriseTime, m.state.SunsetTime, time.Now())
 	state := m.state
@@ -321,9 +320,8 @@ func (m *Manager) handleSetEnabled(params json.RawMessage) (any, error) {
 	return success("enabled state set"), nil
 }
 
-// applyConfigLocked validates and applies cfg and returns the new state. The
-// caller broadcasts it after releasing m.mu — a stalled subscriber write (up
-// to the 5s conn deadline) must not block every gamma handler and Close.
+// applyConfigLocked validates and applies cfg. Broadcast after releasing m.mu so
+// queue backpressure cannot block gamma handlers or Close under the state lock.
 func (m *Manager) applyConfigLocked(cfg Config) (State, error) {
 	if err := validateConfig(cfg); err != nil {
 		return State{}, err
@@ -371,16 +369,9 @@ func (m *Manager) scheduleTransitionLocked(state State) {
 	})
 }
 
-// applyGammaLocked makes the compositor-appropriate gamma process match state.
-// The adapter only runs while night mode is enabled, so nothing consumes
-// resources when it is off:
-//   - off  -> stop the process (release the display back to native).
-//   - on, not yet running -> start it once at the target temperature.
-//   - Hyprland, already running -> adjust live over the hyprsunset IPC socket.
-//   - Niri, already running -> restart wlsunset with its new fixed target.
-//
-// Hyprland retains its no-flash IPC path unchanged. wlsunset has no live control
-// socket, so Niri changes require a short process replacement.
+// applyGammaLocked stops the adapter when disabled. Hyprland changes temperature
+// through hyprsunset IPC. Niri replaces wlsunset because it has no live control
+// socket.
 func (m *Manager) applyGammaLocked(state State) error {
 	if !state.Config.Enabled {
 		m.stopLocked()
@@ -442,8 +433,8 @@ func (m *Manager) applyGammaLocked(state State) error {
 func (m *Manager) watchLocked(cmd *exec.Cmd) {
 	err := cmd.Wait()
 	m.mu.Lock()
-	// Still the active instance means nobody stopped or replaced it: the process
-	// died on its own and gamma is silently no longer applied.
+	// An exit from the active instance is unexpected. Report it so the UI does not
+	// show night light as running.
 	crashed := m.cmd == cmd
 	if crashed {
 		m.cmd = nil

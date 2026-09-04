@@ -2,9 +2,7 @@ import QtQuick
 import qs.Common
 import qs.Widgets
 
-// One shortcut in the cheatsheet: its key in a badge, then what the key does.
-// Every row shares one key column width so the descriptions line up down the
-// list rather than tracking the length of the badge beside them.
+// Shortcut row with a shared key-column width so action descriptions align.
 Item {
     id: row
 
@@ -17,10 +15,7 @@ Item {
     StyledRect {
         id: keyBadge
 
-        // The badge hugs its text, capped at the key column. Width reads
-        // implicitWidth, so keyText must never wrap: a wrapping Text
-        // recomputes implicitWidth from the width it was given, and the pair
-        // oscillates.
+        // Keep keyText unwrapped: wrapping makes implicitWidth depend on the width this badge derives from it.
         width: Math.min(keyText.implicitWidth + Theme.spacingS * 2, row.keyColumnWidth)
         height: 26
         radius: 4

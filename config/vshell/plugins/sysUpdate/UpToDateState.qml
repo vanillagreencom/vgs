@@ -2,12 +2,8 @@ import QtQuick
 import qs.Common
 import qs.Widgets
 
-// What the updates sheet shows when there is nothing to install: one centered
-// mark in place of the four upgrade buttons, each of which would otherwise open
-// a terminal and find no work.
-//
-// `toolsAvailable` decides only the caption, so the sheet never names a source
-// this machine cannot check.
+// Show a completion mark when every source has no pending work.
+// toolsAvailable controls whether the caption names the tools source.
 Item {
     id: emptyState
 

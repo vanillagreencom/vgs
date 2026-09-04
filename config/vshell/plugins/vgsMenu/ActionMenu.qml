@@ -2,18 +2,16 @@ import QtQuick
 import qs.Common
 import qs.Widgets
 
-// The one action list behind both a right click and Shift+Enter. It is a plain
-// item rather than a Popup so that hiding the launcher hides it too: a Popup
-// stays open across a hidden scene and reappears on the next open.
+// Use an Item so hiding the launcher also hides its action menu. A Popup
+// can reappear when the launcher opens again.
 Item {
     id: menu
 
     property var actions: []
     property var targetItem: null
     property int selectedIndex: 0
-    // Whether the launcher itself is on screen. The menu is armed separately,
-    // so a launcher hidden while the menu is up cannot bring it back on the
-    // next open, whichever path hid it.
+    // Keep launcher visibility separate from menu arming so reopening the
+    // launcher cannot restore a previously open menu.
     property bool launcherVisible: true
     property bool armed: false
     readonly property int rowHeight: 36

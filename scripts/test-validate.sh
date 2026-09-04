@@ -1,18 +1,7 @@
 #!/usr/bin/env bash
-# Behavioral coverage for `scripts/validate` itself (VGS-123). The must-fail
-# controls for the guard that READS the runner live in
-# `scripts/test-validation-inventory.sh`.
-#
-# The runner is the entry point every agent and dev session invokes and trusts,
-# and before this nothing committed executed it. The demonstrated hole: dropping
-# the last manifest row — the whole Go block — left `validate go` and `all`
-# printing `ok` while every other check exited 0.
-#
-# TWO FIXTURE STRATEGIES: (1) selection and reporting run from a THROWAWAY REPO
-# holding a copy of `scripts/validate` with a fixture manifest and stub
-# commands; (2) membership assertions run against the REAL manifest through
-# `--list`, which executes nothing — a fixture cannot answer "does `validate
-# qml` still contain the surface smoke", and retagging it is a silent shrink.
+# Test runner selection and reporting with copied scripts and stub commands.
+# Read the real manifest through --list for area membership because fixtures cannot prove
+# that the repository still includes a required check.
 set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -27,9 +16,7 @@ fail() {
   failures=$((failures + 1))
   case_failed=1
 }
-# `ok` closes a case and consumes the per-case flag. Printing it unconditionally
-# meant a failed case emitted FAIL to stderr and then `ok` to stdout for the same
-# assertion — a transcript asserting the opposite of the result.
+# Consume each case failure flag before printing ok so a failed case cannot also report success.
 ok() {
   if [[ $case_failed -eq 0 ]]; then
     printf '  ok    %s\n' "$1"
@@ -37,18 +24,14 @@ ok() {
   case_failed=0
 }
 
-# --- fixture repo -----------------------------------------------------------
-# Exercises every selection shape the real manifest does, plus the multi-tag row
-# it has none of (so that branch is not dead on real data).
+# Include multi-tag rows even when the real manifest has none.
 fixture_repo="$tmp/repo"
 mkdir -p "$fixture_repo/scripts/lib"
-# The runner reads its vocabulary from the grammar, so the throwaway repo needs
-# it too — the fixture varies the MANIFEST, not the definition.
+# Copy the grammar because this fixture changes the manifest, not its vocabulary.
 cp "$repo_root/scripts/lib/validation-grammar.conf" "$fixture_repo/scripts/lib/"
 
 write_runner() {
-  # $1 = fixture manifest body. Everything else about the runner is the real
-  # file, so this tests the shipped logic rather than a paraphrase of it.
+  # Replace only the manifest body while retaining the shipped runner logic.
   local body="$1" out="$fixture_repo/scripts/validate"
   python3 - "$runner" "$out" "$body" <<'PY'
 import re, sys
@@ -83,7 +66,7 @@ done
 write_runner "$FIXTURE_MANIFEST"
 
 fixture() {
-  # Runs the fixture runner, capturing stdout, stderr and status separately.
+  # Capture stdout, stderr, and status separately.
   rc=0
   out="$("$fixture_repo/scripts/validate" "$@" 2>"$tmp/stderr")" || rc=$?
   err="$(cat "$tmp/stderr")"
@@ -93,7 +76,7 @@ expect_rc() {
   [[ "$rc" == "$1" ]] || fail "$2" "expected exit $1, got $rc"
 }
 expect_list() {
-  # $1 = expected --list output (exact, order-sensitive), $2 = case name
+  # Compare expected commands in manifest order.
   [[ "$out" == "$1" ]] || fail "$2" "expected list:
 $1
 got:
@@ -108,7 +91,7 @@ expect_absent() {
 
 echo "=== area selection (fixture manifest) ==="
 
-# (a) each area selects exactly its tagged rows, plus every `always` row.
+
 fixture --list go
 expect_rc 0 "go selection"
 expect_list 'scripts/stub-go
@@ -116,7 +99,7 @@ scripts/stub-both
 scripts/stub-always' "go selection"
 ok "go selects its rows, the multi-tag row and the always row"
 
-# (c) the multi-tag row is selected by BOTH of its areas.
+
 fixture --list qml
 expect_rc 0 "qml selection"
 expect_list 'scripts/stub-qml
@@ -124,7 +107,7 @@ scripts/stub-both
 scripts/stub-always' "qml selection"
 ok "qml selects the same multi-tag row (go,qml is not go-only)"
 
-# (b) a `-` row is excluded from every named area and included in `all`.
+
 for area in go qml docs helper packaging; do
   fixture --list "$area"
   expect_absent "$out" "scripts/stub-only-all" "- row excluded from $area"
@@ -143,16 +126,14 @@ scripts/stub-helper
 scripts/stub-packaging' "all selection"
 ok "all selects every row, in manifest order"
 
-# The `always` row reaches every area — the regression that made a Go-scoped run
-# skip the format/lint floor over the Go it had just changed.
+# Universal rows must run in every area, including format checks during Go validation.
 for area in go qml docs helper packaging all; do
   fixture --list "$area"
   expect_contains "$out" "scripts/stub-always" "always row in $area"
 done
 ok "the always row is selected by every area"
 
-# No argument means `all` — which is why `all` must stay in AREAS, and why the
-# guard asserts its declaration separately from the row-tag vocabulary (C3).
+# Default invocation must select the declared all-rows argument.
 fixture --list
 expect_rc 0 "default area"
 expect_contains "$out" "scripts/stub-only-all" "default area"
@@ -160,15 +141,14 @@ ok "no area argument defaults to all"
 
 echo "=== fail-closed argument handling ==="
 
-# (d) an unknown area exits 2 and runs nothing.
+
 fixture nope
 expect_rc 2 "unknown area"
 expect_contains "$err" "unknown area nope" "unknown area"
 expect_absent "$out" "ran " "unknown area"
 ok "unknown area exits 2 having run nothing"
 
-# Two positionals are rejected rather than last-one-wins, which silently ran
-# one area under the other's name.
+# Reject multiple area arguments so the invocation cannot silently discard a requested area.
 fixture --list go qml
 expect_rc 2 "two areas"
 expect_contains "$err" "one area per run; got go and qml" "two areas"
@@ -182,14 +162,9 @@ ok "unknown option exits 2"
 
 echo "=== malformed manifest rows are fatal, never dropped ==="
 
-# THE TAG FIELD IS VALIDATED AGAINST A GRAMMAR, so these are samples of a
-# rejected complement, not the definition of it. Two holes came from the
-# opposite approach — rules written against whatever a split produced, missing
-# the empty field (no elements) and the trailing comma (dropped one). Each case
-# asserts the exit STATUS and that NOTHING RAN, across a named area as well as
-# `all`: the named area is where each was dropped, and the message was absent
-# because nothing fired.
-rejected_everywhere() { # $1 name, $2 fixture manifest, $3 expected fragment
+# Test malformed tag syntax before execution in named and default areas.
+# Require refusal and no executed commands so omitted rows cannot look like scoped success.
+rejected_everywhere() {
   local area
   write_runner "$2"
   for area in all go qml docs; do
@@ -201,16 +176,8 @@ rejected_everywhere() { # $1 name, $2 fixture manifest, $3 expected fragment
   ok "$1"
 }
 
-# ═══ GENERATED FROM THE GRAMMAR ════════════════════════════════════════════
-#
-# These cases are DERIVED from scripts/lib/validation-grammar.conf, not listed
-# by hand: for every token the grammar declares, its class properties say what
-# must be rejected and what must be accepted, and the generator below emits one
-# case per property per token. Adding a token or a class to that file therefore
-# produces its own controls — a ninth shape becomes a change to the stated
-# grammar rather than a new bug. Hand-written cases below cover the SYNTAX
-# shapes (separators, whitespace), which are properties of the tag-field form
-# rather than of any token.
+# Generate token cases from declared class properties. Syntax separator cases remain explicit
+# because they belong to the tag-field format rather than individual tokens.
 python3 - "$repo_root" >"$tmp/generated-cases" <<'GEN'
 import importlib.util, pathlib, sys
 root = pathlib.Path(sys.argv[1])
@@ -228,19 +195,19 @@ for token in sorted(g.tokens):
     cls = g.token_class[token]
     props = g.classes[cls]
     if not props.get("rowtag"):
-        # `all` today: an argument, never a tag.
+        # CLI arguments that are not row tags must fail in a tag field.
         emit(f"{cls} token `{token}` is not a row tag", "malformed tag field", token)
         continue
     if not props.get("standalone"):
-        # `may-skip` today: a modifier cannot be a row's only tag.
+        # A modifier without standalone permission cannot select a row alone.
         emit(f"{cls} token `{token}` cannot stand alone", "cannot stand alone", token)
     if props.get("exclusive"):
-        # `-` today: cannot be combined with anything else.
+        # Exclusive tags cannot combine with other tags.
         for other in sorted(g.row_tags - {token}):
             emit(f"exclusive `{token}` cannot combine with `{other}`",
                  "malformed tag field", f"{token},{other}")
             break
-# A token that is in no class at all.
+
 emit("a token outside the grammar", "malformed tag field", "notatoken")
 GEN
 while IFS=';' read -r name expect row; do
@@ -249,8 +216,7 @@ while IFS=';' read -r name expect row; do
 always    | scripts/stub-always" "$expect"
 done <"$tmp/generated-cases"
 
-# ...and the ACCEPT side, also generated: every standalone row tag must be
-# accepted alone, so an over-tight rule fails here rather than shipping.
+# Generate acceptance cases too so an over-restrictive grammar cannot pass.
 python3 - "$repo_root" >"$tmp/generated-accepts" <<'GEN'
 import importlib.util, pathlib, sys
 root = pathlib.Path(sys.argv[1])
@@ -278,8 +244,7 @@ always    | scripts/stub-always"
   ok "$name"
 done <"$tmp/generated-accepts"
 
-# The SYNTAX shapes, which belong to the tag-field form rather than to any one
-# token, so they are not generated: name ; expected diagnosis ; malformed row.
+
 while IFS=';' read -r name expect row; do
   [[ -n "$name" ]] || continue
   rejected_everywhere "$name" "$row
@@ -295,11 +260,7 @@ a repeated separator is fatal;it has a repeated separator;qml,,go   | scripts/st
 a non-breaking space is fatal;malformed tag field;$(printf 'go\xc2\xa0')      | scripts/stub-go
 SHAPES
 
-# THE COMMAND HALF of `TAGS | COMMAND`. A command that is not valid shell parsed
-# fine, so `--list` exited 0 and a real run executed earlier checks before
-# `eval` returned 2, aggregated into an ordinary exit 1. Checked for EVERY row,
-# not only selected ones, so `validate docs` refuses a broken Go-block command —
-# the same area-independence the tags grammar has.
+# Validate shell syntax for every row before running any check, including rows outside the requested area.
 while IFS=';' read -r name command; do
   [[ -n "$name" ]] || continue
   rejected_everywhere "$name" "always    | $command
@@ -311,14 +272,10 @@ an unclosed brace is fatal;{ scripts/stub-go
 an unclosed subshell is fatal;(cd backend && go build
 SHAPES
 
-# THE ACCEPT SIDE, derived from the grammar's productions rather than from
-# shapes reviewers found: one per production the grammar ALLOWS. A too-tight
-# rule is as wrong as a too-loose one, and no shipped row exercises several of
-# these. Each asserts the EXACT command of the row under test — asserting a
-# substring any fixture row satisfies made these vacuous, which is the defect
-# class this whole change exists to remove.
+# Exercise accepted grammar productions with exact expected commands.
+# A substring matched by another row cannot prove the target row was accepted.
 accepted_row() {
-  # $1 = case name, $2 = tag field under test, $3 = area that must select it
+
   local name="$1" tags="$2" area="$3"
   write_runner "$tags | scripts/stub-under-test
 always    | scripts/stub-always"
@@ -337,8 +294,7 @@ accepted_row "always with a modifier still selects" "always,may-skip" helper
 accepted_row "a repeated tag is inert, not an error" "qml,qml  " qml
 accepted_row "a command may contain a separator" "qml      " qml
 
-# ...and the row under test must be ABSENT from an area that does not select it,
-# so "accepted" cannot mean "accepted everywhere".
+# Require the same row to be absent from an unrelated area.
 write_runner "qml       | scripts/stub-under-test
 always    | scripts/stub-always"
 fixture --list go
@@ -363,8 +319,7 @@ EOF
 chmod +x "$fixture_repo/scripts/stub-fail-a" "$fixture_repo/scripts/stub-fail-b" \
   "$fixture_repo/scripts/stub-skip"
 
-# (e) two failing checks both appear, with no fail-fast: the command after the
-# first failure still runs.
+
 write_runner 'go        | scripts/stub-fail-a
 go        | scripts/stub-fail-b
 go        | scripts/stub-go'
@@ -376,29 +331,25 @@ expect_contains "$err" "FAIL (go, 2 of 3 commands failed)" "two failures"
 expect_contains "$out" "ran stub-go" "two failures"
 ok "both failures are listed, exit 1, and nothing fail-fasts"
 
-# (f) --list prints without executing: the failing stubs produce no output and
-# the status stays 0.
+
 fixture --list go
 expect_rc 0 "--list does not execute"
 expect_absent "$out" "a ran" "--list does not execute"
 expect_contains "$out" "scripts/stub-fail-a" "--list does not execute"
 ok "--list prints the commands without running them"
 
-# The skip channel: 77 from a `may-skip` row is neither pass nor failure.
+
 write_runner 'qml,may-skip | scripts/stub-skip
 qml          | scripts/stub-qml'
 fixture qml
-# The status carries the skip too. Exiting 0 here would hand a caller a pass
-# over a check that never ran — VGS-69's "refusal read as a pass" one layer up,
-# and the dev workflow records exactly this status field.
+# Skip status must remain visible to callers; exit zero cannot represent a check that never ran.
 expect_rc 77 "declared skip"
-# The leading count is what RAN, matching the FAIL line's N of M shape, rather
-# than folding the skipped row into the total.
+# Report executed count separately from skipped rows.
 expect_contains "$out" "ok (qml, 1 of 2 commands, 1 skipped: scripts/stub-skip)" "declared skip"
 expect_contains "$out" "exit 77 — passed, but 1 command did not run" "declared skip"
 ok "a may-skip row exiting 77 gives a named skip, an N-of-M count and exit 77"
 
-# CONTROL: nothing skipped means exit 0 and no skip text.
+
 write_runner 'qml       | scripts/stub-qml
 qml       | scripts/stub-go'
 fixture qml
@@ -407,7 +358,7 @@ expect_absent "$out" "skipped" "no skip"
 expect_absent "$out" "exit 77" "no skip"
 ok "a fully-executed run still exits 0 with no skip text"
 
-# ...and 77 from a row that did NOT declare it stays a failure.
+
 write_runner 'qml       | scripts/stub-skip
 qml       | scripts/stub-qml'
 fixture qml
@@ -416,7 +367,7 @@ expect_contains "$err" "  - scripts/stub-skip" "undeclared 77"
 expect_absent "$out" "skipped" "undeclared 77"
 ok "exit 77 without the may-skip tag is a plain failure"
 
-# A skip alongside a real failure is still a failure, and both are reported.
+
 write_runner 'qml,may-skip | scripts/stub-skip
 qml          | scripts/stub-fail-a'
 fixture qml
@@ -425,10 +376,7 @@ expect_contains "$err" "1 skipped: scripts/stub-skip" "skip plus failure"
 expect_contains "$err" "  - scripts/stub-fail-a" "skip plus failure"
 ok "a skip never masks a failure"
 
-# THE SELF-CONCEALING CASE, on the SHIPPED manifest: the malformed row is the
-# inventory guard's own, so losing it drops the check that reports malformed
-# rows. A fixture cannot carry that, and without a named case here the scenario
-# surfaces only as an errexit abort further down.
+# Corrupt the inventory guard's own row in the real manifest so silent omission cannot hide its detector.
 self_probe="$fixture_repo/scripts/self-concealing"
 for mutation in "alway     :malformed tag field" "          :an empty tag field" "always,   :ends with a separator"; do
   MUT_TO="${mutation%%:*}" python3 - "$runner" >"$self_probe" <<'MUT'
@@ -450,16 +398,8 @@ MUT
 done
 ok "a malformed tag on the inventory guard's OWN row fails in every area, unrun"
 
-# THE SAME SELF-CONCEALMENT REACHED THROUGH THE GRAMMAR, which is the shape a
-# row mutation cannot express. Flipping the selector class to `universal=no` is
-# a single yes/no flip and leaves every row well formed: `always` still parses, still
-# combines, still stands alone — and selects nothing in any named area. Measured
-# before the fix: `--list docs` listed ONE command at rc 0, having dropped the
-# format/lint floor, `git diff --check` and the inventory guard, which is the
-# check that would have reported the edit.
-#
-# Refused in the runner's pre-flight now, so the assertion is exit 2 with
-# NOTHING listed — in every area, including `all`, where the rows do still run.
+# Remove universal selection through class properties while leaving row syntax valid.
+# The runner must refuse before listing or executing because this change can exclude its own guard.
 grammar_probe="$tmp/grammar-probe"
 mkdir -p "$grammar_probe/scripts/lib"
 cp "$runner" "$grammar_probe/scripts/validate"
@@ -485,8 +425,7 @@ ok "a selector class that stops being universal is refused, not silently narrowe
 
 echo "=== the shipped manifest still reaches the local-only checks ==="
 
-# The checks CI cannot run: a scoped local run is the only thing that executes
-# them, and retagging one to `-` shrinks the area silently.
+# Verify area membership of local-only checks that CI cannot execute.
 real_qml="$("$runner" --list qml)"
 real_go="$("$runner" --list go)"
 for needed in \
@@ -501,11 +440,7 @@ expect_contains "$real_go" "(cd backend && go build ./... && go vet ./... && go 
   "validate go membership"
 ok "validate go still runs the Go block"
 
-# THE TWO PARSERS MUST AGREE. The runner's bash loop decides what actually runs;
-# the shared python reader decides what the guard checks. Nothing tied them
-# together: a row the python side dropped resurfaces only for `scripts/` paths,
-# as "executable but the manifest never runs it", so the Go block could have
-# vanished from the guard's view unnoticed.
+# Compare runner and library manifests directly so a dropped non-script block cannot remain unnoticed.
 python_rows="$(python3 - "$repo_root" <<'ROWS_PY'
 import importlib.util, pathlib, sys
 root = pathlib.Path(sys.argv[1])
@@ -526,7 +461,7 @@ $(diff <(printf '%s\n' "$python_rows") <(printf '%s\n' "$("$runner" --list all)"
   ok "parser agreement"
 fi
 
-# Degraded modes that can be flag-forced must be: a skip reads as a pass.
+# Require non-skipping modes when the check exposes a forcing flag.
 expect_contains "$real_qml" "--require-nested" "qml-smoke require flags"
 expect_contains "$real_qml" "--require-static" "qml-smoke require flags"
 ok "the QML smoke is required, not allowed to degrade to a skip"

@@ -7,9 +7,7 @@ import qs.Modules.BuiltinDesktopPlugins
 
 Variants {
     id: root
-    // Real outputs only — never place a desktop-widget surface on the transient
-    // VGSPREVIEW output used during theme-preview generation (see
-    // SettingsData.usableScreens).
+    // Exclude the transient VGSPREVIEW output used for theme previews; SettingsData.usableScreens owns that filter.
     model: SettingsData.usableScreens()
 
     Component.onCompleted: Qt.callLater(autoEnablePluginsForInstances)
@@ -60,8 +58,7 @@ Variants {
             });
         }
 
-        // Layer surfaces stack by map order, so recreate them in list order on
-        // reorder/enable/display-pref changes or once a plugin component loads (#2715).
+        // Layer surfaces stack by map order. Recreate them in list order after layout changes or plugin loading.
         property bool rebuilding: false
 
         readonly property string orderSignature: {

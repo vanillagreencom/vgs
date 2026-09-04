@@ -80,9 +80,8 @@ check_start_deps() {
   done
 }
 
-# Focus bracket: the slurp overlay's exit leaves focus wherever the cursor is
-# (follow_mouse); snapshot the active window before selection and restore it
-# afterwards so starting a recording never moves focus.
+# The slurp overlay can move focus through follow_mouse.
+# Save focus before selection and attempt to restore it after selection.
 focus_snapshot() {
   ((IS_NIRI)) && return 0
   hyprctl activewindow -j 2>/dev/null | jq -r '.address // empty' || true
@@ -98,10 +97,7 @@ focus_restore() {
   hyprctl dispatch "hl.dsp.focus({window=\"address:$addr\"})" >/dev/null 2>&1 || true
 }
 
-# uwsm launches an app into its own systemd scope. It is an enhancement, not a
-# requirement, so it is only used when the session actually has it: hardcoding
-# the prefix is what made VGS actions fail with `command not found` on installs
-# without it (VGS-54).
+# Use the optional uwsm scope only when it is available to the session.
 app_scope() {
   if [[ -z ${VSHELL_NO_APP_SCOPE:-} ]] && command -v uwsm >/dev/null 2>&1; then
     uwsm app -- "$@"

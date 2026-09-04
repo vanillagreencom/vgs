@@ -79,8 +79,7 @@ Item {
         enableRipple: root.enableRipple && !root.isSecondary
     }
 
-    // Flatline keyboard focus ring — only renders when the button holds active
-    // focus, so it adds no visual weight for pointer users.
+
     Rectangle {
         anchors.fill: buttonSurface
         anchors.margins: -Theme.focusRingWidth

@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""VGS helper CLI.
-
-Self-contained runtime helper for VanillaGreen Shell.  This replaces the old
-the old external helper fallback and external theme pipeline for the workstation
-integration used by this repo.
-"""
+"""Runtime helper for VanillaGreen Shell commands, integration and theme generation."""
 from __future__ import annotations
 
 import argparse
@@ -212,31 +207,17 @@ def deps_file() -> Path:
 
 APPLE_VENDOR = "05ac"
 
-# Apple displays expose brightness through a USB HID "monitor control" feature
-# report (VESA MCCS brightness, report id 1, 32-bit little-endian value) rather
-# than /sys/class/backlight -- unless the in-kernel `appledisplay` module claims
-# them, in which case they also appear as a backlight and VGS prefers that.
-#
-# `min`/`max` are the raw HID logical range in centi-nits (the descriptor sets
-# unit cd/m^2 with exponent -2), read from each display's report descriptor:
-# XDR declares 400..50000 (4..500.00 nits, its SDR ceiling), Studio Display
-# declares 400..60000 (4..600.00 nits). nikosdion/asdcontrol#6's "practical
-# ceiling of 50000" is simply the XDR's declared max; the panel accepts and
-# stores larger values but clamps physical output at its own maximum, so
-# `set 100` writes the descriptor max and reaches the panel's true maximum.
-# The control interface number is NOT hardcoded -- VGS probes every HID
-# interface the display exposes and keeps the one that answers a brightness
-# read in range.
+# Apple displays expose brightness through a USB HID feature report.
+# The appledisplay kernel module can also expose a backlight, which VGS prefers.
+# HID logical ranges use centi-nits from each display's report descriptor.
+# Probe the HID interfaces for an in-range brightness response; interface numbers vary.
 APPLE_DISPLAYS: Dict[str, Dict[str, Any]] = {
     "9243": {"alias": "apple-xdr", "label": "Apple Pro Display XDR", "min": 400, "max": 50000},
     "1114": {"alias": "apple-studio", "label": "Apple Studio Display", "min": 400, "max": 60000},
 }
 
-# Probe tolerance ceiling for the brightness-read range gate. A display can
-# store a raw value above its descriptor max (e.g. an XDR that was written
-# 60000 before per-display maxima landed) and still be the right interface,
-# so the gate discriminates against garbage from *other* interfaces using the
-# largest Apple ceiling rather than the per-display max.
+# The probe ceiling permits stored brightness values above a panel's maximum.
+# Use the largest Apple ceiling to reject unrelated HID responses.
 APPLE_RAW_PROBE_CEILING = 60000
 
 # Human Thunderbolt device_name -> USB product id, so `doctor` can report that an
@@ -454,15 +435,9 @@ _oklab_contrast_adjust = _theme_color._oklab_contrast_adjust
 
 def ensure_usable_accent(accent: str, bg: str, palette: Dict[str, str], prefer: str,
                          min_contrast: float = 3.0, continuous: bool = False) -> str:
-    """The shell uses `accent` (Theme.primary) as a FOREGROUND for active
-    indicators, selected items, and icons. A palette whose accent sits on (or too
-    near) its own background — or is achromatic — makes those elements invisible
-    or unreadable (e.g. arc-raiders sets accent == background, so icons render
-    black on the theme's purple-tinted surfaces). When the given accent can't work
-    as a UI accent, pick a palette color that reads against the background,
-    preferring the same hue family so the theme keeps its identity. This is a
-    derived *shell* role, so it applies to curated palettes too without touching
-    their terminal ANSI colors."""
+    """Derive a readable shell accent while leaving curated terminal colors intact.
+    Accent is a foreground role for indicators, selections and icons. Prefer
+    the source hue when a replacement is needed for contrast or chroma."""
     if continuous:
         # Restyle sliders must not make the derived accent jump between unrelated
         # ANSI swatches as a contrast/chroma threshold is crossed.
@@ -516,12 +491,9 @@ def ensure_background_supports_text(bg: str, mode: str, min_ratio: float = 7.0) 
 
 
 def ensure_contrast_set(value: str, checks: List[Tuple[str, float]], targets: List[str], steps: int = 100) -> str:
-    """Move a color minimally until it satisfies every contrast pair.
-
-    ANSI colors are used both as foregrounds and backgrounds by TUIs. The normal
-    foreground-on-terminal-background checks are not enough for structural pairs
-    such as Claude Code light-ansi `30` on `47` or dark-ansi `97` on `100`.
-    """
+    """Search blends toward targets for a color that meets the contrast checks.
+    Return the best tested contrast score if no candidate meets every check.
+    ANSI colors need checks as backgrounds as well as foregrounds in terminal apps."""
     value = clean_hex(value)
     normalized = [(clean_hex(other), ratio) for other, ratio in checks if ratio > 0]
     if not normalized:
@@ -695,21 +667,16 @@ def normalize_color_map(data: Dict[str, str]) -> Dict[str, str]:
             return True
         return False
 
-    # Pass 1: exact key matches claim their slot first. An explicit
-    # `background = ...` must win the `background` slot before a compound UI key
-    # (e.g. `active_tab_background`, `selection_background`) can alias onto it via
-    # the fuzzy last-token fallback in pass 2. Without this precedence, file order
-    # plus setdefault let the wrong value stick, so dark themes carrying an
-    # `active_tab_background` rendered with a light window background.
+    # Exact role keys must claim their slots before compound keys such as
+    # active_tab_background can use the fuzzy last-token fallback.
     for key, value in items:
         norm = key.replace("-", "_").lower()
         if norm in {"theme_type", "mode", "variant", "scheme"}:
             out[norm] = value
         assign(norm, value)
 
-    # Pass 2: fuzzy fallbacks fill only the slots left unclaimed above. Handles
-    # matugen/alacritty nesting flattened into single keys such as
-    # `colors_primary_background` or `colors_normal_red`.
+    # Fuzzy fallbacks handle flattened nested keys, such as colors_primary_background,
+    # without replacing exact matches.
     for key, value in items:
         norm = key.replace("-", "_").lower()
         candidates: List[str] = []
@@ -868,7 +835,6 @@ def quantize_wallpaper(path: Path, limit: int = 16) -> List[str]:
             continue
         c = hexc(palette[off], palette[off + 1], palette[off + 2])
         ranked.append((count, c))
-    # de-dupe near-identical colors by coarse RGB buckets
     seen = set()
     colors: List[str] = []
     for _count, color in ranked:
@@ -960,7 +926,6 @@ def blueprint_from_wallpaper(path: Path, name: str = "wallpaper", scheme: str = 
     val_boost = clamp(1.0 + contrast * 0.08, 0.84, 1.12)
     accent = tune_color(base_accent, sat_mul=sat_boost, val_mul=val_boost)
 
-    # theme extraction surface: scheme controls color-theory/style.
     if scheme == "scheme-content" or scheme == "scheme-fidelity":
         red = pick_hue(cols, 345, 25, rotate_color(accent, 145))
         green = pick_hue(cols, 80, 165, rotate_color(accent, -120))
@@ -1255,24 +1220,11 @@ def resolve_theme_package(name: str) -> Dict[str, Any] | None:
     return bp
 
 
-# --- Theme download catalog ----------------------------------------------------
-#
-# The `core` package bundle ships one theme (packaging/install-system.sh), so
-# without a catalog the theme browser browses a single entry. `themes/catalog.json`
-# (generated by scripts/gen-theme-catalog.py) lists every published theme with its
-# palette and a per-file sha256 manifest, and `core` also ships every theme's
-# screenshot under themes/catalog-previews/, so the browser can show what is not
-# installed yet. Downloads land in the ordinary user theme dir.
-#
-# Safety rules for anything fetched here:
-# - the manifest is local, pinned to a git ref, and every byte is checked against
-#   the committed sha256 before it reaches the theme dir;
-# - only https (a file:// base URL is accepted solely from the test-only
-#   VGS_THEME_CATALOG_BASE_URL override);
-# - only the closed set of theme-package paths below, so a manifest can never ask
-#   for a write outside the theme's own directory;
-# - nothing downloaded is ever executed — theme packages are data, applied through
-#   the same path as built-ins.
+# Theme catalog entries include palettes and per-file checksums for themes
+# that may not be installed. Downloads go to the user theme directory.
+# Accept only manifest paths within the permitted package layout.
+# Verify size and sha256 before publication. HTTPS is required except for
+# the test base-URL override. Downloaded files are theme data.
 
 CATALOG_ALLOWED_TOP_LEVEL = {"theme.json", "colors.toml", "preview.png"}
 CATALOG_ALLOWED_DIRS = ("apps/", "backgrounds/")
@@ -1303,15 +1255,10 @@ def load_theme_catalog() -> Dict[str, Any]:
 
 
 def theme_catalog_base_urls(catalog: Dict[str, Any]) -> Tuple[List[str], bool]:
-    """(base URLs to try in order, whether non-https schemes are allowed).
-
-    More than one location, because the checksums are generated from the working
-    tree while the primary ref is a release tag: between releases a theme edited
-    on `main` is served correctly only by the moving ref. Trying a second
-    location cannot weaken anything — the committed size and sha256 remain the
-    sole authority for what is accepted, so a wrong location simply fails to
-    match and the next one is tried. The override is test-only.
-    """
+    """Return candidate base URLs and whether non-HTTPS schemes are allowed.
+    A release tag and moving ref can contain different theme revisions.
+    Every fetched file must still match the local manifest size and sha256.
+    The base-URL override is for tests."""
     override = os.environ.get("VGS_THEME_CATALOG_BASE_URL", "").strip()
     if override:
         return [override.rstrip("/")], True
@@ -1338,7 +1285,7 @@ def _catalog_check_name(name: str) -> str:
 
 
 def _catalog_check_relpath(rel: str) -> str:
-    """Validate one manifest path as untrusted input. Every rule here is load-bearing."""
+    """Reject manifest paths outside the permitted theme-package layout."""
     if not isinstance(rel, str) or not rel or rel != rel.strip():
         raise ValueError(f"invalid catalog path: {rel!r}")
     if rel.startswith("/") or "\\" in rel or "\x00" in rel:
@@ -1461,14 +1408,9 @@ def catalog_entries() -> List[Dict[str, Any]]:
 
 def catalog_download_theme(entry: Dict[str, Any], base_urls: List[str], allow_local: bool,
                            force: bool = False) -> Dict[str, Any]:
-    """Download one catalog theme into the user theme dir, verifying every file.
-
-    Deliberately NOT run under the theme mutation lock: `install --all` is a
-    ~1.1 GiB transfer, and holding the exclusive lock for its duration would
-    block every theme apply, the light/dark keybinding, wallpaper changes and
-    restyles for hours. Only the directory swap at the end mutates theme state,
-    so only the swap takes the lock.
-    """
+    """Download a catalog theme and verify its files before publication.
+    Network transfer stays outside the theme mutation lock so theme changes
+    can proceed during downloads. The directory swap holds the lock."""
     name = _catalog_check_name(str(entry.get("name") or ""))
     dest = user_themes_dir() / name
     if (builtin_themes_dir() / name / "theme.json").is_file():
@@ -1509,11 +1451,9 @@ def catalog_download_theme(entry: Dict[str, Any], base_urls: List[str], allow_lo
             "bytes": written,
             "installedAt": int(time.time()),
         }, indent=2) + "\n")
-        # Swap, never delete-then-write: a rmtree(dest) followed by a rename
-        # leaves a working theme destroyed if the process dies in between. The
-        # old copy is renamed aside first (atomic), so the worst interruption
-        # window leaves the theme at .catalog-replaced-* and the next run's
-        # _catalog_clear_stale() sweeps it.
+        # Rename the installed theme aside before publishing its replacement.
+        # If publication is interrupted, the old directory remains under
+        # .catalog-replaced-* until cleanup removes it.
         with theme_mutation_lock():
             replaced: Path | None = None
             if dest.exists():
@@ -1545,11 +1485,9 @@ def _catalog_discard(path: Path) -> None:
 
 
 def _catalog_clear_stale() -> None:
-    """Sweep staging/replaced dirs a killed download may have left behind.
-
-    Safe to do unconditionally: a swap is the only moment another download could
-    care about these, and swaps hold the theme mutation lock.
-    """
+    """Remove .catalog-* staging and replaced entries from the user theme directory.
+    Runs without the lock: only a directory swap reads these entries, and swaps
+    hold the theme mutation lock."""
     root = user_themes_dir()
     if not root.is_dir():
         return
@@ -1577,20 +1515,16 @@ def catalog_remove_theme(name: str) -> Dict[str, Any]:
     """Remove a downloaded theme. Never touches built-ins or hand-made user themes."""
     clean = _catalog_check_name(name)
     dest = user_themes_dir() / clean
-    # Identity, not marker presence: `theme duplicate` copies the marker along
-    # with the package, and deleting someone's hand-made copy of a theme is
-    # exactly the data loss this predicate exists to prevent.
+    # A duplicate inherits the download marker. Check the directory identity
+    # before removal so a user copy does not count as a catalog download.
     if not catalog_owns(clean):
         if catalog_marker(clean):
             raise ValueError(f"{clean} is a copy of a downloaded theme, not one the catalog installed")
         raise ValueError(f"{clean} was not downloaded from the theme catalog")
     if current_theme_name() == clean:
         raise ValueError(f"{clean} is the current theme; apply another theme first")
-    # Rename aside first, then delete. The rename is the single operation that
-    # decides the outcome: if it fails the theme is untouched and the caller is
-    # told loudly (never `ignore_errors` + an unconditional "removed"), and if
-    # the subsequent delete fails the theme is already gone from the theme dirs
-    # and the leftover is swept by _catalog_clear_stale().
+    # Rename determines whether removal succeeded. A failed rename leaves the
+    # theme installed; a failed later deletion leaves a hidden cleanup entry.
     trash = dest.with_name(f".catalog-removing-{clean}-{os.getpid()}")
     _catalog_discard(trash)
     with theme_mutation_lock():
@@ -1601,9 +1535,8 @@ def catalog_remove_theme(name: str) -> Dict[str, Any]:
     _catalog_discard(trash)
     if dest.exists():
         raise ValueError(f"could not remove {clean}: {dest} still exists")
-    # Prune HERE, not in the caller: `theme catalog remove` is a documented
-    # command run directly as often as through the browser, and a removal
-    # leaves nothing missing for a later sweep to notice.
+    # Prune thumbnails during CLI removal because a missing theme does not
+    # trigger a later thumbnail build.
     return {"name": clean, "status": "removed", "path": str(dest),
             "thumbsPruned": prune_wallpaper_thumbs_now()}
 
@@ -1616,9 +1549,8 @@ def theme_wallpaper_entries(bp: Dict[str, Any]) -> List[Dict[str, Any]]:
     entries: List[Dict[str, Any]] = []
     for path in bp.get("backgrounds") or []:
         p = Path(path)
-        # `thumb` is a LOOKUP, never a build: listing wallpapers must not pay a
-        # decode. Empty means the rail falls back to the original, which is
-        # what it always read before the cache existed.
+        # Thumbnail lookup must not decode wallpaper images while listing them.
+        # An empty lookup lets the rail read the original image.
         thumb = _wp_thumbs.thumb_for(p)
         entries.append({
             "file": p.name,
@@ -1634,10 +1566,9 @@ def theme_wallpaper_entries(bp: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 def prune_wallpaper_thumbs_now() -> int:
-    """Drop thumbnails no installed wallpaper claims. Called by the paths that
-    DELETE one, so the CLI cleans up after itself rather than leaving the shell
-    to notice: a removal leaves nothing missing, so nothing would trigger a
-    build sweep and the orphan would outlive every later session."""
+    """Remove thumbnails no installed wallpaper claims.
+    Deletion paths must call this because no missing wallpaper remains to
+    trigger a later thumbnail build."""
     live: List[Path] = []
     seen: set = set()
     for pkg in list_themes():
@@ -1682,7 +1613,7 @@ def colors_toml_from_blueprint(bp: Dict[str, Any]) -> str:
 
 
 def colors_toml_from_map(data: Dict[str, str]) -> str:
-    """Emit a 22-key colors.toml from a normalized colors map (no contrast pass)."""
+    """Emit base colors.toml from a normalized color map without a contrast pass."""
     lines: List[str] = []
     for key in ("accent", "cursor", "foreground", "background", "selection_foreground", "selection_background"):
         value = data.get(key)
@@ -2026,7 +1957,6 @@ def target_roles(bp: Dict[str, Any]) -> Dict[str, str]:
     roles["primaryContainer"] = readable_container(tinted(accent, 0.30))
     roles["secondaryContainer"] = readable_container(tinted(roles["cyan"], 0.24))
     roles["tertiaryContainer"] = readable_container(tinted(roles["magenta"], 0.24))
-    # M3-ish companion roles for ported app themes (vscode/zed/emacs/kde).
     roles["secondary"] = _oklab_contrast_adjust(roles["cyan"], bg, 4.5, prefer_text)
     roles["tertiary"] = _oklab_contrast_adjust(roles["magenta"], bg, 4.5, prefer_text)
     roles["onSecondary"] = bg
@@ -2068,7 +1998,6 @@ def target_roles(bp: Dict[str, Any]) -> Dict[str, str]:
     roles["groupbarLockedFg"] = roles["groupbarActiveFg"]
     if not curated:
         stabilize_ansi_role_pairs(roles, bg, mode)
-    # Friendly aliases for generated JSON consumers.
     for snake, camel in CAMEL.items():
         roles[camel] = roles[snake]
     return roles
@@ -2211,11 +2140,8 @@ def _run_hook_cmd(hook: str, cmd: List[str], **kwargs: Any) -> Dict[str, Any]:
 
 
 def tmux_sockets() -> List[Path]:
-    """Every tmux socket this user could have a server on. A server started
-    with TMUX_TMPDIR set — a user unit's own environment, not the shell's —
-    listens under that directory and nowhere else, so a bare `tmux` command
-    from the shell reaches a different socket and silently starts an empty
-    server there."""
+    """Find tmux sockets through environment paths and process environments.
+    A server using TMUX_TMPDIR can be unreachable through the default socket."""
     uid = os.getuid()
     # /tmp by name as well as by $TMPDIR: tmux falls back to /tmp itself, whatever
     # TMPDIR says, so a shell with TMPDIR elsewhere would miss the default socket.
@@ -2343,11 +2269,8 @@ def reload_nvim_hook() -> Dict[str, Any]:
     failures: List[str] = []
     missing: List[str] = []
     pruned: List[str] = []
-    # A crashed/killed nvim leaves its socket file behind; connecting to it fails
-    # with E247/"Connection refused"/"No such file". Those are dead, not failures:
-    # prune the orphan and move on. Otherwise a pile of stale sockets (24 seen on a
-    # live machine, only 1 live) both floods the apply with errors and flips the
-    # hook to ok=False, masking the one live nvim that actually reloaded.
+    # A stopped nvim process can leave a socket behind. Ignore connection errors
+    # for these stale paths so they do not mask reload results from live editors.
     dead_markers = ("connection refused", "e247", "failed to connect", "no such file", "econnrefused")
     for sock in sockets:
         result = _run_hook_cmd("nvim-reload", ["nvim", "--server", str(sock), "--remote-expr", expr], timeout=3)
@@ -2736,13 +2659,9 @@ def _vgs_vscode_labels(ext_dir: Path) -> set:
 
 
 def _set_vscode_color_theme(settings_path: Path, theme_name: str, state: Dict[str, Any], vgs_labels: set) -> str:
-    """Point workbench.colorTheme at `theme_name`. VGS owns every theme it
-    contributes, so a switch always takes effect when the live theme is one VGS
-    provides -- we only step aside for a genuinely foreign theme the user picked
-    (a VS Code builtin or a non-VGS extension). The previous check keyed off our
-    own saved pointer, which permanently locked out switching once that pointer
-    drifted from the live value (e.g. pointer="Dracula" while live="Eldritch"
-    blocked every subsequent VGS theme switch)."""
+    """Set workbench.colorTheme when VGS owns the current selection.
+    A theme contributed by VGS remains eligible even if the saved pointer
+    differs. Leave an external selection alone unless VGS set it."""
     try:
         data = json.loads(settings_path.read_text()) if settings_path.exists() else {}
     except Exception as exc:
@@ -2812,17 +2731,10 @@ def _read_vgs_theme_name(theme_file: Path) -> str:
 
 
 def _all_bundled_vscode_themes() -> List[Tuple[str, str, str, str]]:
-    """(slug, label, uiTheme, content) for every theme package shipping a bundled
-    vscode-theme.json (builtin + user; user overlays builtin by name). Registering
-    them all up front is what lets VSCodium know every theme label at startup: a
-    running VSCodium cannot learn a theme contributed after it launched, so
-    registering only applied themes left a just-applied theme's colorTheme pointing
-    at an unknown label until the next reload. The bundled source files carry no
-    {role} placeholders, but each is run through augment_vscode_colors() with the
-    theme's own role map so the tab-state treatment (active label/border, no bottom
-    border, modified-tab colors) applies here too — this is the copy VSCodium's
-    theme picker actually loads. Derivation is deterministic per source, so the
-    extension stays byte-stable across applies."""
+    """Return (slug, label, uiTheme, content) for bundled VS Code theme files.
+    User themes overlay built-ins by name. Register labels before VSCodium
+    starts so its theme picker can resolve them. Apply tab colors from each
+    theme's role map before writing the extension copy."""
     bp_by_key: Dict[str, Dict[str, Any]] = {}
     for bp in list_themes():
         for key in (str(bp.get("name") or ""), Path(bp.get("path") or "").stem):
@@ -2868,10 +2780,8 @@ def _install_vgs_vscode_extension(ext_dir: Path, theme_file: Path, mode: str) ->
     slug = _vgs_theme_slug(name)
     ui = "vs" if mode == "light" else "vs-dark"
     content = theme_file.read_text()
-    # Per-theme snapshot + shared file (the generic "VGS" alias points here).
     write_file(themes_dir / f"{slug}.json", content)
     write_file(themes_dir / "vgs-theme.json", content)
-    # Accumulate applied themes so their labels keep resolving across switches.
     manifest_path = ext_root / "vgs-manifest.json"
     try:
         manifest = json.loads(manifest_path.read_text())
@@ -2880,10 +2790,8 @@ def _install_vgs_vscode_extension(ext_dir: Path, theme_file: Path, mode: str) ->
     except Exception:
         manifest = {}
     manifest[slug] = {"label": name, "uiTheme": ui}
-    # Register EVERY bundled theme so VSCodium knows all labels at startup, not
-    # just the ones applied so far. Write files only on change so the extension
-    # stays byte-stable across applies (a mutating extension makes VSCodium reload
-    # it every time).
+    # Register bundled labels before VSCodium starts. Write only changed files
+    # to avoid causing an extension reload on every theme apply.
     for b_slug, b_label, b_ui, b_content in _all_bundled_vscode_themes():
         tf = themes_dir / f"{b_slug}.json"
         try:
@@ -2902,7 +2810,6 @@ def _install_vgs_vscode_extension(ext_dir: Path, theme_file: Path, mode: str) ->
         seen.add(label)
         contributes.append({"label": label, "uiTheme": str(meta.get("uiTheme") or "vs-dark"),
                             "path": f"./themes/{sl}.json"})
-    # Back-compat generic label -> current theme.
     if "VGS" not in seen:
         contributes.append({"label": "VGS", "uiTheme": ui, "path": "./themes/vgs-theme.json"})
     package = {
@@ -3078,10 +2985,8 @@ def apply_icon_theme_hook(roles: Dict[str, str]) -> Dict[str, Any]:
     if not shutil.which("gsettings"):
         return {"hook": "icon-theme", "ok": True, "skipped": True, "reason": "gsettings not found"}
     settings = load_settings()
-    # A user "Always use these" selection (fixed iconThemeDark/Light, or per-mode)
-    # wins over the theme's icon set — don't let theme apply overwrite it. The old
-    # `iconTheme` key is a derived QML value, never persisted, so gate on the real
-    # stored fields IconsTab writes.
+    # The persisted fixed/per-mode icon choices outrank the applied theme.
+    # iconTheme is a derived QML value; check the fields saved by IconsTab.
     dark = settings.get("iconThemeDark") or "System Default"
     light = settings.get("iconThemeLight") or "System Default"
     if settings.get("iconThemePerMode") or dark not in ("", "System Default") or light not in ("", "System Default"):
@@ -3208,9 +3113,8 @@ def apply_fastfetch_logo_hook(roles: Dict[str, str]) -> Dict[str, Any]:
     except Exception as exc:  # never fail an apply over a decorative logo
         with contextlib.suppress(OSError):
             temp_out.unlink()
-        # A newly seeded config must never point at a missing image. Preserve an
-        # existing last-known-good logo; otherwise install the shipped default
-        # wallpaper without conversion as the guaranteed low-dependency fallback.
+        # A seeded config needs a logo path. Preserve an existing logo, or try the
+        # shipped wallpaper without conversion when image generation fails.
         if not out.is_file() and fallback_wallpaper.is_file():
             try:
                 shutil.copy2(fallback_wallpaper, temp_out)
@@ -3298,15 +3202,8 @@ def apply_gtk_settings_hook(roles: Dict[str, str]) -> Dict[str, Any]:
     if not shutil.which("gsettings"):
         return {"hook": "gtk-settings", "ok": True, "skipped": True, "reason": "gsettings not found"}
     failures: List[str] = []
-    # Chromium/Electron apps (Slack, Claude Desktop, 1Password) only re-read the
-    # OS theme when they catch the portal color-scheme SettingChanged signal, and
-    # they silently drop it if their renderer is momentarily busy. Writing gtk-theme
-    # and color-scheme back-to-back fires two org.gnome.desktop.interface signals
-    # microseconds apart; landing that amid the theme-apply burst (hyprctl reload,
-    # icon-theme write, shell reload) made apps miss it intermittently — and which
-    # app missed varied run to run. So set gtk-theme first, let the burst settle,
-    # then emit color-scheme alone as the final, quiet signal. That mirrors a bare
-    # `gsettings set color-scheme`, which every app follows reliably.
+    # Separate gtk-theme and color-scheme writes so their portal notifications
+    # do not arrive together during the theme-apply burst.
     theme_cmd = ["gsettings", "set", "org.gnome.desktop.interface", "gtk-theme", gtk_theme]
     theme_result = _run_hook_cmd("gtk-settings", theme_cmd, timeout=5)
     if not theme_result.get("ok"):
@@ -3747,24 +3644,14 @@ def _strip_jsonc(text: str) -> str:
             continue
         out.append(c)
         i += 1
-    # Trailing commas: a comma whose next non-space char closes an object/array.
     return re.sub(r",(\s*[}\]])", r"\1", "".join(out))
 
 
 def augment_vscode_colors(text: str, roles: Dict[str, str]) -> str:
-    """Fill in editor-tab state colors for a curated VS Code theme so every theme
-    shows a clearly active tab and theme-colored (not VS Code's default blue)
-    modified-tab borders.
-
-    Curated themes hand-author their own palette, so values are derived from the
-    theme's OWN colors (with role-map fallbacks). We only strengthen the active
-    tab when it is near-indistinguishable from inactive tabs, but always ensure
-    the modified-border keys exist — those are what stop VS Code falling back to
-    its built-in blue on changed files. Parse failures fall back to verbatim.
-
-    VS Code theme files are JSONC (comments + trailing commas allowed), so parse
-    leniently; the rendered destination is emitted as strict JSON.
-    """
+    """Derive active and modified tab colors for a curated VS Code theme.
+    Use its own colors with role-map fallbacks. Accent labels and borders
+    distinguish active tabs; modified borders use a theme color.
+    Parse JSONC and emit JSON. Return the source unchanged on parse failure."""
     try:
         data = json.loads(_strip_jsonc(text))
     except Exception:
@@ -3829,9 +3716,7 @@ def augment_vscode_colors(text: str, roles: Dict[str, str]) -> str:
     # legibility.
     active_bg = effective("tab.activeBackground") or editor_bg
 
-    # 1. Accent-colored active label. Keep it a real accent: nudge lightness in a
-    #    hue-preserving way only when contrast is too low, instead of blending
-    #    toward white (which reads as plain bright body text, not an accent).
+    # Preserve hue when raising active-label contrast so the label stays accented.
     fg = accent
     guard = 0
     while contrast_ratio(fg, active_bg) < 3.0 and guard < 8:
@@ -3842,19 +3727,16 @@ def augment_vscode_colors(text: str, roles: Dict[str, str]) -> str:
     colors.setdefault("tab.inactiveForeground",
                       pick("descriptionForeground") or clean_hex(roles.get("outline") or "#808080"))
 
-    # 2. No bottom border on any tab; a transparent value overrides any the theme
-    #    set. VS Code renders these bottom/underline borders at a fixed 1px.
+    # Transparent bottom borders override underline colors supplied by a theme.
     for k in ("tab.activeBorder", "tab.unfocusedActiveBorder", "tab.hoverBorder"):
         colors[k] = "#00000000"
 
-    # 3. Accent top border on the active (saved) tab — VS Code draws this at 1px.
+    # Use the accent for the saved active tab's top border.
     colors["tab.activeBorderTop"] = accent
     colors.setdefault("tab.unfocusedActiveBorderTop", accent + "80")
 
-    # 4. Modified (unsaved) tabs get VS Code's 2px top border in a THEME color
-    #    distinct from the saved accent — this replaces its built-in blue. Prefer
-    #    the theme's own modified/warning color. (Shows as a border only when
-    #    workbench.editor.highlightModifiedTabs is on; otherwise the dot is used.)
+    # Modified tabs use a distinct theme color. VS Code shows the top border
+    # only with workbench.editor.highlightModifiedTabs; otherwise it uses a dot.
     modified = pick("editorGutter.modifiedBackground", "gitDecoration.modifiedResourceForeground") \
         or clean_hex(roles.get("warning") or accent)
     colors.setdefault("tab.activeModifiedBorder", modified)
@@ -3977,31 +3859,12 @@ def _apply_theme_obj_unlocked(bp: Dict[str, Any], only_app: str | None = None,
 PREVIEW_GENERATOR_VERSION = 7
 PREVIEW_SIZE = (1920, 1080)
 PREVIEW_OUTPUT = "VGSPREVIEW"
-# Nested Hyprland sessions surface on the parent as `aquamarine` windows; park them
-# fullscreen on the headless staging output, unfocusable, so generation is invisible
-# to the user. `no_focus` (never focusable) is deliberate over `no_initial_focus`
-# (only the first map): output add/remove warps the pointer across the staging
-# output, and with `follow_mouse` on that would otherwise pull keyboard focus onto
-# the nested window every capture — stealing the user's focus every few seconds.
-# `no_focus` also prevents the on-close focus bounce. Keyboard focus is never needed:
-# the nested session runs its exec-rule apps and captures itself.
-# Runtime window rules cannot be individually removed, and a config reload (the only
-# way to flush them) disturbs the live session — so the rule is simply left
-# registered. It only matches nested-compositor windows, and the routine hypr-reload
-# hook that runs on every theme apply flushes it naturally.
-# The `_VGS_PREVIEW_STAGE` Lua global makes registration idempotent: a config reload
-# wipes Lua state (rule AND flag together), so re-running this eval before every shot
-# re-arms the rule after a mid-run reload without stacking duplicates. Without the
-# re-assert, a theme apply during a long `preview --all` would flush the rule and the
-# remaining capture sessions would open focused on the user's active monitor.
-# Placement uses `workspace = "... silent"` rather than a `monitor = ...`
-# directive: a monitor-move at map switches Hyprland's *active monitor* to the
-# staging output even though `no_focus` keeps the window unfocusable, landing
-# the user's next keystroke on the invisible output. Silent workspace placement
-# switches neither keyboard nor monitor focus; the workspace_rule pins the
-# named workspace to the staging output. If that binding ever fails, the
-# workspace sits inert (never activated) on a physical monitor — still no
-# focus disturbance.
+# Nested Hyprland windows use the aquamarine class. Stage them fullscreen
+# on a headless output with no_focus to limit pointer-driven focus changes.
+# Silent workspace placement avoids activating the staging monitor at map time.
+# The workspace rule binds that workspace to the staging output.
+# Runtime rules are cleared by config reloads. Reassert them before captures;
+# the _VGS_PREVIEW_STAGE flag avoids duplicate registration within a Lua session.
 PREVIEW_STAGE_ON_LUA = (
     'if not _VGS_PREVIEW_STAGE then _VGS_PREVIEW_STAGE = true '
     'hl.workspace_rule({ workspace = "name:vgspreview", monitor = "' + PREVIEW_OUTPUT + '", default = true }) '
@@ -4261,10 +4124,8 @@ def preview_file_manager(root: Path) -> List[str] | None:
     return None
 
 
-# The file-manager pane used to open the real $HOME. Previews are committed to
-# the repo and regenerated on user machines, so it browses a synthetic home
-# instead: the shot is identical everywhere and never carries someone's
-# filenames into a screenshot.
+# The preview file manager uses a synthetic home to keep user filenames
+# out of shipped screenshots and keep their contents consistent.
 PREVIEW_SAMPLE_HOME = {
     "Desktop": [],
     "Documents": ["notes.md", "invoice.pdf"],
@@ -4418,13 +4279,8 @@ def preview_layout(width: int, height: int) -> Dict[str, Tuple[int, int, int, in
 
 
 def preview_canvas() -> Tuple[int, int]:
-    """Size the nested session — and therefore every preview — comes out at.
-
-    Previews ship in the repo, so this is a fixed number rather than whatever
-    the staging output happens to leave over: `preview_stage()` grows the
-    headless output by the parent's window chrome and reserved area so the
-    nested compositor lands on exactly this size on any machine.
-    """
+    """Return the fixed target size for preview captures.
+    preview_stage adds parent gaps, borders and reserved areas to the staging output."""
     return PREVIEW_SIZE
 
 
@@ -4583,7 +4439,6 @@ def preview_hyprctl_json(*args: str) -> Any:
 
 
 def preview_focus_target(monitors: List[Dict[str, Any]]) -> str | None:
-    # Prefer the monitor under the cursor — that's where the user actually is.
     try:
         x, y = (run(["hyprctl", "cursorpos"]).stdout or "").strip().split(",")
         cx, cy = int(x.strip()), int(y.strip())
@@ -4600,11 +4455,9 @@ def preview_focus_target(monitors: List[Dict[str, Any]]) -> str | None:
 
 
 def preview_dispatch(lua_call: str, legacy: List[str]) -> None:
-    # hl.dsp.* calls only CONSTRUCT a dispatch; hl.dispatch() executes it (a
-    # bare hl.dsp call returns "ok" and silently does nothing). On this
-    # Hyprland `hyprctl dispatch <verb>` is Lua shorthand and fails on classic
-    # syntax, while pre-Lua builds fail `eval` — and both report errors on
-    # stdout with exit 0, so match on the text, not the return code.
+    # hl.dsp calls construct dispatches; hl.dispatch executes them.
+    # Lua and classic Hyprland command errors can appear on stdout with exit 0,
+    # so inspect the response text as well as the exit code.
     res = run(["hyprctl", "eval", f"hl.dispatch({lua_call})"])
     if res.returncode != 0 or "error" in (res.stdout or "").lower():
         run(["hyprctl", "dispatch", *legacy])
@@ -4698,8 +4551,7 @@ def capture_theme_preview(bp: Dict[str, Any], out_path: Path, canvas: Tuple[int,
             proc = subprocess.Popen(["Hyprland", "--config", str(config)], env=env, stdout=log, stderr=log, cwd=tmp)
             deadline = time.time() + 60
             while time.time() < deadline and proc.poll() is None and not done.exists():
-                # The parent only renders the headless output on demand; capturing it
-                # keeps render callbacks flowing so the nested session never freezes.
+                # Capture the headless output to keep nested render callbacks flowing.
                 run(["grim", "-o", PREVIEW_OUTPUT, str(pump_shot)])
                 preview_guard_focus()
                 time.sleep(0.8)
@@ -4809,9 +4661,8 @@ def preview_stage():
         if staged and not legacy_rule:
             run(["hyprctl", "eval", PREVIEW_STAGE_ON_LUA])
         if staged:
-            # Workspace adoption fires asynchronously after `output create`, and
-            # a mid-run reload can re-trigger it; heal before every capture, not
-            # just at stage creation. The capture pump also heals every 0.8s.
+            # Workspace adoption is asynchronous and can recur after a config reload.
+            # Repair it before captures and during the capture pump.
             preview_guard_focus()
 
     try:
@@ -4900,7 +4751,6 @@ def cmd_theme_preview_capture(args: argparse.Namespace) -> int:
         except Exception:
             pass
         time.sleep(0.25)
-    # Park the nested pointer in the corner; a fresh session never hides it otherwise.
     preview_dispatch("hl.dsp.cursor.move({ x = 5000, y = 5000 })", ["movecursor", "5000", "5000"])
     time.sleep(args.settle)
     (tmp / "clients.json").write_text(run(["hyprctl", "clients", "-j"]).stdout or "[]")
@@ -4944,7 +4794,7 @@ def blueprint_from_theme_json(theme: Dict[str, Any], name: str | None = None, mo
         data[f"color{i}"] = colors_obj.get(CAMEL.get(ansi, ansi), colors_obj.get(ansi, DEFAULT_COLORS[i]))
     source = str(theme.get("source") or "generated")
     if mode and mode != theme.get("mode"):
-        # Cheap but visible mode transform; real wallpaper extraction should be used for curated palettes.
+        # This mode transform approximates colors without extracting a wallpaper palette.
         source = "generated"
         bg = data["background"]
         fg = data["foreground"]
@@ -4974,17 +4824,10 @@ def blueprint_from_current_theme(name: str | None = None, mode: str | None = Non
 
 
 def carry_curated_apps(bp: Dict[str, Any]) -> Dict[str, Any]:
-    """Graft the active theme's curated apps/ sources and package identity onto a
-    palette-only blueprint. A blueprint rebuilt from theme.json carries colors
-    only (no `apps`), so re-applying it makes apply_theme_obj fall back to
-    template generation for every curated target -- which, for VSCodium,
-    repoints workbench.colorTheme from the curated label (e.g. "VGS Tokyo
-    Night") to the generic "VGS" template. A wallpaper-only change must leave
-    theme settings untouched, so re-attach the current theme's curated apps/ and
-    package path (the latter is what bp_app_overrides keys off) before applying.
-    Only grafts when names match and the current theme is a real package; a bare
-    generated theme has no curated apps and is left as-is. Mutates and returns
-    bp."""
+    """Restore current-package sources to a matching palette-only blueprint.
+    Wallpaper changes must retain curated app files and package identity;
+    otherwise apply falls back to generated app themes. Mutate and return bp.
+    Leave non-matching names and non-package themes unchanged."""
     if str(current_theme().get("name") or "") != str(bp.get("name") or ""):
         return bp
     cur = current_theme_obj()
@@ -5076,7 +4919,7 @@ def parse_color_edits(edits: List[str]) -> Dict[str, str]:
 
 
 def theme_base_colors(bp: Dict[str, Any]) -> Dict[str, str]:
-    """The theme's 22 base colors pre-restyle, as a normalized map for editing."""
+    """Return the normalized base palette before restyle adjustments for editing."""
     pkg_dir_name = Path(str(bp.get("path"))).name
     files = compose_theme_files(pkg_dir_name)
     base_map: Dict[str, str] = {}
@@ -5317,22 +5160,11 @@ def detect_compositor() -> Dict[str, str]:
     return {"compositor": "unknown", "source": "none"}
 
 
-# Commands VGS needs a CAPABILITY from, not merely presence.
-#
-# Each entry runs the command and asks it to do the thing VGS actually depends
-# on. That is deliberately not a version comparison: a version string is a
-# proxy, and a fragile one — the manifest declares 67 commands, each with its
-# own `--version` shape, several writing to stderr, and a mis-parse would report
-# a working system as broken, which is worse than the gap it closes.
-#
-# The bar for a new entry is a documented minimum that a REACHABLE system can
-# actually violate. Presence-only stays the default.
-# See docs/decisions/D005-dependency-version-constraints.md.
+# Probe required command capabilities directly. Version output alone does not
+# show whether a required operation works. See docs/decisions/D005-dependency-version-constraints.md.
 CAPABILITY_PROBES: Dict[str, Dict[str, Any]] = {
     "jq": {
-        # Regex builtins arrived in jq 1.5 (2015-08-16) — `test`, `match`,
-        # `sub`, `gsub`, and `gsub/3` with them; jq 1.4 has none of them. Every
-        # jq-using helper in bin/ needs them.
+        # VGS jq programs require regex builtins, including gsub with flags.
         "argv": ["jq", "-ne", '("a" | test("a")) and (("ab" | gsub("b"; "c"; "i")) == "ac")'],
         "requirement": "needs regex builtins (jq >= 1.5)",
     },
@@ -5344,15 +5176,9 @@ _CAPABILITY_PROBE_CACHE: Dict[str, bool] = {}
 
 
 def capability_probe_ok(command: str) -> bool:
-    """True when ``command`` can do what VGS needs of it.
-
-    Fail-SAFE in one direction only: a probe that cannot be run at all (the
-    binary vanished between the presence check and here, a timeout) is reported
-    as satisfied. Reporting a working system as broken on the strength of a
-    probe that never executed is the false negative this whole mechanism exists
-    to avoid; a genuinely unusable command still fails the probe by returning
-    non-zero.
-    """
+    """Return whether the capability probe succeeds.
+    Execution errors and timeouts are treated as satisfied; only a probe
+    that completes with a non-zero exit rejects the command."""
     probe = CAPABILITY_PROBES.get(command)
     if not probe:
         return True
@@ -5406,10 +5232,8 @@ def feature_status() -> Dict[str, Any]:
         if selected_compositor:
             commands.extend(compositor_commands[selected_compositor])
         missing = [cmd for cmd in commands if not command_exists(cmd)]
-        # A declared minimum that nothing checks is a comment pretending to be a
-        # constraint (VGS-89). Present-but-unusable lands in the same list, so
-        # every existing consumer — `deps status`, the capture modal's toast —
-        # reports it without knowing the mechanism exists.
+        # Include failed capability probes in the missing list so existing consumers
+        # can report commands that are installed but unusable.
         unusable = _unusable_commands(commands)
         missing.extend(unusable)
         alternatives = [list(group) for group in (spec.get("anyCommands") or [])]
@@ -5505,8 +5329,7 @@ def _vgs_peer_alive(pid: int) -> bool:
         executable = ""
     if executable in QS_BINARIES:
         return True
-    # /proc/<pid>/exe is readable only for our own processes; comm is not, and
-    # is enough to reject a process that merely inherited the number.
+    # The process name can reject an unrelated process when exe cannot be read.
     try:
         comm = (proc / "comm").read_text(encoding="utf-8", errors="replace").strip()
     except OSError:
@@ -5590,12 +5413,8 @@ def _vgs_instance_order(entry: Dict[str, Any]) -> Tuple[str, int]:
 
 
 def _proc_start_ticks(pid: int) -> Any:
-    """Process start time in clock ticks since boot, or None when unreadable.
-
-    Monotonic within a boot and independent of the Quickshell registry's
-    metadata, so it is the authoritative age comparison whenever both processes
-    are readable.
-    """
+    """Return process start time in clock ticks since boot, or None if unreadable.
+    Use this instead of registry timestamps when both processes are readable."""
     # starttime is field 22, i.e. index 19 once field 3 is index 0.
     fields = _proc_stat_fields(pid)
     if len(fields) < 20:
@@ -5607,14 +5426,8 @@ def _proc_start_ticks(pid: int) -> Any:
 
 
 def _vgs_instance_precedes(peer: Dict[str, Any], own: Dict[str, Any], own_registered: bool) -> bool:
-    """True only when ``peer`` is *provably* older than ``own``.
-
-    Kernel start times decide it whenever both processes are readable. The
-    registry's launch time is only a fallback, and a *missing* launch time is
-    never treated as proof: ranking a peer above a registered shell whose launch
-    time the registry did not report would let a hand-run duplicate unseat the
-    session shell, the exact outcome this guard exists to prevent.
-    """
+    """Compare process start times, falling back to known registry launch times.
+    Missing launch times do not establish that a peer is older."""
     peer_start = _proc_start_ticks(peer["pid"])
     own_start = _proc_start_ticks(own["pid"])
     if peer_start is not None and own_start is not None:
@@ -5727,8 +5540,7 @@ def cmd_instances(argv: List[str]) -> int:
     if args.json:
         print(json.dumps(report))
     if not report["ok"]:
-        # 2 == no registry to consult here; 1 == the read failed. Callers that
-        # assert "validation disturbed nothing" must tell those apart.
+        # Distinguish a missing registry from a failed registry read for callers.
         if not args.json:
             eprint(f"vshell instances: {report.get('error', 'registry unavailable')}")
         return 2 if report.get("cliMissing") else 1
@@ -5817,7 +5629,6 @@ def asdcontrol_path() -> Path | None:
         return None
 
 
-# --- small IO helpers -------------------------------------------------------
 
 def _read_text(path: "Path | str") -> str | None:
     try:
@@ -5854,7 +5665,6 @@ def _raw_from_percent(percent: int, min_value: int = 400, max_value: int = 60000
     return round(min_value + (max_value - min_value) * (percent / 100.0))
 
 
-# --- USB / HID device identity (sysfs first, udevadm fallback) --------------
 
 _IFACE_RE = re.compile(r"^\d+-[\d.]+:\d+\.\d+$")
 
@@ -5999,7 +5809,6 @@ def _hid_id_from_uevent(uevent_path: str) -> Dict[str, Any] | None:
     }
 
 
-# --- Apple HID feature-report backend (native hidraw + asdcontrol fallback) --
 
 APPLE_REPORT_ID = 1
 APPLE_REPORT_LEN = 7
@@ -6062,12 +5871,9 @@ def _apple_hidraw_write(node: str, raw: int) -> None:
 
 
 def _apple_descriptor_is_monitor(desc: bytes) -> bool:
-    """True if the HID report descriptor declares a Monitor/VESA usage page.
-
-    Usage Page (Monitor) = 0x80, VESA Virtual Controls = 0x82, in 1- or 2-byte
-    item forms. Unknown descriptors return True so the in-range value probe
-    still gets a chance (never wrongly excludes the real control interface).
-    """
+    """Return whether the HID descriptor declares a Monitor or VESA usage page.
+    Unknown descriptors return True so the brightness-value probe can still
+    check interfaces whose descriptors cannot be classified."""
     if not desc:
         return True
     return (
@@ -6153,7 +5959,6 @@ def _apple_devices(include_unavailable: bool = False) -> Tuple[List[Dict[str, An
             )
             method, node, raw = "hidraw", cand["node"], val
 
-        # 2) hiddev via vendored asdcontrol.
         if not method:
             asd = get_asd()
             if asd:
@@ -6181,9 +5986,8 @@ def _apple_devices(include_unavailable: bool = False) -> Tuple[List[Dict[str, An
             sample = all_nodes[0]["node"] if all_nodes else ""
             any_readable = any(os.access(c["node"], os.R_OK) for c in all_nodes)
             if all_nodes and not any_readable:
-                # The rule being present but the ACL missing means the nodes enumerated
-                # before udev could apply uaccess (early boot, or before the seat went
-                # active) — a retrigger fixes that without reinstalling anything.
+                # The udev rule can exist before the device receives its uaccess ACL.
+                # Retrigger the nodes to request permissions without reinstalling the rule.
                 if _apple_udev_rule_state() == "installed":
                     fix = ("Run: sudo udevadm trigger --action=change "
                            "--subsystem-match=hidraw")
@@ -6258,7 +6062,6 @@ def _set_apple(dev: Dict[str, Any], raw: int) -> None:
             raise RuntimeError((cp.stderr or cp.stdout or "asdcontrol failed").strip())
 
 
-# --- DDC/CI backend (ddcutil, VESA MCCS feature 0x10) -----------------------
 
 DDC_BRIGHTNESS_VCP = "10"
 
@@ -6456,7 +6259,6 @@ def _ddc_set(dev: Dict[str, Any], percent: int) -> None:
         raise RuntimeError((cp.stderr or cp.stdout or "ddcutil setvcp failed").strip())
 
 
-# --- backlight backend (/sys/class/backlight via brightnessctl) -------------
 
 def _brightnessctl_devices() -> Tuple[List[Dict[str, Any]], List[str]]:
     if not command_exists("brightnessctl"):
@@ -6499,7 +6301,6 @@ def _brightnessctl_devices() -> Tuple[List[Dict[str, Any]], List[str]]:
     return devices, []
 
 
-# --- video-side topology (DRM + Thunderbolt) for doctor + roles -------------
 
 def _parse_edid(data: bytes) -> Dict[str, Any]:
     if len(data) < 128:
@@ -6591,7 +6392,6 @@ def _primary_connector() -> str:
     return str(mons[0].get("name", ""))
 
 
-# --- merge / dedup / role annotation / resolution ---------------------------
 
 _BACKEND_PRIORITY = {"backlight": 0, "ddc": 1, "apple": 2}
 
@@ -6796,7 +6596,6 @@ def _set_brightness_device(target: str, value: str, relative: bool = False) -> D
     return {"device": results[0], "devices": results}
 
 
-# --- doctor -----------------------------------------------------------------
 
 def _asd_available_hint() -> bool:
     bundled = repo_root() / "bin" / "vshell-asdcontrol"
@@ -6912,7 +6711,6 @@ def brightness_doctor() -> Dict[str, Any]:
     }
 
 
-# --- udev rule generation + install -----------------------------------------
 
 APPLE_UDEV_RULE_PATH = "/etc/udev/rules.d/60-vshell-apple-displays.rules"
 
@@ -6978,7 +6776,6 @@ def _install_apple_udev(dry_run: bool = False) -> Dict[str, Any]:
         dest.write_text(rule_text)
     if command_exists("udevadm"):
         run(["udevadm", "control", "--reload-rules"])
-        # Re-apply uaccess/permissions to already-present nodes.
         run(["udevadm", "trigger", "--subsystem-match=usbmisc", "--action=add"])
         run(["udevadm", "trigger", "--subsystem-match=hidraw", "--action=add"])
     return {
@@ -7159,12 +6956,8 @@ def cmd_ai_usage(argv: List[str]) -> int:
     provider = argv[0] if argv else "claude"
 
     def emit(payload: Dict[str, Any]) -> int:
-        # The widget files every payload under the provider the payload itself
-        # names and discards anything unstamped, so this wrapper's own errors
-        # carry the stamp too — and so does a backend's payload that lacks one,
-        # since `ai-usage` may be a third-party engine from PATH that predates
-        # the field. An unstamped payload would otherwise be dropped and the
-        # real cause replaced by "provider mismatch" (VGS-118).
+        # Stamp errors and unstamped backend payloads with the requested provider.
+        # The widget drops unstamped payloads, which would hide the actual failure.
         payload.setdefault("provider", provider)
         print(json.dumps(payload))
         return 0
@@ -7276,11 +7069,8 @@ def _theme_command_mutates(argv: List[str]) -> bool:
         return "--apply" in argv or "--save" in argv
     if command == "apps":
         return "--enable" in argv or "--disable" in argv
-    # `catalog` is deliberately absent: its downloads are minutes to hours of
-    # network transfer that mutate nothing, and it takes the lock itself around
-    # the one step that does (the directory swap). Wrapping the whole command
-    # would block theme applies, the light/dark keybinding, wallpaper changes
-    # and restyles for the length of a 1.1 GiB `install --all`.
+    # Catalog commands lock their own directory swaps. Locking the full download
+    # would block theme and wallpaper changes during the network transfer.
     return False
 
 
@@ -7890,8 +7680,6 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
             if args.json:
                 print(json.dumps({"success": False, "error": str(exc)}, indent=2))
             return 1
-        # Seed the user overlay curated file from the composed source, then
-        # replace every occurrence of each old hex (case-insensitive) with new.
         overlay = user_themes_dir() / pkg_dir_name / "apps" / curated_name
         source_text = Path(apps[curated_name]).read_text(errors="ignore")
         text = overlay.read_text(errors="ignore") if overlay.exists() else source_text
@@ -8056,7 +7844,6 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
             return 1
         rendered_apps = rendered_apps_for(bp)
         if args.app:
-            # Accept either the curated file name (ghostty.conf) or the app id (ghostty).
             match = {k: v for k, v in rendered_apps.items() if k == args.app or k.split(".")[0] == args.app}
             if not match:
                 eprint(f"No regenerable app file matches: {args.app} (have: {', '.join(sorted(rendered_apps))})")
@@ -8495,9 +8282,8 @@ def clipboard_copy_entry(entry: Dict[str, Any]) -> bool:
 
 
 def clipboard_rpc(method: str, params: Dict[str, Any] | None) -> Dict[str, Any]:
-    # Reads serve the state file as-is: the watcher (backend daemon, or
-    # `clipboard watch` as fallback) is the single owner keeping it fresh.
-    # Polling here turned every history read into a full clipboard transfer.
+    # The clipboard watcher owns refreshes. Reads use the stored snapshot to
+    # avoid transferring the full clipboard on every history request.
     params = params or {}
     state = load_clipboard_state()
     warning = state.pop("_warning", "")
@@ -8593,8 +8379,8 @@ def cmd_clipboard(argv: List[str]) -> int:
         if not shutil.which("wl-paste"):
             eprint("wl-paste not found")
             return 1
-        # Singleton guard: a second watcher is a bug amplifier (every clipboard
-        # change would poll N times), so bail out if one already holds the lock.
+        # Only one fallback watcher may hold the lock; duplicates would transfer
+        # the clipboard repeatedly for each change.
         ensure_dirs()
         lock = (state_dir() / "clipboard-watch.lock").open("a+")
         try:
@@ -8602,10 +8388,8 @@ def cmd_clipboard(argv: List[str]) -> int:
         except OSError:
             eprint("clipboard watcher already running")
             return 0
-        # exec (not spawn): whoever supervises this command must own wl-paste
-        # itself — a python intermediary turns its child into an unkillable
-        # orphan when the supervisor dies or reloads. The lock fd is made
-        # inheritable so the flock lives exactly as long as wl-paste does.
+        # Exec wl-paste so its supervisor owns the watcher process directly.
+        # Inherit the lock descriptor so the lock lasts as long as the watcher.
         os.set_inheritable(lock.fileno(), True)
         os.execvp("wl-paste", ["wl-paste", "--watch", resolve_vshell_cli(), "clipboard", "poll"])
     if len(argv) >= 1 and argv[0] == "history":
@@ -8894,8 +8678,7 @@ def hypr_binds_json() -> Dict[str, Any]:
         elif any(x in action for x in ["dpms", "exit", "lock", "night", "reload"]):
             cat = "System"
         binds.setdefault(cat, []).append({"key": combo, "desc": desc, "action": action, "source": "hyprland"})
-    # A category nothing landed in is not a category: the cheatsheet sizes its
-    # dialog by how many it has, and empty ones buy a column of blank space.
+    # Drop empty categories because the cheatsheet allocates a column per category.
     binds = {cat: entries for cat, entries in binds.items() if entries}
     return {"provider": "hyprland", "modKey": "Super", "vgsBindsIncluded": True, "vgsStatus": {"exists": True, "included": True, "readOnly": True, "configFormat": "lua", "statusMessage": "VGS reads live Hyprland binds read-only; change them in your Hyprland config"}, "binds": binds}
 
@@ -8986,14 +8769,8 @@ def cmd_keybinds(argv: List[str]) -> int:
 
 
 def scratchpad_session_compositor() -> str:
-    """What is actually RUNNING, or "" when nothing is.
-
-    Deliberately does not consider installed binaries. `hyprctl` and `niri`
-    coexist in most distro repos, so the presence of `hyprctl` says nothing
-    about which compositor owns the session — treating it as proof sent a Niri
-    session down the Hyprland path and generated rules for a compositor that
-    was not running, which is exactly what the deliberate Niri refusal exists
-    to prevent."""
+    """Return the running compositor, or an empty string when none is detected.
+    Installed compositor binaries do not identify the active session."""
     if os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
         return "hyprland"
     if os.environ.get("NIRI_SOCKET"):
@@ -9012,18 +8789,10 @@ def scratchpad_session_compositor() -> str:
 
 
 def scratchpad_compositor_supported() -> Tuple[bool, str]:
-    """Which backend this session gets, if any.
-
-    Hyprland is the reference implementation; Niri is a separate backend
-    (VGS-83) with its own generator and its own toggle, not a translation of the
-    Hyprland one — Niri has no special workspaces. Anything else still refuses
-    with the reason.
-
-    With NO session running, generation is still meaningful — writing the config
-    from a TTY before starting the compositor, or regenerating it after an edit.
-    It is allowed, and defaults to the Hyprland backend because that is what the
-    generated-without-a-session caveat is written for; the live-session paths
-    (`toggle`/`preload`) check for a real session of their own."""
+    """Select the scratchpad backend for the detected session.
+    Niri uses named workspaces; Hyprland uses special workspaces.
+    With no session, allow config generation for Hyprland. Live actions
+    check session availability separately."""
     session = scratchpad_session_compositor()
     if session:
         return (session in ("hyprland", "niri"), session)
@@ -9038,10 +8807,7 @@ def cmd_scratchpad(argv: List[str]) -> int:
 
     supported, compositor = scratchpad_compositor_supported()
     if not supported and action in {"apply", "toggle", "show", "hide", "preload"}:
-        # A clean, stated no-op — not a silent success, and not config written
-        # into a session that will never read it. `hide` is in the set because
-        # it is a live-session action like the rest; Niri is no longer in the
-        # refusal because it now has a backend of its own.
+        # Live actions require a supported running compositor, including hide.
         message = f"VGS scratchpads require Hyprland or Niri; this session is running {compositor}."
         if "--json" in rest:
             print(json.dumps({"ok": False, "unsupported": True,
@@ -9050,8 +8816,6 @@ def cmd_scratchpad(argv: List[str]) -> int:
             eprint(message)
         return 1
 
-    # Which backend answers. Two generators and two toggles, one schema — see
-    # docs/architecture/helper.md § Invariants for why this is not a translation.
     on_niri = compositor == "niri"
 
     if action == "apply":
@@ -9118,11 +8882,8 @@ def cmd_scratchpad(argv: List[str]) -> int:
         }, indent=2))
         return 0
 
-    # Which live windows a pad's pattern actually claims. A class match applies
-    # to every current and future instance of an application, and nothing in the
-    # UI showed that — so a user with one terminal as a scratchpad and another
-    # tiled had both captured with no indication why. This makes the breadth of
-    # a pattern inspectable before it is saved.
+    # Show all live windows a pad pattern claims before the user saves it.
+    # A class pattern can match every instance of an application.
     if action == "match":
         parser = argparse.ArgumentParser(prog="vshell scratchpad match")
         parser.add_argument("id", nargs="?", default="")
@@ -9141,21 +8902,16 @@ def cmd_scratchpad(argv: List[str]) -> int:
         if args.json:
             print(json.dumps(result, indent=2))
         elif not result.get("ok"):
-            # An error is not a count. Printing "0 live window(s) match" for a
-            # pattern that never compiled says the pattern works and happens to
-            # match nothing — which is exactly the "silently matches nothing"
-            # failure this command exists to surface.
+            # A regex that failed to compile has no match count. Report the error
+            # instead of claiming that no windows match.
             eprint(result.get("error") or "could not evaluate the pattern")
         elif result.get("known") is False:
-            # Nor is "nobody asked". No session means no answer, which must not
-            # render as zero either.
+            # Without a session query, the match count is unknown.
             print(f"unknown: no Hyprland session to ask about {pattern}")
         else:
             print(f"{result['count']} live window(s) match {pattern}")
         return 0 if result.get("ok") else 1
 
-    # What geometry a pad resolves to on a given monitor, without applying
-    # anything. This is the percentage-sizing answer made inspectable.
     if action == "resolve" and rest:
         pads = {pad["id"]: pad for pad in load_scratchpads()}
         pad = pads.get(rest[0])
@@ -9163,10 +8919,8 @@ def cmd_scratchpad(argv: List[str]) -> int:
             eprint(f"unknown scratchpad: {rest[0]}")
             return 2
         if on_niri:
-            # There is no pixel answer to print here, and inventing one would be
-            # the least honest thing this command could do. Niri resolves the
-            # proportion and the anchor against the real output at map time, so
-            # what is inspectable is the rule, not a resolved rectangle.
+            # Niri resolves proportions and anchors at map time; generation can report
+            # the rule but cannot supply a resolved pixel rectangle.
             relative_to = SCRATCHPAD_NIRI_ANCHORS[pad["anchor"]]
             print(json.dumps({
                 "id": pad["id"],
@@ -9211,8 +8965,7 @@ def cmd_scratchpad(argv: List[str]) -> int:
         return 0 if result.get("ok") else 1
 
     if action in {"toggle", "show", "hide", "preload"} and rest:
-        # Both backends take the same four flags, so the CLI never has to know
-        # which compositor it is talking to beyond picking the function.
+        # Both backends accept the same flags for this operation.
         toggle_fn = scratchpad_toggle_niri if on_niri else scratchpad_toggle
         result = toggle_fn(rest[0],
                            reveal_only=(action == "show"),
@@ -9485,15 +9238,9 @@ def apply_hyprland_layout() -> Dict[str, Any]:
     }
 
 
-# --- Scratchpads (VGS-62) ----------------------------------------------------
-# A scratchpad is an app parked on a hidden special workspace that one keybind
-# slides in and out. Presentation is split across two rules that have to agree
-# (a workspace rule and a window rule), and Hyprland applies workspace/float/
-# size/move exactly ONCE, at map time — so any app whose class or title settles
-# after mapping loses that race permanently. The generated rules below are
-# therefore best-effort initial placement; `scratchpad_toggle` re-asserts the
-# intended presentation on every reveal, which is what makes this robust rather
-# than mostly-working. See docs/architecture/scratchpads.md.
+# Hyprland applies workspace and geometry rules when a window maps.
+# Apps can set their final class or title later, so the toggle reapplies
+# placement on reveal. See docs/architecture/helper.md.
 
 SCRATCHPAD_ANCHORS = {
     "top-left": ("left", "top"),
@@ -9509,15 +9256,8 @@ SCRATCHPAD_ANCHORS = {
 
 SCRATCHPAD_PRESENTATIONS = ("float", "tile", "fullscreen")
 
-# Entry animation, as a per-window-rule `animation` style.
-#
-# This is deliberately NOT the `specialWorkspace` animation leaf. That leaf is
-# global — one value for every special workspace on the system — so emitting it
-# once per pad would mean the last pad silently wins and the user's own global
-# animation gets overwritten by whichever scratchpad happened to be generated
-# last. A window rule is the only per-pad animation Hyprland actually has, so
-# that is what a per-pad setting can honestly control; the workspace slide
-# itself stays global and VGS does not touch it.
+# Use a per-window entry animation. specialWorkspace animation is global;
+# setting it per pad would overwrite other pads and user workspace animation.
 SCRATCHPAD_ANIMATIONS = {
     "slide-top": "slide top",
     "slide-bottom": "slide bottom",
@@ -9556,16 +9296,9 @@ def scratchpad_include_line() -> str:
 
 
 def normalize_scratchpad(raw: Any, problems: List[Dict[str, str]] | None = None) -> Dict[str, Any] | None:
-    """One pad record, coerced to the shape the renderer and the toggle both
-    assume. Returns None for anything unusable rather than emitting a partial
-    rule — a scratchpad whose class regex is missing would silently capture
-    nothing, or worse, everything.
-
-    `problems` collects a reason for every rejection. Rejecting is right, but
-    doing it silently is not: a pad with an uncompilable regex simply vanished
-    from the generated config, so the user's scratchpad stopped working while
-    Settings still showed it as configured. Every `return None` below records
-    why, so the caller can name the pad instead of losing it."""
+    """Normalize a pad record for rendering and toggling.
+    Return None for an unusable record and append rejection reasons to
+    problems, so callers can identify pads omitted from generated config."""
     def reject(reason: str, pad_name: str = "") -> None:
         if problems is not None:
             problems.append({"id": pad_name, "reason": reason})
@@ -9648,10 +9381,8 @@ def load_scratchpads(problems: List[Dict[str, str]] | None = None) -> List[Dict[
         pad = normalize_scratchpad(raw, problems)
         if pad is None:
             continue
-        # Two pads with one id would generate two rule sets for one special
-        # workspace — the exact two-owners problem the settings migration
-        # refuses to create by import. First definition wins, and the loser is
-        # named rather than quietly discarded.
+        # Duplicate IDs would share a special workspace. Keep the first definition
+        # and report each rejected duplicate.
         if pad["id"] in seen:
             if problems is not None:
                 problems.append({"id": pad["name"],
@@ -9667,12 +9398,8 @@ def monitor_logical_size(monitor: Dict[str, Any]) -> Tuple[int, int]:
     `scale`; every coordinate a window rule or a dispatch uses is logical. A pad
     sized as a percentage of a 3840x2160 monitor at scale 2 must be a percentage
     of 1920x1080, not of the mode."""
-    # NaN and infinity survive float() — `float("nan")` raises nothing, and
-    # `nan <= 0` is False — so a monitor reporting a non-numeric scale used to
-    # carry NaN all the way to `int(round(width / nan))`, which raises and takes
-    # the whole geometry path down with it. This subsystem's rule elsewhere is
-    # that a failed query is not a negative answer: degrade to a sane default
-    # and say so, rather than crashing on data the compositor handed us.
+    # NaN and infinity pass float() but cannot produce integer geometry.
+    # Reject non-finite scales before calculating the logical display size.
     scale = 1.0
     raw_scale = monitor.get("scale")
     if raw_scale is not None:
@@ -9756,13 +9483,8 @@ def resolve_scratchpad_geometry(pad: Dict[str, Any], monitor: Dict[str, Any]) ->
 
 
 def _scratchpad_session_ready() -> bool:
-    """Whether there is a live Hyprland session to talk to.
-
-    One seam for a condition the scratchpad paths each used to spell out. Having
-    it in one place is also what lets the tests exercise those paths on a machine
-    with no compositor and no `hyprctl` at all — which is every CI runner, and
-    exactly where the regression coverage is wanted. A test that returns early
-    because a binary is missing is a check that passes without checking."""
+    """Return whether the environment and command lookup identify a Hyprland session.
+    Tests patch this seam to run the scratchpad paths without a compositor."""
     return bool(shutil.which("hyprctl") and os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"))
 
 
@@ -9864,7 +9586,6 @@ def render_scratchpads_lua(pads: List[Dict[str, Any]], monitors: List[Dict[str, 
         if pad["titleExclude"]:
             match_lines.append(f"    title = {_lua_string('negative:' + pad['titleExclude'])},")
 
-        # Window rule.
         lines.append("hl.window_rule({")
         lines.append("  match = {")
         lines.extend(match_lines)
@@ -9930,14 +9651,8 @@ def render_scratchpads_lua(pads: List[Dict[str, Any]], monitors: List[Dict[str, 
 
 
 def scratchpad_matching_windows(class_regex: str, title_exclude: str = "") -> Dict[str, Any]:
-    """Every live window a pad's pattern claims, using the SAME selection rule
-    the runtime toggle uses (class match, minus the title exclusion).
-
-    A derived `StartupWMClass` is an exact class match, which applies to every
-    current and future instance of that application — so a pad configured for a
-    terminal claims every window of that terminal. Nothing surfaced that. This
-    is the query behind the Settings warning; it answers "how wide is this
-    pattern, right now" rather than guessing."""
+    """Return live matches using the toggle's class and title-exclusion rules.
+    Settings uses these matches to show how broadly a pad claims app windows."""
     try:
         pattern = re.compile(class_regex)
     except re.error as exc:
@@ -9971,12 +9686,8 @@ def scratchpad_matching_windows(class_regex: str, title_exclude: str = "") -> Di
 
 
 def scratchpad_include_status() -> Dict[str, Any]:
-    """Whether hyprland.lua actually pulls the generated file in.
-
-    VGS does not edit the user's Hyprland config — the existing stance for this
-    compositor is read-only ("edit it directly"), and silently appending a
-    require to a hand-maintained file would break that. So generation reports
-    the one line to add and the Settings page shows it; nothing is written."""
+    """Report whether hyprland.lua contains an include of the generated fragment.
+    VGS reports the include to add; it does not edit this user-owned file."""
     conf = home() / ".config" / "hypr" / "hyprland.lua"
     line = scratchpad_include_line()
     included = False
@@ -10035,7 +9746,6 @@ def apply_scratchpads(reload: bool = True) -> Dict[str, Any]:
     }
 
 
-# --- Scratchpad runtime toggle -----------------------------------------------
 
 def _scratchpad_state_dir() -> Path:
     base = os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir()
@@ -10068,22 +9778,10 @@ def _scratchpad_dispatch(*args: str) -> bool:
 
 
 def _scratchpad_restore_target(keep_focus: bool, origin: str, current: str) -> str:
-    """Which window a hide must focus afterwards.
-
-    A KEYBIND hide returns to whatever the pad was revealed from: the user is
-    dismissing the pad to get back to what they were doing. A FOCUS-LOSS
-    dismissal must not — there the user has already chosen where to be, and that
-    choice is what triggered the hide, so restoring the reveal origin would yank
-    focus out of the window they just moved to.
-
-    `current` is passed as "" when focus is unknown or still sits on the pad's
-    own window. Both fall back to the origin: restoring to a window about to be
-    hidden leaves focus on nothing, and a failed query is not a reason to strand
-    it.
-
-    Each backend gathers `origin` and `current` through its own IPC — they have
-    no choice about that — but the DECISION lives here, so it cannot be right on
-    one compositor and wrong on the other."""
+    """Choose the window to focus after a pad hides.
+    Keybind dismissal returns to the reveal origin. Focus-loss dismissal
+    keeps the user's current focus unless it is unknown or still on the pad.
+    Both compositor backends use this decision after gathering their own state."""
     if keep_focus and current:
         return current
     return origin
@@ -10091,18 +9789,9 @@ def _scratchpad_restore_target(keep_focus: bool, origin: str, current: str) -> s
 
 def _scratchpad_select_owned(candidates: List[Dict[str, Any]],
                              owns: Callable[[Dict[str, Any]], bool]) -> Dict[str, Any] | None:
-    """The window a pad owns, chosen from ALL of its class/title matches.
-
-    Ownership filters the candidates BEFORE one is selected, and that order is
-    the whole point. Selecting the first match and ownership-checking it
-    afterwards lets a stray same-class window that happens to be listed earlier
-    win the selection, fail the check, and hide the pad's real window behind it
-    — release then does nothing, or moves the wrong thing.
-
-    Both backends select through here so the rule cannot be right on one
-    compositor and wrong on the other, which is how this path acquired three
-    variations of the same defect (VGS-90 on Hyprland, then the Niri workspace
-    target, then this ordering)."""
+    """Select an owned window from all class/title matches.
+    Filter by ownership before selection so an unrelated earlier match
+    cannot hide the pad's window from release."""
     for window in candidates:
         if owns(window):
             return window
@@ -10110,17 +9799,9 @@ def _scratchpad_select_owned(candidates: List[Dict[str, Any]],
 
 
 def _scratchpad_find_windows(pad: Dict[str, Any]) -> List[Dict[str, Any]] | None:
-    """Every window matching a pad's class/title, in the compositor's order.
-
-    A list rather than the first hit, so a caller that also has an OWNERSHIP
-    test can apply it across all of them instead of only to whichever happened
-    to be listed first. See `_scratchpad_select_owned`.
-
-    **None means "could not look", and is not the same as [].** Collapsing a
-    failed query into an empty list makes "nothing matched" indistinguishable
-    from "the compositor did not answer" — and `release` treats the first as a
-    successful no-op that authorises DELETING the pad record. A caller that can
-    act destructively has to be able to tell them apart."""
+    """Return all class/title matches in compositor order, or None if unknown.
+    Callers can filter ownership across the full list. Release must distinguish
+    None from an empty list because a successful release allows pad deletion."""
     clients = _hyprctl_json("clients")
     if not isinstance(clients, list):
         return None
@@ -10164,17 +9845,9 @@ def _scratchpad_find_window(pad: Dict[str, Any]) -> Dict[str, Any] | None:
 
 
 def _scratchpad_visibility(pad_id: str) -> Tuple[str, str]:
-    """Whether a pad's special workspace is on screen: (state, monitor).
-
-    state is "visible" (monitor names it), "hidden", or "unknown" — the last
-    when the compositor could not be asked at all.
-
-    Hidden and unknown are DIFFERENT ANSWERS and the distinction is
-    load-bearing. Settings hides a pad before writing `enabled: false`, and that
-    write removes the keybind; if a failed `hyprctl -j monitors` reads as
-    "hidden", the hide reports success on a query that never ran and the bind is
-    dropped out from under a window that may still be up. A failed query is not
-    a negative answer."""
+    """Return (visibility, monitor), where visibility is visible, hidden or unknown.
+    Settings removes a pad's keybind only after confirmed hiding. A failed
+    monitor query must not count as hidden."""
     monitors = _hyprctl_json("monitors")
     if not isinstance(monitors, list):
         return ("unknown", "")
@@ -10186,12 +9859,8 @@ def _scratchpad_visibility(pad_id: str) -> Tuple[str, str]:
 
 
 def _scratchpad_visible_monitor(pad_id: str) -> str:
-    """The monitor a pad is visible on, or "" for both hidden and unknown.
-
-    Kept for the callers whose behaviour on an unanswerable query is already the
-    safe one — the reveal path treats "" as "not visible yet", so an unknown
-    makes it report failure rather than false success. Anything that must not
-    conflate the two calls _scratchpad_visibility directly."""
+    """Return the visible monitor, or an empty string for hidden or unknown.
+    Use _scratchpad_visibility when the caller must distinguish those states."""
     return _scratchpad_visibility(pad_id)[1]
 
 
@@ -10221,21 +9890,9 @@ def _scratchpad_place_workspace(pad_id: str, monitor_name: str, attempts: int = 
 
 
 def _scratchpad_ensure_membership(pad_id: str, client: Dict[str, Any]) -> Dict[str, Any]:
-    """Put the window on the pad's special workspace if it is not already there.
-
-    This is the other half of the map-time race, and the half that decides
-    whether a pad works at all. Hyprland applies the `workspace` rule once, when
-    the window maps; an app whose class settles afterwards — Electron apps,
-    1Password, anything with a splash — never matched the rule and so mapped
-    onto whatever workspace was active at the time.
-
-    Re-asserting only float/size/move would style that window beautifully while
-    leaving it exactly where it should not be, and the reveal would show an
-    empty special workspace. Membership has to be re-asserted too.
-
-    `movetoworkspacesilent` is deliberate: the caller reveals the workspace
-    itself a moment later, and the non-silent variant would switch to it here,
-    fighting the placement and focus sequence that follows."""
+    """Move a window onto the pad workspace without changing focus.
+    An app can set its final class after map-time rules run. Reapply workspace
+    membership before geometry or reveal. The caller handles focus separately."""
     special = "special:" + pad_id
     current = str(((client or {}).get("workspace") or {}).get("name") or "")
     address = str((client or {}).get("address") or "")
@@ -10246,17 +9903,9 @@ def _scratchpad_ensure_membership(pad_id: str, client: Dict[str, Any]) -> Dict[s
 
 
 def _scratchpad_reassert(pad: Dict[str, Any], address: str) -> Dict[str, Any]:
-    """Re-apply the intended presentation to a window that already exists.
-
-    This is the piece that makes scratchpads robust rather than mostly-working.
-    Hyprland resolves float/size/move once at map time; an Electron app, 1Password
-    or anything with a splash screen settles its class or title after that and
-    loses the rule permanently. Re-asserting on every reveal is cheap and fixes
-    every one of those cases without special-casing any of them.
-
-    It is also where percentage sizing becomes multi-monitor correct: the pad is
-    resolved against the monitor it is ACTUALLY on right now, not the one it was
-    generated against."""
+    """Reapply presentation to a mapped window using its current monitor.
+    Apps can set their final class or title after Hyprland's map-time rules
+    run, so reveal must reapply floating state, size and position."""
     if not address:
         return {"applied": False, "reason": "no window"}
 
@@ -10270,16 +9919,8 @@ def _scratchpad_reassert(pad: Dict[str, Any], address: str) -> Dict[str, Any]:
         _scratchpad_dispatch("fullscreenstate", f"2 -1,{selector}")
         return {"applied": True, "mode": "fullscreen", "monitor": monitor_name}
 
-    # Everything below wants a NON-fullscreen window. Changing a mapped pad from
-    # fullscreen to float or tile left the fullscreen state set, so the pad went
-    # on covering its workspace and every size/move dispatch below was applied
-    # to a window whose geometry fullscreen overrides — the setting changed and
-    # nothing visible did. `scratchpad_release` drops it before moving a window
-    # for exactly this reason.
-    #
-    # Unconditional rather than conditional on the window's current state: the
-    # dispatch is idempotent, and reading the state back first would cost a
-    # query on every reveal to save nothing.
+    # Clear fullscreen before applying float or tile geometry; fullscreen would
+    # otherwise override the requested size. The dispatch is idempotent.
     _scratchpad_dispatch("fullscreenstate", f"0 -1,{selector}")
 
     if pad["presentation"] == "tile":
@@ -10302,9 +9943,8 @@ def _scratchpad_reassert(pad: Dict[str, Any], address: str) -> Dict[str, Any]:
 
 
 def _scratchpad_wait_for_window(pad: Dict[str, Any], timeout: float) -> Dict[str, Any] | None:
-    """Cold start: launch, then WAIT for the window, and only then let the
-    caller reveal. Revealing first shows an empty special workspace, which reads
-    as a dead keybind and is why users press it two or three times."""
+    """Launch the app and wait for its window before revealing the workspace.
+    Revealing first would show an empty pad."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         client = _scratchpad_find_window(pad)
@@ -10328,20 +9968,9 @@ def scratchpad_toggle(pad_id: str, reveal_only: bool = False, launch_only: bool 
     with _scratchpad_lock(pad_id):
         visible_state, visible_on = _scratchpad_visibility(pad_id)
 
-        # `hide` asks for one direction only, and asking to hide something
-        # already hidden is a no-op, not a failure. The focus watcher fires on
-        # an event, so by the time it gets the lock the user may have dismissed
-        # the pad themselves; reporting that as an error would turn an ordinary
-        # race into a log line and a non-zero exit. Answered before the enabled
-        # check because a *disabled* pad that is already hidden is equally
-        # nothing to do.
-        #
-        # But "already hidden" has to be an ANSWER, not the absence of one. A
-        # compositor that could not be asked is a different case from a pad that
-        # is down, and it is NOT the ordinary race above — reporting success
-        # there would tell Settings to drop the keybind for a pad that may well
-        # still be on screen, which is the outcome hiding first exists to
-        # prevent.
+        # An already-hidden pad needs no action, even when disabled.
+        # A failed visibility query must not count as hidden: Settings may remove
+        # the keybind after this command reports success.
         if hide_only and visible_state == "unknown":
             return {"ok": False, "id": pad_id, "action": "hide-unknown",
                     "error": f"{pad['name']}: could not determine whether the pad is visible"}
@@ -10350,30 +9979,14 @@ def scratchpad_toggle(pad_id: str, reveal_only: bool = False, launch_only: bool 
 
         hiding = bool(visible_on) and not reveal_only and not launch_only
 
-        # A disabled pad generates no rules and no keybind, so revealing one is
-        # never what the user asked for — the enable toggle in Settings would
-        # otherwise claim a mechanism it does not have, the same defect the
-        # dismiss-on-focus-loss control was removed for.
-        #
-        # Hiding is still allowed, and deliberately so: a pad disabled while it
-        # was on screen would otherwise be stranded visible with no keybind left
-        # to dismiss it, which is a worse outcome than the one being fixed.
+        # Disabled pads cannot be revealed. Allow hide so disabling a visible pad
+        # does not leave it on screen without a keybind.
         if not pad["enabled"] and not hiding:
             return {"ok": False, "id": pad_id, "action": "disabled",
                     "error": f"{pad['name']} is disabled"}
 
         if visible_on and not reveal_only and not launch_only:
-            # Where focus has to end up, decided BEFORE anything moves it.
-            #
-            # A keybind hide returns to whatever the pad was revealed from: the
-            # user is dismissing the pad to get back to what they were doing.
-            #
-            # A focus-loss dismissal must not. There the user has already chosen
-            # where they want to be — that choice is what triggered the hide —
-            # so restoring the reveal origin would yank focus out of the window
-            # they just moved to, which is the opposite of what dismissal is
-            # for. `keep_focus` says "leave them where they are", and the target
-            # is read here because the `focusmonitor` below moves focus itself.
+            # Capture the hide focus target before focusmonitor changes the active window.
             keep_target = ""
             if keep_focus:
                 active = _hyprctl_json("activewindow")
@@ -10385,32 +9998,14 @@ def scratchpad_toggle(pad_id: str, reveal_only: bool = False, launch_only: bool 
                     if not on_pad:
                         keep_target = str(active.get("address") or "")
 
-            # The reveal origin belongs to the reveal that is now ending, and
-            # leaving it behind would restore a stale window the next time this
-            # pad is hidden. One store, read by both paths — neither keeps
-            # bookkeeping of its own.
-            #
-            # READ here but CONSUMED only once the hide is confirmed, below. A
-            # hide that fails leaves the pad on screen, and the next attempt
-            # still needs somewhere to hand focus back to; discarding the origin
-            # up front would spend it on an attempt that did not happen.
+            # Keep the reveal origin until hiding is confirmed so a retry can restore focus.
             origin = ""
             if state_file.exists():
                 origin = state_file.read_text().strip()
             restore_to = _scratchpad_restore_target(keep_focus, origin, keep_target)
 
-            # Hide, then hand focus to the target — including when the pad lives
-            # on a different monitor, which is the case a naive "focus the last
-            # workspace" restore gets wrong.
-            #
-            # The result is CHECKED, not assumed. Settings hides a pad before
-            # disabling it, and only writes `enabled: false` — which regenerates
-            # config and removes the keybind — once this reports success. A hide
-            # that returned ok without confirming would make that ordering
-            # hollow: the bind would go while the window was still on screen,
-            # which is the exact outcome hiding first exists to prevent. Same
-            # reasoning as the reveal path, which reads its own state back
-            # rather than inferring success from the dispatches.
+            # Check hide dispatches before restoring focus. Settings can remove the
+            # keybind after success, so an unconfirmed hide must fail.
             hide_failures: List[str] = []
             if not _scratchpad_dispatch("focusmonitor", visible_on):
                 hide_failures.append(f"could not focus monitor {visible_on}")
@@ -10469,14 +10064,8 @@ def scratchpad_toggle(pad_id: str, reveal_only: bool = False, launch_only: bool 
         membership = _scratchpad_ensure_membership(pad_id, client)
 
         if launch_only:
-            # Preload: park it, place it, never reveal. Membership matters even
-            # more here -- a preloaded app that mapped late would otherwise sit
-            # VISIBLY on the active workspace instead of being parked.
-            #
-            # And it is CHECKED, not assumed. Reporting success while the window
-            # is still sitting on the active workspace reports the map-time race
-            # this whole subsystem exists to handle as though it had been
-            # handled — the one failure the user would actually see, called fine.
+            # Preload must confirm workspace membership before reporting success.
+            # A late app class can leave the window visible on the active workspace.
             placed = _scratchpad_place_workspace(pad_id, target_monitor)
             reassert = _scratchpad_reassert(pad, address)
             preload_failures: List[str] = []
@@ -10493,22 +10082,14 @@ def scratchpad_toggle(pad_id: str, reveal_only: bool = False, launch_only: bool 
                     "launched": launched, "membership": membership,
                     "reassert": reassert}
 
-        # Remember what to hand focus back to on hide — but ONLY when this call
-        # actually changes visibility. `show` on a pad that is already on screen
-        # reaches here too, and at that point the focused window is very often
-        # the pad's own: recording it would make the next hide "restore" focus to
-        # the window it just hid. An already-visible pad is a no-op for focus
-        # bookkeeping, so the origin captured by the reveal that opened it
-        # survives.
+        # Save the reveal origin only when visibility changes. Showing an already
+        # visible pad must not replace its origin with the pad's own window.
         if not visible_on:
             active = _hyprctl_json("activewindow")
             if isinstance(active, dict) and active.get("address"):
                 state_file.write_text(str(active["address"]))
 
-        # Every step below is checked. Reporting success after a dispatch that
-        # failed means a toggle that revealed nothing is indistinguishable from
-        # one that worked — the caller, and the user reading `--json`, are told
-        # the pad is on screen when it is not.
+        # Stop on a failed dispatch so the caller cannot report an unrevealed pad as visible.
         failures: List[str] = []
         if membership.get("from") is not None and not membership.get("moved"):
             failures.append(f"could not move the window onto special:{pad_id}")
@@ -10542,27 +10123,10 @@ def scratchpad_toggle(pad_id: str, reveal_only: bool = False, launch_only: bool 
 
 
 def scratchpad_release(pad_id: str, class_regex: str = "", title_exclude: str = "") -> Dict[str, Any]:
-    """Hand a scratchpad's window back to the user's normal workspace.
-
-    Deleting a pad removes its keybind and every rule that pointed at its
-    special workspace. A window already mapped there would be left with no way
-    to reach it short of `hyprctl` by hand — invisible, but still running and
-    still holding whatever was open in it.
-
-    Moving it to the active workspace is chosen over closing it because
-    removing a *configuration entry* must not destroy the user's running
-    program or unsaved work, and over refusing the removal because a pad the
-    user no longer wants should not become unremovable until they find and
-    close its window.
-
-    `class_regex` and `title_exclude` are both passed in so this does not depend
-    on reading the pad back out of settings — the caller is about to delete it,
-    and a lookup here would race that write. They travel TOGETHER for the same
-    reason the generated rules share one match: releasing on the class alone
-    would relocate a same-class window the user explicitly excluded from the
-    pad, so deleting a scratchpad would yank an unrelated window onto their
-    active workspace. `release` must own exactly the windows the placement rule
-    owned, and no others."""
+    """Move an owned pad window to the active workspace before removing its config.
+    Closing it could discard unsaved work; leaving it on the special workspace
+    would remove its keybind access. Keep class and title exclusion together,
+    and require workspace ownership to avoid moving unrelated app windows."""
     if not _scratchpad_session_ready():
         return {"ok": True, "released": False, "reason": "no Hyprland session"}
 
@@ -10610,23 +10174,16 @@ def scratchpad_release(pad_id: str, class_regex: str = "", title_exclude: str = 
     if workspace_id is None:
         return {"ok": False, "error": "could not read the active workspace"}
 
-    # Drop fullscreen first: a window moved out still fullscreen would cover the
-    # workspace it lands on, which is a worse surprise than the one being fixed.
+    # Clear fullscreen before moving the window so it does not cover its destination.
     _scratchpad_dispatch("fullscreenstate", f"0 -1,{selector}")
     moved = _scratchpad_dispatch("movetoworkspace", f"{workspace_id},{selector}")
     return {"ok": moved, "released": moved, "address": address, "workspace": workspace_id}
 
 
 def _scratchpad_target_monitor(pad: Dict[str, Any]) -> str:
-    """The output a pad should open on, resolved against what is CONNECTED.
-
-    A configured monitor name is an intent, not a guarantee: a laptop that has
-    left its dock still carries `DP-1` in the pad record, and dispatching at a
-    name no output answers to silently does nothing — the workspace stays
-    wherever it was and the pad appears in the wrong place, or not at all.
-    Falling back to the focused output is the same thing "follow focus" already
-    means, so an unplugged monitor degrades to the behaviour the user would
-    have picked anyway rather than to a broken keybind."""
+    """Resolve the requested output against connected outputs.
+    If the configured monitor is disconnected, use the focused output.
+    If the monitor query fails, retain the configured name."""
     configured = str(pad.get("monitor") or "")
     if configured:
         monitors = _hyprctl_json("monitors")
@@ -10656,19 +10213,10 @@ def _scratchpad_focused_monitor() -> str:
     return ""
 
 
-# --- Scratchpads on Niri (VGS-83) --------------------------------------------
-#
-# Not a port of the Hyprland generator. Niri has no special workspaces — nothing
-# that overlays the current view and hides again — so the model is a PERSISTENT
-# NAMED WORKSPACE per pad plus window rules, and the toggle focuses that
-# workspace and focuses back. See docs/architecture/helper.md § Invariants.
-#
-# The persisted pad record is unchanged, which was VGS-62's point: anchor +
-# percentage geometry is compositor-agnostic. Niri resolves both itself
-# (`proportion` for size, `relative-to` for the anchor), so this backend does
-# not compute pixels at all and never needs a monitor query to render — the
-# whole "generated against a nominal display" caveat the Hyprland file carries
-# simply does not arise here.
+# Niri scratchpads use persistent named workspaces because Niri has no
+# special workspaces. Toggling focuses the named workspace and returns focus.
+# Niri resolves percentage sizes and anchors at map time, so generation
+# does not need a monitor query.
 
 # VGS anchor -> niri `relative-to`. Niri's coordinates already run INWARD from
 # the named corner or edge (its own docs: with `bottom-left`, y counts upward),
@@ -10702,24 +10250,16 @@ _SCRATCHPAD_SHELL_EXPANSION = re.compile(r"(?:\$\(|`|\$\{|\$[A-Za-z_])")
 
 
 def scratchpad_launch_argv(command: str) -> Tuple[List[str], str]:
-    """(argv, error) for a pad's launch command.
-
-    Parsed with `shlex` and executed directly, so quoting still works
-    (`ghostty --title="My Pad"`) but nothing is handed to a shell to interpret.
-
-    A command using shell OPERATORS is refused rather than run either way.
-    Passing `&&` to execvp as a literal argument would silently do the wrong
-    thing, and keeping `sh -c` for exactly the commands where interpretation
-    matters would keep the rule broken where it counts. Refusing names the
-    problem instead of picking a quiet failure."""
+    """Return (argv, error) for a pad launch command.
+    Use shlex quoting and direct execution. Reject shell operators and
+    expansions rather than passing them as unexpected literal arguments.
+    An explicit shell command remains the caller's opt-in to interpretation."""
     text = str(command or "").strip()
     if not text:
         return ([], "the launch command is empty")
     try:
-        # punctuation_chars makes shlex tokenise `();<>|&` the way a shell does,
-        # so `foo; bar` yields a bare `;` token instead of hiding it inside
-        # `foo;` — while quoted text is still left alone. It is a lexer option,
-        # not a `split()` one, so the lexer is built directly.
+        # Tokenize punctuation so unquoted shell operators are visible even when
+        # they touch command text. Quoted argument contents stay together.
         lexer = shlex.shlex(text, posix=True, punctuation_chars=True)
         lexer.whitespace_split = True
         argv = list(lexer)
@@ -10727,10 +10267,8 @@ def scratchpad_launch_argv(command: str) -> Tuple[List[str], str]:
         return ([], f"the launch command could not be parsed ({exc})")
     if not argv:
         return ([], "the launch command is empty")
-    # Classified AFTER splitting, never on the raw string. `sh -c 'foo && bar'`
-    # is the deliberate opt-in this very message recommends, and there the `&&`
-    # is INSIDE an argument — scanning the raw text refused the one command
-    # shape that is meant to work.
+    # Inspect tokens after splitting. In sh -c commands, shell operators
+    # inside the command argument belong to the explicitly requested shell.
     for token in argv:
         if _SCRATCHPAD_SHELL_OPERATORS.fullmatch(token):
             return ([], f"the launch command uses shell syntax ({token!r}). VGS runs pad "
@@ -10766,8 +10304,7 @@ def _scratchpad_spawn(pad: Dict[str, Any]) -> str:
 
 
 def scratchpad_niri_workspace(pad_id: str) -> str:
-    """The named workspace a pad lives on. Prefixed so a VGS pad can never
-    collide with a workspace the user named themselves."""
+    """Return the pad workspace name with the VGS prefix."""
     return "vgs-" + pad_id
 
 
@@ -10793,12 +10330,8 @@ def _kdl_raw_string(value: str) -> str:
     return "" if '"#' in value else 'r#"' + value + '"#'
 
 
-# Constructs Python's `re` accepts that the Rust regex crate niri uses does not.
-# A pattern carrying one compiles fine here and then makes niri reject the WHOLE
-# config file, so the pad would not merely fail — it would take the user's entire
-# Niri configuration down with it. Each entry is a construct Rust's regex crate
-# documents as unsupported (it guarantees linear time, which rules out anything
-# needing backtracking) paired with the name to report.
+# Reject known Python regex constructs that Niri's Rust regex engine does
+# not support. An unsupported pattern can make Niri reject the whole config.
 _NIRI_REGEX_UNSUPPORTED = (
     (re.compile(r"\(\?(?:=|!|<=|<!)"), "lookahead or lookbehind"),
     # Backreferences, numeric and named. `\1`-`\9`, but not `\10`+ (which Python
@@ -10817,13 +10350,8 @@ _NIRI_REGEX_UNSUPPORTED = (
 
 
 def _niri_regex_problem(pattern: str, what: str) -> str:
-    """Why `pattern` cannot be handed to niri, or "" when it can.
-
-    A DENY list of constructs that are decidable offline and certain to be
-    rejected, not a Rust regex parser — it cannot prove a pattern good, only
-    catch the ones known to be bad. That asymmetry is the honest position: this
-    machine has no Niri to validate against, so the check refuses what it can
-    prove wrong and says nothing about the rest."""
+    """Report known constructs that Niri's regex engine rejects, or an empty string.
+    This check is not a Rust regex parser and cannot establish validity."""
     if not pattern:
         return ""
     for probe, name in _NIRI_REGEX_UNSUPPORTED:
@@ -10833,17 +10361,13 @@ def _niri_regex_problem(pattern: str, what: str) -> str:
     return ""
 
 
-# Hyprland-shaped modifier names (what the Settings capture records) to niri's.
 SCRATCHPAD_NIRI_MODIFIERS = {
     "SUPER": "Mod", "MOD": "Mod", "META": "Mod", "WIN": "Mod", "LOGO": "Mod",
     "CTRL": "Ctrl", "CONTROL": "Ctrl",
     "ALT": "Alt", "SHIFT": "Shift",
 }
 
-# Key names to xkb keysyms. The Settings capture only ever records a single
-# printable character (ScratchpadsTab.keyEventToCombo refuses anything else), so
-# the punctuation rows are what it can actually produce; the named rows exist for
-# a hand-edited settings.json.
+# Translate captured punctuation and hand-written named keys to xkb keysyms.
 SCRATCHPAD_NIRI_KEYSYMS = {
     "RETURN": "Return", "ENTER": "Return", "KP_ENTER": "KP_Enter",
     "SPACE": "space", "TAB": "Tab", "ESCAPE": "Escape", "ESC": "Escape",
@@ -10860,23 +10384,13 @@ SCRATCHPAD_NIRI_KEYSYMS = {
 
 
 def scratchpad_niri_keybind(keybind: str) -> str:
-    """A VGS keybind as niri spells it, or "" when it cannot be converted.
-
-    The stored form is Hyprland-shaped — `SUPER + SHIFT, T` — because that is
-    what the Settings capture writes and what the Lua backend emits verbatim.
-    Niri wants `Mod+Shift+T`, so emitting the stored string unchanged produced a
-    bind niri either rejects or silently never fires.
-
-    Returns "" rather than guessing. A bind that cannot be converted is reported
-    and omitted, which leaves a pad that still works through `vshell scratchpad
-    toggle`; inventing a spelling could instead shadow a bind the user already
-    has."""
+    """Convert a VGS keybind to Niri modifier and keysym syntax.
+    Return an empty string when conversion fails. Callers omit and report
+    that bind; the pad remains available through the CLI toggle."""
     raw = str(keybind or "").strip()
     if not raw:
         return ""
-    # The LAST separator splits modifiers from the key, not every comma: the
-    # comma itself is a bindable key, and splitting on all of them turned
-    # `SUPER, ,` into modifiers with nothing left to bind.
+    # Split at the last modifier separator so a comma can itself be the key.
     if ", " in raw:
         head, key = raw.rsplit(", ", 1)
     elif "," in raw:
@@ -10901,7 +10415,6 @@ def scratchpad_niri_keybind(keybind: str) -> str:
         if mod not in mods:
             mods.append(mod)
     key = key.strip()
-    # A chord that is only modifiers has no key to bind.
     if not key or key.upper() in SCRATCHPAD_NIRI_MODIFIERS:
         return ""
     folded = key.upper()
@@ -10918,19 +10431,14 @@ def scratchpad_niri_keybind(keybind: str) -> str:
         resolved = key
     else:
         return ""
-    # niri orders modifiers as written; keep the canonical order VGS shows.
     order = ["Mod", "Ctrl", "Alt", "Shift"]
     mods.sort(key=lambda name: order.index(name) if name in order else len(order))
     return "+".join(mods + [resolved])
 
 
 def scratchpad_niri_unsupported() -> List[Dict[str, str]]:
-    """Pad features this backend cannot express, as a standing list.
-
-    Reported, never silently dropped: a setting that is stored, shown and
-    ignored is the defect this subsystem has refused throughout. These are
-    properties of the compositor, not of any one pad, so they are stated once
-    for the backend rather than repeated per pad."""
+    """List scratchpad settings Niri cannot express.
+    Report backend limits separately from individual rejected pads."""
     return [
         {
             "field": "animation",
@@ -10948,9 +10456,7 @@ def scratchpad_niri_unsupported() -> List[Dict[str, str]]:
 
 def render_scratchpads_kdl(pads: List[Dict[str, Any]],
                            problems: List[Dict[str, str]] | None = None) -> Tuple[str, Dict[str, Any]]:
-    """Pure renderer: pads in, Niri KDL text + metadata out. No IPC, so the
-    generated config can be diffed in a test without a compositor — which is the
-    only way this backend can be checked at all from a Hyprland machine."""
+    """Render pad records as Niri KDL text and metadata without compositor IPC."""
     cli = shutil.which("vshell") or "vshell"
     lines = [
         "// Generated by VGS (Settings -> Scratchpads). Do not edit.",
@@ -11000,10 +10506,8 @@ def render_scratchpads_kdl(pads: List[Dict[str, Any]],
                 continue
 
         workspace = scratchpad_niri_workspace(pad["id"])
-        # The name is user text and the id is not: `normalize_scratchpad`
-        # restricts the id precisely so it can be written unescaped, while a
-        # name may contain anything. A newline in one ended the `//` comment and
-        # left the rest of the name as config KDL would try to parse.
+        # Flatten the user-supplied name before adding it to a KDL comment.
+        # A newline would end the comment and expose the remaining name as config.
         lines.append(f"// {_kdl_comment_text(pad['name'])} ({pad['id']})")
 
         # The workspace. Declared, so it exists before any window is moved onto
@@ -11090,12 +10594,8 @@ def render_scratchpads_kdl(pads: List[Dict[str, Any]],
         lines.append("}")
         lines.append("")
 
-    # Preload is derived from the pads that were actually RENDERED, not merely
-    # from the enabled ones. A pad rejected above generates no workspace, no
-    # rule and no bind, so preloading it would launch its app at every login
-    # into a session that has nowhere to put it — a pad refused for being
-    # unusable has to be refused everywhere, not only in the half that emits
-    # rules.
+    # Preload only rendered pads. Rejected pads have no workspace or rules,
+    # so launching them at login would leave an unmanaged app on screen.
     rendered_ids = {entry["id"] for entry in rendered}
     preload = [pad["id"] for pad in enabled if pad["preload"] and pad["id"] in rendered_ids]
     if preload:
@@ -11112,10 +10612,8 @@ def render_scratchpads_kdl(pads: List[Dict[str, Any]],
         "defined": len(pads),
         "preload": preload,
         "scratchpads": rendered,
-        # Per-pad settings that could not be expressed, plus the standing
-        # backend-level ones. Distinct from `problems`: a pad listed here WAS
-        # generated and does work, with one property dropped — reporting that as
-        # a rejection would be as misleading as not reporting it at all.
+        # Report unsupported properties separately from rejected pads: these pads
+        # were rendered, but some requested behavior is unavailable.
         "unsupported": unsupported + scratchpad_niri_unsupported(),
     }
     return ("\n".join(lines), meta)
@@ -11135,11 +10633,7 @@ def _niri_scratchpad_size_line(rule: str, pad: Dict[str, Any], axis: str) -> str
 
 
 def scratchpad_niri_include_status() -> Dict[str, Any]:
-    """Whether config.kdl pulls the generated fragment in.
-
-    Unlike the Hyprland side, VGS already manages Niri includes (with a backup)
-    — that is this repo's existing stance for this compositor, not a new one
-    taken here."""
+    """Report whether config.kdl directly includes the managed scratchpad fragment."""
     status = _niri().niri_include_status("scratchpads.kdl")
     if not status.get("ok"):
         return {
@@ -11194,12 +10688,10 @@ def apply_scratchpads_niri(reload: bool = True) -> Dict[str, Any]:
     }
 
 
-# --- Niri scratchpad runtime -------------------------------------------------
 
 def _niri_session_ready() -> bool:
-    """Whether there is a live Niri session to talk to. Same seam, and same
-    reason, as `_scratchpad_session_ready` on the Hyprland side: it is what lets
-    the tests drive these paths on a machine with no Niri at all."""
+    """Return whether the environment and command lookup identify a Niri session.
+    Tests patch this seam to run the Niri paths without a compositor."""
     return bool(shutil.which("niri") and os.environ.get("NIRI_SOCKET"))
 
 
@@ -11406,12 +10898,7 @@ def scratchpad_toggle_niri(pad_id: str, reveal_only: bool = False, launch_only: 
                 if focused_id and not _scratchpad_niri_window_on_pad(pad_id, focused_id):
                     keep_target = str(focused_id)
 
-            # READ here, CONSUMED only once the hide is confirmed, below. A hide
-            # that fails leaves the pad on screen and the next attempt still
-            # needs somewhere to hand focus back to; spending the origin up
-            # front destroys that on the one path that needs it. Same rule the
-            # Hyprland backend follows, and the same shape as release: act on
-            # the record only after the thing it describes has succeeded.
+            # Keep the reveal origin until hiding succeeds so a retry can restore focus.
             origin = ""
             if state_file.exists():
                 origin = state_file.read_text().strip()
@@ -11452,18 +10939,9 @@ def scratchpad_toggle_niri(pad_id: str, reveal_only: bool = False, launch_only: 
                                    if isinstance(w, dict) and w.get("is_focused")), "")
 
             if still_on:
-                # The pad's workspace is STILL the active one on `still_on`.
-                #
-                # On one output that means the hide did not happen and the user
-                # is looking straight at the pad they asked to dismiss.
-                #
-                # Across outputs it is simply what Niri does. There is no
-                # overlay to pull away: focus moved to another output and the
-                # pad's own output goes on showing its active workspace. Focus
-                # having genuinely landed elsewhere is the whole of what a hide
-                # can do here, so reporting failure told a multi-monitor user
-                # every hide had failed — and now that Settings gates on this
-                # result, a false failure is no longer harmless.
+                # Niri can keep the pad visible on its output after focus moves to another
+                # output. In that case, focus leaving the pad counts as a successful hide.
+                # On the same output, the pad must stop being the active workspace.
                 if not focused_output or focused_output == still_on:
                     return {"ok": False, "id": pad_id, "action": "hide-failed",
                             "error": f"{pad['name']}: the pad is still displayed on {still_on}"}
@@ -11494,10 +10972,8 @@ def scratchpad_toggle_niri(pad_id: str, reveal_only: bool = False, launch_only: 
         membership = _scratchpad_niri_ensure_membership(pad_id, window)
 
         if launch_only:
-            # Checked, like the reveal path and like the Hyprland preload: a
-            # window that never made it onto the pad's workspace is sitting
-            # VISIBLY on the user's current one, which is the map-time race
-            # reported as success.
+            # Confirm preload placement; a failed move can leave the app visible
+            # on the user's active workspace.
             if membership.get("from") is not None and not membership.get("moved"):
                 return {"ok": False, "action": "preload-failed", "id": pad_id,
                         "launched": launched, "membership": membership,
@@ -11566,7 +11042,6 @@ def scratchpad_release_niri(pad_id: str, class_regex: str = "", title_exclude: s
         return {"ok": False, "released": False,
                 "error": "could not read the workspace list to confirm which window belongs to the pad"}
     if not pad_workspace:
-        # The pad's workspace does not exist, so nothing is parked on it.
         return {"ok": True, "released": False, "reason": "the pad's workspace does not exist"}
     try:
         pad_workspace_id = int(pad_workspace.get("id") or 0)
@@ -11583,9 +11058,7 @@ def scratchpad_release_niri(pad_id: str, class_regex: str = "", title_exclude: s
         except (TypeError, ValueError):
             return False
 
-    # Ownership filters ALL the matches, before one is picked. Selecting first
-    # and checking afterwards let a stray same-class window listed earlier win
-    # the selection, fail the check, and hide the pad's real window behind it.
+    # Filter all matches by workspace ownership before selecting a window.
     candidates = _scratchpad_niri_find_windows(pad)
     if candidates is None:
         # Same rule as the Hyprland backend, and for the same reason: Settings
@@ -11742,14 +11215,11 @@ def _hyprland_blur_script(enabled: bool, strength: float, glass: bool, opacity: 
         vibrancy_darkness = 0.0 if light else 0.10
         noise = round(0.004 + strength * 0.005, 4)
     rule_enabled = "true" if enabled else "false"
-    # A namespace belongs here only when its WHOLE surface rectangle is an
-    # acceptable per-frame live-blur region. The blur pass runs over the
-    # rectangle (xray = false selects the live path); ignore_alpha only masks the
-    # result, so "it paints something small" is not the test. Whole-output
-    # painters, the popouts' `:background` dismiss windows and
-    # backdrop-less-by-design menus stay out: docs/architecture/design-language.md
-    # § Invariants, enforced by
-    # scripts/check-vshell-helper.py::test_hyprland_blur_script.
+    # Only include namespaces whose full surface rectangle can receive live blur.
+    # With xray=false the blur pass covers that rectangle; ignore_alpha masks
+    # the result without reducing the region. Exclude whole-output painters,
+    # dismiss backgrounds and menus without backdrops. See
+    # docs/architecture/design-language.md and test_hyprland_blur_script.
     blurred_namespaces = [
         "battery",
         "bluetooth-pairing",
@@ -12005,11 +11475,8 @@ def ensure_root_for(argv: List[str], terminal: bool = False) -> int | None:
     return proc.returncode
 
 
-# VGS has exactly one terminal resolver and it is this section. QML, plugin JS,
-# bash and the Go backend all reach it through `vshell terminal ...` instead of
-# invoking a terminal — or `xdg-terminal-exec` — themselves, so the ordering
-# below is the only ordering in the tree. The terminal contract is in
-# docs/architecture/helper.md § Invariants.
+# Terminal selection and launch contracts are defined in
+# docs/architecture/helper.md. Callers use vshell terminal.
 TERMINAL_CANDIDATES = ("ghostty", "kitty", "alacritty", "foot", "wezterm", "konsole", "gnome-terminal", "xterm")
 
 # Per-terminal argv shape.
@@ -12041,15 +11508,12 @@ TERMINAL_DEFAULT_SPEC: Dict[str, Any] = {"subcommand": [], "app_id_flag": None, 
 # The app-id VGS asks for when it opens a TUI, which compositor rules float.
 TERMINAL_TUI_APP_ID = "TUI.float"
 
-# How long to watch a freshly spawned terminal before treating it as launched.
-# A terminal that cannot take `-e sh -lc`, or cannot reach the display, dies
-# immediately; without this the caller reports success for a window that never
-# appeared, which is the silent-failure class VGS-11 exists to remove.
+# Watch for an immediate terminal exit before reporting launch success.
+# The timeout cannot establish whether a window is visible.
 TERMINAL_SETTLE_SECONDS = 0.75
 
-# launch_terminal: a candidate was spawned but died immediately, so no window
-# ever appeared. Distinct from 1 (no terminal installed at all) and from
-# SUDO_TOGGLE_EXIT_STALE, which callers must not confuse with a launch failure.
+# Exit status for a terminal that died immediately after spawning.
+# Keep it distinct from a missing terminal and a stale sudo-toggle state.
 TERMINAL_EXIT_FAILED = 4
 
 
@@ -12220,24 +11684,15 @@ def terminal_spec(executable: str) -> Dict[str, Any]:
     return TERMINAL_SPECS.get(Path(executable).name, TERMINAL_DEFAULT_SPEC)
 
 
-# How long to give the one-off `uwsm app -- true` probe below.
 APP_SCOPE_PROBE_SECONDS = 5
 
 _app_scope_usable: bool | None = None
 
 
 def app_scope_prefix() -> List[str]:
-    """`uwsm app --` when the session can actually use it, else nothing.
-
-    Launching into a systemd scope is an enhancement, never a requirement:
-    hardcoding the prefix is what made every VGS terminal action fail with
-    `command not found` on installs without uwsm.
-
-    Presence is not usability — uwsm can be installed while the current session
-    has no user manager to attach a scope to. That is settled once, up front,
-    with a no-op command, because the alternative (launch the payload, see it
-    die, launch it again without the prefix) would run the user's command twice.
-    """
+    """Return the optional uwsm app prefix when a no-op probe succeeds.
+    Installed uwsm may lack a usable user manager. Probe before launching
+    the payload so a failed scope cannot cause the command to run twice."""
     global _app_scope_usable
     if os.environ.get("VSHELL_NO_APP_SCOPE"):
         return []
@@ -12256,14 +11711,8 @@ def app_scope_prefix() -> List[str]:
 
 
 def notify_user(title: str, details: str = "") -> None:
-    """Put a failure in front of the user when the caller cannot see it.
-
-    Every VGS terminal call site launches through `Quickshell.execDetached`,
-    which discards stdout, stderr and the exit status — so printing here reaches
-    nobody, and a broken button looks like a button that does nothing. The
-    shell's own toast IPC is the channel that survives detachment; `notify-send`
-    is the fallback for when the shell is not the caller.
-    """
+    """Notify the user of a failure when the caller cannot see process output.
+    Detached QML callers need toast IPC; notify-send provides a fallback."""
     eprint(f"{title}: {details}" if details else title)
     cli = shutil.which("vshell") or str(repo_root() / "bin" / "vshell")
     try:
@@ -12312,19 +11761,10 @@ def spawn_terminal(
     notify: bool = False,
     what: str = "VGS command",
 ) -> int:
-    """Run `cmd` (or an interactive shell when empty) in the resolved terminal.
-
-    The single spawn path behind `vshell terminal` and `launch_terminal()`.
-
-    `wait` blocks until the terminal exits rather than returning as soon as its
-    window is up. Callers that treat this process's exit as "the command
-    finished" — the backend's upgrade supervisor does — must pass it, or they
-    will call a running package-manager transaction complete.
-
-    `notify` puts a failure in front of the user instead of only on stderr. Set
-    it whenever the caller cannot see this process's output, which is every
-    `Quickshell.execDetached` call site.
-    """
+    """Run a command, or an interactive shell, in the resolved terminal.
+    wait keeps this process attached until the terminal exits; supervisors
+    use it to track command lifetime. notify reports failures to detached
+    callers that cannot read stderr."""
     payload = terminal_hold_script(cmd) if (cmd and hold) else list(cmd)
     scope = app_scope_prefix()
     # A fast non-zero exit only means "the terminal failed" when the payload
@@ -12343,18 +11783,17 @@ def spawn_terminal(
             continue
         tried.append(base[0])
         try:
-            # Popen only proves the exec succeeded. Give the terminal a moment
-            # to fail on its own (bad -e handling, no display) before treating
-            # the window as up.
+            # Watch for immediate launch errors. A process that stays alive past the
+            # timeout is treated as launched without a window-visibility check.
             proc.wait(timeout=TERMINAL_SETTLE_SECONDS)
         except subprocess.TimeoutExpired:
             if not wait:
-                return 0  # still running: the window is up
+                return 0  # still running after the launch timeout
             return proc.wait()  # caller needs the command's whole lifetime
         if proc.returncode == 0:
             return 0  # exited cleanly and fast; nothing to distrust
         if not retry_next_candidate:
-            # The payload ran; this is its status, not a launch failure.
+            # The exit may belong to the payload; retrying could run the command twice.
             return proc.returncode
     if tried:
         message = f"Terminal exited immediately for {what} (tried: " + ", ".join(tried) + ")"
@@ -13102,8 +12541,6 @@ def capture_user_monitor_layout(target_user: str) -> List[Dict[str, Any]]:
         captured: List[Dict[str, Any]] = []
         for monitor in monitors:
             name = str(monitor.get("name") or "").strip()
-            # Same connector-shaped guard as greeter_primary_monitor: these
-            # names are interpolated into generated native Lua.
             if not name or not re.fullmatch(r"[A-Za-z0-9._:-]+", name):
                 continue
             # Virtual outputs (e.g. the Sunshine headless sink) do not exist at
@@ -13148,9 +12585,8 @@ def render_hyprland_greeter_config(qs_cmd: str, cache_path: Path, cursor_env: Di
         name = str(monitor.get("name") or "").strip()
         if not name or not re.fullmatch(r"[A-Za-z0-9._:-]+", name):
             continue
-        # Re-validate at render time, not just at capture: monitors.json is a
-        # file on disk that can predate these checks or be edited by hand, and a
-        # bad literal here costs the login screen.
+        # Validate disk-loaded monitor values again before generating Lua.
+        # Hand edits or invalid saved values could prevent the greeter from starting.
         scale = _sane_monitor_scale(monitor.get("scale"))
         transform = _sane_monitor_transform(monitor.get("transform"))
         if scale is None or transform is None:
@@ -13203,8 +12639,7 @@ def choose_greeter_compositor(requested: str = "") -> str:
         raise ValueError(f"Unsupported greeter compositor: {requested}")
     if requested:
         return requested
-    # Preserve the historical Hyprland default wherever it is installed; a
-    # Niri-only machine needs no extra setting.
+    # Prefer Hyprland when installed; use Niri when it is the available compositor.
     return "hyprland" if (shutil.which("start-hyprland") or shutil.which("Hyprland")) else "niri"
 
 
@@ -13479,11 +12914,8 @@ def _launcher_search_name_hits(
         command.append(fuzzy_pattern)
         command.extend(str(root) for root in roots)
         completed = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=8, check=False)
-        # fd exits 0 for an ordinary search, warnings and unreadable directories
-        # included, so a non-zero exit means the invocation itself was refused --
-        # a rejected argument, a search path that is not a directory. Reporting
-        # that as "no matches" is a wrong answer wearing a successful one's
-        # clothes, which is exactly what a rejected --exclude used to produce.
+        # A non-zero fd exit means the search failed. Report the failure instead
+        # of returning an empty set of matches.
         if completed.returncode != 0:
             detail = completed.stderr.decode("utf-8", "replace").strip().splitlines()
             raise RuntimeError(
@@ -13584,8 +13016,6 @@ def _launcher_folder_openers() -> List[Dict[str, str]]:
     # can only answer "unavailable".
     if shutil.which("yazi") and have_terminal():
         openers.append({"id": "yazi", "label": "Yazi", "icon": "terminal"})
-    # Not a hardcoded application: whichever file manager the user has set for
-    # inode/directory, which is what Settings -> Default Apps writes.
     manager = file_manager()
     if manager and (have_terminal() or not manager.get("terminal")):
         openers.append({"id": "filemanager", "label": manager.get("name") or "File manager",
@@ -13763,25 +13193,15 @@ def _launcher_preview(path: Path, lines: int, focus_line: int = 0, query: str = 
         return {"ok": False, "error": str(exc), "path": str(path)}
 
 
-# --- Passwordless sudo toggle -------------------------------------------------
-#
-# Protocol (owned by VGS; the sudoToggle plugin is the only consumer):
-#   /etc/sudoers.d/50-<user>-nopasswd-toggle        the privileged drop-in
-#   ~/.local/state/vshell/sudo-passwordless-toggle  unprivileged state mirror
-#
-# The mirror exists because /etc/sudoers.d is 0750 root:root, so the shell
-# cannot read the real state as the logged-in user. Anything that changes the
-# drop-in must update the mirror in the same operation.
-#
-# The mirror can still go stale behind VGS's back — an admin removing the
-# drop-in, a cleaned /etc/sudoers.d, a restored home backup. It is therefore
-# never allowed to decide a direction: callers pass the direction they showed
-# the user (`set on|off`), and the privileged half refuses and re-syncs rather
-# than doing the opposite of what was displayed. Inferring the direction
-# root-side turned a "revoke" click into a permanent NOPASSWD grant (VGS-11).
+# Passwordless sudo state uses a privileged drop-in and an unprivileged mirror:
+# /etc/sudoers.d/50-<user>-nopasswd-toggle
+# ~/.local/state/vshell/sudo-passwordless-toggle
+# The shell cannot read sudoers.d directly. Update the mirror with the drop-in.
+# The mirror can become stale after external changes. Callers must pass the
+# displayed set on/off direction; the privileged operation checks it again.
 
 SUDO_TOGGLE_FLAG_NAME = "sudo-passwordless-toggle"
-# Pre-VGS-11 location, outside the VGS state dir. Read for migration only.
+# Mirror path read only to migrate state into the VGS directory.
 SUDO_TOGGLE_LEGACY_FLAG = ".local/state/sudo-passwordless-toggle"
 
 # `set` exit codes. Keep these distinct: the widget reports a stale-state
@@ -13832,13 +13252,9 @@ def sudo_noninteractive_ok(runner: Any = None) -> bool:
 
 
 def sudo_toggle_availability() -> Tuple[bool, str]:
-    """Can this machine run the toggle at all? (unprivileged check)
-
-    Deliberately does NOT require a terminal. A terminal is only needed to
-    GRANT; revoking takes the quiet `sudo -n` path, because the drop-in being
-    removed is what makes sudo passwordless. Gating both directions on a
-    terminal stranded the escalated state in place on machines with none.
-    """
+    """Check unprivileged requirements for the sudo toggle.
+    Granting needs a terminal for confirmation. Revocation can use sudo -n
+    while the drop-in supplies passwordless access."""
     if not shutil.which("sudo"):
         return False, "sudo is not installed"
     if not shutil.which("visudo"):
@@ -13934,14 +13350,9 @@ def sudo_toggle_write_flag(enable: bool) -> Tuple[bool, str]:
             return False, f"could not open the home directory: {exc}"
 
         def retire_legacy(state_fd: int) -> None:
-            """Drop the pre-VGS-11 mirror so one file is the truth.
-
-            Done as soon as the `state` directory is open, not at the end: on a
-            revoke where `state/vshell` does not exist the walk returns early,
-            and retiring afterwards would leave the legacy flag behind still
-            asserting "enabled" — recreating the stale-mirror state the
-            direction guard exists to catch.
-            """
+            """Remove the mirror outside the VGS directory.
+            Run when its parent opens: revocation can return early if the VGS
+            subdirectory is absent, and must not leave an enabled mirror behind."""
             try:
                 os.unlink(SUDO_TOGGLE_FLAG_NAME, dir_fd=state_fd)
             except (FileNotFoundError, OSError):
@@ -14031,12 +13442,8 @@ def sudo_toggle_status(user: str, sudo_probe: Any = None, probe_sudo: bool = Tru
         # need to put a line in the auth log).
         non_interactive = True
     elif probe_sudo:
-        # Probing is always caller-initiated: the widget passes
-        # --no-sudo-probe at shell start and only asks for real once the user
-        # hovers the control, so a login never touches sudo. Group membership
-        # is deliberately NOT used to pre-filter — it would silently skip the
-        # probe for a user granted sudo by a direct sudoers rule
-        # (`alice ALL=...`), reporting them as prompting when they are not.
+        # The widget defers sudo probes until user interaction. Do not filter by
+        # group membership: a direct sudoers rule can grant access independently.
         non_interactive = sudo_noninteractive_ok(sudo_probe)
     else:
         non_interactive = False
@@ -14045,7 +13452,6 @@ def sudo_toggle_status(user: str, sudo_probe: Any = None, probe_sudo: bool = Tru
         "ok": True,
         "available": available,
         "reason": reason,
-        # VGS's own drop-in, as far as this caller can tell.
         "enabled": dropin_installed,
         "dropinInstalled": dropin_installed,
         # Whether sudo prompts right now, from any rule or a cached credential.
@@ -14131,9 +13537,8 @@ def cmd_sudo_toggle(argv: List[str]) -> int:
         return 1
 
     if args.cmd == "toggle":
-        # Resolve the direction here, then go through the same guarded `set`
-        # path. Root-side direction inference is what let a stale mirror turn a
-        # revoke into a grant, so there is exactly one place that decides.
+        # Pass the direction derived from the displayed state through guarded set.
+        # The privileged operation must not infer a different direction.
         if os.geteuid() == 0:
             want = not sudo_toggle_dropin(user).is_file()
         else:
@@ -14145,10 +13550,7 @@ def cmd_sudo_toggle(argv: List[str]) -> int:
 
     if os.geteuid() != 0:
         if want:
-            # Only the grant direction needs somewhere to prompt, and only when
-            # we still have to elevate. Checking this for `set off` too meant a
-            # machine with no terminal could not revoke an existing grant at
-            # all; checking it as root demanded a terminal that is never used.
+            # Require a terminal only for grants that still need privilege escalation.
             can_enable, enable_reason = sudo_toggle_enable_availability()
             if not can_enable:
                 eprint(f"vshell sudo-toggle: {enable_reason}")
@@ -14191,8 +13593,7 @@ def cmd_launcher_search(argv: List[str]) -> int:
     opener = sub.add_parser("open-folder")
     opener.add_argument("path")
     opener.add_argument("--command", default="")
-    # "nautilus" is the pre-VGS-32 id for what is now the resolved file manager;
-    # accepted so a menu opened before an upgrade still opens a folder.
+    # Accept nautilus as a file-manager action alias for menus open during an upgrade.
     opener.add_argument("--opener", choices=("default", "yazi", "filemanager", "nautilus"), default="default")
     sub.add_parser("openers")
     sub.add_parser("status")
@@ -14590,20 +13991,9 @@ def vgs_notification_server_enabled() -> bool:
 
 
 def vgs_first_run_takeover_done() -> bool:
-    """Whether settings.json ON DISK records the first-run one-shot as spent.
-
-    The shell cannot answer this about itself. `SettingsData.set()` updates the
-    in-memory property and asks FileView to save; an unwritable settings.json
-    (read-only home, full disk) fails that save without changing the property,
-    so the shell believes the one-shot is spent while the next process reads it
-    as unspent -- and the automatic takeover masks and stops the user's daemon
-    again on every start.
-
-    This is read here, in a separate process, because that is exactly the claim
-    that has to be true: the NEXT process must see it. False on any error --
-    unreadable is not evidence of a durable write, and the shell refuses to
-    take over without one.
-    """
+    """Read whether settings.json records the automatic takeover as spent.
+    An in-memory setting does not establish that FileView saved it. Return
+    False on read errors so a failed save cannot permit repeated takeover."""
     try:
         value = load_settings().get("notificationFirstRunTakeoverDone", False)
     except Exception:
@@ -14718,8 +14108,6 @@ def notification_status() -> Dict[str, Any]:
         "state": state,
         "error": owner["error"],
         "vgsServerEnabled": vgs_notification_server_enabled(),
-        # Read from settings.json on disk, so the shell can confirm its own
-        # one-shot spend actually persisted before acting on it.
         "vgsFirstRunTakeoverDone": vgs_first_run_takeover_done(),
         # VGS holds the name now, but something else would still be activated
         # into it on a session where VGS starts a moment later.
@@ -14796,9 +14184,8 @@ def _save_takeover_record(record: Dict[str, Any]) -> str:
     path = notification_state_file()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        # Saved originals outlive their shadows: a backup whose restore failed
-        # is still owed to the user, so the record only goes away when there is
-        # genuinely nothing left to undo.
+        # Keep the undo record while saved originals still need restoration,
+        # even if their replacement shadows are gone.
         if not _takeover_record_has_changes(record):
             path.unlink(missing_ok=True)
             return ""
@@ -14866,25 +14253,14 @@ def _write_activation_shadow(source: Path) -> Dict[str, Any]:
 
 
 def notification_takeover(automatic: bool = False) -> Dict[str, Any]:
-    """Make VGS the session's notification daemon, reversibly.
-
-    Nothing is killed: the conflicting unit is masked and stopped, so it
-    releases the bus name and Quickshell's pending registration wins it back on
-    its own. A daemon that is not a user unit cannot be stopped safely from
-    here and is reported for the user to quit.
-
-    `automatic` marks the undo record as VGS's own doing, so a later opt-out
-    can reverse it even from a shell that has restarted since. Once set it
-    stays set for as long as the record does: a record that mixes an automatic
-    takeover with a later manual one cannot be unpicked, and reversing all of
-    it is what keeps a notification daemon running.
-    """
+    """Mask and stop conflicting user units so VGS can claim the notification bus.
+    Report daemons that cannot be managed through a suitable user unit.
+    The undo record preserves who initiated the changes. A first-run record
+    allows an opt-out to restore them after a shell restart."""
     status = notification_status()
     record = _load_takeover_record()
-    # Only a record being CREATED may be stamped. An existing record's
-    # provenance is history: relabelling a takeover the user ran themselves as
-    # "first-run" would let the shell reverse a change they made deliberately,
-    # which is the one thing the initiator exists to prevent.
+    # Set the initiator only when creating the undo record. Relabelling a manual
+    # takeover would let automatic restore reverse a deliberate user choice.
     if automatic and not _takeover_record_has_changes(record):
         record["initiator"] = "first-run"
     actions: List[str] = []
@@ -14991,10 +14367,7 @@ def notification_restore() -> Dict[str, Any]:
             kept_masks.append(unit)
             failures.append(f"could not unmask {unit}: {(proc.stderr or '').strip()}")
 
-    # Undoing a takeover means the daemon runs again. Unmasking alone only
-    # makes that possible at the next login, which is not what "restore" says
-    # on the tin -- so anything takeover stopped is started again here, after
-    # the unmask that would otherwise refuse it.
+    # Start units after unmasking so restore can take effect in this session.
     kept_stops: List[str] = []
     for unit in record["stopped"]:
         proc = _systemctl_user(["start", unit])
@@ -15004,9 +14377,7 @@ def notification_restore() -> Dict[str, Any]:
             kept_stops.append(unit)
             failures.append(f"could not start {unit}: {(proc.stderr or '').strip()}")
 
-    # Provenance is carried through: whatever could not be undone was still
-    # VGS's doing if it was VGS's doing, and a later opt-out has to be able to
-    # try again.
+    # Preserve the initiator for incomplete restores so opt-out can retry them.
     save_error = _save_takeover_record({
         "shadows": kept_shadows, "masked": kept_masks,
         "stopped": kept_stops, "backups": kept_backups,
@@ -15053,20 +14424,11 @@ def _print_notification_status(status: Dict[str, Any]) -> None:
             print(f"  note: {status['takeover']['reason']}")
 
 
-# --- Remote desktop host (Sunshine) -----------------------------------------
-#
-# Sunshine is deliberately NOT autostarted: its user unit ships `disabled`, and
-# the virtual output it captures is created on start and removed on stop, so a
-# local-only session carries no phantom monitor and nothing listening.
-#
-# Those two halves are ONE operation and must never be split. Sunshine picks
-# its capture target at startup, so starting the unit without the headless
-# output first makes it fall back to the first real monitor -- the user's own
-# screen is streamed instead of the virtual one, with no error logged anywhere
-# and nothing on screen to notice. That silence is why the lifecycle lives here
-# rather than in QML: `vshell remote-desktop start` is the only supported way
-# to bring the host up, and no VGS surface may call `systemctl start` on this
-# unit directly.
+# Start Sunshine only after verifying the capture output. Without that output,
+# Sunshine can fall back to a physical monitor. Keep output creation and unit
+# startup in this lifecycle operation, with ownership checked before cleanup.
+# No VGS surface may start this unit directly; vshell remote-desktop start is
+# the only supported path. The unit ships disabled.
 
 RD_UNIT = "app-dev.lizardbyte.app.Sunshine.service"
 RD_OUTPUT = "HEADLESS-1"
@@ -15125,28 +14487,11 @@ def _rd_output_present() -> Any:
 
 
 def _rd_manages_output() -> Dict[str, Any]:
-    """Whether VGS can manage the virtual output here, and why not if it cannot.
-
-    `detect_compositor()` answers from THIS process's environment, and an ssh
-    session has none of it -- no Wayland socket owner, no instance signature --
-    so it reports "unknown". Treating unknown as "not Hyprland" is how starting
-    the host over ssh skipped the output entirely and let the capture fall back
-    to a real monitor. Starting over ssh is a PRIMARY way a remote-desktop host
-    gets used, so that is not an edge case.
-
-    Unknown therefore means ASK, using the same ssh-aware environment
-    `_rd_output_present()` already uses. Three sub-cases, graded by how much
-    they leave in doubt:
-
-    * hyprctl not installed -> this is definitely not Hyprland. Proceed without
-      an output and say so.
-    * hyprctl installed but no instance in the runtime dir -> no Hyprland is
-      running. Same.
-    * an instance IS there but hyprctl will not answer -> refuse. There is a
-      Hyprland session here and we cannot talk to it, so we cannot rule out
-      capturing a real monitor -- the same reasoning as the `present is None`
-      refusal, and the opposite of guessing.
-    """
+    """Return whether VGS can manage a Hyprland virtual output and why.
+    SSH can lack compositor environment variables, so inspect the runtime
+    directory for an instance. An instance that cannot be queried causes
+    refusal: startup could otherwise capture a physical monitor.
+    Without hyprctl or an instance, report output management as unavailable."""
     compositor = detect_compositor()["compositor"]
     if compositor == "hyprland":
         return {"manages": True, "compositor": "hyprland", "blocked": False, "reason": ""}
@@ -15169,12 +14514,11 @@ def _rd_manages_output() -> Dict[str, Any]:
         detail = (proc.stderr or "").strip() or f"hyprctl exited {proc.returncode}"
         return {"manages": False, "compositor": "unknown", "blocked": True,
                 "reason": f"a Hyprland instance is running but hyprctl could not be reached: {detail}"}
-    # Resolved from the runtime dir: this IS Hyprland, reached over ssh.
     return {"manages": True, "compositor": "hyprland", "blocked": False, "reason": ""}
 
 
 def _rd_web_host() -> str:
-    """Prefer the tailnet address: that is the only route a client has."""
+    """Prefer the tailnet address when available."""
     if command_exists("tailscale"):
         try:
             proc = run(["tailscale", "ip", "-4"], timeout=3)
@@ -15188,26 +14532,10 @@ def _rd_web_host() -> str:
 
 
 def _rd_journal_window() -> Any:
-    """Bound the journal read to the CURRENT run of the unit, or None.
-
-    Without this bound a `CLIENT CONNECTED` from a previous run -- with no
-    matching disconnect, because the daemon was killed -- reads as a live
-    session forever. The window is what makes the last-event scan sound.
-
-    **There is no fallback window, deliberately.** An earlier version fell back
-    to `--boot` when the timestamp could not be established, reasoning that a
-    running unit always has an ActiveEnterTimestamp. That reasoning does not
-    survive the query itself failing, or systemd phrasing the value differently:
-    the read then replays unbounded history, and a stale CLIENT CONNECTED is
-    reported as a live session. The widget would show LIVE with nobody
-    connected.
-
-    That is the WORSE direction of the same error the readable/active split
-    guards. Hiding a real capture is bad; inventing one trains the user to
-    ignore the only indicator that says somebody is watching their screen, which
-    destroys the thing this plugin exists for. So: no anchor, no read -- the
-    session is reported unknown, which is neither a replay nor an idle claim.
-    """
+    """Return the active unit's journal start time, or None if unknown.
+    Reading older runs could report an unmatched connection as a live session.
+    Without a valid timestamp, callers must report unknown session state.
+    Do not fall back to a --boot window."""
     proc = _systemctl_user(["show", RD_UNIT, "--property=ActiveEnterTimestamp", "--value"])
     if proc.returncode != 0:
         return None
@@ -15308,9 +14636,7 @@ def _rd_session_state() -> Dict[str, Any]:
     return state
 
 
-# Candidate markers for the decode below. Private-use characters, so a real
-# state file will not contain one -- and the loop picks one that provably does
-# not, rather than assuming.
+# Choose a private-use marker absent from the raw bytes before decoding.
 _RD_DECODE_MARKERS = ("\ue000", "\ue001", "\uf8ff")
 
 # U+FFFD written literally, and the JSON escape a writer may use instead. Both
@@ -15320,26 +14646,10 @@ _RD_FFFD_ESCAPE_RE = re.compile(rb"\\u fffd".replace(b" ", b""), re.IGNORECASE)
 
 
 def _rd_decode_marking_real_fffd(raw_bytes: bytes) -> Any:
-    """Decode leniently, with genuine U+FFFD swapped for a marker first.
-
-    The point is to make the leftover U+FFFD UNAMBIGUOUS. Decoding with
-    `errors="replace"` and then asking "is this U+FFFD real?" cannot be
-    answered from the decoded text -- an earlier attempt searched the whole file
-    for the name's bytes, which answers "does this sequence appear ANYWHERE",
-    not "did THIS field decode cleanly", and mis-attributes whenever it appears
-    somewhere else.
-
-    So the question is removed rather than approximated: every rendering of a
-    real U+FFFD is swapped for a marker BEFORE decoding, and both renderings are
-    handled because a JSON writer may or may not escape non-ASCII (Sunshine's
-    own state file escapes solidus, so assuming either would be a guess). After
-    that, any U+FFFD in the decoded text can only be our own substitution, and
-    any marker can only be a real one.
-
-    Returns ``(text, marker)``, or ``(None, "")`` when no marker can be used --
-    which is not a failure to paper over, so the caller withholds every
-    suspicious name rather than guessing.
-    """
+    """Mark literal and JSON-escaped U+FFFD before decoding invalid bytes.
+    Remaining U+FFFD then identifies decode substitutions, while the marker
+    identifies original replacement characters. Return (text, marker), or
+    (None, "") if no unused marker is available."""
     for marker in _RD_DECODE_MARKERS:
         encoded = marker.encode("utf-8")
         escaped_marker = marker.encode("unicode_escape")
@@ -15354,27 +14664,10 @@ def _rd_decode_marking_real_fffd(raw_bytes: bytes) -> Any:
 
 
 def _rd_paired_clients() -> Dict[str, Any]:
-    """Names of PAIRED devices, from Sunshine's own state file.
-
-    These are the devices allowed to connect, NOT the ones connected now: the
-    journal does not say which client a session belongs to, so nothing here may
-    be presented as the current viewer.
-
-    That file also holds Sunshine's Web UI credential hash and salt. Only
-    `name` is read out of it; nothing else from the file is returned, printed
-    or logged.
-
-    Every shape is checked rather than assumed. Decoding as JSON says nothing
-    about the structure -- a list, a scalar, or a `root` that is a string all
-    used to raise straight out of `remote_desktop_status()`, so one malformed
-    field took out every OTHER field with it and the widget lost the host and
-    session state too. By this subsystem's own model unparseable state is
-    UNKNOWN, not fatal, so it degrades to that with the reason attached, the
-    way the unreadable-journal path already does.
-
-    A missing file is not malformed: no Sunshine config means no paired
-    devices, which is an answer.
-    """
+    """Return paired device names from Sunshine's state file.
+    Paired devices are allowed to connect; they are not the current viewers.
+    Do not return the file's credential hash or salt. Missing state means
+    no paired devices; invalid structure produces an error for this field."""
     config_home = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
     path = Path(config_home) / "sunshine" / "sunshine_state.json"
     try:
@@ -15384,11 +14677,8 @@ def _rd_paired_clients() -> Dict[str, Any]:
     except OSError as exc:
         return {"names": [], "known": False, "error": f"the Sunshine state file could not be read: {exc}", "undecodable": 0}
 
-    # Decoding with `errors="replace"` and moving on turned bad bytes into
-    # U+FFFD INSIDE device names, so a client appeared under a mangled name that
-    # is indistinguishable from the device genuinely being called that. The file
-    # is still decoded leniently -- one bad name must not cost the whole list --
-    # but genuine U+FFFD is marked first, so what remains is unambiguous.
+    # Mark genuine replacement characters before decoding so invalid bytes in
+    # one name do not require discarding every paired device.
     raw, marker = _rd_decode_marking_real_fffd(raw_bytes)
     if raw is None:
         # No usable marker. Nothing here can tell a real replacement character
@@ -15495,7 +14785,7 @@ def _rd_clear_output_record() -> None:
 
 
 def _rd_output_is_ours() -> bool:
-    """True only when VGS created the output the RUNNING compositor still has."""
+    """Return True only when the ownership record names this output and the running compositor instance."""
     try:
         data = json.loads(_rd_output_record_file().read_text(errors="replace"))
     except (OSError, ValueError):
@@ -15523,26 +14813,10 @@ def _rd_remove_output() -> str:
 
 
 def _rd_unit_state() -> Dict[str, Any]:
-    """Unit state PLUS whether the query itself worked.
-
-    `_user_unit_state()` reports a failed `systemctl show` and a genuinely
-    absent unit identically -- both come back `exists: False` -- and the whole
-    discipline of this subsystem is that a failed question is not a negative
-    answer. A transient systemctl failure must not make the widget announce
-    that Sunshine is not installed.
-
-    Parsed here rather than by adding a flag to the shared helper: this needs
-    two properties, and the notification subsystem's use of _user_unit_state is
-    not worth the blast radius.
-
-    **A PARTIAL reply is not an answer either.** Both returned fields carry a
-    verdict, and each is read with a default that looks definite: an absent
-    `ActiveState` silently makes `running` false, so a truncated reply that
-    happened to contain `LoadState` reported the host as *stopped* when its
-    state was in fact unknown. Every property the verdict depends on must be
-    present AND non-empty before the query counts as known -- `LoadState=` is a
-    field, not a value.
-    """
+    """Return unit state with a separate flag for a successful query.
+    Require non-empty LoadState and ActiveState before treating the reply
+    as known. Failed or partial queries must not report the host as stopped
+    or uninstalled."""
     required = ("LoadState", "ActiveState")
     proc = _systemctl_user(["show", RD_UNIT, *(f"--property={name}" for name in required)])
     values: Dict[str, str] = {}
@@ -15619,15 +14893,12 @@ def remote_desktop_status() -> Dict[str, Any]:
             "known": output_present is not None,
             "present": output_present is True,
         },
-        # The silent failure, made loud: the host is up on Hyprland with no
-        # HEADLESS-1, which means it is capturing a REAL monitor -- the user's
-        # own screen -- and nothing else would ever say so.
+        # A running Hyprland host without the capture output may expose a physical
+        # monitor. Report the missing output in the status.
         "captureFallback": bool(running and managed["manages"] and output_present is False),
         "webUi": f"https://{_rd_web_host()}:{RD_WEB_PORT}",
         "session": session,
         "pairedClients": paired["names"],
-        # One malformed field degrades to unknown; it never takes the host and
-        # session state down with it.
         "pairedClientsKnown": paired["known"],
         "pairedClientsError": paired["error"],
         # Names dropped because the file held bytes that are not valid UTF-8.
@@ -15660,12 +14931,8 @@ def remote_desktop_start() -> Dict[str, Any]:
     if not unit["exists"]:
         return _rd_result(actions, [f"{RD_UNIT} is not installed"], manual)
 
-    # Idempotent, deliberately. `toggle` decides from a state read, and the unit
-    # can change between that read and here -- it can exit on its own, or a
-    # concurrent client can bring it up. The losing path must touch NO output:
-    # a host that is already running has already picked its capture target, so
-    # creating a second virtual output for it would leave the user a phantom
-    # monitor and change nothing else.
+    # A running host has already selected its capture target. Return without
+    # creating an output if the unit started between toggle's read and this call.
     if unit["running"]:
         manual.append(f"{RD_UNIT} was already running; nothing to do")
         return _rd_result(actions, failures, manual)
@@ -15705,19 +14972,9 @@ def remote_desktop_start() -> Dict[str, Any]:
             if proc.returncode != 0:
                 detail = (proc.stderr or proc.stdout or "").strip()
                 return _rd_result(actions, [f"could not create {RD_OUTPUT}: {detail or f'hyprctl exited {proc.returncode}'}"], manual)
-            # hyprctl reporting success is NOT the same as the output
-            # existing. If it is absent, Sunshine picks a real monitor at
-            # startup and streams the user's own screen with nothing anywhere
-            # to say so -- the same silent fallback the `present is None`
-            # refusal above guards, reached from the other side. Verify, and
-            # refuse rather than start blind.
-            #
-            # Nothing is rolled back on either failure path: `False` means there
-            # is no output to remove, and `None` means we cannot tell what is
-            # there, so removing would be the guess this whole record exists to
-            # avoid. Ownership is recorded only AFTER this check, so what was
-            # verified as created is exactly what is owned and what stop may
-            # remove.
+            # Verify output presence after creation before recording ownership or starting
+            # Sunshine. A missing output can cause physical-monitor capture.
+            # If presence is unknown, do not remove an output whose state is unverified.
             verified = _rd_output_present()
             if verified is not True:
                 detail = (
@@ -15733,10 +14990,8 @@ def remote_desktop_start() -> Dict[str, Any]:
             actions.append(f"created {RD_OUTPUT}")
             record_error = _rd_record_output_created()
             if record_error:
-                # Fail safe toward LEAVING it. An unrecorded output is left
-                # alone by stop, which leaks a monitor the user can remove in
-                # one click; guessing ownership the other way deletes one that
-                # may be theirs, which they cannot undo.
+                # Leave an output without an ownership record intact. Removing it without
+                # confirmed ownership could delete a user-created monitor.
                 manual.append(
                     f"created {RD_OUTPUT} but could not record that VGS created it "
                     f"({record_error}); stop will leave it in place"
@@ -15751,11 +15006,7 @@ def remote_desktop_start() -> Dict[str, Any]:
     if proc.returncode != 0:
         detail = (proc.stderr or "").strip()
         failures.append(f"could not start {RD_UNIT}: {detail or f'systemctl exited {proc.returncode}'}")
-        # Transactional. The output was created FOR this start; leaving it
-        # behind hands the user a phantom monitor AND no host, which is exactly
-        # the state the disabled-by-default design exists to avoid. Only what
-        # this call created is removed -- `created` is false when the output was
-        # already there.
+        # If host startup fails, remove only the output created for this attempt.
         if created:
             reason = _rd_remove_output()
             if reason:
@@ -15800,10 +15051,8 @@ def remote_desktop_stop() -> Dict[str, Any]:
         _rd_clear_output_record()
         return _rd_result(actions, failures, manual)
     if not _rd_output_is_ours():
-        # Present, but VGS did not create it -- or the record belongs to a
-        # previous compositor instance. Removing it would delete a virtual
-        # output the user set up for something else, and they cannot undo that
-        # from here.
+        # Leave outputs intact when the ownership record is absent or belongs to
+        # another compositor instance.
         manual.append(f"{RD_OUTPUT} was not created by VGS, so it is left in place")
         return _rd_result(actions, failures, manual)
 
@@ -15852,12 +15101,8 @@ def _print_remote_desktop_status(status: Dict[str, Any]) -> None:
 
 
 def _rd_watch_token(line: str) -> str:
-    """Classify one journal line into a watch token, or "" to ignore it.
-
-    Pure, so scripts/check-vshell-helper.py can exercise every branch without a
-    running host -- which is the only way this gets tested at all, since
-    starting Sunshine means capturing somebody's screen.
-    """
+    """Classify a journal line as a watch token, or an empty string to ignore it.
+    Tests patch this seam to run the watch loop without Sunshine."""
     if "CLIENT CONNECTED" in line:
         return "connected"
     if "CLIENT DISCONNECTED" in line:
@@ -15899,7 +15144,6 @@ def remote_desktop_watch() -> int:
     except KeyboardInterrupt:
         return 130
     except BrokenPipeError:
-        # The reader went away; that is the normal way this ends.
         return 0
     finally:
         with contextlib.suppress(Exception):
@@ -15948,12 +15192,8 @@ def cmd_remote_desktop(argv: List[str]) -> int:
             return 2
         return 0 if status["running"] else 1
 
-    # One lock around the whole lifecycle operation, INCLUDING toggle's state
-    # read. That closes the window against another helper invocation deciding
-    # from the same reading. It cannot close the window against the unit
-    # changing on its own -- a Moonlight client connecting, the daemon exiting
-    # -- which is why start and stop are also idempotent, and why the losing
-    # path of each creates and destroys nothing.
+    # Hold the lifecycle lock across toggle's state read and action. The unit
+    # can still change independently, so start and stop must handle that race.
     with _rd_lifecycle_lock():
         if args.cmd == "toggle":
             # A failed query must not be read as "stopped" -- that would start a
@@ -16027,7 +15267,7 @@ def cmd_notifications(argv: List[str]) -> int:
 
 
 def cmd_terminal(argv: List[str]) -> int:
-    """The one entry point every VGS surface uses to open a terminal."""
+    """Dispatch terminal CLI arguments to the shared terminal launcher."""
     usage = (
         "Usage:\n"
         "  vshell terminal resolve [--json] [--prefer TERMINAL]\n"
@@ -16114,12 +15354,10 @@ def cmd_terminal(argv: List[str]) -> int:
     if sub == "exec" and not cmd:
         eprint("vshell terminal exec: a command is required after --")
         return 2
-    # Everything that reaches this CLI was launched detached by the shell, so a
-    # failure printed to stderr would reach nobody: report it to the user.
+    # CLI callers may be detached, so request a visible error notification.
     return spawn_terminal(cmd, app_id=app_id, hold=hold, wait=wait, prefer=prefer, notify=True,
-                          # A caller waiting on this process is supervising the
-                          # command; keep the terminal in our process group so it
-                          # dies with the supervisor rather than being orphaned.
+                          # Waiting callers supervise the command. Keep the terminal in this process
+                          # group so the supervisor can terminate it with the command.
                           detach=not wait,
                           what="the requested terminal command" if cmd else "a terminal")
 

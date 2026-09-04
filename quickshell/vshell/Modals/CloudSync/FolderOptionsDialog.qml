@@ -5,9 +5,7 @@ import qs.Widgets
 import qs.Modules.Settings.Widgets
 import "CloudSyncIcons.js" as CloudIcons
 
-// Edits the settings a folder can safely change in place. Mode, account and
-// paths are fixed after creation: changing them would invalidate the sync state
-// that describes the pair, so they are shown read-only.
+// Edit folder options without changing mode, account or paths, which identify the existing sync baseline.
 CloudSyncDialog {
     id: dialog
 
@@ -86,7 +84,7 @@ CloudSyncDialog {
         });
     }
 
-    // ---- Fixed facts ----
+
     CloudSyncRow {
         iconName: CloudIcons.modeIcon(dialog.folder.mode)
         iconColor: Theme.primary
@@ -103,7 +101,7 @@ CloudSyncDialog {
         color: Theme.surfaceVariantText
     }
 
-    // ---- Name ----
+
     StyledText {
         width: parent.width
         text: I18n.tr("Folder name", "Field label for the display name of a synced folder")
@@ -117,7 +115,7 @@ CloudSyncDialog {
         onTextEdited: dialog.folderName = text
     }
 
-    // ---- Schedule ----
+
     CloudSyncDropdownRow {
         visible: !dialog.isStream
         text: I18n.tr("Sync schedule", "Setting label for how often a folder syncs")
@@ -186,7 +184,7 @@ CloudSyncDialog {
         onTextEdited: dialog.excludes = text
     }
 
-    // ---- Two-way maintenance ----
+
     StyledText {
         visible: dialog.isTwoWay
         width: parent.width
@@ -221,7 +219,7 @@ CloudSyncDialog {
         }
     }
 
-    // ---- Remove ----
+
     StyledText {
         width: parent.width
         topPadding: Theme.spacingS

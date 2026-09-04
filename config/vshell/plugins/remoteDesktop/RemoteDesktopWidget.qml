@@ -6,19 +6,8 @@ import qs.Services
 import qs.Widgets
 import qs.Modules.Plugins
 
-// Sunshine remote-desktop host, in the bar.
-//
-// The pill is ALWAYS present, dimmed when Sunshine is not installed — the same
-// shape as sudoToggle. Hiding it while the host is down would remove the only
-// thing the widget is for: this host is deliberately not autostarted, so
-// "stopped" is its normal state and starting it is the whole affordance. A
-// control that appears only once you have already started the thing by other
-// means is not a control.
-//
-// Three states, never two. "Listening" and "somebody is watching my screen" are
-// different facts, and an unnoticed live capture is a privacy problem, so the
-// streaming state borrows the capture language already established by
-// `screenRecord`: Theme.error, filled glyph, a word rather than an icon alone.
+// Keep the host control visible while Sunshine is stopped so the user can
+// start it. Distinguish listening from live capture in the pill.
 PluginComponent {
     id: root
 
@@ -32,44 +21,18 @@ PluginComponent {
     readonly property bool watchLive: RemoteDesktopService.watchLive
     readonly property bool busy: RemoteDesktopService.busy
     readonly property bool captureFallback: RemoteDesktopService.captureFallback
-    // The third knowledge axis: hyprctl could not be asked whether the virtual
-    // output exists. Only meaningful where VGS manages one at all.
+    // Unknown virtual-output state matters only on compositors where VGS manages it.
     readonly property bool outputUnknown: RemoteDesktopService.outputSupported && !RemoteDesktopService.outputKnown
-    // Whether VGS creates and owns the virtual output on this compositor at all.
-    // False on anything but Hyprland, where the host captures a real monitor.
+    // Whether this compositor supports a VGS-managed virtual output.
     readonly property bool outputManaged: RemoteDesktopService.outputSupported
 
-    // "streaming"   -> a client is connected right now.
-    // "unknown"     -> no usable answer yet, or the last probe could not run.
-    // "unavailable" -> Sunshine is not installed here.
-    // "stale"       -> the event watch is down, so nothing below is trustworthy.
-    // "listening"   -> the host is up and nobody is connected.
-    // "off"         -> the host is down.
-    //
-    // ORDER MATTERS, twice over.
-    //
-    // `streaming` is tested FIRST, ahead of every uncertainty state. A capture
-    // that may still be live must fail loud: downgrading it to a question mark
-    // because a probe failed would hide the one thing this widget exists to
-    // show. Uncertainty is reported alongside it in the popout instead.
-    //
-    // `statusKnown` is tested before `installed`, because `installed` defaults
-    // to false — testing it first rendered "Sunshine is not installed" for
-    // every instant before the first reply, and again after any failed probe.
-    // A default is not an answer.
-    // Pure decision function. `scripts/test-remote-desktop-state.js` extracts
-    // THIS source text and exercises it directly, so the shipped ordering is
-    // what is tested — bundled plugins get no runtime coverage from
-    // `qml-smoke.sh --nested` (VGS-19), and both bugs this closes were ordering
-    // bugs. Keep it free of QML API calls.
+    // Keep this decision free of QML APIs: scripts/test-remote-desktop-state.js extracts the marked block and runs it as JavaScript.
+    // Possible capture takes priority over uncertainty. Check statusKnown before
+    // installed because the default false does not establish a missing host.
     // BEGIN STATE DECISION
     function visualStateFor(host) {
-        // A possible capture outranks everything, but "confirmed live" and
-        // "last we heard, live" are not the same claim. Losing the event watch
-        // makes the session unknown, not idle, so it renders as its own state:
-        // still red, still says LIVE, with the uncertainty explicit. Showing a
-        // plain LIVE on a dead watcher's last message would claim certainty
-        // nothing has; showing idle would hide a capture that may be running.
+        // A lost session watch cannot establish that capture stopped. Keep the
+        // live warning and identify the uncertainty separately.
         if (host.streaming)
             return host.sessionKnown ? "streaming" : "streaming-unconfirmed";
         if (!host.statusKnown)
@@ -80,15 +43,10 @@ PluginComponent {
             return "stale";
         if (!host.running)
             return "off";
-        // Host up, watch alive, but the journal could not be read: "On" would
-        // claim nobody is watching, which is the same overstatement as a plain
-        // LIVE on an unconfirmed session — just in the reassuring direction,
-        // which is the worse one to get wrong.
+        // A running host with an unreadable session journal cannot establish idle state.
         return host.sessionKnown ? "listening" : "listening-unconfirmed";
     }
-    // Which colour token a state carries. Returned as a NAME, not a Theme
-    // value, so the state table can be asserted without a Theme instance —
-    // "streaming must not look like listening" is a claim about these tokens.
+    // Return a Theme token name so tests can distinguish alarm and idle colors.
     function stateColorTokenFor(state) {
         switch (state) {
         case "streaming":
@@ -105,48 +63,20 @@ PluginComponent {
         }
     }
 
-    // Whether the BAR PILL's glyph takes the state colour instead of the bar's
-    // uniform widget icon colour.
-    //
-    // Bars keep one icon colour by convention, and for "off" and "listening"
-    // that convention is right — nothing is wrong, and a bar of differently
-    // coloured glyphs is noise. It is wrong for the states that mean something
-    // is happening or unknown: in `icon` pill mode there is no text at all, so
-    // `cast_connected` vs `cast` was the ONLY difference between "someone is
-    // watching my screen" and "idle". A glyph shape is not enough signal for
-    // that, which is the whole point of the streaming/listening split.
+    // Use state color for alarm and uncertainty icons. Icon-only pills need
+    // the same distinction as pills with text.
     function pillIconUsesStateColor(state) {
         const token = stateColorTokenFor(state);
         return token === "error" || token === "warning";
     }
 
-    // Which tooltip a state gets, as a KEY plus the values that fill it -- never
-    // as a finished sentence.
-    //
-    // tooltipText() used to re-derive the whole ordering: streaming first, then
-    // statusKnown, then installed, then stale. That is visualStateFor()'s table,
-    // written a second time, and the two were free to drift -- in a widget whose
-    // every reported defect so far has been an ordering bug. Selecting on the
-    // state that has already been decided leaves one owner for the order, and
-    // puts this decision inside the markers so the same test that pins the state
-    // table pins the message chosen for each entry.
-    //
-    // Structured, not rendered, for two reasons. The sentences stay in QML,
-    // where I18n can reach them -- sibling plugins already use I18n.tr, and text
-    // formatted anywhere else would be permanently out of its reach. And this
-    // block is executed as plain JS by scripts/test-remote-desktop-state.js, so
-    // it must call no QML API, which a translated string necessarily would.
-    //
-    // `reason` is the service's own explanation for the uncertainty and may be
-    // empty; the caller supplies the fallback wording. `detail` is the session
-    // summary, which is composition rather than selection and is built by
-    // sessionDetailFrom() below.
+    // Return a translation key and parameters. QML renders the descriptor so
+    // I18n can translate it and this extractable decision stays free of QML APIs.
+    // The caller supplies fallback reason text and composes session detail.
     function tooltipFor(state, facts) {
         switch (state) {
         case "streaming":
-            // The host axis can be uncertain while the session is confirmed --
-            // a live capture with a failed status probe -- and that is worth
-            // saying beside "someone is streaming", not instead of it.
+            // Host status can be uncertain while a live session is confirmed.
             return {
                 "key": facts.statusKnown ? "streaming" : "streaming-host-uncertain",
                 "reason": "",
@@ -163,8 +93,7 @@ PluginComponent {
         case "listening-unconfirmed":
             return { "key": "listening-unconfirmed", "reason": facts.sessionError || "", "detail": "" };
         case "listening":
-            // Capture fallback outranks an unchecked output: one is a known bad
-            // state, the other is not knowing, and the known one is worse.
+            // Report known capture fallback before an unchecked virtual-output state.
             if (facts.captureFallback)
                 return { "key": "listening-capture-fallback", "reason": "", "detail": "" };
             if (facts.outputUnknown)
@@ -175,10 +104,7 @@ PluginComponent {
         }
     }
 
-    // The session summary: codec · bitrate · depth, from whatever is present.
-    // The one piece of genuine COMPOSITION here, so it is the one piece worth
-    // having under test -- the rounding and the omit-when-absent rule are easy
-    // to get wrong and invisible to qmllint.
+    // Compose available session details: codec, bitrate, and depth.
     function sessionDetailFrom(facts) {
         const parts = [];
         if (facts.codec)
@@ -190,22 +116,15 @@ PluginComponent {
         return parts.join(" · ");
     }
 
-    // Which subtitle the popout's host row carries while the host is up.
-    //
-    // Every branch answers; none falls through to "". A blank line where the
-    // neighbouring states all have one reads as a rendering fault rather than
-    // as "not applicable here", and the case that produced it -- a compositor
-    // VGS cannot create a virtual output on -- is precisely the one where the
-    // user most needs telling that a REAL monitor is being captured.
+    // Choose a host subtitle, including real-monitor capture on compositors
+    // where VGS cannot manage a virtual output.
     function upSubtitleFor(facts) {
         if (facts.outputUnknown)
             return { "key": "output-unknown", "output": facts.outputName };
         if (facts.outputPresent)
             return { "key": "output-present", "output": facts.outputName };
         if (facts.outputManaged)
-            // Hyprland, asked and answered, and the output is gone: the host is
-            // on a real monitor. The warning card below says it at length; the
-            // subtitle must not be the one line that says nothing.
+            // A missing managed output means the host can capture a real monitor.
             return { "key": "output-missing", "output": facts.outputName };
         return { "key": "output-unmanaged", "compositor": facts.compositor || "" };
     }
@@ -233,8 +152,7 @@ PluginComponent {
         }
     }
 
-    // Unconfirmed keeps the alarm colour: softening it would trade a possible
-    // live capture for a tidier bar.
+    // Keep possible capture in the alarm color when confirmation is unavailable.
     readonly property color stateColor: {
         switch (root.stateColorTokenFor(root.visualState)) {
         case "error":
@@ -270,8 +188,7 @@ PluginComponent {
         }
     }
 
-    // Renders the descriptor tooltipFor() chose. Text selection only: no state
-    // is decided here, so the ordering cannot drift from visualStateFor().
+    // Translate the descriptor selected by tooltipFor.
     function tooltipText() {
         const t = root.tooltipFor(root.visualState, {
             "statusKnown": root.statusKnown,
@@ -318,7 +235,7 @@ PluginComponent {
         });
     }
 
-    // Renders the descriptor upSubtitleFor() chose, same division of labour.
+    // Translate the descriptor selected by upSubtitleFor.
     function upSubtitleText() {
         const s = root.upSubtitleFor({
             "outputUnknown": root.outputUnknown,
@@ -345,9 +262,8 @@ PluginComponent {
         service: RemoteDesktopService
     }
 
-    // Starting the host creates a virtual output and opens a listening port, so
-    // it is never reachable by a pointer crossing the bar. The pill opens the
-    // popout; the toggle inside it is the only way to change state.
+    // Starting a host opens a listening port and can create a virtual output.
+    // Require an explicit control activation; hover only opens the popout.
     pillClickOnHover: false
 
     property var _hoverItem: null
@@ -395,7 +311,6 @@ PluginComponent {
         }
     }
 
-    // ============================ PILL ============================
     horizontalBarPill: Component {
         Row {
             spacing: Theme.spacingXS
@@ -406,8 +321,6 @@ PluginComponent {
                 size: root.iconSize
                 color: root.pillIconColor
                 filled: root.visualState === "streaming"
-                // Dimmed reads as "present but not operable"; the popout still
-                // explains why rather than doing nothing.
                 opacity: root.installed ? 1 : 0.4
                 anchors.verticalCenter: parent.verticalCenter
             }
@@ -463,7 +376,6 @@ PluginComponent {
         }
     }
 
-    // ============================ POPOUT ============================
     popoutWidth: 380
     popoutContent: Component {
         PopoutComponent {
@@ -487,7 +399,6 @@ PluginComponent {
                 width: parent.width
                 spacing: Theme.spacingS
 
-                // ---- Host card + start/stop ----
                 StyledRect {
                     width: parent.width
                     height: hostRow.implicitHeight + Theme.spacingM * 2
@@ -556,9 +467,7 @@ PluginComponent {
                             Layout.alignment: Qt.AlignVCenter
                             hideText: true
                             checked: root.hostUp
-                            // An unknown host state has no true position to
-                            // show, so the control is inert rather than
-                            // offering to "start" something that may be up.
+                            // Unknown host state cannot supply a reliable toggle position.
                             enabled: root.statusKnown && root.installed && !root.busy
                             onToggled: want => {
                                 if (want)
@@ -570,11 +479,7 @@ PluginComponent {
                     }
                 }
 
-                // ---- Capture is falling back to a real monitor ----
-                //
-                // The whole reason the lifecycle lives in the helper. If this
-                // ever shows, the host is streaming a screen the user is
-                // actually looking at, and nothing else in the system says so.
+                // Warn when the host can capture a real monitor instead of its managed output.
                 StyledRect {
                     width: parent.width
                     visible: root.captureFallback
@@ -605,7 +510,6 @@ PluginComponent {
                     }
                 }
 
-                // ---- The state on screen may be out of date ----
                 StyledRect {
                     width: parent.width
                     visible: !root.statusKnown || root.visualState === "stale" || (root.hostUp && !root.sessionKnown) || root.outputUnknown
@@ -656,13 +560,10 @@ PluginComponent {
                     }
                 }
 
-                // ---- Live session ----
                 Column {
                     width: parent.width
                     spacing: Theme.spacingXS
-                    // Only while confirmed. The cached fields are cleared when
-                    // the watch dies, so this would render an empty card;
-                    // hiding it says "unknown" more honestly than blank rows.
+                    // Show session details only after confirmation; a lost watch clears cached fields.
                     visible: root.streaming && root.sessionKnown
 
                     StyledText {
@@ -674,9 +575,8 @@ PluginComponent {
 
                     Repeater {
                         model: [
-                            // Between a `connected` event and the authoritative
-                            // read, the count is not known -- and a 0 beside a
-                            // live capture reads as a fact rather than a gap.
+                            // A connected event can precede the authoritative client count. Do not
+                            // render a default zero as a confirmed count.
                             { label: "Clients", value: RemoteDesktopService.sessionCountKnown ? String(RemoteDesktopService.sessionCount) : "confirming…" },
                             { label: "Codec", value: RemoteDesktopService.sessionCodec },
                             { label: "Bitrate", value: RemoteDesktopService.sessionBitrateBps > 0 ? (Math.round(RemoteDesktopService.sessionBitrateBps / 1000) + " kbps") : "" },
@@ -709,7 +609,6 @@ PluginComponent {
                     }
                 }
 
-                // ---- Web UI ----
                 VgsButton {
                     width: parent.width
                     visible: root.installed
@@ -729,11 +628,8 @@ PluginComponent {
                     elide: Text.ElideRight
                 }
 
-                // ---- Paired devices ----
-                //
-                // PAIRED, not connected. Sunshine's journal does not say which
-                // client a session belongs to, so naming one here would be a
-                // guess dressed as a fact; the heading says which it is.
+                // Sunshine does not identify the paired client owning a journal session.
+                // List paired devices without claiming that they are connected.
                 Column {
                     width: parent.width
                     spacing: Theme.spacingXS

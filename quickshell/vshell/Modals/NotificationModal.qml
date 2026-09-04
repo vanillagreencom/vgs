@@ -11,9 +11,7 @@ VgsModal {
 
     layerNamespace: "vshell:notification-center-modal"
 
-    // Null means VgsModalStandalone.open() puts the center on the focused
-    // screen. Pinning it to a named output belongs in user config, not here —
-    // a connector name is specific to one machine's cabling.
+    // A null target follows the focused screen. Named output selection belongs in user configuration.
     targetScreen: null
 
     property bool notificationModalOpen: false
@@ -195,11 +193,8 @@ VgsModal {
             return "NOTIFICATION_MODAL_DISMISS_ALL_POPUPS_SUCCESS";
         }
 
-        // Invoke the newest notification's default action — same behaviour as
-        // left-clicking a popup card (NotificationPopup.qml): actions[0].invoke()
-        // then dismiss. Prefers the newest visible popup; falls back to the newest
-        // notification in the center. Both lists are appended in arrival order, so
-        // "newest" = last element. Bound to Super+Shift+N in Hyprland.
+        // Invoke the newest visible popup's default action, or the newest centre notification if no popup is visible.
+        // Both service lists append in arrival order, so the last element is the newest.
         function activateLatest(): string {
             const popups = NotificationService.popups;
             const pool = (popups && popups.length > 0) ? popups : NotificationService.notifications;

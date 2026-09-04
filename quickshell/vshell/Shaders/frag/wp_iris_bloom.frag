@@ -1,4 +1,3 @@
-// ===== wp_iris_bloom.frag =====
 #version 450
 
 layout(location = 0) in vec2 qt_TexCoord0;

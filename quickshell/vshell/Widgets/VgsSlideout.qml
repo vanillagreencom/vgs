@@ -18,7 +18,7 @@ PanelWindow {
     property var targetScreen: null
     property var modelData: null
     property bool triggerUsesOverlayLayer: false
-    // Drop off the Overlay layer (back to Top) while an overlay modal
+    // Move to the Top layer while an overlay modal needs to receive input above this slideout.
     property bool suppressOverlayLayer: false
     property real slideoutWidth: 480
     property bool expandable: false
