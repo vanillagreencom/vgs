@@ -15,9 +15,8 @@ So: every executable check under `scripts/` must be invoked by the manifest and
 by the CI workflow, or carry a written exclusion here; and every command in the
 manifest must be runnable exactly as written.
 
-The manifest moved out of AGENTS.md § Validation into `scripts/validate`
-(VGS-123), so this parses the runner; the tables it cross-compares against moved
-with it, to `.github/instructions/validation-scripts.instructions.md`.
+The manifest lives in `scripts/validate`, so this parses the runner; the tables
+it cross-compares against sit beside it, in `scripts/AGENTS.md`.
 """
 
 from __future__ import annotations
@@ -45,7 +44,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 AGENTS = REPO_ROOT / "AGENTS.md"
 SKILL_DOC = REPO_ROOT / ".agents" / "skills" / "vshell-dev" / "SKILL.md"
 RUNNER = REPO_ROOT / "scripts" / "validate"
-TABLES_DOC = REPO_ROOT / ".github" / "instructions" / "validation-scripts.instructions.md"
+TABLES_DOC = REPO_ROOT / "scripts" / "AGENTS.md"
 CI = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 SCRIPTS = REPO_ROOT / "scripts"
 
@@ -63,9 +62,9 @@ NOT_A_SUITE_CHECK = {
 }
 
 # Checks the suite runs but CI cannot, with the reason CI cannot run them.
-# validation-scripts.instructions.md § "What CI covers, and what it cannot"
-# documents these at length; this is the machine-readable half, so the two
-# cannot disagree silently.
+# scripts/AGENTS.md § "What continuous integration covers, and what it cannot"
+# states these in prose; this is the machine-readable half, so the two cannot
+# disagree silently.
 LOCAL_ONLY = {
     "smoke-surfaces.sh": "needs a live Hyprland VGS session and reads `hyprctl layers`",
     "check-label-taxonomy.py": "reads live Linear label inventory; CI has no Linear credentials and no local cache",
@@ -90,8 +89,8 @@ AREA_ENUMERATING_DOCS = (AGENTS, TABLES_DOC, SKILL_DOC)
 SYNTAX_CHECK_FLAGS = {"--check", "-n", "py_compile"}
 
 
-# The prose tables in validation-scripts.instructions.md § What CI covers, keyed
-# by the bold lead-in above each. Claiming the doc and the code cannot
+# The prose tables in scripts/AGENTS.md § What continuous integration covers,
+# and what it cannot, keyed by the bold lead-in above each. Claiming the doc and the code cannot
 # disagree is only true if something compares them; before this, nothing did,
 # and the table had drifted (it listed qml-smoke.sh, which is reached
 # indirectly rather than being local-only).
@@ -397,7 +396,7 @@ def main() -> int:
         for name in sorted(coded - documented_names):
             problems.append(
                 f"scripts/{name} is in {map_name} but not in the "
-                f"validation-scripts.instructions.md table introduced by {lead_in!r}"
+                f"scripts/AGENTS.md table introduced by {lead_in!r}"
             )
         for name in sorted(documented_names - coded):
             problems.append(

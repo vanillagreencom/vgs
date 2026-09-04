@@ -14,7 +14,7 @@ import qs.Widgets.Tooltip
 // Positions are screen-absolute, because the caller is the only thing that
 // knows where its bar edge is. For content inside a window big enough to hold
 // its own tooltip, use VgsInlineTooltip instead — see
-// docs/architecture/design-language.md § Tooltips.
+// docs/architecture/design-language.md § Invariants.
 PanelWindow {
     id: root
 

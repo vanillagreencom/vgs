@@ -74,7 +74,7 @@ from prose_blocks import blocks, fence_left_open, normalized_words
 
 SECTION_MARK = "§"
 # THE TARGET IS ADJACENT TO THE MARK. Only delimiters may sit between them —
-# quotes closing a wrapped string literal, the paren in `(`AGENTS.md` § Mission)`
+# quotes closing a wrapped string literal, the paren in `(`AGENTS.md` § Conventions)`
 # — and crossing a SEPARATOR means the nearest path belongs to the sentence
 # rather than to this pointer. In "§ Live section (sub/doc.md), § Gone section"
 # the path is the FIRST pointer's parenthetical, and reading it as the second's
@@ -98,7 +98,7 @@ CLOSERS = "`\"'*_)]}"
 # after `!`, `?`, `;` or an em dash inherited a target it does not name.
 #
 # THE COMMA IS THE DIFFERENCE, and it is the whole reason inheritance exists:
-# `AGENTS.md` (§ Mission, § Do not) is one enumeration, and the second mark
+# `AGENTS.md` (§ Conventions, § Do not) is one enumeration, and the second mark
 # names AGENTS.md as plainly as the first. Everything else in SEPARATORS ends
 # the clause. `;` and `:` are included deliberately though neither ends a
 # sentence: they separate independent statements, and the two errors are not
@@ -238,7 +238,7 @@ def pointers(path: str, text: str) -> list[tuple[int, str, str, bool, str | None
 
     A SECOND MARK IN THE SAME CLAUSE INHERITS the first's target:
     `.agents/skills/vshell-dev/SKILL.md` writes "canonical in `AGENTS.md`
-    (§ Mission, § Do not)", where the second pointer names AGENTS.md as plainly
+    (§ Conventions, § Do not)", where the second pointer names AGENTS.md as plainly
     as the first. Inheritance stops at any INHERITANCE_STOPS character — every
     separator but the comma — so a later "see § Niri" is read as intra-document,
     which is what it is. An inherited target carries the first pointer's LINK

@@ -1,0 +1,29 @@
+# Plugins, overlays and dependencies
+
+Covers: config/vshell/
+
+Bundled plugins are VGS product UI packaged as plugins and loaded read-only from the repository; they are always available rather than enabled or disabled. A user package under `~/.config/vshell/plugins/` may replace one, and `config/vshell/dependencies.json` declares what every optional feature needs.
+
+## Boundaries
+
+- VGS ships defaults and bundled plugin code; `~/.config/vshell/` holds mutable user state and `~/.config/vshell-local/` holds machine-local overlays outside the repository. Shipped seed files are never written to at runtime.
+- Dotfiles supply private overlays and wiring, never whole-directory VGS config symlinks, and no personal command is required for a default VGS start.
+- A missing optional dependency degrades a widget to an unavailable or empty state; it never crashes the shell.
+
+## Invariants
+
+1. A user package replaces a bundled package only when its manifest declares the override. The loader never infers an override from an id match, because auto-loading a package the user never enabled purely on a name match is a decision nobody made. A package reusing a bundled id without the declaration stays inert and a one-time notice names the collision.
+2. A declared override inherits always-available: auto-enabled without the user turning it on, and undisableable. That exists because an override owning the id of a product surface the shell ships no fallback for would take that surface dark. Settings shows an always-on badge instead of a disable toggle, and the disable call answers with its own distinct refusal.
+3. The swap is gated. The override's start-up check runs and its components compile before the shipped package is unloaded; a failed gate, an incompatible shell requirement or a component that will not compile demotes the override, and the shipped package keeps or takes back the id and stays loaded. Demotion is available whenever a shipped manifest for the id is still on disk, so it does not depend on scan order. Enforced by `scripts/test-bundled-override.js`.
+4. A bundled manifest's shell requirement is audited, never enforced: refusing to load a shipped package would take its product surface offline, which is worse than an unmet declaration. An unsatisfiable one is still a defect, because an override is normally a copy of the shipped manifest and inherits the constraint — so an impossible bundled requirement makes overriding that plugin fail while looking like nothing is wrong. The audit walks every known manifest rather than only the ones that won their id.
+5. Reporting is about refusals, not declarations. The refusal sentence is owned in one place and walks every manifest claiming the id, because a refused override does not own the id and the winner alone never shows the configuration the message exists to explain. It is empty for a bundled id, empty for a package that still owns its id, and empty until shell-version detection lands. Enforced by `scripts/test-plugin-requirement-report.js`.
+6. A scan reads only manifest paths it has never seen, so editing a manifest in place is picked up by a rescan of its id and not by a scan. A rescan re-reads every manifest claiming that id and lets the policy arbitrate from scratch, because rescanning only the owner's path could never change an override's outcome — the package that lost the id is exactly the one never re-read. It accepts an id with no current owner, since an id left empty by a demotion or a collision is the state the command exists to repair.
+7. Ownership is settled by id and identity is by path. Precedence is user over bundled over system, and within one source the manifest path breaks the tie, so two user packages claiming one id resolve to the same owner whichever asynchronous read finishes first. Whether a swap must tear the running package down is judged by path too, never by source. A collision that ends with no package owning a bundled id is reported as an error naming every candidate path, never as a quiet unload.
+8. Every distribution-installable command that gates user-facing behaviour is declared under `features` in the dependency manifest, and a command deliberately left undeclared is listed with its reason in the manifest's own `undeclared` map. `scripts/check-command-declarations.py` enforces both directions: an undeclared probe fails, and so does an exclusion for a command nothing probes any more. Its coverage boundary, including what it deliberately does not scan, is in that script's module docstring.
+9. Shipped code must not probe for a command that exists only in a private dotfiles repository — one no distribution packages and VGS does not ship. A private wrapper belongs behind a user setting the shipped code already passes through, not behind a lookup on its name.
+10. The feature groups are not listed in prose anywhere. A hand-written copy of the manifest is the defect the declaration check closes one layer down, reproduced one layer up; the group names are self-describing, and where a group needs more than its name and commands the explanation lives in a comment array on the manifest entry itself, beside the data it annotates.
+11. Adding a command to the manifest without a distribution-package mapping fails the packaging check, so the native packages' optional dependencies cannot fall behind the manifest. The generator joins the two files and rewrites the generated blocks in the recipes; per-channel mechanisms live in `../../packaging/README.md`.
+
+## Decisions
+
+[D005](../decisions/D005-dependency-version-constraints.md) makes the manifest declare presence only: three of six packaging formats cannot express a version constraint, and the many `--version` output shapes are a false-negative risk, so capability probes answer version questions instead.

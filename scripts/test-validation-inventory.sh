@@ -915,7 +915,7 @@ expect_absent "$guard_out" "never closed" "backtick in an opening info string"
 ok "a run whose info string carries a backtick is prose, so the list it appears to fence stays live"
 
 # AN INDENTED FENCE IS NOT A FENCE HERE, and the contract paragraph in
-# .github/instructions/validation-scripts.instructions.md says so in those
+# scripts/AGENTS.md says so in those
 # words. Pinned rather than left incidental: markers demonstrated inside a
 # bullet-indented block are read as the real thing, which refuses LOUDLY — the
 # right direction, but only if the limit stays where the doc claims it is.
@@ -1358,7 +1358,7 @@ ok "the guard's grammar is exactly what the runner dumped, with nothing supplied
 
 # The table lead-in the local-only/reached-indirectly comparison keys on.
 no_table="$tmp/no-table.md"
-python3 - "$repo_root/.github/instructions/validation-scripts.instructions.md" >"$no_table" <<'MUT'
+python3 - "$repo_root/scripts/AGENTS.md" >"$no_table" <<'MUT'
 import sys
 t = open(sys.argv[1], encoding="utf-8").read()
 print(t.replace("**Local-only — CI cannot run these at all:**", "**Local-only:**"), end="")

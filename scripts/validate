@@ -57,8 +57,8 @@
 # importable modules with no shebang and no `__main__`.
 #
 # WHICH OF THESE CI CAN RUN is not restated here — one enforced copy only.
-# `.github/instructions/validation-scripts.instructions.md` § "What CI covers,
-# and what it cannot" holds it, and `scripts/check-validation-inventory.py`
+# `scripts/AGENTS.md` § "What continuous integration covers, and what it
+# cannot" holds it, and `scripts/check-validation-inventory.py`
 # machine-compares its tables against that file's `LOCAL_ONLY`/`INDIRECT_IN_CI`
 # maps, so a second prose copy in this header could only drift. The measured
 # economics behind the single CI job are in

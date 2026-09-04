@@ -778,7 +778,7 @@ AREA_ANCHOR_CLOSE = "<!-- /validate-areas -->"
 # A FENCE LINE, and its RUN LENGTH, which is what decides pairing below.
 #
 # ONLY AN UNINDENTED BACKTICK FENCE, and the contract paragraph in
-# .github/instructions/validation-scripts.instructions.md says so in those
+# scripts/AGENTS.md says so in those
 # words. A fence opened under a list bullet, and a `~~~` fence, are not matched
 # here, so markers inside one are read as the real thing — which fails LOUDLY
 # (two anchored regions) rather than quietly, and is the direction to keep.

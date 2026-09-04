@@ -332,7 +332,7 @@ jobs:
           python3 -m py_compile bin/vshell-helper
           bash -n bin/vshell
 
-      # AGENTS.md § Backend rules: this is what keeps the Go and QML sides of
+      # backend/AGENTS.md § backend/: this is what keeps the Go and QML sides of
       # the capability inventory in agreement. Pure text analysis, no toolchain.
       - name: Backend capability inventory
         run: |

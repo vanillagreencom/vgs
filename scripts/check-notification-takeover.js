@@ -198,7 +198,7 @@ assert.ok(
 
 // ...and that deadline needs a driver that does not depend on re-entry. A
 // Process that fails to start emits no `exited` and produces no output (see
-// .github/instructions/quickshell-qml.instructions.md), so nothing calls
+// quickshell/vshell/AGENTS.md), so nothing calls
 // _applyServerOwnership(), nothing reaches _resolveFirstRunSpend(), and a
 // deadline only checked on re-entry is never checked at all.
 assert.ok(

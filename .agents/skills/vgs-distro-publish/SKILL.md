@@ -13,9 +13,7 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 
 # Publishing VGS to distributions
 
-Run after the tag builds and `chore(release): pin published vX.Y.Z assets` merges.
-Recipes live in `packaging/`; channel status and install commands in
-`packaging/README.md`.
+Run after the tag builds and `chore(release): pin published vX.Y.Z assets` merges. Recipes live in `packaging/`; channel status and install commands in `packaging/README.md`.
 
 Never claim a channel until its public install command succeeds.
 
@@ -26,12 +24,9 @@ Never claim a channel until its public install command succeeds.
 | AUR `vgs-shell`, `vgs-shell-assets`, `vgs-shell-git` | `publish-aur.yml` on `packaging/arch/**` and after a tag |
 | Nix | flake follows the tag |
 
-If CI is down, `scripts/publish-aur.sh` is the same publisher run by hand; it needs
-an AUR account with commit rights on all three packages.
+If CI is down, `scripts/publish-aur.sh` is the same publisher run by hand; it needs an AUR account with commit rights on all three packages.
 
-`publish-aur.sh` defers a package whose release assets 404, or whose declared
-`sha256sums` disagree with the release's `SHA256SUMS`. Both are expected before the
-pin lands. Any other non-zero is a real failure.
+`publish-aur.sh` defers a package whose release assets 404, or whose declared `sha256sums` disagree with the release's `SHA256SUMS`. Both are expected before the pin lands. Any other non-zero is a real failure.
 
 ## Manual
 
@@ -64,19 +59,13 @@ debsign -k <KEYID> ../vgs-shell_*_source.changes
 dput vgs-ppa ../vgs-shell_*_source.changes    # host config in ~/.dput.cf
 ```
 
-`dput` on Arch ships no `ppa:` shorthand and exits 0 when the host is unknown —
-define `vgs-ppa` (`fqdn = ppa.launchpad.net`,
-`incoming = ~vanillagreen/ubuntu/vgs-shell/` — owner, then distro, then PPA name)
-and read its output, not its status.
+`dput` on Arch ships no `ppa:` shorthand and exits 0 when the host is unknown — define `vgs-ppa` (`fqdn = ppa.launchpad.net`, `incoming = ~vanillagreen/ubuntu/vgs-shell/` — owner, then distro, then PPA name) and read its output, not its status.
 
 Void ships a recipe only — Void has no Quickshell 0.3.0.
 
 ## Verify
 
-Assert the NEW version, not merely that a package exists — an older release still
-published makes every loose check pass. Read the published artefact, not the build
-status: COPR and OBS report success for a build whose packages are not yet in the
-repository, and the AUR's RPC index lags its git by minutes.
+Assert the NEW version, not merely that a package exists — an older release still published makes every loose check pass. Read the published artefact, not the build status: COPR and OBS report success for a build whose packages are not yet in the repository, and the AUR's RPC index lags its git by minutes.
 
 ```bash
 V=$(cat VERSION); bad=0

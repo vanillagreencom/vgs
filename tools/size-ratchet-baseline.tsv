@@ -37,14 +37,6 @@ config/vshell/plugins/sysUpdate/SysUpdateWidget.qml	729
 config/vshell/plugins/tailscale/TailscaleWidget.qml	804
 config/vshell/plugins/vgsMenu/VGSMenu.qml	2319
 config/vshell/settings.default.json	754
-docs/architecture/design-language.md	23232b
-docs/architecture/idle-lock-screensaver.md	18569b
-docs/architecture/notification-ownership.md	17530b
-docs/architecture/overlay-and-dependencies.md	19354b
-docs/architecture/remote-desktop.md	19653b
-docs/architecture/scratchpads.md	22255b
-docs/architecture/shell-architecture.md	24084b
-docs/architecture/theme-architecture.md	41889b
 docs/media/vgs-demo-poster.jpg	1197
 docs/media/vgs-demo.mp4	30319
 kendex.settings.toml	429
@@ -215,7 +207,7 @@ scripts/check-notification-takeover.js	454
 scripts/check-paste-injection.py	897
 scripts/check-section-pointers.py	594
 scripts/check-settings-migration.js	964
-scripts/check-validation-inventory.py	423
+scripts/check-validation-inventory.py	422
 scripts/check-vshell-helper.py	5930
 scripts/check-vshell-niri.py	678
 scripts/gen-package-metadata.py	993

@@ -2,7 +2,7 @@
 """VGS backend method inventory + apiVersion-gate guard.
 
 Enforces the boundary between the QML backend client (VGSBackendService and its
-callers) and the Go backend daemon, using docs/architecture/backend-methods.json
+callers) and the Go backend daemon, using backend/methods.json
 as the source of truth.
 
 Fails (exit 1) when:
@@ -31,7 +31,7 @@ from pathlib import Path
 REPO_ROOT = Path(os.environ.get("VGS_INVENTORY_REPO_ROOT", Path(__file__).resolve().parents[1]))
 QML_ROOT = REPO_ROOT / "quickshell" / "vshell"
 BACKEND_ROOT = REPO_ROOT / "backend"
-MANIFEST = REPO_ROOT / "docs" / "architecture" / "backend-methods.json"
+MANIFEST = REPO_ROOT / "backend" / "methods.json"
 
 # Callsites are scoped to the VGS backend daemon only. Other singletons (e.g.
 # CalendarBackend's separate dcal socket) also have a sendRequest(), so outside
@@ -181,7 +181,7 @@ def main() -> int:
             errors.append(
                 f"UNDOCUMENTED backend method '{method}' referenced in "
                 f"{', '.join(files)} — add it to a capability prefix in "
-                f"backend-methods.json or mark it excluded with a removal action."
+                f"methods.json or mark it excluded with a removal action."
             )
 
     # 2. apiVersion gate ceiling.
@@ -204,7 +204,7 @@ def main() -> int:
         elif capability_for(method, caps) is None:
             errors.append(
                 f"Go backend registers UNDOCUMENTED method '{method}' in "
-                f"{', '.join(files)} — add its capability to backend-methods.json."
+                f"{', '.join(files)} — add its capability to methods.json."
             )
 
     # 4. Ownership contracts that have regressed before.

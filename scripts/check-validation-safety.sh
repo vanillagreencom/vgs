@@ -63,19 +63,15 @@ SENTENCE_SPLIT = re.compile(r"(?<=[.;!?])\s+")
 #
 # The entries are: the runner describing the child it spawns, the greeter
 # fixtures (a greeter runs from /var/cache, never against a live session), and
-# the bot-config and instruction-file prohibitions, where the ban wraps onto a
-# continuation line that no longer carries its own negation. shell.qml's guard
-# comment carries "rather than" on the matched line, so it needs no entry at
-# all, and AGENTS.md stopped needing one when its smoke sentence was rewritten
-# to stop naming the command. An entry costs a rewording of the exact line it
-# names, so prefer that rewrite over adding one.
+# the bot config, where the ban wraps onto a continuation line carrying no
+# negation of its own. Every markdown surface states its prohibition as one
+# unwrapped sentence, so the negation and the command sit together and none of
+# them needs an entry. An entry costs a rewording of the exact line it names, so
+# prefer that rewrite over adding one.
 ALLOWED_CONTEXTS = {
     "backend/internal/runner/runner.go": (
         "extra args appended after `qs -c vshell`",
         "otherwise `qs -c vshell` (with VGS_SOCKET",
-    ),
-    "docs/architecture/backend-daemon.md": (
-        "then spawn `qs -c vshell` as a child",
     ),
     "scripts/check-vshell-helper.py": (
         "/usr/bin/qs -p /var/cache/vshell-greeter/runtime/quickshell/vshell",
@@ -85,17 +81,6 @@ ALLOWED_CONTEXTS = {
     ),
     ".coderabbit.yaml": (
         "`qs -p quickshell/vshell`. Each starts a second full shell",
-    ),
-    ".github/copilot-instructions.md": (
-        "`qs -p quickshell/vshell` each start a full second VGS instance",
-    ),
-    # The prohibition wraps: "Never suggest validating this repo with `qs -c
-    # vshell` or" ends the line above, so this continuation carries a command
-    # whose negation is on the previous line. Sentence-scoping the negation
-    # (VGS-40) is what surfaced it; it is the same wrapped-continuation shape as
-    # the entries above.
-    ".github/instructions/validation-scripts.instructions.md": (
-        "`qs -p quickshell/vshell` — see",
     ),
 }
 
@@ -187,21 +172,11 @@ FIXTURES = [
         "// `qs -c vshell` by hand rather than the script.",
         "//   qs -c vshell",
     ], [3]),
-    ("docs/architecture/backend-daemon.md", [
-        "```text",
-        "(VGS_BACKEND_LISTEN_FD), then spawn `qs -c vshell` as a child",
-        "qs -c vshell",
-        "```",
-    ], [3]),
     # The prohibition text: the wrapped continuation is exempt, a real
     # instruction added to the same file is not.
     (".coderabbit.yaml", [
         "        `qs -p quickshell/vshell`. Each starts a second full shell in the live",
         "        Validate QML with `qs -c vshell`.",
-    ], [2]),
-    (".github/copilot-instructions.md", [
-        "`qs -p quickshell/vshell` each start a full second VGS instance in the live",
-        "Run `qs -p quickshell/vshell` to check your work.",
     ], [2]),
     # An exemption covers its own occurrence and nothing more: appending an
     # instruction to a sanctioned line must still be caught. Line 1 of each pair
@@ -211,17 +186,9 @@ FIXTURES = [
         "        `qs -p quickshell/vshell`. Each starts a second full shell in the live",
         "        `qs -p quickshell/vshell`. Each starts a second full shell in the live; to validate, run qs -c vshell",
     ], [2]),
-    (".github/copilot-instructions.md", [
-        "`qs -p quickshell/vshell` each start a full second VGS instance in the live",
-        "`qs -p quickshell/vshell` each start a full second VGS instance in the live — smoke yours with `qs -p quickshell/vshell`",
-    ], [2]),
     ("backend/internal/runner/runner.go", [
         "\t// QSArgs are extra args appended after `qs -c vshell`.",
         "\t// QSArgs are extra args appended after `qs -c vshell`. To try it: qs -c vshell",
-    ], [2]),
-    (".github/instructions/validation-scripts.instructions.md", [
-        "`qs -p quickshell/vshell` — see `.github/copilot-instructions.md`. Never",
-        "`qs -p quickshell/vshell` — see the docs, or just run qs -c vshell",
     ], [2]),
     # Two sanctioned commands on one line stay exempt, and a third does not.
     ("scripts/check-vshell-helper.py", [
@@ -236,6 +203,7 @@ FIXTURES = [
 DEFECT_FIXTURES = [
     ("`qs -p quickshell/vshell`. Each starts a second full shell", True),
     ("extra args appended after `qs -c vshell`", True),
+    ("`qs -c vshell` vs `qs -p quickshell/vshell`", True),
     ("VGS_BACKEND_LISTEN_FD", False),
     ("the sanctioned smoke is scripts/validate qml", False),
 ]

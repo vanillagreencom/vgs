@@ -153,7 +153,7 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	// Event-only capability: it carries no method of its own, it tells the
 	// shell that this backend pushes tailscale updates instead of only
 	// answering them, so the shell can drop its re-fetch cadence to a bare
-	// liveness backstop. See docs/architecture/backend-methods.json.
+	// liveness backstop. See backend/methods.json.
 	srv.AddCapability("tailscale.watch")
 	m.startWatch()
 	return m, nil
