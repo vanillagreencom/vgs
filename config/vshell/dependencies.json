@@ -33,7 +33,7 @@
     "prime-run": "Same as `nvidia-offload`; the other common wrapper name.",
     "secret-tool": "Optional round-trip verification inside the keyring bootstrap, already behind its own `command -v` guard. The keyring itself is `gnome-keyring-daemon`, declared under `greeter`.",
     "mmsg": "miracle-wm IPC, reached by the bar's Overview pill. VGS targets Hyprland or Niri only, so this probe can never succeed on a supported session: an unsupported-compositor leftover to remove, not a dependency to declare.",
-    "yazi-scratchpad-open": "Not shipped by VGS: a personal-overlay script reached by the capture helpers, behind a fallback. Recorded so the audit keeps seeing it; the same overlay-and-dependencies.md rule applies."
+    "yazi-scratchpad-open": "Not shipped by VGS: a personal-overlay script reached by the capture helpers, behind a fallback. Recorded so the audit keeps seeing it; the same plugins.md declaration rule applies."
   },
   "features": {
     "base": {

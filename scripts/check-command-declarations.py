@@ -290,7 +290,7 @@ def main() -> int:
         print(
             "\nDeclare it under \"features\" in config/vshell/dependencies.json, or add it to\n"
             '"undeclared" with a one-line reason. Shipped code must not probe a command VGS\n'
-            "neither ships nor declares (docs/architecture/overlay-and-dependencies.md).",
+            "neither ships nor declares (docs/architecture/plugins.md).",
             file=sys.stderr,
         )
 

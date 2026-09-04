@@ -187,7 +187,7 @@ BasePill {
                 return;
 
 
-            // A wheel notch is ±120; any other delta is touchpad scrolling, accumulated below.
+            // A ±120 delta is one wheel notch and acts at once; any other delta (high-resolution wheel or touchpad) is accumulated below until it reaches a notch's worth.
             if (delta !== 120 && delta !== -120) {
                 touchpadAccumulator += delta;
                 if (Math.abs(touchpadAccumulator) < 500)

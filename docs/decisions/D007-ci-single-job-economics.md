@@ -39,5 +39,5 @@ Re-measure the timings by running each `scripts/validate` entry under `time` for
 
 ## References
 
-- `.github/instructions/ci.instructions.md` and `.github/instructions/validation-scripts.instructions.md` — the working posture.
+- `.github/workflows/AGENTS.md` and `scripts/AGENTS.md` — the working posture; `scripts/check-validation-inventory.py` holds the CI-coverage tables.
 - `.github/workflows/ci.yml` — the implementation, with structural comments pointing back here for figures.
