@@ -1,18 +1,23 @@
 #!/usr/bin/env bash
-# Publish the in-repo Arch recipes to their AUR repositories.
+# Publish repository Arch recipes to their separate AUR repositories.
 #
-# The AUR keeps a git repository per package and pulls nothing from here, so
-# `packaging/arch/` only reaches users when something pushes it. That something
-# is this script — used by .github/workflows/publish-aur.yml and by the release
-# procedure in .agents/skills/vgs-release/SKILL.md. The AUR side is never edited
-# by hand: a change made there is drift the next run overwrites, and
-# scripts/check-aur-sync.py --remote reports in the meantime.
+# Usage: scripts/publish-aur.sh [--dry-run] [package...]
 #
-# Usage:
-#   scripts/publish-aur.sh --dry-run [package...]   # read-only, shows the diff
-#   scripts/publish-aur.sh [package...]             # commits and pushes (needs
-#                                                   # an AUR account with commit
-#                                                   # rights and its SSH key)
+# --dry-run: show proposed changes without committing or pushing.
+# -h, --help: print this help.
+#
+# Packages: vgs-shell, vgs-shell-assets, vgs-shell-git.
+# Without package arguments, process all supported packages.
+#
+# A normal run commits changed recipe files and pushes them to AUR.
+# Publishing needs an AUR account with commit rights and its SSH key.
+# Dry runs clone public repositories over HTTPS.
+# PKGBUILD and .SRCINFO must agree before publication.
+# Absent source archives defer the affected package.
+# Archive checksum mismatches also defer publication.
+# Network and metadata errors fail the run.
+# Edit recipes here; publication overwrites direct AUR edits.
+# Published packages receive a remote synchronization check.
 set -euo pipefail
 
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -48,9 +53,7 @@ files_for() {
   esac
 }
 
-# Never publish a recipe whose own PKGBUILD and .SRCINFO disagree: .SRCINFO is
-# what the AUR serves to paru and yay, so pushing a stale one ships metadata
-# nobody can see is wrong.
+# AUR clients read .SRCINFO, so it must agree with PKGBUILD before publication.
 "$root/scripts/check-aur-sync.py"
 
 revision="$(git -C "$root" rev-parse --short HEAD)"
@@ -59,23 +62,9 @@ message="sync from vanillagreencom/vgs $revision"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-# A recipe whose source_* point at release tarballs cannot be published before
-# those tarballs exist: `yay -S vgs-shell` would fail to download its source for
-# every user until the tag was built. This is the whole reason the stable
-# package is published from release.yml. Checking the URLs rather than assuming
-# lets a routine packaging change — a dependency fix that leaves pkgver alone —
-# reach stable users immediately instead of waiting for the next release.
-#
-# Three outcomes, and the difference between the last two is the whole point:
-#   0  every source resolves            -> publish
-#   1  a source is definitively absent  -> defer this package, run stays green
-#   2  the check could not be made      -> FAIL the run
-#
-# "Not released yet" and "the runner's DNS blinked" look identical if you only
-# ask whether curl succeeded, and treating the second as the first is silent
-# non-delivery — the exact failure VGS-5 and VGS-53 are about, reintroduced in
-# the tool meant to end it. curl can tell them apart, so it is asked to: a
-# transport error is a transport error, and only 404/410 means "not there".
+# Publish only when source URLs resolve. A missing release defers publication;
+# a transport or inspection failure must fail instead of pretending the release is absent.
+# Return 0 for available sources, 1 for HTTP 404/410, and 2 for an inconclusive check.
 sources_exist() {
   local package="$1" url sources code rc
 
@@ -86,11 +75,7 @@ sources_exist() {
 
   while IFS= read -r url; do
     [[ -n "$url" ]] || continue
-    # `rc=0; x=$(...) || rc=$?` rather than assign-then-read-$?: under `set -e`
-    # a failing command substitution in a bare assignment aborts the script, so
-    # the classification below would never run. It survives today only because
-    # every caller invokes this function in a `||` list, which suspends errexit
-    # for the whole body — a property of the call site, not of this code.
+    # Capture curl failure in a conditional assignment so errexit cannot skip status classification.
     rc=0
     code="$(curl -sSL --head --max-time 30 --retry 2 -o /dev/null -w '%{http_code}' "$url")" || rc=$?
     if [[ "$rc" -ne 0 ]]; then
@@ -115,19 +100,8 @@ sources_exist() {
   return 0
 }
 
-# A source that EXISTS is not yet a source that INSTALLS. Between a version bump
-# and the checksum pin, `source_x86_64` names the new tarball while
-# `sha256sums_x86_64` still holds the previous release's digest — every URL
-# resolves, the check above is satisfied, and `makepkg` fails validity checking
-# for every user who runs `yay -S vgs-shell`. release.yml calls this script
-# immediately after a tag builds, which is precisely that window, so existence
-# alone is the wrong question to stop at.
-#
-# The release publishes SHA256SUMS beside the tarballs, so the answer costs one
-# 283-byte fetch rather than 2 GiB of downloads. Same three outcomes as above,
-# and for the same reason: a digest that disagrees is a recipe waiting for its
-# pin (defer), and a SHA256SUMS that cannot be read is not evidence of anything
-# (fail).
+# Available archives can still disagree with recipe checksums. Compare the published SHA256SUMS
+# before publication. A mismatch defers the package; an unreadable checksum list fails.
 checksums_match() {
   local package="$1" pairs url digest sums_url sums code rc name
 
@@ -153,8 +127,7 @@ checksums_match() {
     fi
 
     name="${url##*/}"
-    # `awk` rather than `grep`, so a filename that is a prefix of another cannot
-    # match the wrong row.
+    # Match the full filename so a prefix cannot select another archive checksum.
     if ! echo "$sums" | awk -v want="$digest" -v file="$name" '
       { published = $1; sub(/^\*/, "", $2) }
       $2 == file { found = 1; if (published == want) ok = 1 }
@@ -175,13 +148,13 @@ for package in "${packages[@]}"; do
   clone="$tmp/$package"
 
   sources_exist "$package" || case "$?" in
-    1) continue ;;          # deferred by design; release.yml owns it
-    *) status=1; continue ;;  # could not check: never green
+    1) continue ;;          # Release publication owns this deferred package.
+    *) status=1; continue ;;
   esac
 
   checksums_match "$package" || case "$?" in
-    1) continue ;;          # awaiting its checksum pin
-    *) status=1; continue ;;  # could not check: never green
+    1) continue ;;
+    *) status=1; continue ;;
   esac
 
   if [[ "$dry_run" -eq 1 ]]; then
@@ -200,11 +173,8 @@ for package in "${packages[@]}"; do
     install -m 644 "$source_dir/$file" "$clone/$file"
   done
 
-  # Intent-to-add first: a file the AUR does not carry at all lands untracked,
-  # and `git diff` ignores untracked files. Neither AUR repository publishes its
-  # .install scriptlet today, so without this a package whose PKGBUILD and
-  # .SRCINFO already match would report as current and the missing scriptlet
-  # would never be pushed — and --dry-run would not show it either.
+  # Intent-to-add includes new files in git diff and dry-run output.
+  # Without it, matching tracked metadata could conceal a missing install scriptlet.
   git -C "$clone" add --intent-to-add --all
 
   if git -C "$clone" diff --quiet --exit-code; then
@@ -223,8 +193,7 @@ for package in "${packages[@]}"; do
   fi
 
   git -C "$clone" add --all
-  # The AUR rejects a push with no committer identity, and a CI runner has
-  # none configured. AUR_COMMIT_NAME/EMAIL let the caller name the account.
+  # AUR pushes require a committer identity. CI callers supply it with AUR_COMMIT_NAME and AUR_COMMIT_EMAIL.
   identity=()
   if ! git -C "$clone" config user.email >/dev/null; then
     identity=(
@@ -238,10 +207,7 @@ for package in "${packages[@]}"; do
   published+=("$package")
 done
 
-# Prove the push landed, for exactly the packages this run published. Scoping
-# matters: verifying a package that was deliberately not published — one whose
-# release tarballs do not exist yet — would report drift that is expected and
-# turn a successful publish red.
+# Verify only packages published by this run; deliberately deferred packages can still differ remotely.
 if [[ "$dry_run" -eq 0 && ${#published[@]} -gt 0 ]]; then
   "$root/scripts/check-aur-sync.py" --remote "${published[@]}" || status=1
 fi

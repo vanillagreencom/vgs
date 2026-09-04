@@ -7,24 +7,14 @@ import qs.Services
 import qs.Widgets
 import "CloudSyncIcons.js" as CloudIcons
 
-// Accounts is the "what am I connected to" page. Each account is an object with
-// its own identity, health, storage and — critically — its own folders: a sync
-// pair belongs to exactly one account, which the flat Folders list cannot show.
-// The card is where that containment becomes visible, so an account expands
-// rather than offering a single row of buttons.
+// Account cards group identity, health, storage and the folders that use that account.
 CloudSyncPage {
     id: page
 
     title: I18n.tr("Accounts", "Cloud Sync accounts page title")
     subtitle: I18n.tr("Cloud services this computer can sync with.", "Cloud Sync accounts page subtitle")
 
-    // One card open at a time: two expanded accounts turn the page into a wall
-    // of folder rows with no visible structure. A single account starts open,
-    // because there is nothing to choose between.
-    //
-    // Plain state, not a binding: as a binding it re-evaluated on every state
-    // broadcast, so adding a second account collapsed the card the user was
-    // reading mid-scroll.
+    // Keep expansion as state rather than a binding so account broadcasts do not collapse the card being read.
     property string expandedAccount: ""
     property bool autoExpanded: false
 
@@ -63,7 +53,7 @@ CloudSyncPage {
         }
     ]
 
-    // ---- Sign-in in progress ----
+
     CloudSyncCard {
         visible: CloudSyncService.oauthActive
         iconName: "hourglass_top"
@@ -116,7 +106,7 @@ CloudSyncPage {
         }
     }
 
-    // ---- Last sign-in failed ----
+
     CloudSyncCard {
         visible: !CloudSyncService.oauthActive && CloudSyncService.oauthError.length > 0
         iconName: "error"
@@ -124,7 +114,7 @@ CloudSyncPage {
         description: CloudSyncService.oauthError
     }
 
-    // ---- Empty state ----
+
     CloudSyncCard {
         visible: CloudSyncService.accounts.length === 0 && !CloudSyncService.oauthActive
         iconName: "cloud_off"
@@ -142,7 +132,7 @@ CloudSyncPage {
         }
     }
 
-    // ---- Account list ----
+
     Repeater {
         model: CloudSyncService.accounts
 
@@ -156,9 +146,7 @@ CloudSyncPage {
             readonly property var accountFolders: CloudSyncService.foldersForAccount(accountCard.accountName)
             readonly property int accountConflicts: CloudSyncService.conflictsForAccount(accountCard.accountName).length
             readonly property string health: modelData.health || "unknown"
-            // Every account action either talks to rclone or starts a sign-in,
-            // and neither is possible while the engine is down or another
-            // sign-in already holds the callback port.
+            // Account actions need the engine and must wait while sign-in holds the callback port.
             readonly property bool actionable: CloudSyncService.daemonRunning && !CloudSyncService.oauthActive
 
             readonly property var quota: modelData.quota || null
@@ -168,7 +156,7 @@ CloudSyncPage {
                 return Math.max(0, Math.min(1, (quota.used || 0) / quota.total));
             }
 
-            // ---- Identity ----
+
             CloudSyncRow {
                 tile: true
                 iconName: CloudIcons.providerIcon(accountCard.modelData.type)
@@ -179,9 +167,7 @@ CloudSyncPage {
                 onClicked: page.expandedAccount = accountCard.expanded ? "" : accountCard.accountName
 
                 trailing: [
-                    // Status is shown, not asked for. The previous "Test" button
-                    // made the user run a diagnostic to learn something the
-                    // service already re-checks on a schedule.
+
                     CloudSyncStatusChip {
                         anchors.verticalCenter: parent.verticalCenter
                         iconName: CloudSyncService.healthIcon(accountCard.health)
@@ -197,10 +183,7 @@ CloudSyncPage {
                 ]
             }
 
-            // ---- Health problem ----
-            // Our own explanation first, rclone's wording second: "couldn't
-            // fetch token: oauth2: cannot fetch token: 400" is not an
-            // instruction, but "sign in again, your folders are safe" is.
+            // Show recovery instructions before the backend diagnostic text.
             Column {
                 width: parent.width
                 spacing: Theme.spacingXS
@@ -242,10 +225,7 @@ CloudSyncPage {
                 }
             }
 
-            // ---- Storage ----
-            // Free space is what a person actually decides on ("can I sync this
-            // folder?"), so it is stated outright rather than left as a
-            // subtraction the reader has to perform.
+
             Column {
                 width: parent.width
                 spacing: Theme.spacingXS
@@ -292,9 +272,7 @@ CloudSyncPage {
                 }
             }
 
-            // ---- Collapsed summary ----
-            // What collapsing would otherwise hide: how much this account is
-            // doing, and whether anything inside it needs a decision.
+
             Row {
                 width: parent.width
                 spacing: Theme.spacingXS
@@ -324,7 +302,7 @@ CloudSyncPage {
                 }
             }
 
-            // ---- Expanded: this account's folders ----
+
             Column {
                 width: parent.width
                 spacing: Theme.spacingXS
@@ -337,9 +315,7 @@ CloudSyncPage {
                 }
 
                 StyledText {
-                    // Uppercase eyebrow, matching the sidebar's group headers:
-                    // at this size it is the only reliable way to read as a
-                    // label rather than as another line of body copy.
+
                     text: I18n.tr("FOLDERS FROM THIS ACCOUNT", "Section header above an account's sync folders")
                     topPadding: Theme.spacingXS
                     bottomPadding: Theme.spacingXXS
@@ -375,8 +351,7 @@ CloudSyncPage {
                         title: modelData.name || modelData.localPath
                         subtitle: modelData.localPath
                         subtitleElide: Text.ElideMiddle
-                        // Opens the Folders page, where a folder is actually
-                        // managed; the account card only surfaces it.
+
                         onClicked: page.parentModal.showFolder(modelData.id)
 
                         trailing: [
@@ -409,7 +384,7 @@ CloudSyncPage {
                 }
             }
 
-            // ---- Expanded: account actions ----
+
             Column {
                 width: parent.width
                 spacing: Theme.spacingS
@@ -430,8 +405,7 @@ CloudSyncPage {
                             return I18n.tr("Checking this account now…", "Status line while an account check is running");
                         if (checked <= 0)
                             return I18n.tr("Not checked yet.", "Status line before an account has been checked");
-                        // The shared relative formatter is sentence-initial
-                        // ("Just now"); mid-sentence it needs its own phrasing.
+                        // The relative formatter returns sentence-initial text; embedded dates need separate wording.
                         if (Math.floor(Date.now() / 1000) - checked < 60)
                             return I18n.tr("Checked just now.", "Status line right after an account check");
                         return I18n.tr("Last checked", "Precedes a relative timestamp for an account check") + " " + CloudSyncService.formatRelativeTime(checked).toLowerCase();
@@ -477,17 +451,14 @@ CloudSyncPage {
                     }
                 }
 
-                // The destructive action sits on its own line, away from the
-                // rest, so it is never the button next to the one you wanted.
+
                 VgsButton {
                     text: I18n.tr("Disconnect account", "Button that removes a cloud account")
                     iconName: "link_off"
                     variant: "secondary"
                     buttonHeight: 32
                     textColor: Theme.error
-                    // Gated like every sibling action: disconnecting an account
-                    // whose OAuth callback is still pending leaves the outcome
-                    // to backend ordering.
+                    // Wait for pending sign-in before disconnecting so its callback cannot race removal.
                     enabled: accountCard.actionable
                     onClicked: page.parentModal.openDialog("disconnectAccount", {
                         "account": accountCard.accountName

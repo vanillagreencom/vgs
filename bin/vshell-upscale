@@ -95,7 +95,6 @@ upscale_one() { # $1=in $2=out $3=model $4=scale $5=width $6=downscale(1/0)
   [ -f "$in" ] || die "input not found: $in"
   local mg; mg="$(magick_bin)"
   local tmp; tmp="$(mktemp --suffix=.png)"
-  # One-shot: load model, upscale, EXIT (VRAM released on process exit).
   "$BIN" -i "$in" -o "$tmp" -n "$model" -s "$scale" -m "$MODELS" >/dev/null 2>&1 \
     || die "upscale failed (model=$model). Try 'vshell-upscale models' or a different --type."
   mkdir -p "$(dirname "$out")"

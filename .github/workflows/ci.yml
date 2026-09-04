@@ -1,40 +1,19 @@
 name: CI
 
-# Runs the scripts/validate manifest on every pull request as individual named
-# steps, never by invoking the runner. Before this workflow the only checks on a
-# VGS PR were CodeQL default-setup Analyze jobs, which say nothing about VGS's
-# own suite — how `check-validation-safety.sh` sat red on clean main (VGS-18).
-#
-# ONE JOB, DELIBERATELY, on the 2 vCPU runner (shared CI_RUNNER_2V repository
-# variable; Blacksmith when set, `ubuntu-latest` when unset — that fallback is
-# supported and must keep working). The suite is ~30s of total compute, so
-# per-job overhead dominates: no lanes, no change-detection JOB, no
-# ci-nightly.yml, no bigger runner tier; the classifier STEP below adds no
-# runner. Figures: docs/decisions/D007-ci-single-job-economics.md.
-#
-# One job also means one stable required check. Point branch protection and the
-# merge queue at `CI / ci-ok` — the job is NAMED for the required context
-# rather than for what it does, which is the indirection a separate aggregator
-# job would have bought: if lanes are ever added, the real work moves to new
-# jobs and `ci-ok` becomes the aggregator over them, and branch protection
-# keeps requiring the same context.
+# Run the scripts/validate manifest as named steps in one job.
+# Keep CI / ci-ok stable because branch protection requires that context.
+# Runner-cost rationale: docs/decisions/D007-ci-single-job-economics.md.
 
 on:
-  # Deliberately NO pull_request_review / pull_request_review_comment triggers.
-  # They mint a second run on the same head that the concurrency group then
-  # cancels; hyprtrade measured 37 of 43 cancellations across 100 runs coming
-  # from exactly those two triggers, and a cancelled required check on the
-  # current head blocks merge-queue enqueue.
+  # Review events can create competing runs for the same head and cancel
+  # the required check before the merge queue can use it.
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
-  # Required checks must exist on merge-group shas too, or a queue entry blocks
-  # forever waiting on a context nothing creates (kendex VST-10).
+  # Merge groups need their own required-check result to enter the queue.
   merge_group:
     types: [checks_requested]
-  # Post-merge signal on main. The absence of exactly this is how a permanently
-  # red check survived on main unnoticed (VGS-18). Cheap here because the job
-  # caches nothing and takes minutes-at-worst.
+  # Post-merge check on main: without it a red check on main persists unnoticed.
   push:
     branches: [main]
 
@@ -42,30 +21,18 @@ permissions:
   contents: read
 
 concurrency:
-  # Per-PR on pull_request; push/merge_group fall back to the ref.
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  # ONLY pull_request cancels. A synchronize means a new head sha, so the
-  # cancelled check-runs land on the superseded sha, which the merge queue
-  # ignores. Nothing may cancel a run on the CURRENT head — the queue counts
-  # every check-run on the head, and a cancelled required check there blocks
-  # enqueue.
+  # Only pull requests cancel superseded runs. Push and merge-group runs
+  # must finish to supply their required-check result.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # ONE JOB, no exceptions. The kendex engines run from the committed render
-  # (.agents/skills/) and are tested upstream in vanillagreencom/kendex on
-  # every change; this repo runs them, it does not re-vet them.
-  # The `review-gate-selftest` job that used to sit here, and the size-ratchet
-  # and vendor-drift suites inside `ci-ok`, were exactly that re-vetting and
-  # are gone (owner directive, 2026-08-26).
-  #
-  # `ci-ok` deliberately takes no gate condition and no fast/full split beyond
-  # the harness classifier below. The v2 single writer
-  # (.github/workflows/review-gate-writer.yml) is the ONLY writer of the gate
-  # status; CI here never evaluates or posts it.
+  # Harness engines are tested upstream. This job runs the committed engines.
+  # review-gate-writer.yml owns review-gate status writes.
   validate:
-    # The required-check context is `CI / ci-ok`; see the aggregator note above.
+    # Branch protection requires CI / ci-ok.
     name: ci-ok
+    # CI_RUNNER_2V is an org variable; the ubuntu-latest fallback must keep working.
     runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
     timeout-minutes: 15
     permissions:
@@ -77,25 +44,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      # Change classifier. The kendex render trees (.agents, .claude, .codex,
-      # .opencode, .cursor, .pi, opencode.json) are upstream output, tested in
-      # vanillagreencom/kendex, so a diff touching nothing else skips the two
-      # expensive tails of this job: the Go toolchain and the Qt install, plus
-      # the pinned actionlint/shellcheck/ruff download between them. The cheap
-      # text checks above and below still run over the whole tree, so the
-      # render keeps its integrity coverage.
-      #
-      # A STEP, not a workflow-level paths-ignore and not a separate job: a
-      # skipped workflow leaves `CI / ci-ok` "expected" and the merge queue
-      # waits on it forever, and a second job would break the one-job rule this
-      # workflow's header states. `ci-ok` runs and reports either way.
-      #
-      # Fail-closed on every edge, the package's semantics and the package's
-      # tests: an unresolvable endpoint, an unreadable or empty diff and an
-      # unclassified event all classify as not-harness-only and run everything.
-      # The classification function is the kendex harness-ci package's,
-      # rendered into .agents by `kendex refresh` and tested upstream. This
-      # step is the only part this repo owns.
+      # Keep classification inside the required job: a skipped workflow leaves
+      # the merge queue waiting for CI / ci-ok. The upstream classifier selects
+      # full validation when it cannot establish a harness-only diff.
       - name: Classify the diff
         id: classify
         env:
@@ -106,36 +57,22 @@ jobs:
           .agents/skills/harness-ci/scripts/harness-only
           --event "$EVENT" --base "$BASE" --head "$HEAD"
 
-      # Cheapest checks first, so the common failures report in seconds rather
-      # than after the Go toolchain and the Qt install.
+      # Run text checks before installing the Go and Qt toolchains.
       - name: Naming guard
         run: scripts/check-naming.sh
 
-      # Asserts this workflow and the scripts/validate manifest still name the
-      # same checks. Four checks under scripts/ were committed and invoked by nothing
-      # at all before this existed (VGS-50).
+      # Compare the workflow commands with the scripts/validate manifest.
       - name: Validation inventory
         run: scripts/check-validation-inventory.py
 
-      # `.agents/skills/` holds render output and this repo's own skills side by
-      # side, and only kendex.toml tells them apart. The guards read it; the two
-      # bot configs and review-bots.md cannot, so this holds their lists to it.
-      # KEN-938 copied the names instead, and a fourth in-place skill then swept
-      # past five surfaces with a dead pointer and no ceiling.
+      # The bot configs cannot read kendex.toml. Check their skill lists against
+      # its in-place declarations.
       - name: Owned-skill register
         run: scripts/check-owned-skills.py
-      # The guard's own arms are controlled in-process; its WIRING is not, and
-      # cannot be — on a clean tree every control passes, so the gate that reads
-      # them is invisible from inside. This runs the guard as a process, one
-      # throwaway root per arm.
+      # Run the guard in throwaway repositories to exercise its process wiring.
       - name: Owned-skill register controls
         run: scripts/test-owned-skills-e2e.py
 
-      # Every `<doc>.md § <section>` pointer must name a heading that exists.
-      # VGS-124's dead pointers were found by hand; VGS-125 merges
-      # docs/architecture/ 13 files into 4, invalidating pointers across bin/,
-      # quickshell/, the project skills and docs/decisions/ at once (VGS-150). The
-      # controls run beside the guard, which has no inline self-test.
       - name: Doc section pointers
         run: scripts/check-section-pointers.py
       # The label taxonomy is the allow-list the issue preflight consults; the
@@ -151,40 +88,17 @@ jobs:
           python3 scripts/lib/tracked_blobs_selftest.py
           python3 scripts/lib/prose_blocks_selftest.py
 
-      # Tighten-only size gate: offenders are frozen in
-      # tools/size-ratchet-baseline.tsv and may only shrink. A path's limit is
-      # the first shipped class it matches — markdown measured in BYTES (24k for
-      # AGENTS/CLAUDE/SKILL.md, 40k workflows, 64k other .md), test classes 800
-      # lines, everything else the 400-line default; no settings key sets any of
-      # those numbers here, deliberately (VGS-111, and kendex.settings.toml).
+      # The upstream path classes set limits; baseline entries may only shrink.
       - name: File-size ratchet
         run: .agents/skills/size-ratchet/scripts/size-ratchet
 
-      # The standing half of the work-marker ban. The pre-commit hook's
-      # `todo-ban --staged` judges only the lines a commit ADDS, so a marker
-      # already in the tree is invisible to it. Scope is every tracked path
-      # tools/todo-ban-excludes does not name. That list drops .agents and the
-      # vendored trees, keeps .claude/.codex/.opencode/.pi, and narrows this step.
+      # The pre-commit marker check sees added lines only. This scan also checks
+      # existing tracked content outside tools/todo-ban-excludes.
       - name: Work-marker ban
         run: .agents/skills/growth-guards/scripts/todo-ban
 
-      # scripts/validate lists a bare `git diff --check`, which is a working-tree
-      # check: on a clean CI checkout it inspects nothing at all. The form that
-      # means something is a range of what the event actually introduces.
-      #
-      # UNCONDITIONAL ON PURPOSE. This step used to carry
-      # `if: github.event_name == 'pull_request'`, which left it silently
-      # skipped on merge_group and main push — green without checking, on
-      # exactly the two events that gate landing code. A usable range exists for
-      # all three events, so there is no reason to skip any of them.
-      #
-      # A whole-tree check is NOT the alternative: the tree's pre-existing
-      # findings all sit in content VGS ships verbatim, so it would be red from
-      # day one. Figures and derivation:
-      # docs/decisions/D007-ci-single-job-economics.md.
-      #
-      # The step fails rather than checking a substitute range when its base
-      # cannot be resolved; see the comment on the fallback inside the script.
+      # A clean checkout has no working-tree diff. Compare the event range so CI
+      # checks the whitespace introduced by the change.
       - name: Whitespace errors introduced by this change
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -192,13 +106,7 @@ jobs:
           PUSH_BEFORE: ${{ github.event.before }}
         run: |
           set -euo pipefail
-          # THERE IS NO FALLBACK BASE, DELIBERATELY. An earlier revision
-          # substituted HEAD^1 whenever the intended base would not resolve.
-          # That turned an unverifiable range into a PASS over a narrower one —
-          # green while claiming coverage it did not have, which is the same
-          # defect as the skipped step this check replaced, one layer down.
-          # Each event names exactly one base, and if that base cannot be
-          # resolved the step fails.
+          # An unresolved event base must fail; a substitute range could miss changes.
           case "$EVENT_NAME" in
             pull_request)
               base="$PR_BASE_SHA"
@@ -223,12 +131,8 @@ jobs:
               exit 1
               ;;
           esac
-          # Unresolvable cases: a force-push can leave the previous tip
-          # unreachable, a branch-creation push sends the all-zero sha, and a
-          # root commit has no first parent. None of them can be papered over
-          # with a different range — "did not check" must never read as
-          # "checked", and a red run on a rewritten trunk is informative, not
-          # noise.
+          # Force-pushes, branch creation, or a root commit can make the selected
+          # base unavailable. Do not substitute a smaller range.
           if [ -z "$base" ] || ! git rev-parse --verify --quiet "$base^{commit}" >/dev/null; then
             echo "::error::cannot resolve $source ('$base') for event $EVENT_NAME, so the whitespace range is unknown and NOTHING was checked. Not falling back to a narrower range: that would pass while claiming coverage it does not have."
             exit 1
@@ -236,12 +140,8 @@ jobs:
           echo "whitespace range: $base...HEAD ($source)"
           git diff --check "$base...HEAD"
 
-      # check-aur-sync.py runs without --remote here on purpose: the offline
-      # half (PKGBUILD vs .SRCINFO) is what a PR can break, and it says out
-      # loud that it did not look at what the AUR publishes. Comparing against
-      # aur.archlinux.org belongs to publish-aur.yml, which owns the push and
-      # runs a weekly drift check; putting a network fetch on every PR would
-      # make an unrelated PR red for an AUR-side problem it cannot fix.
+      # Check local recipe consistency here. publish-aur.yml owns remote drift
+      # checks so AUR availability does not gate unrelated pull requests.
       - name: Packaging metadata and assets
         run: |
           python3 scripts/lib/shell_scan.py
@@ -250,9 +150,7 @@ jobs:
           scripts/check-package-assets.sh
           scripts/check-aur-sync.py
 
-      # Every external command shipped code probes must be declared in
-      # config/vshell/dependencies.json or excluded there with a reason, or
-      # `vshell deps status` reports a healthy system while a feature is dead.
+      # Undeclared command probes can hide a feature dependency from deps status.
       - name: Probed-command declarations
         run: scripts/check-command-declarations.py
 
@@ -263,10 +161,7 @@ jobs:
 
       - name: Queue, theme-request and plugin-policy regressions
         run: |
-          # LOAD-BEARING, not boilerplate: three rows below pipe a self-test into
-          # `grep -qxF`, and a `run:` block is `bash -e {0}` with no pipefail, so
-          # without this the pipeline's status is grep's alone and node's — the
-          # entire verdict — is discarded.
+          # pipefail preserves self-test failures when output is piped to grep.
           set -euo pipefail
           scripts/test-restyle-queue.js
           scripts/test-theme-requests.js
@@ -303,25 +198,18 @@ jobs:
           scripts/test-brightness-scan-ordering.js
           scripts/test-wallpaper-thumbs.py
           scripts/test-wallpaper-thumb-cache.py
-      # Wired in by VGS-50: all four were committed, maintained and invoked by
-      # nothing until then.
       - name: Fixture and capability regressions
         run: |
           scripts/check-display-config-fixtures.js
           scripts/check-vgs-menu-capabilities.js
           scripts/check-vshell-ipc.sh
-          # `smoke-surfaces.sh` itself is local-only (it needs a live Hyprland
-          # VGS session), but its precondition classifier runs entirely off
-          # stubs — a fake `qs` registry, a fabricated procfs, a stub `hyprctl`
-          # — so the branch that decides skip-vs-fail IS checkable here.
+          # The live-session smoke needs Hyprland and VGS. Its precondition tests
+          # use stubs and can run in CI.
           scripts/test-smoke-surfaces.sh
-          # The only thing in CI that runs scripts/validate: its area selection,
-          # fail-closed argument and manifest handling, and its skip channel.
+          # Exercise the validation runner itself, including its skip status.
           scripts/test-validate.sh
           scripts/test-qml-smoke.sh
-          # `scripts/test-validation-inventory.sh` belongs with these but runs in
-          # its own step at the END OF THE JOB — see that step for why. Order
-          # here is free: each script builds its own mktemp tree.
+          # test-validation-inventory.sh runs in its own final step; see that step.
 
       - name: Helper and CLI checks
         run: |
@@ -332,16 +220,13 @@ jobs:
           python3 -m py_compile bin/vshell-helper
           bash -n bin/vshell
 
-      # Cross-check Go registrations and QML callers against backend/methods.json.
       - name: Backend capability inventory
         run: |
           scripts/check-backend-inventory.py
           scripts/check-backend-inventory-tests.py
 
-      # Quickshell matches reload children by index, so Lock.qml's child ORDER
-      # is what keeps a session lock alive across a hot reload. Getting it wrong
-      # aborts the shell on a save while locked, and nothing else in the suite
-      # would catch it — the nested smoke never locks.
+      # Quickshell matches reload children by index. Lock child order must
+      # preserve the session lock across reloads.
       - name: Lock reload order
         run: scripts/check-lock-reload-order.py
 
@@ -351,11 +236,7 @@ jobs:
           # Pinned to the version release.yml builds with, so a PR cannot pass
           # here on a toolchain the release never uses.
           go-version: 1.23.12
-          # CACHING IS OFF ON PURPOSE, and this is the one place where measuring
-          # inverted the obvious answer: the GOCACHE a cold run leaves behind is
-          # ~20x the module download it skips, a net loss to save and restore on
-          # a 2 vCPU runner. Figures and re-measure commands:
-          # docs/decisions/D007-ci-single-job-economics.md.
+          # Cache-cost rationale: docs/decisions/D007-ci-single-job-economics.md.
           cache: false
 
       - name: Go build, vet and race tests
@@ -366,21 +247,8 @@ jobs:
           go -C backend build ./...
           go -C backend vet ./...
           go -C backend test -race ./...
-      # actionlint lints `run:` blocks by shelling out to shellcheck, and with
-      # shellcheck absent it skips every one of them and still exits 0 (VGS-38).
-      # scripts/check-workflows.sh FAILS on a missing tool rather than
-      # degrading, so this trio has to be installed, not assumed. All three are
-      # single static binaries, pinned and fetched from their releases —
-      # shellcheck deliberately NOT taken from the runner image: shellcheck
-      # adds and retunes checks across releases, so an image-supplied version
-      # lets the format/lint floor's verdict drift from the documented local
-      # run. The shellcheck and ruff pins are SINGLE-SOURCED from
-      # scripts/check-format-lint.sh, which requires exactly those versions
-      # locally — extracting them here means one bump site, and a bad
-      # extraction fails the curl loudly rather than installing "latest".
-      # GITHUB_PATH prepends, so RUNNER_TEMP shadows any image copy for every
-      # later step; shellcheck and ruff feed the format/lint floor two steps
-      # down, which fails on a missing or wrong-version tool the same way.
+      # actionlint needs shellcheck to lint shell blocks. Install the pinned
+      # tools required by check-workflows.sh and check-format-lint.sh.
       - name: Install actionlint, shellcheck and ruff (pinned)
         if: steps.classify.outputs.harness_only != 'true'
         env:
@@ -408,73 +276,34 @@ jobs:
         if: steps.classify.outputs.harness_only != 'true'
         run: scripts/check-workflows.sh
 
-      # Formatter/lint floor over first-party Go/shell/Python/JS: gofmt -l,
-      # shellcheck, ruff (rule floor in ruff.toml), node --check. Sits here
-      # because it needs setup-go's gofmt plus the shellcheck/ruff install
-      # above. A missing tool or an empty file set FAILS the check rather than
-      # skipping it — a silent skip is indistinguishable from a pass.
-      # test-format-lint.sh runs HERE rather than with the other test-*.sh
-      # entries: it drives a copy of the check, so it needs the pinned
-      # shellcheck and ruff installed two steps up.
+      # These checks need the Go toolchain and pinned lint tools installed above.
       - name: First-party format and lint floor
         if: steps.classify.outputs.harness_only != 'true'
         run: |
           scripts/check-format-lint.sh
           scripts/test-format-lint.sh
 
-      # CodeRabbit rejects an invalid .coderabbit.yaml and reviews with DEFAULT
-      # settings, reporting nothing on the PR. VGS shipped a 376-character
-      # tone_instructions against a 250 limit, so the file was inert on every
-      # PR. Validated against the vendored schema — offline, so an endpoint
-      # outage cannot turn this into a skip.
+      # Check the pinned CodeRabbit schema offline so invalid settings cannot
+      # silently fall back to service defaults.
       - name: CodeRabbit configuration
         run: scripts/check-coderabbit-config.py
 
-      # qmllint is what `--require-static` needs, and no runner image ships Qt.
-      # This is the single most expensive step here, which is why it is last.
-      # Quickshell itself is NOT installed and does not need to be: the static
-      # check tolerates unresolved qs.* imports by design and fails only on
-      # `[syntax…]` findings.
+      # The static smoke needs qmllint. Unresolved Quickshell imports are
+      # tolerated; syntax findings fail the check.
       - name: Install qmllint (Qt 6 declarative tooling)
         if: steps.classify.outputs.harness_only != 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends qt6-declarative-dev-tools
 
-      # Covers both halves of the safety guard in one command: the repo-wide
-      # scan for unsafe direct-launch instructions, and — via the argument it
-      # forwards to the canonical smoke — the qmllint parse pass over the whole
-      # QML tree in --require-static mode, so a missing qmllint fails loudly.
-      # A plain skip is otherwise indistinguishable from a pass.
-      #
-      # --nested is NOT passed and cannot be: that sandbox needs a real Hyprland
-      # plus a Quickshell install inside the runner. The live-session half of
-      # this guard degrades cleanly here (no compositor and no Quickshell CLI →
-      # "nothing of that kind exists on this system"), which is correct: there is
-      # no live session in CI to disturb. The validation-scripts instruction
-      # file's "What CI covers" tables record what that leaves local-only.
+      # Require the static QML check. The nested runtime smoke needs a compositor
+      # and Quickshell installation that this runner does not provide.
       - name: Validation safety and QML static smoke
         if: steps.classify.outputs.harness_only != 'true'
         run: scripts/check-validation-safety.sh --require-static
 
-      # MUST STAY THE LAST STEP OF THIS JOB. It is the only script in the job
-      # that can exit 77 — the four-valued status scripts/validate defines, here
-      # meaning a control the suite could not create (no PyYAML, or a libc that
-      # resolves no Unicode space), so what ran passed but something did NOT run.
-      # 77 is not a pass and is not treated as one: it reddens this step and the
-      # job, exactly like a failure, and the summary names what was skipped.
-      #
-      # The step boundary is the whole containment, and it only works from LAST
-      # place. Inside a `run:` block, `bash -e` stops at the 77 and drops the
-      # commands after it; across the job, a red step makes GitHub's default
-      # `if: success()` skip every LATER step. Last in the job there is no later
-      # step to skip and nothing behind it in the block, so a 77 costs only the
-      # report of this one suite while every other check has already run. Move
-      # this step or add one after it and that containment is gone.
-      #
-      # Containment is placement only. Do NOT add `continue-on-error`, `set +e`,
-      # or per-command exit-code handling: those would convert the 77 into a
-      # green step, which is the false pass the four-valued exit exists to
-      # prevent.
+      # Keep this step last. Exit 77 means a control could not run and must fail
+      # the job. GitHub skips later steps after a failure, so last position lets
+      # the other checks finish. Do not convert the skip status into success.
       - name: Validation inventory regressions
         run: scripts/test-validation-inventory.sh

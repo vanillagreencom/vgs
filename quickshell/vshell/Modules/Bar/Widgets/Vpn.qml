@@ -42,7 +42,7 @@ BasePill {
 
                 name: NetworkBackendService.connected ? "vpn_lock" : "vpn_key_off"
                 size: Theme.barIconSize(root.barThickness, -4, root.barConfig?.maximizeWidgetIcons, root.barConfig?.iconScale)
-                // Glyph already changes with connection state.
+
                 color: Theme.widgetIconColor
                 opacity: NetworkBackendService.isBusy ? 0.5 : 1.0
                 anchors.centerIn: parent

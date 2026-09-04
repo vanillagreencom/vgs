@@ -1,4 +1,3 @@
-// ===== wp_portal.frag =====
 #version 450
 
 layout(location = 0) in vec2 qt_TexCoord0;
@@ -88,7 +87,6 @@ void main() {
     vec4 oldCol = sampleWithFillMode(source1, uv, ubuf.imageWidth1, ubuf.imageHeight1);
     vec4 newCol = sampleWithFillMode(source2, uv, ubuf.imageWidth2, ubuf.imageHeight2);
 
-    // Edge softness
     float edgeSoft = mix(0.001, 0.45, ubuf.smoothness * ubuf.smoothness);
 
     // Aspect-corrected distance from center (keep circle round)
@@ -97,28 +95,22 @@ void main() {
     vec2 acCenter = vec2(center.x * ubuf.aspectRatio, center.y);
     float dist    = length(acUv - acCenter);
 
-    // Max radius from center to cover screen
     float maxDistX = max(center.x * ubuf.aspectRatio, (1.0 - center.x) * ubuf.aspectRatio);
     float maxDistY = max(center.y, 1.0 - center.y);
     float maxDist  = length(vec2(maxDistX, maxDistY));
 
-    // Smooth easing for a friendly feel
     float p = ubuf.progress;
     p = p * p * (3.0 - 2.0 * p);
 
     // Portal radius shrinks from full to zero (bias by edgeSoft so it vanishes cleanly)
     float radius = (1.0 - p) * (maxDist + edgeSoft) - edgeSoft;
 
-    // Inside circle = old wallpaper; outside = new wallpaper
     float t = smoothstep(radius - edgeSoft, radius + edgeSoft, dist);
-    // When radius is large: t ~ 0 inside (old), ~1 outside (new)
-    // As radius shrinks, old area collapses to center.
 
     vec4 col = mix(oldCol, newCol, t);
 
-    // Snaps
-    if (ubuf.progress <= 0.0) col = oldCol; // full old at start
-    if (ubuf.progress >= 1.0) col = newCol; // full new at end
+    if (ubuf.progress <= 0.0) col = oldCol;
+    if (ubuf.progress >= 1.0) col = newCol;
 
     fragColor = col * ubuf.qt_Opacity;
 }

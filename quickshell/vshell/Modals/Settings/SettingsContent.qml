@@ -24,9 +24,7 @@ FocusScope {
         anchors.topMargin: 32 + Theme.spacingL
         color: "transparent"
 
-        // Flatline: cap the reading column and center it so settings don't
-        // stretch edge-to-edge on wide/maximized windows (Vercel rhythm). On
-        // narrow windows this is a no-op — the column just fills the pane.
+        // Cap and centre the reading column so wide windows do not stretch settings across the full pane.
         Item {
             id: contentColumn
             anchors.top: parent.top

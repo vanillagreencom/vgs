@@ -37,9 +37,7 @@ Column {
     property bool externalWatchPaused: false
     property bool inPopout: false
     property bool surfaceVisible: true
-    // Tab ids are Date.now() timestamps (~1.78e12) which overflow a 32-bit `int`,
-    // corrupting the value (e.g. -946062153) and breaking buffer keying. `var`
-    // holds the full JS-safe integer.
+    // Timestamp tab ids exceed a QML int. var preserves the full JavaScript integer for buffer keys.
     property var loadedTabId: -1
     property bool applyingShared: false
     property bool showPathInfo: false
@@ -382,7 +380,7 @@ Column {
             anchors.rightMargin: Theme.spacingM
             spacing: Theme.spacingS
 
-            // Search icon
+
             VgsIcon {
                 Layout.alignment: Qt.AlignVCenter
                 name: "search"
@@ -390,7 +388,7 @@ Column {
                 color: searchField.activeFocus ? Theme.primary : Theme.surfaceVariantText
             }
 
-            // Search input field
+
             TextInput {
                 id: searchField
                 Layout.fillWidth: true
@@ -443,7 +441,7 @@ Column {
                 }
             }
 
-            // Placeholder text
+
             StyledText {
                 Layout.fillWidth: true
                 Layout.alignment: Qt.AlignVCenter
@@ -451,10 +449,10 @@ Column {
                 font: searchField.font
                 color: Theme.surfaceTextSecondary
                 visible: searchField.text.length === 0 && !searchField.activeFocus
-                Layout.leftMargin: -(searchField.width - 20) // Position over the input field
+                Layout.leftMargin: -(searchField.width - 20)
             }
 
-            // Match count display
+
             StyledText {
                 Layout.alignment: Qt.AlignVCenter
                 text: matchCount > 0 ? "%1/%2".arg(currentMatchIndex + 1).arg(matchCount) : searchQuery.length > 0 ? I18n.tr("No matches") : ""
@@ -464,7 +462,7 @@ Column {
                 Layout.rightMargin: Theme.spacingS
             }
 
-            // Navigation buttons
+
             VgsActionButton {
                 id: prevButton
                 Layout.alignment: Qt.AlignVCenter
@@ -649,8 +647,7 @@ Column {
                         }
 
                         onTextChanged: {
-                            // Debounced flush to the shared buffer (+ optional disk
-                            // autosave) for every loaded tab, not just scratch notes.
+                            // Flush each loaded tab to the shared buffer after typing settles; disk autosave remains optional.
                             if (contentLoaded && !applyingShared) {
                                 autoSaveTimer.restart();
                             }
@@ -734,7 +731,7 @@ Column {
                 Layout.preferredWidth: previewMode === "full" ? parent.width : parent.width * 0.45
                 clip: true
 
-                // Preview header with copy buttons
+
                 Rectangle {
                     id: previewHeader
                     anchors.top: parent.top
@@ -750,7 +747,7 @@ Column {
                         anchors.rightMargin: Theme.spacingM
                         spacing: Theme.spacingS
 
-                        // Copy plain text button
+
                         VgsActionButton {
                             iconName: "content_copy"
                             iconSize: Theme.iconSize - 4
@@ -772,7 +769,7 @@ Column {
                             anchors.verticalCenter: parent.verticalCenter
                         }
 
-                        // Copy HTML button
+
                         VgsActionButton {
                             iconName: "code"
                             iconSize: Theme.iconSize - 4

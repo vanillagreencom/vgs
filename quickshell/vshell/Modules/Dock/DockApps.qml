@@ -71,10 +71,7 @@ Item {
         SessionData.setPinnedApps(currentPinned);
     }
 
-    // Reorder any dragged dock app to a drop position. A pinned app is simply
-    // reordered; an unpinned (running) app is pinned at the drop slot — the
-    // standard "drag a running icon to arrange it" behaviour. Everything is keyed
-    // off the appId, so the running/pinned index split doesn't matter.
+    // Move an app to a drop slot by appId. Dropping an unpinned running app pins it there.
     function moveDockApp(draggedAppId, toDockIndex) {
         if (!draggedAppId || draggedAppId === "__SEPARATOR__" || draggedAppId === "__LAUNCHER__")
             return;

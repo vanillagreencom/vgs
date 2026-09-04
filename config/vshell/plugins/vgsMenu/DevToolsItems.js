@@ -1,10 +1,7 @@
 .pragma library
 
-// Launcher entries for the Dev tools section, built from
-// config/vshell/dev-tools.json: one entry per coding agent (tag Agent) and
-// one per language environment (tag Environment). The catalog is the only
-// list; `group` orders them below the category's own entries (group 0)
-// when no query ranks them.
+// Build launcher entries from config/vshell/dev-tools.json. Group ordering
+// keeps category entries before agents and environments when no query ranks them.
 function iconFields(spec) {
     const match = /^(nerd|brand):([0-9a-f]+)$/i.exec(spec || "");
     if (!match)

@@ -1,58 +1,23 @@
 #!/usr/bin/env bash
-# Canonical VGS QML smoke.
+# Parse QML source and optionally exercise an isolated shell sandbox.
 #
-# Never launches a VGS shell into the live session. A second full VGS instance
-# competes with the session shell for session-global resources (WlSessionLock,
-# the fade-to-lock overlay, idle/DPMS tiers) and leaves orphaned full-screen
-# layer surfaces behind, which is how a validation run can black out a working
-# Hyprland session.
+# Usage: scripts/qml-smoke.sh [options]
 #
-#   scripts/qml-smoke.sh                 static QML parse check (always safe)
-#   scripts/qml-smoke.sh --nested        + run the real shell inside an isolated
-#                                          nested compositor sandbox
-#   scripts/qml-smoke.sh --require-nested fail instead of skipping when the
-#                                          sandbox cannot be built
-#   scripts/qml-smoke.sh --require-static fail instead of skipping when qmllint
-#                                          is unavailable
+# Without options, run static QML parsing.
+# --nested: also run the shell inside a nested compositor.
+# --require-nested: enable nesting and fail if its prerequisites are absent.
+# --require-static: fail if the QML parser is unavailable.
+# --timeout SECONDS: set the sandbox shell lifetime.
+# -h, --help: print this help.
 #
-# The default mode is a *parse* check: it catches syntax errors across the QML
-# tree, not runtime faults. Unresolved qs.* imports and missing properties only
-# surface when the shell actually runs, which is what --nested is for.
-#
-# --nested loads bundled plugins from config/vshell/plugins and waits for EVERY
-# one of them to report loaded before it stops observing, so plugin-owned QML is
-# inside the checked window. It fails if any of them never loads.
-#
-# The sandbox's HOME is built from the repo alone — nothing is read out of
-# `~/.config/vshell`, so no run's outcome can depend on the operator's VGS
-# configuration (docs/decisions/D008-nested-sandbox-state-seeding.md; the
-# machine still supplies the compositor and the installed binaries). A phase
-# asserts the seed is in EFFECT by reading sentinels back out of the running
-# shell (VGS-92), gating the popout and override phases below. Theme state is
-# deliberately OUT OF SCOPE (D008 § Scope). No failure withholds its own
-# evidence: from teardown on, every diagnostic precedes every verdict, and of
-# the two failures that can end a run earlier, the launch failure prints the log
-# tail and "no bundled plugins in the repo" has no log evidence to print.
-#
-# It then drives two things that loading alone never reaches (VGS-81):
-#
-#   * a plugin POPOUT is opened through `widget toggle` and dismissed with
-#     Escape, because everything inside popoutContent is only instantiated when
-#     the popout opens — the extracted meter delegates and the in-surface pager
-#     had never been executed by anything. A ReferenceError in that content
-#     passes a full nested run with the popout closed. The surface's SIZE is not
-#     treated as evidence about the content; see the note above popout_check.
-#   * a user OVERRIDE of a bundled id is planted in the sandbox's own HOME and
-#     put through scan, rescan, reload and removal, asserting on markers only
-#     the override's own component can emit. "The load succeeded" is not
-#     evidence here: the VGS-75 defect reported PLUGIN_RELOAD_SUCCESS and logged
-#     a clean "Plugin loaded" for what was really the bundled copy.
-#
-# Both modes assert that they leave the live session byte-for-byte alone: same
-# VGS Quickshell instances, same VGS layer surfaces. Cleanup is process-group
-# scoped and runs on success, failure, timeout, and interrupt. This script never
-# uses a broad `pkill quickshell` — other Quickshell applications on the seat
-# are legitimate.
+# Nested mode needs Hyprland, qs, Python, and a host Wayland socket.
+# Sandbox settings come from repository defaults.
+# Theme loading is outside this smoke's coverage.
+# The runtime check waits for bundled plugins and exercises user overrides.
+# Popouts and switchers are checked for mapping and dismissal.
+# wtype enables Escape-key dismissal checks.
+# Live-session snapshots check process instances and excess layer surfaces; cleanup targets only process groups this run created.
+# Never launches into the live session and never runs pkill quickshell; other Quickshell apps on the seat are legitimate.
 set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -64,9 +29,7 @@ require_static=false
 static_ran=false
 nested_timeout=40
 compositor_timeout=15
-# Bundled plugins are scanned asynchronously after the core tree loads, so they
-# appear well after the first core IPC target does. Waiting for them is what
-# makes plugin-owned QML part of the observed window.
+# Plugin discovery is asynchronous. Core IPC readiness alone does not establish plugin loading.
 plugin_timeout=30
 
 usage() {
@@ -89,16 +52,12 @@ status=0
 note() { printf 'qml-smoke: %s\n' "$*"; }
 fail() { printf 'qml-smoke: FAIL: %s\n' "$*" >&2; status=1; }
 
-# --- live-session snapshots -------------------------------------------------
-
 # shellcheck source=scripts/lib/session-snapshot.sh
 source "$repo_root/scripts/lib/session-snapshot.sh"
 vgs_snapshot_prefix="qml-smoke: "
 
 instances_before="$(vgs_snapshot_instances)" && instances_before_status=0 || instances_before_status=$?
 layers_before="$(vgs_snapshot_layers)" && layers_before_status=0 || layers_before_status=$?
-
-# --- deterministic cleanup --------------------------------------------------
 
 declare -a tracked_pgids=()
 declare -a scratch_dirs=()
@@ -108,9 +67,7 @@ spawn_pgid=""
 track_pgid() { tracked_pgids+=("$1"); }
 track_dir() { scratch_dirs+=("$1"); }
 
-# Launches a command in its own session/process group and records the group so
-# cleanup can signal exactly what this script started. The inner shell reports
-# its own pid (== the new process group id) before exec'ing the real command.
+# Start a command in its own process group and record the inner shell PID before exec.
 spawn_group() {
   local pidfile="$1" launcher
   shift
@@ -129,9 +86,7 @@ spawn_group() {
     sleep 0.05
   done
   if [[ -z "$spawn_pgid" ]]; then
-    # The pid file never appeared, but the command may be running anyway.
-    # Nothing may be left behind unsupervised, so adopt whatever setsid forked
-    # (parent-scoped, never a name match) before reporting the failure.
+    # A missing PID file does not prove launch failure. Adopt children of this setsid process for cleanup.
     local child
     for child in $(pgrep -P "$launcher" 2>/dev/null || true); do
       track_pgid "$child"
@@ -142,9 +97,7 @@ spawn_group() {
   track_pgid "$spawn_pgid"
 }
 
-# Signals the process group we created and nothing else. Every pid here came
-# from a setsid launch in this script, so the group can never contain a
-# pre-existing shell or an unrelated Quickshell application.
+# Signal only process groups recorded by this script's launches.
 kill_pgid() {
   local pgid="$1"
   kill -0 -- "-$pgid" 2>/dev/null || return 0
@@ -156,8 +109,7 @@ kill_pgid() {
   kill -KILL -- "-$pgid" 2>/dev/null || true
 }
 
-# A signal handler inherits $? from whatever finished last, which is usually 0,
-# so an interrupted run would otherwise report success to CI.
+# An interrupt can inherit a successful status. Set failure explicitly.
 # shellcheck disable=SC2329  # invoked via the trap registrations below
 cleanup() {
   local code=$? signal="${1:-}" pgid dir index
@@ -207,8 +159,6 @@ trap 'cleanup INT' INT
 trap 'cleanup TERM' TERM
 trap 'cleanup HUP' HUP
 
-# --- static QML parse check -------------------------------------------------
-
 find_qmllint() {
   local candidate bindir
   for candidate in qmllint qmllint-qt6 /usr/lib/qt6/bin/qmllint /usr/lib/qt/bin/qmllint; do
@@ -242,25 +192,18 @@ static_check() {
     fi
     return
   fi
-  # The linter's own exit status has to be inspected separately: piping into
-  # grep would let a linter that cannot run at all (missing library, wrong
-  # architecture) look identical to a clean scan.
+  # Inspect linter status separately so a failed executable cannot appear as an empty clean scan.
   rc=0
   output="$("$linter" "${files[@]}" 2>&1)" || rc=$?
-  # qmllint exits 0 when nothing is reported and 255 when it reports something,
-  # including the semantic warnings this check deliberately ignores. Any other
-  # status means the linter itself failed.
+  # qmllint uses 255 for findings, including ignored semantic warnings. Other nonzero statuses fail the tool check.
   if [[ "$rc" != 0 && "$rc" != 255 ]]; then
     printf '%s\n' "$output" | tail -n 20 >&2
     fail "qmllint could not run (exit $rc)"
     return
   fi
 
-  # Semantic warnings (unqualified access, uncreatable types, unresolved
-  # qs.* module imports) are expected outside a Quickshell engine, so only
-  # parse-level findings are treated as failures. syntax.duplicate-ids is
-  # dropped as well: qmllint keeps one id table per document, but two inline
-  # delegates are separate component scopes and may legally reuse an id.
+  # Outside Quickshell, semantic import and property warnings are expected. Check parse findings only.
+  # Inline component delegates can reuse IDs, so the document-wide duplicate-ID warning is excluded.
   findings="$(printf '%s\n' "$output" |
     grep -E '\[syntax(\.[a-z-]+)?\]' |
     grep -v '\[syntax\.duplicate-ids\]' || true)"
@@ -273,19 +216,8 @@ static_check() {
   note "static parse check passed (${#files[@]} QML files)"
 }
 
-# --- isolated nested runtime check ------------------------------------------
-
-# nested_unavailable <reason> [no-host-socket]
-#
-# The second argument is what makes option 4 appear, and it is an ARGUMENT
-# rather than a test of the environment on purpose. This function has six call
-# sites and only one of them is the missing-host-socket case; the Hyprland, qs
-# and python3 preconditions are checked first, so a headless agent shell hits
-# those with WAYLAND_DISPLAY equally unset. Gating on WAYLAND_DISPLAY offered
-# "point the sandbox at the session socket" as the fix for a missing Hyprland
-# binary — the same keying-on-a-proxy defect that moving this remedy out of
-# scripts/validate was meant to end. Only the call site that knows the cause
-# passes the flag, and a reword of the reason string cannot break it.
+# Report unavailable nesting. Pass no-host-socket only for that specific failed prerequisite,
+# so missing binaries cannot produce irrelevant socket advice.
 nested_unavailable() {
   local reason="$1" cause="${2:-}"
   if [[ "$require_nested" == true ]]; then
@@ -293,8 +225,7 @@ nested_unavailable() {
   else
     note "isolated runtime check skipped: $reason"
   fi
-  # The WAYLAND_DISPLAY test stays as a SECONDARY guard: with one set, pointing
-  # the sandbox at "the session socket" is not the advice the reader needs.
+  # Socket advice also requires WAYLAND_DISPLAY to be unset.
   local nest_remedy=""
   if [[ "$cause" == no-host-socket && -z "${WAYLAND_DISPLAY:-}" ]]; then
     nest_remedy="qml-smoke:   4. point the sandbox at the session's own socket (it keeps its own runtime
@@ -321,63 +252,28 @@ host_wayland_socket() {
   printf '%s/%s\n' "${XDG_RUNTIME_DIR:?XDG_RUNTIME_DIR must be set}" "$display"
 }
 
-# --- plugin phases run inside the sandbox -----------------------------------
-# Both read `sandbox_env`, `repo_root`, `sandbox`, `log` and `qs_group` from
-# nested_check; bash scopes dynamically, so they are visible here.
-#
-# `popout_namespace`, `popout_plugin` and `override_plugin` are defined once,
-# below `wait_layer_state`, next to the evidence that picked them.
+# Plugin phases use dynamically scoped sandbox variables from nested_check.
 
 sandbox_ipc() {
   "${sandbox_env[@]}" qs ipc -p "$repo_root/quickshell/vshell" --any-display call "$@" 2>&1 || true
 }
 
-# `hyprctl -i 0` resolves to the NESTED compositor: sandbox_env is built with
-# `env -i`, so no HYPRLAND_INSTANCE_SIGNATURE from the live session leaks in and
-# XDG_RUNTIME_DIR points at the sandbox's own runtime dir.
-# The exit status is PROPAGATED. Swallowing it with `|| true` fed an empty
-# string to the parser, which then reported "no such surface" — a failed query
-# becoming a negative answer, which is the defect this harness exists to refuse.
+# env -i and the sandbox runtime directory keep hyprctl on the nested compositor.
+# Propagate query errors so they cannot be interpreted as an absent surface.
 sandbox_layers() {
   "${sandbox_env[@]}" hyprctl -i 0 layers -j 2>/dev/null
 }
 
-# The OUTPUTS, so their size is measured rather than inferred. Same status
-# propagation as sandbox_layers, and for the same reason.
+# Read monitor geometry from the nested compositor and propagate query failure.
 sandbox_monitors() {
   "${sandbox_env[@]}" hyprctl -i 0 monitors -j 2>/dev/null
 }
 
-# THE OUTPUT SIZE IS MEASURED, NOT INFERRED. This used to take the largest OTHER
-# layer on the monitor as a proxy, and that proxy SILENTLY ACCEPTS A WRONG
-# POPOUT: with only the bar mapped it read 1756x40, so a 444x40 popout on a
-# genuinely 933-tall output compared 40 against 40 and passed. A guard shown to
-# accept a surface twenty-three times too short is worse than no guard, so this
-# cannot go back to the proxy - only to a measurement.
-#
-# `hyprctl monitors` reports it. Its `width`/`height` are the MODE in physical
-# pixels while layer geometry is LOGICAL, and the conversion is exact rather than
-# a guess: logical = mode / scale, axes swapped for the quarter-turn transforms
-# (1, 3, 5, 7). Verified on a live two-monitor session - 6016x3384 @ scale 2,
-# transform 0 -> 3008x1692, and 5120x2880 @ scale 2, transform 1 -> 1440x2560,
-# both matching the full-output layers on those monitors exactly.
-#
-# Prints EXACTLY ONE LINE, "<w>x<h> <screen_w>x<screen_h>", and callers must
-# branch on the STATUS before reading it:
-# 0 = present and non-degenerate, measured against its own output. NOT
-#     "content-sized": every popout is output-tall since VGS-133.
-# 1 = absent
-# 2 = present but degenerate (zero-sized, or as large as the output)
-# 3 = no reading could be taken - hyprctl errored, was unparsable, reported no
-#     usable size for the surface's output, or reported the surface on more than
-#     one output. Distinct from 1 deliberately: neither "I could not look" nor
-#     "I could not measure it" is "it is not there".
-#
-# The LAYER traversal below is NOT hardened against malformed `hyprctl` payloads:
-# an unhandled shape raises, exits 1, and reads as ABSENCE. That is a pre-existing
-# fail-open class in this shared harness rather than anything VGS-133 introduced,
-# and it is tracked and deliberately deferred as VGS-188 - the monitor parse above
-# is guarded because it is new code here, not because the class is fixed.
+# Read layer geometry against its own output. Convert physical mode pixels to logical pixels
+# using scale and quarter-turn transforms; another layer's size is not an output measurement.
+# Return one geometry line: <w>x<h> <screen_w>x<screen_h>.
+# Status 0 means nondegenerate, 1 absent, 2 degenerate or output-sized, and 3 unreadable.
+# The layer payload traversal can still raise an unhandled error that exits 1 and appears absent.
 sandbox_layer_state() {
   local namespace="$1" layers monitors rc=0
   layers="$(sandbox_layers)" || rc=$?
@@ -413,14 +309,9 @@ monitors = parsed("MONITORS_JSON")
 if not isinstance(monitors, list):
     raise SystemExit(3)
 
-# Logical output size per monitor name. A monitor whose numbers do not survive
-# the conversion is left OUT of the map rather than entered with a zero, which
-# would be the proxy problem again in a new costume. EVERY arithmetic step sits
-# inside the guard because a merely WELL-TYPED value still breaks it: a NaN scale
-# survives float() and survives `scale > 0`, then raises out of int(round(...)).
-# Uncaught that exits 1 - this function's code for "not there" - so malformed
-# monitor metadata would read as ABSENCE and an absence check would pass off a
-# crash.
+# Guard the entire physical-to-logical conversion. Even numeric NaN can fail when converted
+# to an integer; an uncaught exception exits with the status reserved for surface absence.
+# Omit invalid outputs rather than inventing zero dimensions.
 outputs = {}
 for monitor in monitors:
     try:
@@ -431,17 +322,12 @@ for monitor in monitors:
         mode_h = int(monitor.get("height") or 0)
         scale = float(monitor.get("scale") or 0)
         transform = int(monitor.get("transform") or 0)
-        # `name` is type-checked, not merely truthiness-checked. A list or dict
-        # name is TRUTHY and converts nothing, so it would reach the
-        # `outputs[name]` assignment below - which is outside this guard - and
-        # raise TypeError there, exiting 1: absence, off a crash, again.
+        # Require a string name before using it as a map key. A truthy list or dict is not hashable.
         if not isinstance(name, str) or not name:
             continue
         if mode_w <= 0 or mode_h <= 0 or not scale > 0:
             continue
-        # Hyprland's transform enum is 0-7; anything else means the axes cannot
-        # be resolved, and guessing "no swap" would measure against the wrong
-        # dimensions rather than admit that.
+        # Only known transform values establish whether axes swap.
         if transform not in range(8):
             continue
         logical_w = int(round(mode_w / scale))
@@ -466,11 +352,8 @@ for monitor_name, monitor in data.items():
 if not matches:
     raise SystemExit(1)
 
-# A popout or modal surface binds to exactly ONE screen (VgsPopoutStandalone
-# `screen: root.screen`, from PluginPopout's `triggerScreen`; VgsModalStandalone
-# `contentWindow.screen`), so a second surface is a duplicate-mapping defect, not
-# a second reading. Picking one would hide it and averaging would invent a
-# number, so neither: no reading was taken.
+# A popout or modal binds one screen. Multiple mappings are an invalid measurement,
+# not readings to select or average.
 if len(matches) > 1:
     sys.stderr.write(
         "sandbox_layer_state: %s is mapped %d times (%s), but a popout or modal surface "
@@ -493,20 +376,15 @@ screen_w, screen_h = outputs[monitor_name]
 print("%dx%d %dx%d" % (w, h, screen_w, screen_h))
 if w <= 0 or h <= 0:
     raise SystemExit(2)
-# Unguarded, because the output size is measured by the time it runs. Exit 2 is
-# a READING, not a verdict: for a popout, covering the whole output is a layout
-# failure; for a full-screen switcher it is the expected result. Both readings
-# are collapsed here because both are "not a normal content-sized surface", so a
-# caller that cares which one it got must compare the printed measurement -
-# switcher_check does. Do not "fix" that caller toward exit 0.
+# Status 2 includes both collapsed and output-sized surfaces. Switcher callers must inspect
+# positive dimensions against the output; they cannot treat the status alone as success.
 if w >= screen_w and h >= screen_h:
     raise SystemExit(2)
 raise SystemExit(0)
 PY
 }
 
-# Waits for a state, and fails LOUDLY on a query error rather than spinning to
-# the timeout and then reporting the wrong thing.
+# Wait for the requested layer state. Report a failed query separately from timeout.
 wait_layer_state() {
   local namespace="$1" want="$2" state=1
   for _ in $(seq 1 30); do
@@ -523,67 +401,29 @@ wait_layer_state() {
   return 1
 }
 
-# WHAT THE POPOUT CHECK WITNESSES, AND WHAT IT DOES NOT.
-#
-# It opens a plugin popout and asserts a `vshell:plugins:plugin` layer surface
-# appears where there was none, is not degenerate, and goes away again on
-# Escape. That proves the popout was created, mapped and dismissed.
-#
-# It does NOT prove `popoutContent` rendered correctly, and the surface's SIZE
-# is not evidence that it did. That was measured rather than assumed: a fixture
-# plugin was planted with three different content shapes (a bare `Item`, a
-# `Column`, a `Rectangle`) at two declared heights (140px and 340px), and all
-# six combinations settled to an identical 573px surface. Since VGS-133 the
-# surface is the output height for every popout, so "the surface is
-# content-sized" would now measure the OUTPUT and before that it measured the
-# popout chrome. Either way, not the content.
-#
-# Two things DO witness the content, and both are already load-bearing here:
-#
-#   * a plugin with no `popoutContent` produces NO surface at all, so the
-#     presence assertion below fails (proven by mutation);
-#   * a ReferenceError inside `popoutContent` reaches the log scan at the end of
-#     nested_check, and that error class is only reachable because the popout is
-#     opened — the same defect passes a full nested run with the popout closed
-#     (proven by mutation).
-#
-# Navigating the pager would be a third and better witness, but it needs a
-# pointer click on the gear affordance. `wtype` is keyboard-only and
-# `hyprctl dispatch` cannot address a layer surface, so there is no pointer
-# route from here; that is a real gap, not an oversight.
+# A mapped surface verifies creation and dismissal, not correct content layout.
+# Opening the popout exposes content ReferenceErrors to the log scan. The surface size
+# does not measure content, and this harness cannot click through the pager.
 popout_namespace="vshell:plugins:plugin"
-# aiUsage, because its popoutContent is the code with no coverage at all: the
-# extracted MeterRow/MeterCard delegates and the in-surface pager (VGS-72/73)
-# live entirely inside it, and it is only instantiated when the popout opens.
+# Opening aiUsage instantiates its meter delegates and pager.
 popout_plugin="aiUsage"
-# A different bundled id for the override phase, so the two cannot mask each
-# other. It has to be one the shipped bar layout hosts - a plugin no bar hosts
-# never instantiates its component, and the marker below would never fire.
+# Use a separate override plugin that the shipped bar hosts; unhosted components never emit the marker.
 override_plugin="tailscale"
 
-# --- the seeded settings are in effect (VGS-92, D008 rule 4) ----------------
-#
-# Why a sentinel rather than any seeded value: D008 § Rationale. Each seeded
-# file carries one matching neither the shipped file nor the fallback used
-# without it, read back out of the RUNNING shell. Both carriers are inert:
-# `customAnimationDuration` is read only when `animationSpeed` selects Custom
-# (Common/MethodTheme.qml), and `sysUpdate.aurUpdateCommand` runs only on a
-# user-initiated update.
+# Read sentinels from the running shell. They must differ from both repository values and fallbacks.
+# The selected carriers remain inert during smoke: custom animation duration requires Custom speed,
+# and the update command requires a user update request.
 settings_sentinel_key="customAnimationDuration"
 settings_sentinel_value=4242
 plugin_sentinel_plugin="sysUpdate"
 plugin_sentinel_key="aurUpdateCommand"
 plugin_sentinel_value="{vshell} update run aur --vgs92-seed-sentinel"
 
-# EXACT matchers, never substring: `*4242*` would accept 14242, and searching
-# the whole `pluginSettings` blob for a `"key":"value"` pair would accept it
-# under the wrong section. Both are the pass-without-checking shape this branch
-# removes. Each takes the reply as $1.
+# Match the exact value in its expected section; substring matches can accept unrelated values.
 # shellcheck disable=SC2329  # invoked by name through await_sentinel's $matcher
 sentinel_is_exactly() { [[ "$1" == "$2" ]]; }
 
-# reply, plugin, key, value. An unparsable reply is a miss, not an error: the
-# poll may simply have caught the shell mid-answer.
+# Match a plugin key and value. An unparsable reply remains a miss during polling.
 # shellcheck disable=SC2329  # invoked by name through await_sentinel's $matcher
 sentinel_at_path() {
   python3 -c 'import json, sys
@@ -593,33 +433,22 @@ section = data.get(sys.argv[2])
 sys.exit(0 if isinstance(section, dict) and section.get(sys.argv[3]) == sys.argv[4] else 1)' "$@"
 }
 
-# Polls `settings get $key` until `$matcher` accepts the reply; bounded, because
-# SettingsData loads asynchronously. Prints the last reply a call returned, and
-# never folds one failure reason into another - misattribution is what this
-# split exists to prevent:
-#   1 = answered a real value, the matcher rejected it -> the seed
-#   2 = process group gone, or nothing answered        -> a dead shell, saying
-#                                                         nothing about the seed
-#   3 = answered `undefined`, or answered empty        -> the KEY is gone from
-#       SettingsData, so the sentinel needs repointing. VGSIPC's `get` is
-#       JSON.stringify(SettingsData?.[key]), so a rename exits 0 and would
-#       otherwise read as 1. The caller reports the two separately.
+# Poll an asynchronous settings value with a bounded wait and retain the last reply.
+# Status 1 means a rejected value, 2 means no answer or dead shell, and 3 means an absent key.
+# A missing SettingsData key can return undefined with a successful IPC status.
 await_sentinel() {
   local key="$1" matcher="$2"
   shift 2
   local reply="" last_good="" answered=false gone=false
   for _ in $(seq 1 40); do
-    # NOT `sandbox_ipc`: that folds stderr into stdout and ends in `|| true`, so
-    # a transport failure would arrive as a reply and be blamed on the seed.
+    # Keep transport errors separate from replies; sandbox_ipc merges them and swallows status.
     if reply="$("${sandbox_env[@]}" qs ipc -p "$repo_root/quickshell/vshell" \
         --any-display call settings get "$key" 2>/dev/null)"; then
       answered=true
       last_good="$reply"
       "$matcher" "$reply" "$@" && { printf '%s' "$reply"; return 0; }
     fi
-    # Liveness decides state 2, NOT whether the final attempt happened to
-    # answer: a shell that answered the wrong value all window and missed only
-    # the last call is a seed failure, not a dead shell.
+    # A missed final poll cannot erase earlier answers and turn a wrong seed into a dead-shell diagnosis.
     if ! kill -0 -- "-$qs_group" 2>/dev/null; then
       gone=true
       break
@@ -632,9 +461,7 @@ await_sentinel() {
   return 1
 }
 
-# One probe: the IPC key, a human-readable statement of what the matcher demands
-# (printed on failure, so the message and the assertion say the same thing),
-# then the matcher and its arguments.
+# Probe one IPC key with an exact matcher and a failure description of the same expected value.
 seed_probe() {
   local key="$1" want="$2" reply state=0
   shift 2
@@ -642,8 +469,7 @@ seed_probe() {
   case "$state" in
     0) return 0 ;;
     2)
-      # Whatever it managed to say is kept: the best evidence about a shell that
-      # then died.
+      # Retain the last reply as evidence if the shell exits.
       # shellcheck disable=SC2016  # the quotes inside ${reply:+...} are literal text; $reply does expand
       fail "the sandboxed shell stopped answering \`settings get $key\` - the shell or its IPC is gone, so nothing was learned about the seed${reply:+ (last reply: '$reply')}" ;;
     3)
@@ -668,9 +494,7 @@ seeded_settings_check() {
   return 0
 }
 
-# Plugin widgets are registered with BarWidgetService by the bar's WidgetHost,
-# which mounts them some time AFTER the plugin itself reports loaded. A single
-# read here failed about one run in eight with WIDGET_NOT_FOUND.
+# Bar registration follows plugin loading asynchronously, so widget readiness needs its own wait.
 wait_widget_registered() {
   local widget="$1" reply=""
   for _ in $(seq 1 60); do
@@ -684,30 +508,16 @@ wait_widget_registered() {
   return 1
 }
 
-# Asserts the VGS-133 height invariant on the ONE line sandbox_layer_state
-# emits. The emitter used to promise one line per matching layer per monitor
-# while this consumer rejected anything multi-line - a function and its own
-# contract disagreeing. The emitter was the wrong half: a popout binds to
-# exactly one screen, so the thing being described can only exist once, and a
-# second surface is now a failed reading over there rather than an extra line to
-# parse here. Fixing it on this side instead would have papered over a
-# duplicate-mapping defect by quietly accepting it as normal output.
-#
-# An empty reply is a FAILURE, not a pass: the caller reached here only because
-# the surface was reported present, so no geometry to check means the evidence
-# went missing, and passing on no evidence is the shape this file exists to
-# refuse (VGS-154).
+# Require one geometry record for a surface already reported present.
+# Missing or multiple records cannot establish output-height coverage.
 assert_popout_geometry() {
   local geometry="$1" label="$2" surface_size screen_size
   if [[ -z "${geometry//[[:space:]]/}" ]]; then
     fail "no layer geometry to check for '$label', though its surface was reported present - refusing to pass on no evidence"
     return 1
   fi
-  # Shape-guarded before splitting, because `${g%% *}` and `${g##* }` both
-  # return the WHOLE string when it holds no space: a single field would compare
-  # equal to itself and pass vacuously. The `$` anchor also rejects a multi-line
-  # reply, which now means the emitter broke its own one-line contract - a
-  # reason to stop, not to start parsing lines.
+  # Validate both fields before splitting. Without a space, shell prefix and suffix expansion
+  # return the same field and can produce a false equality.
   if [[ ! "$geometry" =~ ^[0-9]+x[0-9]+\ [0-9]+x[0-9]+$ ]]; then
     fail "could not parse the '$label' layer geometry: '$geometry'"
     return 1
@@ -721,23 +531,12 @@ assert_popout_geometry() {
   return 0
 }
 
-# Sends Escape through the virtual-keyboard protocol. `hyprctl dispatch
-# sendshortcut` targets a WINDOW and answers "window not found" for a layer
-# surface, so it cannot reach one at all; wtype goes to whatever holds keyboard
-# focus, which is the surface's own focus grab.
-#
-# 0 = the key was sent; 2 = wtype is not installed, so NOTHING was sent and the
-# caller must say so rather than assert on the aftermath; 1 = wtype ran and
-# failed, already reported here. The status is captured, not discarded: a failed
-# invocation used to leave the next assertion claiming "Escape did not dismiss
-# the switcher", a confident statement about QML focus handling derived from a
-# tool that never ran.
+# Send Escape through virtual-keyboard input because window-targeted shortcuts cannot reach layers.
+# Status 0 means sent, 2 means wtype absent, and 1 means an invocation failure already reported.
 send_escape() {
   local what="$1" rc=0
   command -v wtype >/dev/null 2>&1 || return 2
-  # The content grabs keyboard focus asynchronously (both PluginPopout and
-  # FullScreenSwitcher defer forceActiveFocus through Qt.callLater), so a key
-  # sent the instant the surface appears can land before anything is listening.
+  # Focus is deferred after mapping; immediate keyboard input can arrive before content is listening.
   sleep 1.5
   "${sandbox_env[@]}" WAYLAND_DISPLAY="$nested_socket" wtype -k Escape >/dev/null 2>&1 || rc=$?
   if [[ "$rc" -ne 0 ]]; then
@@ -755,8 +554,7 @@ popout_check() {
     return 1
   }
 
-  # Start from a known state: no popout surface open. Without this, a surface
-  # left over from something else would satisfy the assertion below.
+  # Require initial absence so an unrelated open popout cannot satisfy the mapping assertion.
   if ! wait_layer_state "$popout_namespace" 1; then
     fail "a plugin popout surface was already open before '$popout_plugin' was toggled"
     return 1
@@ -768,8 +566,7 @@ popout_check() {
     return 1
   fi
 
-  # NOT "the call returned success" - that is what the old coverage would have
-  # been. This waits for the compositor to show the surface.
+  # Wait for compositor evidence; a successful IPC reply alone does not prove mapping.
   wait_layer_state "$popout_namespace" 0 || state=$?
   if [[ "$state" -ne 0 ]]; then
     sandbox_layer_state "$popout_namespace" >&2 || true
@@ -781,14 +578,8 @@ popout_check() {
     return 1
   fi
 
-  # VGS-133: the surface must span the OUTPUT height, not the content's, or a
-  # resize re-commits wl_surface geometry every frame - the flash. Nothing else
-  # here notices: a content-sized surface opens and closes the same way.
-  #
-  # The STATUS is the diagnosis, so it is captured, not discarded. Reporting a
-  # failed query or a vanished surface as "wrong height" sends the next reader
-  # after the wrong defect, and a degenerate 0x0 on a 0x0 output would pass a
-  # bare height comparison outright.
+  # Output-height surfaces avoid committing resized window geometry during content animation.
+  # Classify query and presence failures before comparing height.
   geometry="$(sandbox_layer_state "$popout_namespace")" && geo_rc=0 || geo_rc=$?
   case "$geo_rc" in
     3) fail "could not take a geometry reading for '$popout_plugin' - hyprctl failed, or its output has no reported size, or it is mapped more than once. That is not evidence about the popout's height"; return 1 ;;
@@ -809,8 +600,7 @@ popout_check() {
       note "plugin popout check passed ($popout_plugin opened a $popout_namespace surface and Escape closed it)"
       ;;
     2)
-      # Named, never silent: a skip that reads as a pass is what this file exists
-      # to prevent.
+
       note "NOT CHECKED: Escape-to-close - wtype is not installed"
       reply="$(sandbox_ipc widget toggle "$popout_plugin")"
       if [[ "$reply" != "WIDGET_TOGGLE_SUCCESS: $popout_plugin" ]]; then
@@ -828,67 +618,16 @@ popout_check() {
   return 0
 }
 
-# --- the full-screen switchers map, cover the output, and unmap (VGS-208) ---
-#
-# The MEASUREMENT is asserted, not an exit code. `sandbox_layer_state` returns 2
-# for two OPPOSITE readings - a degenerate surface (`w <= 0 or h <= 0`) and one
-# as large as its output - so reading exit 2 as proof of full-bleed passes the
-# 0x0 layout collapse this phase exists to catch. `wait_switcher_mapped` below
-# reads the `<w>x<h> <screen_w>x<screen_h>` line instead and requires both
-# dimensions to be non-zero AND at least the output's.
-#
-# What this phase reaches that nothing else does: VGS.qml instantiates both
-# modals directly, so their own bindings do evaluate at startup, but a modal's
-# `content: Component` is not loaded until an open - every binding inside the
-# content tree, and the geometry of the mapped surface it produces, is invisible
-# to the static parse AND to the nested load.
-#
-# `toggle` and Escape are driven, not just `open`/`close`: `toggle` is the verb a
-# keybind binds and its close branch reads `shouldBeVisible`, and Escape is the
-# only way out of a surface that covers the whole output with
-# `closeOnBackgroundClick: false`.
-#
-# BOTH `modalDarkenBackground` states are exercised, and the `false` pass is the
-# control for a real defect. With it off, VgsModalStandalone's click catcher has
-# nothing to draw; while that window was ALSO excluded from rendering
-# (`updatesEnabled: root.useBackground`), the mapped-but-never-rendered surface
-# stalled the QML animation driver, so the animation-backed Timer that unmaps a
-# closing modal never fired and EVERY modal - the pre-existing colour picker
-# included - stayed on screen indefinitely. Restore that binding and the `false`
-# pass below fails; that is what proves this pass is not vacuous.
-#
-# The setting is RESTORED to whatever the sandbox had, on every exit path: D008
-# is about a phase's state not leaking into the next one, and an ordering
-# invariant stated only in a comment is not enforcement.
-# The switchers this phase covers, DISCOVERED from the tree rather than listed.
-# Five parallel hardcoded arrays indexed by position meant a third subclass got
-# ZERO coverage while the phase still noted "both switchers passed", and one
-# misaligned entry asserted one switcher's reply string against another's
-# surface - passing or failing for the wrong reason. `expected_plugins` one
-# phase later already rejects that shape for the same reason.
-#
-# Each record is `<target>|<namespace>`. The reply strings are DERIVED
-# (`<TARGET>_<VERB>_SUCCESS`), so there is nothing left to keep aligned.
+# Opening switchers instantiates content that startup and static parsing do not reach.
+# Measure positive dimensions against the output: status 2 alone can also mean a collapsed surface.
+# Exercise toggle and Escape in both backdrop states. With background disabled, a mapped window
+# that never renders can stall the animation timer responsible for closing it.
+# Restore the sandbox setting on every exit. Discover target/namespace pairs from QML source.
 switcher_records=()
 
-# Fills `switcher_records` with every file in the QML tree whose ROOT ELEMENT is
-# `FullScreenSwitcher` — what makes something a switcher, not what it is named.
-# A filename glob (`*Modal.qml`) was the same silent-zero-coverage shape the five
-# hardcoded arrays had, narrowed rather than closed: the identical file named
-# PaletteSwitcher.qml was discovered by nothing and the phase still reported "2
-# full-screen switchers measured", and the directory already holds non-Modal
-# names (SwitcherStage.qml, ThemeApplyReporter.qml) so the spelling is enforced
-# by nothing.
-#
-# The directory convention is asserted rather than assumed: a FullScreenSwitcher
-# outside Modals/Switcher/ FAILS here instead of being quietly absent. So does
-# one whose namespace or IPC target cannot be read — that is exactly the switcher
-# that would otherwise be covered by nothing.
-# Every file whose ROOT element is FullScreenSwitcher. Its own function so the
-# grep's exit status is the function's: inside a process substitution it is
-# discarded, which would let a read error deliver a PARTIAL list that the caller
-# cannot tell from a complete one. Exit 1 (no matches) is the empty list, which
-# the caller already fails on; anything else is a read fault and aborts.
+# Discover FullScreenSwitcher root elements, independent of filenames.
+# Reject an unexpected directory or unreadable target/namespace instead of omitting it.
+# Capture grep status directly; process substitution can hide a partial listing after read failure.
 switcher_roots() {
   local root_dir="$1" out status
   out="$(grep -rlE '^[[:space:]]*FullScreenSwitcher[[:space:]]*(\{|$)' "$root_dir/quickshell/vshell" --include='*.qml')"
@@ -922,20 +661,14 @@ discover_switchers() {
       return 1
     fi
     target="${namespace#vshell:}"
-    # The derived target must be a real IPC handler, or this phase would drive a
-    # target that does not exist and read the miss as a switcher defect.
+    # Require the discovered target to have an IPC handler before driving it.
     if ! grep -q "target: \"$target\"" "$repo_root/quickshell/vshell/VGSIPC.qml"; then
       fail "$name's namespace '$namespace' implies IPC target '$target', which VGSIPC.qml does not register - switcher_check cannot drive it"
       return 1
     fi
     switcher_records+=("$target|$namespace")
-  # Deliberately LOOSE, in both directions QML allows: the brace may sit on the
-  # next line, and the element may be indented. Demanding either made the
-  # discovery fail OPEN - a switcher written that way was found by nothing, the
-  # already-collected records kept the count non-zero, and the phase passed
-  # having never measured it. The cost is that a NESTED use of the type would
-  # also be collected; that fails LOUDLY on the directory and namespace checks
-  # below rather than under-covering, which is the direction a guard should err.
+  # Allow indentation and a brace on the following line. This broad match can include a nested use;
+  # directory and namespace checks then fail instead of silently dropping a real switcher.
   done < <(switcher_roots "$repo_root")
   if [[ $found_any -eq 0 || ${#switcher_records[@]} -eq 0 ]]; then
     fail "no file in quickshell/vshell declares FullScreenSwitcher as its root element - switcher_check would measure nothing and still pass"
@@ -944,24 +677,16 @@ discover_switchers() {
   return 0
 }
 
-# `<TARGET>_<VERB>_SUCCESS`, the shape every switcher IpcHandler answers with.
 switcher_reply() {
   local target="${1//-/_}" verb="$2"
   printf '%s_%s_SUCCESS\n' "${target^^}" "${verb^^}"
 }
 
-# The last reading wait_switcher_mapped took, so a failure can quote it. This is
-# the ONE channel the reading comes back on: it used to also be printf'd, which
-# every call site then discarded, leaving a reader to check each one to learn
-# which channel was live.
+# Keep the last geometry reading for failure diagnostics.
 switcher_last_geometry=""
 
-# Waits for `namespace` to map at full output size, leaving the measurement in
-# `switcher_last_geometry`.
-# 0 = full-bleed; 1 = timed out, with the last reading in
-# `switcher_last_geometry` (empty if the surface never mapped at all); 3 = no
-# reading could be taken; 4 = the sandbox shell exited while waiting, which is a
-# different defect and must not be reported as a missing surface.
+# Wait for positive full-output geometry and store the last reading in switcher_last_geometry.
+# Return 0 on success, 1 on timeout, 3 on query failure, or 4 if the shell exits.
 wait_switcher_mapped() {
   local namespace="$1" geometry rc surface screen
   switcher_last_geometry=""
@@ -969,11 +694,7 @@ wait_switcher_mapped() {
     rc=0
     geometry="$(sandbox_layer_state "$namespace")" || rc=$?
     [[ "$rc" -eq 3 ]] && return 3
-    # Shape-guarded before splitting: `${g%% *}` returns the WHOLE string when
-    # there is no space, which would compare a field against itself. A NEGATIVE
-    # reading is admitted here so it is quoted in the failure - discarding it
-    # left `switcher_last_geometry` empty and the run reported a surface that
-    # never mapped at all.
+    # Validate field structure before splitting. Retain negative readings so diagnostics show collapse.
     if [[ "$geometry" =~ ^-?[0-9]+x-?[0-9]+\ -?[0-9]+x-?[0-9]+$ ]]; then
       switcher_last_geometry="$geometry"
       surface="${geometry%% *}"
@@ -988,7 +709,7 @@ wait_switcher_mapped() {
   return 1
 }
 
-# Turns a wait_switcher_mapped status into the diagnosis it actually is.
+# Describe the cause represented by the wait status.
 fail_switcher_mapped() {
   local rc="$1" what="$2" surface
   case "$rc" in
@@ -998,9 +719,7 @@ fail_switcher_mapped() {
       if [[ -z "$switcher_last_geometry" ]]; then
         fail "$what never produced a surface at all"
       else
-        # The two rejected readings are OPPOSITE defects; naming the collapse for
-        # a surface that merely came up small sends the next reader after a
-        # defect that did not happen.
+        # Distinguish collapsed dimensions from a mapped surface smaller than the output.
         surface="${switcher_last_geometry%% *}"
         if ((${surface%x*} <= 0 || ${surface#*x} <= 0)); then
           fail "$what mapped at '$switcher_last_geometry' (surface then output) - a zero or negative dimension is the layout collapse this checks for"
@@ -1012,9 +731,7 @@ fail_switcher_mapped() {
   esac
 }
 
-# Waits for the surface to be gone. A failed QUERY already failed loudly inside
-# wait_layer_state, so it is not re-reported here as a surface that outlived its
-# close - that would name the wrong defect for the next reader.
+# Wait for absence without relabeling a query failure as failed dismissal.
 wait_switcher_unmapped() {
   local namespace="$1" what="$2" state=0
   wait_layer_state "$namespace" 1 || state=$?
@@ -1026,11 +743,8 @@ wait_switcher_unmapped() {
   return 1
 }
 
-# Polls until SettingsData reports the value the caller just wrote. `settings
-# set` answers before the property has propagated, and running the round trip
-# against the OTHER state would silently make one of the two passes a duplicate.
-# 1 = the value never converged; 2 = the shell exited, which is a different
-# defect and gets a different message.
+# Wait for a settings write to become observable so each backdrop pass tests the requested state.
+# Return 1 on nonconvergence or 2 if the shell exits.
 await_darken_setting() {
   local want="$1" reply
   for _ in $(seq 1 20); do
@@ -1061,9 +775,7 @@ set_darken_setting() {
   return 0
 }
 
-# Drive one verb that should OPEN the switcher, then wait for the compositor to
-# show it covering the output. Three sites did this identically; only the
-# failure phrasing differed, which `what` now carries.
+# Open a switcher through the requested verb and require compositor geometry evidence.
 switcher_open_and_map() {
   local target="$1" verb="$2" namespace="$3" darken="$4" open_want="$5" what="$6" reply rc=0
 
@@ -1072,7 +784,7 @@ switcher_open_and_map() {
     fail "$target $verb answered '$reply', wanted '$open_want' - $what (modalDarkenBackground=$darken)"
     return 1
   fi
-  # NOT "the call returned success": this waits for the compositor to show it.
+
   wait_switcher_mapped "$namespace" || rc=$?
   if [[ "$rc" -ne 0 ]]; then
     fail_switcher_mapped "$rc" "$what (modalDarkenBackground=$darken)"
@@ -1081,7 +793,7 @@ switcher_open_and_map() {
   return 0
 }
 
-# One open/close cycle per verb, for one target in one backdrop state.
+# Run an open/close cycle for one target and backdrop value.
 switcher_cycle() {
   local target="$1" namespace="$2" darken="$3"
   local open_want close_want toggle_want reply state=0
@@ -1090,21 +802,17 @@ switcher_cycle() {
   close_want="$(switcher_reply "$target" close)"
   toggle_want="$(switcher_reply "$target" toggle)"
 
-  # Start from a known state, so a surface left mapped by something else cannot
-  # satisfy the assertions below.
+  # Initial absence prevents a previously mapped surface from satisfying this cycle.
   wait_layer_state "$namespace" 1 || state=$?
   if [[ "$state" -ne 0 ]]; then
-    # A failed query already reported itself; do not add a contradictory claim.
+
     [[ "$state" -ne 2 ]] && fail "'$namespace' was already mapped before '$target open' was called (modalDarkenBackground=$darken)"
     return 1
   fi
 
   switcher_open_and_map "$target" open "$namespace" "$darken" "$open_want" "'$target open'" || return 1
 
-  # The close REPLY is asserted, not just quoted in a failure message: a close
-  # handler regressed to an error string, or an IPC call that failed outright
-  # (sandbox_ipc swallows the exit status), must fail on its own evidence rather
-  # than on the surface happening to be gone.
+  # Check the close reply as well as absence; sandbox_ipc does not propagate transport status.
   reply="$(sandbox_ipc "$target" close)"
   if [[ "$reply" != "$close_want" ]]; then
     fail "$target close answered '$reply', wanted '$close_want' (modalDarkenBackground=$darken)"
@@ -1112,8 +820,7 @@ switcher_cycle() {
   fi
   wait_switcher_unmapped "$namespace" "'$target close' reported success but the '$namespace' surface outlived it (modalDarkenBackground=$darken)" || return 1
 
-  # `toggle` both ways, which is what proves `shouldBeVisible` tracks the mapped
-  # surface - an inverted or stale value answers TOGGLE_SUCCESS either way.
+  # Toggle in both directions because a stale shouldBeVisible can still return success.
   switcher_open_and_map "$target" toggle "$namespace" "$darken" "$open_want" "'$target toggle' (to open)" || return 1
 
   reply="$(sandbox_ipc "$target" toggle)"
@@ -1127,21 +834,16 @@ switcher_cycle() {
   return 0
 }
 
-# False once an Escape leg has been skipped, so the phase's own verdict line
-# cannot claim coverage that did not happen. Nothing in .github/ installs wtype,
-# so the skip is the DEFAULT reading, not the exceptional one.
+# Track skipped Escape tests so the phase cannot claim keyboard coverage without wtype.
 switcher_escape_checked=true
 
-# Escape is the ONLY way out for a user: the switcher covers the whole output
-# and sets `closeOnBackgroundClick: false`. If focus never reaches the
-# FocusScope they are stranded on an opaque surface, and the IPC close path
-# above still passes.
+# Escape dismissal tests focus handling that IPC close cannot exercise.
+# The full-output switcher disables background-click dismissal.
 switcher_escape_cycle() {
   local target="$1" namespace="$2" darken="$3" open_want="$4" esc_rc=0
 
   if ! command -v wtype >/dev/null 2>&1; then
-    # Named, never silent: a skip that reads as a pass is what this file exists
-    # to prevent.
+
     note "NOT CHECKED: $target Escape-to-dismiss - wtype is not installed"
     switcher_escape_checked=false
     return 0
@@ -1151,8 +853,7 @@ switcher_escape_cycle() {
 
   send_escape "the '$target' switcher" || esc_rc=$?
   if [[ "$esc_rc" -ne 0 ]]; then
-    # 2 cannot happen here - the availability guard above already returned - so
-    # any non-zero is a wtype that ran and failed, reported by send_escape.
+    # The availability check excludes status 2; remaining errors come from a failed wtype invocation.
     switcher_escape_checked=false
     return 1
   fi
@@ -1162,9 +863,7 @@ switcher_escape_cycle() {
 
 switcher_check() {
   local original rc=0
-  # Read FIRST, restore LAST: this phase persists into the sandbox HOME
-  # (`settings set` calls SettingsData.saveSettings()), so leaving it on the
-  # value this phase wanted hands the next phase an unseeded setting.
+  # Read the prior setting before mutation and restore it after the phase so sandbox state does not leak.
   original="$(sandbox_ipc settings get modalDarkenBackground)"
   if [[ "$original" != "true" && "$original" != "false" ]]; then
     fail "could not read modalDarkenBackground before the switcher check (answered '$original'), so it could not be restored afterwards"
@@ -1202,11 +901,7 @@ switcher_check_body() {
   return 0
 }
 
-# How many times the override fixture's OWN component has been instantiated.
-# This is the assertion the original VGS-75 defect defeats: it reported
-# PLUGIN_RELOAD_SUCCESS and logged a clean "Plugin loaded" for what was really
-# the bundled copy, so anything checking that a load *succeeded* passed
-# throughout. Only the override's own QML can emit this.
+# Count markers emitted only by the override component. A load-success reply cannot identify its source.
 override_marker_count() {
   grep -c "VGS81-OVERRIDE-LOADED-$override_nonce" "$log" 2>/dev/null || true
 }
@@ -1234,15 +929,9 @@ override_check() {
   local dir reply live loads teardowns loads_before teardowns_before
   local strays strays_dir strays_rc=0
 
-  # HERE, not at sandbox prep, where nothing could have created one yet: by now
-  # the shell has been running in that HOME. A second package under this id
-  # would make "which copy loaded?" — the question this phase answers —
-  # unanswerable. An empty `plugins/` directory is fine; a package is not.
-  # Three states, not two: the directory is normally ABSENT, so a scan that
-  # swallowed find's status would look identical on a healthy run and on "I
-  # could not look" — the failed-query-reads-as-absence class this file has
-  # already had three times. No `-printf` either; it is GNU-only, and a BSD
-  # find would degrade the guard to an unconditional pass.
+  # Check for packages after the sandbox has run, when it can have created them.
+  # A second package with this ID makes ownership ambiguous. Distinguish an absent directory
+  # from an unreadable directory, and avoid GNU-only find options.
   strays_dir="$sandbox/home/.config/vshell/plugins"
   if [[ -d "$strays_dir" ]]; then
     strays="$(find "$strays_dir" -mindepth 1 -maxdepth 1 -type d)" || strays_rc=$?
@@ -1258,11 +947,8 @@ override_check() {
 
   dir="$sandbox/home/.config/vshell/plugins/$override_plugin"
   mkdir -p "$dir"
-  # A fixture, not a copy of the bundled component: the marker has to come from
-  # QML that only the override has, and authoring it here keeps a test-only
-  # hook out of the shipped tree entirely. `overrides` is the opt-in that lets
-  # a user package take a bundled id (VGS-26); requires_shell is satisfied, so
-  # the version gate is not what is under test here.
+  # Only the fixture override can emit its marker. Its manifest opts into overriding the bundled ID
+  # and satisfies the shell-version gate, which is outside this test's purpose.
   cat >"$dir/plugin.json" <<EOF
 {
     "id": "$override_plugin",
@@ -1311,14 +997,8 @@ EOF
     return 1
   fi
 
-  # A rescan re-reads every manifest claiming the id. It deliberately does NOT
-  # assert a reload: when the record re-read for a path is the one already
-  # installed, _relinkLoadedRecord hands it the registration and reloading
-  # would be pointless work. Whether a reload happens depends on which manifest
-  # the rescan reaches first, so counting loads here asserts an artefact — it
-  # was observed failing about one run in five before this was corrected. What
-  # must hold is the invariant: exactly one live instance of the override, and
-  # the id owned.
+  # Rescan can relink an existing record without reloading. Load counts depend on discovery order;
+  # assert one live override instance and retained ID ownership instead.
   reply="$(sandbox_ipc plugin-scan rescan "$override_plugin")"
   if [[ "$reply" != RESCAN_TRIGGERED:* ]]; then
     fail "plugin-scan rescan answered '$reply'"
@@ -1329,12 +1009,7 @@ EOF
     return 1
   fi
 
-  # A reload IS a defined contract: unload, then load. This is the step VGS-75
-  # was reproduced on — after a rescan, `unloadPlugin` cleared the flag on the
-  # record in `loadedPlugins` while `loadPlugin` read the other record, which
-  # still claimed `loaded`, and early-returned true having installed nothing.
-  # Live, that produced two "Plugin unloaded" lines and no matching load while
-  # `plugin-scan status` still answered "loaded".
+  # Reload must unload and instantiate again, including after records were relinked by rescan.
   loads_before="$(override_marker_count)"
   teardowns_before="$(override_unloaded_count)"
   reply="$(sandbox_ipc plugins reload "$override_plugin")"
@@ -1342,9 +1017,7 @@ EOF
     fail "plugins reload answered '$reply'"
     return 1
   fi
-  # PLUGIN_RELOAD_SUCCESS is exactly what the defect reported while installing
-  # nothing, so the reply is not evidence. Only the override's own component
-  # saying it was torn down and instantiated again is.
+  # Require component teardown and creation markers; a success reply alone cannot prove either.
   if ! wait_marker override_marker_count $((loads_before + 1)); then
     loads="$(override_marker_count)"
     fail "plugins reload reported success but the override's own component was never re-instantiated (own-component loads $loads, expected $((loads_before + 1)))"
@@ -1361,8 +1034,7 @@ EOF
     return 1
   fi
 
-  # Removing the override must hand the id back to the shipped package rather
-  # than leaving a package that no longer exists on disk installed under it.
+  # Removing the override must return its ID to the bundled package.
   rm -rf -- "$dir"
   reply="$(sandbox_ipc plugin-scan rescan "$override_plugin")"
   if [[ "$reply" != RESCAN_TRIGGERED:* ]]; then
@@ -1374,12 +1046,7 @@ EOF
     return 1
   fi
   sleep 1
-  # `plugins list` saying "[loaded]" is NOT evidence that the shipped package
-  # took the id back: it is exactly what the id reported while the wrong
-  # package's components were installed. The evidence is that the id is loaded
-  # AND no instance of the override survives, which leaves only the shipped
-  # package. Reverting VGS-75 ends this run with one override instance still
-  # live after its manifest was deleted.
+  # Require the ID to remain loaded with no override instance alive. A loaded label alone cannot identify ownership.
   if ! override_state_settles 0; then
     return 1
   fi
@@ -1389,8 +1056,7 @@ EOF
   return 0
 }
 
-# The two things that must hold after every step: the id is owned by something,
-# and the override has exactly `want` live instances (loads minus teardowns).
+# Check ownership and the expected live override count from loads minus teardowns.
 override_state_settles() {
   local want="$1" loads teardowns live
   loads="$(override_marker_count)"
@@ -1413,26 +1079,22 @@ nested_check() {
   local seeded
   local -a expected_plugins=() missing_plugins=()
   local -a sandbox_env=() dbus_wrapper=()
-  # Per-run, so a stale log from an earlier invocation can never satisfy a
-  # marker assertion in this one.
+  # Each run needs its own log so old markers cannot satisfy fixture assertions.
   override_nonce="$$-${RANDOM}"
 
   command -v Hyprland >/dev/null 2>&1 || { nested_unavailable "Hyprland not installed"; return; }
   command -v qs >/dev/null 2>&1 || { nested_unavailable "quickshell (qs) not installed"; return; }
-  # The layer-geometry assertions parse hyprctl's JSON with it. Without this the
-  # first parse would fail as a command-not-found and be read as "no surface".
+  # Require the JSON parser before geometry queries so a missing interpreter cannot look like absence.
   command -v python3 >/dev/null 2>&1 || { nested_unavailable "python3 not installed (needed to read the compositor's layer list)"; return; }
   if ! host_socket="$(host_wayland_socket)" || [[ ! -S "$host_socket" ]]; then
-    # Without a host Wayland socket a nested compositor would fall back to DRM
-    # and fight the real session for the GPU/VT. Refuse rather than risk it.
+    # A host Wayland socket prevents the nested compositor from falling back to the live GPU and VT.
     nested_unavailable "no host Wayland socket to nest inside (WAYLAND_DISPLAY unset)" no-host-socket
     return
   fi
 
   sandbox="$(mktemp -d -t vshell-smoke.XXXXXX)"
   track_dir "$sandbox"
-  # Hyprland's IPC socket path is XDG_RUNTIME_DIR + a 60-char instance
-  # signature; keep the runtime dir short or it exceeds sun_path.
+  # Keep the runtime directory short enough for Hyprland's IPC socket path.
   rt_dir="${XDG_RUNTIME_DIR:?}/vs.$$"
   rm -rf -- "$rt_dir"
   mkdir -p -- "$rt_dir"
@@ -1440,21 +1102,10 @@ nested_check() {
   track_dir "$rt_dir"
 
   mkdir -p "$sandbox/home/.config" "$sandbox/home/.local/share" "$sandbox/home/.local/state" "$sandbox/home/.cache"
-  # The sandbox's user state comes from the REPO ALONE: two seeded files, no
-  # read of `~/.config/vshell` at all, and `plugins/` left absent for
-  # override_check. Why, and which narrower shapes were tried and rejected:
-  # docs/decisions/D008-nested-sandbox-state-seeding.md.
-  #
-  # NOT seeded, deliberately: `theme.json`. The shell renders on MethodTheme's
-  # fallback palette, so THEME STATE IS OUT OF THIS SMOKE'S SCOPE and a
-  # theme-load regression passes here unseen. The repo has no runtime
-  # theme.json to copy and generating one runs hooks that reach the live
-  # session — measurements and the revisit condition: D008 § Scope.
-  #
-  # Every step below either succeeds or SAYS SO. A swallowed prep failure leaves
-  # the run measuring a sandbox that is not the one it describes — the same
-  # defect as a failed layer query reading as absence, which this file has now
-  # had three times, twice of them here.
+  # Seed sandbox state from repository files and leave plugins/ absent for the override fixture.
+  # Theme state is not seeded: the smoke uses the fallback palette and cannot verify theme loading.
+  # See D008 § Scope.
+  # Report each preparation failure before using the resulting sandbox.
   prep_fail() {
     fail "sandbox preparation failed at: $1"
     return 1
@@ -1466,10 +1117,7 @@ nested_check() {
   cp -- "$repo_root/config/vshell/plugin_settings.default.json" \
         "$sandbox/home/.config/vshell/plugin_settings.json" || { prep_fail "seeding plugin_settings.json from the shipped default"; return; }
 
-  # Stamp the sentinels `seeded_settings_check` reads back. Each key must
-  # ALREADY EXIST in the shipped default: one that does not is a rename this
-  # check was never told about, and inventing it would seed a setting the shell
-  # ignores and then assert on it.
+  # Sentinel keys must exist in shipped defaults. Inventing a renamed key would test a setting the shell ignores.
   python3 - "$sandbox/home/.config/vshell" \
             "$settings_sentinel_key" "$settings_sentinel_value" \
             "$plugin_sentinel_plugin" "$plugin_sentinel_key" "$plugin_sentinel_value" \
@@ -1491,10 +1139,7 @@ def stamp(name, path, value):
         node = node[key]
     if path[-1] not in node:
         sys.exit(f"{name}: {path[-1]!r} is not in the shipped default")
-    # A sentinel equal to what the shipped file already holds -- which is also
-    # what the shell falls back to -- would pass in both worlds and witness
-    # nothing. That is the one way to pick a sentinel that cannot discriminate,
-    # so it fails here rather than passing quietly for years.
+    # A sentinel matching the repository fallback cannot distinguish applied seed from fallback state.
     if node[path[-1]] == value:
         sys.exit(f"{name}: the sentinel for {'.'.join(path)} equals the shipped value {value!r}")
     node[path[-1]] = value
@@ -1523,11 +1168,7 @@ EOF
 
   log="$sandbox/qs.log"
 
-  # env -i: nothing from the live session leaks in. No VGS_SOCKET (the
-  # sandboxed shell must not reach the live backend daemon), no
-  # HYPRLAND_INSTANCE_SIGNATURE (hyprctl resolves to the nested compositor in
-  # $rt_dir, never the live one), no DBUS_SESSION_BUS_ADDRESS (a private bus is
-  # provided below instead of the live one).
+  # Clear inherited environment, then provide isolated backend, compositor, and session-bus endpoints.
   sandbox_env=(
     env -i
     HOME="$sandbox/home"
@@ -1584,9 +1225,7 @@ EOF
     "${dbus_wrapper[@]}" \
     timeout --signal=TERM --kill-after=5 "$nested_timeout" \
     qs --no-color -p "$repo_root/quickshell/vshell" >"$log" 2>&1; then
-    # stdout and stderr are already redirected into $log, so there can be a
-    # reason to show even this early. Same rule as the post-teardown block:
-    # never report a failure while withholding its evidence.
+    # Launch output already reaches the log, so include it when reporting early failure.
     tail -n 40 "$log" >&2 || true
     fail "sandboxed shell failed to launch"
     return
@@ -1594,9 +1233,7 @@ EOF
   qs_launcher="$spawn_launcher_pid"
   qs_group="$spawn_pgid"
 
-  # A live IPC target list is the proof that VGS itself came up: those handlers
-  # only exist once the shell tree loaded. Waiting on the timeout instead would
-  # also "pass" for a shell that exited immediately.
+  # Wait for VGS IPC targets; surviving until a timeout alone does not prove the shell loaded.
   loaded=false
   targets=""
   for _ in $(seq 1 $((nested_timeout * 2))); do
@@ -1609,21 +1246,8 @@ EOF
     sleep 0.5
   done
 
-  # Bundled plugins load asynchronously, several seconds after the core targets
-  # answer. Stopping at the first core target ends observation before any plugin
-  # QML has run, so plugin load failures, duplicate IpcHandler registrations and
-  # broken entry points were invisible here — and passed as full coverage.
-  #
-  # EVERY bundled plugin, not one of them. Waiting on a single plugin's IPC
-  # target proved only that plugin loaded: the seven load through independent
-  # asynchronous FileViews with no ordering guarantee, so six could still be
-  # pending when the shell was killed, and their QML was never observed while
-  # the run reported full plugin coverage. That is the original VGS-19 defect
-  # wearing a different hat.
-  #
-  # The expected set is derived from the tree rather than hardcoded, so adding a
-  # bundled plugin extends this check automatically instead of silently not
-  # covering the new one.
+  # Wait for every bundled plugin discovered from the repository. Their independent asynchronous
+  # loads can remain pending after core readiness or another plugin's readiness.
   mapfile -t expected_plugins < <(
     find "$repo_root/config/vshell/plugins" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort
   )
@@ -1632,13 +1256,8 @@ EOF
     return
   fi
 
-  # Needs nothing but the shell's IPC, and goes first because a missed seed is
-  # otherwise INVISIBLE until deep inside popout_check: bundled plugins are
-  # force-enabled regardless of settings.json (see the plugin diagnostics
-  # below), so they all load on fallback defaults — which is why VGS-92 survived
-  # every run in the `cp -a` window. The first phase that would notice is
-  # wait_widget_registered, answering WIDGET_NOT_FOUND much later and pointing
-  # at the wrong thing.
+  # Verify sentinels before state-dependent phases. Bundled plugins can load on fallback settings,
+  # so plugin readiness alone cannot prove the seed was applied.
   seeded=false
   if [[ "$loaded" == true ]] && seeded_settings_check; then
     seeded=true
@@ -1646,20 +1265,11 @@ EOF
 
   plugins_loaded=false
   plugin_report=""
-  # Gated on `loaded`, NOT on the seed: plugin loading does not depend on
-  # settings, so this verdict is independent evidence worth having even when
-  # the seed check failed.
+  # Plugin readiness is independent of seeded settings.
   if [[ "$loaded" == true ]]; then
     for _ in $(seq 1 $((plugin_timeout * 2))); do
-      # The `plugins` IPC target, NOT `plugin-scan`. Both expose a `list`, and
-      # they format differently: this one emits "<id> [loaded|disabled]"
-      # (VGSIPC.qml), while PluginService's own `plugin-scan list` emits
-      # tab-separated "<id>\tloaded\t<type>\t<name>\t<withheld-reason>".
-      # Matching the wrong
-      # emitter's shape would make every row miss, which reads as "no plugin
-      # ever loaded" — so the target and the pattern have to be quoted together.
-      # This one is used because it is the view that distinguishes "not scanned
-      # yet" (absent) from "scanned and failed to load" (present, [disabled]).
+      # Match plugins list output, which uses [loaded|disabled]. plugin-scan list uses tab-separated fields.
+      # This view distinguishes an undiscovered ID from a discovered ID that failed to load.
       plugin_report="$("${sandbox_env[@]}" qs ipc -p "$repo_root/quickshell/vshell" \
         --any-display call plugins list 2>/dev/null || true)"
       missing_plugins=()
@@ -1675,21 +1285,15 @@ EOF
     done
   fi
 
-  # These two drive the shell that is still running, so they come before the
-  # teardown, and they stop at the first failure. Gated on the seed (D008 rule
-  # 4): both read state the seeded settings supply, so on fallback defaults they
-  # would be measuring a configuration nobody described.
+  # Run state-dependent phases only after seed verification and before teardown.
   if [[ "$seeded" == true && "$plugins_loaded" == true ]]; then
     if popout_check; then
       override_check || true
     fi
   fi
 
-  # Gated on `loaded` alone, NOT on the seed or on plugins: the switchers read
-  # the theme services, so their verdict is independent evidence worth having
-  # even when those phases could not run. It writes `modalDarkenBackground`, so
-  # it runs after every phase that reads seeded settings. `|| true` keeps the
-  # teardown below reachable - `fail` has already set the exit status.
+  # Switchers can run once the shell loads. Run them after seed-dependent phases because they write settings.
+  # Their failure has already set exit status; keep teardown reachable.
   if [[ "$loaded" == true ]]; then
     switcher_check || true
   fi
@@ -1698,34 +1302,13 @@ EOF
   exit_code=0
   wait "$qs_launcher" || exit_code=$?
 
-  # EVERY DIAGNOSTIC IS EMITTED FIRST, then the verdicts, with no `return` in
-  # between: each early return here used to withhold evidence for the very
-  # failure it reported — a shell that died before exposing IPC got a raw `tail`
-  # and no error classification; a plugin failure with log errors lost its report.
-  #
-  # Services the sandbox deliberately cannot reach (the live PipeWire socket
-  # lives in the session's runtime dir, and the private bus has no peers) are
-  # environment gaps, not QML defects.
+  # Emit available diagnostics before verdicts so one failure does not hide another's evidence.
+  # Missing live PipeWire and bus peers are expected sandbox environment gaps.
   local sandbox_noise='quickshell\.service\.pipewire|Failed to connect pipewire'
-  # Error classes, each verified against a paired positive/negative control:
-  #   ReferenceError  undefined identifier in a binding or handler body
-  #   TypeError       property/method access on undefined, calling a non-function
-  #   SyntaxError     JS parse failure inside a .js import or a handler body
-  # These are prefixed by the QML file path, not by 'ERROR', so the leading
-  # anchor below never saw them.
-  #
-  # Deliberately NOT matched:
-  #   'Binding loop detected'  a warning, benign in several existing surfaces,
-  #                            and it would make the gate noisy rather than
-  #                            catching a class of defect the shell cannot run
-  #                            through.
-  #   bare 'Error:'            over-matches process output and third-party
-  #                            library chatter (ffmpeg, dbus) piped into the log.
+  # Match ReferenceError, TypeError, and SyntaxError even when prefixed by QML paths.
+  # Binding-loop warnings are benign in existing surfaces; bare Error lines match third-party output. Both are excluded.
   local error_classes='ReferenceError|TypeError|SyntaxError'
-  # `|| true` here would treat a MISSING or unreadable log exactly like a clean
-  # one: grep exits 1 for "no match" and 2 for "could not read the file", and
-  # collapsing both into an empty result reports success over a log that was
-  # never scanned. Distinguish them.
+  # grep status 1 means no match; status 2 means the log was not read. Preserve that distinction.
   local grep_rc=0 scan_error=""
   findings="$(grep -nE "^[[:space:]]*ERROR|is not a type|Cannot assign|Unable to assign|Failed to start process|Type .* unavailable|$error_classes" "$log")" || grep_rc=$?
   if [[ "$grep_rc" -gt 1 ]]; then
@@ -1739,17 +1322,12 @@ EOF
     fi
   fi
   [[ -n "$findings" ]] && printf '%s\n' "$findings" >&2
-  # The scan matches error CLASSES; a shell that died before logging one leaves
-  # it nothing, so the raw tail is what carries the reason in that case.
+  # A shell can exit without a recognized error class; include the raw tail for that case.
   [[ "$loaded" != true ]] && { tail -n 40 "$log" >&2 || true; }
 
   local -a not_loaded=() never_seen=()
   if [[ "$loaded" == true && "$plugins_loaded" != true ]]; then
-    # Say WHICH failure this is. "Discovered but not loaded" and "never appeared
-    # at all" have different causes, and a timeout listing names without
-    # distinguishing them sends the reader to the wrong place. Printed here
-    # rather than beside its verdict, so a run that also has log findings keeps
-    # it.
+    # Distinguish plugins never discovered from plugins discovered but not loaded.
     for candidate in "${missing_plugins[@]}"; do
       if printf '%s\n' "$plugin_report" | grep -q "^${candidate} \["; then
         not_loaded+=("$candidate")
@@ -1762,8 +1340,7 @@ EOF
       "${plugin_report:-<no response from the plugins IPC target>}" >&2
   fi
 
-  # Verdicts, most upstream first: the first true one is the honest cause, and
-  # everything needed to act on it is already on stderr above.
+
   if grep -q "refusing to start a duplicate shell" "$log"; then
     fail "the duplicate-instance guard misfired inside the sandbox"
     return
@@ -1777,22 +1354,18 @@ EOF
     return
   fi
   if [[ -n "$findings" ]]; then
-    # Ahead of the plugin verdict: when both fire, the QML error is the cause.
+    # Report QML errors before plugin failure when both conditions hold.
     fail "QML/runtime errors in the sandboxed shell"
     return
   fi
   if [[ "$seeded" != true ]]; then
-    # `seeded_settings_check` already failed the run and named the reason.
+
     return
   fi
   if [[ "$plugins_loaded" != true ]]; then
     if [[ ${#not_loaded[@]} -gt 0 ]]; then
-      # Every bundled plugin is force-enabled by PluginService (a bundled id
-      # backs product UI, so it loads whether or not a user setting names it)
-      # and none declares a startupCheck, so there is no legitimate way for one
-      # to sit here disabled. If that ever changes, this is where the expected
-      # set has to learn about it — a deliberately-disabled plugin must not
-      # look like a broken one.
+      # Bundled plugins are force-enabled and declare no startupCheck. If that contract changes,
+      # expected readiness must account for intentionally disabled plugins.
       fail "bundled plugin(s) scanned but NOT loaded: ${not_loaded[*]} — a bundled id is force-enabled and declares no startup gate, so this is a load failure, not a disabled plugin"
       return
     fi
@@ -1800,14 +1373,10 @@ EOF
     return
   fi
 
-  # Only when nothing has failed. A phase that called `fail` set the exit status
-  # but does not stop the run, so an unconditional pass line here sits directly
-  # under a FAIL line and reads as a summary that contradicts it.
+  # fail sets status without stopping the run. Print success only while status remains successful.
   [[ "$status" -eq 0 ]] || return
   note "isolated runtime check passed (shell loaded, all ${#expected_plugins[@]} bundled plugins loaded, answered IPC in the sandbox)"
 }
-
-# --- run --------------------------------------------------------------------
 
 static_check
 if [[ "$nested" == true ]]; then

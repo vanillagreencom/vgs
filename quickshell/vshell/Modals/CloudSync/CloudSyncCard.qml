@@ -5,21 +5,12 @@ import qs.Common
 import qs.Widgets
 import qs.Modules.Settings.Widgets
 
-// The Settings app's card, plus a description slot. Cloud Sync is a
-// settings-shaped product, so it inherits SettingsCard's fill, hairline border,
-// radius, header typography and padding rather than restating them.
-//
-// Children declared here land in contentColumn ahead of the use site's, so the
-// description always renders directly under the title.
+// SettingsCard with a description slot. Its declared children precede caller content, placing the description below the title.
 SettingsCard {
     id: root
 
     property string description: ""
-    // Marks the card a cross-page jump landed on. SettingsCard's own highlight
-    // is wired to the settings search service, which Cloud Sync does not use.
-    // Expressed as the card's own border rather than an overlay child: this
-    // component's default children land in SettingsCard's content column, so a
-    // declared Rectangle would render inside the card instead of around it.
+    // Mark cross-page navigation with the card border. A default Rectangle child would land inside the content column.
     property bool highlighted: false
 
     width: parent ? parent.width : 0

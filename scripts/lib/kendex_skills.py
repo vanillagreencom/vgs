@@ -1,33 +1,9 @@
 #!/usr/bin/env python3
-"""The one reader of `kendex.toml`'s skill register.
+"""Read the skill register in kendex.toml.
 
-`.agents/skills/` holds two kinds of tree that look identical from the
-filesystem: `kendex refresh` output, owned upstream in vanillagreencom/kendex,
-and this repo's own skills, which nothing renders over. Only `kendex.toml`
-tells them apart — a `[skills.<name>]` table whose `source` is `"in-place"` is
-ours, anything else is render.
-
-KEN-938 moved the project skills under `.agents/` and gave three guards and two
-bot configs a hand-copied list of the three names, each comment naming this
-register as the thing it copies. Nothing read it. A fourth in-place skill was
-registered, given a dead section pointer and 16 KB of unceilinged prose, and
-all five surfaces passed — the guards were scoped to a list that no longer
-described the repo. So the guards read the register instead: divergence is
-impossible by construction rather than detectable afterwards, the same move
-`scripts/validate`'s grammar header records for the eight holes that came from
-consumers each re-deriving one definition.
-
-WHAT A SCRIPT CANNOT GENERATE — `.coderabbit.yaml`'s three skill path lists,
-`.github/copilot-instructions.md` and `review-bots.md` — is held to this
-register by `scripts/check-owned-skills.py`, which also owns this module's
-must-fail controls. `scripts/AGENTS.md` is NOT among them: it names no skill.
-
-`tomllib` READS IT, stdlib since 3.11. The register is ordinary TOML and a
-hand-rolled line scanner only adds shapes to get wrong.
-
-AN UNREADABLE REGISTER RAISES, and so does a readable one with no in-place row:
-"no skills are ours" is the answer that turns every derived guard into a no-op
-that still prints its ok line, which is the failure this module exists to end.
+In-place rows identify repository-owned skills. Other rows identify rendered
+skills. An unreadable register or an empty in-place set raises RegisterError
+so callers do not silently narrow their scan to nothing.
 """
 
 from __future__ import annotations
@@ -95,14 +71,7 @@ def skill_sources(text: str) -> dict[str, str]:
 
 
 def in_place_names(text: str) -> tuple[str, ...]:
-    """This repo's own skills, sorted. NEVER EMPTY — an empty answer raises.
-
-    A register that names no in-place skill is readable and useless: every
-    guard deriving its scope from it scans nothing and prints its ok line, and
-    the two guards that own the question report agreement over comparisons that
-    compared nothing. One refusal here is what all four consumers act on,
-    through the `except RegisterError` each already has.
-    """
+    """Return sorted in-place skill names; raise RegisterError if none exist."""
     names = tuple(
         sorted(name for name, source in skill_sources(text).items() if source == IN_PLACE)
     )
@@ -124,20 +93,10 @@ def rendered_names(text: str) -> tuple[str, ...]:
 
 
 def switched_off(text: str) -> tuple[str, ...]:
-    """Skills the register declares and switches off, sorted.
+    """Return sorted names of skills with enabled set to false.
 
-    `enabled` DEFAULTS TO TRUE, which is kendex's own reading — `ItemDecl` in
-    crates/core/src/manifest/mod.rs carries `#[serde(default = "default_true")]`
-    — so a row without the key is on and only an explicit `false` lands here.
-    Anything else `enabled` could hold is left on: this set only ever relaxes a
-    check, so a value kendex would refuse outright must not relax one here.
-
-    SWITCHING A SKILL OFF DOES NOT REMOVE ITS TREE. kendex renames the
-    declaration to `SKILL.md.disabled` and leaves the directory and every file
-    below it in the repository, so a disabled row keeps its place in both sets
-    above and in every scope derived from them — its prose is still here to be
-    ceilinged, and the bots still read it. The one thing that stops being true
-    of it is that `.agents/skills/<name>/SKILL.md` exists.
+    A missing enabled key leaves the skill enabled. Disabled skills retain their
+    trees and registration; only the requirement for SKILL.md is relaxed.
     """
     return tuple(
         sorted(
@@ -149,13 +108,7 @@ def switched_off(text: str) -> tuple[str, ...]:
 
 
 def register_text(manifest: Path = MANIFEST) -> str:
-    """`kendex.toml`'s text, or a sentence saying why it could not be read.
-
-    UnicodeDecodeError is caught beside OSError: an undecodable byte in the
-    register is not an OSError, and uncaught it reaches all four guards as a
-    bare traceback with no sentence saying which file failed. `error` is
-    formatted whole because `strerror` is OSError-only.
-    """
+    """Read kendex.toml or raise RegisterError for file or decoding failures."""
     try:
         return manifest.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as error:
@@ -167,12 +120,9 @@ def register_text(manifest: Path = MANIFEST) -> str:
 
 
 def in_place_dirs(text: str | None = None) -> tuple[str, ...]:
-    """Repo-relative directory of each in-place skill, sorted.
+    """Return sorted repository-relative directories of in-place skills.
 
-    THE DERIVED VALUE the guards use. `scripts/check-owned-skills.py` asserts
-    each one exists and carries a `SKILL.md` unless the row is switched off, so
-    a derived path that names nothing on disk is a named failure there rather
-    than a silent narrowing in every guard that globs it.
+    check-owned-skills.py checks that these trees exist.
     """
     return tuple(
         f"{SKILLS_DIR}/{name}"
@@ -181,8 +131,6 @@ def in_place_dirs(text: str | None = None) -> tuple[str, ...]:
 
 
 if __name__ == "__main__":
-    # `scripts/check-naming.sh` derives its skill candidate paths through this,
-    # rather than keeping the fifth hand-copied list of the same three names.
     try:
         print("\n".join(in_place_dirs()))
     except RegisterError as error:

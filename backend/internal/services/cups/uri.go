@@ -55,9 +55,8 @@ func validateNetworkDeviceURI(rest string) error {
 	return validateDeviceHost(host)
 }
 
-// dnssd and usb always name their device through an authority, so a path-form
-// value for them is malformed rather than a shorthand — accepting it would let
-// the URI reach CUPS tooling with no host ever validated.
+// dnssd and usb require a device authority. Reject path-only values so CUPS
+// cannot receive an unchecked host.
 func validateAuthorityDeviceURI(rest string) error {
 	host, _, err := splitDeviceAuthority(rest)
 	if err != nil {

@@ -60,9 +60,7 @@ Item {
         interval: 4000
         onTriggered: root.revertConfirmPending = false
     }
-    // Swatches show the effective (post-restyle) palette, but per-swatch edits
-    // persist as the base color with the restyle re-applied on top — so a swatch
-    // won't land on the exact picked hex while a restyle is active. Warn honestly.
+    // Swatches show restyled colors, but edits persist base colors before restyling. Warn that the picked hex may differ.
     readonly property bool hasAdjustments: {
         const a = VGSThemeService.currentTheme.adjustments || {};
         return ["brightness", "vibrancy", "contrast", "hue", "temperature"].some(k => Math.round(a[k] || 0) !== 0);
@@ -151,8 +149,7 @@ Item {
 
     Timer {
         id: restylePreviewTimer
-        // Helper startup is ~150 ms p95; matching that cadence avoids keeping a
-        // stale preview permanently queued while still feeling immediate.
+        // Debounce slider events. The interval tracks helper startup (about 150 ms p95) so a stale preview is never left queued.
         interval: 160
         repeat: false
         onTriggered: root.previewRestyle()

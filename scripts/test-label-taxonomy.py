@@ -1,15 +1,5 @@
 #!/usr/bin/env python3
-"""Controls for the label-taxonomy parser.
-
-The parser is the allow-list the project-management preflight consults before
-every issue create or label update, and the preflight STOPS on a label it
-cannot find. A label the parser cannot see is therefore indistinguishable from
-one nobody documented: the sweep reports it missing however carefully it was
-written down. `1.0`, kendex's release set, was exactly that for as long as the
-pattern demanded a leading letter.
-
-The guard has no inline self-test, so its controls live here.
-"""
+"""Controls for label extraction from the taxonomy tables."""
 from __future__ import annotations
 
 import importlib.machinery
@@ -82,9 +72,7 @@ def test_a_label_name_may_begin_with_a_digit():
 
 
 def test_the_leading_letter_pattern_is_what_hid_it():
-    """The must-fail control. Restoring the old letter-only pattern has to put
-    the numeric labels back out of reach, or the case above proves nothing
-    about the fix it exists for."""
+    """Require the letter-only mutant to lose numeric labels."""
     import re
 
     original = guard.LABEL_SPAN

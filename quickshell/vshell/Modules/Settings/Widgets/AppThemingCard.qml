@@ -16,8 +16,7 @@ SettingsCard {
 
     property string expandedApp: ""
 
-    // A color can be used by many keys; keep the tile label short (first key
-    // + a "+N" count) so it never wraps or spills out of the swatch tile.
+    // Collapse repeated color-key labels to the first key plus a count to limit label width.
     function curatedLabel(keys, value) {
         const k = keys || [];
         if (k.length === 0)
@@ -287,7 +286,7 @@ SettingsCard {
                     font.pixelSize: Theme.fontSizeSmall
                 }
 
-                // Curated apps: deduped file colors, each editable (recolor-all).
+
                 Flow {
                     id: curatedFlow
                     width: parent.width

@@ -1,4 +1,3 @@
-// ===== wp_wipe.frag =====
 #version 450
 
 layout(location = 0) in vec2 qt_TexCoord0;
@@ -83,12 +82,9 @@ vec4 sampleWithFillMode(sampler2D tex, vec2 uv, float imgWidth, float imgHeight)
 void main() {
     vec2 uv = qt_TexCoord0;
 
-    // Sample textures with fill mode
     vec4 color1 = sampleWithFillMode(source1, uv, ubuf.imageWidth1, ubuf.imageHeight1);
     vec4 color2 = sampleWithFillMode(source2, uv, ubuf.imageWidth2, ubuf.imageHeight2);
 
-    // Map smoothness from 0.0-1.0 to 0.001-0.5 range
-    // Using a non-linear mapping for better control
     float mappedSmoothness = mix(0.001, 0.5, ubuf.smoothness * ubuf.smoothness);
 
     float edge = 0.0;
@@ -98,8 +94,6 @@ void main() {
     // This ensures the transition completes fully at the edges
     float extendedProgress = ubuf.progress * (1.0 + 2.0 * mappedSmoothness) - mappedSmoothness;
 
-    // Calculate edge position based on direction
-    // As progress goes from 0 to 1, we reveal source2 (new wallpaper)
     if (ubuf.direction < 0.5) {
         // Wipe from right to left (new image enters from right)
         edge = 1.0 - extendedProgress;

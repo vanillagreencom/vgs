@@ -3,25 +3,8 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import qs.Common
 
-// The switcher's carousel: a rail of leaning slices with the selection opened
-// out to a full preview in the middle, everything else compressed to a sliver
-// and overlapping its neighbour. Ported from the Omarchy 4 image picker, whose
-// proportions are reproduced here rather than reinvented.
-//
-//    ╱╱╱╱╱╱╱  ┌───────────────────────┐  ╱╱╱╱╱╱╱
-//   ╱╱╱╱╱╱╱   │      selected         │   ╱╱╱╱╱╱╱
-//  ╱╱╱╱╱╱╱    │      full preview     │    ╱╱╱╱╱╱╱
-//   ╱╱╱╱╱╱╱   └───────────────────────┘   ╱╱╱╱╱╱╱
-//   dimmed slivers          ^              dimmed slivers
-//                    z above its neighbours
-//
-// The base proportions are Omarchy's in logical pixels, which fill a 1920-wide
-// screen exactly. `unit` grows them together on anything wider, so the rail
-// keeps its shape instead of sitting as a small island on a HiDPI panel.
-//
-// Nothing here animates, also on purpose: a page step lands instantly, the way
-// flicking through a stack of prints does. Sliding fifteen masked layers per
-// keypress would cost far more than it reads.
+// Carousel geometry follows the Omarchy image picker: overlapping leaning slices surround a full selected preview.
+// Scale base proportions together and keep page changes immediate.
 Item {
     id: carousel
 
@@ -34,8 +17,7 @@ Item {
     signal activated
 
     readonly property real baseRailWidth: 768 + 13 * 78 + 40
-    // NOT named `scale`: that is Item's own transform property, and shadowing
-    // it would magnify the whole rail instead of sizing it.
+    // Avoid scale: Item owns that transform property, which would magnify the rail instead of sizing its geometry.
     readonly property real unit: {
         const byWidth = carousel.width / carousel.baseRailWidth;
         const byHeight = carousel.height / 475;
@@ -46,33 +28,22 @@ Item {
     readonly property real expandedHeight: 475 * unit
     readonly property real sliceWidth: 108 * unit
     readonly property real sliceHeight: 432 * unit
-    // Negative: consecutive slivers OVERLAP, which is what makes the rail read
-    // as a stack rather than as a row of separate tiles.
+    // Negative spacing lets adjacent slices overlap.
     readonly property real sliceSpacing: -30 * unit
     readonly property real skewOffset: 28 * unit
 
     readonly property real itemStep: sliceWidth + sliceSpacing
     readonly property real railWidth: expandedWidth + 13 * itemStep
     readonly property real previewX: (railWidth - expandedWidth) / 2
-    // Only what the rail can actually show is built. Omarchy keeps a fixed 16
-    // per side; deriving it from the rail instead means a wide screen does not
-    // hold a dozen decoded images that are positioned off the end of it.
+    // Build only the slices that the rail can display to limit decoded images.
     readonly property int slicesPerSide: Math.ceil(previewX / Math.max(1, itemStep)) + 1
 
-    // Slivers decode to a fixed budget, NOT to their display size: a slice is a
-    // tall narrow crop, so covering it from a 16:9 source needs a decode several
-    // times its own width, and asking for that at HiDPI display size across a
-    // whole rail is hundreds of megabytes. This is Omarchy's thumbnail size,
-    // which is the same trade they make one step earlier by pre-rendering
-    // 1536x864 thumbnails on disk. The selected slot decodes properly — see
-    // SwitcherStage.
+    // Cap slice decoding independently of display size; tall narrow crops would otherwise decode large images across the rail.
+    // The selected slot uses its own display-size budget.
     readonly property int sliceDecodeWidth: 1536
     readonly property int sliceDecodeHeight: 864
 
-    // Wallpaper filenames are user data and routinely carry spaces, '#' and '%',
-    // all of which break a raw file:// URL. Encode per segment, as CachingImage
-    // does, so the separators survive. `Paths.toFileUrl` deliberately does not:
-    // it is the raw-prefix helper.
+    // Encode file-path segments so spaces, # and % remain valid without encoding directory separators. Paths.toFileUrl does not encode; do not substitute it.
     function fileUrl(path) {
         if (!path)
             return "";
@@ -84,11 +55,7 @@ Item {
         return entry ? carousel.fileUrl(entry.image) : "";
     }
 
-    // Slivers read a pre-sized thumbnail; the SELECTED slot never does, so the
-    // one image shown at full size still decodes from the original and its
-    // quality is untouched. Empty `thumb` falls back to the source, which is
-    // what the rail read before the cache existed, so a cold or unwritable
-    // cache costs speed and nothing else.
+    // Use cached thumbnails for slices. The selected slot reads the original; missing thumbnails fall back to the source.
     function thumbUrlFor(index) {
         const entry = (carousel.items || [])[index];
         if (!entry)
@@ -122,13 +89,8 @@ Item {
                 readonly property int relativeIndex: index - carousel.selectedIndex
                 readonly property bool isSelected: index === carousel.selectedIndex
                 readonly property bool nearby: Math.abs(relativeIndex) <= carousel.slicesPerSide
-                // A small hysteresis band around the visible window: the source
-                // is kept a couple of steps past the edge so paging back and
-                // forth over the same entries does not re-decode, and RELEASED
-                // beyond that. Latching it on for good instead — which is what
-                // Omarchy does, over a list of a dozen — retained every sliver
-                // a long browse had ever passed: 79 installed themes is 79
-                // decoded pixmaps, not the bound this file claims.
+                // Retain sources just beyond the visible range to avoid repeated decoding during short back-and-forth paging.
+                // Release them farther away so a long browse cannot retain every image.
                 readonly property bool retained: Math.abs(relativeIndex) <= carousel.slicesPerSide + 2
 
                 visible: nearby
@@ -151,9 +113,7 @@ Item {
                 borderWidth: isSelected ? 3 : 1
                 onClicked: isSelected ? carousel.activated() : carousel.picked(index)
 
-                // The selected slot decodes at display size and warms its
-                // neighbours; the slivers share one small budget. Two separate
-                // cache keys on purpose — see SwitcherStage.
+                // Keep separate cache sizes for slices and the selected slot; selected lookahead uses the selected slot's cache key.
                 SwitcherStage {
                     anchors.fill: parent
                     visible: slice.isSelected

@@ -288,7 +288,7 @@ Item {
                         return 1;
                     if (root.layoutMode === "grid")
                         return 2;
-                    // auto
+
                     if (root.width < 280)
                         return 1;
                     if (root.width < 500)

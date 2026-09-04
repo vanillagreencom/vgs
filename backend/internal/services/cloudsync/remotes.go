@@ -20,13 +20,11 @@ import (
 // give up and release the local callback port.
 const oauthTimeout = 5 * time.Minute
 
-// aboutTimeout is generous: the first quota call after a sign-in can include a
-// token exchange, and Drive in particular is slow to answer it.
+// aboutTimeout allows for a token exchange during the quota request.
 const aboutTimeout = 60 * time.Second
 
-// featuredProviders surface first in the account picker: the backends a
-// consumer is actually likely to want. Everything else rclone supports is still
-// reachable through the full list.
+// featuredProviders appear first in the picker. Other supported providers remain
+// available in the full list.
 var featuredProviders = map[string]bool{
 	"drive":       true,
 	"dropbox":     true,
@@ -65,8 +63,6 @@ var (
 	authURLPattern    = regexp.MustCompile(`https?://[^\s"']+`)
 )
 
-// listProviders returns the connectable backends with the fields a setup form
-// needs.
 func (m *Manager) listProviders() ([]Provider, error) {
 	var raw rcProviders
 	if err := m.client.callTimeout("config/providers", nil, &raw, 15*time.Second); err != nil {
@@ -123,17 +119,13 @@ func (m *Manager) listProviders() ([]Provider, error) {
 	return out, nil
 }
 
-// shortProviderName turns rclone's Description into something that fits on one
-// line of a picker. Most are already fine ("Google Drive", "Dropbox"), but a
-// few enumerate every compatible vendor — the S3 description alone names ~50
-// providers — which would swamp the list.
+// shortProviderName removes vendor enumerations so provider descriptions fit the
+// picker.
 func shortProviderName(name, description string) string {
 	label := strings.TrimSpace(description)
 	if label == "" {
 		return name
 	}
-	// Cut the enumeration: "Amazon S3 Compliant Storage Providers including
-	// AWS, Alibaba, …" becomes "Amazon S3 Compliant Storage Providers".
 	for _, sep := range []string{" including ", " (this is not ", ", including "} {
 		if idx := strings.Index(label, sep); idx > 0 {
 			label = label[:idx]
@@ -149,7 +141,6 @@ func shortProviderName(name, description string) string {
 	return label
 }
 
-// optionAcronyms are the fragments that look wrong in Title Case.
 var optionAcronyms = map[string]string{
 	"id": "ID", "url": "URL", "api": "API", "oauth": "OAuth", "aws": "AWS",
 	"sso": "SSO", "acl": "ACL", "iam": "IAM", "sse": "SSE", "kms": "KMS",
@@ -210,17 +201,15 @@ func stringifyDefault(value any) string {
 	}
 }
 
-// providerDetails is the cached presentation half of a provider definition.
-// Resolving it needs an rc round trip over every backend rclone supports, so it
-// is fetched once and reused: the set cannot change while rclone is running.
+// providerDetails caches provider names and sign-in metadata. The provider table
+// is fetched once per daemon instance.
 type providerDetails struct {
 	name  string
 	oauth bool
 }
 
-// providerDetailsFor resolves a backend type to its display name and whether it
-// signs in through a browser. Unknown types degrade to the raw type, which is
-// still better than nothing.
+// providerDetailsFor returns the provider label and browser-sign-in support.
+// Unknown providers use their raw type as a label.
 func (m *Manager) providerDetailsFor(providerType string) providerDetails {
 	if providerType == "" {
 		return providerDetails{}
@@ -236,9 +225,8 @@ func (m *Manager) providerDetailsFor(providerType string) providerDetails {
 		return providerDetails{name: providerType}
 	}
 
-	// Single-flight: refreshAccounts calls this once per account, and without
-	// the gate every one of N accounts paid its own 15s config/providers call
-	// against a slow or failing daemon — delaying the account list by minutes.
+	// Serialize provider-table loading so concurrent account lookups share the same
+	// control call.
 	m.providersOnce.Lock()
 	defer m.providersOnce.Unlock()
 
@@ -284,9 +272,8 @@ func (m *Manager) refreshAccounts() {
 	}
 	var remotes rcListRemotes
 	if err := m.client.callTimeout("config/listremotes", nil, &remotes, 10*time.Second); err != nil {
-		// The previous list is left in place — dropping every account because
-		// one call failed would be worse — but the user asked for a refresh, so
-		// the failure is not silent.
+		// Retain cached accounts on a failed refresh and report the error to the
+		// caller.
 		m.log.Warn("cloudsync could not list remotes; the account list may be stale", "err", err)
 		return
 	}
@@ -371,12 +358,9 @@ func (m *Manager) refreshAccounts() {
 	go m.refreshAccountDetails(m.accountNames())
 }
 
-// carryOverAccounts folds what a refresh cannot re-derive — reachability,
-// quota, and the identity of any account whose config could not be read this
-// pass — from the outgoing list into the incoming one, in place.
-//
-// Split out from refreshAccounts so it can be tested directly: exercising it
-// through refreshAccounts means racing the health sweep that call spawns.
+// carryOverAccounts retains health, quota, and unreadable account identities
+// from the outgoing list. It does not retain transient checking state or state
+// from a different provider type.
 func carryOverAccounts(fresh []Account, previous map[string]Account, unresolved map[string]bool) {
 	for i := range fresh {
 		prior, ok := previous[fresh[i].Name]
@@ -414,9 +398,8 @@ func carryOverAccounts(fresh []Account, previous map[string]Account, unresolved 
 // here shares its backing array with m.accounts, which setAccountHealth writes
 // into under the lock — so iterating it off-lock is a data race.
 func (m *Manager) refreshAccountDetails(names []string) {
-	// The closed test and the Add share a critical section: Close sets closed
-	// under the same lock before waiting, so an Add can never land after the
-	// Wait has started (which would panic).
+	// Check closed and add the task under the same lock that Close uses. Adding
+	// after shutdown starts waiting can violate WaitGroup ordering.
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
@@ -438,7 +421,6 @@ func (m *Manager) refreshAccountDetails(names []string) {
 	m.broadcastNow()
 }
 
-// accountNames snapshots the current account names for off-lock use.
 func (m *Manager) accountNames() []string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -449,14 +431,9 @@ func (m *Manager) accountNames() []string {
 	return names
 }
 
-// checkAccount refreshes one account's health and quota in place. It is the
-// single implementation behind the periodic sweep and the manual "Check now".
-//
-// Reachability is probed with operations/about rather than a directory listing:
-// about is one API call, whereas listing the root of a large Drive routinely
-// takes longer than any timeout worth waiting for — which would report a
-// perfectly healthy account as broken. Backends that do not implement about
-// fall back to the listing, where there is no cheaper option.
+// checkAccount refreshes account health and quota. It probes operations/about
+// first because listing a large root can exceed the timeout. Providers without
+// about support use a root listing.
 func (m *Manager) checkAccount(name string) error {
 	if err := validateRemoteName(name); err != nil {
 		return err
@@ -509,9 +486,8 @@ func (m *Manager) setAccountHealth(name, health, message string, stamp bool) {
 	}
 }
 
-// scheduleAccountCheck arms the periodic health/quota sweep. Tokens expire and
-// quotas move on their own, so a status the user never asked to refresh still
-// has to stay true.
+// scheduleAccountCheck refreshes health and quota because tokens and storage use
+// can change without a user request.
 func (m *Manager) scheduleAccountCheck() {
 	m.mu.Lock()
 	if m.closed {
@@ -580,7 +556,6 @@ func (m *Manager) accountExists(name string) bool {
 	return false
 }
 
-// addRemote creates a credentials-based (non-OAuth) account.
 func (m *Manager) addRemote(name, providerType string, parameters map[string]string) error {
 	if err := validateRemoteName(name); err != nil {
 		return err
@@ -612,13 +587,9 @@ func (m *Manager) addRemote(name, providerType string, parameters map[string]str
 	return nil
 }
 
-// removeRemote deletes an account.
-//
-// Folders that point at it become unrunnable the moment its credentials are
-// gone, so a disconnect that would strand them is refused unless the caller has
-// shown the user the count and they said yes. Those folders are then removed
-// cleanly — stopping jobs, unmounting, dropping timers and watches — rather
-// than left behind pointing at nothing. Local files are never touched.
+// removeRemote requires explicit acknowledgement when folders depend on the
+// account. It deletes the remote first, then tears down those folders without
+// deleting their local files.
 func (m *Manager) removeRemote(name string, removeFolders bool) error {
 	if err := validateRemoteName(name); err != nil {
 		return err
@@ -627,11 +598,9 @@ func (m *Manager) removeRemote(name string, removeFolders bool) error {
 	if len(affected) > 0 && !removeFolders {
 		return fmt.Errorf("%d synced folder(s) still use this account", len(affected))
 	}
-	// Order matters: the rclone delete is the step that can fail (a stopped or
-	// crash-looping daemon is a supported state), while folder teardown is
-	// local and effectively cannot. Tearing folders down first would destroy
-	// the user's sync configuration — including the two-way baselines they
-	// would have to re-choose — and then report that the disconnect failed.
+	// Delete the remote before tearing down folders. A failed remote deletion must
+	// preserve sync configuration and two-way baselines. Folder teardown failures
+	// are reported separately.
 	if err := m.client.callTimeout("config/delete", map[string]any{"name": name}, nil, 20*time.Second); err != nil {
 		return err
 	}
@@ -656,10 +625,8 @@ func (m *Manager) removeRemote(name string, removeFolders bool) error {
 	return nil
 }
 
-// reconnectRemote re-runs the browser sign-in for an account that already
-// exists and writes the fresh token over the old one. This is the repair path
-// for an expired token: the remote name survives, so every folder pointing at
-// it keeps working.
+// reconnectRemote replaces an account token through browser sign-in while
+// preserving the remote name used by configured folders.
 func (m *Manager) reconnectRemote(name string, parameters map[string]string) error {
 	if err := validateRemoteName(name); err != nil {
 		return err
@@ -687,14 +654,9 @@ func (m *Manager) reconnectRemote(name string, parameters map[string]string) err
 	if !account.OAuth && !m.providerDetailsFor(account.Type).oauth {
 		return fmt.Errorf("this account does not sign in through a browser")
 	}
-	// Allowlisted, not passed through: reconnect writes onto an existing config
-	// section, and an unfiltered map could carry `type` — repointing an account
-	// (and every folder that trusts its name) at a different backend.
-	//
-	// `rclone authorize` also only accepts a client ID and secret together, so
-	// a half-filled pair is dropped rather than written: a custom client_id
-	// beside a token minted with rclone's built-in credentials produces an
-	// account that works now and fails at the next token refresh.
+	// Restrict reconnect updates to credential fields so a supplied type cannot
+	// redirect dependent folders. Keep client ID and secret together because rclone
+	// authorize uses them as a pair.
 	allowed := map[string]string{}
 	if id, secret := strings.TrimSpace(parameters["client_id"]), strings.TrimSpace(parameters["client_secret"]); id != "" && secret != "" {
 		allowed["client_id"] = id
@@ -703,9 +665,8 @@ func (m *Manager) reconnectRemote(name string, parameters map[string]string) err
 	return m.beginOAuth(name, account.Type, allowed, true)
 }
 
-// testRemote verifies an account still works by listing its root. This is the
-// expensive probe — the root of a well-used account can hold thousands of
-// entries — so it is only reached when the backend cannot answer about.
+// testRemote lists the remote root as a fallback when operations/about is
+// unavailable. Large roots can exceed the probe timeout.
 func (m *Manager) testRemote(name string) error {
 	return m.testRemoteCtx(context.Background(), name)
 }
@@ -720,14 +681,12 @@ func (m *Manager) testRemoteCtx(ctx context.Context, name string) error {
 		&list, aboutTimeout)
 }
 
-// browse lists one directory of a remote for the folder picker.
 func (m *Manager) browse(remote, path string) ([]rcListEntry, error) {
 	if err := validateRemoteName(remote); err != nil {
 		return nil, err
 	}
-	// Trimming slashes leaves "../.." intact, which rclone would happily walk
-	// upward from. Inert against a real cloud backend, but the picker must not
-	// be the one component that assumes its remote is remote.
+	// Reject parent traversal before browsing. rclone remotes can refer to local
+	// storage, where traversal can escape the selected root.
 	for _, segment := range strings.Split(strings.Trim(strings.TrimSpace(path), "/"), "/") {
 		if segment == ".." {
 			return nil, fmt.Errorf("that path is not valid")
@@ -770,9 +729,6 @@ func validateRemoteName(name string) error {
 	return nil
 }
 
-// --- Browser sign-in --------------------------------------------------------
-
-// oauthSession is one in-flight `rclone authorize` run.
 type oauthSession struct {
 	cmd    *exec.Cmd
 	timer  *time.Timer
@@ -784,12 +740,10 @@ type oauthSession struct {
 	// It decides whether the finished token is written with config/update
 	// (preserving every other setting) or config/create.
 	reconnect bool
-	// scanners tracks the two output readers so the token can be collected
-	// before the child is reaped.
+	// scanners waits for stdout and stderr readers before the child is reaped.
 	scanners sync.WaitGroup
 }
 
-// startOAuth begins a browser sign-in for a brand new account.
 func (m *Manager) startOAuth(name, providerType string, parameters map[string]string) error {
 	if err := validateRemoteName(name); err != nil {
 		return err
@@ -817,11 +771,9 @@ func (m *Manager) beginOAuth(name, providerType string, parameters map[string]st
 	m.mu.Unlock()
 	m.broadcastNow()
 
-	// The user's own API credentials go in the environment, never in argv:
-	// /proc/<pid>/cmdline is world-readable, so the positional form would
-	// publish the client secret to every local user for the whole consent
-	// window. rclone reads any flag from RCLONE_<FLAG>, and
-	// /proc/<pid>/environ is 0400.
+	// Pass API credentials through the environment because command arguments can be
+	// visible to other local users. Use backend-specific option names for rclone
+	// authorize.
 	cmd := exec.Command(m.binary, "authorize", providerType, "--auth-no-open-browser")
 	cmd.Env = os.Environ()
 	clientID := strings.TrimSpace(parameters["client_id"])
@@ -850,10 +802,8 @@ func (m *Manager) beginOAuth(name, providerType string, parameters map[string]st
 	}
 
 	session := &oauthSession{cmd: cmd, name: name, kind: providerType, params: parameters, reconnect: reconnect}
-	// A timeout is a distinct outcome from the user pressing Cancel: reusing
-	// cancelOAuth here cleared the state with no Error set, so the sign-in card
-	// simply vanished and the failure card stayed hidden — leaving the user
-	// with no indication of what happened.
+	// A timeout must publish an error. User cancellation clears the sign-in state
+	// without one.
 	session.timer = time.AfterFunc(oauthTimeout, func() {
 		m.abortOAuth(session, "sign-in timed out after 5 minutes; try again")
 	})
@@ -906,15 +856,11 @@ func (m *Manager) scanAuthorizeOutput(session *oauthSession, r io.Reader, tokens
 	}
 }
 
-// awaitOAuth finishes the sign-in: it waits for the token, writes the account,
-// and clears the in-flight state whatever happens.
+// awaitOAuth collects the token and writes the account only while this sign-in
+// session is current.
 func (m *Manager) awaitOAuth(session *oauthSession, tokens <-chan string) {
-	// Both pipes are drained to EOF before Wait, and the token is read after
-	// the scanners have finished. exec closes the pipe read ends when the child
-	// is reaped, and `rclone authorize` prints the token immediately before
-	// exiting — so waiting first raced the user's completed consent against a
-	// closed pipe and reported "sign-in did not complete" on a code that had
-	// already been spent.
+	// Drain both streams before Wait closes their read ends. rclone authorize can
+	// print the token immediately before exit; waiting first can discard it.
 	session.scanners.Wait()
 	waitErr := session.cmd.Wait()
 
@@ -992,7 +938,6 @@ func (m *Manager) finishOAuth(session *oauthSession, state OAuthState) bool {
 	return true
 }
 
-// abortOAuth ends one session with a message the user can act on.
 func (m *Manager) abortOAuth(session *oauthSession, message string) {
 	if !m.finishOAuth(session, OAuthState{Error: firstLine(message)}) {
 		return
@@ -1044,11 +989,9 @@ func (m *Manager) failOAuth(message string) {
 	m.broadcastNow()
 }
 
-// backendEnvPrefix builds rclone's per-backend option prefix, e.g. "drive" ->
-// "RCLONE_DRIVE_". Verified against rclone v1.74: the generic RCLONE_CLIENT_ID
-// is *not* honoured by `rclone authorize` — it silently falls back to rclone's
-// built-in credentials, which would mint a token that does not match the
-// client_id we then write into the config.
+// backendEnvPrefix selects rclone authorize credential options such as
+// RCLONE_DRIVE_CLIENT_ID. The generic RCLONE_CLIENT_ID does not select the same
+// credentials, which can leave the token mismatched with the saved account.
 func backendEnvPrefix(providerType string) string {
 	var b strings.Builder
 	b.WriteString("RCLONE_")
@@ -1072,8 +1015,6 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-// decodeStringMap converts loosely-typed JSON parameters into the string map
-// rclone's config API expects.
 func decodeStringMap(raw json.RawMessage) map[string]string {
 	out := map[string]string{}
 	if len(raw) == 0 {

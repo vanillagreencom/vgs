@@ -2,27 +2,9 @@
 
 "use strict";
 
-// VGS-65: toast actions.
-//
-// Four things are worth proving mechanically, and none is visible to qmllint.
-//
-// 1. The normaliser. A toast action is data whenever it can be; a label with
-//    nowhere to go must not become a button that does nothing.
-// 2. The lifetime of the callback form. ToastService is a singleton, so a
-//    closure it stores outlives the toast unless every exit path releases it.
-//    `showToast` drops queued entries by category, and the displayed toast's
-//    copy has to be cleared by `hideToast`. Both are asserted against
-//    ToastService.qml's own source, because the bug would be a missing line,
-//    and a test that only exercised the normaliser would pass with that line
-//    gone. There are two independent drop paths, so each is checked in its own
-//    function body -- asserting the shared line exists somewhere in the file
-//    passed with either one of them deleted.
-// 3. Guaranteed delivery. The queue cap silently drops a non-error toast once
-//    three are waiting, which is not acceptable for the one message that
-//    explains an unrequested change to the user's system.
-// 4. That every `settingsTab:` literal in the tree resolves to a real settings
-//    tab. The declarative form is a bare string resolved at click time; a typo
-//    or a renamed registry id turns the button into a silent no-op.
+// Test action normalization, callback release, protected queue entries, and settings-tab targets.
+// Singleton callbacks can outlive dismissed toasts, and string tab IDs resolve only when clicked.
+// Source wiring checks complement the queue and normalizer behavior tests.
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -34,7 +16,7 @@ const Queue = require(path.join(repoRoot, "quickshell/vshell/Services/ToastQueue
 const servicePath = path.join(repoRoot, "quickshell/vshell/Services/ToastService.qml");
 const serviceSource = fs.readFileSync(servicePath, "utf8");
 
-// --- normalise --------------------------------------------------------------
+
 
 assert.equal(Action.normalizeAction(null), null, "no action is not an action");
 assert.equal(Action.normalizeAction(undefined), null);
@@ -71,8 +53,7 @@ assert.equal(typeof live.callback, "function");
 live.callback();
 assert.equal(called, 1, "the normalised record keeps the handler callable");
 
-// Both given: the declarative half wins, so behaviour does not depend on which
-// property the caller happened to write first.
+// Declarative actions take precedence when both forms are supplied.
 const both = Action.normalizeAction({
     label: "Open settings",
     settingsTab: "notifications",
@@ -84,24 +65,15 @@ assert.equal(both.callback, null, "a settings tab must displace the callback, no
 assert.equal(Action.hasAction(null), false);
 assert.equal(Action.hasAction({ label: "x", settingsTab: "", callback: null }), false);
 
-// --- the normaliser can fail -----------------------------------------------
-//
-// Everything above is a passing assertion, which proves nothing about the
-// instrument. Feed it the shape it must reject and confirm the rejection is
-// real rather than an artefact of how the assertions are written.
+// Use a rejecting normalizer control so incorrect unconditional acceptance cannot pass.
 assert.throws(
     () => assert.notEqual(Action.normalizeAction({ label: "Open settings" }), null),
     "the reject-path assertions must be capable of failing"
 );
 
-// --- reading QML literals ---------------------------------------------------
-//
-// Both checks below read arrays straight out of their .qml files rather than
-// transcribing them, so a rename or a restructure surfaces as a failure here
-// instead of leaving this script asserting about a list that no longer exists.
+// Read QML arrays from source so renamed or removed IDs enter the test automatically.
 
-// The smallest balanced-bracket reader that can lift a QML array-literal
-// property out of its file. Regexes cannot: the structures nest.
+// Extract a balanced QML array literal, including nested arrays.
 function extractArrayLiteral(source, marker) {
     const markerAt = source.indexOf(marker);
     assert.ok(markerAt >= 0, `expected to find ${JSON.stringify(marker)}`);
@@ -121,16 +93,11 @@ function extractArrayLiteral(source, marker) {
     assert.fail(`unbalanced array literal after ${JSON.stringify(marker)}`);
 }
 
-// Both literals are plain data apart from the labels, which call out to QML
-// singletons (I18n.tr, CompositorService...). Only ids and structure matter
-// here, so every free identifier resolves to one inert stub: it is callable,
-// truthy, has every property, and stringifies to "". Evaluating the real text
-// rather than re-declaring the ids is the point -- a hand-copied list would
-// drift from the file it is supposed to be checking.
+// Evaluate array structure with inert callable property stubs for QML label expressions.
+// Only IDs and structure are relevant to these checks.
 const qmlStub = new Proxy(function () {}, {
     get(target, prop) {
-        // `with` consults Symbol.unscopables first; a truthy answer there would
-        // send every identifier back out to the global scope.
+        // Symbol.unscopables must remain false so with does not redirect identifiers to globals.
         if (prop === Symbol.unscopables)
             return undefined;
         if (prop === "toString" || prop === "valueOf" || prop === Symbol.toPrimitive)
@@ -142,17 +109,12 @@ const qmlStub = new Proxy(function () {}, {
 });
 
 function evalArrayLiteral(text) {
-    // `with` is what makes every unknown identifier reach the stub, so this
-    // body is deliberately sloppy-mode; new Function() bodies are, regardless
-    // of this file's own "use strict".
+    // Use non-strict generated function scope for the with-based stubs.
     // eslint-disable-next-line no-new-func
     return new Function("__qml", `with (__qml) { return (${text}); }`)(qmlStub);
 }
 
-// Both lists are plain string arrays; parsed rather than transcribed so a
-// rename in ToastService.qml cannot leave this check asserting about a list
-// that no longer exists. (extractArrayLiteral/evalArrayLiteral are defined
-// below for the settings-tab check and hoist as function declarations.)
+// Read toast category arrays from source rather than maintaining a duplicate list.
 const stickyCategories = evalArrayLiteral(
     extractArrayLiteral(serviceSource, "readonly property var stickyCategories:")
 );
@@ -160,7 +122,7 @@ const undroppableCategories = evalArrayLiteral(
     extractArrayLiteral(serviceSource, "readonly property var undroppableCategories:")
 );
 
-// --- lifetime ---------------------------------------------------------------
+
 
 function qmlFunctionBody(name) {
     const start = serviceSource.indexOf(`function ${name}(`);
@@ -170,8 +132,7 @@ function qmlFunctionBody(name) {
     return serviceSource.slice(start, end);
 }
 
-// One writer for the live reference. If a second assignment to
-// currentActionCallback appears, one of them will eventually forget to clear.
+// Require one current callback writer so release behavior has one owner.
 const callbackAssignments = serviceSource.match(/currentActionCallback\s*=/g) || [];
 assert.equal(
     callbackAssignments.length,
@@ -184,39 +145,21 @@ assert.ok(
     "_setCurrentAction must null the callback when given no action"
 );
 
-// The displayed toast's copy is released on dismissal.
+
 assert.ok(
     qmlFunctionBody("hideToast").includes("_setCurrentAction(null)"),
     "hideToast must release the displayed toast's action, or the closure outlives the toast"
 );
 
-// A queued entry's copy is released when the entry is dropped, and there are
-// TWO independent drop paths: showToast() drops a superseded category before
-// enqueueing its replacement, and dismissCategory() drops one on request.
-// Asserting the drop existed somewhere in the file proved only that at least
-// one of them survived, so each is checked on its own below.
-//
-// The property is REACHABILITY -- after the drop, the entry must not be
-// reachable from the queue the service goes on to hold -- and that is a
-// behavioural property, so it is tested behaviourally rather than by pattern.
-// The earlier version demanded the literal `toastQueue = toastQueue.filter(...)`
-// and listed a splice loop among the forms it must reject, which was wrong:
-// Array.prototype.splice() removes the array's reference to the entry exactly
-// as a filter does. Requiring one syntax rejected a correct implementation,
-// and a check that fails correct code gets weakened later by someone who
-// cannot tell it from a real finding.
-//
-// So the drop itself lives in ToastQueue.js and is exercised for real. The
-// property check is proved on THREE implementations: this one, a splice-based
-// one that must also pass, and a marking one that must fail.
+// A dropped queue entry must become unreachable from the returned queue. Test both filter
+// and splice removal as valid, and marking without removal as invalid. Inspect each call site
+// separately because whole-file presence cannot cover independently removable paths.
 
 function releasesDroppedEntry(dropImplementation) {
     const dropped = { category: "doomed", message: "drop me" };
     const kept = { category: "other", message: "keep me" };
     const result = dropImplementation([dropped, kept], "doomed");
-    // `result` is what every call site assigns back to toastQueue, so this is
-    // the queue the singleton will hold. However the implementation got there,
-    // the dropped entry must not be reachable from it.
+    // Compare reachability from the returned queue that callers retain.
     return result.indexOf(dropped) === -1 && result.indexOf(kept) >= 0;
 }
 
@@ -227,8 +170,7 @@ assert.equal(
 );
 assert.equal(
     releasesDroppedEntry((entries, category) => {
-        // The implementation the old check wrongly forbade. splice() removes
-        // the array's reference, so this releases the entry too and must pass.
+        // Splice removes the array reference too and must satisfy the same release property.
         const copy = entries.slice();
         for (let i = copy.length - 1; i >= 0; i--) {
             if (copy[i].category === category)
@@ -241,7 +183,7 @@ assert.equal(
 );
 assert.equal(
     releasesDroppedEntry((entries, category) => {
-        // Marking instead of removing: the entry is still reachable.
+
         entries.forEach(entry => {
             if (entry.category === category)
                 entry.dropped = true;
@@ -252,10 +194,7 @@ assert.equal(
     "the reachability check must reject a drop that only marks entries"
 );
 
-// Both drop sites route through that one audited implementation. This is a
-// one-owner claim, not a ban on any syntax: a second inline drop would be a
-// second thing to keep correct, and it is the drop that was silently deleted
-// in the first place.
+// Both drop sites must use the queue implementation exercised here.
 for (const fn of ["showToast", "dismissCategory"]) {
     assert.ok(
         /toastQueue\s*=\s*ToastQueue\.dropCategory\(toastQueue,\s*category\)/.test(qmlFunctionBody(fn)),
@@ -263,12 +202,7 @@ for (const fn of ["showToast", "dismissCategory"]) {
     );
 }
 
-// --- undroppable entries survive every trim, not just admission -------------
-//
-// The admission exemption alone was not enough: an error arriving later takes
-// the eviction path, which drops queued errors and then shortens the queue, and
-// that could discard the takeover announcement anyway. "Undroppable" has to
-// hold everywhere the queue is trimmed or it is a claim the code does not keep.
+// Protected entries must survive eviction as well as admission; later errors can trigger trimming.
 
 const protectedCategory = "notification-server-takeover";
 const isProtected = category => undroppableCategories.includes(category);
@@ -277,14 +211,14 @@ const droppable = (n, level = 0) => ({ category: `plain-${n}`, level, message: `
 const announcement = { category: protectedCategory, level: 0, message: "VGS is now handling notifications" };
 const failureNotice = { category: "notification-server-takeover-failed", level: 2, message: "could not record it" };
 
-// dropLevel: an undroppable ERROR is still undroppable.
+// Protected error entries remain protected during level eviction.
 assert.deepEqual(
     Queue.dropLevel([droppable(1, 2), failureNotice, droppable(2, 0)], 2, isProtected),
     [failureNotice, droppable(2, 0)],
     "dropping a level must keep protected entries whatever their level"
 );
 
-// trimToLimit: protected entries are never removed, droppables go from the end.
+
 assert.deepEqual(
     Queue.trimToLimit([droppable(1), announcement, droppable(2), droppable(3)], 2, isProtected),
     [droppable(1), announcement],
@@ -301,21 +235,19 @@ assert.deepEqual(
     "a protected entry survives a trim to nothing"
 );
 
-// The instrument must be able to fail: an unprotected entry in the same place
-// is removed.
+// Require an unprotected sibling to be removed so blanket retention cannot pass.
 assert.deepEqual(
     Queue.trimToLimit([droppable(1), droppable(9)], 1, isProtected),
     [droppable(1)],
     "trimming must actually remove something, or the assertions above prove nothing"
 );
 
-// The input is left alone, so a caller that has not yet reassigned still holds
-// a consistent queue.
+// Keep the input queue consistent for callers until they adopt the returned value.
 const original = [droppable(1), announcement, droppable(2)];
 Queue.trimToLimit(original, 1, isProtected);
 assert.equal(original.length, 3, "trimToLimit must not mutate the queue it was given");
 
-// And the eviction path in showToast must route through both.
+
 assert.ok(
     /ToastQueue\.trimToLimit\(\s*ToastQueue\.dropLevel\(toastQueue,\s*levelError,\s*isUndroppableCategory\)/.test(qmlFunctionBody("showToast")),
     "the error eviction path must protect undroppable entries, not just the admission check"
@@ -326,8 +258,7 @@ assert.ok(
     "processQueue must install the dequeued entry's action, overwriting the previous one"
 );
 
-// invokeAction reads the action out before hideToast() releases it, and the
-// declarative route is taken without ever calling a handler.
+// Read the action before hideToast releases it; declarative actions must not invoke the callback.
 const invokeBody = qmlFunctionBody("invokeAction");
 const readIndex = invokeBody.indexOf("const callback = currentActionCallback");
 const hideIndex = invokeBody.indexOf("hideToast()");
@@ -338,8 +269,7 @@ assert.ok(
     "the settings route should run after the toast is dismissed"
 );
 
-// Every public entry point must forward the action, or a caller would set one
-// and silently get a plain toast.
+// Public toast entrypoints must forward actions or callers silently lose their buttons.
 for (const fn of ["showInfo", "showWarning", "showError"]) {
     const body = qmlFunctionBody(fn);
     assert.ok(
@@ -348,19 +278,8 @@ for (const fn of ["showInfo", "showWarning", "showError"]) {
     );
 }
 
-// --- guaranteed delivery ----------------------------------------------------
-//
-// The queue cap silently drops a non-error toast once three are waiting:
-// showToast() simply returns. That is acceptable for a message the user can
-// reconstruct from what they just did. It is not acceptable for the first-run
-// takeover announcement, which explains a change VGS made to the user's system
-// without being asked -- which daemon owns org.freedesktop.Notifications -- and
-// carries the only in-UI pointer at the undo. Dropped, the user's notifications
-// change appearance for no stated reason.
-//
-// Two properties, and the toast needs both: it must reach the queue (the cap
-// must not drop it) and it must stay on screen (no 10s auto-dismiss for a
-// message that may arrive while the user is away from the machine).
+// The first-run notification takeover message explains a system change and provides its undo action.
+// It must bypass queue dropping and auto-dismiss so an absent user can still read it.
 
 const takeoverCategory = "notification-server-takeover";
 
@@ -373,8 +292,7 @@ assert.ok(
     `${takeoverCategory} must be sticky; reaching the queue is not delivery if it auto-dismisses in 10s`
 );
 
-// Reaching the queue and staying on screen are one guarantee, not two: an
-// undroppable category that times out is only half delivered.
+// Protected admission alone does not prevent the notice from disappearing by timeout.
 for (const category of undroppableCategories) {
     assert.ok(
         stickyCategories.includes(category),
@@ -382,40 +300,23 @@ for (const category of undroppableCategories) {
     );
 }
 
-// The cap check itself must consult the exemption. Asserting only that the
-// list contains the category would pass with the list never read.
+// Require the cap check to use the exemption list, not merely declare it.
 const showToastBody = qmlFunctionBody("showToast");
 assert.ok(
     /toastQueue\.length\s*>=\s*maxQueueSize\s*&&\s*!isUndroppableCategory\(category\)/.test(showToastBody),
     "the queue cap must exempt undroppable categories, or the list is decorative"
 );
 
-// And the announcing side has to use that exact string. A rename on one side
-// only silently returns the toast to droppable.
+// The announcing category must match its exemption key.
 const notificationSource = fs.readFileSync(
     path.join(repoRoot, "quickshell/vshell/Services/NotificationService.qml"),
     "utf8"
 );
-// Checked on the announcing CALL, not on the file: the same string also appears
-// in dismissCategory() nearby, so a file-wide search passed with the show call
-// renamed -- exactly the mistake that returns the toast to droppable.
-//
-// The call is located by the CATEGORY, never by ordinal position. Taking the
-// first `ToastService.showInfo(` in the file meant any earlier showInfo added
-// later would silently repoint this assertion at an unrelated call and it would
-// go on passing -- an instrument quietly measuring the wrong thing, which is
-// the pattern this whole file exists to catch.
+// Locate the actual show call by category. A dismissal reference or an unrelated earlier show
+// cannot establish that the announcement uses the protected category.
 
-// Every ToastService.show* call in `src`, each bounded by its own closing
-// parenthesis.
-//
-// Bounding a call by the START OF THE NEXT ONE is not the same thing and is
-// wrong: the last call in the file then runs to EOF and swallows unrelated
-// code, which is how the first version of this still matched after the
-// announcement's category was renamed -- a `dismissCategory` for the old
-// category further down the file kept it matching. Depth counting, skipping
-// string contents so a parenthesis inside a translated message cannot close the
-// call early.
+// Bound each show call by its matching parenthesis while skipping string contents.
+// Ending at the next call or EOF can borrow an unrelated later category.
 function toastCalls(src) {
     const re = /ToastService\.show(Info|Warning|Error)\(/g;
     const calls = [];
@@ -452,8 +353,7 @@ function toastCalls(src) {
     return calls;
 }
 
-// Prove the bounding: no call may contain the start of another, which is what
-// an over-long slice would look like.
+// Check extracted calls do not contain the next call's start.
 for (const call of toastCalls(notificationSource)) {
     assert.equal(
         (call.text.match(/ToastService\.show(Info|Warning|Error)\(/g) || []).length,
@@ -462,9 +362,7 @@ for (const call of toastCalls(notificationSource)) {
     );
 }
 
-// The quotes are part of the needle: "notification-server-takeover-failed" is a
-// different category that shares the prefix, and an unquoted search would match
-// both.
+// Include quotes in the category needle so a longer category sharing its prefix cannot match.
 const announcements = toastCalls(notificationSource).filter(call => call.text.includes(`"${takeoverCategory}"`));
 assert.equal(
     announcements.length,
@@ -477,24 +375,15 @@ assert.equal(
     "the first-run announcement is informational; VGS did something deliberate rather than something going wrong"
 );
 
-// Prove the locator can fail: a category nothing raises must find nothing.
+// Require a nonexistent raised category to return no call.
 assert.equal(
     toastCalls(notificationSource).filter(c => c.text.includes('"no-such-category"')).length,
     0,
     "the call locator must find nothing for a category that is never raised"
 );
 
-// --- settingsTab literals resolve to real tabs ------------------------------
-//
-// The declarative action form is a bare string that is resolved at click time
-// by SettingsSidebar.resolveTabIndex(). Nothing binds that string to anything:
-// a typo, or a future sidebar restructure that renames an id, makes
-// setTabIndex(-1) a no-op and the button silently does nothing. Nobody sees a
-// stack trace, and qmllint cannot see a string.
-//
-// So every settingsTab literal in the tree is resolved here, against the real
-// SettingsSidebar category structure and the real SettingsRegistry, using the
-// same matching rule resolveTabIndex() implements.
+// Resolve settingsTab literals against the parsed sidebar and registry. An invalid string
+// otherwise becomes a no-op button at click time without a parse error.
 
 const sidebarPath = path.join(repoRoot, "quickshell/vshell/Modals/Settings/SettingsSidebar.qml");
 const registryPath = path.join(repoRoot, "quickshell/vshell/Modals/Settings/SettingsRegistry.qml");
@@ -513,16 +402,13 @@ function tabIndexFor(id) {
     return tab ? tab.tabIndex : -1;
 }
 
-// The same normalisation SettingsSidebar.resolveTabIndex() applies, including
-// its one alias. Kept as a transcription rather than a paraphrase: if the rule
-// there changes, this is the line to change with it.
+// This mirrors sidebar normalization, including its alias, and must change with that runtime rule.
 function normalizeTabName(name) {
     const normalized = String(name).toLowerCase().replace(/[_\-\s]/g, "");
     return normalized === "compositor" ? "workspaces" : normalized;
 }
 
-// resolveTabIndex(), reimplemented over the parsed structure with tab indexes
-// supplied from the registry the way _withTabIndexes() supplies them.
+// Resolve tab indexes over the parsed sidebar using registry-provided indexes.
 function resolveTabIndex(name) {
     if (!name)
         return -1;
@@ -546,10 +432,7 @@ function resolveTabIndex(name) {
     return -1;
 }
 
-// Prove the resolver can fail before its passes mean anything. The control is
-// taken from the registry rather than hard-coded, so it stays independent of
-// the literals actually under test below -- a rename there must surface as a
-// failure about that literal, not as a broken control.
+// Derive the resolver failure control from the registry so a renamed action literal fails at its own check.
 const controlId = registryTabs[0].id;
 assert.ok(resolveTabIndex(controlId) >= 0, `the resolver must find ${controlId}, a declared tab`);
 assert.equal(
@@ -559,7 +442,7 @@ assert.equal(
 );
 assert.equal(resolveTabIndex(""), -1, "an empty tab id is not a tab");
 
-// Every literal in the tree, from every file that can carry one.
+
 function qmlSources(dir) {
     const out = [];
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -574,9 +457,7 @@ function qmlSources(dir) {
 
 const literals = new Map();
 for (const file of qmlSources(path.join(repoRoot, "quickshell"))) {
-    // Whole-line comments only: ToastAction.js documents the form in prose, and
-    // that example is not a call site. Anything else is left intact so a real
-    // literal cannot be hidden by a `//` inside a string on the same line.
+    // Skip whole-line comments only; an inline double slash can belong to a real string literal.
     const code = fs
         .readFileSync(file, "utf8")
         .split("\n")

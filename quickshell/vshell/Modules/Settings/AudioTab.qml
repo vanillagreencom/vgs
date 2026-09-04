@@ -51,7 +51,7 @@ Item {
     function updateDeviceList() {
         const allNodes = Pipewire.nodes.values;
 
-        // Sort devices: active first, then alphabetically by name
+
         const sortDevices = (a, b) => {
             if (a === AudioService.sink && b !== AudioService.sink)
                 return -1;

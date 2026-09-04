@@ -1,28 +1,17 @@
 #!/usr/bin/env bash
-# Shared live-session snapshots for validation safety checks.
-#
-# Sourced by scripts/qml-smoke.sh and scripts/check-validation-safety.sh so both
-# judge "did validation disturb the live session?" the same way.
-#
-# Each snapshot prints its data on stdout and reports how it went:
-#   0  collected
-#   1  collection failed (the caller must not read an empty result as "clean")
-#   2  nothing to collect here (no compositor session)
-#
-# Requires: $repo_root
+# Collect live-session resources for validation safety checks. Requires repo_root.
+# Status 0 means collected, 1 means failed, and 2 means no applicable session resource.
 
-# Fail at source time with a named cause when the sourcing script forgot to set
-# repo_root, instead of at first use with a bare command-not-found.
+# Fail while sourcing so missing repo_root names its cause before the first snapshot call.
 repo_root="${repo_root:?scripts/lib/session-snapshot.sh: sourcing script must set repo_root first}"
 
 # One line per live VGS Quickshell instance: "<pid> <configPath>".
 vgs_snapshot_instances() {
   local report rc=0
-  # stderr is deliberately not suppressed: it is the only diagnostic behind an
-  # "unverified session" verdict.
+  # Keep stderr because it explains why session safety could not be verified.
   report="$("$repo_root/bin/vshell" instances list --json)" || rc=$?
-  # 2 == quickshell is not installed, so there is no registry here at all.
-  [[ "$rc" == 2 ]] && return 2
+
+  [[ "$rc" == 2 ]] && return 2 # quickshell is not installed, so there is no registry here at all
   [[ "$rc" == 0 && -n "$report" ]] || return 1
   printf '%s' "$report" | python3 -c 'import json,sys
 report = json.load(sys.stdin)
@@ -32,13 +21,8 @@ for entry in sorted(report.get("instances", []), key=lambda item: item["pid"]):
     print(entry["pid"], entry["configPath"])'
 }
 
-# One line per live VGS layer surface: "<monitor>\t<namespace>". Repeats are
-# meaningful — a duplicate shell shows up as a second surface with the same
-# namespace on the same monitor.
-#
-# Hyprland only: Niri exposes no equivalent layer listing, so on Niri this half
-# of the proof reports "nothing to collect" and the instance comparison carries
-# the check on its own.
+# Print monitor and namespace per Hyprland layer surface, retaining duplicates.
+# Niri has no equivalent layer listing; its safety check uses process instances only.
 vgs_snapshot_layers() {
   local layers
   [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]] || return 2
@@ -57,14 +41,9 @@ for monitor, payload in data.items():
 print("\n".join(sorted(rows)))'
 }
 
-# Surfaces come and go while the live shell runs: a popout opening or closing
-# mid-check is normal, and so is the shell raising its own fade-to-lock overlay
-# when the seat goes idle. What must never happen is one shell's worth of
-# surfaces becoming two — a duplicate shell, or overlays orphaned by one that
-# died. So growth is judged against the number of live shells: N instances may
-# legitimately own N surfaces of a namespace on a monitor, never more.
-#
-#   $1 before  $2 after  $3 live VGS instance count (defaults to 1)
+# Popup and idle-lock changes are normal during a snapshot. Compare surface growth
+# with the live instance count so duplicate or orphaned surfaces can still fail.
+# $1 before, $2 after, $3 live VGS instance count (default 1).
 vgs_layers_regressed() {
   local before="$1" after="$2" instances="${3:-1}"
   BEFORE="$before" AFTER="$after" INSTANCES="$instances" python3 -c '
@@ -89,12 +68,9 @@ sys.exit(1 if grown else 0)
 '
 }
 
-# Compares a before/after pair given their collection statuses. A snapshot that
-# worked before validation and fails after it is itself a failure — that is the
-# case where an empty result would otherwise read as "nothing changed".
-#   $1 label  $2 before  $3 before_status  $4 after  $5 after_status
-#   $6 comparator: "exact" or "growth"
-#   ... $7 live VGS instance count, for the growth comparison
+# Compare snapshots and their collection statuses. Read failure cannot count as unchanged.
+# $1 label, $2 before, $3 before_status, $4 after, $5 after_status,
+# $6 exact or growth comparator, $7 live instance count for growth.
 vgs_compare_snapshots() {
   local label="$1" before="$2" before_status="$3" after="$4" after_status="$5" mode="$6"
   local instances="${7:-1}"
@@ -104,9 +80,7 @@ vgs_compare_snapshots() {
     printf '%sno %s to compare (nothing of that kind exists on this system)\n' "$prefix" "$label"
     return 0
   fi
-  # A snapshot that could not be read leaves the session unproven in both
-  # directions. Skipping the baseline case would let a transient failure hide
-  # damage that the "after" snapshot plainly shows.
+  # An unreadable baseline also leaves the comparison unverified.
   if [[ "$after_status" == 1 || "$before_status" == 1 ]]; then
     printf '%sFAIL: could not read %s (before=%s after=%s); the session is unverified\n' \
       "$prefix" "$label" "$before_status" "$after_status" >&2

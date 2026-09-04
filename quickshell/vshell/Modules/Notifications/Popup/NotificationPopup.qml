@@ -472,8 +472,7 @@ PanelWindow {
 
     readonly property bool screenValid: win.screen && !_isDestroying
 
-    // Text must clear the top-right controls. The old fixed reserve left no gap
-    // beside the close button and ran under the expand button when it appeared.
+    // Reserve the visible close and expand controls so notification text cannot overlap them.
     readonly property real actionButtonSize: compactMode ? 20 : 24
     readonly property bool hasExpandButton: SettingsData.notificationPopupPrivacyMode && win.hasExpandableBody
     readonly property real contentRightInset: Theme.spacingL + actionButtonSize + (hasExpandButton ? actionButtonSize + Theme.spacingXS : 0) + Theme.spacingS
@@ -632,8 +631,7 @@ PanelWindow {
                 }
             }
 
-            // Timeout progress bar: drains as the dismiss timer runs; inset by
-            // the corner radius and frozen while hovered or during exit.
+
             Rectangle {
                 id: timeoutBar
 

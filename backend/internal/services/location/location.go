@@ -16,9 +16,8 @@ import (
 
 const ipLookupURL = "http://ip-api.com/json/"
 
-// cacheTTL bounds how long a cached IP fix is served without refetching, so a
-// machine that moved (travel, VPN egress change) does not keep feeding stale
-// coordinates to sunrise/sunset consumers forever.
+// cacheTTL sets the age at which an IP location needs refresh. Failed lookups
+// can still return an older cached location.
 const cacheTTL = 12 * time.Hour
 
 type State struct {
@@ -97,7 +96,7 @@ func (m *Manager) handleGetState(json.RawMessage) (any, error) {
 	fresh, err := m.refreshFromIP()
 	if err != nil {
 		if valid(state) {
-			// Offline or lookup down: a stale fix beats an error.
+			// Retain cached coordinates when the lookup fails.
 			m.log.Warn("location refresh failed, serving cached location", "err", err)
 			return state, nil
 		}
@@ -170,7 +169,7 @@ func stale(state State) bool {
 	}
 	updated, err := time.Parse(time.RFC3339, state.UpdatedAt)
 	if err != nil {
-		return true // legacy cache entries without a timestamp
+		return true // A cache entry without a timestamp cannot establish freshness.
 	}
 	return time.Since(updated) > cacheTTL
 }

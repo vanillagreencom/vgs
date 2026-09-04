@@ -127,18 +127,7 @@ Singleton {
             refuseUnconfirmedSeat();
             return;
         }
-        // One question, asked once: can the focus source answer right now?
-        // Which conditions that covers per compositor — detection, Niri's link
-        // and snapshot, whether any toplevel has been reported — belongs to
-        // CompositorService.focusReady and is enumerated there. This service
-        // deliberately does not restate them or add a condition beside them:
-        // three bugs on this path were each a different flag standing in for
-        // readiness, and a fourth flag here would be the fourth.
-        //
-        // Not ready means the paste WAITS, the same rule as a helper in flight
-        // above: deferred, not dropped, and not refused — nothing has gone
-        // wrong, the answer has not arrived. Resolving anyway would resolve ""
-        // and send Ctrl+V, the stray input this service exists to prevent.
+        // Wait for CompositorService.focusReady rather than resolving an unknown target to a paste chord.
         if (!CompositorService.focusReady) {
             // Some of what readiness waits on cannot be observed — a socket that
             // is up but silent, a toplevel list that may never come — so the
@@ -175,20 +164,9 @@ Singleton {
         _pendingPaste = false;
     }
 
-    // The readiness wait cannot be open-ended. Parts of what it waits on are not
-    // observable — CompositorService.focusReady names which — so "not ready yet"
-    // and "never going to be" look identical from here, and a wait with no floor
-    // under it would leave paste silently dead for the rest of the session.
-    //
-    // It ends in a refusal rather than a paste, and that is the whole point: the
-    // only thing VGS could do instead is press a chord for a window it could not
-    // identify, which for a terminal is the stray input this service exists to
-    // prevent. The user is told, so the outcome is a message rather than a paste
-    // that quietly did nothing — and the content is already on the clipboard, so
-    // their own paste keystroke still works.
-    //
-    // Generous on purpose: compositor detection alone may take up to its own 3s
-    // timeout, so this has to clear that with room rather than race it.
+    // Bound focus-readiness waits because an unresponsive source may never become ready.
+    // On expiry, report failure and leave the content on the clipboard for manual paste.
+    // The interval must exceed the compositor detection timeout in CompositorService.
     Timer {
         id: readinessTimer
         interval: 8000
@@ -313,12 +291,7 @@ Singleton {
             ToastService.showError(I18n.tr("Paste is unavailable"), I18n.tr("The paste helper could not be stopped"));
             root._helperStuck = true;
             root.cancelQueuedPaste();
-            // Locally, as the release ladder does, even though finishInjection()
-            // reaches stopInjectorWatchdogs() and stops this timer today. This is
-            // a repeating timer in a terminal branch: leaving it armed would toast
-            // and re-cancel every second for as long as the zombie lives, so
-            // whether it stops must not depend on a call two hops away continuing
-            // to do it.
+            // Stop this repeating timer in the terminal branch so a surviving helper cannot trigger repeated failures.
             stop();
             root.finishInjection(false);
         }
@@ -451,7 +424,6 @@ Singleton {
             root._terminating = false;
             if (terminated || exitCode !== 0) {
                 if (terminated) {
-                    // The watchdog already said this one out loud when it fired.
                     root.log.warn("Paste injector exited after the watchdog terminated it - exit", exitCode);
                 } else {
                     root.log.warn("Paste keystroke failed for target", root.targetForLog(), "- argv", wtypeProcess.command.join(" "), "- exit", exitCode);

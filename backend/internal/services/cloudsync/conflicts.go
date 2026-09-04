@@ -22,16 +22,14 @@ const (
 	suffixCloud = "." + conflictSuffix + "2"
 )
 
-// Conflict resolution actions.
 const (
 	resolveKeepLocal = "keepLocal"
 	resolveKeepCloud = "keepCloud"
 	resolveKeepBoth  = "keepBoth"
 )
 
-// rescanConflicts walks a two-way folder's local tree for the conflict pairs
-// bisync left behind. Scanning the filesystem is authoritative in a way that
-// parsing rclone's log is not: conflicts persist across runs until resolved.
+// Conflict files persist across runs, so rescanConflicts reads the local tree
+// rather than relying on transient log messages.
 func (m *Manager) rescanConflicts(folder Folder) error {
 	if folder.Mode != ModeTwoWay {
 		m.replaceConflicts(folder.ID, nil)
@@ -101,7 +99,6 @@ func (m *Manager) rescanConflicts(folder Folder) error {
 	return nil
 }
 
-// replaceConflicts swaps in a folder's conflict list and refreshes its count.
 func (m *Manager) replaceConflicts(folderID string, found []Conflict) {
 	m.mu.Lock()
 	kept := make([]Conflict, 0, len(m.conflicts)+len(found))
@@ -141,12 +138,8 @@ func (m *Manager) resolveConflict(id, action string) error {
 		return fmt.Errorf("no such folder")
 	}
 
-	// Ordering rule for every branch: perform the rename that can fail *first*,
-	// and only destroy the loser once the winner is safely in place. Trashing
-	// first left the original path empty with the survivor still under its
-	// .conflict1 name if the rename then failed, and a half-applied keep-both
-	// dropped the pair from the Conflicts view while orphaning a file in the
-	// synced tree.
+	// Move the winner before trashing the rejected copy. A failed move must leave
+	// the conflict pair available for retry.
 	original := strings.TrimSuffix(conflict.LocalPath, suffixLocal)
 	switch action {
 	case resolveKeepLocal:
@@ -196,8 +189,8 @@ func (m *Manager) resolveConflict(id, action string) error {
 	return nil
 }
 
-// trashLocal moves a file into the folder's recycle bin instead of deleting it.
-// Resolving a conflict should never be the thing that loses data.
+// trashLocal moves the rejected version into the folder recycle bin for recovery
+// within its retention period.
 func (m *Manager) trashLocal(folder Folder, path string) error {
 	rel, err := filepath.Rel(folder.LocalPath, path)
 	if err != nil {
@@ -207,7 +200,8 @@ func (m *Manager) trashLocal(folder Folder, path string) error {
 	if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
 		return fmt.Errorf("prepare recycle bin: %w", err)
 	}
-	// A same-name entry from an earlier resolution must not block this one.
+	// Use a unique trash destination so an existing same-name file cannot block
+	// conflict resolution.
 	if _, statErr := os.Stat(dest); statErr == nil {
 		dest = fmt.Sprintf("%s.%d", dest, nowUnix())
 	}
@@ -247,8 +241,8 @@ func moveFile(src, dst string) error {
 		os.Remove(dst)
 		return err
 	}
-	// Flush before unlinking the original: a crash between the two must not
-	// lose the only copy.
+	// Sync the destination file before unlinking the source to reduce data loss if
+	// the process stops during the move.
 	if err := out.Sync(); err != nil {
 		out.Close()
 		os.Remove(dst)
@@ -261,8 +255,8 @@ func moveFile(src, dst string) error {
 	return os.Remove(src)
 }
 
-// rescanAllConflicts refreshes every two-way folder. Used on startup so the
-// Conflicts view is correct before anything has synced this session.
+// rescanAllConflicts scans configured two-way folders at startup so persisted
+// conflicts can appear before another sync.
 func (m *Manager) rescanAllConflicts() error {
 	var problems []string
 	for _, folder := range m.store.snapshotFolders() {

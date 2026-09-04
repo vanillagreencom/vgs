@@ -52,7 +52,7 @@ Item {
         }
     }
 
-    // M3 elevation shadow — Level 2 baseline (navigation bar), with per-bar override support
+
     readonly property bool hasPerBarOverride: (barConfig?.shadowIntensity ?? 0) > 0
     readonly property var elevLevel: Theme.elevationLevel2
     readonly property bool shadowEnabled: (Theme.elevationEnabled && (typeof SettingsData !== "undefined" ? (SettingsData.barElevationEnabled ?? true) : false)) || hasPerBarOverride
@@ -83,7 +83,7 @@ Item {
         }
     }
 
-    // Per-bar override values (when barConfig.shadowIntensity > 0)
+
     readonly property real overrideBlurPx: (barConfig?.shadowIntensity ?? 0) * 0.2
     readonly property real overrideOpacity: (barConfig?.shadowOpacity ?? 60) / 100
     readonly property string overrideColorMode: barConfig?.shadowColorMode ?? "default"
@@ -102,7 +102,7 @@ Item {
         }
     }
 
-    // Resolved values — per-bar override wins if set, otherwise use global M3 elevation
+
     readonly property real shadowBlurPx: hasPerBarOverride ? overrideBlurPx : (elevLevel.blurPx ?? 8)
     readonly property color shadowColor: hasPerBarOverride ? Theme.withAlpha(overrideBaseColor, overrideOpacity) : Theme.elevationShadowColor(elevLevel)
     readonly property real shadowOffsetMagnitude: hasPerBarOverride ? (overrideBlurPx * 0.5) : Theme.elevationOffsetMagnitude(elevLevel, 4, effectiveShadowDirection)
@@ -175,7 +175,7 @@ Item {
         id: barShadow
         visible: root.shadowEnabled && root.width > 0 && root.height > 0
 
-        // Size to the bar's rectangular body, excluding gothic wing extensions
+
         x: root.isRight ? root.wing : 0
         y: root.isBottom ? root.wing : 0
         width: axis.isVertical ? (parent.width - root.wing) : parent.width

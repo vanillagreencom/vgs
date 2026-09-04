@@ -1,69 +1,14 @@
-"""Read the structure of QML and JS source as text, for checks that pin wiring.
+"""Read supported QML and JS source structures for static wiring checks.
 
-Not a parser: these helpers match comments, quotes, parens and braces, which is
-enough to answer the questions a wiring check asks — what a block contains, which
-statement an `if` controls, whether a region always returns — without a QML
-toolchain a CI runner would have to install.
+Offsets identify enclosing blocks, function and handler bodies, and regions
+controlled by if, for, while, switch and else. The scanner does not establish
+reachability, data flow or execution semantics.
 
-What that buys a check is the difference between text order and containment. Code
-that merely follows an `if` is outside the region the `if` controls; a test read
-to its closing paren is the whole test, so a conjunct that can falsify it cannot
-hide off the end of a substring match. A check built on these helpers can state
-what it verifies without overclaiming.
-
-Offsets are preserved everywhere: blanking replaces characters in place, and the
-region helpers return offsets into the source they were given, so results from
-different helpers can be compared against each other.
-
-`live_code` — which decides what counts as code at all before any of these
-helpers ask what contains what — lives in `qml_scrub` and is re-exported here,
-so a caller still imports one name from one place. Its own limits are written
-down there, and they are underneath everything below.
-
-WHAT THIS ESTABLISHES, so a caller can answer "will this see my construct?"
-without reading the loops. Every shape named below is pinned by
-`qml_source_selftest.py` — the limits as well as the guarantees, so this
-account cannot quietly go stale against the code.
-
-Handled exactly:
-
-  - Containment, by matched braces and parens: the innermost block around an
-    offset, a function or handler body, whether an offset belongs to a body
-    rather than to a callback nested in it, a test read to its closing paren.
-  - Governed regions for `if`, `for`, `while`, `switch` and `else`, braced and
-    braceless alike, including a braceless body that is itself one of those.
-  - Where a braceless statement ENDS: a `;` at the statement's own depth, a
-    line break nothing carries across, or the close of the enclosing block —
-    whichever comes first. Not a raw search for `;`, which read a `for` head's
-    semicolon as the end and, given a statement with none, ran the region to
-    end of file.
-  - Handler bodies, only where the binding IS a braced body. A handler bound
-    to an expression reports none rather than borrowing the next block.
-
-Approximated, with the direction it errs — all of these UNDER-report, so a
-caller is told a construct is absent or ungoverned when it is present, which
-surfaces as a complaint rather than as silence:
-
-  - Automatic semicolon insertion. A line break ends a statement unless a
-    character on either side carries the expression across it (`x +`, `.bar`).
-    Real ASI is a parser rule about the next token; this is a character test,
-    so an exotic continuation ends a region early.
-  - `enclosing_function_body` looks back 120 characters for a preamble. A
-    longer signature reads as "no enclosing function" and returns None, which
-    a caller must report rather than widen.
-  - What counts as a function: `function name(...)`, an arrow, or an `onX:`
-    handler. Method shorthand (`handle() {`) and getters are NOT recognised —
-    verified, not assumed — so a statement inside one has no function scope.
-
-Not attempted at all:
-
-  - Reachability. Every helper answers where a construct SITS, never whether
-    anything calls the function containing it. This is the largest gap in any
-    guard built here, and no arrangement of these helpers closes it.
-  - Governance by anything other than the five keywords above: a ternary, a
-    `&&` short-circuit, `try`/`catch` and `do` model no regions. A `return`
-    inside a braced one of those is excluded by the brace-depth test instead,
-    so the answer is conservative rather than reasoned.
+Statement continuation uses character checks rather than JavaScript parsing.
+Function recognition uses a bounded preamble search and does not recognize
+method shorthand or getters. Ternaries, short-circuit expressions, try/catch
+and do loops do not define control regions here. qml_scrub supplies the source
+view and has separate lexical limits.
 """
 
 import re
@@ -108,21 +53,13 @@ def enclosing_body(source: str, index: int) -> tuple[int, str] | None:
     return None
 
 
-# What a body's preamble looks like when the body is a function or a signal
-# handler: `function name(...) {`, `onExited: exitCode => {`, `onTriggered: {`.
 FUNCTION_PREAMBLE_RE = re.compile(r"(?:\bfunction\b[^{;]*|=>\s*|\bon[A-Z]\w*\s*:\s*)$")
 
 
 def enclosing_function_body(source: str, index: int) -> tuple[int, str] | None:
-    """The function or handler body containing `index`, walking outward.
+    """Return the recognized function or handler containing index, or None.
 
-    The innermost block alone is too tight — wrapping a statement in a
-    conditional inside the same function moves it — and the whole file is too
-    loose, since a guard or a read in an unrelated function proves nothing about
-    this one. The function that runs the statement is the scope where a textual
-    order means what it says. None when no enclosing block reads as a function or
-    handler — a caller should report that rather than widen, since a statement no
-    scope contains is exactly what widening would hide.
+    Callers must reject an unrecognized scope rather than widen to the file.
     """
     scope = enclosing_body(source, index)
     while scope is not None:
@@ -136,14 +73,7 @@ def enclosing_function_body(source: str, index: int) -> tuple[int, str] | None:
 
 
 def in_function(source: str, offset: int, body_start: int) -> bool:
-    """Whether `offset` belongs to the function body opening at `body_start`.
-
-    Text inside a callback nested in that body is inside it and does NOT belong
-    to it: a branch there returns from the callback, a read there runs when the
-    callback runs. Every rule that says "in the same function" means this, and
-    means it about the construct that governs a code path rather than about
-    where the characters happen to sit.
-    """
+    """Return whether the offset belongs to the body rather than a nested callback."""
     scope = enclosing_function_body(source, offset)
     return scope is not None and scope[0] == body_start
 
@@ -161,18 +91,9 @@ _ARROW_PREFIX_RE = re.compile(r"\s*(?:\([^()]*\)|[A-Za-z_$][\w$]*)\s*=>")
 
 
 def handler_bodies(source: str, handler: str) -> list[tuple[int, int]]:
-    """Every braced body of `handler` in `source`, in declaration order.
+    """Return offsets of recognized braced handler bodies in declaration order.
 
-    Offsets, not text: a question about a handler is usually a question about
-    what contains what, and a detached substring cannot be compared against the
-    positions the other helpers return.
-
-    A handler with no braced body reports none. Taking the next `{` in the file
-    instead — which a bare `source.find("{")` did — answered a question about
-    one handler with an unrelated block further down, so `onExited: handle()`
-    beside a later `Rectangle { ... }` returned the Rectangle's body. The
-    binding is read as the statement it is, by the same machinery every other
-    region goes through, rather than by a second scan for a character.
+    An expression binding must not borrow a later unrelated block.
     """
     scrubbed = live_code(source, blank_strings=True)
     bodies = []
@@ -189,7 +110,6 @@ def handler_bodies(source: str, handler: str) -> list[tuple[int, int]]:
         if region is None:
             continue
         start, end = region
-        # A braced region reports its INSIDE; a handler body is the braces too.
         if start > 0 and scrubbed[start - 1] == "{":
             bodies.append((start - 1, end + 1))
     return bodies
@@ -201,13 +121,8 @@ def handler_bodies(source: str, handler: str) -> list[tuple[int, int]]:
 CONTROL_HEAD_RE = re.compile(r"(?<![\w.$])(if|for|while|switch)\s*\(")
 ELSE_RE = re.compile(r"(?<![\w.$])else(?![\w$])")
 
-# Whether an expression carries across a newline. JavaScript inserts no
-# semicolon when either side of the break continues the expression, so `x +\n
-# y;` and `foo\n  .bar();` are one statement. Reading a break as a terminator
-# anyway ends a region EARLY, which under-reports it — governed code reads as
-# ungoverned, a caller rejects what it should accept, and the mistake is
-# visible. That is the direction to err in; running to end of file was the
-# other one.
+# Character checks approximate expression continuation across newlines. An
+# unrecognized continuation can end the reported statement early.
 _CONTINUES_BEFORE = set("+-*/%&|^~!=<>?:,.([{")
 _CONTINUES_AFTER = set("+-*/%&|^=<>?:.")
 
@@ -237,14 +152,10 @@ def _continues_across(source: str, newline: int, start: int) -> bool:
 
 
 def _statement_end(source: str, cursor: int) -> int:
-    """Where the braceless statement beginning at `cursor` ends, exclusive.
+    """Return the exclusive end of a recognized braceless statement.
 
-    The terminator is a `;` at the statement's own depth, or a line break that
-    nothing carries across — never a raw `source.find(";")`, which read a
-    semicolon in a `for` head or a string as the end of the statement and, when
-    a statement had none at all, ran the region to END OF FILE. An over-large
-    region makes ungoverned code read as governed, so a rule that must see an
-    assignment outside a guard saw it inside one and passed.
+    Separators inside nested syntax do not end the statement. Newline handling
+    uses the continuation heuristic described in the module docstring.
     """
     depth = 0
     index = cursor
@@ -254,7 +165,7 @@ def _statement_end(source: str, cursor: int) -> int:
             depth += 1
         elif char in ")]}":
             if depth == 0:
-                return index  # The enclosing block closed before the statement did.
+                return index
             depth -= 1
         elif depth == 0 and char == ";":
             return index + 1
@@ -306,26 +217,10 @@ def _statement_after(source: str, cursor: int) -> tuple[int, int] | None:
 
 
 def control_regions(source: str) -> list[tuple[str, str, int, int]]:
-    """Every governed region as (keyword, test text, start, end).
+    """Return recognized control regions as keyword, test text, start and end.
 
-    Governed means the statement does not necessarily run: an `if` may not take
-    its branch, a `for` or `while` may not reach a first iteration, an `else`
-    runs only when its `if` did not, a `switch` may match no case. Recognising
-    only `if` reads a `for (...) return;` as an unconditional return, a guard
-    passing on code that can fall straight through it.
-
-    Parens and braces are matched rather than pattern-matched, so a call in a
-    test does not truncate it and a braceless body reads as the region it is.
-    Code that merely follows a construct is outside its region, and a test read
-    to its closing paren is the whole test, so a conjunct that can falsify it
-    cannot hide off the end of a substring match.
-
-    Every judgement is made on a `live_code` view rather than on `source` as
-    given, so a keyword or a delimiter inside a string or a comment governs
-    nothing. Blanking is idempotent and preserves offsets, so a caller that
-    already holds a view loses nothing by it, and one that does not is no
-    longer quietly relying on a precondition it was never told about. Offsets
-    and the test text are reported against `source`, whichever view that is.
+    Scan a blanked source view so strings and comments define no control regions.
+    Offsets and test text refer to the supplied source.
     """
     scrubbed = live_code(source, blank_strings=True)
     regions: list[tuple[str, str, int, int]] = []
@@ -355,16 +250,10 @@ def if_regions(source: str) -> list[tuple[str, int, int]]:
 
 
 def returns_unconditionally(source: str, start: int, end: int) -> bool:
-    """Whether `source[start:end]` returns whenever it is entered.
+    """Return whether the region contains a recognized unconditional return.
 
-    The return has to sit at the region's own brace depth — so a return inside a
-    nested block or a callback does not count — and inside no construct nested
-    within the region that governs whether it runs. A branch is the obvious one;
-    a loop that may iterate zero times is the same hole wearing another keyword.
-
-    Read off a `live_code` view for the same reason as `control_regions`: the
-    word `return` inside a log message is not a return, and counting it as one
-    reports a region as always returning when it does not.
+    The return must be at the region brace depth and outside nested control
+    regions recognized by control_regions. This does not prove runtime behavior.
     """
     regions = control_regions(source)
     scrubbed = live_code(source, blank_strings=True)

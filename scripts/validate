@@ -1,174 +1,27 @@
 #!/usr/bin/env bash
-# The VGS validation suite: one runner, one manifest (VGS-123).
-#
-# This list used to live in AGENTS.md § Validation, where every agent session
-# re-read forty command lines and a script machine-parsed them — which is what a
-# manifest is, not prose. It lives here now, and AGENTS.md carries a pointer.
-#
-#   scripts/validate [AREA]            AREA: go|qml|helper|packaging|docs|all
-#   scripts/validate --list [AREA]     print the commands without running them
-#   scripts/validate --dump-grammar    print the normalized tag grammar and exit
-#
-# Scope to the area touched; run `all` for cross-cutting work. Exactly one area
-# per invocation — naming two is rejected rather than silently honouring the
-# last, because a partial run reported as the asked-for scope is the failure
-# this runner exists to prevent. Every selected command runs — failures are
-# collected rather than fail-fast — and the summary names every failing
-# command, because that set is what a dev agent reports as `FAILING: ...` and a
-# first failure must not hide the rest.
-#
-# A check that DID NOT RUN is never counted as a pass, in the summary OR in the
-# exit status. Rows tagged `may-skip` may exit 77 to mean "precondition absent,
-# nothing was checked"; exit 77 from any other row is a plain failure, and every
-# check whose degraded mode can be flag-forced is listed with the flag that
-# forces it (`--require-static`, `--require-nested`) rather than being allowed to
-# skip at all. This runner's own four statuses:
-#
-#   0    every selected command ran and passed
-#   77   everything that ran passed, but something did NOT run — the summary
-#        names each skipped command. Report it as a pass with the skip recorded
-#        (dev SKILL.md `--validate-note`), never as a bare pass: handing a caller
-#        a 0 here would be VGS-69's "refusal read as a pass" one layer up.
-#   1    at least one command failed
-#   2    usage or manifest error — a broken invocation. NOTHING ran, so it is
-#        neither a pass nor a validation failure; fix the invocation and re-run.
-#
-# `scripts/check-validation-inventory.py` parses the MANIFEST_EOF block below
-# and enforces it in both directions: every executable check under `scripts/`
-# must appear here and in CI or carry a written exclusion (VGS-50), and every
-# command here must be runnable exactly as written (VGS-30). The interpreter
-# prefixes that do appear are deliberate: `node --check`, `python3 -m
-# py_compile` and `bash -n` are syntax checks over a file, and `scripts/lib/`
-# holds non-executable libraries reached only by import, sourcing, or an
-# explicit interpreter — `python3 scripts/lib/shell_scan.py` and
-# `python3 scripts/lib/qml_source_selftest.py` run a library's self-test (each
-# carries a `__main__` only for that; `session-snapshot.sh` is
-# sourced, `validation_manifest.py` is imported by the inventory guard,
-# `collected.py`, `section_pointers.py`, `pointer_targets.py`, `prose_blocks.py`,
-# `tracked_blobs.py` and `owned_skill_lists.py` by the checks that import them, and
-# `qml_scrub_selftest.py` and `shell_scan_selftest.py` by the entry points above, none of
-# them run; `section_pointers_selftest.py` and `prose_blocks_selftest.py` join
-# that list of libraries carrying a `__main__` only for their own self-test.
-# `kendex_skills.py` is the exception: its `__main__` prints the in-place skill
-# paths for `scripts/check-naming.sh`, which is bash and cannot import it, and
-# its controls live in `scripts/check-owned-skills.py`).
-# `bin/vshell_niri.py`,
-# `bin/vshell_niri_kdl.py` and `bin/vshell_theme_color.py` likewise stay
-# importable modules with no shebang and no `__main__`.
-#
-# CI coverage exceptions and their reasons are owned by
-# `scripts/check-validation-inventory.py`, which compares this manifest to CI.
-#
-# What is true of THIS runner: the nested QML smoke and the surface smoke are
-# tagged `qml` and neither can run in CI, so only a run that includes the qml
-# rows (`scripts/validate qml` or `all`) proves the shell starts.
-# `scripts/smoke-surfaces.sh` works only from the checkout owning the live
-# session, and its refusal is not a pass (VGS-69) — hence its `may-skip` tag,
-# the named skip in the summary, and the 77 above.
+# Run the selected validation area and collect every command failure.
+# scripts/validate [AREA] runs checks; --list [AREA] lists commands without execution;
+# --dump-grammar emits normalized grammar. Accept one area argument per invocation.
+# Exit 0 means all selected checks ran and passed. Exit 77 means allowed checks skipped
+# while executed checks passed. Exit 1 means a check failed. Exit 2 means invalid usage
+# or manifest, before checks execute.
+# The inventory guard owns manifest and CI coverage checks and their documented exceptions.
+# Explicit interpreter calls cover syntax checks and non-executable libraries.
+# Nested QML smoke requires its compositor sandbox; surface smoke requires the checkout
+# that owns the live shell. A missing precondition does not establish a pass.
 
-# `-e` is on, and the suite loop below deliberately does not rely on it: each
-# check runs as `eval "$cmd" || status=$?`, where the `||` both suppresses
-# errexit and CAPTURES the status. The captured VALUE, not merely its
-# truthiness, is what separates 77-from-a-may-skip-row from every other non-zero
-# result — so do not "simplify" that line back to `if ! eval ...`, which
-# collapses every failure into one branch and silently deletes the skip channel.
+# Capture each eval status without aborting the suite. Its exact value distinguishes
+# a permitted skip from failure; a negated truth test would lose that distinction.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || exit 1
 cd "$repo_root" || exit 1
 
-# ═══ THE MANIFEST GRAMMAR — the authority for what a row may say ═══════════
-#
-# Four rounds of review each closed one malformed SHAPE and left the rule
-# unstated, so a fifth shape kept existing. The rule is written here, once, and
-# both readers validate against it: scripts/validate below, and
-# scripts/lib/validation_manifest.py for the guard. The controls in
-# scripts/test-validate.sh are derived from THESE productions — one per thing
-# the grammar forbids — not from the shapes reviewers happened to find.
-#
-#   row        := tags "|" command
-#
-#   tags       := "-" | part { "," part }     # a SET: order and repetition
-#   part       := selector | modifier         # are immaterial
-#   selector   := area | "always"             # decides WHEN the row runs
-#   modifier   := "may-skip"                  # qualifies HOW it may exit
-#   area       := "go" | "qml" | "helper" | "packaging" | "docs"
-#
-#   command    := non-empty after trimming, and accepted by `bash -n`
-#
-# Constraints the productions alone do not carry:
-#
-#   C1  `-` is exclusive — a row tagged `-` carries no other tag. It means
-#       "only the full `all` run selects this row".
-#   C2  every row that is not `-` carries AT LEAST ONE SELECTOR. A row of
-#       modifiers alone is the fourth shape this grammar exists to end:
-#       `may-skip` by itself parses, selects nothing, and so vanishes from
-#       every named area while still running under `all` — green, and the row
-#       gone from exactly the scoped runs this repo tells agents to use.
-#   C3  `all` is an ARGUMENT to this script, never a tag. As a tag it would
-#       match only an `all` run and behave like `-` everywhere else.
-#   C4  whitespace is ASCII, and removed before matching. Python's str.split()
-#       also eats Unicode whitespace; ASCII-only in both readers is what stops
-#       a Unicode space normalising away for one and not the other. Enforced by
-#       ONE SET, `ASCII_SPACE` below, which `--dump-grammar` emits and the
-#       library builds its pattern from — the two sides used to spell six
-#       characters out separately under a comment claiming they moved together,
-#       which nothing checked. `[[:space:]]` did not enforce it either: bash
-#       resolves character classes through the LOCALE, so C4 was asserted here
-#       and true only incidentally, until a locale change made it false.
-#
-# ─── and the AREA DECLARATION, one level up ────────────────────────────────
-#
-# `all` being silently droppable by a reader was the FIFTH hole in this file,
-# after the empty tag field, the trailing comma, the malformed command and the
-# modifier-only row. Same lesson: the rule was real but unwritten, so it was a
-# bug to discover rather than a rule to check. So it is written here too.
-#
-# TWO VOCABULARIES, and they are NOT the same set — overloading one word for
-# both is what let `all` fall through the gap between them:
-#
-#   AREAS      := scope { scope } "all"    # the declaration; order immaterial
-#   scope      := "go" | "qml" | "helper" | "packaging" | "docs"
-#   argument   := scope | "all"            # what `scripts/validate X` accepts
-#
-#   A1  AREAS declares `all`. It is the runner's DEFAULT, so with `all`
-#       deleted a bare `scripts/validate` fails as an unknown area.
-#   A2  every name in AREAS is a lowercase token and appears exactly once.
-#   A3  `all` is an ARGUMENT and never a row TAG (C3 above). Readers therefore
-#       expose the DECLARATION and the tag-usable SCOPES separately; a consumer
-#       that rebuilds one from the other cannot see a deletion in it, which is
-#       precisely how A1 went unchecked.
-#   A4  every scope is carried by at least one manifest row, or the argument
-#       selects nothing of its own.
-#   A5  the prose surfaces enumerate exactly the ARGUMENTS.
-#
-# NOT expressible here, and so not claimed: that a command names a program
-# that exists and does what the row says. scripts/check-validation-inventory.py
-# covers the `scripts/` part of that; the rest is only proven by running it.
-#
-# `always` IS A SELECTOR, not a modifier — it stands alone on three shipped
-# rows and must keep doing so. The bar for it is high and all three parts are
-# load-bearing: cheap, network-free, and correct in ANY checkout — a plain
-# clone, a CI-shaped checkout, a worktree made before `kendex refresh`. A check
-# that hard-fails when some out-of-tree artifact is absent does NOT qualify
-# however fast it is. What qualifies: the format/lint floor, this manifest's own guard,
-# `git diff --check` — a Go-scoped run must still gofmt the Go it changed.
-#
-# The per-area sets are the scoping AGENTS.md used to state in prose:
-# go = the backend capability inventory guard plus the Go block; qml = naming,
-# the QML smoke, the safety guard, surfaces, plus the QML source lints carrying
-# the tag: the launcher hover latch and the popout dismiss envelope; helper =
-# the helper checks plus the py_compile/bash -n pass; packaging = its three;
-# docs = the instruction-surface growth ratchet, the owned-skill register guard,
-# the section-pointer guard, and that guard's five control scripts, one per
-# subject. This `test-` row is needed because the guard has no inline self-test;
-# a docs run without the controls would prove nothing about whether it guards.
-#
-# The older QML source lints are still `-`, so only `all` reaches them, and the
-# family is bigger than it looks: 23 of today's `-` rows read .qml source, from
-# pill-hover to the six ai-usage checks. `qml` is the better tag for a new one —
-# it runs the guard in the area AGENTS.md tells agents to run before finishing
-# QML work — but retagging two dozen rows is its own change, not a drive-by.
+# Manifest rows use tags | command. Tags select areas or modify permitted exit status.
+# The vocabulary and class constraints live in scripts/lib/validation-grammar.conf.
+# Validate command syntax before execution. This does not prove commands exist or behave correctly.
+# The inventory guard checks script command coverage; other commands need actual execution.
+# Only cheap, network-free checks valid in ordinary checkouts belong in universal rows.
 # shellcheck disable=SC2329  # invoked indirectly, as an argument to collect()
 manifest() {
   cat <<'MANIFEST_EOF'
@@ -258,61 +111,11 @@ qml,may-skip | scripts/smoke-surfaces.sh
 go        | (cd backend && go build ./... && go vet ./... && go test -race ./...)
 MANIFEST_EOF
 }
-# ═══ THE VOCABULARY IS READ, NOT RESTATED ══════════════════════════════════
-#
-# scripts/lib/validation-grammar.conf is the one definition, and THIS IS ITS
-# ONLY PARSER. Eight holes came from consumers each re-deriving the grammar;
-# writing one definition fixed that and left two READERS of it, which disagreed
-# about invalid and ambiguous input three more times. So the definition is
-# parsed and validated here — the runner must do it anyway, with nothing on its
-# critical path — and `--dump-grammar` emits the normalized result for every
-# other consumer. scripts/lib/validation_manifest.py DECODES that dump; it does
-# not read the .conf.
-#
-# The alternative considered and rejected was a conformance corpus shared by two
-# parsers. A corpus is an ENUMERATION of malformed shapes, and the lesson of
-# these eight holes is that such enumerations are incomplete: a corpus would
-# have caught neither the missing-trailing-newline divergence nor the
-# metadata-pass indexing bug, both of which surfaced only while fixing something
-# else. One reader makes divergence impossible by construction rather than
-# detectable afterwards — the same move as one definition, one level up.
-# ═══ WHITESPACE IS ASCII, SPELLED OUT ══════════════════════════════════════
-#
-# C4 says whitespace is ASCII and removed before matching. `[[:space:]]` did NOT
-# guarantee that: bash resolves character classes through the LOCALE, and under
-# this machine's own en_US.UTF-8 it matches U+2002 EN SPACE and U+3000
-# IDEOGRAPHIC SPACE. Verified end to end, in the ambient locale, before this
-# was written: a row tagged `qml<U+2002>` had the en space stripped here and so
-# parsed as `qml`, while validation_manifest.py — explicitly ASCII — refused the
-# same row as a malformed tag field. That is exactly the divergence C4 exists to
-# stop, one layer below where an earlier round fixed it. (glibc excludes NBSP
-# from `space`, so the character the review named is not the one that bites;
-# the class is.)
-#
-# WHY NOT `export LC_ALL=C`. It would settle this in one line, and it leaks:
-# every manifest command runs through `eval` in this process's environment, so
-# 58 checks — the Go block, node, python, shellcheck — would run under a locale
-# chosen for a tag-parsing reason. A suite whose results depend on a setting
-# made for the parser is a worse trade than spelling six patterns out. The two
-# `LC_ALL=C sort` calls in the dump stay as they are: they answer a different
-# question (deterministic collation), and they are already scoped to one
-# command each, which is what a global export would have to give up.
-#
-# Ranges were checked too, since `[a-z]` is collation-dependent in principle:
-# on this glibc `[[ "Q" =~ ^[a-z]+$ ]]` is false under C and under en_US.UTF-8
-# alike, so the token-name rule is not affected.
-#
-# THE SET BELOW IS THE ONLY ONE. `--dump-grammar` emits it as codepoints and
-# scripts/lib/validation_manifest.py builds its pattern from that, so the two
-# readers cannot hold different sets. They used to hold two spellings under a
-# comment asserting the two moved together — an ASCII character dropped from one
-# side alone would have divided them exactly as the locale-resolved class did,
-# and no locale control could have caught it, since a locale changes what a
-# CLASS means and never what a spelled-out set contains.
+# Parse and validate the grammar here; other consumers decode --dump-grammar.
+# Use an explicit ASCII whitespace set. Locale-resolved space classes can admit Unicode,
+# while exporting a C locale globally would change every validation command's environment.
 ASCII_SPACE=$' \t\n\r\f\v'
-# ...minus the newline, for the line-oriented tools that cannot carry one.
-# Derived rather than written twice: two spellings of one set is how the readers
-# came to disagree in the first place.
+# Derive the line-oriented whitespace set by removing newline.
 ASCII_SPACE_LINE="${ASCII_SPACE//$'\n'/}"
 
 GRAMMAR_FILE="$repo_root/scripts/lib/validation-grammar.conf"
@@ -321,31 +124,10 @@ if [[ ! -r "$GRAMMAR_FILE" ]]; then
   exit 2
 fi
 
-# ═══ COLLECTION IS CHECKED, NOT ASSUMED ════════════════════════════════════
-#
-# `done < <(producer)` DISCARDS the producer's exit status: the loop consumes
-# whatever bytes arrived and the shell never asks whether the producer finished.
-# Verified before this was written — with a `sed` wrapper that emits the real
-# output and then exits 42, `scripts/validate --list docs` returned 0 and listed
-# commands. A TRUNCATED grammar is the worst possible input here, because every
-# rule below is derived from it: a class or token that never arrived does not
-# fail, it silently changes what the runner selects.
-#
-# So each producer is run through a command substitution, whose status the shell
-# DOES report, and the status is checked before the bytes are used. `set -e`
-# alone is not the answer: it would abort with no diagnostic at all, and a
-# TRANSPORT failure needs a different sentence from a malformed grammar, because
-# the remedies are different — one is "fix the file", the other is "your read
-# failed and nothing was validated".
-#
-# These two messages are hardcoded rather than read from the grammar, and that
-# is not the drift hazard it looks like: they are reported when the grammar
-# could not be COLLECTED, so its message table does not exist yet. The
-# `cannot read the grammar at ...` error above is hardcoded for the same reason.
-# Sets `collected`; NEVER writes to stdout and is never wrapped in a command
-# substitution. `$( )` runs a subshell, so an `exit 2` inside one would end the
-# substitution and leave the caller running on empty output — a fail-open in the
-# very function written to close one.
+# Collect producer output with its status before parsing it. Process substitution hides
+# producer failure and can silently accept a partial grammar.
+# Set collected in this shell; wrapping collect itself in substitution would hide its fatal exit.
+# Collection diagnostics cannot come from grammar messages before that grammar is available.
 collected=""
 collect() { # $1 what, then the producer and its arguments
   local what="$1" status=0
@@ -365,75 +147,32 @@ declare -A CLASS_CLI=() CLASS_UNIVERSAL=() CLASS_SKIPS=()
 declare -A TOKEN_CLASS=() MSG=()
 grammar_tokens=()
 
-# AN AMBIGUOUS GRAMMAR IS REFUSED BEFORE ANYTHING RUNS. Every validation below
-# is DERIVED from this definition, so a runner willing to execute against an
-# ambiguous one cannot honour its own promise that a malformed manifest exits 2
-# before anything runs — the promise is computed from the thing in doubt. A
-# token declared twice is ambiguous whether or not the two agree: the same
-# spelling appearing twice is a definition nobody can read confidently.
+# Reject ambiguous grammar before deriving rules or running commands.
 grammar_fatal() {
   printf 'scripts/validate: %s: %s\n' "$1" "$2" >&2
   exit 2
 }
 
-# `|| [[ -n "$kind" ]]` keeps a FINAL LINE WITH NO TRAILING NEWLINE. Without it
-# `read` returns non-zero at EOF and the loop drops that line, while the python
-# reader's splitlines() keeps it — so a grammar whose last line is unterminated
-# declared a token for one reader and not the other. Same class of divergence as
-# reading class properties positionally.
-# METADATA FIRST — the `kind` arity table and the messages — because both are
-# needed to VALIDATE the records that follow, and both are declared after them.
-# A single pass left class and token failures using built-in fallback wording,
-# and left every record's field count unchecked.
-#
-# A NAME IS DECLARED ONCE, whatever its line kind. A duplicate `class` line was
-# accepted silently and merged one way by the runner and another by the reader
-# that used to sit beside it: same file, two meanings. The rule is checked for
-# every kind, not for `class`, because "declared twice" is the rule and `class`
-# was only the shape that surfaced — a second `message` or `kind` line is the
-# same ambiguity with the same silent last-one-wins outcome. It is checked in
-# BOTH passes, each for the kinds that pass consumes, so the duplicate is
-# reported instead of a downstream symptom of the merge it caused.
+# Read metadata before dependent records so arity and diagnostic definitions are available.
+# Retain an unterminated final line. Check duplicate names in each pass before records can merge.
 
-# EVERY NUMERIC FIELD IN THE DEFINITION GOES THROUGH HERE, and there are exactly
-# two sites: a `kind` line's arity and a `class` line's cardinality. One rule in
-# one function is the point — `kind` was unvalidated once already, and a second
-# copy of the regex is how the two sites drift apart.
-#
-# CANONICAL DECIMAL, not merely digits. `^[0-9]+$` accepted `08`, which bash
-# arithmetic reads as octal and then rejects: `[[ 2 -lt 08 ]]` printed
-# "value too great for base" to stderr and evaluated FALSE, so the arity check
-# and the class-count invariant silently turned themselves off while the run
-# continued at rc 0. A value that is not obviously the value written is worse
-# than one that is refused.
-require_count() { # $1 context, $2 field text, $3 value
+# Validate every numeric field as canonical decimal. Leading-zero values can become octal
+# in Bash arithmetic and make comparisons fail without enforcing the intended bound.
+require_count() { # Validate a count using context, field name, and value.
   if [[ ! "$3" =~ ^(0|[1-9][0-9]*)$ ]]; then
     grammar_fatal "${MSG[grammar-count-value]:-grammar min and max must be decimal integers}" \
       "$1: $2"
   fi
 }
 
-# A FIELD APPEARS ONCE IN A RECORD, and this is the only implementation of that
-# rule. `class` had one and `kind` had none, so `kind class min=100 min=2` was
-# silently last-one-wins — an ambiguous declaration of the rule that governs how
-# every other record is read, with the runner then executing checks against it.
-# A second implementation beside the first is exactly how the two sites came to
-# disagree, so there is one function and every record kind with named fields
-# calls it.
-#
-# TWO RECORD KINDS CARRY NAMED FIELDS — `kind` (min, max) and `class` (the seven
-# booleans plus min and max). `token <name> <class>` and `message <key> <text>`
-# are positional and have no named field to repeat; `token`'s `max=2` arity
-# means an extra field is refused as arity before it could be one.
-# COLLECTED ONCE, and both passes read the SAME BYTES. Reading the file twice
-# also let it change between the passes, so the metadata a record was validated
-# against need not have been the metadata in the file.
+# Use one named-field uniqueness check for kind and class records.
+# Collect grammar bytes once so metadata and record passes cannot read different file contents.
 collect "the grammar" sed -e 's/#.*//' -e "/^[$ASCII_SPACE_LINE]*\$/d" "$GRAMMAR_FILE"
 grammar_text="$collected"
 
 declare -A SEEN_FIELD=()
 begin_record() { SEEN_FIELD=(); }
-seen_field() { # $1 context, $2 field name
+seen_field() { # Validate uniqueness using record context and field name.
   if [[ -n "${SEEN_FIELD[$2]:-}" ]]; then
     grammar_fatal "${MSG[grammar-repeated-field]:-grammar record repeats a field}" "$1: $2"
   fi
@@ -453,8 +192,7 @@ while read -r kind name rest || [[ -n "$kind" ]]; do
   esac
   case "$kind" in
     kind)
-      # The bootstrap: `kind` lines are checked inline against the shape they
-      # themselves describe, since the table does not exist yet.
+      # Bootstrap kind validation inline before its own arity table exists.
       if [[ -z "$name" || -z "$rest" ]]; then
         grammar_fatal "${MSG[grammar-arity]:-grammar line has the wrong number of fields}" \
           "kind ${name:-}"
@@ -467,16 +205,10 @@ while read -r kind name rest || [[ -n "$kind" ]]; do
             "kind $name: $field" ;;
         esac
         seen_field "kind $name" "${field%%=*}"
-        # A COUNT IS AN INTEGER, and unvalidated it was neither. `min=banana`
-        # was stored verbatim here and later compared with `-lt`, which
-        # arithmetic-evaluates an unknown word to 0 — so a typo silently turned
-        # a kind's arity off. It is not a boolean either, so it gets the message
-        # that names the rule it broke rather than the yes/no one.
+        # Validate integer counts before arithmetic; unknown words can otherwise evaluate as zero.
         require_count "kind $name" "$field" "${field#*=}"
         case "$field" in
-          # min must be at least 1: every branch reads a record's NAME, so a
-          # kind that permitted zero fields would leave that read unproven —
-          # the same shape as the missing arity check, one level up.
+          # Require a name field because every record branch reads it.
           min=0) grammar_fatal "${MSG[grammar-arity]:-grammar line has the wrong number of fields}" \
             "kind $name: min must be at least 1" ;;
           min=*) KIND_MIN[$name]="${field#min=}" ;;
@@ -485,9 +217,7 @@ while read -r kind name rest || [[ -n "$kind" ]]; do
       done
       ;;
     message)
-      # The metadata pass indexes too, so it proves the key present first: a
-      # bare `message` line made `MSG[$name]` a bad-subscript bash error at
-      # rc 1. The arity check in the main pass reports it properly.
+      # Check the metadata key before array indexing; defer malformed-message reporting to the arity check.
       [[ -n "$name" ]] && MSG[$name]="$rest"
       ;;
   esac
@@ -497,8 +227,7 @@ if [[ -z "${KIND_MIN[class]:-}" || -z "${KIND_MIN[token]:-}" || -z "${KIND_MIN[m
   grammar_fatal "grammar declares no arity for a required line kind" "class/token/message"
 fi
 
-# ARITY IS CHECKED BEFORE ANYTHING IS INDEXED. Every branch below used to read
-# fields it had not proven present.
+# Validate arity before indexing record fields.
 check_arity() {
   local kind="$1" count="$2" line="$3"
   local low="${KIND_MIN[$kind]:-}" high="${KIND_MAX[$kind]:-}"
@@ -520,16 +249,13 @@ while read -r line || [[ -n "$line" ]]; do
   name="${fields[0]}"
   rest="${rest_all#"${fields[0]}"}"
   rest="${rest# }"
-  # The other half of the duplicate rule; `kind` and `message` were checked in
-  # the metadata pass, which is where their merge would otherwise happen.
+  # Kind and message duplicate checks run in the metadata pass; this pass checks the other record kinds.
   case "$kind" in
     class | token) seen_record "$kind" "$name" ;;
   esac
   case "$kind" in
     class)
-      # BY KEY, NEVER BY POSITION. Reading these positionally while the python
-      # reader read them by key made reordering the same four pairs change what
-      # each reader believed — in the file written to end reader disagreements.
+      # Read class fields by key so equivalent reordering preserves meaning.
       begin_record
       for field in $rest; do
         if [[ "$field" != *=* ]]; then
@@ -543,15 +269,11 @@ while read -r line || [[ -n "$line" ]]; do
           *) grammar_fatal "${MSG[grammar-unknown-field]:-grammar record has an unknown field}" \
             "$name: $prop" ;;
         esac
-        # Same function the `kind` branch calls; the one that used to live here
-        # was the second implementation.
+
         seen_field "$name" "$prop"
         case "$prop" in
           min | max)
-            # NOT a boolean, so not the boolean message: `min=banana` was
-            # reported as "must be yes or no", which names a rule `min` does not
-            # have and sends the reader looking for the wrong mistake. Same
-            # function as the `kind` site, so the two cannot drift.
+            # Count fields use numeric diagnostics, not boolean diagnostics.
             require_count "$name" "$prop=$value" "$value"
             ;;
           *)
@@ -586,8 +308,7 @@ while read -r line || [[ -n "$line" ]]; do
         grammar_fatal "${MSG[grammar-token-fields]:-token line must be token <name> <class>}" \
           "$name ($rest)"
       fi
-      # No duplicate check here: SEEN_RECORD above covers every kind, and a
-      # per-kind copy is the shape-by-shape habit this file exists to end.
+
       if [[ -z "${CLASS_ROWTAG[$cls]:-}" ]]; then
         grammar_fatal "${MSG[grammar-bad-class]:-grammar token has an unknown class}" \
           "$name ($cls)"
@@ -599,14 +320,11 @@ while read -r line || [[ -n "$line" ]]; do
       CLASS_COUNT[$cls]=$(( ${CLASS_COUNT[$cls]:-0} + 1 ))
       grammar_tokens+=("$name")
       ;;
-    kind | message) ;; # read in the metadata pass above
+    kind | message) ;;
   esac
 done <<<"$grammar_text"
 
-# THE INVARIANTS, enforced here as well as in the guard and taken from the same
-# `min`/`max` in the definition. The runner goes first, so an invariant only the
-# guard knew was one the runner ran straight past — it would execute against a
-# grammar the suite was about to reject.
+# Enforce declared cardinality before commands can run under an invalid grammar.
 for cls in "${!CLASS_ROWTAG[@]}"; do
   count="${CLASS_COUNT[$cls]:-0}"
   low="${CLASS_MIN[$cls]:-0}"
@@ -624,9 +342,9 @@ for required in row-no-separator row-empty-tags row-malformed-tags \
   fi
 done
 
-# Derived sets. Each is a QUERY over the grammar, not a second list.
-AREAS=()          # what `scripts/validate X` accepts
-default_area=""   # the lone CLI-default token: "every row", and the default
+# Derive selection sets from class properties.
+AREAS=()
+default_area=""
 default_candidates=()
 row_tag_vocabulary=()
 combinable_tags=()
@@ -636,9 +354,7 @@ universal_tags=()
 skip_tags=()
 for token in "${grammar_tokens[@]}"; do
   class="${TOKEN_CLASS[$token]}"
-  # ASKED AS PROPERTIES, not by class name. `[[ "$class" == area || "$class" ==
-  # argument ]]` was a rule naming two classes, and the default was the literal
-  # `all`; both are questions the definition answers.
+  # CLI eligibility and default selection come from properties rather than class names.
   [[ "${CLASS_CLI[$class]}" == yes ]] && AREAS+=("$token")
   if [[ "${CLASS_CLI[$class]}" == yes && "${CLASS_ROWTAG[$class]}" != yes ]]; then
     default_area="$token"
@@ -659,45 +375,18 @@ for token in "${grammar_tokens[@]}"; do
   fi
 done
 
-# ═══ THE DUMP — what every other consumer reads instead of the .conf ═══════
-#
-# NORMALIZED, so a decoder never supplies a default: every boolean is present in
-# a fixed order, `min` is always present, `max` is an integer or `-`. Supplying
-# defaults is how a second reader starts having opinions, and opinions are what
-# diverged. Ordering is deterministic (classes and messages sorted, tokens in
-# declaration order) so the dump is diffable and a control can compare two runs.
-#
-# Reached only after the whole definition has been validated above, so anything
-# this prints is a grammar the runner itself accepted. A grammar it refuses
-# never produces a dump at all — it exits 2 with the diagnostic, which is what
-# the consumer reports.
-# `printf | sort` is a pipeline, and a pipeline inside a process substitution
-# discards its status twice over. Wrapped so `collect` can see it; pipefail is
-# already on, so a failure in either half surfaces.
+# Emit normalized grammar only after validation, with explicit defaults and deterministic ordering.
+# Wrap sorting pipelines so collect can inspect their status.
 # shellcheck disable=SC2329  # invoked indirectly, as an argument to collect()
 sort_names() { printf '%s\n' "$@" | LC_ALL=C sort; }
 
 dump_grammar() {
   local cls key token i code hex=""
   printf 'source %s\n' "$GRAMMAR_FILE"
-  # THE RESOLVED DEFAULT, so a consumer reads the runner's verdict instead of
-  # recomputing it. Recomputing was how the guard came to reject a grammar the
-  # runner accepted: a query over the dumped tokens is not a second parser, but
-  # it is a second place the rule is written, and that is the same thing wearing
-  # a different name.
+  # Emit the resolved default so consumers do not recompute its selection rule.
   printf 'default %s\n' "$default_area"
-  # THE WHITESPACE SET ITSELF, so C4 has one definition instead of two spellings
-  # that a comment merely asserted move together. The python side used to carry
-  # its own `[ \t\n\r\f\v]` regex under a note saying it changed with
-  # `ASCII_SPACE` here; nothing enforced that, and the locale control could only
-  # have caught a Unicode space, never an ASCII character dropped from one side.
-  # Now the set is derived from this variable and read from the dump, so the two
-  # readers cannot hold different sets at all.
-  #
-  # AS CODEPOINTS, because the set CONTAINS A NEWLINE and a line-oriented dump
-  # cannot carry one literally. Hex is the transport; the decoder validates it
-  # and refuses anything outside ASCII, which is the half of C4 a transport
-  # cannot state.
+  # Emit the whitespace set as hex codepoints because it contains newline.
+  # The decoder must validate ASCII and preserve the supplied set.
   for ((i = 0; i < ${#ASCII_SPACE}; i++)); do
     printf -v code '%d' "'${ASCII_SPACE:i:1}"
     printf -v hex '%s%02x ' "$hex" "$code"
@@ -721,39 +410,15 @@ dump_grammar() {
   done <<<"$collected"
 }
 
-# EXACTLY ONE TOKEN MAY BE THE CLI DEFAULT, counted across ALL classes. The
-# eligibility test is the property pair that actually decides the default —
-# cli=yes with rowtag=no — and `argument min=1 max=1` does NOT state this: it
-# bounds the tokens of one class and says nothing about how many classes may
-# carry that pair. A second such class left `--list docs` at rc 0 over four
-# commands while the runner picked one of two defaults silently, which is the
-# runner running against a grammar the suite rejects — the split closed twice
-# before, on an invariant nobody had written down. Refused here, in the
-# pre-flight, so nothing runs and `--list` is included.
+# Require one default-eligible token across all classes. Per-class cardinality cannot prove global uniqueness.
 if [[ ${#default_candidates[@]} -ne 1 ]]; then
   grammar_fatal "${MSG[grammar-default-count]:-grammar must declare exactly one CLI default token}" \
     "cli=yes with rowtag=no: ${#default_candidates[@]} token(s)${default_candidates[*]:+ (${default_candidates[*]})}"
 fi
 
-# A SELECTOR THAT SELECTS NOTHING BUT THE DEFAULT AREA IS REFUSED, and it is C3
-# reached through a property instead of through a name. C3 keeps `all` out of the
-# tag vocabulary because as a tag it would match only an `all` run and behave
-# like `-` everywhere else — silent narrowing. A row tag that SELECTS, is not
-# exclusive, names no area (cli=no) and is not universal has exactly that
-# behaviour: it parses, it combines, and it selects nothing in any named area.
-#
-# The edit that reaches it is a single yes/no flip — `universal=no` on the selector
-# class — and it is SELF-CONCEALING: every `always` row vanishes from every
-# scoped run, including scripts/check-validation-inventory.py, which is the check
-# that would report the edit. `scripts/validate --list docs` then lists one
-# command and exits 0. Refused here, in the pre-flight beside the undecidable
-# default, so no consumer ever sees a dump of such a grammar and no scoped run is
-# quietly narrowed.
-#
-# ASKED OF THE DERIVED SETS, not of the class properties again. Those sets were
-# just computed from exactly these properties, and re-spelling five CLASS_*
-# lookups here would put "what makes a token a selector" in two places — the
-# shape this file's own notes reject everywhere else.
+# Reject selecting row tags that are neither areas, universal, nor exclusive.
+# They would disappear from scoped runs, potentially removing this manifest's own guard.
+# Use derived sets so this check shares the same eligibility definitions as selection.
 in_list() { # $1 needle, then the haystack
   local needle="$1" item
   shift
@@ -776,8 +441,7 @@ if [[ ${#inert_selectors[@]} -gt 0 ]]; then
     "${inert_selectors[*]}: a selector that is neither an area (cli=yes) nor universal selects only the default area, which is what the exclusive tag already means"
 fi
 
-# Exit status a `may-skip` row uses for "precondition absent, nothing checked".
-# 77 is the autotools convention; anything else from such a row is a failure.
+# Only permitted skip rows can use status 77 for absent prerequisites.
 SKIP_STATUS=77
 
 usage() {
@@ -789,18 +453,13 @@ usage() {
 }
 
 list_only=0
-# The DEFAULT is the argument class's single token, not a literal: `argument
-# min=1 max=1` is what makes "the lone one" well defined, and hardcoding `all`
-# here was another copy of something the definition already states.
+# Use the resolved grammar default for a bare invocation.
 area="$default_area"
 area_given=0
 for arg in "$@"; do
   case "$arg" in
     --list) list_only=1 ;;
-    # Answered before any other argument is considered: this is the grammar
-    # reader's output, and it must be obtainable from a runner whose MANIFEST is
-    # broken — otherwise a consumer asking "what is the vocabulary" gets an
-    # answer about the rows instead.
+    # Grammar dumping must work independently of manifest validity so consumers can inspect vocabulary errors separately.
     --dump-grammar)
       dump_grammar
       exit 0
@@ -815,10 +474,7 @@ for arg in "$@"; do
       exit 2
       ;;
     *)
-      # ONE area per invocation. Assigning each positional in turn would let
-      # `validate go qml` run qml alone and report `ok (qml, ...)` — a partial
-      # run wearing the name of the scope that was asked for, which is exactly
-      # what the unknown-area and empty-selection exits below refuse.
+      # Reject multiple area arguments instead of silently keeping the last.
       if [[ $area_given -eq 1 ]]; then
         printf 'scripts/validate: one area per run; got %s and %s\n' "$area" "$arg" >&2
         usage
@@ -830,8 +486,7 @@ for arg in "$@"; do
   esac
 done
 
-# An unknown area must never degrade to "run everything" or "run nothing": both
-# would exit reporting a scope that was never the one asked for.
+# Unknown areas must fail rather than select all or no commands.
 matched_area=0
 for known in "${AREAS[@]}"; do
   if [[ "$area" == "$known" ]]; then
@@ -844,10 +499,7 @@ if [[ $matched_area -eq 0 ]]; then
   exit 2
 fi
 
-# The accepted language for a tag field, built from the grammar's own classes:
-# an exclusive token alone, or a comma-separated list of combinable tokens.
-# Neither list is written here — both are queries over the one definition, so a
-# token added there is accepted here without a second edit.
+# Build accepted tag syntax from exclusive and combinable token sets.
 exclusive_alternation="$(
   IFS='|'
   printf '%s' "${exclusive_tags[*]}"
@@ -859,10 +511,7 @@ tag_alternation="$(
 tags_grammar="^(($exclusive_alternation)|($tag_alternation)(,($tag_alternation))*)$"
 
 
-# row_fatal <message key> <line> [offending tags] [detail]
-# The message TEXT comes from the grammar file, which the library reads too;
-# only the context around it is this reader's. Nothing here spells a shared
-# diagnostic by hand — that text drifted twice and was hand-synchronised twice.
+# Format a row error using the shared message key, line, optional tags, and detail.
 row_fatal() {
   local key="$1" line="$2" tags="${3:-}" detail="${4:-}"
   # shellcheck disable=SC2016  # the backticks quote the tags in the message
@@ -875,15 +524,8 @@ row_fatal() {
   exit 2
 }
 
-# Commands selected for this area, in manifest order, with their tags kept
-# alongside so the run loop can tell a `may-skip` row from every other one.
-#
-# A MALFORMED ROW IS FATAL, never dropped. Splitting on `|` up front would put a
-# separator-less line wholly in the tag field and leave the command empty, and
-# skipping such a row deletes a check from every area — including `all` — while
-# the run still ends in `ok`. That is the one shape the guard on the other side
-# (check-validation-inventory.py) and this loop could both have swallowed, so
-# both now refuse it with the same message.
+# Retain tags with commands so execution can classify skips.
+# Refuse malformed rows instead of silently omitting checks from the selected area.
 collect "the manifest" manifest
 manifest_text="$collected"
 selected=()
@@ -900,28 +542,15 @@ while IFS= read -r line; do
   tags="${tags//[$ASCII_SPACE]/}"
   while [[ "$cmd" == ["$ASCII_SPACE"]* ]]; do cmd="${cmd:1}"; done
   while [[ "$cmd" == *["$ASCII_SPACE"] ]]; do cmd="${cmd:0:${#cmd}-1}"; done
-  # TAGS ARE VALIDATED AS A STRING, AGAINST A GRAMMAR OF WHAT IS ALLOWED,
-  # before any split and before any check runs. Two holes came from doing it the
-  # other way round — writing the rule in terms of whatever `read -a` produced:
-  # an empty field yields a ZERO-element array so the loop never ran, and a
-  # trailing comma is dropped by `read -a` so `qml,` looked well formed. Both
-  # are shapes; enumerating shapes is endless. A whitelist has no complement to
-  # enumerate: anything that is not exactly `-`, or a comma-separated list of
-  # known non-`-` tags, is rejected whatever it looks like. `-` may not be
-  # combined, because "only the full `all` run selects this row" cannot be true
-  # of a row that also names an area — the grammar says so rather than a
-  # follow-up test. scripts/lib/validation_manifest.py holds the same grammar
-  # for the same rows; scripts/test-validate.sh pins the two to one answer.
+  # Validate the whole tag string before splitting. Empty arrays and discarded trailing separators
+  # can otherwise make malformed fields appear valid.
   if [[ -z "$tags" ]]; then
     # shellcheck disable=SC2016  # the backticks quote tag names in the hint
     row_fatal row-empty-tags "$line" "" \
       'every row needs at least one tag; use `-` for a row only `all` runs'
   fi
   if [[ ! "$tags" =~ $tags_grammar ]]; then
-    # Diagnosis is separate from the decision: the grammar already refused the
-    # row, and these only explain WHY. A shape none of them names still exits 2
-    # with the shared message, which is what makes the rule complete without the
-    # diagnostics having to be.
+    # Tag syntax already decides refusal. These branches only refine its diagnostic.
     why=""
     case ",$tags," in
       ,,*) why="it starts with a separator" ;;
@@ -936,10 +565,7 @@ while IFS= read -r line; do
     # shellcheck disable=SC2016  # the backticks quote tag names in the hint
     row_fatal row-malformed-tags "$line" "$tags" "${why}known row tags: ${row_tag_vocabulary[*]}"
   fi
-  # THE CLASS PROPERTIES ARE THE RULES, asked of the grammar rather than
-  # restated here. `standalone` catches a lone modifier; `selects` catches a row
-  # of several tokens none of which selects. Both messages match the library's
-  # word for word, so one malformed row gets one diagnosis from either reader.
+  # Use class standalone and selection properties to diagnose rows without a selector.
   IFS=, read -r -a row_tag_list <<<"$tags"
   if [[ ${#row_tag_list[@]} -eq 1 ]]; then
     only="${row_tag_list[0]}"
@@ -959,18 +585,12 @@ while IFS= read -r line; do
   if [[ -z "$cmd" ]]; then
     row_fatal row-empty-command "$line"
   fi
-  # THE COMMAND HALF OF THE SAME CONTRACT. An invalid-shell command parsed fine,
-  # so `--list` exited 0 and a real run executed earlier checks before `eval`
-  # returned 2, aggregated into an ordinary exit 1. EVERY ROW, not only the
-  # selected ones, matching the tags grammar: the verdict on a manifest must not
-  # depend on which rows the requested area picks, which is what makes
-  # `validate docs` refuse a broken Go-block command. ~30 ms over all 58 rows.
+  # Validate shell syntax for every row, including unselected rows, before any command runs.
   if ! syntax_error="$(bash -n -c "$cmd" 2>&1)"; then
     row_fatal row-bad-syntax "$line" "" "${syntax_error//$'\n'/$'\n  '}"
   fi
   if [[ "$area" != "$default_area" ]]; then
-    # A row joins a named area if it carries that area, or carries any
-    # UNIVERSAL tag — asked of the grammar rather than matching `always`.
+
     selected_here=0
     [[ ",$tags," == *",$area,"* ]] && selected_here=1
     for universal in "${universal_tags[@]}"; do
@@ -985,8 +605,7 @@ while IFS= read -r line; do
 done <<<"$manifest_text"
 
 if [[ ${#selected[@]} -eq 0 ]]; then
-  # Unreachable while every area tag names at least one row. If the manifest is
-  # ever edited into that state, say so rather than exiting 0 over nothing.
+  # Reject an empty selection so a missing area's checks cannot report success.
   printf 'scripts/validate: area %s selects no commands — the manifest lost its rows\n' \
     "$area" >&2
   exit 2
@@ -1008,9 +627,7 @@ for i in "${!selected[@]}"; do
   if [[ $status -eq 0 ]]; then
     continue
   fi
-  # Only a row that declared it may skip gets the skip channel. Honouring 77
-  # from any row would let an unrelated check pick that status by accident and
-  # be quietly demoted out of the failure list.
+  # Treat exit 77 as skip only when the row declares permission.
   may_skip=0
   for skipper in "${skip_tags[@]}"; do
     [[ ",$tags," == *",$skipper,"* ]] && may_skip=1
@@ -1041,10 +658,7 @@ if [[ ${#failed[@]} -eq 0 ]]; then
     printf 'validate: ok (%s, %d command%s)\n' "$area" "${#selected[@]}" "$plural"
     exit 0
   fi
-  # Never a bare `ok`, and never a bare 0. The leading count is what RAN, in the
-  # same `N of M` shape the FAIL line uses, and the status is 77 so a caller
-  # mapping exit code to a verdict cannot record a pass over a check that did
-  # not happen.
+  # Report executed and skipped counts separately and return 77 when any allowed check skipped.
   printf 'validate: ok (%s, %d of %d command%s%s)\n' \
     "$area" "$ran" "${#selected[@]}" "$plural" "$skip_note"
   printf 'validate: exit 77 — passed, but %d command%s did not run\n' \

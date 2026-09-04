@@ -12,9 +12,9 @@ Item {
     height: size
     visible: text.length > 0
 
-    // This is for file browser, particularly - might want another map later for app IDs
+
     readonly property var iconMap: ({
-            // --- Distribution logos ---
+
             "debian": "\u{f08da}",
             "arch": "\u{f08c7}",
             "archcraft": "\u{f345}",
@@ -29,17 +29,17 @@ Item {
             "artix": "\u{f31f}",
             "void": "\u{f32e}",
 
-            // --- special types ---
+
             "folder": "\u{F024B}",
             "file": "\u{F0214}",
 
-            // --- special filenames (no extension) ---
+
             "docker": "\u{F0868}",
             "makefile": "\u{F09EE}",
             "license": "\u{F09EE}",
             "readme": "\u{F0354}",
 
-            // --- programming languages ---
+
             "rs": "\u{F1617}",
             "dart": "\u{e798}",
             "go": "\u{F07D3}",
@@ -69,7 +69,7 @@ Item {
             "xml": "\u{F09EE}",
             "sql": "\u{f1c0}",
 
-            // --- scripts / shells ---
+
             "sh": "\u{f0bc1}",
             "bash": "\u{f0bc1}",
             "zsh": "\u{f0bc1}",
@@ -77,7 +77,7 @@ Item {
             "ps1": "\u{f0bc1}",
             "bat": "\u{f0bc1}",
 
-            // --- data / config ---
+
             "toml": "\u{e6b2}",
             "ini": "\u{F09EE}",
             "conf": "\u{F09EE}",
@@ -85,7 +85,7 @@ Item {
             "csv": "\u{eefc}",
             "tsv": "\u{F021C}",
 
-            // --- docs / office ---
+
             "pdf": "\u{F0226}",
             "doc": "\u{F09EE}",
             "docx": "\u{F09EE}",
@@ -96,10 +96,10 @@ Item {
             "xls": "\u{F021C}",
             "xlsx": "\u{F021C}",
 
-            // --- images ---
+
             "ico": "\u{F021F}",
 
-            // --- audio / video ---
+
             "mp3": "\u{e638}",
             "wav": "\u{e638}",
             "flac": "\u{e638}",
@@ -109,21 +109,21 @@ Item {
             "webm": "\u{f0567}",
             "mov": "\u{f0567}",
 
-            // --- archives / packages ---
+
             "zip": "\u{e6aa}",
             "tar": "\u{f003c}",
             "gz": "\u{f003c}",
             "bz2": "\u{f003c}",
             "7z": "\u{f003c}",
 
-            // --- containers / infra / cloud ---
+
             "dockerfile": "\u{F0868}",
             "yml.k8s": "\u{F09EE}",
             "yaml.k8s": "\u{F09EE}",
             "tf": "\u{F09EE}",
             "tfvars": "\u{F09EE}",
 
-            // --- moon phases
+
             "moon_new": "\u{F0F64}",
             "moon_waxing_crescent": "\u{F0F67}",
             "moon_first_quarter": "\u{F0F61}",

@@ -35,9 +35,7 @@ Item {
 
     property var categoryModels: ({})
 
-    // A curated list of MIME types for each category.
-    // The first one is used for fetching the apps list and current default,
-    // the rest are for setting the default app.
+    // The first MIME type identifies the app list and current default; the full list receives default-app changes.
     readonly property var mimeMapping: ({
             [root.appCategory.WebBrowser]: ["x-scheme-handler/https", "x-scheme-handler/http", "text/html", "application/xhtml+xml"],
             [root.appCategory.FileManager]: ["inode/directory", "x-scheme-handler/file"],
@@ -48,7 +46,7 @@ Item {
             [root.appCategory.PDFReader]: ["application/pdf", "application/x-ext-pdf", "application/x-bzpdf", "application/x-gzpdf", "application/vnd.comicbook-rar", "application/vnd.comicbook+zip"],
             [root.appCategory.Mail]: ["x-scheme-handler/mailto"],
             [root.appCategory.Calendar]: ["x-scheme-handler/calendar"],
-            [root.appCategory.Terminal]: ["terminal"] // Special
+            [root.appCategory.Terminal]: ["terminal"]
         })
 
     function propertyName(type) {
@@ -137,14 +135,12 @@ Item {
                 getDefaultTerminal();
                 break;
             case root.appCategory.WebBrowser:
-                // When using the MIME type, stuff like vgs-run shows up.
-                // It's probably better to use the category.
+                // The browser category excludes generic MIME handlers such as vgs-run.
                 loadCategoryModel(root.appCategory.WebBrowser, "WebBrowser");
                 DesktopService.getDefaultApp(mimeMapping[category][0], category.toString());
                 break;
             case root.appCategory.FileManager:
-                // Use categories for file managers instead,
-                // you don't want Kate as your file manager just because it can open folders
+                // The file-manager category excludes editors that can also open directories.
                 loadCategoryModel(root.appCategory.FileManager, "FileManager");
                 DesktopService.getDefaultApp(mimeMapping[category][0], category.toString());
                 break;
@@ -158,16 +154,14 @@ Item {
     }
 
     function getDefaultTerminal() {
-        // Read back what this tab writes: the first entry of
-        // xdg-terminals.list. `vshell terminal` resolves the effective terminal
-        // from this same file (VGS-32); nothing here invokes a terminal.
+        // Read the first xdg-terminals.list entry, which vshell terminal also uses to resolve the terminal.
         const proc = xdgGetDefaultTerminal.createObject(root, {
             running: true
         });
     }
 
     function setDefaultTerminal(terminalId) {
-        // Write to xdg-terminals.list
+
         const proc = xdgSetDefaultTerminal.createObject(root, {
             terminalId: terminalId,
             running: true
@@ -269,7 +263,7 @@ Item {
         }
     }
 
-    // Dropdowns
+
 
     VgsFlickable {
         anchors.fill: parent

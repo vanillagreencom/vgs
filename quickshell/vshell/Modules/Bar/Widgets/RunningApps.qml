@@ -289,7 +289,7 @@ BasePill {
                             return mouseArea.containsMouse ? BlurService.hoverColor(Theme.widgetBaseHoverColor) : Theme.withAlpha(BlurService.hoverColor(Theme.widgetBaseHoverColor), 0);
                         }
 
-                        // App icon
+
                         IconImage {
                             id: iconImg
                             anchors.left: parent.left
@@ -419,7 +419,7 @@ BasePill {
                                 windowContextMenuLoader.active = true;
                                 if (windowContextMenuLoader.item) {
                                     windowContextMenuLoader.item.currentWindow = toplevelObject;
-                                    // Pass bar context
+
                                     windowContextMenuLoader.item.triggerBarConfig = root.barConfig;
                                     windowContextMenuLoader.item.triggerBarPosition = root.axis.edge === "left" ? 2 : (root.axis.edge === "right" ? 3 : (root.axis.edge === "top" ? 0 : 1));
                                     windowContextMenuLoader.item.triggerBarThickness = root.barThickness;
@@ -663,7 +663,7 @@ BasePill {
                                 windowContextMenuLoader.active = true;
                                 if (windowContextMenuLoader.item) {
                                     windowContextMenuLoader.item.currentWindow = toplevelObject;
-                                    // Pass bar context
+
                                     windowContextMenuLoader.item.triggerBarConfig = root.barConfig;
                                     windowContextMenuLoader.item.triggerBarPosition = root.axis.edge === "left" ? 2 : (root.axis.edge === "right" ? 3 : (root.axis.edge === "top" ? 0 : 1));
                                     windowContextMenuLoader.item.triggerBarThickness = root.barThickness;
@@ -747,7 +747,7 @@ BasePill {
             property bool isVertical: false
             property string edge: "top"
 
-            // New properties for bar context
+
             property int triggerBarPosition: (SettingsData.barConfigs[0]?.position ?? SettingsData.Position.Top)
             property real triggerBarThickness: 0
             property real triggerBarSpacing: 0

@@ -184,7 +184,7 @@ Rectangle {
 
                         let sorted = [...nodes];
                         sorted.sort((a, b) => {
-                            // Pinned device first
+
                             const aPinnedIndex = pinnedList.indexOf(a.name);
                             const bPinnedIndex = pinnedList.indexOf(b.name);
                             if (aPinnedIndex !== -1 || bPinnedIndex !== -1) {
@@ -194,7 +194,7 @@ Rectangle {
                                     return -1;
                                 return aPinnedIndex - bPinnedIndex;
                             }
-                            // Then active device
+
                             if (a === AudioService.source && b !== AudioService.source)
                                 return -1;
                             if (b === AudioService.source && a !== AudioService.source)

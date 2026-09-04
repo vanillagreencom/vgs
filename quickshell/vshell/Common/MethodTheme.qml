@@ -15,12 +15,7 @@ Singleton {
     readonly property string defaultFontFamily: "Inter Variable"
     readonly property string defaultMonoFontFamily: "Fira Code"
 
-    // Both default families load once here from the bundled, relocatable assets
-    // tree, so a fresh install renders correctly with no system font packages
-    // and no distro-specific paths, and every consumer (StyledText,
-    // StyledTextMetrics) renders and measures with the same face. The mono face
-    // is the same Fira Code build VgsNFIcon already ships, so this costs no
-    // extra bytes in the package.
+    // Load bundled fonts here so controls measure and draw with the same face without system font packages.
     FontLoader {
         id: bundledFontLoader
         source: Qt.resolvedUrl("../assets/fonts/inter/InterVariable.ttf")
@@ -125,11 +120,7 @@ Singleton {
         return "#" + toHex(ca[0] * (1 - r) + cb[0] * r) + toHex(ca[1] * (1 - r) + cb[1] * r) + toHex(ca[2] * (1 - r) + cb[2] * r);
     }
 
-    // Flatline neutral-surface mode: pull the neutral surface family (background,
-    // surface, containers, outline) toward luminance-matched gray so surfaces read
-    // as a shadcn "zinc/slate" base, while accent (primary/secondary) and status
-    // colors keep their chroma. 0 = original palette, 1 = fully desaturated. This
-    // is the single knob for how neutral the shell reads. See design-language.md.
+    // Neutralization affects surface colors only; accent and status colors retain their chroma.
     readonly property real flatlineNeutralAmount: 0.12
     function _neutral(c) {
         const col = (typeof c === "string") ? Qt.color(c) : c;
@@ -184,8 +175,6 @@ Singleton {
     property color primaryText: currentThemeData.primaryText
     property color secondary: currentThemeData.secondary
     property color tertiary: currentThemeData.tertiary || currentThemeData.secondary
-    // Neutral surface family (Flatline): lightly desaturated toward gray via
-    // _neutral() so surfaces keep the theme's hue but read a touch calmer.
     property color surface: _neutral(currentThemeData.surface)
     property color surfaceText: currentThemeData.surfaceText
     property color surfaceVariant: _neutral(currentThemeData.surfaceVariant)
@@ -230,11 +219,8 @@ Singleton {
 
     property color secondaryHover: withAlpha(secondary, 0.08)
 
-    // Interaction washes. These are translucent OVERLAYS, meant for a control
-    // that is transparent at rest (ghost rows, nav items). Assigning one as the
-    // `color` of a control that is opaque at rest replaces its fill with an 8%
-    // wash, so the element goes see-through on hover instead of lighting up —
-    // use hoverOn()/pressedOn()/selectedOn() for those.
+    // Use these translucent washes on transparent controls.
+    // Filled controls need hoverOn(), pressedOn(), or selectedOn() to retain their fill.
     readonly property real hoverOverlayAlpha: 0.08
     readonly property real pressedOverlayAlpha: 0.12
     readonly property real selectedOverlayAlpha: 0.15
@@ -249,18 +235,11 @@ Singleton {
     readonly property bool blurForegroundLayers: BlurService.enabled && foregroundLayers
     readonly property bool transparentBlurLayers: BlurService.enabled && !foregroundLayers
     readonly property bool popupGlassEffect: BlurService.enabled && (typeof SettingsData !== "undefined") && (SettingsData.popupGlassEffect ?? false)
-    // Glass rim, modeled on Liquid Glass: intensity follows the surface normal
-    // against a fixed top light — top edges brightest, a weaker secondary
-    // glint on bottom edges, sides dim.
     readonly property color glassRimTopColor: withAlpha("#ffffff", isLightMode ? 0.70 : 0.45)
     readonly property color glassRimBottomColor: withAlpha("#ffffff", isLightMode ? 0.38 : 0.20)
-    // Glass sheen: soft white illumination wash from the top, fading out by
-    // mid-surface; only a whisper of shade at the bottom for depth.
     readonly property color glassSheenTopColor: withAlpha("#ffffff", isLightMode ? 0.22 : 0.12)
     readonly property color glassSheenBottomColor: withAlpha("#000000", isLightMode ? 0.03 : 0.06)
-    // Content-bearing layers need a stronger tint than the surrounding glass.
-    // Keep the user's transparency on the outer flyout while flooring cards,
-    // dropdown panels, and menus so text never competes with the backdrop.
+    // Content layers need a minimum tint so backdrop detail does not obscure text.
     readonly property real readableSurfaceAlpha: Math.max(popupTransparency, isLightMode ? 0.86 : 0.82)
     readonly property color readableSurface: withAlpha(surfaceContainer, readableSurfaceAlpha)
     readonly property color readableSurfaceHigh: withAlpha(surfaceContainerHigh, readableSurfaceAlpha)
@@ -318,8 +297,7 @@ Singleton {
         }
     }
     property color surfaceTextLight: withAlpha(surfaceText, 0.06)
-    // Over glass, translucent text compounds with the translucent surface, so
-    // secondary/medium labels step up toward opaque (Apple uses vibrancy here).
+    // Translucent text compounds with glass transparency, so labels need more opacity.
     property color surfaceTextSecondary: withAlpha(surfaceText, popupGlassEffect ? 0.75 : 0.6)
     property color surfaceTextMedium: withAlpha(surfaceText, popupGlassEffect ? 0.85 : 0.7)
     function inputHintFor(backgroundColor) {
@@ -345,27 +323,19 @@ Singleton {
     property color outlineStrong: withAlpha(outline, Math.min(1, layerOutlineOpacity * 1.5))
     property color outlineHeavy: withAlpha(outline, 0.2)
 
-    // Opaque borders for settings/content surfaces. Unlike the alpha-based outline*
-    // tokens above (kept translucent for blur/glass layers), these are solid 1px
-    // lines that do not let underlying content bleed through.
+    // Opaque borders prevent content behind settings surfaces from showing through.
     readonly property color borderColor: blend(surfaceContainerHigh, outline, 0.42)
     readonly property color borderColorStrong: outline
     // A nested row/tile that must read as slightly raised above the card it sits on
     // (e.g. list rows inside a settings card). Always at least as light as the card.
     readonly property color elevatedRowColor: surfaceContainerHighest
-    // Secondary/outlined resting edge — kept at borderColor's quiet level (VGS-227).
+    // Matches borderColor; change both together.
     readonly property color secondaryOutline: blend(surfaceContainerHigh, outline, 0.42)
 
-    // Flatline focus ring (shadcn-style keyboard focus). Primitives draw this as
-    // a 2px accent ring when they hold keyboard focus. See design-language.md.
     readonly property color focusRing: withAlpha(primary, 0.55)
     readonly property int focusRingWidth: 2
 
-    // Window border tokens — mirror Hyprland's native window decorations so vShell
-    // windows/modals/applets read as first-class windows. bin/vshell-helper sets
-    // Hyprland's col.active_border = accent and col.inactive_border = outline; the
-    // live compositor confirms active=primary, inactive=outline. Keep these in sync
-    // with that helper if the mapping ever changes.
+    // Keep window border colors in sync with the helper-generated Hyprland decorations.
     readonly property color windowBorderActive: primary
     readonly property color windowBorderInactive: outline
     readonly property int windowBorderWidth: 2
@@ -390,8 +360,6 @@ Singleton {
         }
     }
 
-    // Flatline: legible inactive tiles — drop the old ≤0.24 cap so tiles read as
-    // solid controls over the (glass) panel instead of nearly-invisible washes.
     readonly property color ccTileInactiveBg: transparentBlurLayers ? withAlpha(surfaceContainerHigh, 0.4) : (foregroundLayers ? withAlpha(surfaceContainerHigh, popupTransparency) : withAlpha(surfaceContainer, 0))
     readonly property color ccPillInactiveBg: transparentBlurLayers ? withAlpha(surfaceContainerHigh, 0.08) : nestedSurface
     readonly property color ccPillInactiveHoverBg: transparentBlurLayers ? withAlpha(primary, 0.10) : primaryPressed
@@ -489,7 +457,6 @@ Singleton {
         }
     }
 
-    // Flatline: flatter shadows — surfaces lean on borders, not drop-shadows.
     property color shadowMedium: Qt.rgba(0, 0, 0, 0.05)
     property color shadowStrong: Qt.rgba(0, 0, 0, 0.18)
 
@@ -791,10 +758,7 @@ Singleton {
         "expressiveEffects": [0.34, 0.8, 0.34, 1, 1, 1]
     }
 
-    // Theme is the canonical access point for animation variant state. The
-    // aliases below forward to AnimVariants.qml so consumers don't need two
-    // imports. ~200 call sites read through Theme.variantEnterCurve /
-    // Theme.isDirectionalEffect / etc. — do NOT migrate to AnimVariants directly.
+    // Read animation variant state through Theme so consumers share the same access point.
     readonly property list<real> variantEnterCurve: AnimVariants.variantEnterCurve
     readonly property list<real> variantExitCurve: AnimVariants.variantExitCurve
     readonly property list<real> variantModalEnterCurve: AnimVariants.variantModalEnterCurve
@@ -935,9 +899,7 @@ Singleton {
         return presetMap[SettingsData.modalAnimationSpeed] ?? 150;
     }
 
-    // Flatline (shadcn/Vercel) radius defaults — tighter than Material 3.
-    // These are the values used when the user has not overridden surface
-    // geometry. See docs/architecture/design-language.md.
+    // Radius, border, and focus-ring tokens follow docs/architecture/design-language.md.
     readonly property real maxSurfaceRadius: 14
     readonly property real defaultContainerRadius: 10
     readonly property real defaultControlRadius: 7
@@ -951,10 +913,6 @@ Singleton {
 
     property int fontWeight: typeof SettingsData !== "undefined" ? SettingsData.fontWeight : Font.Normal
 
-    // Semantic header weights. Section headers (settings card titles) and category
-    // headers (sidebar top-level groups) render bolder than body text so the
-    // information hierarchy reads at a glance.
-    // Flatline: bolder titles for a stronger type hierarchy.
     readonly property int fontWeightSectionHeader: Font.Bold
     readonly property int fontWeightCategoryHeader: Font.Bold
 
@@ -967,8 +925,7 @@ Singleton {
     property real spacingL: 16
     property real spacingXL: 24
     readonly property real popupDistance: spacingXS
-    // Standard inner padding between a popout/dropdown/modal container edge and its content.
-    // Use this for the outermost content inset so surfaces read with consistent breathing room.
+    // Use this padding for the outer content inset of popouts, dropdowns, and modals.
     property real popoutPadding: 20
     property real fontSizeSmall: Math.round(fontScale * 12)
     property real fontSizeMedium: Math.round(fontScale * 14)
@@ -990,19 +947,7 @@ Singleton {
             return 0.0;
         return Math.max(0, Math.min(1, SettingsData.popupBlurStrength !== undefined ? SettingsData.popupBlurStrength : 0.0));
     }
-    // Glass is a material: it owns the surface translucency needed for the
-    // backdrop blur to read through, scaled by the user's opacity slider so
-    // lowering opacity still yields thinner glass.
-    // Tint alphas follow Apple's material recipes: light materials sit near 0.8,
-    // dark near 0.7. The backdrop blur pulls luminance toward the material tone
-    // (light lifts, dark sinks — see the helper's blur profile) and the tint
-    // above finishes it, so neither mode washes out over an opposite-luminance
-    // window. Both modes floor high: Apple's materials never go thin enough for
-    // the backdrop to drag the surface to mid-gray under the label color, so the
-    // opacity slider thins glass toward — never past — a legible floor.
-    // Flatline: raise the glass legibility floor so popouts read as crisp
-    // surfaces (a hint of material, not a see-through overlay) — modern design
-    // systems keep panels mostly opaque.
+    // The opacity setting scales glass tint, with a minimum alpha to keep labels legible.
     readonly property real glassSurfaceAlpha: Math.max(isLightMode ? 0.80 : 0.74, Math.min(0.94, glassBaseAlpha * popupBaseTransparency))
     readonly property real glassBaseAlpha: isLightMode ? 0.78 : 0.68
     // Effective popup surface alpha. Blur strength deliberately plays no part:
@@ -1034,7 +979,6 @@ Singleton {
 
 
     function screenTransition() {
-        // VGS applies compositor colors through its own generator and hooks.
     }
 
     function _runThemeHelper(id, args, label) {
@@ -1295,15 +1239,8 @@ Singleton {
         return Qt.rgba(c.r, c.g, c.b, c.a * a);
     }
 
-    // Composite an interaction state onto an opaque fill, returning a solid
-    // colour so a filled row can light up without losing its fill.
-    //
-    // These tint toward the on-surface colour (the Material "state layer"
-    // model) rather than toward surfaceVariant. surfaceVariant only reads as a
-    // highlight over the darker base surfaces; composited onto an already
-    // elevated fill it is a near-invisible *darkening*, which is the opposite
-    // of what a hover should do. Tinting toward surfaceText always moves away
-    // from the fill — lighter on dark themes, darker on light ones.
+    // Composite interaction colors onto a filled control without making its fill transparent.
+    // Tint toward surfaceText so the highlight remains visible on elevated fills.
     function hoverOn(base) {
         return blend(base, surfaceText, hoverOverlayAlpha);
     }

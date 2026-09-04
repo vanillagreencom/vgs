@@ -4,21 +4,15 @@ import QtQuick
 import qs.Common
 import qs.Widgets
 
-// The house list-row idiom (see Settings/Widgets/DeviceAliasRow.qml): a Row
-// with anchored edges and an explicitly computed text column, never a
-// RowLayout. Layout components fight with the fixed intrinsic widths of
-// VgsTextField/VgsButton and produce lopsided rows.
-//
-// `trailing` and `body` are children aliases rather than Loaders so their
-// widths are real and can be subtracted from the text column.
+// Use explicit row widths because controls set intrinsic widths that compete with layout sizing.
+// Child aliases expose trailing and body widths without Loader sizing loops.
 Rectangle {
     id: root
 
     property string iconName: ""
     property color iconColor: Theme.surfaceVariantText
     property real iconSize: Theme.iconSizeSmall
-    // tile draws the icon on a rounded plate — used for the "identity" rows
-    // (accounts, folders) so they read as objects rather than list entries.
+
     property bool tile: false
 
     property string title: ""
@@ -44,8 +38,7 @@ Rectangle {
     width: parent ? parent.width : 0
     height: Math.max(contentRow.implicitHeight, root.tile ? 40 : 0) + (root.subtitleWrap ? Theme.spacingL : Theme.spacingM) * 2
     radius: Theme.controlRadius
-    // Filled rows composite the wash onto their own fill; ghost rows use the
-    // translucent token directly, which is what it is designed for.
+    // Composite state washes over filled rows; transparent rows use the wash directly.
     color: {
         const rest = root.filled ? Theme.elevatedRowColor : "transparent";
         if (root.selected)
@@ -101,8 +94,7 @@ Rectangle {
         }
 
         Column {
-            // Clamped: a narrow row with wide trailing content would
-            // otherwise compute a negative text column and disappear.
+            // Clamp the text width when trailing controls exceed a narrow row.
             width: Math.max(0, contentRow.width - contentRow.leadingWidth - contentRow.trailingWidth)
             anchors.verticalCenter: parent.verticalCenter
             spacing: root.subtitleWrap ? Theme.spacingXS : Theme.spacingXXS
@@ -111,8 +103,7 @@ Rectangle {
                 width: parent.width
                 visible: root.title.length > 0
                 text: root.title
-                // StyledText wraps by default; a row title must stay on one
-                // line or a long provider description blows the row up.
+                // Disable the StyledText wrapping default so long titles stay within the row height.
                 wrapMode: Text.NoWrap
                 maximumLineCount: 1
                 elide: Text.ElideRight
@@ -128,8 +119,7 @@ Rectangle {
                 elide: root.subtitleWrap ? Text.ElideNone : root.subtitleElide
                 wrapMode: root.subtitleWrap ? Text.WordWrap : Text.NoWrap
                 maximumLineCount: root.subtitleWrap ? 6 : 1
-                // Wrapped copy needs leading; single-line labels must not get
-                // it or the row grows for no reason.
+                // Extra line spacing belongs to wrapped copy, not single-line labels.
                 lineHeight: root.subtitleWrap ? 1.35 : 1.0
                 lineHeightMode: Text.ProportionalHeight
                 font.pixelSize: Theme.fontSizeSmall

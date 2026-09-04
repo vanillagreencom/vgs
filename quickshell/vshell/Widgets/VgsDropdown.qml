@@ -376,8 +376,7 @@ Item {
             LayoutMirroring.enabled: I18n.isRtl
             LayoutMirroring.childrenInherit: true
             property real radius: Theme.cornerRadius
-            // Flatline: dropdown menus are solid (never glass) so content behind
-            // them can't bleed through and hurt legibility. The shadow lifts it.
+            // Keep dropdown menus opaque so background content cannot reduce text contrast.
             property color surfaceColor: Theme.surfaceContainerHigh
 
             ElevationShadow {

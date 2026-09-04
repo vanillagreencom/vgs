@@ -38,7 +38,6 @@ def check(cond: bool, msg: str) -> None:
         print(f"  ok: {msg}")
 
 
-# --- udev rule generation ---------------------------------------------------
 
 def test_udev_generation() -> None:
     print("udev rule generation:")
@@ -50,7 +49,6 @@ def test_udev_generation() -> None:
             shipped_path.read_text() == text,
             "shipped rule matches generator (run `vshell brightness install-udev --print > ...` to refresh)",
         )
-    # Every product in the table appears, matched by product id, never by interface path.
     for product, spec in H.APPLE_DISPLAYS.items():
         check(f'ATTRS{{idProduct}}=="{product}"' in text, f"rule targets product {product}")
     rule_lines = [ln for ln in text.splitlines() if ln.startswith("SUBSYSTEM==")]
@@ -65,14 +63,12 @@ def test_udev_generation() -> None:
             check(line.rstrip().endswith('"'), f"rule line has no trailing comment: {line[:40]}...")
 
 
-# --- backend priority / dedup ----------------------------------------------
 
 def test_backend_selection() -> None:
     print("backend selection + dedup:")
     check(H._BACKEND_PRIORITY["backlight"] < H._BACKEND_PRIORITY["ddc"] < H._BACKEND_PRIORITY["apple"],
           "priority order backlight < ddc < apple")
 
-    # Same physical panel (shared EDID serial) on two backends -> prefer backlight.
     devs = [
         {"id": "apple-studio", "class": "apple", "serial": "SN-XYZ", "currentPercent": 50},
         {"id": "intel_backlight", "class": "backlight", "serial": "SN-XYZ", "currentPercent": 60},
@@ -81,14 +77,12 @@ def test_backend_selection() -> None:
     check(len(out) == 1, "same-serial duplicate collapsed to one device")
     check(out and out[0]["class"] == "backlight", "kept the higher-priority backlight backend")
 
-    # ddc vs apple, same serial -> prefer ddc.
     out2 = H._dedup_devices([
         {"id": "apple-studio", "class": "apple", "serial": "SAME", "currentPercent": 1},
         {"id": "ddc-x", "class": "ddc", "serial": "SAME", "currentPercent": 2},
     ])
     check(len(out2) == 1 and out2[0]["class"] == "ddc", "ddc wins over apple for same serial")
 
-    # Distinct serials are both preserved; missing serials never dedup together.
     out3 = H._dedup_devices([
         {"id": "a", "class": "apple", "serial": "S1"},
         {"id": "b", "class": "ddc", "serial": "S2"},
@@ -98,7 +92,6 @@ def test_backend_selection() -> None:
     check(len(out3) == 4, "distinct/serial-less devices all preserved")
 
 
-# --- target resolution ------------------------------------------------------
 
 def test_target_resolution() -> None:
     print("target resolution:")
@@ -126,7 +119,6 @@ def test_target_resolution() -> None:
     check(rid("dell") == ["ddc-del-u2720q-abc"], "resolve by monitor-name substring")
     check(set(rid("all")) == {"intel_backlight", "apple-studio", "ddc-del-u2720q-abc"}, "'all' targets every device")
 
-    # Legacy alias resolves to the matching Apple product even with a serial-suffixed id.
     devices2 = [{"id": "apple-studio-3685802e", "name": "apple-studio-3685802e", "class": "apple",
                  "product": "1114", "connector": "", "monitorName": "Apple Studio Display",
                  "label": "Apple Studio Display", "available": True, "role": "primary"}]
@@ -174,7 +166,6 @@ def test_primary_connector() -> None:
             os.environ["NIRI_SOCKET"] = original_socket
 
 
-# --- Apple HID feature-report codec ----------------------------------------
 
 def test_apple_codec() -> None:
     print("apple HID codec + range:")
@@ -182,7 +173,7 @@ def test_apple_codec() -> None:
         buf = H._apple_encode(raw)
         check(len(buf) == H.APPLE_REPORT_LEN and buf[0] == H.APPLE_REPORT_ID, f"encode {raw} shape")
         check(H._apple_decode(buf) == raw, f"decode round-trips {raw}")
-    # Live-observed Studio report: 01 60 ea 00 00 00 00 -> 60000.
+    # Studio feature report: 01 60 ea 00 00 00 00 encodes 60000.
     check(H._apple_decode(bytes.fromhex("0160ea00000000")) == 60000, "decodes real Studio report 0x60ea -> 60000")
     # Per-display descriptor maxima (centi-nits): XDR 500.00, Studio 600.00.
     check(H.APPLE_DISPLAYS["9243"]["max"] == 50000, "XDR descriptor max 50000")
@@ -191,12 +182,10 @@ def test_apple_codec() -> None:
     check(H._apple_raw_in_range(60000, spec), "60000 in range")
     check(H._apple_raw_in_range(400, spec), "400 in range")
     check(not H._apple_raw_in_range(138240, spec), "138240 (wrong interface) rejected")
-    # An XDR that stored 60000 (written before per-display maxima) must still
-    # pass the probe gate so the control interface is recognized.
+    # An XDR with a stored value above its display maximum must remain detectable.
     xdr_spec = H.APPLE_DISPLAYS["9243"]
     check(H._apple_raw_in_range(60000, xdr_spec), "XDR tolerates stored 60000 on probe")
     check(not H._apple_raw_in_range(138240, xdr_spec), "XDR still rejects wrong-interface value")
-    # percent<->raw round trip endpoints.
     check(H._raw_from_percent(100, 400, 60000) == 60000, "100% -> raw max")
     check(H._raw_from_percent(0, 400, 60000) == 400, "0% -> raw min")
     check(H._percent_from_raw(60000, 400, 60000) == 100, "raw max -> 100%")
@@ -204,7 +193,6 @@ def test_apple_codec() -> None:
     check(H._percent_from_raw(60000, 400, 50000) == 100, "overdriven raw clamps to 100%")
 
 
-# --- DDC parsers ------------------------------------------------------------
 
 DDC_DETECT_SAMPLE = """Display 1
    I2C bus:  /dev/i2c-5
@@ -252,7 +240,6 @@ def test_ddc_parsers() -> None:
     check(H._parse_ddc_getvcp("no vcp here") is None, "unparseable getvcp -> None")
 
 
-# --- EDID parser ------------------------------------------------------------
 
 def _build_edid(mfg: str, product: int, serial_num: int, name: str, serial_str: str) -> bytes:
     data = bytearray(128)

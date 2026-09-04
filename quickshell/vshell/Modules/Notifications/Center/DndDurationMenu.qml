@@ -16,9 +16,7 @@ Rectangle {
     // so it hides the built-in header. The bar popout still needs it.
     property bool showHeader: true
 
-    // Embedded inside an existing card (notification center) rather than
-    // floating as its own popup surface: drop the chrome and the outer padding
-    // so the presets read as part of the parent box.
+    // Embedded menus share the parent card's chrome and outer padding.
     property bool flat: false
 
     readonly property bool currentlyActive: SessionData.doNotDisturb

@@ -37,8 +37,6 @@ func RegisterAll(srv *server.Server, log *slog.Logger) func() {
 	disabled := parseDisabled(os.Getenv("VGS_BACKEND_DISABLE"))
 	var closers []closer
 
-	// register runs one service's constructor unless it is disabled, tracks
-	// its closer, and reports failures without blocking the rest.
 	register := func(name string, init func() (closer, error)) bool {
 		if disabled[name] {
 			log.Info("service disabled via VGS_BACKEND_DISABLE", "service", name)
@@ -109,7 +107,6 @@ func RegisterAll(srv *server.Server, log *slog.Logger) func() {
 	}
 }
 
-// parseDisabled splits VGS_BACKEND_DISABLE into a capability-name set.
 func parseDisabled(raw string) map[string]bool {
 	out := map[string]bool{}
 	for _, name := range strings.Split(raw, ",") {

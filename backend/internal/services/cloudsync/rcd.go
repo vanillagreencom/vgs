@@ -35,10 +35,8 @@ type rcd struct {
 
 	mu  sync.Mutex
 	cmd *exec.Cmd
-	// starting closes the window between the "is one already running?" test and
-	// the assignment of d.cmd. Without it two callers could both pass the test
-	// and spawn a daemon, orphaning the first — which then survives shutdown
-	// holding a port and any FUSE mounts it created.
+	// starting protects the interval before d.cmd is assigned. Concurrent starts
+	// could otherwise orphan a daemon holding a port and mounts.
 	starting bool
 	// done is closed by wait() once the current child has been reaped, so
 	// close() can await the existing waiter instead of issuing a second,
@@ -86,14 +84,10 @@ func (d *rcd) start() error {
 		return fmt.Errorf("generate control credentials: %w", err)
 	}
 
-	// Bound to loopback with mandatory auth: the rc API can run arbitrary
-	// operations as this user, so it is never exposed unauthenticated.
-	//
-	// The credentials go in the environment, never in argv. /proc/<pid>/cmdline
-	// is world-readable on a default Linux mount, so a flag would publish the
-	// rc password to every local user beside the port it protects — and rc
-	// access is shell-equivalent (config/dump returns every account's token).
-	// /proc/<pid>/environ is 0400, readable only by this user.
+	// Bind the control API to loopback and require authentication because it can
+	// access account credentials and run operations as this user. Pass credentials
+	// through the environment because command arguments can be visible to other
+	// local users.
 	cmd := exec.Command(d.binary,
 		"rcd",
 		"--rc-addr", "127.0.0.1:"+strconv.Itoa(port),
@@ -263,10 +257,8 @@ func (d *rcd) close() {
 	_ = d.client.call(ctx, "core/quit", nil, nil)
 	cancel()
 
-	// Awaiting the existing wait() goroutine rather than starting a second
-	// wait: os/exec does not support concurrent waits — only one reaps the
-	// child, the loser gets ECHILD, and close() could then conclude the process
-	// was gone and skip the kill, leaving the daemon alive.
+	// Wait on the existing reaper: concurrent cmd.Wait calls can return ECHILD
+	// before the child is gone, causing shutdown to skip a needed kill.
 	if done == nil {
 		d.kill(cmd)
 		d.client.clearEndpoint()
@@ -294,8 +286,8 @@ func (d *rcd) kill(cmd *exec.Cmd) {
 	_ = cmd.Process.Kill()
 }
 
-// freeLoopbackPort reserves an ephemeral port by binding and immediately
-// releasing it. Picking the port ourselves avoids parsing rclone's log format.
+// freeLoopbackPort finds an available port by binding and releasing it. The port
+// is not reserved for the subsequent daemon bind.
 func freeLoopbackPort() (int, error) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

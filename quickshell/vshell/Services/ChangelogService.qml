@@ -8,16 +8,8 @@ import Quickshell.Io
 import qs.Common
 import qs.Services
 
-// Shows the "What's New" modal once per shipped version.
-//
-// The version is the one in `quickshell/vshell/VERSION` (via ShellVersionService),
-// not a hand-maintained constant: a release bump is what makes the changelog
-// re-display, so a note written into ChangelogContent.qml reaches users exactly
-// when the release carrying it ships. Dismissal is persisted per version by
-// `~/.config/vshell/.changelog-<version>`, so a marker written for 0.1.0 does
-// not suppress 0.2.0. Fresh installs are suppressed by FirstLaunchService and
-// have their marker written silently, so a new user never sees upgrade notes
-// for an upgrade they did not make.
+// Show release notes once per version reported by ShellVersionService.
+// Fresh installs write the dismissal marker without showing upgrade notes.
 Singleton {
     id: root
     readonly property var log: Log.scoped("ChangelogService")
@@ -83,12 +75,7 @@ Singleton {
             changelogDismissed = true;
             touchMarker(version);
         } else {
-            // The path is an argument, never part of the script: XDG_CONFIG_HOME
-            // may legally contain an apostrophe, and interpolating it into a
-            // single-quoted test produced invalid shell — which fails silently
-            // and leaves the changelog suppressed, the exact defect this
-            // service exists to fix. The result is the exit status, so there is
-            // no output to quote either.
+            // Pass the marker path as an argument because XDG_CONFIG_HOME can contain shell quote characters.
             changelogCheckProcess.command = ["sh", "-c", 'test -f "$1"', "vshell-changelog", markerPathFor(version)];
             changelogCheckProcess.running = true;
         }

@@ -100,7 +100,7 @@ Item {
         }
         function onResourcesLost() {
             root._clear();
-            // Re-arm so blur self-heals since instances are no longer recreated per open
+            // Re-arm here because one blur instance serves several opens of the same window.
             root._scheduleLifecycleKick();
         }
         function onWindowConnected() {

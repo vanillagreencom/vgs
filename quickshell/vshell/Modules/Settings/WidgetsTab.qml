@@ -30,7 +30,7 @@ Item {
     property string highlightedId: ""
     property string highlightedSection: ""
 
-    // Cross-section drag coordinator state + floating proxy avatar.
+
     property bool dragActive: false
     property string dragSourceSection: ""
     property string dragTargetSection: ""
@@ -298,9 +298,7 @@ Item {
         var removed = widgets[widgetIndex];
         widgets.splice(widgetIndex, 1);
         setWidgetsForSection(sectionId, widgets);
-        // Deleting a widget is a decision worth keeping: without it, a widget
-        // the user dropped and one their config never mentioned look identical,
-        // and hardware reconciliation would put it straight back.
+        // Persist user removals so hardware reconciliation can distinguish deletion from an unconfigured widget.
         SettingsData.recordBarWidgetRemoval(typeof removed === "string" ? removed : removed?.id);
     }
 
@@ -376,7 +374,7 @@ Item {
         setWidgetsForSection(sectionId, reordered);
     }
 
-    // Move a widget across sections (or within); committed as one atomic bar-config save
+    // Move a widget within or across sections with a single bar-config save.
     function moveWidget(fromSection, toSection, movedId, toIndex) {
         if (fromSection === toSection) {
             var arr = getWidgetsForSection(fromSection).slice();
@@ -764,8 +762,7 @@ Item {
         setWidgetsForSection(sectionId, widgets);
     }
 
-    // A widget bound to hardware this machine does not have renders nothing and
-    // says nothing about why. Say it here instead, where the user can act on it.
+
     function missingHardwareWarning(widgetId, item) {
         if (widgetId === "battery" && !BatteryService.batteryAvailable)
             return I18n.tr("No battery was detected on this machine, so this widget stays blank.");

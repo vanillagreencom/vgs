@@ -1,15 +1,7 @@
 #!/usr/bin/env bash
-# Regression guard for the validation path itself.
-#
-# 1. No repo instruction (docs, agent guidance, scripts) may tell anyone to
-#    launch the VGS shell directly with `qs -c vshell` / `qs -p quickshell/vshell`.
-#    That is how a validation run ends up with duplicate full-screen
-#    fade-to-lock surfaces and a black live session.
-# 2. Running the canonical smoke must leave the live session unchanged: same
-#    VGS Quickshell instances, same VGS layer surfaces, no strays.
-#
-# Usage: scripts/check-validation-safety.sh [--nested] [--self-test]
-#   --self-test  exercise the instruction detector against fixtures and exit
+# Check direct shell-launch instructions and compare live session resources around the canonical smoke.
+# A direct shell launch can duplicate lock surfaces and obscure the live session.
+# Usage: scripts/check-validation-safety.sh [--nested] [--self-test]; --self-test runs the detector fixtures and exits.
 set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -31,7 +23,7 @@ note() { printf 'check-validation-safety: %s\n' "$*"; }
 source "$repo_root/scripts/lib/session-snapshot.sh"
 vgs_snapshot_prefix="check-validation-safety: "
 
-# --- 1. no unsafe launch instructions ---------------------------------------
+
 
 detector_rc=0
 SELF_TEST="$self_test" python3 - <<'PY' || detector_rc=$?
@@ -40,34 +32,17 @@ import re
 import subprocess
 import sys
 
-# A mention is fine only when it tells the reader NOT to do it. Anything inside
-# a fenced code block is a runnable instruction and is never fine.
+# A negated mention can describe the launch prohibition. Fenced commands remain instructions.
 LAUNCH = re.compile(r"qs\s+(?:-c\s+vshell|-p\s+\S*quickshell/vshell)")
 NEGATED = re.compile(r"never|do not|don't|must not|refus|instead of|rather than", re.IGNORECASE)
 
-# A negation qualifies the sentence it is in, not the whole line. Scoping it to
-# the sentence is what closes "Never run X. Now run X." — the negation covers
-# the first clause and the trailing instruction is left to be caught. Only
-# sentence-ending punctuation followed by whitespace splits: `:` and `—`
-# introduce a clause the negation still governs ("Never do this: `qs -c vshell`
-# starts a second instance"), and a bare `.` with no space is inside a filename
-# like `qml-smoke.sh`.
+# Negation applies to one sentence. Split on sentence-ending punctuation followed by whitespace;
+# colons and dashes continue its clause, while a filename dot is not a sentence boundary.
 SENTENCE_SPLIT = re.compile(r"(?<=[.;!?])\s+")
 
-# Exemptions name the sanctioned OCCURRENCE, never the file and never the whole
-# line. Each entry is the exact text of a known-good mention, including the
-# command inside it; scan() deletes those spans and re-checks what is left, so an
-# instruction appended to a sanctioned line is still caught. An entry that did
-# not contain a command would exempt its whole line again, which is the bypass
-# this shape exists to prevent — exemption_defects() refuses to run in that case.
-#
-# The entries are: the runner describing the child it spawns, the greeter
-# fixtures (a greeter runs from /var/cache, never against a live session), and
-# the bot config, where the ban wraps onto a continuation line carrying no
-# negation of its own. Every markdown surface states its prohibition as one
-# unwrapped sentence, so the negation and the command sit together and none of
-# them needs an entry. An entry costs a rewording of the exact line it names, so
-# prefer that rewrite over adding one.
+# Exempt only exact sanctioned occurrences containing a launch command.
+# Recheck the remaining line so an appended instruction or neighboring line cannot inherit exemption.
+# The entries cover nested launch text, greeter fixtures, and a wrapped bot prohibition.
 ALLOWED_CONTEXTS = {
     "backend/internal/runner/runner.go": (
         "extra args appended after `qs -c vshell`",
@@ -75,8 +50,7 @@ ALLOWED_CONTEXTS = {
     ),
     "scripts/check-vshell-helper.py": (
         "/usr/bin/qs -p /var/cache/vshell-greeter/runtime/quickshell/vshell",
-        # One span covering both commands: sequential deletion cannot use two
-        # entries that overlap on the "vs" between them.
+        # Use one span for overlapping command examples so deletion offsets cannot conflict.
         "Config-path matching covers `qs -c vshell` vs `qs -p quickshell/vshell`",
     ),
     ".coderabbit.yaml": (
@@ -99,8 +73,7 @@ def exemption_defects():
             if not LAUNCH.search(span)]
 
 
-# This script defines the rule, so its own header and detector fixtures have to
-# spell the forbidden commands out.
+# Detector fixtures must spell the prohibited commands they test.
 SELF_PATH = "scripts/check-validation-safety.sh"
 
 
@@ -115,20 +88,13 @@ def scan(path, lines):
             continue
         if not LAUNCH.search(line):
             continue
-        # Delete the sanctioned occurrences, then re-check what is left. Skipping
-        # the whole matched line instead would let a real instruction ride along
-        # on the end of a sanctioned one — and these are exactly the lines a doc
-        # edit lands on. Matched per line, never over a window, so an exempt
-        # neighbour cannot launder the line next to it either.
+        # Remove only the accepted span on this line, then inspect remaining instructions.
         remainder = line
         for span in allowed:
             remainder = remainder.replace(span, " ")
         if not LAUNCH.search(remainder):
             continue
-        # A negation exempts only the sentence it appears in. Exempting the
-        # whole line — what this did before — meant "Never run X. Now run X."
-        # passed, because the line was negated somewhere. Inside a fence there
-        # is no prose to negate: every line is runnable.
+        # Negation qualifies its sentence only. Inside a fence, command lines are treated as runnable.
         if not fenced:
             unnegated = [
                 clause for clause in SENTENCE_SPLIT.split(remainder)
@@ -143,45 +109,38 @@ def scan(path, lines):
 FIXTURES = [
     ("doc.md", ["```bash", "qs -c vshell", "```"], [2]),
     ("doc.md", ["Never run `qs -c vshell` in a live session."], []),
-    # VGS-40: a negation covers its own sentence, not the rest of the line.
+    # An earlier negated sentence cannot excuse a later instruction.
     ("doc.md", ["Never run `qs -c vshell`. Now run `qs -c vshell`."], [1]),
     ("doc.md", ["Never run `qs -c vshell`; now run `qs -c vshell`."], [1]),
-    # ...and the negated sentence alone still passes when a later sentence is
-    # harmless, so the split did not simply turn every negation into a hit.
+    # A harmless later sentence must still pass so splitting cannot turn every negation into failure.
     ("doc.md", ["Never run `qs -c vshell`. Use scripts/qml-smoke.sh instead."], []),
-    # A colon or dash introduces a clause the negation still governs, so those
-    # are not sentence boundaries.
+
     ("doc.md", ["Never do this: `qs -c vshell` starts a second full instance."], []),
     ("doc.md", ["Never do this — `qs -c vshell` starts a second full instance."], []),
-    # A dot inside a filename is not a sentence boundary either.
+
     ("doc.md", ["Use scripts/qml-smoke.sh rather than `qs -c vshell`."], []),
     ("doc.md", ["Smoke with `qs -c vshell` before finishing."], [1]),
     ("doc.md", ["```bash", "qs -p /home/me/dev/vgs/quickshell/vshell", "```"], [2]),
     ("skill.md", ["Use scripts/qml-smoke.sh; do not run `qs -p quickshell/vshell`."], []),
     ("notes.txt", ["qs -c vshell"], [1]),
     ("greeter.py", ['cmd = "/usr/bin/qs -p /var/cache/vshell-greeter/runtime"'], []),
-    # A scoped exemption must not blanket the rest of its file.
+
     ("backend/internal/runner/runner.go", [
         "// QSArgs are extra args appended after `qs -c vshell`.",
         "// smoke it yourself with qs -c vshell",
     ], [2]),
-    # A wrapped comment must carry its own exemption on the matched line; an
-    # exempt neighbour must not launder the line below it.
+    # A neighboring line's exemption must not cover a wrapped instruction.
     ("quickshell/vshell/shell.qml", [
         "// this is the runtime backstop for someone who runs",
         "// `qs -c vshell` by hand rather than the script.",
         "//   qs -c vshell",
     ], [3]),
-    # The prohibition text: the wrapped continuation is exempt, a real
-    # instruction added to the same file is not.
+    # Accept the sanctioned continuation but reject another instruction in that file.
     (".coderabbit.yaml", [
         "        `qs -p quickshell/vshell`. Each starts a second full shell in the live",
         "        Validate QML with `qs -c vshell`.",
     ], [2]),
-    # An exemption covers its own occurrence and nothing more: appending an
-    # instruction to a sanctioned line must still be caught. Line 1 of each pair
-    # is the untouched sanctioned line, line 2 is that same line with an
-    # instruction appended.
+    # Append an instruction to each accepted line to verify occurrence-only exemption.
     (".coderabbit.yaml", [
         "        `qs -p quickshell/vshell`. Each starts a second full shell in the live",
         "        `qs -p quickshell/vshell`. Each starts a second full shell in the live; to validate, run qs -c vshell",
@@ -190,16 +149,14 @@ FIXTURES = [
         "\t// QSArgs are extra args appended after `qs -c vshell`.",
         "\t// QSArgs are extra args appended after `qs -c vshell`. To try it: qs -c vshell",
     ], [2]),
-    # Two sanctioned commands on one line stay exempt, and a third does not.
+
     ("scripts/check-vshell-helper.py", [
         "        # Config-path matching covers `qs -c vshell` vs `qs -p quickshell/vshell`.",
         "        # Config-path matching covers `qs -c vshell` vs `qs -p quickshell/vshell`. Try qs -c vshell.",
     ], [2]),
 ]
 
-# Exemption spans that must keep sanctioning their own line unchanged, paired
-# with a span that does not name any command. The self-test asserts both
-# polarities so exemption_defects() is shown able to fail, not just to pass.
+# Test valid exemptions and an invalid span lacking a command so validation must reject one.
 DEFECT_FIXTURES = [
     ("`qs -p quickshell/vshell`. Each starts a second full shell", True),
     ("extra args appended after `qs -c vshell`", True),
@@ -227,9 +184,7 @@ if os.environ.get("SELF_TEST") == "true":
     print(f"self-test: instruction detector passed ({len(FIXTURES)} fixtures, {len(DEFECT_FIXTURES)} exemption spans)")
     sys.exit(0)
 
-# A live exemption that names no command cannot exempt anything, so the scan
-# below would report the line it was written for. Say which entry is wrong
-# instead of emitting a violation whose cause is invisible.
+# Report an exemption missing its command as a broken entry before it creates a misleading scan finding.
 defects = exemption_defects()
 for path, span in defects:
     print(f"exemption for {path} names no launch command: {span!r}", file=sys.stderr)
@@ -252,13 +207,10 @@ for path in tracked:
 
 for violation in violations:
     print(violation, file=sys.stderr)
-# 2 == policy violations found. Any other non-zero status is the scanner itself
-# failing (unreadable tree, git missing) and must not be reported as a clean
-# bill of health *or* as a violation.
+# Status 2 means policy findings. Other nonzero statuses mean scanner failure, not a clean scan or violation.
 sys.exit(2 if violations else 0)
 PY
-# $? inside an `if ! cmd` branch is the negation's status, not the command's, so
-# the status is captured directly above.
+# Inside an if ! branch, $? is the negated status. Capture the original status before branching.
 if [[ "$detector_rc" == 2 ]]; then
   fail "unsafe direct shell launch instructions found (use scripts/qml-smoke.sh)"
 elif [[ "$detector_rc" == 3 ]]; then
@@ -277,11 +229,11 @@ if [[ "$self_test" == true ]]; then
   if vgs_layers_regressed "$self_before" "$(printf 'DP-1\tvshell:bar\nDP-1\tvshell:bar\nDP-2\tvshell:bar')" 1 2>/dev/null; then
     fail "self-test: a second surface with one live shell must be caught"
   fi
-  # One shell raising its own fade-to-lock when the seat idles is normal.
+  # The live shell can raise its own lock surface when the seat idles.
   if ! vgs_layers_regressed "$self_before" "$(printf 'DP-1\tvshell:bar\nDP-1\tvshell:fade-to-lock\nDP-2\tvshell:bar')" 1 2>/dev/null; then
     fail "self-test: one shell's own overlay must not read as damage"
   fi
-  # ...but two of them with only one shell running cannot be.
+  # Duplicate lock surfaces must fail even if the process count is unchanged.
   if vgs_layers_regressed "$self_before" "$(printf 'DP-1\tvshell:fade-to-lock\nDP-1\tvshell:fade-to-lock')" 1 2>/dev/null; then
     fail "self-test: a doubled overlay must be caught"
   fi
@@ -308,7 +260,7 @@ if [[ "$status" -eq 0 ]]; then
   note "no unsafe 'qs' launch instructions in tracked guidance"
 fi
 
-# --- 2. the canonical smoke leaves no strays --------------------------------
+
 
 instances_before="$(vgs_snapshot_instances)" && instances_before_status=0 || instances_before_status=$?
 layers_before="$(vgs_snapshot_layers)" && layers_before_status=0 || layers_before_status=$?
@@ -330,7 +282,7 @@ vgs_compare_snapshots "VGS layer surfaces" \
   "$layers_after" "$layers_after_status" growth \
   "$(printf '%s' "$instances_after" | grep -c . || true)" || status=1
 
-# The specific incident signature: more fade-to-lock overlays than monitors.
+# More lock overlays than monitors can indicate orphaned surfaces.
 overlays="$(printf '%s\n' "$layers_after" | grep -c 'vshell:fade-to-lock' || true)"
 if [[ "$overlays" -gt 0 ]]; then
   monitors="$(hyprctl monitors -j 2>/dev/null | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))' 2>/dev/null || echo 0)"
@@ -339,8 +291,7 @@ if [[ "$overlays" -gt 0 ]]; then
       fail "orphaned fade-to-lock surfaces: $overlays across $monitors monitors"
     fi
   else
-    # This is the only check that catches overlays orphaned before the run, so
-    # say when it could not run rather than passing silently.
+    # A skipped comparison cannot establish whether preexisting overlays remain.
     note "could not count monitors; the orphaned-overlay check did not run"
   fi
 fi

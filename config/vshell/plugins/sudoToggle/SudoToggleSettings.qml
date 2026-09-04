@@ -4,9 +4,7 @@ import qs.Services
 import qs.Widgets
 import qs.Modules.Plugins
 
-// The only reason this pane exists: "Don't ask me again" in the grant modal is
-// otherwise a one-way door. The flag lives in SettingsData (not plugin data) so
-// it sits with every other setting, and this is where it is turned back on.
+// Allow the user to restore grant confirmation after suppressing it.
 PluginSettings {
     id: root
     pluginId: "sudoToggle"

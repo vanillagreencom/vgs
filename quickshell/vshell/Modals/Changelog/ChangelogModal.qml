@@ -25,9 +25,7 @@ FloatingWindow {
     color: Theme.surfaceContainer
     visible: false
 
-    // Every close path writes the marker. Closing through the compositor
-    // (Alt+F4, the window menu) only hid the window, so the notes came back on
-    // the next launch as though they had never been read.
+    // Compositor close must also save the read marker so notes do not reopen on the next launch.
     onClosed: dismiss()
 
     FocusScope {

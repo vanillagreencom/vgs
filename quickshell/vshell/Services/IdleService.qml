@@ -58,10 +58,8 @@ Singleton {
     readonly property bool postLockMonitorActive: isShellLocked
         && SettingsData.lockScreenPowerOffMonitorsOnLock && postLockMonitorTimeout > 0
 
-    // media availability kept for UI/back-compat
     readonly property bool mediaPlaying: MprisController.activePlayer !== null && MprisController.activePlayer.isPlaying
 
-    // ---- Public signals (interface preserved for VGS.qml / fade windows) ---
     signal lockRequested
     signal fadeToLockRequested
     signal cancelFadeToLock
@@ -77,20 +75,11 @@ Singleton {
     // from the lock *request*).
     property bool isShellLocked: false
 
-    // Every caller that asked while the lock was unavailable, in order. A single
-    // string would keep the first name and discard the rest — and since the
-    // defect this whole path exists to fix IS a silently dropped lock request,
-    // losing who else asked would keep part of that silence.
+    // Remember each caller waiting for the lock component so failures identify every pending request.
     property var _pendingLockSources: []
 
-    // The one way UI code should ask for a lock. `lockComponent` is assigned in
-    // Lock.qml::_start(), which waits on the duplicate-instance guard, so there
-    // is a real window at startup where it is still null — and in a greeter, or
-    // a shell refused as a duplicate, it stays null forever. A plain
-    // `lockComponent?.activate()` turns both cases into a silent no-op at the
-    // exact moment somebody asked to lock the machine, which is not a failure
-    // mode a lock is allowed to have. So: retry across the startup window, and
-    // if it still cannot be served, say so loudly rather than drop it.
+    // Request locking through this function. The lock component can be absent during startup or remain unavailable.
+    // Retry within the startup window, then report failure rather than dropping the request.
     function requestLock(source: string): void {
         if (lockComponent) {
             _pendingLockSources = [];
@@ -110,44 +99,13 @@ Singleton {
         uiLockRetry.restart();
     }
 
-    // ======================================================================
-    //  Surviving a hot reload
-    // ======================================================================
-    // IdleService is a Quickshell Singleton, which means a NEW object per engine
-    // generation: `Singleton::componentComplete` registers it by URL, and
-    // `SingletonRegistry::onReload` only hands the old instance to
-    // ReloadPropagator child matching — it does not preserve properties
-    // (quickshell 0.3.0, src/core/singleton.cpp). So `Component.onCompleted`
-    // below runs on EVERY hot reload, not only on process start.
-    //
-    // That was harmless while Lock.qml suspended `Quickshell.watchFiles` for the
-    // duration of a lock, because a new generation while locked was impossible.
-    // VGS-28 removed that suspension, so the two startup recoveries at the
-    // bottom of this file can now fire under a live lock — where they are
-    // exactly wrong. Both were written for a *process* start, where the old lock
-    // surface is genuinely gone:
-    //
-    //   - `_recoverDisplaysOnStartup()` sees `anyDisplayOff()` and forces the
-    //     monitors back ON over a still-locked session. Nothing re-arms the off:
-    //     Lock.qml's `_adoptReloadedLock()` deliberately skips the DPMS half of
-    //     `_syncConfirmedLock()`, the adopted manager re-emits no
-    //     `secureStateChanged`, and `postLockMonitorTimeout` defaults to 0.
-    //   - `_recoverBlackoutOnStartup()` ramps brightness back to the persisted
-    //     pre-blackout levels, while `lockBlackoutActive` defaulting to false
-    //     lifts the black overlay.
-    //
-    // So the state is carried across the reload the same way Lock.qml carries
-    // the lock request. `Singleton` IS a `ReloadPropagator`, so this child is
-    // matched positionally across generations.
+    // Singleton objects are recreated on QML reload. Carry idle state in a position-matched PersistentProperties child.
+    // Reload recovery must preserve a live lock and blackout; fresh-process recovery must restore abandoned display state.
     PersistentProperties {
         id: reloadState
         reloadableId: "vshellIdleServiceState"
 
-        // False in a fresh process, true in every generation after a reload.
-        // This is the whole "is this a reload rather than a start?" signal —
-        // `PersistentProperties` emits `reloaded()` only when it was handed a
-        // real old instance (src/core/persistentprops.cpp), which cannot happen
-        // in a process that just started.
+        // PersistentProperties emits reloaded only when it receives an old instance, distinguishing reload from process start.
         property bool isReload: false
 
         property bool blackoutActive: false
@@ -157,18 +115,8 @@ Singleton {
         property bool displaysApplied: false
         property bool manualOffPending: false
 
-        // Pull the whole snapshot rather than mirroring property-by-property, so
-        // no call site can carry half the state. Deliberately not bindings:
-        // `PersistentProperties::onReload` writes these with `setProperty`,
-        // which would break a binding permanently and leave the NEXT reload
-        // restoring a stale value.
-        // Set for the duration of the restore below. Without it the restore
-        // eats itself: assigning root.lockBlackoutActive fires
-        // onLockBlackoutActiveChanged SYNCHRONOUSLY, which snapshots the new
-        // generation's still-empty _blackoutBrightness over the persisted map —
-        // and the next line then "restores" that emptied value. Same for
-        // displaysApplied behind desiredDisplaysOff. A half-restored object must
-        // never be observable as a snapshot source.
+        // Write snapshots explicitly because PersistentProperties restoration replaces bindings.
+        // Suppress snapshot writes during restoration so change handlers cannot save partially restored state.
         property bool restoring: false
 
         function snapshot(): void {
@@ -192,8 +140,6 @@ Singleton {
             root._lastAppliedOff = displaysApplied;
             root.secureManualOffPending = manualOffPending;
             restoring = false;
-            // One snapshot at the end, from the fully restored object, so this
-            // generation starts with a coherent record for the NEXT reload.
             snapshot();
         }
     }
@@ -221,9 +167,7 @@ Singleton {
                 return;
             }
             attempts++;
-            // shell.qml fails the duplicate-instance guard open after 2s, so a
-            // shell that is allowed to lock cannot stay componentless past that.
-            // Anything still missing here genuinely cannot lock.
+            // Allow the duplicate-instance guard startup window before reporting that the lock component is unavailable.
             if (attempts >= 16) {
                 stop();
                 root.log.error("lock request(s) from", root._pendingLockSources.join(", "),
@@ -242,9 +186,6 @@ Singleton {
     // blackout latch below, which activity may NOT clear.
     readonly property bool lockScreenBlanked: lockScreenBlankedIdle || lockBlackoutActive
 
-    // ======================================================================
-    //  Display power — the single owner
-    // ======================================================================
     property bool desiredDisplaysOff: false
     property bool _lastAppliedOff: false
     property bool manualWakeBlocked: false
@@ -253,7 +194,6 @@ Singleton {
         const runtimeDir = Quickshell.env("XDG_RUNTIME_DIR");
         return runtimeDir ? runtimeDir + "/vshell-manual-display-off" : "";
     }
-    // Back-compat alias for external readers (PopoutService, wallpaper, bar).
     readonly property bool monitorsOff: desiredDisplaysOff
 
     FileView {
@@ -388,20 +328,9 @@ Singleton {
         setDisplaysOff(false, "resume", true);
     }
 
-    // ======================================================================
-    //  Manual lock blackout — jump to the end of the idle path on demand
-    // ======================================================================
-    // Locks, blanks to full black (cursor hidden, monitors still powered — same
-    // overlay the idle blank tier draws), and dims every display to its minimum.
-    //
-    // Unlike the idle tier this is a LATCH: seat activity may NOT lift it, only
-    // an explicit toggle off. That is the whole point — it holds the screen dark
-    // through mouse bumps until you ask for the prompt back, and the same toggle
-    // ramps brightness back to the levels captured on the way down.
-    //
-    // Brightness is deliberately not DPMS: the panels stay lit at 1% so waking
-    // costs nothing, avoiding the flaky Thunderbolt/XDR re-modeset that the
-    // Super+F5 secure-off path can hit.
+    // Manual blackout keeps monitors powered and dims them while the confirmed lock draws a black overlay.
+    // Seat activity cannot clear it. The explicit toggle restores captured brightness.
+    // Keeping panels powered avoids a display modeset on wake.
     property bool lockBlackoutActive: false
     property bool blackoutLockPending: false
     // deviceId -> brightness percentage captured before dimming.
@@ -567,7 +496,6 @@ Singleton {
         function status(): string { return root.lockBlackoutActive ? "on" : (root.blackoutLockPending ? "pending" : "off"); }
     }
 
-    // ---- Idle monitor enable/rearm ---------------------------------------
     onEnabledChanged: _applyMonitorEnableds()
     onIdleBlockedChanged: _rearmIdleMonitors()
     onPostLockMonitorActiveChanged: _applyMonitorEnableds()

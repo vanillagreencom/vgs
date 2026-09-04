@@ -1,9 +1,4 @@
-// The expanded height for one control centre section.
-//
-// `contentHeight` is what the loaded detail says it needs; sections whose
-// detail publishes nothing pass 0 and keep their fixed height. Fitting the
-// content matters at both ends: two paired Bluetooth devices used to sit above
-// 200 px of empty panel, and the audio lists scrolled inside 250 px.
+// Resolve a control centre section height. A detail with no height request passes 0 and uses the section default.
 function detailHeightForSection(section, maxHeight, pluginInstance, contentHeight) {
     if (!section)
         return 0;

@@ -57,7 +57,6 @@
 
 set -euo pipefail
 
-# --- Parse args ---
 FORMAT="{session_pct}% · {session_reset}"
 TOOLTIP_FORMAT=""
 PACE_TOLERANCE=5
@@ -110,7 +109,6 @@ while [[ $# -gt 0 ]]; do
 done
 [[ "$PACE_TOLERANCE" =~ ^[0-9]+$ ]] || { echo '{"text":"⚠","tooltip":"--pace-tolerance must be a non-negative integer","class":"critical"}'; exit 0; }
 PACE_TOLERANCE=$((10#$PACE_TOLERANCE))
-# In remaining mode, default the bar to "what's left" unless the user set their own format.
 [[ "$REMAINING" == "true" && "$FORMAT_SET" == "false" ]] && FORMAT="{session_remaining_pct}% · {session_reset}"
 
 # Account selection mirrors claudebar: --config-dir, else CODEX_HOME, else the
@@ -131,14 +129,9 @@ if [[ "$CONFIG_DIR" != "$HOME/.codex" ]]; then
 fi
 CACHE_TTL=60 # seconds
 
-# Transient (no-HTTP-response) failures retry on a deadline budget, not a fixed
-# attempt count. Boot-like starts (no cache, or cache older than
-# NET_BOOT_CACHE_AGE) poll up to NET_LONG_BUDGET seconds: at the first Waybar
-# exec there is nothing better to show than an empty module, and on re-execs
-# the bar keeps the previous output while we wait — waiting beats rendering
-# day-old data for a full interval. Mid-session blips keep the quick budget.
-# CODEXBAR_TEST_NET_* envs let the test suite shrink the budgets; they are
-# not a user interface.
+# A missing or old cache needs the longer retry budget to avoid leaving the
+# widget without usable data for another refresh interval. Recent cache uses
+# the shorter budget. CODEXBAR_TEST_NET_* overrides are for tests.
 _env_uint() { if [[ "$1" =~ ^[0-9]+$ ]]; then printf '%s' "$1"; else printf '%s' "$2"; fi; }
 NET_RETRY_DELAY=$(_env_uint "${CODEXBAR_TEST_NET_RETRY_DELAY:-}" 2)
 NET_QUICK_BUDGET=$(_env_uint "${CODEXBAR_TEST_NET_QUICK_BUDGET:-}" 6)
@@ -146,8 +139,7 @@ NET_LONG_BUDGET=$(_env_uint "${CODEXBAR_TEST_NET_LONG_BUDGET:-}" 20)
 NET_BOOT_CACHE_AGE=600 # cache older than this → boot-like start
 NET_WAIT_RECENT=45     # .net_wait younger than this → a sibling already waited
 
-# --- Theme colors ---
-# Blend two hex colors (#RRGGBB) by averaging their RGB components
+# Blend hex colors by averaging their RGB components.
 hex_blend() {
     local c1="${1#\#}" c2="${2#\#}"
     local r1=$((16#${c1:0:2})) g1=$((16#${c1:2:2})) b1=$((16#${c1:4:2}))
@@ -164,18 +156,15 @@ load_theme_colors() {
             jq -r '.colors | [.accent, .foreground, .background, .red, .green, .yellow]
                    | map(. // "") | @tsv' "$theme_file" 2>/dev/null
         )
-        # Map theme colors to widget colors
         [[ -n "$accent" ]]     && BLUE="$accent"
         [[ -n "$foreground" ]] && FG="$foreground"
         [[ -n "$color1" ]]     && { RED="$color1"; ORANGE="$color1"; }
         [[ -n "$color2" ]]     && GREEN="$color2"
         [[ -n "$color3" ]]     && YELLOW="$color3"
-        # DIM = midpoint between foreground and background
         if [[ -n "$foreground" && -n "$background" ]]; then
             DIM=$(hex_blend "$foreground" "$background")
         fi
         MARKER="$FG"
-        # BAR_EMPTY = slightly lighter than background (blend bg with dim)
         if [[ -n "$background" ]]; then
             BAR_EMPTY=$(hex_blend "$background" "$DIM")
         fi
@@ -206,7 +195,6 @@ BAR_LEN=20
 SESSION_WINDOW=$(( 5 * 3600 ))      # 5 hours
 WEEKLY_WINDOW=$(( 7 * 24 * 3600 ))  # 7 days
 
-# --- Helpers ---
 
 die() {
     # Widget-bridge mode: one account failing is not the whole bar failing.
@@ -224,9 +212,8 @@ die() {
     exit 0
 }
 
-# Soft exit for transient network failures with no usable cache. Emits a neutral
-# "Loading…" widget in the low class so Waybar styles it like normal usage and
-# doesn't draw attention to a state that will self-resolve on the next dispatch.
+# Emit a low-class "Loading…" widget when a transient failure has no usable cache.
+# The next dispatch retries the request.
 loading_network() {
     jq -nc \
         --arg t "${BAR_ICON:+${BAR_ICON} }Loading…" \
@@ -394,13 +381,10 @@ countdown() {
     fi
 }
 
-# Calculate time elapsed % and pacing for a usage window.
-# Uses point-based delta (actual - expected) for the icon and delta values.
-# Also computes the original ratio-based label for backward-compatible placeholders.
-#
+# Calculate elapsed time and pacing for a usage window.
+# Point deltas drive the indicator; ratios drive the ratio placeholders.
 # Args: usage_pct reset_at_unix window_duration_seconds
-# Output fields (6 logical, 8 space-separated tokens due to multi-word labels):
-#   elapsed_pct pace_icon pace_indicator pace_delta pace_pct_label pace_pts_label
+# Output fields: elapsed_pct pace_icon pace_indicator pace_delta pace_pct_label pace_pts_label
 calc_pacing() {
     local usage_pct=$1 reset_at=$2 window_s=$3
     local elapsed_pct=0 pace_icon="→" pace_indicator="→" pace_delta="0"
@@ -414,7 +398,6 @@ calc_pacing() {
         (( elapsed_pct < 0 )) && elapsed_pct=0
         (( elapsed_pct > 100 )) && elapsed_pct=100
 
-        # Point-based delta for indicator, delta, and pts label
         local delta=$(( usage_pct - elapsed_pct ))
         pace_delta="$delta"
         if (( delta > 0 )); then
@@ -425,7 +408,7 @@ calc_pacing() {
             pace_pts_label="$(( -delta ))pts under"
         fi
 
-        # Ratio-based icon and label for backward-compatible {*_pace} and {*_pace_pct}
+        # The {*_pace} and {*_pace_pct} placeholders use ratios.
         if (( elapsed_pct > 0 )); then
             local pacing_x100=$(( usage_pct * 100 / elapsed_pct ))
             if (( pacing_x100 > 100 + PACE_TOLERANCE )); then
@@ -461,13 +444,11 @@ jwt_decode() {
 
 jwt_exp() { jwt_decode "$1" | jq -r '((.exp | numbers) // 0) | floor | if (. > 1e12 or . < 0) then 0 else . end'; }
 
-# --- Pre-checks ---
 for cmd in curl jq date base64; do
     command -v "$cmd" &>/dev/null || die "Missing dependency: $cmd"
 done
 [[ -f "$CREDS" ]] || die "No credentials.\nRun <b>codex login</b> to log in."
 
-# --- Cache / lock setup ---
 mkdir -p "$CACHE_DIR"
 cache_file="$CACHE_DIR/usage.json"
 stale_marker="$CACHE_DIR/.stale"
@@ -508,10 +489,8 @@ _fetch_usage() {
         return
     fi
 
-    # Transient failures (no HTTP response: DHCP/DNS still settling at boot,
-    # brief blip) are retried until the shared deadline — one missed dispatch
-    # otherwise means stale data for a full Waybar interval.
-    # Bearer token via stdin config, never argv — /proc/<pid>/cmdline is world-readable.
+    # Retry requests with no HTTP response until the shared deadline.
+    # Send the bearer token over stdin to keep it out of process arguments.
     _fetch_args=(-s --max-time 10 -w $'\n%{http_code}' "$API_URL")
     [[ -n "$account_id" ]] && _fetch_args+=(-H "chatgpt-account-id: $account_id")
     while :; do
@@ -521,7 +500,6 @@ CURLCFG
 ) || true
         _http_code="${_resp_body##*$'\n'}"
         _resp_body="${_resp_body%$'\n'"$_http_code"}"
-        # Normalize bogus codes (e.g. raw body without curl write-out suffix) to 000.
         [[ "$_http_code" =~ ^[0-9]{3}$ ]] || _http_code="000"
         if [[ "$_http_code" != "000" ]]; then break; fi
         if (( SECONDS >= net_deadline )); then break; fi
@@ -563,12 +541,9 @@ CURLCFG
 # auth.json only under the lock prevents a stale-token refresh from hard-failing
 # with a spurious "run codex login" while credentials are actually fine.
 exec 9>"$_lockfile"
-# Generous wait: a boot-like sibling may hold the lock for the long budget plus
-# in-flight curls (worst ≈ NET_LONG_BUDGET + 25s refresh + 10s fetch ≈ 57s);
-# rendering late beats dying with a visible "Cache lock timeout".
+# The lock wait must cover a peer's retry budget and in-flight requests.
 flock -w 90 9 || die "Cache lock timeout"
 
-# --- Transient retry budget (shared by token refresh and usage fetch) ---
 now_s=$(date +%s)
 cache_age=-1
 [[ -f "$cache_file" ]] && cache_age=$(( now_s - $(date -r "$cache_file" +%s) ))
@@ -591,7 +566,6 @@ if (( cache_age > NET_BOOT_CACHE_AGE )); then
 fi
 net_deadline=$(( SECONDS + net_budget ))
 
-# --- Read credentials (under the lock) ---
 [[ -f "$CREDS" ]] || die "No credentials.\nRun <b>codex login</b> to log in."
 creds=$(<"$CREDS")
 jq -e . <<< "$creds" &>/dev/null || die "Invalid credentials file.\nRun <b>codex login</b> to log in."
@@ -601,7 +575,6 @@ account_id=$(jq -r '.tokens.account_id // empty' <<< "$creds")
 
 [[ -n "$access_token" ]] || die "No token.\nRun <b>codex login</b> to log in."
 
-# Extract plan type from id_token JWT claims
 id_token_raw=$(jq -r '.tokens.id_token // empty' <<< "$creds")
 plan_type="unknown"
 if [[ -n "$id_token_raw" ]]; then
@@ -609,7 +582,6 @@ if [[ -n "$id_token_raw" ]]; then
     [[ -n "$_pt" ]] && plan_type="$_pt"
 fi
 
-# --- Token refresh if needed (under the lock) ---
 expires_s=$(jwt_exp "$access_token")
 auth_ok=true
 refresh_failure_kind=""
@@ -627,7 +599,6 @@ if (( expires_s < now_s + REFRESH_BUFFER )); then
             --data @- <<<"$refresh_body") || true
         refresh_code="${refresh_raw##*$'\n'}"
         resp="${refresh_raw%$'\n'"$refresh_code"}"
-        # Normalize bogus codes (e.g. raw body without curl write-out suffix) to 000.
         [[ "$refresh_code" =~ ^[0-9]{3}$ ]] || refresh_code="000"
         if [[ "$refresh_code" != "000" ]]; then break; fi
         if (( SECONDS >= net_deadline )); then break; fi
@@ -732,7 +703,6 @@ route_window secondary_window
 session_remaining_pct=$(remaining_pct_for "$session_pct")
 weekly_remaining_pct=$(remaining_pct_for "$weekly_pct")
 
-# Code review
 has_review=$(jq 'try (.code_review_rate_limit != null and .code_review_rate_limit.primary_window != null) catch false' <<< "$usage")
 review_pct=0
 review_reset_at=0
@@ -744,12 +714,8 @@ if [[ "$has_review" == "true" ]]; then
 fi
 review_remaining_pct=$(remaining_pct_for "$review_pct")
 
-# Generalized "third" meter for the compact bridge/widget. OpenAI dropped the
-# dedicated code-review bucket for most ChatGPT/OAuth accounts (code_review_rate_limit
-# is now null) and reports model-specific limits under additional_rate_limits[]
-# instead (e.g. "GPT-5.3-Codex-Spark"). Prefer the legacy review bucket when
-# present; otherwise surface the most-consumed additional lane, with a dynamic
-# label. Only display lanes whose window is actually reported (window seconds > 0).
+# Prefer the code-review bucket when present; otherwise select the most-used
+# additional model limit. Only include windows with a positive duration.
 third_label=""; third_pct=0; third_reset_at=0; has_third=false
 if [[ "$has_review" == "true" ]]; then
     third_label="Review"; third_pct=$review_pct; third_reset_at=$review_reset_at; has_third=true
@@ -797,7 +763,6 @@ additional_max_pct=$(jq -r '
   ] | max // 0) | floor | if (. > 1e12 or . < 0) then 0 else . end
 ' <<< "$usage")
 
-# Credits
 credits_balance=$(jq -r 'try (.credits.balance // "0") catch "0"' <<< "$usage")
 has_credits=$(jq -r 'try (.credits.has_credits // false) catch false' <<< "$usage")
 credits_local_lo=$(jq -r 'try (((.credits.approx_local_messages[0] | numbers) // 0) | floor | if (. > 1e12 or . < 0) then 0 else . end) catch 0' <<< "$usage")
@@ -805,7 +770,6 @@ credits_local_hi=$(jq -r 'try (((.credits.approx_local_messages[1] | numbers) //
 credits_cloud_lo=$(jq -r 'try (((.credits.approx_cloud_messages[0] | numbers) // 0) | floor | if (. > 1e12 or . < 0) then 0 else . end) catch 0' <<< "$usage")
 credits_cloud_hi=$(jq -r 'try (((.credits.approx_cloud_messages[1] | numbers) // 0) | floor | if (. > 1e12 or . < 0) then 0 else . end) catch 0' <<< "$usage")
 
-# Format credits local/cloud as range strings
 if (( credits_local_lo == credits_local_hi )); then
     credits_local="${credits_local_lo}"
 else
@@ -817,9 +781,7 @@ else
     credits_cloud="${credits_cloud_lo}–${credits_cloud_hi}"
 fi
 
-# --- Plan label ---
 plan=$(format_plan_label "$plan_type")
-# Also check API response for plan_type
 _api_plan=$(jq -r '.plan_type // empty' <<< "$usage" 2>/dev/null) || true
 [[ -n "$_api_plan" ]] && plan=$(format_plan_label "$_api_plan")
 
@@ -843,7 +805,6 @@ if [[ "$has_review" == "true" ]]; then
     review_pace_pts=$(cut -d' ' -f7-8 <<< "$_r_pace")
 fi
 
-# --- Tooltip pace icon (ratio or point-based) ---
 if [[ "$TOOLTIP_PACE_PTS" == "true" ]]; then
     _tip_session_pace="$session_pace_indicator"
     _tip_weekly_pace="$weekly_pace_indicator"
@@ -879,7 +840,6 @@ _precompute_pace session "$session_pace" "$session_pace_indicator" "$session_pac
 _precompute_pace weekly  "$weekly_pace"  "$weekly_pace_indicator"  "$weekly_pace_pct"  "$weekly_pace_pts"  "$weekly_pace_delta"
 _precompute_pace review  "$review_pace"  "$review_pace_indicator"  "$review_pace_pct"  "$review_pace_pts"  "$review_pace_delta"
 
-# --- Waybar class ---
 max_pct=$session_pct
 (( weekly_pct > max_pct )) && max_pct=$weekly_pct
 (( review_pct > max_pct )) && max_pct=$review_pct
@@ -892,8 +852,6 @@ elif (( max_pct >= 50 )); then class="mid"
 else class="low"
 fi
 
-# --- Apply format placeholders ---
-# Compute countdowns once
 s_cd_val=$(countdown "$session_reset_at")
 w_cd_val=$(countdown "$weekly_reset_at")
 r_cd_val=""
@@ -946,7 +904,6 @@ apply_format() {
     text="${text//\{weekly_remaining_bar\}/$format_weekly_remaining_bar}"
     text="${text//\{review_remaining_bar\}/$format_review_remaining_bar}"
 
-    # Pace placeholders — pre-computed colored or plain depending on --format-pace-color.
     text="${text//\{session_pace_indicator\}/$_sp_session_indicator}"
     text="${text//\{session_pace_abs_delta\}/$_sp_session_abs_delta}"
     text="${text//\{session_pace_delta\}/$_sp_session_delta}"
@@ -969,13 +926,11 @@ apply_format() {
     printf '%s' "$text"
 }
 
-# Stale data indicator
 stale_icon=""
 [[ -f "$stale_marker" || "${transient_stale:-false}" == "true" ]] && stale_icon=" ⏸"
 
 bar_text=$(apply_format "$FORMAT")${stale_icon}
 
-# --- Colorize bar text via Pango ---
 case "$class" in
     low)      bar_fg="$BAR_COLOR_LOW" ;;
     mid)      bar_fg="$BAR_COLOR_MID" ;;
@@ -990,10 +945,7 @@ else
     bar_text="<span foreground='${bar_fg}'>${BAR_ICON:+${BAR_ICON} }${bar_text}</span>"
 fi
 
-# --- Stale status note ---
-# One explicit line saying WHY the ⏸ is shown and how old the data is. Used as
-# the footer of the default tooltip and appended to custom tooltips (precedent:
-# the ⏸ icon is already appended outside custom --format).
+# Append the stale reason and age even with a custom tooltip format.
 _updated="—"
 _data_age=""
 if [[ -f "$cache_file" ]]; then
@@ -1007,7 +959,6 @@ elif [[ -f "$stale_marker" ]]; then
     _stale_note="⏸  Stale — data from ${_updated}${_data_age:+ (${_data_age})}"
 fi
 
-# --- Tooltip ---
 if [[ -n "$TOOLTIP_FORMAT" ]]; then
     t=$(apply_format "$TOOLTIP_FORMAT")
     [[ -n "$_stale_note" ]] && t+=$'\n'"<span foreground='${ORANGE}'>${_stale_note}</span>"
@@ -1033,7 +984,6 @@ else
     # Right-align a plain value label to a fixed column (width 6 fits "100% ↑").
     _val_pad() { local w=6 n=${#1}; (( n > w )) && w=$n; printf '%*s' $(( w - n )) ''; }
 
-    # Collect all content lines into an array
     lines=()
     _tip_title="Codex ${plan}"
     [[ "$REMAINING" == "true" ]] && _tip_title="${_tip_title} · Remaining"
@@ -1133,7 +1083,6 @@ else
         fi
     fi
 
-    # API error info (if stale)
     if [[ -f "$CACHE_DIR/.last_error" ]]; then
         _le_code="" _le_msg=""
         { read -r _le_code || true; read -r _le_msg || true; } < "$CACHE_DIR/.last_error" 2>/dev/null || true
@@ -1165,7 +1114,6 @@ else
         fi
     fi
 
-    # Footer: explicit stale status, or "Updated HH:MM" when data is fresh.
     lines+=("")
     lines+=("SEP")
     if [[ -n "$_stale_note" ]]; then
@@ -1174,7 +1122,6 @@ else
         lines+=(" <span foreground='${DIM}'>  󰅐  Updated ${_updated}</span>")
     fi
 
-    # Calculate max width from content
     max_w=0
     for line in "${lines[@]}"; do
         [[ "$line" == "SEP" ]] && continue
@@ -1213,7 +1160,6 @@ else
     L() { printf '%s' "${B}│${E}$(pad "$1")${B}│${E}"; }
     LC() { printf '%s' "${B}│${E}$(center_pad "$1")${B}│${E}"; }
 
-    # Build separator dynamically
     sep=""
     printf -v sep '%*s' "$(( INNER_W - 2 ))" ''; sep="${sep// /─}"
     sep=" <span foreground='${DIM}'>${sep}</span>"
@@ -1221,7 +1167,6 @@ else
     border_h=""
     printf -v border_h '%*s' "$INNER_W" ''; border_h="${border_h// /─}"
 
-    # Render tooltip
     if [[ "$FRAME" == "true" ]]; then
         # Framed: draw the box; pinned to a Mono Nerd Font below so text,
         # box-drawing and icons share one uniform advance regardless of bar font.
@@ -1306,6 +1251,5 @@ if [[ "$EMIT_JSON" == "true" ]]; then
     exit 0
 fi
 
-# --- Output waybar JSON ---
 jq -nc --arg text "$bar_text" --arg tooltip "$t" --arg class "$class" \
     '{text:$text, tooltip:$tooltip, class:$class}'

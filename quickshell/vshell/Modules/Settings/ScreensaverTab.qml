@@ -132,9 +132,7 @@ Item {
                         width: parent.width
                         visible: ScreensaverService.lastError !== "" && SettingsData.screensaverAsciiImagePath !== ""
                         wrapMode: Text.WordWrap
-                        // Converting needs ImageMagick, which VGS does not require.
-                        // Without this the field just keeps showing the picture that
-                        // was silently never rendered.
+                        // Conversion requires optional ImageMagick. Report its absence instead of leaving a stale picture without an error.
                         text: I18n.tr("Could not convert this picture — the screensaver keeps its previous art. %1").arg(ScreensaverService.lastError)
                         color: Theme.warning
                         font.pixelSize: Theme.fontSizeSmall

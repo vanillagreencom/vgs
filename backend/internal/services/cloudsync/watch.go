@@ -12,29 +12,24 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// watchDebounce is how long writes must be quiet before a real-time folder
-// syncs. Long enough that saving a large file or unpacking an archive produces
-// one sync instead of dozens. A variable so tests can shorten it.
+// watchDebounce waits for quiet writes before requesting sync. Tests can shorten
+// it.
 var watchDebounce = 5 * time.Second
 
-// watchMask covers the events that mean "the tree changed in a way the cloud
-// should learn about". IN_MODIFY is deliberately excluded in favour of
-// IN_CLOSE_WRITE: syncing a file that is still being written is worse than
-// syncing it a moment later.
+// Use IN_CLOSE_WRITE instead of IN_MODIFY so sync waits for a writer to close
+// its file.
 const watchMask = unix.IN_CREATE | unix.IN_DELETE | unix.IN_DELETE_SELF |
 	unix.IN_MOVED_FROM | unix.IN_MOVED_TO | unix.IN_MOVE_SELF |
 	unix.IN_CLOSE_WRITE | unix.IN_EXCL_UNLINK
 
-// watcher is a recursive inotify watcher shared by every real-time folder.
-// rclone has no filesystem watching of its own, so this is what makes
-// "sync as I work" possible.
+// watcher shares a recursive inotify watcher across folders with real-time sync
+// enabled.
 type watcher struct {
 	file    *os.File
 	fd      int
 	onDirty func(folderID string)
-	// onDegraded fires when real-time watching stops working mid-session, so
-	// the manager can push the reason into state. Without it the UI kept
-	// reporting a folder as watched after its watches had silently died.
+	// onDegraded publishes watcher failures between configuration updates so the UI
+	// can report that real-time sync is unavailable.
 	onDegraded func()
 	log        debugLogger
 
@@ -47,8 +42,6 @@ type watcher struct {
 	closed   bool
 }
 
-// debugLogger is the small slice of slog the watcher needs, so tests can pass a
-// no-op.
 type debugLogger interface {
 	Debug(msg string, args ...any)
 	Warn(msg string, args ...any)
@@ -99,7 +92,6 @@ func (w *watcher) watch(folderID, root string) {
 	w.log.Debug("cloudsync watching tree", "folder", folderID, "directories", added)
 }
 
-// addTree registers a watch on root and every directory beneath it.
 func (w *watcher) addTree(folderID, root string) (int, error) {
 	count := 0
 	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
@@ -145,7 +137,6 @@ func (w *watcher) addWatch(folderID, path string) error {
 	return nil
 }
 
-// unwatch removes every watch belonging to a folder.
 func (w *watcher) unwatch(folderID string) {
 	w.mu.Lock()
 	root, ok := w.roots[folderID]
@@ -192,7 +183,6 @@ func (w *watcher) watchState(folderID string) (bool, string) {
 	return watching && reason == "", reason
 }
 
-// readLoop decodes inotify events until the watcher is closed.
 func (w *watcher) readLoop() {
 	buf := make([]byte, 64*1024)
 	for {
@@ -207,9 +197,8 @@ func (w *watcher) readLoop() {
 			if closed {
 				return
 			}
-			// The loop is dead for the life of the process: every watched
-			// folder has stopped syncing on write, so all of them are marked
-			// rather than left reporting "watched" and "Up to date".
+			// A stopped event reader disables write-triggered sync for all watched
+			// folders. Mark them degraded so the UI can report it.
 			w.log.Warn("cloudsync watcher read failed", "err", err)
 			w.degrade("", "real-time watching stopped: "+firstLine(err.Error()))
 			return
@@ -248,13 +237,12 @@ func (w *watcher) handleEvents(buf []byte) {
 		if folderID == "" {
 			continue
 		}
-		// A new subdirectory needs its own watch, and anything created inside
-		// it before we get there is covered by the sync that follows.
+		// Add a watch for new subdirectories and request sync to cover files created
+		// before the watch was installed.
 		if raw.Mask&unix.IN_ISDIR != 0 && raw.Mask&(unix.IN_CREATE|unix.IN_MOVED_TO) != 0 {
 			if err := w.addWatch(folderID, full); err != nil {
-				// Hitting max_user_watches mid-session is exactly when this
-				// matters, and it is the case the architecture doc promises is
-				// reported rather than silently ignored.
+				// Report watch-limit failures so affected folders do not continue to appear
+				// fully watched.
 				w.degrade(folderID, err.Error())
 			}
 		}
@@ -286,7 +274,6 @@ func (w *watcher) degrade(folderID, reason string) {
 	}
 }
 
-// folderFor maps a path back to the folder that owns it.
 func (w *watcher) folderFor(path string) string {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -302,7 +289,6 @@ func (w *watcher) folderFor(path string) string {
 	return best
 }
 
-// markDirty (re)arms the folder's debounce timer.
 func (w *watcher) markDirty(folderID string) {
 	w.mu.Lock()
 	if w.closed {
@@ -367,8 +353,6 @@ func isIgnoredPath(path string) bool {
 	return strings.Contains(path, string(filepath.Separator)+".vgs-trash"+string(filepath.Separator))
 }
 
-// syncWatchers brings the watcher's set of watched trees in line with the
-// current folder configuration.
 func (m *Manager) syncWatchers() {
 	if m.watcher == nil {
 		return
@@ -396,7 +380,6 @@ func (m *Manager) syncWatchers() {
 	}
 }
 
-// onWatchDirty is the watcher's callback: a debounced tree change wants a sync.
 func (m *Manager) onWatchDirty(folderID string) {
 	if err := m.startSync(folderID, syncOptions{Trigger: triggerWatch}); err != nil {
 		m.noteStartFailure(folderID, triggerWatch, err)

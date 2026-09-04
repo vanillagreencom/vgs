@@ -7,9 +7,7 @@ VgsPopout {
     id: root
 
     layerNamespace: "vshell:dash"
-    // VGS-12: the Dash is large enough that centring it on the clock read as
-    // arbitrary and drifted with the bar layout. Anchor it to the bar-edge
-    // zone its trigger sits in instead.
+    // Anchor the large Dash to its trigger section so bar layout changes do not shift it with the clock.
     zoneAnchored: true
 
     property bool dashVisible: false
@@ -246,9 +244,7 @@ VgsPopout {
             color: "transparent"
             focus: true
 
-            // Focus the right thing for the active tab: the themes tab wants its
-            // search field focused (type-to-filter immediately), everything else
-            // keeps focus on the container for tab/list keyboard navigation.
+            // Themes needs text input focus; other tabs keep container focus for keyboard navigation.
             function focusActiveTab() {
                 if (root.currentTabId === "themes" && themesLoader.item && themesLoader.item.focusSearch)
                     themesLoader.item.focusSearch();
@@ -396,10 +392,7 @@ VgsPopout {
                     width: parent.width
                     height: implicitHeight
                     implicitWidth: currentItem && currentItem.implicitWidth > 0 ? currentItem.implicitWidth : (700 - Theme.spacingM * 2)
-                    // Hold the last good height while the switched-to tab's loader
-                    // item is transiently null/unsized. Without this, the height
-                    // collapsed to the 410 fallback for a frame and the popout's
-                    // height animation flashed up-then-back on every tab switch.
+                    // Keep the last measured height while a newly selected tab is null or unsized to avoid a resize flash.
                     property real _stableHeight: 410
                     implicitHeight: {
                         const h = (currentItem && currentItem.implicitHeight > 0) ? currentItem.implicitHeight : 0;

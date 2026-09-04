@@ -1,190 +1,18 @@
 #!/usr/bin/env python3
-"""Pin the wiring that makes paste land the right keystroke in the right window.
+"""Check supported source patterns in the paste owner and its callers.
 
-`scripts/test-paste-target.js` covers the resolver, which is pure JS. Nothing
-else covers the code that calls it: `scripts/qml-smoke.sh --nested` proves the
-shell parses and starts, but it never opens the clipboard surface or the
-launcher's paste path, so the injection site itself has no failing-test control.
-Hard-coding the argv again, assuming a target instead of resolving one, or
-letting a second surface grow its own injector would pass the entire suite while
-terminal pastes misfire — the exact bug VGS-119 fixed.
+The scan covers QML and JS under quickshell/vshell and config/vshell. It checks
+resolver-builder ownership, injector assignments and ordering, compositor focus
+branches, remembered-focus updates, and the launcher copy-failure return.
 
-WHAT THIS DOES NOT CLAIM, first, because it used to claim it. There was a rule
-1: "no file anywhere under the scanned roots builds a hard-coded wtype argv."
-It is GONE, and nothing here replaces it. Concretely, and this is the cost a
-reader should not have to infer from a missing rule: A HARD-CODED ARGV
-INTRODUCED SOMEWHERE OTHER THAN THE PASTE OWNER IS NOT CAUGHT BY THIS CHECK.
-Rules 2 to 5 keep their numbers so every message and control that names one
-still means it, and so the gap here reads as what it is.
+Source presence does not establish reachability or data flow. Focus-property
+reads need not supply the resolver argument. An argv assignment and process
+start need not name the same Process. Caller checks require a source call,
+not execution of that call. Runtime queues and watchdogs are outside this check.
 
-Its absence is a DECISION, not an oversight or an unfinished edit. It was
-removed because it could not be made true, not because it was inconvenient.
-Seven spellings evaded it across one review — comments, template literals,
-string interiors, braceless regions, regex literals, division after an object
-literal, and finally `[("wtype"), ...]`, where a transparent paren made the
-argv unrecognisable while changing nothing about the value. Each fix invited
-the next spelling, so it was removed rather than patched an eighth time.
-
-That is the general lesson, and it is the thing to carry away when adding a
-rule here:
-
-  - An unbounded ABSENCE claim over source text — "nothing anywhere does X" —
-    cannot be established by matching. Valid JavaScript has unbounded ways to
-    spell one expression, so a matcher can only ever enumerate the spellings
-    someone thought of. Passing means "none of the spellings I know", which
-    reads as "none", and that gap is where seven evasions lived.
-  - A POSITIVE STRUCTURAL claim about a NAMED SITE can be: this call exists,
-    this assignment is guarded by that test, this owner is the only caller,
-    this branch returns before that start. The site is known, so the question
-    is bounded, and every remaining rule is of this kind — which is why they
-    held once they were made structural rather than textual.
-
-The removal NARROWS this guard; it does not leave the fix unguarded, and both
-halves of that matter to a reader deciding how much to worry. An edit to
-PasteService that hard-codes the keystroke still trips rule 3 — not by
-recognising the literal, but because the owner would no longer be calling the
-resolver at all, which rule 3 requires of the one site that injects. What rule
-1 added on top was the rarer case of a brand-new second injector written
-somewhere else entirely.
-
-Rebuilding that coverage needs a parse rather than patterns, and is tracked as
-VGS-146, which carries Codex's planted `[("wtype"), ...]` as its first
-acceptance test — planted and watched to fail, not described — the other six
-evaded forms as further planted cases, and the requirement that the scrubber's
-fail-closed property survives any rebuild: an input the tool cannot parse must
-refuse loudly rather than return a view that silently satisfies every rule
-built on it.
-
-Pinned, over the QML and JS under `quickshell/vshell/` and `config/vshell/`
-(bundled plugins ship both, and a paste feature could be written there):
-
-  2. One injector. Only PasteService may call the resolver functions that BUILD
-     a wtype argv, and that set is READ OUT OF THE RESOLVER rather than listed
-     here: every `function` in `PasteTarget.js` whose body contains a literal
-     wtype argv. A hand-kept list is how `releaseModifiersCommand` stayed
-     callable from anywhere while `pasteCommand` was guarded — it builds the
-     release half of the same keystroke, and the seat's modifier state is only
-     safe while one component owns both halves. Deriving it means the next
-     builder added to the resolver is owner-only the moment it exists, and a
-     resolver that yields no builder at all FAILS rather than policing an empty
-     set. Another caller is a second injector, which is how the original Ctrl+V
-     bug came to exist in two places at once. Reading the resolver for anything
-     else — asking whether a target is a terminal, to show what a keystroke
-     will be — is not restricted, and that carve-out survives the derivation
-     because those functions build no argv. The two surfaces that paste must
-     each call into PasteService.
-  3. The injector resolves a target rather than assuming one: it imports the
-     resolver, and the resolved argv is assigned to the injector's `command`
-     property — the call is matched as the right-hand side of that assignment,
-     not as a free-standing occurrence, since a call whose result goes nowhere
-     leaves injection broken. That means the resolved argv has to reach the
-     property in ONE statement: routing it through a local first is behavior the
-     rule cannot tell apart from dropping it, so this arm rejects that too.
-     Its argument is something other than a literal string in any of the three
-     delimiters — a template literal carrying an interpolation is a computed
-     value, not a literal, and passes —
-     and both the live focused app id and the sticky fallback are read in the
-     same function or handler as the assignment, and the assignment precedes the
-     start. Same function means the function ITSELF: a read or a start inside a
-     callback nested in it runs on the callback's terms and does not count. Quickshell ignores a command change on a live Process, so the reverse
-     order runs the previous injection's argv. Ahead of all of it, a branch on
-     `CompositorService.focusReady` that returns unconditionally: when the focus
-     source cannot answer, the focus properties are empty by design, and empty
-     resolves to Ctrl+V, so an injector that read them and carried on would send
-     exactly the keystroke readiness exists to withhold. On the predicate and
-     nothing beside it — the injector must not assemble its own readiness out of
-     individual flags, which is how three variants of one bug got written.
-  4. Both supported compositors resolve a target, a source that cannot answer
-     resolves none, and the sticky fallback empties when its window closes.
-
-     `focusedAppId` and `lastFocusedAppId` each branch on the four-state
-     `focusSource` — never on `isNiri` or `isHyprland`. That pair reads false
-     BOTH before detection has answered and when it answered that it could not
-     tell, so a property branching on it resolves those two states through the
-     Hyprland arm, at the first paste of a session. `focusSource` must itself
-     derive from `compositorDetected`, or the pending state does not exist.
-     Neither compositor can inherit the other's mechanism either: the non-Niri
-     arm reads the seat's active toplevel and gates the fallback on membership in
-     `ToplevelManager.toplevels`, while the Niri arm reads Niri's own
-     IPC-maintained `NiriService.windows[].is_focused` and gates the fallback by
-     resolving the remembered id through that same live list. Niri does not
-     populate the active toplevel the way Hyprland does, so an unbranched
-     toplevel read leaves every Niri paste falling back to Ctrl+V — the original
-     bug, on a supported platform. What a FAILED detection resolves to is a
-     decision stated in the QML, not something this arm dictates.
-
-     BOTH arms of both properties test `focusReady`, the one predicate meaning
-     "the focus source can answer right now". Three bugs on this path were each a
-     different flag standing in for that question — the remembered toplevel never
-     seeded, resolution ungated on detection, readiness declared before the data
-     could answer — so the predicate is pinned as one thing rather than as the
-     conditions of the day: it must express not-ready per source, derive its Niri
-     arm from `NiriService` (whose snapshot arrives well after detection), and
-     contain no literal `true` anywhere.
-
-     That last rule is about assertion, not strictness, and the difference cost
-     a regression to learn. Readiness may be as weak as "a source has been
-     named" — on a source whose emptiness cannot be told apart from its silence,
-     a stricter arm refuses pastes that used to work, which is a worse defect
-     than the one it prevents. What the rule forbids is an arm that asserts
-     rather than tests: a condition nothing can observe does not become
-     satisfied by being unobservable. Say so in the comment, and write whatever
-     the arm does assert as a condition. Each fallback is also actually
-     maintained:
-     every assignment to the private reference its branch reads sits INSIDE the
-     statement a focus test controls (its braced body, or the single statement
-     of a braceless form), not merely after such a test in the text — an
-     activeToplevel test for Hyprland, and for Niri a test that is exactly the
-     object the remembered value is read from, so recording cannot happen when
-     nothing is focused.
-
-     A declaration is read as its line plus the following more-indented lines,
-     QML's continuation style; a blank line or a dedent ends it. Its branches
-     are split at the first conditional at paren depth zero, so a nested
-     conditional inside either branch stays with that branch.
-  5. The launcher does not paste after a failed copy: its exit handler returns
-     from inside a branch whose whole test is the non-zero exit-code comparison,
-     and that branch closes before the paste. Branch and paste must both belong
-     to the handler itself — a branch nested in a callback returns from the
-     callback, and a paste nested in one runs on terms no branch in the handler
-     governs. The test must carry no further
-     conjunct that could falsify it, and the return must be unconditional within
-     the branch — at the branch's own brace depth and inside nothing nested that
-     governs whether it runs, which is a branch or a loop alike: a loop that may
-     iterate zero times returns no more reliably than an `if` that may not be
-     taken.
-
-Comments are blanked before any pattern runs, so commented-out code satisfies
-nothing. The structural reading these rules stand on — blanking, brace and paren
-matching, which statement an `if` controls, whether a region always returns —
-lives in `scripts/lib/qml_source.py`, and the delimiter-level reading a literal
-needs — every string form, and code told apart from prose — in
-`scripts/lib/paste_literals.py` with its controls beside it. The rules
-themselves are here.
-
-Deliberately NOT pinned:
-
-  - Object identity between the assignment and the start in rule 3: the check
-    proves an argv assignment precedes a `.running = true` in the same function,
-    not that both name the same Process.
-  - PasteService's queue latch, its watchdog ladder and the launcher's
-    in-flight copy guard. Those are runtime state machines; expressing them as
-    patterns would pin a flag's name and a handler's shape rather than a
-    behavior, and their behavior needs a live session.
-  - Reachability, and it is the largest gap here. Every rule proves a construct
-    exists inside a function of the right shape; none proves anything ever calls
-    that function. A whole handler could be unreachable and every rule below
-    would still pass. Scoping to the function that runs a statement is as close
-    as a source scan gets to "governs the code path", and it stops there.
-  - The data flow inside rule 3: it proves both focus properties are read in the
-    function that builds the argv, not that the value handed to the resolver
-    derives from them. `pasteCommand(other)` beside an unused read would pass.
-  - Rule 2's caller arm proves each surface CONTAINS a call to
-    PasteService.injectPaste(), not that the call runs.
-  - Anything outside the two scanned roots, or written in neither QML nor JS: a
-    keystroke built in the Go backend or the helper CLI is out of scope here.
-
-Exits non-zero naming the file and what it found.
+The scan does not detect an independent hard-coded injector elsewhere. Builder
+extraction covers supported literal function declarations in the named resolver.
+The source helpers reject some malformed constructs but are not full parsers.
 """
 
 import re
@@ -239,45 +67,27 @@ LIVENESS_RE = re.compile(r"ToplevelManager\.toplevels")
 # resolution IS the liveness gate, since the list drops a window when it closes.
 NIRI_WINDOWS_RE = re.compile(r"NiriService\.windows\b")
 NIRI_FOCUS_FLAG_RE = re.compile(r"\bis_focused\b")
-# The four-state focus source, and the two-state pair it exists to replace. The
-# pair reads false BOTH before detection answers and when it answered "cannot
-# tell", so a focus path branching on it resolves those two states through the
-# Hyprland arm — which is why reading them HERE is the defect, even though they
-# are the right thing to read for maintenance and for everything else in QML.
+# The boolean compositor pair cannot distinguish pending detection from failure.
 FOCUS_SOURCE_RE = re.compile(r"(?<![\w.])(?:\w+\s*\.\s*)*focusSource\b")
 COMPOSITOR_BOOLEAN_RE = re.compile(r"(?<![\w.])(?:\w+\s*\.\s*)*is(?:Niri|Hyprland)\b")
 NIRI_SOURCE_TEST_RE = re.compile(r"focusSource\s*===?\s*(['\"])niri\1")
-# Either polarity: testing that the source IS pending and testing that it is
-# NOT are the same test, and the toplevel arm reads better as the negative.
 PENDING_SOURCE_TEST_RE = re.compile(r"focusSource\s*[!=]==?\s*(['\"])pending\1")
 DETECTION_COMPLETE_RE = re.compile(r"\bcompositorDetected\b")
-# The readiness predicate: can the focus source answer a focus query right now?
-# One question, so one name — every consumer waits on this and nothing else.
 FOCUS_READY_RE = re.compile(r"(?<![\w.])(?:\w+\s*\.\s*)*focusReady\b")
-# Readiness asserted as a constant, which is the mistake this arm exists to
-# catch: an unobservable condition treated as satisfied because nothing can see
-# it. A predicate derived from state never needs the literal.
 ASSERTED_READY_RE = re.compile(r"(?<![\w.])true\b")
-# The WHOLE test, anchored and NEGATED — the same shape as NONZERO_EXIT_TEST_RE
-# below and for the same reason. Matching a mention of `focusReady` accepted
-# `if (CompositorService.focusReady) return`, which injects only when focus is
-# UNAVAILABLE: the behaviour exactly inverted, with the guard green. Anchoring
-# also stops a further conjunct riding along, while the optional parens and
-# whitespace keep a reasonable reformat from false-failing.
+# Require the whole negated readiness test; a positive or extra conjunct can
+# return on the wrong condition.
 NOT_READY_TEST_RE = re.compile(r"^\s*\(*\s*!\s*\(*\s*(?:\w+\s*\.\s*)*focusReady\s*\)*\s*$")
 NIRI_SERVICE_RE = re.compile(r"\bNiriService\s*\.")
 PRIVATE_MEMBER_RE = re.compile(r"\b_[A-Za-z][A-Za-z0-9_]*\b")
-# Polarity matters, in both directions: a test on the ABSENCE of an active
-# toplevel guards the wrong way, and a guard that returns when the copy SUCCEEDED
-# pastes only after failures, which is the bug inverted rather than fixed.
+# Polarity determines whether missing focus or a failed copy stops injection.
 ACTIVE_TOPLEVEL_TEST_RE = re.compile(r"(?<![\w.])(?:\w+\s*\.\s*)*activeToplevel\b")
 NEGATED_ACTIVE_TOPLEVEL_RE = re.compile(r"!\s*(?:\w+\s*\.\s*)*activeToplevel\b")
 # The remembered value's source object, e.g. `focused` in `_id = focused.id`.
 # The Niri guard tests that object for existence, so the check has to know which
 # object the assignment read before it can ask whether it was tested.
 ASSIGNED_FROM_RE = re.compile(r"=(?!=)\s*([A-Za-z_$][A-Za-z0-9_$]*)")
-# The WHOLE test, anchored: `exitCode !== 0 && false` is a non-zero comparison
-# that never holds, and satisfied a substring match while pasting on failure.
+# A substring match would accept a comparison conjoined with false.
 NONZERO_EXIT_TEST_RE = re.compile(r"^\s*\(*\s*(?:\w+\s*\.\s*)*exitCode\s*!==?\s*0\s*\)*\s*$")
 
 
@@ -327,11 +137,7 @@ def check_matchers() -> bool:
 
 
 def resolver_argv_builders() -> list[str] | None:
-    """The resolver's argv builders, or None when it declares none.
-
-    Reading the file and refusing an empty answer belong here, with the other
-    reporting; deriving the set from the two views is the matcher layer's job.
-    """
+    """Return the detected resolver argv builders, or None if none are declared."""
     source = read_live_with_strings(RESOLVER_LIB)
     blanked = read_live(RESOLVER_LIB)
     if source is None or blanked is None:
@@ -389,10 +195,7 @@ def check_owner() -> bool:
     with_strings = read_live_with_strings(OWNER)
     if source is None or with_strings is None:
         return False
-    # The import names the file in a string literal, so it is the one pattern
-    # that reads the view where string contents survive — and the only positive
-    # rule a string could otherwise satisfy, hence the line anchor: a statement
-    # starts its line, the same text inside an expression does not.
+    # Imports need string contents; the line anchor excludes mentions in expressions.
     if not IMPORT_RE.search(with_strings):
         return fail(f"{OWNER} does not import PasteTarget.js")
 
@@ -405,8 +208,6 @@ def check_owner() -> bool:
             "injector's command property, so the resolved argv never reaches the process and paste "
             "runs whatever argv was set last"
         )
-    # Every assignment has to hold up, not the first one found: a second built
-    # somewhere looser is a second injection path with none of the guarantees.
     for call in calls:
         if not check_argv_assignment(source, call):
             return False
@@ -439,13 +240,8 @@ def check_argv_assignment(source: str, call: re.Match) -> bool:
             + " — the live value is routinely empty at the moment a paste fires, so both are needed"
         )
 
-    # Emptying the focus properties while detection is pending only helps if the
-    # injector tells empty-because-not-yet-known from empty-because-no-window:
-    # "" resolves to Ctrl+V, so a paste that read it and carried on would land
-    # the exact keystroke the pending state exists to withhold. The branch has to
-    # belong to this function, close before the argv is built, and return —
-    # unconditionally, at its own brace depth and inside nothing that governs
-    # whether it runs.
+    # Empty focus resolves to Ctrl+V. Readiness must return before argv construction
+    # in the same function, outside any nested conditional or callback.
     ahead = [
         (test, region_start, region_end) for test, region_start, region_end in if_regions(source)
         if body_start <= region_start and region_end <= call.start()
@@ -599,15 +395,7 @@ def focus_branches(source: str, name: str) -> tuple[str, str] | None:
 
 
 def check_focus_readiness() -> bool:
-    """The readiness predicate, and that it is derived rather than asserted.
-
-    Three separate bugs on this path were each a flag standing in for readiness —
-    the remembered toplevel unseeded, resolution ungated on detection, readiness
-    declared before the focus data could answer. What they had in common is that
-    a flag was true while the source could not answer, so this arm asks of the
-    predicate the two things a fourth variant would violate: that it can express
-    not-ready per source, and that no arm of it is a constant.
-    """
+    """Check source patterns for per-source readiness and reject literal true."""
     source = read_live_with_strings(FOCUS_SOURCE)
     if source is None:
         return False
@@ -660,11 +448,7 @@ def check_focus_readiness() -> bool:
 
 def check_remembered(source: str, branch: str, arm: str, guarded_regions: list[tuple[int, int]],
                      complaint: str) -> bool:
-    """The private reference an arm of lastFocusedAppId reads, and its upkeep.
-
-    A declaration alone leaves the fallback permanently empty, which silently
-    collapses target resolution back to the live value and its restore race.
-    """
+    """Check the source references and assignments that maintain remembered focus."""
     remembered = sorted(set(PRIVATE_MEMBER_RE.findall(branch)))
     if not remembered:
         return fail(
@@ -680,10 +464,7 @@ def check_remembered(source: str, branch: str, arm: str, guarded_regions: list[t
             f"{FOCUS_SOURCE} never assigns {', '.join(remembered)}, so the {arm} lastFocusedAppId stays "
             "empty and the sticky fallback does nothing there"
         )
-    # Every assignment, and containment rather than order: a focus test that
-    # merely precedes the assignment guards nothing — moving the assignment below
-    # the branch, or leaving an unrelated test above it, overwrites the remembered
-    # window with nothing, and one such assignment is enough.
+    # Text order alone does not show that a focus test controls the assignment.
     for name, matches in assignments.items():
         for match in matches:
             if not any(start <= match.start() < end for start, end in guarded_regions):
@@ -713,12 +494,8 @@ def niri_guarded_regions(source: str) -> list[tuple[int, int]]:
 
 def check_focus_source() -> bool:
     source = read_live(FOCUS_SOURCE)
-    # The declarations name their states as string literals, so the branch rules
-    # read the view where string contents survive. The structural rules below
-    # keep the blanked view, which is what the shared brace and paren scanning
-    # expects: a brace inside a string elsewhere in the file would otherwise be
-    # counted as code. The two views are read for different questions and their
-    # offsets are never mixed.
+    # State names need string contents; structural scans need blanked strings.
+    # Both views preserve offsets.
     declared = read_live_with_strings(FOCUS_SOURCE)
     if source is None or declared is None:
         return False
@@ -727,10 +504,7 @@ def check_focus_source() -> bool:
     sticky = focus_branches(declared, "lastFocusedAppId")
     if live is None or sticky is None:
         return False
-    # The second arm is not "Hyprland": it is every state that is not Niri, which
-    # is Hyprland plus the deliberate decision about what a failed detection
-    # resolves to. Both are checked here as the toplevel mechanism, because that
-    # is what the arm reads on either.
+    # The non-Niri arm includes the QML decision for failed detection.
     live_niri, live_toplevel = live
     sticky_niri, sticky_toplevel = sticky
 
@@ -796,31 +570,21 @@ def check_launcher_copy_result() -> bool:
     if source is None:
         return False
 
-    # Every exit handler that pastes, not one located by position: a handler
-    # added above this one must not be able to take the check's attention.
     regions = if_regions(source)
     pasting = []
     for start, end in handler_bodies(source, "onExited"):
-        # Every paste in the handler: checking only the first would let a second
-        # one, added below the guarded one, paste ungated.
         for inject in INJECT_CALL_RE.finditer(source, start, end):
             pasting.append((start, end, inject))
     if not pasting:
         return fail(f"{LAUNCHER} pastes from no process exit handler, so the copy's result is not what gates it")
 
     for start, end, inject in pasting:
-        # Both the paste and the branch that guards it have to belong to the
-        # handler itself. A branch inside a callback nested in the handler
-        # returns from the callback, so its return cannot stop the handler from
-        # reaching the paste — and a paste inside one runs on the callback's
-        # terms, which no branch in the handler governs.
+        # A callback return cannot stop its containing handler from pasting.
         if not in_function(source, inject.start(), start):
             return fail(
                 f"{LAUNCHER} pastes from inside a function nested in its exit handler, where no branch in "
                 "the handler can gate it, so a failed copy would paste stale clipboard content"
             )
-        # The branch has to close before the paste and the paste has to be
-        # outside it, so entering the branch means never reaching the paste.
         failing = [
             (region_start, region_end) for test, region_start, region_end in regions
             if start <= region_start and region_end <= end
@@ -847,9 +611,6 @@ def main() -> int:
     try:
         return run()
     except ScrubError as error:
-        # Deliberately caught HERE and nowhere else: one place turns a refusal
-        # into a named failure, so no call site can quietly carry on with a
-        # view the scanner would not vouch for.
         fail(f"the source scanner refused a file, so these rules were NOT checked: {error}")
         return 1
 
@@ -861,12 +622,10 @@ def run() -> int:
             "the scan matched no files under " + ", ".join(SCAN_ROOTS)
             + " — a moved tree would make every rule below pass on nothing"
         ) or 1
-    # Before rules 1 and 3 mean anything, their matchers have to still see
-    # every delimiter — so this short-circuits, like the empty-scan guard.
+    # Matcher controls must pass before their source checks are used.
     if not check_matchers():
         return 1
 
-    # Deliberately not short-circuiting: report every violation in one run.
     builders = resolver_argv_builders()
     if builders is None or not check_ownership_controls(builders):
         return 1

@@ -152,7 +152,6 @@ def test_update_run_and_count_carry_tools():
         assert_equal(update.cmd_update(["run", "tools"]), 0, "tools run must succeed")
         assert_equal(calls, [(["mise", "up"], "0", str(mise.RT.home()))], "tools mode runs mise up from $HOME with the cooldown off")
         assert_equal(len(refreshed), 1, "stubs are refreshed after the tools step")
-        # The after-hook also runs, and a failing hook counts as a failure.
         calls.clear()
         refreshed.clear()
         def boom():
@@ -172,7 +171,6 @@ def test_update_run_and_count_carry_tools():
         mise.RT.run = lambda cmd, check=False, **kw: subprocess.CompletedProcess(cmd, 1, stdout="", stderr="mise ERROR nope")
         data = update.update_count()
         assert data.get("toolsError") and data["tools"] == 0, "a failed probe is reported, not a clean zero"
-        # No pacman: the tools rows still come through.
         mise.RT.command_exists = lambda name: name == "mise"
         mise.RT.run = lambda cmd, check=False, **kw: subprocess.CompletedProcess(cmd, 0, stdout=payload, stderr="")
         data = update.update_count()
@@ -302,7 +300,7 @@ def test_catalog_is_consistent():
 
 
 def test_cli_wrapper_routes_the_commands():
-    """The bash wrapper and the helper's dispatcher both know the three commands."""
+    """Check that the wrapper and helper dispatcher expose the development commands."""
     wrapper = (REPO_ROOT / "bin" / "vshell").read_text()
     dispatch_line = next(line for line in wrapper.splitlines() if "|update|" in line and 'exec "$helper"' not in line)
     for name in ("mise", "agent", "dev-env"):

@@ -48,10 +48,7 @@ Singleton {
 
     property bool available: false
 
-    // True once the backend has answered at least once. It is NOT a latch that
-    // stops further reads: before VGS-63 the single fetch it guarded was the
-    // only status the shell ever took, so a shell that started while tailscaled
-    // was still warming up displayed "Off" for the rest of the process's life.
+    // True after the backend has answered. Further reads still refresh state.
     property bool stateInitialized: false
 
     // Whether a watcher is actually running behind the backend, reported in
@@ -68,26 +65,14 @@ Singleton {
     // answer, so none of them may be presented as "off" or kept indefinitely.
     readonly property bool backendStateKnown: backendState !== "" && backendState !== "NoState" && backendState !== "Starting"
 
-    // Knowledge belongs to the connection that produced it. `connectionGeneration`
-    // ticks on every connect; `stateGeneration` records which generation the
-    // values above came from. Without this, cached values from before an outage
-    // read as a settled answer about the *current* backend — the same defect as
-    // rendering an unread state as "off", one layer out: not unread, but stale.
-    // A response cannot satisfy a generation it was not asked in, so a reconnect
-    // is never closed by a pre-disconnect answer still in flight.
+    // Stamp responses with their connection generation so pre-disconnect replies cannot satisfy a reconnect.
     property int connectionGeneration: 0
     property int stateGeneration: -1
     readonly property bool haveCurrentState: VGSBackendService.isConnected && stateGeneration >= 0 && stateGeneration === connectionGeneration
     readonly property bool everHadState: stateGeneration >= 0
 
-    // What widgets branch on. Only `stateSettled` licenses rendering an
-    // "off"-shaped answer: deriving that from backendState alone meant the
-    // window before the first response — and forever, if reads kept failing —
-    // rendered as "Disconnected"/"Off", which is a smaller copy of the bug this
-    // whole change exists to fix.
+    // Only stateSettled permits rendering a disconnected or off state; pending and failed reads remain unknown.
     readonly property bool awaitingFirstState: available && !haveCurrentState && !everHadState
-    // Distinct from the above on purpose: "Reading status…" reads oddly in a
-    // session that has been up for hours and briefly lost its backend.
     readonly property bool reacquiring: available && !haveCurrentState && everHadState
     readonly property bool starting: available && haveCurrentState && !backendStateKnown
     readonly property bool stateSettled: available && haveCurrentState && backendStateKnown
@@ -100,10 +85,10 @@ Singleton {
     // having no other way to notice that a push never came.
     readonly property int pollIntervalMs: {
         if (!stateSettled)
-            return 10000;      // warming up or no answer yet: a change is imminent
+            return 10000;
         if (backendWatches)
-            return 300000;     // a live watcher is pushing; this only catches it dying
-        return 45000;          // nothing is pushing: the shell is the only thing asking
+            return 300000;
+        return 45000;
     }
 
     Timer {

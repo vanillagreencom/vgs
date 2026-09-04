@@ -160,12 +160,7 @@ Column {
                 };
                 CupsService.testConnection(tested.host, tested.port, tested.protocol, tested.queue, response => {
                     tab.testingConnection = false;
-                    // Inputs edited while the test was in flight: the response
-                    // describes an address the form no longer shows, so drop it
-                    // and leave the form untested. Switching to Discover leaves
-                    // all four inputs untouched, so mode is checked separately —
-                    // otherwise a late manual result arms Create with the old
-                    // address while the discovery picker is on screen.
+                    // Discard manual-test replies after input or mode changes. Discovery mode can leave the same input text in place.
                     if (!tab.manualEntryMode)
                         return;
                     const currentPort = parseInt(tab.manualPort) || parseInt(root.defaultPortFor(tab.manualProtocol));

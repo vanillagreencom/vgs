@@ -25,7 +25,6 @@ Singleton {
     property bool noCpu: false
     property int dgopProcessPid: 0
 
-    // Cursor data for accurate CPU calculations
     property string cpuCursor: ""
     property string procCursor: ""
     property int cpuSampleCount: 0
@@ -100,7 +99,6 @@ Singleton {
                 const currentCount = moduleRefCounts[module] || 0;
                 moduleRefCounts[module] = currentCount + 1;
 
-                // Add to enabled modules if not already there
                 if (enabledModules.indexOf(module) === -1) {
                     enabledModules.push(module);
                     modulesChanged = true;
@@ -109,8 +107,8 @@ Singleton {
         }
 
         if (modulesChanged || refCount === 1) {
-            enabledModules = enabledModules.slice(); // Force property change
-            moduleRefCounts = Object.assign({}, moduleRefCounts); // Force property change
+            enabledModules = enabledModules.slice();
+            moduleRefCounts = Object.assign({}, moduleRefCounts);
             updateAllStats();
         } else if (gpuPciIds.length > 0 && refCount > 0) {
             // If we have GPU PCI IDs and active modules, make sure to update
@@ -141,10 +139,9 @@ Singleton {
         }
 
         if (modulesChanged) {
-            enabledModules = enabledModules.slice(); // Force property change
-            moduleRefCounts = Object.assign({}, moduleRefCounts); // Force property change
+            enabledModules = enabledModules.slice();
+            moduleRefCounts = Object.assign({}, moduleRefCounts);
 
-            // Clear cursor data when CPU or process modules are no longer active
             if (!enabledModules.includes("cpu")) {
                 cpuCursor = "";
                 cpuSampleCount = 0;
@@ -164,7 +161,6 @@ Singleton {
         const currentCount = gpuPciIdRefCounts[pciId] || 0;
         gpuPciIdRefCounts[pciId] = currentCount + 1;
 
-        // Add to gpuPciIds array if not already there
         if (!gpuPciIds.includes(pciId)) {
             gpuPciIds = gpuPciIds.concat([pciId]);
         }
@@ -177,7 +173,6 @@ Singleton {
         if (currentCount > 1) {
             gpuPciIdRefCounts[pciId] = currentCount - 1;
         } else if (currentCount === 1) {
-            // Remove completely when count reaches 0
             delete gpuPciIdRefCounts[pciId];
             const index = gpuPciIds.indexOf(pciId);
             if (index > -1) {
@@ -185,7 +180,6 @@ Singleton {
                 gpuPciIds.splice(index, 1);
             }
 
-            // Clear temperature data for this GPU when no longer monitored
             if (availableGpus && availableGpus.length > 0) {
                 const updatedGpus = availableGpus.slice();
                 for (var i = 0; i < updatedGpus.length; i++) {
@@ -199,7 +193,6 @@ Singleton {
             }
         }
 
-        // Force property change notification
         gpuPciIdRefCounts = Object.assign({}, gpuPciIdRefCounts);
     }
 
@@ -234,11 +227,9 @@ Singleton {
         const cmd = ["dgop", "meta", "--json"];
 
         if (enabledModules.length === 0) {
-            // Don't run if no modules are needed
             return [];
         }
 
-        // Replace 'gpu' with 'gpu-temp' when we have PCI IDs to monitor
         const finalModules = [];
         for (const module of enabledModules) {
             if (module === "gpu" && gpuPciIds.length > 0) {
@@ -248,7 +239,6 @@ Singleton {
             }
         }
 
-        // Add gpu-temp module automatically when we have PCI IDs to monitor
         if (gpuPciIds.length > 0 && finalModules.indexOf("gpu-temp") === -1) {
             finalModules.push("gpu-temp");
         }
@@ -276,7 +266,7 @@ Singleton {
 
         if (enabledModules.indexOf("processes") !== -1 || enabledModules.indexOf("all") !== -1) {
             cmd.push("--limit", "100"); // Get more data for client sorting
-            cmd.push("--sort", "cpu"); // Always get CPU sorted data
+            cmd.push("--sort", "cpu");
             if (noCpu) {
                 cmd.push("--no-cpu");
             }
@@ -412,14 +402,11 @@ Singleton {
 
         const gpuData = (data.gpu && data.gpu.gpus) || data.gpus;
         if (gpuData && Array.isArray(gpuData)) {
-            // Check if this is temperature update data (has PCI IDs being monitored)
             if (gpuPciIds.length > 0 && availableGpus && availableGpus.length > 0) {
-                // This is temperature data - merge with existing GPU metadata
                 const updatedGpus = availableGpus.slice();
                 for (var i = 0; i < updatedGpus.length; i++) {
                     const existingGpu = updatedGpus[i];
                     const tempGpu = gpuData.find(g => g.pciId === existingGpu.pciId);
-                    // Only update temperature if this GPU's PCI ID is being monitored
                     if (tempGpu && gpuPciIds.includes(existingGpu.pciId)) {
                         updatedGpus[i] = Object.assign({}, existingGpu, {
                             "temperature": tempGpu.temperature || 0
@@ -428,7 +415,6 @@ Singleton {
                 }
                 availableGpus = updatedGpus;
             } else {
-                // This is initial GPU metadata - set the full list
                 const gpuList = [];
                 for (const gpu of gpuData) {
                     let displayName = gpu.displayName || gpu.name || "Unknown GPU";
@@ -760,7 +746,6 @@ Singleton {
                             }
                         }
 
-                        // Prefer PRETTY_NAME, fallback to NAME
                         const distroName = prettyName || name || "Linux";
                         distribution = distroName;
                         log.info("Detected distribution:", distroName);

@@ -1,24 +1,10 @@
 #!/usr/bin/env python3
-"""VGS backend method inventory + apiVersion-gate guard.
+"""Check QML backend calls and Go registrations against the backend inventory.
 
-Enforces the boundary between the QML backend client (VGSBackendService and its
-callers) and the Go backend daemon, using backend/methods.json
-as the source of truth.
-
-Fails (exit 1) when:
-  - QML references a backend method that maps to no documented capability prefix
-    and no 'excluded' prefix (an undocumented method with no plan);
-  - the number of raw numeric `.apiVersion <op> N` gates in QML exceeds the
-    manifest baseline (gates must only shrink as they convert to capability /
-    method predicates);
-  - (when backend/ exists) a Go handler registers a method that maps to no
-    documented capability and is not excluded.
-
-Reports (non-fatal):
-  - 'excluded' methods still referenced from QML (dead surface to remove);
-  - documented capabilities with no QML caller and no Go handler yet.
-
-This runs with no third-party dependencies and works before backend/ exists.
+The check reports undocumented methods and raw numeric apiVersion gates above
+the manifest baseline. It also checks the named resource ownership contracts.
+Excluded methods still used by QML and unused capabilities produce warnings.
+Source patterns cover literal calls and the supported registration tables.
 """
 from __future__ import annotations
 
@@ -39,10 +25,8 @@ MANIFEST = REPO_ROOT / "backend" / "methods.json"
 BACKEND_SINGLETON = "Services/VGSBackendService.qml"
 CALLSITE_INTERNAL_RE = re.compile(r'\bsendRequest\(\s*"([a-zA-Z0-9._]+)"')
 CALLSITE_EXTERNAL_RE = re.compile(r'VGSBackendService\.sendRequest\(\s*"([a-zA-Z0-9._]+)"')
-# raw numeric apiVersion gate, e.g. .apiVersion >= 7  (named constants excluded)
 APIGATE_RE = re.compile(r'\.apiVersion\s*(?:>=|>|<=|<|===|!==|==)\s*[0-9]+')
-# Best-effort Go route registration, e.g. Register("network", "network.getState", ...)
-# or Handle("cups.getPrinters", ...).
+# Literal Go route registrations; variable arguments need the patterns below.
 GO_SERVER_REGISTER_RE = re.compile(r'\.Register\(\s*"[^"]+"\s*,\s*"([a-zA-Z0-9._]+)"')
 GO_ROUTE_RE = re.compile(r'(?:register|Register|Handle|handle|route|Route)\(\s*"([a-zA-Z0-9._]+)"')
 # Loop registrations: handler maps (`map[string]server.HandlerFunc{ "m": h, ... }`)
@@ -170,7 +154,6 @@ def main() -> int:
     errors: list[str] = []
     warnings: list[str] = []
 
-    # 1. Every QML-referenced method must be documented or explicitly excluded.
     dead_referenced: list[str] = []
     for method, files in sorted(qml_methods.items()):
         ex = excluded_for(method, excluded)
@@ -184,7 +167,6 @@ def main() -> int:
                 f"methods.json or mark it excluded with a removal action."
             )
 
-    # 2. apiVersion gate ceiling.
     if len(gates) > baseline:
         errors.append(
             f"raw apiVersion numeric gates increased to {len(gates)} "
@@ -194,7 +176,6 @@ def main() -> int:
             + "\n    ".join(f"{f}:{ln}" for f, ln in gates[baseline:])
         )
 
-    # 3. Go handlers (when present) must map to a documented capability.
     for method, files in sorted(go_methods.items()):
         if excluded_for(method, excluded) is not None:
             errors.append(
@@ -207,7 +188,6 @@ def main() -> int:
                 f"{', '.join(files)} — add its capability to methods.json."
             )
 
-    # 4. Ownership contracts that have regressed before.
     tailscale_plugin = qml_text("config/vshell/plugins/tailscale/TailscaleWidget.qml")
     forbidden_tailscale = [
         'command: ["tailscale"',
@@ -236,12 +216,10 @@ def main() -> int:
     if 'log.debug("Request socket <<", line)' in backend_qml or 'log.debug("Subscribe socket <<", line)' in backend_qml:
         errors.append("VGSBackendService must not log raw backend frames.")
 
-    # Non-fatal: excluded surface still referenced from QML.
     for method in dead_referenced:
         ex = excluded_for(method, excluded)
         warnings.append(f"excluded method still referenced from QML: '{method}' — {ex['action']}")
 
-    # Non-fatal: documented capabilities with no caller and no handler.
     called_prefixes = set()
     for method in list(qml_methods) + list(go_methods):
         cap = capability_for(method, caps)

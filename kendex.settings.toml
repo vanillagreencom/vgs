@@ -3,29 +3,19 @@
 # then this [env] table, then its own built-in default. `.env` is never read.
 
 [env]
-#BOT_CHECK_NAME = ""
-#BOT_EMAIL = ""
-#BOT_NAME = ""
-#BOT_REMOTE_NAME = ""
 CI_FIX_MAX_CYCLES = "6"
-# Reviewer gate: AI bots review PRs on this repo (Copilot via the "Copilot
-# review for default branch" ruleset, qodo, Codex; CodeRabbit is disabled
-# org-wide since 2026-08-08), so the reviewer wait applies. They submit
-# review objects; the check name below is the fallback for a clean pass that
-# submits no review object.
+# Wait for reviewer evidence. PR_REVIEW_CHECK can provide a named-status
+# fallback when a reviewer submits no review object.
 PR_REVIEW_GATE = "review"
 DECISIONS_DIR = "docs/decisions"
-#GH_BOT_USERNAME = ""
-# Issue IDs in branch names. Linear identifiers for team vg-shell are VGS-<n>,
-# and branches are named vgs-<n>-<slug>, which is also what Linear's GitHub
-# integration matches to link the PR back to the issue.
+# Issue branches use the vg-shell Linear identifier: vgs-<n>-<slug>.
 GH_ISSUE_PATTERN = "vgs-[0-9]+"
 GIT_HOST_CLI = ".agents/skills/github/scripts/github.sh"
 LINEAR_FORMAT = "safe"
 ORCH_STATE_DIR = "tmp"
 
-# File-size ratchet: NO KEY HERE, deliberately. The shipped path classes decide
-# every threshold; a key repeating a default holds a stale number through one.
+# File-size thresholds come from the shipped path classes. No SIZE_RATCHET_*
+# key here: a repeated default goes stale when the class changes.
 
 SECOND_OPINION_CLAUDE_CMD = "claude -p --no-session-persistence --model opus --effort max --allowedTools Bash(read-only:true),Read,Glob,Grep"
 SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-6-astra -s read-only -c model_reasoning_effort=xhigh --ephemeral"
@@ -42,72 +32,32 @@ WORKTREE_SYMLINKS = ".env.local .cache"
 # the clock. "0" disables.
 PR_REVIEW_NUDGE_SECS = "600"
 
-# Used by: orch (`approval-wait`). Comment body posted as the nudge — set it
-# to whatever summons this repo's review bot (e.g. "@devin review"). Empty =
-# fall back to a GitHub-native re-review request to the PR's reviewers.
-# Empty here since 2026-08-08: the previous "@coderabbitai review" handle
-# went dead when the owner disabled CodeRabbit org-wide; the native
-# re-review fallback re-triggers the remaining bots.
+# The reviewer nudge body. Empty requests a native GitHub re-review.
 PR_REVIEW_NUDGE = ""
 
-# Used by: orch (`approval-wait`, review mode). Name/context of the trusted
-# reviewer's check-run OR commit status: a success for that exact name on the
-# current head counts as review-received when a clean re-analysis submits no
-# review object (e.g. "Devin Review"). Empty = review objects only. SECURITY:
-# match by name means any app could publish it — name only the trusted bot's
-# check on repos where all publishers are trusted.
-#
-# Left empty deliberately. This is a fallback for bots that publish a check but
-# submit a review object only when they have findings — no reviewer here
-# behaves that way: Copilot, qodo and Codex all post review objects (as did
-# CodeRabbit before its 2026-08-08 org-wide disable). With reviewers that
-# post review objects, a genuine outage is PR_REVIEW_ON_TIMEOUT's job, not
-# this one's.
+# Optional trusted check-run or commit-status name accepted as review
+# evidence on the current head. Empty accepts review objects only. Names
+# do not authenticate publishers; use only where all publishers are trusted.
 PR_REVIEW_CHECK = ""
 
 # Seconds ci-wait keeps polling before failing when no CI checks registered
 # yet; raise for approval-gated CI with slow dispatch.
 CI_WAIT_NO_CHECKS_GRACE = "180"
 
-# Used by: orch (`review-pr` / `review` / `review-codebase`). Total concurrent
-# agent-session budget of the harness runtime, counting the primary session.
-# "0" = unlimited: every reviewer launches up front and persists through
-# fix/re-review cycles. When the reviewer set exceeds the available slots,
-# review workflows run reviewers in bounded sequential waves, retiring each
-# completed session to release its slot. Codex collaboration runtime: four
-# total threads -> set "4".
+# Total concurrent reviewer-session budget, including the primary session.
+# Zero allows all reviewers. A bounded budget runs sequential waves and
+# releases completed sessions.
 REVIEWER_SLOT_BUDGET = "0"
 
-# Used by: orch (`approval-wait`, `submit-pr` / `merge-pr` / `ci-fix`).
-# Deadline behavior when the review gate signal never arrives — the reviewer
-# posted nothing (e.g. its credits are exhausted). "block" (default) reports a
-# "timeout" and the caller prompts or keeps waiting. "proceed" instead reports
-# a distinct "proceeded" verdict and records a reviewer-down override, moving
-# to CI/merge — but ONLY when zero threads are unresolved, so an open thread
-# always blocks (it returns "comments" first) and a real comment is never
-# bypassed. CI and the comment-hygiene gate still apply. On multi-reviewer
-# repos this only fires when EVERY reviewer is silent; a single live reviewer
-# already satisfies the gate on its own.
-# "proceed" is the fleet standard (owner decision 2026-08-06, no human in
-# the loop except human-contributor PRs): genuine total reviewer silence
-# past the wait deadline proceeds with the logged attestation instead of
-# stalling the fleet on a dead reviewer.
+# On total reviewer silence, proceed records a local timeout override.
+# Unresolved threads still block, and CI and comment checks still apply.
 PR_REVIEW_ON_TIMEOUT = "proceed"
 
-# Used by: orch (`review-pr` § 4/§ 7, `dev-fix` § 1). How workflow decision
-# points behave. "ask" (default) presents every decision to the user.
-# "auto-recommended" executes the workflow's recommended option and logs
-# "auto-selected: [option] — [reason]" in the round record (workflow-state
-# auto_decisions) — for fleet launchers whose workers would otherwise
-# serialize on one supervisor. Decision-record revisits, scope expansion
-# beyond the issue, and anything touching benchmark-host protocol ALWAYS
-# ask, in every mode; merge is governed by ORCH_MERGE_AUTONOMY.
+# Workflow decision policy: ask prompts the user; auto-recommended selects
+# and records the recommended option. Scope changes and decision-record
+# revisits still require confirmation. Merge uses ORCH_MERGE_AUTONOMY.
 ORCH_DECISION_MODE = "ask"
 
-# LINEAR — which Linear team this project writes to.
-# Project-scope `kendex add` / `kendex refresh` merge these defaults into
-# <project>/kendex.settings.toml (never overwriting existing keys). Full key
-# reference: linear README.md.
 
 # The team every Linear write targets. No default: an empty value refuses
 # writes instead of guessing inside whatever workspace the API key reaches
@@ -118,180 +68,65 @@ LINEAR_TEAM = "vg-shell"
 # Issue identifier prefix used in examples (e.g. PROJ-123).
 LINEAR_TEAM_PREFIX = "VGS"
 
-# REVIEW GATE — shared merge-gate engine (review-gate skill).
-# Project-scope `kendex add` / `kendex refresh` merge these defaults into
-# <project>/kendex.settings.toml (never overwriting existing keys). Keys
-# resolve environment-first, then this file, then the built-in default; list
-# values pack into one string with ';' separators. Full reference:
-# review-gate SKILL.md and references/adoption.md.
+# Review-gate list values use semicolon separators.
+# See the review-gate skill for the complete key reference.
 
 # Commit-status context the gate posts — the required check name in branch
 # protection. Keep it stable: changing it strands the old required context
 # on open PRs.
 REVIEW_GATE_CONTEXT = "Review gate"
 
-# Clean-analysis evidence: exact names of the trusted reviewer's check-run
-# and/or legacy commit status; a success for a listed name on the current
-# head counts as review evidence (for bots that submit a review object only
-# when they have findings). Both APIs are queried; either counts. SECURITY:
-# check-runs and statuses are matched by NAME, and any GitHub App or Actions
-# workflow can publish under any name — list only names produced by trusted
-# bots, on repos where every publisher is trusted.
-# Check-runs published by the shared github-actions app are rejected
-# automatically (any PR workflow can mint those; real reviewer bots publish
-# under their own app slug); legacy commit STATUSES still rely on the
-# publisher-trust precondition above.
-# Default is EMPTY (source disabled): trust is opt-in per repo, never a
-# shipped vendor default. Example for a repo whose reviewer posts a
-# check/status under the name "Devin Review":
-# REVIEW_GATE_TRUSTED_STATUS_CONTEXTS = "Devin Review"
-#
-# VGS ASSIGNMENT: the fleet-identical standard (v2 cutover, 2026-08-08 —
-# the same alignment memsira#444 and drovr#448 made). The earlier VGS
-# rationale for "" — CodeRabbit's `CodeRabbit` status concluding `success`
-# with "Review rate limited" on PR #38 having analysed nothing — is
-# SUPERSEDED by two engine properties: REVIEW_GATE_CHECKRUN_SKIP_PATTERNS
-# below routes a rate-limited/skipped/queued "pass" to NOT-EVIDENCE, and
-# newest-row semantics mean a stale success never survives a newer
-# non-success row. The empty-list posture bought nothing those two do not.
-# NOTE: CodeRabbit is disabled org-wide (owner, 2026-08-08) — its entry here
-# is inert until/unless it returns (it posts nothing to match). Kept because
-# the value is fleet-identical config; pruning happens fleet-wide in one
-# pass (kendex#1113), never as per-repo drift.
+# Trusted check-run or commit-status names may supply clean-review evidence.
+# Name matching requires trusted publishers. Shared github-actions check-runs
+# are rejected; legacy statuses use REVIEW_GATE_STATUS_PUBLISHER_REJECT.
+# Skip-pattern filtering and newest-row selection prevent skipped or stale
+# successes from supplying evidence. CodeRabbit is disabled org-wide, so its
+# entry is inert; it stays because the value is fleet-identical and is pruned
+# fleet-wide, never per repo.
 REVIEW_GATE_TRUSTED_STATUS_CONTEXTS = "CodeRabbit;copilot-pull-request-reviewer"
 
-# A trusted "pass" whose output contains one of these substrings never ran
-# (e.g. "Review rate limited") and is NOT-EVIDENCE. Empty disables.
+# Reject a trusted pass whose output contains any listed skip substring.
+# Empty disables this filter.
 REVIEW_GATE_CHECKRUN_SKIP_PATTERNS = "rate limited;skipped;queued"
 
-# Comment-form reviewers: 'login:binding-pattern' pairs for bots whose clean
-# pass is only an issue comment on the PR conversation (no review object, no
-# check/status). The first ':' splits login from pattern; the pattern is a
-# LITERAL prefix that must precede the bound commit sha in the body (e.g.
-# "chatgpt-codex-connector[bot]:Reviewed commit:"). SECURITY: trust keys on
-# the author LOGIN (only GitHub can set it); the body is read only to bind
-# the evidence to a commit. Empty disables the source.
-# VGS ASSIGNMENT: EMPTY. VGS has no comment-form reviewer — the active
-# reviewers (Copilot, qodo, Codex) all post review objects. Configuring one
-# would also be inert: the predicate rejects comment evidence from the PR
-# author, and every VGS PR is authored by the single house login.
+# Comment reviewers use login:binding-prefix entries. The author login
+# authenticates the reviewer; the literal prefix binds its comment to a commit.
+# Empty disables comment evidence because configured reviewers use review objects.
 REVIEW_GATE_COMMENT_REVIEWERS = ""
 
 # Shortest sha prefix (4–40) a comment-form reviewer may bind evidence to.
 REVIEW_GATE_SHA_PREFIX_FLOOR = "7"
 
-# Operator-override attestation (v2 key; the legacy alias
-# REVIEW_GATE_OUTAGE_CONTEXT still resolves but new installs set only this):
-# commit-status context a trusted orchestrator posts on the head ONLY on
-# genuine total reviewer silence. Substitutes for MISSING review evidence
-# only — changes-requested and unresolved threads still fail closed.
-#
-# VGS ASSIGNMENT: ENABLED at the fleet-standard context (v2 cutover,
-# 2026-08-08). MANUAL-ONLY as of engine kendex#1126: orch never posts this
-# attestation (its proceed is local-only); an operator posts it
-# deliberately, and the sanctioned automated no-review posture is
-# REVIEW_GATE_MODE = "off". The earlier VGS rationale for disabling — the v1 predicate's
-# outage read applied no publisher filter, so on this PUBLIC repo anyone
-# able to post a status under the context name could substitute for missing
-# evidence — is RESOLVED upstream: the v2 predicate applies
-# REVIEW_GATE_STATUS_PUBLISHER_REJECT to the override read too, and the
-# override is operator-PAT-posted (never github-actions[bot]), which that
-# reject list below enforces.
+# Status context for an operator attestation of total reviewer silence.
+# It substitutes only for missing evidence, never requested changes or open
+# threads. The operator posts it manually; publisher rejection still applies.
 REVIEW_GATE_OVERRIDE_CONTEXT = "kendex-reviewer-outage"
 
-# Review-object trust list: logins whose review objects at the exact head
-# count as evidence. Empty = any non-author (the compatible default; on
-# repos with outside read-access collaborators this means any drive-by
-# COMMENTED review satisfies the gate — set the list to close that).
-#
-# VGS ASSIGNMENT: POPULATED, and this one is not optional. `vanillagreencom/vgs`
-# is a PUBLIC repository, which is the maximal case of the hazard above: with
-# the list empty, ANY GitHub account could submit a drive-by COMMENTED review on
-# a head with no unresolved threads, the predicate would count it as evidence,
-# and the gate would flip to success with neither reviewer having analysed
-# anything. A gate a passer-by can open is worse than no gate, because it reads
-# as protection.
-#
-# The logins below are the AI reviewers submitting review objects on this
-# repo (sampled across PRs #57, #59, #61, #62; chatgpt-codex-connector[bot]
-# added fleet-wide by owner decision 2026-08-08 — it reviews actively, and
-# an untrusted active reviewer is a deadlock: its reviews are invisible as
-# evidence while still counting as engagement that holds off the
-# proceed-on-timeout fallback). Trust keys on the login, which only GitHub
-# can set.
-#
-# The human owner's login is deliberately ABSENT. `bmethod` authors every VGS
-# PR, and the predicate rejects review evidence from the PR author — mechanical,
-# not policy — so listing it would be inert. It is also the point of the gate:
-# the evidence has to come from an analysis the author did not perform.
+# Only listed non-author reviewer logins may supply review-object evidence.
+# An empty list accepts any non-author, which lets an unrelated GitHub account
+# satisfy missing evidence on a public repository. The PR author never qualifies.
+# Every active reviewer must be listed: an unlisted one supplies no evidence
+# yet its engagement holds off the timeout fallback.
 REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS = "coderabbitai[bot];copilot-pull-request-reviewer[bot];qodo-code-review[bot];chatgpt-codex-connector[bot]"
 
-# Minimum review-object state that counts as evidence: "any" (any
-# non-dismissed row) or "approved" (an APPROVED at head not withdrawn by a
-# LATER CHANGES_REQUESTED from the same login; a trailing COMMENTED never
-# supersedes an approval).
-#
-# VGS ASSIGNMENT: "any", deliberately, now that the trust list above is what
-# closes the drive-by hole. Of the four trusted logins only CodeRabbit ever
-# submitted APPROVED, and it has been disabled org-wide since 2026-08-08
-# (trusted again if it returns); the three active reviewers — Copilot, qodo
-# and Codex — report clean runs as COMMENTED. Requiring "approved" would
-# therefore discard every active reviewer and hang the gate on a disabled bot.
+# Accept non-dismissed review objects from trusted logins. COMMENTED can
+# represent a clean review; requiring APPROVED would discard that evidence.
 REVIEW_GATE_REVIEW_OBJECT_MIN_STATE = "any"
 
-# PR-triggered workflows must not be able to mint trusted contexts or the
-# operator override: commit statuses created by github-actions[bot] are
-# never evidence (fleet standard). Safe here because the override is
-# operator-PAT-posted under v2, and required after the cutover because this
-# is a PUBLIC repo whose trusted contexts and override are name-matched.
+# Reject statuses from github-actions[bot] so PR workflows cannot supply
+# trusted reviewer evidence or the operator override.
 REVIEW_GATE_STATUS_PUBLISHER_REJECT = "github-actions[bot]"
 
-# Docs-only deltas carry ancestor evidence forward (owner decision
-# 2026-08-08, fleet-wide): a final docs-only push keeps its review evidence
-# instead of forcing one more re-review round. "comments" is deliberately
-# NOT enabled — its classifier is line-lexical and cannot see enclosing
-# heredocs/multiline strings; "docs" has no such residual. Code changes
-# always require fresh evidence.
+# Carry ancestor evidence for documentation changes. Comment carry is disabled
+# because its line classifier cannot recognize enclosing strings or heredocs.
 REVIEW_GATE_CARRY_FORWARD = "docs"
 
-# The engine's one-switch per-repo gate disable (kendex#1126, owner ask):
-# "enforce" is the full gate; "off" makes the predicate answer approved with
-# a disabled-by-settings attestation before any evidence read — the writer
-# keeps the required status green and merging gates on CI alone; orch skips
-# its reviewer wait. Flip to "off" here to turn this repo's review gate off.
+# Enforce requires review evidence. Off posts a disabled-by-settings status
+# and skips the reviewer wait; CI remains required.
 REVIEW_GATE_MODE = "enforce"
-# Policy-bearing markdown and vendored engine/skill trees are "docs" by
-# extension but are obeyed mechanically by agents and reviewers — a push
-# editing them gets a fresh review instead of carrying ancestor evidence
-# (closes the residual accepted when the docs class was enabled).
-# High-risk path classes (VGS-112, review-bots.md § Risk classes) never
-# carry either. Code files already cannot carry mechanically — the "docs"
-# class matches only markdown — so each addition names what it closes:
-#   scripts/*            — the validation/release machinery as a whole
-#                          (check-/test-/gen-/smoke/qml-smoke harnesses
-#                          plus scripts/lib; widened from check-* in
-#                          PR #120 review — anything ci-ok runs is gate
-#                          machinery). Inert under "docs" (no markdown
-#                          there today); holds if a comment-carry class
-#                          is ever enabled.
-#   kendex.settings.toml — this file: the gate's own trust config, whose
-#                          comments carry the policy rationale. Same
-#                          future-proofing.
-#   kendex.toml          — source of the rendered reviewer/skill
-#                          instructions ([skill-instructions]); a policy
-#                          input like this file, same future-proofing
-#                          (PR #120 review).
-#   packaging/*          — packaging READMEs classify "docs" and would
-#                          carry; they are install instructions.
-#   backend/*            — backend/ATTRIBUTION.md and vendored Go-module
-#                          markdown classify "docs" and would carry.
-#   .agents/*            — the whole committed render tree, taken as one
-#                          because per-skill globs would need an edit on every
-#                          kendex refresh. The in-place skills ride along, and
-#                          that only forces fresh review evidence they already
-#                          deserve. Succeeds project-skills/*, deleted by
-#                          KEN-938.
-# Lock/idle/greeter QML needs no glob: no carry class matches .qml.
+# Require fresh evidence for policy instructions and installation guidance.
+# Exclude harness trees as a whole so new rendered skills inherit this rule.
+# Code paths are also excluded to retain this boundary if comment carry is enabled.
 REVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*AGENTS.md;*CLAUDE.md;.github/*;*review-bots.md;third_party/*;.agents/*;scripts/*;kendex.settings.toml;kendex.toml;packaging/*;backend/*"
 
 # Declared agent-routing label set (e.g. "agent:generalist, agent:rust").
@@ -314,8 +149,7 @@ REVIEW_GATE_API_ATTEMPTS = "1"
 
 REVIEW_GATE_API_RETRY_DELAY_SECONDS = "2"
 
-# Repo instruction files appended to the review prompt: the root map, the nested
-# AGENTS.md files carrying the path-scoped rules, and both bot-context surfaces.
+# Repository instruction files appended to the review prompt.
 SECOND_OPINION_REVIEW_INSTRUCTIONS = "AGENTS.md backend/AGENTS.md bin/AGENTS.md scripts/AGENTS.md themes/AGENTS.md quickshell/vshell/AGENTS.md config/vshell/AGENTS.md .github/workflows/AGENTS.md review-bots.md .github/copilot-instructions.md"
 
 # Seconds per brief-delivery verification pass on tmux handoff lanes.
@@ -331,14 +165,8 @@ REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = ""
 # MERGE_READY = false never auto-merges.
 ORCH_MERGE_AUTONOMY = "auto"
 
-# Used by: orch (`lanes`, `open-terminal --lane`). Optional alias overlay for
-# multi-account machines: comma-separated `<config-dir-name>=<alias>` pairs
-# giving discovered lanes meaningful names, usable as `--lane <alias>`. The
-# lane INVENTORY is always discovered (~/.claude plus any ~/.*claude* dir, and
-# ~/.codex), so adding an account needs no edit here — this only renames what
-# discovery already found. ORCH_LANE_DIRS (colon-separated) covers a layout
-# discovery cannot reach.
-# ORCH_LANE_ALIASES = "eclaude=work,mclaude=overflow"
+# ORCH_LANE_ALIASES (optional) maps config-directory names to lane names.
+# Discovery owns the lane inventory; ORCH_LANE_DIRS covers other layouts.
 
 # Used by: orch (`oversee`). Max concurrent lanes the overseer keeps in
 # flight.
@@ -359,9 +187,8 @@ REVIEW_GATE_REVIEW_OBJECT_ERROR_PATTERNS = "encountered an error and was unable 
 # dead reviewer.
 PR_REVIEW_QUORUM = ""
 
-# SECOND OPINION — cross-model review (second-opinion skill).
-# One reviewer by default: the highest-priority roster entry that is
-# AVAILABLE and is NOT the model this session runs. Full semantics: second-opinion SKILL.md.
+# Cross-model review selects an available roster entry distinct from this session.
+# See the second-opinion skill for selection rules.
 
 # Priority-ordered roster, space/comma separated. Per entry:
 # SECOND_OPINION_<NAME>_CMD (claude and codex have defaults) and
@@ -376,11 +203,6 @@ SECOND_OPINION_COUNT = "1"
 # left alone — ignore it yourself).
 SECOND_OPINION_ARTIFACT_DIR = "tmp/second-opinion"
 
-# GROWTH GUARDS — repo growth checks (growth-guards skill).
-# Project-scope `kendex add` / `kendex refresh` merge these defaults into
-# <project>/kendex.settings.toml (never overwriting existing keys). Every
-# other GROWTH_GUARDS_* key ships a working default; the full list is in the
-# skill's SKILL.md.
 
 # Repo-local check the pre-commit shim runs LAST: a repo-root-relative
 # executable following the family exit contract (0 clean, 1 violations,
@@ -395,8 +217,7 @@ GROWTH_GUARDS_MD_SCOPE = "all"
 # re-entry refuses once cycles is past it.
 REVIEW_MAX_CYCLES = "4"
 
-# The repo's own validation command: the same checks the pre-commit hook
-# runs, so a skill validating a change gets the answer that will gate it.
+# Optional repository validation command. Empty leaves validation to the workflow.
 DEV_VALIDATE_CMD = ""
 
 # Optional extra verification command for GitHub-side checks; empty means
@@ -415,9 +236,7 @@ BOT_REMOTE_NAME = ""
 # GitHub login the bot acts as; empty means the default account.
 GH_BOT_USERNAME = ""
 
-# Max external (gh bot) review rounds per PR before findings get
-# dispositions instead of fix pushes. Read by tooling landing with KEN-592;
-# harmless to set early.
+# Maximum external review rounds before findings receive dispositions.
 REVIEW_MAX_EXTERNAL_ROUNDS = "4"
 
 # The kendex render trees "vendored" trusts as kendex output, e.g.

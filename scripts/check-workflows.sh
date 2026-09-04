@@ -1,22 +1,20 @@
 #!/usr/bin/env bash
-# Lint .github/workflows, INCLUDING the shell inside every `run:` block.
+# Lint GitHub workflows and the shell code in their run blocks.
 #
-# actionlint lints `run:` blocks by shelling out to shellcheck. With shellcheck
-# absent it skips every shell block, reports nothing about the omission, and
-# exits 0 — so "actionlint clean" on a workflow full of inline bash can mean
-# only "the YAML parsed". That false green was produced by the very tool used to
-# validate the workflow whose purpose is to stop checks passing without checking
-# (VGS-38).
+# Usage: scripts/check-workflows.sh [--allow-missing-tools]
 #
-# So this wrapper applies the house rule from qml-smoke.sh's --require-static: a
-# check that cannot run must FAIL, not skip. Missing tooling is an error here,
-# never a quiet degradation.
+# --allow-missing-tools: report a skip when required tools are absent.
+# -h, --help: print this help.
 #
-#   scripts/check-workflows.sh          fail if actionlint or shellcheck is absent
-#   scripts/check-workflows.sh --allow-missing-tools
-#                                       report the absence and skip; for a
-#                                       developer machine that has neither, never
-#                                       for CI or an automated run
+# Requires actionlint and shellcheck on PATH.
+# actionlint checks workflow syntax and job references.
+# Embedded shell code is checked by shellcheck.
+# Missing tools fail by default.
+# Use default mode for CI and required validation.
+# Workflow files belong in .github/workflows.
+# Both .yml and .yaml files are checked.
+# An empty workflow directory fails.
+# Tool findings cause a nonzero exit.
 set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -36,8 +34,7 @@ fail() { printf 'check-workflows: FAIL: %s\n' "$*" >&2; }
 
 missing=()
 command -v actionlint >/dev/null 2>&1 || missing+=("actionlint")
-# actionlint invokes shellcheck by name; a shellcheck on PATH is the only thing
-# that makes its `run:` linting real.
+# actionlint invokes shellcheck by name, so it must be available on PATH.
 command -v shellcheck >/dev/null 2>&1 || missing+=("shellcheck")
 
 if [[ ${#missing[@]} -gt 0 ]]; then

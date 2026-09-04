@@ -1,10 +1,6 @@
-// Package cloudsync provides consumer-style cloud file sync on top of rclone.
-//
-// The service supervises a single `rclone rcd` process and drives it over the
-// rclone remote control API. It owns every long-lived concern — the daemon
-// lifecycle, configured accounts, sync-folder definitions, schedules, the
-// inotify watcher, FUSE mounts, job history and conflict state — so QML stays
-// presentation only.
+// Package cloudsync manages rclone accounts, sync jobs, schedules, filesystem
+// watches, mounts, and conflict state. It owns the rclone control daemon; QML
+// consumes its state.
 package cloudsync
 
 // Mode is how one synced folder is kept in step with the cloud. There is
@@ -13,8 +9,7 @@ package cloudsync
 type Mode string
 
 const (
-	// ModeTwoWay mirrors both directions with rclone bisync. Closest to the
-	// Google Drive desktop experience, and the only mode that can produce
+	// ModeTwoWay syncs in both directions with rclone bisync and can produce
 	// conflicts.
 	ModeTwoWay Mode = "twoway"
 	// ModeBackup is one-way local -> cloud.
@@ -143,13 +138,12 @@ type Quota struct {
 // Account health, reported per account so the UI can show a passive status
 // instead of making the user press a "test" button to find out.
 const (
-	// HealthUnknown means no check has completed yet — the account is new, or
-	// the daemon has not finished its first pass.
+	// HealthUnknown means no account check has completed.
 	HealthUnknown  = "unknown"
 	HealthChecking = "checking"
 	HealthOK       = "ok"
-	// HealthError means the last check failed. Usually an expired token, which
-	// Reconnect fixes without losing the folders that point at this account.
+	// HealthError means the last account check failed. An expired token can require
+	// Reconnect.
 	HealthError = "error"
 )
 
@@ -169,9 +163,8 @@ type Account struct {
 	// OAuth reports that this account was created by a browser sign-in, which
 	// is what makes Reconnect possible.
 	OAuth bool `json:"oauth"`
-	// ClientID is the user's own API credential when they supplied one. Not a
-	// secret (the paired secret is never exposed), but Reconnect needs it to
-	// re-run the same sign-in.
+	// ClientID supplies the public API identifier for reconnect. The paired client
+	// secret is omitted from this account snapshot.
 	ClientID string `json:"clientId"`
 
 	Quota       *Quota `json:"quota"`
@@ -181,8 +174,8 @@ type Account struct {
 	Folders     int    `json:"folders"`
 }
 
-// DisplayName is the label if the user set one, else the provider name, else
-// the raw remote name. Never empty.
+// DisplayName returns the user label, provider name, or remote name in that
+// order.
 func (a Account) DisplayName() string {
 	return firstNonEmpty(a.Label, a.Provider, a.Name)
 }
@@ -306,8 +299,8 @@ type State struct {
 	OAuth         OAuthState     `json:"oauth"`
 }
 
-// defaultSettings are applied on first run and used to fill zero values from an
-// older config file.
+// defaultSettings supplies initial values and fills omitted configuration
+// fields.
 func defaultSettings() Settings {
 	return Settings{
 		Transfers:          4,

@@ -149,7 +149,7 @@ Item {
             const ripplePos = mouseArea.mapToItem(visualContent, mouse.x, mouse.y);
             rippleLayer.trigger(ripplePos.x, ripplePos.y);
             if (popoutTarget) {
-                // Ensure bar context is set first if supported
+
                 if (popoutTarget.setBarContext) {
                     const pos = root.axis?.edge === "left" ? 2 : (root.axis?.edge === "right" ? 3 : (root.axis?.edge === "top" ? 0 : 1));
                     const bottomGap = root.barConfig ? (root.barConfig.bottomGap !== undefined ? root.barConfig.bottomGap : 0) : 0;

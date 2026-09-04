@@ -7,13 +7,8 @@ import qs.Services
 import qs.Widgets
 import qs.Modules.Settings.Widgets
 
-// Settings -> Scratchpads. Edits the persisted `scratchpads` list; every write
-// goes through SettingsData.set, which fires the updateScratchpads hook and
-// regenerates the compositor config through ScratchpadService.
-//
-// Nothing here computes geometry or renders config text: sizes are stored as
-// percentages and resolved by bin/vshell-helper against the real monitor at
-// apply time. See docs/architecture/scratchpads.md.
+// Scratchpad settings write through SettingsData.set to regenerate compositor configuration.
+// The helper resolves stored percentage geometry against the monitor at apply time.
 Item {
     id: root
 
@@ -46,8 +41,7 @@ Item {
     readonly property var presentationOptions: [I18n.tr("Floating"), I18n.tr("Tiled"), I18n.tr("Fullscreen")]
     readonly property var presentationValues: ["float", "tile", "fullscreen"]
 
-    // "Follow focus" is first and is the default: it is the only choice that is
-    // right on a machine whose monitors come and go.
+
     readonly property var monitorOptions: {
         const names = [I18n.tr("Follow focus")];
         const screens = Quickshell.screens || [];
@@ -65,18 +59,14 @@ Item {
 
     Component.onCompleted: {
         ScratchpadService.refreshStatus();
-        // KeybindsService does not load on its own — every consumer asks. Without
-        // this `displayList` stays empty, so the conflict check below compared
-        // against nothing and reported "no conflict" for every key on the
-        // system: a warning that could not fire, which is worse than none.
+        // KeybindsService loads on request. Load before checking conflicts or the empty cache hides existing bindings.
         KeybindsService.loadBinds(false);
         root.refreshAllMatches();
     }
 
     onPadsChanged: root.refreshAllMatches()
 
-    // A class match claims every instance of the application, so the page has
-    // to say how wide each pad's pattern actually is right now.
+
     function refreshAllMatches() {
         if (!root.supported)
             return;
@@ -92,10 +82,7 @@ Item {
         return options[index >= 0 ? index : fallbackIndex];
     }
 
-    // --- persistence -------------------------------------------------------
-    // Every mutation rewrites the whole list. The list is small and this keeps
-    // one write path, so the regeneration hook cannot be missed by a caller
-    // that mutated an element in place.
+    // Rewrite the list through the shared setter so in-place mutations cannot skip configuration regeneration.
     function writePads(next) {
         SettingsData.set("scratchpads", next);
     }
@@ -105,17 +92,7 @@ Item {
     }
 
     function removePad(padId) {
-        // Hand any already-mapped window back to the active workspace BEFORE
-        // the record goes away. Removing a pad deletes its keybind and every
-        // rule pointing at its special workspace, so a window left there would
-        // be unreachable without hyprctl by hand — still running, still holding
-        // whatever was open in it, and invisible.
-        //
-        // Both match criteria are passed explicitly rather than looked up,
-        // because the helper would otherwise read settings that this function
-        // is about to rewrite. The exclusion travels with the class so that
-        // removing a pad cannot relocate a same-class window the user
-        // deliberately excluded from it.
+        // Release mapped windows before removing the pad and its keybind. Pass class and exclusion explicitly because settings will change.
         const pad = root.pads.find(entry => entry.id === padId);
         if (!pad) {
             root.removeError = "";
@@ -124,15 +101,11 @@ Item {
         if (root.removing === padId || root.disabling === padId)
             return;
         if (!ScratchpadService.supported) {
-            // Nothing to strand: no compositor means no mapped window.
+            // Skip window release when neither supported compositor is active.
             root._deletePad(padId);
             return;
         }
-        // Wait for the release. Deleting first would throw the result away and
-        // remove the record whether or not the window ever moved — leaving it on
-        // a special workspace that no longer has any rule or keybind pointing at
-        // it, which is exactly what releasing exists to prevent. A pad that will
-        // not release is a better state than an unreachable window.
+        // Wait for window release before deleting the record and its keybind. Failure must leave the pad reachable.
         root.removing = padId;
         root.removeError = "";
         ScratchpadService.release(padId, pad.classRegex || "", pad.titleExclude || "", (ok, error) => {
@@ -145,26 +118,13 @@ Item {
         });
     }
 
-    // Enabling is an ordinary field write. DISABLING is not: regeneration drops
-    // the pad's rules and its keybind, so a pad still on screen would be left
-    // visible with nothing left to dismiss it — the keybind that was the escape
-    // hatch disappears in the same operation the user just performed.
-    //
-    // Order: hide FIRST, write second. Both failure modes stay recoverable.
-    //   - hide fails      -> the write is skipped, the pad stays enabled, its
-    //                        keybind still works, and the reason is shown.
-    //   - hide succeeds,
-    //     write/regen fails -> the window is already down, and the pad can be
-    //                        re-enabled from this page.
-    // The reverse order has no safe failure: once the bind is gone, a failed
-    // hide leaves a visible window with no way to reach it.
+    // Hide before disabling: regeneration removes the pad's rules and keybind.
+    // If hide fails, keep the pad enabled so its keybind can still dismiss it.
     function setPadEnabled(padId, enabled) {
         const pad = root.pads.find(entry => entry.id === padId);
         if (!pad)
             return;
-        // The control is gated too, but that gate is presentational; this is the
-        // one that holds if anything else ever calls in. The model reads
-        // `enabled` for the whole hide, because the write is deliberately last.
+        // Hold repeated disables at the function boundary too; enabled remains true until hide completes.
         if (root.disabling === padId || root.removing === padId)
             return;
         if (enabled || !ScratchpadService.supported) {
@@ -205,10 +165,7 @@ Item {
         writePads(next);
     }
 
-    // --- derivation --------------------------------------------------------
-    // The class regex is derived rather than typed. A slightly wrong regex is
-    // the single most common way a scratchpad silently lands on the active
-    // workspace instead of its own, and it gives no feedback when it happens.
+    // Derive the class pattern from the desktop entry to reduce manual window-class mismatches.
     function escapeRegex(text) {
         return String(text || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     }
@@ -221,31 +178,14 @@ Item {
         const fallback = String(app?.id || "").replace(/\.desktop$/, "");
         const source = declared || fallback;
 
-        // Match the declared spelling AND its lower-case form. Apps do not
-        // reliably map with the case they declare: 1Password ships
-        // `StartupWMClass=1Password` and maps as `1password`, so the derived
-        // `^(1Password)$` matched NOTHING — a scratchpad that silently never
-        // worked. Measured on a live session: `^(1Password)$` -> 0 windows,
-        // `^(1Password|1password)$` -> 1.
-        //
-        // Plain alternation rather than an inline `(?i)` flag, because the
-        // pattern is handed to Hyprland's own matcher and alternation is the
-        // form already proven to work in hand-written configs here. It widens
-        // the match only across case variants of one identity, never to a
-        // different application.
+        // Match the declared class and its lowercase form: applications can use a different case from StartupWMClass.
+        // Use explicit alternatives for the compositor matcher.
         const folded = source.toLowerCase();
         const forms = folded === source ? [source] : [source, folded];
         return "^(" + forms.map(root.escapeRegex).join("|") + ")$";
     }
 
-    // Re-derive the class regex from a pad's stored appId. Turning "match
-    // automatically" back on used to only hide the editor and persist the flag,
-    // so the row read "automatic" while the stale MANUAL regex stayed in use —
-    // the setting described something that was not happening.
-    //
-    // Returns "" when there is nothing to derive from (the pad was hand-made,
-    // or the app is no longer installed). The caller must not silently claim
-    // automatic matching in that case.
+    // Derive the class pattern from the stored appId. Return empty if the app has no usable entry; callers must reject automatic matching.
     function autoClassRegexFor(padAppId) {
         const id = String(padAppId || "");
         if (!id)
@@ -299,10 +239,7 @@ Item {
         root.expandedId = id;
     }
 
-    // --- keybind capture ---------------------------------------------------
-    // Normalized so a bind captured here ("SUPER, T") can be compared against
-    // what `hyprctl binds` reports ("Super+T"). Without this the conflict check
-    // would quietly never fire, which is worse than not having one.
+    // Normalize captured chords and compositor chords to the same spelling before conflict checks.
     function normalizeCombo(text) {
         const parts = String(text || "").toUpperCase().split(/[+,]/).map(p => p.trim()).filter(p => p.length > 0);
         const order = ["SUPER", "CTRL", "ALT", "SHIFT"];
@@ -315,17 +252,11 @@ Item {
         const combo = root.normalizeCombo(keybind);
         if (!combo)
             return "";
-        // Another pad first: that is a conflict VGS created and can fix.
+
         const twin = root.pads.find(pad => pad.id !== padId && root.normalizeCombo(pad.keybind) === combo);
         if (twin)
             return I18n.tr("Already used by \"%1\"").arg(twin.name || twin.id);
-        // Then the compositor's own binds. Once this pad has been applied its
-        // OWN generated bind is in that list, so it has to be skipped or every
-        // saved keybind would report a conflict with itself.
-        //
-        // Matched on the description, not the action: displayList entries carry
-        // only {id, type, key, desc} — there is no `action` field on them, so
-        // the previous action-based exclusion could never match anything.
+        // Skip this pad's generated bind by description. displayList entries have no action field.
         const self = root.pads.find(pad => pad.id === padId);
         const ownDescription = "Scratchpad: " + ((self && (self.name || self.id)) || padId);
         const list = KeybindsService.displayList || [];
@@ -340,15 +271,7 @@ Item {
         return "";
     }
 
-    // Keys that carry no usable `event.text`, mapped to the names Hyprland's
-    // keybind parser expects. Without this the capture accepted only keys that
-    // produce a single printable character, so F1-F12, Print and the XF86 media
-    // keys could not be bound at all — and a scratchpad on F12 is one of the
-    // most common shapes there is.
-    //
-    // Returns "" for anything unmapped, including the modifier keys themselves,
-    // which is how a press that is only modifiers is ignored while the user is
-    // still assembling a chord.
+    // Map non-text keys to compositor key names. Return empty for unmapped keys, including modifiers while a chord is incomplete.
     function namedKeyFor(key) {
         if (key >= Qt.Key_F1 && key <= Qt.Key_F12)
             return "F" + (key - Qt.Key_F1 + 1);
@@ -421,11 +344,7 @@ Item {
         if (event.modifiers & Qt.ShiftModifier)
             mods.push("SHIFT");
 
-        // The named lookup comes FIRST and its case is preserved. Several of
-        // these keys do carry a single character of `text` — Return is "\r",
-        // Escape "\x1b", Backspace "\b" — so a text-first rule would bind a raw
-        // control character, and upper-casing would break "Page_Up" and the
-        // XF86 names, which Hyprland matches as written.
+        // Prefer named keys before event.text: Return and Escape carry control characters. Preserve compositor key-name case.
         const named = root.namedKeyFor(event.key);
         const text = String(event.text || "").trim().toUpperCase();
         const key = named || (text.length === 1 ? text : "");
@@ -457,7 +376,7 @@ Item {
             topPadding: Theme.spacingS
             spacing: Theme.spacingXL
 
-            // A compositor with no backend is a stated no-op, not a silent one.
+
             SettingsCard {
                 width: parent.width
                 visible: !root.supported
@@ -473,8 +392,7 @@ Item {
                 }
             }
 
-            // Niri works, but not identically, and saying so beats letting the
-            // difference be discovered as a bug.
+
             SettingsCard {
                 width: parent.width
                 visible: ScratchpadService.onNiri
@@ -490,9 +408,7 @@ Item {
                 }
             }
 
-            // Settings that are stored and shown but cannot be honoured here.
-            // Reported rather than silently ignored: a value the compositor
-            // drops is exactly the surface that looks maintained and is not.
+
             SettingsCard {
                 width: parent.width
                 visible: root.supported && (ScratchpadService.unsupported || []).length > 0
@@ -513,8 +429,7 @@ Item {
                 }
             }
 
-            // A failed apply used to leave the previous status on screen and say
-            // nothing, so the page kept reporting rules that were never written.
+
             SettingsCard {
                 width: parent.width
                 visible: root.supported && ScratchpadService.lastError.length > 0
@@ -562,9 +477,7 @@ Item {
                 }
             }
 
-            // Pads the helper refused. A rejected pad generates no rules at all,
-            // so without this the scratchpad would simply stop working while the
-            // list below still showed it as configured.
+            // Show helper refusals because rejected pads generate no compositor rules.
             SettingsCard {
                 width: parent.width
                 visible: root.supported && (ScratchpadService.problems || []).length > 0
@@ -585,10 +498,7 @@ Item {
                 }
             }
 
-            // The status query failed, so whether the generated file is wired up
-            // is genuinely unknown. Saying so beats showing either answer: a
-            // silent page would imply "included", and the warning below would
-            // assert a problem nothing established.
+            // A failed status query cannot establish whether the generated file is included.
             SettingsCard {
                 width: parent.width
                 visible: root.supported && root.pads.length > 0 && ScratchpadService.status.included === null
@@ -613,8 +523,7 @@ Item {
                 }
             }
 
-            // The generated file does nothing until hyprland.lua requires it,
-            // and VGS does not edit that file — so say exactly what to add.
+            // Hyprland must require the generated file. VGS leaves that include to the user.
             SettingsCard {
                 width: parent.width
                 visible: root.supported && root.pads.length > 0 && ScratchpadService.status.included === false

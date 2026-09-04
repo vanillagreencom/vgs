@@ -130,10 +130,7 @@ BasePill {
         }
     }
 
-    // Bar icons stay a single consistent color. Every glyph in this group
-    // already changes with state (wifi bars, bluetooth_connected, mic_off,
-    // battery level), so tinting was redundant. Do Not Disturb is the one
-    // exception: it is a mode the user needs to spot at a glance.
+    // Glyphs already change with state. Do Not Disturb is a mode the user must spot at a glance, so it alone is tinted.
     function groupIconColor(id) {
         return id === "doNotDisturb" ? Theme.error : Theme.widgetIconColor;
     }

@@ -12,7 +12,6 @@ import (
 
 const maxPersistedIntervalSeconds = 366 * 24 * 60 * 60
 
-// remoteFs renders the folder's cloud side as an rclone fs string.
 func (f Folder) remoteFs() string {
 	clean := strings.Trim(strings.TrimSpace(f.RemotePath), "/")
 	if clean == "" {
@@ -21,7 +20,6 @@ func (f Folder) remoteFs() string {
 	return f.Remote + ":" + clean
 }
 
-// displayName falls back to the local basename so a folder always has a label.
 func (f Folder) displayName() string {
 	if strings.TrimSpace(f.Name) != "" {
 		return f.Name
@@ -32,8 +30,8 @@ func (f Folder) displayName() string {
 	return f.remoteFs()
 }
 
-// remoteTrash is the cloud-side recycle bin for this folder. Kept beside the
-// synced tree rather than inside it so it is never itself synced.
+// remoteTrash places the remote recycle bin outside this folder's synced tree so
+// this pair does not sync its own backups.
 func (f Folder) remoteTrash() string {
 	base := strings.Trim(strings.TrimSpace(f.RemotePath), "/")
 	if base == "" {
@@ -136,8 +134,8 @@ func (m *Manager) resolveLocalPath(f Folder) (string, error) {
 	return filepath.Clean(local), nil
 }
 
-// validateFolder enforces the rules that keep sync from eating data: no syncing
-// the whole home directory, no two folders fighting over overlapping trees.
+// validateFolder rejects home and filesystem roots and overlapping configured
+// pairs to prevent competing sync jobs.
 func (m *Manager) validateFolder(f Folder) error {
 	home, err := os.UserHomeDir()
 	if err == nil {
@@ -177,7 +175,6 @@ func (m *Manager) validateFolder(f Folder) error {
 	return nil
 }
 
-// pathsOverlap reports whether either path contains the other.
 func pathsOverlap(a, b string) bool {
 	if a == "" || b == "" {
 		return false
@@ -198,7 +195,7 @@ func remotePathsOverlap(a, b string) bool {
 		return true
 	}
 	if a == "" || b == "" {
-		return true // one side is the whole remote
+		return true
 	}
 	return strings.HasPrefix(a, b+"/") || strings.HasPrefix(b, a+"/")
 }
@@ -249,7 +246,6 @@ func expandHome(p string) string {
 	return p
 }
 
-// sanitizeDirName keeps a mount directory name to something safe for a path.
 func sanitizeDirName(name string) string {
 	replacer := strings.NewReplacer("/", "-", "\\", "-", ":", "-", "\x00", "")
 	out := strings.TrimSpace(replacer.Replace(name))

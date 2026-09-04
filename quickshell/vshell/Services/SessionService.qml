@@ -10,7 +10,7 @@ import qs.Services
 Singleton {
     id: root
 
-    // Keep old Sway/I3 branches inert without loading Quickshell.I3.
+    // Keep unsupported compositor branches inert without importing Quickshell.I3.
     QtObject {
         id: i3Shim
         readonly property var workspaces: ({ values: [] })
@@ -304,7 +304,6 @@ Singleton {
         });
     }
 
-    // * Session management
     function logout() {
         if (hasUwsm) {
             uwsmLogout.running = true;
@@ -390,7 +389,6 @@ Singleton {
         }
     }
 
-    // * Idle Inhibitor
     signal inhibitorChanged
 
     function enableIdleInhibit() {

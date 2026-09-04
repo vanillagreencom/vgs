@@ -16,7 +16,7 @@ Item {
     implicitHeight: size
 
     function pathPosition(index) {
-        // Trace the perimeter before pulsing the center, like a tiny terminal cursor.
+
         const path = [0, 1, 2, 5, 8, 7, 6, 3, 4];
         return path.indexOf(index);
     }

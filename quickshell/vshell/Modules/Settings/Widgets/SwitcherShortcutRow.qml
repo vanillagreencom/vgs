@@ -6,15 +6,8 @@ import qs.Services
 import qs.Widgets
 import "../../../Common/KeyUtils.js" as KeyUtils
 
-// One shortcut, offered where the thing it opens is configured: the wallpaper
-// and theme pages each carry the bind for their own full-screen switcher, so a
-// user who has just found the switcher does not have to go looking for it in
-// the keybinds editor.
-//
-// The bind itself still lives where every other bind lives — this writes
-// through `KeybindsService` to the compositor's VGS binds file, and the
-// keybinds editor shows and can change the same row. Capture is
-// `KeybindCaptureField`, shared with that editor, so a chord is decoded once.
+// Configure a switcher shortcut through KeybindsService so the keybind editor sees the same binding.
+// KeybindCaptureField shares chord decoding with that editor.
 Rectangle {
     id: root
 
@@ -37,21 +30,12 @@ Rectangle {
     readonly property int keybindDataVersion: KeybindsService._dataVersion
     readonly property bool available: KeybindsService.available
     readonly property bool readOnly: KeybindsService.readOnly
-    // A bind saved into the VGS binds file does nothing until the compositor
-    // config includes that file. Saying so here is the difference between a
-    // shortcut that did not take and a shortcut that silently went nowhere.
+    // Saved bindings have no effect until the compositor includes the generated binds file.
     readonly property bool needsSetup: root.available && !KeybindsService.vgsBindsIncluded
-    // Nothing may be captured until a bind read has actually completed.
-    // `loadBinds(false)` deliberately suppresses `loading`, so before the first
-    // read lands `getFlatBinds()` is empty, `pendingConflicts` reports no owner
-    // for ANY chord, and a capture commits straight through — and `keybinds
-    // set` deletes the existing entry for that key on its way past. Zero is the
-    // pre-read value; the service bumps it on every load and every save.
+    // Wait for a completed bind read before capture. loadBinds(false) does not set loading, and an empty cache hides conflicts.
+    // Saving an unchecked chord would replace its existing binding.
     readonly property bool bindsReady: KeybindsService._dataVersion > 0
-    // A chord captured that another action already owns. `keybinds set` deletes
-    // every existing entry for a key before appending the new one, so saving
-    // straight through would silently take the other shortcut away — the
-    // keybinds editor checks the same way before it writes.
+    // Replacing a chord removes its existing bindings. Wait for confirmation when another action owns it.
     property string pendingKey: ""
     readonly property var pendingConflicts: {
         void (root.keybindDataVersion);
@@ -61,15 +45,10 @@ Rectangle {
     }
 
     function commit(token) {
-        // `saving` is checked HERE and not only on the controls: one save
-        // process with no queue means a second `saveBind` assigns `running` to
-        // an already-running Process, which launches nothing and drops the
-        // chord silently.
+        // Check saving inside commit: assigning running to an active Process cannot queue another save.
         if (!token || token === root.boundKey || KeybindsService.saving || !root.bindsReady)
             return;
-        // `originalKey` is what makes this a MOVE rather than a second bind for
-        // the same action: without it the old chord keeps working and the row
-        // shows only one of them.
+        // Pass originalKey so changing a chord removes the previous binding for this action.
         KeybindsService.saveBind(root.boundKey, {
             "key": token,
             "action": root.action,
@@ -120,15 +99,11 @@ Rectangle {
 
             StyledText {
                 width: parent.width
-                // The compositor answer outranks the row's own description:
-                // offering a capture field on a compositor VGS cannot write
-                // binds for would be an affordance that does nothing.
+
                 text: {
                     if (!root.available)
                         return I18n.tr("Set this shortcut in your compositor config — VGS cannot write binds for it");
-                    // Hyprland binds are read live from `hyprctl` and VGS has no
-                    // writer for them, so the capture field would only ever warn.
-                    // Say it here instead of offering a control that refuses.
+
                     if (root.readOnly)
                         return KeybindsService.vgsStatus.statusMessage || I18n.tr("VGS reads these binds read-only — change this shortcut in your compositor config");
                     if (root.needsSetup)
@@ -146,8 +121,7 @@ Rectangle {
                 width: parent.width
                 spacing: Theme.spacingS
                 visible: root.pendingConflicts.length > 0
-                // This row sits OUTSIDE the controls row, so it needs the save
-                // guard of its own — `commit()` enforces it either way.
+                // This row is outside the controls group and needs its own save-state gate.
                 enabled: !KeybindsService.saving
                 opacity: enabled ? 1 : 0.5
 
@@ -184,13 +158,9 @@ Rectangle {
             id: controls
             anchors.verticalCenter: parent.verticalCenter
             spacing: Theme.spacingS
-            // Nothing to offer when VGS cannot write the compositor's binds.
+
             visible: root.available && !root.readOnly
-            // And nothing to accept while a save is running: KeybindsService
-            // owns ONE `saveProcess` and has no queue, so a second `saveBind`
-            // assigns `running = true` to a process that is already running —
-            // which launches nothing and drops the later chord silently.
-            // `enabled` propagates, so this covers capture, Replace and Delete.
+            // Disable capture, replacement and deletion during saves. The service has one saveProcess and no queue.
             enabled: !KeybindsService.saving && root.bindsReady
             opacity: enabled ? 1 : 0.5
 
@@ -214,8 +184,7 @@ Rectangle {
                 onRecordingRefused: KeybindsService.showHyprlandReadOnlyWarning()
                 onCaptured: token => {
                     root.pendingKey = token;
-                    // Only a chord nothing else owns is written straight
-                    // through; a taken one waits for Replace.
+
                     if (root.pendingConflicts.length === 0)
                         root.commit(token);
                 }

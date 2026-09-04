@@ -28,15 +28,8 @@ Singleton {
     property string lastMessage: ""
     property string lastError: ""
     property var blueprints: []
-    // A failed list/wallpapers read leaves the corresponding array empty, which
-    // reads identically to a genuinely empty set. UI that asserts "you have
-    // none" must check these first.
-    //
-    // Each flag carries its OWN error text. `lastError` is a shared slot that
-    // every `_run` clears at dispatch and overwrites in its callback, so a
-    // surface that fires four commands and then reads `lastError` renders
-    // whichever one failed LAST — and watches it mutate, or blank out, under the
-    // user. These are written only by the read that owns the flag.
+    // Keep error state separate for each read so concurrent operations cannot overwrite its explanation.
+    // Consumers must check the corresponding flag before treating an empty list as a valid result.
     property bool blueprintsLoadFailed: false
     property string blueprintsLoadError: ""
     property bool wallpapersLoadFailed: false
@@ -100,12 +93,8 @@ Singleton {
     signal wallpapersLoaded
     signal appRolesLoaded(string app)
     signal applyCompleted(bool success, string message)
-    // The SAME completion, carrying the id of the request it answers. A surface
-    // that started one apply and wants to report only that apply's outcome
-    // cannot use `applyCompleted`: 19 unrelated operations emit it from over 40
-    // sites, so "the next one" is whichever command happened to land first.
-    // Emitted only by `_finishApply`, which `applyBlueprint`/`setWallpaper` —
-    // the two a switcher starts — are the only callers of.
+    // Completion with the originating request id lets switchers identify their own apply result.
+    // applyCompleted also reports unrelated operations.
     signal applyFinished(string requestId, bool success, string message)
 
     // Apply requests still running, keyed by a request id that is unique per
@@ -115,9 +104,7 @@ Singleton {
     // while the switcher's own background reads are still in flight.
     property var _applyInFlight: ({})
     readonly property bool applyInFlight: Object.keys(_applyInFlight).length > 0
-    // Monotonic, so no two calls ever share a request id. A NAME is not an
-    // identity — `setWallpaper` uses one constant for every wallpaper — so two
-    // overlapping calls shared a key and the first completion emptied the set.
+    // Use a unique id per call so overlapping applies retain separate completion records.
     property int _applyRequestSeq: 0
     // The apply request that last claimed `selectedWallpaper`, or "" when none
     // does. Keyed on the REQUEST, never the path — see `_ownsWallpaperSlot`.
@@ -438,14 +425,8 @@ Singleton {
         });
     }
 
-    // One sweep per session, and only when an entry is actually missing its
-    // thumbnail. Dispatched AFTER the list is published, as a background task,
-    // so opening the switcher never waits on it: the rail falls back to the
-    // originals meanwhile and simply gets faster once the sweep lands.
-    //
-    // `--all` covers every installed theme, not just the current one, so
-    // switching themes does not pay a fresh decode; it also prunes entries no
-    // wallpaper claims any more, which is only correct over the complete set.
+    // Sweep missing thumbnails in the background after publishing the list.
+    // The all-themes scope also permits pruning entries absent from the complete wallpaper set.
     property bool _thumbSweepInFlight: false
     // Attempts per cache IDENTITY, not per path. `thumbKey` folds in the
     // source's size and mtime, so overwriting a wallpaper in place mints a new
@@ -473,11 +454,7 @@ Singleton {
     }
 
     // BEGIN THUMBNAIL SWEEP DECISION
-    // The sweep's state machine, with every input an argument so
-    // scripts/test-thumb-sweep.js can execute it — the same contract as the
-    // switcher's decision regions: nothing here may reference `root`, `Theme`,
-    // `I18n` or `Qt`. Every finding this logic attracted in review lived in
-    // these two functions, which is why they are executed rather than pinned.
+    // Keep sweep decisions independent of QML objects; every input is an argument. scripts/test-thumb-sweep.js evaluates the code between these markers in Node; nothing here may reference root, Theme, I18n, or Qt.
 
     // What a read should do. `attempts` is per cache IDENTITY, not per path:
     // overwriting a wallpaper mints a new key and earns fresh attempts, while
@@ -1007,13 +984,8 @@ Singleton {
         // Component.onCompleted and onActiveChanged, so the guard must be set
         // synchronously to guarantee single-flight.
         previewsGenerating = true;
-        // Re-read blueprints first so the "missing" check runs on fresh preview
-        // paths (wallpaper/palette edits invalidate cached previews).
-        // This read does NOT own `blueprintsLoadFailed`. That flag is how a
-        // surface says "the theme list could not be read", and `refreshBlueprints`
-        // is the read that backs the list; setting it from here reported a failed
-        // PREVIEW probe as a failed list even when the list was loaded and on
-        // screen. Failing here just means no previews were rendered this round.
+        // Refresh preview paths after edits without changing blueprintsLoadFailed.
+        // That flag belongs to the list read; a preview-probe failure does not invalidate a displayed theme list.
         _run("vgs-theme-preview-check", ["theme", "list", "--json"], function(output, exitCode) {
             if (exitCode !== 0) {
                 log.warn("Preview check failed, previews not refreshed:", lastError);

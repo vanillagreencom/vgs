@@ -1,21 +1,9 @@
 #!/usr/bin/env python3
-"""Keep the scripts/validate manifest, CI and scripts/ from drifting apart.
+"""Compare the validation manifest with executable scripts, CI and area lists.
 
-Two failure shapes, both of which had already happened when this was written:
-
-1. **A check nobody runs.** Four executable checks under `scripts/` were
-   committed, maintained, and referenced by nothing (VGS-50). A dead check is
-   worse than no check: it implies coverage, and nothing detected them.
-
-2. **A documented command that cannot run.** The manifest lists bare
-   invocations; a script without the executable bit fails with "permission
-   denied", which reads like a broken check rather than a mode problem (VGS-30).
-
-So: every executable check under `scripts/` must be invoked by the manifest and
-by the CI workflow, or carry a written exclusion here; and every command in the
-manifest must be runnable exactly as written.
-
-The manifest lives in `scripts/validate`; CI exceptions and reasons live here.
+Executable checks must appear in the manifest and CI, or have an exclusion
+with a reason. Documented commands must be executable as written.
+The runner owns the manifest; this file owns CI exceptions.
 """
 
 from __future__ import annotations
@@ -44,8 +32,7 @@ RUNNER = REPO_ROOT / "scripts" / "validate"
 CI = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 SCRIPTS = REPO_ROOT / "scripts"
 
-# Executable files under scripts/ that are NOT part of the validation suite.
-# Each needs a reason: an unexplained entry here is how an orphan comes back.
+# Executable scripts outside the suite need a reason for exclusion.
 NOT_A_SUITE_CHECK = {
     "validate": "the suite runner itself: it invokes the checks below rather than being one",
     "build-release.sh": "release tooling, driven by .github/workflows/release.yml",
@@ -69,16 +56,10 @@ INDIRECT_IN_CI = {
     "qml-smoke.sh": "scripts/check-validation-safety.sh",
 }
 
-# Documents that MUST enumerate the validate areas in prose, checked against the
-# runner's own AREAS. Membership is the decision: a doc that should point at
-# `scripts/validate --list` instead is removed from this tuple in the same edit,
-# which is a recorded choice rather than a regex that quietly stopped matching.
+# Documents required to enumerate the runner areas.
 AREA_ENUMERATING_DOCS = (AGENTS,)
 
-# Interpreter invocations that syntax-CHECK a file rather than run it. These are
-# not a mode problem: `node --check`, `bash -n` and `python3 -m py_compile` have
-# no bare equivalent, so the prefix is the command, not a workaround for a
-# missing executable bit.
+# Syntax checks require their interpreter prefix.
 SYNTAX_CHECK_FLAGS = {"--check", "-n", "py_compile"}
 
 
@@ -92,13 +73,9 @@ def executable_checks() -> list[str]:
 
 
 def report(problems: list[str], documented_count: int) -> int:
-    """Print every problem found and return the exit status.
+    """Print collected problems and return an exit status.
 
-    TOTAL BY CONSTRUCTION: it takes the count rather than re-deriving it. The
-    success line used to call manifest_rows a second time, which re-ran
-    `bash -n` over all 58 commands on every clean run — the expensive half of
-    the parse, repeated for a number main() already had — and left a reporting
-    function able to fail on a manifest that changed between the two parses.
+    Use the supplied manifest count so reporting does not parse the manifest again.
     """
     if problems:
         print("check-validation-inventory: FAIL", file=sys.stderr)
@@ -115,8 +92,6 @@ def report(problems: list[str], documented_count: int) -> int:
 def main() -> int:
     problems: list[str] = []
 
-    # VGS-30 applied to the entry point: everything below asserts the mode of the
-    # checks the manifest names, and the file doing the naming was exempt.
     if not RUNNER.is_file():
         raise SystemExit("check-validation-inventory: scripts/validate does not exist")
     if not os.access(RUNNER, os.X_OK):
@@ -126,20 +101,8 @@ def main() -> int:
             "(git update-index --chmod=+x scripts/validate)"
         )
 
-    # --- the GRAMMAR itself, before anything that is built from it ----------
-    # ASKED OF THE RUNNER, not parsed here. scripts/lib/validation-grammar.conf
-    # has exactly one parser — scripts/validate — and this reads
-    # `scripts/validate --dump-grammar`. Two readers of one definition is the
-    # same bug as two definitions, one level up, and it produced three
-    # divergences before the second parser was deleted.
-    #
-    # Checked first because everything below is derived from it: a bad grammar
-    # makes correctly-written rows fail, and the manifest arm would answer
-    # first, blaming the rows.
-    #
-    # NOTHING BUT A DIAGNOSTIC CROSSES THIS BOUNDARY, and on a grammar the
-    # runner refuses that diagnostic is the RUNNER'S OWN, relayed verbatim —
-    # never a traceback, never a silent skip.
+    # Read grammar through the runner, which owns its parser. Check it before
+    # derived rows so a grammar failure reports its cause.
     try:
         rules = grammar(RUNNER)
     except ManifestError as error:
@@ -149,10 +112,7 @@ def main() -> int:
             [f"the grammar could not be read: {type(error).__name__}: {error}"], 0
         )
 
-    # The runner must actually OFFER what the grammar declares. Asked by running
-    # `scripts/validate -h`, not by matching an array that no longer exists:
-    # the runner derives its arguments now, so the question is whether that
-    # derivation still agrees with the definition.
+    # Compare declared arguments with the help output users receive.
     try:
         offered = runner_usage_arguments(RUNNER)
     except ManifestError as error:
@@ -165,12 +125,7 @@ def main() -> int:
             f"have drifted"
         )
 
-    # AN UNPARSEABLE MANIFEST IS A PROBLEM TOO, not an abort that discards what
-    # the declaration arms already found. A bad name in AREAS makes every row
-    # with the CORRECT spelling fail the tag grammar, so raising here reported
-    # the rows and swallowed the declaration finding that explains them — the
-    # same "answers something other than what it claims" shape as the PyYAML
-    # prerequisite, one level over.
+    # Keep declaration findings when manifest parsing also fails.
     rows: list[tuple[str, str]] | None = None
     try:
         rows = manifest_rows(RUNNER)
@@ -179,28 +134,9 @@ def main() -> int:
     commands = [command for _, command in rows] if rows is not None else []
     documented = "\n".join(commands)
 
-    # A declared token the runner never acts on is worse than an unknown one:
-    # rows carrying it pass every check here and then behave like `-`.
-    #
-    # ASKED BEHAVIOURALLY, not by matching text. Whole-token matching closed the
-    # SUBSTRING hole (`skip` inside `may-skip`) but not the INCIDENTAL one:
-    # `status` and `run` match the runner's own variables exactly, so either
-    # could be declared a modifier and pass while the tag did nothing. Tag names
-    # and identifiers come from the same small pool of words, so that collision
-    # recurs. The question the grammar already asks — does this token change
-    # what a row SELECTS or how it EXITS — is the one worth answering.
-    # A PROBE THAT CANNOT RUN IS A PROBLEM TOO, collected like every other arm's.
-    # Unwrapped, the first raise from the probe machinery reached __main__ and
-    # discarded everything collected — including the manifest_rows finding above,
-    # which usually explains it. Caught per tag, so a tag-specific failure keeps
-    # its tag and a shared cause reports once per tag.
-    #
-    # ALL THREE TYPES THE PROBE PATH PRODUCES, not only the library's own. That
-    # path writes files, chmods them and executes the result while capturing in
-    # text mode, so it raises OSError (an occupied workdir, an unlaunchable
-    # probe) and UnicodeDecodeError (a probe whose output is not UTF-8) beside
-    # ManifestError — both verified reachable. Naming only ManifestError left the
-    # identical abort through the other two, which is this defect's second door.
+    # Probe whether each tag changes row selection or exit handling. Source-text
+    # matches cannot distinguish a tag from an incidental runner variable.
+    # Collect parser, filesystem and decoding failures without losing other findings.
     with tempfile.TemporaryDirectory() as workdir:
         for tag in sorted(rules.row_tags - rules.areas):
             try:
@@ -226,41 +162,22 @@ def main() -> int:
             "rows, and the manifest could not be parsed (above)"
         )
     for area in sorted(rules.areas) if rows is not None else []:
-        # Deliberately ignores `always` rows. Counting them would make this arm
-        # dead the moment one exists — every area would look populated — and an
-        # area whose only members are the checks EVERY area runs is not an area,
-        # it is a name that selects nothing of its own.
+        # Always-run rows do not prove that an area selects any checks of its own.
         if not any(area in tags.split(",") for tags, _ in rows):
             problems.append(
                 f"scripts/validate accepts area `{area}` but no manifest row is tagged "
                 f"with it, so `scripts/validate {area}` would run only the `always` rows"
             )
 
-    # A PREREQUISITE IS A PROBLEM, NOT AN ABORT. This raised straight out of
-    # main, so on a python3 without PyYAML every OTHER arm — area, prose,
-    # tag-wiring, tables — was replaced by the prerequisite message, and the
-    # harness that drives fixtures through this function reported ten failures
-    # that were not its fixtures' verdicts, including a false claim that the
-    # real tree does not pass. Collected here instead: the CI comparison is
-    # genuinely impossible, so it FAILS loudly, and every arm that does not
-    # need ci_text still reports its own answer.
+    # A missing CI parser prevents CI comparison; independent checks can still run.
     ci_text: str | None = None
     try:
         ci_text = ci_run_commands(CI)
     except ManifestError as error:
         problems.append(f"CI coverage was NOT checked: {error}")
 
-    # A per-tag vocabulary loop used to live here. It is gone, not relaxed:
-    # manifest_rows now validates the whole tag field against the same grammar
-    # scripts/validate applies, and raises before returning a row, so this loop
-    # could never have fired. An unreachable check is coverage that does not
-    # exist — the thing this file exists to report.
-    # --- the prose copies of the area list must match the grammar -----------
-    # Both docs enumerate the areas: a second copy of something the runner
-    # defines, i.e. the drift axis this check exists to close. So: compared.
     for doc in AREA_ENUMERATING_DOCS:
-        # A fixture copy lives outside the tree (test-validation-inventory.sh
-        # patches these paths), so name it rather than failing to relativise it.
+        # Fixture copies can live outside the repository.
         rel = doc.name
         if doc.is_relative_to(REPO_ROOT):
             rel = doc.relative_to(REPO_ROOT).as_posix()
@@ -280,7 +197,6 @@ def main() -> int:
                 f"not accept it"
             )
 
-    # --- every documented command runs exactly as written ---------------------
     for line in commands:
         # Subshells and `python3 -m ...` are not a script invocation to mode-check.
         stripped = line.strip()
@@ -294,16 +210,10 @@ def main() -> int:
         if not argv:
             continue
         head = argv[0]
-        # A documented interpreter prefix is the defect VGS-30 named: the file
-        # should carry its own executable bit and be invoked bare.
         if head in {"node", "bash", "sh", "python3"} and len(argv) > 1:
             if SYNTAX_CHECK_FLAGS.intersection(argv[1:]):
                 continue
-            # scripts/lib/ holds LIBRARIES — imported or sourced, never run as
-            # a command. The runner's header says they stay non-executable
-            # deliberately, so running a library's built-in self-test through
-            # its interpreter is the correct form, not the VGS-30 defect of a
-            # manifest that omits a prefix the file actually needs.
+            # Libraries remain non-executable and run self-tests through their interpreter.
             if any(a.startswith("scripts/lib/") for a in argv[1:]):
                 continue
             target = next((a for a in argv[1:] if not a.startswith("-")), None)
@@ -315,7 +225,7 @@ def main() -> int:
                 )
             continue
         if "/" not in head:
-            continue  # git, and anything else resolved from PATH
+            continue
         path = REPO_ROOT / head
         if not path.is_file():
             problems.append(f"scripts/validate runs `{head}`, which does not exist")
@@ -324,10 +234,7 @@ def main() -> int:
                 f"scripts/validate runs `{head}` bare, but it is not executable "
                 f"(git update-index --chmod=+x {head})"
             )
-        # CI LOCKSTEP FOR ROWS OUTSIDE scripts/. The arm below keys CI coverage
-        # by basename under scripts/, so a row that runs a rendered engine
-        # (.agents/skills/...) was never compared at all: deleting its ci.yml
-        # step left this check green while the manifest still promised the lane.
+        # Rows outside scripts/ need CI comparison by their full command path.
         elif (ci_text is not None and not head.startswith("scripts/")
               and not ci_runs(ci_text, head)):
             problems.append(
@@ -336,9 +243,7 @@ def main() -> int:
                 f"is coverage that does not exist."
             )
 
-    # --- every executable check is invoked, or excluded with a reason ---------
-    # The CI half of this arm needs ci_text; without it the manifest half still
-    # runs, and the missing comparison is already recorded above.
+    # Manifest coverage can still be checked when CI text is unavailable.
     for name in executable_checks() if rows is not None else []:
         if name in NOT_A_SUITE_CHECK:
             continue
@@ -371,7 +276,6 @@ def main() -> int:
                 f"or in INDIRECT_IN_CI naming the entry that reaches it."
             )
 
-    # --- exclusions that no longer name a real file --------------------------
     for name in sorted(set(NOT_A_SUITE_CHECK) | set(LOCAL_ONLY) | set(INDIRECT_IN_CI)):
         if not (SCRIPTS / name).is_file():
             problems.append(f"scripts/{name} is excluded here but no longer exists; drop the entry")
@@ -380,9 +284,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    # The library raises ManifestError carrying only the parse problem; the name
-    # of the failing check belongs to the check, not to a module that may one
-    # day have two consumers.
     try:
         sys.exit(main())
     except ManifestError as error:

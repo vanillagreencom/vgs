@@ -12,16 +12,14 @@
 set -euo pipefail
 
 script_path="$(readlink -f -- "${BASH_SOURCE[0]}")"
+# Both a checkout root and /usr/lib/vshell carry config/vshell/.
 script_dir="$(cd -- "$(dirname -- "$script_path")" && pwd)"
 
 CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
 CLASS="org.vgs.screensaver"
 BRANDING="$CONFIG_HOME/vshell/branding/screensaver.txt"
-# Package-owned default art (the VGS logo, pre-rendered). Read-only: it is the
-# fallback when the user has no art of their own, so the saver works on a fresh
-# install with no ImageMagick and no first-run transcode. `$script_dir/..` is the
-# repo root in a checkout and /usr/lib/vshell in a package, and both carry
-# config/vshell/. Regenerate after changing the logo with:
+# The bundled pre-rendered logo works without ImageMagick or a config write.
+# Regenerate it after logo changes with:
 #   vshell screensaver transcode quickshell/vshell/assets/vgslogo.svg \
 #     config/vshell/branding/screensaver.txt --width 100 --height 40
 BUNDLED_BRANDING="${VSHELL_ROOT:-$(cd -- "$script_dir/.." && pwd)}/config/vshell/branding/screensaver.txt"
@@ -60,13 +58,8 @@ default_text() {
   printf '%s\n' "$(date '+%A %B %-d, %Y')"
 }
 
-# Is a source picture selected in settings? $BRANDING is generated output, not a
-# hand-authored file, so it only outranks the bundled logo while the picture it
-# was generated from is still selected. Without this, clearing the picture would
-# leave the old art in place forever, and the hostname/date card an older VGS
-# wrote once into $BRANDING would outrank the logo for every existing user.
-# Anything unreadable answers "yes", which keeps the previous behaviour rather
-# than discarding art on a bad settings read.
+# Generated art outranks the bundled logo only while a source picture is
+# selected. An unreadable settings file keeps generated art eligible.
 picture_configured() {
   [[ -r "$SETTINGS" ]] || return 0
   command -v jq >/dev/null 2>&1 || return 0
@@ -140,7 +133,6 @@ cmd_launch() {
     screensaver_count="$(hyprctl clients -j | jq --arg c "$CLASS" '[.[] | select(.class == $c)] | length')"
   fi
 
-  # Already covering every monitor -> nothing to do.
   (( screensaver_count >= monitor_count )) && return 0
   # Partial coverage (monitor hotplug etc.) -> clear and relaunch cleanly.
   if (( screensaver_count > 0 )); then
@@ -196,7 +188,6 @@ cmd_launch() {
   return 0
 }
 
-# --- per-window animation loop (runs inside the fullscreen ghostty) ------------
 
 _screensaver_in_focus() {
   if ((IS_NIRI)); then
@@ -264,7 +255,6 @@ cmd_run() {
         fi
         [[ -z $initial_cursor ]] && initial_cursor="$(_cursor_position)"
         current_cursor="$(_cursor_position)"
-        # Dismiss on any keypress, focus loss, or real cursor movement.
         if read -r -n1 -t 1 ||
           ! _screensaver_in_focus ||
           { [[ -n $initial_cursor && -n $current_cursor ]] && [[ $current_cursor != "$initial_cursor" ]]; }; then

@@ -68,15 +68,9 @@ Rectangle {
 
     readonly property var values: daily ? [] : [
         {
-            "name"//     'name': "Temperature",
+            "name"
             :
-            //     'text': root.tempText,
-            //     'icon': "thermometer"
-            // }, {
-            //     'name': "Feels Like",
-            //     'text': root.feelsLikeText,
-            //     'icon': "thermostat"
-            // }, {
+
             I18n.tr("Humidity"),
             "text": root.humidityText,
             "icon": "humidity_low"

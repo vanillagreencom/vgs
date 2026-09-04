@@ -1,32 +1,8 @@
-"""Read what git TRACKS, never what the working tree happens to hold.
+"""Read indexed file blobs without following working-tree paths.
 
-Split out of `scripts/check-section-pointers.py`, which is about pointers and
-should not also be about how bytes are obtained. The rule here is one sentence
-with a security answer behind it:
-
-    a check that asks "what does this repo contain?" must read the blob, not
-    the path.
-
-`Path.read_text()` FOLLOWS SYMLINKS, and 8,509 of this repo's tracked paths are
-symlinks. Reading paths meant the pointer guard read `.claude/CLAUDE.md` straight
-through to AGENTS.md and counted one file's pointers twice; it also meant a PR
-could add a small tracked link to a host file, or to an endless device such as
-/dev/zero, and have a CI step read it before the size ratchet ever saw the diff.
-A blob cannot be redirected anywhere.
-
-It removes an error arm as well. Reading paths needs `except OSError`, which
-catches the one case a caller wants to skip — here a symlink to a directory —
-along with every case it must not: a dangling link, a permission error, a path
-absent from the checkout. Each of those dropped a file silently while the check
-printed ok. Reading blobs leaves exactly ONE skip, a blob that is not UTF-8
-text, and that one is RETURNED rather than discarded so the caller can decide
-whether a given non-text file is a binary to ignore or a defect to report.
-
-No `__main__` and no executable bit: a library reached only by import, like
-`scripts/lib/collected.py`, so it carries no manifest row. Its behaviour is
-proven by `scripts/lib/tracked_blobs_selftest.py`, beside it, which drives every
-failure this module must REFUSE rather than answer: a failed git call, an index
-mid-merge, and a `cat-file` stream that desyncs, truncates or runs long.
+Blob reads prevent symlinks from redirecting a scan to host files or devices.
+Undecodable content is returned with its cause for the caller to classify.
+Git failures, unresolved index stages and malformed batch streams raise.
 """
 
 from __future__ import annotations
@@ -36,17 +12,7 @@ import subprocess
 from pathlib import Path
 from typing import NamedTuple
 
-# Environment variables that RE-AIM git at another repository. Every one is
-# deleted before any git call here, because `-C <path>` does NOT override them:
-# an absolute `GIT_INDEX_FILE` pointed elsewhere makes `git -C fixture add -A`
-# write the fixture's paths into THAT repository's index, leaving it referencing
-# blobs that live in the fixture's object store — `git status` there then answers
-# `fatal: unable to read <sha>`. Verified both directions before this was
-# written: the RELATIVE `GIT_INDEX_FILE=.git/index` that git exports to hooks is
-# re-resolved by `-C` and is harmless, and git exports neither GIT_DIR nor
-# GIT_WORK_TREE to hooks at all. So the trigger is an ABSOLUTE variable — the
-# shape of tooling that drives a checkout other than its own, which is the
-# pattern this repo's `.worktrees/` layout uses.
+# Repository redirection variables can override git -C and target another index.
 GIT_REDIRECTS = (
     "GIT_DIR",
     "GIT_WORK_TREE",
@@ -57,24 +23,16 @@ GIT_REDIRECTS = (
     "GIT_CEILING_DIRECTORIES",
 )
 
-# CONFIG injection, not repo location — a separate channel with its own reason
-# to be here. `-C` does not override it and neither does GIT_CONFIG_GLOBAL or
-# GIT_CONFIG_SYSTEM, so `GIT_CONFIG_PARAMETERS="'core.excludesFile'='/x'"` makes
-# `git add -A` stage nothing while every other precaution holds. Git exports it
-# into every hook and alias subprocess whenever `-c` is in play, which is the
-# same reachability as the index escape above. Prefix names are matched rather
-# than listed, because GIT_CONFIG_KEY_n/VALUE_n are unbounded in n.
+# Config injection is independent of repository location. Prefix matching covers
+# numbered GIT_CONFIG_KEY and GIT_CONFIG_VALUE variables.
 GIT_CONFIG_INJECTORS = ("GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT")
 GIT_CONFIG_PREFIXES = ("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")
 
 
 def git_env(hermetic: bool = False) -> dict[str, str]:
-    """The ambient environment with every repo-redirecting variable removed.
+    """Return the environment with known git repository and config redirects removed.
 
-    `hermetic` also silences user and system config. That alone did NOT stop a
-    fixture inheriting a `core.excludesFile` that quietly declines to add its own
-    fixtures — `GIT_CONFIG_PARAMETERS` says the same thing through a channel
-    those two do not cover, which is why it is scrubbed above.
+    hermetic also disables user and system configuration.
     """
     env = {
         name: value
@@ -88,27 +46,10 @@ def git_env(hermetic: bool = False) -> dict[str, str]:
         env["GIT_CONFIG_SYSTEM"] = os.devnull
     return env
 
-# Index modes worth reading. 120000 is a SYMLINK, whose blob is the link target
-# — a path, not prose — and 160000 a submodule gitlink, which has no blob here.
-#
-# THIS IS SCOPE, NOT SAFETY, and the distinction matters: sweeping a symlink's
-# blob would be harmless noise, because a blob is what gets read. What makes a
-# link safe is `cat-file` below, not this set. Widening it back would not
-# reintroduce the hazard, so nothing here pretends to guard one.
+# Symlink blobs contain link paths; submodule gitlinks have no local file blob.
 REGULAR_MODES = {"100644", "100755"}
 
-# Blobs per `cat-file --batch` round. Bounds the bytes held at once without
-# giving up batching, and 200 is where the curve flattens — measured over this
-# repo's 9,748 blobs, identical results at every size (2,673 decoded, of which
-# 2,585 are citers, and 7,075 undecodable):
-#
-#     whole stream   214 MB   0.182 s      100   107 MB   0.266 s
-#              1000  127 MB   0.201 s      200   109 MB   0.244 s
-#               500  124 MB   0.215 s
-#
-# The fork count stays in the tens rather than the thousands, and records are
-# still zipped by ORDER within each round, so every integrity check below
-# applies per chunk exactly as it did per sweep.
+# Limit blobs per batch so captured output does not hold the whole repository.
 CHUNK = 200
 
 
@@ -117,14 +58,9 @@ class GitError(SystemExit):
 
 
 def git(root: Path, *arguments: str, stdin: bytes | None = None) -> bytes:
-    """Run git in `root` and return stdout, with its exit status checked.
+    """Run git in root, check its status and return stdout bytes.
 
-    Paths decode with `surrogateescape` at every call site rather than the
-    default strict: git hands back raw bytes, and a path that is not valid UTF-8
-    would otherwise abort the caller with a traceback about decoding rather than
-    anything to do with its own subject. `surrogateescape` round-trips such a
-    path exactly and never raises — the same "diagnose, do not crash" posture as
-    the stderr decode below (VGS-110: a collection step checks its producer).
+    Callers decode paths with surrogateescape to preserve non-UTF-8 path bytes.
     """
     result = subprocess.run(
         ["git", "-C", str(root), *arguments],
@@ -151,19 +87,9 @@ class Entry(NamedTuple):
 
 
 def tracked_entries(root: Path) -> list[Entry]:
-    """Every tracked path, symlinks and all, at index stage 0.
+    """Return all indexed paths at stage zero, regardless of mode.
 
-    The full listing, unfiltered by mode: a caller's exclusion tables index on
-    files, not on blobs, so a path excluded from READING must still be visible
-    as TRACKED.
-
-    A MID-MERGE INDEX IS REFUSED. During an unresolved merge `ls-files -s` emits
-    the same path three times, at stages 1, 2 and 3 — base, ours, theirs — all
-    with mode 100644. Reading them all left the last write standing, so the
-    caller judged the THEIRS side: bytes that are in no commit, in no PR, and
-    not on disk either, with no diagnostic and a blob count inflated by the
-    duplicates. Refusing is the same posture this module takes for a failed git
-    call: say why nothing can be concluded rather than answer about one side.
+    Unresolved merge stages raise so the caller does not select one conflict side.
     """
     entries, conflicted = [], []
     for entry in git(root, "ls-files", "-s", "-z").decode("utf-8", "surrogateescape").split("\0"):
@@ -188,28 +114,10 @@ def tracked_entries(root: Path) -> list[Entry]:
 def blob_texts(
     root: Path, entries: list[Entry]
 ) -> tuple[dict[str, str], dict[str, str]]:
-    """(text by path, undecodable path -> reason) for the regular files in `entries`.
+    """Return text and decoding failures for regular indexed entries.
 
-    The caller filters `entries` first, and that is now ENFORCED rather than
-    stated: a non-regular mode raises. The sentence was false at the only call
-    site — 8,509 symlinks were handed over and quietly dropped by a mode test
-    HERE, where the per-sweep accounting could not see them because it counts
-    what this function decided to ask for. Nothing was lost behaviourally, a
-    symlink's blob being a path rather than prose, but an unmeasured category is
-    the defect this whole check exists to name, so it is measured at the call
-    site and refused here.
-
-    ASKED IN CHUNKS, and the chunk size is the whole of the memory story. One
-    `cat-file --batch` for all 9,748 blobs is correct in shape — per-blob forks
-    would be thousands of processes — but capturing its 90.5 MB answer whole
-    peaked at 215 MB RSS to keep 23.5 MB of text, because 74% of the stream is
-    binary assets that decode-fail and are dropped. Chunking bounds the captured
-    bytes to one round — 214 MB down to 109 — without giving up batching, and
-    without the writer thread an incremental reader would need:
-    `subprocess.run(input=...)` pumps stdin and stdout concurrently, so it cannot
-    deadlock the way a hand-rolled close-stdin-then-read loop does. An
-    incremental reader measured 83 MB; the remaining 26 is not worth a thread in
-    a validation script.
+    Reject other modes so callers account for excluded paths. Batch reads limit
+    captured output to a chunk; subprocess.run pumps input and output concurrently.
     """
     files: dict[str, str] = {}
     undecodable: dict[str, str] = {}
@@ -223,13 +131,8 @@ def blob_texts(
     wanted_all = [(e.sha, e.path) for e in entries]
     for start in range(0, len(wanted_all), CHUNK):
         _read_chunk(root, wanted_all[start : start + CHUNK], files, undecodable)
-    # EVERY BLOB ASKED FOR LANDS IN EXACTLY ONE BUCKET — the partitioned-
-    # collection shape collected.py calls `unaccounted`. The per-chunk checks
-    # below are internally consistent by construction: ask git for 199 shas and
-    # it answers 199 records, so a loop that slices one short per round is
-    # invisible to all of them. Fifteen files then vanish from the sweep and the
-    # count in the ok line is simply smaller, which nothing else can tell from a
-    # repo that has fifteen fewer files. Only a per-SWEEP total sees it.
+    # Per-batch integrity cannot detect entries omitted before the batch call.
+    # Account for every requested entry across the complete sweep.
     if len(files) + len(undecodable) != len(wanted_all):
         raise GitError(
             f"{len(wanted_all)} blobs were asked for and "
@@ -254,12 +157,8 @@ def _read_chunk(root, wanted, files: dict[str, str], undecodable: dict[str, str]
                 f"concluded from a truncated read"
             )
         header = stream[offset:end].decode("utf-8", "replace").split()
-        # EVERY FIELD GIT ECHOES IS CHECKED, because the pairing is positional.
-        # Records are zipped against `wanted` by ORDER — keying by sha would
-        # collapse two identical files into one entry — so the echoed sha, type
-        # and length are the only evidence the order actually held. Without them
-        # a desynced stream pairs each path with a DIFFERENT file's text, and
-        # the guard reports findings against paths that never carried them.
+        # Records pair by order because distinct paths can share a blob. Validate
+        # echoed identity and length before assigning text to a path.
         if len(header) != 3:
             raise GitError(
                 f"`git cat-file --batch` answered '{' '.join(header)}' for {path} "
@@ -280,9 +179,7 @@ def _read_chunk(root, wanted, files: dict[str, str], undecodable: dict[str, str]
                 f"whose length cannot be known"
             ) from None
         blob = stream[end + 1 : end + 1 + size]
-        # Slicing past the end CANNOT raise, so a truncated final record would
-        # otherwise arrive as a short but complete-looking string; the `end == -1`
-        # guard above only fires for a record that has a successor.
+        # A slice beyond the buffer end does not raise on a truncated final record.
         if len(blob) != size:
             raise GitError(
                 f"`git cat-file --batch` declared {size} bytes for {path} and sent "

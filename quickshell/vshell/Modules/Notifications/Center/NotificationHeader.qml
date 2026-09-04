@@ -173,16 +173,13 @@ Item {
             height: Theme.spacingS
         }
 
-        // Labeled Do Not Disturb control. The row body toggles DND immediately;
-        // the chevron expands the duration presets inside this same card.
-        // Previously this was two bare icon buttons that both opened the same
-        // menu, in a separate box below.
+
         StyledRect {
             id: dndCard
             width: parent.width
             height: dndCardColumn.implicitHeight + Theme.spacingXS * 2
             radius: Theme.cornerRadius
-            // Active DND reads as a tinted row rather than an outlined one.
+
             color: SessionData.doNotDisturb ? Theme.errorHover : Theme.nestedSurface
             border.width: 0
 
@@ -299,7 +296,7 @@ Item {
             }
         }
 
-        // Breathing room between the DND block and the tab switcher.
+
         Item {
             width: 1
             height: 15

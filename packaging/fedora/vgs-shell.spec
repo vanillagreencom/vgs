@@ -28,9 +28,8 @@ Requires:       glib2
 Requires:       sudo
 # END GENERATED REQUIRED DEPENDENCIES
 
-# org.freedesktop.Notifications is a first-come, first-served session bus
-# name, so a second notification daemon on the same session silently wins or
-# loses the race. VGS is one, and says so.
+# The session notification bus name has one owner. Conflicting daemons
+# can acquire it before VGS and prevent VGS from receiving notifications.
 Provides:       notification-daemon
 Conflicts:      notification-daemon
 Conflicts:      mako

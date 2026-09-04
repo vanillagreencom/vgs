@@ -34,11 +34,7 @@ def load_helper():
 
 helper = load_helper()
 
-# Several tests swap HOME to a TemporaryDirectory, and check-vshell-niri.py --
-# which main() runs as a subprocess at the end -- reads os.environ["HOME"] and
-# passes it to children. A test that leaked a deleted temp HOME would surface
-# as an unexplained failure in the NIRI suite, pointing at the wrong file
-# entirely. Recorded here so main() can name the real cause instead.
+# Record HOME so main() can identify a leaked temporary home before the Niri subprocess.
 _HOME_AT_IMPORT = os.environ.get("HOME")
 
 
@@ -144,8 +140,7 @@ def test_perceptual_theme_adjustments():
     })
     assert_equal(zero, colors, "neutral restyle must be byte-exact")
 
-    # Brightness is perceptual L only. A sweep must be monotonic without the
-    # saturation/hue drift caused by the former HSV-value implementation.
+    # Brightness changes perceptual lightness without hue or saturation drift.
     brightness_samples = []
     for amount in (-40, -20, 0, 20, 40):
         adjusted = helper.apply_adjustments(colors, {"brightness": amount})["accent"]
@@ -180,7 +175,6 @@ def test_perceptual_theme_adjustments():
     if abs(warmed_l - _base_l) > 0.005 or warmed_a <= base_a or warmed_b <= base_b:
         raise AssertionError("temperature must apply a reversible warm vector without changing lightness")
 
-    # Contrast spreads L around the palette mean but does not rotate colors.
     contrasted = helper.apply_adjustments(colors, {"contrast": 40})
     bg_before, fg_before = _oklch(colors["background"]), _oklch(colors["foreground"])
     bg_after, fg_after = _oklch(contrasted["background"]), _oklch(contrasted["foreground"])
@@ -215,9 +209,7 @@ def test_curated_app_role_passthrough():
 
 
 def test_restyle_integer_sweeps():
-    # Every integer brightness value is a state the UI can publish. Exercise the
-    # complete range on representative dark/light palettes and the themes that
-    # exposed the former clamp, HLS-surface, semantic, and accent discontinuities.
+    # The UI can publish every integer brightness value, so test the full range.
     theme_names = (
         "coppernight", "tokyo-night", "catppuccin-latte", "gruvbox", "arc-raiders",
     )
@@ -298,7 +290,6 @@ def test_restyle_integer_sweeps():
             if meta["mode"] == "light" and any(tone - 0.003 > bg_l for tone in ladder):
                 raise AssertionError(f"{name} light surface ladder crossed above its background")
 
-    # Named regressions document the exact transitions reported in the field.
     fault_pairs = {
         "coppernight surface -49/-48": ("coppernight", -49, ("surfaceContainerHighest",)),
         "tokyo-night surface -73/-72": ("tokyo-night", -73, ("surfaceContainerHighest",)),
@@ -321,9 +312,7 @@ def test_restyle_integer_sweeps():
                     f"{label} regressed for {role}: {left[role]}->{right[role]}"
                 )
 
-    # The other four controls need the same every-integer continuity contract.
-    # One dark and one light curated theme cover both fixed polarity paths while
-    # keeping this focused check fast enough for normal development.
+    # Dark and light curated palettes cover both fixed-polarity paths.
     axis_ranges = {
         "vibrancy": range(-100, 101),
         "contrast": range(-100, 101),
@@ -495,11 +484,7 @@ def test_compositor_dependency_selection():
 
 
 def test_capability_probe_reporting():
-    """A declared minimum that nothing checks is a comment pretending to be a
-    constraint (VGS-89). The probe mechanism is what turns it into a check, so
-    the mechanism itself has to be checked — including the two ways it must NOT
-    fire: on a command that is absent, and on a probe that could not be run.
-    """
+    """Check capability probe results for unusable, absent and unlaunchable commands."""
     original_load = helper.load_deps
     original_detect = helper.detect_compositor
     original_exists = helper.command_exists
@@ -511,8 +496,6 @@ def test_capability_probe_reporting():
     }
     helper.detect_compositor = lambda: {"compositor": "hyprland", "source": "test"}
     try:
-        # Present but unusable: reported, and phrased so it cannot be mistaken
-        # for "not installed".
         helper.command_exists = lambda command: True
         helper.CAPABILITY_PROBES = {
             "probed": {"argv": ["false"], "requirement": "needs the thing"},
@@ -529,7 +512,6 @@ def test_capability_probe_reporting():
         assert_equal("plain" in base["missing"], False,
                      "a command with no probe is judged on presence alone")
 
-        # Usable: silent. The probe must not add noise on a healthy system.
         helper.CAPABILITY_PROBES = {
             "probed": {"argv": ["true"], "requirement": "needs the thing"},
         }
@@ -537,8 +519,7 @@ def test_capability_probe_reporting():
         assert_equal(helper.feature_status()["features"]["base"]["missing"], [],
                      "a satisfied probe adds nothing")
 
-        # Absent: reported once, as missing, never twice. Telling someone to
-        # upgrade a command they have not installed is worse than saying nothing.
+        # A missing command must not also be reported as needing an upgrade.
         helper.command_exists = lambda command: command != "probed"
         helper.CAPABILITY_PROBES = {
             "probed": {"argv": ["false"], "requirement": "needs the thing"},
@@ -549,9 +530,7 @@ def test_capability_probe_reporting():
                      "an absent command is reported as missing, not as unusable")
         assert_equal(base["unusable"], [], "an absent command is not probed")
 
-        # Unrunnable probe: treated as satisfied. Reporting a working system as
-        # broken because the probe itself failed to execute is the false
-        # negative this mechanism exists to avoid.
+        # The helper treats an unlaunchable capability probe as satisfied.
         helper.command_exists = lambda command: True
         helper.CAPABILITY_PROBES = {
             "probed": {"argv": ["/nonexistent/probe/binary"], "requirement": "needs the thing"},
@@ -560,7 +539,6 @@ def test_capability_probe_reporting():
         assert_equal(helper.feature_status()["features"]["base"]["unusable"], [],
                      "a probe that cannot run is not evidence of an unusable command")
 
-        # The shipped jq probe, against the jq actually installed here.
         helper.CAPABILITY_PROBES = original_probes
         helper._CAPABILITY_PROBE_CACHE = {}
         if helper.command_exists("jq"):
@@ -720,14 +698,8 @@ def test_hyprland_layout_payload():
     assert_equal(meta["resizeOnBorder"], True, "legacy resize_on_border false should be upgraded")
 
 
-# THE ALLOWLIST IS A REGEX, SO SUBSTRING CHECKS AGAINST THE SCRIPT ARE VACUOUS.
-# The generated Lua carries the whole allowlist as one grouped, $-anchored
-# alternation, so a "(" always sits between "vshell:" and the first entry and no
-# `vshell:<name>` literal can ever appear in the script — whatever is listed.
-# Proven by mutation: adding `blurwallpaper` (the real wallpaper layer), adding
-# `workspace-overview`, and swapping `control-center` for the real, distinct
-# `control-center-widget-library` all left the old substring assertions green.
-# Assert what the pattern MEANS instead: exact membership, then a match table.
+# Test regex membership and matches, not substring presence in generated Lua.
+# Grouped alternation separates the namespace prefix from each listed name.
 BLUR_ALLOWLIST = (
     "battery bluetooth-pairing clipboard clipboard-popout color-picker confirm-modal "
     "control-center dash filebrowser input-modal keybinds layout modal mux network-info "
@@ -736,17 +708,13 @@ BLUR_ALLOWLIST = (
     "power-profiles process-list-popout switch-user-modal system-update toast tooltip "
     "vgs-menu vpn wifi-password wifi-qrcode"
 ).split()
-# Every probe below is a namespace a live surface actually declares (grep
-# WlrLayershell.namespace / layerNamespace). A probe no surface declares cannot
-# witness anything when it fails to match.
+# Use namespaces declared by live surfaces; nonexistent names cannot test exclusions.
 BLUR_MUST_MATCH = (
     "vshell:control-center vshell:notification-center-popout vshell:dash "
     "vshell:plugins:aiUsage vshell:tooltip"
 ).split()
-# Whole-output painters; backdrop-less-by-design surfaces (they pass
-# blurAvailable: false, see design-language.md § Invariants); a prefix collision;
-# bar chrome; and two `:background` dismiss windows, which the $ anchor and the
-# [^:]+ plugins arm are what keep out.
+# Backdrop-free tooltip hosts must stay outside the blur allowlist; see
+# design-language.md § Invariants.
 BLUR_MUST_NOT_MATCH = (
     "vshell:blurwallpaper vshell:workspace-overview vshell:screensaver vshell:fade-to-lock "
     "vshell:launcher-context-menu vshell:notification-context-menu vshell:tray-overflow-menu "
@@ -756,11 +724,7 @@ BLUR_MUST_NOT_MATCH = (
 
 
 def assert_blur_namespace_rule(script, source):
-    # Anchored to the layer rule's own `match` stanza so a bare `namespace =`
-    # elsewhere in the payload cannot satisfy it, but tolerant WITHIN the stanza:
-    # whitespace is free and the stanza may carry further keys, so reformatting
-    # the emitted Lua or adding a match key does not break this. What it does
-    # still require is that the stanza exist and appear once.
+    # Bind extraction to the unique layer match stanza while permitting formatting changes.
     patterns = re.findall(r'match\s*=\s*\{\s*namespace\s*=\s*"([^"]*)"', script)
     if len(patterns) != 1:
         raise AssertionError(f"{source}: expected one layer-rule match stanza, found {len(patterns)}")
@@ -857,8 +821,6 @@ exit 0
         assert_equal(payload["strength"], 1.0, "blur CLI strength clamp")
         assert_equal(payload["opacity"], 0.08, "blur CLI opacity clamp")
 
-        # Same table as the generator's own test: the CLI is the only path that
-        # reaches hyprctl, so the rule it ships has to be the rule we checked.
         assert_blur_namespace_rule(record_path.read_text(), "blur CLI hyprctl eval payload")
 
 
@@ -1182,13 +1144,11 @@ def test_duplicate_shell_guard():
         report = helper.vgs_instance_report(pid=200, shell_id="shell-1")
         assert_equal(report["duplicate"], True, "registered younger shell yields")
 
-        # A dead registry entry must not unseat a live shell.
         alive = {200}
         report = helper.vgs_instance_report(pid=200, shell_id="shell-1")
         assert_equal(report["duplicate"], False, "dead peers are ignored")
         alive = {100, 200, 300}
 
-        # Config-path matching covers `qs -c vshell` vs `qs -p quickshell/vshell`.
         report = helper.vgs_instance_report(pid=200, config_path=shell_path)
         assert_equal(report["duplicate"], True, "config-path match detects duplicates")
 
@@ -1215,7 +1175,6 @@ def test_duplicate_shell_guard():
         report = helper.vgs_instance_report(pid=200, shell_id="shell-1")
         assert_equal(report["duplicate"], False, "an undated pair abstains rather than guessing")
 
-        # Same launch time: the lower pid owns the session.
         tied = {**duplicate, "launch_time": session["launch_time"]}
         helper.qs_list_instances = lambda: {"ok": True, "instances": [session, tied]}
         report = helper.vgs_instance_report(pid=200, shell_id="shell-1")
@@ -1223,7 +1182,6 @@ def test_duplicate_shell_guard():
         report = helper.vgs_instance_report(pid=100, shell_id="shell-1")
         assert_equal(report["duplicate"], False, "lower pid wins a tie")
 
-        # Fail open: an unreadable registry must never block a shell from starting.
         helper.qs_list_instances = lambda: {"ok": False, "error": "qs missing", "instances": []}
         report = helper.vgs_instance_report(pid=200, shell_id="shell-1")
         assert_equal(report["duplicate"], False, "unavailable registry fails open")
@@ -1374,7 +1332,6 @@ def test_sudo_toggle_dropin_lifecycle():
         assert_equal(sorted(p.name for p in Path(tmp).iterdir()), [dropin.name],
                      "Enable must leave no staging file behind")
 
-        # Re-enabling over an existing drop-in is idempotent, not an error.
         ok, _ = helper.sudo_toggle_apply(dropin, "tester", True, visudo)
         assert_equal(ok, True, "Re-enable must be idempotent")
 
@@ -1382,18 +1339,15 @@ def test_sudo_toggle_dropin_lifecycle():
         assert_equal(ok, True, "Disable must succeed")
         assert_equal(dropin.exists(), False, "Disable must remove the drop-in")
 
-        # Disabling when nothing is installed is a no-op, not a failure.
         ok, _ = helper.sudo_toggle_apply(dropin, "tester", False, visudo)
         assert_equal(ok, True, "Disable on an absent drop-in must be a no-op")
 
-        # An invalid rule must never land: prove the validation gate can fail.
         bad, message = helper.sudo_toggle_apply(dropin, "not a valid user spec !!", True, visudo)
         assert_equal(bad, False, "visudo must reject a malformed user spec")
         assert_equal(dropin.exists(), False, "Rejected candidate must not be installed")
         assert_equal(sorted(p.name for p in Path(tmp).iterdir()), [],
                      "Rejected candidate must leave no staging file behind")
 
-        # A symlinked drop-in path is a redirect target; refuse it.
         link = Path(tmp) / "50-link-nopasswd-toggle"
         link.symlink_to(Path(tmp) / "elsewhere")
         ok, message = helper.sudo_toggle_apply(link, "tester", True, visudo)
@@ -1419,14 +1373,13 @@ def test_sudo_toggle_status_reads_flag_mirror():
                      "Present flag must read as enabled")
         flag.unlink()
 
-        # A pre-VGS-11 install still has the mirror at the old path.
+        # The fixture includes the legacy state-mirror path.
         legacy.parent.mkdir(parents=True, exist_ok=True)
         legacy.touch()
         assert_equal(helper.sudo_toggle_status("tester", probe_sudo=False)["enabled"], True,
                      "Legacy mirror path must still read as enabled (migration)")
         legacy.unlink()
 
-        # available/reason must be a real probe, not a constant.
         available, reason = helper.sudo_toggle_availability()
         expected = bool(shutil.which("sudo") and shutil.which("visudo")
                         and Path("/etc/sudoers.d").is_dir())
@@ -1479,11 +1432,9 @@ def test_sudo_toggle_status_reports_other_passwordless_sources():
 
 
 def test_sudo_toggle_set_refuses_stale_direction():
-    """A stale mirror must never be able to turn a revoke into a grant (VGS-11).
+    """A stale state mirror must not turn a requested revoke into a grant.
 
-    The mirror says enabled, the drop-in is gone (admin removed it, restored
-    home backup). The user clicks what reads as 'revoke'. The old code inferred
-    `enable = not dropin.is_file()` root-side and installed NOPASSWD: ALL.
+    The mirror can say enabled after an administrator removes the drop-in.
     """
     if shutil.which("visudo") is None:
         return
@@ -1495,7 +1446,6 @@ def test_sudo_toggle_set_refuses_stale_direction():
             original = helper.sudo_toggle_dropin
             helper.sudo_toggle_dropin = lambda user: dropin
             try:
-                # Stale mirror: claims enabled, no drop-in on disk.
                 flag.parent.mkdir(parents=True, exist_ok=True)
                 flag.touch()
                 code = helper.sudo_toggle_set("tester", False)
@@ -1506,14 +1456,11 @@ def test_sudo_toggle_set_refuses_stale_direction():
                 assert_equal(flag.exists(), False,
                              "The stale mirror must be re-synced to reality")
 
-                # Honest enable, from an agreed-disabled state.
                 code = helper.sudo_toggle_set("tester", True)
                 assert_equal(code, 0, "Enable from an agreed state must succeed")
                 assert_equal(dropin.is_file(), True, "Enable must install the drop-in")
                 assert_equal(flag.is_file(), True, "Enable must write the mirror")
 
-                # Inverse drift: drop-in present, mirror missing, user clicks
-                # what reads as 'grant'. Benign, but still a mismatch.
                 flag.unlink()
                 code = helper.sudo_toggle_set("tester", True)
                 assert_equal(code, helper.SUDO_TOGGLE_EXIT_STALE,
@@ -1521,7 +1468,6 @@ def test_sudo_toggle_set_refuses_stale_direction():
                 assert_equal(dropin.is_file(), True, "Drop-in must be left as it was")
                 assert_equal(flag.is_file(), True, "Mirror must be re-synced to reality")
 
-                # Agreed revoke.
                 code = helper.sudo_toggle_set("tester", False)
                 assert_equal(code, 0, "Revoke from an agreed state must succeed")
                 assert_equal(dropin.exists(), False, "Revoke must remove the drop-in")
@@ -1533,11 +1479,9 @@ def test_sudo_toggle_set_refuses_stale_direction():
 
 
 def test_sudo_toggle_enable_never_takes_quiet_sudo_path():
-    """Enabling must always go through a terminal (VGS-11).
+    """Enabling requires a terminal even when sudo -n already succeeds.
 
-    Where `sudo -n` already succeeds — an admin wheel NOPASSWD rule, a live
-    credential cache — the quiet path would install a permanent NOPASSWD: ALL
-    from one bar click with no prompt, no window and no confirmation.
+    A credential cache must not silently turn a click into a permanent grant.
     """
     calls = []
 
@@ -1546,18 +1490,13 @@ def test_sudo_toggle_enable_never_takes_quiet_sudo_path():
     original_enable_avail = helper.sudo_toggle_enable_availability
     original_euid = helper.os.geteuid
     helper.sudo_toggle_availability = lambda: (True, "")
-    # Must be stubbed, not inherited from the host: it probes for a terminal
-    # emulator, so leaving it live made this test pass on a developer machine
-    # (terminal installed, enable path reached) and fail on a bare CI runner
-    # (refused before `ensure_root_for` was ever called). The terminal-refusal
-    # behaviour is worth pinning, so it gets its own case below rather than
-    # being an ambient property of whoever ran the suite.
+    # Stub terminal availability so host tools cannot determine whether the privilege
+    # path is reached. Terminal refusal has a separate case.
     helper.sudo_toggle_enable_availability = lambda: (True, "")
-    helper.os.geteuid = lambda: 1000  # never take the privileged branch here
+    helper.os.geteuid = lambda: 1000
 
     def fake_ensure_root_for(argv, terminal=False):
         calls.append((list(argv), terminal))
-        # Stand in for a machine where `sudo -n` succeeds.
         return 0
 
     helper.ensure_root_for = fake_ensure_root_for
@@ -1589,9 +1528,7 @@ def test_sudo_toggle_enable_never_takes_quiet_sudo_path():
 
         with_temp_home(check)
 
-        # No terminal: enabling must refuse outright rather than fall back to
-        # the quiet path, and revoking must still work — gating both directions
-        # on a terminal is what once stranded an existing grant in place.
+        # Without a terminal, enabling must refuse while revocation remains available.
         helper.sudo_toggle_enable_availability = lambda: (False, "no terminal emulator found")
         calls.clear()
         code = helper.cmd_sudo_toggle(["set", "on"])
@@ -1628,7 +1565,6 @@ def test_sudo_toggle_flag_write_refuses_symlinks():
                      "A refused write must not create anything inside the link target")
         (state / "vshell").unlink()
 
-        # A symlinked flag file must be refused too.
         (state / "vshell").mkdir()
         (state / "vshell" / "sudo-passwordless-toggle").symlink_to(target)
         ok, message = helper.sudo_toggle_write_flag(True)
@@ -1636,13 +1572,11 @@ def test_sudo_toggle_flag_write_refuses_symlinks():
         assert_equal(target.exists(), False, "A refused write must not create the link target")
         (state / "vshell" / "sudo-passwordless-toggle").unlink()
 
-        # The ordinary path still works.
         ok, message = helper.sudo_toggle_write_flag(True)
         assert_equal(ok, True, f"A clean mirror write must succeed: {message}")
         assert_equal((state / "vshell" / "sudo-passwordless-toggle").is_file(), True,
                      "A clean mirror write must create a real file")
 
-        # Writing the mirror retires the pre-VGS-11 file.
         legacy = state / "sudo-passwordless-toggle"
         legacy.touch()
         ok, _ = helper.sudo_toggle_write_flag(True)
@@ -1653,12 +1587,7 @@ def test_sudo_toggle_flag_write_refuses_symlinks():
 
 
 def test_sudo_toggle_revoke_retires_legacy_flag_without_state_dir():
-    """A revoke must clear the old mirror even when the new tree is absent.
-
-    Otherwise the legacy flag keeps asserting "enabled" after the drop-in is
-    gone, which is exactly the stale-mirror state the direction guard exists to
-    catch — reintroduced by the writer itself.
-    """
+    """Revocation clears the legacy mirror even when the current state tree is absent."""
     def check(home_path: Path):
         legacy = home_path / ".local" / "state" / "sudo-passwordless-toggle"
         legacy.parent.mkdir(parents=True, exist_ok=True)
@@ -1703,18 +1632,14 @@ def test_launch_terminal_rejects_immediately_failing_terminal():
 
 
 def test_sudo_toggle_revoke_never_needs_a_terminal():
-    """A machine with no terminal must still be able to REVOKE (VGS-11).
-
-    Gating both directions on a terminal stranded the escalated state: the
-    drop-in stayed installed and the widget refused to act on it.
-    """
+    """Revocation must remain available without a terminal."""
     calls = []
 
     original_ensure = helper.ensure_root_for
     original_terminals = helper.terminal_candidates
     original_avail = helper.sudo_toggle_availability
     original_euid = helper.os.geteuid
-    helper.terminal_candidates = lambda prefer=None: []          # no terminal anywhere
+    helper.terminal_candidates = lambda prefer=None: []
     helper.sudo_toggle_availability = lambda: (True, "")
     helper.os.geteuid = lambda: 1000
 
@@ -1732,13 +1657,11 @@ def test_sudo_toggle_revoke_never_needs_a_terminal():
         assert_equal(len(calls), 1, "Revoke must still elevate once, on the quiet path")
         assert_equal(calls[0][1], False, "Revoke must not need a terminal")
 
-        # Granting is the direction that genuinely needs one, and must say so.
         calls.clear()
         code = helper.cmd_sudo_toggle(["set", "on"])
         assert_equal(code, 1, "Granting with no terminal must fail")
         assert_equal(calls, [], "Granting with no terminal must not elevate at all")
 
-        # An already-root caller never uses a terminal, so it must not need one.
         helper.os.geteuid = lambda: 0
         original_set = helper.sudo_toggle_set
         recorded = []
@@ -1752,7 +1675,6 @@ def test_sudo_toggle_revoke_never_needs_a_terminal():
             helper.sudo_toggle_set = original_set
             helper.os.geteuid = lambda: 1000
 
-        # The distinction has to be reportable, not just enforced.
         can_enable, reason = helper.sudo_toggle_enable_availability()
         assert_equal(can_enable, False, "enable-availability must be false with no terminal")
         assert_equal("terminal" in reason, True, "The reason must name the missing terminal")
@@ -1774,23 +1696,16 @@ def test_terminal_candidates_match_dependency_manifest():
     assert_equal(len(any_commands), 1, "terminal must declare exactly one alternative set")
     assert_equal(sorted(any_commands[0]), sorted(helper.TERMINAL_CANDIDATES),
                  "dependencies.json terminals must match helper TERMINAL_CANDIDATES")
-    # `xdg-terminal-exec` launches a terminal; it is not one. Counting it here
-    # would report the group available on a machine with no terminal installed,
-    # which is exactly the VGS-54 defect.
+    # xdg-terminal-exec is a launcher and does not establish an installed terminal.
     assert_equal("xdg-terminal-exec" in any_commands[0], False,
                  "a terminal launcher must not count as a terminal")
-    # Terminals are declared once, by the group that owns them. Anything that
-    # needs one says so by requiring that group, so there is no second list to
-    # drift (VGS-32).
+    # Features that need a terminal depend on its owning group, not a copied list.
     for feature in ("sudo-toggle", "launcher-folder-open-yazi"):
         assert_equal(features[feature].get("anyCommands"), None,
                      f"{feature} must not restate the terminal list")
     assert_equal("terminal" in (features["launcher-folder-open-yazi"].get("requiresFeatures") or []),
                  True, "the Yazi opener must require the terminal feature")
-    # Revoking passwordless sudo needs no terminal (VGS-11), so gating the whole
-    # group on one would have `deps status` report the safety valve unavailable
-    # to exactly the people who most need it. The grant half, which really does
-    # need somewhere to prompt, is its own group.
+    # Revocation needs no terminal; only granting requires somewhere to prompt.
     assert_equal(features["sudo-toggle"].get("requiresFeatures"), None,
                  "sudo-toggle must stay available without a terminal so a grant can be revoked")
     assert_equal(sorted(features["sudo-toggle-grant"]["requiresFeatures"]),
@@ -1986,12 +1901,7 @@ def test_terminal_never_reruns_an_unwrapped_command():
 
 
 def test_missing_terminal_reaches_the_user():
-    """A detached caller sees no stderr, so "no terminal" must be reported.
-
-    Every call site launches through Quickshell.execDetached, which discards
-    output and status; without this a click on Update all does nothing and says
-    nothing, which is worse than the command-not-found toast VGS-54 reports.
-    """
+    """Report terminal launch failure to detached callers that receive no stderr."""
     original_candidates = helper.terminal_candidates
     original_notify = helper.notify_user
     reported = []
@@ -2026,7 +1936,7 @@ def test_terminal_wait_blocks_until_the_terminal_exits():
             waits.append(timeout)
             if timeout is not None:
                 raise helper.subprocess.TimeoutExpired("terminal", timeout)
-            return 7  # the command's own status, once the window closes
+            return 7
 
     helper.terminal_candidates = lambda prefer=None: [["kitty"]]
     helper.app_scope_prefix = lambda: []
@@ -2252,7 +2162,6 @@ def test_notification_takeover_never_touches_an_inherited_unit():
             "unit": session_unit,
             "unitShow": {session_unit: {
                 "LoadState": "loaded", "ActiveState": "active", "UnitFileState": "enabled",
-                # The compositor is the unit's main process, not mako.
                 "MainPID": "3099",
                 "ExecStart": "{ path=/usr/bin/uwsm ; argv[]=/usr/bin/uwsm aux exec -- hyprland.desktop ; ignore_errors=no }",
             }},
@@ -2324,15 +2233,9 @@ def test_notification_restore_starts_what_takeover_stopped():
 
 
 def test_notification_takeover_records_who_asked():
-    """The undo record carries provenance, because the shell cannot.
+    """Use the persistent undo record to distinguish automatic from manual takeover.
 
-    `NotificationService._firstRunTakeoverFired` dies with the shell process,
-    while the masks, the stopped units and the record all persist. Keying the
-    opt-out reversal on the runtime flag alone meant a restart between the
-    takeover and the opt-out skipped the reversal and left the user's daemon
-    masked and stopped -- no notification daemon at all, from nothing worse
-    than a restart. Reading the record instead is what makes it durable, so
-    every claim that reading makes is pinned here.
+    Runtime flags disappear on restart while masks and stopped units persist.
     """
     original_bus, original_systemctl = helper._session_bus_call, helper._systemctl_user
     original_env = {key: os.environ.get(key) for key in ("VSHELL_PROC_ROOT", "XDG_DATA_HOME", "XDG_DATA_DIRS")}
@@ -2363,8 +2266,7 @@ def test_notification_takeover_records_who_asked():
         _notification_env(tmp, owner_spec())
         helper.notification_takeover(automatic=True)
 
-        # Re-reading the record from disk IS the restart: no in-process state
-        # survives a shell exit, and this is the only thing that does.
+        # Only the on-disk record survives a shell restart.
         assert_equal(helper._load_takeover_record()["initiator"], "first-run",
                      "the first-run takeover must be recorded on disk, not only in the shell")
         status = helper.notification_status()
@@ -2404,7 +2306,6 @@ def test_notification_takeover_records_who_asked():
 
     def an_existing_record_is_never_relabelled(tmp: Path):
         _notification_env(tmp, owner_spec())
-        # The user takes the name themselves first.
         helper.notification_takeover()
         assert_equal(helper._load_takeover_record()["initiator"], "manual",
                      "precondition: the user's own takeover is recorded as manual")
@@ -2430,10 +2331,7 @@ def test_notification_takeover_records_who_asked():
         settings = tmp / ".config" / "vshell" / "settings.json"
         settings.parent.mkdir(parents=True, exist_ok=True)
 
-        # No settings file at all. load_settings() falls back to the shipped
-        # seed, so the seed's own value is load-bearing here: were it true, an
-        # absent config would answer "already spent" and the shell would refuse
-        # the takeover it is supposed to perform on exactly that config.
+        # With no settings file, the shipped seed decides whether takeover is already spent.
         seed = json.loads((REPO_ROOT / "config" / "vshell" / "settings.default.json").read_text())
         assert_equal(seed["notificationFirstRunTakeoverDone"], False,
                      "the shipped seed must leave the one-shot unspent")
@@ -2442,19 +2340,16 @@ def test_notification_takeover_records_who_asked():
         assert_equal(helper.notification_status()["vgsFirstRunTakeoverDone"], False,
                      "status must surface the on-disk answer")
 
-        # Unparseable: likewise not evidence.
         settings.write_text("{ this is not json")
         assert_equal(helper.vgs_first_run_takeover_done(), False,
                      "an unreadable settings.json must not read as a spent one-shot")
 
-        # Present but false, and present but not a boolean.
         settings.write_text(json.dumps({"notificationFirstRunTakeoverDone": False}))
         assert_equal(helper.vgs_first_run_takeover_done(), False, "false is false")
         settings.write_text(json.dumps({"notificationFirstRunTakeoverDone": "yes"}))
         assert_equal(helper.vgs_first_run_takeover_done(), False,
                      "a non-boolean must not be coerced into a spent one-shot")
 
-        # Only an actual persisted true counts.
         settings.write_text(json.dumps({"notificationFirstRunTakeoverDone": True}))
         assert_equal(helper.vgs_first_run_takeover_done(), True,
                      "a persisted true is what the shell waits for")
@@ -2559,7 +2454,6 @@ def test_notification_takeover_preserves_a_user_activation_file():
         owner = {"unique": ":1.9", "pid": 4343, "comm": "mako", "cmdline": ["/usr/bin/mako"],
                  "unit": "", "unitShow": {}}
         _notification_env(tmp, owner)
-        # The conflicting activation file lives in the user's own data home.
         user_file = tmp / "home" / ".local" / "share" / "dbus-1" / "services" / "fr.emersion.mako.service"
         user_file.parent.mkdir(parents=True, exist_ok=True)
         original = ("[D-BUS Service]\n"
@@ -2711,9 +2605,8 @@ def test_theme_catalog_download_verifies_every_file():
             assert_equal((dest / "theme.json").is_file(), True, "theme survives a failed removal")
             assert_equal(helper.catalog_remove_theme("demo")["status"], "removed", "removal after the block")
 
-            # The theme lock must be free while bytes are moving: a `Download
-            # All` is ~1.1 GiB, and holding it would block every apply, the
-            # light/dark keybinding, wallpapers and restyles for that whole time.
+            # Downloads must not hold the theme lock while bytes move; applies and restyles
+            # need that same lock.
             import fcntl
 
             lock_free_during_transfer = []
@@ -2790,7 +2683,6 @@ def test_theme_catalog_download_verifies_every_file():
             except ValueError as exc:
                 assert_equal("no source served" in str(exc), True, "failure names the exhausted locations")
 
-            # Tampered checksum: nothing may land, not even partially.
             tampered = json.loads(json.dumps(entry))
             tampered["files"][0]["sha256"] = "0" * 64
             try:
@@ -2831,8 +2723,6 @@ def test_theme_catalog_manifest_matches_the_repo():
     on_disk = sorted(p.parent.name for p in (REPO_ROOT / "themes").glob("*/theme.json"))
     assert_equal(names, on_disk, "catalog themes must match themes/ on disk")
     assert_equal(catalog["source"]["baseUrl"].startswith("https://"), True, "catalog must download over https")
-    # The generator validates through the installer's own checker, so a catalogued
-    # path the installer would refuse cannot exist. Assert the invariant directly.
     for theme in catalog["themes"]:
         for spec in theme["files"]:
             helper._catalog_check_relpath(spec["path"])
@@ -2859,20 +2749,14 @@ def test_theme_catalog_generator_rejects_uninstallable_packages():
             raise AssertionError("a nested backgrounds/ path must fail catalog generation")
         except SystemExit:
             pass
-        # Files outside the downloadable shape are skipped, not fatal.
         shutil.rmtree(theme_dir / "backgrounds" / "season")
         (theme_dir / "NOTES.md").write_text("scratch\n")
         assert_equal(generator.catalog_relpaths(helper, theme_dir), ["theme.json"],
                      "stray files are skipped without failing generation")
 
 
-# --- remote desktop (Sunshine host) -----------------------------------------
-#
-# The whole point of routing the host through the helper is that starting the
-# unit and creating the virtual output are one operation. Sunshine picks its
-# capture target at startup, so getting the order or the guard wrong streams a
-# REAL monitor with no error anywhere -- there is no observable symptom to
-# catch it later, which is why it is pinned here.
+# Sunshine selects its capture target at startup. Create and verify the virtual
+# output first or it can capture a physical monitor.
 
 _RD_SESSION_LINES = [
     "2026-08-06T11:10:42+0200 host sunshine[1]: Info: Creating encoder [hevc_nvenc]",
@@ -3017,8 +2901,7 @@ def test_remote_desktop_start_creates_the_output_before_starting_the_unit():
 
 
 def test_remote_desktop_start_refuses_when_the_output_cannot_be_checked():
-    # hyprctl unavailable or unanswering. Starting anyway would capture a real
-    # monitor and report success -- the exact silent failure this guards.
+    # Starting without a verified virtual output can capture a physical monitor.
     with _rd_lifecycle(output_present=None) as (calls, _state):
         result = helper.remote_desktop_start()
     assert_equal(result["ok"], False, "an unverifiable output must not start the host")
@@ -3035,9 +2918,7 @@ def test_remote_desktop_start_does_not_recreate_an_existing_output():
 
 
 def test_remote_desktop_failed_start_removes_the_output_it_created():
-    # N1. A failed start that leaves HEADLESS-1 behind hands the user a phantom
-    # monitor AND no host -- precisely the state the disabled-by-default design
-    # exists to avoid, and the user has no affordance to undo it.
+    # A failed host start must remove a virtual output it created.
     with _rd_lifecycle(output_present=False, systemctl_ok=False) as (calls, state):
         result = helper.remote_desktop_start()
         record_exists = helper._rd_output_record_file().exists()
@@ -3052,8 +2933,7 @@ def test_remote_desktop_failed_start_removes_the_output_it_created():
 
 
 def test_remote_desktop_failed_start_keeps_an_output_it_did_not_create():
-    # The other half of N1: roll back only what THIS call created. An output
-    # that was already there belongs to somebody else even when the start fails.
+    # A pre-existing output belongs to another caller even if host startup fails.
     with _rd_lifecycle(output_present=True, systemctl_ok=False) as (calls, state):
         result = helper.remote_desktop_start()
     assert_equal(result["ok"], False, "a failed systemctl start is still a failure")
@@ -3062,10 +2942,7 @@ def test_remote_desktop_failed_start_keeps_an_output_it_did_not_create():
 
 
 def test_remote_desktop_stop_removes_only_an_output_vgs_created():
-    # N2. Stop used to remove any present HEADLESS-1, so stopping Sunshine
-    # could delete a virtual output the user made for something else. That is
-    # the worst outcome available here: destroying display configuration as a
-    # side effect of stopping a service.
+    # Stopping Sunshine must not delete a virtual output it does not own.
     with _rd_lifecycle(output_present=False) as (calls, state):
         assert_equal(helper.remote_desktop_start()["ok"], True, "the start succeeds")
         assert_equal(state["present"], True, "the start created the output")
@@ -3077,7 +2954,6 @@ def test_remote_desktop_stop_removes_only_an_output_vgs_created():
             "the record is cleared once the output it described is gone",
         )
 
-    # Same shape, but the output was already there when start ran.
     with _rd_lifecycle(output_present=True) as (calls, state):
         assert_equal(helper.remote_desktop_start()["ok"], True, "the start succeeds")
         calls.clear()
@@ -3124,7 +3000,7 @@ def test_remote_desktop_stop_drops_the_record_when_the_output_vanished():
     # that happens to carry the same name.
     with _rd_lifecycle(output_present=False) as (calls, state):
         helper.remote_desktop_start()
-        state["present"] = False  # the user removed it themselves
+        state["present"] = False
         calls.clear()
         result = helper.remote_desktop_stop()
         assert_equal(result["ok"], True, "a vanished output is not an error")
@@ -3136,10 +3012,8 @@ def test_remote_desktop_stop_drops_the_record_when_the_output_vanished():
 
 
 def test_remote_desktop_start_is_idempotent_when_the_host_is_already_running():
-    # N4. `toggle` decides from a state read; the unit can change before the
-    # action runs. The losing path must touch no output -- a running host has
-    # already picked its capture target, so a second virtual output would be a
-    # phantom monitor and nothing else.
+    # The unit can start between a toggle query and action; an already-running host
+    # must not gain another virtual output.
     with _rd_lifecycle(output_present=False, unit_running=True) as (calls, state):
         result = helper.remote_desktop_start()
     assert_equal(result["ok"], True, "starting an already-running host is not a failure")
@@ -3150,10 +3024,8 @@ def test_remote_desktop_start_is_idempotent_when_the_host_is_already_running():
 
 
 def test_remote_desktop_start_reports_an_unrecordable_ownership_claim():
-    # If the record cannot be written, stop will not recognise the output as
-    # VGS's and will leave it. That is the safe direction -- a leaked monitor is
-    # one click to remove, a deleted one cannot be undone -- but it must be said
-    # rather than silently traded away.
+    # If the ownership record cannot be saved, stopping cannot safely remove the
+    # output. Report that failure.
     with _rd_lifecycle(output_present=False) as (calls, state):
         original = helper._rd_record_output_created
         helper._rd_record_output_created = lambda: "Read-only file system"
@@ -3167,10 +3039,7 @@ def test_remote_desktop_start_reports_an_unrecordable_ownership_claim():
 
 
 def test_remote_desktop_start_verifies_the_output_it_created():
-    # N6. `hyprctl` exiting 0 is not the output existing. If it is absent,
-    # Sunshine picks a real monitor at startup and streams the user's own
-    # screen with nothing anywhere to say so -- the same silent fallback the
-    # unverifiable-presence refusal guards, reached from the other side.
+    # hyprctl success without a visible output must not permit host startup.
     with _rd_lifecycle(output_present=False, create_takes_effect=False) as (calls, state):
         result = helper.remote_desktop_start()
         record_exists = helper._rd_output_record_file().exists()
@@ -3186,10 +3055,7 @@ def test_remote_desktop_start_verifies_the_output_it_created():
     if not any("not present" in failure for failure in result["failures"]):
         raise AssertionError(f"the refusal must say the output is absent: {result['failures']!r}")
 
-    # The presence check answering "cannot tell" is its own case, and it must
-    # not be collapsed into "absent" -- nothing is removed on this path,
-    # because removing what we cannot see is the guess the record exists to
-    # avoid.
+    # Unknown presence is neither absence nor authorization to remove an output.
     with _rd_lifecycle(output_present=False, create_takes_effect=None) as (calls, state):
         result = helper.remote_desktop_start()
     assert_equal(result["ok"], False, "an unverifiable output must not start the host either")
@@ -3222,10 +3088,7 @@ def _rd_systemctl(replies):
 
 
 def test_remote_desktop_journal_window_never_falls_back_to_unbounded_history():
-    # S1, and it is the worse direction of the readable/active split. An
-    # unbounded read replays a CLIENT CONNECTED from a previous run, so the
-    # widget shows LIVE with nobody connected -- which trains the user to
-    # ignore the one indicator that says somebody is watching their screen.
+    # Only logs from the current service run can establish a connected client.
     good = subprocess.CompletedProcess([], 0, "Thu 2026-08-06 16:44:12 CEST\n", "")
     with _rd_systemctl({"ActiveEnterTimestamp": good}):
         assert_equal(
@@ -3243,9 +3106,7 @@ def test_remote_desktop_journal_window_never_falls_back_to_unbounded_history():
                 helper._rd_journal_window(), None,
                 f"no anchor when {label} -- and specifically not a boot-wide replay")
 
-    # And the session read must REFUSE rather than read unbounded, reporting
-    # unknown. Not idle either: `active` stays false but `readable` is false
-    # too, which is what the shell renders as "could not tell".
+    # An unreadable session is unknown, not idle.
     calls = []
     original_run = helper.run
 
@@ -3268,9 +3129,7 @@ def test_remote_desktop_journal_window_never_falls_back_to_unbounded_history():
 
 
 def test_remote_desktop_unit_query_failure_is_not_a_missing_unit():
-    # S2. `systemctl show` failing and the unit genuinely being absent came
-    # back identically, so a transient failure made the widget announce that
-    # Sunshine is not installed.
+    # A failed systemctl query must differ from an absent unit.
     loaded = subprocess.CompletedProcess([], 0, "LoadState=loaded\nActiveState=inactive\n", "")
     absent = subprocess.CompletedProcess([], 0, "LoadState=not-found\nActiveState=inactive\n", "")
     broken = subprocess.CompletedProcess([], 1, "", "Failed to connect to bus: No such file")
@@ -3286,17 +3145,10 @@ def test_remote_desktop_unit_query_failure_is_not_a_missing_unit():
     assert_equal(state["known"], True, "'not-found' IS an answer")
     assert_equal(state["exists"], False, "and the answer is that the unit is absent")
 
-    # X1: a PARTIAL reply is not an answer either. Both fields carry a verdict,
-    # and each is read with a default that looks definite -- an absent
-    # ActiveState silently makes `running` false, so a truncated reply that
-    # happened to contain LoadState reported the host as STOPPED when its state
-    # was unknown. This is the fourth instance of the shape on this plugin, so
-    # it gets the same treatment as its three siblings: pinned, with the case
-    # that would otherwise silently regress.
+    # Both LoadState and ActiveState need values; a partial reply cannot establish host state.
     partial = {
         "ActiveState missing": subprocess.CompletedProcess([], 0, "LoadState=loaded\n", ""),
         "LoadState missing": subprocess.CompletedProcess([], 0, "ActiveState=active\n", ""),
-        # A field with no value is a field, not an answer.
         "ActiveState empty": subprocess.CompletedProcess([], 0, "LoadState=loaded\nActiveState=\n", ""),
         "LoadState empty": subprocess.CompletedProcess([], 0, "LoadState=\nActiveState=active\n", ""),
         "reply truncated mid-line": subprocess.CompletedProcess([], 0, "LoadState=loaded\nActiveSta", ""),
@@ -3310,8 +3162,6 @@ def test_remote_desktop_unit_query_failure_is_not_a_missing_unit():
         if "incomplete" not in state["error"]:
             raise AssertionError(f"{label}: the reason must say the reply was incomplete: {state['error']!r}")
 
-    # The specific regression: LoadState=loaded alone previously read as a
-    # definite "installed and stopped".
     with _rd_systemctl({"LoadState": partial["ActiveState missing"]}):
         state = helper._rd_unit_state()
     if state["known"] and not state["running"]:
@@ -3326,7 +3176,6 @@ def test_remote_desktop_unit_query_failure_is_not_a_missing_unit():
         if not state["error"]:
             raise AssertionError(f"{label}: the reason must survive to the caller")
 
-    # The status payload routes it to unknown, never to unavailable.
     originals = {n: getattr(helper, n) for n in ("_rd_unit_state", "detect_compositor", "_rd_paired_clients", "_rd_web_host")}
     helper.detect_compositor = lambda: {"compositor": "niri", "source": "test"}
     helper._rd_paired_clients = lambda: {"names": [], "known": True, "error": "", "undecodable": 0}
@@ -3352,8 +3201,7 @@ def test_remote_desktop_unit_query_failure_is_not_a_missing_unit():
 
 
 def test_remote_desktop_start_refuses_when_the_unit_query_fails():
-    # The lifecycle half of S2: acting on a failed query would start a host
-    # that may already be running, and create an output for it.
+    # A failed query cannot authorize starting a host that may already be running.
     original = helper._rd_unit_state
     helper._rd_unit_state = lambda: {"known": False, "error": "bus is gone", "exists": False, "running": False}
     try:
@@ -3385,10 +3233,7 @@ def test_remote_desktop_paired_clients_reads_only_names():
 
     with_temp_home(check)
 
-    # A machine with no Sunshine config is not an error, just an empty list --
-    # and it is an ANSWER, not an unknown. The ambient config is SEEDED so a
-    # runner proves the isolation too: with nothing to leak, the unfixed
-    # fixture answered [] as well and CI could not see the guard go.
+    # Seed ambient config so an isolated empty fixture proves host data does not leak.
     def check_absent(home):
         result = helper._rd_paired_clients()
         assert_equal(result["names"], [], "no state file means no paired clients")
@@ -3407,11 +3252,7 @@ def test_remote_desktop_paired_clients_reads_only_names():
 
 
 def test_remote_desktop_malformed_state_degrades_rather_than_raising():
-    # U2. `remote_desktop_status()` used to raise straight out of here on a
-    # state file that decoded as JSON but had another shape, so ONE malformed
-    # field took the host and session state down with it and the widget lost
-    # everything. Unparseable state is unknown by this subsystem's own model,
-    # not fatal.
+    # Malformed client state must leave independent host and session status available.
     malformed = {
         "a JSON array": "[]",
         "a JSON scalar": "5",
@@ -3441,8 +3282,6 @@ def test_remote_desktop_malformed_state_degrades_rather_than_raising():
                 if not result["error"]:
                     raise AssertionError(f"{label}: the reason must survive to the caller")
 
-            # Shapes that are legitimately empty are ANSWERS, not unknowns: a
-            # state file with no paired devices yet is well-formed.
             for label, body in {
                 "no root yet": '{"username": "method"}',
                 "no named_devices yet": '{"root": {"uniqueid": "X"}}',
@@ -3453,8 +3292,6 @@ def test_remote_desktop_malformed_state_degrades_rather_than_raising():
                 assert_equal(result["names"], [], f"{label}: no devices")
                 assert_equal(result["known"], True, f"{label}: but that IS the answer")
 
-            # A malformed entry inside a well-formed list is skipped without
-            # discarding its neighbours.
             state.write_text(json.dumps({"root": {"named_devices": [
                 "not-an-object", {"name": "mbp-1"}, {"cert": "no name"}, None, {"name": 7},
             ]}}))
@@ -3467,8 +3304,6 @@ def test_remote_desktop_malformed_state_degrades_rather_than_raising():
 
     with_temp_home(check)
 
-    # And the whole status payload survives it: the other fields are still
-    # there, which is the actual regression.
     originals = {n: getattr(helper, n) for n in
                  ("_rd_unit_state", "_rd_manages_output", "_rd_paired_clients", "_rd_web_host")}
     helper._rd_unit_state = lambda: {"known": True, "error": "", "exists": True, "running": False}
@@ -3488,15 +3323,11 @@ def test_remote_desktop_malformed_state_degrades_rather_than_raising():
 
 
 def test_remote_desktop_unknown_compositor_is_probed_not_assumed():
-    # U1. detect_compositor() answers from THIS process's environment, and an
-    # ssh session has none of it -- so it says "unknown". Treating that as "not
-    # Hyprland" skipped the virtual output on exactly the path a remote-desktop
-    # host is most likely to be started from, and the capture fell back to a
-    # real monitor with nothing to say so.
+    # SSH can lack compositor environment variables while a Hyprland session runs.
+    # Unknown detection alone cannot authorize capture without a virtual output.
     originals = {n: getattr(helper, n) for n in
                  ("detect_compositor", "command_exists", "_rd_hypr_env", "run")}
     try:
-        # A detected compositor is taken at its word, both ways.
         helper.detect_compositor = lambda: {"compositor": "hyprland", "source": "test"}
         assert_equal(helper._rd_manages_output()["manages"], True, "detected Hyprland manages the output")
 
@@ -3507,21 +3338,17 @@ def test_remote_desktop_unknown_compositor_is_probed_not_assumed():
 
         helper.detect_compositor = lambda: {"compositor": "unknown", "source": "none"}
 
-        # Unknown + no hyprctl at all -> definitely not Hyprland. Proceed.
         helper.command_exists = lambda name: False
         managed = helper._rd_manages_output()
         assert_equal(managed["manages"], False, "no hyprctl means no Hyprland")
         assert_equal(managed["blocked"], False, "and the host may still start")
 
-        # Unknown + hyprctl but no running instance -> same.
         helper.command_exists = lambda name: True
         helper._rd_hypr_env = lambda: {}
         managed = helper._rd_manages_output()
         assert_equal(managed["manages"], False, "no instance means no running Hyprland")
         assert_equal(managed["blocked"], False, "and the host may still start")
 
-        # Unknown + an instance resolvable from the runtime dir + hyprctl
-        # answers -> this IS Hyprland, reached over ssh. THE FIX.
         helper._rd_hypr_env = lambda: {"HYPRLAND_INSTANCE_SIGNATURE": "sig"}
         helper.run = lambda argv, **kwargs: subprocess.CompletedProcess(argv, 0, "{}", "")
         managed = helper._rd_manages_output()
@@ -3539,7 +3366,6 @@ def test_remote_desktop_unknown_compositor_is_probed_not_assumed():
         for name, value in originals.items():
             setattr(helper, name, value)
 
-    # start honours the refusal without touching the compositor.
     with _rd_lifecycle(output_present=False) as (calls, state):
         helper._rd_manages_output = lambda: {
             "manages": False, "compositor": "unknown", "blocked": True,
@@ -3553,18 +3379,14 @@ def test_remote_desktop_unknown_compositor_is_probed_not_assumed():
 
 
 def test_remote_desktop_decode_marks_real_replacement_characters():
-    # The mechanism AI2 asked for: every rendering of a genuine U+FFFD is
-    # swapped for a marker BEFORE the lenient decode, so what is left is
-    # unambiguous -- a U+FFFD can only be a byte we could not decode, and a
-    # marker can only be one the file really contained.
+    # Mark genuine replacement characters before lenient decoding so inserted
+    # replacement characters identify undecodable bytes.
     literal = '{"a": "real\ufffdname"}'.encode("utf-8")
     text, marker = helper._rd_decode_marking_real_fffd(literal)
     assert_equal(marker in text, True, "a literal U+FFFD is marked")
     assert_equal("\ufffd" in text, False, "and no bare U+FFFD is left to misread")
 
-    # The escaped rendering counts too: a JSON writer may or may not escape
-    # non-ASCII, and Sunshine's own state file escapes solidus, so assuming
-    # either one would be a guess.
+    # JSON can encode characters literally or with escapes; test both forms.
     escaped = b'{"a": "real\\ufffdname"}'
     text, marker = helper._rd_decode_marking_real_fffd(escaped)
     assert_equal(json.loads(text)["a"], "real" + marker + "name", "an escaped U+FFFD is marked too")
@@ -3573,13 +3395,9 @@ def test_remote_desktop_decode_marks_real_replacement_characters():
     text, marker = helper._rd_decode_marking_real_fffd(b'{"a": "real\\uFFFDname"}')
     assert_equal(json.loads(text)["a"], "real" + marker + "name", "an uppercase escape is the same character")
 
-    # A byte that cannot be decoded still becomes U+FFFD, which is now the only
-    # thing U+FFFD can mean.
     text, marker = helper._rd_decode_marking_real_fffd(b'{"a": "bad-\x80-x"}')
     assert_equal(json.loads(text)["a"], "bad-\ufffd-x", "an undecodable byte is the only source of U+FFFD left")
 
-    # A clean file is returned untouched apart from the marking, and the JSON
-    # still parses -- one bad name must never cost the list.
     text, marker = helper._rd_decode_marking_real_fffd(b'{"a": "plain"}')
     assert_equal(json.loads(text)["a"], "plain", "a clean file decodes normally")
 
@@ -3592,18 +3410,14 @@ def test_remote_desktop_decode_marks_real_replacement_characters():
 
 
 def test_remote_desktop_undecodable_device_names_are_reported_not_mangled():
-    # VGS-87 item 5. Decoding with errors="replace" put U+FFFD INSIDE device
-    # names, so a client appeared under a mangled name indistinguishable from
-    # the device genuinely being called that. The substitution is now reported
-    # and the touched name is withheld rather than presented as fact.
+    # Withhold names changed by decoding replacement so corrupted bytes cannot
+    # be presented as a device name.
     def check(home: Path):
         config = home / ".config" / "sunshine"
         config.mkdir(parents=True)
         state = config / "sunshine_state.json"
         old_xdg = os.environ.pop("XDG_CONFIG_HOME", None)
         try:
-            # A clean file is never second-guessed, including one whose names
-            # carry perfectly ordinary non-ASCII.
             state.write_bytes(json.dumps({"root": {"named_devices": [
                 {"name": "mbp-1"}, {"name": "Bj\u00f6rn's iPad"},
             ]}}).encode("utf-8"))
@@ -3627,10 +3441,7 @@ def test_remote_desktop_undecodable_device_names_are_reported_not_mangled():
                 if "\ufffd" in name:
                     raise AssertionError(f"a substituted name reached the payload: {name!r}")
 
-            # Z5: the suspicion is scoped PER NAME. A device legitimately
-            # named with U+FFFD must keep its name even when an unrelated
-            # neighbour in the same file failed to decode -- a file-wide flag
-            # punished it for somebody else's bad bytes.
+            # A genuine replacement character in one name must survive corruption in another.
             payload = json.dumps({"root": {"named_devices": [
                 {"name": "real\ufffdname"}, {"name": "BADNAME"},
             ]}}, ensure_ascii=False).encode("utf-8").replace(b"BADNAME", b"bad-\x80-client")
@@ -3642,9 +3453,7 @@ def test_remote_desktop_undecodable_device_names_are_reported_not_mangled():
             )
             assert_equal(result["undecodable"], 1, "and only the broken one is counted")
 
-            # The same, with the JSON writer escaping non-ASCII rather than
-            # emitting it literally -- Sunshine's own state file escapes, so
-            # assuming either rendering would be a guess.
+            # Escaped and literal non-ASCII JSON must give the same result.
             payload = json.dumps({"root": {"named_devices": [
                 {"name": "real\ufffdname"}, {"name": "BADNAME"},
             ]}, }, ensure_ascii=True).encode("utf-8").replace(b"BADNAME", b"bad-\x80-client")
@@ -3656,13 +3465,8 @@ def test_remote_desktop_undecodable_device_names_are_reported_not_mangled():
             )
             assert_equal(result["undecodable"], 1, "and the broken neighbour is still the only loss")
 
-            # AI2, and the reason the substring mechanism had to go: asking
-            # "does this name's byte sequence appear ANYWHERE in the file"
-            # answers a different question from "did THIS field decode
-            # cleanly". Here the mangled name's decoded form also appears in an
-            # unrelated field, so the old check found it and kept the name
-            # mangled. Marking real U+FFFD before decoding removes the question
-            # rather than approximating it.
+            # The corrupted name also appears cleanly in an unrelated field. Whole-file
+            # substring presence cannot establish whether this name decoded cleanly.
             payload = json.dumps({
                 "note": "bad-\ufffd-x",
                 "root": {"named_devices": [{"name": "BADNAME"}]},
@@ -3675,7 +3479,6 @@ def test_remote_desktop_undecodable_device_names_are_reported_not_mangled():
             )
             assert_equal(result["undecodable"], 1, "and it is still counted as lost")
 
-            # Invalid bytes OUTSIDE any name must not withhold anything.
             payload = json.dumps({"root": {"named_devices": [{"name": "mbp-1"}], "junk": "PAD"}}).encode("utf-8")
             payload = payload.replace(b'"PAD"', b'"\x80pad"')
             state.write_bytes(payload)
@@ -3688,7 +3491,6 @@ def test_remote_desktop_undecodable_device_names_are_reported_not_mangled():
 
     with_temp_home(check)
 
-    # The count reaches the status payload, which is what the widget renders.
     originals = {n: getattr(helper, n) for n in
                  ("_rd_unit_state", "_rd_manages_output", "_rd_paired_clients", "_rd_web_host")}
     helper._rd_unit_state = lambda: {"known": True, "error": "", "exists": True, "running": False}
@@ -3705,9 +3507,7 @@ def test_remote_desktop_undecodable_device_names_are_reported_not_mangled():
 
 
 def test_remote_desktop_watch_tokens_cover_every_event():
-    # Real lines, copied from this host's journal. The widget never sees
-    # Sunshine's wording -- it sees these tokens -- so this is where the log
-    # format is pinned.
+    # The widget consumes normalized tokens, so journal wording is tested here.
     cases = [
         ("2026-08-06 11:10:43 Info: CLIENT CONNECTED", "connected"),
         ("2026-08-06 11:45:30 Info: CLIENT DISCONNECTED", "disconnected"),
@@ -3716,9 +3516,7 @@ def test_remote_desktop_watch_tokens_cover_every_event():
         ("Stopped Self-hosted game stream host for Moonlight.", "lifecycle"),
         ("Info: Creating encoder [hevc_nvenc]", "session"),
         ("Info: Streaming bitrate is 27788000", "session"),
-        # Noise the follow must NOT wake the shell for: Sunshine logs hundreds
-        # of these per start, and a resync on each would be a poll with extra
-        # steps.
+        # Repeated startup noise must not trigger a shell resync for each log line.
         ("Info: [wayland] Found interface: wl_output(71) version 4", ""),
         ("Info: Color range: JPEG", ""),
         ("", ""),
@@ -3729,13 +3527,10 @@ def test_remote_desktop_watch_tokens_cover_every_event():
 
 @contextlib.contextmanager
 def _scratchpad_state_sandbox():
-    """Point the pad lock and focus-state files at a temp dir.
+    """Use temporary pad locks and focus files.
 
-    `scratchpad_toggle` takes a per-pad flock under `_scratchpad_state_dir()`,
-    which is $XDG_RUNTIME_DIR/vshell-scratchpad — the LIVE session's directory.
-    Without this the tests created and locked `term.lock` next to the running
-    shell's own state, so a test run reached into the session it is supposed to
-    be independent of."""
+    The default runtime directory belongs to the live session.
+    """
     original = helper._scratchpad_state_dir
     with tempfile.TemporaryDirectory(prefix="vgs-scratchpad-state-") as tmp:
         helper._scratchpad_state_dir = lambda: Path(tmp)
@@ -3746,12 +3541,10 @@ def _scratchpad_state_sandbox():
 
 
 def _hides_on_readback(monitor="DP-1"):
-    """A visibility stub for a hide that WORKS: visible when the toggle checks
-    at entry, hidden when it reads the outcome back afterwards.
+    """Return a stateful visibility stub that confirms a successful hide.
 
-    A stub reporting "visible" forever would fail the post-dispatch
-    confirmation, because a hide now proves its own outcome instead of assuming
-    it. Each call site takes a fresh one, since it carries a counter."""
+    Each call site needs a fresh instance because reads advance its state.
+    """
     seen = {"n": 0}
 
     def visibility(pad_id):
@@ -3795,9 +3588,7 @@ def test_scratchpad_size_is_a_percentage_of_the_monitor():
     on_4k = helper.resolve_scratchpad_geometry(pad, _monitor(width=3840, height=2160))
     assert_equal((on_4k["width"], on_4k["height"]), (2304, 1512), "60%x70% of 3840x2160")
 
-    # Scale is not cosmetic here. Window rules and dispatches both speak logical
-    # coordinates, so a 4K panel at scale 2 must size like a 1080p one — sizing
-    # against the mode would produce a pad twice the intended size.
+    # Geometry uses logical coordinates; output scaling changes the physical size.
     hidpi = helper.resolve_scratchpad_geometry(pad, _monitor(width=3840, height=2160, scale=2.0))
     assert_equal((hidpi["width"], hidpi["height"]), (1152, 756),
                  "a 4K monitor at scale 2 is logically 1080p")
@@ -3808,7 +3599,6 @@ def test_scratchpad_size_is_a_percentage_of_the_monitor():
     assert_equal((portrait["monitorWidth"], portrait["monitorHeight"]), (1440, 2560),
                  "transform 1 swaps the logical axes")
 
-    # Pixels remain available for apps with a hard minimum size.
     exact = helper.resolve_scratchpad_geometry(
         _pad(sizeMode="pixels", widthPixels=900, heightPixels=600), _monitor())
     assert_equal((exact["width"], exact["height"]), (900, 600), "pixel override is honoured verbatim")
@@ -3952,7 +3742,6 @@ def test_scratchpad_generated_lua_parses():
         finally:
             os.unlink(path)
 
-    # Prove the instrument can fail before trusting that it passes.
     assert not parses("hl.window_rule({ this is not lua"), "luac -p must reject broken Lua"
 
     pads = [
@@ -3969,10 +3758,7 @@ def test_scratchpad_generated_lua_parses():
 
 
 def test_scratchpad_niri_generation():
-    """The Niri backend (VGS-83). Not a translation of the Lua one: Niri has no
-    special workspaces, so a pad is a persistent named workspace plus window
-    rules. The same pad RECORD drives both backends — that is what storing an
-    anchor and a percentage instead of pixels bought."""
+    """Test Niri scratchpads as named workspaces and window rules from the shared record."""
     pads = [
         _pad(keybind="Mod+T", monitor="DP-1", preload=True, anchor="top-center", offsetY=36),
         _pad(id="notes", classRegex="^(obsidian)$", command="obsidian",
@@ -3983,8 +3769,7 @@ def test_scratchpad_niri_generation():
     ]
     text, meta = helper.render_scratchpads_kdl(pads)
 
-    # The workspace is the model. Prefixed so a pad can never collide with a
-    # workspace the user named themselves.
+    # Prefix generated workspace names to reduce collisions with user workspaces.
     assert 'workspace "vgs-term" {' in text, "a pad with a monitor pins its workspace to that output"
     assert '    open-on-output "DP-1"' in text, "the configured monitor becomes open-on-output"
     assert 'workspace "vgs-notes"\n' in text, "a pad with no monitor declares a bare workspace"
@@ -3997,8 +3782,6 @@ def test_scratchpad_niri_generation():
     assert "default-window-height { proportion 0.7; }" in text
     assert "default-column-width { fixed 1200; }" in text, "pixel sizing becomes fixed"
 
-    # Anchors map onto niri's `relative-to`, and the offsets carry over
-    # unchanged because niri already measures inward from the named edge.
     assert 'default-floating-position x=0 y=36 relative-to="top"' in text, \
         "top-center is niri's single-side 'top', which centres on that edge"
     assert 'default-floating-position x=24 y=24 relative-to="bottom-right"' in text, \
@@ -4014,8 +3797,6 @@ def test_scratchpad_niri_generation():
     assert "open-focused false" in text, \
         "the pad must not steal focus when it maps; the toggle focuses it deliberately"
 
-    # The keybind and preload both run the same CLI paths the Hyprland backend
-    # does, so there is one toggle implementation per compositor and not two.
     assert '{ spawn ' in text and '"scratchpad" "toggle" "term"' in text, "keybind spawns the toggle"
     assert '"scratchpad" "preload" "term"' in text, "preload spawns the preload path"
     assert "spawn-at-startup" in text, "preload uses niri's own startup hook"
@@ -4042,8 +3823,6 @@ def test_scratchpad_niri_reports_what_it_cannot_express():
     assert offsets, "a centre anchor with an offset must be reported as unexpressible"
     assert "mid" in offsets[0]["reason"] or "Terminal" in offsets[0]["reason"] or offsets[0].get("id")
 
-    # ...and a centre pad with no offset is not reported at all, because
-    # nothing was lost: niri centres new floating windows by itself.
     _, plain = helper.render_scratchpads_kdl([_pad(id="mid", anchor="center")])
     assert not [i for i in plain["unsupported"] if i.get("field") == "anchor offset"], \
         "an unoffset centre pad loses nothing and must not be reported"
@@ -4069,8 +3848,6 @@ def test_scratchpad_niri_rejects_rules_it_cannot_write_correctly():
     assert_equal(meta["count"], 0, 'a pattern containing \'"#\' is not rendered')
     assert problems and "raw string" in problems[0]["reason"], "and says so"
 
-    # The exclusion gets the same treatment as the class pattern, exactly as on
-    # Hyprland: a malformed exclusion is not "no exclusion".
     problems = []
     _, meta = helper.render_scratchpads_kdl([_pad(titleExclude=r"(?<=x)y")], problems)
     assert_equal(meta["count"], 0, "an unexpressible exclusion rejects the whole pad")
@@ -4078,10 +3855,7 @@ def test_scratchpad_niri_rejects_rules_it_cannot_write_correctly():
 
 
 def test_scratchpad_niri_keybinds_are_converted():
-    """A keybind is stored Hyprland-shaped (`SUPER + SHIFT, T`) because that is
-    what the Settings capture writes. Emitting it verbatim into the KDL left a
-    bind niri either rejects or silently never fires, so the pad's one keybind
-    did nothing on the compositor the config was generated for."""
+    """Translate Settings keybind syntax into Niri bindings."""
     convert = helper.scratchpad_niri_keybind
     assert_equal(convert("SUPER, T"), "Mod+T", "SUPER becomes Mod and the comma separator goes")
     assert_equal(convert("SUPER + SHIFT, E"), "Mod+Shift+E", "every modifier is translated")
@@ -4119,7 +3893,6 @@ def test_scratchpad_niri_unconvertible_keybind_is_reported_not_emitted():
     assert_equal(meta["scratchpads"][0]["keybind"], "",
                  "and the payload reports no keybind rather than the Hyprland spelling")
 
-    # ...while a convertible one really does reach the file, in niri's syntax.
     text, meta = helper.render_scratchpads_kdl([_pad(keybind="SUPER + SHIFT, T")])
     assert '"Mod+Shift+T"' in text, "a convertible bind is emitted the way niri spells it"
     assert "SUPER" not in text, "and the Hyprland spelling does not survive into the KDL"
@@ -4146,7 +3919,6 @@ def test_scratchpad_niri_rejects_every_construct_it_can_prove_unsupported():
         assert_equal(meta["count"], 0, f"a pattern using {label} is not rendered")
         assert problems, f"and {label} is named rather than the pad vanishing"
 
-    # The patterns VGS itself generates must survive all of that.
     for good in [r"^(com\.ghostty\.scratchpad)$", r"^(a|b)+$", r"^(1password)$"]:
         problems = []
         _, meta = helper.render_scratchpads_kdl([_pad(classRegex=good)], problems)
@@ -4186,18 +3958,13 @@ def test_scratchpad_niri_release_owns_only_the_pad_s_own_window():
         state["workspaces"] = [{"id": 9, "name": "vgs-term", "idx": 3, "is_active": False},
                                {"id": 4, "name": "", "idx": 2, "is_focused": True}]
 
-        # A same-class window that is NOT on the pad's workspace must be left
-        # exactly where it is.
         state["windows"] = [{"id": 1, "app_id": "com.ghostty.scratchpad",
                              "title": "other", "workspace_id": 4}]
         stray = helper.scratchpad_release_niri("term", r"^(com\.ghostty\.scratchpad)$")
         assert_equal(stray["released"], False, "a window that was never in the pad is not released")
         assert_equal(actions, [], "and nothing is moved")
 
-        # ...and a stray listed BEFORE the pad's own window must not win the
-        # selection. Checking ownership after picking the first match let the
-        # stray fail the check and hide the real window behind it, so release
-        # did nothing at all.
+        # Place a non-owned match first so selection must filter before choosing a window.
         actions.clear()
         state["windows"] = [{"id": 1, "app_id": "com.ghostty.scratchpad",
                              "title": "other", "workspace_id": 4},
@@ -4210,7 +3977,6 @@ def test_scratchpad_niri_release_owns_only_the_pad_s_own_window():
                                 "--focus", "false", "2")],
                      "and it is the one moved")
 
-        # The pad's own window is released, to the FOCUSED workspace's index.
         actions.clear()
         state["windows"] = [{"id": 7, "app_id": "com.ghostty.scratchpad",
                              "title": "pad", "workspace_id": 9}]
@@ -4235,23 +4001,20 @@ def test_scratchpad_niri_release_owns_only_the_pad_s_own_window():
 
 
 def test_scratchpad_launch_command_is_argv_not_a_shell():
-    """AGENTS.md: exec external tools with argv arrays. A pad's command is
-    user-supplied configuration, and it was reaching `sh -c` — so shell
-    metacharacters in it were INTERPRETED. On Niri a preloaded pad runs its
-    command at login, not only when the keybind is pressed."""
+    """Execute user-configured pad commands as argv.
+
+    Preloaded commands can run at login, so implicit shell evaluation would
+    interpret configuration metacharacters there too.
+    """
     argv, error = helper.scratchpad_launch_argv("ghostty --class=com.ghostty.scratchpad")
     assert_equal(error, "", "an ordinary command parses cleanly")
     assert_equal(argv, ["ghostty", "--class=com.ghostty.scratchpad"], "into an argv array")
 
-    # Quoting still works, because shlex does it — what is gone is the shell.
     argv, error = helper.scratchpad_launch_argv('ghostty --title="My Pad"')
     assert_equal(error, "", "quoted arguments are still supported")
     assert_equal(argv, ["ghostty", "--title=My Pad"], "and are parsed, not word-split")
 
-    # A command that WANTS a shell is refused, not quietly mangled. Passing
-    # `&&` to execvp as a literal argument would do the wrong thing silently,
-    # and keeping `sh -c` for these would keep the rule broken exactly where it
-    # matters.
+    # Shell operators passed as ordinary argv words would silently change the command.
     for command in ["foo && bar", "foo; bar", "foo|bar", "foo > /tmp/x",
                     "foo $(id)", "foo `id`", "foo ${HOME}", "foo $HOME",
                     "app --flag=a&b"]:
@@ -4266,15 +4029,12 @@ def test_scratchpad_launch_command_is_argv_not_a_shell():
     argv, error = helper.scratchpad_launch_argv("foo; bar")
     assert_equal(argv, [], "an operator with no surrounding spaces is still caught")
 
-    # The opt-in the refusal recommends has to actually work. Classifying the
-    # RAW string instead of the parsed tokens refused this too — the one
-    # command shape that is meant to be allowed.
+    # An explicit shell command must pass after tokenization; raw-text checks can reject it.
     argv, error = helper.scratchpad_launch_argv("sh -c 'foo && bar'")
     assert_equal(error, "", "an explicit shell is allowed")
     assert_equal(argv, ["sh", "-c", "foo && bar"],
                  "with the shell line intact as a single argument")
 
-    # Ordinary commands that merely look punctuated must keep working.
     for command, expected in [("env FOO=1 app", ["env", "FOO=1", "app"]),
                               ("1password --silent", ["1password", "--silent"])]:
         argv, error = helper.scratchpad_launch_argv(command)
@@ -4296,7 +4056,7 @@ def test_scratchpad_launch_refusal_reaches_the_toggle():
                  helper._scratchpad_session_ready, helper._hyprctl_json)
     helper.load_scratchpads = lambda *a, **k: [_pad(command="foo && bar")]
     helper._scratchpad_visible_monitor = lambda pad_id: ""
-    helper._scratchpad_find_window = lambda pad: None       # nothing running: it must launch
+    helper._scratchpad_find_window = lambda pad: None
     helper._scratchpad_dispatch = lambda *args: True
     helper._hyprctl_json = lambda *args: None
     helper._scratchpad_session_ready = lambda: True
@@ -4313,10 +4073,10 @@ def test_scratchpad_launch_refusal_reaches_the_toggle():
 
 
 def test_scratchpad_niri_pad_name_cannot_break_the_generated_kdl():
-    """`normalize_scratchpad` restricts the ID so it can be written unescaped;
-    the NAME is unrestricted user text. A newline in it did not corrupt the
-    `//` comment, it ENDED it — and the rest of the name became config KDL
-    would try to parse."""
+    """Keep unrestricted pad names inside generated comments.
+
+    A newline must not let name text become KDL code.
+    """
     text, _ = helper.render_scratchpads_kdl(
         [_pad(name="Bad\nwindow-rule { open-fullscreen true }")])
     comment = [line for line in text.splitlines() if line.startswith("// Bad")]
@@ -4325,8 +4085,7 @@ def test_scratchpad_niri_pad_name_cannot_break_the_generated_kdl():
     assert "window-rule { open-fullscreen true }" in comment[0], \
         "with the injected text flattened INTO the comment, where it is inert"
 
-    # Prove it did not simply escape into the config: the only window-rule
-    # blocks are the ones the generator wrote.
+    # Count generated blocks to detect a name that escaped its comment into KDL.
     sys.path.insert(0, str(REPO_ROOT / "bin"))
     import vshell_niri_kdl as kdl
     headers = [header for header, _, _ in kdl.kdl_nodes_in_block(text)]
@@ -4335,11 +4094,7 @@ def test_scratchpad_niri_pad_name_cannot_break_the_generated_kdl():
 
 
 def test_scratchpad_niri_hide_confirms_the_pad_is_off_screen():
-    """The hide path reported success without confirming. On Niri a workspace
-    that is still ACTIVE on its output is still displayed even when focus has
-    moved away — which is what happens when focus is restored to a window on a
-    different output — so checking focus alone called it hidden with the pad
-    still on screen."""
+    """Check hide confirmation against the active workspace of the relevant output."""
     originals = (helper._niri_session_ready, helper._niri_msg_json,
                  helper._niri_scratchpad_action, helper.load_scratchpads)
     helper._niri_session_ready = lambda: True
@@ -4367,14 +4122,12 @@ def test_scratchpad_niri_hide_confirms_the_pad_is_off_screen():
     helper._niri_scratchpad_action = fake_action
     try:
         with _scratchpad_state_sandbox():
-            # Focus moved away, but the workspace is still the active one on
-            # DP-2 — so the pad is still on screen and this is not a hide.
+            # The pad remains on the active workspace of its output despite moved focus.
             result = helper.scratchpad_toggle_niri("term")
         assert_equal(result["ok"], False, "a pad still displayed is not a successful hide")
         assert_equal(result["action"], "hide-failed", "and says so")
         assert "DP-2" in result["error"], f"naming where it still is: {result['error']!r}"
 
-        # Same call, but focusing away really does take it off screen.
         state["visible"] = True
         state["hides"] = True
         with _scratchpad_state_sandbox():
@@ -4387,10 +4140,7 @@ def test_scratchpad_niri_hide_confirms_the_pad_is_off_screen():
 
 
 def test_scratchpad_hide_focus_rule_is_shared_by_both_backends():
-    """One rule, two backends. Each gathers the origin and the current focus
-    through its own IPC — they have no choice — but the DECISION is shared, so
-    it cannot be right on one compositor and wrong on the other. That is what
-    let three variations of one defect accumulate on this path."""
+    """Apply the shared focus-restoration decision on both compositor backends."""
     rule = helper._scratchpad_restore_target
     assert_equal(rule(False, "B", "C"), "B", "a keybind hide returns to the reveal origin")
     assert_equal(rule(True, "B", "C"), "C", "a focus-loss dismissal keeps where the user went")
@@ -4400,9 +4150,7 @@ def test_scratchpad_hide_focus_rule_is_shared_by_both_backends():
 
 
 def test_scratchpad_niri_hide_honours_the_same_flags():
-    """`vshell scratchpad hide` reaches BOTH backends, so the Niri toggle has to
-    take the same flags. Without them the CLI raised TypeError on Niri the
-    moment VGS-82's hide path landed — the semantic half of that rebase."""
+    """Support hide flags on the Niri toggle path used by the CLI."""
     import inspect
     hypr = set(inspect.signature(helper.scratchpad_toggle).parameters)
     niri = set(inspect.signature(helper.scratchpad_toggle_niri).parameters)
@@ -4429,8 +4177,6 @@ def test_scratchpad_niri_hide_honours_the_same_flags():
 
     helper._niri_msg_json = fake_json
     try:
-        # Hiding something already hidden is a no-op, not a failure — the same
-        # race the Hyprland backend answers this way.
         state["visible"] = False
         with _scratchpad_state_sandbox():
             quiet = helper.scratchpad_toggle_niri("term", hide_only=True)
@@ -4464,21 +4210,16 @@ def test_scratchpad_niri_hide_honours_the_same_flags():
 
 
 def test_scratchpad_release_refuses_when_it_could_not_look():
-    """A failed window query must never authorise deleting the pad.
+    """A failed window query must not authorize deleting a pad record.
 
-    Settings deletes the scratchpad record only when release reports success,
-    so collapsing "the compositor did not answer" into "nothing to release"
-    costs the user their configuration because an IPC call failed. That is the
-    session's most repeated defect — a failed query becoming a confident
-    negative — with the worst consequence any instance of it has had."""
-    # Hyprland.
+    Settings removes configuration only after release reports success.
+    """
     originals = (helper._hyprctl_json, helper._scratchpad_session_ready,
                  helper._scratchpad_dispatch)
     dispatched = []
     helper._scratchpad_session_ready = lambda: True
     helper._scratchpad_dispatch = lambda *a: (dispatched.append(a), True)[1]
     try:
-        # `clients` unreadable: unknown, not empty.
         helper._hyprctl_json = lambda *a: None
         blind = helper.scratchpad_release("pad", r"^(com\.example\.pad)$")
         assert_equal(blind["ok"], False, "a release that could not look has not succeeded")
@@ -4487,8 +4228,6 @@ def test_scratchpad_release_refuses_when_it_could_not_look():
             f"naming why the pad was kept: {blind.get('error')!r}"
         assert_equal(dispatched, [], "nothing is moved on the strength of a failed query")
 
-        # An answer that really is empty still authorises removal: there is
-        # genuinely nothing parked, so the pad can go.
         helper._hyprctl_json = lambda *a: ([] if a and a[0] == "clients"
                                            else {"id": 3} if a and a[0] == "activeworkspace" else None)
         empty = helper.scratchpad_release("pad", r"^(com\.example\.pad)$")
@@ -4498,7 +4237,6 @@ def test_scratchpad_release_refuses_when_it_could_not_look():
         (helper._hyprctl_json, helper._scratchpad_session_ready,
          helper._scratchpad_dispatch) = originals
 
-    # Niri, same rule.
     niri_originals = (helper._niri_session_ready, helper._niri_msg_json,
                       helper._niri_scratchpad_action)
     actions = []
@@ -4530,10 +4268,7 @@ def test_scratchpad_release_refuses_when_it_could_not_look():
 
 
 def test_scratchpad_preload_reports_a_failed_placement():
-    """Preload that could not park the window reports success while the app
-    sits VISIBLY on the user's current workspace — the map-time race this whole
-    subsystem exists to handle, reported as handled."""
-    # Niri.
+    """Report a preload that cannot move its window to the pad workspace."""
     originals = (helper._niri_session_ready, helper._niri_msg_json,
                  helper._niri_scratchpad_action, helper.load_scratchpads)
     helper._niri_session_ready = lambda: True
@@ -4543,20 +4278,19 @@ def test_scratchpad_preload_reports_a_failed_placement():
         if args and args[0] == "workspaces":
             return [{"id": 9, "name": "vgs-term", "idx": 3, "is_active": False}]
         if args and args[0] == "windows":
-            # On workspace 4, not the pad's 9: it needs moving.
             return [{"id": 7, "app_id": "com.ghostty.scratchpad", "workspace_id": 4}]
         return None
 
     helper._niri_msg_json = fake_json
     try:
-        helper._niri_scratchpad_action = lambda *a: False   # the move fails
+        helper._niri_scratchpad_action = lambda *a: False
         with _scratchpad_state_sandbox():
             bad = helper.scratchpad_toggle_niri("term", launch_only=True)
         assert_equal(bad["ok"], False, "a preload that could not park the window is not ok")
         assert_equal(bad["action"], "preload-failed", "and says so")
         assert "could not move" in bad["error"], f"naming the reason: {bad.get('error')!r}"
 
-        helper._niri_scratchpad_action = lambda *a: True    # the move works
+        helper._niri_scratchpad_action = lambda *a: True
         with _scratchpad_state_sandbox():
             good = helper.scratchpad_toggle_niri("term", launch_only=True)
         assert_equal(good["ok"], True, "a preload that parked the window is ok")
@@ -4565,7 +4299,6 @@ def test_scratchpad_preload_reports_a_failed_placement():
         (helper._niri_session_ready, helper._niri_msg_json,
          helper._niri_scratchpad_action, helper.load_scratchpads) = originals
 
-    # Hyprland, same rule.
     hypr = (helper.load_scratchpads, helper._scratchpad_visible_monitor,
             helper._scratchpad_find_window, helper._scratchpad_dispatch,
             helper._scratchpad_session_ready, helper._hyprctl_json,
@@ -4577,14 +4310,13 @@ def test_scratchpad_preload_reports_a_failed_placement():
     helper._hyprctl_json = lambda *a: None
     helper._scratchpad_reassert = lambda *a, **k: {"applied": True}
     try:
-        helper._scratchpad_dispatch = lambda *a: False       # the move fails
+        helper._scratchpad_dispatch = lambda *a: False
         helper._scratchpad_place_workspace = lambda *a, **k: True
         with _scratchpad_state_sandbox():
             bad = helper.scratchpad_toggle("term", launch_only=True)
         assert_equal(bad["ok"], False, "a Hyprland preload that could not park is not ok")
         assert_equal(bad["action"], "preload-failed", "and says so")
 
-        # The workspace placement is checked too, not just the membership move.
         helper._scratchpad_dispatch = lambda *a: True
         helper._scratchpad_place_workspace = lambda *a, **k: False
         with _scratchpad_state_sandbox():
@@ -4623,7 +4355,6 @@ def _niri_hide_harness(still_active_after, focused_output_after, pad_output="DP-
         if args and args[0] != "workspaces":
             return None
         if not state["done"]:
-            # Before: the pad is up and focused on its own output.
             return [{"id": 9, "name": "vgs-term", "idx": 3, "output": pad_output,
                      "is_active": True, "is_focused": True}]
         rows = [{"id": 9, "name": "vgs-term", "idx": 3, "output": pad_output,
@@ -4642,18 +4373,14 @@ def _niri_hide_harness(still_active_after, focused_output_after, pad_output="DP-
 
 
 def test_scratchpad_niri_hide_succeeds_when_focus_left_for_another_output():
-    """A pad whose workspace stays active on ITS output while focus moves to a
-    different one has been hidden as far as Niri allows: there is no overlay to
-    pull away, so the pad's own output goes on showing its active workspace.
+    """Accept cross-output focus restoration under the Niri hide policy.
 
-    Reporting failure there told every multi-monitor user that every hide had
-    failed — and Settings now gates on this result, so a false failure is no
-    longer harmless. The single-output case must still fail, because there the
-    user is looking straight at the pad they asked to dismiss."""
+    The pad workspace can remain active on its own output. On the focused
+    output, a pad that remains visible must still fail confirmation.
+    """
     originals = (helper._niri_session_ready, helper._niri_msg_json,
                  helper._niri_scratchpad_action, helper.load_scratchpads)
     try:
-        # Cross-output: pad still on DP-2, focus now on DP-1.
         _niri_hide_harness(still_active_after=True, focused_output_after="DP-1")
         with _scratchpad_state_sandbox() as sandbox:
             (sandbox / "term.niri-focus").write_text("7")
@@ -4664,7 +4391,6 @@ def test_scratchpad_niri_hide_succeeds_when_focus_left_for_another_output():
             assert not (sandbox / "term.niri-focus").exists(), \
                 "a confirmed hide consumes the origin"
 
-        # Same output: the pad is still in front of the user. Still a failure.
         _niri_hide_harness(still_active_after=True, focused_output_after="DP-2")
         with _scratchpad_state_sandbox() as sandbox:
             (sandbox / "term.niri-focus").write_text("7")
@@ -4672,7 +4398,6 @@ def test_scratchpad_niri_hide_succeeds_when_focus_left_for_another_output():
             assert_equal(same["ok"], False, "a pad still displayed on the focused output is not hidden")
             assert_equal(same["action"], "hide-failed", "and says so")
 
-        # Gone from every output: the ordinary success.
         _niri_hide_harness(still_active_after=False, focused_output_after="DP-1")
         with _scratchpad_state_sandbox() as sandbox:
             (sandbox / "term.niri-focus").write_text("7")
@@ -4685,17 +4410,10 @@ def test_scratchpad_niri_hide_succeeds_when_focus_left_for_another_output():
 
 
 def test_scratchpad_niri_failed_hide_keeps_the_reveal_origin():
-    """The origin is what a retry needs. Deleting it before the hide is
-    confirmed means each failed attempt permanently loses where the pad came
-    from — and the two defects compounded: cross-output hides always reported
-    failure, so every one of them destroyed the origin.
-
-    Same rule as release: act on the record only after the thing it describes
-    has succeeded."""
+    """Keep the stored origin until hiding succeeds so a failed hide can be retried."""
     originals = (helper._niri_session_ready, helper._niri_msg_json,
                  helper._niri_scratchpad_action, helper.load_scratchpads)
     try:
-        # A hide that fails: the pad is still on the focused output.
         _niri_hide_harness(still_active_after=True, focused_output_after="DP-2")
         with _scratchpad_state_sandbox() as sandbox:
             origin = sandbox / "term.niri-focus"
@@ -4739,8 +4457,7 @@ def test_scratchpad_niri_generated_kdl_parses():
     ]
     text, _ = helper.render_scratchpads_kdl(pads)
 
-    # Prove the instrument can fail before trusting that it passes: an
-    # unterminated block must not come back as a clean parse.
+    # An unterminated block is the failing syntax control.
     assert_equal(kdl.kdl_matching_brace("window-rule {\n  match", 12), -1,
                  "the brace matcher must report an unterminated block")
 
@@ -4770,14 +4487,10 @@ def _with_session_env(env):
 
 
 def test_scratchpad_compositor_detection_reads_the_session_not_the_binary():
-    """`hyprctl` and `niri` coexist in most distro repos, so an INSTALLED
-    hyprctl says nothing about which compositor owns the session.
+    """Select the compositor from session evidence, not installed binaries.
 
-    This mattered when Niri refused, and it matters MORE now that it has its own
-    backend (VGS-83): the returned name is what selects the generator, so
-    mistaking a Niri session for Hyprland no longer merely refuses wrongly, it
-    writes Lua rules into a session that reads KDL."""
-    # The reported case: a Niri session on a machine that also has hyprctl.
+    A wrong selection writes configuration for the wrong compositor.
+    """
     assert_equal(_with_session_env({"NIRI_SOCKET": "/run/niri.sock"}), (True, "niri"),
                  "a Niri session is supported, and identified as niri even with hyprctl installed")
     assert_equal(_with_session_env({"XDG_CURRENT_DESKTOP": "niri"}), (True, "niri"),
@@ -4788,7 +4501,6 @@ def test_scratchpad_compositor_detection_reads_the_session_not_the_binary():
     assert_equal(_with_session_env({"XDG_CURRENT_DESKTOP": "Hyprland:wlroots"}), (True, "hyprland"),
                  "a compound desktop string still identifies Hyprland")
 
-    # Neither session may be mistaken for the other; the name is the router.
     assert _with_session_env({"NIRI_SOCKET": "/run/niri.sock"})[1] != "hyprland", \
         "a Niri session must never select the Hyprland generator"
     assert _with_session_env({"HYPRLAND_INSTANCE_SIGNATURE": "sig"})[1] != "niri", \
@@ -4825,17 +4537,13 @@ def test_scratchpad_target_monitor_resolves_against_connected_outputs():
     try:
         connected = [{"name": "eDP-1", "focused": True}, {"name": "HDMI-1", "focused": False}]
 
-        # Configured output present -> used verbatim.
         fake.monitors = connected
         assert_equal(helper._scratchpad_target_monitor({"id": "p", "monitor": "HDMI-1"}), "HDMI-1",
                      "a connected configured output is honoured")
 
-        # Configured output gone -> falls back to the focused one, which is what
-        # "follow focus" already means, rather than to a dead dispatch.
         assert_equal(helper._scratchpad_target_monitor({"id": "p", "monitor": "DP-1"}), "eDP-1",
                      "an unplugged output falls back to the focused one")
 
-        # No configured output -> follow focus.
         assert_equal(helper._scratchpad_target_monitor({"id": "p", "monitor": ""}), "eDP-1",
                      "follow-focus resolves to the focused output")
 
@@ -4866,16 +4574,10 @@ def test_scratchpad_release_hands_the_window_back():
 
     helper._hyprctl_json = fake_json
     helper._scratchpad_dispatch = lambda *args: (dispatched.append(args), True)[1]
-    # The session gate is stubbed rather than satisfied with a real hyprctl:
-    # these assertions are wanted most on a CI runner, which has neither the
-    # binary nor a session, and a test that returns early there is a check
-    # that passes without checking.
+    # Stub session availability so this path executes without a compositor.
     helper._scratchpad_session_ready = lambda: True
     try:
-        # A stray same-class window listed FIRST, then the pad's own. Release
-        # must skip the stray rather than let it win the selection: filtering by
-        # ownership after picking the first match is what let it hide the real
-        # window behind it.
+        # List a non-owned class match first to require filtering before selection.
         fake_json.clients = [
             {"address": "0xstray", "class": "com.example.pad", "title": "Elsewhere",
              "workspace": {"name": "3"}},
@@ -4893,8 +4595,6 @@ def test_scratchpad_release_hands_the_window_back():
             ("movetoworkspace", "3,address:0xabc"),
         ], "fullscreen is dropped before the move, or the window would cover its new workspace")
 
-        # No matching window is the ordinary case (the pad was never opened) and
-        # must not be reported as a failure.
         dispatched.clear()
         fake_json.clients = []
         quiet = helper.scratchpad_release("pad", r"^(com\.example\.pad)$")
@@ -4902,9 +4602,6 @@ def test_scratchpad_release_hands_the_window_back():
         assert_equal(quiet["released"], False, "and says nothing was released")
         assert_equal(dispatched, [], "no dispatch when there is no window")
 
-        # A same-class window that the pad never owned is left alone entirely.
-        # It is already on a normal workspace, so it needs no rescue, and
-        # moving it would be a surprise rather than a fix.
         dispatched.clear()
         fake_json.clients = [{"address": "0xstray", "class": "com.example.pad",
                               "title": "Elsewhere", "workspace": {"name": "3"}}]
@@ -4916,23 +4613,19 @@ def test_scratchpad_release_hands_the_window_back():
         helper._scratchpad_dispatch = original_dispatch
         helper._scratchpad_session_ready = original_ready
 
-    # Outside a Hyprland session there is nothing to release, and removal must
-    # still be allowed to proceed.
     assert_equal(helper.scratchpad_release("pad", "^x$")["ok"], True,
                  "release is a no-op without a session, not an error")
 
 
 def test_scratchpad_membership_is_reasserted_for_a_late_class():
-    """The map-time race, in full. Hyprland applies the `workspace` rule once,
-    when the window maps. An app whose class settles afterwards never matched
-    it and mapped onto whatever workspace was active — so re-asserting only
-    float/size/move would style that window perfectly while leaving it where it
-    should not be, and the reveal would show an empty special workspace."""
+    """Move windows whose class becomes available only after their initial mapping.
+
+    Styling alone would leave the window on a normal workspace.
+    """
     original = helper._scratchpad_dispatch
     dispatched = []
     helper._scratchpad_dispatch = lambda *args: (dispatched.append(args), True)[1]
     try:
-        # Late-settling class: the window is on a normal workspace.
         stray = {"address": "0xdead", "workspace": {"name": "3"}}
         result = helper._scratchpad_ensure_membership("term", stray)
         assert_equal(result["moved"], True, "a stray window is moved onto the pad's workspace")
@@ -4941,8 +4634,6 @@ def test_scratchpad_membership_is_reasserted_for_a_late_class():
                      "moved SILENTLY: the caller reveals the workspace itself a moment later, "
                      "and the non-silent variant would switch to it here")
 
-        # Already correct: no dispatch at all, so an ordinary reveal does not
-        # churn the window every single press.
         dispatched.clear()
         settled = {"address": "0xbeef", "workspace": {"name": "special:term"}}
         assert_equal(helper._scratchpad_ensure_membership("term", settled)["moved"], False,
@@ -4967,21 +4658,17 @@ def test_scratchpad_title_exclusion_applies_to_every_rule():
     pad = _pad(titleExclude=r"^(1Password)$", classRegex=r"^(1password)$", keybind="SUPER, P")
     text, _ = helper.render_scratchpads_lua([pad], [_monitor("DP-1", focused=True)], True)
 
-    # [1:] drops the text before the first rule; each remaining chunk starts
-    # inside one window rule.
     rules = text.split("hl.window_rule({")[1:]
     assert_equal(len(rules), 2, "a pad emits a placement rule and a suppression rule")
     for index, rule in enumerate(rules):
         assert 'title = "negative:^(1Password)$"' in rule, \
             f"window rule {index} must carry the title exclusion"
 
-    # The suppression rule is the one that regressed; name it explicitly.
     suppression = [rule for rule in rules if "suppress_event" in rule]
     assert_equal(len(suppression), 1, "exactly one suppression rule")
     assert 'title = "negative:^(1Password)$"' in suppression[0], \
         "the suppress_event rule must not match every window with the class"
 
-    # A pad without an exclusion must not grow a stray title match.
     plain, _ = helper.render_scratchpads_lua([_pad()], [_monitor("DP-1", focused=True)], True)
     assert "negative:" not in plain, "no exclusion configured means no title clause"
 
@@ -4995,7 +4682,6 @@ def test_scratchpad_rejects_an_uncompilable_title_exclusion():
         "id": "pad", "command": "x", "classRegex": "^x$", "titleExclude": "^(unclosed",
     }), None, "a pad whose titleExclude does not compile is rejected")
 
-    # A valid one survives, and an absent one is simply empty.
     assert_equal(helper.normalize_scratchpad({
         "id": "pad", "command": "x", "classRegex": "^x$", "titleExclude": "^(1Password)$",
     })["titleExclude"], "^(1Password)$", "a valid exclusion is kept verbatim")
@@ -5032,10 +4718,7 @@ def test_scratchpad_release_honours_the_title_exclusion():
 
     helper._hyprctl_json = fake_json
     helper._scratchpad_dispatch = lambda *args: (dispatched.append(args), True)[1]
-    # The session gate is stubbed rather than satisfied with a real hyprctl:
-    # these assertions are wanted most on a CI runner, which has neither the
-    # binary nor a session, and a test that returns early there is a check
-    # that passes without checking.
+    # Stub session availability so this path executes without a compositor.
     helper._scratchpad_session_ready = lambda: True
     try:
         result = helper.scratchpad_release("1pw", r"^(1password)$", r"^(1Password)$")
@@ -5047,8 +4730,7 @@ def test_scratchpad_release_honours_the_title_exclusion():
             ("movetoworkspace", "5,address:0xmain"),
         ], "only the pad's window is dispatched at")
 
-        # Without the exclusion the first class match wins — which is the bug.
-        # Pinned so a future refactor cannot quietly drop the argument.
+        # Without the exclusion argument, the first class match wins.
         dispatched.clear()
         loose = helper.scratchpad_release("1pw", r"^(1password)$")
         assert_equal(loose["address"], "0xprompt",
@@ -5076,18 +4758,12 @@ def test_scratchpad_toggle_honours_enabled():
     helper.load_scratchpads = lambda: [disabled]
     helper._scratchpad_find_window = lambda pad: {"address": "0xaaa", "workspace": {"name": "3"}}
     helper._scratchpad_dispatch = lambda *args: (dispatched.append(args), True)[1]
-    # Stubbed alongside the session gate: with the gate forced true and no real
-    # hyprctl on PATH, an unstubbed query would escape into a subprocess that
-    # does not exist. Every compositor call this test can reach is mocked.
+    # Stub compositor queries as well as session detection; forcing the gate alone
+    # would still launch a real subprocess.
     helper._hyprctl_json = lambda *args: None
-    # The session gate is stubbed rather than satisfied with a real hyprctl:
-    # these assertions are wanted most on a CI runner, which has neither the
-    # binary nor a session, and a test that returns early there is a check
-    # that passes without checking.
     helper._scratchpad_session_ready = lambda: True
     try:
       with _scratchpad_state_sandbox():
-        # Hidden: revealing is refused, and nothing is dispatched.
         helper._scratchpad_visibility = _visibility_from(lambda pad_id: "")
         result = helper.scratchpad_toggle("off")
         assert_equal(result["ok"], False, "a disabled pad does not reveal")
@@ -5097,12 +4773,8 @@ def test_scratchpad_toggle_honours_enabled():
         assert_equal(helper.scratchpad_toggle("off", launch_only=True)["ok"], False,
                      "a disabled pad does not preload either")
 
-        # Visible: hiding is still allowed. A pad disabled while on screen would
-        # otherwise be stranded visible with no keybind left to dismiss it.
-        #
-        # The stub reports visible once and gone afterwards, because the hide now
-        # reads its own outcome back. A stub that stayed visible forever would
-        # only assert that a hide was ATTEMPTED, which is what this used to do.
+        # A disabled pad already on screen must remain dismissible. The visibility
+        # stub changes after hiding so the outcome check can confirm it.
         dispatched.clear()
         seen = {"n": 0}
 
@@ -5125,11 +4797,11 @@ def test_scratchpad_toggle_honours_enabled():
 
 
 def test_scratchpad_hide_only_never_reveals():
-    """`hide` states a direction; `toggle` infers one. Focus-loss dismissal
-    (VGS-82) fires on an event and reaches the per-pad lock a moment later, by
-    which time the user may already have dismissed the pad — a toggle evaluated
-    then would REVEAL what they just put away. Hiding something already hidden
-    is also an ordinary race, so it is a success, not an error."""
+    """Hide is directional and idempotent.
+
+    A focus-loss event can reach the pad lock after the user has hidden it;
+    toggling at that point would reveal it again.
+    """
     originals = (helper.load_scratchpads, helper._scratchpad_visibility,
                  helper._scratchpad_find_window, helper._scratchpad_dispatch,
                  helper._scratchpad_session_ready, helper._hyprctl_json)
@@ -5142,20 +4814,16 @@ def test_scratchpad_hide_only_never_reveals():
     helper._scratchpad_find_window = lambda p: {"address": "0xaaa", "workspace": {"name": "3"}}
     helper._scratchpad_dispatch = lambda *args: (dispatched.append(args), True)[1]
     helper._hyprctl_json = lambda *args: None
-    # Stubbed for the same reason as the tests above: these assertions matter
-    # most on a runner with no compositor, and returning early there would be a
-    # check that passes without checking.
+    # Stub session availability so this path executes without a compositor.
     helper._scratchpad_session_ready = lambda: True
     try:
       with _scratchpad_state_sandbox():
-        # Already hidden: nothing to do, and above all nothing revealed.
         helper._scratchpad_visibility = _visibility_from(lambda pad_id: "")
         result = helper.scratchpad_toggle("term", hide_only=True)
         assert_equal(result["ok"], True, "hiding an already-hidden pad is not a failure")
         assert_equal(result["action"], "already-hidden", "and says so rather than acting")
         assert_equal(dispatched, [], "a no-op hide dispatches nothing at all")
 
-        # Visible: it hides, exactly as the keybind's toggle would.
         dispatched.clear()
         helper._scratchpad_visibility = _hides_on_readback()
         hidden = helper.scratchpad_toggle("term", hide_only=True)
@@ -5163,8 +4831,6 @@ def test_scratchpad_hide_only_never_reveals():
         assert_equal(hidden["action"], "hidden", "and reports the hide")
         assert ("togglespecialworkspace", "term") in dispatched, "the hide actually dispatches"
 
-        # A disabled pad on screen can still be hidden this way — same reason
-        # the keybind may hide one: the alternative is a pad stranded visible.
         dispatched.clear()
         off = _pad(id="term", enabled=False)
         helper.load_scratchpads = lambda *a, **k: [off]
@@ -5173,8 +4839,6 @@ def test_scratchpad_hide_only_never_reveals():
         assert_equal(stranded["ok"], True, "a disabled pad on screen is still hidable")
         assert_equal(stranded["action"], "hidden", "and reports the hide")
 
-        # ...and a disabled pad that is already hidden is a no-op, not the
-        # "disabled" refusal. The watcher must not turn a race into an error.
         dispatched.clear()
         helper._scratchpad_visibility = _visibility_from(lambda pad_id: "")
         quiet = helper.scratchpad_toggle("term", hide_only=True)
@@ -5203,8 +4867,7 @@ def test_scratchpad_hide_focus_target_depends_on_who_asked():
     dispatched = []
 
     helper.load_scratchpads = lambda *a, **k: [_pad(id="term")]
-    # Re-armed before each hide below: the stub carries a counter, because a
-    # hide now confirms its own outcome (visible at entry, gone on read-back).
+    # Re-arm the stateful visibility stub before each hide.
     helper._scratchpad_dispatch = lambda *args: (dispatched.append(args), True)[1]
     helper._scratchpad_session_ready = lambda: True
 
@@ -5218,7 +4881,6 @@ def test_scratchpad_hide_focus_target_depends_on_who_asked():
 
     helper._hyprctl_json = fake_json
     try:
-        # Keybind hide: back to B, the window the pad was revealed from.
         with _scratchpad_state_sandbox() as state:
             (state / "term.focus").write_text("0xBBB")
             helper._scratchpad_visibility = _hides_on_readback()
@@ -5229,7 +4891,6 @@ def test_scratchpad_hide_focus_target_depends_on_who_asked():
             assert not (state / "term.focus").exists(), \
                 "the reveal origin is consumed: leaving it would restore a stale window next time"
 
-        # Focus-loss dismissal: stay on C, the window the user just chose.
         dispatched.clear()
         with _scratchpad_state_sandbox() as state:
             (state / "term.focus").write_text("0xBBB")
@@ -5272,9 +4933,7 @@ def test_scratchpad_hide_focus_target_depends_on_who_asked():
 
 
 def test_scratchpad_rejections_are_named_not_silent():
-    """Rejecting an unusable pad is right; doing it silently is not. A pad with
-    an uncompilable regex generated no rules at all, so the user's scratchpad
-    stopped working while Settings went on showing it as configured."""
+    """Report unusable pads whose rules cannot be generated."""
     problems = []
     assert_equal(helper.normalize_scratchpad(
         {"id": "bad", "name": "Broken", "command": "x", "classRegex": "^(unclosed"},
@@ -5283,8 +4942,6 @@ def test_scratchpad_rejections_are_named_not_silent():
     assert_equal(problems[0]["id"], "Broken", "named by the pad's own label")
     assert "does not compile" in problems[0]["reason"], "with the reason"
 
-    # Every rejection path reports, not just the regex one — a pad that vanishes
-    # for any reason is equally invisible to the user.
     cases = [
         ({"id": "x", "name": "No Class", "command": "x"}, "no window class pattern"),
         ({"id": "x", "name": "No Command", "classRegex": "^x$"}, "no launch command"),
@@ -5299,12 +4956,10 @@ def test_scratchpad_rejections_are_named_not_silent():
         assert expected in found[0]["reason"], \
             f"{raw.get('name')}: expected {expected!r} in {found[0]['reason']!r}"
 
-    # A usable pad records nothing.
     clean = []
     assert helper.normalize_scratchpad({"id": "ok", "command": "x", "classRegex": "^x$"}, clean)
     assert_equal(clean, [], "a usable pad produces no problem entry")
 
-    # The collector is optional, so existing callers keep working.
     assert_equal(helper.normalize_scratchpad({"id": "bad", "command": "x", "classRegex": "^("}),
                  None, "rejection still works with no collector")
 
@@ -5325,19 +4980,14 @@ def test_scratchpad_reveal_reports_failed_dispatches():
     helper._hyprctl_json = lambda *args: None
     helper._scratchpad_place_workspace = lambda *a, **k: True
     helper._scratchpad_reassert = lambda *a, **k: {"applied": True}
-    # The session gate is stubbed rather than satisfied with a real hyprctl:
-    # these assertions are wanted most on a CI runner, which has neither the
-    # binary nor a session, and a test that returns early there is a check
-    # that passes without checking.
+    # Stub session availability so this path executes without a compositor.
     helper._scratchpad_session_ready = lambda: True
     try:
       with _scratchpad_state_sandbox():
-        # Everything works and the workspace really is visible afterwards.
         helper._scratchpad_dispatch = lambda *args: True
         visible = {"n": 0}
 
         def visible_after_toggle(pad_id):
-            # Hidden on the first read (so the toggle fires), visible after.
             visible["n"] += 1
             return "" if visible["n"] == 1 else "DP-1"
 
@@ -5346,7 +4996,6 @@ def test_scratchpad_reveal_reports_failed_dispatches():
         assert_equal(good["ok"], True, "a reveal that works reports success")
         assert_equal(good["action"], "revealed", "and says so")
 
-        # A dispatch fails: the toggle must NOT report success.
         helper._scratchpad_dispatch = lambda *args: args[0] != "focuswindow"
         visible["n"] = 0
         helper._scratchpad_visibility = _visibility_from(visible_after_toggle)
@@ -5373,10 +5022,7 @@ def test_scratchpad_reveal_reports_failed_dispatches():
 
 
 def test_scratchpad_reassert_clears_fullscreen_for_other_modes():
-    """VGS-90: switching a mapped pad from fullscreen to float or tile left the
-    fullscreen state set, so the pad went on covering its workspace and every
-    size/move dispatch was applied to a window whose geometry fullscreen
-    overrides — the setting changed and nothing visible did."""
+    """Clear fullscreen before applying float or tile geometry to a mapped pad."""
     originals = (helper._scratchpad_dispatch, helper._scratchpad_visibility,
                  helper._scratchpad_workspace_monitor, helper.scratchpad_monitors,
                  helper._scratchpad_find_window)
@@ -5386,7 +5032,6 @@ def test_scratchpad_reassert_clears_fullscreen_for_other_modes():
     helper._scratchpad_workspace_monitor = lambda pad_id: "DP-1"
     helper.scratchpad_monitors = lambda: ([_monitor("DP-1", focused=True)], True)
     try:
-        # Float: fullscreen must be cleared, and before the geometry dispatches.
         helper._scratchpad_find_window = lambda pad: {"address": "0xaaa", "size": [1, 1], "at": [1, 1]}
         dispatched.clear()
         helper._scratchpad_reassert(_pad(presentation="float"), "0xaaa")
@@ -5397,7 +5042,6 @@ def test_scratchpad_reassert_clears_fullscreen_for_other_modes():
         assert verbs.index("fullscreenstate") < verbs.index("setfloating"), \
             f"cleared before setfloating, got {verbs}"
 
-        # Tile: same requirement.
         dispatched.clear()
         helper._scratchpad_reassert(_pad(presentation="tile"), "0xaaa")
         verbs = [d[0] for d in dispatched]
@@ -5405,7 +5049,6 @@ def test_scratchpad_reassert_clears_fullscreen_for_other_modes():
                      "tile must clear fullscreen first too")
         assert "settiled" in verbs, f"and still tile, got {verbs}"
 
-        # Fullscreen: sets it, and must not clear it.
         dispatched.clear()
         helper._scratchpad_reassert(_pad(presentation="fullscreen"), "0xaaa")
         assert_equal(dispatched, [("fullscreenstate", "2 -1,address:0xaaa")],
@@ -5417,10 +5060,7 @@ def test_scratchpad_reassert_clears_fullscreen_for_other_modes():
 
 
 def test_scratchpad_show_does_not_disturb_focus_restore():
-    """VGS-90: `show` on an ALREADY-VISIBLE pad reached the reveal path and
-    overwrote the stored focus-restore target — very often with the pad's own
-    window, since it is visible and focused. The next hide then "restored" focus
-    to the window it had just hidden."""
+    """Preserve the focus origin when showing an already-visible pad."""
     originals = (helper.load_scratchpads, helper._scratchpad_visibility,
                  helper._scratchpad_find_window, helper._scratchpad_dispatch,
                  helper._hyprctl_json, helper._scratchpad_session_ready,
@@ -5433,25 +5073,20 @@ def test_scratchpad_show_does_not_disturb_focus_restore():
     helper._scratchpad_place_workspace = lambda *a, **k: True
     helper._scratchpad_reassert = lambda *a, **k: {"applied": True}
     helper._scratchpad_session_ready = lambda: True
-    # The pad's own window is what is focused while the pad is on screen.
     helper._hyprctl_json = lambda *args: {"address": "0xpad"} if args and args[0] == "activewindow" else None
-    # The pad flock and focus-state files live under
-    # $XDG_RUNTIME_DIR/vshell-scratchpad — the LIVE session's directory.
-    # Sandbox them so this test cannot reach into the running shell's state.
+    # Use temporary pad locks and focus files; the defaults belong to the live session.
     with _scratchpad_state_sandbox():
         try:
             state_file = helper._scratchpad_state_dir() / "term.focus"
             state_file.write_text("0xorigin")
 
-            # show on a visible pad: the remembered origin must survive untouched.
             helper._scratchpad_visibility = _visibility_from(lambda pad_id: "DP-1")
             result = helper.scratchpad_toggle("term", reveal_only=True)
             assert_equal(result["ok"], True, "show on a visible pad still succeeds")
             assert_equal(state_file.read_text(), "0xorigin",
                          "the focus origin from the reveal that opened it must survive")
 
-            # A genuine reveal (pad hidden) does record the origin — otherwise the
-            # fix would have removed focus restore altogether.
+            # A hidden-pad reveal must still store the origin to preserve focus restoration.
             visible = {"n": 0}
 
             def visible_after_toggle(pad_id):
@@ -5472,21 +5107,19 @@ def test_scratchpad_show_does_not_disturb_focus_restore():
 
 
 def test_monitor_logical_size_degrades_on_unusable_scale():
-    """VGS-90: NaN and infinity survive float() — `float("nan")` raises nothing
-    and `nan <= 0` is False — so a monitor reporting a non-numeric scale carried
-    NaN into `int(round(width / nan))`, which raises and took the geometry path
-    down with it. A failed query is not a negative answer."""
+    """Reject non-finite monitor scales before geometry arithmetic.
+
+    float accepts NaN and infinity, and comparison with zero does not reject NaN.
+    """
     for label, scale in [("NaN", float("nan")), ("'nan'", "nan"), ("infinity", float("inf")),
                          ("negative", -2.0), ("garbage", "big"), ("zero", 0), ("empty", "")]:
         size = helper.monitor_logical_size(
             {"name": "DP-1", "width": 1920, "height": 1080, "scale": scale})
         assert_equal(size, (1920, 1080), f"a {label} scale degrades to 1 rather than raising")
 
-    # An absent scale is the ordinary case and must behave identically.
     assert_equal(helper.monitor_logical_size({"name": "DP-1", "width": 1920, "height": 1080}),
                  (1920, 1080), "a missing scale is 1")
 
-    # Usable scales are still honoured — the guard must not flatten everything.
     assert_equal(helper.monitor_logical_size(
         {"name": "DP-1", "width": 3840, "height": 2160, "scale": 2.0}), (1920, 1080),
         "a real scale still divides")
@@ -5494,8 +5127,6 @@ def test_monitor_logical_size_degrades_on_unusable_scale():
         {"name": "DP-1", "width": 2880, "height": 1800, "scale": 1.5}), (1920, 1200),
         "a fractional scale still divides")
 
-    # A geometry resolution over such a monitor must complete, not raise: that
-    # is the path the crash actually took out.
     geometry = helper.resolve_scratchpad_geometry(
         _pad(widthPercent=60, heightPercent=70),
         {"name": "DP-1", "width": 1920, "height": 1080, "scale": float("nan")})
@@ -5504,12 +5135,7 @@ def test_monitor_logical_size_degrades_on_unusable_scale():
 
 
 def test_scratchpad_hide_confirms_the_pad_came_down():
-    """Settings hides a pad BEFORE writing `enabled: false`, because that write
-    regenerates config and removes the keybind. The ordering only buys anything
-    if the hide is confirmed: reporting success without checking would let the
-    bind go while the window was still on screen — the exact outcome hiding
-    first exists to prevent, and the same defect `release()` had when its result
-    was discarded before the record was deleted."""
+    """Confirm hiding before Settings disables the pad and removes its keybind."""
     originals = (helper.load_scratchpads, helper._scratchpad_visibility,
                  helper._scratchpad_find_window, helper._scratchpad_dispatch,
                  helper._hyprctl_json, helper._scratchpad_session_ready)
@@ -5525,9 +5151,7 @@ def test_scratchpad_hide_confirms_the_pad_came_down():
         seen["n"] += 1
         return "DP-1" if seen["n"] == 1 else ""
 
-    # The pad flock and focus-state files live under
-    # $XDG_RUNTIME_DIR/vshell-scratchpad — the LIVE session's directory.
-    # Sandbox them so this test cannot reach into the running shell's state.
+    # Use temporary pad locks and focus files; the defaults belong to the live session.
     with _scratchpad_state_sandbox():
         try:
             helper._scratchpad_dispatch = lambda *args: True
@@ -5544,7 +5168,6 @@ def test_scratchpad_hide_confirms_the_pad_came_down():
             assert_equal(lying["action"], "hide-failed", "and is named")
             assert "still visible" in lying["error"], f"with the reason, got {lying['error']!r}"
 
-            # A failed dispatch is reported too, not only the end state.
             seen["n"] = 0
             helper._scratchpad_visibility = _visibility_from(visible_then_gone)
             helper._scratchpad_dispatch = lambda *args: args[0] != "togglespecialworkspace"
@@ -5552,7 +5175,6 @@ def test_scratchpad_hide_confirms_the_pad_came_down():
             assert_equal(refused["ok"], False, "a failed dispatch is not success")
             assert "could not toggle" in refused["error"], f"named, got {refused['error']!r}"
 
-            # Already hidden stays a cheap idempotent success with no dispatch.
             dispatched = []
             helper._scratchpad_dispatch = lambda *args: (dispatched.append(args), True)[1]
             helper._scratchpad_visibility = _visibility_from(lambda pad_id: "")
@@ -5566,11 +5188,7 @@ def test_scratchpad_hide_confirms_the_pad_came_down():
 
 
 def test_scratchpad_visibility_distinguishes_hidden_from_unknown():
-    """A failed `hyprctl -j monitors` used to be indistinguishable from a pad
-    that is genuinely down: both produced an empty monitor name. Settings hides
-    a pad before writing `enabled: false`, and that write removes the keybind —
-    so a hide reporting success on a query that never ran drops the bind out
-    from under a window that may still be up."""
+    """Distinguish failed monitor queries from a confirmed hidden pad."""
     original = helper._hyprctl_json
     try:
         visible = [{"name": "DP-1", "specialWorkspace": {"name": "special:term"}}]
@@ -5588,11 +5206,7 @@ def test_scratchpad_visibility_distinguishes_hidden_from_unknown():
 
 
 def test_scratchpad_matching_windows_reports_pattern_breadth():
-    """VGS-86: a derived StartupWMClass is an exact class match, so it claims
-    every current and future instance of the application. Nothing surfaced that,
-    so a user running one terminal as a scratchpad and another tiled had both
-    captured with no indication why. This query is what makes the breadth
-    visible before the pattern is saved."""
+    """Report the matching breadth of a derived application class before it is saved."""
     original = helper._hyprctl_json
     clients = [
         {"address": "0x1", "class": "com.mitchellh.ghostty", "title": "vgs"},
@@ -5603,11 +5217,9 @@ def test_scratchpad_matching_windows_reports_pattern_breadth():
     ]
     helper._hyprctl_json = lambda *args: clients if args and args[0] == "clients" else None
     try:
-        # The over-matching case, quantified: the derived pattern claims both.
         wide = helper.scratchpad_matching_windows(r"^(com\.mitchellh\.ghostty)$")
         assert_equal(wide["count"], 2, "a plain class match claims every instance")
 
-        # A launch-time class override narrows to the pad's own window.
         narrow = helper.scratchpad_matching_windows(r"^(com\.ghostty\.scratchpad)$")
         assert_equal(narrow["count"], 1, "an overridden class claims exactly one")
 
@@ -5629,13 +5241,10 @@ def test_scratchpad_matching_windows_reports_pattern_breadth():
         assert_equal(broken.get("known"), None,
                      "an error is not a knowledge claim either way")
 
-        # A bad title exclusion is an error for the same reason.
         bad_exclude = helper.scratchpad_matching_windows(r"^(x)$", "[")
         assert_equal(bad_exclude["ok"], False, "an uncompilable exclusion is an error")
         assert "title exclusion" in bad_exclude["error"], "and names which pattern"
 
-        # The three states are mutually exclusive, so a caller can switch on
-        # them without ambiguity.
         good = helper.scratchpad_matching_windows(r"^(1password)$")
         assert_equal((good["ok"], good["known"]), (True, True), "a real answer is ok+known")
         assert_equal(broken["ok"], False, "an error is not ok")
@@ -5662,9 +5271,7 @@ def test_scratchpad_hide_refuses_when_visibility_is_unknown():
     helper._scratchpad_find_window = lambda p: {"address": "0xpad", "workspace": {"name": "special:term"}}
     helper._scratchpad_session_ready = lambda: True
     helper._scratchpad_dispatch = lambda *args: True
-    # The pad flock and focus-state files live under
-    # $XDG_RUNTIME_DIR/vshell-scratchpad — the LIVE session's directory.
-    # Sandbox them so this test cannot reach into the running shell's state.
+    # Use temporary pad locks and focus files; the defaults belong to the live session.
     with _scratchpad_state_sandbox():
         try:
             # Entry: the monitor query fails outright. "Already hidden" would be a
@@ -5675,7 +5282,6 @@ def test_scratchpad_hide_refuses_when_visibility_is_unknown():
             assert_equal(unknown["action"], "hide-unknown", "and is named")
             assert "could not determine" in unknown["error"], f"got {unknown['error']!r}"
 
-            # Confirmation: visible at entry, then the read-back cannot be answered.
             calls = {"n": 0}
 
             def visible_then_unanswerable(*args):
@@ -5692,7 +5298,6 @@ def test_scratchpad_hide_refuses_when_visibility_is_unknown():
             assert_equal(unconfirmed["action"], "hide-failed", "and is named")
             assert "did not answer" in unconfirmed["error"], f"got {unconfirmed['error']!r}"
 
-            # And the honest success still works: visible, then confirmed down.
             calls["n"] = 0
 
             def visible_then_hidden(*args):
@@ -5780,10 +5385,8 @@ def test_tmux_theme_reaches_the_running_server():
 
 
 def main():
-    # A catalog download is minutes to hours of network transfer. Holding the
-    # exclusive theme lock for that long would block applies, the light/dark
-    # keybinding, wallpapers and restyles; the download takes the lock itself
-    # for the directory swap, which is the only step that mutates theme state.
+    # Catalog transfer must leave the theme lock available for applies and restyles.
+    # The download locks the directory swap that publishes its result.
     for catalog_argv in (["catalog", "install", "ayu"], ["catalog", "install", "--all"],
                          ["catalog", "remove", "ayu"], ["catalog", "list"]):
         assert_equal(helper._theme_command_mutates(catalog_argv), False,
@@ -5869,7 +5472,6 @@ def main():
     test_remote_desktop_unknown_compositor_is_probed_not_assumed()
     test_remote_desktop_decode_marks_real_replacement_characters()
     test_remote_desktop_undecodable_device_names_are_reported_not_mangled()
-    # Fail here, with the reason, rather than in the Niri suite with none.
     if os.environ.get("HOME") != _HOME_AT_IMPORT:
         raise AssertionError(
             "a test leaked its temporary HOME: expected "

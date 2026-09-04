@@ -144,8 +144,7 @@ Scope {
 
                 WindowBlur {
                     targetWindow: overlayWindow
-                    // Track the container's scale so blur shrinks with the content
-                    // during exit — otherwise blur pops away one frame after content.
+                    // Match blur to exit scale so it does not disappear after the content.
                     readonly property real s: Math.min(1, searchContainer.scale)
                     readonly property bool active: overlayWindow.shouldShowSearch && searchContainer.opacity > 0
                     blurX: searchContainer.x + searchContainer.width * (1 - s) * 0.5

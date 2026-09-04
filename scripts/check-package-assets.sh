@@ -8,11 +8,8 @@ trap 'rm -rf "$tmp"' EXIT
 core="$tmp/core"
 extras="$tmp/extras"
 
-# Every recipe that installs VGS must state which theme bundle it wants. The
-# default is `core`, so a forgotten variable ships too little instead of the
-# ~1.1 GiB `all` bundle, but silently shipping the wrong bundle is still a bug.
-# These reference the installer without running it (copy, lint, or run it with
-# an explicit bundle of their own), so they are exempt.
+# A missing bundle choice defaults to core and can silently omit intended themes.
+# These references copy or inspect the installer, or invoke it with their own explicit choice.
 non_callers=(
   packaging/install-system.sh
   scripts/build-release.sh
@@ -41,18 +38,13 @@ test -d "$core/usr/lib/vshell/themes/targets"
 test ! -e "$core/usr/lib/vshell/themes/tokyo-night"
 test ! -e "$core/usr/lib/vshell/config/vshell/icons"
 test -x "$core/usr/lib/vshell/bin/vshell-backend"
-# The screensaver's default art. It is the only thing standing between a fresh
-# install and a saver with nothing to draw, and it is read-only package data —
-# the runner cannot regenerate it into /usr, so dropping it here is silent.
+# The screensaver needs packaged art because it cannot regenerate data into /usr.
 test -s "$core/usr/lib/vshell/config/vshell/branding/screensaver.txt"
-# The download catalog and the screenshots of the themes core does not install.
-# Without them the theme browser on a base install can only offer the one theme
-# it ships, which is what VGS-59 was.
+# Core installs need catalog previews for themes available to download.
 test -s "$core/usr/lib/vshell/themes/catalog.json"
 test -s "$core/usr/lib/vshell/themes/catalog-previews/tokyo-night.png"
 test ! -e "$core/usr/lib/vshell/themes/catalog-previews/coppernight.png"
-# `all` copies themes/ wholesale, so it carries the catalog with it and every
-# theme's own preview.png; only its 1.1 GiB size keeps it out of this check.
+# The all bundle carries themes/ directly. This check avoids copying that full tree.
 test -f "$root/themes/catalog.json"
 
 DESTDIR="$extras" VGS_THEME_BUNDLE=extras "$root/packaging/install-system.sh"
@@ -62,8 +54,7 @@ test -d "$extras/usr/lib/vshell/config/vshell/icons"
 test ! -e "$extras/usr/lib/vshell/bin/vshell"
 test ! -e "$extras/usr/lib/vshell/themes/catalog-previews"
 
-# A stale catalog is worse than no catalog: it points downloads at files whose
-# checksums no longer match, so every install of a changed theme fails.
+# Catalog checksums must match theme contents or downloads fail verification.
 "$root/scripts/gen-theme-catalog.py" --check
 
 echo "package asset split checks passed"

@@ -1,27 +1,9 @@
 #!/usr/bin/env node
 "use strict";
 
-// The wallpaper-thumbnail sweep's state machine, EXECUTED.
-//
-// Every input is an argument, so this runs the same program the shell runs.
-// The logic earned this suite the hard way: nearly every review finding on
-// VGS-216 lived in these two functions — a lifetime latch that never re-armed,
-// a record keyed by path while the cache keys by identity, counts refunded on a
-// theme switch, one failed sweep spending both attempts, and a structured
-// failure read as a broken command, which re-ran the whole `--all` forever.
-//
-//   thumbSweepPlan   decides whether a read dispatches a sweep, and what it
-//                    charges. Identities confirmed to carry a thumbnail are
-//                    forgotten; counts for themes this read cannot see are kept.
-//   thumbSweepResult decides what a finished command meant. A parseable answer
-//                    is a COMPLETED sweep whatever it exited with.
-//
-// MUST-FAIL CONTROLS, each seen red one at a time: the plan sweeping with
-// nothing missing and no force; the plan refusing a forced sweep; counts
-// refunded for an unseen theme; a confirmed thumbnail left in the record; the
-// result treating a structured failure as incomplete (the unbounded re-run);
-// the result restoring the request after a completed sweep; and a reported
-// identity charged twice in one dispatch.
+// Execute thumbnail sweep decisions from the shipped region.
+// Plans retain attempt counts for unseen identities and forget confirmed thumbnails.
+// A structured command result completes a sweep even when every requested thumbnail failed.
 
 const assert = require("assert");
 const path = require("path");
@@ -37,8 +19,7 @@ const source = fs.readFileSync(SERVICE, "utf8");
 const sweep = evaluateMarked(source, MARKER, ["thumbSweepPlan", "thumbSweepResult"],
     "VGSThemeService.qml");
 
-// The extracted block must be free of QML, or this harness tests a different
-// program than the shell runs.
+// Keep extracted decisions independent of QML state.
 {
     const region = qmlSource.stripComments(
         require("./lib/qml-region.js").regionOf(source, MARKER, "VGSThemeService.qml"));
@@ -52,7 +33,7 @@ const sweep = evaluateMarked(source, MARKER, ["thumbSweepPlan", "thumbSweepResul
 const entry = (name, thumb) => ({ path: `/w/${name}.jpg`, thumbKey: `k-${name}`, thumb: thumb || "" });
 const MAX = 2;
 
-// --- thumbSweepPlan --------------------------------------------------------
+
 
 {
     const plan = sweep.thumbSweepPlan([entry("a", "/t/a.jpg")], {}, false, MAX);
@@ -68,8 +49,7 @@ const MAX = 2;
 }
 
 {
-    // A removal leaves nothing missing, which is exactly when the orphan needs
-    // sweeping — the force is the only thing that can say so.
+    // Removing a wallpaper can leave nothing missing but still require a forced orphan sweep.
     const plan = sweep.thumbSweepPlan([entry("a", "/t/a.jpg")], {}, true, MAX);
     assert.strictEqual(plan.sweep, true, "a forced sweep dispatches with nothing missing");
 }
@@ -82,7 +62,7 @@ const MAX = 2;
 }
 
 {
-    // Keyed on IDENTITY: the same path with a new key is a replaced file.
+    // A replacement file can keep its path while changing cache identity.
     const replaced = { path: "/w/a.jpg", thumbKey: "k-a-v2", thumb: "" };
     const plan = sweep.thumbSweepPlan([replaced], { "k-a": MAX }, false, MAX);
     assert.strictEqual(plan.sweep, true,
@@ -100,7 +80,7 @@ const MAX = 2;
         "rebuilding the record from the current theme refunded them on every switch");
 }
 
-// --- thumbSweepResult ------------------------------------------------------
+
 
 const failedJson = (keys) => JSON.stringify({ failed: keys.map(k => ({ path: `/w/${k}`, key: k })) });
 
@@ -112,8 +92,7 @@ const failedJson = (keys) => JSON.stringify({ failed: keys.map(k => ({ path: `/w
 }
 
 {
-    // The unbounded re-run: exit 1 with a structured answer is a COMPLETED
-    // sweep where everything failed, not a command that could not run.
+    // Exit 1 with a structured result is completed failure, not a reason to rerun the entire sweep indefinitely.
     const out = sweep.thumbSweepResult(failedJson(["k-x"]), ["k-a"], {}, true);
     assert.strictEqual(out.completed, true,
         "a structured failure is a completed sweep, or a machine with no decoder " +

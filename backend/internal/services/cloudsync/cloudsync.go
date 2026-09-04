@@ -20,17 +20,14 @@ import (
 // live speed readout, slow enough that a busy sync does not flood the socket.
 const broadcastInterval = 500 * time.Millisecond
 
-// trashPruneInterval is how often expired recycle-bin entries are swept.
 const trashPruneInterval = 6 * time.Hour
 
-// accountCheckInterval is how often account reachability and storage usage are
-// re-verified in the background. Tokens expire and quotas move without anyone
-// pressing a button, and a status chip that is quietly stale is worse than no
-// chip at all.
+// accountCheckInterval refreshes account health and quota because tokens and
+// storage use can change without user action.
 const accountCheckInterval = 30 * time.Minute
 
-// Manager is the cloudsync service. It owns the rclone control daemon and every
-// piece of sync state; QML holds none of it.
+// Manager owns cloud sync configuration, runtime state, and the rclone control
+// daemon. QML consumes its snapshots.
 type Manager struct {
 	srv    *server.Server
 	log    *slog.Logger
@@ -58,8 +55,7 @@ type Manager struct {
 	pruneTimer   *time.Timer
 	accountTimer *time.Timer
 	accounts     []Account
-	// daemonGeneration counts rcd incarnations, so a job started against one
-	// daemon can never be attributed to a job id on the next.
+	// daemonGeneration distinguishes job IDs reused by a restarted rclone daemon.
 	daemonGeneration uint64
 	providers        map[string]providerDetails
 	providersLoaded  bool
@@ -112,8 +108,7 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	m.daemon = newRCD(binary, m.client, m.onDaemonUp, m.onDaemonDown)
 
 	if w, werr := newWatcher(log, m.onWatchDirty); werr != nil {
-		// Real-time sync is a bonus, not a prerequisite: without a watcher the
-		// service still runs on schedules.
+		// Scheduled sync remains available when filesystem watching is unavailable.
 		log.Warn("cloudsync real-time watcher unavailable", "err", werr)
 	} else {
 		m.watcher = w
@@ -166,11 +161,9 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	return m, nil
 }
 
-// onDaemonUp runs once rclone is answering: apply settings, reconcile mounts,
-// arm schedules and watchers.
 func (m *Manager) onDaemonUp(version string) {
-	// A new incarnation: rclone restarts its job IDs from 1, and its provider
-	// table can differ after an upgrade-and-restart.
+	// Daemon job IDs can repeat after a restart. Provider metadata must also be
+	// fetched again.
 	m.mu.Lock()
 	m.daemonGeneration++
 	m.providers = nil
@@ -191,8 +184,8 @@ func (m *Manager) onDaemonUp(version string) {
 	m.broadcastNow()
 }
 
-// onDaemonDown marks every running job as interrupted. Jobs do not survive an
-// rclone restart, so leaving them "syncing" would be a lie.
+// onDaemonDown marks running jobs as interrupted because they do not survive an
+// rclone restart.
 func (m *Manager) onDaemonDown(reason string) {
 	m.mu.Lock()
 	for id := range m.jobs {
@@ -210,18 +203,15 @@ func (m *Manager) onDaemonDown(reason string) {
 	m.broadcastNow()
 }
 
-// onWatchDegraded pushes a mid-session real-time failure into state. Watch
-// degradation was previously only copied into FolderStatus by syncWatchers,
-// which runs on config changes and daemon-up — so a folder that stopped being
-// watched kept reporting itself as watched until the user happened to edit a
-// setting.
+// onWatchDegraded publishes watcher failures between configuration updates so
+// folder state does not continue to report active watching.
 func (m *Manager) onWatchDegraded() {
 	m.syncWatchers()
 	m.broadcastNow()
 }
 
-// Close tears the service down: stop timers, release watches and mounts, and
-// shut the rclone daemon so no orphan process or stale mount is left behind.
+// Close cancels timers and background work, releases watches, and requests mount
+// and daemon shutdown.
 func (m *Manager) Close() {
 	m.mu.Lock()
 	if m.closed {
@@ -257,9 +247,8 @@ func (m *Manager) Close() {
 	m.stopTasks()
 	m.tasks.Wait()
 
-	// The whole group, via the session's own guarded kill: a PID-only kill left
-	// the sign-in's process group alive past shutdown, still holding its
-	// loopback callback port.
+	// Kill the sign-in process group so descendants do not retain the callback port
+	// after shutdown.
 	session.kill()
 	if m.watcher != nil {
 		m.watcher.close()
@@ -268,9 +257,6 @@ func (m *Manager) Close() {
 	m.daemon.close()
 }
 
-// --- State ------------------------------------------------------------------
-
-// snapshot builds the full state frame sent to subscribers.
 func (m *Manager) snapshot() State {
 	folders := m.store.snapshotFolders()
 	settings := m.store.snapshotSettings()
@@ -323,7 +309,6 @@ func (m *Manager) snapshot() State {
 	}
 }
 
-// broadcastNow pushes state immediately. Used for user-visible transitions.
 func (m *Manager) broadcastNow() {
 	m.mu.Lock()
 	if m.closed {
@@ -339,7 +324,6 @@ func (m *Manager) broadcastNow() {
 	m.srv.Broadcast("cloudsync", m.snapshot())
 }
 
-// broadcastThrottled coalesces the high-frequency progress updates.
 func (m *Manager) broadcastThrottled() {
 	m.mu.Lock()
 	if m.closed {
@@ -366,9 +350,8 @@ func (m *Manager) broadcastThrottled() {
 	m.mu.Unlock()
 }
 
-// applyBandwidth pushes the global rate limit into the running daemon. The
-// error is returned rather than swallowed: a rejected limit used to be reported
-// to the user as saved while rclone carried on transferring unthrottled.
+// applyBandwidth returns control-call errors so a saved limit that did not take
+// effect reaches the user.
 func (m *Manager) applyBandwidth(settings Settings) error {
 	rate := bandwidthRate(settings.BandwidthUp, settings.BandwidthDown)
 	if err := m.client.callTimeout("core/bwlimit", map[string]any{"rate": rate}, nil, 10*time.Second); err != nil {
@@ -394,9 +377,8 @@ func bandwidthRate(up, down string) string {
 	return up + ":" + down
 }
 
-// maxConcurrency bounds Transfers/Checkers. rclone hands these straight to its
-// scheduler, and an absurd value is a self-inflicted denial of service on the
-// user's own connection and file descriptors.
+// maxConcurrency limits rclone workers to bound connection and file-descriptor
+// use.
 const maxConcurrency = 64
 
 // validateSettings clamps and checks the fields a client can set. mergeSettings
@@ -437,7 +419,6 @@ func validateSettings(s *Settings) error {
 
 func (m *Manager) validateSettings(s *Settings) error { return validateSettings(s) }
 
-// schedulePrune arms the recycle-bin sweep.
 func (m *Manager) schedulePrune() {
 	m.mu.Lock()
 	if m.closed {
@@ -454,8 +435,6 @@ func (m *Manager) schedulePrune() {
 	m.mu.Unlock()
 }
 
-// --- Handlers ---------------------------------------------------------------
-
 type folderIDParams struct {
 	ID string `json:"id"`
 	// Force is only honoured by syncNow: it overrides the delete guard after
@@ -465,9 +444,8 @@ type folderIDParams struct {
 
 type remoteParams struct {
 	Name string `json:"name"`
-	// RemoveFolders acknowledges that disconnecting an account also removes the
-	// sync folders that point at it. Required when any exist, so a stray click
-	// on a disconnect button can never strand them.
+	// RemoveFolders acknowledges removal of folders that depend on the account.
+	// Account removal requires it while dependent folders exist.
 	RemoveFolders bool `json:"removeFolders"`
 }
 
@@ -564,9 +542,8 @@ func (m *Manager) handleReconnectRemote(params json.RawMessage) (any, error) {
 	return m.snapshot(), nil
 }
 
-// handleCheckRemote re-verifies one account on demand and returns the updated
-// state; the account's own health field carries the answer, so the UI never has
-// to render a transient result that disagrees with the chip beside it.
+// handleCheckRemote starts an account check in the background. Account health
+// updates carry its result; the immediate response can precede completion.
 func (m *Manager) handleCheckRemote(params json.RawMessage) (any, error) {
 	var p remoteParams
 	if err := json.Unmarshal(params, &p); err != nil {
@@ -578,11 +555,9 @@ func (m *Manager) handleCheckRemote(params json.RawMessage) (any, error) {
 	if !m.accountExists(p.Name) {
 		return nil, fmt.Errorf("no such account")
 	}
-	// Run it in the background and answer immediately. The probe can take up to
-	// two minutes on an unreachable backend, and the server serializes calls per
-	// method — so a synchronous check queued a second account's "Check now"
-	// behind the first with no feedback. The account's health field carries the
-	// result, and the "checking" state is already visible in the UI.
+	// Account probes run in the background because the server serializes calls per
+	// method. A slow probe must not delay another account check. The account health
+	// field carries the result.
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
@@ -699,8 +674,8 @@ func (m *Manager) handleUpdateFolder(params json.RawMessage) (any, error) {
 	if !ok {
 		return nil, fmt.Errorf("no such folder")
 	}
-	// Mode, remote and local path define the pair's identity; changing them in
-	// place would leave bisync state describing a tree that no longer exists.
+	// Mode, remote and local path identify the pair and its bisync state. Changing
+	// them requires a separate pair with its own baseline.
 	incoming.Mode = existing.Mode
 	incoming.Remote = existing.Remote
 	incoming.RemotePath = existing.RemotePath
@@ -732,10 +707,8 @@ func (m *Manager) handleRemoveFolder(params json.RawMessage) (any, error) {
 	return m.snapshot(), nil
 }
 
-// removeFolderByID tears one sync pair down completely: running job cancelled,
-// mount released, watch dropped, timer stopped, conflicts cleared. Local files
-// stay exactly where they are — removing a sync folder must never delete the
-// user's data.
+// removeFolderByID stops a pair and removes its configuration and runtime state.
+// Teardown errors stop removal. Local files are retained.
 func (m *Manager) removeFolderByID(id string) error {
 	folder, ok := m.store.folder(id)
 	if !ok {
@@ -776,9 +749,8 @@ func (m *Manager) handleSyncNow(params json.RawMessage) (any, error) {
 		return nil, err
 	}
 	if p.ID == "" {
-		// Every failure is named. Keeping only the last one meant "Sync all"
-		// could report a single message that identified neither the folder nor
-		// how many others had also failed.
+		// Include each failed folder in the response so a partial Sync all failure
+		// identifies the affected folders.
 		var failed []string
 		var lastErr error
 		for _, folder := range m.store.snapshotFolders() {
@@ -925,9 +897,8 @@ func (m *Manager) teardownFolder(folder Folder, stopMount bool) error {
 func (m *Manager) teardownRunningFolders() error {
 	var problems []string
 	for _, folder := range m.store.snapshotFolders() {
-		// Global pause is also expected to release on-demand mounts. A mounted
-		// stream has no sync job, so iterating only jobs falsely reported success
-		// while leaving it accessible and active.
+		// Streamed folders have mounts rather than jobs. Global pause must release
+		// those mounts separately.
 		if err := m.teardownFolder(folder, true); err != nil {
 			m.markFolderError(folder.ID, err)
 			problems = append(problems, err.Error())
@@ -960,8 +931,6 @@ func (m *Manager) runningFolderIDs() map[string]struct{} {
 
 func (m *Manager) handleUpdateSettings(params json.RawMessage) (any, error) {
 	current := m.store.snapshotSettings()
-	// Decode over the current values so a partial update only changes what it
-	// mentions.
 	if err := json.Unmarshal(params, &current); err != nil {
 		return nil, err
 	}
@@ -989,8 +958,8 @@ func (m *Manager) handleSetBandwidthLimit(params json.RawMessage) (any, error) {
 	if err := m.store.putSettings(settings); err != nil {
 		return nil, err
 	}
-	// Saved either way — the limit persists and is applied on the next daemon
-	// start — but the user is told when it did not take effect now.
+	// The limit is saved for daemon startup even if applying it to the running
+	// daemon fails. Report that failure to the caller.
 	applyErr := m.applyBandwidth(settings)
 	m.broadcastNow()
 	if applyErr != nil {
@@ -1046,7 +1015,6 @@ func (m *Manager) handleUnmount(params json.RawMessage) (any, error) {
 	return m.snapshot(), nil
 }
 
-// handleEmptyTrash clears the recycle bin now instead of waiting for retention.
 func (m *Manager) handleEmptyTrash(params json.RawMessage) (any, error) {
 	var p folderIDParams
 	if err := json.Unmarshal(params, &p); err != nil {
@@ -1089,19 +1057,14 @@ func (m *Manager) handleRestartDaemon(json.RawMessage) (any, error) {
 	return m.snapshot(), nil
 }
 
-// afterFolderChange re-arms everything that depends on a folder's config.
 func (m *Manager) afterFolderChange(folder Folder) {
 	m.syncWatchers()
 	m.scheduleFolder(folder)
-	// Only the per-account folder count can have changed, which is local
-	// bookkeeping. A full refreshAccounts here meant every pause toggle paid a
-	// sequential config/get per account plus an operations/about sweep — up to
-	// a minute of network calls for a state the client already derives itself.
+	// Only folder counts change here. Reuse cached account metadata to avoid
+	// network probes on folder edits.
 	m.recountAccountFolders()
 }
 
-// recountAccountFolders refreshes the cached per-account folder counts without
-// touching the network.
 func (m *Manager) recountAccountFolders() {
 	counts := map[string]int{}
 	for _, f := range m.store.snapshotFolders() {

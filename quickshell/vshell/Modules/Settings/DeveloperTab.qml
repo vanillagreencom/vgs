@@ -5,10 +5,7 @@ import qs.Services
 import qs.Widgets
 import qs.Modules.Settings.Widgets
 
-// Coding agents, their mise launchers, and language environments. Every list
-// here is `vshell agent list --json` and `vshell dev-env list --json`; the
-// catalog behind them is config/vshell/dev-tools.json and this tab never
-// carries its own copy.
+// Lists come from vshell agent list and vshell dev-env list; the catalog is config/vshell/dev-tools.json and this tab keeps no copy.
 Item {
     id: root
 
@@ -293,8 +290,7 @@ Item {
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
 
-                                // Installed state is a mark, not a word that could read
-                                // as a second action beside Remove.
+
                                 VgsIcon {
                                     visible: envRow.modelData.installed
                                     name: "check_circle"
@@ -312,7 +308,7 @@ Item {
                                 }
                             }
 
-                            // Install is the primary action; removal is a quiet icon.
+
                             VgsButton {
                                 anchors.right: parent.right
                                 anchors.rightMargin: Theme.spacingXS

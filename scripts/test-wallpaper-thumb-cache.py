@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
-"""Cache housekeeping for the wallpaper thumbnails: what a prune DROPS, and
-just as importantly what it KEEPS.
+"""Controls for wallpaper thumbnail pruning.
 
-Split from scripts/test-wallpaper-thumbs.py, which covers the build ladder.
-A sweep that deletes everything satisfies an orphan-only check, so every case
-here places a live entry beside the orphan.
+Each case includes a live entry so deleting everything cannot pass.
 """
 from __future__ import annotations
 
@@ -26,18 +23,14 @@ def main() -> int:
         return 1
     exercised = 0
 
-    # Pruning must not eat a build that is still running. Temp paths keep the
-    # .jpg suffix deliberately and are absent from `wanted`, so an unguarded
-    # sweep unlinks one mid-decode and the rename that follows fails — losing
-    # the thumbnail on a machine with only that rung.
+    # Temporary JPEG paths are deliberately absent from wanted. Removing one during
+    # decode would make publication fail.
     prune_dir = Path(tempfile.mkdtemp())
     thumbs.configure(thumbs.ThumbRuntime(cache_dir=lambda: prune_dir, run=runner))
     thumbs.thumb_dir().mkdir(parents=True, exist_ok=True)
     in_progress = thumbs.thumb_dir() / ".abc123.4321.999.jpg"
     orphan = thumbs.thumb_dir() / "deadbeefcafe.jpg"
-    # A LIVE entry, named exactly as the cache names it, so the sweep is shown
-    # keeping what it must as well as dropping what it must. Pruning everything
-    # would otherwise satisfy an orphan-only check.
+    # A live entry prevents pruning everything from satisfying the orphan check.
     live = thumbs.thumb_dir() / thumbs.thumb_name(src)
     in_progress.write_bytes(b"partial")
     orphan.write_bytes(b"stale")
@@ -59,7 +52,6 @@ def main() -> int:
         ok("pruning drops the orphan, keeps the live thumbnail, and leaves an "
            "in-progress build alone")
 
-    # The same contract through build_all, which is what the CLI actually calls.
     orphan.write_bytes(b"stale")
     result = thumbs.build_all([src], prune=True)
     exercised += 1
@@ -70,9 +62,7 @@ def main() -> int:
         ok("build_all prunes the orphan and reuses the live thumbnail")
 
 
-    # An unwritable cache must answer like any other miss. Raising here ended
-    # `wallpaper-thumbs` with a traceback instead of a count, and the caller
-    # falls back to the original either way.
+    # An unwritable cache must remain a miss so the caller can use the original.
     blocked = Path(tempfile.mkdtemp()) / "a-file"
     blocked.write_text("not a directory")
     thumbs.configure(thumbs.ThumbRuntime(cache_dir=lambda: blocked, run=runner))

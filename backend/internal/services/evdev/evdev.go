@@ -125,8 +125,8 @@ func capsLockLEDs() ([]string, error) {
 	return paths, nil
 }
 
-// readCapsLock reports whether any LED is lit and whether any path was
-// readable at all (readable=false means the device list is stale).
+// readCapsLock reports whether any LED is lit and whether any path was readable.
+// No readable path requests a device rescan.
 func readCapsLock(paths []string) (on bool, readable bool) {
 	for _, path := range paths {
 		raw, err := os.ReadFile(path)

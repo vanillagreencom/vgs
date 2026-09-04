@@ -1,47 +1,11 @@
 #!/usr/bin/env python3
-"""Enforce the child ordering the session lock's reload safety depends on.
+"""Check the leading child declarations used by session-lock reload matching.
 
-`ReloadPropagator::onReload` (quickshell 0.3.0, src/core/reload.cpp:57-71) matches
-its children **by index**. It never consults `Reloadable.reloadableId` — that
-lookup lives only in `reloadRecursive`, which a propagator reaches solely through
-its else-branch, with an already-null pointer. So every `reloadableId` in the
-lock path is decorative: the objects are found across generations purely by
-position, and matching happens independently at *every* level of the tree.
-
-The failure mode is not a warning. Insert a child above one of the objects below,
-save while the session is locked, and `qobject_cast` on the old object now
-sitting at that index returns null. The reload then builds a fresh
-`SessionLockManager` while the old one is destroyed still owning the
-ext-session-lock, which poisons the process-global lock pointer and aborts the
-shell on the next lock request:
-
-    FATAL: Tried to show lockscreen surfaces without active lock
-
-That is a black screen with a live lock behind it, landing on a routine save —
-in exactly the edit-while-locked workflow VGS-28 exists to enable.
-
-Three positions have to hold, one per propagator in the chain:
-
-  shell.qml       ShellRoot   [0] Lock
-      Lock is the reload-matched entry point for the whole lock subtree, and it
-      cannot be wrapped in a Loader (a Loader is not Reloadable, so propagation
-      would stop there instead).
-
-  Lock.qml        Scope       [0] PersistentProperties, [1] WlSessionLock
-      PersistentProperties must reload BEFORE WlSessionLock, because it restores
-      the `locked` request that `WlSessionLock::onReload` branches on — adopt the
-      old manager if true, `unlock()` the session with it if false.
-
-  IdleService.qml Singleton   [0] PersistentProperties
-      Singleton is also a ReloadPropagator. This is what tells the DPMS and
-      blackout recoveries that they are in a reload rather than a process start.
-
-Anything added after those indexes is safe, which is the point of pinning them
-at the front. Exits non-zero, naming the file and what it found, if any is
-violated.
-
-This is the only check in the suite that covers this: the nested smoke never
-locks a session, so nothing else would notice.
+Quickshell matches ReloadPropagator children by index. A child inserted before
+a lock object can prevent reuse of its manager during a locked reload.
+PersistentProperties must precede WlSessionLock so the locked request is
+restored before the lock reloads.
+This indentation-based scan checks the paths and child positions in EXPECTATIONS.
 """
 
 import re
@@ -50,7 +14,6 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
-# (path, human-readable root type, expected child type names by index)
 EXPECTATIONS = [
     ("quickshell/vshell/shell.qml", "ShellRoot", ["Lock"]),
     (
@@ -65,18 +28,8 @@ EXPECTATIONS = [
     ),
 ]
 
-# A child object declaration at the root object's indentation: four spaces, a
-# capitalised type name, then an opening brace. Property declarations, signal
-# handlers and attached-property assignments all carry a `:` before any brace, so
-# `Component.onCompleted: {` and `WlrLayershell.layer: x` never match, and QML
-# spells every one of them with a lower-case keyword or an `on`/`property`
-# prefix. Nested objects are indented further and are matched by their own
-# propagator, not this one.
-#
-# Deliberately NOT anchored to end-of-line. `Timer {}` and `Timer { id: guard }`
-# are perfectly valid depth-1 declarations, and anchoring made this check report
-# success while the inserted child shifted every index below it — the precise
-# false green it exists to prevent.
+# Match child declarations at the expected indentation, including inline bodies.
+# Declarations inside comments are removed before matching.
 CHILD_RE = re.compile(r"^    ([A-Z][A-Za-z0-9_.]*)\s*\{")
 
 
@@ -129,7 +82,6 @@ def check(rel_path: str, root_type: str, expected: list[str]) -> bool:
 
 
 def main() -> int:
-    # Deliberately not short-circuiting: report every violated file in one run.
     if all([check(*spec) for spec in EXPECTATIONS]):
         return 0
 

@@ -117,20 +117,9 @@ BasePill {
         return root.menuOpen != (root.section === "right") ? "keyboard_arrow_left" : "keyboard_arrow_right";
     }
 
-    // REVISIT(D003): the one call in this widget that is not native. Items
-    // without a DBusMenu (`hasMenu === false`) can only be asked to show their
-    // own menu through the SNI `ContextMenu` method, which Quickshell 0.3.0
-    // does not expose — and it exposes no bus name or object path either, so
-    // this has to find the item again by `Id`, which is application-unique
-    // rather than item-unique. With two items from one application the first
-    // match wins, which may be the wrong one.
-    //
-    // Known and accepted, not an open question: docs/decisions/D003-system-tray-transport.md
-    // weighs the alternatives (helper CLI, backend method). Both would move
-    // this registry walk rather than remove it, neither fixes the `Id`
-    // ambiguity, and both add surface that upstream support would retire. Do
-    // not grow this script — if it needs more logic, it moves to
-    // `bin/vshell-helper` first.
+    // Quickshell does not expose SNI ContextMenu for items without a DBusMenu.
+    // Lookup by application Id can select the wrong item when an app has several.
+    // Keep additional transport logic in bin/vshell-helper. See docs/decisions/D003-system-tray-transport.md.
     function callContextMenuFallback(trayItemId, globalX, globalY) {
         const script = ['ITEMS=$(dbus-send --session --print-reply --dest=org.kde.StatusNotifierWatcher /StatusNotifierWatcher org.freedesktop.DBus.Properties.Get string:org.kde.StatusNotifierWatcher string:RegisteredStatusNotifierItems 2>/dev/null)', 'while IFS= read -r line; do', '  line="${line#*\\\"}"', '  line="${line%\\\"*}"', '  [ -z "$line" ] && continue', '  BUS="${line%%/*}"', '  OBJ="/${line#*/}"', '  ID=$(dbus-send --session --print-reply --dest="$BUS" "$OBJ" org.freedesktop.DBus.Properties.Get string:org.kde.StatusNotifierItem string:Id 2>/dev/null | grep -oP "(?<=\\\")(.*?)(?=\\\")" | tail -1)', '  if [ "$ID" = "$1" ]; then', '    dbus-send --session --type=method_call --dest="$BUS" "$OBJ" org.kde.StatusNotifierItem.ContextMenu int32:"$2" int32:"$3"', '    exit 0', '  fi', 'done <<< "$ITEMS"',].join("\n");
         Quickshell.execDetached(["bash", "-c", script, "_", trayItemId, String(globalX), String(globalY)]);
@@ -965,9 +954,7 @@ BasePill {
         Column {
             spacing: 0
 
-            // Column lacks layoutDirection, so we use four repeaters with mutually exclusive models to control whether main items or expanded items appear above/ below the toggle button.
-            // When reverseInlineVertical is true the first and third repeaters are empty and the second and fourth are active, and vice-versa.
-            // Because items are swapped between repeaters rather than reversed within a single list, vertical drag-and-drop indices don't need remapping (unlike the horizontal RightToLeft case).
+            // Column has no layoutDirection. Swapping active repeaters preserves within-list drag indices.
             Repeater {
                 model: ScriptModel {
                     values: root.reverseInlineVertical ? [] : root.displayedMainBarItems

@@ -11,7 +11,7 @@ Singleton {
     property var currentPopoutsByScreen: ({})
     property var currentPopoutTriggers: ({})
 
-    // Set by the screenshot IPC handshake (vgs screenshot region select); cleared by end() or any popout/modal open.
+    // Set by the screenshot IPC begin handler; shell surfaces release keyboard focus while it is true. Cleared by end(), showPopout(), or a modal opening.
     property bool screenshotActive: false
 
     signal popoutOpening

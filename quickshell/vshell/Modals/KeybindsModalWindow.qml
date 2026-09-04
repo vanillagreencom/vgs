@@ -27,7 +27,7 @@ FloatingWindow {
 
     objectName: "keybindsModalWindow"
     title: I18n.tr("Keybinds")
-    // Matches the overlay: the content asks for the width its text needs.
+
     readonly property real _wantW: keybindsContent.preferredWidth
 
     minimumSize: Qt.size(Math.min(560, Screen.width), Math.min(400, Screen.height))

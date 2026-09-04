@@ -29,14 +29,14 @@ Item {
                 root.themeIcon = data.themeIcon || "";
                 root.themeIconInstalled = data.themeIconInstalled === true;
             } catch (e) {
-                // leave prior state on parse failure
+
             }
         });
     }
 
     function useFollowTheme() {
         SettingsData.setIconThemeUnmanaged();
-        // Re-run the theme's icon hook so the theme's set is applied now.
+
         if (VGSThemeService.currentTheme.name)
             VGSThemeService.applyBlueprint(VGSThemeService.currentTheme.name);
         refresh();
@@ -109,7 +109,7 @@ Item {
                     }
                 }
 
-                // Theme's named set + install status
+
                 StyledText {
                     width: parent.width
                     wrapMode: Text.WordWrap
@@ -124,7 +124,7 @@ Item {
                     font.pixelSize: Theme.fontSizeSmall
                 }
 
-                // Installed-theme picker (active when not following the theme)
+
                 SettingsDropdownRow {
                     width: parent.width
                     text: I18n.tr("Icon set")

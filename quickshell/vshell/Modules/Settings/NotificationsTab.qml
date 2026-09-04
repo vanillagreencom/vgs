@@ -203,8 +203,7 @@ Item {
 
             SettingsCard {
                 width: parent.width
-                // "active" is a claim too: reserve it for a confirmed VGS
-                // registration, and stay neutral while ownership is unknown.
+                // Claim active notification ownership only after VGS registration is confirmed.
                 iconName: {
                     if (NotificationService.serverConflict || !SettingsData.notificationServerEnabled)
                         return "notifications_off";
@@ -253,11 +252,7 @@ Item {
                             wrapMode: Text.WordWrap
                             font.pixelSize: Theme.fontSizeSmall
                             color: Theme.surfaceVariantText
-                            // Every state the helper can report gets its own
-                            // line. Ownership is claimed only for a "vgs"
-                            // result: falling back to it would have Settings
-                            // assert VGS owns the bus while the heading above
-                            // says the opposite.
+                            // Only a vgs result confirms bus ownership. Preserve the helper's other states instead of defaulting to ownership.
                             text: {
                                 if (!SettingsData.notificationServerEnabled)
                                     return I18n.tr("Popups, the notification center and history are handled by whichever other daemon is installed.");
@@ -302,7 +297,7 @@ Item {
                 title: I18n.tr("Notification Popups")
                 settingKey: "notificationPopups"
 
-                // Font size selectors for summary and body
+
                 SettingsDropdownRow {
                     settingKey: "notificationSummaryFontSize"
                     tags: ["notification", "font", "summary", "size"]

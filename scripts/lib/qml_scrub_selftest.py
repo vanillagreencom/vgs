@@ -1,11 +1,4 @@
-"""The `live_code` half of the qml_source selftest, run from there.
-
-Its own file because `live_code` is its own module: `qml_scrub` decides
-which characters are code at all, `qml_source` asks what contains what,
-and the shapes each has to separate are different questions. One runner
-still executes both — `python3 scripts/lib/qml_source_selftest.py` — so
-there is one command to run and one place a failure is reported.
-"""
+"""Controls for qml_scrub, invoked by qml_source_selftest.py."""
 
 import sys
 from pathlib import Path
@@ -27,7 +20,6 @@ def scrub_checks(check) -> None:
             return error.problem
         return "RETURNED A VIEW"
 
-    # --- live_code ---------------------------------------------------------
     commented = "a();\n// b();\nc();\n"
     blanked = live_code(commented)
     check("comment contents are gone", "b()" in blanked, False)
@@ -44,9 +36,7 @@ def scrub_checks(check) -> None:
         True,
     )
 
-    # A view of a file the scanner could not parse IS the silent pass this
-    # module exists to prevent — every containment bug here ended as a blanked
-    # remainder that every guard then read as clean. So these refuse.
+    # Unsupported unterminated constructs must raise instead of hiding the remainder.
     check("an unterminated block comment is refused", refusal("/* x"), "unterminated block comment")
     check("an unterminated string is refused", refusal('x = "abc'), "unterminated string literal")
     check("an unbalanced paren is refused", refusal("f(a;\n"), "unbalanced parentheses: the scan ended inside an open `(`")
@@ -65,12 +55,7 @@ def scrub_checks(check) -> None:
         len(continuation),
     )
 
-    # --- live_code: template literals --------------------------------------
-    # The interior of `${...}` is executable code. A rule that reads this view
-    # to decide whether a call is present would be answered "no" for every call
-    # written inside an interpolation if the literal were blanked wholesale, so
-    # each shape below is pinned in BOTH directions: the code inside survives,
-    # and the literal text around it is still blanked.
+    # Interpolation code must survive while surrounding template text is blanked.
     interpolated = "log(`text danger(x) ${danger(y)} tail`);\n"
     seen = blanked_template(interpolated)
     check("a call inside an interpolation survives", "danger(y)" in seen, True)
@@ -123,10 +108,7 @@ def scrub_checks(check) -> None:
     multiline = "`a\nb ${danger(z)}\nc`"
     check("line count survives a multi-line literal", blanked_template(multiline).count("\n"), multiline.count("\n"))
 
-    # --- live_code: regex literals -----------------------------------------
-    # A quote inside a regex is not a delimiter. Reading it as one opens a
-    # phantom string that runs to the newline — or, for a backtick, to the end
-    # of the file — and every line it swallows is invisible to every rule.
+    # Quotes inside regex bodies must not open strings or hide later code.
     check(
         "a quote in a regex does not swallow the rest of the line",
         "danger(z)" in blanked_template("s.replace(/'/g, \"x\"); danger(z);\n"),
@@ -137,10 +119,7 @@ def scrub_checks(check) -> None:
         "danger(z)" in blanked_template("return /[;&|`\"']/.test(p);\ndanger(z);\n"),
         True,
     )
-    # A control condition's `)` is followed by a STATEMENT, so a `/` after it
-    # opens a regex. Reading it as division let the backtick inside the regex
-    # open a template literal that nothing closed, hiding the rest of the file
-    # — and with it a hard-coded argv the guard exists to forbid.
+    # A regex after a control-condition parenthesis is a statement body.
     check(
         "a regex after a control condition is a regex, not division",
         blanked_template('function f(x) {\n  if (x) /a`b/.test(x);\n  const bad = ["wtype"];\n}\n'),
@@ -185,10 +164,7 @@ def scrub_checks(check) -> None:
         blanked_template("a = counter++ / total-- / 2;\n"),
         "a = counter++ / total-- / 2;\n",
     )
-    # A closing brace ENDS a value. Reading `{} / 2` as a regex opener blanked
-    # everything to the next slash on the line, and a rule prohibiting a
-    # construct then passed without ever seeing it — which is how a hard-coded
-    # argv sat in a file the paste guard called clean.
+    # Division after an object literal must leave the following code visible.
     check(
         "division after an object literal is division",
         blanked_template('const x = {} / 2; run(["wtype"]); const y = a / b;\n'),
