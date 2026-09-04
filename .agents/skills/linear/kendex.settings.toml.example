@@ -22,10 +22,14 @@ LINEAR_AGENT_LABELS = ""
 
 # Non-empty makes `issues create` enforce the creation bar in the
 # project-management skill's SKILL.md, § Disposition → **Name what reaches
-# it**: it refuses a body whose
-# `Reached by:` line is missing or names no producer, and a `--review-born
+# it**: it refuses a body with no `Reached by:` line, and a `--review-born
 # --priority 2` body with no `Symptom:` line. Empty = guard off.
 LINEAR_REQUIRE_REACH = ""
 
 # Default output format for read commands: safe, table, ids, raw.
 LINEAR_FORMAT = "safe"
+
+# Seconds before the first retry of a rate-limited or failed GraphQL call,
+# doubling on each further attempt. A whole number of seconds; 0 retries
+# without waiting at all.
+LINEAR_RETRY_BASE_DELAY = "1"

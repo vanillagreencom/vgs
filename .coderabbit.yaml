@@ -118,6 +118,7 @@ reviews:
     # `scripts/check-owned-skills.py` holds this list and the in-place one below
     # to those rows — unheld, the next refresh renders an unexcluded skill into
     # review scope, silently.
+    - "!.agents/skills/arch-docs/**"
     - "!.agents/skills/code-quality/**"
     - "!.agents/skills/decider/**"
     - "!.agents/skills/deep-research/**"

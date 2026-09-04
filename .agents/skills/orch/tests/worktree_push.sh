@@ -8,6 +8,7 @@
 # surviving copy; nothing may leave stale SHAs silently.
 
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
@@ -146,8 +147,8 @@ assert_contains "$(cat "$args_log")" "push $wt --force" "the rejected flag reach
 # lives in one place. This case runs the REAL worktree script, so the two
 # scripts' wiring is held: the argument order the wrapper sends, and push's
 # own diagnostic reaching the caller. It runs FROM the worktree because the
-# worktree script resolves its project at startup and exits 128 before
-# parsing anything when its working directory is not a repository.
+# worktree script resolves its project at startup and refuses before parsing
+# anything when its working directory is not a repository.
 work="$TMP_ROOT/work-owned-typo"
 reset_state "$work"
 typo_before="$(state_json "$work")"
@@ -259,11 +260,11 @@ mutant_root="$TMP_ROOT/live-refusal-mutant"
 mkdir -p "$mutant_root"
 cp -R "$REPO_ROOT/skills/orch/scripts" "$mutant_root/"
 live_mutant="$mutant_root/scripts/worktree-push"
-assert_eq "$(grep -c 'fail "fix round .active_round is live' "$live_mutant")" "1" \
+assert_eq "$(grep -c 'refuse_live_round "\$active_round"' "$live_mutant")" "1" \
   "control finds exactly one live-round refusal to remove"
-sed -i.bak 's/fail "fix round .active_round is live/: "fix round is live/' "$live_mutant"
+sed -i.bak 's/refuse_live_round "\$active_round"/: "no refusal"/' "$live_mutant"
 chmod +x "$live_mutant"
-assert_eq "$(grep -c 'fail "fix round .active_round is live' "$live_mutant")" "0" \
+assert_eq "$(grep -c 'refuse_live_round "\$active_round"' "$live_mutant")" "0" \
   "control removes the refusal only from its private copy"
 rm -f "$live_wt/tmp/dev-return-KEN-LIVE-1-1.json"
 : > "$live_args"
@@ -273,6 +274,96 @@ mutant_rc=0
 assert_eq "$mutant_rc" "0" "control: the mutant pushes the live round"
 assert_eq "$([[ -s "$live_args" ]] && echo ran || echo no)" "ran" \
   "control: the mutant reached the push the refusal blocks"
+
+echo
+echo "=== --check-live-round answers the question alone, for the restack path ==="
+
+# merge-pr's restack cycle rebases without reaching the push, so it asks here.
+# Exit 0 permits the rebase, 3 is a live round, and anything else is a question
+# left unanswered — which is not permission (kendex#944).
+check_args="$TMP_ROOT/check-args.log"
+: > "$check_args"
+# The must-fail control above left round 1-1 live; land its receipt again so
+# this block starts from a branch that may be rebased.
+"$RETURN_WRITE" --worktree "$live_wt" --kind fix --issue KEN-LIVE --round-id 1-1 \
+  --branch main --commit "$live_head" --validate pass --item 1 Applied done >/dev/null
+STUB_ARGS_LOG="$check_args" run_push "$live_state" --check-live-round \
+  --worktree "$live_wt" --issue KEN-LIVE
+assert_eq "$RUN_RC" "0" "with no live round the check permits the rebase"
+assert_eq "$([[ -s "$check_args" ]] && echo ran || echo no)" "no" \
+  "the check pushes nothing, whatever its answer"
+(cd "$live_state" && "$STATE" set KEN-LIVE dev_round_id 1-1)
+rm -f "$live_wt/tmp/dev-return-KEN-LIVE-1-1.json"
+STUB_ARGS_LOG="$check_args" run_push "$live_state" --check-live-round \
+  --worktree "$live_wt" --issue KEN-LIVE
+assert_eq "$RUN_RC" "3" "a live round answers 3, distinct from every other refusal"
+assert_contains "$(cat "$run_err")" "is live in" "the check names the live round"
+assert_eq "$([[ -s "$check_args" ]] && echo ran || echo no)" "no" \
+  "the live answer still pushes nothing"
+
+# A state that cannot be read is not a state with no round. Each arm stubs one
+# answer, and the honest stub above is the control that they are the cause.
+check_stub_root="$TMP_ROOT/check-stub"
+mkdir -p "$check_stub_root"
+cp -R "$REPO_ROOT/skills/orch/scripts" "$check_stub_root/"
+check_stub="$check_stub_root/scripts/worktree-push"
+cat > "$check_stub_root/scripts/workflow-state" <<'EOF'
+#!/usr/bin/env bash
+# Answers the two state reads worktree-push makes, honestly unless told
+# otherwise: the identity reads must pass so each case fails for its own
+# reason, and only the named answer is broken.
+mode=""
+for arg in "$@"; do
+  case "$arg" in
+  exists) mode=exists ;;
+  get) mode=get ;;
+  *issue_id*) [[ "$mode" == get ]] && { printf 'KEN-LIVE\n'; exit 0; } ;;
+  *dev_round_id*)
+    [[ "$mode" == get ]] || continue
+    [[ "${STUB_GET:-}" == fail ]] && exit 5
+    printf '\n'
+    exit 0
+    ;;
+  esac
+done
+if [[ "$mode" == exists ]]; then
+  [[ "${STUB_EXISTS:-}" == fail ]] && exit 7
+  printf '%s\n' "${STUB_EXISTS_JSON:-{\"path\":\"/x\",\"exists\":true\}}"
+fi
+exit 0
+EOF
+chmod +x "$check_stub_root/scripts/workflow-state" "$check_stub"
+# Every refusal in this script exits 1, so the exit code alone cannot tell one
+# arm from the one below it: each case asserts the message its own arm prints.
+check_err="$TMP_ROOT/check-stub.err"
+check_rc() {
+  local rc=0
+  (cd "$live_state" && "$@" --check-live-round --worktree "$live_wt" --issue KEN-LIVE) \
+    >/dev/null 2>"$check_err" || rc=$?
+  printf '%s' "$rc"
+}
+assert_eq "$(check_rc env "$check_stub")" "0" \
+  "control: an honest stub answering no round permits the rebase"
+assert_eq "$(check_rc env STUB_EXISTS=fail "$check_stub")" "1" \
+  "an exists that fails hands back rather than permitting"
+assert_contains "$(cat "$check_err")" "could not resolve the workflow state" \
+  "and hands back through the arm that names the failed exists"
+assert_eq "$(check_rc env STUB_EXISTS_JSON='{"path":"/x","exists":"maybe"}' "$check_stub")" "1" \
+  "an answer that is neither yes nor no hands back"
+assert_contains "$(cat "$check_err")" "unexpected exists --json answer" \
+  "and hands back through the arm that names the malformed answer"
+assert_eq "$(check_rc env STUB_GET=fail "$check_stub")" "1" \
+  "a round read that fails hands back rather than permitting"
+assert_contains "$(cat "$check_err")" "could not read the active dev round" \
+  "and hands back through the arm that names the failed round read"
+
+# Check mode forwards nothing to the push, so an argument it cannot honour
+# would vanish and the answer would be about a state the caller never asked
+# for. A mistyped --state-dir is the case: refuse instead of permitting.
+assert_eq "$(check_rc "$REPO_ROOT/skills/orch/scripts/worktree-push" --sate-dir=/nowhere)" "1" \
+  "an argument check mode cannot honour refuses rather than permits"
+assert_contains "$(cat "$check_err")" "'--sate-dir=/nowhere' would be ignored rather than honoured" \
+  "and the refusal names the argument it could not honour"
 
 echo
 echo "=== a failed push still applies its map (rebase precedes the push) ==="
@@ -445,46 +536,34 @@ else
 fi
 
 echo
-echo "=== the bare-numeric alias binds, not refuses ==="
+echo "=== a bare-numeric key resolves to its exact file, never to issue-N ==="
 
-# Issue N stored under issue-N is the one accepted spelling difference: the
-# aliased state is this issue's record, and the push must reconcile it through
-# the resolved key.
-work="$TMP_ROOT/work-alias"
-rm -rf "$work" && mkdir -p "$work"
+# workflow-state resolves every key to its exact file, so `--issue 7` reaches
+# workflow-state-7.json and nothing else. worktree-push must resolve it the
+# same way: with no state under that key the rebase map has nowhere to land,
+# which is a loud failure — never a silent bind to the issue-7 record.
+work="$TMP_ROOT/work-numeric"
+mkdir -p "$work"
 git -C "$wt" config user.email test@example.com
 git -C "$wt" config user.name Test
-git -C "$wt" commit -q --allow-empty -m alias-base
-alias_old="$(git -C "$wt" rev-parse HEAD)"
-git -C "$wt" commit -q --allow-empty -m alias-restack
-alias_new="$(git -C "$wt" rev-parse HEAD)"
+git -C "$wt" commit -q --allow-empty -m numeric-base
+numeric_old="$(git -C "$wt" rev-parse HEAD)"
+git -C "$wt" commit -q --allow-empty -m numeric-restack
+numeric_new="$(git -C "$wt" rev-parse HEAD)"
 (cd "$work" \
   && "$STATE" init issue-7 --agent generalist --worktree "$wt" --branch issue-7 >/dev/null \
-  && "$STATE" append issue-7 fixed_items "{\"description\":\"fix\",\"commit\":\"${alias_old:0:7}\",\"source\":\"pr-review\"}")
-STUB_PUSH_STDOUT="rebase-map: $alias_old $alias_new" run_push "$work" --worktree "$wt" --issue 7
-assert_eq "$RUN_RC" "0" "a bare-numeric issue binds to its issue-N state instead of refusing"
-assert_eq "$(jq -r '.fixed_items[0].commit' "$work/tmp/workflow-state-issue-7.json")" "${alias_new:0:7}" "the aliased record's fix SHA is rewritten"
-
-
-echo
-echo "=== an ambiguous state key refuses before pushing ==="
-
-# Files under BOTH the bare-numeric and the issue-N key make the
-# reconciliation target ambiguous (workflow-state exists exits 2). Proceeding
-# would land a rebase whose map has no definite record to land in — the push
-# must not run at all.
-work="$TMP_ROOT/work-ambiguous"
-rm -rf "$work" && mkdir -p "$work"
-(cd "$work" \
-  && "$STATE" init issue-7 --agent generalist --worktree "$wt" --branch issue-7 >/dev/null \
-  && "$STATE" init 7 --agent generalist --worktree "$wt" --branch issue-7 >/dev/null)
-ambig_args_log="$TMP_ROOT/ambig-args.log"
-: >"$ambig_args_log"
-STUB_ARGS_LOG="$ambig_args_log" STUB_PUSH_STDOUT="rebase-map: $OLD_A $NEW_A" \
+  && "$STATE" append issue-7 fixed_items "{\"description\":\"fix\",\"commit\":\"${numeric_old:0:7}\",\"source\":\"pr-review\"}")
+numeric_args_log="$TMP_ROOT/numeric-args.log"
+: >"$numeric_args_log"
+STUB_ARGS_LOG="$numeric_args_log" STUB_PUSH_STDOUT="rebase-map: $numeric_old $numeric_new" \
   run_push "$work" --worktree "$wt" --issue 7
-assert_eq "$RUN_RC" "1" "an ambiguous state key fails the call"
-assert_contains "$(cat "$run_err")" "ambiguous" "the refusal names the ambiguity"
-assert_eq "$(wc -l <"$ambig_args_log")" "0" "the push never runs against an ambiguous state"
+assert_eq "$RUN_RC" "1" "a bare-numeric issue whose state does not exist fails the landed push"
+assert_eq "$(wc -l <"$numeric_args_log")" "1" \
+  "the push itself ran — the failure is reconciliation, not a pre-push refusal"
+assert_contains "$(cat "$run_err")" "State file not found: tmp/workflow-state-7.json" \
+  "the failure names the exact key it resolved, not the issue-7 file"
+assert_eq "$(jq -r '.fixed_items[0].commit' "$work/tmp/workflow-state-issue-7.json")" "${numeric_old:0:7}" \
+  "the issue-7 record is left alone by a bare-numeric call"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

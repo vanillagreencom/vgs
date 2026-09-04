@@ -42,7 +42,7 @@ Present the unblocked candidates from the tracker and pick one. If several are w
 .agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID] --with-bundle
 ```
 
-Apply the Ancestor gate ([SKILL.md § Coordination](../SKILL.md#coordination)) to the `--with-bundle` output.
+Apply the Ancestor gate ([references/skill-rules.md § Coordination](../references/skill-rules.md#coordination)) to the `--with-bundle` output.
 
 - **Container** → it is not the work item. List its unblocked DIRECT children (`depth == 0` in the flattened children array; never select a deeper descendant directly), pick one, and re-run this section for it.
 - **Explicit single-PR bundle** (`(one PR)` in the title, or a leaf whose description carries an internal checklist) → the parent IS the work item.
@@ -82,6 +82,8 @@ Exit 75 means a branch or open PR already owns the issue — inspect it instead 
 ## 5. Continue In Worktree
 
 Execute `workflows/start-worktree.md` with `[WT_PATH]` as the worktree context — no question.
+
+An `orch start` run is complete only when the tracker issue is Done and its worktree is gone. An opened or armed PR is not complete.
 
 <output_format>
 
