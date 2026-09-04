@@ -141,12 +141,8 @@ window-rule {
         assert_equal(managed["allowWhenLocked"], True, "Niri bind allow-when-locked")
         assert_equal(managed["repeat"], False, "Niri bind repeat")
 
-        # VGS-13: binds VGS generated against the retired launcher IPC targets
-        # are rewritten onto vshell-menu on read, and the file is rewritten so
-        # the fix survives without the user re-editing the bind.
-        # "ipc call <target>" is VGS syntax, not a reserved word: only a vshell
-        # invocation may be rewritten. A bind that spawns some other program
-        # with the same arguments is the user's, and a read must not touch it.
+        # Retired launcher targets migrate only inside vshell invocations. Other
+        # programs can legitimately use the same IPC-looking arguments.
         niri._write_vgs_niri_binds([
             {"key": "Mod+Space", "desc": "Launcher", "action": "spawn vshell ipc call spotlight toggle"},
             {"key": "Mod+D", "desc": "Spotlight bar", "action": "spawn vshell ipc call spotlight-bar open"},
@@ -166,9 +162,7 @@ window-rule {
         assert_equal(migrated_binds["Mod+W"], "spawn my-vshell-wrapper ipc call launcher toggle", "lookalike program must not be rewritten")
         assert_equal(niri.migrate_vgs_niri_binds()["migrated"], True, "bind migration should rewrite binds.kdl")
         on_disk = (niri.niri_config_dir() / "binds.kdl").read_text()
-        # Scoped to vshell invocations: the non-vshell binds above legitimately
-        # keep their own "spotlight" argument, so a bare substring check here
-        # would now be testing the wrong thing.
+        # Scope assertions to vshell; other programs can retain spotlight arguments.
         for retired in ("spotlight-bar", "spotlight", "launcher"):
             if f'"vshell" "ipc" "call" "{retired}"' in on_disk:
                 raise AssertionError(f"retired launcher IPC target {retired!r} survived the binds.kdl rewrite")
@@ -187,7 +181,6 @@ window-rule {
 
         niri._reload_niri = _failing_reload
         try:
-            # An idempotent read must not reload at all.
             payload = niri.niri_binds_json()
             assert_equal(reload_calls, [], "clean read should not reload Niri")
             assert_equal("bindMigration" in payload, False, "clean read should report no migration")

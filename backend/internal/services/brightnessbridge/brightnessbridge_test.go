@@ -10,12 +10,9 @@ import (
 	"time"
 )
 
-// writePipeHolderHelper writes a fake helper whose backgrounded child inherits
-// stdout and holds the pipe open long after the helper is gone. The production
-// helper never creates this topology — it pipe-isolates every probe — so these
-// fixtures manufacture the descendant-inherits-the-pipes case the WaitDelay
-// defense-in-depth bound exists for. `body` runs after the child is spawned;
-// the child's PID is killed from t.Cleanup so no stray sleep outlives the test.
+// writePipeHolderHelper starts a fake helper with a descendant that retains
+// stdout. This exercises the WaitDelay bound even though helper probes normally
+// use separate pipes. Cleanup kills the recorded child PID.
 func writePipeHolderHelper(t *testing.T, body string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -39,10 +36,8 @@ func writePipeHolderHelper(t *testing.T, body string) string {
 	return path
 }
 
-// The production topology: the helper pipe-isolates its probes, so when the
-// timeout's kill lands on a blocked helper nothing else holds the backend's
-// pipes and the call resolves at the context deadline, never waiting on
-// WaitDelay.
+// The fixture gives the blocked helper no descendant with backend pipes, so the
+// context deadline can end the read without waiting for WaitDelay.
 func TestCallTimeoutReleasesIsolatedHelper(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "fake-helper")
 	if err := os.WriteFile(path, []byte("#!/bin/sh\nexec sleep 60\n"), 0o755); err != nil {

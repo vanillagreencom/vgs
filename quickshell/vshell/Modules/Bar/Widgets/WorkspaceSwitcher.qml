@@ -12,7 +12,7 @@ import "../../../Common/WorkspaceSlotPool.js" as WorkspaceSlotPool
 Item {
     id: root
 
-    // Keep old Sway/I3 branches inert without loading Quickshell.I3.
+    // Keep unsupported Sway/I3 branches inert without loading Quickshell.I3.
     QtObject {
         id: i3Shim
         readonly property var workspaces: ({ values: [] })
@@ -209,7 +209,7 @@ Item {
         ];
     }
 
-    // Numbered workspaces first in ascending order; purely-named workspaces (sway reports num -1) after, by name
+
     function swayWorkspaceOrder(a, b) {
         const keyA = a.num === -1 ? Number.MAX_SAFE_INTEGER : a.num;
         const keyB = b.num === -1 ? Number.MAX_SAFE_INTEGER : b.num;
@@ -249,7 +249,7 @@ Item {
         return focusedWs ? swayWorkspaceKey(focusedWs) : 1;
     }
 
-    // Numbered workspaces first in id order, named (negative id) after, by name
+
     function hyprlandWorkspaceOrder(a, b) {
         const keyA = a.id < 0 ? Number.MAX_SAFE_INTEGER : a.id;
         const keyB = b.id < 0 ? Number.MAX_SAFE_INTEGER : b.id;
@@ -275,8 +275,7 @@ Item {
             ];
         }
 
-        // Hyprland gives named workspaces negative ids (from -1337 down); special
-        // workspaces always store a "special:" name prefix ("special" pre-colon era)
+        // Hyprland gives named workspaces negative ids; special workspaces are named "special" or carry a "special:" prefix.
         let filtered = workspaces.filter(ws => {
             if (ws.id > 0)
                 return true;
@@ -1237,9 +1236,7 @@ Item {
                     return 0;
                 }
 
-                // A tile is a plain index/glyph badge (no app icons, no long name) when there is
-                // no icon expansion and no workspace name. Those tiles are forced to a true square
-                // sized to the bar icons, so they read as even keycaps rather than taller pills.
+                // Keep plain index/glyph badges square in both orientations when neither app icons nor workspace names expand them.
                 readonly property bool squareTile: !hasWorkspaceName && iconsExtraWidth === 0 && iconsExtraHeight === 0
                 readonly property real squareSide: Math.round(Math.max(root.appIconSize, root.widgetHeight * 0.55, contentImplicitWidth + Theme.spacingS))
 

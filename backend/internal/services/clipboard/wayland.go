@@ -21,8 +21,7 @@ const (
 	// copyStartupGrace is how long wl-copy gets to fail fast (bad args, no
 	// display). Past it the process is assumed to be serving the clipboard.
 	copyStartupGrace = 600 * time.Millisecond
-	// maxImageBytes refuses absurd clipboard blobs rather than writing
-	// unbounded files; anything a screenshot tool produces fits comfortably.
+	// maxImageBytes bounds clipboard image reads and stored blob size.
 	maxImageBytes = 64 << 20
 )
 
@@ -65,10 +64,8 @@ func readSelection(log *slog.Logger) (sel selection, ok bool, err error) {
 	return selection{mime: mime, image: blob}, true, nil
 }
 
-// logPasteFailure distinguishes a real read failure from the routine
-// empty-clipboard exit: wl-paste says nothing on an empty selection, so any
-// stderr content is a failure worth a trace even though the caller degrades
-// to "empty".
+// wl-paste can exit without stderr for an empty selection. Log other read
+// failures because selection reports them to its caller as an empty clipboard.
 func logPasteFailure(log *slog.Logger, op string, err error) {
 	ee, ok := err.(*exec.ExitError)
 	if !ok {
@@ -89,8 +86,8 @@ func listTypes(log *slog.Logger) ([]string, error) {
 		if execbound.Interrupted(err) {
 			return nil, err
 		}
-		// wl-paste exits non-zero for an empty clipboard; that is a normal
-		// state, but anything with stderr is a real failure worth logging.
+		// An empty selection can produce a non-zero exit. Stderr gives a diagnostic
+		// for other failures.
 		logPasteFailure(log, "list-types", err)
 		return nil, nil
 	}
@@ -154,12 +151,9 @@ func readImage(log *slog.Logger, mime string) ([]byte, error) {
 	return out, nil
 }
 
-// wlCopy hands blob to wl-copy. wl-copy stays alive in the background to
-// serve the Wayland clipboard, so success is "did not fail immediately". It
-// runs in its own session so a backend restart does not drop the clipboard;
-// the reaper goroutine collects it when it exits and logs a late failure —
-// by then the RPC has already returned success, so the log line is the only
-// trace that the clipboard was never actually set.
+// wlCopy starts a clipboard owner in a separate session so it can survive
+// backend shutdown. Success means it did not fail within copyStartupGrace. The
+// reaper logs later failures after the caller has received success.
 func wlCopy(log *slog.Logger, blob []byte, mime string) error {
 	args := []string{}
 	if mime != "" {
@@ -186,7 +180,8 @@ func wlCopy(log *slog.Logger, blob []byte, mime string) error {
 		}
 		return nil
 	case <-time.After(copyStartupGrace):
-		// Still serving the clipboard: success as far as the caller knows.
+		// The startup grace elapsed without an observed exit; clipboard ownership is
+		// not confirmed.
 		go func() {
 			if err := <-done; err != nil {
 				log.Warn("wl-copy failed after startup grace", "err", err, "stderr", strings.TrimSpace(stderr.String()))
@@ -196,10 +191,9 @@ func wlCopy(log *slog.Logger, blob []byte, mime string) error {
 	}
 }
 
-// watch runs one wl-paste --watch process, invoking onEvent for every
-// clipboard change, until the context is cancelled or the process dies.
-// The watched command is a bare `echo`: each change prints one line, which is
-// the only signal needed — content is read separately by the poller.
+// watch uses one wl-paste process until cancellation or exit. Each echo line
+// requests a separate clipboard read; content is not sent through the watch
+// pipe.
 func watch(ctx context.Context, onEvent func()) error {
 	cmd := exec.CommandContext(ctx, "wl-paste", "--watch", "echo")
 	stdout, err := cmd.StdoutPipe()

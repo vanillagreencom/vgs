@@ -1,11 +1,6 @@
-"""Self-test for `qml_source`, run as `python3 scripts/lib/qml_source_selftest.py`.
+"""Controls for QML source containment and recognized statement regions.
 
-Kept beside the library rather than inside it: the helpers change when the
-textual reading of QML is wrong, these shapes change when a check needs a new
-distinction drawn, and only one of the two is imported by anything.
-
-This one command runs both halves. The `live_code` shapes live in
-`qml_scrub_selftest.py`, beside the module they pin, and are called in below.
+This runner also invokes qml_scrub_selftest.py.
 """
 
 import re
@@ -26,13 +21,7 @@ from qml_source import (  # noqa: E402
 
 
 def selftest() -> int:
-    """Pin the discriminations these helpers exist to make.
-
-    Each check below is a shape a wiring check must separate from its neighbour.
-    A helper that stopped separating them would still answer every call, and
-    every check built on it would still pass — which is why they are asserted
-    here rather than left to whichever rule happens to depend on them.
-    """
+    """Check source forms that must produce different containment answers."""
     failures: list[str] = []
 
     def check(label: str, actual: object, expected: object) -> None:
@@ -46,7 +35,6 @@ def selftest() -> int:
 
     scrub_checks(check)
 
-    # --- if_regions: a guard versus code that merely follows one -----------
     guarded = "function f() {\n    if (live)\n        remember = x;\n}\n"
     following = "function f() {\n    if (live)\n        log();\n    remember = x;\n}\n"
     braced = "function f() {\n    if (live) {\n        remember = x;\n    }\n}\n"
@@ -79,11 +67,7 @@ def selftest() -> int:
         ["inner", "outer"],
     )
 
-    # --- where a braceless region ENDS -------------------------------------
-    # Scanning for a raw `;` got this wrong in both directions. Too far is the
-    # dangerous one: an over-large region makes ungoverned code read as
-    # governed, so a rule that must see an assignment outside a guard sees it
-    # inside one and passes.
+    # An oversized region could make unguarded code appear conditional.
     check(
         "a statement ended by ASI does not swallow the next one",
         controls("if (live)\n    log()\nremember = x;\n", "remember"),
@@ -99,8 +83,7 @@ def selftest() -> int:
         controls("function f() {\n    if (live)\n        log()\n}\nremember = x;\n", "remember"),
         [],
     )
-    # ...and too short, which under-reports instead: a semicolon that is not a
-    # statement terminator must not end the region.
+    # Nested semicolons must not terminate the surrounding statement.
     check(
         "semicolons in a for head do not end the region",
         controls("if (live)\n    for (i = 0; i < n; i++)\n        remember = x;\n", "remember"),
@@ -137,14 +120,12 @@ def selftest() -> int:
         [],
     )
 
-    # --- returns_unconditionally -------------------------------------------
     def returns(body: str) -> bool:
         source = "if (bad) {\n" + body + "\n}\n"
         start, end = next((s, e) for test, s, e in if_regions(source) if test.strip() == "bad")
         return returns_unconditionally(source, start, end)
 
     check("a return at the region's own depth counts", returns("    return;"), True)
-    # Everything that can stop the return from running.
     check("a return behind a nested if does not", returns("    if (worse)\n        return;"), False)
     check("a return behind a braced if does not", returns("    if (worse) {\n        return;\n    }"), False)
     check("a return in a braceless for does not", returns("    for (const x of xs)\n        return;"), False)
@@ -153,12 +134,11 @@ def selftest() -> int:
     check("a return in an else branch does not", returns("    if (a)\n        log();\n    else\n        return;"), False)
     check("a return in a switch case does not", returns("    switch (a) {\n    case 1:\n        return;\n    }"), False)
     check("a return inside a nested block does not", returns("    once(() => {\n        return;\n    });"), False)
-    # ...and the other direction, so the helper is not simply answering False.
+    # A valid return distinguishes the implementation from a constant false.
     check("a return after a nested if still counts", returns("    if (worse)\n        log();\n    return;"), True)
     check("a return after a loop still counts", returns("    for (const x of xs)\n        log(x);\n    return;"), True)
     check("a return after an if/else still counts", returns("    if (a)\n        log();\n    else\n        warn();\n    return;"), True)
 
-    # --- control_regions ---------------------------------------------------
     check(
         "every governing keyword is recognised",
         sorted({keyword for keyword, _, _, _ in control_regions(
@@ -169,7 +149,6 @@ def selftest() -> int:
     check("a word ending in a keyword is not a keyword", control_regions("notif (a) x();\n"), [])
     check("a ternary governs no region", control_regions("const x = live ? build() : none;\n"), [])
 
-    # --- enclosing_function_body -------------------------------------------
     two = (
         "Item {\n"
         "    function owner() {\n"
@@ -210,8 +189,7 @@ def selftest() -> int:
     plain = "Item {\n    x = 1;\n}\n"
     check("a plain object body is not a function", enclosing_function_body(plain, plain.index("x = 1")), None)
     check("no enclosing block at all is None", enclosing_function_body("x = 1;\n", 2), None)
-    # The limits the module docstring claims, pinned so the account cannot go
-    # stale: each returns None, which a caller must report rather than widen.
+    # Unrecognized function scopes must return None instead of widening.
     shorthand = "Item {\n    handle() {\n        target = 1;\n    }\n}\n"
     check("method shorthand is not a function", enclosing_function_body(shorthand, shorthand.index("target")), None)
     getter = "Item {\n    get value() {\n        target = 1;\n    }\n}\n"
@@ -219,7 +197,6 @@ def selftest() -> int:
     far = "function " + "a" * 130 + "() {\n    target = 1;\n}\n"
     check("a preamble past the lookback window is not found", enclosing_function_body(far, far.index("target")), None)
 
-    # --- handler_bodies ----------------------------------------------------
     handlers = "onExited: {\n    first();\n}\nonExited: {\n    second();\n}\n"
     spans = handler_bodies(handlers, "onExited")
     check(
@@ -233,8 +210,7 @@ def selftest() -> int:
         [arrow[start:end] for start, end in handler_bodies(arrow, "onExited")],
         ["{\n    x = 1;\n}"],
     )
-    # A handler with no braced body has none. Taking the next `{` in the file
-    # answered a question about this handler with an unrelated block.
+    # An expression handler must not borrow an unrelated block.
     unbraced = "Item {\n    onExited: root.handle()\n    Rectangle {\n        elsewhere = 1;\n    }\n}\n"
     check("a handler with no braced body reports none", handler_bodies(unbraced, "onExited"), [])
     check(
@@ -243,7 +219,6 @@ def selftest() -> int:
         [],
     )
 
-    # --- in_function and occurrences_in ------------------------------------
     owner = (
         "function owner() {\n"
         "    if (ready)\n"

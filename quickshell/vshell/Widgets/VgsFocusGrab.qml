@@ -43,11 +43,6 @@ HyprlandFocusGrab {
         active = true;
     }
 
-    // Deliberately no onCleared handling: `cleared` also fires on normal
-    // teardown (keyboardFocus=None commit, hidden grab surfaces, clicks on the
-    // non-whitelisted click catcher), so it cannot distinguish "user focused
-    // elsewhere" from "modal is closing". Skipping restoration on it leaves the
-    // seat with no keyboard focus while Hyprland still reports the old
-    // activeWindow. restoreToplevel() instead checks compositor state at
-    // restore time.
+    // cleared also fires during normal teardown, so it cannot distinguish focus loss from modal closure.
+    // restoreToplevel checks compositor state when restoring focus.
 }

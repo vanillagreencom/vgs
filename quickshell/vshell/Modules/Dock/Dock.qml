@@ -185,7 +185,7 @@ Variants {
                     if (win.workspace_id !== currentWorkspaceId)
                         continue;
 
-                    // Get window position and size from layout data
+
                     const tilePos = win.layout?.tile_pos_in_workspace_view;
                     const winSize = win.layout?.window_size || win.layout?.tile_size;
 
@@ -227,7 +227,7 @@ Variants {
                 return CompositorService.mangoDockOverlapForSmartAutoHide(screenName, SettingsData.dockPosition, dockThickness, screenWidth, screenHeight);
             }
 
-            // Hyprland implementation (current workspace + visible special workspaces)
+
             Hyprland.focusedWorkspace;
             Hyprland.toplevels;
             return CompositorService.hyprlandDockOverlapForSmartAutoHide(screenName, SettingsData.dockPosition, dockThickness, screenWidth, screenHeight);
@@ -245,14 +245,14 @@ Variants {
                 return true;
             }
 
-            // Smart auto-hide: show dock when no windows overlap, hide when they do
+
             if (SettingsData.dockSmartAutoHide) {
                 if (shouldHideForWindows)
                     return dockMouseArea.containsMouse || dockApps.requestDockShow || contextMenuOpen || revealSticky;
-                return true;  // No overlapping windows - show dock
+                return true;
             }
 
-            // Regular auto-hide: always hide unless hovering
+
             return !autoHide || dockMouseArea.containsMouse || dockApps.requestDockShow || contextMenuOpen || revealSticky;
         }
 
@@ -552,10 +552,7 @@ Variants {
                             radius: dock.surfaceRadius
                         }
 
-                        // Generic surface hairline (BlurService). The dock has its own
-                        // dedicated border (the Shape below, driven by dockBorder* settings),
-                        // so this hairline must follow the dock border toggle too — otherwise
-                        // disabling the dock border still left this 1px ring around the dock.
+                        // The shared hairline must follow the dock border toggle or a border remains visible when disabled.
                         Rectangle {
                             anchors.fill: parent
                             color: "transparent"

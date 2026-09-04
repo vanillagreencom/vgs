@@ -2,10 +2,7 @@ import QtQuick
 import qs.Common
 import qs.Widgets
 
-// One line in the changelog's "Upgrade Notes" block. Notes display to every user
-// whose `~/.config/vshell/.changelog-<version>` marker is older than the shipped
-// `quickshell/vshell/VERSION`, so a note written here reaches users on the next
-// release — see "Changelog" in docs/architecture/shell-architecture.md.
+// Render an upgrade note within the changelog. Notes show to every user whose .changelog-<version> marker (ChangelogService) predates the shipped VERSION.
 Row {
     id: root
 

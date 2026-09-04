@@ -5,26 +5,17 @@ root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 version="$(cat "$root/VERSION")"
 
 grep -q "pkgver=$version" "$root/packaging/arch/PKGBUILD"
-# The assets recipe is release-backed too, and was not covered: a release could
-# pass every check here while this recipe still pointed at the previous assets
-# archive, and the post-tag publish would push that stale version.
+# The assets recipe must reference the release being published.
 grep -q "pkgver=$version" "$root/packaging/arch/vgs-shell-assets/PKGBUILD"
 grep -q "Version:        $version" "$root/packaging/fedora/vgs-shell.spec"
 grep -q "vgs-shell ($version-1)" "$root/packaging/debian/changelog"
 grep -q "version=$version" "$root/packaging/void/template"
 grep -qx "$version" "$root/quickshell/vshell/VERSION"
-# The Gentoo recipe carries its version in its FILENAME, and gen-package-metadata
-# deliberately finds it by glob so the rename does not break the generator. That
-# means the generator cannot notice a release that forgot to rename it: bumping
-# VERSION to 0.3.0 while vgs-shell-0.2.0.ebuild is still the only ebuild passes
-# every other check here. The version match belongs at release time, so it is
-# asserted here rather than turning the generator back into a hardcoded path.
+# Gentoo stores its version in the ebuild filename. Metadata generation discovers it by glob,
+# so that generation alone cannot detect a missing release rename.
 test -f "$root/packaging/gentoo/vgs-shell-$version.ebuild"
-# errexit exempts a pipeline that begins with `!` (SC2251), so the previous
-# `! grep -q` form never failed the script — these two checks were inert. The
-# patterns match the shapes the files actually use: PKGBUILD carries per-arch
-# sha256sums_<arch>= arrays, and the void template's checksum= lines sit
-# tab-indented inside a case arm.
+# errexit does not fail on a negated pipeline. Use an explicit failure branch.
+# Checksum patterns must cover architecture arrays and indented template fields.
 if grep -qE "sha256sums(_[a-z0-9_]+)?=\('SKIP'\)" "$root/packaging/arch/PKGBUILD"; then
   echo "check-release: packaging/arch/PKGBUILD still carries a sha256sums SKIP entry" >&2
   exit 1
@@ -34,9 +25,7 @@ if grep -qE '^[[:space:]]*checksum=SKIP$' "$root/packaging/void/template"; then
   exit 1
 fi
 
-# A .install scriptlet that no PKGBUILD declares is dead weight: the post-install
-# activation message never reaches the user. Keep PKGBUILD, .SRCINFO, and the
-# scriptlet file in agreement.
+# The activation message requires agreement between PKGBUILD, .SRCINFO, and the scriptlet.
 grep -q "install='vgs-shell.install'" "$root/packaging/arch/PKGBUILD"
 grep -q '^	install = vgs-shell.install$' "$root/packaging/arch/.SRCINFO"
 test -f "$root/packaging/arch/vgs-shell.install"
@@ -44,15 +33,11 @@ grep -q "install='vgs-shell-git.install'" "$root/packaging/arch/vgs-shell-git/PK
 grep -q '^	install = vgs-shell-git.install$' "$root/packaging/arch/vgs-shell-git/.SRCINFO"
 test -f "$root/packaging/arch/vgs-shell-git/vgs-shell-git.install"
 
-# The theme download catalog builds its URLs from a pinned tag, and its
-# checksums come from the tree. A release must therefore pin to its own tag AND
-# have every theme file committed, or the tag it creates will not serve what the
-# catalog describes. Regenerate with `scripts/gen-theme-catalog.py --ref vX.Y.Z --write`.
+# Catalog URLs must resolve to committed theme contents under this release tag.
 "$root/scripts/gen-theme-catalog.py" --check-release-pin "$version"
 
 "$root/scripts/gen-package-metadata.py"
-# The AUR serves .SRCINFO to paru and yay; a release that publishes one which
-# disagrees with its PKGBUILD advertises dependencies the package does not have.
+# AUR clients read .SRCINFO, so it must agree with PKGBUILD.
 "$root/scripts/check-aur-sync.py"
 bash -n "$root/install.sh" "$root/uninstall.sh" "$root/scripts/build-release.sh" "$root/scripts/build-assets.sh" "$root/packaging/install-system.sh" "$root/scripts/check-package-assets.sh"
 bash "$root/scripts/check-package-assets.sh"
@@ -61,15 +46,12 @@ git diff --check
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 "$root/scripts/build-release.sh" "$version" "$(uname -m)" "$tmp" >/dev/null
-# The extras bundle is the other half of the release: an assets package built
-# from a bundle that never got made would install nothing, and the failure would
-# only show up in a user's theme browser.
+# Build the extras archive to verify that its installer and theme data are present.
 "$root/scripts/build-assets.sh" "$version" "$tmp" >/dev/null
 tar -tzf "$tmp/vgs-$version-assets.tar.gz" > "$tmp/assets.list"
 grep -q "/packaging/install-system.sh$" "$tmp/assets.list"
 grep -q "/config/vshell/icons/" "$tmp/assets.list"
-# The core bundle must NOT carry what the extras bundle exists to hold, or the
-# split silently stops saving anything.
+# Core must omit assets assigned to the extras archive.
 archive="$tmp/vgs-$version-linux-$(uname -m).tar.gz"
 tar -tzf "$archive" > "$tmp/archive.list"
 grep -q "/bin/vshell-backend$" "$tmp/archive.list"
@@ -78,13 +60,7 @@ if grep -q "/config/vshell/icons/" "$tmp/archive.list"; then
   echo "check-release: the core bundle carries config/vshell/icons, which belongs to the extras bundle" >&2
   exit 1
 fi
-# Screenshots for the themes the core bundle does not install. Without them the
-# download browser lists themes it cannot show, and nothing else would notice:
-# the installer falls back to scanning a theme tree this bundle no longer has.
-#
-# The EXACT set, not merely "at least one": a generation loop that dropped most
-# previews would still satisfy an existence check, and the themes it dropped
-# would have blank thumbnails in the browser with nothing failing.
+# Compare the preview set with all eligible themes. A nonempty archive can still omit previews.
 sed -n 's|.*/themes/catalog-previews/\(.*\)\.png$|\1|p' "$tmp/archive.list" | sort > "$tmp/previews.have"
 for theme in "$root"/themes/*/; do
   name="$(basename "$theme")"
@@ -93,9 +69,7 @@ for theme in "$root"/themes/*/; do
   [[ -f "$theme/preview.png" ]] || continue
   echo "$name"
 done | sort > "$tmp/previews.want"
-# One diff, its output captured, and ANY non-zero status fails: `|| true` on a
-# second diff would swallow exit 2 — an unreadable file or a broken invocation —
-# and report a mismatch as though the comparison had been made.
+# Any failed comparison must stop the check, including errors while reading either file.
 if ! preview_diff="$(diff "$tmp/previews.want" "$tmp/previews.have")"; then
   echo "check-release: the core bundle's catalog previews do not match the themes that have one:" >&2
   printf '%s\n' "$preview_diff" >&2

@@ -1,11 +1,8 @@
 # kendex-guard-dialect: legacy-glob
-# Markdown-lane exclusion list — pattern<TAB>reason, glob against the full
-# repo-relative path, `*` crosses `/`. A `!` row carves matching paths back into
-# the scanned set. Read by the md-format, md-refs and prose lanes and by
-# md-reflow. See .agents/skills/growth-guards/CHECKS.md.
-#
-# Two classes only: bytes this repository does not author, and bytes a
-# reformatting would damage. Everything VGS writes is held to the format.
+# Markdown exclusions use pattern<TAB>reason. Globs match full repository paths;
+# * crosses /. A ! entry includes matching files again. Read by md-format,
+# md-refs, prose, and md-reflow. Two classes only: bytes this repository does not
+# author, and bytes a reformatting would damage. Everything VGS writes is held to the format.
 backend/vendor/*	vendored Go modules for offline builds; the tree must match upstream exactly or vendor verification fails
 config/vshell/nvim/colorschemes/*	vendored upstream colourscheme plugins, carried verbatim
 !config/vshell/nvim/colorschemes/ATTRIBUTION.md	VGS-authored: maps each vendored plugin to its upstream and licence, maintained here

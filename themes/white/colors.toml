@@ -1,12 +1,9 @@
-# UI Colors (extended)
 accent = "#6e6e6e"
 cursor = "#000000"
 
-# Primary colors
 foreground = "#000000"
 background = "#ffffff"
 
-# Selection colors
 selection_foreground = "#ffffff"
 selection_background = "#1a1a1a"
 

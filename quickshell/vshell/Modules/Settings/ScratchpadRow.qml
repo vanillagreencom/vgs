@@ -6,9 +6,7 @@ import qs.Services
 import qs.Widgets
 import qs.Modules.Settings.Widgets
 
-// One scratchpad: a compact summary row that expands in place into the full
-// editor. Purely presentational — every change is emitted upward, so the tab
-// keeps the single write path that regenerates the compositor config.
+// Scratchpad editor that emits changes to its tab, which owns configuration writes.
 Column {
     id: row
 
@@ -18,10 +16,7 @@ Column {
     property bool expanded: false
     property bool capturing: false
     property string conflict: ""
-    // What this pad's pattern claims: {state, count, error}, or null when it has
-    // not been asked. `state` is "known" | "unknown" | "error" — an unevaluable
-    // pattern is NOT a count of zero, because that reads as a working pattern
-    // that happens to match nothing, which is the failure this surfaces.
+    // Pattern evaluation: {state, count, error}, or null before a request. Unknown and error are not zero matches.
     property var matchState: null
     readonly property string matchKind: (matchState && matchState.state) || "unknown"
     readonly property int matchCount: (matchState && matchState.count) || 0
@@ -85,9 +80,7 @@ Column {
 
                 StyledText {
                     width: parent.width
-                    // The class regex is what actually decides whether the pad
-                    // works, so it belongs in the summary, not buried in the
-                    // editor.
+
                     text: (row.pad.classRegex || "") + (row.pad.keybind ? "  ·  " + row.pad.keybind : "")
                     elide: Text.ElideMiddle
                     font.pixelSize: Theme.fontSizeSmall
@@ -104,9 +97,7 @@ Column {
                     color: Theme.error
                 }
 
-                // The pattern itself could not be evaluated. Said plainly, and
-                // never as a count — "0 windows match" would describe a broken
-                // pattern as a working one.
+                // Failed pattern evaluation cannot report a match count.
                 StyledText {
                     width: parent.width
                     visible: row.matchKind === "error"
@@ -116,9 +107,7 @@ Column {
                     color: Theme.error
                 }
 
-                // The pattern claims more than the pad's own window. This is
-                // what an exact class match does by construction, and until now
-                // nothing said so.
+
                 StyledText {
                     width: parent.width
                     visible: row.matchKind === "known" && row.matchCount > 1
@@ -128,10 +117,7 @@ Column {
                     color: Theme.warning
                 }
 
-                // Zero is different from "more than one": the pattern matches
-                // nothing open, which is normal for a pad that is not running
-                // but is also exactly what a wrong pattern looks like. Only
-                // shown for a KNOWN answer — "unknown" stays silent.
+                // Show zero only for a known count. It can mean either a closed pad or a pattern that misses its window.
                 StyledText {
                     width: parent.width
                     visible: row.matchKind === "known" && row.matchCount === 0 && (row.pad.classRegex || "").length > 0
@@ -170,15 +156,7 @@ Column {
 
                 VgsToggle {
                     checked: row.pad.enabled !== false
-                    // Disabling is not a plain field write: it removes the pad's
-                    // keybind, so anything still on screen has to come down
-                    // first. The tab owns that ordering.
-                    //
-                    // Gated while that runs. The model still says `enabled` for
-                    // the whole of it — the write is what flips it, and the write
-                    // is deliberately last — so without this a second click
-                    // starts a second disable against a pad that still reads as
-                    // on, and they stack.
+                    // Disabling must hide the pad before removing its keybind. Hold the control while the tab completes that operation.
                     enabled: !row.busy
                     onToggled: checked => row.setEnabled(checked)
                 }
@@ -186,7 +164,7 @@ Column {
         }
     }
 
-    // --- editor ------------------------------------------------------------
+
     Column {
         width: parent.width
         visible: row.expanded
@@ -328,11 +306,7 @@ Column {
             }
         }
 
-        // Hidden on a compositor that cannot honour it rather than left live
-        // and inert. Niri's window-open animation is global config, so there is
-        // no per-pad entry animation for this control to set — and a control
-        // that claims a mechanism it does not have is worse than no control.
-        // The page's "Not supported on this compositor" card says why.
+        // Niri has no per-pad entry animation setting; the page explains the unsupported control.
         SettingsDropdownRow {
             visible: ScratchpadService.fieldSupported("animation")
             text: I18n.tr("Entry animation")
@@ -347,7 +321,7 @@ Column {
             }
         }
 
-        // --- keybind -------------------------------------------------------
+
         Column {
             width: parent.width
             spacing: Theme.spacingXS
@@ -392,7 +366,7 @@ Column {
             }
         }
 
-        // --- matching ------------------------------------------------------
+
         Column {
             width: parent.width
             spacing: Theme.spacingXS
@@ -421,9 +395,7 @@ Column {
                         });
                         return;
                     }
-                    // Nothing to derive from, so "automatic" would be a label
-                    // with no mechanism behind it. Refuse and say why, rather
-                    // than switching it on and quietly keeping the old pattern.
+                    // Without a desktop entry, automatic matching cannot replace the manual pattern.
                     row.autoNote = I18n.tr("Nothing to derive from: this scratchpad has no linked app, or the app is no longer installed. The pattern is unchanged.");
                 }
             }
@@ -452,10 +424,7 @@ Column {
                 visible: row.pad.classRegexAuto === false
                 text: row.pad.classRegex || ""
                 placeholderText: "^(com\\.example\\.app)$"
-                // Refuse the edit rather than persisting a pattern that cannot
-                // compile. A rejected pad generates NO rules, so saving this
-                // would silently stop the scratchpad working while the page
-                // still showed it as configured.
+                // Reject patterns that cannot compile; the helper would omit all rules for that pad.
                 onEditingFinished: {
                     if (!text) {
                         row.regexNote = I18n.tr("A window class pattern is required.");
@@ -503,11 +472,7 @@ Column {
                 })
         }
 
-        // Restored in VGS-82, once a focus owner existed. It was held back
-        // through VGS-62 because nothing watched focus, so the toggle would
-        // have set a value that did nothing. ScratchpadService now dismisses on
-        // focus loss, reading CompositorService — the shell's single owner of
-        // compositor focus — so the control has a mechanism behind it.
+        // ScratchpadService dismisses on focus loss using CompositorService as the shared focus owner.
         SettingsToggleRow {
             text: I18n.tr("Hide when focus leaves")
             description: I18n.tr("Dismiss the pad as soon as you focus another window")

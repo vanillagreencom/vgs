@@ -53,8 +53,7 @@ Item {
         }
     }
 
-    // Standard surface border always draws; the glass rim layers its specular
-    // glints on top of it rather than replacing it.
+
     Rectangle {
         anchors.fill: parent
         visible: root.drawBorder

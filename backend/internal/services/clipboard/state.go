@@ -22,10 +22,9 @@ const maxUnpinned = 100
 // callers that skip the getPinnedCount pre-check.
 const maxPinned = 25
 
-// Entry is one clipboard history item. Text entries persist their full text;
-// image entries persist only the file path (the blob lives in the images dir).
-// The legacy helper format carried an inline base64 "data" field — it is
-// intentionally absent here so loading and re-saving migrates old state files.
+// Entry is one clipboard history item. Text entries persist full text; image
+// entries persist a file path. Inline image data is not retained when state is
+// saved.
 type Entry struct {
 	ID        int64  `json:"id"`
 	Hash      string `json:"hash"`
@@ -71,7 +70,6 @@ func publicEntry(e *Entry) map[string]any {
 	}
 }
 
-// sortEntries orders pinned first, then newest by timestamp, id as tiebreak.
 func sortEntries(entries []*Entry) {
 	sort.SliceStable(entries, func(i, j int) bool {
 		a, b := entries[i], entries[j]
@@ -85,7 +83,6 @@ func sortEntries(entries []*Entry) {
 	})
 }
 
-// stateDir returns the VGS state directory, matching the helper's state_dir.
 func stateDir() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -104,8 +101,9 @@ type store struct {
 	watchLock string
 	imagesDir string
 
-	// lastMod/lastSize detect out-of-band writes (helper CLI) so the manager
-	// re-reads instead of clobbering them with stale in-memory state.
+	// lastMod/lastSize detect changes to file metadata so the manager can reload
+	// helper CLI writes. Same-size writes with an unchanged timestamp are not
+	// detected.
 	lastMod  time.Time
 	lastSize int64
 }
@@ -127,10 +125,9 @@ func newStore(log *slog.Logger) (*store, error) {
 	}, nil
 }
 
-// tryWatchLock claims the system-wide clipboard-watcher lock — the same file
-// the helper's `vshell clipboard watch` guards itself with — so exactly one
-// watcher can exist across the backend and any manual fallback. Returns a
-// release func on success, ok=false when another watcher holds it.
+// tryWatchLock acquires the lock shared with the helper clipboard watcher. It
+// returns a release function on success or ok=false when another watcher holds
+// the lock.
 func (st *store) tryWatchLock() (release func(), ok bool, err error) {
 	f, err := os.OpenFile(st.watchLock, os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
@@ -149,13 +146,10 @@ func (st *store) tryWatchLock() (release func(), ok bool, err error) {
 	}, true, nil
 }
 
-// lockAcquireTimeout bounds how long any operation waits for the
-// cross-process history lock. The helper CLI holds it for milliseconds; a
-// holder stuck longer than this must surface as an error instead of wedging
-// handlers (and, transitively, Manager.Close).
+// lockAcquireTimeout bounds waits for the cross-process history lock so a stuck
+// holder cannot block handlers or Manager.Close indefinitely.
 const lockAcquireTimeout = 5 * time.Second
 
-// withLock runs fn while holding the cross-process history lock.
 func (st *store) withLock(fn func() error) error {
 	f, err := os.OpenFile(st.lockFile, os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
@@ -207,7 +201,6 @@ func (st *store) load() (*state, string, error) {
 	return &s, "", nil
 }
 
-// save trims, persists atomically, and prunes unreferenced image files.
 func (st *store) save(s *state) error {
 	pinned := make([]*Entry, 0, len(s.Entries))
 	unpinned := make([]*Entry, 0, len(s.Entries))
@@ -248,8 +241,6 @@ func (st *store) noteFileInfo() {
 	}
 }
 
-// changedOnDisk reports whether the state file was modified by another
-// process since this store last read or wrote it.
 func (st *store) changedOnDisk() bool {
 	fi, err := os.Stat(st.stateFile)
 	if err != nil {
@@ -258,7 +249,6 @@ func (st *store) changedOnDisk() bool {
 	return !fi.ModTime().Equal(st.lastMod) || fi.Size() != st.lastSize
 }
 
-// writeImage stores an image blob under its content hash, returning the path.
 func (st *store) writeImage(hash, mime string, blob []byte) (string, error) {
 	if err := os.MkdirAll(st.imagesDir, 0o755); err != nil {
 		return "", err
@@ -325,7 +315,6 @@ func imageExt(mime string) string {
 	return strings.ReplaceAll(ext, "+xml", "")
 }
 
-// truncateRunes shortens s to at most n runes without splitting a code point.
 func truncateRunes(s string, n int) string {
 	if len(s) <= n {
 		return s

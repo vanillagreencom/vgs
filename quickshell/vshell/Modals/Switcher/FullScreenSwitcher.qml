@@ -5,34 +5,10 @@ import qs.Common
 import qs.Modals.Common
 import qs.Widgets
 
-// Full-screen one-at-a-time picker: a rail of leaning shots over a dimmed
-// desktop, paged with the arrow keys, applied with Enter, abandoned with Esc.
-// The look is Omarchy 4's image picker — see SwitcherCarousel.qml, which owns
-// the geometry. This file owns the surface, the paging, the optional filter,
-// the key handling and the selection seeding; a subclass binds `activeKey`.
-//
-// There is no header, no counter, no input box and no footer: the only things
-// on screen besides the rail are the selected entry's name and whatever the
-// user has typed. Every state that needs words (empty, stale, still applying)
-// is drawn in that same caption slot, outlined against the wallpaper rather
-// than boxed.
-//
-// Paging only moves the selection. Nothing is applied while the user browses, so
-// an Esc really does leave the desktop exactly as it was; the wallpaper and theme
-// switchers both rely on that and neither previews live.
-//
-// The base's own per-open reset runs from a self-targeted `Connections` rather
-// than a root-level `onOpened:`, because a derived `onOpened:` REPLACES an
-// inline base handler and would silently take the reset with it. A `Connections`
-// handler coexists with any a subclass declares.
-//
-// A subclass MUST also override `layerNamespace` with a "vshell:"-prefixed name
-// whose derived IPC target VGSIPC.qml registers, and it MUST live in this
-// directory. `switcher_check` (scripts/qml-smoke.sh) finds subclasses by their
-// ROOT ELEMENT across the whole QML tree — not by filename — and FAILS on one
-// that breaks any of those three, so the coverage is not left to this comment
-// being read. The default below exists only to keep an unregistered switcher off
-// the shared "vshell:modal" surface.
+// Full-screen picker with arrow-key paging and explicit apply. Browsing alone does not change the desktop.
+// The carousel geometry follows the Omarchy image picker. Subclasses supply activeKey and an IPC-registered vshell: namespace.
+// Keep subclasses in this directory for switcher_check in scripts/qml-smoke.sh.
+// Use self-targeted Connections for reset: a subclass inline onOpened handler replaces a base inline handler.
 VgsModal {
     id: root
 
@@ -40,8 +16,7 @@ VgsModal {
     property var items: []
     // Type-to-filter (theme switcher); the wallpaper switcher has no filter.
     property bool filterable: false
-    // Whether the selected entry is named under the rail. A theme name is worth
-    // reading; a wallpaper's filename is not, and Omarchy shows neither there.
+    // Whether to show the selected entry label below the carousel.
     property bool showLabels: true
     property string emptyText: I18n.tr("Nothing to show")
     // The entry already in use: what the selection is seeded to on open.
@@ -49,47 +24,27 @@ VgsModal {
     // False while the owning service cannot accept an apply. Enter then keeps the
     // surface up and says so, instead of dismissing it with nothing applied.
     property bool canApply: true
-    // Set when the list on screen could not be refreshed but the previous one is
-    // still browsable. Shown as a caption, NOT as the empty state: dropping a
-    // working list because a refresh failed destroys a usable browse, and
-    // showing it silently as if it were fresh is the dishonesty this replaces.
+    // Report a failed refresh while retaining a usable list; the empty-state message is only for an empty list.
     property string staleNotice: ""
-    // The wallpaper switcher's per-monitor scope toggle (VGS-212), loaded
-    // centred just above the rail. One property is both the surface and the Tab
-    // claim, so they cannot drift apart: null — the theme switcher, and any
-    // single-monitor open — draws nothing and leaves Tab on paging.
+    // Optional scope control above the rail. Its presence also assigns Tab to scope selection instead of paging.
     property Component scopeToggle: null
-    // Emitted for Tab, Backtab and a click on the toggle; the subclass owns
-    // the state it flips. Deliberately NOT a `userMoved` write: choosing a
-    // scope is not taking over the selection, and the re-seed that follows
-    // is how the selection lands on that scope's current entry.
+    // Scope changes do not latch selection intent; reseeding must still select the entry active in the new scope.
     signal scopeFlipRequested
 
     property string filterQuery: ""
     property int currentIndex: 0
     property bool applyBlocked: false
-    // The latch is USER INTENT, not data arrival. Both services answer
-    // asynchronously and both `show()` paths dispatch their read and `open()` in
-    // the same tick, so the list present at open is by construction the PREVIOUS
-    // one; `activeKey` can also land after it. Until the user has moved the
-    // selection, every new list and every new `activeKey` re-seeds, so the
-    // switcher ends up on the entry actually in use. Once they have moved,
-    // nothing re-seeds — a background reload must not snap the selection off
-    // what they paged to, because Enter at that moment applies the wrong entry.
+    // Reseed from late list and activeKey replies until the user moves selection.
+    // After user input, background replies must not change what Enter applies.
     property bool userMoved: false
-    // Carried between wheel events — see `wheelSteps`. Cleared with the rest of
-    // the per-open state, or a half-notch left over from the last open spends
-    // itself on the first scroll of the next one.
+    // Carry fractional wheel movement across events; reset between opens so it cannot move a later session.
     property real wheelAccumulator: 0
-    // The entry the selection is ON, by key rather than by position, so a list
-    // that reshapes under it can put it back. Written wherever the selection
-    // moves — see `holdCurrent`.
+    // Preserve selected identity by key when a list change moves its index.
     property string selectedKey: ""
 
     signal applied(var item)
 
-    // Simple word match: every whitespace-separated term must appear in the
-    // label. That is what the label is — a theme name — so no fuzzy ranking.
+    // Match every whitespace-separated filter term within the label.
     readonly property var visibleItems: {
         const list = root.items || [];
         if (!root.filterable)
@@ -107,17 +62,12 @@ VgsModal {
     readonly property var currentItem: (currentIndex >= 0 && currentIndex < itemCount) ? visibleItems[currentIndex] : null
 
     // BEGIN SWITCHER SELECTION DECISION
-    // The selection arithmetic, taking every input as an argument so
-    // scripts/test-switcher-selection.js can execute it. Nothing here may
-    // reference `root`, `Theme`, `I18n` or `Qt` — the extraction has to be the
-    // same program the shell runs. Parameter names deliberately differ from the
-    // properties they are passed, so nothing here can read a property by
-    // accident if an argument is ever dropped at a call site.
+    // Keep selection decisions independent of QML properties so the runtime and extracted tests use the same inputs.
+    // Keep this region free of root., Theme., I18n. and Qt. references: scripts/test-switcher-selection.js extracts and executes it as the same program the shell runs.
     function wrapIndex(index, count) {
         if (count <= 0)
             return 0;
-        // Wrap: a single-item pager has no visible list edge to explain a dead
-        // arrow key, so running off one end lands on the other.
+        // Wrap at either end because this pager has no visible list edge.
         return ((index % count) + count) % count;
     }
 
@@ -159,16 +109,8 @@ VgsModal {
         return applyAllowed ? "apply" : "blocked";
     }
 
-    // Whether a PAGING input takes the selection over: only when there was
-    // something to move to.
-    //
-    // Both `show()` paths dispatch their read and `open()` in the same tick, so
-    // there is a window at every open where the list is empty — guaranteed on the
-    // first wallpaper-switcher open of a session. Home or End pressed in that
-    // window used to latch against nothing, and every later re-seed then found
-    // the latch already set: the switcher sat on index 0 for the whole open
-    // instead of landing on the entry in use, while the arrow keys answered the
-    // opposite for the same empty list.
+    // Paging takes selection ownership only when the list has an entry.
+    // Input while the initial read is pending must not prevent reseeding when the reply arrives.
     function latchesIntent(count) {
         return count > 0;
     }
@@ -185,12 +127,7 @@ VgsModal {
             return clampIndex(count - 1, count);
         return wrapIndex(index + delta, count);
     }
-    // Where the selection lands when the LIST changes under it. The index alone
-    // does not survive a filter: with B selected in [A,B,C], filtering to C
-    // clamps to index 0, and CLEARING the filter then leaves index 0 pointing
-    // at A — the user backspaces and their place is gone. So the KEY is what is
-    // preserved, and the index is only the fallback for a key that is no longer
-    // in the list at all.
+    // Preserve the selected key across filtering; clamping its old index alone can select a different entry after the filter clears.
     function preserveIndex(list, wantedKey, index) {
         const entries = list || [];
         if (entries.length <= 0)
@@ -204,11 +141,7 @@ VgsModal {
         return clampIndex(index, entries.length);
     }
 
-    // How far a wheel movement pages, and what it leaves behind. One notch is
-    // 120 eighths of a degree by Qt's convention, but a touchpad or a
-    // high-resolution wheel sends a stream of fractions of one, so the leftover
-    // is RETURNED to be carried into the next event. Rounding it away instead
-    // is how a slow scroll ends up moving nothing at all.
+    // Return whole wheel steps and the fractional remainder. Preserve sub-notch movement for the next event.
     function wheelSteps(accumulated, notch) {
         if (!notch || notch <= 0)
             return {
@@ -223,8 +156,7 @@ VgsModal {
     }
     // END SWITCHER SELECTION DECISION
 
-    // The one adapter every paging key goes through, so the latch and the target
-    // are decided once, in the region above, for all of them.
+    // Share intent latching and target calculation across paging keys.
     function navigate(kind, delta) {
         if (!root.latchesIntent(root.itemCount))
             return;
@@ -233,15 +165,9 @@ VgsModal {
         root.holdCurrent();
     }
 
-    // The one place the held key is written: every mover calls it after moving,
-    // so the key and the index cannot disagree about what is selected.
+    // Save the selected key after movement so list replacement can preserve it.
     function holdCurrent() {
-        // Only ever WRITES a key, never clears one. A query that matches
-        // nothing empties the list for as long as it is typed, and clearing
-        // here would throw the user's place away mid-keystroke: backspacing
-        // back to a matching query would then land on the top of the list
-        // rather than on the entry they were on. The per-open and per-close
-        // resets are what clear it between uses.
+        // An empty filter result must not clear the held key. Backspacing can restore that entry; open/close reset the key separately.
         if (root.currentItem)
             root.selectedKey = String(root.currentItem.key || "");
     }
@@ -250,9 +176,7 @@ VgsModal {
         root.navigate("step", delta);
     }
 
-    // The scroll wheel pages the rail. It goes through `step` like every other
-    // paging input, so the intent latch and the empty-pager guard are the same
-    // ones the keys get.
+    // Use the same paging rules for wheel and keyboard input.
     function pageByWheel(deltaY, deltaX) {
         const delta = deltaY !== 0 ? deltaY : deltaX;
         if (delta === 0)
@@ -262,25 +186,17 @@ VgsModal {
         root.wheelAccumulator = outcome.remainder;
         if (outcome.steps === 0)
             return;
-        // Scrolling up or left pages BACK, which is the direction the rail
-        // itself travels.
+
         root.step(-outcome.steps);
     }
 
-    // The one place the filter is written. Typing IS taking over the selection,
-    // with or without a list on screen: the filter is what the user is steering
-    // by, and without this a list landing after they clear it would re-seed and
-    // jump off whatever they were looking at. Unconditional, unlike the paging
-    // keys, which must not latch against an empty pager.
+    // Typing latches selection intent even when the list is empty, so late replies cannot reset the filtered selection.
     function updateFilter(nextQuery) {
         root.userMoved = true;
         root.filterQuery = nextQuery;
     }
 
-    // There is no input box to own the filter — typing goes straight into the
-    // caption under the rail, the way Omarchy's picker does — so the edit keys
-    // are decoded here. Alt- and Meta-modified sequences belong to other
-    // shortcuts and never edit.
+    // Decode filter input here because the caption has no TextInput. Leave Alt/Meta sequences for other shortcuts.
     function editsFilter(event) {
         if (!root.filterable || !root.filterQuery)
             return false;
@@ -300,9 +216,7 @@ VgsModal {
         return root.filterQuery.slice(0, -1);
     }
 
-    // A printable character, unmodified: what appends to the filter. Control
-    // characters and DEL are excluded so a stray key never becomes a term no
-    // entry can match.
+    // Exclude control characters and DEL from printable filter text.
     function typesFilter(event) {
         if (!root.filterable || !event.text || event.text.length !== 1)
             return false;
@@ -336,9 +250,7 @@ VgsModal {
         root.close();
     }
 
-    // Upper bound only. The caption tells the user to wait for the apply to
-    // finish, so `onCanApplyChanged` is what normally clears the message; this
-    // stops it sticking forever behind a service that never goes idle.
+    // Clear the blocked-apply message on completion; use this timeout if the service never returns idle.
     Timer {
         id: applyBlockedTimer
         interval: 2500
@@ -358,9 +270,7 @@ VgsModal {
         holdCurrent();
     }
 
-    // `activeKey` is read asynchronously too (`theme current --json`), and can
-    // land either side of the list. Both edges re-seed, so whichever arrives
-    // last is the one the selection ends up on.
+    // List and activeKey arrive independently. Retry seeding on either update until the user takes selection ownership.
     onActiveKeyChanged: reseedIfUntouched()
 
     function handleKey(event) {
@@ -381,10 +291,7 @@ VgsModal {
             root.updateFilter(root.editedFilter(event));
             return true;
         }
-        // Tab is the scope toggle's whenever one is on the surface — taken
-        // OFF paging deliberately (VGS-212), and Backtab goes with it: the
-        // toggle has two states, so either direction lands on the other one.
-        // The arrows, Home/End and the wheel still page.
+        // With a scope control, Tab and Backtab change scope. Other paging keys still move the selection.
         if (root.scopeToggle && (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab)) {
             root.scopeFlipRequested();
             return true;
@@ -417,31 +324,19 @@ VgsModal {
     allowStacking: false
     modalWidth: screenWidth
     modalHeight: screenHeight
-    // Full-bleed: no rounding, no shadow, and no slide offset — a non-zero
-    // animation offset pads the layer surface past the screen edge.
+    // Full-screen geometry needs zero animation offset so surface padding cannot extend past output edges.
     cornerRadius: 0
     enableShadow: false
-    // A window border traced around the whole screen is a frame with nothing
-    // outside it — the one piece of chrome a full-bleed surface must not draw.
+
     enableBorder: false
     animationOffset: 0
-    // A scrim, not a surface: the desktop stays visible underneath, which is
-    // what a wallpaper picker is being judged against. Deliberately not
-    // `popupSurfaceColor`, whose alpha is the user's popup-transparency setting
-    // and would let an opaque preference hide the very thing being previewed.
+    // Use a separate scrim alpha so an opaque popup preference cannot hide the desktop under this picker.
     backgroundColor: Theme.withAlpha(Theme.background, 0.5)
-    // ONE scrim. VgsModalStandalone paints its own black backdrop behind the
-    // content when `modalDarkenBackground` is on, which composited with this
-    // surface dimmed the desktop roughly twice as far as the line above says —
-    // and by an amount that depended on a user setting. `showBackground` stays
-    // true so the backdrop's click-catcher and both smoke paths are unchanged;
-    // only its opacity goes.
+    // Disable the base backdrop opacity to avoid double dimming. Keep showBackground true so the click-catcher surface and the smoke paths that drive it are unchanged.
     backgroundOpacity: 0
     closeOnBackgroundClick: false
 
-    // Reopening inside the close animation keeps the content Loader alive and
-    // stops `closeTimer`, so `dialogClosed` never fires — reset on open as well
-    // or the surface returns with the last filter and selection still on it.
+    // Reopening cancels closeTimer before dialogClosed. Reset on open so a retained Loader cannot keep the old filter and selection.
     Connections {
         target: root
 
@@ -474,12 +369,7 @@ VgsModal {
             readonly property real availableWidth: width - gutter * 2
             readonly property real availableHeight: height - gutter * 2 - captions.height - Theme.spacingL - scopeReserve
             readonly property real scopeReserve: scopeSlot.height > 0 ? scopeSlot.height + Theme.spacingL : 0
-            // The rail's proportions are Omarchy's and both dimensions grow
-            // together (SwitcherCarousel.qml); sized here, not by filling a
-            // box, so captions hug the rail instead of the bottom edge.
-            // Captions scale from the WIDTH alone, never `railScale`: the
-            // caption block's height is an input to that, so a font size
-            // depending on it would be a binding loop.
+            // Scale captions from width, not railScale: caption height contributes to railScale and would create a binding loop.
             readonly property real captionScale: Math.max(1, Math.min(2, switcherContent.availableWidth / carousel.baseRailWidth))
             readonly property real railScale: {
                 const byWidth = switcherContent.availableWidth / carousel.baseRailWidth;
@@ -496,23 +386,19 @@ VgsModal {
 
             Connections {
                 target: root
-                // A reopen inside the close animation does not rebuild this tree,
-                // so nothing else would re-claim the keys.
+                // Reopening during close retains this tree, so reclaim keyboard focus explicitly.
                 function onOpened() {
                     switcherContent.forceActiveFocus();
                 }
             }
 
-            // Clicking away cancels, as it does on every other full-screen
-            // surface. The rail's own tiles are above this and consume theirs.
+
             MouseArea {
                 anchors.fill: parent
                 onClicked: root.close()
             }
 
-            // The WHOLE surface scrolls, not just the rail: the pointer is
-            // wherever the user left it when the switcher came up, and a picker
-            // that only answers the wheel over its tiles reads as broken.
+
             WheelHandler {
                 target: null
                 acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
@@ -551,9 +437,7 @@ VgsModal {
                 styleColor: Theme.withAlpha(Theme.background, 0.7)
             }
 
-            // Everything that needs words, in one column under the rail: the
-            // entry's name, what has been typed, and whichever of "still
-            // applying" or the stale-list notice is live.
+
             Column {
                 id: captions
                 anchors.top: carousel.bottom
@@ -592,9 +476,7 @@ VgsModal {
                     width: parent.width
                     horizontalAlignment: Text.AlignHCenter
                     wrapMode: Text.WordWrap
-                    // The stale notice only means something over a list there is
-                    // something to browse; with none, the empty state already
-                    // carries the failure.
+                    // A stale-list notice requires a browsable list; the empty state carries failures when no entries remain.
                     visible: text !== ""
                     text: {
                         if (root.applyBlocked)
@@ -610,19 +492,14 @@ VgsModal {
                 }
             }
 
-            // Declared below everything else so it stacks above the
-            // click-away MouseArea: the toggle's own clicks must not read
-            // as a dismissal.
+            // Declare the scope control after the click-away area so control clicks cannot dismiss the surface.
             Loader {
                 id: scopeSlot
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.bottom: carousel.top
                 anchors.bottomMargin: Theme.spacingL
                 sourceComponent: root.scopeToggle
-                // Above the rail it scopes, not the screen edge where it went
-                // unseen. NOT Item-scaled: StyledText defaults to
-                // NativeRendering, which rasterizes glyphs at their own pixel
-                // size and smears under a transform. The pill sizes itself.
+                // Size the pill directly: transforming NativeRendering text scales rasterized glyphs and blurs them.
             }
         }
     }

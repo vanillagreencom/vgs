@@ -76,7 +76,7 @@ BasePill {
         return 0;
     }
 
-    // --- Dock Logic Helpers ---
+
     function movePinnedApp(fromDockIndex, toDockIndex) {
         if (fromDockIndex === toDockIndex)
             return;
@@ -489,7 +489,7 @@ BasePill {
 
             z: (dragHandler.dragging) ? 100 : 0
 
-            // --- Drag and Drop Shift Animation Logic ---
+
             property real shiftOffset: {
                 if (root.draggedIndex < 0 || !modelData.isPinned || isSeparator)
                     return 0;
@@ -818,7 +818,7 @@ BasePill {
                 }
             }
 
-            // Handler for Drag Logic
+
             Item {
                 id: dragHandler
                 anchors.fill: parent

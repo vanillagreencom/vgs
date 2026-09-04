@@ -6,12 +6,7 @@ import Quickshell
 import qs.Common
 import qs.Services
 
-// The download catalog: every theme VGS publishes, installed or not.
-//
-// Packages ship one theme by default (the rest are ~1.1 GiB of wallpapers), so
-// browsing installed themes alone shows a single entry. The helper owns the
-// catalog, the downloads and the checksum verification (`vshell theme catalog`);
-// this service is the thin QML front for it.
+// Expose the helper catalog for installed and downloadable themes. The helper owns downloads and checksum verification.
 Singleton {
     id: root
     readonly property var log: Log.scoped("VGSThemeCatalogService")
@@ -69,8 +64,7 @@ Singleton {
         return null;
     }
 
-    // Downloads are long (a single theme is tens of MB, --all is ~1.1 GiB), so
-    // every call is a background task: they must never gate the settings UI.
+    // Run downloads as background tasks so they do not block Settings actions.
     function _run(id, args, timeoutMs, callback) {
         lastError = "";
         Proc.runCommand(id, [Paths.vshellCli].concat(args), function (output, exitCode, stderr) {
@@ -163,13 +157,7 @@ Singleton {
              function (output, exitCode, stderr) {
                  downloadingAll = false;
                  const data = _finishDownload(output, exitCode, stderr, "Downloading all themes failed");
-                 // Whatever else happened, themes may have been installed: a
-                 // PARTIAL run exits nonzero and reports failures, and both of
-                 // those returned before the sweep was requested. The installed
-                 // ones are invisible from the current theme's list, so nothing
-                 // else would ever schedule one and their rails would decode
-                 // full-size sources until each was applied. Requesting it costs
-                 // a stat pass when there is nothing to do.
+                 // Request a thumbnail sweep even after a partial download run; successfully installed themes still need cache entries.
                  if (typeof VGSThemeService !== "undefined") {
                      VGSThemeService.requestThumbnailSweep();
                      VGSThemeService.refreshWallpapers();

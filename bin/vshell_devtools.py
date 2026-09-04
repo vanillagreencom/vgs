@@ -167,7 +167,6 @@ def cmd_agent(argv: List[str]) -> int:
                 print(f"{agent['id']:<10} {agent['name']:<18} {agent['installed'] or ('yours' if agent['stub'] in {'foreign', 'shadowed'} else '-')}")
         return 0
     if sub == "pick":
-        # The launcher's Dev tools section lists every agent; a keybind lands here.
         cli = str(RT.repo_root() / "bin" / "vshell")
         proc = RT.run([cli, "ipc", "call", "vshell-menu", "openCategory", "dev"], timeout=5)
         return 0 if proc.returncode == 0 else 1

@@ -1,25 +1,11 @@
-// Source-reading helpers for the QML tests: walk a block by braces, pull a
-// function body or a handler, require load-bearing tokens, strip comments.
-// Reading only — evaluating a marked region is scripts/lib/qml-region.js's, and
-// deliberately separate. A library, not a check: no executable bit, so its
-// self-test is exported and test-ai-usage-wiring.js runs it first.
-//
-// Bound to one source text: `const q = require("./lib/qml-source.js")(text)`.
-//
-// Everything here reads the source through ONE tokenizer, because both helpers
-// were fail-open without it: a `//` or a brace inside a string made stripComments
-// drop the rest of the line — and the wiring test asserts a literal is ABSENT
-// from what it returns — while blockFrom counted braces in prose and in strings
-// as syntax and could hand back a block that is not the one asked for.
-//
-// KNOWN LIMIT: regex literals are not tokenized — a `/`-delimited regex holding
-// an unpaired quote would desync the scan; none of the QML this reads has one.
+// Read QML source through a shared tokenizer for brace extraction and token assertions.
+// Regex literals are not tokenized; an unmatched quote in one can desynchronize the scan.
+// Region evaluation belongs to qml-region.js. test-ai-usage-wiring.js runs this library self-test.
 
 "use strict";
 const assert = require("node:assert/strict");
 
-// Runs of whitespace flattened, so re-wrapping a call across lines is free while
-// renaming or reshaping it still fails.
+// Normalize whitespace so line wrapping does not change token assertions.
 const flat = text => String(text).replace(/\s+/g, " ");
 // Count only when literal text and code structure occur at the same offset.
 // Whitespace may be rewrapped; comments and string interiors cannot count.
@@ -36,9 +22,7 @@ function codeOccurrences(literalView, structureView, token) {
     return seen;
 }
 
-// One walk over the source, answering where the comments are and where the
-// string literals are. A comment marker inside a string is text, and a quote
-// inside a comment is text: whichever opens first owns the run.
+// Classify comments and strings together; a delimiter inside either remains text.
 function scanRanges(text) {
     const comments = [];
     const strings = [];
@@ -74,8 +58,7 @@ function scanRanges(text) {
                     i += 1;
                     break;
                 }
-                // An unterminated single-line string ends at the newline rather
-                // than swallowing the rest of the file.
+
                 if (ch !== "`" && text[i] === "\n")
                     break;
                 i += 1;
@@ -88,8 +71,7 @@ function scanRanges(text) {
     return { comments, strings };
 }
 
-// Blank the given ranges to spaces, keeping every offset and newline, so an
-// index into the result is an index into the original.
+// Blank ranges while preserving offsets and newlines.
 function blankRanges(text, ranges, keepDelimiters) {
     const out = text.split("");
     for (const [start, end] of ranges) {
@@ -103,17 +85,12 @@ function blankRanges(text, ranges, keepDelimiters) {
     return out.join("");
 }
 
-// Comment text is prose about the code, not the code. EVERY read of the source
-// goes through this or through codeOnly(): a required token found in a comment
-// satisfied requires() while the production statement it pins was deleted, which
-// is a guard manufacturing confidence. String literals survive — they ARE code,
-// and banning one is the usual reason to call this.
+// Blank comments and preserve literals for assertions that inspect literal contents.
 function stripComments(text) {
     return blankRanges(text, scanRanges(text).comments, false);
 }
 
-// The source with comments and string CONTENTS blanked: what is left is
-// structure, which is the only thing a brace walk may count.
+// Blank comments and string contents to expose code structure.
 function codeOnly(text) {
     const ranges = scanRanges(text);
     return blankRanges(blankRanges(text, ranges.comments, false), ranges.strings, true);
@@ -122,10 +99,7 @@ function codeOnly(text) {
 module.exports = function qmlSource(source, fileLabel) {
     const label = fileLabel || "the source";
 
-    // Brace-depth walk from an offset, so nothing depends on how deeply a block
-    // happens to be indented. Braces are counted on the structure-only copy — a
-    // brace in prose or in a string is not syntax — while the slice comes from
-    // the original, so the assertions read the real text, comments and all.
+    // Walk braces in the structure view and return the original text at the same offsets.
     const structure = codeOnly(source);
 
     function blockFrom(at, what) {
@@ -144,17 +118,12 @@ module.exports = function qmlSource(source, fileLabel) {
         return assert.fail(`${what} has no closing brace`);
     }
 
-    // Located on the structure-only copy, like every other lookup here: a comment
-    // merely MENTIONING a signature matched first on the raw source, and the walk
-    // then returned the next structural block — silently inspecting a different
-    // function while reporting green.
+    // Locate signatures in code so a comment cannot redirect extraction to an unrelated block.
     function body(name) {
         return blockFrom(indexOf(`function ${name}(`), `${name}()`);
     }
 
-    // Offsets are preserved by codeOnly(), so an index into the structure-only
-    // copy is an index into the original. Callers that need to find their own
-    // landmark use these rather than searching the raw source.
+    // Return code offsets that also index the original source.
     function indexOf(needle, from) {
         return structure.indexOf(needle, from);
     }
@@ -162,8 +131,7 @@ module.exports = function qmlSource(source, fileLabel) {
         return structure.lastIndexOf(needle, from);
     }
 
-    // Found at the start of a line in the structure-only copy, so a comment
-    // MENTIONING a handler is not mistaken for one.
+    // Find handlers at line starts in the structure view.
     function handlers(name) {
         const out = [];
         const at = new RegExp(`^[ \\t]*${name}:`, "gm");
@@ -171,7 +139,7 @@ module.exports = function qmlSource(source, fileLabel) {
         while ((hit = at.exec(structure)) !== null) {
             const eol = source.indexOf("\n", hit.index);
             const line = source.slice(hit.index, eol === -1 ? source.length : eol);
-            // A handler is either a block or a single expression on its own line.
+
             out.push(line.includes("{") ? blockFrom(hit.index, `${name} handler`) : line);
         }
         return out;
@@ -198,29 +166,9 @@ module.exports = function qmlSource(source, fileLabel) {
         return { value: hit.value, block: hit.value.startsWith("{") ? blockFrom(hit.at, `${name} binding`) : null };
     }
 
-    // Every token has to be present, each named on its own so a failure says
-    // which line went missing.
-    //
-    // ONE occurrence has to satisfy the whole pin. Two things must hold — the
-    // token's exact text, literals and all, and that the text is CODE rather
-    // than the inside of a string — and asking them of two views SEPARATELY let
-    // two different statements answer them: one supplying the shape, an
-    // unrelated one supplying the literal inside a string, with the statement
-    // the pin names absent. So the search runs once, on the comment-blanked view
-    // where literals are intact, and every hit is confirmed to be code AT THAT
-    // SAME OFFSET on the structure view. Both views come out of blankRanges,
-    // which blanks in place, and an offset therefore means the same thing in
-    // each — that is what makes "the same occurrence" checkable at all.
-    //
-    // Ban assertions elsewhere in the suites use stripComments directly: they
-    // must SEE literals, which is why the literal-bearing view is the one
-    // searched here.
-    //
-    // A pair may carry an exact occurrence count: [token, why, count]. Presence
-    // alone could not express "twice" — listing a token in two pairs was
-    // satisfied by ONE occurrence — and it cannot express "once and no more"
-    // either, which is how an immediate deferral would creep back beside a
-    // delayed retry.
+    // Require each token text and its code structure at the same offset. Separate matches
+    // can combine a decoy statement with a literal from an unrelated string.
+    // Optional [token, why, count] entries require an exact occurrence count.
     function requires(block, where, pairs) {
         const literalView = stripComments(block);
         const structureView = codeOnly(block);
@@ -241,15 +189,9 @@ module.exports = function qmlSource(source, fileLabel) {
 };
 module.exports.flat = flat;
 module.exports.stripComments = stripComments;
-// The self-test a library with no executable bit cannot run for itself. Every
-// case below FAILED before the tokenizer went in: the guards could not detect
-// the thing they claim to.
+// Test source-reading helpers before a caller relies on their assertions.
 module.exports.selfTest = function selfTest() {
-    // --- stripComments keeps strings, drops comments ---
-    // The property is that a DOUBLE SLASH inside a string literal is text, so the
-    // fixture is a plain string rather than a URL — a URL shape here matched a
-    // CodeQL substring-sanitization rule that has nothing to do with what this
-    // proves.
+    // The fixture tests a double slash as literal text; no URL syntax is required.
     for (const [quoted, what] of [
         ['"ratio 3//4 kept"', "double quotes"],
         ["'ratio 3//4 kept'", "single quotes"],
@@ -263,9 +205,7 @@ module.exports.selfTest = function selfTest() {
             `the string's own content survives intact (${what}), which is what an assertion ` +
             "banning a literal actually reads");
     }
-    // The string's CONTENT is what proves this one: the old block-comment regex
-    // left `keepMe()` alone but ate the marker out of the literal, so an
-    // assertion banning that literal would have passed against nothing.
+    // Assert literal contents as well as the surrounding call so stripping part of a string fails.
     assert.ok(stripComments('const a = "/* not a comment */"; keepMe();')
         .includes("/* not a comment */"),
         "a block-comment marker inside a string is text too, and survives intact");
@@ -274,7 +214,7 @@ module.exports.selfTest = function selfTest() {
     assert.equal(stripComments("a(); // x\nb();").length, "a(); // x\nb();".length,
         "blanked, not deleted: offsets and line structure survive");
 
-    // --- binding reads only the component top level ---
+
     const bindingFixture = module.exports(`{
 property int target: 7
 Item { property int target: 8 }
@@ -285,7 +225,7 @@ property var decision: { if (false) { target: 10; } return 7; }
     assert.ok(bindingFixture.binding("decision").block.includes("return 7"), "block bindings return their body");
     assert.throws(() => module.exports("{ property int x: 1\nproperty int x: 2 }", "duplicate fixture").binding("x"),
         /exactly once/, "duplicate top-level bindings fail loudly");
-    // --- blockFrom counts only structural braces ---
+
     const cases = [
         ['function f() { // }\n    keepMe();\n}', "a brace in a line comment"],
         ['function f() { /* } */\n    keepMe();\n}', "a brace in a block comment"],
@@ -305,7 +245,7 @@ property var decision: { if (false) { target: 10; } return 7; }
         .body("f").includes('g("//")'),
         "a comment marker inside a string does not swallow the rest of the file either");
 
-    // --- a token that lives only in a comment pins nothing ---
+
     {
         const q = module.exports(
             'function f() {\n    // ch.stallTimer.stop() used to be here\n    keepMe();\n}',
@@ -319,7 +259,7 @@ property var decision: { if (false) { target: 10; } return 7; }
             [['g("ch.stallTimer.stop()")', "a string literal IS code and still counts"]]);
     }
 
-    // --- an exact count means exactly that ---
+
     {
         const q = module.exports("function f() { one(); two(); two(); }", "self-test");
         const block = q.body("f");
@@ -338,7 +278,7 @@ property var decision: { if (false) { target: 10; } return 7; }
         }
     }
 
-    // --- a statement that survives only inside a STRING pins nothing ---
+
     {
         const q = module.exports(
             'function f() {\n    const decoy = "root.current = d";\n}', "self-test");
@@ -347,16 +287,13 @@ property var decision: { if (false) { target: 10; } return 7; }
             "would otherwise leave the guard green");
         const real = module.exports('function f() {\n    root.current = d;\n}', "self-test");
         real.requires(real.body("f"), "f()", [["root.current = d", "genuinely in code"]]);
-        // And the literal view still has to hold, or every string-valued pin
-        // would match any other string of any length.
+        // The literal view must also match so another string cannot satisfy a string-valued assertion.
         const literal = module.exports('function f() { ch.issue = "could not run"; }', "self-test");
         literal.requires(literal.body("f"), "f()", [['ch.issue = "could not run"', "its own text"]]);
         assert.throws(
             () => literal.requires(literal.body("f"), "f()", [['ch.issue = "something else"', "x"]]),
             "a different literal must not satisfy a pin, which the structure view alone would allow");
-        // The composition the two views defeated while they were searched
-        // independently: the SHAPE comes from one statement and the LITERAL from
-        // an unrelated one, and the statement the pin names is nowhere.
+        // Keep the expected structure and literal in different occurrences to reject independent-view matches.
         const split = module.exports(
             'function f() {\n    ch.issue = "other";\n    const decoy = \'ch.issue = "could not run"\';\n}',
             "self-test");
@@ -367,7 +304,7 @@ property var decision: { if (false) { target: 10; } return 7; }
             "the statement it names is absent, which is the whole thing a pin claims");
     }
 
-    // --- a comment mentioning a signature must not become the block ---
+
     {
         const decoy = [
             "// see function target( for details",
@@ -380,10 +317,9 @@ property var decision: { if (false) { target: 10; } return 7; }
         assert.ok(!walked.includes("wrongOne()"), "and never the decoy's body");
     }
 
-    // --- the lookup helpers read code, not prose ---
+
     {
-        // A raw search finds the mention, and the walk from there returns the
-        // NEXT block — the decoy — while still reporting green.
+        // A raw signature lookup can select a comment and return the unrelated block after it.
         const text = [
             "// detailsText: mentioned in prose",
             "decoyBlock: { wrongOne(); }",

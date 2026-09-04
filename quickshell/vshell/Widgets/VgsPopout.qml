@@ -137,7 +137,7 @@ Item {
             impl.item.cancelHoverDismiss();
     }
 
-    // Fade out in place during morph switch transitions.
+
     function beginSupersededClose() {
         if (impl.item?.beginSupersededClose)
             impl.item.beginSupersededClose();

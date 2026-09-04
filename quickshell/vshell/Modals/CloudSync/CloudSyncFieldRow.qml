@@ -2,10 +2,7 @@ import QtQuick
 import qs.Common
 import qs.Widgets
 
-// A short-value text field in the same shape as SettingsDropdownRow: label (and
-// optional description) on the left, a compact control right-aligned to the
-// card edge. Values like "2M" do not deserve a full-width field, and matching
-// the dropdown geometry keeps every control in a card on one right edge.
+// Compact field row with its control aligned to the dropdown rows in the same card.
 Item {
     id: root
 
@@ -14,8 +11,7 @@ Item {
     property alias value: field.text
     property string placeholderText: ""
     property real fieldWidth: 200
-    // The control gives way as the row narrows so the label never gets squeezed
-    // to one word per line.
+    // Shrink the control before reducing the label to a narrow column.
     readonly property real effectiveFieldWidth: Math.max(110, Math.min(fieldWidth, width * 0.5))
 
     signal editingFinished

@@ -2,15 +2,8 @@ import QtQuick
 import qs.Common
 import qs.Widgets
 
-// One usage meter in compact form: the collapsed per-account summary, one line
-// per window — label, bar, reset clock, percentage. The full-card form of the
-// same meter is MeterCard. (VGS-72)
-//
-// A Column, not a manually anchored Item. The old row carried its own height
-// arithmetic (`compactLabel.implicitHeight + 5`), so every line added to it had
-// to add a term to that expression as well as its own markup. Here the height
-// is implicit and the trailing 5px is padding, so a second line costs one
-// child and nothing else.
+// Compact usage meter for collapsed account summaries. MeterCard is the
+// expanded form. Column sizing includes added detail rows automatically.
 Column {
     id: row
 
@@ -24,8 +17,6 @@ Column {
     readonly property color accent: (row.ok && row.host)
         ? row.host.percentageColor(row.pct) : Theme.error
 
-    // Space below the row rather than around it, so the gap reads as separation
-    // from the next window and not as padding on both sides of this one.
     bottomPadding: 5
     spacing: 2
 
@@ -74,9 +65,7 @@ Column {
             color: row.accent
         }
 
-        // The reset clock time belongs on the collapsed row too — otherwise it
-        // is only readable one account at a time, and comparing windows across
-        // accounts is the point of this view.
+        // Keep reset times visible across accounts without expanding each card.
         StyledText {
             id: compactReset
             anchors.right: compactPct.left

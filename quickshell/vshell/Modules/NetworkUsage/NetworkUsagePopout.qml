@@ -139,7 +139,7 @@ VgsPopout {
                     }
                 }
 
-                // Live totals across all apps.
+
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: Theme.spacingL

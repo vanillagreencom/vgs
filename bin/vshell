@@ -14,13 +14,8 @@ packaged_backend="$script_dir/vshell-backend"
 backend_bin="${XDG_CACHE_HOME:-$HOME/.cache}/vshell/vshell-backend"
 backend_build_log="${XDG_CACHE_HOME:-$HOME/.cache}/vshell/backend-build.log"
 
-# Ensure an up-to-date backend binary exists at $backend_bin. Builds on demand
-# (dev setup is symlinked with no package build step) only when the source is
-# newer than the binary. Build output is captured to $backend_build_log. If a
-# rebuild fails but a previously-built binary exists, the last-good binary is
-# kept (a transient compile error must not silently boot a featureless shell).
-# Returns non-zero only when no usable binary can be produced. Never rebuilds on
-# the hot path.
+# Source checkouts can lack a package build step, so build the backend on demand.
+# Keep an executable cached binary if compilation fails. Packaged binaries take precedence.
 _ensure_backend() {
   if [[ -x "$packaged_backend" ]]; then
     backend_bin="$packaged_backend"
@@ -313,10 +308,7 @@ case "${1:-run}" in
         getMode) exec "$helper" theme get-mode ;;
       esac
     fi
-    # Diagnostics go to stderr, successful output to stdout. Callers routinely
-    # discard stdout (`vshell ipc call capture close >/dev/null`), and printing
-    # the reason there left them with a bare exit status and no explanation —
-    # a `set -e` caller then died with no output at all (VGS-69).
+    # Write errors to stderr because IPC callers can discard stdout.
     out="$(_qs_ipc "$@" 2>&1)" || {
       code=$?
       printf '%s\n' "$out" >&2

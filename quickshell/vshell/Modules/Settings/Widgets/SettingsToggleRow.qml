@@ -18,7 +18,7 @@ VgsToggle {
     readonly property bool isHighlighted: settingKey !== "" && SettingsSearchService.highlightSection === settingKey
 
     width: parent?.width ?? 0
-    // Rows share the card's padding; a row-wide hover wash reads as noise here.
+
     horizontalPadding: 0
     rowHoverHighlight: false
 

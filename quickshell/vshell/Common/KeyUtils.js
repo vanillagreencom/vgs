@@ -105,7 +105,6 @@ const KEY_MAP = {
     161: "exclamdown"
 };
 
-// Preserve unshifted symbols from the active layout
 const SYMBOL_KEYSYM = {
     33: "exclam",
     34: "quotedbl",
@@ -130,7 +129,6 @@ const SYMBOL_KEYSYM = {
     126: "asciitilde"
 };
 
-// Preserve the existing shifted-US physical-key mapping
 const SHIFTED_US_FALLBACK = {
     33: "1",
     34: "Apostrophe",

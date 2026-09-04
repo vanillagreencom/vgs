@@ -3,10 +3,7 @@ import qs.Common
 import qs.Services
 import qs.Widgets
 
-// Two-way sync needs one comparison it cannot make on its own: the very first
-// time, when both sides have files and no shared history, something has to win.
-// The backend refuses to guess, so this dialog is the only way to establish a
-// baseline.
+// Ask which side establishes a two-way sync baseline when no shared file history exists.
 CloudSyncDialog {
     id: dialog
 

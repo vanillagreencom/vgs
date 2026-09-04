@@ -20,7 +20,7 @@ CloudSyncPage {
         }
     ]
 
-    // ---- Live transfers ----
+
     CloudSyncCard {
         visible: CloudSyncService.transferring.length > 0
         iconName: "swap_vert"
@@ -72,7 +72,7 @@ CloudSyncPage {
         }
     }
 
-    // ---- Idle state ----
+
     CloudSyncCard {
         visible: CloudSyncService.transferring.length === 0 && CloudSyncService.recent.length === 0 && CloudSyncService.history.length === 0
         iconName: "history"
@@ -80,7 +80,7 @@ CloudSyncPage {
         description: CloudSyncService.hasFolders ? I18n.tr("Runs will show up here as they happen.", "Activity empty state body when folders exist") : I18n.tr("Add a folder to start syncing.", "Activity empty state body when no folders exist")
     }
 
-    // ---- Recently synced files ----
+
     CloudSyncCard {
         visible: CloudSyncService.recent.length > 0
         iconName: "task_alt"
@@ -117,7 +117,7 @@ CloudSyncPage {
         }
     }
 
-    // ---- Run history ----
+
     CloudSyncCard {
         visible: CloudSyncService.history.length > 0
         iconName: "schedule"

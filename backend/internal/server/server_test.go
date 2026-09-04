@@ -117,7 +117,7 @@ func TestUnknownMethod(t *testing.T) {
 func TestSubscribeSendsServerFrameAndToleratesUnknown(t *testing.T) {
 	dial := startTestServer(t)
 	tc := dial(t)
-	// Mix of never-implemented service names must not error the subscription.
+	// Unknown service names must not reject the subscription.
 	tc.send(t, "subscribe", map[string]any{"services": []string{"network", "theme.auto", "bogus"}})
 	resp := tc.read(t)
 	if resp.Error != "" {
@@ -152,7 +152,6 @@ func TestBroadcastReachesSubscriber(t *testing.T) {
 	tc.send(t, "subscribe", map[string]any{"services": []string{"evdev"}})
 	_ = tc.read(t) // server frame
 
-	// Give the server a moment to register the subscriber, then broadcast.
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
 		srv.mu.RLock()

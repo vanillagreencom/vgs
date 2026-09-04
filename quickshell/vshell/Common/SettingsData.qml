@@ -718,7 +718,6 @@ Singleton {
     onNotepadDefaultModeChanged: saveSettings()
     onNotepadUseCompositorGapChanged: saveSettings()
     onNotepadEdgeGapChanged: saveSettings()
-    // onCenteringModeChanged: saveSettings()
     onNotepadTransparencyOverrideChanged: {
         if (notepadTransparencyOverride > 0) {
             notepadLastCustomTransparency = notepadTransparencyOverride;
@@ -892,10 +891,7 @@ Singleton {
     // session's notifications back to another daemon, and silences the
     // warning VGS shows when it loses the name.
     property bool notificationServerEnabled: true
-    // VGS-64: the first-run takeover one-shot. False only on a genuinely fresh
-    // install; the v22 migration sets it true for every config that already
-    // existed, so an update never looks like a first run. Persisted in
-    // settings.json, which no package upgrade rewrites.
+    // Persist whether first-run notification takeover was attempted. Migration marks existing configurations as attempted.
     property bool notificationFirstRunTakeoverDone: false
     property int notificationPopupPosition: SettingsData.Position.Top
     property int notificationAnimationSpeed: SettingsData.AnimationSpeed.Short
@@ -1013,9 +1009,7 @@ Singleton {
     // settings/BarWidgets.js.
     property var removedBarWidgets: []
 
-    // Named special-workspace scratchpads. Presentation is not stored in pixels:
-    // a pad is sized as a percentage of whichever monitor it lands on, and the
-    // helper resolves that at apply time. See docs/architecture/scratchpads.md.
+    // Scratchpad sizes are percentages of the destination monitor; the helper resolves them when applying configuration.
     property var scratchpads: []
 
     // Standalone bar xray is unsafe when windows can render beneath its surface
@@ -1443,9 +1437,7 @@ Singleton {
     }
 
     function applyStoredTheme() {
-        // VGS treats ~/.config/vshell/theme.json as source of truth.
-        // Do not replay stale legacy SettingsData.currentThemeName on startup;
-        // applying a blueprint is explicit through VGSThemeService/helper.
+        // theme.json owns theme selection. Apply blueprints explicitly through VGSThemeService and the helper.
         if (typeof Theme !== "undefined") {
             Theme.currentThemeCategory = "vgs";
             if (Theme.methodThemeJson && Theme.methodThemeJson.name)
@@ -1808,18 +1800,8 @@ Singleton {
         loadPluginSettings();
     }
 
-    // Whether this load migrated the file and still owes it a write. Only a
-    // flag: the migrated object itself is deliberately not held.
-    //
-    // The write has to wait for the asynchronous writability check, and
-    // loadSettings() schedules other deferred work that can save in the
-    // meantime — reconcileHardwareBarWidgets(), checkIconThemeDrift() via
-    // setIconThemeUnmanaged(), any future addition. Holding the payload
-    // captured at parse time meant committing it later reverted whatever they
-    // had written, and since that write bypasses _selfWrite the reload put the
-    // reverted values back in memory too. Keeping only a flag and serializing
-    // current state at commit time makes that whole class of race impossible
-    // instead of asking each new mutation path to remember to sync.
+    // Keep only a pending-write flag while writability is checked.
+    // Saving current state avoids overwriting settings changed during that asynchronous check.
     property bool _pendingMigrationWrite: false
 
     function _checkSettingsWritable() {
@@ -1838,11 +1820,7 @@ Singleton {
             _hasUnsavedChanges = false;
             if (wasReadOnly)
                 log.info("settings.json is now writable");
-            // Commit the migration now that the file is known writable.
-            // saveSettings() serializes current state, so this persists the
-            // migration plus anything else that changed while the check was in
-            // flight, rather than reverting it. The snapshot set just above is
-            // the same serialization, so it stays accurate.
+            // Save current state so changes made during the writability check survive the migration write.
             if (_pendingMigrationWrite)
                 saveSettings();
         }
@@ -2267,7 +2245,7 @@ Singleton {
                 switch (other.position) {
                 case SettingsData.Position.Top:
                     if (position === SettingsData.Position.Top && other.id < barConfig.id) {
-                        topOffset += otherThickness; // Simple stacking for same pos
+                        topOffset += otherThickness;
                     } else if (position === SettingsData.Position.Left || position === SettingsData.Position.Right) {
                         topOffset = Math.max(topOffset, otherThickness);
                     }
@@ -2433,17 +2411,8 @@ Singleton {
         return revealed;
     }
 
-    // Reconciliation has no target while every bar is disabled, so it does
-    // nothing and the hardware widget stays unplaced. The moment a bar becomes
-    // visible is the next chance to place it; without this the user enables a
-    // bar and gets no battery indicator until the shell restarts, which is the
-    // VGS-61 symptom itself.
-    //
-    // Deferred so it lands after the caller's own update settles, and gated on
-    // the no-enabled-bar -> some-enabled-bar transition so it never fires
-    // during an ordinary widget-list edit. reconcile()'s guards still apply on
-    // top of that: a widget the user explicitly removed stays removed, and one
-    // the config already mentions is left alone.
+    // Reconcile when a bar first becomes enabled; hardware widgets have no target while all bars are disabled.
+    // Defer until the caller finishes updating the bar configuration.
     function _reconcileIfBarsBecameVisible(hadEnabledBar) {
         if (hadEnabledBar || getEnabledBarConfigs().length === 0)
             return;
@@ -2651,12 +2620,8 @@ Singleton {
         });
     }
 
-    // Real, user-facing outputs only. Theme-preview generation briefly stages a
-    // transient headless output named VGSPREVIEW on the live compositor; the shell
-    // must never instantiate a per-screen surface on it, because when that output
-    // is then removed quickshell's Wayland connection dies ("removal for monitor
-    // VGSPREVIEW which was not previously tracked" -> fatal). Every screen model
-    // that drives surface creation goes through here.
+    // Exclude the transient VGSPREVIEW output from surface creation.
+    // Removing that output kills Quickshell's Wayland connection if a surface was created on it.
     function usableScreens() {
         return Quickshell.screens.filter(screen => screen && screen.name !== "VGSPREVIEW");
     }
@@ -2857,9 +2822,6 @@ Singleton {
         updateCompositorCursor();
     }
 
-    // This solution for xwayland cursor themes is from the xwls discussion:
-    // https://github.com/Supreeeme/xwayland-satellite/issues/104
-    // no idea if this matters on other compositors but we also set XCURSOR stuff in the launcher
     function updateCompositorCursor() {
         if (typeof CompositorService === "undefined")
             return;
@@ -2931,6 +2893,7 @@ Singleton {
         const size = String(cursorSettings.size || 24);
         const env = {};
 
+        // XWayland cursor theme handling follows xwayland-satellite issue 104.
         if (!isDefaultSize) {
             env["XCURSOR_SIZE"] = size;
             env["HYPRCURSOR_SIZE"] = size;

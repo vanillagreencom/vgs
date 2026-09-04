@@ -12,7 +12,7 @@ import qs.Modules.Settings.DisplayConfig
 Item {
     id: root
 
-    // Keep old Sway/I3 branches inert without loading Quickshell.I3.
+    // Keep unsupported compositor branches inert without importing Quickshell.I3.
     QtObject {
         id: i3Shim
         readonly property var workspaces: ({ values: [] })
@@ -257,9 +257,7 @@ Item {
         target: "processlist"
     }
 
-    // Compatibility shim: the standalone theme picker became the dash's Themes
-    // and Wallpapers tabs. Existing callers (Super+T, `vshell theme pick`, the
-    // helper's mode fallback) keep working against this target.
+    // Route the theme-picker IPC target to the dash Themes and Wallpapers tabs for existing callers.
     IpcHandler {
         function _openDashTab(tabId: string, mode: string): string {
             const bar = root.getPreferredBar("clockButtonRef") || root.getPreferredBar();
@@ -312,9 +310,7 @@ Item {
         target: "theme-picker"
     }
 
-    // Full-screen switchers (VGS-208). Separate targets from `wallpaper` and
-    // `theme`, which are already taken by SessionData's wallpaper accessors and
-    // MethodTheme's light/dark mode toggle.
+    // Use separate switcher IPC targets because wallpaper and theme already address session accessors and mode controls.
     IpcHandler {
         function open(): string {
             root.wallpaperSwitcherModal.show();
@@ -399,7 +395,6 @@ Item {
     }
 
     IpcHandler {
-        // Screenshot region-select handshake
         function begin(): string {
             PopoutManager.screenshotActive = true;
             return "SCREENSHOT_MODE_ON";
@@ -1175,11 +1170,7 @@ Item {
                     value = String(value);
                     break;
                 case "object":
-                    // NOTE: Parsing lists is messed up upstream and not sure if we want
-                    // to make sure objects are well structured or just let people set
-                    // whatever they want but risking messed up settings.
-                    // Objects & Arrays are disabled for now
-                    // https://github.com/quickshell-mirror/quickshell/pull/22
+                    // Objects and arrays are refused because this IPC setter does not validate their structure.
                     throw "Setting Objects and Arrays not supported";
                 default:
                     throw "Unsupported type";

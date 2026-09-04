@@ -202,7 +202,7 @@ Item {
         onStatusChanged: {
             if (status !== FolderListModel.Ready)
                 return;
-            // rebuild entries
+
             const validPaths = new Set();
             for (let i = 0; i < folderModel.count; i++) {
                 const fp = folderModel.get(i, "filePath") || "";

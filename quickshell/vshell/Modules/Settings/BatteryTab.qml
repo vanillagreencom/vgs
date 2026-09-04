@@ -10,8 +10,7 @@ Item {
 
     Process {
         id: applyLimitProcess
-        // Privileged sysfs write lives in the helper; the limit travels as a
-        // validated argv value, never interpolated into shell text.
+        // The helper owns the privileged sysfs write. Pass the limit as a separate argv value.
         command: [Paths.vshellCli, "battery", "set-charge-limit", String(SettingsData.batteryChargeLimit)]
         running: false
         onExited: exitCode => {
@@ -36,7 +35,7 @@ Item {
             anchors.horizontalCenter: parent.horizontalCenter
             spacing: Theme.spacingXL
 
-            // 1. Information Card
+
             SettingsCard {
                 width: parent.width
                 iconName: "battery_charging_full"
@@ -142,7 +141,7 @@ Item {
                 }
             }
 
-            // 2. Threshold & Limits Card
+
             SettingsCard {
                 width: parent.width
                 iconName: "tune"
@@ -258,7 +257,7 @@ Item {
                 }
             }
 
-            // 3. Power Profiles Card
+
             SettingsCard {
                 width: parent.width
                 iconName: "power"

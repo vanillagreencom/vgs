@@ -5,7 +5,6 @@ import QtQuick
 import Quickshell
 import qs.Common
 
-// Reusable ListView/GridView transitions
 Singleton {
     id: root
 

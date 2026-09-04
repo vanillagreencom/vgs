@@ -1,4 +1,3 @@
-// ===== wp_fade.frag =====
 #version 450
 
 layout(location = 0) in vec2 qt_TexCoord0;
@@ -12,14 +11,13 @@ layout(std140, binding = 0) uniform buf {
     float qt_Opacity;
     float progress;
 
-    // Fill mode parameters
     float fillMode;      // 0=stretch, 1=fit, 2=crop, 3=tile, 4=tileV, 5=tileH, 6=pad, 7=scroll
-    float imageWidth1;   // Width of source1 image
-    float imageHeight1;  // Height of source1 image
-    float imageWidth2;   // Width of source2 image
-    float imageHeight2;  // Height of source2 image
-    float screenWidth;   // Screen width
-    float screenHeight;  // Screen height
+    float imageWidth1;
+    float imageHeight1;
+    float imageWidth2;
+    float imageHeight2;
+    float screenWidth;
+    float screenHeight;
     vec4 fillColor;      // Fill color for empty areas (default: black)
 
     // Scroll position (0-100 range, only used when fillMode >= 6.5)
@@ -74,7 +72,6 @@ vec2 calculateUV(vec2 uv, float imgWidth, float imgHeight) {
         vec2 scaledImageSize = vec2(imgWidth, imgHeight) * scale;
         vec2 offset = (scaledImageSize - vec2(ubuf.screenWidth, ubuf.screenHeight)) / scaledImageSize;
 
-        // Determine scroll axis based on aspect ratio
         bool scrollHorizontal = imageAspect > screenAspect + 0.01;
         bool scrollVertical = imageAspect < screenAspect - 0.01;
 
@@ -107,10 +104,8 @@ vec4 sampleWithFillMode(sampler2D tex, vec2 uv, float imgWidth, float imgHeight)
 void main() {
     vec2 uv = qt_TexCoord0;
 
-    // Sample textures with fill mode
     vec4 color1 = sampleWithFillMode(source1, uv, ubuf.imageWidth1, ubuf.imageHeight1);
     vec4 color2 = sampleWithFillMode(source2, uv, ubuf.imageWidth2, ubuf.imageHeight2);
 
-    // Mix the two textures based on progress value
     fragColor = mix(color1, color2, ubuf.progress) * ubuf.qt_Opacity;
 }

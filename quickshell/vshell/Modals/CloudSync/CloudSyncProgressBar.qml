@@ -2,8 +2,7 @@ import QtQuick
 import qs.Common
 import qs.Widgets
 
-// One progress bar definition for every surface that shows transfer or quota
-// progress, so the bar reads identically in the app and in the bar popout.
+// Shared progress bar for transfers and storage quotas.
 StyledRect {
     id: root
 

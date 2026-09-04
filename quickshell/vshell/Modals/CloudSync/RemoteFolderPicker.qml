@@ -3,9 +3,7 @@ import qs.Common
 import qs.Services
 import qs.Widgets
 
-// Cloud-side directory browser, backed by cloudsync.browse (rclone
-// operations/list with dirsOnly). Listing a remote directory is a network call,
-// so this shows its own loading and error states rather than looking frozen.
+// Remote directory browser using cloudsync.browse. Network listings expose loading and error states.
 Item {
     id: root
 

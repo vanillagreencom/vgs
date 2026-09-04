@@ -18,8 +18,7 @@ import (
 	"vshell/backend/internal/registry"
 )
 
-// maxLine bounds a single JSON message. Generous for future clipboard image
-// payloads while still refusing unbounded input.
+// maxLine limits the memory accepted for one JSON message.
 const maxLine = 16 << 20 // 16 MiB
 
 // HandlerFunc handles one method call. It receives raw params and returns a
@@ -40,11 +39,9 @@ type Server struct {
 	workersMu sync.Mutex
 	workers   map[string]chan func()
 
-	// sendQueue serializes broadcasts and subscribe-snapshots into one total
-	// order, with snapshots computed at dispatch time. Without it a broadcast
-	// computed just before a subscribe could be written after that
-	// subscriber's fresher snapshot, leaving the client on stale state until
-	// the next event.
+	// sendQueue orders broadcast delivery and computes subscription snapshots at
+	// dispatch. Queue order keeps each snapshot after broadcasts submitted ahead of
+	// it.
 	sendQueue chan func()
 }
 
@@ -192,8 +189,8 @@ func (s *Server) handleConn(c *conn) {
 		if len(sc.Bytes()) == 0 {
 			continue
 		}
-		// Copy the line: req.ID/req.Params are RawMessage views into it, and
-		// dispatch hands them to a worker goroutine that outlives this Scan.
+		// The worker outlives this Scan. Copy the input to give request fields
+		// independent storage.
 		line := append([]byte(nil), sc.Bytes()...)
 		var req protocol.Request
 		if err := json.Unmarshal(line, &req); err != nil {
@@ -223,11 +220,9 @@ func (s *Server) dispatch(c *conn, req *protocol.Request) {
 		c.send(protocol.Response{ID: req.ID, Error: "unknown method: " + req.Method})
 		return
 	}
-	// Run the handler off the read goroutine: the QML client multiplexes every
-	// call over one socket, so a slow handler (a 2-minute package refresh, a
-	// 20s nmcli call) must not stall queued requests like loginctl.lock.
-	// Serializing per method keeps repeated calls (e.g. a brightness slider
-	// drag) applying in order while distinct methods never block each other.
+	// Each method has a worker so a slow handler does not hold the read goroutine.
+	// Calls to the same method stay in order. A full method queue can still block
+	// the connection read loop.
 	s.enqueue(req.Method, func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -272,9 +267,8 @@ func (s *Server) runJob(method string, job func()) {
 	job()
 }
 
-// subscribeParams is tolerant: unknown/unimplemented service names are ignored,
-// never rejected, so the client can subscribe to its full list while services
-// land incrementally.
+// subscribeParams ignores unknown service names so clients can request services
+// that this backend does not provide.
 type subscribeParams struct {
 	Services []string `json:"services"`
 }
@@ -297,9 +291,8 @@ func (s *Server) handleSubscribe(c *conn, req *protocol.Request) {
 	s.subscribers[c] = set
 	s.mu.Unlock()
 
-	// Send the server capability frame and the snapshots through the ordered
-	// queue: the snapshots are computed at dispatch time, so they are at
-	// least as fresh as any broadcast queued before them.
+	// Compute subscription snapshots in the send queue so earlier queued broadcasts
+	// cannot follow them.
 	s.sendQueue <- func() {
 		c.send(protocol.Response{Result: protocol.Event{Service: "server", Data: s.info()}})
 

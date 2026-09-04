@@ -1,4 +1,3 @@
-// ===== wp_pixelate.frag =====
 #version 450
 
 layout(location = 0) in vec2 qt_TexCoord0;
@@ -84,7 +83,7 @@ vec4 sampleWithFillMode(sampler2D tex, vec2 uv, float imgWidth, float imgHeight)
 
 vec2 quantizeUV(vec2 uv, float cellPx) {
     vec2 screenSize = vec2(max(1.0, ubuf.screenWidth), max(1.0, ubuf.screenHeight));
-    float cell = max(1.0, ceil(cellPx));                  // integer pixel cells
+    float cell = max(1.0, ceil(cellPx));
     vec2 grid = floor(uv * screenSize / cell) * cell + 0.5 * cell;
     return grid / screenSize;
 }
@@ -95,29 +94,25 @@ void main() {
     vec4 oldCol = sampleWithFillMode(source1, uv, ubuf.imageWidth1, ubuf.imageHeight1);
 
     float p = clamp(ubuf.progress, 0.0, 1.0);
-    float pe = p * p * (3.0 - 2.0 * p); // smootherstep for opacity
+    float pe = p * p * (3.0 - 2.0 * p);
 
     // Screen-relative starting cell size:
     // smoothness=0 → ~10% of min(screen), smoothness=1 → ~80% of min(screen)
     float s = clamp(ubuf.smoothness, 0.0, 1.0);
     float minSide = min(max(1.0, ubuf.screenWidth), max(1.0, ubuf.screenHeight));
-    float startPx = mix(minSide * 0.10, minSide * 0.80, s);   // big and obvious even on small screens
+    float startPx = mix(minSide * 0.10, minSide * 0.80, s);
 
-    // Cell size shrinks continuously from startPx → 1 as p grows
     float cellPx = mix(startPx, 1.0, p);
 
-    // Sample next as pixelated overlay
     vec2 uvq = quantizeUV(uv, cellPx);
     vec4 newPix = sampleWithFillMode(source2, uvq, ubuf.imageWidth2, ubuf.imageHeight2);
 
-    // As we approach the end, sharpen the next from pixelated → full-res
-    float sharpen = smoothstep(0.75, 1.0, p);              // only near the end
+    float sharpen = smoothstep(0.75, 1.0, p);
     vec4 newFull = sampleWithFillMode(source2, uv, ubuf.imageWidth2, ubuf.imageHeight2);
     vec4 newCol = mix(newPix, newFull, sharpen);
 
     vec4 outColor = mix(oldCol, newCol, pe);
 
-    // Snaps
     if (p <= 0.0) outColor = oldCol;
     if (p >= 1.0) outColor = newFull;
 

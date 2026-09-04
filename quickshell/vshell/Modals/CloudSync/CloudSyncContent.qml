@@ -3,16 +3,14 @@ import qs.Common
 import qs.Services
 import qs.Widgets
 
-// Reading pane. Pages are swapped rather than stacked so an off-screen page
-// never keeps polling or holding a remote listing alive.
+// Replace off-screen pages to release their view objects and stored page state.
 Item {
     id: root
 
     property var parentModal: null
     property int currentIndex: 0
 
-    // Missing engine is a whole-app state, not a per-page one: without rclone
-    // there is nothing any page could usefully show.
+    // Show engine absence once for the window rather than repeating it on each page.
     Item {
         anchors.fill: parent
         visible: !CloudSyncService.available

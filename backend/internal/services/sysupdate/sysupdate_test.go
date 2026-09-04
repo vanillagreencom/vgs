@@ -345,8 +345,8 @@ func contains(value, needle string) bool {
 	return false
 }
 
-// The count on screen is from before the upgrade. A run that exits non-zero
-// still installed whatever steps succeeded, so the re-count is unconditional.
+// Recount after a failed upgrade because completed steps can still change the
+// installed packages.
 func TestUpgradeRecountsAfterAnyExit(t *testing.T) {
 	for _, code := range []int{0, 1} {
 		counter, logPath := fakeUpdateCommand(t, "go 2:1.26.4-2 -> 2:1.26.5-2\n", 0)

@@ -30,7 +30,7 @@ Item {
         width: parent.width
         height: pillRow.height + Theme.spacingXS * 2
         radius: Theme.cornerRadius
-        // Flatline: no heavy container — the tabs carry the look (was overdone).
+
         color: "transparent"
 
         Row {

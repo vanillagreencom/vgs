@@ -73,7 +73,7 @@ BasePill {
                 name: root.inhibited ? "coffee" : "bedtime"
                 filled: root.inhibited
                 size: Theme.barIconSize(root.barThickness, -4, root.barConfig?.maximizeWidgetIcons, root.barConfig?.iconScale)
-                // Glyph and fill already change with state.
+
                 color: Theme.widgetIconColor
 
                 Behavior on color {

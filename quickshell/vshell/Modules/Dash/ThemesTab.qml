@@ -7,8 +7,7 @@ import qs.Common
 import qs.Services
 import qs.Widgets
 
-// Themes tab of the dash: browse and apply theme packages. Click the preview's
-// Apply pill (or press Enter) to switch; the "more" button opens per-theme actions.
+// Theme browser for Dash. Apply uses the selection; the more button opens per-theme actions.
 Item {
     id: root
 
@@ -23,14 +22,10 @@ Item {
     readonly property var modeFilters: ["all", "dark", "light"]
 
     implicitWidth: SettingsData.showWeekNumber ? 736 : 700
-    // Match the shared dash tab height (overview/media/weather = 410) so switching
-    // tabs never resizes the popout — a height change on switch caused a shrink-only
-    // flash. The theme grid fills and scrolls within whatever height it's given.
+    // Share the Dash tab height to avoid resizing during a tab switch. The grid scrolls within it.
     implicitHeight: 410
 
-    // Favourites float above the alphabetical list; within each group the sort
-    // stays alphabetical, so starring only ever lifts a theme, never reorders
-    // its neighbours. Reads favoriteThemes so restarring re-sorts immediately.
+    // Sort favourites before the alphabetical remainder without changing order within either group.
     readonly property var filteredThemes: {
         const list = VGSThemeService.blueprints || [];
         const favorites = SettingsData.favoriteThemes || [];
@@ -48,8 +43,7 @@ Item {
         });
     }
 
-    // Focus the search box so the user can type-to-filter the moment the browser
-    // opens (Super+T). Callable by the dash so focus lands here for the themes tab.
+    // Focus the theme filter when Dash activates this tab.
     function focusSearch() {
         searchField.forceActiveFocus();
     }
@@ -65,8 +59,7 @@ Item {
         Qt.callLater(focusSearch);
     }
 
-    // Receives the arrow keys forwarded from the search field so the theme
-    // selection moves while the user is still typing (launcher-style).
+    // Forward search-field arrow keys to the theme selection without moving keyboard focus.
     Item {
         id: navRouter
         Keys.onPressed: event => {
@@ -80,9 +73,7 @@ Item {
             onShown();
     }
 
-    // The tab is often created (by its Loader) only once the dash is already
-    // visible, in which case `active` starts true and onActiveChanged never
-    // fires — so trigger the initial refresh/preview generation here too.
+    // Loader creation can start with active already true. Refresh here because no active change signal then fires.
     Component.onCompleted: {
         if (active)
             onShown();
@@ -108,8 +99,7 @@ Item {
 
     Column {
         anchors.fill: parent
-        // The search row needs air on both sides so it doesn't run into the tab
-        // bar above or the first list card below.
+
         anchors.topMargin: Theme.spacingM
         spacing: Theme.spacingM
 
@@ -127,8 +117,7 @@ Item {
                 leftIconName: "search"
                 text: root.searchQuery
                 onTextChanged: root.searchQuery = text
-                // Up/Down move the theme selection even while the search field
-                // holds focus; Enter applies the highlighted theme.
+
                 ignoreUpDownKeys: true
                 keyForwardTargets: [navRouter]
                 onAccepted: {
@@ -207,8 +196,7 @@ Item {
 
                 HoverHandler {
                     id: rowHover
-                    // Mouse hover moves the single selection so exactly one row is
-                    // ever focused; arrow keys and hover share themeList.currentIndex.
+
                     onHoveredChanged: if (hovered)
                         themeList.currentIndex = themeRow.index
                 }
@@ -273,8 +261,7 @@ Item {
                             }
                         }
 
-                        // Generating indicator: shown over themes still awaiting a
-                        // preview while a render batch is in flight.
+
                         VgsSpinner {
                             anchors.centerIn: parent
                             size: 26

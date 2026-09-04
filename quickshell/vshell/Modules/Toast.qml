@@ -50,9 +50,7 @@ PanelWindow {
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
     color: "transparent"
 
-    // An action button keeps the toast on screen until it is answered, so the
-    // close button has to come with it -- otherwise the only way out is the
-    // whole-surface dismiss MouseArea, which would swallow the action's click.
+    // Actions keep the toast visible. Provide a separate close button because a whole-toast click handler would intercept action clicks.
     readonly property bool closeButtonVisible: ToastService.hasDetails || ToastService.currentLevel === ToastService.levelError || ToastService.isStickyCategory(ToastService.currentCategory) || ToastService.hasAction
     readonly property real trailingControlsWidth: (ToastService.hasDetails || ToastService.isStickyCategory(ToastService.currentCategory)) ? (expandButton.width + closeButton.width + 4) : (closeButtonVisible ? closeButton.width + Theme.spacingS : 0)
     readonly property real actionControlWidth: ToastService.hasAction ? actionButton.width + Theme.spacingS : 0
@@ -177,8 +175,7 @@ PanelWindow {
                     wrapMode: Text.NoWrap
                 }
 
-                // VGS-65: a toast that names the fix gets a button to it,
-                // instead of describing where the user should go looking.
+
                 VgsButton {
                     id: actionButton
 

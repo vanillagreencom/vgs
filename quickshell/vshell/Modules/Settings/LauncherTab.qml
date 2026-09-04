@@ -10,11 +10,7 @@ Item {
 
     property var parentModal: null
     readonly property string defaultLauncherAction: "spawn vshell ipc call vshell-menu toggle"
-    // VGS-13 left the overview search UI with exactly one entry point: the niri
-    // overview overlay, which is why VGS-20 moved it under
-    // Modules/WorkspaceOverlays/OverviewSearch. Settings that only reach that
-    // stack are hidden elsewhere rather than presented as app-launcher settings
-    // that do nothing.
+    // These settings reach the Niri overview search, so hide them on other compositors.
     readonly property bool overviewSearchSettingsApply: CompositorService.isNiri && SettingsData.niriOverviewOverlayEnabled
     readonly property int keybindDataVersion: KeybindsService._dataVersion
     readonly property bool keybindsAvailable: KeybindsService.available

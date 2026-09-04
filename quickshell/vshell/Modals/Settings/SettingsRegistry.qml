@@ -3,12 +3,8 @@ pragma Singleton
 import QtQuick
 import Quickshell
 
-// Single source of truth for settings tabs: which QML file each tab id loads
-// and the tab index it occupies. Sidebar structure, content loaders, IPC name
-// resolution, and search navigation all key off these ids.
-//
-// tabIndex values are historical and persisted (session state, IPC callers);
-// never renumber them. Gaps (28, 33) are retired indexes.
+// Registry of tab ids, QML files and indexes shared by navigation, loaders, IPC and search.
+// Indexes are persisted and used by callers. Do not renumber them or reuse gaps.
 Singleton {
     id: root
 
@@ -37,7 +33,7 @@ Singleton {
         { id: "notifications", tabIndex: 17, source: "NotificationsTab.qml" },
         { id: "osd", tabIndex: 18, source: "OSDTab.qml" },
         { id: "running_apps", tabIndex: 19, source: "RunningAppsTab.qml" },
-        // tabIndex 20 retired with the legacy system updater UI.
+
         { id: "power_sleep", tabIndex: 21, source: "PowerSleepTab.qml" },
         { id: "bar_widgets", tabIndex: 22, source: "WidgetsTab.qml", needsModal: true, keepLoaded: true, async: true },
         { id: "clipboard", tabIndex: 23, source: "ClipboardTab.qml" },

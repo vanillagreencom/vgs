@@ -28,9 +28,7 @@ Item {
         property var activeRequest: null
         property var currentEntryId: entry && entry.id !== undefined ? entry.id : null
         property string currentEntryType: entryType
-        // Image entries carry the blob's file path; loading it directly lets
-        // Qt decode asynchronously at thumbnail size. The base64 getEntry
-        // round-trip remains only as a fallback for pathless legacy entries.
+        // Decode image paths asynchronously at thumbnail size. Use base64 getEntry only for entries without paths.
         readonly property string entryPath: entry && entry.isImage && entry.path ? entry.path : ""
 
         anchors.fill: parent
@@ -264,7 +262,7 @@ Item {
 
         Rectangle {
             anchors.fill: parent
-            radius: Theme.cornerRadius / 2 // Thumbnail corner radius is divided by 2 so it doesnt look weird on large corner radius (eg: 32px)
+            radius: Theme.cornerRadius / 2
             color: "black"
             antialiasing: true
         }

@@ -5,13 +5,7 @@ import qs.Services
 import qs.Widgets
 import qs.Modules.Plugins
 
-// Cloud Sync bar widget: a status pill plus a popout that answers the questions
-// a consumer sync client is expected to answer at a glance — is it working,
-// what is moving right now, how fast, and how full is my cloud storage.
-//
-// Rows here use anchored Rows with computed text widths (the house idiom from
-// Settings/Widgets/DeviceAliasRow.qml) rather than Layouts, which fight with
-// the fixed intrinsic widths of VgsButton and friends.
+// Anchored rows accommodate intrinsic button widths without stretching them.
 PluginComponent {
     id: root
 
@@ -28,8 +22,6 @@ PluginComponent {
     readonly property var transfers: CloudSyncService.transferring
     readonly property var accounts: CloudSyncService.accounts
 
-    // The widget disappears entirely when rclone is not installed, rather than
-    // sitting in the bar as a permanently broken control.
     _visibilityOverride: true
     _visibilityOverrideValue: CloudSyncService.available && (!root.hideWhenIdle || root.status !== "idle")
 
@@ -114,8 +106,6 @@ PluginComponent {
             Quickshell.execDetached([Paths.vshellCli, "ipc", "call", "cloudsync", "open"]);
     }
 
-// Shared row shape for everything in this popout: icon, text block,
-// optional trailing text, optional progress bar under the text.
 component PopoutRow: Rectangle {
     id: rowRoot
 
@@ -212,10 +202,7 @@ component SectionHeader: StyledText {
     color: Theme.surfaceVariantText
 }
 
-    // ============================ PILL ============================
 
-    // The icon spins only while transfers are actually moving, so the bar is
-    // still when nothing is happening.
     Component {
         id: pillIconComponent
 
@@ -279,7 +266,6 @@ component SectionHeader: StyledText {
         }
     }
 
-    // ============================ CONTROL CENTER ============================
 
     ccWidgetIcon: "cloud_sync"
     ccWidgetPrimaryText: I18n.tr("Cloud Sync", "Control center tile title")
@@ -299,7 +285,6 @@ component SectionHeader: StyledText {
     ccWidgetIsActive: !CloudSyncService.paused && CloudSyncService.hasAccounts
     onCcWidgetToggled: CloudSyncService.togglePaused(null)
 
-    // ============================ POPOUT ============================
 
     popoutWidth: 400
     popoutContent: Component {
@@ -331,7 +316,6 @@ component SectionHeader: StyledText {
                 width: parent.width
                 spacing: Theme.spacingS
 
-                // ---- Overall progress + master pause ----
                 StyledRect {
                     width: parent.width
                     height: summaryColumn.implicitHeight + Theme.spacingM * 2
@@ -469,7 +453,6 @@ component SectionHeader: StyledText {
                     }
                 }
 
-                // ---- Engine down ----
                 StyledRect {
                     visible: CloudSyncService.available && !CloudSyncService.daemonRunning
                     width: parent.width
@@ -507,7 +490,6 @@ component SectionHeader: StyledText {
                     }
                 }
 
-                // ---- Conflicts banner ----
                 StyledRect {
                     visible: CloudSyncService.conflictCount > 0
                     width: parent.width
@@ -566,7 +548,6 @@ component SectionHeader: StyledText {
                     }
                 }
 
-                // ---- Live transfers ----
                 Column {
                     width: parent.width
                     spacing: Theme.spacingXS
@@ -598,7 +579,6 @@ component SectionHeader: StyledText {
                     }
                 }
 
-                // ---- Recently synced ----
                 Column {
                     width: parent.width
                     spacing: Theme.spacingXS
@@ -623,7 +603,6 @@ component SectionHeader: StyledText {
                     }
                 }
 
-                // ---- Account storage ----
                 Column {
                     width: parent.width
                     spacing: Theme.spacingXS
@@ -655,9 +634,7 @@ component SectionHeader: StyledText {
                     }
                 }
 
-                // ---- Actions ----
-                // VgsButton sizes itself from its content, so these sit in a
-                // Row rather than being stretched to equal halves.
+                // VgsButton sizes itself from its content; a Row preserves that width.
                 Row {
                     width: parent.width
                     spacing: Theme.spacingS

@@ -25,9 +25,7 @@ PluginComponent {
     readonly property int jobCount: visibleJobs.length
     readonly property bool hasPrinters: CupsService.cupsAvailable && CupsService.getPrintersNum() > 0
 
-    // The pill aggregates jobs across every queue, so the header has to name the
-    // queue the work is on. Naming the Settings selection instead lets the
-    // popout call one printer idle while listing another one's job.
+    // Jobs span printer queues. Name the working queue in the header so its status matches the listed work.
     readonly property string connectedName: {
         // A printing queue wins over a queued job: lpstat reports every queued
         // job as pending and allJobs follows printerNames order, so the first

@@ -29,9 +29,7 @@ CloudSyncDialog {
 
     readonly property bool isOAuth: selectedProvider !== null && selectedProvider.oauth === true
 
-    // What the form actually asks for. rclone marks most of these non-advanced
-    // because its CLI wizard walks you through pressing Enter on each one; in a
-    // GUI they are just noise, and every one of them has a working default.
+    // Expose only required credential fields initially; optional fields remain under Advanced.
     readonly property var visibleOptions: {
         if (!selectedProvider)
             return [];
@@ -108,8 +106,7 @@ CloudSyncDialog {
                 params[key] = String(value);
         }
         if (dialog.isOAuth) {
-            // Stay put and show progress here: handing the user off to a card on
-            // the page behind the dialog reads as the dialog having crashed.
+            // Keep the sign-in dialog open while the backend works so progress stays visible.
             dialog.browserOpened = false;
             dialog.step = 2;
             CloudSyncService.startOAuth(dialog.accountName, selectedProvider.type, params, null);
@@ -132,8 +129,7 @@ CloudSyncDialog {
                 dialog.loadProviders();
         }
 
-        // Open the consent page as soon as the backend publishes it. Making the
-        // user press a second button to get to their browser is a needless step.
+
         function onOauthChanged() {
             if (dialog.step !== 2 || dialog.browserOpened)
                 return;
@@ -144,8 +140,7 @@ CloudSyncDialog {
             Quickshell.execDetached([Paths.vshellCli, "open", url]);
         }
 
-        // The account landing is the success signal; close on it rather than
-        // leaving the user looking at a spinner that has finished.
+        // A reported account confirms completion; close the waiting dialog when it arrives.
         function onAccountsChanged() {
             if (dialog.step !== 2)
                 return;
@@ -177,8 +172,7 @@ CloudSyncDialog {
         dialog.selectedProvider = provider;
         dialog.fieldValues = {};
         dialog.showAdvanced = false;
-        // Suggest a name derived from the service, since most people connect
-        // one account per provider and should not have to invent an identifier.
+
         dialog.accountName = suggestName(provider.type);
         dialog.step = 1;
     }
@@ -201,7 +195,7 @@ CloudSyncDialog {
         dialog.fieldValues = copy;
     }
 
-    // ---- Step 0: provider picker ----
+
 
     Item {
         width: parent.width
@@ -258,12 +252,7 @@ CloudSyncDialog {
         onClicked: dialog.showAll = !dialog.showAll
     }
 
-    // ---- Step 1: account details ----
-    // OAuth backends need nothing but a name: rclone signs in with its own
-    // registered application. Credential backends ask only for what they
-    // actually require. Everything else is rclone plumbing and lives behind
-    // "Advanced", because a consumer setting up Drive should never be shown
-    // "client_credentials: false".
+    // OAuth uses the registered application by default. Show custom application options under Advanced.
 
     Column {
         visible: dialog.step === 1
@@ -293,7 +282,7 @@ CloudSyncDialog {
         }
     }
 
-    // ---- OAuth: nothing else to fill in ----
+
     CloudSyncRow {
         visible: dialog.step === 1 && dialog.isOAuth
         iconName: "open_in_browser"
@@ -304,7 +293,7 @@ CloudSyncDialog {
         subtitleWrap: true
     }
 
-    // ---- Credentials: only what the provider requires ----
+
     Repeater {
         model: dialog.step === 1 ? dialog.visibleOptions : []
 
@@ -314,9 +303,7 @@ CloudSyncDialog {
             width: parent.width
             spacing: Theme.spacingXS
 
-            // Booleans get a switch; rclone reports the option type, so there
-            // is no reason to make someone type "false". The toggle row renders
-            // its own label, so no separate one is emitted for that branch.
+            // Boolean options use a labeled toggle; omit a separate label for that branch.
             StyledText {
                 visible: modelData.type !== "bool"
                 width: parent.width
@@ -355,7 +342,7 @@ CloudSyncDialog {
         }
     }
 
-    // ---- Advanced ----
+
     Row {
         visible: dialog.step === 1 && dialog.hasHiddenOptions
         width: parent.width
@@ -388,7 +375,7 @@ CloudSyncDialog {
         color: Theme.surfaceVariantText
     }
 
-    // ---- Step 2: waiting for the browser ----
+
 
     CloudSyncRow {
         visible: dialog.step === 2

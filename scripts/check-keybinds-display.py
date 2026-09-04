@@ -118,9 +118,7 @@ def test_keybind_labels_survive_a_broken_or_hostile_file():
 
 
 def test_hyprland_recovers_a_keycode_bind_key_from_the_config_source():
-    """hyprctl reports key=""/keycode=0 for a bind made on a keycode the
-    layout leaves unmapped -- verified against a live session -- so the JSON
-    alone cannot say what was bound. The source text still can."""
+    """Recover unmapped keycode bindings from configuration when hyprctl omits the key."""
     def check(home):
         config = home / ".config" / "hypr" / "config"
         config.mkdir(parents=True)
@@ -209,8 +207,6 @@ def test_the_reported_binds_carry_every_recovered_and_labelled_key():
         vshell.mkdir(parents=True)
         (vshell / "keybind-labels.json").write_text('{"F13": "Right Alt"}')
 
-        # What hyprctl answers: a keycode bind with modifiers, one without,
-        # and an ordinary bind it can name itself.
         payload = json.dumps([
             {"modmask": 64, "key": "", "keycode": 0, "description": "Modified",
              "dispatcher": "__lua", "arg": "1"},
@@ -241,11 +237,7 @@ def test_the_reported_binds_carry_every_recovered_and_labelled_key():
 
 
 def test_the_temp_home_fixture_isolates_xdg_config_home():
-    """Every check here resolves config from HOME today, so the fixture's
-    XDG_CONFIG_HOME assignment is unexercised by them and could be deleted
-    without a single one going red. This holds the fixture to its contract
-    directly, so the next check that resolves through XDG inherits a temp
-    home that is actually temporary."""
+    """Check XDG_CONFIG_HOME isolation directly; the other fixtures resolve through HOME."""
     ambient = None
 
     def check(home):

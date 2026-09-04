@@ -157,7 +157,7 @@ Item {
         return !isEnabled(id) || id === "settings" || enabledContentCount > 1;
     }
 
-    // Keyboard nav is handled at the tab root (not per-row activeFocusOnTab)
+
     Keys.onPressed: function (event) {
         const order = enabledOrder.concat(disabledOrder);
         if (order.length === 0)

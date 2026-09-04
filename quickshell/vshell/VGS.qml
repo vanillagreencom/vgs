@@ -31,16 +31,9 @@ Item {
     id: root
     readonly property var log: Log.scoped("VGS")
     readonly property var _sessionsServiceRef: SessionsService
-    // Materialize the shipped default theme on a genuinely fresh install.
-    // Without an eager reference this singleton was only constructed after
-    // opening theme-related UI, leaving MethodTheme on its fallback palette.
+    // Construct theme state eagerly so fresh installs materialize the default palette before theme UI opens.
     readonly property var _themeServiceRef: VGSThemeService
-    // Same defect, same fix (VGS-82). ScratchpadService owns the focus-loss
-    // watcher, and every other reference to it is in Settings — so without this
-    // the watcher was only constructed once the user opened the Scratchpads
-    // page, and `dismissOnFocusLoss` did nothing in any session where they did
-    // not. A setting that works only after visiting Settings is the same
-    // silently-inert surface the control was withheld for in the first place.
+    // Construct ScratchpadService eagerly so dismissOnFocusLoss works before Settings opens.
     readonly property var _scratchpadServiceRef: ScratchpadService
 
     property bool osdSurfacesLoaded: true
@@ -103,8 +96,6 @@ Item {
 
     DesktopWidgetLayer {}
 
-    // Native video screensaver overlays (one per screen). Loaded only while
-    // ScreensaverService says the video saver is active.
     Variants {
         model: SettingsData.usableScreens()
 
@@ -259,11 +250,7 @@ Item {
         }
     }
 
-    // UPower answers well after settings load, so a laptop only becomes a
-    // laptop some way into startup. Reconcile the bar widget lists against the
-    // hardware then — a barConfigs carried over from a desktop otherwise never
-    // grows a battery indicator, because nothing revisits that array once the
-    // user has one of their own.
+    // Reconcile hardware widgets when UPower detection completes after settings load.
     Connections {
         target: BatteryService
         function onBatteryAvailableChanged() {
@@ -320,8 +307,7 @@ Item {
 
     Timer {
         id: loginSoundTimer
-        // Half a second delay before playing login sound, otherwise the sound may be cut off
-        // 50 is the minimum that seems to work, but 500 is safer
+        // Delay the login sound so audio startup does not cut it off.
         interval: 500
         repeat: false
         onTriggered: {
@@ -357,7 +343,6 @@ Item {
 
     property bool hadRealScreen: true
     property var previousRealScreenNames: []
-    // Guards for the screen-reconnect recovery path (see scheduleScreenReconnectRecovery).
     property bool _screenRecoveryCooldown: false
     property bool _screenRecoveryPending: false
 
@@ -402,13 +387,8 @@ Item {
         }
     }
 
-    // A DPMS off/on cycle removes an output from the screen list and re-adds it,
-    // which is indistinguishable here from a hotplug. Recovering immediately on
-    // every such event lets a flapping monitor (or a recovery that itself perturbs
-    // the output) drive an endless recovery storm that power-cycles the display
-    // (#2642). Debounce a burst of changes into a single pass, then hold a cooldown
-    // so repeated flaps trigger at most one recovery per window. Recovery still runs
-    // once per resume, so a partial DPMS resume keeps redrawing its surfaces (#2579).
+    // Output power cycles and hotplug both change the screen list.
+    // Debounce changes and enforce a cooldown so monitor flapping cannot create a recovery loop.
     function scheduleScreenReconnectRecovery() {
         if (root._screenRecoveryCooldown) {
             root._screenRecoveryPending = true;
@@ -477,7 +457,7 @@ Item {
         dockRecreateDebounce.start();
         loginSoundTimer.start();
 
-        // These are dummy references just to trigger the singletons onCompleted to trigger
+        // Eager references initialize singleton services at shell startup.
         PolkitService.polkitAvailable;
         DisplayConfigState.hasOutputBackend;
         PortalService.systemColorScheme;

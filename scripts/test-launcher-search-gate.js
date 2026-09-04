@@ -1,56 +1,8 @@
 #!/usr/bin/env node
 
-// Pins the launcher search gate: which tool each search kind needs, what the
-// overview does while nobody knows, and what its empty state then says
-// (VGS-114). The bug this closes was one boolean answering for two backends —
-// `dsearchAvailable = fdAvailable` — so a machine with ripgrep and no fd lost
-// TEXT search too, silently and with no empty state to explain it.
-//
-// Nothing else covers this code: `scripts/qml-smoke.sh --nested` never opens the
-// overview search surface, and qmllint cannot see a gate asking about the wrong
-// tool. So the decisions are extracted verbatim from the shipped QML between its
-// markers and executed here, and the wiring around them is pinned as source.
-//
-// WHERE THE SEAM IS, and why it moved twice. A first version executed the pure
-// regions and pinned everything AROUND them by presence of a token; a mutation
-// run killed 1 of 10, because a mutant that keeps the token and removes the
-// behavior walks past a presence check. So the composition moved INTO the
-// regions — backendStateFor and canDispatchFor over one named snapshot,
-// fileSearchQueryFrom, shouldRetryAfterProbe, fileLegActive, probeSettled,
-// probeFailureOutcome, errorLine — leaving exactly one adapter line per
-// decision, of which _probeSnapshot() is the only place a QML property becomes
-// a field. A second run then killed 19 of 26: the CONSUMERS of the view's facts
-// were pinned and their PRODUCERS were not, so the seam had merely moved a line
-// up. Both halves are pinned now, and what has to stay a QML binding is pinned
-// by ORDER and BRANCH — the full argument list of a call, a statement's
-// position relative to the `return` after it, the block a call sits inside.
-// Section 4's `pathBranch < fdLookup` was the model.
-//
-// Every assertion over the view's facts uses a combination the program can
-// actually build; see the note on `facts` in section 7. A control satisfied only
-// by an impossible input covers nothing, and one such control hid a dangling
-// hint on the first open of every machine.
-//
-// MUST-FAIL CONTROLS, each seen red, applied one at a time to the shipped tree.
-// In-region: an inverted ternary in the command table; an inverted unknown arm
-// in dispatchAllowed; a disabled "/" branch in fileSearchQueryFrom; the
-// prompt/checking and missing/error arm orders swapped. Across the seam: a
-// field of _probeSnapshot() assigned from the wrong property (the original
-// VGS-114 symptom, and now the only way left to express it); canDispatch
-// reduced to a bare equality; the three ResultsList producer bindings mutated —
-// kind and query transposed, a negation dropped, a command hardcoded; a fact
-// carrying the backend state where the probe state belongs; the retry predicate
-// inverted; ensureStatus() moved to the launcher-CLOSED branch with the opened
-// branch left in place, and its condition narrowed back; a `return` hoisted
-// above the stale-result clear; the fileSearchError capture and its reset
-// deleted; the fallback conjunct dropped from search()'s refusal; _fileLegActive
-// hardcoded false; the single-flight guard moved below the budget reset; the
-// generation check moved below the in-flight reset and made to fall through
-// instead of return; the retrying state never published; statusState declared
-// "ready"; helperHasFallback restated instead of derived; the argv terminator
-// and joined values reverted in either file. Plus the pre-fix sources, both the
-// `isFileSearching = ... && DSearchService.dsearchAvailable` form and the
-// `if (!DSearchService.dsearchAvailable) return;` form.
+// Test per-kind launcher search tools, unknown probe state, and empty-state messages.
+// Execute marked decisions and inspect their adapters, producers, branches, and statement order.
+// Use reachable input combinations so impossible fixture states cannot satisfy the intended case.
 
 "use strict";
 
@@ -72,19 +24,15 @@ const resultsSource = fs.readFileSync(RESULTS, "utf8");
 const menuSource = fs.readFileSync(MENU, "utf8");
 const helperSource = fs.readFileSync(HELPER, "utf8");
 
-// This text comes from repo files and is EXECUTED here, so it runs inside a
-// child bounded by a wall clock — scripts/lib/qml-region.js says what
-// that bounds and what it does not.
+// Extracted code runs under qml-region process deadlines.
 const { evaluateMarked, regionOf, guardChild } = require("./lib/qml-region.js");
 const qmlSource = require("./lib/qml-source.js");
 const { stripComments } = qmlSource;
 
-// Returns only in the child; the parent exits with its status.
+
 guardChild();
 
-// Prove the reader before it reads anything: that a token surviving only in a
-// comment pins nothing. The guard's own self-test is a separate manifest row —
-// it cannot run inside a guarded suite and still report a broken guard.
+// Run source-reader self-tests first. Guard self-tests run separately so a broken guard cannot hide them.
 qmlSource.selfTest();
 
 const backend = evaluateMarked(serviceSource, "SEARCH BACKEND DECISION", [
@@ -101,8 +49,7 @@ const files = evaluateMarked(controllerSource, "FILE SEARCH DECISION", [
     "fileSearchQueryFrom", "shouldRetryAfterProbe"
 ], "Controller.qml");
 
-// The extracted regions must be free of QML, or this harness tests something the
-// shell does not run.
+// Keep extracted decisions independent of QML state so fixture inputs fully determine their behavior.
 for (const [label, source, marker] of [
     ["DSearchService.qml", serviceSource, "SEARCH BACKEND DECISION"],
     ["ResultsList.qml", resultsSource, "EMPTY STATE DECISION"],
@@ -118,11 +65,8 @@ for (const [label, source, marker] of [
 
 const ready = (fd, rg) => ({ state: "ready", fd: fd, ripgrep: rg });
 
-// One Python function's text, BOUNDED at the next top-level `def`. A slice that
-// only knows where it starts runs to EOF, and an assertion looking for a token
-// anywhere in it is then satisfied by an unrelated line hundreds of lines later:
-// that is how `raise RuntimeError(` stayed green with the raise it names
-// replaced by `pass`. Nested defs are indented, so they do not end the slice.
+// Bound a Python function at the next top-level def. Unbounded slices can borrow
+// an unrelated later statement to satisfy a missing failure branch.
 function pythonFunction(source, name) {
     const start = source.indexOf(`def ${name}(`);
     assert.notEqual(start, -1, `bin/vshell-helper must define ${name}()`);
@@ -130,25 +74,18 @@ function pythonFunction(source, name) {
     return source.slice(start, end === -1 ? source.length : end);
 }
 
-// --- 1. each kind names its own tool ----------------------------------------
-//
-// The whole defect in one table: text follows ripgrep, name search follows fd,
-// and neither may answer for the other.
+// Text search depends on ripgrep; name search depends on fd.
 
 assert.equal(backend.backendCommandFor("text"), "rg");
 for (const kind of ["files", "folders", "all"])
     assert.equal(backend.backendCommandFor(kind), "fd", `${kind} is fd's`);
 
-// An unlisted kind must NOT inherit fd by falling through — "zoxide" is a real
-// kind this service does not probe, and a typo is not fd's either.
+// An unrecognized kind must not fall through to the fd decision.
 for (const kind of ["zoxide", "sqlite", "", undefined, null])
     assert.equal(backend.backendCommandFor(kind), "",
         `${JSON.stringify(kind)} names no probed tool, so the gate must not answer for it`);
 
-// --- 2. every flag combination, both kinds ----------------------------------
-//
-// Independently, all four ways round: the inverted ternary this suite's control
-// run plants keeps every token in place and only fails here.
+// Exercise tool availability independently for each search kind.
 
 for (const [fd, rg] of [[true, true], [true, false], [false, true], [false, false]]) {
     const probe = ready(fd, rg);
@@ -160,13 +97,13 @@ for (const [fd, rg] of [[true, true], [true, false], [false, true], [false, fals
     }
 }
 
-// The regression in its exact shape: ripgrep installed, fd missing.
+
 assert.equal(backend.backendStateFor("text", "needle", ready(false, true)), "available",
     "ripgrep-backed text search must survive a machine with no fd — this is the bug");
 assert.equal(backend.backendStateFor("files", "needle", ready(false, true)), "missing",
     "while file search on the same machine is honestly reported missing");
 
-// --- 3. unknown is never read as missing ------------------------------------
+
 
 for (const probe of [{ state: "pending" }, { state: "pending", fd: true, ripgrep: true }]) {
     for (const kind of ["files", "folders", "all", "text"]) {
@@ -182,15 +119,8 @@ for (const probe of [{ state: "failed" }, {}, null, undefined, { state: "nonsens
 assert.equal(backend.backendStateFor("zoxide", "needle", ready(true, true)), "unknown",
     "a kind this service never probes stays unknown even with both tools present");
 
-// The rule at its own entry point, WITH the kind — dispatchAllowed answers
-// differently per kind, so calling it with a state alone leaves `kind`
-// undefined and every case falls through the no-fallback arm by accident.
-//
-// A proven-missing tool blocks. An unanswered probe blocks only where
-// dispatching would silently buy the helper's full directory walk: ripgrep
-// fails fast with a real cause, so text goes; an fd-backed name search does not,
-// because taking that walk on nobody's answer is exactly what the overview
-// declines.
+// Pass the kind as well as probe state. Unknown name-search availability must not authorize
+// a fallback directory walk; text search has no such walk and can report its tool failure directly.
 for (const kind of ["files", "text"]) {
     assert.ok(backend.dispatchAllowed("available", kind),
         `a tool proven present dispatches (${kind})`);
@@ -208,11 +138,7 @@ assert.ok(!backend.dispatchAllowed("unknown", "files"),
 assert.ok(!backend.dispatchAllowed("unknown", "folders"),
     "same for folders — a path completion reaches 'available' earlier, never this arm");
 
-// --- 4. folder path completion is not fd's ----------------------------------
-//
-// bin/vshell-helper answers a folder query that starts at a path from its own
-// directory walk, BEFORE fd is consulted, so gating it on fd would take away a
-// capability the implementation still has.
+// Explicit folder paths use the helper's directory walk before fd lookup.
 
 for (const query of ["~/dev", "~", "/home/x", "  ~/dev", "/"])
     assert.ok(backend.pathCompletion("folders", query),
@@ -225,9 +151,7 @@ assert.equal(backend.backendStateFor("folders", "~/dev", ready(false, false)), "
 assert.equal(backend.backendStateFor("folders", "dev", ready(false, false)), "missing",
     "while a name search for the same kind is not");
 
-// The exemption mirrors a branch in another file, so pin that branch: if the
-// helper stops answering path queries before it looks for fd, the QML above
-// starts promising a capability that is gone.
+// Check the helper branch that makes the QML path-completion exemption valid.
 {
     const nameHits = pythonFunction(helperSource, "_launcher_search_name_hits");
     const pathBranch = nameHits.indexOf('if kind == "folders" and query.strip().startswith(("~", "/")):');
@@ -241,7 +165,7 @@ assert.equal(backend.backendStateFor("folders", "dev", ready(false, false)), "mi
         "from a code path that does need fd");
 }
 
-// --- 5. text has no fallback, name search does ------------------------------
+
 
 assert.ok(!backend.helperHasFallback("text"),
     "text search shells out to ripgrep and raises without it — the service refuses it outright");
@@ -249,7 +173,7 @@ for (const kind of ["files", "folders", "all"])
     assert.ok(backend.helperHasFallback(kind),
         `${kind} falls back to the helper's own walk, which vgsMenu accepts`);
 
-// --- 6. the chips map to kinds in one place ---------------------------------
+
 
 assert.equal(backend.kindForType("dir"), "folders");
 assert.equal(backend.kindForType("text"), "text");
@@ -258,17 +182,10 @@ for (const type of ["file", "all", "", undefined, "nonsense"])
     assert.equal(backend.kindForType(type), "files",
         `${JSON.stringify(type)} is a name search`);
 
-// --- 7. the empty state matrix ----------------------------------------------
-//
-// The decisions read NAMED FIELDS, so a fact cannot arrive in the wrong slot;
-// what the view builds is pinned verbatim in section 8b.
+// Use named empty-state fields and verify their producers at the QML adapter.
 
-// EVERY combination below is one the program can actually produce. That is not
-// decoration: `declined` defaults false, and a missing or checking backend state
-// with a searchable query ALWAYS declines — so an assertion that leaves the
-// default there is satisfied by an input the shell cannot build, and stops
-// covering the arm it names. Each case sets declined explicitly where the state
-// implies it.
+// Set declined where the program derives it. A searchable query with a missing or checking
+// backend cannot produce declined:false, so that fixture would cover an unreachable state.
 const facts = extra => Object.assign({
     backendState: "available",
     missingCommand: "",
@@ -302,8 +219,7 @@ assert.equal(view.fileEmptyStateKey(facts({ searchError: "ripgrep is required fo
 assert.equal(view.fileEmptyStateKey(declinedFacts({ backendState: "unknown" })), "unchecked",
     "and one the gate refused says that instead");
 
-// ARM ORDER, with both arms true at once — one field per assertion cannot see
-// a reordering, and both of these reorderings pass every assertion above.
+// Make competing arms true together so swapped precedence becomes observable.
 assert.equal(view.fileEmptyStateKey(declinedFacts({
     backendState: "missing", missingCommand: "fd", searchError: "boom"
 })), "missing-fd",
@@ -326,11 +242,8 @@ assert.equal(view.fileHintKey(declinedFacts({ backendState: "unknown", probeStat
     "advice is a no-op while an episode is in flight");
 assert.equal(view.fileHintKey(facts({ backendState: "unknown", probeState: "failed" })), "",
     "no probe line beside a search that actually ran, whatever the probe did");
-// THE STARTUP WINDOW, as the program produces it: first probe outstanding, two
-// characters typed, so the query is searchable and therefore declined. The
-// same case with declined:false is unreachable, and pinning that instead left
-// this silent — the hint rendered "Still checking ...: " with a dangling colon
-// and no reason, under a message already saying "Checking search tools".
+// A searchable query during the first probe is declined. Test that reachable state to detect
+// a checking hint with a dangling separator and no reason.
 assert.equal(view.fileHintKey(declinedFacts({ backendState: "checking", probeState: "pending" })), "",
     "the first probe reports NOTHING: there is no reason yet, and the message above already " +
     "says the tools are being checked");
@@ -352,8 +265,7 @@ assert.equal(view.fileEmptyIcon("empty", "file"), "insert_drive_file");
 assert.equal(view.fileEmptyIcon("empty", "dir"), "folder_open");
 assert.equal(view.fileEmptyIcon("empty", "text"), "article");
 
-// The prompt comes first: nothing is being checked on the user's behalf before a
-// query that could dispatch, and a query too short to dispatch is not declined.
+// A query too short to dispatch is a prompt state, not a declined request.
 assert.equal(view.fileEmptyStateKey(facts({
     backendState: "checking", queryLength: 0, searchable: false
 })), "prompt", "an empty field prompts even while the probe is outstanding");
@@ -361,7 +273,7 @@ assert.equal(view.fileEmptyStateKey(facts({
     backendState: "checking", queryLength: 1, searchable: false
 })), "short", "and a short query is short, not checking");
 
-// The helper's text, made safe to put on screen.
+
 assert.equal(view.errorLine("ripgrep is required for text search"),
     "ripgrep is required for text search", "an ordinary diagnosis passes through");
 assert.equal(view.errorLine("usage: vshell launcher-search\n  --kind\n  --limit"),
@@ -374,7 +286,7 @@ assert.equal(view.errorLine("x".repeat(400)).length, 160,
 assert.equal(view.errorLine(""), "");
 assert.equal(view.errorLine(null), "");
 
-// --- 7b. the file-search leg, and the query it would send -------------------
+
 
 assert.equal(files.fileSearchQueryFrom("plugins", "/etc", "etc"), "",
     "plugins mode runs no file search: a leading / is the plugin's own text there, and a " +
@@ -386,9 +298,7 @@ assert.equal(files.fileSearchQueryFrom("all", "/notes", "notes"), "notes",
 assert.equal(files.fileSearchQueryFrom("files", "/d notes", "notes"), "notes",
     "including the typed-type form, whose parsed query is what arrives");
 
-// The counter-example the docs got wrong once: the BARE "/" is consumed as the
-// launcher's trigger, but "/d " consumes only itself, so an absolute path
-// survives and reaches the helper's fd-free path completion.
+// A bare slash is a launcher trigger; /d consumes its own prefix and preserves an absolute path query.
 assert.equal(files.fileSearchQueryFrom("files", "/d /home/x", "/home/x"), "/home/x",
     "the typed-type prefix passes a /-rooted query through intact");
 assert.ok(backend.pathCompletion("folders", files.fileSearchQueryFrom("files", "/d /home/x", "/home/x")),
@@ -414,18 +324,13 @@ assert.ok(view.fileLegActive("all", true), "and so is any mode holding a searcha
 assert.ok(!view.fileLegActive("plugins", false), "plugins mode is not");
 assert.ok(!view.fileLegActive("apps", false), "nor is a mode with a query too short to dispatch");
 
-// The one owner of "long enough to search", which those two now read instead of
-// carrying their own literal.
+
 assert.ok(backend.queryIsDispatchable("ab"), "two characters dispatch");
 assert.ok(backend.queryIsDispatchable("  ab  "), "after trimming");
 for (const query of ["a", " a ", "", " ", undefined, null])
     assert.ok(!backend.queryIsDispatchable(query), `${JSON.stringify(query)} does not`);
 
-// And the kind-aware companion every launcher gate actually reads. "~" and "/"
-// are one character AND the first keystroke of a path the helper completes
-// without fd, so the length rule alone refused the capability pathCompletion
-// exists to allow and the surface said "type at least two characters" for a
-// query the helper answers.
+// Single-character path starts can use folder completion without fd; length alone cannot reject them.
 for (const query of ["~", "/", "~/", "  ~  "])
     assert.ok(backend.queryIsSearchable("folders", query),
         `${JSON.stringify(query)} in folders mode is a path the helper completes, not a short query`);
@@ -439,12 +344,7 @@ for (const [kind, query] of [["files", "~"], ["files", "/"], ["text", "~"], ["fo
 assert.equal(backend.queryIsSearchable("folders", "~"), backend.pathCompletion("folders", "~"),
     "the exemption IS pathCompletion, not a second copy of it");
 
-// --- 7c. the whole dispatch matrix, over the named snapshot -----------------
-//
-// One entry point per decision, each reading { state, fd, ripgrep } by name, so
-// a transposed pair is not expressible at a call site — it would have to be
-// written `fd: ripgrepAvailable`, which is legible in review. What the QML
-// builds is pinned verbatim in section 8.
+// Use a named {state, fd, ripgrep} snapshot and verify its property mapping.
 
 const probe = (state, fd, ripgrep) => ({ state: state, fd: fd, ripgrep: ripgrep });
 
@@ -457,8 +357,7 @@ assert.equal(backend.backendStateFor("files", "needle", probe("ready", true, fal
 assert.equal(backend.backendStateFor("files", "needle", probe("retrying", true, true)), "unknown",
     "a retry episode answers nothing about the tools, whatever the last flags said");
 
-// kind and query are not interchangeable either: swapped, backendCommandFor
-// would see a query string, answer "" and leave every state permanently unknown.
+// Kind and query order matters; swapping them can leave every backend lookup unknown.
 assert.notEqual(backend.backendStateFor("folders", "~/dev", probe("ready", false, false)),
     backend.backendStateFor("~/dev", "folders", probe("ready", false, false)),
     "backendStateFor's kind and query slots must not be symmetric");
@@ -478,9 +377,7 @@ for (const [fd, rg] of [[true, true], [true, false], [false, true], [false, fals
     }
 }
 
-// A failed probe never demotes a successful one. Re-probing runs on every open
-// of a machine missing a tool, so one slow re-probe replacing "ready" would
-// refuse name search and blame tools that were found seconds earlier.
+// A failed reprobe must not replace an already successful tool discovery.
 {
     const kept = backend.probeFailureOutcome("ready", 1, 3);
     assert.equal(kept.state, "ready",
@@ -500,9 +397,7 @@ for (const [fd, rg] of [[true, true], [true, false], [false, true], [false, fals
     assert.ok(!backend.probeFailureOutcome("retrying", 3, 3).retry, "and stop retrying");
 }
 
-// A settled answer is the only one worth leaving alone. "ready" with a tool
-// missing is exactly the state the install instruction is given from, so it must
-// NOT count as settled — otherwise installing fd changes nothing until restart.
+// A ready probe with missing tools still needs reprobe so installation can take effect without restart.
 assert.ok(backend.probeSettled(probe("ready", true, true)), "everything found and answered");
 assert.ok(!backend.probeSettled(probe("ready", false, true)),
     "ready with fd missing is the state we tell the user to act on: re-probe it, or the product " +
@@ -513,8 +408,7 @@ for (const state of ["pending", "retrying", "failed"])
         `${state} is not an answer at all`);
 assert.ok(!backend.probeSettled(null), "and neither is nothing");
 
-// The service's own refusal is narrower than the overview's gate, on purpose:
-// vgsMenu still reaches the walk.
+// The service permits fallback directory walks that the overview gate declines.
 assert.ok(backend.serviceRefuses("text", "missing"), "text has no fallback, so the service refuses");
 for (const kind of ["files", "folders", "all"])
     assert.ok(!backend.serviceRefuses(kind, "missing"),
@@ -523,12 +417,7 @@ for (const state of ["available", "unknown", "checking"])
     assert.ok(!backend.serviceRefuses("text", state),
         `the service refuses only a PROVEN missing tool, not ${state}`);
 
-// --- 8. the adapters: full argument lists, in order -------------------------
-//
-// Each of these is the ONE line between an executed decision and the properties
-// feeding it, so the pin is the whole call with its arguments in their slots. A
-// presence check would pass with two of them swapped, which is how the original
-// bug reads at runtime.
+// Require complete adapter calls so swapped arguments cannot satisfy independent token checks.
 
 {
     const q = qmlSource(serviceSource, "DSearchService.qml");
@@ -563,15 +452,13 @@ for (const state of ["available", "unknown", "checking"])
             "missing would be refused here too, taking the helper walk away from vgsMenu"]
     ]);
 
-    // The declared initial value is part of the contract: started at "ready",
-    // the startup window tells a machine that HAS fd to install it.
+    // An initially ready state would label installed tools missing before the probe answers.
     assert.ok(qmlSource.flat(stripComments(serviceSource))
         .includes('property string statusState: "pending"'),
         "statusState must START pending — before the first probe answers, nothing is known, and " +
         "any other initial value is a claim about tools nobody has looked for yet");
 
-    // The argv builders: user text goes behind "--" or into a joined
-    // "--flag=value", never into a slot argparse can read as an option name.
+    // Keep user text behind -- or in joined --flag=value arguments so it cannot become an option.
     for (const [fn, why] of [
         ["search", "a query starting with '-' must search, not die in argparse"],
         ["preview", "and so must a path"]
@@ -643,9 +530,7 @@ for (const state of ["available", "unknown", "checking"])
             "results nor attributes its error to them"]
     ]);
 
-    // BRANCH, not count: two supersedes in the declined block would satisfy the
-    // occurrence count above while the sub-threshold return abandons a search
-    // without superseding it — which is the defect, with the count still green.
+    // Check each abandonment branch separately; duplicate supersedes in one branch cannot cover another.
     for (const [landmark, what, why] of [
         ["if (!DSearchService.queryIsSearchable(kind, fileQuery))", "the sub-threshold return",
             "nothing dispatches for a query this short, so nothing else supersedes the last one"],
@@ -657,9 +542,7 @@ for (const state of ["available", "unknown", "checking"])
             `${what} must supersede inside its own branch — ${why}`);
     }
 
-    // POSITION, not presence: the guard below the error branch still reads
-    // correctly and still captures a stale kind's failure into fileSearchError,
-    // which is the defect the line was added for.
+    // Reject stale-kind responses before copying their error into the active view.
     {
         const body = q.body("performFileSearch");
         const dispatched = body.indexOf("DSearchService.search(");
@@ -676,8 +559,7 @@ for (const state of ["available", "unknown", "checking"])
             "fileSearchError and shown under the search now on screen");
     }
 
-    // ORDER, not presence: a `return` placed above the clear leaves both tokens
-    // in the function and the stale results on screen.
+    // The stale-result clear must run before its return, not merely appear in the same function.
     {
         const gate = q.blockFrom(q.indexOf("if (!DSearchService.canDispatch(kind, fileQuery))"),
             "the not-dispatching gate");
@@ -698,13 +580,9 @@ for (const state of ["available", "unknown", "checking"])
             "which queries search at all"]
     ]);
 
-    // The ban is scoped to the FILES BRANCH of performSearch, not its body: the
-    // same function carries the plugin-phase `searchQuery.length >= 2`, which
-    // gates a different question and is deliberately left alone.
+    // Scope this ban to file search; plugin search uses a separate length rule.
     {
-        // Located on the RAW source because the landmark carries a string
-        // literal, whose contents the structure view blanks; blankRanges keeps
-        // offsets, so the index still means the same place to blockFrom.
+        // This literal-bearing landmark uses raw text. Preserved offsets map it to the structural brace walk.
         const branchAt = controllerSource.indexOf('if (searchMode === "files") {',
             controllerSource.indexOf("function performSearch("));
         const filesBranch = q.blockFrom(branchAt, "performSearch's files branch");
@@ -719,10 +597,7 @@ for (const state of ["available", "unknown", "checking"])
         ["DSearchService.kindForType", "the type-to-kind mapping stays in its owner"]
     ]);
 
-    // The other three abandon paths. A response in flight outlives all of them,
-    // and _applyFileSearchResults CONCATENATES outside files mode, so one that
-    // outlives a mode change appends Files and Folders sections into the apps
-    // list rather than replacing anything.
+    // A response can outlive a mode change. It must not append file sections to another result mode.
     q.requires(q.body("setSearchQuery"), "setSearchQuery()", [
         ["_supersedeFileSearch();",
             "a query change supersedes at the KEYSTROKE, not at the dispatch 200ms later: " +
@@ -740,13 +615,8 @@ for (const state of ["available", "unknown", "checking"])
             "restorePreviousMode assigns searchMode directly, so a setMode-only bump misses it");
     }
 
-    // One owner for the bump, so every path above is the same act — and
-    // abandoning means the search is no longer IN FLIGHT as well as no longer
-    // current. The callback returns at the generation check before it would
-    // clear the flag, and outside files mode nothing else does, so without this
-    // a mode change leaves the flag set for the life of the Controller and the
-    // empty state — which requires !isFileSearching — never renders again in any
-    // mode: a zero-result search then paints a blank panel.
+    // Abandonment must clear in-flight state as well as advance generation. A stale callback returns
+    // before clearing the flag, so leaving it set can suppress empty states indefinitely.
     q.requires(q.body("_supersedeFileSearch"), "_supersedeFileSearch()", [
         ["_fileSearchGeneration++;", "the generation moves"],
         ["isFileSearching = false;", "and nothing is left marked in flight"]
@@ -765,8 +635,7 @@ for (const state of ["available", "unknown", "checking"])
             "a query typed before the probe answered is re-run when it lands"]
     ]);
 
-    // BRANCH, not presence: the token satisfies a presence check from either
-    // arm, and in the wrong one the failed probe never gets its second chance.
+    // Require retry in the opened branch; the same token in the closed branch cannot provide recovery.
     {
         const opened = q.blockFrom(q.indexOf("if (active) {"), "the launcher-opened branch");
         assert.ok(qmlSource.flat(stripComments(opened)).includes("DSearchService.ensureStatus()"),
@@ -790,10 +659,8 @@ for (const state of ["available", "unknown", "checking"])
     const q = qmlSource(resultsSource, "ResultsList.qml");
     const code = qmlSource.flat(stripComments(resultsSource));
 
-    // The PRODUCERS of those facts, verbatim. Pinning only the calls left the
-    // seam one line higher up: a kind/query swap or a dropped negation here
-    // reaches the same user-visible symptom through the view instead of the
-    // gate, with every consumer call still correct.
+    // Verify fact producers as well as consumers. A swapped kind/query or negation at the producer
+    // can produce incorrect view state with every consumer call unchanged.
     for (const [binding, why] of [
         ["readonly property string _fileQuery: controller ? controller.fileSearchQuery() : \"\"",
             "the query is the controller's one authority, not a re-derivation"],
@@ -814,7 +681,7 @@ for (const state of ["available", "unknown", "checking"])
             `ResultsList must compute \`${binding}\` — ${why}`);
     }
 
-    // And the facts they are packed into, by name.
+
     for (const field of [
         "backendState: _fileBackendState", "missingCommand: _missingBackendCommand",
         "probeState: DSearchService.statusState", "queryLength: _fileQuery.length",
@@ -845,8 +712,7 @@ for (const state of ["available", "unknown", "checking"])
             "the search roots, carrying control and bidi characters into a launcher overlay"]
     ]);
 
-    // The label that renders it is bounded like the hint beside it. Unbounded,
-    // a long diagnosis stretches the centered column past the results panel.
+    // Bound the diagnosis label so long messages cannot stretch the centered results column.
     {
         const at = q.indexOf("text: getEmptyText()");
         assert.notEqual(at, -1, "ResultsList must render the empty-state message");
@@ -871,8 +737,7 @@ for (const state of ["available", "unknown", "checking"])
     ]);
 }
 
-// No surface may gate on a single flag again. This is the ban that catches the
-// pre-fix forms being re-added beside the new gate rather than instead of it.
+// Reject single-tool flags alongside the shared gate so another path cannot bypass per-kind decisions.
 for (const [label, source] of [["Controller.qml", controllerSource], ["ResultsList.qml", resultsSource]]) {
     const code = stripComments(source);
     for (const banned of ["dsearchAvailable", "DSearchService.fdAvailable", "DSearchService.ripgrepAvailable"]) {
@@ -882,10 +747,7 @@ for (const [label, source] of [["Controller.qml", controllerSource], ["ResultsLi
     }
 }
 
-// --- 8c. the vgsMenu plugin, which this branch also changed -----------------
-//
-// Read here because it is in the diff: the same threshold owner, the same argv
-// shape, and a plugin the suite did not open before.
+// Verify vgsMenu uses the shared threshold and argv construction rules.
 {
     const q = qmlSource(menuSource, "VGSMenu.qml");
     const code = qmlSource.flat(stripComments(menuSource));
@@ -900,10 +762,7 @@ for (const [label, source] of [["Controller.qml", controllerSource], ["ResultsLi
             "searching at two characters while the launcher's own rule moved");
     }
 
-    // The dispatch predicate and the empty state must be the SAME predicate.
-    // They were not: the dispatch site exempts an explicit folder path, so
-    // typing "~" in folder mode runs a real search while the empty state said
-    // "Type at least two characters" about it.
+    // Dispatch and empty state must agree on explicit path exemptions.
     q.requires(q.body("refreshFileItems"), "refreshFileItems()", [
         ["if (!fileSearchDispatches(trimmed))", "the dispatch site asks the shared predicate"]
     ]);
@@ -926,10 +785,7 @@ for (const [label, source] of [["Controller.qml", controllerSource], ["ResultsLi
         "and pass that configured command joined to its flag");
 }
 
-// No launcher SEARCH surface may carry its own length literal. Scoped to the
-// functions that dispatch a file search: the Controller's plugin-phase and
-// clipboard legs have their own thresholds for a different question and are
-// deliberately untouched.
+// Scope shared-length checks to file dispatch functions; other search kinds have distinct thresholds.
 for (const [label, source, fns] of [
     ["Controller.qml", controllerSource, ["performFileSearch", "fileSearchQuery", "_retryFileSearchAfterProbe"]],
     ["VGSMenu.qml", menuSource, ["refreshAllItems", "refreshFileItems"]]
@@ -943,11 +799,7 @@ for (const [label, source, fns] of [
     }
 }
 
-// --- 8d. the helper's own argv, one layer down ------------------------------
-//
-// The second time an option-vs-value ambiguity crossed this boundary: the QML
-// joined its flags, argparse accepted the value, and fd rejected it — silently,
-// because the run was not checked.
+// The helper must also preserve option/value separation when constructing fd arguments.
 {
     const nameHits = pythonFunction(helperSource, "_launcher_search_name_hits");
     const fdCall = nameHits.indexOf("subprocess.run(command");
@@ -966,10 +818,7 @@ for (const [label, source, fns] of [
         "and raise rather than continue with an empty candidate list");
 }
 
-// --- 9. the view cannot call a controller function that does not exist ------
-//
-// Optional chaining guards a null controller, not a missing function: renaming
-// one would leave the binding throwing TypeError with the empty state blank.
+// Optional chaining on the controller does not protect a renamed or absent method.
 {
     const controllerCode = stripComments(controllerSource);
     const called = new Set();
@@ -986,7 +835,7 @@ for (const [label, source, fns] of [
     }
 }
 
-// --- 10. the probe recovers ---------------------------------------------------
+
 
 {
     const q = qmlSource(serviceSource, "DSearchService.qml");
@@ -1003,12 +852,8 @@ for (const [label, source, fns] of [
         ["statusRetryTimer.start()", "the retry still runs whatever is published"]
     ]);
 
-    // Restored ALONGSIDE the block above, not replaced by it. Dropping these
-    // three took real coverage with them: without the first, a timeout and a
-    // non-zero exit report the same text; without the second, a probe whose
-    // output cannot be read reports NOTHING and leaves the state at "pending"
-    // for the session, refusing every fd-backed search behind "Checking search
-    // tools" — the fail-closed dead end this whole change exists to remove.
+    // Distinguish timeout from nonzero exit and ensure unreadable probe output leaves pending state
+    // with a reported failure instead of permanently blocking name search.
     q.requires(q.body("_probeStatus"), "_probeStatus()", [
         ["exitCode === 124",
             "a timeout is named as one: 'the CLI never answered' is a different diagnosis from " +
@@ -1020,10 +865,7 @@ for (const [label, source, fns] of [
             "success is the ONLY thing that publishes the tool flags"]
     ]);
 
-    // ORDER inside the probe: the generation check is the FIRST thing its
-    // callback does. Below the in-flight reset it would let a superseded probe
-    // clear the flag; below the failure handler it would let a stale failure
-    // overwrite a fresh success.
+    // Check generation before clearing in-flight state or publishing failure.
     {
         const guardCondition = "if (generation !== root._statusGeneration)";
         const probeBody = q.body("_probeStatus");
@@ -1040,17 +882,14 @@ for (const [label, source, fns] of [
         assert.ok(probeBody.indexOf("_statusInFlight = true") < captured,
             "the in-flight flag is raised for the launch, not after it");
 
-        // The guard has to RETURN. Detecting a stale generation and then
-        // carrying on — logging it, say — leaves the late failure landing on the
-        // fresh success exactly as before, with the position assertions green.
+        // The stale-generation guard must return; a condition that only logs still applies the stale result.
         const guarded = stripComments(probeBody.slice(guard + guardCondition.length));
         assert.ok(/^\s*\{?\s*return;/.test(guarded),
             "the generation guard's very next statement must be `return;`: a stale probe that " +
             "carries on after being detected is not guarded, it is announced");
     }
 
-    // BRANCH: single-flight lives in rediscover, ahead of the budget reset, so a
-    // second open during the retry window cannot restart the attempt budget.
+    // Check single-flight state before resetting retry budgets so repeated opens cannot restart the allowance.
     {
         const body = q.body("rediscover");
         const guard = body.indexOf("if (_statusInFlight || statusRetryTimer.running)");

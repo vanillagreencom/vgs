@@ -1,37 +1,11 @@
 #!/usr/bin/env python3
-"""Assert every external command VGS probes is declared or explicitly excluded.
+"""Check extracted external command probes against the dependency manifest.
 
-`config/vshell/dependencies.json` is what `vshell deps status` reports against.
-When shipped code probes a command that is in neither the `features` groups nor
-the `undeclared` exclusion map, `deps status` calls the system healthy while the
-feature behind the probe is dead — a silent, user-facing failure. The VGS-14
-audit that established the current manifest was done by hand and was stale
-before it was written up; this check is what keeps it from drifting again.
-
-Coverage boundary
------------------
-Scanned:
-
-* ``shutil.which("cmd")`` in shipped Python
-* ``command -v cmd`` in shipped shell
-* argv heads of ``bin/vshell-helper``'s ``CAPABILITY_PROBES`` table (D005)
-* argv-head literals in shipped QML/JS: ``command: ["cmd", ...]``,
-  ``argv: ["cmd", ...]``, ``["cmd", ...]`` assigned to a ``*ommand``/``argv``
-  property, plus ``Quickshell.execDetached(["cmd", ...])``
-
-NOT scanned, deliberately:
-
-* commands built at runtime from a variable or from user settings — there is no
-  literal to extract, and a check that guessed would be noise
-* ``sh -c`` payloads: the command inside the string is shell script, not an
-  argv head, and the wrapper (``sh``) is what is actually executed
-* anything under ``third_party/`` or ``packaging/`` — vendored or
-  distro-facing, not the shell runtime
-* ``~/dotfiles`` — the personal overlay layer is explicitly out of VGS's
-  dependency surface
-
-A command that is not extracted is not thereby blessed; it is simply outside
-what this check can see, and that is why the boundary is written down.
+Coverage includes literal shutil.which calls, command -v probes, helper
+CAPABILITY_PROBES argv heads, and supported QML/JS command arrays.
+Runtime-computed commands, shell payloads, vendored trees, packaging and
+personal dotfiles are outside this scan.
+An unextracted command receives no declaration check.
 """
 
 from __future__ import annotations
@@ -45,9 +19,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = REPO_ROOT / "config" / "vshell" / "dependencies.json"
 
-# Roots holding shipped code. Repo tooling under scripts/ is excluded on
-# purpose: it runs on a maintainer's machine, not a user's, so its probes are
-# not dependencies of the shell.
+# Maintainer tooling does not declare dependencies of the shipped shell.
 SCAN_ROOTS = (
     REPO_ROOT / "bin",
     REPO_ROOT / "config" / "vshell",
@@ -57,10 +29,7 @@ SCAN_ROOTS = (
 
 SCAN_SUFFIXES = {".py", ".sh", ".qml", ".js", ".json", ".service", ""}
 
-# Vendored asset trees: theme data and cursor/icon binaries, not VGS code. The
-# whitespace check in ci.yml excludes the same two for the same reason. A probe
-# site cannot exist in them, and scanning them would mean either reading
-# thousands of binaries or swallowing the decode errors they raise.
+# These vendored asset trees contain theme data and cursor/icon binaries.
 SKIP_TREES = (
     REPO_ROOT / "config" / "vshell" / "icons",
     REPO_ROOT / "config" / "vshell" / "nvim" / "colorschemes",
@@ -68,12 +37,9 @@ SKIP_TREES = (
 
 
 def _is_binary(path: Path) -> bool:
-    """A NUL byte near the start means the file is not text.
+    """Return whether the sampled file prefix contains a NUL byte.
 
-    Compiled helpers ship under bin/ with no extension, so the extension filter
-    alone cannot tell them from shell scripts. This is a DELIBERATE skip class,
-    not a swallowed error: a binary cannot contain a `shutil.which` call, and
-    anything that fails to decode for any OTHER reason still fails the check.
+    Compiled helpers can have no extension. Other decoding failures remain errors.
     """
     try:
         with path.open("rb") as handle:
@@ -102,11 +68,7 @@ _SHELL_AND_INTERPRETERS = {
     "env",
 }
 
-# The base system. Declaring these would make `vshell deps status` list
-# coreutils and systemd as installable dependencies of a Wayland shell, which
-# tells a user nothing: a machine missing `cp` or `systemctl` cannot reach the
-# point of running VGS at all. This is a *baseline*, not an exclusion list —
-# entries here need no per-command reason because they share one.
+# Base-system commands are prerequisites of the supported session.
 _BASE_SYSTEM = {
     # coreutils / POSIX userland
     "awk",
@@ -151,15 +113,8 @@ NOT_A_DEPENDENCY = _SHELL_AND_INTERPRETERS | _BASE_SYSTEM
 
 WHICH_RE = re.compile(r"""shutil\.which\(\s*["']([^"']+)["']""")
 
-# A capability probe EXECUTES a command to decide whether it is usable rather
-# than merely present (D005). Its argv lives in a Python data structure, which
-# none of the line-based extractors above can see, so a probe could introduce an
-# undeclared command while this check reported a clean sweep — the invisible
-# probe this file exists to prevent, in a new shape.
-#
-# Read from the AST rather than matched by regex, and it FAILS when the table
-# cannot be found or is not the expected shape. An extractor that silently stops
-# matching is worse than no extractor: the totals still look healthy.
+# Capability probes execute commands whose argv heads live in a Python table (D005).
+# Read that table through the AST and reject missing or unsupported shapes.
 CAPABILITY_PROBE_FILE = REPO_ROOT / "bin" / "vshell-helper"
 CAPABILITY_PROBE_TABLE = "CAPABILITY_PROBES"
 
@@ -206,11 +161,8 @@ def capability_probe_commands() -> list[tuple[str, int]]:
     die("is missing")
     return []
 COMMAND_V_RE = re.compile(r"""command\s+-v\s+["']?([A-Za-z0-9_.+@-]+)""")
-# The leading boundary matters: without it `queueCommand(["capture", ...])`
-# matches on its own name, and `capture` is a vshell subcommand — the real argv
-# head there is Paths.vshellCli, prepended by the callee.
-# The same lead-ins, but with the bracket ending the line: the head is on a
-# following line, which the per-line regex below can never reach.
+# The boundary excludes queueCommand: its callee prepends Paths.vshellCli.
+# A separate pattern handles argv heads after a line break.
 ARGV_OPEN_RE = re.compile(
     r"""(?<![A-Za-z0-9_])(?:command|argv|execDetached\()\s*[:=(]?\s*\[\s*$""",
     re.IGNORECASE,
@@ -236,7 +188,6 @@ def declared_commands(manifest: dict) -> set[str]:
     names: set[str] = set()
     for group in manifest.get("features", {}).values():
         names.update(group.get("commands", []) or [])
-        # anyCommands is a list of alternative-sets: any one member satisfies it.
         for alternatives in group.get("anyCommands", []) or []:
             names.update(alternatives or [])
         for commands in (group.get("compositorCommands") or {}).values():
@@ -254,13 +205,7 @@ def excluded_commands(manifest: dict) -> set[str]:
 
 
 def scan() -> tuple[dict[str, list[str]], list[str]]:
-    """(command -> sorted "path:line" probe sites, unreadable files).
-
-    Unreadable files are RETURNED, not skipped. Swallowing them left the scan
-    partial while the check still reported ok — a probe inside a file that
-    could not be decoded was simply unchecked, which is this script's own
-    governing rule broken by the script itself.
-    """
+    """Return command probe locations and files that could not be read."""
     sites: dict[str, set[str]] = {}
     unreadable: list[str] = []
 
@@ -296,18 +241,7 @@ def scan() -> tuple[dict[str, list[str]], list[str]]:
                 if path.suffix in (".qml", ".js"):
                     for match in ARGV_HEAD_RE.finditer(line):
                         record(match.group(1), path, lineno)
-                    # An argv array whose opening bracket ends the line puts the
-                    # command on the NEXT one — the idiomatic form once a list
-                    # grows past the margin:
-                    #
-                    #     command: [
-                    #         "some-tool",
-                    #         "--flag",
-                    #     ]
-                    #
-                    # A per-physical-line regex never sees that head at all, so
-                    # the probe went unrecorded. Look ahead past blank and
-                    # comment-only lines to the first entry.
+                    # An argv head can follow its opening bracket on a later line.
                     if ARGV_OPEN_RE.search(line):
                         for offset in range(1, 6):
                             if lineno + offset - 1 >= len(lines):
@@ -344,9 +278,7 @@ def main() -> int:
         return 1
     undeclared = {name: where for name, where in sorted(probed.items()) if name not in known}
 
-    # An exclusion for a command nothing probes any more is stale: it claims a
-    # decision about code that is gone, and it would silently bless the command
-    # if it ever came back.
+    # An unused exclusion could silently exempt a command added at that path later.
     stale = sorted(name for name in excluded if name not in probed)
 
     if undeclared:

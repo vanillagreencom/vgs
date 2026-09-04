@@ -14,11 +14,7 @@ FocusScope {
     property bool floating: false
     property alias searchField: searchField
 
-    // The dialog sizes itself from the widest key and description it will
-    // actually draw, so the columns fit their text instead of eliding it and
-    // the window stops at the content rather than running to a screen edge.
-    // Measured off hidden StyledTexts so the metrics come from the same font
-    // resolution the badges use.
+    // Measure hidden StyledText instances so dialog width follows the same font metrics as visible shortcut badges.
     readonly property var textExtents: {
         const cats = KeybindsService.cheatsheet.binds || {};
         let categories = 0;
@@ -56,9 +52,7 @@ FocusScope {
     readonly property real descColumnWidth: Math.max(200, Math.min(460, descMetrics.implicitWidth + Theme.spacingS))
     readonly property real columnWidth: keyColumnWidth + Theme.spacingM + descColumnWidth
     readonly property int preferredColumns: Math.max(1, Math.min(3, categoryCount))
-    // Floored: the cheatsheet is fetched when the dialog opens, so the first
-    // open measures an empty list and would otherwise map at its minimums and
-    // then jump once the binds land.
+    // Keep a minimum size while the first bind list loads to avoid opening small and then jumping.
     readonly property real preferredWidth: Math.max(720, preferredColumns * columnWidth + (preferredColumns - 1) * Theme.spacingM + Theme.spacingL * 2)
 
     StyledText {
@@ -281,11 +275,8 @@ FocusScope {
                 width: mainFlickable.width
                 spacing: Theme.spacingM
 
-                // Categories are atomic in the masonry, so asking for more
-                // columns than there are categories only makes empty ones.
-                // Counted after the search filter, which is what is drawn; the
-                // dialog's own width stays on the unfiltered count so it does
-                // not resize under every keystroke.
+                // Keep categories within columns and limit column count to filtered categories.
+                // Dialog width uses the unfiltered set so typing does not resize it.
                 property int numColumns: Math.max(1, Math.min(3, mainFlickable.categoryKeys.length, Math.floor(width / content.columnWidth)))
                 property var columnCategories: mainFlickable.distributeCategories(numColumns)
 

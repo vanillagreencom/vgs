@@ -274,9 +274,7 @@ VgsModal {
     content: Component {
         Item {
             anchors.fill: parent
-            // Size to the content so popoutPadding is an even inset on all four
-            // sides (a fixed modalHeight left the bottom flush). Also auto-adjusts
-            // when the conditional status row shows/hides.
+            // Size to content so modal padding remains even when the status row changes visibility.
             implicitHeight: contentColumn.implicitHeight + Theme.popoutPadding * 2
 
             Column {
@@ -285,8 +283,7 @@ VgsModal {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.margins: Theme.popoutPadding
-                // With the section labels gone, whitespace alone separates the
-                // sections — use the section-gap step (XL), not the row gap.
+
                 spacing: Theme.spacingXL
 
                 Item {
@@ -349,9 +346,7 @@ VgsModal {
                     }
                 }
 
-                // Options sit directly on the modal surface — whitespace and the
-                // controls' own labels do the grouping; a bordered box here
-                // stacked a third stroke level inside the modal.
+
                 Column {
                     id: screenshotOptions
                     width: parent.width

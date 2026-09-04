@@ -7,9 +7,9 @@ Item {
     id: keyboard_controller
     readonly property var log: Log.scoped("KeyboardController")
 
-    // reference on the TextInput
+
     property Item target
-    //Booléan on the state of the keyboard
+
     property bool isKeyboardActive: false
 
     property var rootObject
@@ -32,7 +32,7 @@ Item {
             log.debug("The keyboard is already hidden");
     }
 
-    // private
+
     property Item keyboard: null
     Component {
         id: keyboardComponent

@@ -499,9 +499,7 @@ Singleton {
         target: VGSBackendService
         enabled: root.refCount > 0
         function onClipboardStateUpdate(data) {
-            // Snapshots and broadcasts both carry {available, history}. The
-            // array check keeps malformed or legacy payloads (the old bridge
-            // sent {available, pinned}) from wiping the visible history.
+            // Only arrays may replace history; malformed snapshots must not erase the visible list.
             if (!data || !Array.isArray(data.history))
                 return;
             const newHistory = data.history;

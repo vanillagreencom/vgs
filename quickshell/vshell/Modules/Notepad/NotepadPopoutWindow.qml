@@ -37,7 +37,7 @@ FloatingWindow {
         }
     }
 
-    // A compositor close (e.g. niri close-window)
+
     onClosed: win.visible = false
 
     Item {

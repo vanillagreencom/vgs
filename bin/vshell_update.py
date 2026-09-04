@@ -39,7 +39,6 @@ def update_count() -> Dict[str, Any]:
     tools = tools_rows()
     for probe in ("pacman", "checkupdates"):
         if not RT.command_exists(probe):
-            # No repo counter, but mise alone is still a count worth showing.
             return {"ok": bool(tools["source"]), "error": f"{probe} not found", "repo": 0, "aur": 0,
                     "tools": tools["tools"], "packages": tools["rows"], "orphanCount": 0, "orphans": [],
                     "source": {"repo": "", "aur": "", "tools": tools["source"]}, "checkedAt": int(time.time()),
@@ -63,8 +62,7 @@ orphans=$(printf '%s\n' "$orphan_lines" | while read -r name ver rest; do [ -n "
 jq -cn --argjson repo "${repo:-0}" --argjson aur "${aur:-0}" --argjson packages "$pkgs" --argjson orphanCount "${orphan:-0}" --argjson orphans "$orphans" '{ok:true,repo:$repo,aur:$aur,packages:$packages,orphanCount:$orphanCount,orphans:$orphans}'
 '''
     proc = subprocess.run(["bash", "-lc", script, "bash", str(lock)], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    # Metadata surfaced to the UI so it can show data provenance/freshness without
-    # opening code. Backward-compatible additions; existing keys stay unchanged.
+    # Expose count source and freshness so the UI can identify stale results.
     meta = {"source": {"repo": "checkupdates", "aur": "paru -Qua"}, "checkedAt": int(time.time())}
     if proc.returncode != 0:
         return {"ok": False, "error": proc.stderr.strip() or "update count failed", "repo": 0, "aur": 0, "packages": [], "orphanCount": 0, "orphans": [], **meta}

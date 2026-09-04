@@ -36,11 +36,7 @@ StyledRect {
     property bool isSystemPlugin: pluginData ? (pluginData.source === "system") : false
     property string requiresShell: pluginData ? (pluginData.requires_shell || pluginData.requires_vgs || "") : ""
     property bool meetsRequirements: requiresShell ? PluginService.checkPluginCompatibility(requiresShell) : true
-    // Non-empty only when a package claiming this id was REFUSED on its shell
-    // requirement. A bundled module's unmet declaration is inert, and so is an
-    // unmet declaration on a package that still owns its id: the requirement is
-    // only enforced on the override/displacement path, so anything else would
-    // report an enforcement that never happened. (VGS-89)
+    // Show requirements only for refused candidates; declarations on a loaded owner do not prove a refusal.
     property string withheldReason: {
         PluginService.availablePlugins;
         PluginService.knownManifests;
@@ -55,11 +51,7 @@ StyledRect {
             root.withheldReasonChanged();
         }
     }
-    // A package that VGS guarantees: a bundled module, or a user package whose
-    // manifest declares itself the override of one. Those are auto-enabled and
-    // PluginService.disablePlugin refuses them by design, so no disable
-    // affordance is offered — offering one would report a rule working as
-    // intended as a failure. (VGS-39)
+    // Bundled modules and declared replacements cannot be disabled through PluginService. Hide that action.
     property bool isAlwaysAvailable: {
         PluginService.bundledPluginIds;
         PluginService.availablePlugins;
@@ -198,13 +190,7 @@ StyledRect {
                     horizontalAlignment: Text.AlignLeft
                 }
 
-                // Only when an override of this id was actually refused. The
-                // card belongs to whatever owns the id — after a refusal that
-                // is the shipped package, which IS loaded and working — so this
-                // says what was refused rather than calling the plugin
-                // unavailable. A hover tooltip is not where someone looks to
-                // find out why the plugin they installed is not the one
-                // running. (VGS-89)
+                // The card may still show the loaded bundled owner. Identify the refused replacement without calling that owner unavailable.
                 StyledText {
                     text: root.withheldReason
                     font.pixelSize: Theme.fontSizeSmall
@@ -399,10 +385,7 @@ StyledRect {
                             return;
                         }
                         if (PluginService.isAlwaysAvailablePlugin(currentPluginId)) {
-                            // The toggle is hidden for these; this only catches
-                            // an id that became always-available between render
-                            // and click. Explain the rule, do not report it as
-                            // a failure.
+                            // Handle a plugin becoming always-available between rendering its toggle and clicking it.
                             ToastService.showInfo(I18n.tr("%1 ships with VGS and stays available").arg(currentPluginName));
                             return;
                         }

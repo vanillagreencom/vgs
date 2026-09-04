@@ -23,9 +23,7 @@ Item {
     property real dragAxisOffset: 0
     property int targetIndex: -1
     property int originalIndex: -1
-    // Any real app tile can be dragged to arrange it — dropping an unpinned
-    // (running) app pins it at that slot (see DockApps.moveDockApp). Excludes the
-    // separator/launcher placeholders.
+    // Dropping a running app pins it at the drop slot. Separator and launcher placeholders cannot be dragged.
     readonly property bool canDrag: !!appData && !!appData.appId && appData.appId !== "__SEPARATOR__" && appData.appId !== "__LAUNCHER__"
     property bool isVertical: SettingsData.dockPosition === SettingsData.Position.Left || SettingsData.dockPosition === SettingsData.Position.Right
     property bool showWindowTitle: false
@@ -99,7 +97,7 @@ Item {
             }
             return toplevel.activated;
         } else if (appData.type === "grouped") {
-            // For grouped apps, check if any window is focused
+
             const allToplevels = ToplevelManager.toplevels.values;
             for (let i = 0; i < allToplevels.length; i++) {
                 const toplevel = allToplevels[i];
@@ -181,10 +179,7 @@ Item {
         if (!specialName)
             return false;
 
-        // A scratchpad window stays on its special workspace whether that workspace
-        // is shown or hidden. toggleSpecial() flips that visibility. Only pull focus
-        // when we just revealed it — re-activating while hiding would immediately
-        // re-show it, which is why a second click never toggled the scratchpad out.
+        // Focus only after revealing the special workspace. Focusing during hide would reveal it again.
         const wasShown = isSpecialWorkspaceShown(specialName);
         HyprlandService.toggleSpecial(specialName);
         if (!wasShown)
@@ -211,11 +206,7 @@ Item {
         return false;
     }
 
-    // Some windows carry a synthetic class (scratchpads, Chromium web-apps,
-    // profile-suffixed classes like "chrome-chatgpt.com__-Scratch") that has no
-    // exact desktop entry, so the normal lookup yields no icon/name. Fall back to
-    // DesktopService's StartupWMClass/token matcher to recover the real entry, and
-    // use it everywhere the tile shows an icon or name (end-to-end, not just here).
+    // Synthetic window classes may lack an exact desktop entry. Use the StartupWMClass/token matcher for icon and name.
     readonly property var effectiveDesktopEntry: (cachedDesktopEntry && cachedDesktopEntry.icon) ? cachedDesktopEntry : (DesktopService.resolveEntryByClass(appData ? appData.appId : "") || cachedDesktopEntry)
 
     onIsHoveredChanged: {
@@ -401,13 +392,8 @@ Item {
             }
         }
         onPositionChanged: mouse => {
-            // Start a reorder drag as soon as a pinned icon is pressed and dragged
-            // past a small threshold — no 500ms hold required (that made drag feel
-            // broken: moving before the timer fired did nothing and release just
-            // launched the app). A plain click stays under the threshold and still
-            // activates. longPressTimer only drives the hold-to-drag cursor cue.
-            // Only while the left button is actually held — onPositionChanged also
-            // fires on plain hover (hoverEnabled), which was starting drags on hover.
+            // Start drag only while the left button is held: position changes also arrive on hover.
+            // Movement starts a reorder; longPressTimer only changes the cursor cue.
             if (!dragging && root.canDrag && (mouse.buttons & Qt.LeftButton)) {
                 const distance = Math.sqrt(Math.pow(mouse.x - dragStartPos.x, 2) + Math.pow(mouse.y - dragStartPos.y, 2));
                 if (distance > 8) {
@@ -563,8 +549,7 @@ Item {
             border.width: 1
             border.color: Theme.primarySelected
 
-            // Scratchpads with no resolvable icon read as a scratchpad glyph
-            // rather than a meaningless class initial ("C" for chrome-*/com.*).
+            // Use a scratchpad glyph when a synthetic class has no resolvable application icon.
             VgsIcon {
                 anchors.centerIn: parent
                 visible: root.isScratchpad
@@ -620,8 +605,7 @@ Item {
             visible: root.shouldShowIndicator
         }
 
-        // Scratchpad badge: a small chip on the icon's top-right corner marking
-        // windows that live on a Hyprland special workspace.
+
         Rectangle {
             id: scratchpadBadge
             visible: root.isScratchpad && SettingsData.dockScratchpadBadge

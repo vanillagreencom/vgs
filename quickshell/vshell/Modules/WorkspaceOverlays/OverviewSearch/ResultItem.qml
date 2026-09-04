@@ -96,10 +96,7 @@ Rectangle {
         anchors.verticalCenter: parent.verticalCenter
         height: nameText.implicitHeight + (subText.visible ? subText.height + 2 : 0)
 
-        // maximumLineCount/elide don't cap Text.RichText, so a search-highlighted
-        // name (e.g. a long clipboard preview) wrapped to two lines that overlapped
-        // in this fixed-height row — looking struck-through and running over. Pre-elide
-        // the rich name to a one-line character budget, exactly like the subtitle below.
+        // Text.RichText ignores maximumLineCount/elide. Pre-elide names to keep them within the fixed-height row.
         TextMetrics {
             id: nameProbe
             font.pixelSize: Theme.fontSizeMedium

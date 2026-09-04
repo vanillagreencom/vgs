@@ -22,7 +22,6 @@
 // TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 // SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// shortcuts for easier to read formulas
 
 const PI   = Math.PI,
     sin  = Math.sin,
@@ -35,7 +34,6 @@ const PI   = Math.PI,
 
 // sun calculations are based on https://aa.quae.nl/en/reken/zonpositie.html formulas
 
-// date/time constants and conversions
 
 const dayMs = 1000 * 60 * 60 * 24,
     J1970 = 2440588,
@@ -46,7 +44,6 @@ function fromJulian(j)  { return new Date((j + 0.5 - J1970) * dayMs); }
 function toDays(date)   { return toJulian(date) - J2000; }
 
 
-// general calculations for position
 
 const e = rad * 23.4397; // obliquity of the Earth
 
@@ -67,7 +64,6 @@ function astroRefraction(h) {
     return 0.0002967 / Math.tan(h + 0.00312536 / (h + 0.08901179));
 }
 
-// general sun calculations
 
 function solarMeanAnomaly(d) { return rad * (357.5291 + 0.98560028 * d); }
 
@@ -127,7 +123,6 @@ function addTime(angle, riseName, setName) {
 };
 
 
-// calculations for sun times
 
 const J0 = 0.0009;
 

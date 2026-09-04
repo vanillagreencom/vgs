@@ -1,25 +1,7 @@
 #!/usr/bin/env node
 
-// Pins what the aiUsage widget SHOWS for a payload: the one headline every
-// surface reads, what the popout shows once hidden accounts are taken out, and
-// the two pill slots (VGS-118). Its sibling scripts/test-ai-usage-provider.js
-// pins how a payload is attributed to a provider in the first place.
-//
-// `qml-smoke.sh --nested` does host this plugin — it toggles the aiUsage widget
-// and opens its popout — but that mode is local-only (it needs Hyprland and
-// quickshell on PATH), so CI has no runtime coverage of it at all, and no
-// harness can drive a QML binding from node. The bugs these cases close are
-// DISPLAY bugs with one shared cause — two surfaces answering the same question
-// their own way: a pill showing an error beside a popout showing 60%, a hidden
-// account's plan above a visible account's meters. qmllint cannot see any of
-// them, and reproducing them live means holding two provider subscriptions and
-// hiding accounts.
-//
-// The decision functions are extracted verbatim from the shipped QML between
-// its PROVIDER DECISION markers, so this tests the real source rather than a
-// re-implementation. scripts/test-ai-usage-wiring.js covers the other half:
-// that the widget applies these decisions where a missing line, not a wrong
-// answer, is the bug shape.
+// Test shared headline, visible-account, and provider-slot decisions from the shipped QML region.
+// Source wiring assertions live in test-ai-usage-wiring.js.
 
 "use strict";
 
@@ -33,12 +15,10 @@ const LOGIC = path.join(PLUGIN, "AiUsageLogic.qml");
 
 const logicSource = fs.readFileSync(LOGIC, "utf8");
 
-// This text comes from a repo file and a fork PR runs this suite on the runner,
-// so it is executed inside a child bounded by a wall clock — see
-// scripts/lib/qml-region.js for what that bounds and what it does not.
+// Extracted code runs under qml-region process deadlines.
 const { evaluateMarked, regionOf, guardChild } = require("./lib/qml-region.js");
 
-// Returns only in the child; the parent exits with its status.
+
 guardChild();
 const {
     normalizeProvider, providerIcon, headOf, popoutView, accountCount, failureWins,
@@ -50,8 +30,7 @@ const {
 
 const region = regionOf(logicSource, "PROVIDER DECISION", "AiUsageLogic.qml");
 
-// The extracted region must be free of the widget and of Qt, or this harness is
-// testing something the shell does not run.
+// Keep decisions independent of Qt and widget state so fixture inputs define their behavior.
 for (const forbidden of ["root.", "Theme.", "Qt."]) {
     assert.ok(
         !region.includes(forbidden),
@@ -59,7 +38,7 @@ for (const forbidden of ["root.", "Theme.", "Qt."]) {
     );
 }
 
-// --- 3. heads ---------------------------------------------------------------
+
 
 const claudePayload = {
     ok: true,
@@ -116,10 +95,7 @@ assert.equal(
     "a payload with no accounts and no lanes has no number to show"
 );
 
-// One owner: whatever the widget renders on the bar, in the vertical bar or in
-// the popout header comes from this function, so those three cannot disagree.
-// They did: with both accounts hidden the pill showed an error, the vertical
-// pill 60% and the header "0 accounts, 60% used".
+// The bar and popout must derive headlines from the same visible-account decision.
 {
     const hiddenAll = Object.assign({ aggregate: { pct: 60 } }, twoAccounts);
     assert.equal(headOf(hiddenAll, "pool", ["a", "b"]), null, "no headline when all are hidden");
@@ -135,18 +111,13 @@ assert.deepEqual(
     "0% is a number, not a missing head"
 );
 
-// --- 3b. what the popout shows, once hidden accounts are out ----------------
-//
-// The payload's top-level plan/ok/error describe the FIRST LIVE account the
-// backend found — hidden or not — so reading them directly is how a hidden
-// account's plan came to sit above a visible account's meters.
+// Top-level plan and status can describe a hidden account. Derive popout state from visible accounts.
 
 const acct = (id, over) => Object.assign(
     { id: id, ok: true, plan: "Max 20x", weekly: { pct: 20 } }, over);
 
 {
-    // Hide the first of two: the card path still renders (the payload reported
-    // two), and nothing prints the hidden account's plan.
+    // A multi-account payload still uses cards when filtering leaves one visible account.
     const data = {
         ok: true, provider: "claude", plan: "Hidden Plan",
         accounts: [acct("a", { plan: "Hidden Plan" }), acct("b", { plan: "Visible Plan" })]
@@ -160,8 +131,7 @@ const acct = (id, over) => Object.assign(
 }
 
 {
-    // A healthy HIDDEN account made the payload ok while the visible one was
-    // unavailable, so the popout reported healthy and rendered no error.
+    // A hidden healthy account cannot make a failed visible account appear healthy.
     const data = {
         ok: true, provider: "claude",
         accounts: [acct("a"), acct("b", { ok: false, error: "session expired" })]
@@ -184,8 +154,7 @@ const acct = (id, over) => Object.assign(
 }
 
 {
-    // Several visible, none of them ok: headOf gives no headline, so the header
-    // must not print a percentage — the pill already shows its placeholder.
+    // If every visible account fails, the header must omit a percentage.
     const data = {
         ok: true, provider: "claude",
         accounts: [acct("a", { ok: false, error: "x" }), acct("b", { ok: false, error: "y" })]
@@ -196,9 +165,7 @@ const acct = (id, over) => Object.assign(
 }
 
 {
-    // Both header lines count accounts, and only one of them had a singular:
-    // hiding a three-account payload down to one visible account read
-    // "1 accounts · 10% used · 2 hidden".
+    // Filtered account counts need singular grammar when one remains.
     const data = { ok: true, provider: "claude", accounts: [acct("a"), acct("b"), acct("c")] };
     const view = popoutView(data, ["b", "c"]);
     assert.equal(view.cards, true, "the card path follows what the payload reported");
@@ -211,8 +178,7 @@ const acct = (id, over) => Object.assign(
 }
 
 {
-    // The older flat shape: no accounts at all, so the payload's own fields ARE
-    // the account's.
+    // Without an accounts array, payload fields describe the account directly.
     const view = popoutView({ ok: true, provider: "claude", plan: "Pro", session: { pct: 5 } }, []);
     assert.equal(view.flat, true, "no accounts reported is the flat shape");
     assert.equal(view.plan, "Pro", "whose plan is the payload's own");
@@ -224,9 +190,7 @@ assert.equal(popoutView(null, []).error, "",
     "no payload yet is nothing known, not a failure with a cause");
 
 {
-    // Still fetching is not a failure. Without this the popout printed
-    // "Unavailable" for every first load and every provider switch — a fault the
-    // user does not have, which is the class this issue spent its rounds closing.
+    // An outstanding initial fetch is a loading state, not an unavailable-provider error.
     const fetching = popoutView(null, [], true);
     assert.equal(fetching.pending, true, "no payload and a fetch running is pending, not failed");
     assert.equal(fetching.error, "", "and has nothing to report");
@@ -241,12 +205,7 @@ assert.equal(popoutView(null, []).error, "",
 assert.equal(popoutView({ ok: false, provider: "claude", error: "no signed-in accounts found" }, []).error,
     "no signed-in accounts found", "a failed payload reports its own reason");
 
-// --- 4. the pill keeps both slots -------------------------------------------
-//
-// The old pill pushed claude-then-codex and skipped whichever head was null, so
-// a signed-out or not-yet-fetched provider made the surviving number slide into
-// the left slot with no separator and no label. Position was the only thing
-// saying which provider a number belonged to, and it moved.
+// Provider slots must stay fixed when a headline is missing; position identifies the provider.
 
 function slotsFor(state) {
     return pillSlots(Object.assign({
@@ -275,7 +234,7 @@ function slotsFor(state) {
 }
 
 {
-    // One head missing — the reported symptom's shape.
+
     const slots = slotsFor({
         claudeHead: { pct: 40 }, claudeData: claudePayload,
         codexData: { ok: false, provider: "codex", error: "no signed-in accounts found" }
@@ -305,8 +264,7 @@ function slotsFor(state) {
 }
 
 {
-    // Stale data plus a refetch in flight keeps showing the number: blanking it
-    // every poll would make the pill flicker.
+    // Keep stale data visible during refetch to avoid a blank pill on each poll.
     const slots = slotsFor({
         claudeHead: { pct: 40 }, claudeData: claudePayload, fetching: ["claude"]
     });

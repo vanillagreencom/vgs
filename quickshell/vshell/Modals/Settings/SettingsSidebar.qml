@@ -66,8 +66,7 @@ Rectangle {
         searchField.setFocus(false);
     }
 
-    // Resolves each entry's tabIndex from SettingsRegistry so the registry
-    // stays the single source of truth for tab numbering.
+
     function _withTabIndexes(cats) {
         return cats.map(cat => {
             const c = Object.assign({}, cat);
@@ -631,9 +630,7 @@ Rectangle {
     implicitWidth: __calculatedWidth
     width: __calculatedWidth
     height: parent.height
-    // With glass on, the sidebar is the translucent material (macOS System
-    // Settings layering): only a thin elevation tint over the window's glass,
-    // while the content pane opposite goes near-opaque for readability.
+    // Glass treatment belongs to the sidebar; the reading pane uses a near-opaque fill for text contrast.
     color: Theme.popupGlassEffect ? Theme.withAlpha(Theme.surfaceContainerHigh, 0.30) : Theme.popupSurfaceColor(Theme.surfaceContainerHigh)
     radius: Theme.cornerRadius
 
@@ -642,7 +639,7 @@ Rectangle {
         root._collapsedIds = SessionData.settingsSidebarCollapsedIds;
     }
 
-    // Flat nav row; groups stay expanded and active state uses a quiet tinted pill.
+
     component NavRow: Rectangle {
         id: navRow
 
@@ -659,7 +656,7 @@ Rectangle {
         width: parent ? parent.width : 0
         height: 34
         radius: Theme.controlRadius
-        // Accent-tinted fill and text, without a separate indicator bar.
+
         color: isActive ? Theme.withAlpha(Theme.primary, 0.12) : ((navMouse.containsMouse || isHighlighted) ? Theme.surfaceHover : "transparent")
 
         Behavior on color {
@@ -772,8 +769,7 @@ Rectangle {
     GlassSurfaceOverlay {
         anchors.fill: parent
         radius: root.radius
-        // Nested panel inside a glass window: sheen only. A rim here reads as
-        // a stray border line along the sidebar.
+        // Disable the rim on this nested glass panel so the sidebar does not gain an interior border.
         rimEnabled: false
         sheenOpacity: 0.6
         z: 0
@@ -1006,7 +1002,7 @@ Rectangle {
                     visible: !root.searchActive && root.isCategoryVisible(modelData)
                     spacing: Theme.spacingXXS
 
-                    // Hairline separator between top-level areas.
+
                     Item {
                         width: parent.width
                         height: Theme.spacingM * 2 + 1
@@ -1019,15 +1015,14 @@ Rectangle {
                         }
                     }
 
-                    // Lead gap so standalone top-level rows (Keybinds, Plugins,
-                    // About) get the same breathing room above them as groups.
+
                     Item {
                         width: parent.width
                         height: Theme.spacingL
                         visible: categoryDelegate.isStandalone
                     }
 
-                    // Small-caps group label with more space above than below.
+
                     Item {
                         width: parent.width
                         height: groupHeaderText.implicitHeight + Theme.spacingXL + Theme.spacingXS
@@ -1047,7 +1042,7 @@ Rectangle {
                         }
                     }
 
-                    // Standalone top-level tab (no children) as a flat nav row.
+
                     NavRow {
                         visible: categoryDelegate.isStandalone
                         label: categoryDelegate.modelData.text || ""
@@ -1056,7 +1051,7 @@ Rectangle {
                         onActivated: ti => root.tabChangeRequested(ti)
                     }
 
-                    // Group children — always visible, flat nav rows.
+
                     Repeater {
                         model: categoryDelegate.modelData.children || []
 

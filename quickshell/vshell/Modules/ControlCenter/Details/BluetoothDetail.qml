@@ -20,9 +20,7 @@ Rectangle {
         return headerRow.height + bluetoothContent.height + Theme.spacingM;
     }
 
-    // The height this detail would fill exactly, read by the control centre. It
-    // measures the device column below its resolved top, never this item's own
-    // height, so the two cannot chase each other.
+    // Measure the device column below its resolved top. Reading this item's height would create a sizing loop.
     readonly property real contentPreferredHeight: {
         if (!BluetoothService.adapter?.enabled)
             return Theme.spacingS + headerRow.height + Theme.spacingM;
@@ -124,8 +122,7 @@ Rectangle {
             readonly property bool adapterEnabled: BluetoothService.adapter?.enabled ?? false
             readonly property bool isDiscovering: BluetoothService.adapter?.discovering ?? false
 
-            // Sized to its label, so both labels end at the header's right
-            // margin; a fixed 100 left "Scan" short of it.
+            // Size to the label so the scan button aligns with the header margin.
             width: scanRow.implicitWidth + Theme.spacingS * 2
             height: 36
             radius: Theme.controlRadius
@@ -348,8 +345,7 @@ Rectangle {
                         }
                     }
 
-                    // Pin state is the icon alone: the word repeated on every
-                    // row and crowded the device name. The tooltip carries it.
+                    // The pin icon and tooltip leave room for the device name.
                     Rectangle {
                         id: pinBluetoothPill
                         anchors.right: pairedOptionsButton.left

@@ -272,9 +272,7 @@ Item {
                                 width: parent.width
                                 height: 40
                                 radius: Theme.cornerRadius
-                                // Composite the wash: assigning surfaceHover directly
-                                // would swap the opaque fill for an 8% overlay and the
-                                // row would go see-through on hover.
+                                // Composite the hover wash over the opaque fill; assigning the wash alone makes the row translucent.
                                 color: groupMouseArea.containsMouse ? Theme.hoverOn(Theme.surfaceContainer) : Theme.surfaceContainer
 
                                 Row {

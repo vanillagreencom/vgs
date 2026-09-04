@@ -36,7 +36,7 @@ Singleton {
         })
 
     property var location: null
-    property int updateInterval: 900000 // 15 minutes
+    property int updateInterval: 900000
     property int retryAttempts: 0
     property int maxRetryAttempts: 3
     property int retryDelay: 30000
@@ -333,7 +333,6 @@ Singleton {
 
         let h = (((pos.azimuth - transitAzimuth) / (2 * Math.PI)) + 1) % 1;
         h = Math.max(0, Math.min(1, h));
-        // let v = pos.altitude / (Math.PI/2)
         let v = Math.sin(pos.altitude);
         v = Math.max(-1, Math.min(1, v));
 
@@ -531,7 +530,6 @@ Singleton {
                 const lon = parseFloat(parts[1]);
                 if (!isNaN(lat) && !isNaN(lon)) {
                     if (cityName) {
-                        // User provided both: trust the configured name and coordinates, skip geocoding
                         setLocation(lat, lon, cityName, "");
                         fetchWeather(lat, lon);
                     } else {
@@ -550,7 +548,6 @@ Singleton {
     }
 
     function getLocationFromCoords(lat, lon) {
-        // Use coordinates immediately for weather; resolve city name in parallel with fallbacks
         setLocation(lat, lon, I18n.tr("Local Weather"), "");
         fetchWeather(lat, lon);
         resolveCityName(lat, lon);
@@ -583,7 +580,6 @@ Singleton {
     }
 
     function resolveCityName(lat, lon) {
-        // Cancel any in-flight city resolution to avoid stale updates
         if (nominatimFetcher.running)
             nominatimFetcher.running = false;
         if (photonFetcher.running)
@@ -658,7 +654,7 @@ Singleton {
     }
 
     function forceRefresh() {
-        root.lastFetchTime = 0; // Reset throttle
+        root.lastFetchTime = 0;
         fetchWeather();
     }
 
@@ -785,7 +781,6 @@ Singleton {
 
                 const raw = text.trim();
                 if (!raw || raw[0] !== "{") {
-                    // All city resolution fallbacks failed; weather is already displayed
                     return;
                 }
 
@@ -795,7 +790,6 @@ Singleton {
                     const country = data.countryName || I18n.tr("Unknown");
                     root.updateLocationCity(city, country);
                 } catch (e) {
-                    // All fallbacks failed; keep placeholder city name
                 }
             }
         }
@@ -803,7 +797,6 @@ Singleton {
         onExited: exitCode => {
             if (bigDataCloudFetcher.reqId !== root._geocodeReqId)
                 return;
-            // Final fallback; no further action needed
         }
     }
 

@@ -1685,9 +1685,7 @@ Item {
                     }
 
                     StyledText {
-                        // "Set key and action to save" would be a lie for a
-                        // retired launcher target: both are set, the action is
-                        // just one validation now rejects, so name it.
+
                         text: root.readOnly ? I18n.tr("Read-only legacy config") : (Actions.usesRetiredIpcTarget(root.editAction) ? I18n.tr("Use: vshell ipc call vshell-menu toggle") : (!root.canSave() ? I18n.tr("Set key and action to save") : (root.hasChanges ? I18n.tr("Unsaved changes") : I18n.tr("No changes"))))
                         font.pixelSize: Theme.fontSizeSmall
                         color: root.hasChanges ? Theme.surfaceText : Theme.surfaceVariantText

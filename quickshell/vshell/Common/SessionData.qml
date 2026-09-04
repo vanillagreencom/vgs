@@ -35,11 +35,8 @@ Singleton {
     property bool isSwitchingMode: false
     property bool suppressOSD: true
 
-    // Terminal resolution has exactly one owner: `vshell terminal` (VGS-32).
-    // Nothing in QML picks a terminal — this list only populates the Settings
-    // picker, and it is what the resolver itself found, in its own order.
-    // `terminalOverride` is a stored preference the resolver reads back out of
-    // session.json; it is not resolved here.
+    // The vshell terminal resolver owns terminal selection. This list supplies its results to Settings.
+    // terminalOverride stores the preference that the resolver reads from session.json.
     readonly property var terminalOptions: ["ghostty", "kitty", "foot", "alacritty", "wezterm", "konsole", "gnome-terminal", "xterm"]
     property var installedTerminals: []
 
@@ -539,10 +536,7 @@ Singleton {
     }
 
     function setPerMonitorWallpaper(enabled) {
-        // Off to on: seed BEFORE the flip, while the accessors still answer the
-        // global values every screen shows — past it they answer whatever an
-        // earlier per-monitor session left retained and every screen with an
-        // entry has jumped (VGS-212). EVERY enable comes through here.
+        // Seed assignments before enabling per-monitor mode, while accessors still return the displayed global values.
         if (enabled && !perMonitorWallpaper)
             _seedPerMonitorFromCurrent();
         perMonitorWallpaper = enabled;
@@ -588,7 +582,6 @@ Singleton {
         saveSettings();
     }
 
-    // The one screen lookup: every per-monitor writer walked Quickshell.screens.
     function _screenByName(screenName) {
         var screens = Quickshell.screens;
         for (var i = 0; i < screens.length; i++) {
@@ -598,11 +591,7 @@ Singleton {
         return null;
     }
 
-    // One screen's entry in one per-monitor map, as a NEW map so the property
-    // change is seen. The screen's OTHER keys go with it: a value an earlier
-    // session wrote under the raw name or model is answered by _findMonitorValue
-    // BEFORE the display name written here, so one left behind is read back
-    // instead of the value just written.
+    // Replace the map to notify bindings. Remove alternate screen keys so they cannot override the new display-name entry.
     function _mapWithMonitorValue(map, screen, value) {
         var identifier = typeof SettingsData !== "undefined" ? SettingsData.getScreenDisplayName(screen) : screen.name;
         var next = {};
@@ -616,18 +605,8 @@ Singleton {
         return next;
     }
 
-    // What every screen shows RIGHT NOW, written on setPerMonitorWallpaper's
-    // off-to-on edge (its only caller) into the maps per-monitor mode is about
-    // to start reading: enabling the mode changes nothing on any screen, and
-    // the caller's own write afterwards is the only change anyone asked for.
-    // Unseeded, the retained maps are republished wholesale — months-old
-    // assignments back when the Settings toggle goes on, or "This monitor"
-    // moving every OTHER monitor. FOUR maps, one flag gating all four: the
-    // wallpaper; both mode maps under per-mode (syncWallpaperForCurrentMode
-    // refills the wallpaper map from whichever the current mode names); the
-    // fill mode, which otherwise re-crops a screen to a retained Fit/Stretch at
-    // the flip; and per-screen cycling, where a retained enabled:true starts a
-    // slideshow on a screen nobody touched that overwrites the seed.
+    // Seed wallpaper, mode, and fill assignments from current display state before enabling per-monitor mode.
+    // Disable retained per-screen cycling so it cannot overwrite those assignments.
     function _seedPerMonitorFromCurrent() {
         var screens = Quickshell.screens || [];
         for (var i = 0; i < screens.length; i++) {
@@ -1248,10 +1227,6 @@ Singleton {
         saveSettings();
     }
 
-    // The inverse of addLauncherHistory above, so it clears the same property
-    // that one writes. It said `launcherSearchHistory` — a name declared
-    // nowhere — which would have thrown at runtime, after launcherLastQuery
-    // was already blanked and before saveSettings() ran.
     function clearLauncherHistory() {
         launcherLastQuery = "";
         launcherQueryHistory = [];

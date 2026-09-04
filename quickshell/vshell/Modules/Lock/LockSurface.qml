@@ -86,10 +86,7 @@ FocusScope {
         onDismissed: Qt.callLater(() => lockContent.focusPasswordField())
     }
 
-    // Full-black blank state after idle-while-locked. Monitors stay powered on
-    // (this is NOT DPMS) — it just covers the lock content/screensaver. Input still
-    // reaches the MouseArea/Keys below (a plain Rectangle captures nothing), so any
-    // activity un-idles IdleService's blank tier and this fades out to the prompt.
+    // This blank overlay keeps monitors powered on. Input still reaches the lock handlers and clears the idle blank state.
     Rectangle {
         anchors.fill: parent
         z: 2000
@@ -102,9 +99,7 @@ FocusScope {
             }
         }
 
-        // Hide the pointer while the screen reads as off. acceptedButtons: NoButton
-        // keeps the "captures nothing" promise above — presses and hover still fall
-        // through to the handlers below, so any activity un-blanks as before.
+        // NoButton leaves presses for the lock handlers while the overlay hides the pointer.
         MouseArea {
             anchors.fill: parent
             enabled: parent.opacity > 0 && SettingsData.hideCursorWhenBlanked

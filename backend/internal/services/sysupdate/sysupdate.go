@@ -38,10 +38,8 @@ type Manager struct {
 	acquireCount  int
 	scheduleTimer *time.Timer
 	closed        bool
-	// opGen invalidates in-flight operation completions: it is bumped whenever
-	// an operation starts or is canceled, and a completion whose captured
-	// generation no longer matches must not touch state (a cancel or a newer
-	// operation owns it now).
+	// opGen identifies the operation allowed to update state. Starting or
+	// cancelling an operation invalidates completions with a different generation.
 	opGen uint64
 }
 
@@ -370,9 +368,8 @@ func (m *Manager) backends() []Backend {
 	return backends
 }
 
-// upgradeMode validates the requested mode against the advertised backends,
-// so the daemon accepts exactly the buttons the widget shows: a mode is its
-// backend's Repo id. "all" needs at least one backend.
+// upgradeMode validates the requested mode against advertised backends. The all
+// mode requires at least one available backend.
 func (m *Manager) upgradeMode(mode string) (string, error) {
 	if m.vshell == "" {
 		return "", fmt.Errorf("vshell CLI not found; `vshell update run` cannot be launched")
@@ -447,12 +444,8 @@ func (m *Manager) collectUpdates(ctx context.Context) ([]Package, []string, erro
 	return packages, logs, nil
 }
 
-// vshellCLIPath locates the VGS CLI the same way the QML side anchors on
-// Paths.vshellCli, rather than trusting the daemon's inherited PATH. A source
-// install puts the CLI only in ~/.local/bin, which a systemd user unit need not
-// have on PATH; falling through to the xdg-terminal-exec branch there would
-// walk straight back into the VGS-54 failure. `bin/vshell` exports VSHELL_ROOT
-// before exec'ing the backend, so that is the reliable anchor.
+// vshellCLIPath uses VSHELL_ROOT before PATH. A systemd user service may not
+// include ~/.local/bin, where source installs place the CLI.
 func vshellCLIPath() string {
 	if root := os.Getenv("VSHELL_ROOT"); root != "" {
 		path := filepath.Join(root, "bin", "vshell")
@@ -472,14 +465,10 @@ func vshellCLIPath() string {
 	return ""
 }
 
-// terminalArgv runs `vshell update run <mode>` through `vshell terminal exec`,
-// the single terminal resolver (VGS-32): it owns the VGS setting, $TERMINAL,
-// xdg-terminals.list, the installed-terminal fallback and the optional uwsm
-// scope. A terminal the caller asked for is forwarded as --prefer. --wait
-// keeps this process alive for the whole upgrade, because waitUpgrade treats
-// its exit as the transaction finishing; without it the helper returns as
-// soon as the window is up and a second package-manager run could start on
-// top of the first.
+// terminalArgv uses the shared vshell terminal resolver. --prefer forwards an
+// explicit terminal choice. --wait keeps the process alive through the upgrade
+// because waitUpgrade treats process exit as completion; an early exit would
+// allow overlapping package-manager runs.
 func (m *Manager) terminalArgv(terminal, mode string) ([]string, error) {
 	if m.vshell == "" {
 		return nil, fmt.Errorf("vshell CLI not found")
@@ -555,9 +544,8 @@ func (m *Manager) waitUpgrade(cmd *exec.Cmd, gen uint64) {
 	state := m.state
 	m.mu.Unlock()
 	m.srv.Broadcast("sysupdate", state)
-	// The count on screen is from before the upgrade; re-check now rather
-	// than leave it stale until the next scheduled refresh. A failed run
-	// still installed whatever steps succeeded, so this is unconditional.
+	// Refresh the count after every upgrade exit because even a failed run can
+	// install some updates.
 	go func() { _, _ = m.refresh(true) }()
 }
 

@@ -64,8 +64,6 @@ func (m *Manager) scheduleFolder(folder Folder) {
 	m.mu.Unlock()
 }
 
-// nextDelay is the folder's interval, extended by exponential backoff while it
-// keeps failing.
 func (m *Manager) nextDelay(folder Folder) time.Duration {
 	interval := time.Duration(folder.IntervalSeconds) * time.Second
 	if interval < minInterval {
@@ -89,7 +87,6 @@ func (m *Manager) nextDelay(folder Folder) time.Duration {
 	return delay
 }
 
-// runScheduled fires one scheduled sync and re-arms regardless of outcome.
 func (m *Manager) runScheduled(folderID string) {
 	folder, ok := m.store.folder(folderID)
 	if !ok {
@@ -118,8 +115,6 @@ func (m *Manager) noteSuccess(folderID string) {
 	m.mu.Unlock()
 }
 
-// rescheduleAll re-arms every folder. Used after settings changes and after the
-// rclone daemon comes back up.
 func (m *Manager) rescheduleAll() {
 	for _, folder := range m.store.snapshotFolders() {
 		m.scheduleFolder(folder)

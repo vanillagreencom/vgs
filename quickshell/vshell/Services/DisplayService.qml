@@ -54,11 +54,8 @@ Singleton {
     property int scanGeneration: 0
     property int settledScanGeneration: 0
     property int scanEpoch: 0
-    // A committed failure that cleared brightness state arms one minutes-scale
-    // recovery rescan, at most this many per episode, so a desktop that never
-    // hotplugs, resumes, or sees the backend restart still recovers. The
-    // single-shot timer and this budget keep it from becoming the removed
-    // repeating poll, and each failed retry still counts toward quarantine.
+    // Bound recovery rescans after a committed failure clears brightness state.
+    // Each failed retry counts toward bus quarantine.
     readonly property int scanRecoveryRetryBudget: 3
     property int scanRecoveryRetriesUsed: 0
 
@@ -658,7 +655,6 @@ Singleton {
         return deviceInfo.displayMax || 100;
     }
 
-    // Night Mode Functions - Simplified
     function enableNightMode() {
         if (!gammaControlAvailable) {
             ToastService.showWarning(I18n.tr("Night mode failed: VGS gamma control not available"));
@@ -668,11 +664,7 @@ Singleton {
         nightModeEnabled = true;
         SessionData.setNightModeEnabled(true);
 
-        // Configure the target gamma FIRST, while control is still disabled: the
-        // backend skips the hyprsunset restart when disabled, so these calls apply
-        // no visible change. Then flip enabled last, for a single clean transition.
-        // Enabling first (then configuring) restarted hyprsunset several times, and
-        // each restart briefly reset the gamma — that was the toggle "flash".
+        // Configure gamma while disabled, then enable it to avoid visible resets from repeated hyprsunset restarts.
         const finishEnable = () => {
             VGSBackendService.sendRequest("wayland.gamma.setEnabled", {
                 "enabled": true
@@ -944,9 +936,7 @@ Singleton {
                 automationAvailable = true;
 
                 if (nightModeEnabled) {
-                    // Configure first (silent while disabled), enable last — a single
-                    // clean transition instead of enabling then re-applying config,
-                    // which restarts hyprsunset several times and flashes the screen.
+                    // Configure before enabling to avoid visible gamma resets during hyprsunset restarts.
                     const finishEnable = () => {
                         VGSBackendService.sendRequest("wayland.gamma.setEnabled", {
                             "enabled": true
@@ -1004,12 +994,9 @@ Singleton {
     }
 
     // BEGIN SCAN VERDICT DECISION
-    // What one terminal scan response may do, as data; every input is an
-    // argument, so scripts/test-brightness-scan-ordering.js executes this
-    // exact program. A failure counts toward quarantine only when its scan
-    // launched in the current lift episode; state commits only for the latest
-    // scan and only while nothing newer has settled, so an out-of-order
-    // response can never overwrite a newer verdict.
+    // scripts/test-brightness-scan-ordering.js evaluates the code between these markers in Node; every input is an argument.
+    // Count failures only for scans launched in the current recovery episode.
+    // Commit state only for the latest scan while no newer response has settled.
     function scanVerdict(isFailure, myGeneration, myEpoch, latestGeneration, currentEpoch, settledGeneration) {
         if (isFailure) {
             return {
@@ -1227,7 +1214,6 @@ Singleton {
         }
     }
 
-    // Session Data Connections
     Connections {
         target: SessionData
 
@@ -1271,7 +1257,6 @@ Singleton {
         }
     }
 
-    // IPC Handler for external control
     IpcHandler {
         function set(percentage: string, device: string): string {
             if (!root.brightnessAvailable)

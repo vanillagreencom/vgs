@@ -12,8 +12,6 @@ Singleton {
     readonly property FontSize fontSize: FontSize {}
     readonly property Anim anim: Anim {}
 
-    // Flatline (shadcn/Vercel) radius scale — tighter than Material 3. See
-    // docs/architecture/design-language.md.
     component Rounding: QtObject {
         readonly property int small: 6
         readonly property int normal: 8

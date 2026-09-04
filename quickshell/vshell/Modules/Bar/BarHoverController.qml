@@ -193,11 +193,7 @@ Item {
         return false;
     }
 
-    // A widget that does nothing on hover is filtered out of the candidate list,
-    // so it never reaches the full watch in _buildCandidateCache — and nothing
-    // would notice it later gaining a popout or a hover opt-in. Watch the one
-    // signal that would change that answer before rejecting it, so the false to
-    // true transition invalidates the cache and hover becomes available.
+    // Rejected widgets need this watcher so gaining a popout or hover opt-in invalidates the cache.
     function _watchHoverCapability(object) {
         _watchCandidateObject(object, ["respondsToHoverChanged"]);
     }
@@ -261,7 +257,7 @@ Item {
         ];
     }
 
-    // The widget registry is keyed by (widgetId, screenName)
+
     function _itemBelongsToThisBar(item) {
         const owner = barContent;
         if (!owner || !item)
@@ -313,11 +309,8 @@ Item {
         if (!widgetId || !widgetItem)
             return false;
         if (typeof widgetItem.triggerHoverPopout === "function") {
-            // Every PluginComponent has the method, including widgets whose
-            // hover path is a no-op since hover-activation became opt-in — so
-            // the method's presence is a shape check, not a capability check.
-            // respondsToHover is the capability; only fall back to the shape
-            // when an implementer does not publish one.
+            // Every PluginComponent exposes this method, even when hover does nothing.
+            // Use respondsToHover when published; method presence is only a fallback.
             if (widgetItem.respondsToHover !== undefined)
                 return widgetItem.respondsToHover === true;
             return true;
@@ -745,9 +738,7 @@ Item {
         }
 
         if (typeof widgetItem.triggerHoverPopout === "function") {
-            // Candidate collection already filters these out, but reporting
-            // "opened" for a widget that does nothing would make a stale hit
-            // look like a live popout to the caller.
+            // A stale candidate must not report an opened popout when hover has no effect.
             if (widgetItem.respondsToHover !== undefined && widgetItem.respondsToHover !== true)
                 return false;
             widgetItem.triggerHoverPopout(hit.widgetId);

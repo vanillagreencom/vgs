@@ -1,14 +1,4 @@
-# Agent and coding-harness workspaces
-# The managed harness trees (.agents, .claude, .codex, .opencode, .pi and
-# opencode.json) are TRACKED; `kendex refresh` renders them from
-# kendex.toml. The links into .agents/skills are relative and the hook
-# commands are repo-relative, so a clone works without running kendex.
-# kendex.toml and kendex.settings.toml are tracked too: project-owned config
-# (agent/skill wiring, review gates, Linear team) with no secrets — those
-# live in .env.local.
-#
-# kendex: this machine's install ledger — the .agents trees and the
-# links into them are committed, so a clone works without kendex.
+# Kendex renders are tracked. The install ledger is machine-local.
 /.kendex-lock.json
 /.claude/settings.local.json
 # Session-continuation state, never shared.
@@ -28,14 +18,7 @@
 !.env.sample
 !.env.local.example
 
-# Runtime logs, scratch files, and caches.
-#
-# Dependency, virtualenv and cache dirs are ignored BARE, never with a trailing
-# slash. A trailing-slash pattern matches a real directory but not a symlink
-# pointing at one, so a store linked into a worktree stays untracked and
-# `git add -A` can commit it (that is how drovr#644 landed a symlinked
-# node_modules and broke `pnpm install` in CI). `.cache` is the live case here,
-# since every worktree links it.
+# Directory patterns omit a trailing slash so they also ignore directory symlinks.
 tmp/
 .cache
 logs/
@@ -94,9 +77,7 @@ docs/research/
 # Session handoff (single file, never committed) — see AGENTS.md § Conventions
 docs/handoff/
 
-# Machine-local companion to AGENTS.md: this workstation's expected symlinks and
-# service state. Never committed — it describes one machine, and a tracked copy
-# would rot on every other one.
+# Machine-local wiring belongs outside the tracked configuration.
 /AGENTS.local.md
 
 # Local git worktrees (kendex worktree skill)

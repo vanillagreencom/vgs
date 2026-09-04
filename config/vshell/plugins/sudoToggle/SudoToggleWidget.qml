@@ -10,24 +10,13 @@ import qs.Modules.Plugins
 PluginComponent {
     id: root
 
-    // --- Live state: passwordless sudo is ENABLED iff the flag file exists ---
-    //
-    // The privileged drop-in lives in /etc/sudoers.d, which is unreadable to
-    // the logged-in user, so `vshell sudo-toggle` mirrors the state to a flag
-    // file this widget can watch. Protocol: docs/architecture/shell-architecture.md.
-    //
-    // The mirror can go stale (drop-in removed by an admin, restored home
-    // backup), so this widget never asks the helper to "flip": it passes the
-    // direction it is displaying via `set on|off`, and the helper refuses and
-    // re-syncs when reality disagrees. Inferring direction privileged-side is
-    // what let a revoke click install a permanent grant (VGS-11).
+    // The helper mirrors its privileged sudoers drop-in to a user-readable flag.
+    // The mirror can be stale, so requests carry the displayed direction.
+    // The helper refuses and resynchronizes when the real state disagrees.
     property bool enabled: false
 
-    // Whether the toggle can run at all on this machine (sudo + visudo +
-    // /etc/sudoers.d). Deliberately NOT gated on having a terminal: only
-    // granting needs one, and gating the whole control on it stranded an
-    // existing grant in place. Assume unavailable until the probe answers, so
-    // a failed probe never leaves a control that looks operable.
+    // Only grants need a terminal. Keep revocation available without one, and
+    // treat the feature as unavailable until the capability probe answers.
     property bool available: false
     property string unavailableReason: "checking…"
     // sudo currently runs without prompting for some other reason (an admin
@@ -51,38 +40,17 @@ PluginComponent {
     readonly property string flagPath: (Quickshell.env("HOME") || "") + "/.local/state/vshell/sudo-passwordless-toggle"
     readonly property string legacyFlagPath: (Quickshell.env("HOME") || "") + "/.local/state/sudo-passwordless-toggle"
 
-    // --- Grant confirmation -------------------------------------------------
-    //
-    // Enabling is permanent, has no expiry, and where sudo already does not
-    // prompt (a foreign wheel NOPASSWD rule, a live credential cache) the
-    // terminal gives visibility but no authentication — so this confirmation is
-    // the only real gate in that configuration.
-    //
-    // Until VGS-55 the gate was a toast plus a pointer gesture (move off the
-    // pill, click again, no sooner than 600 ms and within 8 s). Nothing on
-    // screen was interactive and the requirement was discoverable only by
-    // reading the toast. It is now SudoGrantConfirmModal, which is strictly
-    // stronger: hover cannot reach it, an accidental double-click on the pill
-    // cannot confirm — its second click lands on the modal background, which
-    // declines — and granting takes an explicit activation (clicking the grant
-    // control, or moving focus to it and pressing Return) of a control that
-    // says what it does. `isDirectActivation` stays — routing hover into a
-    // modal-opening call is still wrong.
+    // Grants have no expiry. An existing NOPASSWD rule or credential cache can
+    // remove the terminal authentication prompt, so retain explicit confirmation.
 
     // The drop-in the helper will write, from `sudo-toggle status --json`. Shown
     // in the modal so the rule is inspectable and removable outside the shell.
     property string dropinPath: ""
 
-    // Pure decision functions. `scripts/test-sudo-toggle-confirm.js` extracts
-    // THIS source text and exercises it directly, so the shipped logic is what
-    // is tested. Keep it free of QML API calls.
+    // Keep these decisions free of QML APIs: scripts/test-sudo-toggle-confirm.js extracts the marked block and runs it as JavaScript.
     // BEGIN CONFIRM DECISION
     function isDirectActivation(origin) {
-        // Only a real pointer press may change sudo state. The bar's hover
-        // controller reaches pillClickAction through triggerHoverPopout ->
-        // triggerPopout, so without this a pointer merely crossing the bar
-        // could open — or, with confirmation suppressed, complete — a grant
-        // with no click at all.
+        // Require click origin: hover reaches the same action dispatcher.
         return origin === "click";
     }
 
@@ -106,9 +74,6 @@ PluginComponent {
     // END CONFIRM DECISION
 
     function iconName() {
-        // gpp_maybe = shield with caution (elevated / less secure)
-        // gpp_good  = shield with check   (secure / password required)
-        // gpp_bad   = shield with cross   (feature unavailable here)
         if (!root.available)
             return "gpp_bad";
         if (root.enabled)
@@ -135,10 +100,7 @@ PluginComponent {
     }
 
     function toggle(origin) {
-        // Nothing here may run for a synthesised activation — not the state
-        // change, not the modal, not even a toast. `pillClickOnHover: false`
-        // already stops the known hover path; this is the invariant enforced at
-        // the decision point, so a future caller cannot reopen it.
+        // Check origin before changing state or opening the confirmation dialog.
         if (!root.isDirectActivation(origin))
             return;
         if (!root.available) {
@@ -154,8 +116,7 @@ PluginComponent {
             return;
 
         if (decision === "revoke") {
-            // Revoking only ever removes privilege — no confirmation, and no
-            // terminal requirement, so it works even where granting cannot.
+            // Revocation needs neither confirmation nor a terminal.
             root._runSet("off");
             return;
         }
@@ -176,9 +137,7 @@ PluginComponent {
         root._runSet("on");
     }
 
-    // The confirmation surface. Only `confirmed` may start a grant, and only a
-    // confirmed grant may persist the suppression flag — cancelling with the
-    // box ticked leaves the next grant confirmed.
+    // Only a confirmed grant can persist confirmation suppression.
     SudoGrantConfirmModal {
         id: grantConfirm
         targetScreen: root.parentScreen
@@ -213,13 +172,10 @@ PluginComponent {
     function _runSet(state) {
         root._pendingState = state;
         setProc.running = true;
-        // The FileView watch + poll timer pick up the new state; nudge shortly.
         stateNudge.restart();
     }
 
-    // The mirror moved under the VGS state dir; a pre-existing install still
-    // has the old file until the first change rewrites it, so both count as
-    // "enabled" until then.
+    // Accept both flag locations until the helper migrates an existing install.
     function _refreshFromFlags() {
         root.enabled = root._flagPresent || root._legacyFlagPresent;
     }
@@ -263,8 +219,6 @@ PluginComponent {
         onExited: exitCode => {
             statusWatchdog.stop();
             if (exitCode !== 0) {
-                // A non-zero exit always means unusable; never leave the
-                // placeholder reason in place.
                 root.available = false;
                 if (root.unavailableReason === "" || root.unavailableReason === "checking…")
                     root.unavailableReason = "`vshell sudo-toggle status` exited " + exitCode;
@@ -272,9 +226,7 @@ PluginComponent {
         }
     }
 
-    // If the CLI cannot be spawned at all (wrong VSHELL_ROOT in a packaged
-    // install) neither handler above ever fires, and the tooltip would sit on
-    // "checking…" forever — a diagnosable message is the whole point here.
+    // A failed process start delivers no exit; bound the initial checking state.
     Timer {
         id: statusWatchdog
         interval: 10000
@@ -285,10 +237,8 @@ PluginComponent {
         }
     }
 
-    // The state change itself, always in an explicit direction. Enabling is
-    // routed through a terminal by the helper so sudo can authenticate;
-    // disabling stays silent. A failed spawn must surface: this widget's whole
-    // defect history is clicks that did nothing.
+    // Send an explicit direction. The helper runs grants in a terminal so
+    // sudo can prompt for authentication.
     Process {
         id: setProc
         command: [Paths.vshellCli, "sudo-toggle", "set", root._pendingState]
@@ -305,8 +255,6 @@ PluginComponent {
         onExited: exitCode => {
             const detail = (root._toggleStderr || "").trim();
             if (exitCode === setProc.exitStale) {
-                // The helper found reality disagreed with what we displayed and
-                // deliberately changed nothing.
                 ToastService.showWarning("Passwordless sudo state was out of date", detail || "Nothing changed; the shell has re-read the current state.");
                 root._probeStatus(false);
             } else if (exitCode === setProc.exitTerminalFailed) {
@@ -367,8 +315,7 @@ PluginComponent {
         }
     }
 
-    // A couple of quick re-checks right after a toggle so the icon flips
-    // promptly once the launcher finishes.
+    // Re-check after toggling so the displayed flag can follow the helper result.
     Timer {
         id: stateNudge
         interval: 600
@@ -387,11 +334,7 @@ PluginComponent {
         onRunningChanged: if (running) ticks = 0
     }
 
-    // --- Hover tooltip (native Dock pattern) ---
-    // A single persistent VgsTooltip: it is a separate WlrLayershell Overlay
-    // surface (not an in-window Popup), so it never steals pointer/hover from
-    // the pill. A short reveal delay avoids flicker. We only call show()/hide();
-    // the instance is never created/destroyed.
+    // Use a persistent layer tooltip so showing it does not take hover from the pill.
     property var _hoverItem: null
 
     VgsTooltip {
@@ -409,8 +352,6 @@ PluginComponent {
     function _requestTip(item) {
         root._hoverItem = item;
         tipDelay.restart();
-        // Hovering is the first sign the user cares about this control, so it
-        // is where the sudo probe is paid — never at shell start.
         if (!root.sudoProbeDone && root.available && !root.enabled)
             root._probeStatus(true);
     }
@@ -443,18 +384,11 @@ PluginComponent {
         }
     }
 
-    // Left-click changes sudo state (no popout). Hover must never reach this:
-    // BarHoverController calls triggerHoverPopout on every PluginComponent, and
-    // triggerPopout forwards a zero-argument pillClickAction, so without this a
-    // pointer crossing the bar would arm and then confirm a grant with no click
-    // at all. `pillClickOnHover` is opt-in since VGS-36, so this restates the
-    // default rather than overriding it — stated explicitly because the whole
-    // click-only rule rests on it.
+    // Keep hover out of privilege-changing actions.
     pillClickOnHover: false
 
     pillClickAction: function () {
-        // The origin comes from the invoker, not from this line, so the
-        // click-only rule cannot be re-broken by a new caller.
+        // Pass the invoker origin through to the activation check.
         root.toggle(root.pillActionOrigin);
     }
 
@@ -470,14 +404,10 @@ PluginComponent {
                 size: root.iconSize
                 color: Theme.widgetIconColor
                 filled: root.available && root.enabled
-                // Dimmed reads as "present but not operable" — clicking still
-                // explains why rather than doing nothing.
                 opacity: root.available ? 1 : 0.4
             }
 
-            // Hover-only overlay: NoButton lets clicks fall through to the
-            // BasePill so pillClickAction still fires. Show/hide the shared,
-            // persistent tooltip — no create/destroy churn.
+            // NoButton passes clicks through to BasePill while this area handles hover.
             MouseArea {
                 anchors.fill: parent
                 hoverEnabled: true

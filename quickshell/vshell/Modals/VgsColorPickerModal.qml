@@ -193,8 +193,7 @@ VgsModal {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.top: parent.top
-                // Match the standard modal inset (popoutPadding) and section
-                // rhythm; spacingM edges read cramped next to other modals.
+
                 anchors.margins: Theme.popoutPadding
                 spacing: Theme.spacingL
 

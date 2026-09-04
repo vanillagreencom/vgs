@@ -1,27 +1,8 @@
 #!/usr/bin/env node
 
-// Guards the rule that a popout's dismiss carve-out is the body AS DRAWN, at
-// every frame of every transition (VGS-133 review).
-//
-// The background dismiss window is a full-output surface whose input mask is
-// `maskRect` MINUS `contentHoleRect`. If that hole is not exactly the popup
-// body currently on screen, one of two things is wrong for a real user, during
-// the very animation this PR added: a click on the visible popout dismisses it
-// instead of reaching its content, or a click just outside it fails to dismiss.
-//
-// WHY THIS FILE IS SHAPED THE WAY IT IS. The carve-out used to be written
-// imperatively from SETTLED geometry by every handler that changed anything,
-// while the body draws from ANIMATED geometry. That produced four separate
-// reports - a grow whose entry curve overshoots past its target Y, a shrink
-// whose rendered height lags, a reposition mid-shrink, a width change
-// mid-shrink - which were one defect at four call sites. The fix derives the
-// hole once from the drawn geometry, so this file does not test four handlers.
-// It evaluates the SHIPPED BINDINGS and asserts one invariant across all four
-// paths: hole == drawn body, on every frame.
-//
-// The bindings are extracted from the QML and evaluated, never transcribed. A
-// transcription keeps passing after the QML moves on, which is the failure mode
-// this whole review was about. Extraction fails loudly if the shapes move.
+// Evaluate shipped geometry bindings across growth, shrink, reposition, and width-change frames.
+// The dismissal hole must match the drawn body. A smaller hole can dismiss content clicks;
+// a larger hole can let outside clicks pass without dismissal.
 
 "use strict";
 
@@ -31,24 +12,14 @@ const path = require("path");
 const ROOT = path.resolve(__dirname, "..");
 const POPOUT = path.join(ROOT, "quickshell/vshell/Widgets/VgsPopoutStandalone.qml");
 const source = fs.readFileSync(POPOUT, "utf8");
-// COMMENT-FREE VIEW, used by every check that infers BEHAVIOUR from the QML text.
-// Reading raw source for that lets prose flip a verdict: this file's checks look
-// for `_bgCommitWindow = true` and for mentions of `backgroundDismissWindowRequired`,
-// and the handlers they read are heavily commented precisely because these
-// invariants are subtle. A comment must never be able to satisfy or trip a guard.
-// `source` stays available for the checks that legitimately search prose-free
-// constructs (property bindings, banned identifiers).
+// Blank comments before behavior-oriented source checks so prose cannot satisfy or trip them.
 const code = source.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
 
 let failures = 0;
 const fail = (name, detail) => { console.error(`FAIL [${name}]: ${detail}`); failures += 1; };
 const ok = (name) => console.log(`  ok    ${name}`);
 
-// --- extraction ------------------------------------------------------------
-// Deliberately NOT a brace counter: these are single-line property bindings, so
-// the block is bounded by its `id:` and the first line that closes it. A miss
-// throws rather than returning something partial (VGS-187 covers the brace
-// counter that used to live here).
+// Read single-line bindings from an ID-bounded block and throw when extraction fails.
 function bindingsOf(id, names) {
   const at = source.indexOf(`id: ${id}`);
   if (at === -1) throw new Error(`could not find ${id} in ${POPOUT}`);
@@ -77,15 +48,8 @@ const bodyRect = {
   h: propertyBinding("bodyRectH"),
 };
 
-// EVALUATING THE SHIPPED BINDING IS THE POINT - a transcription keeps passing
-// after the QML moves on - but evaluating raw source from a repo file is a CI
-// execution surface: a binding rewritten to `require("child_process")...` would
-// run here. So an expression is REFUSED unless it is made only of what a
-// geometry binding needs: dotted identifiers, integers, `? :`, `&&`, `+`, `-`
-// and parentheses. No calls, no indexing, no strings, no assignment. The check
-// is a whitelist, so anything unanticipated is rejected rather than permitted,
-// and it throws rather than skipping - a binding this cannot read is a reason to
-// stop, not to quietly test less.
+// Limit evaluated geometry expressions to the accepted token grammar. Reject calls, indexing,
+// strings, and assignments instead of executing arbitrary repository expressions.
 const EXPR_TOKEN = /^(?:[A-Za-z_$][A-Za-z0-9_$]*(?:\s*\.\s*[A-Za-z_$][A-Za-z0-9_$]*)*|[0-9]+|\?|:|&&|\+|-|\(|\))/;
 function assertSafeExpression(expr, what) {
   let rest = expr.trim();
@@ -94,17 +58,10 @@ function assertSafeExpression(expr, what) {
     const m = EXPR_TOKEN.exec(rest);
     if (!m) throw new Error(`refusing to evaluate ${what}: unsupported syntax at ${JSON.stringify(rest.slice(0, 24))}`);
     const token = m[0];
-    // An identifier followed by `(` is a CALL, which is the shape this exists to
-    // keep out; the tokens themselves are otherwise harmless.
+    // Reject an identifier followed by an opening parenthesis because it forms a call.
     if (token === "(" && previous && /[A-Za-z0-9_$)]$/.test(previous))
       throw new Error(`refusing to evaluate ${what}: looks like a call at ${JSON.stringify(rest.slice(0, 24))}`);
-    // `++`/`--` tokenize as two allowed single-character tokens, so the whitelist
-    // admits them while the header promises "no assignment". They cannot reach
-    // anything the identifier guard does not already own, so this is not an
-    // execution surface - but `alignedX++` would MUTATE the model state the sweep
-    // is comparing against, and a harness that quietly rewrites its own fixture is
-    // the wrong kind of green. Adjacent same-sign operators are refused outright;
-    // no real geometry binding needs one.
+    // Adjacent ++ or -- can pass a single-character token list but mutate the model. Reject them explicitly.
     if ((token === "+" || token === "-") && previous === token)
       throw new Error(`refusing to evaluate ${what}: '${token}${token}' mutates state at ${JSON.stringify(rest.slice(0, 24))}`);
     previous = token;
@@ -113,11 +70,7 @@ function assertSafeExpression(expr, what) {
   return expr;
 }
 
-// Syntax alone is not enough: `process.env.HOME` is a dotted read, not a call,
-// so a token whitelist admits it and `with (ctx)` resolves it against the Node
-// globals. Every identifier ROOT must therefore be a property of the state
-// object as well - which is also self-maintaining, because the allowed set is
-// whatever the model actually provides rather than a list to keep in step.
+// Require each identifier root in the model. Dotted syntax alone also permits Node global reads.
 function assertKnownIdentifiers(expr, ctx, what) {
   const heads = expr.replace(/\broot\./g, "").match(/[A-Za-z_$][A-Za-z0-9_$]*(?=\s*\.)|[A-Za-z_$][A-Za-z0-9_$]*/g) || [];
   for (const head of heads) {
@@ -127,7 +80,7 @@ function assertKnownIdentifiers(expr, ctx, what) {
   return expr;
 }
 
-// `root.` and bare names both resolve against the same state here.
+// Bare names and root-qualified names resolve against the same model state.
 const evalIn = (expr, ctx) => {
   assertSafeExpression(expr, "a QML binding");
   assertKnownIdentifiers(expr, ctx, "a QML binding");
@@ -136,7 +89,7 @@ const evalIn = (expr, ctx) => {
   return new Function("ctx", `with (ctx) { return (${src}); }`)(ctx);
 };
 
-// --- the model -------------------------------------------------------------
+
 function makeState(over = {}) {
   const st = {
     shouldBeVisible: true,
@@ -151,23 +104,18 @@ function makeState(over = {}) {
     renderedAlignedHeight: 600,
     ...over,
   };
-  // What the settle path records for the SURFACE. Deliberately settled: the
-  // surface must not resize per frame (that is the VGS-133 flash). If the hole
-  // were still derived from this, every assertion below would fail.
+  // Keep settled surface geometry distinct from animated body geometry so the wrong source fails.
   st._surfaceBodyX = st.alignedX;
   st._surfaceBodyY = st.alignedY;
   st._surfaceBodyW = st.alignedWidth;
   st._surfaceBodyH = st.alignedHeight;
   st._surfaceMarginLeft = st._surfaceBodyX - st.shadowBuffer;
-  // Both `bodyRect*` and the contentContainer bindings are evaluated from the
-  // same state, so the comparison is between two shipped expressions.
+  // Compare body and hole expressions evaluated from the same state.
   for (const [k, expr] of Object.entries(bodyRect)) st[`bodyRect${k.toUpperCase()}`] = evalIn(expr, st);
   return st;
 }
 
-// The body's screen rect, from contentContainer's own bindings. Its x is
-// SURFACE-LOCAL, so the surface's left margin is added back to reach screen
-// coordinates - the same arithmetic the compositor does.
+// Add the surface left margin to content-local X to compare screen coordinates.
 const drawnBody = (st) => ({
   x: st._surfaceMarginLeft + evalIn(container.x, st),
   y: evalIn(container.y, st),
@@ -188,7 +136,7 @@ const mismatch = (st) => {
   return bad.length ? `body ${JSON.stringify(b)} vs carve-out ${JSON.stringify(c)} (differs on ${bad.join(",")})` : null;
 };
 
-// Steps a transition and checks the invariant on EVERY frame, not just the ends.
+// Check each sampled transition frame, not only endpoints.
 function sweep(label, frames) {
   const bad = [];
   frames.forEach((st, i) => {
@@ -203,18 +151,15 @@ function sweep(label, frames) {
 const lerp = (a, b, t) => a + (b - a) * t;
 const FRAMES = 8;
 
-// --- the four paths, all against ANIMATED geometry -------------------------
 
-// 1. GROW WITH OVERSHOOT. The expressive entry curves carry y control points of
-//    1.21 (expressiveDefaultSpatial) and 1.5/1.67 (expressiveFastSpatial), so
-//    renderedAlignedY travels PAST its target before settling. A model that
-//    interpolated between endpoints would never produce these frames.
+
+// Include overshoot beyond the target; endpoint interpolation cannot represent expressive entry curves.
 {
   const startY = 300, targetY = 100;
   const frames = [];
   for (let i = 0; i <= FRAMES; i += 1) {
     const t = i / FRAMES;
-    // Overshoot above the target, then settle back onto it.
+
     const y = t < 0.75 ? lerp(startY, targetY - 40, t / 0.75) : lerp(targetY - 40, targetY, (t - 0.75) / 0.25);
     frames.push(makeState({ alignedY: targetY, renderedAlignedY: y, alignedHeight: 600, renderedAlignedHeight: lerp(200, 600, t) }));
   }
@@ -223,7 +168,7 @@ const FRAMES = 8;
   sweep("grow with Y overshoot", frames);
 }
 
-// 2. SHRINK WHERE THE RENDERED HEIGHT LAGS.
+
 {
   const frames = [];
   for (let i = 0; i <= FRAMES; i += 1)
@@ -233,9 +178,7 @@ const FRAMES = 8;
   sweep("shrink with lagging height", frames);
 }
 
-// 3. REPOSITION DURING A SHRINK. X and Y targets move while the height is still
-//    animating - the Dash tab-switch path, where currentTabIndex is assigned and
-//    updateSurfacePosition() called on an already-visible popout.
+// Move position targets while height is still shrinking to model tab changes.
 {
   const frames = [];
   for (let i = 0; i <= FRAMES; i += 1) {
@@ -249,8 +192,7 @@ const FRAMES = 8;
   sweep("reposition during a shrink", frames);
 }
 
-// 4. WIDTH CHANGE DURING A SHRINK. The Dash binds popupWidth to
-//    SettingsData.showWeekNumber, so a settings reload can land mid-transition.
+// Change width during shrink to model a settings update within a transition.
 {
   const frames = [];
   for (let i = 0; i <= FRAMES; i += 1) {
@@ -264,11 +206,7 @@ const FRAMES = 8;
   sweep("width change during a shrink", frames);
 }
 
-// --- the must-fail control -------------------------------------------------
-// The settled rect is what the carve-out used to come from, and it is still
-// recorded for the surface - so this is the real pre-fix expression, not a straw
-// man. If deriving the hole from it does NOT break the invariant, then none of
-// the sweeps above are measuring anything.
+// Use settled geometry for the hole as a failure control. A useful sweep must detect that disagreement.
 {
   const settledHole = { x: "_surfaceBodyX", y: "_surfaceBodyY", width: "_surfaceBodyW", height: "_surfaceBodyH" };
   const saved = { ...hole };
@@ -280,8 +218,7 @@ const FRAMES = 8;
   else ok("deriving it from the settled rect breaks the invariant (control)");
 }
 
-// The evaluator's own guard: a binding is data from a repo file, and this file
-// must not become a way to run it.
+// Test the evaluator's rejection rules before trusting repository expressions.
 {
   const rejected = [
     'require("child_process").execSync("id")',
@@ -290,10 +227,7 @@ const FRAMES = 8;
     'root.thing["key"]',
     "root.alignedX + `x`",
     'Math.max(root.alignedX, 0)',
-    // `++`/`--` tokenize as two allowed single-character tokens, so the token
-    // whitelist admitted them and the identifier guard has no objection - the
-    // head IS part of the model. They mutate the fixture the sweep compares
-    // against, which is why they are refused explicitly.
+    // Increment and decrement controls use valid model names but must still fail because they mutate fixtures.
     'root.alignedX++',
     '++root.alignedX',
     'root.alignedX--',
@@ -308,8 +242,7 @@ const FRAMES = 8;
     } catch { threw = true; }
     if (!threw) fail("expression guard", `accepted an expression it must refuse: ${bad}`);
   }
-  // ...and it must still accept every shape the real bindings use, or the
-  // guard would be "safe" by testing nothing.
+  // Require every shipped binding shape to pass so blanket rejection cannot count as protection.
   for (const [what, expr] of [...Object.entries(hole), ...Object.entries(container), ...Object.entries(bodyRect)]) {
     try { assertSafeExpression(expr, what); assertKnownIdentifiers(expr, probeState, what); }
     catch (e) { fail("expression guard", `refused a real shipped binding (${what}): ${e.message}`); }
@@ -317,9 +250,7 @@ const FRAMES = 8;
   ok("the evaluator refuses anything but a geometry expression, and accepts every real one");
 }
 
-// --- wiring ----------------------------------------------------------------
-// The invariant above is only meaningful if the hole is bound to the derived
-// rect rather than to a settled value that happens to agree in the steady state.
+// Verify that the actual mask binds to the derived body rectangle.
 {
   for (const [k, expr] of Object.entries(hole)) {
     if (/_surfaceBody/.test(expr))
@@ -336,8 +267,7 @@ const FRAMES = 8;
     ok("bodyRectY/bodyRectH are the animated values");
 }
 
-// The imperative envelope is what produced four call sites to get wrong. If it
-// comes back, this file's single-invariant premise is gone with it.
+// Reject imperative envelope updates that would create separate geometry owners.
 {
   for (const gone of ["_setDismissCarveOutEnvelope", "carveOutSettleTimer"]) {
     if (source.includes(gone))
@@ -346,38 +276,17 @@ const FRAMES = 8;
   if (!failures) ok("no imperative carve-out writer remains");
 }
 
-// THE STACKING ORDER IS LOAD-BEARING, so it is pinned rather than left implicit.
-//
-// The body and the dismiss mask are committed by two separate PanelWindows, and
-// those commits are NOT atomic - so for a frame during a transition the hole and
-// the content input region can disagree. That interval is harmless only because
-// the content window is stacked ABOVE the background window, which it is because
-// both share `effectivePopoutLayer` and the background is mapped FIRST:
-//
-//   bg commits first  -> hole is the new (smaller) rect, content input region is
-//                        still the old (larger) one. Content is on top and
-//                        accepts, so the click REACHES CONTENT.
-//   content commits first -> hole is the old (larger) rect, content input region
-//                        is the new (smaller) one. The point is inside the hole,
-//                        so the background does not accept it either: the click
-//                        falls through. Not a dismiss.
-//
-// Neither ordering dismisses, which is why the imperative envelope is not needed
-// to cover this and why a union of previous/current/target would change nothing -
-// it only ever ENLARGES the hole, and in both orderings the outcome is already
-// decided by stacking. But flip these two assignments and the first ordering
-// becomes a real dismiss-instead-of-click. Hence this check.
+// Separate PanelWindow commits are not atomic. Map the background first on the same layer
+// so content remains above it. During disagreement, a click can reach content or fall through;
+// reversing the stack can turn a content click into dismissal.
 {
-  // `code` is the comment-free view: this file and the QML both DISCUSS
-  // `contentWindow.visible`, and a prose mention must not read as a show site.
-  // Whitespace is free around the assignment, so reformatting cannot break this.
+  // Find content show assignments in comment-free code so explanatory mentions cannot count.
   const SHOW = /(background|content)Window\.visible\s*=\s*true/g;
   const shows = [...code.matchAll(SHOW)].map(m => m[1]);
   if (shows.length < 2)
     fail("stacking", "could not read the window show order; the input-routing argument above is unverified");
   else {
-    // Every content show must be preceded by a background show in the same branch
-    // sequence: the background surface has to be mapped first to sit underneath.
+    // Require background mapping before each content show in its branch sequence.
     let bad = false;
     for (let i = 0; i < shows.length; i++)
       if (shows[i] === "content" && shows[i - 1] !== "background") bad = true;
@@ -387,17 +296,12 @@ const FRAMES = 8;
       ok("the background window is mapped before the content window, so content stacks on top");
   }
 
-  // ...and the order has to SURVIVE the open session. Unmapping the background
-  // while the content window stays up and remapping it later puts it on top,
-  // which is the same defect arriving by a different route - and it is reachable,
-  // because ControlCenterPopout binds backgroundInteractive to !anyModalOpen.
+  // Keep background mapped during the open session. Unmapping and remapping can place it above content.
   const handler = /onBackgroundWindowRequiredChanged:\s*\{([\s\S]*?)\n    \}/.exec(code);
   if (!handler)
     fail("stacking", "could not read onBackgroundWindowRequiredChanged; the no-remap property is unverified");
   else {
-    // The assigned VALUE is read out and compared, not lookahead-negated: a
-    // `(?!true)` after `\s*` passes by backtracking the whitespace to empty, so
-    // it reports a violation on the correct code. (It did.)
+    // Compare the assigned value directly; a negative lookahead after optional whitespace can backtrack.
     const assigned = [...handler[1].matchAll(/backgroundWindow\.visible\s*=\s*([A-Za-z0-9_.]+)/g)].map(m => m[1]);
     const unmaps = assigned.filter(v => v !== "true");
     if (unmaps.length)
@@ -407,15 +311,8 @@ const FRAMES = 8;
   }
 }
 
-// PRESERVING THE MAPPING MADE THE MASK COMMIT LOAD-BEARING, so the round trip is
-// driven rather than asserted.
-//
-// The mask collapsing to 0x0 is a QML property change; it reaches the compositor
-// only on a surface COMMIT, gated by `updatesEnabled`. The handler that used to
-// run on this edge UNMAPPED the window, and an unmap commits regardless - which
-// is why this only became necessary once the mapping was preserved to fix the
-// stacking order. Control Center is the live case: no overlayContent, settled, so
-// every term of `updatesEnabled` is false unless something opens a commit window.
+// A mask property change needs a surface commit. With a settled popout and no overlay,
+// updatesEnabled needs a temporary commit window even when the background remains mapped.
 {
   const mask = bindingsOf("maskRect", ["width", "height"]);
   const upd = /^\s*updatesEnabled:\s*(.+)$/m.exec(code);
@@ -424,24 +321,16 @@ const FRAMES = 8;
   if (!upd) fail("mask commit", "could not read backgroundWindow.updatesEnabled");
   else if (!handler) fail("mask commit", "no onBackgroundDismissWindowRequiredChanged handler: the collapsed mask is never committed, so the mapped surface keeps its previous full-output input region");
   else {
-    // The model below hard-codes the three terms of `updatesEnabled`. Pin that it
-    // still IS those three, or a fourth term would be silently unmodelled and this
-    // whole control would be reasoning about a binding that no longer exists.
+    // Assert the modeled updatesEnabled expression so additional dependencies cannot go unmodeled.
     const terms = (upd[1].match(/[A-Za-z_$][A-Za-z0-9_$]*/g) || []).filter(t => t !== "root" && t !== "null");
     const expected = ["overlayContent", "_bgCommitWindow", "bodyRectAnimating"];
     if (JSON.stringify(terms) !== JSON.stringify(expected))
       fail("mask commit", `updatesEnabled is no longer the three terms this control models (got ${terms.join(", ")}); re-derive the model before trusting it`);
 
-    // A settled Control Center popout: no overlay content, nothing animating,
-    // commit window expired. `updatesEnabled` is then exactly `_bgCommitWindow`.
+    // Use settled state without overlay content so only _bgCommitWindow enables a commit.
     const opensCommit = /_bgCommitWindow\s*=\s*true/.test(handler[1]);
-    // ...and on BOTH edges. A handler that only commits when the requirement
-    // becomes true restores the mask but never collapses it, which is the
-    // click-eating direction. Detected as ANY mention of the requirement in the
-    // body, not as a leading `if (...)`: the first draft looked for the guard in
-    // first position and so missed `if (!backgroundWindow.visible ||
-    // !backgroundDismissWindowRequired)`. The correct body has no reason to read
-    // the requirement at all - it commits on the edge, whichever way it went.
+    // Commit on both edges of dismissal requirement. Checking only true restores the mask
+    // but can leave the click catcher active when the requirement becomes false.
     const edgeGated = /backgroundDismissWindowRequired/.test(handler[1]);
 
     let committedMask = null;
@@ -451,11 +340,11 @@ const FRAMES = 8;
       st._frozenMaskWidth = 1920;
       st._frozenMaskHeight = 1080;
       const live = { w: evalIn(mask.width, st), h: evalIn(mask.height, st) };
-      // The commit only lands if the handler opened a window on this edge.
+      // The commit needs a window opened on this edge.
       if (opensCommit && !edgeGated) committedMask = live;
       sim.push({ label, live, committed: committedMask });
     };
-    committedMask = { w: 1920, h: 1080 }; // settled and interactive: full catcher
+    committedMask = { w: 1920, h: 1080 };
     step("power menu opens (backgroundInteractive -> false)", false);
     step("power menu closes (backgroundInteractive -> true)", true);
 
@@ -470,9 +359,7 @@ const FRAMES = 8;
   }
 }
 
-// The surface must still settle from SETTLED geometry - deriving the hole from
-// the animation must not have dragged the surface along, which would be the
-// VGS-133 flash returning.
+// Surface geometry must remain settled while the hole follows animation to avoid per-frame surface resize.
 {
   const m = /function _setSettledSurfaceGeometry\(\)[\s\S]{0,300}?_setSurfaceGeometry\(([^)]*)\)/.exec(source);
   if (!m) fail("surface", "could not read the settle path's _setSurfaceGeometry call");

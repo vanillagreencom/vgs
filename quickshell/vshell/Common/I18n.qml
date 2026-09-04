@@ -77,10 +77,10 @@ Singleton {
 
     function _loadPresentLocales() {
         if (Object.keys(presentLocales).length > 1) {
-            return; // already loaded
+            return;
         }
         for (let i = 0; i < dir.count; i++) {
-            const name = dir.get(i, "fileName"); // e.g. "zh_CN.json"
+            const name = dir.get(i, "fileName");
             if (name && name.endsWith(".json")) {
                 const shortName = name.slice(0, -5);
                 presentLocales[shortName] = Qt.locale(shortName);

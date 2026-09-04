@@ -1,15 +1,7 @@
 #!/usr/bin/env node
 
-// Pins how AiUsageWidget.qml APPLIES the decisions the sibling suites prove as
-// behavior (VGS-118). Those are pure and executed there; what is left here is
-// wiring, where the bug shape is a MISSING or MISDIRECTED line — a channel's
-// reason on the other's record, a reset that resets nothing, an outcome computed
-// and then ignored. This suite parses only; it executes nothing.
-//
-// Why source assertions at all: `qml-smoke.sh --nested` DOES host this plugin,
-// but it is local-only (Hyprland and quickshell on PATH) so CI never runs it, and
-// a harness cannot drive a fetch's exit path through the QML runtime. Tokens match
-// with whitespace flattened: reformatting is free, deleting is not.
+// Inspect how AiUsageWidget applies its shared decisions. These checks parse source
+// and do not execute its fetch paths. Whitespace normalization permits line wrapping.
 
 "use strict";
 
@@ -26,13 +18,11 @@ const source = fs.readFileSync(WIDGET, "utf8");
 const { blockFrom, body, handlers, requires, indexOf, lastIndexOf, stripComments } =
     require("./lib/qml-source.js")(source, "AiUsageWidget.qml");
 
-// Bans read the source with comments blanked: prose MENTIONING a banned name is
-// not that name. Landmarks go through indexOf/lastIndexOf, on a structure-only
-// view; requires() needs both — see the library for why.
+// Use comment-blanked text for bans and code structure for landmarks.
+// Required tokens must agree in both views at the same offset.
 const code = stripComments(source);
 
-// Prove the walk and the stripper before anything leans on them: the library's
-// own cases, then the same helpers against the file this test reads.
+// Run helper self-tests before using the helpers against widget source.
 require("./lib/qml-source.js").selfTest();
 
 {
@@ -46,7 +36,7 @@ require("./lib/qml-source.js").selfTest();
     assert.ok(stripped.includes('b("kept")'), "code must survive stripping");
 }
 
-// --- filing a payload: a keyed map, so no branch can file under a guess ------
+
 
 const store = body("storeHeadline");
 requires(store, "storeHeadline()", [
@@ -61,15 +51,14 @@ assert.ok(body("noteHeadline").includes("logic.payloadProvider(data)"),
 assert.ok(!body("noteHeadline").includes("root.provider"),
     "filing by the CURRENT selection is the bug this issue is about");
 
-// --- accepting a payload: one path for both channels, taking only the channel -
+
 
 const accept = body("acceptPayload");
 requires(accept, "acceptPayload()", [
     ["logic.decodePayload(ch.inFlight, txt)", "validated against ITS OWN channel's tag"],
     ["ch.issue = got.issue", "the reason is recorded on the channel that fetched it"],
     ["ch.accepted = true", "acceptance is what tells the exit path a payload arrived"],
-    // One call, not three operands: `ch.want` also occurs two lines below, so
-    // split operands miss the two arguments being swapped.
+    // Match the complete call; separate operands can also appear in unrelated statements.
     ["logic.acceptOutcome(logic.payloadProvider(got.data), ch.want)",
         "the outcome is decided from the payload's OWN provider and what this channel wants"],
     ["outcome.file", "a payload that names a provider updates that provider's pill slot"],
@@ -80,9 +69,9 @@ requires(accept, "acceptPayload()", [
     ["ch.retries = 0", "a satisfying payload restores the retry budget"]
 ]);
 
-// Third consumer of the rule: promotion, not gated on which channel fetched.
+// Promotion uses result ordering independently of the fetching channel.
 requires(body("promoteSelected"), "promoteSelected()", [
-    // ACCEPTED, not success-only: an ok:false payload is the provider answering.
+    // Accepted failure payloads must also reach promotion.
     ["logic.newerAccepted(filed, filedAt, root.currentFiledAt)",
         "the same ordering the failure paths ask"],
     ["root.current = filed", "the popout state is the payload that was filed"],
@@ -92,7 +81,7 @@ requires(body("promoteSelected"), "promoteSelected()", [
 assert.ok(!/ch\.primary/.test(stripComments(body("acceptPayload"))),
     "acceptPayload must not gate the popout on which channel fetched");
 
-// --- the channel owns its process, so no call site can cross the pairing -----
+
 
 const channel = blockFrom(indexOf("component FetchChannel:"), "FetchChannel");
 requires(channel, "FetchChannel", [
@@ -125,10 +114,8 @@ requires(channel, "FetchChannel", [
         "the process fetches the provider its own channel wants"]
 ]);
 
-// Nothing outside the component may name a process or a collector — that is what
-// makes the pairing structural. The span removed must BE the block blockFrom
-// walked: from the open brace, not the `component` keyword ~33 characters
-// earlier, which left the block's tail inside `outside` (latent: no banned name).
+// Inspect everything outside the extracted channel block, using its opening-brace offset.
+// A component-keyword offset would remove the wrong span and leave part of the block behind.
 const componentAt = indexOf("{", indexOf("component FetchChannel:"));
 assert.equal(source.slice(componentAt, componentAt + channel.length), channel,
     "the removed span is exactly the component block, starting at its own open brace");
@@ -136,8 +123,7 @@ const outside = source.slice(0, componentAt) + source.slice(componentAt + channe
 assert.ok(!/\b(usageProc|otherProc|usageOut|otherOut|usageErr|otherErr)\b/.test(stripComments(outside)),
     "per-channel processes and collectors are not nameable from outside the channel");
 
-// Both channels are instantiated with their provider bound, only one is the
-// popout's, each found by id then walked back to its FetchChannel.
+
 function channelNamed(id) {
     const at = indexOf(`id: ${id}`);
     assert.notEqual(at, -1, `AiUsageWidget.qml must declare ${id}`);
@@ -155,7 +141,7 @@ const otherChannel = channelNamed("otherFetch");
 assert.ok(otherChannel.includes("want: root.otherProvider"), "the other channel fetches the other provider");
 assert.ok(!otherChannel.includes("primary"), "and does not own the popout");
 
-// Both failure paths are idempotent: whichever settles the fetch first owns it.
+// Either failure path can settle first; settlement must be idempotent.
 assert.ok(body("finishFetch").includes('if (ch.inFlight === "")'),
     "an exit arriving after the watchdog settled must not report twice, nor settle a relaunch");
 
@@ -177,7 +163,7 @@ requires(body("failLaunch"), "failLaunch()", [
     ["console.warn", "and says so in the log"],
     ["root.settleFetch(ch)", "then settles like a failed exit — retried, then reported"]]);
 
-// --- finishing --------------------------------------------------------------
+
 
 const finish = body("finishFetch");
 requires(finish, "finishFetch()", [
@@ -190,8 +176,7 @@ requires(finish, "finishFetch()", [
     ["console.warn", "the failure has to reach vshell logs, or the cause exists nowhere"],
     ["root.completeFetch(ch)", "and then asks whether BOTH halves have landed, rather than " +
         "settling on the exit alone"]]);
-// The provider suite proves stderrReason honours the limit it is handed; what is
-// left to pin is the number the widget hands it. A five-digit "cap" is none.
+// The provider tests enforce the supplied stderr limit. This assertion fixes the limit supplied by the widget.
 const capMatch = code.match(/property int maxIssueChars: (\d+)/);
 assert.ok(capMatch, "the reason's cap must be a named property, not a literal at the call site");
 const cap = Number(capMatch[1]);
@@ -201,30 +186,24 @@ assert.ok(cap > 0 && cap <= 500,
 
 const settle = body("settleFetch");
 requires(settle, "settleFetch()", [
-    // Read BY FIELD: three same-typed provider strings could be swapped, which
-    // type-checks and inverts the answer.
+    // Use channel fields to avoid exchanging same-typed provider arguments.
     ["logic.shouldRelaunch(ch, root.maxFetchRetries)", "relaunch is the shared predicate's"],
     ['if (ch.inFlight === "")', "a fetch already settled is settled once"],
     ["ch.retries += 1", "a relaunch spends a retry, or the budget bounds nothing"],
-    // A retry WAITS: deferring it to the next event-loop turn spent the whole
-    // budget in consecutive turns, a burst at a provider API once per bar.
+    // Retries need a delay; consecutive event-loop turns can exhaust the budget in a burst of API calls.
     ["ch.retryTimer.interval = root.retryDelayMs * ch.retries",
         "the wait grows with the attempt number rather than being one fixed tick"],
     ["ch.retryTimer.restart()", "and the retry runs off that timer, not the event loop"],
     ["ch.stallTimer.stop()", "a settled fetch stops its own watchdog"],
-    // A parked request runs when the tag clears, and stays IMMEDIATE: the process
-    // it waited on has stopped. Counted, because one occurrence used to satisfy
-    // two pairs, and an immediate retry creeping back shows up here.
+    // A parked request can run immediately after the old process settles. Require exact occurrence counts
+    // so a delayed retry cannot acquire an extra immediate path.
     ["if (ch.pending)", "a parked request is drained when the channel settles", 1],
     ["Qt.callLater(() => root.launch(ch))",
         "by launching it promptly — and this is the ONLY immediate deferral left in settleFetch", 1],
     ["ch.loaded !== ch.want || !ch.accepted",
         "a poll that delivered nothing for the provider on screen is a failure"],
     ['ch.issue !== "" ? ch.issue : "usage unavailable"', "the recorded reason, else the generic"],
-    // Conditional: both channels file into the same slots, and an unconditional
-    // failure write overwrote a payload the OTHER channel had just filed there.
-    // ONE decision for both writes: guarding only the headline write left the
-    // popout claiming an error over numbers that had just landed.
+    // Both the filed failure and popout error must respect newer data from the other channel.
     ["const authoritative = logic.failureWins(", "the newer-success rule is decided once", 1],
     ["root.providerData[ch.want], root.providerFiledAt[ch.want], ch.launchSeq)",
         "from what is filed for that provider, against this launch's stamp", 1],
@@ -240,13 +219,12 @@ assert.ok(settle.indexOf("logic.shouldRelaunch") < settle.indexOf('ch.inFlight =
 const exits = handlers("onExited");
 assert.equal(exits.length, 1, "the one exit handler lives on the channel's own process");
 
-// --- invalidation -----------------------------------------------------------
+
 
 const cleared = body("clearProviderState");
 requires(cleared, "clearProviderState()", [
     ["root.current = null", "one payload property holds every provider-scoped lane"],
-    // The barrier, not zero: providerData survives a switch, so zero promoted a
-    // pre-switch payload.
+    // Preserve a switch barrier because per-provider data survives selection changes.
     ["root.currentFiledAt = root.fileSeq", "the switch's stamp, so only later filings promote"],
     ['root.fetchError = ""', "the failure text is provider-scoped too"],
     ["root.loading = true", "a switch puts the popout back into loading"],
@@ -268,9 +246,7 @@ assert.ok(invalidateAt < refetchAt,
 assert.equal((code.match(/root\.current = /g) || []).length, 2,
     "root.current is written in exactly two places: the promotion path and the switch's reset");
 
-// --- one headline owner -----------------------------------------------------
-// Bar, vertical bar and popout header all come from headOf, or they contradict
-// each other: with both hidden they showed "!", 60% and "0 accounts · 60% used".
+// Bar and popout headers must use the shared headline decision.
 requires(source, "AiUsageWidget.qml", [
     ["logic.headOf(root.current, root.headlineMode, root.hiddenAccounts)",
         "the popout's headline comes from the same function the pill slots use"],
@@ -289,9 +265,7 @@ requires(vertical, "the vertical pill", [
 assert.ok(!/headlinePct/.test(stripComments(vertical)),
     "a raw percentage here is how it came to show 60% beside an error glyph");
 
-// --- one view of the payload -------------------------------------------------
-// The payload's top-level plan/ok/error describe the FIRST LIVE account the
-// backend found, hidden or not — one function answers all of it instead.
+// Visible-account decisions must govern plan, status, and errors rather than hidden top-level data.
 requires(source, "AiUsageWidget.qml", [
     ["readonly property var view: logic.popoutView(root.current, root.hiddenAccounts, root.loading)",
         "the popout's account-scoped state is one function's, hidden accounts already out"],
@@ -315,7 +289,7 @@ assert.ok(details.includes("if (root.allHidden)"),
     "the header must answer the all-hidden case before it prints any percentage");
 assert.ok(details.indexOf("root.allHidden") < details.indexOf("% used"),
     "and answer it BEFORE the percentage, not after");
-// A count concatenated with a bare " account(s)" literal lost the singular.
+
 const detailsCode = stripComments(details);
 assert.ok(!/\+\s*" accounts?\b/.test(detailsCode),
     "both header lines count accounts through logic.accountCount(), so neither can lose its " +
@@ -331,9 +305,7 @@ assert.ok(meters.includes("root.view.account") && meters.includes("root.view.fla
     "the single-account view renders the account the view says is on screen, falling back to " +
     "the payload's own lanes only for the older shape that reports no accounts");
 
-// --- one source of provider identity ----------------------------------------
-// The pill slots are built from AiUsageLogic; the popout's tabs must be too, or
-// they can disagree about a provider's name or icon.
+// Tabs and pill slots must share provider identity, including name and icon.
 assert.ok(code.includes("model: logic.providerOrder()"),
     "the provider tabs are generated from the same order the pill uses");
 for (const literal of ['"Claude"', '"Codex"', '"smart_toy"', '"terminal"'])

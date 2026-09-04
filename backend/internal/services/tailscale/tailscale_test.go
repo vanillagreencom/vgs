@@ -235,13 +235,9 @@ func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
-// The converted call site, end to end: a tailscale binary that answers in full
-// and leaves a descendant holding stdout must be read as a success with the
-// complete response, not as the raw "exec: WaitDelay expired before I/O
-// complete" that names neither the tool nor the cause. Before execbound
-// classified the result, m.output returned that error and discarded the
-// status. The holder's sleep is bounded so no signal to a recorded PID is
-// needed; it exits on its own well after the WaitDelay it must outlive.
+// A complete status response must remain usable when a descendant holds stdout
+// after tailscale exits. The holder exits on its own after WaitDelay, avoiding
+// cleanup through a potentially reused PID.
 func TestOutputSalvagesResponseHeldByDescendant(t *testing.T) {
 	dir := t.TempDir()
 	statusPath := filepath.Join(dir, "status.json")

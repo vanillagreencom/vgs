@@ -34,20 +34,12 @@ FloatingWindow {
     property bool shouldHaveFocus: visible
     property bool allowFocusOverride: false
     property alias shouldBeVisible: settingsModal.visible
-    // Layout floors. The content pane used to be whatever width was left over
-    // after the sidebar took its share, so a long locale or a large UI scale
-    // could squeeze it to nothing. Instead: clamp the sidebar against the
-    // window, give the content pane a real minimum, and derive the compact
-    // breakpoint from those two so the side-by-side layout is only used at
-    // widths where both actually fit.
+    // Derive compact mode from sidebar and content minimum widths so the reading pane cannot collapse.
     readonly property int minContentWidth: 380
     readonly property real maxSidebarWidth: Math.max(270, width * 0.4)
     readonly property real expandedSidebarWidth: Math.min(sidebar.implicitWidth, maxSidebarWidth)
     property bool isCompactMode: width < expandedSidebarWidth + minContentWidth
-    // Initial value only — toggleMenu(), onIsCompactModeChanged and
-    // onTabChangeRequested all assign to it, so this binding does not survive
-    // the first interaction. onIsCompactModeChanged restores it in both
-    // directions, which is what keeps the value from going stale.
+    // Interaction replaces this initial binding. Restore menu visibility explicitly when compact mode changes.
     property bool menuVisible: !isCompactMode
     property bool enableAnimations: true
     property string keybindSearchQuery: ""
@@ -110,9 +102,7 @@ FloatingWindow {
 
     onIsCompactModeChanged: {
         enableAnimations = false;
-        // Both directions: leaving compact restores the side-by-side layout,
-        // entering it drills down to the content the user was already reading
-        // (the menu button is the way back).
+        // Enter compact mode on content; restore the sidebar when leaving it.
         menuVisible = !isCompactMode;
         Qt.callLater(() => {
             enableAnimations = true;
@@ -201,9 +191,7 @@ FloatingWindow {
             anchors.fill: parent
             targetWindow: settingsModal
             radius: Math.min(20, Theme.cornerRadius)
-            // Border follows compositor focus so the window reads active/inactive
-            // exactly like a native Hyprland window (accent when focused, outline
-            // when not).
+
             windowActive: ToplevelManager.activeToplevel ? (ToplevelManager.activeToplevel.appId === "com.vanillagreen.vshell" && ToplevelManager.activeToplevel.title === settingsModal.title) : true
 
             Column {
@@ -315,12 +303,7 @@ FloatingWindow {
                 }
 
                 Item {
-                    // Explicit width rather than a right anchor: the pane keeps
-                    // minContentWidth even if the sidebar somehow overruns, so
-                    // it is never zero-width. In compact mode it takes the whole
-                    // window and hides outright behind the menu, which is a
-                    // deliberate drill-down with the menu button as the way back
-                    // — not an anchor collapse.
+                    // Use an explicit minimum content width. Compact mode uses the full window and hides content while navigation is shown.
                     anchors.left: parent.left
                     anchors.leftMargin: settingsModal.isCompactMode ? 0 : sidebar.width
                     width: settingsModal.isCompactMode ? parent.width : Math.max(settingsModal.minContentWidth, parent.width - sidebar.width)
@@ -328,9 +311,7 @@ FloatingWindow {
                     visible: !settingsModal.isCompactMode || !settingsModal.menuVisible
                     clip: true
 
-                    // macOS-style glass layering: the sidebar chrome carries the
-                    // glass; the reading pane stays near-opaque so settings text
-                    // is legible over any wallpaper.
+                    // Keep the reading pane near-opaque over sidebar glass for text contrast.
                     Rectangle {
                         anchors.fill: parent
                         color: Theme.popupGlassEffect ? Theme.withAlpha(Theme.surfaceContainerLowest, 0.94) : "transparent"

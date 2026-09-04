@@ -1,20 +1,8 @@
-"""Self-test for `section_pointers`, run as `python3 scripts/lib/section_pointers_selftest.py`.
+"""Controls for section-pointer grammar, resolution and declines.
 
-Beside the library, in the same shape as `prose_blocks_selftest.py` and
-`qml_source_selftest.py`: one control per GRAMMAR rule — what a target is, where
-a name ends, what resolves, what this parser declines to own — while the policy
-arms built on top of it (collection points, exclusion tables) are pinned by
-`scripts/test-section-pointers.py` beside the check that owns them.
-
-The mutation set these were run red against is recorded in
-`scripts/test-section-pointers.py`, once, so a parser change has a stated list
-to re-run rather than a bare assertion. Two shapes are deliberate: the healthy input is asserted SILENT beside each failing
-one, or a rule that reports everything satisfies both; and a control that could
-be answered by a different rule asserts what the finding SAYS, not merely that
-one exists.
-
-`NO_EXEMPTIONS` is imported rather than stubbed for the exemption paths, so a
-control cannot pass against a table the check does not actually use.
+Healthy twins distinguish intended failures from rules that reject every input.
+Diagnostic assertions identify the rule when another failure could also occur.
+Policy checks and process failure propagation have separate test scripts.
 """
 
 import sys
@@ -30,7 +18,6 @@ def NO_EXEMPTIONS(*_args) -> list:  # noqa: N802 - reads as the constant it is
     """No pointer here is exempt; the exemption table is another file's subject."""
     return []
 
-# The SAME fixture in every control file; test-section-pointers.py says why.
 DOC = (
     "# Doc\n\n## Live section\n\n## Popout surfaces are screen-tall (and frosted)\n\n"
     "## `dismissOnFocusLoss`, and who owns focus\n"
@@ -61,10 +48,7 @@ def pointer_controls() -> list[str]:
         if not cited(citer):
             failures.append(f"{case} was accepted, so the pointer arm reports nothing")
 
-    # A DECISION-RECORD ID NAMES A DOCUMENT. Read as a sentence word, three live
-    # pointers in scripts/qml-smoke.sh went unchecked. Resolution is by unique
-    # basename PREFIX, so the ambiguous and absent cases are reported, not
-    # answered by whichever record sorted first.
+    # Decision identifiers require a unique basename prefix.
     records = {
         "docs/decisions/D008-nested-sandbox.md": DOC,
         "citer.py": f"# out of scope (D008 {SECTION_MARK} Gone section).\n",
@@ -89,9 +73,7 @@ def pointer_controls() -> list[str]:
             "pointer is not told what made it ambiguous"
         )
 
-    # AN UNREADABLE NAME IS REPORTED, not folded into the numbered-step skip.
-    # Paired with the plain form, which is already reported, so the control
-    # cannot be satisfied by an arm that complains about everything.
+    # Malformed-name failures need a valid twin so a constant failure cannot pass.
     for case, citer in (
         ("a parenthesised name", f"`doc.md` {SECTION_MARK} (Gone section)\n"),
         ("a bracketed name", f"`doc.md` {SECTION_MARK} [Gone section]\n"),
@@ -105,10 +87,7 @@ def pointer_controls() -> list[str]:
     if any("could not be read" in problem for problem in cited(f"`doc.md` {SECTION_MARK} 4 covers it.\n")):
         failures.append("a numbered step was reported as an unreadable name")
 
-    # A TARGET THAT EXISTS BUT COULD NOT BE PARSED is named as that, not as a
-    # missing file: "not a tracked markdown file. Repoint it" is wrong in every
-    # clause when the file is tracked and the path is right. Paired with the
-    # genuinely-absent case, which must still say exactly that.
+    # An unreadable target needs a different cause from an absent target.
     unreadable = pointer_problems(
         {"citer.md": f"# C\n\n`odd/doc.md` {SECTION_MARK} Live section.\n"},
         {},
@@ -142,9 +121,7 @@ def pointer_controls() -> list[str]:
             "table's identity is a two-place fact again"
         )
 
-    # AN UNBALANCED FENCE IS A LOST FILE. Detected in prose_blocks and asserted
-    # there; asserted HERE to be reported rather than silently swallowing every
-    # mark after it. Paired with the closed form, which must stay silent.
+    # Require unclosed fences to propagate as findings; balanced forms stay silent.
     for case, citer, want in (
         ("left open", f"# C\n\n```\nx\n\n`doc.md` {SECTION_MARK} Live section.\n", True),
         ("closed", f"# C\n\n```\nx\n```\n\n`doc.md` {SECTION_MARK} Live section.\n", False),
@@ -171,10 +148,7 @@ def pointer_controls() -> list[str]:
             "control above passes on a parser that finds no mark at all"
         )
 
-    # THE NUMBERED-STEP GUARD IS `isdigit`, NOT `not isalpha`. Widening it skips
-    # strictly more pointers with everything still green, so a name starting with
-    # some other non-letter is asserted STILL CHECKED — reported when its heading
-    # is absent — beside the numbered step asserted still declined.
+    # Only digit-led names are numbered steps; other non-letter prefixes stay checked.
     if not any(
         "Gone section" in problem
         for problem in cited(f"`doc.md` {SECTION_MARK} &Gone section, which\n")
@@ -184,9 +158,7 @@ def pointer_controls() -> list[str]:
             "the numbered-step skip has widened into pointers it was never meant to own"
         )
 
-    # A `..` THAT CLIMBS PAST THE ROOT is refused, not clamped, which made a link
-    # naming something outside the repo resolve to a tracked file. Paired with
-    # the same link one directory down, where it legitimately resolves.
+    # A link beyond the root must fail while the same link in a subdirectory resolves.
     docs = {"AGENTS.md": DOC, "sub/deep.md": DOC}
     md = {rel: headings(text) for rel, text in docs.items()}
     for case, citer, link, want in (
@@ -235,8 +207,7 @@ def pointer_controls() -> list[str]:
                     f"leaves a dead pointer green because the heading survives elsewhere"
                 )
 
-    # THE UNREADABLE CAUSE REACHES EVERY SPELLING. Keying the map by the raw
-    # token left the other three falling back to the message this round retired.
+    # Target read failures must reach every supported token spelling.
     broken = {"docs/architecture/design.md": "not UTF-8 text", "docs/decisions/D001-x.md": "not UTF-8 text"}
     for spelling, citer, token in (
         ("repo-relative path", "citer.md", "docs/architecture/design.md"),
@@ -257,9 +228,6 @@ def pointer_controls() -> list[str]:
                 f"{found}"
             )
 
-    # AN AMBIGUOUS BASENAME IS REPORTED AS AMBIGUOUS, candidates named — the
-    # message three first-party docs' citers now get, since widening the target
-    # set to every tracked .md left them shadowed by vendored copies.
     shared = {"a/SKILL.md": DOC, "b/SKILL.md": DOC}
     found = pointer_problems(
         dict(shared, **{"citer.md": f"# C\n\n`SKILL.md` {SECTION_MARK} Live section.\n"}),
@@ -278,10 +246,7 @@ def pointer_controls() -> list[str]:
     ):
         failures.append("a genuinely absent target was reported as ambiguous")
 
-    # AN UNREADABLE DUPLICATE IS STILL A DUPLICATE. Resolution asked only the
-    # PARSED documents, so a twin that is a symlink or is not UTF-8 was invisible
-    # to the ambiguity check and the readable one answered for the name. The
-    # caller passes every tracked `.md`, unreadable ones carrying no headings.
+    # Unreadable markdown paths remain ambiguity candidates with no headings.
     for case, reason in (
         ("a tracked symlink", "tracked as a symlink, whose blob is a link target"),
         ("not UTF-8 text", "not UTF-8 text"),
@@ -298,7 +263,6 @@ def pointer_controls() -> list[str]:
                 f"one and passed, so the guard answered confidently about a token whose "
                 f"target it cannot determine: {found}"
             )
-    # ...and a LONE unreadable match still reports its own cause, not ambiguity.
     lone = pointer_problems(
         {"citer.md": f"# C\n\n`solo.md` {SECTION_MARK} Live section.\n"},
         {"a/solo.md": []},
@@ -313,13 +277,8 @@ def pointer_controls() -> list[str]:
             f"ambiguity first swallowed the one-candidate case: {lone}"
         )
 
-    # A QUALIFIER BETWEEN THE TARGET AND THE MARK IS CROSSED, driven with the
-    # REAL citation this recovered — `kendex.toml` names review-bots.md and then
-    # says where it lives before citing two of its headings, and it WRAPS
-    # mid-pointer, so the joining has to hold for it too. Paired with the shape
-    # that must stay bare: a parenthetical carrying a path OF ITS OWN belongs to
-    # the pointer before it, and crossing that would name a document the second
-    # pointer does not cite.
+    # The qualifier fixture wraps mid-pointer. Its path-free qualifier can be
+    # crossed; a qualifier carrying another path cannot.
     qualified = (
         "Risk-classed review depth and the regression-test expectation live in\n"
         f"`doc.md` (repo root, {SECTION_MARK} Live section and {SECTION_MARK} Gone\n"
@@ -344,8 +303,7 @@ def pointer_controls() -> list[str]:
             "was answered by a document the first one cited"
         )
 
-    # THE DECLINED CENSUS, the fourth collection point: a count nobody asserts
-    # can go to zero while the marks keep being dropped. Driven per reason.
+    # Assert each decline reason so an omitted count cannot look complete.
     declined = pointer_problems(
         {
             "doc.md": DOC,
@@ -397,10 +355,7 @@ def pointer_controls() -> list[str]:
                 f"document the pointer does not name"
             )
 
-    # THE DECLARED SET ITSELF, before the behaviour derived from it: the loop
-    # below iterates INHERITANCE_STOPS, so shrinking that constant shrinks the
-    # test with it. The invariant is the relationship, so that is what is
-    # asserted, and it catches both drift directions at once.
+    # Check the declared separator relationship before a loop derived from it.
     if set(check_lib.INHERITANCE_STOPS) != set(check_lib.SEPARATORS) - {","}:
         failures.append(
             f"INHERITANCE_STOPS is {check_lib.INHERITANCE_STOPS!r}, which is not "
@@ -408,12 +363,8 @@ def pointer_controls() -> list[str]:
             f"the grammar have drifted, and the loop below only tests what is declared"
         )
 
-    # EVERY INHERITANCE_STOPS CHARACTER, one control each: the stop was once a
-    # bare "." while six separators were declared, so a mark after `!`, `?`, `;`
-    # or a dash silently inherited a target it does not name. Each is asserted
-    # REPORTED against citer.md; the comma, the one separator inheritance
-    # crosses, is asserted silent beside them, or all of these would pass on a
-    # parser that never inherits at all.
+    # Test each stop beside a comma that permits inheritance; otherwise a parser
+    # that never inherits could pass.
     for stop in check_lib.INHERITANCE_STOPS:
         citer = f"`doc.md` {SECTION_MARK} Live section{stop} Also {SECTION_MARK} Live\n"
         if not any(problem.startswith("citer.md:") for problem in cited(citer)):
@@ -427,8 +378,6 @@ def pointer_controls() -> list[str]:
             "— `AGENTS.md` (§ Mission, § Do not) — no longer resolves"
         )
 
-    # A `.md` target that resolves to nothing must FAIL, never be skipped: that
-    # is the fail-open the check exists to close.
     if not any(
         "not a tracked markdown file" in problem
         for problem in cited("`vanished.md` § Live section.\n")
@@ -468,9 +417,7 @@ def pointer_controls() -> list[str]:
                 f"reported, never answered by whichever path sorted first"
             )
 
-    # The heading list a finding carries is capped, and the cap is only useful
-    # if the remainder is COUNTED — a truncated list with no count reads as the
-    # document's whole set, which is worse than either.
+    # A truncated heading list must count the omitted headings.
     wide = {
         "doc.md": "".join(f"## Heading {n}\n\n" for n in range(9)),
         "citer.md": "`doc.md` § Gone section.\n",

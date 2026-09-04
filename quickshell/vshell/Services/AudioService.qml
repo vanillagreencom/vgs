@@ -84,7 +84,6 @@ Singleton {
         }
     }
 
-    // Used in playLoginSoundIfApplicable()
     Process {
         id: loginSoundChecker
         onExited: exitCode => {
@@ -679,8 +678,6 @@ EOFCONFIG
 
             const loginFile = `${runtimeDir}/vgslinux.login-${sessionId}`;
 
-            // if file doesn't exist, touch it (0)
-            // If it exists, do nothing (1)
             loginSoundChecker.command = ["sh", "-c", `[ ! -f ${loginFile} ] && touch ${loginFile}`];
             loginSoundChecker.running = true;
         }
@@ -737,15 +734,11 @@ EOFCONFIG
             return "";
         }
 
-        // FIRST: Check if we have a custom alias in our deviceAliases map
-        // This ensures we always show the user's custom name, regardless of
-        // whether WirePlumber has applied it to the node properties yet
+        // User aliases take precedence while WirePlumber updates node properties asynchronously.
         if (node.name && deviceAliases[node.name]) {
             return deviceAliases[node.name];
         }
 
-        // Check node.properties["node.description"] for WirePlumber-applied aliases
-        // This is the live property updated by WirePlumber rules
         if (node.properties && node.properties["node.description"]) {
             const desc = node.properties["node.description"];
             if (desc !== node.name) {
@@ -753,22 +746,18 @@ EOFCONFIG
             }
         }
 
-        // Check cached description as fallback
         if (node.description && node.description !== node.name) {
             return node.description;
         }
 
-        // Fallback to device description property
         if (node.properties && node.properties["device.description"]) {
             return node.properties["device.description"];
         }
 
-        // Fallback to nickname
         if (node.nickname && node.nickname !== node.name) {
             return node.nickname;
         }
 
-        // Fallback to friendly names based on node name patterns
         if (node.name.includes("analog-stereo")) {
             return "Built-in Audio Analog Stereo";
         }
@@ -807,19 +796,16 @@ EOFCONFIG
             return "HDMI Audio";
         }
         if (node.name.includes("raop_sink")) {
-            // Extract friendly name from RAOP node name
             const match = node.name.match(/raop_sink\.([^.]+)/);
             if (match) {
                 return match[1].replace(/-/g, " ");
             }
         }
 
-        // Fallback to device.description property
         if (node.properties && node.properties["device.description"]) {
             return node.properties["device.description"];
         }
 
-        // Fallback to nickname
         if (node.nickname && node.nickname !== node.name) {
             return node.nickname;
         }

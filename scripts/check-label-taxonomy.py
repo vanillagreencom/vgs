@@ -1,20 +1,9 @@
 #!/usr/bin/env python3
-"""Diff live Linear label inventory against kendex.toml's taxonomy.
+"""Compare cached Linear labels with the taxonomy in kendex.toml.
 
-The project-management skill runs a label preflight before every issue create or
-label update, and that preflight STOPS on an unknown label. The taxonomy in
-`kendex.toml` is the allow-list, so a label that is live but undocumented makes
-a strictly-followed workflow either halt or silently omit a valid label. A
-2026-08-04 sweep found ten such labels, including an entire parent group
-(VGS-49). It drifted silently because nothing compared the two.
-
-Every live label must appear in the taxonomy as usable or as never-use, and
-every label the taxonomy names must still exist in Linear.
-
-The inventory comes from the linear skill's local cache. That is why this is a
-local-only check: CI has no Linear credentials and no cache. Per the house rule
-it FAILS rather than skipping when the inventory cannot be read — pass
---allow-missing-inventory to accept that the sweep did not happen.
+Every inventory label must be usable or forbidden in the taxonomy. Every
+taxonomy label must exist in the inventory. The local Linear cache is required
+unless --allow-missing-inventory explicitly accepts an unchecked inventory.
 """
 
 from __future__ import annotations
@@ -29,15 +18,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = REPO_ROOT / "kendex.toml"
 LINEAR_CLI = REPO_ROOT / ".agents" / "skills" / "linear" / "scripts" / "linear.sh"
 
-# The taxonomy lives inside a prompt string in kendex.toml and names its labels
-# in `backtick` spans inside markdown tables. Parsing those spans is what keeps
-# this check reading the same text a human reads, rather than a parallel list
-# that could itself drift.
+# The taxonomy names labels in backtick spans inside markdown table rows.
 TAXONOMY_START = "## Project issue label taxonomy"
 NEVER_USE_HEADING = "### Never-use labels"
-# A leading digit is a real label name -- kendex's release set is called `1.0`
-# -- and requiring a letter made one invisible to the parser while staying
-# visible to Linear, so the sweep reported it missing however it was documented.
+# Label names can start with a digit.
 LABEL_SPAN = re.compile(r"`([A-Za-z0-9][A-Za-z0-9:._-]*)`")
 
 # Prose inside the taxonomy also uses backticks for non-label text.
@@ -63,7 +47,6 @@ def taxonomy_sections() -> tuple[set[str], set[str]]:
         return {
             name
             for line in chunk.splitlines()
-            # Only table rows name labels; surrounding prose explains them.
             if line.startswith("|")
             for name in LABEL_SPAN.findall(line.split("|")[1] if line.count("|") > 1 else "")
             if not NOT_A_LABEL.match(name)
@@ -71,7 +54,7 @@ def taxonomy_sections() -> tuple[set[str], set[str]]:
 
     usable = labels(body[:never_at])
     never = labels(body[never_at:])
-    # Named in prose rather than a table row, but explicitly governed.
+    # This label is governed in prose outside the table.
     if "`ci-nightly`" in body:
         usable.add("ci-nightly")
     return usable, never
@@ -140,7 +123,6 @@ def main() -> int:
             + "  Remove the row, or restore the label."
         )
 
-    # A group label the taxonomy forgot to forbid is the VGS-49 shape exactly.
     groups = {label["name"] for label in inventory if label.get("is_group")}
     ungoverned_groups = sorted(groups - never)
     if ungoverned_groups:

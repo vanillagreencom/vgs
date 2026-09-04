@@ -248,16 +248,9 @@ def _niri_binds_from_file(path: Path) -> List[Dict[str, Any]]:
     return result
 
 def niri_binds_json() -> Dict[str, Any]:
-    # Heal VGS-generated binds that still name a retired launcher IPC target
-    # before reporting them, so Settings never shows a bind VGS knows is dead.
-    # A rewrite Niri then refused to load leaves the file and the live
-    # compositor disagreeing, so that has to travel with the payload rather
-    # than being dropped here.
-    #
-    # This is a convenience on a read path and must never take the read down
-    # with it: an unreadable or unwritable binds.kdl would otherwise abort the
-    # whole keybind query and lose Settings every other bind in the config,
-    # which are parsed independently below and are still perfectly good.
+    # Migrate generated launcher binds before listing them. Include reload errors
+    # so Settings can distinguish a rewritten file from the active config.
+    # A migration failure must not hide independently parsed user binds.
     try:
         migration = migrate_vgs_niri_binds()
     except OSError as exc:
@@ -314,10 +307,8 @@ def _niri_action_kdl(action: str) -> str:
         return "spawn " + " ".join(json.dumps(arg) for arg in args)
     return name + ((" " + " ".join(json.dumps(arg) for arg in args)) if args else "")
 
-# VGS-13 retired the grid launcher, the app drawer and the spotlight bar; the
-# vgsMenu plugin's "vshell-menu" target is the only launcher IPC left. These
-# binds live in a VGS-generated file, so VGS has to rewrite them rather than
-# leave a user with a key that spawns against a target that no longer answers.
+# Generated binds for unsupported launcher targets must point to vshell-menu
+# so their keys continue to open the launcher.
 _RETIRED_LAUNCHER_IPC_TARGETS = ("spotlight-bar", "spotlight", "launcher")
 _LAUNCHER_IPC_TARGET = "vshell-menu"
 # vshell-menu exposes only open/close/toggle. The retired targets also had
@@ -334,12 +325,8 @@ _RETIRED_LAUNCHER_IPC_VERBS = {
 }
 
 
-# "ipc call <target>" is VGS syntax, not a reserved word: another program can
-# legitimately take those as its own arguments. Only a vshell invocation may be
-# rewritten. Compared by basename so an absolute or $HOME-relative path to the
-# same CLI still counts (~/dotfiles binds both `vshell ipc call ...` and
-# `$HOME/.local/bin/vshell ipc call ...`), and quote-stripped so the first token
-# of a `sh -c "..."` command string is recognised too.
+# Only rewrite a vshell invocation: other programs can accept ipc call as
+# arguments. Compare CLI basenames to support absolute and home-relative paths.
 _VSHELL_CLI_BASENAMES = frozenset({"vshell"})
 
 
@@ -357,7 +344,6 @@ def _migrated_launcher_action(action: str) -> str:
     Settings, which is the same treatment as any bind VGS does not generate.
     """
     tokens = action.split()
-    # spawn <vshell-cli> ipc call <target> <verb> [args...]
     if len(tokens) < 6 or tokens[0] != "spawn" or tokens[2:4] != ["ipc", "call"]:
         return action
     if not _is_vshell_cli(tokens[1]):

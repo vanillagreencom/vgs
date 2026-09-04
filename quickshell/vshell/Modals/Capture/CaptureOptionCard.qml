@@ -21,9 +21,7 @@ Rectangle {
             return Theme.surfaceHover;
         return Theme.surfaceContainerHigh;
     }
-    // Quiet fill tile; the accent border appears only on the selected card so
-    // selection is the sole stroke at this level (resting hairlines on every
-    // tile read as clutter next to the modal's own border).
+
     border.width: root.selected ? 1 : 0
     border.color: Theme.primary
     opacity: root.enabled ? 1 : 0.4

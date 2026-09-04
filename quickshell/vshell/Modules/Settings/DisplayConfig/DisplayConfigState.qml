@@ -371,7 +371,7 @@ Singleton {
         });
     }
 
-    // Extract neutral per-output config from current live state
+
     function extractOutputNeutralConfig(outputName, outputData, niriSettings, hyprlandSettings) {
         const modeData = (outputData.modes && outputData.current_mode !== undefined) ? outputData.modes[outputData.current_mode] : null;
         const modeStr = modeData ? modeData.width + "x" + modeData.height + "@" + (modeData.refresh_rate / 1000).toFixed(3) : null;
@@ -415,7 +415,7 @@ Singleton {
         const cfgOutputs = configEntry.outputs || {};
         for (const outputId in cfgOutputs) {
             const cfg = cfgOutputs[outputId];
-            // Find matching live output to get modes list
+
             let liveOutput = null;
             const matchingNames = DisplayProfileUtils.matchingOutputNames(outputId, outputs, SettingsData.displayNameMode, CompositorService.compositor);
             if (matchingNames.length === 1)
@@ -550,7 +550,7 @@ Singleton {
         });
     }
 
-    // ── Profile management ─────────────────────────────────────────────────
+
 
     function validateProfiles() {
         log.info("Validating profiles against current outputs...");
@@ -840,7 +840,7 @@ Singleton {
         const newOutputSet = buildCurrentOutputSet();
         if (JSON.stringify(newOutputSet) === JSON.stringify(currentOutputSet))
             return;
-        // Physical output set changed — pending tweaks belong to the previous setup
+        // Pending edits belong to the previous physical output set.
         if (hasPendingChanges)
             clearPendingChanges();
         currentOutputSet = newOutputSet;
@@ -2032,9 +2032,7 @@ Singleton {
         return pending !== undefined ? pending : originalValue;
     }
 
-    // Returns true if the given output can currently be disabled.
-    // Prevents disabling all outputs and prevents disabling the only output
-    // in a single-display configuration.
+    // Return whether this output can be disabled while leaving another enabled output.
     function canDisableOutput() {
         if (!CompositorService.isNiri && !CompositorService.isHyprland)
             return false;
@@ -2191,7 +2189,8 @@ Singleton {
                 merged[outputId][key] = pendingNiriChanges[outputId][key];
             }
         }
-        // Never disable the only connected output — clear any stale flag
+
+        // Never disable the only connected output; drop stale disabled flags from both the merge and SettingsData.
         if (Object.keys(outputs).length <= 1) {
             for (const id in merged)
                 delete merged[id].disabled;
@@ -2205,7 +2204,7 @@ Singleton {
                 SettingsData.setNiriOutputSetting(outputId, key, pendingNiriChanges[outputId][key]);
             }
         }
-        // Clear stale disabled from SettingsData so NiriService reads clean state
+
         if (Object.keys(outputs).length <= 1) {
             for (const id in SettingsData.niriOutputSettings) {
                 if (SettingsData.niriOutputSettings[id]?.disabled)
@@ -2227,7 +2226,8 @@ Singleton {
                     merged[outputId][key] = val;
             }
         }
-        // Never disable the only connected output — clear any stale flag
+
+        // Never disable the only connected output; drop stale disabled flags from both the merge and SettingsData.
         if (Object.keys(outputs).length <= 1) {
             for (const id in merged)
                 delete merged[id].disabled;
@@ -2245,7 +2245,7 @@ Singleton {
                     SettingsData.setHyprlandOutputSetting(outputId, key, val);
             }
         }
-        // Clear stale disabled from SettingsData so HyprlandService reads clean state
+
         if (Object.keys(outputs).length <= 1) {
             for (const id in SettingsData.hyprlandOutputSettings) {
                 if (SettingsData.hyprlandOutputSettings[id]?.disabled)

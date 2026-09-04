@@ -8,9 +8,7 @@ import qs.Modals.FileBrowser
 import qs.Services
 import qs.Widgets
 
-// Wallpapers tab of the dash: thumbnail grid over the current theme's wallpaper
-// set or the user's own folder. Click a wallpaper to apply it; the tile's "…"
-// button opens per-wallpaper actions (default, light/dark, monitors, remove).
+// Wallpaper browser for Dash, with per-wallpaper actions and monitor assignment.
 Item {
     id: root
 
@@ -29,9 +27,7 @@ Item {
     property bool keyboardNav: false
 
     implicitWidth: SettingsData.showWeekNumber ? 736 : 700
-    // Match the shared dash tab height (overview/media/weather = 410) so switching
-    // tabs never resizes the popout — a height change on switch caused a shrink-only
-    // flash. The wallpaper grid fills and scrolls within whatever height it's given.
+    // Share the Dash tab height to avoid resizing during a tab switch. The grid scrolls within it.
     implicitHeight: 410
 
     readonly property string effectiveFolder: {
@@ -151,8 +147,7 @@ Item {
 
     Column {
         anchors.fill: parent
-        // Same header rhythm as the themes tab: air between the tab bar, the
-        // filter row, and the grid below.
+
         anchors.topMargin: Theme.spacingM
         spacing: Theme.spacingM
 
@@ -195,11 +190,7 @@ Item {
             }
         }
 
-        // The theme set is RETAINED when a `theme wallpapers` read fails, so what
-        // the grid shows can be the previous theme's — and applying a tile still
-        // works, because the absolute paths stay valid. The switcher's banner
-        // says exactly this from the same service property; presenting a stale
-        // set here as the current theme's was the other half of the same lie.
+        // A failed theme read retains the previous paths. Label that set as retained rather than current.
         StyledText {
             width: parent.width
             wrapMode: Text.WordWrap
@@ -249,8 +240,7 @@ Item {
 
                 HoverHandler {
                     id: tileHover
-                    // Mouse hover takes focus back from the keyboard so only one tile
-                    // is highlighted at a time; arrow keys then resume from this tile.
+
                     onHoveredChanged: if (hovered) {
                         root.keyboardNav = false;
                         grid.currentIndex = tile.index;
@@ -358,7 +348,7 @@ Item {
                         }
                     }
 
-                    // Border overlay above the image so edges stay clean.
+
                     Rectangle {
                         anchors.fill: parent
                         radius: tile.tileRadius
@@ -384,9 +374,7 @@ Item {
 
                 StyledText {
                     anchors.horizontalCenter: parent.horizontalCenter
-                    // An empty THEME set after a failed read is not "you have
-                    // none" — the read failed with nothing retained to fall back
-                    // on, the same distinction the switcher's empty state draws.
+                    // An empty set after a failed read means no retained fallback, not a successful read with no wallpapers.
                     text: {
                         if (root.source === "folder")
                             return I18n.tr("No images in ") + Paths.shortenHome(root.effectiveFolder);

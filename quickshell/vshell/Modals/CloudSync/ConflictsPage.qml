@@ -30,8 +30,7 @@ CloudSyncPage {
             title: modelData.relPath
             description: modelData.folderName
 
-            // Two identical summaries side by side: the decision is "which of
-            // these two", so both sides must present the same facts the same way.
+            // Use matching fields for both conflict versions so the user can compare them.
             Item {
                 width: parent.width
                 height: Math.max(localSide.height, cloudSide.height)

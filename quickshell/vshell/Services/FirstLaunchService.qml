@@ -8,9 +8,7 @@ import Quickshell.Io
 import qs.Common
 import qs.Services
 
-// First-launch detection + marker. The interactive greeter UI was removed; this
-// singleton now only reports whether this is a fresh install (consumed by
-// ChangelogService) and writes the marker so detection fires exactly once.
+// Detect first launch for ChangelogService and persist a marker to limit it to the current session.
 Singleton {
     id: root
     readonly property var log: Log.scoped("FirstLaunchService")
@@ -33,10 +31,7 @@ Singleton {
     Process {
         id: firstLaunchCheckProcess
 
-        // Paths are arguments, never part of the script: an apostrophe in
-        // XDG_CONFIG_HOME made the old single-quoted assignments mangle both
-        // paths, so neither file was found and every launch on such a machine
-        // reported "first" — silently suppressing the changelog for good.
+        // Pass paths as arguments because XDG_CONFIG_HOME can contain shell quote characters.
         command: ["sh", "-c", `
             if [ -f "$2" ]; then
                 echo 'skip'

@@ -1,19 +1,8 @@
-// Package runner is the long-lived parent process launched by `vshell run`. It
-// owns the backend socket, exports VGS_SOCKET, spawns the backend daemon and
-// Quickshell as children, and guarantees teardown (socket/pid/session unlink,
-// child reap) on every exit path. Quickshell must not own backend lifetime, so
-// this replaces the old `exec qs`.
-//
-// The backend services run in a supervised child process (`vshell-backend
-// serve`) on a listener FD inherited from the runner: a panic in a service
-// kills only the backend, the supervisor restarts it (capped backoff,
-// crash-loop breaker), and because the runner keeps the listener open the
-// socket never disappears — QML reconnects and resubscribes.
-//
-// The backend is never required for the shell to start: if the socket cannot be
-// created securely, Quickshell is launched without VGS_SOCKET (backend-disabled,
-// features degrade) rather than failing startup — bin/vshell has already exec'd
-// this binary, so there is no bash-side `exec qs` fallback left.
+// Package runner owns the backend listener and starts the backend daemon and
+// Quickshell as children. It keeps the listener open during supervised backend
+// restarts so connections can queue in the accept backlog. If secure socket
+// creation fails, it starts Quickshell without the backend. Normal shutdown
+// closes the listener, removes runtime files, and waits for children.
 package runner
 
 import (
@@ -32,7 +21,7 @@ import (
 
 // Options configures a runner invocation.
 type Options struct {
-	// QSArgs are extra args appended after `qs -c vshell`.
+	// QSArgs are extra arguments appended to the Quickshell invocation.
 	QSArgs []string
 	Log    *slog.Logger
 }
@@ -53,8 +42,6 @@ func Run(opts Options) (int, error) {
 
 	st, err := setupSocket(log)
 	if err != nil {
-		// Fail closed on the socket (never create an insecure/shared one) but do
-		// not block the shell: run Quickshell with the backend disabled.
 		log.Warn("backend socket unavailable, starting Quickshell without backend", "err", err)
 		return runQuickshell(log, sigCh, opts.QSArgs, "")
 	}
@@ -86,14 +73,11 @@ func Run(opts Options) (int, error) {
 	}()
 	st.writeState(log)
 
-	// The listener is bound (accept backlog live) before we hand VGS_SOCKET to
-	// Quickshell, so the client's first connect succeeds instead of racing the
-	// backend child's startup.
+	// Bind the listener before handing VGS_SOCKET to Quickshell so a connection can
+	// queue while the backend starts.
 	return runQuickshell(log, sigCh, opts.QSArgs, st.socketPath)
 }
 
-// listenerFile duplicates the Unix listener's FD for inheritance by the
-// backend child.
 func listenerFile(ln net.Listener) (*os.File, error) {
 	ul, ok := ln.(*net.UnixListener)
 	if !ok {
@@ -102,7 +86,6 @@ func listenerFile(ln net.Listener) (*os.File, error) {
 	return ul.File()
 }
 
-// socketState owns the listener and runtime files for one run.
 type socketState struct {
 	ln          net.Listener
 	socketPath  string

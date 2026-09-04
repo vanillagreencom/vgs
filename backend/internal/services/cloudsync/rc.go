@@ -44,9 +44,7 @@ func (c *rcClient) ready() bool {
 	return c.baseURL != ""
 }
 
-// rcError is a structured error from the rc API. The daemon returns a JSON body
-// with an "error" field on failure; surfacing it verbatim gives the UI rclone's
-// own wording, which is usually the most actionable thing available.
+// rcError carries the control API error field for display to the user.
 type rcError struct {
 	Method string
 	Status int
@@ -119,7 +117,6 @@ func (c *rcClient) call(ctx context.Context, method string, in any, out any) err
 	return nil
 }
 
-// callTimeout wraps call with a deadline for the many short control calls.
 func (c *rcClient) callTimeout(method string, in any, out any, d time.Duration) error {
 	return c.callTimeoutCtx(context.Background(), method, in, out, d)
 }
@@ -134,8 +131,6 @@ func (c *rcClient) callTimeoutCtx(parent context.Context, method string, in any,
 	defer cancel()
 	return c.call(ctx, method, in, out)
 }
-
-// --- Typed response shapes -------------------------------------------------
 
 type rcVersion struct {
 	Version string `json:"version"`

@@ -1015,11 +1015,8 @@ func (m *Manager) monitor() {
 	}
 }
 
-// broadcastSoon requests a debounced state broadcast. The kick channel holds at
-// most one pending request, so a burst of monitor events collapses into one
-// recomputation instead of a goroutine (and a ~10-nmcli sweep) per event, and
-// broadcastLoop serializes the sweeps so an older snapshot can never be
-// broadcast after a newer one.
+// broadcastSoon coalesces pending monitor events. broadcastLoop serializes its
+// state reads and broadcasts so those reads cannot complete out of order.
 func (m *Manager) broadcastSoon() {
 	select {
 	case m.kick <- struct{}{}:
@@ -1034,7 +1031,6 @@ func (m *Manager) broadcastLoop() {
 			return
 		case <-m.kick:
 		}
-		// Let the burst that follows a monitor event settle before the sweep.
 		select {
 		case <-m.stop:
 			return
@@ -1256,7 +1252,7 @@ func deviceDetails(log *slog.Logger, device string) map[string]string {
 		key := strings.ToLower(parts[0])
 		key = strings.Split(key, "[")[0]
 		key = strings.TrimPrefix(key, "general.")
-		key = strings.TrimPrefix(key, "capabilities.") // CAPABILITIES.SPEED -> "speed"
+		key = strings.TrimPrefix(key, "capabilities.")
 		value := strings.Join(parts[1:], ":")
 		if existing := result[key]; existing != "" {
 			result[key] = existing + ", " + value
@@ -1282,8 +1278,8 @@ func connectionProperties(log *slog.Logger, target string) map[string]string {
 	return props
 }
 
-// nmRows is the best-effort variant of nmRowsErr: failures are logged (the
-// query args are read-only nmcli commands, never secrets) and yield nil rows.
+// nmRows logs failed read-only queries and returns nil rows. Callers that need
+// an error use nmRowsErr.
 func nmRows(log *slog.Logger, fields []string, args ...string) [][]string {
 	rows, err := nmRowsErr(log, fields, args...)
 	if err != nil {

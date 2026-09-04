@@ -1,28 +1,16 @@
 #!/usr/bin/env node
 
-// Guards PasteService's process lifecycle: a helper that never starts, and the
-// paths that must not replay a paste the user is no longer expecting.
-//
-// Quickshell's `Process` reports a spawn failure through neither `exited` nor
-// any error signal — `running` simply falls back to false, or never becomes
-// true — so a paste whose helper is missing produces no keystroke and no error
-// unless the code looks for that exact shape. The other half is the queue: a
-// give-up or a failed modifier release leaves the seat in a state VGS cannot
-// account for, and a paste recorded behind it has to be dropped rather than
-// replayed minutes later into whatever window has focus by then.
-//
-// Neither is reachable from `scripts/qml-smoke.sh --nested`, where wtype works
-// and nothing wedges, so this runs the SHIPPED handler bodies extracted from the
-// QML against a deterministic model of QML's Timer and Process: no wall-clock
-// time, every tick and every process transition driven by hand.
+// Exercise extracted paste handlers with deterministic Process and Timer transitions.
+// A failed spawn can emit neither started nor exited, so the service needs a start watchdog.
+// After give-up or failed modifier release, discard queued paste instead of replaying it
+// into whatever window has focus later. Nested smoke does not exercise those failures.
 
 "use strict";
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-// Comment- and string-aware, so a brace inside either cannot truncate a body
-// and leave the test silently covering nothing. See scripts/lib/qml-block.js.
+// Use the shared brace reader so comments and strings cannot truncate extracted handlers.
 const { extractBlock } = require("./lib/qml-block.js");
 
 const QML_ROOT = path.join(__dirname, "..", "quickshell", "vshell");
@@ -32,10 +20,9 @@ const LAUNCHER_QML = path.join(QML_ROOT, "Modules", "WorkspaceOverlays", "Overvi
 const source = fs.readFileSync(PASTE_QML, "utf8");
 const launcherSource = fs.readFileSync(LAUNCHER_QML, "utf8");
 
-// ---- extract the shipped bodies ------------------------------------------
 
-// A handler written on one line (`onStarted: root._x = false`) has no block for
-// extractBlock to find, so it is read as the statement it is.
+
+// Read single-expression handlers directly because they have no block for extraction.
 function extractStatement(text, opener, fromIndex = 0) {
     const at = text.indexOf(opener, fromIndex);
     assert.notEqual(at, -1, `could not find ${opener}`);
@@ -47,8 +34,7 @@ function extractStatement(text, opener, fromIndex = 0) {
     return statement;
 }
 
-// A Timer's own repeat flag, read from its declaration: the harness must model
-// the timer the shell ships, not one it assumes.
+// Read repeat from the shipped Timer declaration so model scheduling matches QML.
 function declaredRepeat(id) {
     const at = source.indexOf(`id: ${id}`);
     assert.notEqual(at, -1, `could not find the ${id} declaration`);
@@ -58,8 +44,7 @@ function declaredRepeat(id) {
     return flag[1] === "true";
 }
 
-// A property binding, read as the expression the shell ships. Restating it here
-// would make the harness prove something about the restatement instead.
+// Evaluate the shipped property expression rather than a fixture restatement.
 function bindingExpression(id) {
     const opener = `readonly property bool ${id}:`;
     const at = source.indexOf(opener);
@@ -112,8 +97,7 @@ const bodies = {
 };
 
 const IN_FLIGHT = bindingExpression("_helperInFlight");
-// An extraction that silently came back short would leave the window this
-// binding exists to close untested while every case still passed.
+// Require expected binding content to detect truncated extraction.
 for (const name of ["wtypeProcess.running", "_injectorAwaitingStart", "releaseProcess.running", "_releaseAwaitingStart"])
     assert.ok(IN_FLIGHT.includes(name), `the in-flight binding must read ${name}`);
 
@@ -132,18 +116,15 @@ const launcherBodies = {
     copyExited: bodyAfter(launcherSource, "id: copyProcess", "onExited: exitCode =>"),
 };
 
-// The bodies must actually contain the machinery under test: an extraction that
-// silently returned a fragment would leave every assertion below vacuous.
+// Require expected handler content before treating its execution as evidence.
 assert.match(bodies.beginInjection, /_injectorAwaitingStart/, "beginInjection must arm the start latch");
 assert.match(bodies.injectorRunningChanged, /reportInjectorFailedToStart/, "the injector must report a failed start");
 assert.match(bodies.releaseRunningChanged, /reportReleaseFailedToStart/, "the release must report a failed start");
 
-// ---- deterministic model --------------------------------------------------
 
-// `with (root)` gives the extracted bodies the QML scope they were written
-// against: `root.x`, bare `_x` and the sibling ids all resolve off one object.
-// new Function is sloppy-mode, so `with` is available — which is why this file
-// is CommonJS rather than an ES module.
+
+// with models QML lookup of bare properties and sibling IDs. The generated function
+// requires non-strict mode, so this file uses CommonJS.
 function compile(body, ...params) {
     // eslint-disable-next-line no-new-func
     return new Function("root", ...params, `with (root) { ${body} }`);
@@ -153,10 +134,8 @@ function makeHarness() {
     const toasts = [];
     const warnings = [];
 
-    // repeat comes from the QML rather than from a restatement here: a one-shot
-    // clears running when it triggers, so a body that neither restarts nor stops
-    // itself leaves a one-shot DISARMED, and a harness that assumed otherwise
-    // would report every settle as armed and make the replay proofs unfalsifiable.
+    // A one-shot Timer clears running before its handler. Read repeat from QML so a missing
+    // restart cannot pass in a fixture that incorrectly keeps every timer armed.
     const makeTimer = id => ({
         interval: 0,
         running: false,
@@ -165,11 +144,8 @@ function makeHarness() {
         stop() { this.running = false; },
     });
 
-    // Quickshell's Process, to the extent the handlers can observe it.
-    // `running = false` is a SIGTERM: a request, not a state change — the
-    // property stays true until the process actually goes away, which is the
-    // whole reason the escalation ladder exists. Only the harness moves it back,
-    // standing in for the compositor: an exit, or a spawn that never happened.
+    // Setting Process.running=false requests SIGTERM; the process can remain running.
+    // Only modeled external transitions confirm exit, preserving the escalation test.
     function makeProcess() {
         let running = false;
         const proc = {
@@ -179,11 +155,11 @@ function makeHarness() {
             get running() { return running; },
             set running(value) {
                 if (!value || running)
-                    return; // a SIGTERM request, or a start on a live process
+                    return;
                 running = true;
                 proc.onRunningChanged();
             },
-            // The compositor's side of it: the process actually went away.
+
             stopped() {
                 if (!running)
                     return;
@@ -216,13 +192,8 @@ function makeHarness() {
         releaseProcess: makeProcess(),
 
         log: { debug() {}, warn: (...a) => warnings.push(a.join(" ")) },
-        // focusReady is the single predicate: can the focus source answer a
-        // focus query right now? It covers detection, Niri's event stream and
-        // snapshot, and whether any toplevel has been reported — enumerated on
-        // CompositorService, deliberately not restated here, since a copy of the
-        // conditions is the failure mode the predicate exists to end. The
-        // default is a session where the source can answer, which is what every
-        // case below but the readiness ones is about.
+        // Treat focusReady as the service's shared readiness decision instead of duplicating
+        // its compositor-specific conditions in this lifecycle model.
         CompositorService: { focusSource: "hyprland", focusReady: true, focusedAppId: "foot", lastFocusedAppId: "" },
         PasteTarget: {
             pasteCommand: () => ["wtype", "-M", "ctrl", "-M", "shift", "-P", "v", "-p", "v", "-m", "shift", "-m", "ctrl"],
@@ -233,12 +204,11 @@ function makeHarness() {
         I18n: { tr: text => text },
     };
     root.root = root;
-    // QML re-evaluates a binding on every read; so does this.
+    // Reevaluate bindings on reads as QML does.
     const inFlight = compile(`return (${IN_FLIGHT});`);
     Object.defineProperty(root, "_helperInFlight", { get: () => inFlight(root), configurable: true });
 
-    // The bodies call each other as plain QML functions (`cancelQueuedPaste()`),
-    // so each is bound to this harness's root before being hung off it.
+    // Bind extracted sibling functions to the model root so their unqualified calls share state.
     for (const [name, body] of Object.entries(bodies)) {
         if (name.endsWith("Exited") || name.endsWith("Triggered") || name.endsWith("RunningChanged"))
             continue;
@@ -252,9 +222,7 @@ function makeHarness() {
     const injectorStarted = compile(statements.injectorStarted);
     const releaseStarted = compile(statements.releaseStarted);
 
-    // A timer body reads `interval` and calls a bare `stop()`, both of which
-    // belong to the Timer rather than to root, so it runs with the timer's own
-    // scope layered over root's.
+    // Layer Timer scope over root because interval and stop belong to the Timer.
     function fire(timerName, bodyName) {
         const timer = root[timerName];
         if (!timer.running)
@@ -262,9 +230,7 @@ function makeHarness() {
         const scope = Object.create(root);
         scope.interval = timer.interval;
         scope.stop = () => timer.stop();
-        // What QML leaves behind when the handler runs: a repeating timer is
-        // still armed inside its own handler, a one-shot has already cleared.
-        // Only a restart() in the body re-arms a one-shot.
+        // A repeating Timer stays armed inside its handler; a one-shot needs an explicit restart.
         timer.running = timer.repeat;
         compile(bodies[bodyName]).call(scope, scope);
         return true;
@@ -280,16 +246,14 @@ function makeHarness() {
         toasts,
         warnings,
         fire,
-        // The compositor started the helper: `started` arrives, and the process
-        // stays running until it exits.
+
         started(which) {
             if (which === "injector")
                 injectorStarted(root);
             else
                 releaseStarted(root);
         },
-        // The helper exited: `exited` first, then running falls to false, which
-        // is the order the latch has to survive.
+        // Model exit before running=false to exercise the start latch in that event order.
         exit(which, code) {
             if (which === "injector") {
                 injectorExited(root, code);
@@ -299,13 +263,12 @@ function makeHarness() {
                 root.releaseProcess.stopped();
             }
         },
-        // Asked to run, with no transition to observe: running never becomes
-        // true, nothing has failed, and only the start latch knows about it.
+        // A start request can produce no transition; only the start latch records it.
         stall(which) {
             const proc = which === "injector" ? root.wtypeProcess : root.releaseProcess;
             Object.defineProperty(proc, "running", { get: () => false, set: () => {}, configurable: true });
         },
-        // The spawn failed: no `started`, no `exited`, running falls back.
+        // A failed spawn can fall back to stopped without started or exited.
         failToStart(which) {
             const proc = which === "injector" ? root.wtypeProcess : root.releaseProcess;
             proc.stopped();
@@ -318,7 +281,7 @@ function queuePaste(h) {
     h.fire("settleTimer", "settleTriggered");
 }
 
-// ---- 1. the injector never starts: reported, not silent -------------------
+
 
 {
     const h = makeHarness();
@@ -335,12 +298,11 @@ function queuePaste(h) {
     assert.equal(h.root.watchdogTimer.running, false, "the watchdog must not be left armed");
 }
 
-// ---- 2. running never becomes true at all: the watchdog still reports ------
+
 
 {
     const h = makeHarness();
-    // The assignment does not take: no transition of any kind, so there is
-    // nothing for onRunningChanged to see.
+    // With no running transition, only the watchdog can detect this failed start.
     Object.defineProperty(h.root.wtypeProcess, "running", {
         get: () => false,
         set: () => {},
@@ -358,7 +320,7 @@ function queuePaste(h) {
     assert.equal(h.root._injectorAwaitingStart, false, "the latch must clear");
 }
 
-// ---- 3. the ordinary exit is not reported as a failed start ---------------
+
 
 {
     const h = makeHarness();
@@ -371,13 +333,13 @@ function queuePaste(h) {
     assert.equal(h.root._injectorAwaitingStart, false, "the latch must be clear");
 }
 
-// ---- 4. a paste queued behind a live injection still replays --------------
+
 
 {
     const h = makeHarness();
     queuePaste(h);
     h.started("injector");
-    queuePaste(h); // arrives mid-injection
+    queuePaste(h);
     assert.equal(h.root._pendingPaste, true, "the second paste must be recorded, not dropped");
 
     h.exit("injector", 0);
@@ -385,13 +347,13 @@ function queuePaste(h) {
     assert.equal(h.root.settleTimer.running, true, "the queued paste must be replayed");
 }
 
-// ---- 4b. a paste queued behind an injector that then fails to start -------
+
 
 {
     const h = makeHarness();
     queuePaste(h);
-    queuePaste(h); // recorded behind the injector, which has not started yet
-    h.root.injectPaste(); // and one more still counting down, not yet recorded
+    queuePaste(h);
+    h.root.injectPaste();
     assert.equal(h.root._pendingPaste, true, "the second paste is queued");
     assert.equal(h.root.settleTimer.running, true, "the third is still counting down");
 
@@ -401,12 +363,11 @@ function queuePaste(h) {
     assert.equal(h.root.settleTimer.running, false, "and a settle counting down toward it must be stopped, not left to fire");
 }
 
-// ---- 4c. finishInjection(false) never replays -----------------------------
+
 
 {
-    // The give-up paths reach this with the record already cleared, so without
-    // a direct call the replay argument is indistinguishable from `if (pending)`
-    // and the parameter that exists to stop a minutes-late paste is unpinned.
+    // Call finishInjection(false) with a pending record directly. Give-up callers already clear it,
+    // so their tests alone cannot prove that replay=false prevents injection.
     const h = makeHarness();
     h.root._pendingPaste = true;
     h.root.finishInjection(false);
@@ -415,19 +376,17 @@ function queuePaste(h) {
     assert.equal(h.root.settleTimer.running, false, "replay false must not arm a settle");
 }
 
-// ---- 4d. a non-zero injector exit goes through the release, not the queue --
+
 
 {
-    // wtype presses ctrl and shift before it types, so an exit partway through
-    // may leave them held. This is the third site of that family; the queue must
-    // wait for the release rather than run on top of an unaccounted seat.
+    // A failed injector can leave modifiers pressed. Queue replay must wait for confirmed release.
     const h = makeHarness();
     queuePaste(h);
     h.started("injector");
     queuePaste(h);
     assert.equal(h.root._pendingPaste, true, "the second paste is queued behind the injection");
 
-    h.exit("injector", 1); // not terminated: an ordinary failure partway through
+    h.exit("injector", 1);
 
     assert.equal(h.root.releaseProcess.running, true, "a partial keystroke must be released");
     assert.equal(h.root._pendingPaste, true, "the queued paste must survive, owned by the release now");
@@ -439,7 +398,7 @@ function queuePaste(h) {
     assert.equal(h.root._pendingPaste, false, "and consumes the record");
 }
 
-// ---- 4e. a non-zero injector exit whose release then fails ----------------
+
 
 {
     const h = makeHarness();
@@ -448,20 +407,18 @@ function queuePaste(h) {
     queuePaste(h);
     h.exit("injector", 1);
     h.started("release");
-    h.root.injectPaste(); // a settle counting down as the release fails
+    h.root.injectPaste();
 
-    h.exit("release", 1); // the release failed: the seat is unaccounted for
+    h.exit("release", 1);
     assert.equal(h.root._pendingPaste, false, "a failed release must drop the paste it owned");
     assert.equal(h.root.settleTimer.running, false, "and must not arm a settle for it");
     assert.match(h.toasts[h.toasts.length - 1], /modifiers could not be released/);
 }
 
-// ---- 4f. an ordinary injection failure reaches the user -------------------
+
 
 {
-    // The surface that asked for the paste has already closed, so a log line is
-    // the same as silence. Reported before the cleanup, so it does not depend on
-    // how the release that follows turns out.
+    // Report injection failure before cleanup. The requesting UI has closed, so a log alone is insufficient.
     const h = makeHarness();
     queuePaste(h);
     h.started("injector");
@@ -471,13 +428,13 @@ function queuePaste(h) {
     assert.match(h.toasts[0], /Paste did not complete/, "in the wording the wedged path already uses");
     assert.equal(h.root.releaseProcess.running, true, "and the report must not have replaced the cleanup");
 
-    // The release succeeding afterwards must not retract or duplicate it.
+    // A successful release must neither retract nor repeat the injection failure notice.
     h.started("release");
     h.exit("release", 0);
     assert.equal(h.toasts.length, 1, "a successful release must not add a second report");
 }
 
-// ---- 4g. a paste that landed stays silent ---------------------------------
+
 
 {
     const h = makeHarness();
@@ -488,36 +445,33 @@ function queuePaste(h) {
     assert.deepEqual(h.toasts, [], "a paste that worked must say nothing at all");
 }
 
-// ---- 4h. a wedged injector is reported once, not twice ---------------------
+
 
 {
     const h = makeHarness();
     queuePaste(h);
     h.started("injector");
-    h.fire("watchdogTimer", "watchdogTriggered"); // the watchdog reports it here
+    h.fire("watchdogTimer", "watchdogTriggered");
     const afterWatchdog = h.toasts.length;
     h.exit("injector", 143);
 
     assert.equal(h.toasts.length, afterWatchdog, "the terminated path must not report the same failure again");
 }
 
-// ---- 4i. the awaiting-start window counts as in flight --------------------
+
 
 {
-    // A helper asked to run but not yet transitioned has failed at nothing, so
-    // no state marks the seat unsafe — and its chord may be a moment away. A
-    // settle firing in that window must queue rather than start a second run.
+    // An awaiting-start helper can still inject shortly. A settle in that window must queue,
+    // even before any failure marks the seat unconfirmed.
     const h = makeHarness();
     queuePaste(h);
     h.started("injector");
-    h.stall("release"); // its start will produce no transition
-    h.exit("injector", 1); // partial keystroke: the release is asked to start
+    h.stall("release");
+    h.exit("injector", 1);
 
     assert.equal(h.root._releaseAwaitingStart, true, "the release is awaiting its start");
     assert.equal(h.root.releaseProcess.running, false, "with nothing in the running flags to show for it");
-    // The window this finding was about: nothing has FAILED yet, so a flag that
-    // waited for a failure would read exactly like an untouched seat. Set at the
-    // request instead, it is already true here.
+    // Mark the release request before its first transition so the awaiting-start window counts as occupied.
     assert.equal(h.root._seatUnconfirmed, true, "the seat is marked from the request, before anything has failed");
 
     h.root.injectPaste();
@@ -527,7 +481,7 @@ function queuePaste(h) {
     assert.equal(h.root._pendingPaste, true, "the request must queue instead");
 }
 
-// ---- 4j. the injector's own start window counts too ------------------------
+
 
 {
     const h = makeHarness();
@@ -541,7 +495,7 @@ function queuePaste(h) {
     assert.equal(h.root._pendingPaste, true, "a second paste must queue behind it, not start its own run");
 }
 
-// ---- 4k. no second release during the first one's start window -------------
+
 
 {
     const h = makeHarness();
@@ -556,12 +510,10 @@ function queuePaste(h) {
     assert.ok(h.warnings.length > before, "a second release must be refused, and say so");
 }
 
-// ---- 4k2. the funnel refuses on its own, whatever reached it --------------
+
 
 {
-    // beginInjection is where an injection begins, so the rule holds there and
-    // not only in its caller. Called directly during a start window, it must
-    // defer rather than press a chord.
+    // Exercise beginInjection directly so the shared entrypoint enforces deferral independently of callers.
     const h = makeHarness();
     h.stall("injector");
     queuePaste(h);
@@ -574,9 +526,7 @@ function queuePaste(h) {
 }
 
 {
-    // Same order at the funnel as at the entry point: a release in flight marks
-    // the seat, and the paste must still queue behind it rather than be refused
-    // for a seat that release is about to answer for.
+    // An active release takes precedence over refusal for an unconfirmed seat because that release can confirm it.
     const h = makeHarness();
     queuePaste(h);
     h.started("injector");
@@ -592,16 +542,16 @@ function queuePaste(h) {
     assert.equal(h.root.settleTimer.running, true, "the request defers behind it instead");
 }
 
-// ---- 4l. not over-corrected: a settled seat still injects ------------------
+
 
 {
-    // The other direction, so the fix cannot pass by refusing everything.
+    // A settled seat must still inject; unconditional refusal cannot pass this control.
     const h = makeHarness();
     queuePaste(h);
     h.started("injector");
     h.exit("injector", 1);
     h.started("release");
-    h.exit("release", 0); // confirmed clean: nothing is in flight any more
+    h.exit("release", 0);
 
     h.root.injectPaste();
     h.fire("settleTimer", "settleTriggered");
@@ -609,14 +559,10 @@ function queuePaste(h) {
     assert.equal(h.root._pendingPaste, false, "and must not be queued behind nothing");
 }
 
-// ---- 4m. a paste requested before the focus source can answer -------------
+
 
 {
-    // One question, asked once. Whether it is detection still running, Niri's
-    // window snapshot not yet delivered, or no toplevel ever reported, the
-    // answer here is the same and this service does not care which — it waits.
-    // Resolving anyway would resolve "" and press Ctrl+V into whatever holds
-    // focus, which is the stray input the whole path exists to prevent.
+    // Wait on the shared focusReady decision. Resolving early can inject Ctrl+V without an identified target.
     const h = makeHarness();
     h.root.CompositorService = { focusSource: "niri", focusReady: false, focusedAppId: "", lastFocusedAppId: "" };
 
@@ -627,11 +573,11 @@ function queuePaste(h) {
     assert.equal(h.root.readinessTimer.running, true, "and the wait is bounded from the first deferral");
     assert.deepEqual(h.toasts, [], "nothing has gone wrong yet, so the user is told nothing");
 
-    // Waiting is not refusing: the seat is untouched, so no recovery runs.
+    // Readiness waiting leaves the seat untouched and must not start modifier recovery.
     assert.equal(h.root._seatUnconfirmed, false, "waiting must not mark the seat");
     assert.equal(h.root.releaseProcess.running, false, "and must not start a modifier release");
 
-    // The source answers. The next settle finds a target and injects.
+
     h.root.CompositorService = { focusSource: "niri", focusReady: true, focusedAppId: "foot", lastFocusedAppId: "" };
     h.fire("settleTimer", "settleTriggered");
     assert.equal(h.root.wtypeProcess.running, true, "the waiting paste injects once the source can answer");
@@ -639,10 +585,7 @@ function queuePaste(h) {
     assert.equal(h.root.readinessTimer.running, false, "and the deadline is stood down");
 }
 {
-    // The deadline. Parts of readiness cannot be observed — a socket that is up
-    // but silent, a toplevel list that may never arrive — so "not yet" and
-    // "never" look identical from here. Without a floor the paste would wait for
-    // the rest of the session in silence.
+    // A silent focus source can remain unready indefinitely, so the request needs a deadline.
     const h = makeHarness();
     h.root.CompositorService = { focusSource: "niri", focusReady: false, focusedAppId: "", lastFocusedAppId: "" };
     queuePaste(h);
@@ -657,15 +600,12 @@ function queuePaste(h) {
     assert.equal(h.root._seatUnconfirmed, false, "no chord was pressed, so the seat is not in doubt");
 }
 {
-    // The deadline racing readiness. Readiness can arrive between two settle
-    // polls, and the deadline bounds an unbounded wait rather than capping one
-    // that is over — firing on elapsed time alone discarded a paste that could
-    // now succeed and told the user it was unavailable.
+    // Recheck readiness at deadline time. It can arrive between polls, ending the condition being bounded.
     const h = makeHarness();
     h.root.CompositorService = { focusSource: "niri", focusReady: false, focusedAppId: "", lastFocusedAppId: "" };
     queuePaste(h);
 
-    // The source answers, and the deadline expires before the next settle poll.
+
     h.root.CompositorService = { focusSource: "niri", focusReady: true, focusedAppId: "foot", lastFocusedAppId: "" };
     assert.equal(h.fire("readinessTimer", "readinessTriggered"), true, "the deadline expires");
     assert.deepEqual(h.toasts, [], "a paste that can now succeed is not reported as unavailable");
@@ -677,8 +617,7 @@ function queuePaste(h) {
     assert.equal(h.root._targetAppId, "foot", "into the target that became resolvable");
 }
 {
-    // The other half of that: the deadline must still refuse when readiness
-    // really never arrives, so re-checking cannot become a way to never refuse.
+    // Persistent unreadiness must still refuse; rechecking cannot turn the deadline into endless waiting.
     const h = makeHarness();
     h.root.CompositorService = { focusSource: "niri", focusReady: false, focusedAppId: "", lastFocusedAppId: "" };
     queuePaste(h);
@@ -687,10 +626,7 @@ function queuePaste(h) {
     assert.equal(h.root.wtypeProcess.running, false, "with no keystroke");
 }
 {
-    // The deadline outliving the attempt it was armed for. An unconfirmed seat
-    // refuses the paste on the next settle, which ends the wait without
-    // cancelling the queue — so a deadline still armed would fire afterwards and
-    // report a second failure for a paste that is no longer pending.
+    // End the readiness deadline when another refusal ends the attempt to avoid duplicate failure notices.
     const h = makeHarness();
     h.root.CompositorService = { focusSource: "niri", focusReady: false, focusedAppId: "", lastFocusedAppId: "" };
     queuePaste(h);
@@ -706,15 +642,14 @@ function queuePaste(h) {
     assert.equal(h.toasts.length, afterRefusal, "the stale deadline says nothing");
 }
 {
-    // Not over-corrected: the deadline must not fire on a session that answers.
+
     const h = makeHarness();
     queuePaste(h);
     assert.equal(h.root.wtypeProcess.running, true, "a ready source injects immediately");
     assert.equal(h.root.readinessTimer.running, false, "and no deadline is left armed behind it");
 }
 {
-    // A second paste after a readiness refusal still works: the refusal dropped
-    // the queue, it did not disable the service.
+    // A later request must work after readiness recovers; refusal cancels a request, not the service.
     const h = makeHarness();
     h.root.CompositorService = { focusSource: "hyprland", focusReady: false, focusedAppId: "", lastFocusedAppId: "" };
     queuePaste(h);
@@ -725,49 +660,45 @@ function queuePaste(h) {
     assert.equal(h.root.wtypeProcess.running, true, "the next paste injects once the source answers");
 }
 
-// ---- 5. release give-up: the queue must not outlive it --------------------
+
 
 {
     const h = makeHarness();
     queuePaste(h);
     h.started("injector");
 
-    h.fire("watchdogTimer", "watchdogTriggered"); // wedged: terminate
-    h.fire("escalationTimer", "escalationTriggered"); // SIGKILL
-    h.exit("injector", 143); // the injector finally dies, starting the release
+    h.fire("watchdogTimer", "watchdogTriggered");
+    h.fire("escalationTimer", "escalationTriggered");
+    h.exit("injector", 143);
     assert.equal(h.root.releaseProcess.running, true, "a terminated injector must release the modifiers");
     h.started("release");
 
-    queuePaste(h); // the user asks again while the release is in flight
+    queuePaste(h);
     assert.equal(h.root._pendingPaste, true, "a paste during the release is recorded");
 
     h.fire("releaseWatchdogTimer", "releaseWatchdogTriggered");
-    h.fire("releaseEscalationTimer", "releaseEscalationTriggered"); // SIGKILL
-    h.fire("releaseEscalationTimer", "releaseEscalationTriggered"); // gives up
+    h.fire("releaseEscalationTimer", "releaseEscalationTriggered");
+    h.fire("releaseEscalationTimer", "releaseEscalationTriggered");
 
     assert.equal(h.root._pendingPaste, false, "a give-up must drop the queued paste, not bank it");
     assert.equal(h.root.settleTimer.running, false, "and must stop a settle already counting down");
     assert.equal(h.root._seatUnconfirmed, true, "and the seat stays marked, since only a clean release clears it");
 
-    // The unkillable release finally exits, minutes later.
+    // Model the release exiting after give-up to detect delayed queue replay.
     h.exit("release", 0);
     assert.equal(h.root.settleTimer.running, false, "a dropped paste must never be replayed by a late exit");
 }
 
-// ---- 5a2. neither give-up leaves its repeating timer armed ----------------
+
 
 {
-    // Both escalation ladders repeat every second, so a terminal branch that
-    // returns without stopping its timer toasts, warns and re-cancels every
-    // second for as long as the zombie lives. Asserted as the invariant rather
-    // than as the mechanism: what stops the timer may move, but a give-up must
-    // never leave one running.
+    // Give-up must stop repeating escalation timers or each tick repeats cancellation and notifications.
     const h = makeHarness();
     queuePaste(h);
     h.started("injector");
     h.fire("watchdogTimer", "watchdogTriggered");
-    h.fire("escalationTimer", "escalationTriggered"); // SIGKILL
-    h.fire("escalationTimer", "escalationTriggered"); // survives it: gives up
+    h.fire("escalationTimer", "escalationTriggered");
+    h.fire("escalationTimer", "escalationTriggered");
     const afterGiveUp = h.toasts.length;
     const afterWarnings = h.warnings.length;
 
@@ -776,15 +707,15 @@ function queuePaste(h) {
     assert.equal(h.toasts.length, afterGiveUp, "a stuck injector is reported once, not once per second");
     assert.equal(h.warnings.length, afterWarnings, "and logged once");
 
-    // The release ladder's own give-up, which already stopped its timer.
+
     const r = makeHarness();
     queuePaste(r);
     r.started("injector");
-    r.exit("injector", 1); // a failed keystroke sends the release
+    r.exit("injector", 1);
     r.started("release");
     r.fire("releaseWatchdogTimer", "releaseWatchdogTriggered");
-    r.fire("releaseEscalationTimer", "releaseEscalationTriggered"); // SIGKILL
-    r.fire("releaseEscalationTimer", "releaseEscalationTriggered"); // survives it
+    r.fire("releaseEscalationTimer", "releaseEscalationTriggered");
+    r.fire("releaseEscalationTimer", "releaseEscalationTriggered");
     const releaseToasts = r.toasts.length;
 
     assert.equal(r.root.releaseEscalationTimer.running, false, "the release give-up must leave no repeating timer armed either");
@@ -792,8 +723,7 @@ function queuePaste(h) {
     assert.equal(r.toasts.length, releaseToasts, "a stuck release is reported once too");
 }
 {
-    // The other direction, so the stop cannot pass by never reaching the branch:
-    // the first escalation must still SIGKILL and leave the ladder running.
+    // The first escalation must still send SIGKILL and retain its timer so early stopping cannot pass.
     const h = makeHarness();
     queuePaste(h);
     h.started("injector");
@@ -803,31 +733,30 @@ function queuePaste(h) {
     assert.equal(h.root.escalationTimer.running, true, "and the ladder keeps going, since that is not a terminal branch");
 }
 
-// ---- 5b. injector give-up: the queue must not outlive it either -----------
+
 
 {
     const h = makeHarness();
     queuePaste(h);
     h.started("injector");
-    queuePaste(h); // recorded behind a wedged injector
+    queuePaste(h);
     h.fire("watchdogTimer", "watchdogTriggered");
-    h.fire("escalationTimer", "escalationTriggered"); // SIGKILL
-    h.root.injectPaste(); // and a settle counting down as it gives up
-    h.fire("escalationTimer", "escalationTriggered"); // survives it: gives up
+    h.fire("escalationTimer", "escalationTriggered");
+    h.root.injectPaste();
+    h.fire("escalationTimer", "escalationTriggered");
 
     assert.equal(h.root._helperStuck, true, "the helper VGS could not stop must be marked");
     assert.equal(h.root._pendingPaste, false, "a give-up must drop what queued behind it");
     assert.equal(h.root.settleTimer.running, false, "and stop a settle counting down toward a helper it could not kill");
 
-    // The zombie finally dies: it pressed a chord it never released, so the
-    // release runs — and finds nothing queued to replay.
+    // A late injector exit still needs modifier release but must find no canceled paste to replay.
     h.exit("injector", 137);
     assert.equal(h.root.releaseProcess.running, true, "a killed injector's modifiers must still be released");
     h.exit("release", 0);
     assert.equal(h.root.settleTimer.running, false, "a dropped paste must never come back");
 }
 
-// ---- 6. a failed modifier release never replays a paste -------------------
+
 
 {
     const h = makeHarness();
@@ -841,7 +770,7 @@ function queuePaste(h) {
     assert.equal(h.root._pendingPaste, true, "the paste is queued behind the release");
 
     const before = h.toasts.length;
-    h.exit("release", 1); // the release itself failed: modifiers may be held
+    h.exit("release", 1);
 
     assert.equal(h.root._pendingPaste, false, "a failed release must drop the queued paste");
     assert.equal(h.root.settleTimer.running, false, "and must not leave a settle counting down");
@@ -849,7 +778,7 @@ function queuePaste(h) {
     assert.match(h.toasts[h.toasts.length - 1], /modifiers could not be released/);
 }
 
-// ---- 7. a clean release still replays what was queued behind it -----------
+
 
 {
     const h = makeHarness();
@@ -866,7 +795,7 @@ function queuePaste(h) {
     assert.equal(h.root._pendingPaste, false, "and consume the record doing it");
 }
 
-// ---- 8. the release failing to start is reported too ----------------------
+
 
 {
     const h = makeHarness();
@@ -878,7 +807,7 @@ function queuePaste(h) {
     assert.equal(h.root._releaseAwaitingStart, true, "the release start latch must be armed");
 
     const before = h.toasts.length;
-    h.root.injectPaste(); // a settle counting down toward the unaccounted seat
+    h.root.injectPaste();
     h.failToStart("release");
 
     assert.ok(h.toasts.length > before, "a release that never starts must reach the user");
@@ -888,22 +817,21 @@ function queuePaste(h) {
     assert.equal(h.root.releaseWatchdogTimer.running, false, "no watchdog may be left armed for it");
 }
 
-// ---- 8b. an unconfirmed seat outlives the request that discovered it ------
+
 
 {
-    // Per-request cancellation cannot reach this: the next paste is a brand-new
-    // request with nothing queued, and it would press a fresh chord onto the
-    // same modifiers the queued one was dropped for.
+    // An unconfirmed seat survives request cancellation. A fresh request must not add a chord
+    // to modifiers whose release never succeeded.
     const h = makeHarness();
     queuePaste(h);
     h.started("injector");
-    h.exit("injector", 1); // partial keystroke: the release runs
+    h.exit("injector", 1);
     h.started("release");
-    h.exit("release", 1); // and fails
+    h.exit("release", 1);
     assert.equal(h.root._seatUnconfirmed, true, "a release that did not come back clean must mark the seat");
 
     const before = h.toasts.length;
-    h.root.injectPaste(); // the user tries again, seconds later
+    h.root.injectPaste();
 
     assert.equal(h.root.settleTimer.running, false, "a later request must not be armed onto an unconfirmed seat");
     assert.equal(h.root.wtypeProcess.running, false, "and must not press a chord onto it");
@@ -911,7 +839,7 @@ function queuePaste(h) {
     assert.match(h.toasts[h.toasts.length - 1], /Paste is unavailable/);
 }
 
-// ---- 8c. only a confirmed release clears it, and it is reachable ----------
+
 
 {
     const h = makeHarness();
@@ -922,23 +850,22 @@ function queuePaste(h) {
     assert.equal(h.root._seatUnconfirmed, true, "and must not clear it in advance of the answer");
 
     h.started("release");
-    h.exit("release", 1); // still failing: the seat stays unconfirmed
+    h.exit("release", 1);
     assert.equal(h.root._seatUnconfirmed, true, "a failed retry leaves the seat exactly as it was");
 
     h.root.injectPaste();
     h.started("release");
-    h.exit("release", 0); // confirmed clean
+    h.exit("release", 0);
     assert.equal(h.root._seatUnconfirmed, false, "a clean release is the one thing that clears it");
 
     h.root.injectPaste();
     assert.equal(h.root.settleTimer.running, true, "and paste works again afterwards");
 }
 
-// ---- 8d. a replay cannot slip past the seat rule either ------------------
+
 
 {
-    // beginInjection is the funnel every injection passes through, so the rule
-    // holds for a paste replayed from a queue as well as for a fresh request.
+    // Queue replay must pass through the same injection entrypoint and seat check as a fresh request.
     const h = makeHarness();
     h.root._seatUnconfirmed = true;
     h.root._pendingPaste = true;
@@ -949,7 +876,7 @@ function queuePaste(h) {
     assert.equal(h.root.wtypeProcess.running, false, "a replayed paste must be refused on an unconfirmed seat too");
 }
 
-// ---- 8e. a release that never starts marks the seat as well --------------
+
 
 {
     const h = makeHarness();
@@ -960,18 +887,15 @@ function queuePaste(h) {
     assert.equal(h.root._seatUnconfirmed, true, "a release that never ran confirms nothing");
 }
 
-// ---- 9. the launcher's copy helper failing to start ----------------------
 
-// The launcher has the same two spawn-failure shapes as the injector, so it
-// needs the same two detection paths: the transition that falls back, and the
-// start that never transitions at all.
+
+// The copy helper needs both fallback-to-stopped and no-transition spawn-failure detection.
 function makeLauncher() {
     const toasts = [];
     const pastes = [];
     const scope = {
         _copyAwaitingStart: false,
-        // `running` bare is the Process's own property, as a handler in the QML
-        // sees it; copyProcess.running is the same state read from outside.
+        // Bare running and copyProcess.running must reference the same modeled Process property.
         running: false,
         copyProcess: { command: [], running: false },
         copyStartTimer: { running: false, restart() { this.running = true; }, stop() { this.running = false; } },
@@ -987,9 +911,7 @@ function makeLauncher() {
     const start = compile(launcherBodies.startPluginCopy, "pasteArgs");
     scope.startPluginCopy = args => start(scope, args);
 
-    // What Enter actually runs. The plugin-paste path is the one with the
-    // in-flight guard on it; the rest is stubbed to the shape pasteSelected
-    // reads, so the guard's outcome is what these cases observe.
+    // Run the shipped pasteSelected path with unrelated services stubbed so the busy guard determines the result.
     const executed = [];
     scope.itemExecuted = () => executed.push("closed");
     scope.selectedItem = { type: "plugin", pluginId: "calc", data: "42" };
@@ -1003,15 +925,15 @@ function makeLauncher() {
         toasts,
         pastes,
         executed,
-        // Enter on the selected item, through the shipped function.
+
         pasteSelected() {
             paste(scope);
         },
-        // The shipped start, guard and all: pasteSelected() calls exactly this.
+
         request(args = ["wl-copy", "x"]) {
             return start(scope, args);
         },
-        // Only the exit handler takes a parameter, and it is named in the QML.
+
         run(name, ...args) {
             compile(launcherBodies[name], ...(name === "copyExited" ? ["exitCode"] : []))(scope, ...args);
         },
@@ -1019,9 +941,7 @@ function makeLauncher() {
 }
 
 {
-    // Enter twice, quickly. The first copy is in flight, so the second request
-    // is refused — and a refusal the person cannot see is the silent failure
-    // this whole path exists to remove.
+    // A second Enter during copy must refuse visibly; the requesting surface needs a user-facing failure.
     const h = makeLauncher();
     h.pasteSelected();
     assert.equal(h.scope.copyProcess.running, true, "the first Enter starts the copy");
@@ -1036,16 +956,13 @@ function makeLauncher() {
     assert.equal(h.scope.copyProcess.command, firstCommand, "the copy in flight keeps its own argv");
 }
 {
-    // Not over-applied: the happy path reports nothing. A toast on every paste
-    // would be its own defect.
+    // Successful paste must remain quiet.
     const h = makeLauncher();
     h.pasteSelected();
     assert.deepEqual(h.toasts, [], "a paste with no copy in flight says nothing");
     assert.deepEqual(h.executed, ["closed"], "and closes the launcher");
 
-    // And once the copy finishes, the next Enter works normally. Quickshell owns
-    // the running transition, so the model makes it here the way the compositor
-    // would rather than the handler pretending to.
+    // Confirm the external stop transition before testing a later Enter.
     h.run("copyExited", 0);
     h.scope.copyProcess.running = false;
     h.pasteSelected();
@@ -1053,7 +970,7 @@ function makeLauncher() {
     assert.deepEqual(h.executed, ["closed", "closed"], "and closes as it should");
 }
 {
-    // The start arms both detection paths, or neither can report anything.
+    // A start must arm both failure detectors.
     const h = makeLauncher();
     assert.equal(h.request(), true, "the first request starts a copy");
     assert.equal(h.scope._copyAwaitingStart, true, "arming the latch");
@@ -1062,12 +979,11 @@ function makeLauncher() {
 }
 
 {
-    // A copy asked to start but not yet transitioned must read as busy: a
-    // second request then would copy and paste the PREVIOUS selection.
+    // Awaiting-start copy is busy; another request could otherwise paste the preceding selection.
     const h = makeLauncher();
     h.request(["wl-copy", "first"]);
     assert.equal(h.scope.copyProcess.running, true, "the process was asked to run");
-    h.scope.copyProcess.running = false; // asked, no transition yet
+    h.scope.copyProcess.running = false;
     assert.equal(h.scope._copyAwaitingStart, true, "and it is still awaiting its start");
 
     assert.equal(h.request(["wl-copy", "second"]), false, "a second request during that window must be refused");
@@ -1075,12 +991,11 @@ function makeLauncher() {
 }
 
 {
-    // ...and after a CONFIRMED outcome the launcher works normally again, so
-    // the rule is not over-corrected into refusing legitimate copies.
+    // A confirmed outcome must release the guard for later copies.
     const h = makeLauncher();
     h.request(["wl-copy", "first"]);
     h.scope.copyProcess.running = false;
-    h.run("copyStartTriggered"); // the watchdog confirms the failure
+    h.run("copyStartTriggered");
     assert.equal(h.scope._copyAwaitingStart, false, "the failure is confirmed");
 
     assert.equal(h.request(["wl-copy", "second"]), true, "a request after a confirmed failure must start");
@@ -1088,7 +1003,7 @@ function makeLauncher() {
 }
 
 {
-    // A copy confirmed running is busy too — the case that already worked.
+
     const h = makeLauncher();
     h.request();
     h.run("copyStarted");
@@ -1101,7 +1016,7 @@ function makeLauncher() {
 }
 
 {
-    // Shape one: running falls back to false.
+
     const h = makeLauncher();
     h.request();
     h.run("copyRunningChanged");
@@ -1113,7 +1028,7 @@ function makeLauncher() {
 }
 
 {
-    // Shape two: running never becomes true, so there is no transition to see.
+
     const h = makeLauncher();
     h.request();
     h.run("copyStartTriggered");
@@ -1124,15 +1039,15 @@ function makeLauncher() {
 }
 
 {
-    // A copy that runs and succeeds must say nothing on any of the three paths.
+    // A successful copy must not trigger any failure detector.
     const h = makeLauncher();
     h.request();
     h.run("copyStarted");
     assert.equal(h.scope._copyAwaitingStart, false, "started clears the latch");
     assert.equal(h.scope.copyStartTimer.running, false, "and disarms the timer that would report it");
 
-    h.run("copyStartTriggered"); // fires anyway: must find nothing to report
-    h.run("copyRunningChanged"); // the ordinary stop after an exit
+    h.run("copyStartTriggered");
+    h.run("copyRunningChanged");
     h.run("copyExited", 0);
 
     assert.deepEqual(h.toasts, [], "a copy that worked must produce no report at all");
@@ -1140,8 +1055,7 @@ function makeLauncher() {
 }
 
 {
-    // A copy that ran and failed is the exit handler's outcome, not a start
-    // failure, and it must not paste.
+    // A nonzero exit is an execution failure, not a failed start, and must not paste.
     const h = makeLauncher();
     h.request();
     h.run("copyStarted");
@@ -1153,8 +1067,7 @@ function makeLauncher() {
 }
 
 {
-    // An exit is proof the helper ran, whatever order the signals arrived in, so
-    // it clears the start latch itself rather than trusting `started` to have.
+    // An exit proves execution even when started arrives late, so it must clear the start latch.
     const h = makeLauncher();
     h.request();
     h.run("copyExited", 0);

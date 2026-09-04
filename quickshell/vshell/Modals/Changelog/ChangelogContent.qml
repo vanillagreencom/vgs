@@ -61,7 +61,7 @@ Column {
                         radius: root.badgeHeight / 2
                         color: Theme.primaryContainer
                         anchors.verticalCenter: parent.verticalCenter
-                        // CODENAME is optional and currently empty; no badge then.
+
                         visible: ShellVersionService.shellCodename.length > 0
 
                         StyledText {

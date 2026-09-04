@@ -7,12 +7,7 @@ import qs.Modals.Common
 import qs.Services
 import qs.Widgets
 
-// Download browser for themes that are not installed yet.
-//
-// Base packages ship one theme, so this is the discovery path for the other
-// ~79: each card shows the theme's shipped screenshot and palette whether or
-// not it is installed, and downloads go through `vshell theme catalog`, which
-// verifies every file against the committed manifest.
+// Browse downloadable themes. The helper verifies catalog downloads before installation.
 FloatingWindow {
     id: root
 
@@ -37,8 +32,7 @@ FloatingWindow {
         });
     }
 
-    // Screenshot paths are filesystem paths, not URLs: a theme dir under a HOME
-    // with a space or `#` in it breaks a naive "file://" + path concatenation.
+    // Encode screenshot paths as URLs so spaces and # in directory names remain part of the path.
     function imageUrl(path) {
         if (!path)
             return "";
@@ -84,8 +78,7 @@ FloatingWindow {
         searchField.text = "";
     }
 
-    // Removing deletes the theme directory, including any edits the user made to
-    // it in place, so it asks first — one stray click must not destroy work.
+    // Ask before removal because the theme directory can contain user edits.
     function confirmRemove(name) {
         removeConfirm.showWithOptions({
             "title": I18n.tr("Remove Theme"),
@@ -223,9 +216,7 @@ FloatingWindow {
                     wrapMode: Text.WordWrap
                 }
 
-                // Search owns its own line and the chip groups wrap below it, so
-                // the field stays usable down to the window's minimum width
-                // instead of being squeezed to nothing by two fixed chip rows.
+                // Keep search on its own line and wrap chips so narrow windows retain usable input width.
                 Column {
                     id: filterRow
                     anchors.left: parent.left
@@ -281,15 +272,13 @@ FloatingWindow {
                     anchors.bottom: parent.bottom
                     clip: true
                     visible: root.filteredEntries.length > 0
-                    // Horizontal insets between the cell edge and the preview.
+
                     readonly property int cardInset: Theme.spacingXS * 2 + Theme.spacingS * 2
                     // Everything under the preview: name row, swatches, button,
                     // plus the column's gaps and the card's own margins.
                     readonly property int cardControls: 22 + 10 + 30 + Theme.spacingS * 5 + Theme.spacingXS * 2
                     cellWidth: Math.floor(width / Math.max(1, Math.floor(width / 260)))
-                    // The preview is 16:9 of the card width, so a fixed cell
-                    // height overflows into the next row as soon as the window
-                    // is narrow enough to drop to one column.
+                    // Derive cell height from the preview aspect ratio so rows do not overlap when column count changes.
                     cellHeight: Math.round((cellWidth - cardInset) * 9 / 16) + cardControls
                     model: root.filteredEntries
 
@@ -351,9 +340,7 @@ FloatingWindow {
                                         width: installedLabel.implicitWidth + Theme.spacingS * 2
                                         height: 20
                                         radius: 10
-                                        // Theme tokens, not a scrim + white: the badge sits
-                                        // over an arbitrary screenshot, so it carries its own
-                                        // surface and hairline instead of hardcoded colors.
+
                                         color: Theme.surfaceContainer
                                         border.width: 1
                                         border.color: Theme.borderColor
@@ -465,8 +452,7 @@ FloatingWindow {
                         text: {
                             if (VGSThemeCatalogService.available)
                                 return I18n.tr("No themes match this filter");
-                            // An empty browser always says why: a failed CLI call
-                            // must not look like a catalog with nothing in it.
+                            // Distinguish a failed catalog request from a successful empty catalog.
                             if (VGSThemeCatalogService.failureText !== "")
                                 return VGSThemeCatalogService.failureText;
                             return I18n.tr("This install ships no theme catalog");

@@ -1,8 +1,6 @@
-"""Self-test for `shell_scan`, run as `python3 scripts/lib/shell_scan.py`.
+"""Controls for shell_scan masks and recipe boundaries.
 
-Its own file so the scanner stays one screenful of scanner. The entry
-point does not move: `shell_scan.py` runs this when executed directly, so
-there is still one command and one place a failure is reported.
+Run through python3 scripts/lib/shell_scan.py.
 """
 
 import re
@@ -13,10 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from shell_scan import assignments, code_mask, split_scopes  # noqa: E402
 
 
-# One row per claim the module docstring makes about what code_mask handles.
-# Written as exact masks rather than "does not crash": an entry in that account
-# is what a reader trusts INSTEAD of checking, so each is pinned by a control
-# and none is left resting on a reading of the loop.
+# Exact masks test which characters remain visible to recipe readers.
 _MASK_CONTROLS = [
     ("a bare single-quoted body", "x='a # } b'\n", "x='       '\n"),
     # POSIX: no escapes inside '...', so the first quote really does close it.
@@ -24,7 +19,6 @@ _MASK_CONTROLS = [
     ("a double-quoted body", 'x="a } b"\n', 'x="     "\n'),
     ("an escaped quote does not end a double quote", 'x="a\\"} b" y=1\n', 'x="      " y=1\n'),
     ("ANSI-C quoting", "x=$'a } b'\n", "x=$'     '\n"),
-    # The reported shape: `\'` is an escape here, not a terminator.
     ("an escaped quote does not end ANSI-C quoting", "x=$'can\\'t' y=1\n", "x=$'      ' y=1\n"),
     ("locale quoting", 'x=$"a } b"\n', 'x=$"     "\n'),
     ("a comment at a word start", "x=1 # note\n", "x=1       \n"),
@@ -35,8 +29,7 @@ _MASK_CONTROLS = [
     ("a hash in a parameter expansion is not a comment", "x=${v#pat} y=1\n", "x=${     } y=1\n"),
     ("an expansion's body is not structure", "x=${v//(/z} y=1\n", "x=${      } y=1\n"),
     ("a nested expansion is blanked in one pass", "x=${a:-${b}} y=1\n", "x=${       } y=1\n"),
-    # Left alone rather than guessed at: blanking to a far-off closer would
-    # destroy real structure, which is the failure this scanner exists to stop.
+    # An unmatched bracket must not mask later lines.
     ("an unmatched expansion is left alone", "x=${v\ny=1\n", "x=${v\ny=1\n"),
     ("a glob character class is literal text", "x=b[(]c y=1\n", "x=b[ ]c y=1\n"),
     ("an unmatched bracket is left alone", "x=a[b\ny=1\n", "x=a[b\ny=1\n"),
@@ -45,7 +38,6 @@ _MASK_CONTROLS = [
     ("a quoted heredoc body", "cat <<'EOF'\n}\nEOF\n", "cat <<'EOF'\n \nEOF\n"),
     ("an unquoted heredoc body", "cat <<EOF\n}\nEOF\n", "cat <<EOF\n \nEOF\n"),
     ("a tab-stripping heredoc body", "cat <<-EOF\n\t}\n\tEOF\n", "cat <<-EOF\n  \n\tEOF\n"),
-    # Before the fix this became a heredoc delimited by `}` and masked the rest.
     ("a herestring is not a heredoc", "cat <<<'}' \ny=1\n", "cat <<<' ' \ny=1\n"),
     # Blanked WITH the quoted body around it, but as a balanced pair, which is
     # why scope splitting still bounds a function correctly.
@@ -66,8 +58,6 @@ def selftest() -> int:
         check(f"{label} preserves offsets", len(code_mask(source)), len(source))
         check(f"{label} preserves lines", code_mask(source).count("\n"), source.count("\n"))
 
-    # The three shapes that read a delimiter without honouring escapes or
-    # nesting, end to end through the callers that would have been misled.
     check(
         "an ANSI-C escape does not hide the next declaration",
         assignments("pkgname=$'can\\'t'\nconflicts=()\n", "conflicts"),
@@ -88,9 +78,7 @@ def selftest() -> int:
         assignments("conflicts=(a $((1 + 2)) c)\n", "conflicts"),
         ["a $((1 + 2)) c"],
     )
-    # Counting every paren as nesting was the regression that replaced the
-    # bug above: a literal paren opens nothing, so a valid recipe read as
-    # unterminated and packaging validation rejected it.
+    # Literal parentheses must not change array nesting.
     check(
         "a paren in a parameter expansion does not open nesting",
         assignments("conflicts=(a ${value//(/x} c)\n", "conflicts"),
@@ -106,14 +94,12 @@ def selftest() -> int:
         assignments("conflicts=(a b c)\n", "conflicts"),
         ["a b c"],
     )
-    # The one known shape that still ends an array early, pinned so the
-    # docstring's account of it cannot drift from what the code does.
+    # This case documents the scanner limit that ends an array early.
     check(
         "a case pattern inside a substitution still ends the array early",
         assignments("conflicts=(a $(case x in b) echo;; esac) c)\n", "conflicts"),
         ["a $(case x in b) echo;; esac"],
     )
-    # Brace counting is the other nesting counter, and it reads the same mask.
     func = re.compile(r"^(package(?:_[\w.+-]+)?)\s*\(\)")
     for label, source in (
         ("a brace inside an expansion", "package_sub() {\n  x=${v//\\}/y}\n  conflicts=('b')\n}\nafter=1\n"),
@@ -123,7 +109,7 @@ def selftest() -> int:
         check(f"{label} does not close the scope", "conflicts=('b')" in bodies["package_sub"], True)
         check(f"{label} does not leak to top", "conflicts=('b')" in top, False)
 
-    # ...and the other direction, so the fix is not simply accepting anything.
+    # A valid twin prevents a constant rejection from passing.
     for unterminated in ("conflicts=(a b\n", "conflicts=(a ${v//(/x} b\n"):
         try:
             assignments(unterminated, "conflicts")
@@ -132,7 +118,6 @@ def selftest() -> int:
         else:
             failures.append(f"unterminated {unterminated!r}: expected ValueError, got a result")
 
-    # A brace in a comment must not close the function.
     top, bodies = split_scopes(
         "conflicts=('a')\n"
         "package_main() {\n"
@@ -147,26 +132,22 @@ def selftest() -> int:
     check("comment brace stays in the subpackage", "conflicts=('b')" in bodies["package_sub"], True)
     check("comment brace does not leak to top", "conflicts=('b')" in top, False)
 
-    # A brace in a quoted string must not close the function either.
     _, bodies = split_scopes(
         'package_sub() {\n  echo "}"\n  conflicts=(\'b\')\n}\n',
         func,
     )
     check("quoted brace stays in the subpackage", "conflicts=('b')" in bodies["package_sub"], True)
 
-    # A heredoc body is not shell syntax.
     top, bodies = split_scopes(
         "package_sub() {\n  cat <<'EOF'\n}\nEOF\n  conflicts=('b')\n}\n",
         func,
     )
     check("heredoc brace stays in the subpackage", "conflicts=('b')" in bodies["package_sub"], True)
 
-    # A function header inside a comment is not a function.
     top, bodies = split_scopes("# package_sub() {\nconflicts=('a')\n", func)
     check("commented-out header is not a function", bodies, {})
     check("commented-out header leaves the top level whole", "conflicts=('a')" in top, True)
 
-    # Assignments: comments dropped, delimiters found on code.
     check("array fragment", assignments("conflicts=('a' 'b')\n", "conflicts"), ["'a' 'b'"])
     check("unassigned is None", assignments("depends=(x)\n", "conflicts"), None)
     check("assigned empty is not None", assignments("conflicts=()\n", "conflicts"), [""])
@@ -183,7 +164,6 @@ def selftest() -> int:
     check("quoted string fragment", assignments('conflicts="a b" # )\n', "conflicts"), ["a b"])
     check("bare word fragment", assignments("pkgbase=vgs-shell\n", "pkgbase"), ["vgs-shell"])
 
-    # An apostrophe in a comment is not an unterminated string.
     check(
         "apostrophe in a comment",
         assignments("conflicts=(\n  # it doesn't matter\n  'a'\n)\n", "conflicts"),

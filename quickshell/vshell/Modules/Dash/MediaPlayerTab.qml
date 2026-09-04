@@ -62,7 +62,7 @@ Item {
 
     property bool isSwitching: false
 
-    // Derived "no players" state: always correct, no timers.
+
     readonly property int _playerCount: allPlayers ? allPlayers.length : 0
     readonly property bool _noneAvailable: _playerCount === 0
     readonly property bool showNoPlayerNow: (!_switchHold) && (_noneAvailable || !activePlayer)
@@ -221,7 +221,7 @@ Item {
         if (!activePlayer)
             return false;
 
-        // 1. Number keys 0-9 to seek to 0%-90%
+
         if (event.key >= Qt.Key_0 && event.key <= Qt.Key_9) {
             if (activePlayer.canSeek && stableLength > 0) {
                 const ratio = (event.key - Qt.Key_0) * 0.1;
@@ -231,7 +231,7 @@ Item {
             }
         }
 
-        // 2. Left / Right arrows to seek backward / forward 5s
+
         if (event.key === Qt.Key_Left) {
             if (activePlayer.canSeek) {
                 activePlayer.position = Math.max(0.1, activePlayer.position - 5);
@@ -245,7 +245,7 @@ Item {
             }
         }
 
-        // 3. Up / Down arrows to adjust volume
+
         if (event.key === Qt.Key_Up) {
             adjustVolume(5);
             triggerVolumeDropdown();
@@ -259,7 +259,7 @@ Item {
             return true;
         }
 
-        // 4. Spacebar to play/pause
+
         if (event.key === Qt.Key_Space) {
             if (activePlayer.canTogglePlaying) {
                 activePlayer.togglePlaying();
@@ -267,7 +267,7 @@ Item {
             }
         }
 
-        // 5. M key to toggle mute
+
         if (event.key === Qt.Key_M) {
             toggleMute();
             triggerVolumeDropdown();
@@ -401,7 +401,7 @@ Item {
                 }
             }
 
-            // Song Info and Controls Section
+
             Item {
                 width: parent.width
                 Layout.fillHeight: true

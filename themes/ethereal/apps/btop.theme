@@ -1,10 +1,8 @@
 # Main background, empty for terminal default, need to be empty if you want transparent background
 theme[main_bg]="#060B1E"
 
-# Main text color
 theme[main_fg]="#ffcead"
 
-# Title color for boxes
 theme[title]="#c89dc1"
 
 # Highlight color for keyboard shortcuts
@@ -16,20 +14,17 @@ theme[selected_bg]="#6d7db6"
 # Foreground color of selected item in processes box
 theme[selected_fg]="#ffcead"
 
-# Color of inactive/disabled text
 theme[inactive_fg]="#6d7db6"
 
 # Misc colors for processes box including mini cpu graphs, details memory graph and details status text
 theme[proc_misc]="#c89dc1"
 
-# Box outline and divider line color
 theme[cpu_box]="#92a593"
 theme[mem_box]="#92a593"
 theme[net_box]="#92a593"
 theme[proc_box]="#92a593"
 theme[div_line]="#6d7db6"
 
-# Gradient for all meters and graphs
 theme[temp_start]="#a3bfd1"
 theme[temp_mid]="#7d82d9"
 theme[temp_end]="#92a593"

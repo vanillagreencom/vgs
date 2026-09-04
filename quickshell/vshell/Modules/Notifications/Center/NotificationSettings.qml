@@ -131,8 +131,7 @@ Rectangle {
                 color: Theme.surfaceText
             }
 
-            // Do Not Disturb lives in the notification center header now, as a
-            // labeled row with the duration presets attached.
+
 
             StyledText {
                 text: I18n.tr("Notification Timeouts")

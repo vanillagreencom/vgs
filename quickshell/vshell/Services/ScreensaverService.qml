@@ -7,27 +7,9 @@ import Quickshell.Io
 import qs.Common
 import qs.Services
 
-// =============================================================================
-// ScreensaverService — owns the decorative screensaver lifecycle.
-//
-// Two modes (SettingsData.screensaverType):
-//   * "ascii" — the VGS TerminalTextEffects saver (fullscreen ghostty windows
-//     running `tte`, one per monitor, via `vshell screensaver`). The art source
-//     is ~/.config/vshell/branding/screensaver.txt; picking a picture in settings
-//     regenerates that file through `vshell screensaver transcode` (braille art).
-//     With no picture picked, the runner falls back to the pre-rendered VGS logo
-//     shipped at config/vshell/branding/screensaver.txt, so the saver has art on
-//     a fresh install without ImageMagick or a first-run transcode. An empty
-//     screensaverAsciiImagePath means "use the bundled logo", not "no art": the
-//     runner reads the setting and only prefers the generated user art while a
-//     picture is still selected, so clearing the field really does go back to
-//     the logo — see bin/vshell-screensaver::resolve_branding.
-//   * "video" — native in-shell video overlays (Modules/Screensaver/
-//     ScreensaverVideoWindow.qml, one per screen, gated on `videoActive`).
-//
-// IdleService drives start()/stop() from its screensaver idle tier; Super+Esc
-// and scripts can use the "screensaver" IPC target. Locking always dismisses.
-// =============================================================================
+// IdleService drives the decorative saver lifecycle. Locking dismisses it.
+// ASCII mode uses helper-managed terminal windows and generated art, or the bundled logo when no picture is selected.
+// Video mode uses per-screen ScreensaverVideoWindow overlays while videoActive is true.
 
 Singleton {
     id: root
@@ -35,9 +17,7 @@ Singleton {
 
     // True while a saver (either mode) is meant to be shown.
     property bool active: false
-    // Video mode requires QtMultimedia (MultimediaService probes it) AND a
-    // configured source; without either we silently fall back to the ascii saver
-    // rather than showing a black exclusive overlay (Codex review).
+    // Video needs QtMultimedia and a configured source. Otherwise use the ASCII saver to avoid an empty overlay.
     readonly property bool _videoUsable: SettingsData.screensaverType === "video" && MultimediaService.available && (SettingsData.screensaverVideoPath || "").length > 0
     // Drives the per-screen video overlay windows in VGS.qml.
     readonly property bool videoActive: active && _videoUsable
@@ -82,7 +62,6 @@ Singleton {
         // saver is up with nothing on screen.
         if (!_videoUsable)
             launchProcess.running = true;
-        // video mode: overlays follow videoActive
     }
 
     // Set by onExited so the settle timer can tell "the launcher ran and reported"
@@ -115,9 +94,7 @@ Singleton {
         }
     }
 
-    // exited and runningChanged are emitted from the same teardown, but their
-    // order is not part of Quickshell's contract, so neither handler may assume
-    // it ran first. Deferring to the next tick makes the check order-independent.
+    // Defer completion to the next tick so the exit handler can record its result before the settle check.
     Timer {
         id: launchSettleTimer
         interval: 0

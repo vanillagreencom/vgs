@@ -220,10 +220,7 @@ Singleton {
                 _refreshBundledId(pid);
                 if (availablePlugins[pid])
                     continue;
-                // A product id that ends up with no owner is a collision that
-                // ended in nothing loaded. It must never be silent — and the
-                // promotion decides that asynchronously, so the report waits
-                // for it rather than for the read to start. (VGS-75)
+                // Wait for promotion to settle before reporting that a bundled id has no loaded owner.
                 promoteShadowedPlugin(pid, function (ok) {
                     if (wasBundled && !ok)
                         root._reportIdLeftEmpty(pid);
@@ -234,22 +231,9 @@ Singleton {
         }
     }
 
-    // Returns whether a candidate was found and its (asynchronous) load
-    // started. Callers must not read availablePlugins to answer that question:
-    // loadPluginManifestFile parses through a FileView, so the id is still
-    // unowned when this returns. "No candidate at all" is the only synchronous,
-    // reliable signal that the id is about to be left empty. (VGS-75)
-    //
-    // The return value is therefore NOT an outcome, and no caller may report
-    // one from it: the candidate can still fail to parse, be invalid, lose the
-    // id to another package, or fail its startup gate, and a caller that told
-    // the user "the bundled version is still in use" on the strength of a
-    // started read would be describing a plugin that never loaded. Pass
-    // `onSettled(ok)` and say nothing until it fires — see _beginPromotion.
-    //
-    // `continuesPath` is the manifest path of the record this promotion is
-    // superseding, when there is one. It is what lets _beginPromotion tell a
-    // chained retry from an unrelated second promotion of the same id.
+    // Return whether a candidate read started, not whether the plugin loaded.
+    // Use onSettled(ok) for the asynchronous outcome.
+    // continuesPath identifies the manifest whose pending promotion this attempt supersedes.
     function promoteShadowedPlugin(pluginId, onSettled, continuesPath) {
         let bestPath = "";
         let bestSource = "";
@@ -272,8 +256,6 @@ Singleton {
             }
         }
         if (!bestPath) {
-            // The one synchronous verdict this function can give, and it is a
-            // final one: with no candidate there is nothing left to settle.
             if (onSettled)
                 onSettled(false);
             return false;
@@ -288,34 +270,12 @@ Singleton {
     // yet, by plugin id. Entry: { path, onSettled, deadline }.
     property var _pendingPromotions: ({})
 
-    // How long a promotion may stay unsettled before it is judged. A promotion
-    // is a manifest read followed, usually, by a startup gate that can spawn a
-    // process, so it is not instant — but it has to be bounded, because the
-    // whole point of tracking it is that a promotion ending with nothing loaded
-    // must reach the user. Same shape as appLauncherRegistrationTimeout, with a
-    // budget that accommodates a startupCheck.
+    // Bound manifest loading and startup checks so an unsettled promotion reaches its reporter.
     readonly property int _promotionTimeoutMs: 8000
 
-    // Two different situations can start a promotion for an id that already has
-    // one pending, and collapsing them is what silently dropped a reporter:
-    //
-    //   * a CONTINUATION — the pending promotion's own candidate reached the
-    //     load path and failed, so _demoteToShipped promotes the next one. Both
-    //     reporters describe one event stream, and the user wants its outcome
-    //     once, not one line per hop.
-    //   * an INDEPENDENT second promotion — resyncAll promoting a removed
-    //     bundled id while a demotion for the same id is in flight, say. Two
-    //     callers are asking two different questions ("was the shipped module
-    //     restored?" and "is this product id empty?") and each is entitled to
-    //     its answer.
-    //
-    // The two are told apart by fact, not by heuristic: a continuation names
-    // the record it is superseding, and it is a continuation only if that is
-    // exactly what the pending promotion produced. `chain` therefore holds at
-    // most one reporter however long the chain runs, while `others` grows only
-    // for genuinely independent callers — so the chained case still yields one
-    // user-visible message, and a race yields one per caller instead of losing
-    // one. (VGS-75)
+    // A continuation replaces the reporter for its own pending promotion.
+    // Independent promotions retain separate reporters so each caller receives an outcome.
+    // Match continuations by the exact manifest path they supersede.
     function _beginPromotion(pluginId, manifestPath, onSettled, continuesPath) {
         const prev = _pendingPromotions[pluginId];
         let chain = prev ? prev.chain : null;
@@ -541,10 +501,7 @@ Singleton {
         if (sourceTag === "bundled")
             _auditBundledRequirement(manifest.id, info.requires_shell);
 
-        // A bundled id names a VGS product module, and some of them back core
-        // UI (the app launcher has no fallback since VGS-13). A user package
-        // may still replace one, but that has to be a decision, not a name
-        // collision — see _declaresBundledOverride.
+        // Bundled ids back product UI. Replacing one requires an explicit manifest override declaration.
         if (sourceTag === "bundled" && !_bundledPluginIds[manifest.id]) {
             const knownBundled = Object.assign({}, _bundledPluginIds);
             knownBundled[manifest.id] = true;
@@ -569,10 +526,7 @@ Singleton {
         info.alwaysAvailable = decision.alwaysAvailable;
 
         if (decision.action === "block") {
-            // A package that merely reuses a shipped id stays inert: the shipped
-            // package keeps the id, and nothing the user never enabled is
-            // loaded on the strength of a name match. Declaring
-            // `"overrides": "<id>"` is the opt-in. (VGS-26)
+            // A package that only reuses a bundled id stays inactive. The overrides declaration authorizes replacement.
             knownManifests[absPath] = {
                 mtime: mtimeEpochMs,
                 source: sourceTag,
@@ -602,11 +556,7 @@ Singleton {
                 };
                 _reportBundledCollision(manifest.id, existing.source);
             }
-            // The package this one displaces, if it is currently loaded. Its
-            // teardown is deferred until the incoming package has passed its
-            // own startup gate — unloading first is what left a product surface
-            // with nothing loaded when an override turned out to be
-            // non-viable. (VGS-24)
+            // Keep the loaded package until its replacement passes startup checks.
             const displaced = _displacesLoadedPackage(existing, absPath) ? existing : null;
             const newMap = Object.assign({}, availablePlugins);
             newMap[manifest.id] = info;
@@ -665,20 +615,8 @@ Singleton {
         }
     }
 
-    // `loaded` is a flag stored on the info record, but a package can have more
-    // than one record over its lifetime: re-parsing a manifest builds a fresh
-    // info object, and forceRescanPlugin does exactly that without tearing the
-    // package down (so does the promotion at the end of _demoteToShipped). That
-    // leaves availablePlugins holding the new record and loadedPlugins holding
-    // the old one, and from there the two disagree permanently — unloadPlugin
-    // clears the flag on whichever record loadedPlugins hands it, while the
-    // record loadPlugin reads out of availablePlugins still claims `loaded`, so
-    // loadPlugin early-returns true and installs nothing. The widget leaves the
-    // bar with a PLUGIN_RELOAD_SUCCESS and no error anywhere. (VGS-75)
-    //
-    // Precedence is by id, but *identity* is by path: only a record for the same
-    // manifest path may take the loaded registration over, because the installed
-    // components belong to the package at that path, not to the id.
+    // Manifest path identifies installed components; plugin id decides ownership.
+    // Relink reparsed records only for the same path so available and loaded state cannot disagree.
     function _relinkLoadedRecord(pluginId, info, absPath) {
         const current = loadedPlugins[pluginId];
         if (!current || current === info)
@@ -708,14 +646,7 @@ Singleton {
         return paths;
     }
 
-    // A VGS product id that ends a resync with no package owning it means every
-    // surface it backs is simply gone. Until VGS-75 that happened without a
-    // single log line — the failure mode this whole path exists to make loud.
-    //
-    // Only when packages claiming the id are still on disk: that is a collision
-    // that resolved to nothing, which is a bug. An id with no candidates left is
-    // an ordinary uninstall — the bundled directory going away with a checkout
-    // switch, say — and shouting about it would be noise, not a signal.
+    // Report a bundled id with candidates on disk but no loaded owner. An id with no candidates is an uninstall.
     function _reportIdLeftEmpty(pluginId) {
         const candidates = _knownPathsFor(pluginId);
         if (!candidates.length)
@@ -725,17 +656,9 @@ Singleton {
     }
 
     // BEGIN OVERRIDE POLICY
-    // Who owns a plugin id, and whether owning it grants always-available.
-    // Pure: no QML API, no service calls, no side effects — the caller applies
-    // the verdict. scripts/test-bundled-override.js extracts this block
-    // verbatim and exercises the shipped source rather than a re-implementation
-    // of it. Keep it free of anything node cannot evaluate.
+    // scripts/test-bundled-override.js evaluates this block in Node; no QML APIs, service calls, or side effects. The caller applies its result.
 
-    // A user or system package replaces a shipped VGS module only when its
-    // manifest says so: `"overrides": "<bundled-id>"` (or a list, or `true` for
-    // "whatever id I declare"). Reusing a shipped id without that is treated as
-    // an accident — the trust decision is the manifest's, not the loader's
-    // inference from a name match. (VGS-26)
+    // A user or system package must declare overrides for the bundled id, a list of ids, or true for its own id.
     function _declaresBundledOverride(manifest, pluginId) {
         const claim = manifest.overrides;
         if (claim === true)
@@ -747,18 +670,7 @@ Singleton {
         return false;
     }
 
-    // Does the incoming record take an id over from a package that is running
-    // under it right now — i.e. must the swap tear the old one down before
-    // installing the new one?
-    //
-    // Identity is by manifest path, never by source. Judging it by source was
-    // survivable only while equal-priority packages could not displace each
-    // other; the path tie-break made two user packages a real takeover, and a
-    // takeover the loader does not see is one it does not unload. The old
-    // package then stays in loadedPlugins with its components installed while
-    // availablePlugins points at the new record — the exact identity desync
-    // VGS-75 exists to remove, re-entered through the door the tie-break
-    // opened. Two packages in one directory are still two packages. (VGS-75)
+    // Return whether the incoming manifest path differs from the loaded package and requires a swap.
     function _displacesLoadedPackage(existing, incomingPath) {
         if (!existing || existing.loaded !== true)
             return false;
@@ -778,10 +690,7 @@ Singleton {
         // scanned yet, and a package that declares an override means it whether
         // or not this process has met the package it overrides.
         const overridesBundled = sourceTag !== "bundled" && _declaresBundledOverride(input.manifest, input.pluginId);
-        // Always-available means "auto-enabled, and disablePlugin refuses it".
-        // A declared override inherits it, because an override that owns the id
-        // and never loads is the hole VGS-13 closed. A bare collision does not,
-        // because it does not get to own the id at all.
+        // Declared overrides inherit automatic enablement and cannot be disabled while they own a bundled id.
         const alwaysAvailable = bundledId && (sourceTag === "bundled" || overridesBundled);
         const enabled = input.isPureDesktop === true || alwaysAvailable || input.userEnabled === true;
 
@@ -797,15 +706,8 @@ Singleton {
         // (the bundled directory can be scanned second), so it takes its id
         // back rather than staying shadowed by an accident.
         const reclaims = sourceTag === "bundled" && !!existing && existing.source !== "bundled" && existing.overridesBundled !== true;
-        // Equal priority — two user packages claiming one id — used to resolve
-        // on `>=`, i.e. whichever manifest read finished last became the owner.
-        // FileView completion order is not something the loader controls, so
-        // that made ownership genuinely nondeterministic: the same two packages
-        // could swap owner across rescans of the same disk state. The tie-break
-        // is the manifest path, which every read knows before it starts, so the
-        // winner is the same whatever order the reads settle in. `<=` rather
-        // than `<` because re-parsing the current owner's own path (a rescan,
-        // or a manifest edited in place) must still replace its own record.
+        // Break equal-priority ties by manifest path so asynchronous read order cannot decide ownership.
+        // Allow the same path to replace its own record during rescan.
         const samePath = String(input.incomingPath) === String(input.existingPath);
         const winsTie = input.incomingPriority === input.existingPriority && (samePath || String(input.incomingPath) < String(input.existingPath));
         let action = "shadow";
@@ -833,10 +735,7 @@ Singleton {
         ToastService.showWarning(I18n.tr("Plugin id already used by VGS: %1").arg(pluginId), I18n.tr("The bundled module keeps this id. Add \"overrides\": \"%1\" to the plugin's plugin.json if replacing it was the intent.").arg(pluginId), "", "plugin-collision-" + pluginId);
     }
 
-    // Is a shipped manifest for this id still on disk? That, not "something is
-    // currently loaded", is what decides whether an override has anywhere to be
-    // demoted to — the two differ in exactly the scan order VGS-13 verified,
-    // where the override is parsed before the package it overrides.
+    // Demotion requires a shipped manifest on disk, even if the override was scanned first.
     function _hasShippedManifest(pluginId) {
         for (const path in knownManifests) {
             const meta = knownManifests[path];
@@ -846,12 +745,8 @@ Singleton {
         return false;
     }
 
-    // Load a package that is taking an id over from another package: gate it
-    // completely — compatibility, startupCheck, and component compilation —
-    // before anything is torn down. Any failure hands the id back to the
-    // shipped package rather than leaving it, and whatever product surface it
-    // backs, with nothing loaded. `displaced` is the package still loaded under
-    // this id, if any. (VGS-24)
+    // Check compatibility, startupCheck, and component compilation before replacing loaded components.
+    // On failure, restore the shipped package when available. displaced names the package still loaded.
     function _gateThenSwap(pluginId, displaced) {
         const incoming = availablePlugins[pluginId];
         if (!incoming) {
@@ -897,10 +792,7 @@ Singleton {
         // slips through that window is judged by the ShellVersionService
         // Connections below, once the version lands.
         if (requires && ShellVersionService.semverVersion && !checkPluginCompatibility(requires)) {
-            // Recorded, not just toasted. A toast is gone in seconds and
-            // `plugin-scan status` reported an empty reason for this refusal,
-            // so the one enforced constraint VGS has left no trace anywhere a
-            // user could look afterwards. (VGS-89)
+            // Record the requirement refusal so status queries retain the cause after the toast disappears.
             const reason = I18n.tr("It requires VGS %1.").arg(requires);
             _markRequirementRefusal(incoming);
             giveUp(reason, {
@@ -954,17 +846,8 @@ Singleton {
         return true;
     }
 
-    // A shipped manifest's requires_shell is never *enforced*, and must not be:
-    // a bundled package is always-available by construction, and refusing to
-    // load one would take the product surface it backs offline (the app
-    // launcher has no fallback since VGS-13), which is strictly worse than an
-    // unmet declaration. That is why an impossible one stayed invisible — every
-    // bundled manifest declared `>=1.0.0` against a 0.1.0 shell and nothing
-    // judged it. It is not harmless: an override is normally a copy of the
-    // shipped manifest, so it inherits the constraint and _gateThenSwap demotes
-    // it, which made overriding any bundled plugin impossible. Judge it where it
-    // is written rather than only where it is copied. scripts/test-bundled-override.js
-    // turns the same comparison into a build-time failure. (VGS-76)
+    // Audit bundled shell requirements without blocking their loading.
+    // Copied requirements also affect override eligibility, so bundled declarations need validation.
     function _auditBundledRequirement(pluginId, requires) {
         if (!requires || !ShellVersionService.semverVersion)
             return;
@@ -985,17 +868,7 @@ Singleton {
         function onSemverVersionChanged() {
             if (!ShellVersionService.semverVersion)
                 return;
-            // Bundled manifests are parsed before the version lands too, so
-            // this is where an impossible shipped requirement first becomes
-            // judgeable. Audited, never enforced — see
-            // _auditBundledRequirement. (VGS-76)
-            //
-            // Over knownManifests rather than availablePlugins: a shipped
-            // manifest that is shadowed by an override owns no record in
-            // availablePlugins, so auditing only the winners silently skipped
-            // exactly the bundled/override pairing this audit exists to
-            // diagnose — the one where the impossible requirement was copied
-            // into the override and demoted it.
+            // Audit all known bundled manifests after version detection, including those shadowed by overrides.
             for (const manifestPath in root.knownManifests) {
                 const meta = root.knownManifests[manifestPath];
                 if (!meta || meta.bad || meta.source !== "bundled")
@@ -1012,32 +885,14 @@ Singleton {
                     continue;
                 if (!root._hasShippedManifest(pluginId))
                     continue;
-                // Same fact, written from the second place it happens.
                 root._markRequirementRefusal(plugin);
                 root._demoteToShipped(pluginId, plugin, I18n.tr("It requires VGS %1.").arg(plugin.requires_shell));
             }
         }
     }
 
-    // Hand the id back to the package the override displaced. The shipped
-    // manifest is still in knownManifests (shadowed), so re-parsing it makes it
-    // the owner again; if it was never unloaded it simply keeps running.
-    // Records WHY a package is about to be refused, on the manifest it was
-    // refused for. Every consumer then reads a recorded cause instead of
-    // re-deriving one: `demoted` alone says a package lost its id, not what
-    // took it away.
-    //
-    // There are TWO places a version refusal happens, and they are far apart in
-    // time. `_gateThenSwap` refuses at parse time, when the shell version is
-    // already known. The ShellVersionService `Connections` below refuses
-    // asynchronously, when the version lands after the package was already
-    // judged and loaded — and that is the path VGS-76 actually arrived on, so a
-    // recording that covered only the first left the hole exactly where the
-    // motivating case lives. One function, called from both.
-    //
-    // The mark lives on the knownManifests entry, which `loadPluginManifestFile`
-    // rebuilds from scratch on every read, so it clears itself the moment the
-    // manifest is re-read and judged again.
+    // Record requirement refusal on the manifest, both during initial gating and after asynchronous version detection.
+    // A manifest reread rebuilds the record so the refusal can be evaluated again.
     function _markRequirementRefusal(record) {
         if (!record)
             return;
@@ -1063,12 +918,7 @@ Singleton {
         _updateAvailablePluginsList();
         pluginListUpdated();
         const name = incoming ? (incoming.name || pluginId) : pluginId;
-        // Reported only once the promotion has settled. Starting a manifest
-        // read is not a restored plugin: the promoted candidate can fail to
-        // parse, be invalid, be blocked, or fail its own gate, and saying "the
-        // version bundled with VGS is still in use" at that point tells the
-        // user everything is fine while nothing owns or loads the id — the same
-        // silent failure this path exists to remove. (VGS-75)
+        // Report restoration only after promotion settles; starting a manifest read does not prove that anything loaded.
         promoteShadowedPlugin(pluginId, function (ok) {
             if (!ok) {
                 // Nothing took the id back. The demotion is the moment a
@@ -1093,12 +943,7 @@ Singleton {
         }, overridePath);
     }
 
-    // A bundled id must not outlive the bundled directory: a shipped package
-    // that goes away (a partial upgrade, a dev checkout switch) would otherwise
-    // keep a same-id user package auto-enabled and undisableable until the
-    // shell restarts. Called from resyncAll after the removed manifests are
-    // gone from knownManifests, which is what makes the "any left?" scan
-    // meaningful. (VGS-39)
+    // Recalculate bundled ids after removing manifests so user packages do not retain automatic enablement without a shipped owner.
     function _refreshBundledId(pluginId) {
         if (_bundledPluginIds[pluginId] !== true || _hasShippedManifest(pluginId))
             return;
@@ -1126,10 +971,7 @@ Singleton {
         }
     }
 
-    // True when the id is a VGS product module the shell guarantees: bundled,
-    // or a user package that declared itself the override of one. Those are
-    // auto-enabled and disablePlugin refuses them, so UI must not offer a
-    // disable affordance for them. (VGS-39)
+    // Bundled modules and declared overrides are auto-enabled and cannot be disabled; hide the disable control.
     function isAlwaysAvailablePlugin(pluginId) {
         if (_bundledPluginIds[pluginId] !== true)
             return false;
@@ -1159,12 +1001,7 @@ Singleton {
         if (plugin.loaded) {
             if (loadedPlugins[pluginId] === plugin)
                 return true;
-            // The record claims loaded but it is not the record registered under
-            // the id, so returning true would report a success that installs no
-            // components — exactly the silent disappearance in VGS-75.
-            // _relinkLoadedRecord keeps the two in step; if anything else ever
-            // desynchronises them, say so and do the load for real rather than
-            // no-op behind a success.
+            // A loaded flag must refer to the record registered under this id. Report mismatches and perform the load.
             log.error("plugin record claims loaded but is not the registered one, loading for real:", pluginId, plugin.manifestPath || "(no path)");
             plugin.loaded = false;
         }
@@ -1285,9 +1122,7 @@ Singleton {
             }
 
             plugin.loaded = false;
-            // The record availablePlugins holds can be a different object for
-            // the same package after a re-parse. Clearing only the loadedPlugins
-            // one leaves the other claiming `loaded` forever. (VGS-75)
+            // Clear loaded state on the reparsed available record as well as the installed record.
             const current = availablePlugins[pluginId];
             if (current && current !== plugin)
                 current.loaded = false;
@@ -1564,10 +1399,7 @@ Singleton {
             return false;
         }
 
-        // A gate with no startupCheck, or a synchronous one, settles before
-        // this returns. Report the real outcome to callers that read the
-        // return value (the plugin IPC does); an async gate can only answer
-        // "started", as before.
+        // Return a synchronous gate result when available; asynchronous gates can only report that they started.
         let settled = null;
         _runStartupCheck(pluginId, err => {
             if (err) {
@@ -1651,11 +1483,7 @@ Singleton {
         return false;
     }
 
-    // Single seam between core shell UI and the bundled launcher package. The
-    // dock button, the bar widget and the changelog card all route through
-    // here, so the plugin id is defined once and the unavailable-launcher
-    // handling lives in one place. Since VGS-13 the shell ships no fallback
-    // launcher, so a failure here has to be visible rather than a dead click.
+    // Core shell launcher controls share this entry point. Report unavailable launcher state because no fallback launcher exists.
     readonly property string appLauncherPluginId: "vgsMenu"
 
     // The open-state half of the same seam. Core shell code binds to this
@@ -1721,9 +1549,7 @@ Singleton {
 
     function _reportAppLauncherUnavailable() {
         _appLauncherOpenPending = false;
-        // Three distinguishable failures wanting three different pieces of
-        // advice. Pointing someone at Settings > Plugins when the plugin is
-        // loaded and merely slow sends them where nothing is wrong.
+        // Distinguish missing, unloaded, and unregistered launcher instances so the error points to the applicable recovery.
         if (getPluginInstance(appLauncherPluginId)) {
             log.error("app launcher unavailable:", appLauncherPluginId, "registered an instance with no callable open()/toggle()");
             ToastService.showError(I18n.tr("App launcher unavailable"), I18n.tr("The %1 plugin registered without a launcher to open.").arg(appLauncherPluginId), "", "app-launcher-unavailable");
@@ -1766,10 +1592,7 @@ Singleton {
         }
     }
 
-    // Nothing else consumes this signal, so a component load error used to
-    // reach only the log. Plugin surfaces back real product UI (the app
-    // launcher has no fallback since VGS-13), so a failed load has to be
-    // visible to the user.
+    // Report component load errors because these plugins supply visible product controls.
     onPluginLoadFailed: (pluginId, error) => {
         // The startup-gate path records the error first and raises a richer
         // toast of its own; do not replace it with this generic one.
@@ -1936,27 +1759,9 @@ Singleton {
         checkPluginDirectoryExists();
     }
 
-    // Re-evaluate a plugin from disk, by id, across every manifest that claims
-    // that id — not just the path that happens to own it right now.
-    //
-    // resyncAll's consider() loads a path only when it is *unknown*, so a
-    // package that lost the id once — blocked as a bare collision, or demoted
-    // by its version gate — is never read again for the life of the process.
-    // Rescanning the owner's path alone therefore could not change any outcome
-    // an override was involved in: editing the override and rescanning produced
-    // no log output and no change at all. Precedence has to be settled by id
-    // after the manifests are (re)loaded, which is what re-parsing all of them
-    // and letting _bundledOverrideDecision arbitrate does. Dropping the
-    // knownManifests entries first is deliberate: it clears the blocked/demoted
-    // flags, so a rescan is a genuinely fresh verdict rather than a replay of
-    // the old one. (VGS-75)
-    //
-    // The manifest loads are asynchronous and may settle in any order, and the
-    // policy arbitrates to the same owner whatever that order is: source
-    // priority decides across sources, and manifest path breaks a tie within
-    // one source (see _bundledOverrideDecision). The priority ordering below
-    // is therefore not load-bearing — it only keeps the transient states during
-    // a rescan closer to the final one.
+    // Rescan every manifest claiming the id, including blocked and demoted candidates.
+    // Clear their decisions before rereading so edited manifests can compete again.
+    // Source priority and manifest-path ties make final ownership independent of read order.
     function forceRescanPlugin(pluginId) {
         const owner = availablePlugins[pluginId];
         const paths = _knownPathsFor(pluginId);
@@ -2003,11 +1808,9 @@ Singleton {
         return true;
     }
 
-    // Launcher plugin helper functions
     function getLauncherPlugins() {
         const launchers = {};
 
-        // Check plugins that have launcher components
         for (const pluginId in pluginLauncherComponents) {
             const plugin = availablePlugins[pluginId];
             if (plugin && plugin.loaded) {
@@ -2028,12 +1831,10 @@ Singleton {
     function getPluginTrigger(pluginId) {
         const plugin = getLauncherPlugin(pluginId);
         if (plugin) {
-            // Check if noTrigger is set (always active mode)
             const noTrigger = SettingsData.getPluginSetting(pluginId, "noTrigger", false);
             if (noTrigger) {
                 return "";
             }
-            // Otherwise load the custom trigger, defaulting to plugin manifest trigger
             const customTrigger = SettingsData.getPluginSetting(pluginId, "trigger", plugin.trigger || "!");
             return customTrigger;
         }
@@ -2101,24 +1902,8 @@ Singleton {
         return ShellVersionService.checkVersionRequirement(requiresVgs, ShellVersionService.getParsedShellVersion());
     }
 
-    // Why a package claiming this id was REFUSED on its declared shell
-    // requirement, or "" when none was. One owner for the sentence, because it
-    // has to read identically in Settings > Plugins and in `plugin-scan`.
-    //
-    // The requirement is enforced in EXACTLY ONE PLACE: `_gateThenSwap`, which
-    // is reached only for a package that declares itself the override of a
-    // bundled id, or one displacing a package already loaded under that id.
-    // `runStartupGate()`, `loadPlugin()` and `reloadPlugin()` do not look at
-    // `requires_shell` at all, so a unique-id user or system package with an
-    // impossible requirement LOADS. Verified in the nested sandbox: a fixture
-    // declaring `>=99.0.0` against a 0.1.0 shell answered `plugin-scan status`
-    // with `loaded`, alongside a control with a satisfiable requirement and one
-    // with none, all three behaving identically.
-    //
-    // So this reports refusals, not declarations. An earlier version of this
-    // function reported any non-bundled package with an unmet requirement,
-    // which labelled loaded, working plugins "Unavailable" — the same false
-    // report the bundled exemption exists to prevent, one source over.
+    // Report recorded shell-requirement refusals, not every unmet declaration.
+    // Unique-id plugins can load without passing the override swap gate.
     function requirementBlockReason(pluginId) {
         const shellSemver = ShellVersionService.semverVersion;
         const parts = [];
@@ -2151,38 +1936,11 @@ Singleton {
     }
 
     // BEGIN REQUIREMENT REPORT POLICY
-    // Pure: no QML API, no service calls, no side effects.
-    // scripts/test-plugin-requirement-report.js extracts this block verbatim
-    // and pairs it with ShellVersionService's own VERSION POLICY comparator, so
-    // the rule is judged by the runtime's code rather than a re-implementation.
-    // Keep it free of anything node cannot evaluate.
-    //
-    // `meta` is a knownManifests entry:
-    // {source, requiresShell, demoted, refusedOnRequirement}. Every manifest
-    // claiming an id is examined, not just the one that won it — a refused
-    // package no longer owns the id, so looking only at the winner never sees
-    // the very configuration this reports (VGS-76's motivating case).
-    //
-    // Keyed on `refusedOnRequirement`, which `_gateThenSwap` records at the
-    // moment it refuses, NOT on `demoted`. `demoted` says a package lost its id
-    // and says nothing about why: a package can fail its own startupCheck and
-    // be demoted while its shell requirement is unmet but was never judged —
-    // shell-version detection is asynchronous, so during the first scan the
-    // version branch is skipped entirely. Inferring the cause from `demoted`
-    // plus an unmet constraint therefore blamed the version for refusals that
-    // had another cause.
-    //
-    // True only when a package was genuinely refused on the requirement:
-    //   * nothing recorded, nothing was refused on this;
-    //   * a bundled id is always-available by construction, so its declaration
-    //     is inert — audited at its source, never enforced. It cannot reach the
-    //     refusal path, and the guard stays explicit rather than implied;
-    //   * shell version detection is asynchronous, and an unresolved version
-    //     parses as 0.0.0 and fails every `>=`. Nothing is refused until it
-    //     lands, so reporting then would be a lie that clears itself;
-    //   * a constraint that is satisfied NOW is a stale record — the shell was
-    //     upgraded under a refusal that has not been re-judged. Reporting it
-    //     would send the reader after a problem that no longer exists.
+    // scripts/test-plugin-requirement-report.js evaluates this block in Node together with ShellVersionService's VERSION POLICY block.
+    // Examine each known manifest, including packages that lost ownership.
+    // Report only recorded requirement refusals for non-bundled packages after version detection.
+    // Suppress a recorded refusal when the current shell satisfies its requirement.
+    // Keep this policy free of QML APIs and side effects.
     function _withheldOnRequirement(meta, shellSemver, compatible) {
         if (!meta || !meta.refusedOnRequirement)
             return false;
@@ -2220,13 +1978,7 @@ Singleton {
                 return "ERROR: rescan requires a pluginId";
             if (!new RegExp(root._ipcIdPattern).test(pluginId))
                 return `ERROR: invalid pluginId '${pluginId}' (allowed: [a-zA-Z0-9_\\-:]{1,64})`;
-            // Not gated on availablePlugins alone. An id whose packages all
-            // lost it — a demotion or a bare collision that ended with no
-            // owner — is exactly the state this command exists to repair, and
-            // it is the state in which the id has no record. Refusing it here
-            // meant the recovery path could never run: rescanning is what drops
-            // the blocked/demoted flags and re-reads the manifests. Known
-            // manifest paths are the real precondition. (VGS-75)
+            // Known manifest paths permit recovery even when no package currently owns the id.
             if (!(pluginId in root.availablePlugins) && !root._knownPathsFor(pluginId).length)
                 return `ERROR: unknown pluginId '${pluginId}' (try 'list' first)`;
             if (!root.forceRescanPlugin(pluginId))
@@ -2256,10 +2008,7 @@ Singleton {
                     continue;
                 const p = root.availablePlugins[id];
                 const safeName = String(p.name || "").replace(/[\t\n\r]/g, " ");
-                // Fifth field: why an unloaded package is being withheld, empty
-                // when it is not. Without it a package enforced against by
-                // requires_shell was indistinguishable here from one the user
-                // simply had not enabled. (VGS-89)
+                // The status field records why an unloaded package is withheld; empty means no reported refusal.
                 const withheld = String(root.requirementBlockReason(id)).replace(/[\t\n\r]/g, " ");
                 lines.push(`${id}\t${p.loaded ? "loaded" : "unloaded"}\t${p.type || "unknown"}\t${safeName}\t${withheld}`);
             }
@@ -2276,14 +2025,7 @@ Singleton {
             if (!plugin)
                 return `ERROR: unknown pluginId '${pluginId}'`;
             const errObj = root.pluginLoadErrors[pluginId];
-            // A recorded startup failure first, then a standing refusal.
-            //
-            // The recorded error is emitted WITH its details. Emitting only the
-            // title dropped the shell's own version — the requirement refusal
-            // records "It requires VGS x." as the title and "This shell is VGS
-            // y." as the details, and a reader given only the first cannot tell
-            // whether their shell is too old or the plugin is mislabelled,
-            // which is the whole point of reporting it.
+            // Include error details with the title so requirement failures report both required and current shell versions.
             let err = "";
             if (errObj)
                 err = errObj.details ? (errObj.title + " " + errObj.details) : (errObj.title || "");

@@ -1,19 +1,7 @@
-"""Self-test for `tracked_blobs`, run as `python3 scripts/lib/tracked_blobs_selftest.py`.
+"""Controls for indexed blob reads and git isolation.
 
-Beside the library, like `section_pointers_selftest.py` and
-`prose_blocks_selftest.py`. What it pins is the module's one promise — that
-"what git TRACKS" means this repository, at this index, with the bytes git
-actually sent — so every control here drives a failure the module must REFUSE
-rather than answer:
-
-  * git exiting non-zero must raise, not return an empty listing;
-  * an index mid-merge must raise, not answer from one side of the conflict;
-  * a `cat-file --batch` stream that desyncs, lies about a length, or runs long
-    must raise, not pair paths with another file's text.
-
-The stream cases drive a stubbed `git`, because a real one cannot be made to
-answer out of order. The mutation set they were run red against is recorded in
-`scripts/test-section-pointers.py`.
+Exercise git failures, unresolved merges and malformed batch streams. Stub
+git for stream errors that a real git process cannot emit on demand.
 """
 
 import os
@@ -29,20 +17,10 @@ import tracked_blobs  # noqa: E402
 REPO_ROOT = HERE.parents[1]
 
 def blob_controls() -> list[str]:
-    """The VCS-access arms: git failing, and a blob that cannot be produced.
-
-    These were the two rules the "every rule has a control" claim did not cover.
-    Both fail LOUDLY by design — a check that cannot read the tree has nothing to
-    report — so each is asserted to raise rather than to return something a
-    caller might treat as an empty, clean answer.
-    """
+    """Require git failure and missing-blob errors to raise."""
     failures: list[str] = []
-    # A THROWAWAY directory, like the rest of this file. A fixed name under the
-    # shared temp dir leaked on every run and, worse, made the fixture's validity
-    # depend on TMPDIR sitting outside any checkout — with it inside one, git
-    # walks UP and succeeds, and the arm accuses this module of the fixture's
-    # fault. `git_env` strips GIT_CEILING_DIRECTORIES, so that upward walk is not
-    # otherwise stopped: the fixture is asserted repo-less before it is trusted.
+    # Assert that this temporary directory is outside a repository. Git can walk
+    # to an ancestor when TMPDIR is inside a checkout.
     with tempfile.TemporaryDirectory() as absent:
         outside = subprocess.run(
             ["git", "-C", absent, "rev-parse", "--show-toplevel"],
@@ -86,10 +64,7 @@ def blob_controls() -> list[str]:
             "a sha with no object behind it was accepted, so cat-file's answer is "
             "parsed as content and every file after it shifts"
         )
-    # A MID-MERGE INDEX IS REFUSED, not answered from one side. `ls-files -s`
-    # emits stages 1/2/3 for a conflicted path and the last write won, so the
-    # caller judged "theirs" — bytes in no commit and not on disk. Built as a
-    # real conflict, because the stage field is what has to be read.
+    # Use a real merge conflict to test refusal of nonzero index stages.
     with tempfile.TemporaryDirectory() as workdir:
         root = Path(workdir)
         env = tracked_blobs.git_env(hermetic=True)
@@ -108,9 +83,7 @@ def blob_controls() -> list[str]:
         (root / "f.md").write_text("# ours\n", encoding="utf-8")
         run("add", "-A")
         run("-c", "user.email=a@b", "-c", "user.name=a", "commit", "-qm", "ours")
-        # The identity goes on the MERGE too: under the hermetic env there is no
-        # user config, and git refuses to begin a merge it cannot commit — the
-        # fixture then produced no conflict at all and the control failed clean.
+        # The isolated git config needs an identity to begin a merge.
         merge = subprocess.run(
             ["git", "-C", str(root), "-c", "user.email=a@b", "-c", "user.name=a",
              "merge", "other"],
@@ -129,13 +102,8 @@ def blob_controls() -> list[str]:
                 "side of an unfinished merge — bytes in no commit and not on disk"
             )
 
-    # EVERY BLOB ASKED FOR IS ACCOUNTED FOR. A chunk loop that slices one short
-    # per round is invisible to every per-chunk check — git is asked for N-1 and
-    # answers N-1 — so only the per-sweep total sees it. Driven by asking for two
-    # blobs through a stub that answers for one.
-    # The chunk reader is stubbed to drop its last entry, which is what a slice
-    # off by one does. Stubbing the STREAM instead would trip the per-chunk
-    # truncation check first and prove nothing about this arm.
+    # Drop an entry in the chunk reader, not the byte stream, to isolate sweep
+    # accounting from per-chunk truncation checks.
     real_chunk = tracked_blobs._read_chunk
     tracked_blobs._read_chunk = lambda root, wanted, files, undec: real_chunk(
         root, wanted[:-1], files, undec
@@ -160,11 +128,8 @@ def blob_controls() -> list[str]:
     finally:
         tracked_blobs._read_chunk = real_chunk
 
-    # THE LIBRARY'S OWN ENVIRONMENT HYGIENE, which is the production path: the
-    # guard inherits whatever CI or a shell hands it. Asserting the LISTING is
-    # what kills a missing `env=git_env()` — a redirected READ does not write, so
-    # an index-unchanged assertion alone passes. The config-injection channel is
-    # driven in the same block, since `-C` and GIT_CONFIG_GLOBAL do not cover it.
+    # Assert returned paths as well as unchanged indexes; a redirected read writes
+    # nothing. Config injection needs its own coverage.
     with tempfile.TemporaryDirectory() as workdir:
         victim, fixture = Path(workdir) / "victim", Path(workdir) / "fixture"
         env = tracked_blobs.git_env(hermetic=True)
@@ -198,9 +163,7 @@ def blob_controls() -> list[str]:
         if index.read_bytes() != before:
             failures.append("reading through the library rewrote another repo's index")
 
-    # THE CONFIG-INJECTION CHANNEL bites on a WRITE, so it needs its own fixture:
-    # `GIT_CONFIG_PARAMETERS` survives `-C` and GIT_CONFIG_GLOBAL alike, and an
-    # injected `core.excludesFile` makes `git add -A` stage nothing at all.
+    # An injected excludesFile affects git add despite isolated user config.
     with tempfile.TemporaryDirectory() as workdir:
         repo = Path(workdir) / "repo"
         repo.mkdir()
@@ -227,10 +190,7 @@ def blob_controls() -> list[str]:
                 f"— GIT_CONFIG_PARAMETERS is not covered by -C or GIT_CONFIG_GLOBAL"
             )
 
-    # THE MODE FILTER IS THE CALLER'S, and handing a non-regular entry here is
-    # refused rather than silently dropped — dropping it is what hid 8,509
-    # symlinks from the accounting, since this function can only count what it
-    # was asked to read. Paired with the regular entry, which must still read.
+    # Pair rejected non-regular modes with readable regular files.
     link = tracked_blobs.Entry("120000", "0" * 40, "link.md")
     try:
         tracked_blobs.blob_texts(REPO_ROOT, [link])

@@ -3,8 +3,7 @@ import qs.Common
 import qs.Services
 import qs.Widgets
 
-// Flat, always-visible navigation (Vercel/Linear style): quiet rows, an active
-// pill, no ripples. Matches the Settings sidebar language.
+
 Item {
     id: root
 
@@ -70,8 +69,7 @@ Item {
                     return CloudSyncService.formatSpeed(CloudSyncService.aggregateSpeed) || I18n.tr("Syncing…", "Cloud Sync sidebar status while syncing");
                 if (!CloudSyncService.hasAccounts)
                     return I18n.tr("Not set up yet", "Cloud Sync sidebar status before any account is connected");
-                // An unreachable account stops everything under it, so the
-                // header must not claim "Up to date" while one is broken.
+                // Account failures must override the up-to-date summary because their folders cannot sync.
                 if (CloudSyncService.unhealthyAccounts.length > 0)
                     return I18n.tr("Account needs attention", "Cloud Sync sidebar status when an account cannot be reached");
                 if (CloudSyncService.erroredStatuses.length > 0)
@@ -113,8 +111,7 @@ Item {
                 required property int index
 
                 readonly property bool isActive: root.currentIndex === index
-                // The conflicts row carries a count badge, because an unresolved
-                // conflict is the one thing in this app that needs a decision.
+
                 readonly property int badgeCount: modelData.id === "conflicts" ? CloudSyncService.conflictCount : 0
 
                 width: parent.width
@@ -175,8 +172,7 @@ Item {
         }
     }
 
-    // Engine state footer: version and a restart affordance, so a stuck rclone
-    // is diagnosable without leaving the app.
+
     Column {
         anchors.bottom: parent.bottom
         anchors.left: parent.left

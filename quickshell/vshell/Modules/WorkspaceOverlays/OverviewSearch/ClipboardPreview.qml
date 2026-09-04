@@ -14,8 +14,7 @@ Rectangle {
     property var _requestedEntryId: null
 
     readonly property bool canLoadImage: !!entry?.isImage && (entry?.mimeType ?? "").startsWith("image/")
-    // Image entries carry a file path; the base64 getEntry round-trip remains
-    // only as a fallback for pathless legacy entries.
+    // Use image paths when present; entries without a path need the base64 getEntry fallback.
     readonly property string entryPath: canLoadImage && entry?.path ? entry.path : ""
     readonly property string sourceUrl: entryPath ? "file://" + entryPath : resolvedSourceUrl(cachedImageData, cachedMimeType || (entry?.mimeType ?? ""))
 

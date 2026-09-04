@@ -22,7 +22,7 @@ Singleton {
     readonly property bool enabled: available && (SettingsData.blurEnabled ?? false)
     readonly property bool backgroundEffectEnabled: enabled && backgroundEffectSupported && !hyprlandLayerBlurSupported
 
-    // These settings predate non-blurred surface borders, so keep their keys for compatibility.
+    // Keep the blur* setting keys; they also control non-blurred surface borders.
     readonly property color borderColor: {
         const opacity = SettingsData.blurBorderOpacity ?? 0.35;
         switch (SettingsData.blurBorderColor ?? "outline") {

@@ -16,18 +16,9 @@ except Exception:  # pragma: no cover - handled at runtime
     ImageOps = None  # type: ignore
 
 
-# Sliver thumbnails for the wallpaper switcher's rail.
-#
-# The switcher's modal content is torn down on close and Qt retains only ~2 MB
-# of UNreferenced pixmaps, while one sliver frame is 5.3 MB, so every open
-# re-decoded every source. Shipped wallpapers run past 20 MP; thirteen of them
-# cost ~596 ms of decode, which is the spinner the user sees.
-#
-# The geometry is the budget the rail ALREADY decodes to
-# (SwitcherCarousel.sliceDecodeWidth/Height), so the rail's quality is
-# unchanged. The SELECTED slot still reads the original at display size and is
-# deliberately untouched — routing it through here would cap the one image
-# actually shown at full size.
+# Cache narrow wallpaper thumbnails for the switcher rail. Closing the modal
+# can evict decoded originals from Qt's cache, making each reopen decode them.
+# Use the rail's decode geometry; the selected full-size slot reads the original.
 WIDTH = 1536
 HEIGHT = 864
 QUALITY = 82
@@ -58,10 +49,9 @@ def thumb_dir() -> Path:
 
 
 def thumb_name(src: Path) -> str:
-    """Cache key: the resolved source plus its size, mtime and the thumb
-    geometry. An edited or replaced wallpaper therefore lands on a NEW name
-    rather than serving a stale thumbnail, and a geometry change invalidates
-    every entry at once. Orphans are swept by `theme wallpaper-thumbs --all`."""
+    """Derive a cache key from resolved path, size, mtime and thumbnail geometry.
+    Changes to these values select a different cache entry. The all-theme
+    thumbnail command removes unused entries."""
     st = src.stat()
     key = "\0".join([
         str(src.resolve()), str(st.st_size), str(st.st_mtime_ns),
@@ -71,11 +61,9 @@ def thumb_name(src: Path) -> str:
 
 
 def thumb_key(src: Path) -> str:
-    """The cache IDENTITY — the name the thumbnail is stored under, which folds
-    in the source's size and mtime. Callers outside this module use it to tell
-    "the same file" from "something else written to the same path", which a path
-    alone cannot: overwrite a wallpaper in place and the key moves while the path
-    does not. Empty when the source cannot be stat'd."""
+    """Return the thumbnail key for the source, or an empty string if stat fails.
+    The key detects path, size and mtime changes, not content changes that
+    preserve this metadata."""
     with contextlib.suppress(OSError):
         return thumb_name(src)
     return ""
@@ -92,12 +80,9 @@ def thumb_for(src: Path) -> Optional[Path]:
 
 
 def temp_path(out: Path) -> Path:
-    """The in-progress name for `out`. The `.jpg` MUST stay last: the magick and
-    ffmpeg rungs pick their output FORMAT from the final extension, and ffmpeg
-    refuses outright ("Unable to choose an output format") when the name ends in
-    a timestamp — so every build failed on exactly the installs with no Pillow.
-    Named rather than inlined so scripts/test-wallpaper-thumbs.py can plant the
-    old shape and prove the rung breaks without it."""
+    """Return a temporary filename ending in .jpg.
+    ImageMagick and ffmpeg select output format from the final extension.
+    scripts/test-wallpaper-thumbs.py checks the extension placement."""
     return out.with_name(f".{out.stem}.{os.getpid()}.{time.time_ns()}.jpg")
 
 
@@ -112,10 +97,7 @@ def build_one(src: Path) -> Optional[Path]:
     if out.is_file() and out.stat().st_size > 0:
         return out
     try:
-        # Inside the guard: an unwritable cache — a read-only path, or a parent
-        # that is a file — must answer like any other miss, so the caller falls
-        # back to the original. Raising here ended `wallpaper-thumbs` with a
-        # traceback instead of a count.
+        # An unwritable cache must return a miss so callers can use the original.
         out.parent.mkdir(parents=True, exist_ok=True)
     except OSError:
         return None
@@ -150,10 +132,8 @@ def build_one(src: Path) -> Optional[Path]:
         if proc.returncode != 0:
             raise RuntimeError(proc.stderr.strip() or "ffmpeg failed")
 
-    # Each rung is tried in turn and its failure is caught SEPARATELY. Pillow's
-    # codec set depends on how it was built, so a valid wallpaper in a format it
-    # cannot open — JXL, AVIF and HEIF are all accepted by the picker — used to
-    # abort the whole build and never reach ImageMagick, which usually can.
+    # Catch failures for each decoder separately. Pillow builds can lack codecs
+    # for accepted formats, so a failed decode must still try external decoders.
     rungs = []
     if Image is not None:
         rungs.append(("pillow", with_pillow))

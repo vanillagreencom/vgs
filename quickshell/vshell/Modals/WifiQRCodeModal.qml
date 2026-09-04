@@ -46,7 +46,7 @@ VgsModal {
     }
 
     function fetchNetworkQRCode(ssid) {
-        // TODO: Add loading UI?
+
 
         VGSBackendService.sendRequest("network.qrcode", {
             ssid: ssid

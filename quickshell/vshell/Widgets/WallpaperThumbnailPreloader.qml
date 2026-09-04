@@ -3,11 +3,7 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import qs.Common
 
-// Preload the CachingImage disk cache for a list of wallpapers via ffmpegthumbnailer
-// so thumbnail grids render instantly. One batched sh process covers the whole list;
-// `test thumb -nt source` keeps thumbs fresh when a source image is edited/replaced.
-// No-op (graceful fallback) if the tool is absent — CachingImage's grabToImage path
-// still fills the cache lazily.
+// Preload wallpaper thumbnails in a batch. Missing ffmpegthumbnailer leaves CachingImage to fill its cache lazily.
 Item {
     id: root
 
@@ -17,8 +13,7 @@ Item {
     property int cacheSize: 256
     property bool autoStart: true
     property bool generating: false
-    // True once a batch completed with the tool available; grids can then set
-    // CachingImage.assumeCached and skip per-tile probes.
+    // A tool-available batch has returned. Individual thumbnails can still be missing; CachingImage handles those misses.
     property bool cacheReady: false
 
     signal finished(bool toolAvailable)
@@ -90,7 +85,7 @@ Item {
         }
         generating = true;
         const generation = ++_generation;
-        // One process for the whole batch; regenerate only missing/stale thumbs.
+
         const script = 'size="$1"; shift; while [ "$#" -ge 2 ]; do t="$1"; s="$2"; shift 2; [ "$t" -nt "$s" ] || ffmpegthumbnailer -i "$s" -o "$t" -s "$size"; done';
         Proc.runCommand(null, ["sh", "-c", script, "thumbs", String(cacheSize)].concat(args), function (out, code) {
             if (generation !== root._generation)

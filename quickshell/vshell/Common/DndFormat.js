@@ -1,9 +1,4 @@
-// Shared Do Not Disturb time formatting.
-//
-// The clock/remaining math was previously duplicated in DndDurationMenu,
-// DndPill and the notification header. Formatting stays here; the surrounding
-// translated wording stays in QML, since I18n is not reachable from a plain JS
-// helper.
+// Translated wording stays in QML because this JavaScript helper has no I18n singleton.
 
 function pad2(n) {
     return n < 10 ? "0" + n : "" + n;

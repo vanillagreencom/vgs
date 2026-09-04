@@ -2,19 +2,7 @@ import QtQuick
 import qs.Common
 import qs.Widgets
 
-// One usage meter in full-card form: label, percentage, bar, detail line.
-//
-// The single-account view and the expanded per-account card rendered identical
-// markup from two separate copies, so every per-meter field had to be written
-// twice here and a third time in MeterRow. Now it is written once. (VGS-72)
-//
-// `host` is the widget root rather than one function property per helper. This
-// card reads percentageColor from it; its sibling MeterRow also reads
-// formatSpend and formatResetAt, and the call sites compose detailText from
-// resetLabel/formatSpendExact. Threading those callables through every call site
-// is the duplication this is meant to remove. They are the widget's own surface;
-// the arithmetic behind them lives in AiUsageFormat.qml. A sibling type resolves from the plugin's own directory with
-// no import — verified in the running shell, see the commit message.
+// Expanded usage meter. The widget host supplies formatting helpers.
 Column {
     id: card
 
@@ -23,14 +11,9 @@ Column {
     // One entry from host.primaryMeters, or from AiUsageFormat.metersFor() for
     // a per-account card.
     property var meter: null
-    // False when the account this meter belongs to failed to report: the
-    // numbers are stale, so they read as error rather than as a healthy
-    // percentage. The single-account view only renders when the fetch
-    // succeeded, so it leaves this at true.
+    // False marks stale numbers from an account that failed to report.
     property bool ok: true
-    // The two call sites word this line differently — the single-account card
-    // spells out the exact spend, the expanded card prefers the engine's own
-    // detail string. Everything above it is identical, which is the point.
+    // Caller-supplied detail supports exact spending or helper-provided text.
     property string detailText: ""
     property int labelWeight: Font.Normal
 

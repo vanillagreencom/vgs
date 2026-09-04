@@ -163,7 +163,7 @@ VgsModal {
         target: "mux"
     }
 
-    // Backwards compatibility
+    // Keep the tmux IPC target as an alias for callers that use it.
     IpcHandler {
         function open(): string {
             muxModal.show();
@@ -274,7 +274,7 @@ VgsModal {
             y: Theme.spacingM
             spacing: Theme.spacingS
 
-            // Header
+
             Item {
                 width: parent.width
                 height: 40
@@ -305,7 +305,7 @@ VgsModal {
                 }
             }
 
-            // Search field
+
             VgsTextField {
                 id: searchField
 
@@ -330,7 +330,7 @@ VgsModal {
                 }
             }
 
-            // New Session Button
+
             Rectangle {
                 width: parent.width
                 height: 56
@@ -385,7 +385,7 @@ VgsModal {
                 }
             }
 
-            // Sessions List
+
             Rectangle {
                 width: parent.width
                 height: parent.height - 88 - 48 - shortcutsBar.height - Theme.spacingS * 3
@@ -428,7 +428,7 @@ VgsModal {
                                     anchors.rightMargin: Theme.spacingM
                                     spacing: Theme.spacingM
 
-                                    // Avatar
+
                                     Rectangle {
                                         Layout.preferredWidth: 40
                                         Layout.preferredHeight: 40
@@ -444,7 +444,7 @@ VgsModal {
                                         }
                                     }
 
-                                    // Info
+
                                     Column {
                                         Layout.fillWidth: true
                                         spacing: Theme.spacingXXS
@@ -470,7 +470,7 @@ VgsModal {
                                         }
                                     }
 
-                                    // Rename button (tmux only)
+
                                     Rectangle {
                                         Layout.preferredWidth: 36
                                         Layout.preferredHeight: 36
@@ -494,7 +494,7 @@ VgsModal {
                                         }
                                     }
 
-                                    // Delete button
+
                                     Rectangle {
                                         Layout.preferredWidth: 36
                                         Layout.preferredHeight: 36
@@ -522,7 +522,7 @@ VgsModal {
                             }
                         }
 
-                        // Empty state
+
                         Item {
                             width: parent.width
                             height: muxModal.filteredSessions.length === 0 ? 200 : 0
@@ -558,7 +558,7 @@ VgsModal {
                 }
             }
 
-            // Shortcuts bar
+
             Row {
                 id: shortcutsBar
                 width: parent.width

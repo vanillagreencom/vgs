@@ -2,32 +2,23 @@ import QtQuick
 import qs.Common
 import qs.Widgets
 
-// Shared page scaffold. Geometry matches a Settings tab exactly — centered
-// column capped at 550, spacingXL card rhythm, VgsFlickable scrolling — with a
-// page header added, since Cloud Sync is a standalone window and its sections
-// are not named anywhere else on screen.
+// Shared scrolling Cloud Sync page with a capped reading column and page header.
 Item {
     id: root
 
     property var parentModal: null
     property string title: ""
     property string subtitle: ""
-    // A children alias, not a Loader: sizing a Loader from its own item is
-    // circular, and VgsButton sets width rather than implicitWidth so an
-    // unsized Loader collapses to zero and the button drifts out of column.
+    // Use a children alias: a Loader sized from its own item is circular, and controls without implicitWidth can collapse it.
     property alias headerAction: headerActionRow.children
-    // Clamped at zero: a narrow (or momentarily zero-width) pane would
-    // otherwise produce a negative column and the page would render blank.
+    // Clamp to zero so a narrow or temporarily unsized pane cannot create a negative column width.
     readonly property real columnWidth: Math.max(0, Math.min(550, width - Theme.spacingL * 2))
-    // Below this the header action drops onto its own line rather than
-    // squeezing the title into nothing.
+
     readonly property bool narrow: columnWidth < 420
 
     default property alias pageContent: mainColumn.data
 
-    // Brings one card into view. A cross-page jump that only highlights its
-    // target leaves it below the fold on any list longer than a screen, so the
-    // navigation reads as having done nothing at all.
+    // Scroll a cross-page navigation target into view before highlighting it.
     function scrollToItem(item) {
         if (!item || !item.parent)
             return;
@@ -45,9 +36,7 @@ Item {
         width: root.columnWidth
         height: root.narrow ? headerText.height + (headerActionRow.height > 0 ? headerActionRow.height + Theme.spacingM : 0) : Math.max(headerText.height, headerActionRow.height)
 
-        // Positioned rather than anchored: switching anchors on and off between
-        // the wide and narrow arrangements leaves them half-applied, which put
-        // the action button outside the column.
+        // Set positions instead of toggling anchors between wide and narrow layouts; partially retained anchors can move controls outside the column.
         Column {
             id: headerText
 

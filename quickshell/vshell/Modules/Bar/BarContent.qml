@@ -9,7 +9,7 @@ import qs.Services
 Item {
     id: topBarContent
 
-    // Keep old Sway/I3 branches inert without loading Quickshell.I3.
+    // Keep unsupported Sway/I3 branches inert without loading Quickshell.I3.
     QtObject {
         id: i3Shim
         readonly property var workspaces: ({ values: [] })
@@ -33,8 +33,7 @@ Item {
     readonly property bool _barIsVertical: _hasBarWindow ? barWindow.isVertical : false
     readonly property string _barScreenName: _hasBarWindow ? (barWindow.screenName || "") : ""
 
-    // Standalone/separate Bar Inset Padding (per-bar, optionally synced): absolute gap at BOTH ends.
-    // Stored value < 0 (default -1) means "auto" — fall back to the natural edge margin so the look is unchanged.
+    // Negative inset padding means auto: use the natural edge margin.
     readonly property real _barInsetPaddingRaw: SettingsData.barInsetPaddingSyncAll ? SettingsData.barInsetPaddingShared : (barConfig?.barInsetPadding ?? -1)
     readonly property real _barInsetPaddingAuto: _barIsVertical ? Theme.spacingXS : _edgeBaseMargin
     readonly property real _barInsetPadding: _barInsetPaddingRaw < 0 ? _barInsetPaddingAuto : _barInsetPaddingRaw
@@ -892,8 +891,7 @@ Item {
             parentScreen: barWindow.screen
             hyprlandOverviewLoader: barWindow ? barWindow.hyprlandOverviewLoader : null
 
-            // The bar launcher button and the dock launcher button share one
-            // target: the vgsMenu plugin, the shell's only app launcher.
+
             onClicked: PluginService.toggleAppLauncher()
         }
     }

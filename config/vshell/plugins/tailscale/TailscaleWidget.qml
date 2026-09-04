@@ -35,17 +35,12 @@ PluginComponent {
         service: TailscaleService
     }
 
-    // ---- Derived pill presentation ----
-    // tailscaled is still coming up. Reported honestly rather than as "Off":
-    // the two look identical to the daemon-is-disabled case but mean opposite
-    // things, and on a cold boot this is the state the shell sees first.
+    // A starting daemon is not an off daemon.
     readonly property bool starting: TailscaleService.starting
     // No answer from the backend yet. Also not "Off".
     readonly property bool awaiting: TailscaleService.awaitingFirstState
-    // Had an answer, but it belongs to a connection that has since dropped, so
-    // it says nothing about the backend we have now. Also not "Off".
+    // The cached answer belongs to a disconnected backend and cannot establish off.
     readonly property bool reacquiring: TailscaleService.reacquiring
-    // Neither the daemon's state nor the connection is currently known.
     readonly property bool unknown: root.awaiting || root.reacquiring
 
     function stateShort() {
@@ -109,7 +104,6 @@ PluginComponent {
         }
     }
 
-    // ---- Helpers ----
     function selfIps() {
         if (!root.selfNode)
             return [];
@@ -137,7 +131,6 @@ PluginComponent {
         TailscaleService.refresh(null);
     }
 
-    // ---- Actions ----
     function connectTailscale() {
         root.connecting = true;
         root.authUrl = "";
@@ -179,7 +172,6 @@ PluginComponent {
             Quickshell.execDetached([Paths.vshellCli, "cl", "copy", t]);
     }
 
-    // ============================ PILL ============================
     horizontalBarPill: Component {
         Row {
             spacing: Theme.spacingXS
@@ -223,7 +215,6 @@ PluginComponent {
         }
     }
 
-    // ============================ POPOUT ============================
     popoutWidth: 380
     popoutContent: Component {
         PopoutComponent {
@@ -236,10 +227,7 @@ PluginComponent {
             // PluginPopout assigns itself here when it loads this content.
             property var parentPopout: null
 
-            // Opening the popout is the moment the user is looking, so re-read
-            // rather than showing whatever the last push left behind. Both
-            // hooks are needed: onCompleted covers the first open, the
-            // Connections cover every later one if the loader is kept alive.
+            // Refresh on first creation and on later opens when the loader stays alive.
             Component.onCompleted: TailscaleService.refreshStatus()
 
             Connections {
@@ -255,7 +243,6 @@ PluginComponent {
                 width: parent.width
                 spacing: Theme.spacingS
 
-                // ---- Connection card + master switch ----
                 StyledRect {
                     width: parent.width
                     height: connRow.implicitHeight + Theme.spacingM * 2
@@ -313,7 +300,6 @@ PluginComponent {
                     }
                 }
 
-                // ---- Needs-login hint + explicit sign-in button ----
                 Column {
                     width: parent.width
                     spacing: Theme.spacingS
@@ -340,7 +326,6 @@ PluginComponent {
                     }
                 }
 
-                // ---- This device card ----
                 StyledRect {
                     width: parent.width
                     visible: root.connected && root.selfNode !== null
@@ -382,7 +367,6 @@ PluginComponent {
                             }
                         }
 
-                        // Tailscale IPs (copyable)
                         Repeater {
                             model: root.selfIps()
 
@@ -455,7 +439,6 @@ PluginComponent {
                     }
                 }
 
-                // ---- Exit node selector ----
                 Column {
                     width: parent.width
                     spacing: Theme.spacingXS
@@ -468,7 +451,6 @@ PluginComponent {
                         color: Theme.surfaceVariantText
                     }
 
-                    // "None" option
                     StyledRect {
                         id: noneRow
                         property bool active: root.currentExitNode === null
@@ -580,7 +562,6 @@ PluginComponent {
                     }
                 }
 
-                // ---- Accept routes toggle ----
                 StyledRect {
                     width: parent.width
                     visible: root.connected
@@ -599,7 +580,6 @@ PluginComponent {
                     }
                 }
 
-                // ---- Health warnings ----
                 StyledRect {
                     width: parent.width
                     visible: root.hasHealthIssue
@@ -649,14 +629,11 @@ PluginComponent {
                     }
                 }
 
-                // ---- Devices list ----
                 Column {
                     width: parent.width
                     spacing: Theme.spacingXS
                     visible: root.connected
 
-                    // Extra separation so the Devices section breathes below the
-                    // connection controls above it.
                     Item {
                         width: parent.width
                         height: Theme.spacingS

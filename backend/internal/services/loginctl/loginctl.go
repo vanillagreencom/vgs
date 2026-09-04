@@ -456,8 +456,8 @@ func (m *Manager) handleSignal(sig *dbus.Signal) {
 		if len(sig.Body) == 3 {
 			name, _ := sig.Body[0].(string)
 			newOwner, _ := sig.Body[2].(string)
-			// A logind restart emits (old, "") then ("", new) — never both
-			// owners non-empty — so trigger on the name being (re)acquired.
+			// A logind restart releases and then reacquires the bus name. Reinitialize on
+			// acquisition rather than requiring both owners in the same signal.
 			if name == dbusDest && newOwner != "" {
 				if err := m.updateState(); err != nil {
 					m.log.Warn("loginctl state refresh failed", "err", err)

@@ -8,7 +8,7 @@ Item {
     LayoutMirroring.enabled: I18n.isRtl
     LayoutMirroring.childrenInherit: true
 
-    // API
+
     property bool checked: false
     property bool toggling: false
     property string text: ""
@@ -30,14 +30,12 @@ Item {
 
     readonly property bool showText: text && !hideText
 
-    // Flatline (shadcn) switch geometry: slimmer track, constant thumb, no check
-    // glyph. See docs/architecture/design-language.md.
+
     readonly property int trackWidth: 44
     readonly property int trackHeight: 24
     readonly property int insetCircle: 18
 
-    // Compact width measures the text items directly — textColumn's implicit
-    // width is circular here (children bind width to the column).
+    // Measure text directly: child widths bind to textColumn, making its implicit width circular.
     readonly property real _compactTextWidth: Math.max(labelText.implicitWidth, descriptionText.visible ? descriptionText.implicitWidth : 0)
     width: showText ? (compact ? _compactTextWidth + Theme.spacingM + trackWidth + horizontalPadding * 2 : parent.width) : trackWidth
     height: showText ? Math.max(trackHeight, textColumn.implicitHeight + Theme.spacingM * 2) : trackHeight
@@ -118,7 +116,7 @@ Item {
         color: !toggle.enabled ? (toggle.checked ? Qt.alpha(Theme.surfaceText, 0.12) : Theme.withAlpha(Qt.alpha(Theme.surfaceText, 0.12), 0)) : (toggle.checked ? Theme.primary : Theme.surfaceVariantAlpha)
         opacity: toggle.toggling ? 0.6 : 1
 
-        // M3 disabled unchecked border: on surface 12% opacity
+
         border.color: toggle.checked ? Theme.withAlpha(Theme.outline, 0) : (!toggle.enabled ? Qt.alpha(Theme.surfaceText, 0.12) : Theme.outline)
 
         readonly property int pad: Math.round((height - thumb.width) / 2)
@@ -128,17 +126,13 @@ Item {
         StyledRect {
             id: thumb
 
-            // Flatline: constant-size solid thumb (no grow-on-check, no border
-            // ring). The track carries the on/off color; the thumb is a clean disc.
+
             width: insetCircle
             height: insetCircle
             radius: width / 2
             anchors.verticalCenter: parent.verticalCenter
 
-            // Off (enabled) thumb uses a legible neutral (outline) instead of the
-            // surface/background colour, which vanished on dark themes whose bg is
-            // near-black — the toggle read as an empty pill. outline keeps >=4.5
-            // contrast against the background on every theme.
+            // Use outline for the off thumb so it stays distinct from a dark surface.
             color: !toggle.enabled ? (toggle.checked ? Theme.surface : Qt.alpha(Theme.surfaceText, 0.28)) : (toggle.checked ? Theme.primaryText : Theme.outline)
             border.width: 0
 
@@ -167,8 +161,7 @@ Item {
                 }
             }
 
-            // Flatline: no check glyph inside the thumb (a Material-ism). The
-            // filled track already communicates the on state.
+
         }
 
         StateLayer {

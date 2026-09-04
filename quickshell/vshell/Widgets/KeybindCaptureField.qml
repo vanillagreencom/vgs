@@ -7,16 +7,7 @@ import qs.Services
 import qs.Widgets
 import "../Common/KeyUtils.js" as KeyUtils
 
-// A field that records ONE key combination and hands it back as an xkb token.
-//
-// Lifted out of KeybindItem.qml so the settings pages that offer a single
-// shortcut (the wallpaper and theme switchers) capture keys the same way the
-// keybinds editor does, rather than carrying a second copy of the modifier
-// decoding, the Alt+Shift ghost-event workaround and the scroll-wheel binds.
-//
-// While recording, `ShortcutInhibitor` stops the compositor consuming the very
-// chord being recorded, so Super+Shift+W can be bound from inside a session
-// where Super+Shift+W already does something.
+// Capture a key combination as an xkb token. ShortcutInhibitor prevents the compositor consuming it while recording.
 FocusScope {
     id: capture
 
@@ -164,11 +155,7 @@ FocusScope {
         cursorShape: capture.recording ? Qt.CrossCursor : Qt.PointingHandCursor
         acceptedButtons: Qt.LeftButton
 
-        // This area covers the WHOLE field, the close button included, and sits
-        // above it — so the button's own click never arrives and a recording
-        // could not be cancelled with the control that advertises it. Escape is
-        // no escape either: it is a capturable key and would be taken as the
-        // new bind. So the field itself toggles, exactly as the button does.
+        // This MouseArea covers the close button. Toggle recording here so the pointer can cancel; Escape is a capturable key.
         onClicked: {
             if (capture.recording)
                 capture.stopRecording();

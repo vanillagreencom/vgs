@@ -17,14 +17,11 @@ Singleton {
 
     // Consumers call addRef()/removeRef(); capture runs only while refCount > 0.
     property int refCount: 0
-    // bandwhich binary is on PATH.
     property bool available: false
     // Present but cannot capture (missing capabilities) — the flyout shows setup help.
     property bool needsSetup: false
-    // Actively receiving capture data.
     property bool active: false
-    // Capture just started and no output has arrived yet — the flyout shows a
-    // spinner instead of an empty state during the ~1-2s bandwhich warm-up.
+    // Show warm-up state until capture output arrives or the grace period ends.
     property bool warmingUp: false
 
     // Aggregated per app: [{ name, up, down, connections }] (bytes/sec, up=tx, down=rx).
@@ -32,7 +29,6 @@ Singleton {
     property real totalUp: 0
     property real totalDown: 0
 
-    // Sort state for the list view (same shape as DgopService's process sort).
     property string sortBy: "down" // "down" | "up" | "name" | "connections"
     property bool sortAscending: false
 
@@ -77,7 +73,6 @@ Singleton {
             return;
         }
 
-        // Reaching a parseable data line means capture is working.
         if (needsSetup) {
             needsSetup = false;
         }
@@ -142,9 +137,7 @@ Singleton {
         totalUp = tu;
         totalDown = td;
 
-        // Keep the spinner up until real results land (the first non-empty
-        // snapshot), rather than dropping it the instant bandwhich prints its
-        // first "<NO TRAFFIC>" line — that early gap is what read as "broken".
+        // Keep warm-up state until a non-empty snapshot arrives; an initial NO TRAFFIC line does not complete warm-up.
         if (list.length > 0 && warmingUp) {
             warmingUp = false;
             warmupTimer.stop();
@@ -209,8 +202,7 @@ Singleton {
         }
 
         onExited: (exitCode, exitStatus) => {
-            // A non-zero exit while we still want data almost always means the
-            // capability grant is missing; surface the setup path.
+            // Offer setup help when capture exits unsuccessfully while a consumer still needs data.
             if (root.refCount > 0 && exitCode !== 0 && !root.active) {
                 root.needsSetup = true;
             }

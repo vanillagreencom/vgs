@@ -1,10 +1,7 @@
 import QtQuick
 
-// Presentation helpers for the aiUsage widget: meters, status class and the
-// date/money formatting. Split out of AiUsageLogic.qml, which holds only the
-// provider-identity and fetch decisions its regression test extracts and runs —
-// nothing here is part of that contract, and these reach for Qt.locale(), which
-// the extracted block may not.
+// Usage-meter presentation helpers. Qt.locale() is available here; the
+// extractable provider-decision functions must remain independent of Qt.
 QtObject {
     // Meters for one account entry, in the same order the single-account view
     // uses: session, weekly, then every per-model lane the provider reported.
@@ -28,8 +25,8 @@ QtObject {
         return out;
     }
 
-    // The lanes a payload describes directly, for the older single-account shape
-    // that carries session/weekly/third instead of an accounts list.
+    // The lanes a payload carries at top level when it reports no accounts
+    // (session/weekly/third instead of an accounts list).
     function flatMeters(data) {
         if (!data)
             return [];
@@ -43,9 +40,7 @@ QtObject {
         return out;
     }
 
-    // One percentage has one status colour everywhere it appears. Provider and
-    // account classes describe their worst lane, so using them for every meter
-    // made a healthy 0% lane red whenever a different lane was exhausted.
+    // Classify each meter by its own percentage, independent of other account lanes.
     function percentageClass(pct) {
         const value = Math.max(0, Math.min(Number(pct) || 0, 100));
         if (value >= 90)
@@ -57,12 +52,7 @@ QtObject {
         return "low";
     }
 
-    // Absolute reset instant as wall-clock text. A countdown alone ("4d 17h")
-    // makes you do the arithmetic; the clock time is what you actually plan
-    // around. Same day -> just the time, otherwise the weekday, and the date
-    // once it is far enough out that the weekday is ambiguous. Kept short and
-    // lowercase ("tom 02:59", "thu 04:00") — these sit in a narrow column
-    // beside the bar, so every character costs bar width.
+    // Format reset times for a narrow column: time today, then weekday or date.
     function formatResetAt(epoch) {
         if (!epoch || epoch <= 0)
             return "";
@@ -70,12 +60,10 @@ QtObject {
         if (isNaN(when.getTime()))
             return "";
         const now = new Date();
-        // Past instants are stale data (a window that already rolled over);
-        // showing them would be worse than showing nothing.
+        // A past reset instant describes an expired window.
         if (when.getTime() <= now.getTime())
             return "";
-        // 24h, explicitly — the locale short format drags in AM/PM, which is
-        // three more characters in a column that is already fighting the bar.
+        // Use a 24-hour clock to keep the reset column narrow.
         const time = when.toLocaleTimeString(Qt.locale(), "HH:mm");
         const startOfDay = d => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
         const days = Math.round((startOfDay(when) - startOfDay(now)) / 86400000);
@@ -88,9 +76,7 @@ QtObject {
         return when.toLocaleDateString(Qt.locale(), "d MMM").toLowerCase() + " " + time;
     }
 
-    // Money for the compact row: no cents, thousands separated. At credit-pool
-    // scale the cents are noise, and this column is only as wide as the bar can
-    // spare. The expanded card keeps the engine's exact string.
+    // Round compact-row spending to whole currency units. Expanded cards retain cents.
     function formatSpend(meter) {
         if (!meter || meter.used === undefined || meter.limit === undefined)
             return "";
@@ -99,8 +85,7 @@ QtObject {
         return sym + round(meter.used) + " / " + sym + round(meter.limit);
     }
 
-    // The card has room for the cents. Falls back to the engine's own string
-    // if an older helper sent only that.
+    // Format exact spending, with the helper detail string as a fallback.
     function formatSpendExact(meter) {
         if (!meter)
             return "";

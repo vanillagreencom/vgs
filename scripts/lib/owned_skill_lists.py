@@ -1,13 +1,7 @@
-"""THE HAND-KEPT LISTS: which surfaces carry one, how each is read, and the
-sentence a drift from the register gets.
+"""Read hand-maintained skill lists and compare them with the register.
 
-`scripts/check-owned-skills.py` owns the other half — the register, what is on
-disk, the controls and the verdict. `PROSE_SURFACES` and `CODERABBIT_LISTS` are
-the membership decision and live here beside the patterns that read them.
-
-Every function here is driven by must-fail controls in that guard's
-`self_test()` and in `scripts/test-owned-skills-e2e.py`, which also pins
-`PROSE_SURFACES` to the surfaces it covers.
+PROSE_SURFACES and CODERABBIT_LISTS define the lists checked by
+check-owned-skills.py.
 """
 
 from __future__ import annotations
@@ -22,46 +16,24 @@ CODERABBIT = ".coderabbit.yaml"
 
 
 class DuplicateList(Exception):
-    """A surface carries the same register-held list more than once.
+    """A surface carries a register-held list more than once.
 
-    MERGING TWO SPANS IS THE DRIFT THIS MODULE EXISTS TO CATCH. A rename that
-    updates one entry and leaves a stale one beside it unions to a set that
-    still equals the register, so every list reports agreement while the live
-    entry scopes a bot to the wrong trees. Only the SUBSET direction hides that
-    way — a stale entry naming a retired skill still fires `disagreement`'s
-    other arm — so the refusal is on the count, not on the names.
+    Merging repeated lists could conceal an incomplete entry beside a complete one.
     """
 
-# A skill directory name. `/` is IN IT because kendex matches a declared name as
-# a path prefix — `[skills."plugin/item"]` carves `.agents/skills/plugin/item/`,
-# and a pattern that stops at the first segment cannot spell what these lists
-# have to name for such a skill, so every one of them would read as drifted.
-# Deliberately excludes `<`, so the `.agents/skills/<name>` placeholders these
-# documents write in prose are not read as a further skill.
+# Skill names can include subdirectories. Exclude placeholder names with <.
 NAME = r"[a-z0-9][a-z0-9._/-]*"
 
-# `.coderabbit.yaml`'s two register-held lists, which point in OPPOSITE
-# directions and so cannot share one pattern: `path_filters` names every skill
-# that IS render output, to exclude it from review; `path_instructions` names
-# every skill that is NOT, to tell the reviewer those are project files.
+# path_filters lists rendered skills; path_instructions lists in-place skills.
 FILTER_LINE = re.compile(rf'^\s*-\s*"!{re.escape(SKILLS_DIR)}/({NAME})/\*\*"\s*$', re.M)
 INSTRUCTION_PATH = re.compile(
     rf'^\s*-\s*path:\s*"{re.escape(SKILLS_DIR)}/\{{([^}}]*)\}}/\*\*"\s*$', re.M
 )
 
-# Any OTHER quoted skill-tree path in that file. `knowledge_base.code_guidelines`
-# names one in-place tree today and nothing held it to anything: retire or rename
-# that skill and CodeRabbit stops loading the repo's guidelines from it, silently,
-# with every list above green. A curated selection cannot be compared against the
-# register, so the arm on this asks only that each path names a REGISTERED skill.
+# Curated skill selections need registered names, but need not list every skill.
 OTHER_SKILL_PATH = re.compile(rf'"!?{re.escape(SKILLS_DIR)}/({NAME})/\*\*"')
 
-# The prose surfaces name their skills inside a MACHINE-READ MARKER PAIR, the
-# same idiom AGENTS.md uses for the validate areas. Reading every
-# `.agents/skills/<name>/**` in the file instead was tried and is wrong in both
-# directions: review-bots.md names the review-gate render tree one section down
-# to say it is OUT of scope, which read as a fourth owned skill, and a name
-# added anywhere else in either document would have counted as coverage.
+# Read only marker-delimited lists; prose elsewhere can name excluded skills.
 MARKED = re.compile(
     r"<!--\s*in-place-skills\s*-->(.*?)<!--\s*/in-place-skills\s*-->", re.S
 )
@@ -69,12 +41,9 @@ PROSE_GLOB = re.compile(rf"`{re.escape(SKILLS_DIR)}/({NAME})/\*\*`")
 
 
 def named_in_prose(text: str) -> set[str]:
-    """Skill names inside a prose surface's in-place marker pair.
+    """Return skill names from a prose marker pair.
 
-    An absent or unclosed pair yields the empty set, which every caller reports
-    as "does not name <every skill>" — the marker moving is the same failure as
-    the list emptying, and both mean a bot is no longer told these trees are
-    project files. A SECOND PAIR IS REFUSED rather than merged.
+    Missing or unclosed markers yield an empty set. Repeated pairs raise.
     """
     spans = MARKED.findall(text)
     if len(spans) > 1:
@@ -93,9 +62,9 @@ def filtered_skills(text: str) -> set[str]:
 
 
 def instructed_skills(text: str) -> set[str]:
-    """Skills `.coderabbit.yaml`'s project-files path_instructions entry names.
+    """Return skills in the project-files path_instructions entry.
 
-    ONE ENTRY, refused rather than merged for the same reason the marker pair is.
+    Repeated entries raise rather than merge.
     """
     groups = INSTRUCTION_PATH.findall(text)
     if len(groups) > 1:
@@ -123,13 +92,7 @@ def other_named_skills(text: str) -> set[str]:
 
 
 def read_surface(root: Path, rel: str, what: str) -> tuple[str, str | None]:
-    """A surface's text, or the sentence saying what went unchecked instead.
-
-    Absent and undecodable are separate sentences because they are separate
-    repairs, and neither may reach the operator as a traceback: this guard's
-    whole subject is surfaces going unread, so its own unread surface has to be
-    a finding in the same shape as the rest.
-    """
+    """Return a file text or a diagnostic for a read or decoding failure."""
     path = root / rel
     try:
         return path.read_text(encoding="utf-8"), None
@@ -165,9 +128,6 @@ def disagreement(
     )
 
 
-# Each `.coderabbit.yaml` list, with the register set it must equal and what it
-# is for. A table because the ok line counts it: a literal there outlived the
-# thing it described once already.
 CODERABBIT_LISTS: tuple[tuple[Callable[[str], set[str]], str, str], ...] = (
     (
         filtered_skills,
@@ -184,9 +144,6 @@ CODERABBIT_LISTS: tuple[tuple[Callable[[str], set[str]], str, str], ...] = (
     ),
 )
 
-# Each prose surface, with what its list is for. Membership is the decision: a
-# document that stops naming skills is removed here in the same edit, which is a
-# recorded choice rather than a pattern that quietly stopped matching.
 PROSE_SURFACES = (
     (
         ".github/copilot-instructions.md",
@@ -198,7 +155,6 @@ PROSE_SURFACES = (
     ),
 )
 
-# Derived, never counted by hand: the ok line says how many lists agreed.
 COMPARED_LISTS = len(CODERABBIT_LISTS) + len(PROSE_SURFACES)
 
 

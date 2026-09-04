@@ -55,9 +55,7 @@ VgsModal {
     shouldBeVisible: false
     allowStacking: true
     modalWidth: 420
-    // Even padding: the content column is inset spacingL from the top, so reserve
-    // spacingL top + spacingL bottom (was spacingM*2, which — with the column's
-    // spacingL top inset + a trailing spacer — left more room below than above).
+    // Match bottom padding to the column's top inset.
     modalHeight: contentLoader.item ? Math.min(540, contentLoader.item.implicitHeight + Theme.spacingL * 2) : 320
     enableShadow: true
     shouldHaveFocus: true
@@ -121,8 +119,7 @@ VgsModal {
                             width: parent.width
                             height: 64
                             radius: Theme.cornerRadius
-                            // Hover brightens toward the accent (was reversed:
-                            // full fill at rest, dimmed on hover).
+
                             color: sessionMouse.containsMouse ? Theme.blend(Theme.surfaceContainerHigh, Theme.primary, 0.16) : Theme.surfaceContainerHigh
 
                             Row {
@@ -195,8 +192,7 @@ VgsModal {
                         width: parent.width
                         height: bodyCol.implicitHeight + Theme.spacingM * 2
                         radius: Theme.cornerRadius
-                        // Passive empty-state callout: a calm fill + hairline so it
-                        // reads as information, not a clickable/hoverable row.
+
                         color: Theme.surfaceContainerHigh
                         border.width: 1
                         border.color: Theme.borderColor

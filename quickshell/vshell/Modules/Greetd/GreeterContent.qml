@@ -694,7 +694,7 @@ Item {
         }
     }
 
-    // Probe fprintd D-Bus for physically enrolled scanners to eliminate PAM stack false-positives.
+    // Probe enrolled fingerprint scanners; a PAM module can exist without usable hardware.
     Process {
         id: fprintdDeviceProbe
         running: false
@@ -704,7 +704,7 @@ Item {
         stdout: StdioCollector {
             onStreamFinished: {
                 if (text.includes("PROBE_UNAVAILABLE"))
-                    return; // PAM-only fallback stays active
+                    return;
                 root.fprintdHasDevice = text.includes("objectpath");
                 root.fprintdProbeComplete = true;
                 root.maybeAutoStartExternalAuth();
@@ -712,7 +712,7 @@ Item {
         }
         onExited: function (exitCode, exitStatus) {
             if (!root.fprintdProbeComplete)
-                root.maybeAutoStartExternalAuth(); // PAM-only fallback stays active
+                root.maybeAutoStartExternalAuth();
         }
     }
 
@@ -870,18 +870,10 @@ Item {
     Rectangle {
         anchors.fill: parent
         color: "transparent"
-        // Rendered on every screen, not just the primary one: the login prompt
-        // should be readable wherever the user is looking. Username, password
-        // dots and auth status all read from the GreeterState singleton, so the
-        // non-primary copies mirror the real session rather than forking it.
+        // Mirror authentication state on every screen through GreeterState; only the primary runs the login session.
         visible: true
-        // Display-only on mirrors. WlrKeyboardFocus.None keeps their keystrokes
-        // out, but that says nothing about the pointer: without this the user
-        // picker, submit and external-auth buttons, session dropdown, layout
-        // switcher and power button stay clickable on every output, mutating
-        // shared state and calling Greetd from an instance whose own greetd
-        // Connections are disabled. Disabling the subtree leaves the mirrors
-        // pixel-identical while keeping the primary the sole interactive owner.
+        // Mirror screens must reject pointer input as well as keyboard focus.
+        // Only the primary instance owns the enabled Greetd connections.
         enabled: root.isPrimaryScreen
 
         MouseArea {
@@ -1086,7 +1078,7 @@ Item {
                             }
                         }
 
-                        // Switch-user affordance: hover scrim over the selected user's avatar.
+
                         Rectangle {
                             anchors.fill: parent
                             radius: width / 2
@@ -1845,9 +1837,7 @@ Item {
             });
         }
 
-        // _addSession guards against a session name already existing
-        // so we have to load from the user directories first so they
-        // correctly override a system configuration
+        // Load user sessions first: _addSession rejects names that already exist.
         return dirs.reverse();
     }
 

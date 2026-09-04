@@ -11,7 +11,8 @@ import (
 func TestRemoveStaleUnlinksDeadOnly(t *testing.T) {
 	dir := t.TempDir()
 
-	// A dead pid: our pid + a large offset is very unlikely to be live.
+	// The fixture assumes this offset PID is unused; it does not reserve or check
+	// it.
 	deadPID := os.Getpid() + 1_000_000
 	livePID := os.Getpid()
 
@@ -71,8 +72,6 @@ func TestSetupSocketCreates0600(t *testing.T) {
 		t.Fatalf("socket perms = %o, want 0600", perm)
 	}
 
-	// A second setup at the same (recycled) pid path must not fail on a leftover
-	// socket: setupSocket removes it before listening.
 	st.teardown()
 	st2, err := setupSocket(slog.Default())
 	if err != nil {

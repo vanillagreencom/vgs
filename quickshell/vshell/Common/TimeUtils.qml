@@ -4,9 +4,6 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import Quickshell
 
-// TimeUtils — small shared time formatting helpers for widgets/plugins.
-// Centralizes the coarse "ago" cascade that was duplicated across bundled
-// plugins (sysUpdate, tailscale).
 Singleton {
     id: root
 

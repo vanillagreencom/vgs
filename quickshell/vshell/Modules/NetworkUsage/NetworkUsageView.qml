@@ -134,7 +134,7 @@ Item {
                 app: modelData
             }
 
-            // Empty / setup states
+
             Item {
                 anchors.centerIn: parent
                 width: Math.min(parent.width - Theme.spacingL * 2, 360)

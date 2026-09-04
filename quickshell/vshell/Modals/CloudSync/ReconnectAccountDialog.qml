@@ -6,12 +6,7 @@ import qs.Services
 import qs.Widgets
 import "CloudSyncIcons.js" as CloudIcons
 
-// Signs an existing account in again.
-//
-// Access tokens expire, and before this existed the only cure was to disconnect
-// and re-add — which meant rebuilding every synced folder, because folders
-// reference the account by name. Reconnect writes a fresh token over the old
-// one and leaves the remote name (and therefore every folder) intact.
+// Refresh an account token without changing the remote name that its folders reference.
 CloudSyncDialog {
     id: dialog
 
@@ -20,9 +15,7 @@ CloudSyncDialog {
 
     readonly property var accountData: CloudSyncService.accountByName(account) || ({})
     readonly property var affected: CloudSyncService.foldersForAccount(account)
-    // An account set up with the user's own API credentials has to be signed in
-    // again with those same credentials. The ID is stored and prefilled; the
-    // secret never leaves rclone's config, so it has to be retyped.
+    // Reconnect must use the account's custom application credentials. Prefill the stored ID; the secret must be entered again.
     readonly property bool customCredentials: (accountData.clientId || "").length > 0
 
     property string clientId: ""
@@ -53,9 +46,7 @@ CloudSyncDialog {
         }
         CloudSyncService.reconnectRemote(dialog.account, params, response => {
             if (response.error)
-                return; // the service already surfaced it; keep the dialog open
-            // The sign-in itself is tracked on the Accounts page, which shows
-            // the consent URL and a cancel affordance.
+                return; // The service reports failures; keep this dialog open. AccountsPage tracks the subsequent browser sign-in.
             if (dialog.parentModal)
                 dialog.parentModal.closeDialog();
         });

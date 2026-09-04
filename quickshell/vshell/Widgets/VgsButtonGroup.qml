@@ -3,10 +3,7 @@ import Quickshell
 import qs.Common
 import qs.Widgets
 
-// Flatline segmented control (mac / shadcn style): a recessed track holding
-// equal-width segments. The active segment reads as a quiet raised tile — not a
-// loud accent pill — with full-strength text; inactive segments are muted text
-// only. See docs/architecture/design-language.md.
+// Segmented control with an inset track and raised selected segment.
 Rectangle {
     id: root
 
@@ -29,8 +26,7 @@ Rectangle {
     property bool multiSelect: selectionMode === "multi"
     property var initialSelection: []
     property var currentSelection: initialSelection
-    // Kept for API compatibility; the segmented control no longer draws a check
-    // glyph (a Material-ism) — the raised tile signals selection.
+    // Compatibility property; the selected tile carries state without a check glyph.
     property bool checkEnabled: false
     property string size: "medium"
     property int buttonHeight: size === "small" ? 26 : 30
@@ -42,8 +38,7 @@ Rectangle {
     property bool usePopupTransparency: !checkParentDisablesTransparency()
     property real maximumWidth: -1
     property bool fillWidth: false
-    // Retained for API compatibility (callers/aliases still set it); segments in
-    // the unified track are contiguous, so it no longer inserts gaps.
+    // Compatibility property; segments remain contiguous regardless of this value.
     property int spacing: 0
 
     readonly property int trackPad: 0
@@ -69,7 +64,7 @@ Rectangle {
     implicitWidth: segmentRow.implicitWidth + trackPad * 2
     height: implicitHeight
     radius: Theme.controlRadius
-    // Fill alone groups the segments; the active segment carries selection.
+
     color: usePopupTransparency ? Theme.withAlpha(Theme.surfaceContainerLow, Theme.popupTransparency) : Theme.surfaceContainerLow
     border.width: 0
     opacity: enabled ? 1 : 0.45
@@ -147,7 +142,7 @@ Rectangle {
                 }
                 height: root.buttonHeight
 
-                // Fill contrast against the recessed track signals selection.
+
                 Rectangle {
                     anchors.fill: parent
                     radius: root.segmentRadius
@@ -173,9 +168,7 @@ Rectangle {
                     text: typeof segment.modelData === "string" ? segment.modelData : segment.modelData.text || ""
                     font.pixelSize: root.textSize
                     font.weight: segment.selected ? Font.DemiBold : Font.Medium
-                    // Inactive segments stay clearly legible (medium-emphasis text),
-                    // distinguished from the active one by weight + the raised tile
-                    // rather than by being dimmed to near-invisible on dark themes.
+
                     color: segment.selected ? Theme.surfaceText : Theme.surfaceTextMedium
                     width: Math.min(implicitWidth, Math.max(0, segment.width - root.buttonPadding * 2))
                     elide: Text.ElideRight

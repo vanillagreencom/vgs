@@ -1,14 +1,7 @@
 #!/usr/bin/env python3
-"""Shared fixtures for the wallpaper-thumbnail suites.
+"""Shared wallpaper thumbnail fixtures for decoder and cache tests.
 
-Two suites use these: scripts/test-wallpaper-thumbs.py covers the BUILD ladder,
-scripts/test-wallpaper-thumb-cache.py covers cache housekeeping. They are split
-because those are separate contracts, and holding both in one file put it past
-the size gate.
-
-The stub rungs exist so the ladder is reachable on a machine with no decoder
-installed, which is what CI runners are — otherwise every check would skip and
-the suite would report a vacuous pass.
+Stub decoders keep build paths testable when no real decoder is installed.
 """
 from __future__ import annotations
 
@@ -24,9 +17,7 @@ import vshell_wallpaper_thumbs as thumbs  # noqa: E402
 
 FAILURES: list[str] = []
 
-# A real 8x6 JPEG. The stub rungs write these bytes so the ladder can be
-# exercised end to end on a machine with no decoder at all — which is what CI
-# runners are, and what made "skip everything" the shipped outcome.
+# A real JPEG lets stub decoders exercise the build without installed tools.
 TINY_JPEG = base64.b64decode(
     "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAA0JCgsKCA0LCgsODg0PEyAVExISEyccHhcgLikxMC4p"
     "LSwzOko+MzZGNywtQFdBRkxOUlNSMj5aYVpQYEpRUk//2wBDAQ4ODhMREyYVFSZPNS01T09PT09P"
@@ -44,11 +35,10 @@ TINY_JPEG = base64.b64decode(
 
 
 def stub_runner(recorded: list[list[str]]):
-    """Stands in for magick and ffmpeg, modelling the ONE behaviour that broke:
-    both pick their output format from the destination's extension, and ffmpeg
-    refuses outright when it cannot. Nothing else about them is simulated — this
-    exercises `build_one`'s own argv and atomic-rename path, deterministically,
-    on a machine with no decoder installed."""
+    """Stub destination-extension format selection for magick and ffmpeg.
+
+    The stub exercises build_one argv and rename handling, not image decoding.
+    """
     def run(cmd, **kwargs):
         recorded.append(list(cmd))
         dest = Path(cmd[-1])
@@ -135,9 +125,7 @@ def build_with(src: Path, rung: str) -> Path | None:
     thumbs.configure(thumbs.ThumbRuntime(cache_dir=lambda: out_dir, run=runner))
     real_image, real_which = thumbs.Image, thumbs.shutil.which
     try:
-        # EXACTLY one rung, not "this one and everything after it". The ladder
-        # falls through on failure, so leaving later rungs enabled would let
-        # ffmpeg quietly answer for a broken magick and be reported as magick.
+        # Disable later rungs so fallback cannot conceal a failure in the selected one.
         if rung != "pil":
             thumbs.Image = None
         thumbs.shutil.which = lambda name: real_which(name) if name == rung else None

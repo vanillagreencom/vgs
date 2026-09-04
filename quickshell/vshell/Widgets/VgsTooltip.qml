@@ -6,15 +6,8 @@ import qs.Services
 import qs.Widgets
 import qs.Widgets.Tooltip
 
-// The tooltip for surfaces that cannot contain one: bar widgets, the dock, and
-// bundled plugin pills all live in layer surfaces only a widget tall, so the
-// tooltip has to be its own Overlay surface. Being a separate surface is also
-// what keeps it from stealing pointer/hover from the pill it describes.
-//
-// Positions are screen-absolute, because the caller is the only thing that
-// knows where its bar edge is. For content inside a window big enough to hold
-// its own tooltip, use VgsInlineTooltip instead — see
-// docs/architecture/design-language.md § Invariants.
+// Layer-surface tooltip for bar and dock hosts too small to contain it.
+// Callers supply screen coordinates. Use VgsInlineTooltip for content within a larger window.
 PanelWindow {
     id: root
 
@@ -91,9 +84,7 @@ PanelWindow {
         text: root.text
         maxWidth: 300
         minWidth: 120
-        // Stated rather than inherited: the WindowBlur above is this surface's
-        // backdrop, so the glass treatment has something real to sit on. If that
-        // blur ever goes, this has to go with it.
+        // Glass styling depends on the WindowBlur backdrop above; keep their availability in sync.
         blurAvailable: true
     }
 }

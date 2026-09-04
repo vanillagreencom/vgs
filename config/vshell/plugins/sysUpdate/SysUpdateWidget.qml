@@ -30,22 +30,18 @@ PluginComponent {
     readonly property int totalCount: root.repoCount + root.aurCount + root.toolsCount
     readonly property bool useBackend: SystemUpdateService.sysupdateAvailable
 
-    // ---- Refresh timing / provenance (P1) ----
-    // CLI path: local wall-clock of the last successful count, plus the helper's
-    // own checkedAt (epoch seconds) when present. Backend path derives both from
-    // SystemUpdateService instead.
+    // The CLI stores local check time and helper checkedAt when available.
+    // The backend path reads service timestamps.
     property double lastCheckedAtMs: 0
     property int helperCheckedAt: 0
     property string cliSourceLabel: "checkupdates + paru -Qua"
 
-    // Unified "last checked" epoch-ms across both data paths (0 = unknown).
+    // Last-check time in milliseconds; zero means unknown.
     readonly property double lastCheckedMs: root.useBackend
         ? (SystemUpdateService.lastCheckUnix > 0 ? SystemUpdateService.lastCheckUnix * 1000 : 0)
         : (root.helperCheckedAt > 0 ? root.helperCheckedAt * 1000 : root.lastCheckedAtMs)
 
-    // Human-readable data source for the footer. Empty when unknown (e.g. backend
-    // path before backends are populated) so the footer can hide the row rather
-    // than advertise a bare, uninformative label.
+    // Hide the source row until a data source is known.
     readonly property string sourceLabel: root.useBackend
         ? ((SystemUpdateService.backends || []).map(b => b.displayName).filter(Boolean).join(", "))
         : root.cliSourceLabel
@@ -66,8 +62,7 @@ PluginComponent {
         }
     }
 
-    // State color for the pill's *text*. Bar icons stay a single consistent
-    // color regardless of whether updates are pending.
+    // Use state color for pill text while retaining the bar icon color.
     readonly property color accentColor: root.errorText.length > 0 ? Theme.error : (root.totalCount > 0 ? Theme.primary : Theme.surfaceVariantText)
 
     function pillText() {
@@ -133,15 +128,8 @@ PluginComponent {
     }
 
     function terminalArgv(command) {
-        // Keep the configured command out of `sh -c`'s positional command slot.
-        // Some terminal-launch paths can lose a trailing argv value, which turns
-        // `sh -lc <command>` into the opaque "option requires an argument" error.
-        // A fixed script plus an environment argv preserves arbitrary shell syntax
-        // while ensuring -c always has an argument and a canonical $0 value.
-        // `vshell terminal` is the single terminal resolver (VGS-54/VGS-32):
-        // it owns $TERMINAL, xdg-terminals.list, the installed-terminal
-        // fallback and the optional uwsm scope, so nothing here may name a
-        // terminal binary.
+        // Pass the configured command through an environment argument so sh -c
+        // always has a script and $0. vshell terminal owns terminal selection.
         return [
             root.updateCommand, "terminal", "exec", "--tui", "--",
             "env", "VSHELL_UPDATE_COMMAND=" + command,
@@ -183,9 +171,7 @@ PluginComponent {
             const command = root.expandCommand(root.pendingLaunchCommand);
             root.pendingLaunchCommand = "";
             Quickshell.execDetached(root.terminalArgv(command));
-            // Upgrades run detached in a terminal for an unknown duration; poll on a
-            // bounded schedule so long upgrades don't leave stale counts, and stop as
-            // soon as the count clears (see recheckTimer / onTotalCountChanged).
+            // A detached upgrade has no observed exit. Re-check on a bounded schedule.
             root._retryElapsedMs = 0;
             recheckTimer.restart();
         }
@@ -233,9 +219,8 @@ PluginComponent {
             root.orphans = d.orphans || [];
             if (d.source && d.source.repo && d.source.aur)
                 root.cliSourceLabel = d.source.repo + " + " + d.source.aur;
-            // Stop the post-upgrade retry on a clean zero. onTotalCountChanged covers
-            // the N→0 transition; this also covers the case where the count was
-            // already 0 (e.g. after an errored recheck) so the binding doesn't refire.
+            // Stop on a clean zero even if the count was already zero and its change
+            // signal does not fire.
             if (recheckTimer.running && root.errorText.length === 0 && root.totalCount === 0)
                 recheckTimer.stop();
         } catch (e) {
@@ -300,14 +285,8 @@ PluginComponent {
         onTriggered: root.refresh()
     }
 
-    // Bounded post-update retry polling (P3): after launching an upgrade we can't
-    // observe when the detached terminal finishes, so re-check every 30s for up to
-    // 10 minutes. Stops early once totalCount reaches 0 (onTotalCountChanged) and is
-    // destroyed with the widget, so there's no unbounded loop. Uses manualRefresh()
-    // (a real re-check) rather than refresh(): on the backend path refresh() only
-    // re-copies the already-cached service state, so it would never observe the
-    // packages the just-finished upgrade cleared — the count would stay stale until
-    // the user forced a manual refresh.
+    // Detached upgrades have no observed exit. Bound retries with _retryMaxMs.
+    // Use manualRefresh because refresh can copy cached backend state.
     property int _retryElapsedMs: 0
     readonly property int _retryMaxMs: 600000
 
@@ -326,9 +305,7 @@ PluginComponent {
     }
 
     onTotalCountChanged: {
-        // Only a *clean* zero means the upgrade finished. An errored recheck also
-        // zeroes the counts (parseOutput sets repo/aur to 0 on failure), so gate on
-        // errorText to avoid a transient AUR/DB hiccup killing the retry window.
+        // An errored check can clear counts without establishing that work finished.
         if (recheckTimer.running && root.errorText.length === 0 && root.totalCount === 0)
             recheckTimer.stop();
     }
@@ -390,8 +367,6 @@ PluginComponent {
 
                 readonly property int innerWidth: width - leftPadding - rightPadding
 
-                // ---- Toggle link (right-aligned): swaps to the OTHER sheet; the
-                //      whole label is clickable and shows that sheet's count. ----
                 Item {
                     width: contentCol.innerWidth
                     height: toggleLink.implicitHeight
@@ -418,8 +393,6 @@ PluginComponent {
                     }
                 }
 
-                // ---- Swappable body: cross-fade opacity + animated height so the
-                //      toggle grows/shrinks smoothly instead of hard-resizing. ----
                 Item {
                     id: bodySwap
                     width: contentCol.innerWidth
@@ -429,7 +402,6 @@ PluginComponent {
                     height: Math.max(updatesBody.implicitHeight, orphansBody.implicitHeight)
                     clip: true
 
-                    // ===== UPDATES SHEET =====
                     Column {
                         id: updatesBody
                         width: parent.width
@@ -471,7 +443,6 @@ PluginComponent {
                                 id: pkgList
                                 anchors.fill: parent
                                 anchors.margins: Theme.spacingS
-                                // The bar rides in the card's right gutter, not over the rows.
                                 anchors.rightMargin: 2
                                 model: root.packages
                                 clip: true
@@ -484,8 +455,6 @@ PluginComponent {
                                     width: pkgList.width - Theme.spacingS + 2
                                     height: 44
 
-                                    // The pill marks the row, not the name line,
-                                    // so it centres against both lines of text.
                                     Rectangle {
                                         id: srcPill
                                         anchors.right: parent.right
@@ -547,7 +516,6 @@ PluginComponent {
                         }
                     }
 
-                    // ===== ORPHANS SHEET =====
                     Column {
                         id: orphansBody
                         width: parent.width
@@ -586,7 +554,6 @@ PluginComponent {
                                 id: orphanList
                                 anchors.fill: parent
                                 anchors.margins: Theme.spacingS
-                                // The bar rides in the card's right gutter, not over the rows.
                                 anchors.rightMargin: 2
                                 model: root.orphans
                                 clip: true
@@ -645,17 +612,14 @@ PluginComponent {
                     }
                 }
 
-                // ---- Footer: data provenance, freshness, manual refresh (P1/P2) ----
                 Column {
                     id: footer
                     width: contentCol.innerWidth
                     spacing: Theme.spacingXS
                     visible: !root.showOrphans
 
-                    // Explanatory copy (P2): the caveat about the checkupdates vs.
-                    // paru -S reinstall mismatch. The data source itself is shown by
-                    // the "Source:" row below, so this stays a caveat only (no
-                    // duplicate "Counts come from …"). Only the CLI/paru path needs it.
+                    // The CLI count can differ from what paru reinstalls. Show that caveat
+                    // only on the CLI path.
                     StyledText {
                         width: parent.width
                         visible: !root.useBackend && root.errorText.length === 0 && !root.allClear
@@ -665,7 +629,6 @@ PluginComponent {
                         color: Theme.surfaceVariantText
                     }
 
-                    // Last-checked + source labels on the left, refresh on the right.
                     Item {
                         width: parent.width
                         height: Math.max(footerInfo.implicitHeight, refreshBtn.height)

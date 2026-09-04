@@ -42,7 +42,7 @@ PluginComponent {
     property string folderCompletion: ""
     property bool sidebarVisible: true
     readonly property var selectedItem: visibleItems[selectedItemIndex] || null
-    // Hover drives selection only after the mouse has really moved (VGS-134).
+    // Hover takes selection only after pointer movement.
     readonly property HoverSelectionGate hoverGate: HoverSelectionGate {}
 
     readonly property var categories: mergeCategories(MenuCatalog.categories, overlayCategories)
@@ -225,9 +225,7 @@ PluginComponent {
         return out;
     }
 
-    // Categories already let the overlay win by id; items did not, so a local
-    // override of a shipped action listed both copies side by side. Same rule
-    // as everywhere else in VGS: the more specific layer replaces the default.
+    // An overlay replaces a shipped item with the same key.
     function mergeItems(base, overlay, webapps) {
         const overridden = ({});
         const key = function(item) {
@@ -555,11 +553,8 @@ PluginComponent {
         filePreviewRevealed = false;
     }
 
-    // Whether a file search actually runs for this query: the shared rule, which
-    // already covers a folder path the helper completes directly, plus the one
-    // leg that is this plugin's own — zoxide, which needs no query at all. The
-    // empty state reads this too, or it tells the user to type more about a
-    // search that ran and found nothing.
+    // Share search eligibility with the empty state so it describes a search
+    // that actually ran. zoxide can search without query text.
     function fileSearchDispatches(trimmed) {
         return DSearchService.queryIsSearchable(DSearchService.kindForType(fileSearchType), trimmed)
             || fileSearchType === "zoxide";
@@ -767,7 +762,6 @@ PluginComponent {
             actions.push({ id: "terminal", label: "Open in terminal", icon: "terminal" });
         } else {
             actions.push({ id: "open", label: "Run", icon: "play_arrow" });
-            // A dev tool VGS installed can be taken back out the same way.
             if (item.devId)
                 actions.push({ id: "uninstall", label: "Uninstall", icon: "delete" });
         }
@@ -914,8 +908,6 @@ PluginComponent {
     }
 
     function handleKey(event) {
-        // Every key press — navigation and typing alike — hands selection back
-        // to the keyboard and puts hover to sleep until the mouse moves again.
         hoverGate.disarm();
         const hasCtrl = event.modifiers & Qt.ControlModifier;
         const hasShift = event.modifiers & Qt.ShiftModifier;
@@ -1003,15 +995,9 @@ PluginComponent {
         event.accepted = false;
     }
 
-    // EVERY repopulation hands selection back to the keyboard, on the one
-    // funnel each rebuild must pass through rather than beside each
-    // `visibleItems =` a later edit can forget. Keying the latch to key presses
-    // alone left the defect alive on the async path: a DSearchService reply
-    // lands hundreds of ms after the keystroke, the rebuilt row under the
-    // resting pointer fires its synthetic hover, and selection snaps to it.
-    // It fires per ASSIGNMENT, so every repopulation must assign a fresh array
-    // and must never write the current reference back — Qt raises no signal for
-    // that, and the rebuild would skip the disarm with nothing to notice.
+    // Result updates can arrive after keyboard input. Disarm on every new
+    // visibleItems assignment. Rebuilds must assign a fresh array because
+    // writing the same reference does not emit this signal.
     onVisibleItemsChanged: hoverGate.disarm()
     onQueryChanged: {
         if (resettingState || routingPrefix)
@@ -1135,8 +1121,7 @@ PluginComponent {
 
     HyprlandFocusGrab {
         id: focusGrab
-        // The catcher is one of ours: leaving it out meant any click that landed
-        // on it cleared the grab and closed the menu, even over the menu itself.
+        // Include the click catcher in the grab so clicks on it do not clear the menu.
         windows: [menuWindow, clickCatcher]
         active: CompositorService.useHyprlandFocusGrab && root.keyboardActive
         onCleared: {
@@ -1886,7 +1871,7 @@ PluginComponent {
         property int size: Theme.iconSize
         property color color: Theme.surfaceText
         property real xOffset: 0
-        // "nerd" (bundled Nerd Font) or "brand" (bundled omarchy marks).
+        // nerd selects the bundled Nerd Font; brand selects bundled brand glyphs.
         property string fontKind: "nerd"
 
         width: Math.round(size)
@@ -1902,9 +1887,7 @@ PluginComponent {
             source: Qt.resolvedUrl("../../assets/fonts/omarchy/omarchy.ttf")
         }
 
-        // Centered on the glyph's own ink box rather than a box the width of
-        // the tile: Nerd Font glyphs carry uneven side bearings, so a
-        // tile-wide text box left many of them visibly off-center.
+        // Center the glyph ink box; Nerd Font side bearings can be uneven.
         StyledText {
             anchors.centerIn: parent
             anchors.horizontalCenterOffset: nerdIcon.xOffset
@@ -2023,7 +2006,6 @@ PluginComponent {
         property string shortcut: ""
         property string description: ""
         property real shortcutWidth: 92
-        // The pill grows for a longer shortcut rather than crowding its text.
         readonly property real pillWidth: Math.max(shortcutWidth, shortcutText.implicitWidth + Theme.spacingM)
 
         height: 28
@@ -2088,8 +2070,6 @@ PluginComponent {
                 id: cardIcon
                 width: parent.width
                 height: resultCard.thumbnailMode ? 64 : 38
-                // The same brand tint the list row paints, so a tile does not
-                // drop an item's own color.
                 readonly property bool branded: String(resultCard.itemData.iconColor || "").length > 0
                 readonly property color brand: branded ? resultCard.itemData.iconColor
                     : (resultCard.selected ? Theme.primary : Theme.surfaceVariantText)
@@ -2178,7 +2158,6 @@ PluginComponent {
         signal contextRequested(var sender, real localX, real localY)
 
         radius: Theme.cornerRadius
-        // Tint follows the latch, as in ResultCard above.
         color: selected ? Theme.withAlpha(Theme.primary, 0.16)
             : (rowArea.containsMouse && root.hoverGate.armed) ? Theme.surfaceHover : "transparent"
         clip: true
@@ -2194,12 +2173,10 @@ PluginComponent {
                 height: 40
                 anchors.verticalCenter: parent.verticalCenter
                 radius: Theme.cornerRadius
-                // A brand color tints the tile the way an app icon brings its
-                // own color; everything else follows the selection.
                 readonly property bool branded: String(resultRow.itemData.iconColor || "").length > 0
                 readonly property color brand: branded ? resultRow.itemData.iconColor : (resultRow.selected ? Theme.primary : Theme.surfaceVariantText)
-                // A brand mark below 3:1 against a light tile reads as blank;
-                // darken the glyph until it clears the tile behind it.
+                // Darken bright brand glyphs on light tiles to improve visibility.
+                // This luminance threshold does not enforce a contrast ratio.
                 readonly property real brandLuma: 0.2126 * brand.r + 0.7152 * brand.g + 0.0722 * brand.b
                 readonly property color tint: (branded && Theme.isLightMode && brandLuma > 0.45) ? Qt.darker(brand, 2.4) : brand
                 color: Theme.withAlpha(brand, resultRow.selected ? 0.22 : (branded ? 0.16 : 0.12))
@@ -2278,7 +2255,6 @@ PluginComponent {
                     id: categoryText
                     anchors.centerIn: parent
                     width: parent.width - Theme.spacingS
-                    // An item's own tag names its kind inside the category.
                     text: resultRow.itemData.tag || resultRow.categoryLabel
                     font.pixelSize: Theme.fontSizeSmall - 1
                     font.weight: Font.Medium

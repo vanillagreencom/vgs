@@ -115,7 +115,6 @@ func TestSaveTrimsUnpinned(t *testing.T) {
 	if unpinned != maxUnpinned || pinned != 1 {
 		t.Fatalf("trim kept %d unpinned, %d pinned", unpinned, pinned)
 	}
-	// The oldest unpinned entries are the ones dropped.
 	for _, e := range s.Entries {
 		if !e.Pinned && e.Timestamp < 20 {
 			t.Fatalf("expected oldest entries trimmed, found timestamp %d", e.Timestamp)
@@ -281,7 +280,6 @@ func TestExternalWriteIsPickedUp(t *testing.T) {
 	if err := m.upsertTextLocked("mine"); err != nil {
 		t.Fatal(err)
 	}
-	// Simulate the helper CLI rewriting the state file out-of-band.
 	external := `{"nextId": 50, "entries": [{"id": 49, "hash": "x", "preview": "external", "text": "external", "size": 8, "mime": "text/plain", "timestamp": 99}]}`
 	if err := os.WriteFile(m.store.stateFile, []byte(external), 0o644); err != nil {
 		t.Fatal(err)

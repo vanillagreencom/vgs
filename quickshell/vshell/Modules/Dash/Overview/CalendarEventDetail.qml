@@ -41,8 +41,7 @@ Item {
         return out;
     }
 
-    // Descriptions arrive as HTML (Google) or markdown/plain text; both render
-    // as RichText so links become clickable anchors recolored to the theme.
+    // Descriptions may contain HTML or plain text. Render links as themed clickable anchors.
     function _descriptionRichText() {
         const raw = ((eventData && eventData.description) || "").trim();
         if (raw === "")

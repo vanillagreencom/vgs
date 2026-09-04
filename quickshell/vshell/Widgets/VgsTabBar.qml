@@ -120,9 +120,7 @@ FocusScope {
                 property bool isHovered: tabArea.containsMouse
                 property bool hasIcon: tabBar.showIcons && modelData && modelData.icon && modelData.icon.length > 0
                 property bool hasText: modelData && modelData.text && modelData.text.length > 0
-                // Flatline: no rounded hover cell. Inactive tabs sit muted; hover
-                // lifts the icon/label toward full contrast (plus a whisper of
-                // scale), and the active tab is accent + the underline indicator.
+
                 readonly property color contentColor: isActive ? Theme.primary : (isHovered ? Theme.surfaceText : Theme.surfaceVariantText)
 
                 width: tabBar.equalWidthTabs ? (tabBar.width - tabBar.spacing * Math.max(0, tabRepeater.count - 1)) / Math.max(1, tabRepeater.count) : Math.max(contentCol.implicitWidth + Theme.spacingXL, 64)

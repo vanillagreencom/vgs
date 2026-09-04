@@ -51,19 +51,19 @@ Rectangle {
         anchors.verticalCenter: parent.verticalCenter
         spacing: Theme.spacingS
 
-        // Whether the apps category picker should replace the plain title
+
         readonly property bool hasAppCategories: root.section?.id === "apps" && (root.controller?.appCategories?.length ?? 0) > 0
 
         VgsIcon {
             anchors.verticalCenter: parent.verticalCenter
-            // Hide section icon when the category chip already shows one
+
             visible: !leftContent.hasAppCategories
             name: root.section?.icon ?? "folder"
             size: 16
             color: Theme.surfaceVariantText
         }
 
-        // Plain title — hidden when the category chip is shown
+
         StyledText {
             anchors.verticalCenter: parent.verticalCenter
             visible: !leftContent.hasAppCategories
@@ -73,7 +73,7 @@ Rectangle {
             color: Theme.surfaceVariantText
         }
 
-        // Compact inline category chip — only visible on the apps section
+
         Item {
             id: categoryChip
             visible: leftContent.hasAppCategories
@@ -237,7 +237,7 @@ Rectangle {
                     }
                 }
 
-                // Size to list content, cap at 10 visible items
+
                 height: Math.min((root.controller?.appCategories?.length ?? 0) * 34, 10 * 34) + Theme.spacingS * 2 + 4
             }
         }

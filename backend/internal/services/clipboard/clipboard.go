@@ -1,8 +1,5 @@
-// Package clipboard implements the VGS clipboard history service natively:
-// it owns the single wl-paste watcher, the history state file, and the image
-// store, and pushes history updates to subscribers. Nothing in the hot path
-// forks the Python helper; the helper's clipboard CLI remains a manual
-// fallback that shares the same state file and lock.
+// Package clipboard owns the clipboard watcher, history file, and image store.
+// The helper CLI shares the history file and locks for manual use.
 package clipboard
 
 import (
@@ -26,8 +23,8 @@ const (
 	// debounceDelay coalesces the burst of watch events a single copy can
 	// produce (each offered mime type may fire once) into one poll.
 	debounceDelay = 250 * time.Millisecond
-	// watchRestartMin/Max back off a crash-looping watcher without ever
-	// giving up: a dead watcher silently stops history recording.
+	// watchRestartMin/Max bound restart backoff. The loop retries until shutdown
+	// because watcher failure stops history recording.
 	watchRestartMin = time.Second
 	watchRestartMax = 30 * time.Second
 	// maxEntryData bounds the base64 payload getEntry returns inline. Larger
@@ -48,11 +45,9 @@ type Manager struct {
 	state *state
 	store *store
 
-	// snapshot caches the current {available, history} payload. The subscribe
-	// snapshot closure runs on the server's send-queue goroutine — the same
-	// goroutine broadcasts wait on — so it must never take m.mu: a handler
-	// blocked in Broadcast (queue full) while holding m.mu would deadlock
-	// against a snapshot job waiting for m.mu.
+	// Subscription snapshots run on the send-queue goroutine. They must read the
+	// cache without m.mu: a handler can hold that mutex while waiting for queue
+	// space, causing deadlock if the snapshot also waits for it.
 	snapshot atomic.Value
 
 	events chan struct{}
@@ -113,11 +108,9 @@ func (m *Manager) Close() {
 	m.wg.Wait()
 }
 
-// watchLoop keeps exactly one wl-paste --watch alive, restarting with capped
-// backoff. The child dies with the daemon (CommandContext kill on cancel), so
-// backend restarts can never leak watchers. One-owner is enforced through the
-// shared watch lock: while a manual `vshell clipboard watch` holds it, this
-// loop stands by and retries instead of doubling the watcher.
+// watchLoop restarts wl-paste with capped backoff and cancels it on shutdown.
+// The shared watch lock excludes the manual clipboard watcher while this loop
+// owns it.
 func (m *Manager) watchLoop(ctx context.Context) {
 	defer m.wg.Done()
 	delay := watchRestartMin
@@ -160,7 +153,6 @@ func (m *Manager) signalEvent() {
 	}
 }
 
-// pollLoop debounces watch events into single clipboard reads.
 func (m *Manager) pollLoop(ctx context.Context) {
 	defer m.wg.Done()
 	for {
@@ -193,7 +185,6 @@ func (m *Manager) pollLoop(ctx context.Context) {
 	}
 }
 
-// pollOnce reads the current clipboard offer and folds it into history.
 func (m *Manager) pollOnce() error {
 	sel, ok, err := readSelection(m.log)
 	if err != nil || !ok {
@@ -294,12 +285,9 @@ func (m *Manager) syncLocked() {
 	m.snapshot.Store(m.historyPayloadLocked())
 }
 
-// mutate applies fn to the state and persists it, holding the cross-process
-// flock across the whole read-modify-write so a helper-CLI write can never
-// land between our read and our save and be silently clobbered. The
-// broadcast happens after m.mu is released: the server's send queue applies
-// backpressure, and blocking there under the mutex would couple this
-// service's lock to every other broadcaster in the daemon.
+// mutate holds the shared file lock through read, change, and save to exclude
+// helper CLI writes. Broadcast follows release of m.mu because a full server
+// queue can block.
 func (m *Manager) mutate(fn func() error) error {
 	m.mu.Lock()
 	changed := true
@@ -436,10 +424,9 @@ func (m *Manager) handleGetEntry(params json.RawMessage) (any, error) {
 	return out, nil
 }
 
-// entryData returns the inline base64 payload getEntry has always served:
-// full text for text entries, the image bytes when they fit the cap. A
-// missing blob degrades to "" like an oversized one, so the read failure is
-// logged to keep the two distinguishable somewhere.
+// entryData returns full text or image bytes within the inline cap. Missing and
+// oversized images both return an empty string; read errors are logged to
+// distinguish them.
 func (m *Manager) entryData(e *Entry) string {
 	if !e.IsImage {
 		return base64.StdEncoding.EncodeToString([]byte(e.Text))
@@ -463,9 +450,8 @@ func (m *Manager) handleCopyEntry(params json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Snapshot the entry's content under the lock, but run wl-copy (600ms
-	// grace) and image reads outside it so other clipboard methods keep
-	// flowing.
+	// Run wl-copy and image reads outside the lock so other clipboard methods can
+	// proceed during I/O.
 	m.mu.Lock()
 	m.syncLocked()
 	e := m.findByIDLocked(id)

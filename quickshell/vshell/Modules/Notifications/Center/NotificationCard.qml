@@ -36,8 +36,7 @@ Rectangle {
     readonly property real cardPadding: compactMode ? Theme.notificationCardPaddingCompact : Theme.notificationCardPadding
     readonly property real iconSize: compactMode ? Theme.notificationIconSizeCompact : Theme.notificationIconSizeNormal
 
-    // Text must clear the top-right controls (expand + close). The old fixed
-    // reserve was narrower than the control cluster, so titles ran under it.
+    // Reserve the expand and close controls so notification text cannot overlap them.
     readonly property real fixedControlsWidth: compactMode ? 52 : 60
     readonly property real fixedControlsHeight: compactMode ? 24 : 28
     readonly property real collapsedControlsTopMargin: cardPadding + (collapsedHeaderRow.implicitHeight - fixedControlsHeight) / 2

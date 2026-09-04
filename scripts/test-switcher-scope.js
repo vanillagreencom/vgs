@@ -1,62 +1,9 @@
 #!/usr/bin/env node
 
-// Pins the wallpaper switcher's per-monitor scope toggle (VGS-212): when the
-// toggle exists, which entry each scope seeds, where Enter routes the apply,
-// and the wiring that keeps the single-screen write honest.
-//
-// A separate suite from scripts/test-switcher-selection.js, deliberately: the
-// scope arithmetic is the wallpaper subclass's own decision region, and the
-// selection suite pins the BASE's. The split is a concept seam, not a size
-// dodge — each suite owns one region and the wiring around it.
-//
-// TWO HALVES, the same shape as the selection suite:
-//
-//   1. The arithmetic, EXECUTED. WallpaperSwitcherModal.qml marks it off
-//      between `// BEGIN WALLPAPER SCOPE DECISION` and its END; every input
-//      is an argument, so this runs the same program the shell runs.
-//
-//   2. The wiring, as pins. The base's Tab claim must sit ABOVE the paging
-//      branch that also consumes Backtab; the subclass's Enter must dispatch
-//      on the extracted route; the single-screen write must check its screen,
-//      read itself back and toast a miss — a write that can fail with nothing
-//      said is the failure mode VGS-208 spent rounds removing elsewhere. And
-//      the seed inside SessionData.setPerMonitorWallpaper, because without it
-//      "This monitor" reaches every OTHER monitor: enabling per-monitor mode
-//      republishes whatever an earlier per-monitor session left in the four
-//      maps that one flag gates.
-//
-// MUST-FAIL CONTROLS, each seen red against the shipped tree, one at a time:
-// `scopeChoiceExists` answering true for a single monitor; `scopeSeedKey`
-// seeding one screen's picture as everyone's current under disagreement, and
-// dropping the pending-claim fallback under agreement; `applyRoute` answering
-// "screen" for a single monitor (the stale-scope hazard) and "screen" while
-// allMonitors is set; the base's scope branch moved BELOW the arrow branch
-// that consumes Backtab; the base's Loader moved ABOVE the click-away
-// MouseArea; the Loader's `sourceComponent` unhooked from `scopeToggle`; the
-// subclass's per-open reset deleted; the flip handler replaced by a decoy
-// string carrying its text; `setPerMonitorWallpaper` dropped
-// from applyHere (the product decision undone), and reordered below the write;
-// the setter's seed call deleted and moved BELOW the flag flip, and its
-// off-to-on edge guard widened to every call; the seed's wallpaper read taken
-// straight from `wallpaperPath` instead of through `getMonitorWallpaper`, each
-// of its four map seeds deleted one at a time, the two mode-map seeds hoisted
-// OUT of the `perModeWallpaper` guard, and the cycling force-off dropped along
-// with its write-back; `_mapWithMonitorValue` keeping the screen's stale alias
-// keys, mutating the map in place, dropping the other screens' entries, and
-// writing an empty value as an entry; the mode
-// restore dropped from the miss branch, and hoisted above the read-back; the
-// read-back deleted; the screen-known guard moved below the mode flip; the
-// pill's active-segment no-op guard dropped; the pill's padding absorber
-// deleted, and moved above the segments; the pill's click writing the scope
-// directly instead of routing through the signal; the theme switcher growing
-// a `scopeToggle`.
-//
-// Wiring pins prove presence, order, and liveness-as-code — never
-// REACHABILITY: a pinned statement wrapped in a dead conditional stays green,
-// so behavior guarantees live only in the executed region above. If applyHere
-// ever grows branches, the upgrade path is extracting an executable plan
-// (ordered ops from screenKnown/perMonitorOn inputs) into the marked region,
-// not more pins.
+// Test wallpaper per-monitor scope decisions and inspect their QML adapters.
+// Enabling per-monitor mode must seed maps before flipping the flag or old map values
+// can change other monitors. Single-screen apply needs verification and failure reporting.
+// Source assertions establish presence, order, and code occurrence, not reachability inside dead branches.
 
 "use strict";
 
@@ -71,17 +18,14 @@ const WALLPAPER_MODAL = path.join(SWITCHER, "WallpaperSwitcherModal.qml");
 const THEME_MODAL = path.join(SWITCHER, "ThemeSwitcherModal.qml");
 const SESSION_DATA = path.join(repoRoot, "quickshell", "vshell", "Common", "SessionData.qml");
 
-// This text comes from repo files and is EXECUTED here, so it runs inside a
-// child bounded by a wall clock — scripts/lib/qml-region.js says what that
-// bounds and what it does not.
+// Extracted code runs under qml-region process deadlines.
 const { evaluateMarked, regionOf, guardChild } = require("./lib/qml-region.js");
 const qmlSource = require("./lib/qml-source.js");
 
-// Returns only in the child; the parent exits with its status.
+
 guardChild();
 
-// Prove the reader before it reads anything: that a token surviving only in a
-// comment pins nothing.
+// Run source-reader controls before relying on extracted assertions.
 qmlSource.selfTest();
 
 const read = file => fs.readFileSync(file, "utf8");
@@ -92,14 +36,13 @@ const sessionSource = read(SESSION_DATA);
 
 const MARKER = "WALLPAPER SCOPE DECISION";
 
-// --- 1. The shipped arithmetic, executed -----------------------------------
+
 
 const scope = evaluateMarked(wallpaperSource, MARKER, [
     "scopeChoiceExists", "scopeSeedKey", "applyRoute"
 ], "WallpaperSwitcherModal.qml");
 
-// The extracted block must be free of QML, or this harness tests a different
-// program than the shell runs.
+// Keep extracted decisions independent of QML state.
 {
     const region = qmlSource.stripComments(regionOf(wallpaperSource, MARKER, "WallpaperSwitcherModal.qml"));
     for (const forbidden of ["root.", "Theme.", "I18n.", "Qt."]) {
@@ -109,23 +52,21 @@ const scope = evaluateMarked(wallpaperSource, MARKER, [
     }
 }
 
-// scopeChoiceExists: the pill and the Tab claim exist only where a choice does.
+
 assert.equal(scope.scopeChoiceExists(0), false, "no screens is no choice (headless never shows a pill)");
 assert.equal(scope.scopeChoiceExists(1), false,
     "one monitor has nothing to point at: the pill must hide and Tab must stay on paging");
 assert.equal(scope.scopeChoiceExists(2), true, "two monitors is the choice this feature exists for");
 assert.equal(scope.scopeChoiceExists(3), true, "and it does not cap at two");
 
-// scopeSeedKey, "this monitor": what is ON this screen, then the service's
-// optimistic claim — the same ladder the seed always had.
+// Seed this monitor from its displayed wallpaper, then its pending service claim.
 assert.equal(scope.scopeSeedKey(false, ["a", "b"], "here", "claim"), "here",
     "this-monitor seeds what this screen shows, never a consensus over the others");
 assert.equal(scope.scopeSeedKey(false, [], "", "claim"), "claim",
     "with nothing shown yet, the optimistic claim is the honest fallback");
 assert.equal(scope.scopeSeedKey(false, [], "", ""), "", "and with neither, there is no seed");
 
-// scopeSeedKey, "all monitors": one current entry exists only when every
-// screen agrees.
+// All-monitor scope has one current entry only when every monitor agrees.
 assert.equal(scope.scopeSeedKey(true, ["x", "x"], "here", "claim"), "x",
     "agreement seeds the shared entry — NOT `shownHere`, which is one screen's answer");
 assert.equal(scope.scopeSeedKey(true, ["x", "y"], "x", "claim"), "",
@@ -139,7 +80,7 @@ assert.equal(scope.scopeSeedKey(true, [], "here", "claim"), "claim",
 assert.equal(scope.scopeSeedKey(true, null, "here", ""), "",
     "a screen list that has not arrived seeds nothing rather than throwing");
 
-// applyRoute: where Enter lands.
+
 assert.equal(scope.applyRoute(true, 2), "service", "all-monitors goes through the service, which reports");
 assert.equal(scope.applyRoute(false, 2), "screen", "this-monitor writes one screen's assignment");
 assert.equal(scope.applyRoute(false, 1), "service",
@@ -148,7 +89,7 @@ assert.equal(scope.applyRoute(false, 1), "service",
 assert.equal(scope.applyRoute(true, 1), "service", "the default scope on one monitor is the old behavior");
 assert.equal(scope.applyRoute(false, 0), "service", "and no screens at all never routes to a screen write");
 
-// --- 2. The wiring ----------------------------------------------------------
+
 
 const readers = new Map([
     ["FullScreenSwitcher.qml", qmlSource(baseSource, "FullScreenSwitcher.qml")],
@@ -167,12 +108,12 @@ function q(file) {
     return readers.get(file);
 }
 
-// Bans only: this SEES string literals, which is the point.
+// Use literal-preserving text for bans.
 function mustNot(file, pattern, why) {
     assert.doesNotMatch(qmlSource.stripComments(sources.get(file)), pattern, `${file}: ${why}`);
 }
 
-// Order of two statements inside one block, which no presence pin can express.
+// Check order within the same block, not presence alone.
 function mustPrecedeIn(block, label, first, second, why) {
     const view = qmlSource.stripComments(block);
     const a = view.search(first);
@@ -180,8 +121,7 @@ function mustPrecedeIn(block, label, first, second, why) {
     assert.ok(a >= 0 && b >= 0 && a < b, `${label}: ${why}`);
 }
 
-// The base: one slot property that is also the Tab claim, one signal, the
-// claim decided before paging eats Backtab, and the Loader that draws it.
+// The scope Tab branch must precede paging because paging also consumes Backtab.
 {
     const base = q("FullScreenSwitcher.qml");
 
@@ -212,9 +152,7 @@ function mustPrecedeIn(block, label, first, second, why) {
         "and every pill click closes the switcher — the pill's own handlers never hear it");
 }
 
-// The subclass: the slot gated by the extracted predicate, one flip path, a
-// per-open reset, the seed routed through the region, and an honest
-// single-screen write.
+// Require scope reset per open and an observed single-screen write.
 {
     const modal = q("WallpaperSwitcherModal.qml");
 
@@ -240,8 +178,7 @@ function mustPrecedeIn(block, label, first, second, why) {
             "and the seed for the CHOSEN scope is the extracted function this suite executes", 1]
     ]);
 
-    // Enter dispatches on the extracted route: the service path keeps its
-    // correlated reporting, the screen path takes the verified write.
+    // Track the service call for all-monitor apply; verify the screen write on the per-monitor route.
     modal.requires(wallpaperSource, "WallpaperSwitcherModal.qml", [
         ['if (root.applyRoute(root.applyToAllMonitors, root.screenCount) === "screen") root.applyHere(item.key); else applyReporter.track(VGSThemeService.setWallpaper(item.key));',
             "Enter must dispatch on the extracted route — a re-derived branch here is how the pill " +
@@ -293,10 +230,7 @@ function mustPrecedeIn(block, label, first, second, why) {
         "absorber moved below the Row sits on top of the segment hit targets and eats every click");
 }
 
-// SessionData's seeded enable. One setter owns it (D010: a SessionData write,
-// not a new service method), so the switcher, the dash button, the Settings
-// toggle and the wallpaper setFor IPC handler are all seeded by construction —
-// there is no second, unseeded enable to keep in step.
+// One setter owns the seeded enable (D010: a SessionData write, not a new service method), so every caller is seeded by construction.
 {
     const session = q("SessionData.qml");
     const setter = session.body("setPerMonitorWallpaper");
@@ -339,9 +273,7 @@ function mustPrecedeIn(block, label, first, second, why) {
             "stale alias keys cannot answer getMonitorCyclingSettings instead", 1]
     ]);
 
-    // The two mode maps must sit INSIDE the per-mode guard, which no presence
-    // pin can express: seeded unconditionally they would write light/dark maps
-    // that per-mode is off and nothing reads, and the pin would still be green.
+    // Seed light/dark maps only within the per-mode guard.
     const perModeBranch = session.blockFrom(
         session.indexOf("if (perModeWallpaper)", session.indexOf("function _seedPerMonitorFromCurrent(")),
         "the perModeWallpaper branch of _seedPerMonitorFromCurrent()");
@@ -355,7 +287,7 @@ function mustPrecedeIn(block, label, first, second, why) {
             "from whichever of the two the new mode names", 1]
     ]);
 
-    // The helper every seed and every single-screen write goes through.
+
     session.requires(session.body("_mapWithMonitorValue"), "_mapWithMonitorValue()", [
         ["var next = {};",
             "a NEW map: QML sees a var property change by identity, so mutating the existing " +
@@ -373,8 +305,7 @@ function mustPrecedeIn(block, label, first, second, why) {
     ]);
 }
 
-// The theme switcher has no per-monitor concept and must not grow the toggle
-// (VGS-212's scope section says so in those words).
+// The theme switcher has no per-monitor scope.
 mustNot("ThemeSwitcherModal.qml", /scopeToggle|applyToAllMonitors|scopeFlipRequested/,
     "the theme switcher must not grow the scope toggle: themes have no per-monitor concept");
 

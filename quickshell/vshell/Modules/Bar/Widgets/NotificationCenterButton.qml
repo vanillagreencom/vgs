@@ -20,8 +20,7 @@ BasePill {
                 anchors.centerIn: parent
                 name: SessionData.doNotDisturb ? "notifications_off" : "notifications"
                 size: Theme.barIconSize(root.barThickness, -4, root.barConfig?.maximizeWidgetIcons, root.barConfig?.iconScale)
-                // DND uses error, not primary: primary is also the plain "popout open"
-                // color, so the two states were indistinguishable at a glance.
+                // Use error color to distinguish DND from the primary color of an open popout.
                 color: SessionData.doNotDisturb ? Theme.error : (root.isActive ? Theme.primary : Theme.widgetIconColor)
             }
 

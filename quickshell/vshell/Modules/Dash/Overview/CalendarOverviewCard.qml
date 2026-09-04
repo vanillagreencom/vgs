@@ -59,29 +59,26 @@ Rectangle {
         let week1Start;
 
         if (weekStartJs() === 1) {
-            // ISO 8601 Standard, week start on Monday
-            // A week belongs to the year its Thursday falls in
-            // So we have to get the yearTarget from weekStartDay instead of dateObj
+            // ISO weeks belong to the year of their Thursday, starting with the week that contains January 4.
             let yearTarget = weekStartDay;
-            yearTarget.setDate(yearTarget.getDate() + 3); // Monday + 3 = Thursday
+            yearTarget.setDate(yearTarget.getDate() + 3);
 
-            // Week 1 is the week containing Jan 4th
+
             const jan4 = new Date(yearTarget.getFullYear(), 0, 4);
             week1Start = startOfWeek(jan4);
         } else {
-            // Traditional / US Standard, week start on Sunday
-            // A week belongs to the year its Sunday falls in
+            // Non-ISO week starts: the week belongs to the year of its last day (start + 6), and week 1 contains January 1.
             let yearTarget = weekStartDay;
-            yearTarget.setDate(yearTarget.getDate() + 6); // Monday + 6 = Sunday
+            yearTarget.setDate(yearTarget.getDate() + 6);
 
-            // Week 1 is the week containing Jan 1st
+
             const jan1 = new Date(yearTarget.getFullYear(), 0, 1);
             week1Start = startOfWeek(jan1);
         }
 
         week1Start.setHours(12, 0, 0, 0);
 
-        const diffDays = Math.round((weekStartDay.getTime() - week1Start.getTime()) / 86400000); // Number of miliseconds in a day
+        const diffDays = Math.round((weekStartDay.getTime() - week1Start.getTime()) / 86400000);
         return Math.floor(diffDays / 7) + 1;
     }
 
@@ -707,17 +704,17 @@ Rectangle {
 
                         let didSwap = false;
 
-                        // Check item above
+
                         if (draggedIdx > 0) {
                             let above = items[draggedIdx - 1];
                             let targetYAbove = getTargetY(draggedIdx - 1);
                             if (above && dragged.y < (targetYAbove + above.height / 2)) {
-                                // Swap visualIndex
+
                                 let temp = dragged.visualIndex;
                                 dragged.visualIndex = above.visualIndex;
                                 above.visualIndex = temp;
 
-                                // Swap in local array
+
                                 items[draggedIdx] = above;
                                 items[draggedIdx - 1] = dragged;
 
@@ -727,17 +724,17 @@ Rectangle {
                             }
                         }
 
-                        // Check item below
+
                         if (!didSwap && draggedIdx < items.length - 1) {
                             let below = items[draggedIdx + 1];
                             let targetYBelow = getTargetY(draggedIdx + 1);
                             if (below && (dragged.y + dragged.height) > (targetYBelow + below.height / 2)) {
-                                // Swap visualIndex
+
                                 let temp = dragged.visualIndex;
                                 dragged.visualIndex = below.visualIndex;
                                 below.visualIndex = temp;
 
-                                // Swap in local array
+
                                 items[draggedIdx] = below;
                                 items[draggedIdx + 1] = dragged;
 
@@ -878,7 +875,7 @@ Rectangle {
                             }
                         }
 
-                        // Drag Handle
+
                         Rectangle {
                             id: dragHandle
                             width: 24
@@ -916,7 +913,7 @@ Rectangle {
                                 }
 
                                 onPositionChanged: {
-                                    // Handled natively by MouseArea.drag
+                                    // Movement is handled by MouseArea.drag.
                                 }
 
                                 onReleased: {
@@ -937,7 +934,7 @@ Rectangle {
                             }
                         }
 
-                        // Checkbox status icon
+
                         Rectangle {
                             id: checkboxContainer
                             width: 24
@@ -1004,7 +1001,7 @@ Rectangle {
                             }
                         }
 
-                        // Inline Edit Input Box
+
                         Rectangle {
                             id: editInputContainer
                             anchors.left: parent.left
@@ -1042,7 +1039,7 @@ Rectangle {
                             }
                         }
 
-                        // Main body MouseArea (declared before the delete/edit buttons so they sit on top)
+                        // Declare before delete/edit buttons so those buttons receive clicks above this MouseArea.
                         MouseArea {
                             id: eventMouseArea
 
@@ -1062,7 +1059,7 @@ Rectangle {
                             }
                         }
 
-                        // Delete / Cancel Button
+
                         Rectangle {
                             id: deleteButton
                             width: 24
@@ -1096,7 +1093,7 @@ Rectangle {
                             }
                         }
 
-                        // Edit / Save Button
+
                         Rectangle {
                             id: editButton
                             width: 24

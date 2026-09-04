@@ -27,19 +27,16 @@ Singleton {
     function getArtworkUrl(player) {
         if (!player) return "";
 
-        // 1. If native trackArtUrl is present and valid
         let artUrl = player.trackArtUrl || "";
         if (artUrl !== "") {
             return artUrl;
         }
 
-        // 2. Fallback to raw metadata mpris:artUrl if present
         if (player.metadata && player.metadata["mpris:artUrl"]) {
             artUrl = player.metadata["mpris:artUrl"].toString();
             if (artUrl !== "") return artUrl;
         }
 
-        // 3. Fallback for YouTube from xesam:url
         if (player.metadata && player.metadata["xesam:url"]) {
             const url = player.metadata["xesam:url"].toString();
             if (url.includes("youtube.com") || url.includes("youtu.be")) {
@@ -67,14 +64,13 @@ Singleton {
 
         if (url.startsWith("http://") || url.startsWith("https://")) {
             loading = true;
-            resolvedArtUrl = ""; // Clear stale artwork immediately while loading
+            resolvedArtUrl = "";
             const targetUrl = url;
             const hash = djb2Hash(url);
             const cacheDir = Paths.strip(Paths.imagecache);
             const filePath = cacheDir + "/remote_" + hash;
             const localFileUrl = "file://" + filePath;
 
-            // 1. First, check if the file already exists locally
             Proc.runCommand(null, ["test", "-f", filePath], (output, exitCode) => {
                 if (_lastArtUrl !== targetUrl)
                     return;
@@ -85,7 +81,6 @@ Singleton {
                 } else {
                     const dlCmd = "mkdir -p \"$(dirname \"$1\")\" && curl -f -s -L -o \"$1\" \"$2\" && mv \"$1\" \"$3\" || { rm -f \"$1\"; exit 1; }";
 
-                    // 2. Check if this is a YouTube URL to do high quality 16:9 fallback
                     if (targetUrl.includes("img.youtube.com/vi/")) {
                         const videoId = targetUrl.split("/vi/")[1].split("/")[0];
                         const maxresUrl = "https://img.youtube.com/vi/" + videoId + "/maxresdefault.jpg";
@@ -107,14 +102,13 @@ Singleton {
                                     if (mqExitCode === 0) {
                                         resolvedArtUrl = localFileUrl;
                                     } else {
-                                        resolvedArtUrl = targetUrl; // Ultimate fallback
+                                        resolvedArtUrl = targetUrl;
                                     }
                                     loading = false;
                                 }, 50, 15000);
                             }
                         }, 50, 15000);
                     } else {
-                        // Standard curl download for other remote URLs (e.g. SoundCloud)
                         const tmpPath = filePath + ".tmp";
                         Proc.runCommand(null, ["sh", "-c", dlCmd, "sh", tmpPath, targetUrl, filePath], (dlOutput, dlExitCode) => {
                             if (_lastArtUrl !== targetUrl)
@@ -123,7 +117,7 @@ Singleton {
                             if (dlExitCode === 0) {
                                 resolvedArtUrl = localFileUrl;
                             } else {
-                                resolvedArtUrl = targetUrl; // Fallback to raw URL
+                                resolvedArtUrl = targetUrl;
                             }
                             loading = false;
                         }, 50, 15000);
@@ -134,7 +128,7 @@ Singleton {
         }
 
         loading = true;
-        resolvedArtUrl = ""; // Clear stale artwork immediately while verifying local file
+        resolvedArtUrl = "";
         const localUrl = url;
         const filePath = url.startsWith("file://") ? url.substring(7) : url;
         Proc.runCommand(null, ["test", "-f", filePath], (output, exitCode) => {

@@ -4,34 +4,17 @@ import QtQuick
 import qs.Common
 import qs.Widgets
 
-// The carousel's selected slot: the one image shown at full size, its
-// lookahead, and the two states that are not an image (loading, undecodable).
-// Split out of SwitcherCarousel.qml, which owns the geometry, and out of
-// FullScreenSwitcher.qml, which owns paging and keys.
+// Selected carousel preview with loading/error states and adjacent-image lookahead.
 Item {
     id: stage
 
     property real dpr: 1
     property string imageSource: ""
-    // Adjacent entries, kept decoded so a page step is a cache hit. Bounded to
-    // prev/current/next on purpose: Qt retains only ~2 MB of UNreferenced
-    // pixmaps, so residency is the elements that hold a reference rather than
-    // the whole set — gruvy-glass alone ships 38 wallpapers.
+    // Hold decoded previous and next entries for paging. Bound references so browsing cannot retain every full-size image.
     property var prefetchSources: []
 
-    // Decode at display size, capped: theme previews are 1920x1080 but a user
-    // wallpaper can be far larger than the screen, and on a HiDPI panel the
-    // display size alone would ask for a decode bigger than any source we
-    // actually ship.
-    //
-    // The lookahead MUST match the visible Image on EVERY property the pixmap
-    // cache keys on — url, sourceSize, fillMode, sourceClipRect, frame, mirror —
-    // not just the size. QQuickImage folds fillMode into the key through
-    // QQuickImageProviderOptions::preserveAspectRatioFit, so a delegate left at
-    // the default Image.Stretch decodes under a DIFFERENT key and the page step
-    // misses exactly the entry the lookahead warmed: it pays the memory and
-    // re-decodes anyway. These three are declared once here and bound by both
-    // so the two cannot drift apart.
+    // Cap decode size for large wallpapers. Lookahead and the visible Image must share all pixmap-cache inputs.
+    // fillMode affects the cache key as well as sourceSize; mismatches decode twice despite preloading.
     readonly property int decodeCap: 2560
     readonly property int decodeWidth: Math.min(stage.decodeCap, Math.max(1, Math.round(stage.width * stage.dpr)))
     readonly property int decodeHeight: Math.min(stage.decodeCap, Math.max(1, Math.round(stage.height * stage.dpr)))

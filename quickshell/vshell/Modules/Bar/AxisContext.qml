@@ -47,7 +47,7 @@ QtObject {
 
     signal axisEdgeChanged()
     signal axisOrientationChanged()
-    signal changed()  // Single coalesced signal
+    signal changed()
 
     onEdgeChanged: {
         axisEdgeChanged()

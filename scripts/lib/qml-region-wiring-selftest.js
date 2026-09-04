@@ -1,12 +1,4 @@
-// The self-test for the plumbing AROUND scripts/lib/qml-region.js's bound: how the
-// child's deadline is derived from the supervisor's limit and ordered against it,
-// how a second guardChild() in one process answers, how a guarded suite's exit
-// status reaches CI, how the argv marker names the child's role without reaching
-// the suite's arguments, how a finished spawn is classified, how a bad override
-// falls back, and what evaluateMarked() hands back.
-//
-// Its entry point is this file, run directly. The map of the subsystem — which
-// files exist and which are manifest rows — is in scripts/lib/qml-region.js.
+// Test guard role selection, deadline derivation, exit status, and marked-region extraction.
 
 "use strict";
 
@@ -23,25 +15,15 @@ const { CHILD_ARGV_MARKER, CHILD_DEADLINE_GRACE_MS, CHILD_TIMEOUT_DEFAULT_MS, MA
 const { withGuardedSuite, hangingRegion, guardPath } = require("./qml-region-testkit.js");
 
 function regionGuardWiringSelfTest() {
-    // --- the ordering of the two bounds is derived, not asserted in prose ---
-    //
-    // The child's deadline sits above the supervisor's limit so the supervisor
-    // wins while it is alive and gets to name the limit it enforced. Every check
-    // that exercises the deadline overrides it, so nothing observed the derived
-    // default: flipping `limit + CHILD_DEADLINE_GRACE_MS` to `limit - ...`
-    // survived the whole self-test. The derivation is reachable now, and the raw
-    // override is a parameter rather than a read of process.env, so this answers
-    // the same way in a shell that has the variable exported.
+    // Test deadline derivation directly. Fixtures with explicit overrides cannot detect
+    // a default child deadline that runs before its supervisor limit.
     {
         assert.equal(childDeadlineFor(1000, undefined, () => {}), 1000 + CHILD_DEADLINE_GRACE_MS,
             "with no override the child's deadline is the supervisor's limit plus the grace");
         assert.ok(childDeadlineFor(1000, undefined, () => {}) > 1000,
             "and it must sit ABOVE that limit, or the supervisor never gets to report the bound " +
             "it enforced");
-        // The derived default does not pass through msFromEnv's ceiling, so a limit
-        // that was itself accepted used to push it over: at MAX_TIMER_MS the
-        // deadline came out 1000ms above, Node clamped the Worker's setTimeout to
-        // 1ms, and the child self-killed in 59ms reporting a 24-day bound.
+        // The derived default also needs the timer ceiling; an accepted limit can overflow after adding grace.
         assert.ok(childDeadlineFor(MAX_TIMER_MS, undefined, () => {}) <= MAX_TIMER_MS,
             "the derived deadline must clear the same ceiling the parser enforces, or the two " +
             "bounds invert at the top of the range instead of degrading together");
@@ -49,9 +31,7 @@ function regionGuardWiringSelfTest() {
             "an override is honoured as given, including below the limit — that inversion is the " +
             "only way to make the child's own bound observable");
 
-        // An inverted pair is a degraded MESSAGE, not a broken bound, so it is
-        // honoured and announced rather than clamped. Clamping would silently
-        // disarm every check below that depends on the child winning.
+        // An inverted deadline pair still bounds execution. Preserve it for child-deadline tests and report it.
         const said = [];
         childDeadlineFor(600000, "600", text => said.push(text));
         assert.ok(said.join("").includes("at or below this supervisor's 600000ms limit"),
@@ -61,13 +41,7 @@ function regionGuardWiringSelfTest() {
         assert.deepEqual(quiet, [], "and an ordered pair must say nothing at all");
     }
 
-    // --- a guarded suite's exit status is its child's, exactly ---
-    //
-    // guardChild() ends in process.exit(run.status ...), and every assertion in
-    // every guarded suite reaches CI through that one line. Pinned to an exact
-    // uncommon status rather than "non-zero": an always-1 regression would keep a
-    // non-zero check green while an always-0 regression turns all five guarded
-    // suites into unconditional passes.
+    // Assert an uncommon exact exit status so either an always-zero or always-one result fails.
     {
         withGuardedSuite({
             prefix: "vgs-region-status-",
@@ -85,11 +59,7 @@ function regionGuardWiringSelfTest() {
         });
     }
 
-    // --- the ps marker does not reach the suite's own arguments ---
-    //
-    // The marker is what says CHILD and what earns an orphan its attribution in
-    // ps, but it is inserted ahead of the suite's own argv, so guardChild() has to
-    // splice it back out or every suite that takes an argument reads the wrong one.
+    // Remove the guard marker from suite arguments while retaining it in the kernel command line.
     {
         withGuardedSuite({
             prefix: "vgs-region-argv-",
@@ -107,46 +77,23 @@ function regionGuardWiringSelfTest() {
         });
     }
 
-    // --- calling it twice in one process is a no-op, not a re-exec ---
-    //
-    // The neighbouring check covers a DESCENDANT guarding itself, which is correct
-    // and passes. This is the case the splice created: the marker is removed the
-    // instant it is read, so a second guardChild() in the SAME process found no
-    // marker, took the supervisor branch, and re-exec'd — unbounded, every level
-    // restarting its own spawnSync clock, 82 live processes measured from a
-    // two-line suite with nothing reported. Reachable from two modules that each
-    // defensively guard themselves.
-    //
-    // The exit status is the detector: a chain never reaches the exit at all, so
-    // it can only end at the fixture timeout. The census is the second one, and
-    // catches a chain short enough to still exit.
+    // Repeated guardChild calls in one process must not start a recursive chain after marker removal.
+    // Check both the completion status and process census.
     {
         withGuardedSuite({
             prefix: "vgs-region-twice-",
             timeout: 9000,
-            // Pinned like every sibling that can hang, and here it bounds the
-            // FAILURE path: on the 20s default a regressed flag re-exec'd for the
-            // whole fixture window — 3 processes at 3s, 86 at 6s, 260 at 12s, each
-            // arming a Worker. A chain of depth three proves the regression
-            // exactly as well, and on a 2 vCPU runner the deep one is an OOM event
-            // rather than the named red this check is written to produce.
+            // Short fixture deadlines bound the process-chain failure control.
             env: { VGS_REGION_CHILD_TIMEOUT_MS: "1500" },
             body: (dir, suite) => [
-                // A DEPTH cap, so the failure path is bounded by structure and not
-                // only by the clock. Pinning the timeout alone still let the chain
-                // reach ~45 live processes before it unwound, each arming a Worker;
-                // on a 2 vCPU runner that is a memory event rather than the named
-                // red this check is written to produce. Depth three proves the
-                // regression exactly as well as depth 260. The env name is outside
-                // the VGS_REGION_ prefix on purpose, so fixtureEnv does not strip
-                // it and it descends the way the chain does.
+                // Cap recursion depth as well as time so a failed guard cannot exhaust memory.
+                // The fixture depth variable must sit outside VGS_REGION_ so environment cleanup preserves it.
                 `const depth = Number(process.env.VGSTEST_TWICE_DEPTH || "0");`,
                 `if (depth > 3) { console.log("depth cap " + depth); process.exit(9); }`,
                 "process.env.VGSTEST_TWICE_DEPTH = String(depth + 1);",
                 "guardChild();",
                 "guardChild();",
-                // Counted from inside, because a synchronous fixture cannot sample
-                // the process table while its own spawnSync is blocked.
+                // Count from inside; the synchronous parent cannot sample while spawnSync blocks.
                 `const mine = fs.readdirSync("/proc").filter(function (entry) {`,
                 "    if (!/^[0-9]+$/.test(entry)) return false;",
                 "    try {",
@@ -162,10 +109,7 @@ function regionGuardWiringSelfTest() {
                 "a second guardChild() must be a no-op — a re-exec chain never reaches the exit " +
                 `at all; it exited ${run.status} after ${elapsed}ms. stdout ` +
                 `${JSON.stringify(stdout)}, stderr ${JSON.stringify(stderr)}` +
-                // The depth cap that bounds the failure path exits 9 and says so on
-                // STDOUT. Quoting stderr alone left the real regression reading as
-                // an unexplained 9, since the run stops here and the assertion that
-                // would have explained it is never reached.
+                // Include stdout in failure output because the depth cap reports its cause there.
                 (run.status === 9 ? " — status 9 is this fixture's own depth cap, which is the " +
                     "regression: every level re-exec'd until the cap stopped it" : ""));
             assert.ok(stdout.includes("census 2"),
@@ -177,16 +121,8 @@ function regionGuardWiringSelfTest() {
         });
     }
 
-    // --- a swallowed arming refusal cannot be converted into a quiet pass ---
-    //
-    // roleAnswered is set BEFORE arming, and must stay there: the marker is
-    // already spliced out by then, so a retry after a failed arm would take the
-    // SUPERVISOR branch and restart the chain the flag exists to stop. The cost is
-    // that the role being answered does not mean the process is BOUNDED, so a
-    // caller who swallowed the refusal could call again and get a quiet return —
-    // the suite then running in the child with no deadline, and a 100%-CPU orphan
-    // if the supervisor dies first. No shipped suite catches around guardChild();
-    // this pins the second flag that makes the difference reportable.
+    // A role can be recorded before arming succeeds. A retry after arming failure must throw,
+    // not return as if bounded or restart supervision after the marker was removed.
     {
         withGuardedSuite({
             prefix: "vgs-region-unarmed-twice-",
@@ -216,14 +152,8 @@ function regionGuardWiringSelfTest() {
         });
     }
 
-    // --- the marker is read at ONE position, not searched for ---
-    //
-    // Honouring the marker anywhere in argv let a suite's own
-    // `--vgs-region-guard-child` argument change this process's role: no
-    // supervisor, the argument eaten by the splice, and exit 137 from the child's
-    // own deadline rather than the supervised named kill and exit 1. It sits
-    // SECOND here, where a suite's own flag would land; a marker AT argv[2] stays
-    // honoured, since nothing can tell it from the supervisor's own insertion.
+    // A marker among suite arguments must not select the child role.
+    // At argv[2] it cannot be distinguished from a supervisor insertion.
     {
         withGuardedSuite({
             prefix: "vgs-region-argv-pos-",
@@ -252,13 +182,7 @@ function regionGuardWiringSelfTest() {
         });
     }
 
-    // --- the role is not inherited ---
-    //
-    // It used to be, through an env var, and a guarded suite that spawned another
-    // node script calling guardChild() handed that grandchild the child branch: no
-    // supervisor above it and no marker on it, so an orphan of it was exactly the
-    // unattributable ps entry the marker exists to prevent. argv does not descend,
-    // so the grandchild must supervise itself — which its own command line proves.
+    // A spawned script must select its own role. Process arguments do not descend like environment variables.
     {
         withGuardedSuite({
             prefix: "vgs-region-descend-",
@@ -291,19 +215,15 @@ function regionGuardWiringSelfTest() {
         });
     }
 
-    // --- a child that never started is not a hang ---
+
     {
-        // Both shapes taken from real spawnSync results, not fabricated: a
-        // timeout kill and a missing interpreter.
+        // Use observed spawn result forms for timeout and missing-interpreter cases.
         const killedRun = spawnSync(process.execPath, ["-e", "setInterval(() => {}, 1000);"],
             { timeout: 200, killSignal: "SIGKILL" });
         assert.equal(spawnOutcome(killedRun), "killed",
             "a child the parent killed on the clock is the hang case");
 
-        // A SIGKILL this spawn did not send classifies the same, on purpose: from
-        // here they are one answer, "the child did not exit on its own". Which
-        // SIGKILL it was is killReport()'s question, and asking it here instead
-        // would put the distinction where the caller cannot act on it.
+        // spawnOutcome classifies external and local SIGKILL together; killReport attributes the cause.
         const selfKilled = spawnSync(process.execPath,
             ["-e", "process.kill(process.pid, 'SIGKILL');"], { timeout: 20000 });
         assert.equal(selfKilled.signal, "SIGKILL",
@@ -328,7 +248,7 @@ function regionGuardWiringSelfTest() {
             "and an ordinary exit is neither");
     }
 
-    // --- a bad timeout override falls back rather than becoming NaN ---
+
     {
         const NAME = "VGS_REGION_CHILD_TIMEOUT_MS";
         assert.equal(msFromEnv(undefined, NAME, CHILD_TIMEOUT_DEFAULT_MS), CHILD_TIMEOUT_DEFAULT_MS,
@@ -344,12 +264,8 @@ function regionGuardWiringSelfTest() {
                 assert.ok(said.join("").includes("not a positive number"),
                     `${JSON.stringify(bad)} must say why it fell back`);
         }
-        // Above the largest delay a timer holds, an override does not merely
-        // degrade — it INVERTS. Node clamps a Worker's setTimeout to 1ms up there
-        // while spawnSync's timeout keeps the huge value, so the child would kill
-        // itself at once while reporting the bound it was given, and the two
-        // bounds would disagree rather than stretch together. Same class as the
-        // NaN beside it, so it falls back the same way.
+        // A delay above the Node timer ceiling clamps to an immediate Worker timer while
+        // spawnSync keeps its large timeout. Reject that override to keep the bounds consistent.
         for (const huge of [String(MAX_TIMER_MS + 1), "1e12", String(Number.MAX_SAFE_INTEGER)]) {
             const loud = [];
             assert.equal(msFromEnv(huge, NAME, CHILD_TIMEOUT_DEFAULT_MS, text => loud.push(text)),
@@ -361,8 +277,7 @@ function regionGuardWiringSelfTest() {
         assert.equal(msFromEnv(String(MAX_TIMER_MS), NAME, CHILD_TIMEOUT_DEFAULT_MS, () => {}),
             MAX_TIMER_MS, "the ceiling itself is still a usable bound");
 
-        // All three bounds parse through here, so the message has to name the one
-        // that was actually set — a hardcoded name sends triage to the wrong knob.
+        // Fallback diagnostics must name the variable that supplied the invalid bound.
         const said = [];
         msFromEnv("abc", "VGS_REGION_CHILD_DEADLINE_MS", 4000, text => said.push(text));
         assert.ok(said.join("").includes("VGS_REGION_CHILD_DEADLINE_MS=\"abc\" is not a positive"),
@@ -371,7 +286,7 @@ function regionGuardWiringSelfTest() {
             "and the value it fell back to; said " + JSON.stringify(said.join("")));
     }
 
-    // --- and the extraction itself answers with the region's own functions ---
+
     {
         const region = body => ["// BEGIN SELF TEST", body, "// END SELF TEST"].join("\n");
         const marked = region("function two() { return Math.max(1, JSON.parse('2')); }\n" +
@@ -389,11 +304,5 @@ function regionGuardWiringSelfTest() {
     console.log("qml-region wiring selftest: all checks passed");
 }
 
-// A SCRIPT, not a module: nothing in the repo requires this file, so there is no
-// export and no `require.main` guard to flip. It is a manifest row and a CI line,
-// and that row pipes the completion line through grep — so a run that asserted
-// nothing prints nothing and the row goes red. The line is printed by the LAST
-// statement INSIDE the function for that reason: printed from out here it would
-// still appear after someone deleted the call, which is the vacuous pass the
-// grep exists to catch.
+// Keep the required completion message inside the test function so deleting its call cannot pass.
 regionGuardWiringSelfTest();

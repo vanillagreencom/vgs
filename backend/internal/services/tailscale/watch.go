@@ -13,60 +13,30 @@ import (
 	"time"
 )
 
-// The ipn bus watcher.
-//
-// Without it the backend only ever answers tailscale.getStatus on demand and
-// re-broadcasts after its own write actions, so every transition VGS did not
-// itself initiate is invisible: tailscaled finishing startup (the common case
-// on a cold boot, where the shell's first and only read lands minutes before
-// the daemon reaches Running), `tailscale up`/`down` from a terminal, another
-// client, or the control plane expiring the node.
-//
-// The bus is consumed through `tailscale debug watch-ipn`, the supported CLI
-// front end for tailscaled's LocalAPI /localapi/v0/watch-ipn-bus. Going through
-// the CLI rather than dialling the LocalAPI socket directly keeps the operator
-// mechanism (`tailscale set --operator=$USER`) in charge of access — the
-// tailscaled socket is root-owned on many distributions — and matches how every
-// other call in this service reaches tailscaled.
-//
-// A frame is treated purely as an edge: the payload is never parsed for state
-// and never logged. ipn notifications carry Prefs.Config.PrivateNodeKey and the
-// full netmap, so the only safe thing to do with the bytes is to discard them.
-// On any frame the watcher re-runs the normal status path and broadcasts that,
-// which also means subscribers keep receiving exactly the shape they handle
-// today.
+// The ipn bus watcher detects tailscaled changes made outside VGS. It uses
+// tailscale debug watch-ipn so CLI operator permissions control access. Frames
+// can contain private node keys and network maps: discard their contents and
+// request state through the normal status path.
 
 const (
-	// Frames arrive in bursts while a netmap settles. The first unserved frame
-	// opens a window; every frame landing inside it collapses into the same
-	// push, and the push happens when the window closes whether or not traffic
-	// has stopped.
-	//
-	// This is deliberately NOT a trailing-edge debounce. A debounce re-arms on
-	// each frame, so a stream arriving faster than the window postpones the push
-	// indefinitely — sustained bus traffic, which is exactly what a netmap burst
-	// is, would suppress every watcher-driven broadcast until it went quiet.
-	// Waiting for quiet buys nothing here anyway: pushStatus re-reads the
-	// current status, so a push mid-burst is as truthful as one after it.
+	// The first unserved frame starts a fixed window. Later frames share the
+	// pending push without extending it, so sustained traffic cannot postpone
+	// status reads indefinitely.
 	watchCoalesceWindow = 400 * time.Millisecond
 	// Floor on time between status reads, so a pathological frame rate cannot
 	// turn into a `tailscale status` fork bomb. It can only ever lengthen the
 	// wait, never shorten the coalescing window below its own value.
 	watchMinInterval = 2 * time.Second
-	// Restart backoff bounds for a watcher process that keeps exiting.
-	watchBackoffMin = 1 * time.Second
-	watchBackoffMax = 30 * time.Second
+	watchBackoffMin  = 1 * time.Second
+	watchBackoffMax  = 30 * time.Second
 	// A watcher that survives this long counts as having worked, so the next
 	// exit starts its backoff from scratch rather than inheriting a penalty.
 	watchHealthyAfter = 60 * time.Second
-	// Consecutive immediate failures before the supervisor gives up. Reached
-	// when the installed tailscale has no `debug watch-ipn` at all; spinning on
-	// that forever would just be a log flood.
+	// Limit consecutive short-lived watcher runs so a startup failure cannot cause
+	// endless restarts.
 	watchMaxFastFailures = 5
-	// Ceiling on how much of a watcher child's stderr runWatch retains for its
-	// exit error. A crash-looping or unexpectedly chatty child must not be able
-	// to grow this buffer without bound — capacity, not the child's output
-	// volume, decides how much error text ever exists in memory.
+	// watchStderrCap limits retained stderr so a noisy watcher cannot grow the
+	// error buffer without bound.
 	watchStderrCap = 4 * 1024
 )
 
@@ -79,9 +49,8 @@ type boundedBuffer struct {
 	truncated bool
 }
 
-// Write always reports success for the full input — dropping the overflow is
-// deliberate truncation, not a failure the caller (cmd.Wait, here) should see
-// as one.
+// Write reports the full input length even when the retained buffer is full.
+// Truncation must not become an I/O error for cmd.Wait.
 func (b *boundedBuffer) Write(p []byte) (int, error) {
 	if room := b.max - b.buf.Len(); room > 0 {
 		if len(p) > room {
@@ -112,7 +81,6 @@ func (b *boundedBuffer) String() string {
 	return s
 }
 
-// startWatch launches the supervised ipn bus watcher.
 func (m *Manager) startWatch() {
 	if m.watchCtx == nil {
 		m.watchCtx, m.watchStop = context.WithCancel(context.Background())
@@ -120,23 +88,13 @@ func (m *Manager) startWatch() {
 	go m.superviseWatch()
 }
 
-// watcherActive answers one question: can a push arrive right now? True only
-// while a watcher child is actually running — not merely while a supervisor
-// exists. It is false before the first child starts, false during every restart
-// backoff, and false permanently once supervision gives up.
-//
-// Reporting it for the supervisor rather than the child was wrong: the shell
-// does not care whether something intends to watch, it uses this to decide how
-// long it can go without asking, and during a backoff gap nothing can push. It
-// rides along in every State so the shell can pick its cadence from what is
-// actually running rather than from the capability alone — a capability is
-// advertised once at registration and cannot be withdrawn.
+// watcherActive reports a running watcher child. It is false during restart
+// backoff and after supervision stops, so the shell can choose its refresh
+// interval from current liveness.
 func (m *Manager) watcherActive() bool { return m.watchAlive.Load() }
 
-// setWatcherAlive records the child's liveness and, on a change, pushes a fresh
-// status so subscribers learn at the transition instead of at their next poll —
-// which for a watching backend is up to five minutes away, i.e. exactly the
-// staleness this flag exists to prevent.
+// setWatcherAlive requests a status push on child-liveness changes so
+// subscribers can adjust polling during restart gaps.
 func (m *Manager) setWatcherAlive(alive bool) {
 	if m.watchAlive.Swap(alive) == alive {
 		return
@@ -144,7 +102,8 @@ func (m *Manager) setWatcherAlive(alive bool) {
 	m.pulse()
 }
 
-// superviseWatch keeps exactly one watcher process alive until Close.
+// superviseWatch restarts the watcher until Close or the immediate-failure
+// limit.
 func (m *Manager) superviseWatch() {
 	backoff := watchBackoffMin
 	fastFailures := 0
@@ -163,15 +122,9 @@ func (m *Manager) superviseWatch() {
 		} else {
 			fastFailures++
 		}
-		// runWatch already cleared the flag when the child exited, so the shell
-		// is told it is on its own for the whole backoff, not just after the
-		// give-up below.
 		if fastFailures >= watchMaxFastFailures {
-			// Name what was actually observed — the child's exit status and any
-			// stderr runWatch folded in — rather than asserting a specific
-			// cause. A message that guesses wrong (e.g. "does this build have
-			// `debug watch-ipn`?" when it does and only a flag was rejected)
-			// sends whoever is triaging looking in the wrong place.
+			// Report the observed exit error and retained stderr; an exit alone does not
+			// identify why the child failed.
 			m.log.Error("tailscale ipn bus watcher keeps failing immediately; giving up "+
 				"(status will only update on demand)",
 				"err", err, "attempts", fastFailures)
@@ -192,15 +145,9 @@ func (m *Manager) superviseWatch() {
 	}
 }
 
-// runWatch reads one watcher process to completion.
 func (m *Manager) runWatch(ctx context.Context) error {
-	// No flags: `--netmap=true` was already the CLI default and has since been
-	// removed from the flag set entirely (`flag provided but not defined:
-	// -netmap` on tailscale 1.102.2). Passing it made every watcher restart
-	// fail immediately and burn the whole retry budget within seconds — do not
-	// reintroduce it or any other flag without re-verifying it against a
-	// current `tailscale debug watch-ipn --help`. Netmap-carried peer
-	// online/offline transitions still reach the bus with no flag at all.
+	// Invoke watch-ipn without flags. Notifications already include the state
+	// changes used here; unsupported flags would cause repeated startup failures.
 	stderr := &boundedBuffer{max: watchStderrCap}
 	cmd := exec.CommandContext(ctx, m.tailscale, "debug", "watch-ipn")
 	cmd.Stderr = stderr
@@ -212,18 +159,13 @@ func (m *Manager) runWatch(ctx context.Context) error {
 		return err
 	}
 	m.setWatcherAlive(true)
-	// From here every exit path must clear it again: until a replacement child
-	// is running, no push can arrive, and a status read during the restart
-	// backoff must say so.
+	// Clear child liveness on exit so status reads during restart backoff request
+	// polling.
 	defer m.setWatcherAlive(false)
 	readErr := m.readFrames(stdout, m.pulse)
 	if readErr != nil {
-		// The reader gave up on output it could not parse, but the child is
-		// very likely still alive and simply idle — waiting for the next
-		// tailscaled event. Closing the read end does not disturb a process
-		// that is not writing, so Wait would block forever and supervision
-		// would never restart, never count a failure, and never reach its
-		// give-up limit. Terminate it explicitly.
+		// A parse error does not stop an idle child. Kill it before Wait so malformed
+		// output cannot block supervision indefinitely.
 		if cmd.Process != nil {
 			_ = cmd.Process.Kill()
 		}
@@ -242,8 +184,8 @@ func (m *Manager) runWatch(ctx context.Context) error {
 	return waitErr
 }
 
-// readFrames consumes concatenated JSON notifications and calls onFrame for
-// each one. The frame contents are deliberately discarded: see the file header.
+// readFrames consumes concatenated JSON notifications and calls onFrame without
+// retaining their contents. Notifications can contain private keys.
 func (m *Manager) readFrames(r io.Reader, onFrame func()) error {
 	br := bufio.NewReaderSize(r, 64*1024)
 	// Some tailscale builds print a human "Connected." banner before the JSON.
@@ -290,9 +232,8 @@ func (m *Manager) watchDone() bool {
 	return m.watchCtx.Err() != nil
 }
 
-// pulse schedules a coalesced status read. Frames arriving while a push is
-// already pending collapse into it and — importantly — do NOT postpone it, so
-// the wait has a hard ceiling of the delay computed for the first frame.
+// pulse coalesces frames without extending an existing timer, so continuous
+// traffic does not postpone the pending read.
 func (m *Manager) pulse() {
 	m.watchMu.Lock()
 	defer m.watchMu.Unlock()
@@ -300,21 +241,15 @@ func (m *Manager) pulse() {
 		return
 	}
 	if m.pushTimer != nil {
-		// A push is already scheduled; this frame is covered by it.
 		return
 	}
 	if m.pushing {
-		// A read is in flight. Starting a second one would put two `tailscale
-		// status` calls in the air at once — each may take up to the 12s
-		// command timeout while the scheduling floor is 2s — and they would
-		// broadcast in completion order, so an older answer could land after a
-		// newer one and make the shell's state go backwards. Remember the frame
-		// instead; the read in flight re-pulses when it lands.
+		// Only one watcher status read may run at a time. Otherwise reads can finish
+		// out of order and publish stale state. Record an intervening frame for a read
+		// after this one finishes.
 		m.pushMissed = true
 		return
 	}
-	// The larger of the two: the coalescing window is a minimum wait, and the
-	// min-interval remainder can only extend it.
 	delay := watchCoalesceWindow
 	if remainder := watchMinInterval - time.Since(m.lastPush); remainder > delay {
 		delay = remainder
@@ -322,13 +257,8 @@ func (m *Manager) pulse() {
 	m.pushTimer = time.AfterFunc(delay, m.pushStatus)
 }
 
-// pushStatus re-reads the truthful status and broadcasts it to subscribers.
-//
-// Exactly one of these runs at a time. The slot is held until the read has been
-// broadcast, so watcher-driven broadcasts are emitted in the order their reads
-// started — a push can never hand the shell a state older than the one it just
-// gave it. Frames that arrive meanwhile are not lost: they set pushMissed and
-// are served by a fresh pulse as soon as this one finishes.
+// pushStatus holds the watcher read slot through broadcast so watcher reads
+// publish in start order. Frames received during the read request another pulse.
 func (m *Manager) pushStatus() {
 	m.watchMu.Lock()
 	m.lastPush = time.Now()
@@ -352,9 +282,8 @@ func (m *Manager) pushStatus() {
 	}
 	state, err := m.status()
 	if err != nil {
-		// Never broadcast a fabricated "disconnected": a failed read is not a
-		// state, and overwriting a good snapshot with one would recreate the
-		// bug this watcher exists to fix.
+		// A failed read must preserve the last reported state rather than publish an
+		// empty disconnected state.
 		m.log.Warn("tailscale status read after ipn event failed", "err", err)
 		return
 	}
@@ -362,7 +291,6 @@ func (m *Manager) pushStatus() {
 	m.srv.Broadcast("tailscale", state)
 }
 
-// stopWatch cancels the watcher and any pending push.
 func (m *Manager) stopWatch() {
 	// Cancel first: setWatcherAlive would otherwise pulse a status read on the
 	// way out of a daemon that is shutting down.

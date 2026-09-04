@@ -58,9 +58,7 @@ Scope {
                     // (delayedGrabTimer); the grab then follows the focused
                     // monitor as the pointer moves between screens.
                     wanted: CompositorService.useHyprlandFocusGrab && overviewScope.overviewOpen && grabArmed && root.monitorIsFocused
-                    // While the overview stays open, a release only means another
-                    // monitor's grab took over — restoring focus then would fight
-                    // the new grab and clear it. Restore only on real close.
+                    // A grab handoff while open must not restore application focus and fight the new monitor's grab.
                     restoreFocus: !overviewScope.overviewOpen
                     property bool grabArmed: false
                     property bool hasBeenActivated: false

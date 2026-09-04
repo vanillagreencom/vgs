@@ -15,7 +15,7 @@
     ]
   },
   "count": 79,
-  "totalSize": 1099213323,
+  "totalSize": 1099203205,
   "themes": [
     {
       "name": "akane",
@@ -610,12 +610,12 @@
       "foreground": "#bfbdb6",
       "accent": "#e6b450",
       "preview": "preview.png",
-      "size": 8039745,
+      "size": 8039213,
       "files": [
         {
           "path": "apps/btop.theme",
-          "size": 2150,
-          "sha256": "d5484417195f43235313c14764ffc7be5be1c40a1545f8fbe4d86e77e742dd89"
+          "size": 1618,
+          "sha256": "8f9cf9e4b5de8379b0ecc5e0006600913d65c422467035efaf7a085563bfdd9a"
         },
         {
           "path": "apps/icons.theme",
@@ -1009,12 +1009,12 @@
       "foreground": "#cdd6f4",
       "accent": "#89b4fa",
       "preview": "preview.png",
-      "size": 13257991,
+      "size": 13257356,
       "files": [
         {
           "path": "apps/btop.theme",
-          "size": 2278,
-          "sha256": "19dc3669e81d5857c5cbe7b3a884b1004e7c069ce2b8261f3bcd03bacb3dea54"
+          "size": 1643,
+          "sha256": "5346e76ccf69a1695584d0c731caf5bef78c1dc4799fa38274d60220a4d637d1"
         },
         {
           "path": "apps/icons.theme",
@@ -1090,12 +1090,12 @@
       "foreground": "#c6d0f5",
       "accent": "#ca9ee6",
       "preview": "preview.png",
-      "size": 15857697,
+      "size": 15857062,
       "files": [
         {
           "path": "apps/btop.theme",
-          "size": 2277,
-          "sha256": "1689b67c1c6ce2f4985a0047fad6535acecf7872c21963785fa749868a01a2c9"
+          "size": 1642,
+          "sha256": "46d2f4b3ee8d89ab613f3e795a7a69cf0bd09e3abf112553640686cc5e7286ee"
         },
         {
           "path": "apps/icons.theme",
@@ -1252,12 +1252,12 @@
       "foreground": "#cad3f5",
       "accent": "#c6a0f6",
       "preview": "preview.png",
-      "size": 21048535,
+      "size": 21047900,
       "files": [
         {
           "path": "apps/btop.theme",
-          "size": 2277,
-          "sha256": "f8b18ccb217bd4ebc184806a91d49a12cb312b9cf37d8ba23322653a78ac8850"
+          "size": 1642,
+          "sha256": "083e847ef0b303dd9ba48de484460ad312aa5f42b3a3c5bc501ce0f6d6b5a2ca"
         },
         {
           "path": "apps/icons.theme",
@@ -1636,12 +1636,12 @@
       "foreground": "#f8f8f2",
       "accent": "#bd93f9",
       "preview": "preview.png",
-      "size": 13681698,
+      "size": 13681166,
       "files": [
         {
           "path": "apps/btop.theme",
-          "size": 2150,
-          "sha256": "ca5f7a7a8aab828e2b3b464393797df1edc109e1aca11c716ff7f66947a05292"
+          "size": 1618,
+          "sha256": "1ab860165fc2e6db5636b640e6951e23fe892232abfabf4089f99d016b86c904"
         },
         {
           "path": "apps/icons.theme",
@@ -1909,12 +1909,12 @@
       "foreground": "#ffcead",
       "accent": "#7d82d9",
       "preview": "preview.png",
-      "size": 5035048,
+      "size": 5034898,
       "files": [
         {
           "path": "apps/btop.theme",
-          "size": 1535,
-          "sha256": "40a0c87c51e7f5cde088742f24c7d21429c9d6d6b20a65bae7bad7dcab16da11"
+          "size": 1385,
+          "sha256": "b68cc423b20e8863f744e481dbc294e14f0d2b037003768e01ea402d89863a9b"
         },
         {
           "path": "apps/icons.theme",
@@ -2106,12 +2106,12 @@
       "foreground": "#d3c6aa",
       "accent": "#7fbbb3",
       "preview": "preview.png",
-      "size": 1134141,
+      "size": 1133653,
       "files": [
         {
           "path": "apps/btop.theme",
-          "size": 2267,
-          "sha256": "6067fdd9521f00621044cfc4bbc27ce1d3744170120e88ceff4555a69a1b5482"
+          "size": 1779,
+          "sha256": "460a323846ba4ba97ba30dab5f99eed13b7bfb74bc57f4d7cb6e8b24ad61f9ea"
         },
         {
           "path": "apps/icons.theme",
@@ -2258,12 +2258,12 @@
       "foreground": "#100f0f",
       "accent": "#205ea6",
       "preview": "preview.png",
-      "size": 2145694,
+      "size": 2145256,
       "files": [
         {
           "path": "apps/btop.theme",
-          "size": 1722,
-          "sha256": "0f204f5fe8dd6f13ed263fed8a95f8e0f0ca2d053a0f208c44f108b6b4a1b772"
+          "size": 1284,
+          "sha256": "c6a5b9720265c4439d0764aa9a4a1deffe9f8070cfb2812e25eb31e3a23a3e8f"
         },
         {
           "path": "apps/chromium.theme",
@@ -2954,12 +2954,12 @@
       "foreground": "#ddf7ff",
       "accent": "#82fb9c",
       "preview": "preview.png",
-      "size": 8273817,
+      "size": 8273667,
       "files": [
         {
           "path": "apps/btop.theme",
-          "size": 1535,
-          "sha256": "5d57977fbd1db40cb1452d7b65593cf429bb98d6518bf48bf790c7310aa5e964"
+          "size": 1385,
+          "sha256": "3dd389ec82ae6d5742c7892590d122d4e70c7ec4a73c197227c6ea66e524baa3"
         },
         {
           "path": "apps/icons.theme",
@@ -3475,12 +3475,12 @@
       "foreground": "#fafcfb",
       "accent": "#b59790",
       "preview": "preview.png",
-      "size": 6973842,
+      "size": 6973134,
       "files": [
         {
           "path": "apps/btop.theme",
-          "size": 2272,
-          "sha256": "b1396a01fc50eae877365cbefe941c542942ac64044adccfcc362777bb4621f3"
+          "size": 1639,
+          "sha256": "7c555989a544f33b2f5e161bdc9eed034572699bc667e097261846f1419c7543"
         },
         {
           "path": "apps/chromium.theme",
@@ -3524,8 +3524,8 @@
         },
         {
           "path": "colors.toml",
-          "size": 661,
-          "sha256": "050b423941fdd5a4113dd0538a25c9566ae529226c99913174d3a03d529f7426"
+          "size": 586,
+          "sha256": "9dada0aba228e90a3b89bce019eea4434cbe4912d71df9aab3ca27a112f34284"
         },
         {
           "path": "preview.png",
@@ -3652,12 +3652,12 @@
       "foreground": "#d6e2ee",
       "accent": "#8bc9eb",
       "preview": "preview.png",
-      "size": 2745782,
+      "size": 2745557,
       "files": [
         {
           "path": "apps/btop.theme",
-          "size": 1545,
-          "sha256": "737f37556784ad4ba744f07b634acbead1764804d511ca3f44e9d036b3770838"
+          "size": 1395,
+          "sha256": "3ca1ca402ee58f2892fa55fe005eff8f2fb20bd9ab7225709278c3d69e9e6051"
         },
         {
           "path": "apps/chromium.theme",
@@ -3691,8 +3691,8 @@
         },
         {
           "path": "colors.toml",
-          "size": 671,
-          "sha256": "7cb79694305b7f7c8ef25c0333343dfccfcb2dde863cf025eb016235b81ecfa6"
+          "size": 596,
+          "sha256": "131b1fb736fcfb23671a07ad96cb8828d6b4d581f8b24c28f1eadc89f84c72ea"
         },
         {
           "path": "preview.png",
@@ -3991,12 +3991,12 @@
       "foreground": "#c2c2b0",
       "accent": "#78824b",
       "preview": "preview.png",
-      "size": 13660419,
+      "size": 13660269,
       "files": [
         {
           "path": "apps/btop.theme",
-          "size": 1536,
-          "sha256": "a0c738b9c9e2126be3de7da621c6a4644cd31cf99efd91d68d079137bad9eac1"
+          "size": 1386,
+          "sha256": "6fdc54783dc5546ae43b5ab92c304ef7e188c7311a76fb434774c6e05d1de882"
         },
         {
           "path": "apps/chromium.theme",
@@ -4491,12 +4491,12 @@
       "foreground": "#f3edf7",
       "accent": "#fff59b",
       "preview": "preview.png",
-      "size": 24833796,
+      "size": 24833136,
       "files": [
         {
           "path": "apps/btop.theme",
-          "size": 2356,
-          "sha256": "4914cccfd65a7db4856823e6dbff65cbae130e5468ac6fba83f19a0b7dcef65f"
+          "size": 1696,
+          "sha256": "4fd7a244bc6b94fc998223a5f404bc3b0cf7075ed2679447c35abee88743a78b"
         },
         {
           "path": "apps/icons.theme",
@@ -4663,12 +4663,12 @@
       "foreground": "#c1c497",
       "accent": "#509475",
       "preview": "preview.png",
-      "size": 9144638,
+      "size": 9144100,
       "files": [
         {
           "path": "apps/btop.theme",
-          "size": 1851,
-          "sha256": "00ae9d0960ee3d17797eef1d3f29d2b04b9d8b4a5d8ceaa612f02afe1922327a"
+          "size": 1313,
+          "sha256": "211389226ac8cfa4baa0b281a839eef70b59758143edd3384e4c8cbb1b786824"
         },
         {
           "path": "apps/icons.theme",
@@ -5057,12 +5057,12 @@
       "foreground": "#f6dcac",
       "accent": "#faa968",
       "preview": "preview.png",
-      "size": 41705380,
+      "size": 41704763,
       "files": [
         {
           "path": "apps/btop.theme",
-          "size": 2457,
-          "sha256": "5e724560125a59416fec61c9cc35439b875bc22a5bb219c9ee63c5520f1ec414"
+          "size": 2307,
+          "sha256": "980d7e0a74f57781278fb8130e042447208218ea490db04cad0b30162910f070"
         },
         {
           "path": "apps/chromium.theme",
@@ -5076,8 +5076,8 @@
         },
         {
           "path": "apps/neovim.lua",
-          "size": 1579,
-          "sha256": "1f1fe6ed31622685c76f4ba405aa02fe76949b61821bfacd0fbbea66ba322b9d"
+          "size": 1112,
+          "sha256": "2827be6a851769fa25653377f3f7310a83f2bdd33d7fd006f7970be6d8cce1e5"
         },
         {
           "path": "apps/vscode-theme.json",
@@ -5284,12 +5284,12 @@
       "foreground": "#e6d9db",
       "accent": "#f38d70",
       "preview": "preview.png",
-      "size": 6902921,
+      "size": 6902493,
       "files": [
         {
           "path": "apps/btop.theme",
-          "size": 1880,
-          "sha256": "c44bf03217360e39c9f8f8a48ba79cd790974d31ccb64bc378d6a207c34ce1c3"
+          "size": 1452,
+          "sha256": "4581115dd42df20d7b5d9540e8def9529243377e0ff209fd1d1b8b8a07b8031a"
         },
         {
           "path": "apps/icons.theme",
@@ -5370,12 +5370,12 @@
       "foreground": "#575279",
       "accent": "#56949f",
       "preview": "preview.png",
-      "size": 12972816,
+      "size": 12972284,
       "files": [
         {
           "path": "apps/btop.theme",
-          "size": 2455,
-          "sha256": "a0db380482534b32cbe52ed0831dab8e31e477b37eb76d8446cae1b047908250"
+          "size": 1923,
+          "sha256": "3f6b0f9272cf1791aa8019b03ecfb3f92a77f7e2fbcaecdc1c2b9dd389b97ee6"
         },
         {
           "path": "apps/chromium.theme",
@@ -5456,12 +5456,12 @@
       "foreground": "#e0def4",
       "accent": "#ebbcba",
       "preview": "preview.png",
-      "size": 16195574,
+      "size": 16195042,
       "files": [
         {
           "path": "apps/btop.theme",
-          "size": 2455,
-          "sha256": "088675387b0b3665f0424ac6b250748decd8f2387a0acf821bc8f47a80cfd2c6"
+          "size": 1923,
+          "sha256": "60cbdf3e435ed46363137b5b79c650294e0972c2445717116994ef50241bf9bd"
         },
         {
           "path": "apps/icons.theme",
@@ -5537,12 +5537,12 @@
       "foreground": "#e0def4",
       "accent": "#ea9a97",
       "preview": "preview.png",
-      "size": 21664637,
+      "size": 21664105,
       "files": [
         {
           "path": "apps/btop.theme",
-          "size": 2150,
-          "sha256": "88936158043ac7397a12c234c16c6d375e3f2aa67b61664525aa853998cb3bc8"
+          "size": 1618,
+          "sha256": "88db7dd9dd57a400837aab4a592a0133991e42b687c1c368522cd49486be1973"
         },
         {
           "path": "apps/icons.theme",
@@ -6093,12 +6093,12 @@
       "foreground": "#cacccc",
       "accent": "#798186",
       "preview": "preview.png",
-      "size": 44241692,
+      "size": 44241109,
       "files": [
         {
           "path": "apps/btop.theme",
-          "size": 2395,
-          "sha256": "c1ff25fdc526b5d25feb892057639f806810cafa4820430f73d618862a5ad0fb"
+          "size": 1887,
+          "sha256": "893840002261331656b077de51845d50b47519e3af1dbe60790bb3709c6b34a8"
         },
         {
           "path": "apps/icons.theme",
@@ -6147,8 +6147,8 @@
         },
         {
           "path": "colors.toml",
-          "size": 661,
-          "sha256": "55a651397ebe67de12305344911ec385a92b79bf8717bbf82c5d849f725f656e"
+          "size": 586,
+          "sha256": "a788bfc159245dda703dd37853e81b0b3dd4f6ba9eaec0b6efd851a3f3796b6e"
         },
         {
           "path": "preview.png",
@@ -6896,12 +6896,12 @@
       "foreground": "#ffffff",
       "accent": "#8d8d8d",
       "preview": "preview.png",
-      "size": 3805766,
+      "size": 3805557,
       "files": [
         {
           "path": "apps/btop.theme",
-          "size": 1535,
-          "sha256": "e47d2a8e6027cf70829835124fdd60a039e6692fa6120bc0af0297634986eefc"
+          "size": 1385,
+          "sha256": "d68f80da2c372aaa359c47bdc1234e4424bc0c4fb8f906f7b812939d7669cf7d"
         },
         {
           "path": "apps/icons.theme",
@@ -6940,8 +6940,8 @@
         },
         {
           "path": "colors.toml",
-          "size": 578,
-          "sha256": "b451fcdd07130125263b1f9a502823b09d0dafde078962305d6cc534cdb95c5e"
+          "size": 519,
+          "sha256": "06127de36dac33f35af196ba7cde244d63a489b1c5e8496f97d50cb33fa9ac6c"
         },
         {
           "path": "preview.png",
@@ -7346,12 +7346,12 @@
       "foreground": "#000000",
       "accent": "#6e6e6e",
       "preview": "preview.png",
-      "size": 3443362,
+      "size": 3443153,
       "files": [
         {
           "path": "apps/btop.theme",
-          "size": 1535,
-          "sha256": "472aa87dd515c5f575fba8a8d8283bdae00a1f75c606f392c079cc7f61be8bfd"
+          "size": 1385,
+          "sha256": "5386bb22dd39741a9811249a28a59ae548108a8a7dbede45782cb90b2b3c1ecb"
         },
         {
           "path": "apps/icons.theme",
@@ -7385,8 +7385,8 @@
         },
         {
           "path": "colors.toml",
-          "size": 578,
-          "sha256": "e17625164213d21a1ada6da37fa35e1356c2a85564e194c5989dd0fbd15aba4d"
+          "size": 519,
+          "sha256": "491e12e27bbfd5096c650684c77c7e0f12d1c6d48ba251867c055e247a8f7113"
         },
         {
           "path": "preview.png",

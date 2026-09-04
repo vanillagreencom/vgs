@@ -12,12 +12,12 @@ Rectangle {
 
     signal dismissed
 
-    property double rowSpacing: 0.01 * width // horizontal spacing between keyboard
-    property double columnSpacing: 0.02 * height // vertical   spacing between keyboard
-    property bool shift: false //Boolean for the shift state
-    property bool symbols: false //Boolean for the symbol state
-    property double columns: 10 // Number of column
-    property double rows: 4 // Number of row
+    property double rowSpacing: 0.01 * width
+    property double columnSpacing: 0.02 * height
+    property bool shift: false
+    property bool symbols: false
+    property double columns: 10
+    property double rows: 4
 
     property string strShift: '\u2191'
     property string strBackspace: "Backspace"
@@ -163,7 +163,7 @@ Rectangle {
                   }]
     }
 
-    //Here is the corresponding table between the ascii and the key event
+
     property var tableKeyEvent: {
         "_0": Qt.Key_0,
         "_1": Qt.Key_1,
@@ -212,7 +212,7 @@ Rectangle {
         "_)": Qt.Key_BracketRight,
         "_€": parseInt(
                     "20ac",
-                    16) // I didn't find the appropriate Qt event so I used the hex format
+                    16)
         ,
         "_&": Qt.Key_Ampersand,
         "_@": Qt.Key_At,
@@ -236,7 +236,7 @@ anchors.topMargin: 5
 anchors.bottom: parent.bottom
 anchors.bottomMargin: 5
 
-//One column which contains 5 rows
+
 Column {
 spacing: columnSpacing
 

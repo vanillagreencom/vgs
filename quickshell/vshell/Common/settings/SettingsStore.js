@@ -263,9 +263,7 @@ function migrateToVersion(obj, targetVersion) {
 
     if (currentVersion < 12) {
         console.info("Migrating settings from version", currentVersion, "to version 12");
-        // VGS matugenTemplate* toggles become the themeApps map. The old values
-        // only expressed intent when the VGS matugen pipeline was actually on;
-        // otherwise we drop them and let app detection pick defaults.
+        // Migrate template toggles only when their generation pipeline was enabled; otherwise use app-detection defaults.
         var matugenToApp = {
             matugenTemplateGtk: "gtk", matugenTemplateHyprland: "hyprland",
             matugenTemplateQt5ct: "qt5ct", matugenTemplateQt6ct: "qt6ct",
@@ -294,7 +292,6 @@ function migrateToVersion(obj, targetVersion) {
     }
 
     if (currentVersion < 14) {
-        // Legacy theme-registry keys; nothing consumed them under VGS packages.
         delete settings.customThemeFile;
         delete settings.registryThemeVariants;
         settings.configVersion = 14;
@@ -371,9 +368,7 @@ function migrateToVersion(obj, targetVersion) {
     if (currentVersion < 17) {
         console.info("Migrating settings from version", currentVersion, "to version 17");
         console.info("New idle default: idle -> lock -> blank-to-black; no auto monitor-off");
-        // Turn off auto monitor power-off only when still on the old shipped 600s
-        // default (a deliberately-customized value is preserved). Add the new
-        // blank-to-black keys if absent.
+        // Preserve customized monitor timeouts; disable power-off for the shipped 600-second default.
         if (settings.acMonitorTimeout === 600)
             settings.acMonitorTimeout = 0;
         if (settings.lockScreenBlankEnabled === undefined)
@@ -397,9 +392,6 @@ function migrateToVersion(obj, targetVersion) {
     if (currentVersion < 19) {
         console.info("Migrating settings from version", currentVersion, "to version 19");
         console.info("Retiring the legacy grid launcher; the vgsMenu plugin is the only app launcher");
-        // These keys only ever configured the removed launcher modal, app
-        // drawer popout and spotlight bar. The valid-key filter below would
-        // drop them anyway; deleting them here keeps the intent on the record.
         delete settings.showLauncherButton;
         delete settings.appLauncherViewMode;
         delete settings.spotlightModalViewMode;
@@ -416,12 +408,8 @@ function migrateToVersion(obj, targetVersion) {
     if (currentVersion < 20) {
         console.info("Migrating settings from version", currentVersion, "to version 20");
         console.info("Recording bar widget removals so hardware-gated widgets can be reconciled");
-        // Introduces removedBarWidgets. It starts empty on purpose: no existing
-        // config ever recorded a removal, so seeding it from the current bar
-        // layout would mark every widget the config simply never mentioned as
-        // "deliberately removed" and preserve exactly the bug this fixes. The
-        // cost is that a user who had already removed a hardware-gated widget
-        // gets it back once; removing it again is recorded and sticks.
+        // Absent widgets do not prove user removal, so seed removedBarWidgets empty.
+        // Reconciliation can restore an unwanted hardware widget. An explicit removal records the choice.
         if (!Array.isArray(settings.removedBarWidgets))
             settings.removedBarWidgets = [];
         settings.configVersion = 20;
@@ -430,11 +418,7 @@ function migrateToVersion(obj, targetVersion) {
     if (currentVersion < 21) {
         console.info("Migrating settings from version", currentVersion, "to version 21");
         console.info("Renaming the surviving spotlight keys; both now configure the niri overview search");
-        // Rename, not drop: these two keys are live, and the valid-key filter
-        // below would silently discard a set value under its old name. Only
-        // copy when the new key is absent, so a config that has already been
-        // migrated (or hand-edited to the new name) is never overwritten by a
-        // stale duplicate.
+        // Copy renamed keys only when the destination is absent, before the valid-key filter discards the source.
         var renamedIn21 = {
             spotlightCloseNiriOverview: "overviewSearchCloseNiriOverview",
             spotlightSectionViewModes: "overviewSearchSectionViewModes"
@@ -451,14 +435,7 @@ function migrateToVersion(obj, targetVersion) {
     if (currentVersion < 22) {
         console.info("Migrating settings from version", currentVersion, "to version 22");
         console.info("Marking the notification first-run takeover as already spent for an existing config");
-        // VGS-64: on a fresh install VGS now takes org.freedesktop.Notifications
-        // rather than losing it to whichever daemon claimed it first. That is a
-        // FIRST-RUN behaviour, and this config is by definition not a first run
-        // -- it already exists. Without this line the key would arrive at its
-        // `false` default on every upgrade, and a user who deliberately turned
-        // VGS notifications off would find their daemon masked after the next
-        // `-git` bump. Set unconditionally: an existing config cannot have a
-        // meaningful value for a key that did not exist until now.
+        // Existing configurations must not trigger first-run notification takeover after migration.
         settings.notificationFirstRunTakeoverDone = true;
         settings.configVersion = 22;
     }

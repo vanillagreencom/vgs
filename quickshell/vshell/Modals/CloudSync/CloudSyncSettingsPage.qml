@@ -12,9 +12,7 @@ CloudSyncPage {
 
     readonly property var settings: CloudSyncService.settings
 
-    // Bandwidth limits are rclone rate strings ("2M", "500k"). An empty field
-    // means unlimited, which is why the placeholder says so rather than showing
-    // a fake number.
+    // Bandwidth values use rclone rate strings such as 2M; empty means unlimited.
     CloudSyncCard {
         iconName: "speed"
         title: I18n.tr("Transfer speed", "Settings card title for bandwidth limits")
@@ -85,8 +83,7 @@ CloudSyncPage {
         }
     }
 
-    // The recycle bin is what makes two-way sync recoverable, so it gets its
-    // own card rather than being buried in an advanced section.
+
     CloudSyncCard {
         iconName: "delete_sweep"
         title: I18n.tr("Recycle bin", "Settings card title for the sync trash")

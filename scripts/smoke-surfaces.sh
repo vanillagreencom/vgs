@@ -1,17 +1,10 @@
 #!/usr/bin/env bash
-# Live-session surface smoke. Local-only: it needs a Hyprland VGS session and
-# reads `hyprctl layers`.
-#
-# EXIT 77 MEANS "NOTHING WAS CHECKED" (VGS-123). Every skip path below — no
-# Hyprland, no Quickshell CLI, no live VGS shell — exits 77 rather than 0, so a
-# caller cannot read a precondition failure as a pass. `scripts/validate` maps
-# 77 on this row to a NAMED skip in its summary; a foreign checkout is still a
-# hard failure (exit 1), because there the assertions were requested and could
-# not be trusted. Branch coverage: scripts/test-smoke-surfaces.sh.
+# Exercise live Hyprland surfaces. Exit 77 means prerequisites were absent and no assertions ran.
+# A shell owned by another checkout fails because this checkout cannot safely address it.
+# Branch coverage: scripts/test-smoke-surfaces.sh.
 set -euo pipefail
 
-# Autotools' "skipped" convention, so "did not run" is distinguishable from
-# both a pass and a failure by status alone.
+
 readonly SKIP_STATUS=77
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -98,25 +91,13 @@ for monitor_name, monitor_w, monitor_h, layer_w, layer_h in matches:
 PY
 }
 
-# Every assertion below drives the live shell through `vshell ipc`, which
-# resolves instances by *this* checkout's config path. Run from a worktree while
-# the session's shell belongs to another checkout, every call fails — and with
-# stdout discarded and `set -e` in force, the script used to abort with no
-# output whatsoever, which is indistinguishable from a clean pass (VGS-69).
-#
-# `vshell instances list` cannot tell those cases apart either: it applies the
-# same per-checkout filter, so "no VGS shell at all" and "a VGS shell owned by
-# somebody else" both come back empty. The registry is read directly and
-# classified here instead. No shell is a skip; a foreign shell is a failure,
-# because the requested assertions did not run.
+# vshell ipc filters by this checkout, so inspect the registry directly to distinguish
+# a missing shell from a foreign checkout's shell. Skip only the missing-shell case.
 require_own_shell() {
   local listing verdict diag err_file qs_bin="" candidate rc=0
   local class_err class_diag=""
 
-  # Both names, in the order `bin/vshell-helper`'s QS_BINARIES lists them. A
-  # system providing only `quickshell` reads the same registry, and probing for
-  # `qs` alone turned that into a skip — a false green of exactly the kind this
-  # precondition exists to prevent.
+  # Accept both CLI names recognized by the helper so a quickshell-only system is not skipped.
   for candidate in qs quickshell; do
     if command -v "$candidate" >/dev/null 2>&1; then
       qs_bin="$candidate"
@@ -128,11 +109,7 @@ require_own_shell() {
     exit "$SKIP_STATUS"
   fi
 
-  # stdout and stderr are captured SEPARATELY on purpose. Folding them together
-  # ("2>&1") feeds any warning the CLI writes to stderr — a deprecation notice,
-  # a protocol grumble — into the JSON parser and turns a perfectly good listing
-  # into a hard failure. stdout is the document; stderr is only ever the
-  # diagnostic printed when something actually went wrong.
+  # Parse stdout only. CLI warnings on stderr are diagnostics, not part of the JSON document.
   err_file="$(mktemp)"
   listing="$("$qs_bin" list --all --json 2>"$err_file")" || rc=$?
   diag="$(cat "$err_file")"
@@ -187,7 +164,7 @@ def peer_alive(pid):
     fields = stat_text.rpartition(")")[2].split()
     if not fields:
         return False
-    if fields[0] == "Z":  # exited, not yet reaped: owns no surfaces
+    if fields[0] == "Z":  # A zombie owns no surfaces.
         return False
     try:
         executable = os.path.basename(os.path.realpath(proc / "exe"))
@@ -195,8 +172,7 @@ def peer_alive(pid):
         executable = ""
     if executable in QS_BINARIES:
         return True
-    # /proc/<pid>/exe is readable only for our own processes; comm is not, and
-    # is enough to reject a process that merely inherited the number.
+    # An exe link can be unreadable for foreign processes; comm still helps reject an unrelated reused PID.
     try:
         comm = (proc / "comm").read_text(encoding="utf-8", errors="replace").strip()
     except OSError:
@@ -214,13 +190,8 @@ if not isinstance(data, list):
     print("unexpected qs list output", file=sys.stderr)
     raise SystemExit(2)
 
-# Three outcomes, and they must stay distinct. An entry the registry schema
-# says nothing sensible about is MALFORMED and fails: silently skipping it
-# recreates the false green this precondition exists to prevent, one layer in.
-# An entry that is well formed but is not a VGS tree is SKIPPED — other
-# Quickshell apps share the seat and are none of this script's business. An
-# entry that is well formed and is VGS but whose process is gone is skipped
-# too — the registry simply outlived it.
+# Malformed entries fail because they cannot be classified. Well-formed unrelated apps
+# and vanished processes are skipped without claiming an owned live shell.
 malformed = []
 foreign = []
 mine = False
@@ -256,11 +227,10 @@ for index, entry in enumerate(data):
     path = resolve(raw)
     if path.name == "shell.qml":
         path = path.parent
-    # A VGS runtime tree, in any checkout: <root>/quickshell/vshell. Unrelated
-    # Quickshell shells on the same seat are none of this script's business.
+    # Match the VGS runtime-tree suffix across checkouts; unrelated Quickshell apps remain outside scope.
     if path.parts[-2:] != ("quickshell", "vshell"):
         continue
-    # A registry entry outliving its process must not fail the run.
+
     if not peer_alive(pid):
         continue
     if path == want:
@@ -268,19 +238,8 @@ for index, entry in enumerate(data):
         continue
     foreign.append((pid, str(path.parent.parent)))
 
-# Decision order: MALFORMED, then FOREIGN, then MINE, then skip. Both of the
-# first two beat a confirmed own shell, for the same underlying reason — the
-# assertions cannot tell whose surfaces they are reading.
-#
-# Malformed first: an entry this script cannot read might BE a foreign shell,
-# so "some of the registry was understood" is not an answer worth acting on.
-#
-# Foreign before mine, which is not a tie-break but the whole point: `hyprctl
-# layers` aggregates every Quickshell instance on the seat. With this checkout's
-# shell AND another's both live, a foreign shell's surfaces can satisfy every
-# assertion and the smoke reports success on evidence from somebody else's
-# shell. Returning success there is worse than the silent death this
-# precondition replaced, because a false pass is acted on.
+# Reject malformed entries before ownership results because an unreadable entry could be foreign.
+# Reject foreign shells before accepting an owned shell because compositor layers aggregate both.
 if malformed:
     print("registry entries this script does not understand:", file=sys.stderr)
     for line in malformed:
@@ -322,16 +281,12 @@ PY
     *)
       {
         echo "surface smoke FAILED: could not classify the instance registry (classifier exit $rc)"
-        # The classifier's own stderr belongs INSIDE this report, indented with
-        # everything else. Letting it escape from the command substitution put
-        # multi-line errors above the header, where they read as unrelated.
+        # Capture classifier stderr so the report can group it with the failed precondition.
         if [[ -n "$class_diag" ]]; then
           while IFS= read -r line; do echo "  $line"; done <<<"$class_diag"
         fi
         if [[ -n "$diag" ]]; then
-          # Indent every line, not just the first: the CLI's stderr is routinely
-          # multi-line, and a single echo leaves continuation lines flush against
-          # the margin where they read as separate findings.
+          # Indent multiline diagnostics so continuation lines stay attached to their cause.
           echo "  $qs_bin list also wrote to stderr:"
           while IFS= read -r line; do echo "    $line"; done <<<"$diag"
         fi
@@ -341,13 +296,10 @@ PY
   esac
 }
 
-# Runs before the cleanup trap is installed: a refused precondition must not
-# poke the live session on its way out.
+# Check prerequisites before installing cleanup that can act on the live session.
 require_own_shell
 
-# `vshell ipc` prints its diagnostics on stderr, so the reason survives; what
-# used to be lost was this script discarding stdout and never reporting the
-# non-zero status at all.
+# Preserve IPC stderr and report the failed action status.
 ipc_call() {
   local out rc=0
   out="$("$vshell_bin" ipc call "$@" 2>&1)" || rc=$?

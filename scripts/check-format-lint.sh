@@ -1,47 +1,12 @@
 #!/usr/bin/env bash
-# Formatter/lint floor for first-party code (VGS-110). One deterministic tool
-# per surface, no style rewrites:
-#
-#   Go      gofmt -l     backend/ minus vendor/ — any listed file is a failure
-#   Shell   shellcheck   bash-shebang files under scripts/ and bin/ (routed by
-#                        shebang, so an extensionless entry point like
-#                        scripts/validate is covered without being named),
-#                        scripts/lib/*.sh, install.sh,
-#                        uninstall.sh, packaging/*.sh, the packaging hooks
-#                        (*.postinst has a shebang; the sourced *.install
-#                        scriptlets carry an in-file shell= directive) and
-#                        bash-shebang bin/ files. The lib files are covered
-#                        because their
-#                        pathspec lists them explicitly — that is what to
-#                        preserve when editing; being inputs also lets the
-#                        tool resolve `source` directives pointing at them.
-#                        (A comment line must never START with the word
-#                        "shellcheck": that shape is a directive and a
-#                        malformed one is an SC1072 parse error.)
-#   Python  ruff check   python-shebang files under scripts/ and bin/, plus
-#                        scripts/lib/*.py and bin/*.py (the importable modules
-#                        that carry no shebang by design);
-#                        rule floor lives in ruff.toml (F + E9)
-#   JS      node --check node-shebang files under scripts/, plus
-#                        scripts/lib/*.js — a syntax floor, dependency-free
-#
-# REQUIRE SEMANTICS THROUGHOUT (the qml-smoke.sh --require precedent): a
-# missing tool, a wrong tool version, a failed `git ls-files`, or an empty
-# file set FAILS this check instead of skipping the surface, because a silent
-# skip is indistinguishable from a pass. Findings are fixed at the source or
-# carry a per-line disable with a reason; there is no baseline file and no
-# severity downgrade here.
+# Lint tracked first-party source. Missing tools, unsupported versions, and empty file sets fail.
+# Sourced libraries need explicit pathspecs because they can lack shebangs.
+# A comment beginning with shellcheck is a directive, even when intended as prose.
 set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
 
-# Single source of truth for the version-sensitive tool pins: ci.yml extracts
-# these exact assignments (sed on this file), so bumping a pin is a one-line
-# edit here and CI follows. The local run REQUIRES exactly these versions:
-# both tools add and retune checks across releases, and an unpinned local
-# tool would let the local verdict drift from CI's.
-# Deliberately unpinned: gofmt (ships with the Go toolchain, which go.mod and
-# ci.yml's setup-go already pin) and node (its --check is a bare syntax floor,
-# not a findings engine, so version drift cannot move the verdict).
+# CI reads these version assignments. Local runs require the same versions.
+# gofmt follows the Go toolchain; node provides syntax checks.
 SHELLCHECK_VERSION=0.11.0
 RUFF_VERSION=0.16.2
 
@@ -66,18 +31,12 @@ if [[ "$ruff_actual" != "$RUFF_VERSION" ]]; then
 fi
 [[ "$status" == 0 ]] || exit 1
 
-# Tracked files only: git pathspecs are the discovery mechanism, so a new file
-# is covered the moment it is added and scratch clutter never fails the check.
-# Collection goes through a temp file rather than process substitution so
-# git's OWN exit status is checked: mapfile reports only its own status, and a
-# git that emitted part of the listing and then died would otherwise pass a
-# surface on a partial set.
+# Capture git output in a file so a partial listing cannot hide a failed git command.
+# Process substitution does not expose the producer status to mapfile.
 list_tmp="$(mktemp)"
 trap 'rm -f -- "$list_tmp"' EXIT
 
-# Writes the NUL-delimited listing for the given pathspecs to $list_tmp.
-# On git failure: FAIL, truncate the listing so no surface can consume a
-# partial set, and return nonzero so the caller's mapfile is skipped.
+# Write a NUL-delimited tracked-file listing. On failure, discard partial output and return nonzero.
 list_files() {
   if ! git ls-files -z -- "$@" >"$list_tmp"; then
     : >"$list_tmp"
@@ -86,42 +45,10 @@ list_files() {
   fi
 }
 
-# Is the file a BINARY? Asked of git — `--eol` reports `-text` for content git
-# considers binary — rather than sniffed here, because git is already the tool
-# that discovers every file this check looks at.
-#
-# `w/` IS DETECTED CONTENT, NOT A DECLARED ATTRIBUTE, and saying so is the point:
-# a `-text` in .gitattributes declares an eol policy, and `--eol` reports that in
-# a separate `attr/` column while `i/` and `w/` keep reporting what the bytes
-# are. This repo declares it — `backend/vendor/** -text -whitespace` — and those
-# files report `w/lf`. So no .gitattributes line can hand a text file the
-# exemption below; left unstated, this arm reads like a fail-open that one such
-# line would open. scripts/test-format-lint.sh pins it in both directions.
-#
-# It exists for one arm: the executable-bit rule below says "something runs it,
-# so something must lint it", and a compiled binary is the case where nothing
-# here could ever lint it and nothing should. bin/vshell-asdcontrol is a tracked
-# ELF, and reporting it as an unlinted script would be a false finding with no
-# fix available. A shebang-less TEXT file in the same place is the real hazard
-# and stays reported.
-#
-# `:(literal)` DISABLES PATHSPEC MAGIC, and that is not defensive tidiness: git
-# reads a bare argument as a PATTERN, so with a tracked binary `bin/probe1` and
-# an executable shebang-less text `bin/probe[1]`, the lookup for the second
-# returned BOTH — binary first — and this exempted the text file on another
-# file's content. Verified both ways: deleting `bin/probe1` made the same file
-# report correctly.
-#
-# THE WORKTREE COLUMN, not the index one. The rule this qualifies gates on
-# `[[ -x "$file" ]]`, a worktree mode, and every linter below reads worktree
-# content. A file staged as a binary and then replaced with a text script
-# reports `i/-text w/lf` (verified), so keying on the index would exempt a
-# running script on the strength of a blob nobody runs.
-#
-# ANYTHING BUT ONE ANSWER IS UNABLE-TO-TELL, and that FAILS the check and reports
-# "binary", so a file this could not classify never draws a second, confident
-# message about being unlinted — the status is already 1 by then, so the
-# exemption cannot hide anything.
+# Classify worktree content because the executable check and linters read the worktree.
+# The attr/ column declares policy; w/ reports detected content.
+# Literal pathspecs prevent a filename with brackets from matching another file.
+# An ambiguous or failed classification fails the check before the caller can exempt the file.
 is_binary() {
   local eol worktree_eol
   if ! eol="$(git ls-files --eol -- ":(literal)$1")"; then
@@ -136,7 +63,7 @@ is_binary() {
   [[ "$worktree_eol" == "w/-text" ]]
 }
 
-# --- Go: gofmt over the non-vendored backend ---------------------------------
+
 go_files=()
 list_files 'backend/*.go' ':!backend/vendor' && mapfile -d '' -t go_files <"$list_tmp"
 if [[ ${#go_files[@]} -eq 0 ]]; then
@@ -147,17 +74,8 @@ else
 $unformatted"
 fi
 
-# --- Shell, Python and JS discovery by SHEBANG (bin/ and scripts/) -----------
-# Extension globs cannot see an extensionless entry point, and naming each one
-# by hand is coverage that lasts until the next one is added and forgotten —
-# `scripts/validate` was added that way and would have been the only such file
-# anyone remembered. bin/ was already discovered by shebang; scripts/ now is
-# too, and a file there whose extension claims a language but whose shebang
-# does not route it FAILS rather than dropping out silently.
-#
-# `:(glob)` is load-bearing: a plain `scripts/*` pathspec matches across `/`,
-# swallowing scripts/lib/, which is listed separately below because those are
-# libraries (sourced or imported, some without a shebang at all).
+# Shebang routing includes extensionless scripts.
+# The glob pathspec stops at scripts/, leaving sourced libraries to their explicit pathspecs.
 bin_files=()
 list_files 'bin/*' && mapfile -d '' -t bin_files <"$list_tmp"
 if [[ ${#bin_files[@]} -eq 0 ]]; then
@@ -170,23 +88,8 @@ if [[ ${#script_files[@]} -eq 0 ]]; then
   fail "no files matched scripts/* — stale pathspec or the git failure above; scripts/ has dropped out of every lint surface"
 fi
 
-# `:(glob)scripts/*` stops at the top level and scripts/lib/ is listed by hand
-# below, so a NEW subdirectory would never be collected, never enter the router,
-# and therefore never trip the unrouted arm either — a quiet coverage drop
-# instead of a decision. Naming the known depth here makes adding one a
-# conscious edit.
-#
-# THE GUARD HOLDS AT ANY DEPTH, and not by accident: `*` in a bash case pattern
-# matches `/` (unlike a pathname expansion), so `scripts/*/*` catches
-# scripts/a/b/c as readily as scripts/a/b. Verified before this was written,
-# and scripts/test-format-lint.sh pins it at depth so a future rewrite into a
-# form where `*` does stop at `/` fails instead of silently narrowing.
-#
-# scripts/lib/ is exempt only at ITS OWN level. The lib pathspecs below are
-# `scripts/lib/*.py` and friends, and a git pathspec's `*` does cross `/`, so a
-# nested .py there is still linted — but a nested EXTENSIONLESS file is in
-# neither the pathspecs nor the router, which is the same quiet drop one
-# directory over. So a nested directory under lib/ is a conscious edit too.
+# New script directories need explicit routing. Bash case wildcards cross directory separators.
+# Nested extensionless libraries need routing even though extension pathspecs can reach nested files.
 scripts_all=()
 list_files 'scripts/' && mapfile -d '' -t scripts_all <"$list_tmp"
 for file in "${scripts_all[@]}"; do
@@ -212,56 +115,16 @@ for file in "${bin_files[@]}" "${script_files[@]}"; do
     '#!'*python*) shebang_python+=("$file") ;;
     '#!'*node*) shebang_js+=("$file") ;;
     '#!'*)
-      # A SHEBANG THE CASES ABOVE DID NOT ROUTE — `#!/bin/sh`, `#!/usr/bin/env
-      # zsh`, perl, ruby. Asserting on the shebang rather than on the extension
-      # is the point. scripts/validate (`#!/usr/bin/env bash`) went unlinted
-      # because it carries no EXTENSION, which shebang routing now covers; an
-      # extension test is blind to the same file arriving with `#!/bin/sh`, so
-      # this arm names it instead of dropping it.
-      #
-      # NO TREE TEST HERE, and its absence is the rule rather than an omission.
-      # This loop walks `bin_files` and `script_files`, which come from the
-      # `bin/*` and `:(glob)scripts/*` pathspecs above, so every file it sees is
-      # already in one of the two trees: the `scripts/* | bin/*` wrapper that
-      # used to sit here decided nothing, and stood ready to silently exclude a
-      # third tree from the rule if one were ever added to the pathspecs. Every
-      # exemption this file grants is a property of the FILE — non-executable, a
-      # tracked binary, a documented importable module — never of its directory.
+      # Any shebang not handled above has no assigned linter.
       fail "$file has an unrouted shebang ($shebang) — no linter claims it. Route it in this case statement, rewrite the shebang to one that is routed, or it is silently unlinted"
       ;;
     *)
-      # NO SHEBANG AT ALL, and the rule is the executable BIT, not the name.
-      # An extensionless executable with no shebang is not inert the way a data
-      # fixture is: bash's ENOEXEC fallback runs it, so it can be a working
-      # manifest command that satisfies check-validation-inventory.py's
-      # executable-bit requirement while no linter ever claims it — scripts/
-      # validate's own shape, one variation over, and nothing forces it to keep
-      # its shebang. Something runs it, so something must lint it.
-      #
-      # Non-executable files still fall through, which is what actually leaves
-      # data fixtures alone; the extension arm still catches a non-executable
-      # .sh/.py/.js, since that is a lint gap regardless of mode.
-      #
-      # The two exemptions this arm needs are properties of the file, so it needs
-      # no tree test either (see the arm above). bin/ deliberately holds
-      # importable Python modules with no shebang (bin/vshell_niri.py and
-      # friends, documented in scripts/validate's header) — they are
-      # NON-EXECUTABLE, so the mode
-      # rule already leaves them alone and naming the tree was never what
-      # protected them. Restricting the arm to scripts/ left an executable
-      # shebang-less bin/ file — a working entry point through ENOEXEC — claimed
-      # by no linter, which is the hole this rule exists to close.
+      # Bash can execute text without a shebang through its ENOEXEC fallback.
+      # The executable bit therefore requires lint coverage unless the file is binary.
       if [[ -x "$file" ]] && ! is_binary "$file"; then
         fail "$file is executable with no shebang — something runs it (bash falls back to ENOEXEC), so something must lint it. Give it a shebang this case statement routes, or drop the executable bit if nothing is meant to run it"
       fi
-      # THE EXTENSION ARM NAMES ITS TREES, because here they genuinely differ:
-      # `bin/*.py` is the documented importable-module pattern AND is in the ruff
-      # pathspec below, so such a file is linted and reporting it would be a
-      # false claim. `bin/*.sh` and `bin/*.js` are in no pathspec at all — as
-      # unlinted as their scripts/ counterparts — so they are named the same way.
-      # Adding them to the shellcheck and node pathspecs instead was considered
-      # and rejected: that would silently adopt an undocumented pattern, where
-      # scripts/ makes the same shape a conscious edit.
+      # bin/*.py has an explicit importable-module pathspec. Shell and JS files need shebang routing.
       case "$file" in
         scripts/*.sh | scripts/*.py | scripts/*.js | bin/*.sh | bin/*.js)
           fail "$file has a language extension but no shebang routing it to a linter — give it one, or this file is silently unlinted"
@@ -271,7 +134,7 @@ for file in "${bin_files[@]}" "${script_files[@]}"; do
   esac
 done
 
-# --- Shell: shellcheck -------------------------------------------------------
+
 shell_files=()
 list_files 'scripts/lib/*.sh' 'install.sh' 'uninstall.sh' \
   'packaging/*.sh' 'packaging/*.install' 'packaging/*.postinst' \
@@ -283,7 +146,7 @@ else
   shellcheck "${shell_files[@]}" || fail "shellcheck findings above: fix them, or add a per-line disable with a reason"
 fi
 
-# --- Python: ruff (rule floor in ruff.toml) ----------------------------------
+
 py_files=()
 list_files 'scripts/lib/*.py' 'bin/*.py' && mapfile -d '' -t py_files <"$list_tmp"
 py_files+=("${shebang_python[@]}")
@@ -293,7 +156,7 @@ else
   ruff check --no-cache "${py_files[@]}" || fail "ruff findings above: fix them, or add a targeted noqa with a reason"
 fi
 
-# --- JS: node --check, the syntax floor --------------------------------------
+
 js_files=()
 list_files 'scripts/lib/*.js' && mapfile -d '' -t js_files <"$list_tmp"
 js_files+=("${shebang_js[@]}")

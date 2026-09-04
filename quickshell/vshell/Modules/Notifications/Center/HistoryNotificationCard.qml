@@ -26,8 +26,7 @@ Rectangle {
     readonly property real collapsedContentHeight: Math.max(iconSize, historyTextColumn.implicitHeight)
     readonly property real baseCardHeight: cardPadding * 2 + collapsedContentHeight
 
-    // Text must clear the top-right controls. Derive the inset from the buttons
-    // actually shown, rather than a fixed reserve that was narrower than them.
+    // Reserve the width of visible controls so notification text cannot overlap them.
     readonly property real actionButtonSize: compactMode ? 24 : 28
     readonly property real actionButtonTopMargin: cardPadding + (historyHeaderRow.implicitHeight - actionButtonSize) / 2
     readonly property bool hasOpenAction: (historyItem?.url || "") !== ""
@@ -270,8 +269,7 @@ Rectangle {
         }
     }
 
-    // Persisted "Open" affordance: the live freedesktop action is long gone for
-    // a history entry, so open the URL captured from the body at save time.
+    // History entries no longer have a live notification action. Open the URL saved with the entry.
     VgsActionButton {
         id: historyOpenButton
         visible: (historyItem?.url || "") !== ""

@@ -8,9 +8,8 @@ import (
 )
 
 const (
-	// progressInterval is how often running jobs are polled for stats. Fast
-	// enough that the bar widget's speed readout feels live, slow enough that
-	// an idle-but-syncing session is not a busy loop.
+	// progressInterval limits control calls while keeping progress updates
+	// available to the bar widget.
 	progressInterval = 750 * time.Millisecond
 	// recentInterval throttles the completed-transfers feed, which is a whole
 	// separate rc round trip and does not need per-frame freshness.
@@ -20,13 +19,11 @@ const (
 	jobCallTimeout = 20 * time.Second
 )
 
-// statusPollLimit is how many consecutive job/status failures are tolerated
-// before a job is declared interrupted. rclone expires finished jobs from its
-// cache and a transient timeout under load is routine, but an unbounded silent
-// retry leaves the folder "Syncing" forever with no way back.
+// statusPollLimit bounds consecutive job/status failures. Finished jobs can
+// expire from rclone state; retrying indefinitely would leave the folder stuck
+// on Syncing.
 const statusPollLimit = 8
 
-// activeJob is one in-flight rclone job owned by a folder.
 type activeJob struct {
 	FolderID    string
 	RCJobID     int64
@@ -34,9 +31,8 @@ type activeJob struct {
 	Trigger     string
 	StartedUnix int64
 	Resync      bool
-	// Generation is the daemon incarnation this job was started against.
-	// rclone restarts its job IDs from 1, so a job id from a previous daemon
-	// can collide with an unrelated job on the new one.
+	// Generation distinguishes daemon instances because rclone can reuse job IDs
+	// after restart.
 	Generation uint64
 	// StatusFailures counts consecutive job/status errors. Guarded by mu.
 	StatusFailures int
@@ -46,7 +42,6 @@ type activeJob struct {
 // can be read back independently of everything else running.
 func statsGroup(folderID string) string { return "vgs-" + folderID }
 
-// syncOptions describes one requested run.
 type syncOptions struct {
 	Trigger    string
 	Resync     bool
@@ -95,7 +90,7 @@ func (m *Manager) startSync(folderID string, opts syncOptions) error {
 	}
 	if _, running := m.jobs[folderID]; running {
 		m.mu.Unlock()
-		return nil // already syncing; the running job will pick up recent writes
+		return nil // A running job picks up recent writes.
 	}
 	generation := m.daemonGeneration
 	m.mu.Unlock()
@@ -123,10 +118,9 @@ func (m *Manager) startSync(folderID string, opts syncOptions) error {
 
 	now := nowUnix()
 	m.mu.Lock()
-	// The daemon can go down between issuing the call and recording the job.
-	// onDaemonDown clears m.jobs wholesale, so inserting afterwards would leave
-	// an entry that survives the "everything was interrupted" sweep and is then
-	// polled forever against a job id that no longer means anything.
+	// The daemon can stop between the control call and job registration. Reject an
+	// outdated generation so the interrupted-job cleanup cannot miss a late
+	// insertion.
 	if m.closed || m.daemonGeneration != generation {
 		m.mu.Unlock()
 		return fmt.Errorf("the sync engine restarted; try again")
@@ -152,9 +146,9 @@ func (m *Manager) startSync(folderID string, opts syncOptions) error {
 	return nil
 }
 
-// buildSyncParams renders one folder's run into rc parameters. The safety rails
-// live here: everything destructive routes through a backup directory, and
-// two-way runs are resilient and self-recovering.
+// buildSyncParams configures backup directories for deleted and overwritten
+// files. Backup and restore set MaxDelete; two-way requests resilient recovery
+// and keeps bisync's deletion guard unless Force is set.
 func (m *Manager) buildSyncParams(folder Folder, settings Settings, group string, opts syncOptions) (map[string]any, error) {
 	config := map[string]any{
 		"Transfers": settings.Transfers,
@@ -178,8 +172,8 @@ func (m *Manager) buildSyncParams(folder Folder, settings Settings, group string
 			src, dst = folder.remoteFs(), folder.LocalPath
 			backupDir = m.store.localTrash(folder.ID)
 		}
-		// Deleted and overwritten files move to a VGS-owned trash instead of
-		// disappearing, so a bad sync is always recoverable.
+		// Keep deleted and overwritten files in VGS trash until retention pruning or
+		// explicit emptying removes them.
 		config["BackupDir"] = backupDir
 		if folder.MaxDelete >= 0 {
 			config["MaxDelete"] = folder.MaxDelete
@@ -233,8 +227,7 @@ func (m *Manager) buildSyncParams(folder Folder, settings Settings, group string
 	return params, nil
 }
 
-// cancelSync stops a running job. The rclone side unwinds cleanly; partially
-// transferred files are resumed or re-checked next run.
+// cancelSync requests cancellation of a running rclone job.
 func (m *Manager) cancelSync(folderID string) error {
 	m.mu.Lock()
 	job := m.jobs[folderID]
@@ -278,12 +271,9 @@ func (m *Manager) progressLoop() {
 		for _, job := range m.jobs {
 			jobs = append(jobs, job)
 		}
-		// The emptiness test and the progressRunning clear must be one critical
-		// section. Split apart, a job inserted in the gap saw progressRunning
-		// still true (so ensureProgressLoop returned) while this loop went on
-		// to clear the flag and exit — leaving the job with no poller, the
-		// folder stuck on "Syncing", and every later sync for it refused as
-		// already running.
+		// Check for jobs and clear progressRunning under the same lock. A job inserted
+		// between these operations could otherwise observe an active poller just
+		// before it exits and remain unpolled.
 		if len(jobs) == 0 {
 			m.progressRunning = false
 			m.mu.Unlock()
@@ -305,7 +295,6 @@ func (m *Manager) progressLoop() {
 	}
 }
 
-// pollJob refreshes one job's stats and finalizes it once rclone reports done.
 func (m *Manager) pollJob(job *activeJob) {
 	folder, ok := m.store.folder(job.FolderID)
 	if !ok {
@@ -324,10 +313,8 @@ func (m *Manager) pollJob(job *activeJob) {
 
 	var status rcJobStatus
 	if err := m.client.callTimeout("job/status", map[string]any{"jobid": job.RCJobID}, &status, 5*time.Second); err != nil {
-		// Bounded, not silent. rclone expires finished jobs from its cache, so
-		// a job whose status can no longer be read is finished as interrupted
-		// rather than polled forever — the folder would otherwise sit on
-		// "Syncing" indefinitely, with Sync now and Pause both gated off.
+		// End the job after repeated status failures so expired rclone jobs cannot
+		// leave the folder stuck on Syncing.
 		m.mu.Lock()
 		job.StatusFailures++
 		failures := job.StatusFailures
@@ -350,7 +337,6 @@ func (m *Manager) pollJob(job *activeJob) {
 	m.finishJob(job, status.Success, status.Error, stats)
 }
 
-// applyStats maps rclone's live counters onto the folder's UI status.
 func (m *Manager) applyStats(folder Folder, job *activeJob, stats rcStats) {
 	transferring := make([]Transfer, 0, len(stats.Transferring))
 	for _, t := range stats.Transferring {
@@ -401,7 +387,6 @@ func transferDirection(folder Folder, t rcTransferring) string {
 	return "up"
 }
 
-// finishJob records the outcome, drops the job, and schedules the next run.
 func (m *Manager) finishJob(job *activeJob, success bool, errMsg string, stats rcStats) {
 	folder, exists := m.store.folder(job.FolderID)
 	now := nowUnix()
@@ -469,12 +454,9 @@ func (m *Manager) finishJob(job *activeJob, success bool, errMsg string, stats r
 	m.broadcastNow()
 }
 
-// noteStartFailure surfaces a triggered run that never started. These paths
-// previously logged at Debug and stopped there, so the failure never reached
-// FolderStatus or history — a folder could fail every scheduled run forever
-// while the UI showed it as fine. The post-resolution case is the sharpest: the
-// conflict cleared from the view but the sync carrying that decision to the
-// cloud silently never ran.
+// noteStartFailure records a triggered run that could not start. Scheduled runs
+// and conflict-resolution syncs need the failure in folder state and history
+// even when no caller is waiting.
 func (m *Manager) noteStartFailure(folderID, trigger string, err error) {
 	if err == nil {
 		return
@@ -494,7 +476,6 @@ func (m *Manager) noteStartFailure(folderID, trigger string, err error) {
 	m.broadcastNow()
 }
 
-// recordFailure logs a run that never started (rclone refused the request).
 func (m *Manager) recordFailure(folder Folder, trigger, errMsg string) {
 	now := nowUnix()
 	m.mu.Lock()
@@ -518,7 +499,6 @@ func (m *Manager) recordFailure(folder Folder, trigger, errMsg string) {
 	m.broadcastNow()
 }
 
-// refreshRecent pulls rclone's completed-transfer log for the activity feed.
 func (m *Manager) refreshRecent() {
 	var list rcTransferredList
 	if err := m.client.callTimeout("core/transferred", nil, &list, 5*time.Second); err != nil {
@@ -558,7 +538,6 @@ func (m *Manager) refreshRecent() {
 	m.mu.Unlock()
 }
 
-// recomputeGlobal aggregates every running folder for the bar widget.
 func (m *Manager) recomputeGlobal() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -601,9 +580,8 @@ func (m *Manager) statusLocked(folderID string) *FolderStatus {
 	return st
 }
 
-// explainSyncError rewrites rclone's terser refusals into something a user can
-// act on. Everything else is passed through verbatim — rclone's own wording is
-// usually the most actionable thing available.
+// explainSyncError adds user actions to recognized rclone errors and passes
+// other messages through.
 func explainSyncError(msg string) string {
 	line := firstLine(msg)
 	if line == "" {
@@ -626,7 +604,6 @@ func firstLine(s string) string {
 	return strings.TrimSpace(s)
 }
 
-// parseRCTime converts one of rclone's RFC3339 timestamps to Unix seconds.
 func parseRCTime(value string) int64 {
 	if value == "" {
 		return 0

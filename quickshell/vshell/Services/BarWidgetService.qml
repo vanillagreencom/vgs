@@ -8,7 +8,7 @@ import Quickshell.Hyprland
 Singleton {
     id: root
 
-    // Keep old Sway/I3 branches inert without loading Quickshell.I3.
+    // Keep unsupported compositor branches inert without importing Quickshell.I3.
     QtObject {
         id: i3Shim
         readonly property var workspaces: ({ values: [] })

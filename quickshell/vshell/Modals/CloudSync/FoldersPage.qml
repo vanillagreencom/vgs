@@ -11,9 +11,7 @@ CloudSyncPage {
     title: I18n.tr("Folders", "Cloud Sync folders page title")
     subtitle: I18n.tr("Folders on this computer that are kept in step with the cloud.", "Cloud Sync folders page subtitle")
 
-    // Folders belong to accounts. The list stays flat — that is the right
-    // default when everything is one account — but becomes filterable as soon
-    // as there is more than one, so "what is my work Drive doing" is one click.
+    // Offer account filtering when the folder list spans several accounts.
     property string accountFilter: ""
 
     readonly property bool canFilter: CloudSyncService.accounts.length > 1
@@ -38,10 +36,7 @@ CloudSyncPage {
 
     readonly property var visibleFolders: page.accountFilter.length === 0 ? CloudSyncService.folders : CloudSyncService.foldersForAccount(page.accountFilter)
 
-    // The chips own their selected index — VgsFilterChips assigns to
-    // currentIndex itself on click, which would destroy a declarative binding —
-    // so reconciliation is imperative and one-directional: accounts change,
-    // then the filter and the chip are brought back into agreement.
+    // VgsFilterChips writes currentIndex on click. Reconcile account changes explicitly because that write replaces a binding.
     function syncFilter() {
         if (page.accountFilter.length > 0 && CloudSyncService.accountByName(page.accountFilter) === null)
             page.accountFilter = "";
@@ -57,9 +52,7 @@ CloudSyncPage {
     Connections {
         target: CloudSyncService
 
-        // Disconnecting the filtered account would otherwise leave every folder
-        // hidden behind a chip that no longer exists, with no visible control
-        // left to clear it.
+        // Clear a removed account filter so folders do not remain hidden behind a vanished chip.
         function onAccountsChanged() {
             page.syncFilter();
         }
@@ -77,7 +70,7 @@ CloudSyncPage {
         }
     ]
 
-    // ---- Account filter ----
+
     VgsFilterChips {
         id: filterChipRow
 
@@ -90,7 +83,7 @@ CloudSyncPage {
         }
     }
 
-    // ---- No folders for the chosen account ----
+
     CloudSyncCard {
         visible: CloudSyncService.hasFolders && page.visibleFolders.length === 0
         iconName: "filter_alt_off"
@@ -110,7 +103,7 @@ CloudSyncPage {
         }
     }
 
-    // ---- No account yet ----
+
     CloudSyncCard {
         visible: !CloudSyncService.hasAccounts
         iconName: "account_circle"
@@ -118,7 +111,7 @@ CloudSyncPage {
         description: I18n.tr("Sync folders need somewhere to sync to. Add a cloud account, then come back here to choose what to sync.", "Empty state body when no cloud account exists")
     }
 
-    // ---- No folders yet ----
+
     CloudSyncCard {
         visible: CloudSyncService.hasAccounts && CloudSyncService.folders.length === 0
         iconName: "create_new_folder"
@@ -135,7 +128,7 @@ CloudSyncPage {
         }
     }
 
-    // ---- Global pause banner ----
+
     CloudSyncCard {
         visible: CloudSyncService.paused && CloudSyncService.folders.length > 0
         iconName: "pause_circle"
@@ -152,7 +145,7 @@ CloudSyncPage {
         }
     }
 
-    // ---- Folder list ----
+
     Repeater {
         model: page.visibleFolders
 
@@ -161,13 +154,7 @@ CloudSyncPage {
 
             required property var modelData
 
-            // Marks the folder a jump from the Accounts page landed on, and
-            // brings it into view: the highlight alone is invisible whenever
-            // the target sits below the fold.
-            //
-            // parentModal is assigned by the content Loader *after* this
-            // component completes, so the jump is caught here rather than in
-            // Component.onCompleted, where it would always read null.
+            // parentModal arrives after component completion. Handle it here so cross-page navigation can scroll and highlight the target.
             highlighted: page.parentModal ? page.parentModal.highlightFolderId === modelData.id : false
 
             onHighlightedChanged: {
@@ -184,7 +171,7 @@ CloudSyncPage {
 
             readonly property color stateColor: CloudSyncService.stateColor(folderCard.state)
 
-            // ---- Identity + status ----
+
             CloudSyncRow {
                 tile: true
                 iconName: CloudIcons.modeIcon(folderCard.modelData.mode)
@@ -202,8 +189,7 @@ CloudSyncPage {
                     }
                 ]
 
-                // Live progress lives inside the row so it aligns with the
-                // folder's own text column rather than the whole card.
+
                 body: [
                     Column {
                         width: parent.width
@@ -246,7 +232,7 @@ CloudSyncPage {
                 ]
             }
 
-            // ---- Detail line ----
+
             StyledText {
                 width: parent.width
                 wrapMode: Text.WordWrap
@@ -262,8 +248,7 @@ CloudSyncPage {
 
                     const parts = [];
                     parts.push(CloudSyncService.modeLabel(folderCard.modelData.mode));
-                    // "Last synced Never" is not a sentence; a folder that has
-                    // never run says so in its own words.
+
                     if (!folderCard.status.lastSuccessUnix || folderCard.status.lastSuccessUnix <= 0)
                         parts.push(I18n.tr("Never synced", "Shown for a folder that has not completed a sync yet"));
                     else
@@ -276,9 +261,7 @@ CloudSyncPage {
                 }
             }
 
-            // A folder whose account is unreachable reports "Up to date"
-            // because it simply never ran. Saying why here is the difference
-            // between a quiet lie and an actionable state.
+            // An unreachable account can leave a folder idle without a sync attempt. Show the account error instead of implying success.
             StyledText {
                 readonly property var folderAccount: CloudSyncService.accountByName(folderCard.modelData.remote)
 
@@ -299,11 +282,7 @@ CloudSyncPage {
                 color: Theme.warning
             }
 
-            // ---- Actions ----
-            // The icon buttons sit on the same line when there is room and drop
-            // to their own line when there is not; pinning them right
-            // unconditionally makes them collide with the text buttons on a
-            // narrow window.
+            // Move icon actions to another line when the row cannot fit them beside the text buttons.
             Item {
                 id: actions
 
@@ -383,8 +362,7 @@ CloudSyncPage {
                 Row {
                     id: iconsRow
 
-                    // Positioned rather than anchored: toggling anchors on and
-                    // off between the two arrangements leaves them half-applied.
+                    // Position controls explicitly because toggling anchors can leave part of the wide layout applied.
                     x: actions.sideBySide ? Math.max(0, actions.width - width) : 0
                     y: actions.sideBySide ? Math.round((actionsRow.height - height) / 2) : actionsRow.height + Theme.spacingS
                     spacing: Theme.spacingXS

@@ -18,10 +18,7 @@ Item {
     property var transientSurfaceTracker: null
     readonly property bool _bottomSectionHeaderActive: leadingSectionHeaderAtBottom && (controller?.sections?.length ?? 0) > 0
 
-    // One reading of the search backend for the whole empty state, so the
-    // message, the hint and the icon cannot disagree with the gate the
-    // controller applied. The controller owns the kind and the effective query;
-    // DSearchService owns which tool answers for them.
+    // Share backend state across the empty-state message, hint and icon. The controller supplies the kind and query.
     readonly property string _fileQuery: controller ? controller.fileSearchQuery() : ""
     readonly property bool _fileQuerySearchable: !!controller
         && DSearchService.queryIsSearchable(controller.fileSearchKind(), _fileQuery)
@@ -33,9 +30,7 @@ Item {
     // and found nothing.
     readonly property bool _fileSearchDeclined: !!controller && _fileQuerySearchable
         && !DSearchService.canDispatch(controller.fileSearchKind(), _fileQuery)
-    // One named snapshot for the whole empty state. Named rather than
-    // positional so a transposed pair is legible here instead of silent: the
-    // decision functions below read fields, never argument order.
+
     readonly property var _emptyStateFacts: ({
         backendState: _fileBackendState,
         missingCommand: _missingBackendCommand,
@@ -51,22 +46,13 @@ Item {
 
     signal itemRightClicked(int index, var item, real mouseX, real mouseY)
 
-    // What the files-mode empty state says, as keys rather than copy: the copy
-    // is I18n's and cannot run outside Qt, while the CHOICE is what
-    // scripts/test-launcher-search-gate.js pins.
     // BEGIN EMPTY STATE DECISION
-    // `facts.declined` is a search the gate refused because the tools could not
-    // be checked — a different thing from one that ran and found nothing, and
-    // the only arm that may not say "No files found". `facts.searchError` is the
-    // helper's own diagnosis for a search that ran and failed.
+    // declined means tools could not be checked; searchError describes a search that ran and failed.
     function fileEmptyStateKey(facts) {
         const f = facts || {};
         if (f.backendState === "missing")
             return f.missingCommand === "rg" ? "missing-rg" : "missing-fd";
-        // Nothing is being checked on the user's behalf before a query that
-        // would search at all: an empty field prompts, and a query too short
-        // to search — one that is not a path the helper completes either — is
-        // short.
+
         if (f.queryLength === 0)
             return "prompt";
         if (!f.searchable)
@@ -80,14 +66,7 @@ Item {
         return "empty";
     }
 
-    // The second line: an install step for a tool that is genuinely missing, the
-    // probe's own failure where that is why nothing ran, and nothing otherwise.
-    // Never an install step on the strength of an answer nobody has.
-    //
-    // `legActive` is what makes it honest outside files mode: the hint may only
-    // appear where a file search would actually have run, or it promises that
-    // installing fd fixes a mode that never searched files at all. `declined` is
-    // what keeps the probe line off a search that ran fine.
+    // Show installation hints only for a missing tool on an active file-search path. Unknown tools require the probe error.
     function fileHintKey(facts) {
         const f = facts || {};
         if (!f.legActive)
@@ -96,28 +75,19 @@ Item {
             return f.missingCommand === "rg" ? "install-rg" : "install-fd";
         if (!f.declined)
             return "";
-        // The first probe declines every kind, so "declined" alone would put a
-        // second line under "Checking search tools" on the first open of every
-        // machine — reporting a reason nobody has yet.
+        // The initial probe has no failure to report yet, even though requests are declined while it runs.
         if (f.probeState === "pending")
             return "";
-        // A probe still retrying will answer on its own; only a spent one is
-        // worth asking the user to do something about.
+        // Ask the user to retry only after automatic probe retries are exhausted.
         return f.probeState === "failed" ? "probe-failed" : "probe-retrying";
     }
 
-    // A file search is on screen in files mode, and outside it wherever
-    // fileSearchQuery — the one authority on that — hands back a query long
-    // enough to dispatch. Plugins mode is excluded there, so no file-search
-    // message can render over plugin results.
+    // Display file-search messages only for file mode or a searchable file query, never over plugin results.
     function fileLegActive(searchMode, searchable) {
         return searchMode === "files" || !!searchable;
     }
 
-    // The helper's diagnosis, made safe to render: first line only, control and
-    // bidi characters dropped, length bounded. The text can quote a filename
-    // from the search roots or a whole argv, and this label is one line in a
-    // centered column. The full text stays in the log.
+    // Bound helper errors for a single-line label and remove control and bidi characters. Preserve full errors in the log.
     function errorLine(text) {
         const first = String(text || "").split("\n")[0];
         const clean = first.replace(/[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, " ").trim();
@@ -629,10 +599,7 @@ Item {
 
             StyledText {
                 anchors.horizontalCenter: parent.horizontalCenter
-                // Bounded like the hint below: the error arm renders text from
-                // the helper, which can carry a whole argv or a filename out of
-                // the search roots, and this column is centered inside the
-                // results panel.
+
                 width: Math.min(360, Math.max(160, root.width - Theme.spacingXL * 2))
                 text: getEmptyText()
                 font.pixelSize: Theme.fontSizeMedium
@@ -692,9 +659,7 @@ Item {
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.WordWrap
 
-                // Named so a missing search backend reads as an install step
-                // rather than as a query that matched nothing — and so a probe
-                // that could not run says that instead of blaming a tool.
+
                 function getDependencyHint() {
                     switch (root.fileHintKey(root._emptyStateFacts)) {
                     case "install-rg":

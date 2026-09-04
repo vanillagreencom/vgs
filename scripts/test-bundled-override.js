@@ -1,30 +1,8 @@
 #!/usr/bin/env node
 
-// Exercises the bundled-id override policy in PluginService.
-//
-// Three rules meet in one decision and none of them can be checked by the QML
-// smoke, which only ever sees the bundled directory:
-//
-//   * a package that reuses a shipped id without declaring an override is
-//     inert — id collision alone must not auto-enable and load something the
-//     user never turned on (VGS-26);
-//   * a declared override inherits always-available, because an override that
-//     owns the id and never starts is the hole VGS-13 closed;
-//   * always-available is what makes disablePlugin refuse, so it is also what
-//     the Settings UI keys its "no disable affordance" on (VGS-39).
-//
-// The policy is extracted verbatim from the shipped QML between its
-// BEGIN/END OVERRIDE POLICY markers, so this tests the real source rather than
-// a re-implementation of it.
-//
-// It then checks the shipped plugin manifests against VERSION, using the
-// runtime's own comparator (extracted the same way from ShellVersionService).
-// A bundled manifest's requires_shell is never enforced, so an impossible one
-// is inert where it is written and fires only where it is copied: an override
-// is normally a copy of the shipped manifest, so it inherits the constraint and
-// is demoted by the version gate. Every bundled manifest shipped `>=1.0.0`
-// against a 0.1.0 shell, which made overriding any bundled plugin impossible
-// and had nothing to catch it. (VGS-76)
+// Test the extracted bundled-plugin override policy and runtime version comparator.
+// An ID collision alone must not enable a user package. An explicit override inherits availability.
+// Shipped manifest requirements must accept VERSION because users can copy them into overrides.
 
 "use strict";
 
@@ -41,8 +19,7 @@ const source = fs.readFileSync(SERVICE, "utf8");
 const match = source.match(/\/\/ BEGIN OVERRIDE POLICY\n([\s\S]*?)\/\/ END OVERRIDE POLICY/);
 assert.ok(match, "PluginService.qml must carry the OVERRIDE POLICY markers");
 
-// The extracted text is plain JavaScript with no QML API use, so it evaluates
-// as ordinary functions.
+// The extracted policy uses plain JavaScript functions without QML APIs.
 const {
     _bundledOverrideDecision: decide,
     _declaresBundledOverride: declares,
@@ -83,7 +60,7 @@ function verdict(opts) {
     });
 }
 
-// --- the override claim itself -------------------------------------------
+
 
 assert.equal(declares({ overrides: "vgsMenu" }, "vgsMenu"), true, "the id names the claim");
 assert.equal(declares({ overrides: "somethingElse" }, "vgsMenu"), false, "a claim on another id is not a claim on this one");
@@ -93,7 +70,7 @@ assert.equal(declares({ overrides: ["a", "b"] }, "vgsMenu"), false, "a list with
 assert.equal(declares({}, "vgsMenu"), false, "no marker is no claim");
 assert.equal(declares({ overrides: false }, "vgsMenu"), false, "an explicit false is no claim");
 
-// --- the shipped package -------------------------------------------------
+
 
 let v = verdict({ sourceTag: "bundled" });
 assert.equal(v.action, "replace", "a bundled manifest with no incumbent owns its id");
@@ -101,7 +78,7 @@ assert.equal(v.alwaysAvailable, true, "bundled packages are always available");
 assert.equal(v.enabled, true, "and therefore auto-enabled without a user setting");
 assert.equal(v.overridesBundled, false, "a bundled package does not override itself");
 
-// --- VGS-26: collision alone grants nothing ------------------------------
+
 
 v = verdict({ sourceTag: "user", existing: owner("bundled") });
 assert.equal(v.action, "block", "a user package reusing a bundled id without a marker is inert");
@@ -117,7 +94,7 @@ assert.equal(v.action, "block", "the rule is about the id, not the user director
 v = verdict({ sourceTag: "user", manifest: { overrides: "other" }, existing: owner("bundled") });
 assert.equal(v.action, "block", "a marker naming a different id does not claim this one");
 
-// --- a declared override -------------------------------------------------
+
 
 v = verdict({ sourceTag: "user", manifest: { overrides: "vgsMenu" }, existing: owner("bundled") });
 assert.equal(v.action, "replace", "a declared override takes the id");
@@ -125,10 +102,9 @@ assert.equal(v.alwaysAvailable, true, "and inherits always-available");
 assert.equal(v.enabled, true, "so it loads without the user enabling it (the VGS-13 hole)");
 assert.equal(v.overridesBundled, true);
 
-// --- scan order ----------------------------------------------------------
 
-// The user directory can be read before the bundled one, so the id is not yet
-// known to be bundled when the package that reuses it is parsed.
+
+// A user manifest can arrive before the bundled ID is known.
 v = verdict({ sourceTag: "user", bundledId: false });
 assert.equal(v.action, "replace", "an unknown id is just an ordinary plugin");
 assert.equal(v.enabled, false, "which stays disabled until the user enables it");
@@ -138,8 +114,7 @@ v = verdict({ sourceTag: "user", manifest: { overrides: "vgsMenu" }, bundledId: 
 assert.equal(v.overridesBundled, true, "the claim is recorded even before the shipped package is seen");
 assert.equal(v.alwaysAvailable, false, "but grants nothing until there is something to override");
 
-// The bundled manifest arriving second must be able to take its id back from a
-// bare collision, and must NOT take it from a declared override.
+// The bundled manifest must displace a bare collision but retain an explicit override.
 v = verdict({ sourceTag: "bundled", existing: owner("user") });
 assert.equal(v.action, "reclaim", "the shipped package reclaims its id from a bare collision");
 assert.equal(v.alwaysAvailable, true);
@@ -150,7 +125,7 @@ assert.equal(v.action, "shadow", "a declared override keeps the id whichever ord
 v = verdict({ sourceTag: "bundled", existing: owner("system") });
 assert.equal(v.action, "reclaim", "a system collision is reclaimed the same way");
 
-// --- unrelated ids are untouched -----------------------------------------
+
 
 v = verdict({ sourceTag: "user", pluginId: "somePlugin", bundledId: false, existing: owner("system") });
 assert.equal(v.action, "replace", "user still outranks system for an ordinary id");
@@ -165,13 +140,9 @@ assert.equal(v.enabled, true, "an enabled ordinary plugin loads");
 v = verdict({ sourceTag: "user", pluginId: "someWidget", bundledId: false, isPureDesktop: true });
 assert.equal(v.enabled, true, "desktop-only packages are enabled by their instances, as before");
 
-// --- VGS-75: equal priority must not be decided by completion order --------
 
-// Two user packages claiming one id have equal priority, and the manifest reads
-// that produce them are FileViews that settle in whatever order the filesystem
-// hands back. Under `>=` the last read to finish won, so the same two packages
-// on disk could own the id differently across rescans. The tie-break is the
-// manifest path, so both arrival orders have to name the same winner.
+
+// Equal-priority manifest reads can finish in either order. Both orders must select the same path.
 const A = "/home/u/.config/vshell/plugins/aPkg/plugin.json";
 const B = "/home/u/.config/vshell/plugins/zPkg/plugin.json";
 
@@ -185,25 +156,18 @@ assert.equal(first.action, "replace");
 second = verdict({ sourceTag: "user", pluginId: "somePlugin", bundledId: false, incomingPath: B, existing: owner("user", { manifestPath: A }) });
 assert.equal(second.action, "shadow", "and the higher path does not take it back — the winner is the same in both orders");
 
-// Re-parsing the owner's own manifest (a rescan, or an edit in place) is an
-// equal-priority collision with itself and must still replace its own record,
-// or `plugin-scan rescan` would leave the stale record owning the id.
+// A rescan of the current owner must replace its own record so edits do not leave stale metadata.
 const reparse = verdict({ sourceTag: "user", pluginId: "somePlugin", bundledId: false, incomingPath: A, existing: owner("user", { manifestPath: A }) });
 assert.equal(reparse.action, "replace", "a manifest always replaces its own previous record");
 
-// Priority still outranks the path: a lower path in a lower-priority directory
-// does not beat a higher-priority one.
+
 const acrossSources = verdict({ sourceTag: "system", pluginId: "somePlugin", bundledId: false, incomingPath: A, existing: owner("user", { manifestPath: B }) });
 assert.equal(acrossSources.action, "shadow", "the path only breaks ties within one priority");
 
-// --- VGS-75: a takeover is a takeover whatever directory it comes from -----
 
-// Displacement decides whether the swap tears the running package down before
-// installing the new one. Judging it by source was survivable only while equal
-// priority could not displace — the path tie-break above made two user packages
-// a real takeover, and a takeover the loader cannot see is one it never
-// unloads, leaving the old package in loadedPlugins with its components
-// installed while availablePlugins points at the new record.
+
+// Displacement can occur within one source directory. It must still tear down the prior
+// loaded component before installing the replacement record.
 assert.equal(
     displaces({ source: "user", loaded: true, manifestPath: A }, B), true,
     "a different path is a takeover even when both packages are user-source"
@@ -222,7 +186,7 @@ assert.equal(
 );
 assert.equal(displaces(null, A), false, "and an unowned id has no incumbent at all");
 
-// --- the invariant, stated directly --------------------------------------
+
 
 for (const sourceTag of ["user", "system"]) {
     for (const manifest of [{}, { overrides: false }, { overrides: "other" }, { overrides: [] }]) {
@@ -238,7 +202,7 @@ for (const existing of [null, owner("bundled"), owner("user"), owner("user", { o
     assert.equal(decided.alwaysAvailable, true, "and is always available whatever it competes with");
 }
 
-// --- VGS-76: shipped manifests must satisfy the shell they ship with --------
+
 
 const VERSION_SERVICE = path.join(
     REPO, "quickshell", "vshell", "Services", "ShellVersionService.qml"
@@ -247,9 +211,7 @@ const versionSource = fs.readFileSync(VERSION_SERVICE, "utf8");
 const versionMatch = versionSource.match(/\/\/ BEGIN VERSION POLICY\n([\s\S]*?)\/\/ END VERSION POLICY/);
 assert.ok(versionMatch, "ShellVersionService.qml must carry the VERSION POLICY markers");
 
-// Same extraction trick, and for the same reason: the requirement has to be
-// judged by the comparator that judges it at runtime, not by a stand-in that
-// could be more permissive than the shell.
+// Use the runtime comparator so a more permissive test substitute cannot accept an invalid requirement.
 const { checkVersionRequirement, parseVersion } = new Function(
     `${versionMatch[1]}\nreturn { checkVersionRequirement, parseVersion };`
 )();
@@ -258,8 +220,7 @@ const shellVersion = fs.readFileSync(path.join(REPO, "VERSION"), "utf8").trim();
 assert.ok(/^\d+\.\d+\.\d+/.test(shellVersion), `VERSION must be semver, got "${shellVersion}"`);
 const parsedShell = parseVersion(shellVersion);
 
-// The instrument before the measurement: a comparator that answered `true` to
-// everything would pass every manifest below while checking nothing.
+// Require the comparator to reject an incompatible requirement before checking shipped manifests.
 assert.equal(checkVersionRequirement(">=999.0.0", parsedShell), false, "the extracted comparator must be able to refuse a requirement");
 assert.equal(checkVersionRequirement(">=0.0.0", parsedShell), true, "and to accept one");
 

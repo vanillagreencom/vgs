@@ -143,7 +143,7 @@ PanelWindow {
             anchors.topMargin: Theme.spacingS
             spacing: 1
 
-            // Window list for grouped apps
+
             Repeater {
                 model: {
                     if (!root.appData || root.appData.type !== "grouped")

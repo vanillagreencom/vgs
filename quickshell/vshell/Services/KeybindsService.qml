@@ -568,10 +568,7 @@ Singleton {
 
     property bool _retiredLauncherBindWarnShown: false
 
-    // VGS-13 removed the launcher/spotlight/spotlight-bar IPC targets. VGS
-    // rewrites the niri binds it generated itself; anything in a config VGS
-    // does not own can only be reported, so say so once per session when the
-    // binds are already in hand rather than spawning a startup probe for it.
+    // Report retired launcher targets in user-owned bindings once per session. The helper rewrites only VGS-generated Niri bindings.
     function _maybeWarnRetiredLauncherBinds(bindsData) {
         if (_retiredLauncherBindWarnShown || !bindsData)
             return;

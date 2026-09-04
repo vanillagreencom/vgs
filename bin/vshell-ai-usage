@@ -8,10 +8,8 @@
 #
 # Multi-account: people run several subscriptions side by side by pointing
 # CLAUDE_CONFIG_DIR (or CODEX_HOME) at different directories, one per wrapper
-# script. Every such directory is discovered and reported as its own account,
-# labelled by the signed-in email. Single-account machines produce a one-entry
-# list, and the top-level fields still describe that account, so the widget
-# looks and behaves exactly as it did before.
+# script. Discovery checks configured profile locations. Each supported profile
+# becomes an account entry. Top-level fields describe the primary account.
 #
 # Usage: vshell-ai-usage [claude|codex]
 #
@@ -58,7 +56,6 @@ if ! command -v "$engine" >/dev/null 2>&1; then
     exit 0
 fi
 
-# --- Account discovery -------------------------------------------------------
 
 # Claude: any directory holding a .credentials.json with a claudeAiOauth block.
 # Profiles whose tokens live in the desktop keyring instead (mcpOAuth only) are
@@ -82,9 +79,8 @@ discover_codex() {
     done | awk '!seen[$0]++'
 }
 
-# The signed-in email is the only label that means anything when several
-# accounts are on the same plan. The default profile keeps its profile JSON at
-# ~/.claude.json rather than inside the config dir, so both layouts are tried.
+# The default Claude profile is ~/.claude.json; other profiles keep their
+# identity file in the config directory. Email distinguishes accounts on the same plan.
 label_for() {
     local dir="$1" email=""
     if [[ "$provider" == "claude" ]]; then
@@ -126,15 +122,11 @@ for dir in "${dirs[@]}"; do
     fi
 
     label="$(label_for "$dir")"
-    # Codex reports the account email in its usage payload; prefer it.
     [[ -z "$label" ]] && label="$(jq -r '.email // empty' <<<"$raw" 2>/dev/null || true)"
     [[ -z "$label" ]] && label="$id"
 
-    # Not fatal. Under `set -e` a jq failure here would abort the script with no
-    # output at all, so one unreadable account would cost the whole payload and
-    # the widget would show a blanket error instead of the accounts that are
-    # fine. One account degrades to an unavailable entry, and the reason is said
-    # out loud on stderr rather than swallowed.
+    # An unreadable account must not abort collection for the other accounts.
+    # Report its error on stderr and return an unavailable entry.
     normalized=""
     if ! normalized="$(jq -c \
         --argjson acc "$accounts_json" \
@@ -143,36 +135,17 @@ for dir in "${dirs[@]}"; do
         --arg label "$label" \
         --arg dir "$dir" \
         '
-        # Engine messages are written for Pango tooltip markup. The widget
-        # renders every string through StyledText, which is Text.PlainText by
-        # design (RichText would make provider-supplied strings an injection
-        # surface), so the markup has to be resolved here — one owner, same
-        # reason the "\n" flattening below lives here rather than in QML.
-        #
-        # Only the Pango tag names are stripped, so a message containing "<3"
-        # or "a < b" survives intact. Tags come out before the entities are
-        # unescaped, so text the engine deliberately escaped ("&lt;b&gt;")
-        # stays literal instead of being stripped on a second pass; "&amp;"
-        # is unescaped last for the same reason.
-        #
-        # The "i" flag needs three-argument gsub, which is NOT a newer builtin
-        # than the two-argument form: jq 1.5 (2015-08-16) defines them side by
-        # side in builtin.c —
-        #   def gsub($re; s; flags): sub($re; s; flags + "g");
-        #   def gsub($re; s): sub($re; s; "g");
-        # — and jq 1.4 has no regex builtins at all, so a jq that cannot run
-        # gsub/3 cannot run the gsub/2 calls this script has always used. The
-        # flag therefore adds no version exposure of its own; jq >= 1.5 is the
-        # floor for this script as a whole, and it is declared as such in
-        # config/vshell/dependencies.json.
+        # The widget renders plain text, so remove engine Pango markup here.
+        # Strip tags before decoding entities to preserve escaped literal tags.
+        # Decode &amp; last to avoid decoding the same text twice.
+        # gsub with flags needs jq >= 1.5, the floor config/vshell/dependencies.json probes.
         def pango:
           if . == null then null
           else gsub("</?(b|i|u|s|tt|big|small|sub|sup|span|markup)([ \t\r\n][^>]*)?>"; ""; "i")
                | gsub("&lt;"; "<") | gsub("&gt;"; ">")
                | gsub("&quot;"; "\"")
-               # An apostrophe cannot appear literally in this jq program —
-               # the whole program is a single-quoted bash string — so the
-               # replacement is built from its code point.
+               # Build the apostrophe from its code point because this jq program is
+               # inside a single-quoted Bash argument.
                | gsub("&(apos|#0*39);"; ([39] | implode); "i")
                | gsub("&amp;"; "&")
           end;
@@ -181,24 +154,19 @@ for dir in "${dirs[@]}"; do
             label: $label,
             configDir: $dir,
             ok: ($entry.ok == true),
-            # Also carries literal "\n" sequences; flatten them so the widget
-            # never prints them raw.
+            # Flatten literal escape sequences so the widget does not display them raw.
             error: (($entry.error // null) | if . == null then null
                     else gsub("\\\\n"; " ") | gsub("\\\\t"; " ") | pango
                          | gsub("[[:space:]]+"; " ") | sub("^ +"; "") | sub(" +$"; "") end),
             plan: (($entry.plan // "") | pango),
-            # Credit-billed Claude seats identify as Enterprise and expose a
-            # spend pool instead of rate-limit windows. Keep the explicit flag
-            # in the shared payload so every UI can group account types without
-            # inferring them from an email domain.
+            # Keep account type explicit so the UI can group spend-based accounts
+            # without guessing from email domains.
             enterprise: (((($entry.plan // "") | ascii_downcase) | startswith("enterprise"))
                          or ($entry.spend != null)),
             class: ($entry.class // "low"),
             session: ($entry.session // null),
             weekly: ($entry.weekly // null),
-            # Every remaining engine-populated string the widget renders as
-            # text goes through the same normalization — a lane label and a
-            # spend detail reach StyledText exactly as an error message does.
+            # Normalize model labels and spend details for the same plain-text widget.
             models: (($entry.models // [])
                      | map(if type == "object" and (.label | type) == "string"
                            then .label = (.label | pango) else . end)),
@@ -233,10 +201,8 @@ jq -nc \
     | ($live | map(select(.weekly  != null))) as $week
     | (if ($sess | length) > 0 then (($sess | map(.session.pct) | add) / ($sess | length) | round) else null end) as $aggSession
     | (if ($week | length) > 0 then (($week | map(.weekly.pct)  | add) / ($week | length) | round) else null end) as $aggWeekly
-    # Headline: each account counts for its TIGHTEST window, because that is what
-    # actually blocks you — an account with a 3% session and a 96% weekly is 96%
-    # spent, not 3%. Averaging one window type across accounts (which is what
-    # $aggSession/$aggWeekly do) reported 8% on a pool that was nearly exhausted.
+    # Average the highest usage percentage per account across its reported
+    # windows. Averaging each window separately can hide an exhausted account.
     | ($live | map([ (.session.pct // empty), (.weekly.pct // empty),
                      (.models[]?.pct // empty), (.spend.pct // empty) ]
                    | map(select(. != null)) | max // 0)) as $tightest
@@ -249,8 +215,7 @@ jq -nc \
        elif $peak >= 75 then "high"
        elif $peak >= 50 then "mid"
        else "low" end) as $aggClass
-    # Primary account keeps the single-account contract intact: same top-level
-    # shape the widget has always parsed, so nothing regresses with one account.
+    # Top-level fields describe the primary account for single-account consumers.
     | ($live[0] // $accounts[0]) as $primary
     | ($primary.models // []) as $pm
     | if ($live | length) == 0 then

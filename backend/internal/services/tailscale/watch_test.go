@@ -13,10 +13,9 @@ import (
 	"vshell/backend/internal/server"
 )
 
-// Frames as tailscale emits them: pretty-printed, concatenated, no separators,
-// after a human banner line on some builds. The Prefs blob is included verbatim
-// (with a placeholder private key) so the decoder is exercised on the real
-// shape — nothing from it may ever reach a log or a broadcast.
+// The fixture contains concatenated, formatted JSON after a banner. Its
+// placeholder private key checks that notification contents do not reach
+// broadcasts or logs.
 const ipnFrames = `Connected.
 {
 	"Version": "1.98.10",
@@ -61,17 +60,15 @@ func TestReadFramesPulsesOncePerNotification(t *testing.T) {
 	}
 }
 
-// TestPulseIsNotStarvedBySustainedTraffic is the assertion that would have
-// caught the trailing-edge debounce: with a re-arming timer, a frame stream
-// faster than the coalescing window postpones every push for as long as the
-// traffic lasts — which is precisely what a netmap burst looks like.
+// TestPulseIsNotStarvedBySustainedTraffic checks that a stream faster than the
+// coalescing window cannot postpone every push.
 func TestPulseIsNotStarvedBySustainedTraffic(t *testing.T) {
 	dir := t.TempDir()
 	statusPath := filepath.Join(dir, "status.json")
 	writeFile(t, statusPath, statusFixture)
 
-	// A watcher that never stops talking: one frame every 50ms, forever, which
-	// is eight times faster than the 400ms window.
+	// Frames arrive faster than the coalescing window to expose a timer that
+	// re-arms on each frame.
 	stub := filepath.Join(dir, "tailscale")
 	writeStub(t, stub, statusPath,
 		"  printf 'Connected.\\n'\n"+
@@ -84,9 +81,8 @@ func TestPulseIsNotStarvedBySustainedTraffic(t *testing.T) {
 	c, sc := subscribeTailscale(t, sock)
 	_ = readEvent(t, c, sc, "tailscale") // subscribe snapshot
 
-	// The ceiling is the delay computed for the first unserved frame, i.e. at
-	// most watchMinInterval. Anything under a few seconds proves the push is
-	// not being postponed by the ongoing stream.
+	// The deadline must allow a pending push but expire while the frame stream
+	// remains active.
 	start := time.Now()
 	update := readEvent(t, c, sc, "tailscale")
 	elapsed := time.Since(start)
@@ -97,7 +93,6 @@ func TestPulseIsNotStarvedBySustainedTraffic(t *testing.T) {
 		t.Fatalf("pushed state = %v, want Running", update)
 	}
 
-	// ...and it keeps pushing rather than pushing once and starving after.
 	start = time.Now()
 	_ = readEvent(t, c, sc, "tailscale")
 	if elapsed := time.Since(start); elapsed > 4*time.Second {
@@ -112,7 +107,6 @@ func TestPulseHonoursMinIntervalFloor(t *testing.T) {
 	m.watchCtx, m.watchStop = context.WithCancel(context.Background())
 	t.Cleanup(m.watchStop)
 
-	// A push "just happened", so the floor has almost all of its time left.
 	m.lastPush = time.Now()
 	m.pulse()
 	m.watchMu.Lock()
@@ -131,27 +125,26 @@ func TestPulseHonoursMinIntervalFloor(t *testing.T) {
 	m.stopWatch()
 }
 
-// TestPulseSurvivesNilWatchCtx: a Manager built directly, as every other test
-// in this package does, must not nil-panic when the watcher paths run.
+// TestPulseSurvivesNilWatchCtx checks a directly constructed Manager without a
+// watcher context.
 func TestPulseSurvivesNilWatchCtx(t *testing.T) {
 	m := &Manager{}
 	if m.watchDone() {
 		t.Fatal("a Manager with no watchCtx must not report itself shut down")
 	}
-	m.pulse() // must not panic
+	m.pulse()
 	m.watchMu.Lock()
 	if m.pushTimer != nil {
 		m.pushTimer.Stop()
 		m.pushTimer = nil
 	}
 	m.watchMu.Unlock()
-	m.stopWatch() // must not panic either
+	m.stopWatch()
 }
 
-// TestRunWatchTerminatesChildOnParseError: the child stays alive and idle after
-// emitting output the reader rejects. Without killing it, cmd.Wait blocks
-// forever and supervision never restarts, never counts the failure, and never
-// reaches its give-up limit.
+// TestRunWatchTerminatesChildOnParseError uses a child that remains idle after
+// invalid output. Waiting without killing it would prevent supervision from
+// retrying.
 func TestRunWatchTerminatesChildOnParseError(t *testing.T) {
 	dir := t.TempDir()
 	statusPath := filepath.Join(dir, "status.json")
@@ -179,10 +172,8 @@ func TestRunWatchTerminatesChildOnParseError(t *testing.T) {
 	}
 }
 
-// TestRunWatchFoldsChildStderrIntoError proves the stderr-folding path added
-// alongside the flag fix: a give-up log line is only as useful as the text it
-// carries, and nothing else exercises the `stderr.Len() > 0` guard or proves
-// the wrap keeps the child's own words rather than swallowing them.
+// TestRunWatchFoldsChildStderrIntoError checks that the returned error includes
+// the child diagnostic.
 func TestRunWatchFoldsChildStderrIntoError(t *testing.T) {
 	dir := t.TempDir()
 	statusPath := filepath.Join(dir, "status.json")
@@ -211,16 +202,13 @@ func TestRunWatchFoldsChildStderrIntoError(t *testing.T) {
 	}
 }
 
-// TestRunWatchCapsStderr proves a crash-looping or unexpectedly chatty child
-// cannot grow the stderr folded into the returned error without bound: a
-// child that writes well past watchStderrCap must still produce an error of
-// bounded size, carrying a truncation marker rather than every byte it wrote.
+// TestRunWatchCapsStderr checks that oversized stderr produces a bounded error
+// with a truncation marker.
 func TestRunWatchCapsStderr(t *testing.T) {
 	dir := t.TempDir()
 	statusPath := filepath.Join(dir, "status.json")
 	writeFile(t, statusPath, statusFixture)
 
-	// Twice the cap, so a bug that retains everything is unambiguous.
 	written := watchStderrCap * 2
 	stub := filepath.Join(dir, "tailscale")
 	writeStub(t, stub, statusPath,
@@ -249,13 +237,8 @@ func TestRunWatchCapsStderr(t *testing.T) {
 	}
 }
 
-// TestRunWatchInvokesWatchIpnWithNoFlags is the regression control for
-// VGS-202: tailscale 1.102.2 rejects `--netmap=true` on `debug watch-ipn`
-// ("flag provided but not defined: -netmap") because the flag was removed
-// upstream, and every watcher restart burned the whole retry budget within
-// seconds as a result. The stub records the exact argv it was invoked with so
-// a future reintroduction of that flag, or any other, fails here rather than
-// silently reproducing the outage.
+// TestRunWatchInvokesWatchIpnWithNoFlags checks the exact argument list.
+// Unsupported flags would cause watcher startup to fail repeatedly.
 func TestRunWatchInvokesWatchIpnWithNoFlags(t *testing.T) {
 	dir := t.TempDir()
 	statusPath := filepath.Join(dir, "status.json")
@@ -297,18 +280,16 @@ func TestReadFramesRejectsGarbage(t *testing.T) {
 	m := &Manager{}
 	m.watchCtx, m.watchStop = context.WithCancel(context.Background())
 	t.Cleanup(m.watchStop)
-	// The whole point of the banner skip is that it advances by lines to the
-	// first JSON value; a stream that never contains one must error, not spin.
+	// Skipping banners must consume input. A stream without a JSON value must end
+	// with an error.
 	err := m.readFrames(strings.NewReader("Connected.\n{\"State\": 6}\nnot json at all\n"), func() {})
 	if err == nil {
 		t.Fatal("readFrames accepted a malformed stream")
 	}
 }
 
-// TestWatcherBroadcastReachesSubscriber is the end-to-end assertion for VGS-63:
-// a subscriber that took its snapshot while tailscaled was still coming up
-// receives an updated state when the ipn bus reports a transition, with no
-// request of its own and no VGS-initiated write action.
+// TestWatcherBroadcastReachesSubscriber checks that a bus event updates a
+// subscriber without a client request or VGS write action.
 func TestWatcherBroadcastReachesSubscriber(t *testing.T) {
 	dir := t.TempDir()
 	statusPath := filepath.Join(dir, "status.json")
@@ -328,14 +309,12 @@ func TestWatcherBroadcastReachesSubscriber(t *testing.T) {
 
 	c, sc := subscribeTailscale(t, sock)
 
-	// The snapshot the shell would take on a cold boot: truthful, and wrong
-	// within minutes.
+	// The initial snapshot precedes the daemon state change.
 	snapshot := readEvent(t, c, sc, "tailscale")
 	if snapshot["backendState"] != "NoState" || snapshot["connected"] != false {
 		t.Fatalf("subscribe snapshot = %v, want NoState/false", snapshot)
 	}
 
-	// tailscaled finishes coming up. Nothing in VGS asked for this.
 	writeFile(t, statusPath, statusFixture)
 	writeFile(t, triggerPath, "go")
 
@@ -349,19 +328,15 @@ func TestWatcherBroadcastReachesSubscriber(t *testing.T) {
 	}
 }
 
-// TestWatcherActiveClearsDuringRestartBackoff reads WatcherActive *during* the
-// supervisor's backoff, not after give-up. Setting the flag when a child starts
-// and never clearing it when that child exits left every status read in the gap
-// claiming a watcher, so the shell held its five-minute watched cadence while
-// nothing could deliver a push.
+// TestWatcherActiveClearsDuringRestartBackoff reads WatcherActive while no child
+// can deliver events. A replacement child must restore the flag.
 func TestWatcherActiveClearsDuringRestartBackoff(t *testing.T) {
 	dir := t.TempDir()
 	statusPath := filepath.Join(dir, "status.json")
 	writeFile(t, statusPath, statusFixture)
 
-	// A child that starts cleanly, emits one frame, stays up long enough to be
-	// observed running, then exits — so supervision restarts it after a backoff
-	// rather than giving up.
+	// The child stays alive long enough to observe its running state, then exits to
+	// trigger backoff.
 	stub := filepath.Join(dir, "tailscale")
 	writeStub(t, stub, statusPath,
 		"  printf 'Connected.\\n'\n"+
@@ -376,9 +351,7 @@ func TestWatcherActiveClearsDuringRestartBackoff(t *testing.T) {
 		return m.watchAlive.Load()
 	})
 
-	// The child exits at once. Everything from here until the replacement
-	// starts is backoff, and the first backoff is one second — plenty of room
-	// to catch a status read inside it.
+	// Read status after the child exits and before the replacement starts.
 	waitFor(t, 5*time.Second, "watcher child to exit", func() bool {
 		return !m.watchAlive.Load()
 	})
@@ -404,21 +377,17 @@ func TestWatcherActiveClearsDuringRestartBackoff(t *testing.T) {
 	}
 }
 
-// TestStatusReadsDoNotOverlap: two `tailscale status` calls in the air at once
-// broadcast in completion order, so an older read can land after a newer one
-// and walk the shell's state backwards. The watcher must hold its slot until
-// the read it started has been broadcast.
+// TestStatusReadsDoNotOverlap checks that a watcher read holds its slot through
+// broadcast. Overlapping reads could complete out of order and publish stale
+// state.
 func TestStatusReadsDoNotOverlap(t *testing.T) {
 	dir := t.TempDir()
 	statusPath := filepath.Join(dir, "status.json")
 	writeFile(t, statusPath, statusFixture)
 	marks := filepath.Join(dir, "marks.log")
 
-	// `status` brackets itself in the marker log and takes 2.5s — deliberately
-	// LONGER than the 2s scheduling floor, which is the condition the finding
-	// names ("each command may take up to 12s while the floor is 2s"). With a
-	// read shorter than the floor the floor alone serialises them and the test
-	// proves nothing; only a read that outlives it can overlap.
+	// The status stub takes longer than the scheduling floor. A shorter read could
+	// not expose overlap because the floor alone would serialize it.
 	stub := filepath.Join(dir, "tailscale")
 	writeFile(t, stub, "#!/bin/sh\n"+
 		"if [ \"$1\" = status ]; then\n"+
@@ -440,9 +409,9 @@ func TestStatusReadsDoNotOverlap(t *testing.T) {
 
 	m := newWatchManager(t, server.New(0, nil), stub)
 	m.startWatch()
-	time.Sleep(9 * time.Second) // several floor intervals of continuous frames
+	time.Sleep(9 * time.Second)
 	m.stopWatch()
-	time.Sleep(3 * time.Second) // let any read already running finish
+	time.Sleep(3 * time.Second)
 
 	raw, err := os.ReadFile(marks)
 	if err != nil {
@@ -477,10 +446,8 @@ func TestWatcherGivingUpClearsWatcherActive(t *testing.T) {
 	statusPath := filepath.Join(dir, "status.json")
 	writeFile(t, statusPath, statusFixture)
 
-	// A tailscale build with no `debug watch-ipn`: the subcommand exits at once,
-	// every time. Each attempt records itself, so "gave up" is observed as
-	// attempts stopping rather than inferred from a flag that also happens to
-	// be false before the first child ever starts.
+	// The stub records failed startup attempts. Observe that attempts stop, because
+	// an inactive flag alone also describes backoff.
 	attempts := filepath.Join(dir, "attempts.log")
 	stub := filepath.Join(dir, "tailscale")
 	writeStub(t, stub, statusPath,
@@ -499,7 +466,6 @@ func TestWatcherGivingUpClearsWatcherActive(t *testing.T) {
 		return len(strings.Fields(string(raw)))
 	}
 
-	// watchMaxFastFailures attempts, with backoff 1,2,4,8s between them.
 	waitFor(t, 30*time.Second, "supervision to exhaust its retries", func() bool {
 		return countAttempts() >= watchMaxFastFailures
 	})

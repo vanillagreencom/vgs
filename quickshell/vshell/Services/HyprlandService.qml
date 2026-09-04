@@ -130,11 +130,7 @@ Singleton {
         Hyprland.dispatch("hl.dsp.exit()");
     }
 
-    // hl.dsp.dpms takes a TABLE — a positional string arg is silently ignored
-    // and the dispatch degrades to a TOGGLE (verified live 2026-07-06). The old
-    // string form here meant every "off"/"on" was really a toggle, which is a
-    // root cause of the historical lock-screen↔black oscillation (reapplying
-    // "off" while already off toggled displays back on).
+    // hl.dsp.dpms requires a table. A positional string is ignored and turns an explicit state request into a toggle.
     function dpmsOff() {
         Hyprland.dispatch('hl.dsp.dpms({ action = "off" })');
     }

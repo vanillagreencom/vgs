@@ -6,9 +6,7 @@ import qs.Widgets
 Item {
     id: root
 
-    // An empty center is the whole symptom of a lost bus name: notifications
-    // appear on screen, drawn by another daemon, and VGS shows nothing. Say so
-    // here rather than leaving the user to read the journal.
+    // A lost notification bus name can leave VGS empty while another daemon draws notifications. Show that ownership state here.
     readonly property bool conflict: NotificationService.serverConflict
 
     width: parent.width

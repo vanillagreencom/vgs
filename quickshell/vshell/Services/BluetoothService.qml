@@ -270,7 +270,6 @@ Singleton {
             return;
         }
 
-        // The VGS backend actually implements a bluez agent, so we can pair anything
         if (enhancedPairingAvailable) {
             const devicePath = getDevicePath(device);
             VGSBackendService.bluetoothPair(devicePath, callback);
@@ -603,7 +602,6 @@ Singleton {
                 callback(exitCode === 0, exitCode === 0 ? "Codec switched successfully" : "Failed to switch codec");
             }
 
-            // If successful, refresh the codec for this device
             if (exitCode === 0) {
                 if (root.adapter && root.adapter.devices) {
                     root.adapter.devices.values.forEach(device => {

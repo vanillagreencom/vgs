@@ -1,18 +1,7 @@
 #!/usr/bin/env node
 
-// Pins the provider stamp on the entrypoint the aiUsage widget actually runs:
-// `vshell ai-usage <provider>`, which wraps whichever ai-usage backend is
-// installed (VGS-118).
-//
-// The widget files every payload under the provider the payload itself names
-// and discards anything unstamped. The wrapper's OWN error payloads carried no
-// stamp, so a genuine backend failure — missing backend, non-zero exit, empty
-// output — was discarded as a provider mismatch and the real cause never
-// reached the user. A third-party `ai-usage` from PATH predates the field
-// entirely, which is the other half of the same problem.
-//
-// Driven through bin/vshell with a fake backend, because that wrapper layer is
-// what the widget calls; scripts/test-ai-usage-provider.js covers the QML side.
+// Drive the widget entrypoint through bin/vshell with a fake backend.
+// Its error payloads and unstamped backend results need provider identity so failures reach the user.
 
 "use strict";
 
@@ -24,21 +13,9 @@ const { spawnSync } = require("node:child_process");
 
 const repoRoot = path.join(__dirname, "..");
 
-// This suite reads the payload's `provider` field directly rather than executing
-// the widget's acceptance rule. It used to extract and RUN that rule from
-// AiUsageLogic.qml, which meant a QML edit executed code in this process on a
-// fork PR's CI run; nothing here needs it. The rule itself — that a payload is
-// accepted only when its own stamp matches the fetch's provider — is proved by
-// executing it in scripts/test-ai-usage-provider.js, and what this suite proves
-// is the other half: that the entrypoint emits a payload carrying that stamp.
+// Read provider fields directly here. test-ai-usage-provider.js exercises widget acceptance decisions.
 
-// --- 6. the entrypoint the widget actually runs -----------------------------
-//
-// The widget runs `vshell ai-usage <provider>`, which wraps the backend. The
-// wrapper's OWN error payloads carried no provider stamp, so with payload
-// identity enforced a genuine backend failure was discarded as a mismatch and
-// the real cause never reached the user. Exercised through bin/vshell, because
-// that is the layer the widget calls.
+
 
 const VSHELL = path.join(repoRoot, "bin", "vshell");
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "vgs-ai-usage-"));
@@ -64,9 +41,7 @@ function runEntrypoint(provider, backend) {
     return parsed;
 }
 
-// try/finally, because a failing assertion throws past a trailing cleanup and
-// leaves a directory of executable fake backends behind — which it did, five
-// times, before this was wrapped.
+// Use finally so failed assertions cannot leave executable fake backends behind.
 try {
     for (const [label, backend] of [
         ["a backend that fails", fakeBackend("fails", 'echo "boom" >&2\nexit 7')],
@@ -85,7 +60,7 @@ try {
     }
 
     {
-        // A third-party ai-usage engine from PATH predates the field entirely.
+        // An external backend can omit the provider field.
         const backend = fakeBackend("unstamped", 'echo \'{"ok":true,"plan":"Max","session":{"pct":12}}\'');
         const payload = runEntrypoint("codex", backend);
         assert.equal(payload.ok, true, "a good payload passes through");
@@ -94,9 +69,7 @@ try {
     }
 
     {
-        // The stamp must not overwrite what a backend already said: the backend is
-        // the authority on its own identity, and a wrapper that overwrote it would
-        // re-introduce attribution by argument.
+        // Keep a backend-provided identity; overwriting it would conceal an attribution mismatch.
         const backend = fakeBackend("stamped", 'echo \'{"ok":false,"provider":"claude","error":"nope"}\'');
         const payload = runEntrypoint("codex", backend);
         assert.equal(payload.provider, "claude", "an existing stamp is preserved, never overwritten");
@@ -107,13 +80,9 @@ try {
     fs.rmSync(tmp, { recursive: true, force: true });
 }
 
-// The backend-not-found branch cannot be reached with the repo's own backend
-// present, so it is pinned at the source: every payload cmd_ai_usage emits goes
-// through the one stamping helper.
+// The repository backend prevents the missing-backend fixture, so inspect wrapper emissions at source.
 const helperSource = fs.readFileSync(path.join(repoRoot, "bin", "vshell-helper"), "utf8");
-// Comment lines blanked, same reason as everywhere else in this batch: a comment
-// mentioning `print(` or the stamping call is prose, and counting it either hides
-// an unstamped path or fails a harmless edit.
+// Blank comments before counting print and stamp calls so prose cannot satisfy emission checks.
 const helperCode = helperSource.split("\n").map(l => (/^\s*#/.test(l) ? "" : l)).join("\n");
 const cmdAiUsage = helperCode.slice(
     helperCode.indexOf("def cmd_ai_usage("),
@@ -126,26 +95,12 @@ assert.equal((cmdAiUsage.match(/print\(/g) || []).length, 1,
 assert.ok(cmdAiUsage.includes('emit({"ok": False, "error": "ai-usage backend not found"})'),
     "the backend-not-found payload is emitted through the stamping helper");
 
-// --- the backend script's own emissions -------------------------------------
-//
-// The wrapper stamps what it emits and fills in a stamp the backend omitted, so
-// a missing stamp in bin/vshell-ai-usage would not reach the widget — but it
-// would silently make the wrapper the source of a provider identity the backend
-// meant to state itself. Every payload the backend builds has to carry the key.
-//
-// Scanned per payload OBJECT, not per jq invocation: the main emission is ONE jq
-// program holding TWO payload objects — the no-live-account failure and the
-// success — so a per-invocation scan was satisfied by either sibling's key while
-// the other went unstamped, and the success object is the everyday path.
+// Inspect each payload object. A jq program can emit both success and failure objects,
+// and a stamp in one must not cover the other.
 
 const backend = fs.readFileSync(path.join(repoRoot, "bin", "vshell-ai-usage"), "utf8");
 
-// Every brace-balanced object literal, paired with its OWN level: the text at
-// this object's depth, with every nested object left out entirely. Computed
-// during the walk rather than by stripping nested braces afterwards — one
-// regex pass removed only the INNERMOST objects, so a key one level down
-// survived into the parent's own text whenever a deeper sibling existed, and a
-// nested stamp then counted as the payload's own.
+// Read object fields at their own brace depth. A nested provider key cannot stamp its parent.
 function objectLiterals(text) {
     const out = [];
     for (let i = 0; i < text.length; i++) {
@@ -180,32 +135,23 @@ function objectLiterals(text) {
         "a key inside a NESTED object must not count as its parent's");
     assert.ok(sample.some(o => /ok:false/.test(o.own) && /provider/.test(o.own)),
         "a key at the object's own level does count");
-    // The shape a single strip pass got wrong: the stamp one level down survives
-    // into the parent whenever the nested object has an object of its own.
+    // A nested sibling object must not expose its provider key at the parent depth.
     const deeper = objectLiterals("{ok:true, a:{provider:$p, b:{x:1}}}");
     assert.ok(deeper.some(o => /ok:true/.test(o.own) && !/provider/.test(o.own)),
         "a nested stamp must not count as the payload's own even when a deeper object sits " +
         "beside it — that let the scan pass after a top-level payload LOST its stamp");
 }
 
-// The programs that BUILD payloads: `jq -n` constructs an object from nothing
-// and its output is printed, while the `jq -c` calls normalise one account from
-// stdin — account objects carry `ok` too and are not payloads.
-//
-// The program text is delimited by the single quotes the script uses throughout
-// (it cannot contain a literal quote, as the script says of itself). That is a
-// convention, so it is ENFORCED rather than assumed: a jq invocation whose
-// program does not open with a single quote fails here. Searching forward for
-// the next quote instead was fail-open — a double-quoted unstamped emission read
-// the NEXT program's text and was vouched for by a stamped sibling.
+// Inspect jq -n payload builders, not jq -c account normalizers.
+// Require the single-quoted program convention within the same command so an unsupported
+// quote shape cannot borrow a later program's stamp.
 function jqBuildPrograms(text) {
     const out = [];
     const at = /\bjq -n[a-z]*\b/g;
     let hit;
     while ((hit = at.exec(text)) !== null) {
         const rest = text.slice(hit.index + hit[0].length);
-        // Options may precede the program, but it stays inside this one logical
-        // command: only whitespace, line continuations and --arg/--argjson pairs.
+
         const preamble = rest.match(/^(?:\s*\\\n|\s|--arg(?:json)?\s+\w+\s+"[^"]*")*/)[0];
         const program = rest.slice(preamble.length);
         assert.equal(program[0], "'",
@@ -219,12 +165,10 @@ function jqBuildPrograms(text) {
     return out;
 }
 
-// Comment lines are blanked first: this file documents its payload shape in a
-// worked example, which is prose, not an emission.
+// Blank comment lines so a documented payload example cannot count as an emission.
 const backendCode = backend.split("\n").map(l => (/^\s*#/.test(l) ? "" : l)).join("\n");
 
-// A payload is what the widget parses: the object carrying `ok`. Both jq's bare
-// keys and JSON's quoted ones, so a payload written any other way is covered too.
+// Recognize payloads by their own ok field, with bare jq or quoted JSON keys.
 const hasKey = (text, key) => new RegExp(`(^|[{,\\s])"?${key}"?\\s*:`).test(text);
 const programs = jqBuildPrograms(backendCode);
 assert.ok(programs.length >= 4,
@@ -236,8 +180,7 @@ for (const program of programs) {
             payloads.push(object);
     }
 }
-// One program holds two of them — the no-live-account failure and the success —
-// which is exactly the pair a per-invocation scan let cover for each other.
+// Require separate coverage for success and no-live-account payloads in the same program.
 assert.ok(payloads.length >= 5,
     `expected every payload object the backend builds to be found, got ${payloads.length}`);
 for (const payload of payloads) {

@@ -218,10 +218,8 @@ func (m *Manager) schedulerLoop() {
 		}
 
 		if firesDirty {
-			// GC entries for monitors that no longer exist in the config, but
-			// keep the ones for configured-yet-disabled schedules: pruning
-			// those would defeat catch-up when the user re-enables a daily
-			// rotation whose time passed while it was off.
+			// Keep disabled schedules for configured monitors so daily rotation can catch
+			// up when re-enabled. Remove only monitors absent from configuration.
 			known := map[string]bool{"": true}
 			for name := range config.Monitors {
 				known[name] = true

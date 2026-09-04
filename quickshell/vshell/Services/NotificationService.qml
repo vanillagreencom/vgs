@@ -669,11 +669,7 @@ Singleton {
     property var expandedMessages: ({})
     property bool popupsDisabled: false
 
-    // --- notification bus ownership ---------------------------------------
-    //
-    // "", "vgs", "foreign" or "unowned", as reported by `vshell notifications
-    // status`. The shell cannot ask Quickshell whether its registration won,
-    // so ownership is read from the session bus itself.
+    // Ownership is reported by the session bus because Quickshell does not expose whether registration succeeded.
     property string serverOwnership: ""
     property string serverConflictDaemon: ""
     property string serverConflictReason: ""
@@ -684,7 +680,6 @@ Singleton {
     property bool serverConflictFixable: false
     property bool serverTakeoverBusy: false
     readonly property bool serverEnabled: SettingsData.notificationServerEnabled
-    // True only when VGS is meant to be the daemon and is not.
     readonly property bool serverConflict: serverEnabled && serverOwnership === "foreign"
     property bool _serverConflictAnnounced: false
     // True from the moment a first-run takeover is fired until it has either
@@ -696,20 +691,10 @@ Singleton {
     // helper is still working (its systemd calls can outlast one window), so a
     // tick count would let a stuck helper extend it forever; this cannot.
     property double _firstRunTakeoverDeadline: 0
-    // True once VGS has masked/stopped another daemon on its own initiative in
-    // this session. The user never asked for that, so an explicit opt-out has
-    // to undo it -- see _reverseFirstRunTakeover().
-    //
-    // Runtime-only, and therefore NOT the source of truth: it resets on every
-    // shell restart while the masks, stopped units and undo record it stands
-    // for all persist on disk. serverRestoreAutomatic is the durable answer;
-    // this is only the fast path for the session that fired the takeover.
+    // Track automatic takeover in this session for immediate reversal on opt-out.
+    // Use serverRestoreAutomatic for durable provenance across shell restarts.
     property bool _firstRunTakeoverFired: false
-    // Whether a takeover is waiting to be undone, and whether VGS made it on
-    // its own initiative. Both read from `vshell notifications status`, whose
-    // undo record lives beside the changes it describes -- so it cannot
-    // outlive them, and a `vshell notifications restore` run from a terminal
-    // updates it without VGS having to be told.
+    // Read pending restore state and automatic-takeover provenance from the helper undo record.
     property bool serverRestoreAvailable: false
     property bool serverRestoreAutomatic: false
     // Whether settings.json ON DISK records the one-shot as spent, as read by
@@ -769,23 +754,8 @@ Singleton {
         return true;
     }
 
-    // Undoes an automatic first-run takeover after the user turns the server
-    // off. VGS masked and stopped the user's daemon without being asked, so
-    // the opt-out has to put it back -- otherwise the opt-out itself is what
-    // leaves the session with no notification daemon at all, which is the one
-    // outcome it exists to prevent.
-    //
-    // Provenance comes from the helper's undo record, not from the runtime
-    // flag. The flag dies with the shell process while the masks, the stopped
-    // units and the record itself all persist, so keying on it alone meant a
-    // restart between the takeover and the opt-out skipped the reversal
-    // entirely and left the user's daemon masked and stopped -- the invariant
-    // broken by nothing more than a restart.
-    //
-    // `unconditional` is the deadline path: no ownership answer ever arrived,
-    // so provenance cannot be established and the invariant is honoured rather
-    // than the scope boundary. See reverseDeadlineTimer for why that is the
-    // right way round.
+    // Reverse automatic takeover after opt-out using durable helper provenance.
+    // The unconditional deadline path attempts restoration when provenance queries never answer.
     function _reverseFirstRunTakeover(unconditional = false) {
         if (!unconditional && !root._firstRunTakeoverFired
                 && !(root.serverRestoreAvailable && root.serverRestoreAutomatic))
@@ -832,18 +802,8 @@ Singleton {
         }
     }
 
-    // The takeover reply carries ok/failures alongside the ownership status, and
-    // the two can disagree in the one direction that matters: the helper masks
-    // and stops the foreign daemon FIRST and writes the undo record last, so a
-    // record that cannot be saved leaves the daemon masked, the bus name won,
-    // and nothing to reverse it with. Ownership reaching "vgs" is therefore not
-    // sufficient evidence -- reading only the status would announce success over
-    // the worst state this feature can reach, and the opt-out built in
-    // _reverseFirstRunTakeover() would later find nothing to undo.
-    //
-    // This is P1's shape on the other side of the same operation: acting on
-    // something whose durable half was never confirmed. Both now agree that "the
-    // takeover succeeded" means the change AND its record landed.
+    // Takeover success requires both the ownership change and a saved undo record.
+    // Winning the bus name alone does not prove that restoration is possible.
     function _applyTakeoverResult(text) {
         let result = null;
         try {
@@ -871,21 +831,12 @@ Singleton {
             root._reportTakeoverFailure(failures, root._takeoverRecordLost);
             return;
         }
-        // A sticky message about a transient state needs an owner that clears
-        // it when the state changes. This takeover worked and recorded itself,
-        // so an earlier "could not record it" now describes something that is
-        // no longer true -- and being sticky, it would otherwise sit there
-        // saying so indefinitely.
+        // Clear a sticky missing-record warning once a successful takeover has saved its undo record.
         ToastService.dismissCategory("notification-server-takeover-failed");
     }
 
     function _reportTakeoverFailure(failures, recordLost) {
-        // The mirror of the dismissal above, and a real case rather than
-        // symmetry for its own sake: the success toast is sticky, so one raised
-        // by the first-run takeover is still on screen when a later takeover --
-        // the Settings button, or the conflict toast's action -- fails. Leaving
-        // it up would tell the user notifications are handled while this
-        // message says they are not.
+        // Dismiss stale takeover success before reporting a later failure.
         ToastService.dismissCategory("notification-server-takeover");
         const detail = failures.length > 0 ? failures.join("; ") : I18n.tr("no reason given");
         root.log.warn("notification takeover did not fully succeed:", detail,
@@ -904,11 +855,7 @@ Singleton {
             "vshell notifications restore", "notification-server-takeover-failed");
     }
 
-    // A restore that half worked is worse than one that did not run: the masks
-    // it could not lift are still in force, so the daemon the opt-out was
-    // supposed to hand notifications back to may not be running -- and nothing
-    // on screen says so. The helper answers with `ok` plus a `failures` list
-    // and exits non-zero, and both are surfaced here.
+    // Report partial restore failures because units can remain masked or stopped after the helper exits.
     function _applyRestoreResult(text) {
         restoreProcess._answered = true;
         let result = null;
@@ -959,31 +906,15 @@ Singleton {
         firstRunTakeoverTimer.stop();
     }
 
-    // VGS-64: on the very first run VGS claims the bus name rather than losing
-    // it to whichever daemon the session happened to activate first, and then
-    // says so with an undo. Losing silently leaves a fresh install looking
-    // broken -- a notification centre that never fills -- plus a chore.
-    //
-    // The one-shot is keyed on its OWN persisted state
-    // (SettingsData.notificationFirstRunTakeoverDone), never on "is there a
-    // conflict right now". Keying it on the conflict would re-fire on every
-    // update for anyone whose preferred daemon is another one, which is exactly
-    // the opt-out this must not overturn. Returns true when it fired.
+    // Attempt takeover only while its persisted first-run flag is unspent. Return true when it starts.
+    // A recurring ownership conflict must not rearm automatic takeover.
     function _maybeTakeOverOnFirstRun() {
         // A spend is already out for confirmation. Nothing is masked or
         // stopped until another process has read the one-shot back as spent.
         if (root._firstRunSpendPending)
             return root._resolveFirstRunSpend();
 
-        // A settings.json that failed to parse -- or has not been read yet --
-        // leaves every property standing at its default: notificationServerEnabled
-        // true and the one-shot false, which is byte-for-byte what a fresh
-        // install looks like. Acting on that would mask and stop the daemon of
-        // a session that has been running for months, and saveSettings() is
-        // disabled after a parse error, so the one-shot could not even be
-        // recorded as spent -- the same takeover would fire again on the next
-        // start. "The properties look like defaults" is not evidence of a
-        // first run; "the config loaded and said so" is.
+        // Require loaded settings; unreadable or pending settings expose defaults that resemble a fresh install.
         if (!SettingsData._hasLoaded || SettingsData._parseError)
             return false;
         if (SettingsData.notificationFirstRunTakeoverDone)
@@ -998,9 +929,7 @@ Singleton {
         if (root.serverOwnership !== "vgs" && root.serverOwnership !== "foreign" && root.serverOwnership !== "unowned")
             return false;
 
-        // A config VGS already knows it cannot write is one it cannot record a
-        // takeover in, so there is nothing to think about: refuse before
-        // changing anything.
+        // Refuse takeover when settings cannot persist the spent flag.
         if (SettingsData._isReadOnly) {
             root.log.warn("first run: settings.json is read-only, so the notification takeover is not offered automatically");
             root._reportUnrecordableFirstRun();
@@ -1012,7 +941,6 @@ Singleton {
         // unspent in that case would arm a takeover that fires weeks later, on
         // whichever session the other daemon happens to become stoppable.
         SettingsData.set("notificationFirstRunTakeoverDone", true);
-        // A save that failed synchronously is already visible here.
         if (SettingsData._isReadOnly) {
             root.log.warn("first run: the one-shot could not be written to settings.json");
             root._reportUnrecordableFirstRun();
@@ -1022,17 +950,8 @@ Singleton {
         if (root.serverOwnership !== "foreign" || !root.serverConflictFixable)
             return false;
 
-        // NOTHING IS MASKED OR STOPPED YET. SettingsData.set() updates the
-        // property and asks FileView to save; it does not confirm the save
-        // landed, and FileView.onSaveFailed only marks the store read-only.
-        // On an unwritable settings.json the in-memory flag reads spent while
-        // the next process reads it unspent -- so the "one-shot" would mask
-        // and stop the user's daemon again on every single start. The takeover
-        // therefore waits until a SEPARATE process has read the flag back as
-        // true from disk (`status --json`'s vgsFirstRunTakeoverDone), which is
-        // precisely the claim that has to hold. Failing closed here is the
-        // same direction as the parse-error gate above: an unrecordable
-        // takeover is one VGS could never honour the opt-out for.
+        // Wait for a separate helper process to read the spent flag from disk.
+        // The in-memory setting changes before FileView confirms persistence, so it cannot prevent repeated takeovers alone.
         root._firstRunSpendPending = true;
         root._firstRunSpendDeadline = Date.now() + 15000;
         root.log.info("first run: confirming the one-shot persisted before taking org.freedesktop.Notifications");
@@ -1072,10 +991,7 @@ Singleton {
             return false;
 
         root.log.info("first run: taking org.freedesktop.Notifications from", root.serverConflictDaemon || "another daemon");
-        // The settle window opens only once the helper is actually running.
-        // Starting it first meant a helper that could not be spawned still got
-        // a 6s window, and -- worse -- that the window was already burning
-        // while the helper's synchronous systemd calls ran.
+        // Start settling only after the helper starts, so spawn failures remain ordinary ownership conflicts.
         if (!root.takeOverNotificationServer(true)) {
             // Nothing is settling and nothing was changed: fall through to the
             // ordinary conflict report rather than suppressing it.
@@ -1088,12 +1004,8 @@ Singleton {
         return true;
     }
 
-    // A first run VGS declined to act on because it could not record having
-    // acted. Silence would be defensible -- nothing was changed -- but the
-    // user installed a shell for its notification centre and it is inert, so
-    // the reason is worth one message. Reported once per session.
+    // Report once per session when takeover is refused because its spent flag could not be persisted.
     function _reportUnrecordableFirstRun() {
-        // Nothing to report when VGS is not losing the name anyway.
         if (!root.serverConflict)
             return;
         if (root._unrecordableFirstRunAnnounced)
@@ -1169,10 +1081,7 @@ Singleton {
                         : I18n.tr("VGS could not register org.freedesktop.Notifications, so its notification center stays empty: %1. Use the gear on the notifications dropdown in the bar to change how VGS handles this.").arg(root.serverConflictReason || I18n.tr("no supported way to stop it from here")),
                     "", "notification-server-conflict",
                     root.serverConflictFixable
-                        // A live handler, not a route: the fix runs a helper,
-                        // it does not open a tab. ToastService drops this the
-                        // moment the toast leaves the screen or its queue entry
-                        // is dropped -- see Services/ToastAction.js.
+                        // Use a callback for this helper action. ToastService releases it when the toast or queue entry is discarded.
                         ? ({
                             label: I18n.tr("Use VGS for Notifications"),
                             callback: () => root.takeOverNotificationServer()
@@ -1189,14 +1098,7 @@ Singleton {
             }
             root._serverConflictAnnounced = false;
 
-            // serverEnabled is re-checked because the else branch is also
-            // reached with the server turned off: announcing a successful
-            // takeover to a user who just opted out of it would be a lie about
-            // a change that is on its way to being undone.
-            // _takeoverReportedOk, not just ownership: the helper masks and
-            // stops before it records, so VGS can hold the bus name over a
-            // takeover whose undo record was never saved. Announcing success
-            // there would be announcing the worst state this feature reaches.
+            // Announce success only while the server is enabled and the helper confirms takeover and undo-record success.
             if (root._firstRunTakeoverRunning && root._takeoverReportedOk && !root._takeoverRecordLost
                     && root.serverEnabled && !root._restorePending && root.serverOwnership === "vgs") {
                 root._endFirstRunTakeover();
@@ -1223,11 +1125,7 @@ Singleton {
                 root._ownershipProbeAnswered = false;
                 return;
             }
-            // A probe that could not be spawned never produces output, and
-            // silently keeping the previous answer is the failure mode this
-            // service exists to remove. The grace period is for the ordinary
-            // case where the process stops a moment before its output is
-            // collected.
+            // A failed spawn can produce no output. Allow a grace period for output collection before invalidating ownership.
             probeUnansweredTimer.restart();
         }
     }
@@ -1290,10 +1188,7 @@ Singleton {
                 restoreProcess._answered = false;
                 return;
             }
-            // Same grace period as the ownership probe: the process usually
-            // stops a moment before its output is collected. A restore whose
-            // result never arrives is reported rather than assumed to have
-            // worked -- silence is what this whole path exists to remove.
+            // Allow output collection to finish after process shutdown; report a missing restore result as a failure.
             restoreUnansweredTimer.restart();
             ownershipSettleTimer.restart();
         }
@@ -1337,16 +1232,8 @@ Singleton {
             if (SettingsData.notificationServerEnabled)
                 return;
 
-            // ACT rather than give up, for three reasons. The invariant is
-            // "after an opt-out, some notification daemon is running", and
-            // waiting forever breaks it exactly whenever it was owed. Restore
-            // is a no-op when the record is empty, so acting costs nothing in
-            // the common case where VGS never took anything. And the only
-            // residual risk -- undoing a takeover the user ran themselves -- is
-            // not contrary to what they just asked for: they have turned VGS's
-            // notification server off, so they want another daemon handling
-            // notifications, which is what restore makes possible. Whatever it
-            // does is reported through _applyRestoreResult().
+            // If provenance queries time out after opt-out, attempt restore and report its result.
+            // This can also undo a takeover the user requested explicitly.
             root.log.warn("no ownership answer within the opt-out window; restoring the previous notification daemon anyway");
             root._reverseFirstRunTakeover(true);
         }
@@ -1410,14 +1297,7 @@ Singleton {
 
     Timer {
         id: ownershipRecheckTimer
-        // Quickshell re-registers on its own the moment the current owner drops
-        // the name, so keep looking while VGS is not the owner -- that is how
-        // the shell notices it has won without a restart.
-        //
-        // Unknown ("") counts as not the owner. A probe that failed to spawn or
-        // returned nothing leaves ownership unknown, and excluding that state
-        // here would switch off the only retry after exactly the failure this
-        // service exists to report, leaving the silence VGS-56 is about.
+        // Continue probing while VGS lacks confirmed ownership, including when a probe fails to establish ownership.
         interval: 30000
         repeat: true
         running: root.serverEnabled && root.serverOwnership !== "vgs"
@@ -1432,23 +1312,13 @@ Singleton {
             ToastService.dismissCategory("notification-server-takeover");
 
             if (!SettingsData.notificationServerEnabled) {
-                // Turning the server off is the user overruling the takeover,
-                // and clearing VGS's own bookkeeping is not enough: the helper
-                // has masked and stopped their daemon, so dropping the settle
-                // window alone leaves VGS inert AND their daemon dead. Put it
-                // back. _reverseFirstRunTakeover() defers itself if the helper
-                // is still running, and is a no-op when VGS never took
-                // anything -- in which case whatever was running still is.
+                // Opt-out must restore the displaced daemon. Wait for an in-flight takeover helper before restoring its changes.
                 if (!takeoverProcess.running)
                     root._endFirstRunTakeover();
                 // A confirmation still in flight is abandoned: nothing was
                 // masked or stopped, and the server is off now.
                 root._endFirstRunSpend();
-                // Provenance may not be known yet -- on a shell that has just
-                // restarted, the first ownership probe lands at 4s. Arm the
-                // deferred path first, and clear it inside the reversal if it
-                // turns out we already knew enough to act now. The deadline is
-                // what keeps "wait for the probe" from becoming "wait forever".
+                // Bound the wait for durable takeover provenance when opt-out precedes the first ownership reply.
                 root._reverseAfterProbe = true;
                 root._reverseAfterProbeDeadline = Date.now() + 15000;
                 reverseDeadlineTimer.restart();
@@ -1941,7 +1811,6 @@ Singleton {
         if (/<\/?[a-z][\s\S]*>/i.test(body)) {
             result = body;
         } else {
-            // Decode percent-encoded URLs (e.g. https%3A%2F%2F → https://)
             let processed = body.replace(/\bhttps?%3A%2F%2F[^\s]+/gi, match => {
                 try {
                     return decodeURIComponent(match);
@@ -2138,14 +2007,12 @@ Singleton {
         target: SessionData
         function onDoNotDisturbChanged() {
             if (SessionData.doNotDisturb) {
-                // Hide all current popups when DND is enabled
                 for (const notif of visibleNotifications) {
                     notif.popup = false;
                 }
                 visibleNotifications = [];
                 notificationQueue = [];
             } else {
-                // Re-enable popup processing when DND is disabled
                 processQueue();
             }
         }

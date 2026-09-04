@@ -17,8 +17,7 @@ from typing import List, Optional
 
 from vshell_devtools import os_release_ids
 
-# One entry per distribution family: the query that names the package owning a
-# path, and the removal that takes the package with its unused dependencies.
+# Package-owner queries and removal commands by distribution family.
 PACKAGE_OWNER_QUERY = {
     "arch": ["pacman", "-Qoq"],
     "debian": ["dpkg", "-S"],

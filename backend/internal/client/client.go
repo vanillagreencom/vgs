@@ -1,5 +1,4 @@
-// Package client is a thin debugging client for the backend socket, used by
-// `vshell backend request` and `vshell backend doctor`.
+// Package client sends diagnostic requests to the backend socket.
 package client
 
 import (
@@ -18,10 +17,8 @@ import (
 	"vshell/backend/internal/protocol"
 )
 
-// SocketPath resolves the backend socket: the debug override VGS_BACKEND_SOCKET
-// wins, else VGS_SOCKET set by the runner. Terminals opened before a shell
-// restart inherit a VGS_SOCKET whose socket the new runner already unlinked, so
-// a dead env path falls back to session-file discovery in XDG_RUNTIME_DIR.
+// SocketPath prefers VGS_BACKEND_SOCKET, then a live VGS_SOCKET. A stale
+// inherited VGS_SOCKET falls back to session-file discovery in XDG_RUNTIME_DIR.
 func SocketPath() (string, error) {
 	if p := os.Getenv("VGS_BACKEND_SOCKET"); p != "" {
 		return p, nil

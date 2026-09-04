@@ -1,12 +1,4 @@
-// The self-test for the BOUND scripts/lib/qml-region.js enforces: that a region
-// which does not finish is stopped, by the supervisor or by the child itself,
-// and that the stopping is legible afterwards. It is deliberately not called from
-// a guarded suite — see the note where it runs itself, at the bottom of this file.
-//
-// Its entry point is this file, run directly, as
-// `node scripts/lib/qml-region-selftest.js | grep -qxF '<its success line>'`. The
-// map of the subsystem — which files exist and which are manifest rows — is in
-// scripts/lib/qml-region.js.
+// Test region termination and its diagnostics outside the guard being tested.
 
 "use strict";
 
@@ -21,12 +13,8 @@ const { withGuardedSuite, hangingRegion, fixtureEnv, plantSuite, cmdlineOf, orph
     reapUntilQuiet, pidRunning, waitFor } = require("./qml-region-testkit.js");
 
 function regionGuardSelfTest() {
-    // --- the bound: a region that does not finish becomes a fast, named red ---
-    //
-    // Both shapes, because they hang differently and only one of them was ever
-    // covered by an in-process timeout: a synchronous loop never returns, while a
-    // non-terminating MICROTASK is scheduled by a call that returns normally and
-    // hangs Node afterwards. A process kill does not care which.
+    // A synchronous loop blocks the call. A runaway microtask can start after the call returns.
+    // Both must be terminated by the process deadline.
     for (const [what, planted] of [
         ["a synchronous loop", "function boom() { while (true) {} return 1; }"],
         ["a non-terminating microtask",
@@ -45,39 +33,22 @@ function regionGuardSelfTest() {
         }, ({ run, suite, stderr, elapsed }) => {
             assert.notEqual(run.status, 0,
                 `a suite whose region hangs from ${what} must FAIL, not pass and hang`);
-            // The report has to be actionable on its own: which suite, and what
-            // bound it broke. "killed" alone sends triage looking for the cause.
+            // A termination report must name the suite and the expired limit.
             assert.ok(stderr.includes(`${suite}: killed after 1000ms`),
                 "the supervisor must name the suite and the limit it enforced; stderr was " +
                 JSON.stringify(stderr));
-            // HANG DETECTOR, NOT A PRECISION BOUND — do not tighten it back. What
-            // is being excluded is running until the CI job's own timeout, which
-            // is minutes; the runner is a 2 vCPU tier and the whole suite is one
-            // job, so a contended box is the normal case. 15s sits far above any
-            // plausible scheduling delay around a 1s child timeout and far below
-            // the thing it rules out. It stays UNDER the spawnSync timeout above,
-            // so a guard that failed to kill is caught here rather than passing.
+            // This detects hangs, not precise timing. Allow scheduling contention while keeping
+            // the assertion below spawnSync timeout so that timeout cannot count as success.
             assert.ok(elapsed < 15000,
                 `killed after ${elapsed}ms — the wall clock has to bound it, since a hang is the ` +
                 "one failure mode a passing suite cannot be told from a slow one");
         });
     }
 
-    // --- a deadline that cannot arm is a loud refusal, never a quiet unbound run ---
-    //
-    // The Worker starts asynchronously, so a startup failure arrives as an `error`
-    // event on the main thread's loop — the loop the region is about to block. If
-    // arming were fire-and-forget, that child would run the region believing it
-    // was bounded and spin a full core in silence: a guard that fails open in
-    // exactly the case it exists for.
-    //
-    // Two halves, because they fail differently. Broken source stands in for every
-    // way a Worker can fail to start, which are indistinguishable from here; a
-    // confirm budget no thread creation can beat proves the refusal travels out of
-    // guardChild() into a non-zero exit instead of being swallowed on the way.
+    // Worker startup errors reach the main event loop, which the region can block.
+    // Test both broken Worker source and a confirmation budget too short to arm.
     {
-        // This one deliberately trips worker.on("error"), which writes to fd 2 by
-        // design. Saying so keeps a passing run from reading like a failing one.
+        // The worker error fixture intentionally writes a diagnostic to stderr.
         process.stderr.write(
             "region guard: the stderr line below about a worker that could not arm is this " +
             "check working.\n");
@@ -95,9 +66,7 @@ function regionGuardSelfTest() {
 
         withGuardedSuite({
             prefix: "vgs-region-unarmed-",
-            // A short clock on both sides, like every sibling that plants a hanging
-            // region: if the worker DID arm, the region runs and this has to be a
-            // fast named red rather than a 20s one with no cause attached.
+            // Bound both processes so an unexpectedly armed Worker cannot stall this failure control.
             timeout: 9000,
             env: {
                 VGS_REGION_ARM_CONFIRM_MS: "1",
@@ -111,10 +80,7 @@ function regionGuardSelfTest() {
                 `${run.status} saying ${JSON.stringify(stderr)}`);
             assert.ok(stderr.includes("did not confirm within 1ms"),
                 `the refusal must say what it refused and why; stderr was ${JSON.stringify(stderr)}`);
-            // The handler that would name a startup failure cannot run: the wait
-            // blocks the loop that delivers its event. So the refusal itself has to
-            // name that cause, or every real startup failure reads as an expired
-            // budget and sends the operator to widen a knob that cannot help.
+            // The synchronous wait blocks Worker error delivery. Its refusal must name possible startup failure.
             assert.ok(stderr.includes("FAILED to start") &&
                 stderr.includes("thread or memory cap"),
                 "the refusal must name the cause it cannot quote, not just the budget; stderr " +
@@ -127,15 +93,8 @@ function regionGuardSelfTest() {
         });
     }
 
-    // --- a SIGKILL the supervisor did not send is not reported as its own ---
-    //
-    // The child's deadline made the supervisor's spawnSync a second SIGKILL
-    // source, and spawnOutcome() answers "killed" for both. Naming this
-    // supervisor's limit as the cause reports a bound that never elapsed — the
-    // reported shape, reproduced below: a 600000ms limit the child never reaches
-    // and a short deadline it dies of, after which the supervisor claimed the
-    // 600000ms. The OOM killer looks identical from here, which is why the
-    // wording must not assert authorship at all, only rule this supervisor out.
+    // An external SIGKILL must not be attributed to the supervisor timeout.
+    // The same result can come from the child deadline, an operator, or the OOM killer.
     {
         withGuardedSuite({
             prefix: "vgs-region-attrib-",
@@ -163,14 +122,7 @@ function regionGuardSelfTest() {
         });
     }
 
-    // --- the kill does not depend on its own diagnostic ---
-    //
-    // The Worker writes a note before it signals, and fd 2 can be unwritable by
-    // then — a closed pipe in a job whose reader exited is the reported shape.
-    // Letting that throw ends the Worker before the SIGKILL, making the entire
-    // bound conditional on logging succeeding. Closing fd 2 in the child is the
-    // deterministic stand-in: EBADF and EPIPE are the same event here, a write
-    // that throws, and a genuine broken pipe is a race this check would carry.
+    // Closing stderr makes the diagnostic fail deterministically. The Worker must still send its kill.
     {
         withGuardedSuite({
             prefix: "vgs-region-mute-",
@@ -195,41 +147,24 @@ function regionGuardSelfTest() {
         });
     }
 
-    // --- the child's own bound outlives its supervisor ---
-    //
-    // The leak this pins (VGS-198): the supervisor dies before its spawnSync
-    // timeout can fire, the child is reparented, and a synchronous infinite loop
-    // is left with nothing that can stop it. One such orphan held a full core for
-    // 70 hours. The two bounds are separated here on purpose — the supervisor's
-    // limit is set far beyond this test, so a child that dies can only have died
-    // of its OWN deadline. Its stderr goes to a file rather than a pipe because
-    // the interesting output arrives AFTER its supervisor is gone, and this check
-    // has no event loop free to drain a pipe.
+    // Separate the deadlines so only the child deadline can end the orphan within this fixture.
+    // Use a file for stderr because output arrives after the supervisor exits and no event loop drains a pipe.
     {
         const DEADLINE_MS = 1000;
-        // The same 15x the sibling hang check runs at, and for the same reason:
-        // this is a HANG DETECTOR, not a precision bound. Measured kill latency is
-        // ~1030ms; an 8x window failed once on a loaded box during review and said
-        // nothing about why, which is a red CI job with no cause attached.
+        // Allow scheduling contention; this assertion detects a surviving orphan, not exact kill latency.
         const WAIT_MS = DEADLINE_MS * 15;
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), "vgs-region-orphan-"));
         let supervisor = null;
         let childPid = 0;
         let errFd = -1;
-        // Hoisted for the same reason withGuardedSuite hoists its own: the reaper
-        // in the finally is handed the value plantSuite returned, never a filename
-        // re-derived by hand that could drift away from it in silence.
+        // Cleanup uses the path returned by plantSuite so it cannot drift from the planted fixture.
         let suite;
         const errLog = path.join(dir, "stderr.log");
         try {
             const pidFile = path.join(dir, "child.pid");
             suite = plantSuite(dir, () => [
                 "guardChild();",
-                // A no-op SIGTERM listener, so the self-kill has to be a signal the
-                // child cannot catch. Without it, downgrading SIGKILL to SIGTERM
-                // reads as equivalent — a process with no listener dies either way
-                // — and the one property that matters here, that a blocked main
-                // loop cannot refuse the kill, goes untested.
+                // A no-op SIGTERM listener ensures a catchable signal cannot satisfy the kill control.
                 "process.on('SIGTERM', function () {});",
                 // Written then renamed, so the reader never sees a half-written pid.
                 `fs.writeFileSync(${JSON.stringify(pidFile)} + ".part", String(process.pid));`,
@@ -259,9 +194,7 @@ function regionGuardSelfTest() {
                 "process whose own bound is under test");
             assert.ok(pidRunning(supervisor.pid) && pidRunning(childPid),
                 "both roles must still be running at the moment the supervisor is killed");
-            // Attribution, asserted on a process that is genuinely about to be
-            // orphaned: this is the command line `ps` would have shown for the
-            // one that burned a core for 70 hours.
+            // Read the child command line before orphaning it to verify that its owner remains identifiable.
             const childArgv = cmdlineOf(childPid);
             assert.ok(childArgv && childArgv.includes(CHILD_ARGV_MARKER),
                 "an orphaned worker must name this harness in ps; its command line was " +
@@ -273,10 +206,8 @@ function regionGuardSelfTest() {
                 `a ${DEADLINE_MS}ms deadline of its own — that is the 100%-CPU orphan this bound ` +
                 `exists to prevent. ${orphanDiagnostics(childPid, errLog)}`);
 
-            // With no supervisor left to report anything, the child's own line is
-            // the ONLY evidence that it died of its bound rather than vanishing.
-            // It is written with fs.writeSync for that reason: process.stderr in a
-            // Worker is proxied through the main thread, which is spinning.
+            // The child diagnostic proves its own deadline fired after the supervisor left.
+            // Worker stderr proxying depends on the blocked main thread, so the diagnostic uses fs.writeSync.
             const said = fs.readFileSync(errLog, "utf8");
             assert.ok(said.includes(`${suite}: self-killed after ${DEADLINE_MS}ms`),
                 "an orphan must say what stopped it and which suite it was; the captured stderr " +
@@ -284,11 +215,7 @@ function regionGuardSelfTest() {
         } finally {
             if (supervisor)
                 try { supervisor.kill("SIGKILL"); } catch { /* already gone */ }
-            // Attributed on this fixture's own mkdtemp dir, so the runaway is taken
-            // down without ever signalling a pid on the strength of a number that
-            // may already have been recycled — concurrent runs are normal here,
-            // and four unrelated marker-carrying children were alive at once
-            // during review.
+            // Attribute cleanup to the fixture directory rather than trusting a PID that can be reused.
             reapUntilQuiet(dir, suite);
             if (errFd !== -1)
                 fs.closeSync(errFd);
@@ -299,11 +226,6 @@ function regionGuardSelfTest() {
     console.log("qml-region guard selftest: all checks passed");
 }
 
-// A SCRIPT, not a module: nothing in the repo requires this file, so there is no
-// export and no `require.main` guard to flip. It is a manifest row and a CI line,
-// and that row pipes the completion line through grep — so a run that asserted
-// nothing prints nothing and the row goes red. The line is printed by the LAST
-// statement INSIDE the function for that reason: printed from out here it would
-// still appear after someone deleted the call, which is the vacuous pass the
-// grep exists to catch.
+// Keep the completion message inside the test function. The manifest requires it,
+// so deleting the call must also remove the message.
 regionGuardSelfTest();

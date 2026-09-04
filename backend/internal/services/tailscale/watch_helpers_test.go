@@ -16,7 +16,6 @@ import (
 	"vshell/backend/internal/server"
 )
 
-// readEvent reads until a subscription event for the given service arrives.
 func readEvent(t *testing.T, c net.Conn, sc *bufio.Scanner, service string) map[string]any {
 	t.Helper()
 	_ = c.SetReadDeadline(time.Now().Add(10 * time.Second))
@@ -57,8 +56,6 @@ func writeStub(t *testing.T, path, statusPath, watchBody string) {
 	}
 }
 
-// newWatchManager builds a Manager wired to srv and the stub, with the watcher
-// context live and torn down on cleanup.
 func newWatchManager(t *testing.T, srv *server.Server, stub string) *Manager {
 	t.Helper()
 	m := &Manager{srv: srv, log: discardLogger(), tailscale: stub}
@@ -78,12 +75,9 @@ func newWatchManager(t *testing.T, srv *server.Server, stub string) *Manager {
 // terminating NUL — so a usable path is at most sunPathMax-1 bytes.
 const sunPathMax = 108
 
-// shortSocketPath returns a unix socket path guaranteed to fit in sun_path.
-// t.TempDir() embeds the test name, which for the longer names in this file
-// already runs to ~60 bytes before TMPDIR is taken into account; a long TMPDIR
-// pushes it over and the listen fails with "invalid argument". Truncating would
-// silently collide between tests, so an unusable path is a clear failure
-// instead.
+// shortSocketPath returns a Unix socket path that fits sun_path or fails the
+// test. Test names and TMPDIR can make t.TempDir paths too long. Truncation
+// could cause collisions.
 func shortSocketPath(t *testing.T) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "vgs")
@@ -99,7 +93,6 @@ func shortSocketPath(t *testing.T) string {
 	return sock
 }
 
-// startTestServer listens on a short unix socket path and serves srv.
 func startTestServer(t *testing.T) (*server.Server, string) {
 	t.Helper()
 	sock := shortSocketPath(t)
@@ -113,7 +106,6 @@ func startTestServer(t *testing.T) (*server.Server, string) {
 	return srv, sock
 }
 
-// subscribeTailscale dials the socket and subscribes to the tailscale service.
 func subscribeTailscale(t *testing.T, sock string) (net.Conn, *bufio.Scanner) {
 	t.Helper()
 	c, err := net.DialTimeout("unix", sock, 2*time.Second)
@@ -134,7 +126,6 @@ func subscribeTailscale(t *testing.T, sock string) (net.Conn, *bufio.Scanner) {
 	return c, sc
 }
 
-// waitFor polls until cond holds, failing with what it was waiting for.
 func waitFor(t *testing.T, limit time.Duration, what string, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(limit)

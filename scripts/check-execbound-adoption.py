@@ -15,9 +15,7 @@ DEFAULT_REPO_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = Path(os.environ.get("VGS_EXECBOUND_REPO_ROOT", DEFAULT_REPO_ROOT)).resolve()
 ANALYZER = Path(__file__).with_suffix(".go")
 
-# Raw os/exec sites that intentionally start a process whose lifecycle outlives
-# a single output read. Every entry needs the process reason, because an
-# unreasoned raw exec site is exactly what hides a bypass.
+# These processes must outlive a single output read; each entry names why.
 ALLOWED_RAW_EXECS = {
     'backend/internal/services/clipboard/wayland.go::wlCopy exec.Command("wl-copy", args...)': "wl-copy serves the clipboard after the copy RPC returns.",
     'backend/internal/services/clipboard/wayland.go::watch exec.CommandContext(ctx, "wl-paste", "--watch", "echo")': "wl-paste --watch is the backend clipboard watcher.",

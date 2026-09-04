@@ -5,9 +5,7 @@ import qs.Common
 import qs.Services
 import qs.Widgets
 
-// The Cloud Sync app: a standalone floating window in the same shape as the
-// Settings app (sidebar + reading pane), because it is a settings-shaped
-// product — accounts, folders, and the state of the syncing itself.
+// Cloud Sync window with sidebar navigation and an account, folder or activity page.
 FloatingWindow {
     id: cloudSyncModal
 
@@ -84,10 +82,7 @@ FloatingWindow {
         menuVisible = !menuVisible;
     }
 
-    // ---- Cross-page navigation ----
-    // Folders belong to accounts, so the Accounts page links into the Folders
-    // page. Highlighting the target is what makes the jump legible: a page that
-    // silently scrolls to a row looks like it did nothing.
+    // Account links scroll to and highlight a folder on the Folders page.
     property string highlightFolderId: ""
 
     function showFolder(folderId) {
@@ -99,8 +94,7 @@ FloatingWindow {
             highlightTimer.restart();
     }
 
-    // The highlight is a pointer, not a selection: it fades once it has done
-    // its job, so a card is not left permanently ringed.
+
     Timer {
         id: highlightTimer
 
@@ -108,9 +102,7 @@ FloatingWindow {
         onTriggered: cloudSyncModal.highlightFolderId = ""
     }
 
-    // ---- Dialog host ----
-    // Flows live at window level rather than inside a page so they cover the
-    // sidebar too and survive a section change underneath them.
+    // Host dialogs at window level so they cover the sidebar and survive page changes.
     property var dialogArgs: ({})
 
     function openDialog(name, args) {
@@ -159,9 +151,7 @@ FloatingWindow {
     onClosed: hide()
 
     onIsCompactModeChanged: {
-        // Entering compact hides the menu rather than leaving it covering the
-        // window: shrinking the window should reveal the content you were
-        // reading, not a full-screen nav list.
+
         menuVisible = !isCompactMode;
     }
 
@@ -224,8 +214,7 @@ FloatingWindow {
                     height: parent.height
                     clip: true
 
-                    // The reading pane stays near-opaque so file names and
-                    // paths stay legible over any wallpaper.
+
                     Rectangle {
                         anchors.fill: parent
                         color: Theme.popupGlassEffect ? Theme.withAlpha(Theme.surfaceContainerLowest, 0.94) : "transparent"

@@ -1,19 +1,7 @@
 #!/usr/bin/env node
 
-// Pins the remoteDesktop widget's state ordering and the service's
-// unknown-state handling.
-//
-// Bundled plugins get no runtime coverage from `qml-smoke.sh --nested` — the
-// sandbox loads them but never places one in a bar, so no binding here is ever
-// evaluated (same reason scripts/test-sudo-toggle-confirm.js exists, VGS-19).
-// Every finding this file closes was either an ORDERING bug or a dropped event,
-// neither of which qmllint can see, and starting the real Sunshine host to
-// observe them means capturing somebody's screen.
-//
-// The decision function is extracted verbatim from the shipped QML between its
-// BEGIN/END STATE DECISION markers, so this tests the real source rather than a
-// re-implementation. The service's structural invariants are asserted against
-// its own source, because the bug shape there is a MISSING line.
+// Test remote-desktop state ordering and unknown-state handling using the shipped decisions.
+// Inspect service wiring without starting a host that captures the user's screen.
 
 "use strict";
 
@@ -32,18 +20,8 @@ const SERVICE = path.join(
 const widgetSource = fs.readFileSync(WIDGET, "utf8");
 const serviceSource = fs.readFileSync(SERVICE, "utf8");
 
-// --- read the CODE, never the commentary ------------------------------------
-//
-// Every assertion below asks whether some text is present. Read against the raw
-// file a COMMENT answers that just as well as the code does, and both files are
-// heavily commented precisely because the orderings they encode are subtle. Two
-// concrete hazards here: `visualStateFor`'s own comments contain quoted words
-// ("On", "LIVE"), which would land in the derived state list; and a comment
-// naming a function would satisfy the body extractor.
-//
-// Comments are blanked once, up front, with characters replaced by spaces so
-// offsets and line structure survive. The BEGIN/END markers are themselves
-// comments, so marker extraction deliberately keeps using the raw text.
+// Blank comments while preserving offsets before source checks. Keep raw text only for
+// marker extraction because the region delimiters are comments.
 function stripComments(src) {
     let out = "";
     let i = 0;
@@ -90,7 +68,7 @@ function stripComments(src) {
     return out;
 }
 
-// Prove the stripper before a single assertion leans on it.
+
 {
     const sample = 'a(); // function ghost() "On"\nb("// not a comment"); /* gone */ c();';
     const stripped = stripComments(sample);
@@ -106,10 +84,7 @@ function stripComments(src) {
     );
 }
 
-// Every double-quoted literal in `text`, scanned rather than regex-matched.
-// The obvious /"([^"]+)"/g cannot match an empty literal, so one `""` shifts
-// every pair after it and swallows the values between them -- an under-count,
-// which is the quietest way for a check to stop checking.
+// Read empty double-quoted literals too; skipping them shifts later quote pairing and loses values.
 function quotedLiterals(text) {
     const out = [];
     for (let i = 0; i < text.length; i++) {
@@ -176,7 +151,7 @@ function host(overrides) {
     }, overrides || {});
 }
 
-// --- the ordinary states ----------------------------------------------------
+
 
 assert.equal(visualStateFor(host({})), "off", "installed, known, watched, not running");
 assert.equal(visualStateFor(host({ running: true })), "listening", "up with nobody connected");
@@ -196,11 +171,7 @@ assert.equal(
     "a dead event watch means the values may be out of date"
 );
 
-// --- unknown is checked BEFORE installed ------------------------------------
-//
-// `installed` defaults to false, so testing it first rendered "Sunshine is not
-// installed" for every instant before the first reply, and again after any
-// failed probe. A default is not an answer.
+// Unknown status must precede the default installed=false value; a default is not a probe answer.
 
 assert.equal(
     visualStateFor(host({ statusKnown: false, installed: false })),
@@ -218,11 +189,7 @@ assert.equal(
     "unknown outranks stale: there is no previous answer to call stale"
 );
 
-// --- streaming is checked before EVERY uncertainty state --------------------
-//
-// A capture that may still be live has to fail loud. Downgrading it to a
-// question mark because a probe failed would hide the one thing this widget
-// exists to show.
+// A potentially live capture must remain visible when other state becomes uncertain.
 
 for (const uncertain of [
     { statusKnown: false },
@@ -237,11 +204,7 @@ for (const uncertain of [
     );
 }
 
-// --- a live capture is never rendered on a dead watcher's last message ------
-//
-// Losing the watch makes the session UNKNOWN, not idle. "Confirmed live" and
-// "last we heard, live" are different claims, so they get different states —
-// but neither of them is idle, and neither hides the capture.
+// Watcher loss makes a prior live capture uncertain, not idle.
 
 assert.equal(
     visualStateFor(host({ streaming: true, sessionKnown: false, watchLive: false })),
@@ -266,12 +229,7 @@ for (const state of ["unknown", "stale", "listening", "off", "unavailable"]) {
     );
 }
 
-// --- an unreadable journal is not "nobody is watching" ----------------------
-//
-// The helper reports `readable: false` with `active` left at its default
-// false. Taking that default at face value cleared a live capture on the
-// strength of a failed read — the same defect as the dead-watcher case, moved
-// to the assignment site.
+// An unreadable journal's default active=false cannot establish that capture stopped.
 
 const unreadable = sessionApplyDecision({ readable: false, active: false, error: "No journal files were found." });
 assert.equal(unreadable.known, false, "an unreadable journal leaves the session unknown");
@@ -298,17 +256,13 @@ assert.equal(
     "a readable journal saying nobody is connected DOES clear it — that is the one authority"
 );
 
-// _applyStatus must route through the decision, and must not assign the
-// session fields on the path that decided nothing.
+// Apply the decision before writing session fields; an inconclusive path must not overwrite them.
 const applyBody = qmlFunctionBody("_applyStatus");
 assert.ok(
     applyBody.includes("root.sessionApplyDecision(session)"),
     "_applyStatus must route the session block through the decision"
 );
-// The guard's PRESENCE is asserted before its position. `indexOf` returns -1
-// for an absent needle, and -1 is trivially less than any real index, so an
-// ordering assertion alone passes vacuously once the guard is deleted — which
-// is precisely the mutation it exists to catch.
+// Assert landmark presence before order because indexOf=-1 can satisfy a less-than comparison.
 const guardAt = applyBody.indexOf("if (!decision.applyActive)");
 const assignAt = applyBody.indexOf("root.streaming = session.active === true");
 assert.ok(guardAt >= 0, "_applyStatus must guard the session assignment on the decision");
@@ -319,9 +273,7 @@ assert.ok(
     "an unreadable block moves the session to unknown, not to idle"
 );
 
-// And "up, but we cannot say whether anyone is connected" must not render as a
-// plain On, which claims nobody is — the reassuring direction is the worse one
-// to get wrong.
+// An up host with unknown clients must not render as confirmed idle.
 assert.equal(
     visualStateFor(host({ running: true, sessionKnown: false })),
     "listening-unconfirmed",
@@ -338,11 +290,7 @@ assert.equal(
     "a host that is down has no sessions to be unsure about"
 );
 
-// --- streaming must not LOOK like listening ---------------------------------
-//
-// The state split is only worth having if it reaches the pixels. The colour
-// tokens are returned as names precisely so this can be asserted without a
-// Theme instance.
+// Require distinct presentation for capture and listening states.
 
 assert.equal(stateColorTokenFor("streaming"), "error", "a live capture is an alarm colour");
 assert.equal(
@@ -361,10 +309,7 @@ assert.notEqual(
     "the two states this widget exists to distinguish must not share a colour"
 );
 
-// The BAR PILL glyph, not just the popout. In `icon` pill mode there is no
-// text at all, so before this the only difference between "someone is watching
-// my screen" and "idle" was `cast_connected` vs `cast` — a glyph shape, at bar
-// size, in the same colour.
+// Icon-only pills need a color distinction because they have no text to identify a live capture.
 assert.equal(
     pillIconUsesStateColor("streaming"), true,
     "the pill glyph must carry the alarm colour, or LIVE is a shape difference only"
@@ -373,14 +318,12 @@ assert.equal(pillIconUsesStateColor("streaming-unconfirmed"), true);
 assert.equal(pillIconUsesStateColor("unknown"), true);
 assert.equal(pillIconUsesStateColor("stale"), true);
 assert.equal(pillIconUsesStateColor("listening-unconfirmed"), true);
-// Bars keep one icon colour by convention, and for the states where nothing is
-// wrong that convention is right.
+
 assert.equal(pillIconUsesStateColor("listening"), false, "an idle host does not shout");
 assert.equal(pillIconUsesStateColor("off"), false);
 assert.equal(pillIconUsesStateColor("unavailable"), false);
 
-// The bindings have to actually consume the tokens; a table nothing reads is
-// not a fix.
+// Require bindings to consume the decided tokens.
 assert.ok(
     /readonly property color stateColor: \{\s*switch \(root\.stateColorTokenFor\(root\.visualState\)\)/.test(widgetCode),
     "stateColor must be derived from the token table rather than a second switch"
@@ -395,16 +338,13 @@ assert.equal(
     "both the horizontal and vertical pill glyphs must take it — a bar on the left edge is still a bar"
 );
 
-// --- the decision function can fail ----------------------------------------
-//
-// Everything above passes; that proves nothing about the harness. Confirm the
-// assertions are capable of failing on the shape they are written to reject.
+// Use a failing decision control to verify the behavior assertions reject incorrect ordering.
 assert.throws(
     () => assert.equal(visualStateFor(host({ statusKnown: false, installed: false })), "unavailable"),
     "the ordering assertions must be capable of failing"
 );
 
-// --- service invariants -----------------------------------------------------
+
 
 function qmlFunctionBody(name) {
     return functionBodyIn(serviceSource, name, "RemoteDesktopService.qml");
@@ -414,21 +354,10 @@ function widgetFunctionBody(name) {
     return functionBodyIn(widgetSource, name, "RemoteDesktopWidget.qml");
 }
 
-// A QML function body, located by a UNIQUE declaration and closed by matching
-// braces.
-//
-// The previous form took the first `function <name>(` in the raw file and ran
-// to the first line matching "\n    }". Three ways that measured the wrong
-// thing while still passing: a comment mentioning the name matched (comments are
-// now stripped); a second, similarly-named function silently repointed it; and
-// the closing heuristic depended on the indentation the body happens to sit at,
-// so it stopped early on anything nested differently. Same class as the
-// first-match `showInfo` lookup on PR #82.
+// Read a unique function declaration and balanced body. Ambiguous names or indentation heuristics
+// can select unrelated code and give source assertions false evidence.
 function functionBodyIn(src, name, where) {
-    // Stripped HERE rather than by each caller. A caller that forgot would
-    // silently go back to matching comments, and no self-test below could see
-    // it -- the samples would still be stripped on the way in. One place means
-    // the shadowing case exercises the path production actually uses.
+    // Strip comments in the shared reader so callers cannot omit that step.
     const code = stripComments(src);
     const declaration = new RegExp(`(^|[^\\w$.])function\\s+${name}\\s*\\(`, "g");
     const found = [...code.matchAll(declaration)];
@@ -467,44 +396,34 @@ function functionBodyIn(src, name, where) {
     assert.fail(`${name}() is not closed in ${where}`);
 }
 
-// --- prove the reader, on sources it must reject or handle exactly ----------
-//
-// ALL_STATES is derived through this reader, so a reader that quietly located
-// the wrong span would produce a wrong state list and every loop over it would
-// assert about the wrong thing while reporting success. Its self-test therefore
-// has to be capable of failing.
-//
-// What stood here was `!functionBodyIn(...).includes("ghost")`. "ghost" was in
-// neither the sample nor any output the reader could produce, so that assertion
-// could not fail for any implementation -- it read like a check and measured
-// nothing. Each case below is paired with the reason it can fail.
+// Test missing, ambiguous, unclosed, and misleading source shapes before deriving state lists.
 
-// Absent: no declaration at all.
+
 assert.throws(
     () => widgetFunctionBody("thisFunctionDoesNotExist"),
     "the reader must fail on a name that is absent, not return an empty body"
 );
 
-// Ambiguous: two declarations, so "the first one" is a guess.
+
 assert.throws(
     () => functionBodyIn("function twice() { }\nfunction twice() { }", "twice", "a sample"),
     "the reader must refuse an ambiguous name rather than take whichever came first"
 );
 
-// Unclosed: running to the end of the file is not an answer.
+
 assert.throws(
     () => functionBodyIn("function open() {\n    return 1;", "open", "a sample"),
     "an unclosed body must fail rather than swallow the rest of the file"
 );
 
-// A brace inside a string literal must not close the body early.
+
 assert.equal(
     functionBodyIn('function only() {\n    const s = "}";\n    return 1;\n}', "only", "a sample"),
     'function only() {\n    const s = "}";\n    return 1;\n}',
     "a brace inside a string literal must not close the body early"
 );
 
-// A shorter name must not match a longer one that starts with it.
+
 assert.ok(
     functionBodyIn(
         "function targetLonger() { return 1; }\nfunction target() { return 2; }",
@@ -513,9 +432,7 @@ assert.ok(
     "`target` must not resolve to `targetLonger`"
 );
 
-// THE CENTRAL CLAIM: a comment naming the function must not be located instead
-// of the function. This is what the raw-source reader got wrong, and it was the
-// one behaviour with no assertion behind it.
+// A comment naming the function must not become its declaration landmark.
 {
     const shadowed = [
         "// call function target( from here",
@@ -524,8 +441,7 @@ assert.ok(
         "}"
     ].join("\n");
 
-    // The fixture must actually be adversarial, or the assertion below passes
-    // for the wrong reason. A naive first-match reader has to be fooled by it.
+    // Require the misleading fixture to fool naive first-match lookup so the control remains adversarial.
     const naive = shadowed.slice(shadowed.indexOf("function target("));
     assert.ok(
         naive.startsWith("function target( from here"),
@@ -537,9 +453,7 @@ assert.ok(
     assert.ok(!body.includes("from here"), "and must not begin inside that comment");
 }
 
-// A single disconnect must never clear the indicator. With more than one client
-// connected it ends ONE session, not the capture, so only the authoritative
-// session count may turn LIVE off.
+// A disconnect ends one client session. Only an authoritative count can establish that capture stopped.
 const tokenBody = qmlFunctionBody("_handleWatchToken");
 assert.ok(
     /root\.streaming = true/.test(tokenBody),
@@ -554,7 +468,7 @@ assert.ok(
     "every event must schedule the authoritative resync that can clear it"
 );
 
-// _applyStatus is the ONLY writer that turns streaming off.
+
 const clearingWriters = serviceCode
     .split("\n")
     .map((line, index) => ({ line: line.trim(), index }))
@@ -569,9 +483,7 @@ assert.ok(
     "the authoritative apply is what clears the indicator"
 );
 
-// Losing the watch clears the session DETAIL, because those values were only
-// current while something was refreshing them — but never `streaming`, which
-// would be claiming idle on a dead watcher's say-so.
+// Watcher loss invalidates session detail but cannot establish streaming=false.
 const sessionUnknownBody = qmlFunctionBody("_markSessionUnknown");
 assert.ok(
     !/root\.streaming = /.test(sessionUnknownBody),
@@ -588,8 +500,7 @@ for (const field of ["sessionCount", "sessionCodec", "sessionBitrateBps", "sessi
     );
 }
 
-// The watch-stop path has to actually call it, and then ask the status read —
-// which is a separate process and does not depend on the watch.
+// Watch-stop handling must request an independent status read after invalidation.
 const watchStopSlice = serviceCode.slice(
     serviceCode.indexOf("root.watchLive = false;\n            watchStable.stop();")
 );
@@ -602,8 +513,7 @@ assert.ok(
     "losing the watch should immediately ask the independent status read"
 );
 
-// A status reply that says the unit query failed must not be applied as
-// "not installed" — the same defect as reading an unreadable journal as idle.
+// A failed unit query cannot establish that the host is uninstalled.
 assert.ok(
     /if \(status\.unitKnown === false \|\| status\.state === "unknown"\)/.test(applyBody),
     "_applyStatus must route an unanswerable unit query to unknown"
@@ -614,13 +524,7 @@ assert.ok(unitGuardAt >= 0, "the unit-unknown guard must exist");
 assert.ok(installedAt >= 0, "_applyStatus must still be the site that applies `installed`");
 assert.ok(unitGuardAt < installedAt, "the guard must come before the assignment it guards");
 
-// --- VGS-87 item 1: the session COUNT is its own knowledge axis -------------
-//
-// Optimistic LIVE-on-connect is deliberate (it is what stops a multi-client
-// disconnect briefly hiding a real capture), but a connect proves only that
-// SOMEBODY is watching — not how many. Carrying the stale 0 alongside it
-// rendered "streaming now" with no clients listed, which reads as a fact
-// rather than as the gap it is.
+// A connect proves at least one viewer, not a current count. Mark the count unknown until resync.
 const connectBody = qmlFunctionBody("_handleWatchToken");
 assert.ok(
     connectBody.includes("root.sessionCountKnown = false"),
@@ -639,21 +543,14 @@ assert.ok(
     "and it must still set the indicator optimistically — that half is deliberate"
 );
 
-// Which events invalidate it, and — the VGS-87 Z1 asymmetry — that BOTH
-// directions of a client change do. A disconnect proves the displayed number
-// is no longer current just as surely as a connect does; leaving only the
-// connect side marked let the live session card render a superseded count as
-// authoritative for the length of the resync window.
+// Both connect and disconnect invalidate the prior client count.
 assert.equal(countInvalidatingEvent("connected"), true, "a client arrived: the number is stale");
 assert.equal(countInvalidatingEvent("disconnected"), true, "a client left: equally stale, and this was the gap");
 assert.equal(
     countInvalidatingEvent("lifecycle"), true,
     "the host starting or stopping ends every session it had, so a count from before it describes a host that is gone"
 );
-// Not everything, though: marking it unknown costs a visible "confirming…",
-// and an encoder or bitrate change within the current set of clients says
-// nothing about how many there are. A client change would carry its own
-// connect/disconnect event.
+// Encoder and bitrate changes do not change client count without their own client events.
 assert.equal(
     countInvalidatingEvent("session"), false,
     "an encoder/bitrate change must not blank a count it did not affect"
@@ -661,8 +558,7 @@ assert.equal(
 assert.equal(countInvalidatingEvent(""), false, "an empty token decides nothing");
 assert.equal(countInvalidatingEvent("nonsense"), false, "an unknown token decides nothing");
 
-// The handler has to actually consult it, and on every event rather than
-// inside the connect branch — which is where the asymmetry lived.
+// Apply event invalidation outside the connect-only branch.
 assert.ok(
     connectBody.includes("if (root.countInvalidatingEvent(event))"),
     "the handler must gate the count on the shared decision, not on the connect branch"
@@ -686,12 +582,7 @@ assert.ok(
     "the Clients row must render the count only when it is known"
 );
 
-// --- VGS-87 item 4: an unknown status cannot keep asserting a fallback ------
-//
-// captureFallback is an assertion — "the host is capturing a real monitor right
-// now" — derived from output presence. When that goes unknown the warning is no
-// longer substantiated, and a warning nobody can substantiate costs the user
-// trust in every other warning.
+// Unknown output state cannot support an asserted monitor-capture fallback warning.
 assert.ok(
     /root\.captureFallback = false/.test(qmlFunctionBody("_markStatusUnknown")),
     "an unknown status must clear captureFallback, not preserve the last answer"
@@ -701,11 +592,7 @@ assert.ok(
     "and only an authoritative status may set it"
 );
 
-// --- VGS-87 item 3: the grace timer belongs to one probe --------------------
-//
-// The timer is shared, so a tick armed by probe A could fire while probe B is
-// in flight, find `_statusAnswered` false because B had only just started, and
-// mark a healthy B unanswered — turning a fresh reading into "unknown".
+// Cancel or identify grace timers per probe so an older timer cannot expire a newer probe.
 assert.ok(
     /statusUnansweredTimer\.armedFor = root\._statusProbeGeneration/.test(serviceSource),
     "the grace timer must record which probe armed it"
@@ -723,7 +610,7 @@ assert.ok(
     "a starting probe should also stop any tick still armed for the previous one"
 );
 
-// --- VGS-87 item 2: a lifecycle failure always reaches the user -------------
+
 const lifecycleBody = qmlFunctionBody("_reportLifecycleFailure");
 assert.ok(
     lifecycleBody.includes("ToastService.showError"),
@@ -737,14 +624,7 @@ assert.ok(
     /if \(root\._lifecycleReported && authoritative !== true\)/.test(lifecycleBody),
     "the helper's own verdict may replace a generic message that arrived first"
 );
-// --- Z3: a command that SUCCEEDED must never report a failure --------------
-//
-// `running` going false is not evidence of failure. This repo's own precedent
-// (NotificationService.qml, both probes) says the process usually stops a
-// MOMENT BEFORE its output is collected, so reporting on the spot announced
-// "start failed" for commands that had in fact succeeded and whose JSON had
-// simply not arrived. A user who sees that on a host that started will retry
-// and stop it — strictly worse than the silence it replaced.
+// Process stop can precede output collection. Defer failure until grace allows a successful reply to arrive.
 const lifecycleRunningBody = serviceSource.slice(
     serviceSource.indexOf("id: lifecycleProc")
 );
@@ -761,8 +641,7 @@ assert.ok(
     "it must hand the verdict to the grace timer instead"
 );
 
-// The grace timer is where the outcome is decided, and a zero exit is a
-// SUCCESS -- it must take the early return, not the report path.
+// A recorded zero exit must take the success path when grace expires.
 const graceSlice = serviceSource.slice(serviceSource.indexOf("id: lifecycleUnansweredTimer"));
 const graceBody = graceSlice.slice(0, graceSlice.indexOf("id: settleTimer"));
 const zeroAt = graceBody.indexOf("root._lifecycleExitCode === 0");
@@ -779,8 +658,7 @@ assert.ok(
     "a command that never exited at all is the spawn failure, and must still be reported"
 );
 
-// onExited records the code and reports nothing, so the JSON verdict -- which
-// carries a far better message -- is never pre-empted by an exit code.
+// Record exit status without preempting a more informative JSON verdict.
 const exitedSlice = lifecycleRunningBody.slice(lifecycleRunningBody.indexOf("onExited: exitCode =>"));
 const exitedBody = exitedSlice.slice(0, exitedSlice.indexOf("\n        }"));
 assert.ok(
@@ -792,10 +670,7 @@ assert.ok(
     "and must not report from there, or an exit code beats the reason to the user"
 );
 
-// A command that cannot be spawned emits no `exited` at all, so the report has
-// to be reachable from the `running` transition. Since Z3 that is via the grace
-// timer rather than directly -- the invariant is the reachability, not the
-// call site, so this asserts the chain rather than one line of it.
+// A failed spawn may emit no exit. Running transition and grace must still reach failure reporting.
 assert.ok(
     /lifecycleUnansweredTimer\.restart\(\)/.test(lifecycleRunningSlice),
     "the running transition must arm the timer that owns the verdict"
@@ -805,27 +680,15 @@ assert.ok(
     "and a command that never exited must be reported as unrunnable from there"
 );
 
-// Each action resets the recorded code, or the previous action's exit would
-// decide this one's outcome.
+// Reset the recorded exit code per action so each verdict uses that action's outcome.
 const runLifecycleBody = qmlFunctionBody("_runLifecycle");
 assert.ok(
     runLifecycleBody.includes("root._lifecycleExitCode = -1"),
     "each action must start with no recorded exit code"
 );
 
-// --- AC1: one action's verdict must never be attributed to another ---------
-//
-// Deferring the verdict (Z3) put a 500ms window between a command finishing and
-// its outcome being decided. `_lifecycleExitCode` and `_lifecycleReported` are
-// shared, so a second action launched inside that window reset them while the
-// first action's tick was still armed — and that tick would then report, under
-// the SECOND action's name, a failure belonging to neither.
-//
-// Two mechanisms, and both are asserted because they close different holes:
-// holding `busy` stops the toggle offering the window to the user at all, and
-// tagging stops a programmatic caller (IPC, another service) from hitting it
-// anyway — `_runLifecycle` gates on `lifecycleProc.running`, not on `busy`, so
-// the UI gate alone is not a state guarantee.
+// Keep busy until the outcome is known and tag deferred verdicts per action.
+// UI busy gating alone cannot prevent a programmatic caller from starting another lifecycle action.
 assert.ok(
     runLifecycleBody.includes("root._lifecycleGeneration++"),
     "each action must take its own generation"
@@ -849,12 +712,8 @@ assert.ok(
     /armedFor !== root\._lifecycleGeneration\)\s*\{[\s\S]{0,600}?return;/.test(graceBody),
     "a superseded verdict must return without reporting"
 );
-// It must also not clear `busy`: the newer action owns it now, and clearing
-// here would re-enable the toggle mid-flight.
-// Bounded by the block's OWN terminator, not by the string being searched for:
-// slicing to `indexOf("root.busy = false")` made this vacuous under the exact
-// mutation it exists to catch, because inserting that line moved the boundary
-// in front of itself.
+// A stale action must not clear newer busy state. Bound its branch by syntax,
+// not by the prohibited assignment that a mutation can move ahead of itself.
 const supersededEnd = graceBody.indexOf("return;", supersededAt);
 assert.ok(supersededEnd > supersededAt, "the superseded branch must return");
 const supersededBlock = graceBody.slice(supersededAt, supersededEnd);
@@ -863,8 +722,7 @@ assert.ok(
     "a superseded verdict must leave `busy` to the action that now owns it"
 );
 
-// `busy` is cleared with the verdict, not when the process ends — the toggle
-// claiming ready while the outcome is unknown is what offered the window.
+// Clear busy with the verdict, not merely process stop.
 assert.ok(
     !/root\.busy = false/.test(lifecycleRunningSlice),
     "the running=false handler must not re-enable the control before the verdict"
@@ -878,7 +736,7 @@ assert.ok(
     "and it clears busy whether or not there was anything to report"
 );
 
-// --- Z4: a correction must not be eaten by the error throttle ---------------
+
 const toastSource = fs.readFileSync(
     path.join(repoRoot, "quickshell", "vshell", "Services", "ToastService.qml"), "utf8"
 );
@@ -890,16 +748,12 @@ assert.ok(
     /if \(level === levelError && !correctsVisibleToast\)/.test(toastSource),
     "and must exempt a correction from the error throttle"
 );
-// ...but ONLY a correction. Exempting every same-category update let a
-// genuinely repeating failure spam at whatever rate it recurred, which is
-// exactly what the throttle exists to stop. The distinction is whether the
-// content changes, not whether the caller called it authoritative.
+// Only changed content is a correction exempt from throttling; repeated failures remain throttled.
 assert.ok(
     /const correctsVisibleToast = updatesVisibleToast && \(currentMessage !== message \|\| currentDetails !== \(details \|\| ""\)\)/.test(toastSource),
     "a correction must be an update whose CONTENT differs; the same message again is a repeat"
 );
-// The in-place update itself still applies to any same-category toast, so a
-// repeat that survives the throttle refreshes rather than queueing a duplicate.
+// A same-category repeat that survives throttling updates its existing toast.
 assert.ok(
     /if \(category\) \{\s*\n\s*if \(updatesVisibleToast\) \{/.test(toastSource),
     "the in-place update branch keys on the update, not on it being a correction"
@@ -918,9 +772,8 @@ assert.ok(
     "each action starts unreported, or the second failure in a session would be silent"
 );
 
-// A refresh arriving during a probe is coalesced, never dropped: the journal
-// read can take seconds while the event debounce is 400ms, and there is no
-// polling fallback to recover a lost event.
+// Coalesce refreshes during a probe. Event debounce can expire before a slow journal read,
+// and no periodic poll recovers a dropped refresh.
 const refreshBody = qmlFunctionBody("refresh");
 assert.ok(
     refreshBody.includes("root._refreshPending = true"),
@@ -931,8 +784,7 @@ assert.ok(
     "the coalesced refresh must actually be launched once the probe completes"
 );
 
-// A command that fails to start emits no `exited` at all, so the probe has to
-// be keyed on `running` plus an unanswered grace period.
+// Start failure needs running-state and grace detection because it may emit no exit.
 assert.ok(
     /id: statusProc[\s\S]*?onRunningChanged/.test(serviceCode),
     "the status probe must handle onRunningChanged, or a missing binary leaves it stale forever"
@@ -946,11 +798,7 @@ assert.ok(
     "an unanswered probe must mark the state unknown rather than keep the previous answer"
 );
 
-// Every knowledge axis drops together — a half answer must not render whole.
-// The session half may be reached by delegation to _markSessionUnknown (the
-// watch-loss path needs it on its own), so the effective body is what matters;
-// asserting only the literal body would go red on a refactor that still clears
-// everything, and — worse — could go green if the delegate stopped clearing.
+// Invalidate all related knowledge fields, including delegated session invalidation.
 const statusUnknownBody = qmlFunctionBody("_markStatusUnknown");
 const unknownBody = statusUnknownBody.includes("_markSessionUnknown(")
     ? statusUnknownBody + "\n" + qmlFunctionBody("_markSessionUnknown")
@@ -966,8 +814,7 @@ assert.ok(
     "losing the answer must not clear a possibly-live capture"
 );
 
-// The backoff is earned by surviving, not by starting. Resetting on `running`
-// makes the cap unreachable for a watcher that fails immediately.
+// Reset watcher backoff after sustained survival, not startup, so repeated immediate failures reach the cap.
 const watchBlock = serviceCode.slice(serviceCode.indexOf("id: watchProc"));
 const runningBranch = watchBlock.slice(0, watchBlock.indexOf("root.watchLive = false;"));
 assert.ok(
@@ -983,14 +830,7 @@ assert.ok(
     "only the stability timer may reset the backoff"
 );
 
-// --- the tooltip selects on the decided state, and never re-derives it ------
-//
-// tooltipText() used to walk the same ordering a second time: streaming, then
-// statusKnown, then installed, then stale. Two copies of one table, free to
-// drift, in a widget whose every reported defect has been an ordering bug. The
-// ordering now has one owner and the message is chosen from its verdict, so the
-// table below is what pins that every state still says something, and says the
-// right thing.
+// Select tooltip text from the shared state decision instead of duplicating its ordering.
 
 function tipFacts(overrides) {
     return Object.assign({
@@ -1005,22 +845,13 @@ function tipFacts(overrides) {
     }, overrides || {});
 }
 
-// EVERY state the decision function can return must get a message. A state
-// added to visualStateFor() without one would silently fall to the default and
-// tell the user the host is off.
-//
-// DERIVED, not transcribed. A hand-maintained list is the same defect this
-// block exists to prevent, one level up: add a state, forget the list, and the
-// new state goes untested while the suite still reports success. The block
-// itself is extracted verbatim from the shipped QML, so the states it can
-// return are read out of it the same way.
+// Derive returned states from the shipped decision so a new state enters message coverage automatically.
 const decisionCode = stripComments(marked[1]);
 const ALL_STATES = [...new Set(
     quotedLiterals(functionBodyIn(decisionCode, "visualStateFor", "the STATE DECISION block"))
 )];
 
-// Anchors, so a broken extraction cannot make every loop below vacuous. An
-// empty or truncated list would otherwise pass everything by iterating nothing.
+// Require known states and a nonempty result so a broken extractor cannot produce vacuous loops.
 assert.ok(ALL_STATES.length >= 6, `expected visualStateFor() to return at least 6 states, derived ${ALL_STATES.length}`);
 for (const anchor of ["streaming", "listening", "off"]) {
     assert.ok(
@@ -1028,20 +859,14 @@ for (const anchor of ["streaming", "listening", "off"]) {
         `the derived state list must contain ${anchor}; if it does not, the extraction is reading the wrong thing`
     );
 }
-// The comments inside visualStateFor() quote words like "On" and "LIVE". If
-// those reached the list the loops below would assert about text that is not a
-// state at all, so the stripping above is load-bearing here specifically.
+// Exclude quoted words in comments from the derived state list.
 for (const notAState of ["On", "LIVE"]) {
     assert.ok(
         !ALL_STATES.includes(notAState),
         `${notAState} is prose from a comment, not a state -- the derivation is reading comments`
     );
 }
-// And it must be scoped to visualStateFor(), not to the whole marked block.
-// These are tooltip and subtitle KEYS from the sibling functions: they are
-// string literals in the same block, so a reader that took the block instead of
-// the one function would sweep them in and the completeness loop would then
-// demand tooltips for things that are not states.
+// Extract visualStateFor only; neighboring tooltip and subtitle keys are not states.
 for (const notAState of ["streaming-host-uncertain", "listening-capture-fallback", "output-unmanaged"]) {
     assert.ok(
         !ALL_STATES.includes(notAState),
@@ -1060,8 +885,7 @@ assert.equal(
     "each state must select a DISTINCT message; sharing one would make two states read alike"
 );
 
-// The states this widget exists to distinguish must not share a tooltip either
-// -- the colour split above is worthless if the words collapse.
+// Distinct capture and idle states need distinct tooltips.
 assert.notEqual(
     tooltipFor("streaming", tipFacts()).key,
     tooltipFor("listening", tipFacts()).key,
@@ -1078,8 +902,7 @@ assert.notEqual(
     "'nobody is connected' and 'we cannot say' must not read alike"
 );
 
-// An uncertain host axis is reported BESIDE a confirmed capture, not instead
-// of it: the capture is still the headline.
+// Keep confirmed capture as the headline when host status is uncertain.
 assert.equal(
     tooltipFor("streaming", tipFacts({ statusKnown: false })).key,
     "streaming-host-uncertain",
@@ -1095,9 +918,7 @@ assert.equal(
     "the session summary rides along with the streaming message"
 );
 
-// The service's own reason reaches the message; the caller supplies a fallback
-// only when there is none, so a real explanation is never replaced by a
-// generic one.
+// Use the service's reason when present and a fallback only when absent.
 for (const [state, factKey] of [
     ["streaming-unconfirmed", "sessionError"],
     ["unknown", "statusError"],
@@ -1116,8 +937,7 @@ for (const [state, factKey] of [
     );
 }
 
-// A known-bad capture target outranks an unchecked one: one is a fact, the
-// other is not knowing, and the fact is the worse news.
+// A known invalid capture target takes precedence over an unchecked target.
 assert.equal(
     tooltipFor("listening", tipFacts({ captureFallback: true, outputUnknown: true })).key,
     "listening-capture-fallback",
@@ -1133,8 +953,7 @@ assert.equal(
     "an ordinary idle host gets the plain message"
 );
 
-// The capture-fallback and unchecked-output messages belong to the LISTENING
-// state only. Reaching them from a streaming state would bury the capture.
+// Capture-fallback and unchecked-output messages belong to listening, not streaming.
 for (const state of ["streaming", "streaming-unconfirmed", "unknown", "unavailable", "stale", "off"]) {
     const tip = tooltipFor(state, tipFacts({ captureFallback: true, outputUnknown: true }));
     assert.ok(
@@ -1143,7 +962,7 @@ for (const state of ["streaming", "streaming-unconfirmed", "unknown", "unavailab
     );
 }
 
-// --- the session summary --------------------------------------------------
+
 
 assert.equal(sessionDetailFrom({}), "", "nothing known is an empty summary, not a row of separators");
 assert.equal(
@@ -1164,11 +983,7 @@ assert.equal(
     "the bitrate is rounded, not truncated"
 );
 
-// --- the up-host subtitle always says something ----------------------------
-//
-// The non-Hyprland branch used to fall through to "". A blank line where every
-// neighbouring state has one reads as a rendering fault, and it is exactly the
-// case where the user most needs telling that a REAL monitor is being captured.
+// An up-host subtitle must describe non-Hyprland capture rather than return an unexplained blank.
 
 function subtitleFacts(overrides) {
     return Object.assign({
@@ -1220,10 +1035,7 @@ assert.equal(
     "not knowing outranks a stale `present`, which is what the unknown flag exists to say"
 );
 
-// --- both renderers select on the descriptor, and decide nothing themselves -
-//
-// The point of the split is that the ordering has ONE owner. A renderer that
-// re-tested the service's state would put a second copy back.
+// Renderers must consume descriptors so state ordering remains in the shared decision.
 for (const fn of ["tooltipText", "upSubtitleText"]) {
     const body = widgetFunctionBody(fn);
     assert.ok(

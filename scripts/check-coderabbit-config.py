@@ -1,24 +1,8 @@
 #!/usr/bin/env python3
-"""Validate .coderabbit.yaml against CodeRabbit's own published schema.
+"""Validate .coderabbit.yaml against the vendored CodeRabbit schema.
 
-CodeRabbit rejects an invalid config and reviews with DEFAULT settings instead.
-It reports that nowhere a PR can see it: the review still happens, still posts,
-and still says nothing about the configuration having been discarded. VGS shipped
-a `tone_instructions` of 376 characters against a documented 250-character limit,
-so the whole file had been inert on every PR for as long as it had been that
-long — a configuration that reports nothing and quietly does not apply, which is
-the same class as the checks the rest of VGS-42 fixes.
-
-The schema is vendored at third_party/coderabbit-schema/ (see its README for
-why it is not fetched at check time).
-
-WHY A HAND-WRITTEN VALIDATOR. `jsonschema` is not a VGS dependency and adding
-one to run a single check would be a worse trade than implementing the fifteen
-keywords this schema actually uses. The trade is only safe because of the
-unsupported-keyword guard below: if a refreshed schema introduces a keyword this
-does not implement, the check FAILS and names it. Silently ignoring an unknown
-constraint would under-validate the config while reporting success — which is
-the defect this file exists to catch, one level up.
+Unknown schema keywords fail the check so a schema update cannot silently
+add constraints this validator does not enforce.
 """
 
 from __future__ import annotations
@@ -41,9 +25,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = REPO_ROOT / ".coderabbit.yaml"
 SCHEMA = REPO_ROOT / "third_party" / "coderabbit-schema" / "schema.v2.json"
 
-# Keywords this validator implements. Anything else in the schema is a hole.
-# `description`, `default`, `enumNames` and `$schema` are annotations that
-# constrain nothing, so they are known-and-ignored rather than unimplemented.
+# Schema annotations do not constrain values and need no validation.
 ENFORCED = {
     "type", "properties", "items", "enum", "required", "additionalProperties",
     "minLength", "maxLength", "minimum", "maximum", "minItems", "maxItems",

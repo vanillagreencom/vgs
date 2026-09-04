@@ -1,22 +1,10 @@
-# Qodo Merge configuration for VGS (VanillaGreen Shell).
-#
-# Deliberately minimal. Qodo is on a 14-day trial here; if it lapses, deleting
-# this file is the entire cleanup. Nothing else in the repo references Qodo:
-# it publishes review objects (not a check-run or commit status), so it needs
-# no gate wiring, and orch's PR_REVIEW_CHECK stays empty.
-#
-# CodeRabbit is the primary reviewer and carries the full rule set in
-# .coderabbit.yaml. Only the rules that stop the most expensive misfires are
-# duplicated here.
+# Qodo review instructions. Shared repository rules also apply in .coderabbit.yaml.
 
 [github_app]
-# Review only. /agentic_describe is omitted so Qodo posts no PR summary comment —
-# CodeRabbit's summaries are off too, and two AI summaries of one diff is worse
-# than none.
+# Review summaries are disabled; findings belong in code threads.
 pr_commands = ["/agentic_review"]
 
 [review_agent]
-# Findings belong in threads next to the code, not in a summary block.
 comments_location_policy = "inline"
 
 issues_user_guidelines = """

@@ -36,8 +36,7 @@ Flow {
             height: root.chipHeight
             radius: Theme.controlRadius
 
-            // Flatline: unselected chips are ghost/outline (transparent + hairline);
-            // only the selected chip carries a fill. See design-language.md.
+
             color: selected ? Theme.primary : "transparent"
             border.width: selected ? 0 : 1
             border.color: Theme.borderColor

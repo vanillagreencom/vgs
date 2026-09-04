@@ -2,17 +2,9 @@ import QtQuick
 import qs.Common
 import qs.Widgets
 
-// The upgrade buttons for the updates sheet.
-//
-// Only the sources that actually have something pending get a button, so a
-// lone AUR package does not present three buttons of which two do nothing.
-// One pending source collapses the row entirely: the primary button below
-// names that source, because "Update All" and "Update AUR" would be the same
-// run. When the check itself failed the counts are unknown, not zero, so every
-// button stays available.
-//
-// Each button reports a `vshell update run` mode through `launchRequested`;
-// the widget owns the command lookup and the terminal launch.
+// Expose upgrade actions for pending sources. With one pending source, the
+// primary action names it. Unknown counts retain the available actions.
+// Report the selected mode through launchRequested; the widget owns launch.
 Column {
     id: actions
 

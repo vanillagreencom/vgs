@@ -30,7 +30,7 @@ Singleton {
     readonly property bool calendarAvailable: activeBackend !== "none"
     readonly property bool isVgsActive: activeBackend === "vgs-calendar"
     readonly property bool canCreateEvents: isVgsActive && vgsBackend.connected
-    property bool khalAvailable: true // compatibility alias - calendar card UI gate
+    property bool khalAvailable: true // Calendar card availability gate.
 
     readonly property bool vgsConnected: vgsBackend.connected
     readonly property bool vgsBinaryExists: vgsBackend.binaryExists

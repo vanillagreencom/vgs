@@ -21,8 +21,7 @@ Singleton {
     readonly property string muxType: SettingsData.muxType
     readonly property string displayName: muxType === "zellij" ? "Zellij" : "Tmux"
 
-    // Which terminal, and how it takes a command, is `vshell terminal`'s job
-    // (VGS-32) — this service only says what to run inside it.
+    // The vshell terminal resolver selects the terminal and command syntax. This service supplies the command to run.
     function _terminalPrefix() {
         return [Paths.vshellCli, "terminal", "exec", "--"];
     }

@@ -924,18 +924,11 @@ function isVgsAction(action) {
     return action.startsWith("spawn vshell ipc call ");
 }
 
-// VGS-13 retired these launcher IPC targets in favour of "vshell-menu". VGS
-// rewrites its own generated niri binds; binds in a config VGS does not own
-// (every Hyprland bind, and hand-written niri binds) can only be reported.
+// VGS rewrites generated Niri bindings. It can only report retired launcher targets in user-owned bindings.
 const RETIRED_IPC_TARGETS = ["launcher", "spotlight", "spotlight-bar"];
 
-// "ipc call <target>" is VGS syntax, not a reserved word — another program may
-// legitimately take those as its own arguments, and `spawn notify-send ipc call
-// launcher` is a valid bind that has nothing to do with VGS. So the match is
-// keyed on the program token immediately before "ipc" being the vshell CLI.
-// Compared by basename, because ~/dotfiles binds both `vshell ipc call ...` and
-// `$HOME/.local/bin/vshell ipc call ...`; quote-stripped, so the CLI still reads
-// as vshell inside a `spawn sh -c "vshell ipc call ..."` command string.
+// Match the vshell program before ipc so another program can use those words as arguments.
+// Compare the unquoted basename to accept absolute paths and shell command strings.
 const VSHELL_CLI_BASENAMES = ["vshell"];
 
 function isVshellCliToken(token) {
@@ -977,10 +970,7 @@ function isValidAction(action) {
         case "spawn_shell ":
             return false;
     }
-    // A retired launcher target is a dead bind the moment it is written.
-    // Reporting one that already exists is all VGS can do for configs it does
-    // not own, but it must not accept a NEW one: this is the only gate on the
-    // save path (KeybindsService.saveBind, KeybindItem.canSave).
+    // Reject retired launcher targets on save. This is the only gate on the save path (KeybindsService.saveBind, KeybindItem.canSave). User-owned configurations can only be reported.
     if (usesRetiredIpcTarget(action))
         return false;
     return true;

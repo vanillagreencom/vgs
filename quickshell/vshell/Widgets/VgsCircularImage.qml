@@ -13,7 +13,7 @@ Rectangle {
     property bool cacheImages: true
     property bool hasImage: imageSource !== ""
     readonly property bool shouldProbe: imageSource !== "" && !imageSource.startsWith("image://")
-    // Probe with AnimatedImage first; once loaded, check frameCount to decide.
+    // Probe frameCount with AnimatedImage before selecting the static Image path.
     readonly property bool isAnimated: shouldProbe && probe.status === Image.Ready && probe.frameCount > 1
     readonly property var activeImage: isAnimated ? probe : staticImage
     property int imageStatus: activeImage.status
@@ -57,7 +57,7 @@ Rectangle {
     border.color: "transparent"
     border.width: 0
 
-    // Probe: loads as AnimatedImage to detect frame count.
+
     AnimatedImage {
         id: probe
         anchors.fill: parent
@@ -71,7 +71,7 @@ Rectangle {
         source: root.shouldProbe ? root.imageSource : ""
     }
 
-    // Static fallback: used once probe confirms the image is not animated.
+
     Image {
         id: staticImage
         anchors.fill: parent
@@ -87,7 +87,7 @@ Rectangle {
         source: !root.shouldProbe ? root.imageSource : ""
     }
 
-    // Once the probe loads, if not animated, hand off to Image and unload probe.
+
     Connections {
         target: probe
         function onStatusChanged() {
@@ -108,7 +108,7 @@ Rectangle {
         }
     }
 
-    // If imageSource changes, reset: re-probe with AnimatedImage.
+
     onImageSourceChanged: {
         if (root.shouldProbe) {
             staticImage.source = "";

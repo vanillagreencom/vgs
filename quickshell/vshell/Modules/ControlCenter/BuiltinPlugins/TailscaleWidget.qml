@@ -31,8 +31,7 @@ PluginComponent {
     }
     ccWidgetIsActive: TailscaleService.connected
 
-    // The detail pane opening is the moment the user is looking, so it is worth
-    // one request to make sure what they are about to read is current.
+    // Refresh on detail open so the peer list reflects the backend state when viewed.
     onCcWidgetExpanded: TailscaleService.refreshStatus()
 
     onCcWidgetToggled: {
@@ -62,7 +61,7 @@ PluginComponent {
                 anchors.margins: Theme.spacingM
                 spacing: Theme.spacingS
 
-                // Not available state
+
                 Column {
                     visible: !TailscaleService.available
                     width: parent.width
@@ -93,7 +92,7 @@ PluginComponent {
                     }
                 }
 
-                // Connected content
+
                 Item {
                     visible: TailscaleService.available
                     width: parent.width
@@ -105,9 +104,7 @@ PluginComponent {
                         width: parent.width
                         spacing: Theme.spacingS
 
-                        // Connection status + connect/disconnect. Always shown
-                        // (when available) so the connection can be toggled from
-                        // the detail, including while disconnected.
+                        // Keep connection controls available while disconnected so the user can reconnect here.
                         RowLayout {
                             width: parent.width
                             spacing: Theme.spacingS
@@ -180,8 +177,7 @@ PluginComponent {
                             }
                         }
 
-                        // Connection controls: exit node picker + LAN access.
-                        // Only meaningful while the backend is connected.
+                        // Exit-node and LAN controls require a connected backend.
                         Column {
                             id: controlsColumn
                             width: parent.width
@@ -221,7 +217,7 @@ PluginComponent {
                             }
                         }
 
-                        // Search bar + refresh button
+
                         RowLayout {
                             width: parent.width
                             spacing: Theme.spacingS
@@ -245,7 +241,7 @@ PluginComponent {
                             }
                         }
 
-                        // Filter chips
+
                         VgsFilterChips {
                             width: parent.width
                             currentIndex: detailRoot.filterIndex
@@ -271,7 +267,7 @@ PluginComponent {
                         }
                     }
 
-                    // Scrollable peer list — fills remaining space below header
+
                     VgsFlickable {
                         anchors.top: headerColumn.bottom
                         anchors.topMargin: Theme.spacingS
@@ -306,7 +302,7 @@ PluginComponent {
                                 return base;
                             }
 
-                            // Empty state
+
                             Item {
                                 width: parent.width
                                 height: 60
@@ -332,7 +328,7 @@ PluginComponent {
                                 }
                             }
 
-                            // Peer cards
+
                             Repeater {
                                 model: peerListColumn.filteredPeers
 
@@ -425,7 +421,7 @@ PluginComponent {
                                             elide: Text.ElideRight
                                         }
 
-                                        // Expanded: DNS name + copy, tags, owner
+
                                         Column {
                                             visible: isExpanded
                                             width: parent.width

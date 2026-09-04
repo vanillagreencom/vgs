@@ -2,23 +2,9 @@
 
 "use strict";
 
-// VGS-64: the first-run notification takeover, pinned against its own source.
-//
-// This is the one subsystem in the shell that changes the user's system without
-// being asked: it masks and stops whichever daemon holds
-// org.freedesktop.Notifications. Every finding on it so far has been an
-// ORDERING mistake rather than a logic error -- acting before a durable fact was
-// established, or announcing an outcome the evidence did not support:
-//
-//   J1  acted on a settings.json that had not parsed
-//   P1  acted on a one-shot whose write was never confirmed
-//   P5  announced success over a takeover whose undo record was never saved
-//
-// qmllint cannot see any of that, the nested smoke never reaches the branch (a
-// sandbox bus has no foreign daemon to take the name from), and exercising it
-// for real means masking a live notification daemon. So the invariants are
-// pinned here, against NotificationService.qml's own text. A missing line is the
-// bug in every case, which is exactly what source-pinning catches.
+// Source checks cover notification takeover ordering without masking a live daemon.
+// The nested smoke bus has no foreign notification owner, so it does not reach this branch.
+// These assertions inspect source text; they do not establish all runtime orderings.
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -28,19 +14,8 @@ const repoRoot = path.resolve(__dirname, "..");
 const servicePath = path.join(repoRoot, "quickshell/vshell/Services/NotificationService.qml");
 const rawSource = fs.readFileSync(servicePath, "utf8");
 
-// --- read the CODE, never the commentary --------------------------------
-//
-// Every assertion below asks whether a name or a statement is present. Read
-// against the raw file, a comment satisfies that question just as well as the
-// code does -- and this file is heavily commented, precisely because the
-// orderings it pins are subtle. The announcement guard was the live example:
-// both flag names appear in the comment explaining the guard, so deleting the
-// executable condition left the assertion passing.
-//
-// Comments are therefore blanked out first, everywhere, rather than worked
-// around at each site. Characters are replaced with spaces instead of being
-// deleted so offsets and line structure survive, which is what lets
-// functionBody() keep matching on "\n    }".
+// Blank comments without shifting offsets or line structure.
+// Otherwise a comment can satisfy a source assertion after the executable guard is deleted.
 function stripComments(src) {
     let out = "";
     let i = 0;
@@ -90,7 +65,7 @@ function stripComments(src) {
     return out;
 }
 
-// Prove the stripper before a single assertion leans on it.
+
 {
     const sample = 'a(); // takeOverNotificationServer(true)\nb("// not a comment"); /* gone */ c();';
     const stripped = stripComments(sample);
@@ -108,16 +83,13 @@ function stripComments(src) {
 
 const source = stripComments(rawSource);
 
-// The file must actually BE commented for the above to be load-bearing; if the
-// comments were ever stripped from the source itself, this check would quietly
-// become equivalent to reading it raw.
+// This fixture requires comments in the inspected source to exercise comment stripping.
 assert.ok(
     rawSource.length > source.replace(/ +$/gm, "").length,
     "NotificationService.qml should carry comments; stripping is what keeps them out of these assertions"
 );
 
-// A QML function body, from its `function name(` to the closing brace at the
-// singleton's own indentation. Same reader as scripts/test-toast-actions.js.
+// Read a QML function through its closing brace at singleton indentation.
 function functionBody(name) {
     const start = source.indexOf(`function ${name}(`);
     assert.ok(start >= 0, `NotificationService.qml should define ${name}()`);
@@ -126,20 +98,14 @@ function functionBody(name) {
     return source.slice(start, end);
 }
 
-// Prove the reader can fail before anything it returns is used as evidence.
+
 assert.throws(
     () => functionBody("thisFunctionDoesNotExist"),
     "functionBody() must fail on a name that is absent, or every assertion below is vacuous"
 );
 
-// --- P1: nothing is masked until the one-shot is confirmed on disk ----------
-//
-// SettingsData.set() updates the property and asks FileView to save; it does not
-// confirm the save landed. On an unwritable settings.json the shell would read
-// the one-shot as spent while the next process reads it unspent, and the
-// "one-shot" would mask and stop the user's daemon on every start. The takeover
-// therefore waits for a SEPARATE process to read the flag back
-// (`status --json`'s vgsFirstRunTakeoverDone -> serverPersistedOneShotDone).
+// SettingsData.set() requests a save but does not confirm persistence.
+// A separate process must read back the one-shot before takeover can mask another daemon.
 
 const automaticTakeoverCalls = source.match(/takeOverNotificationServer\(true\)/g) || [];
 assert.equal(
@@ -163,10 +129,7 @@ assert.ok(
     !maybeTakeOver.includes("takeOverNotificationServer("),
     "_maybeTakeOverOnFirstRun() must not take over directly -- it writes the one-shot, and the write is what has to be confirmed first"
 );
-// Split at the write, because every gate's value is in which side of it they
-// sit on. Asserting only that a name appears somewhere in the body passed with
-// either of the two _isReadOnly checks deleted -- the same defect this file
-// exists to catch, one level up.
+// Split at the write so a gate after the mutation cannot satisfy a precondition check.
 const spendIndex = maybeTakeOver.indexOf('SettingsData.set("notificationFirstRunTakeoverDone", true)');
 assert.ok(spendIndex > 0, "_maybeTakeOverOnFirstRun() should write the one-shot");
 const beforeSpend = maybeTakeOver.slice(0, spendIndex);
@@ -189,18 +152,13 @@ assert.ok(
     "_maybeTakeOverOnFirstRun() must hand off to the confirmation step rather than proceeding"
 );
 
-// The confirmation cannot wait forever: an unspawnable probe produces no next
-// answer, and an unbounded pending state is a takeover that never resolves.
+// A probe that cannot start must not leave confirmation pending without a deadline.
 assert.ok(
     /_firstRunSpendDeadline/.test(maybeTakeOver) && /_firstRunSpendDeadline/.test(resolveSpend),
     "the spend confirmation must be bounded by a deadline it both sets and checks"
 );
 
-// ...and that deadline needs a driver that does not depend on re-entry. A
-// Process that fails to start emits no `exited` and produces no output (see
-// quickshell/vshell/AGENTS.md), so nothing calls
-// _applyServerOwnership(), nothing reaches _resolveFirstRunSpend(), and a
-// deadline only checked on re-entry is never checked at all.
+// A failed Process start can emit no exited event. The deadline needs an independent timer.
 assert.ok(
     source.includes("id: firstRunSpendTimer"),
     "the spend confirmation must have its own timer; a deadline checked only on re-entry never fires when nothing re-enters"
@@ -221,8 +179,7 @@ assert.ok(
     "the spend timer must fail CLOSED: an unconfirmed spend is a reason not to take over, never a reason to proceed"
 );
 
-// One owner for clearing the confirmation, so no path can drop the flag and
-// leave the timer armed, or stop the timer and leave the flag set.
+// Clearing the pending state and stopping its timer must share an owner.
 const endSpend = functionBody("_endFirstRunSpend");
 assert.ok(
     endSpend.includes("_firstRunSpendPending = false") && endSpend.includes("firstRunSpendTimer.stop()"),
@@ -234,12 +191,8 @@ assert.equal(
     "_resolveFirstRunSpend() must clear the confirmation through _endFirstRunSpend(), not by hand"
 );
 
-// --- P5: ownership reaching "vgs" is not evidence the takeover succeeded -----
-//
-// The helper masks and stops the foreign daemon FIRST and writes the undo record
-// LAST, so a record that cannot be saved leaves the daemon masked, the bus name
-// won, and nothing to reverse it with. Reading only the ownership status would
-// announce success over precisely that state.
+// Winning the bus name does not prove the helper saved an undo record.
+// The success notice must also use the takeover result.
 
 assert.ok(
     /stdout:\s*StdioCollector\s*\{[^}]*_applyTakeoverResult\(text\)/.test(
@@ -262,11 +215,8 @@ assert.ok(
     "a takeover that did not fully succeed must be reported, not left in the log"
 );
 
-// The success announcement must require the takeover's own verdict.
-// The condition of the `if` that governs `index`, read as a balanced
-// parenthesis so it is the executable test and nothing else. Searching the
-// whole prefix for a name was the weaker form: it could not tell a condition
-// from any earlier mention of the same identifier.
+// Read the balanced condition of the last preceding if statement.
+// An identifier elsewhere in the prefix is not evidence that the condition checks it.
 function governingCondition(body, index, what) {
     const ifIndex = body.lastIndexOf("if (", index);
     assert.ok(ifIndex >= 0, `${what} should be governed by an if statement`);
@@ -284,7 +234,7 @@ function governingCondition(body, index, what) {
     assert.fail(`unbalanced condition governing ${what}`);
 }
 
-// Prove it reads the condition rather than its surroundings.
+
 {
     const sample = 'if (alpha && beta) {\n    raise("thing");\n}';
     const condition = governingCondition(sample, sample.indexOf('"thing"'), "the sample");
@@ -302,11 +252,7 @@ for (const flag of ["_takeoverReportedOk", "_takeoverRecordLost"]) {
     );
 }
 
-// --- the unreversible state is never described as reversible ----------------
-//
-// `restore` reads the undo record. With no record it reports "nothing to do" and
-// exits 0, so running it and trusting the exit code would log a successful
-// reversal while the user's daemon is still masked and stopped.
+// Restore can exit successfully without an undo record. That cannot prove a masked daemon was restored.
 const reverse = functionBody("_reverseFirstRunTakeover");
 const spawnIndex = reverse.indexOf("restoreProcess.running = true");
 assert.ok(spawnIndex > 0, "_reverseFirstRunTakeover() should start the restore helper");
@@ -315,11 +261,7 @@ assert.ok(
     "a takeover whose undo record was lost must be reported before the restore is spawned, not after it reports success over nothing"
 );
 
-// --- every unattended change has a bounded wait ------------------------------
-//
-// Each of these waits for something that may never arrive -- a helper that never
-// exits, a probe that cannot be spawned, a write that never lands. An unbounded
-// one is a state the user cannot get out of.
+// Helpers and probes can fail to answer. These waits need independent deadlines.
 for (const [deadline, timer] of [
     ["_firstRunTakeoverDeadline", "firstRunTakeoverTimer"],
     ["_reverseAfterProbeDeadline", "reverseDeadlineTimer"]
@@ -334,26 +276,11 @@ for (const [deadline, timer] of [
     );
 }
 
-// --- every sticky message has an owner that clears it -----------------------
-//
-// Sticky was the right call for messages the user must not miss, but a sticky
-// message about a TRANSIENT state needs something that takes it down when the
-// state changes -- otherwise a retry that succeeds leaves "the takeover failed"
-// on screen indefinitely, saying the opposite of what is true.
-//
-// Asserted as a rule over every sticky category this service raises, rather
-// than for the two that prompted it, because the next one added would have the
-// same hole and nothing would notice.
+// A notice about a transient failure must clear when a retry succeeds.
+// Derive raised categories from show calls so added categories enter the check.
 
-// Every double-quoted literal in `text`, scanned rather than matched.
-//
-// The obvious /"([^"]+)"/g is wrong here and fails SILENTLY: `+` cannot match
-// the empty `command` argument these calls pass (`"", "category"`), so that
-// quote goes unpaired, every later pair shifts by one, and the category is
-// swallowed into a "literal" that spans the code between two real strings. The
-// first version of this rule inspected one category instead of three and still
-// reported success -- an under-count, which is the quietest way for a check to
-// stop checking.
+// Read double-quoted literals, including empty strings and escapes.
+// Skipping empty strings shifts quote pairing and can hide a category.
 function quotedLiterals(text) {
     const out = [];
     for (let i = 0; i < text.length; i++) {
@@ -376,7 +303,7 @@ function quotedLiterals(text) {
     return out;
 }
 
-// Prove the scanner on the shapes that broke the regex.
+
 assert.deepEqual(
     quotedLiterals('f(tr("msg"), "", "category", x)'),
     ["msg", "", "category"],
@@ -396,8 +323,7 @@ assert.ok(stickyMatch, "ToastService.qml should declare stickyCategories");
 const stickyCategories = quotedLiterals(stickyMatch[1]).filter(value => value.length > 0);
 assert.ok(stickyCategories.length > 0, "stickyCategories should not be empty");
 
-// Categories this service RAISES, read from the show calls themselves so a
-// category mentioned only in a dismissal is not mistaken for one that is shown.
+// Derive categories from show calls; dismissal-only references are not raised categories.
 const raised = new Set();
 {
     const re = /ToastService\.show(?:Info|Warning|Error)\(/g;
@@ -436,8 +362,7 @@ for (const category of stickyRaised) {
     );
 }
 
-// The two specific transitions that prompted the rule, pinned on the functions
-// that own them so a dismissal moving somewhere useless still fails.
+// Require dismissals in the functions that own the successful transitions.
 assert.ok(
     functionBody("_applyTakeoverResult").includes('dismissCategory("notification-server-takeover-failed")'),
     "a takeover that reports ok must clear an earlier failure notice"

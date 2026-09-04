@@ -1,9 +1,6 @@
 #version 450
 
-// Glass surface chrome modeled on Apple's Liquid Glass: a specular rim whose
-// intensity follows the surface normal against a fixed top light (top edges
-// brightest, a weaker secondary glint on bottom edges, dim sides), plus an
-// interior illumination wash from the top. One SDF pass.
+// A shared signed-distance pass draws the surface rim and interior illumination.
 
 layout(location = 0) in vec2 qt_TexCoord0;
 layout(location = 0) out vec4 fragColor;

@@ -133,10 +133,7 @@ focus_satty_target() {
   printf '%s\n' "$target_ws"
 }
 
-# uwsm launches an app into its own systemd scope. It is an enhancement, not a
-# requirement, so it is only used when the session actually has it: hardcoding
-# the prefix is what made VGS actions fail with `command not found` on installs
-# without it (VGS-54).
+# Use the optional uwsm scope only when it is available to the session.
 app_scope() {
   if [[ -z ${VSHELL_NO_APP_SCOPE:-} ]] && command -v uwsm >/dev/null 2>&1; then
     uwsm app -- "$@"
@@ -474,7 +471,7 @@ wait_for_capture_delay() {
   fi
   "$VSHELL_CLI" ipc call capture countdownEnd >/dev/null 2>&1 || true
   COUNTDOWN_OWNED=0
-  # Let the countdown toast finish its fade-out so it never lands in the shot.
+  # Allow the countdown toast to fade before capture.
   sleep 0.45
 }
 
@@ -493,8 +490,7 @@ capture_to_file() {
   return "$status"
 }
 
-# Every output mode ends with the same actionable "saved" notification so the
-# result is always visible and openable, delayed or not.
+# Saved notifications provide the path to open the captured image.
 notify_screenshot_result() {
   local filepath="$1"
   local summary="$2"
@@ -560,9 +556,8 @@ capture_niri() {
     region | smart | *) action=(niri msg action screenshot --show-pointer "$pointer") ;;
   esac
 
-  # Native Niri screenshot actions always publish image/png to the clipboard.
-  # Start an event watcher before opening the interactive UI so we never read a
-  # stale clipboard image after the IPC request returns.
+  # Niri publishes screenshots to the clipboard. Start the watcher before the
+  # interactive UI so the capture waits for a clipboard update.
   if [[ ${action[0]} == niri ]]; then
     mkdir -p "$CAPTURE_STATE_DIR"
     capture_event=$(mktemp "$CAPTURE_STATE_DIR/.niri-screenshot.XXXXXX")
