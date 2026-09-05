@@ -2,10 +2,10 @@
 description: General-purpose agent for documentation, cleanup, stale references, code organization, and miscellaneous maintenance tasks.
 tags: docs, refactoring
 mode: subagent
-model: openai/gpt-5.5
+model: openai/gpt-6-astra
 color: "#22c55e"
 options:
-  reasoningEffort: xhigh
+  reasoningEffort: high
   reasoningSummary: auto
   textVerbosity: medium
 permission:

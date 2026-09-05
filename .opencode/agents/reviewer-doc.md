@@ -2,10 +2,10 @@
 description: Documentation accuracy reviewer. Verifies changed doc claims against implementation, re-derives transcribed values, checks citations resolve, audits drift.
 tags: review, docs
 mode: subagent
-model: openai/gpt-5.5
+model: openai/gpt-6-astra
 color: "#eab308"
 options:
-  reasoningEffort: medium
+  reasoningEffort: high
   reasoningSummary: auto
   textVerbosity: medium
 permission:
