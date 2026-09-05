@@ -179,6 +179,13 @@ PluginComponent {
             property int page: 0
             readonly property bool onSettings: popout.page === 1
 
+            // PluginPopout owns Escape and uses this contract to pop a pushed
+            // page before dismissing the surface, and to reset one on close.
+            readonly property bool canPopBack: popout.page > 0
+            function popBack() {
+                popout.page = Math.max(0, popout.page - 1);
+            }
+
             // The shared header slot. This was a hand-drawn Rectangle showing
             // a `settings` cog, which no other flyout used.
             configurable: true

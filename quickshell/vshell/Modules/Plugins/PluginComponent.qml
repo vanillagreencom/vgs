@@ -1,6 +1,8 @@
 import QtQuick
+import Quickshell
 import Quickshell.Io
 import qs.Common
+import qs.Modals.FileBrowser
 
 Item {
     id: root
@@ -343,5 +345,42 @@ Item {
         contentWidth: root.popoutWidth
         contentHeight: root.popoutHeight
         pluginContent: root.popoutContent
+    }
+
+    // ---- file picking, on behalf of the plugin ----
+    //
+    // A bundled plugin may import only qs.Common, qs.Widgets, qs.Services and
+    // qs.Modules.Plugins; feature directories are private (config/vshell/AGENTS.md).
+    // The file browser lives in one of those, so the base owns it and plugins
+    // ask through here rather than reaching past the rule.
+    //
+    // The modal is handed this widget's own popout, which is what keeps that
+    // popout open while the picker is up -- a plugin has no other way to say so.
+    signal fileChosen(string path)
+
+    function pickFile(title, extensions) {
+        filePickerLoader.pickTitle = title || "";
+        filePickerLoader.pickExtensions = extensions || ["*.*"];
+        filePickerLoader.active = true;
+        if (filePickerLoader.item)
+            filePickerLoader.item.open();
+    }
+
+    LazyLoader {
+        id: filePickerLoader
+        active: false
+
+        property string pickTitle: ""
+        property var pickExtensions: ["*.*"]
+
+        FileBrowserSurfaceModal {
+            browserTitle: filePickerLoader.pickTitle
+            browserType: "plugin_" + root.pluginId
+            fileExtensions: filePickerLoader.pickExtensions
+            allowStacking: true
+            parentPopout: pluginPopout
+
+            onFileSelected: path => root.fileChosen(decodeURI(String(path || "").replace(/^file:\/\//, "")))
+        }
     }
 }

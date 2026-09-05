@@ -57,8 +57,15 @@ Item {
     // to hold right now. Measuring live data would be tighter by a few pixels
     // and would resize the flyout under the reader every time a rate crossed
     // from "9.5 K/s" to "10.2 K/s"; a stable frame is worth more than that.
-    readonly property string widestRate: "888.8 M/s"
-    readonly property string widestConns: "8888"
+    //
+    // These are the real bounds of what the cells emit, not round numbers.
+    // formatRate only leaves a unit at 1024, so its longest output is four
+    // digits, a point and one decimal -- "1023.9 G/s", not "888.8 M/s", which
+    // was a full character short. A connection count is not bounded at all, so
+    // the column is sized for five digits and anything beyond that elides
+    // rather than pushing the layout.
+    readonly property string widestRate: "1023.9 G/s"
+    readonly property string widestConns: "88888"
 
     // One outsized process name must not widen the popout without limit; past
     // this the name elides, as it always did.
@@ -468,7 +475,11 @@ Item {
                 StyledText {
                     anchors.left: parent.left
                     anchors.leftMargin: root.columnGutter
+                    anchors.right: parent.right
+                    anchors.rightMargin: root.columnGutter
                     anchors.verticalCenter: parent.verticalCenter
+                    horizontalAlignment: Text.AlignLeft
+                    elide: Text.ElideRight
                     text: appItemRoot.appConns.toString()
                     font.pixelSize: Theme.fontSizeSmall
                     font.family: SettingsData.monoFontFamily

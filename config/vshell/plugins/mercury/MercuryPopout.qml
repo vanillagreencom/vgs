@@ -2,7 +2,6 @@ import QtQuick
 import QtQuick.Layouts
 import Quickshell
 import qs.Common
-import qs.Modals.FileBrowser
 import qs.Modules.Plugins
 import qs.Services
 import qs.Widgets
@@ -29,6 +28,13 @@ PopoutComponent {
     // than growing BY them.
     property int page: 0
     readonly property bool onSettings: root.page === 1
+
+    // PluginPopout owns Escape and uses this contract to pop a pushed page
+    // before dismissing the surface, and to reset one when the popout closes.
+    readonly property bool canPopBack: root.page > 0
+    function popBack() {
+        root.page = Math.max(0, root.page - 1);
+    }
 
     // Which account has its number revealed, by id. Reset whenever the popout
     // closes: an account number must not be left on screen by a popout that
@@ -248,12 +254,7 @@ PopoutComponent {
                             locked: root.widget.uploadingTxId !== ""
 
                             onOpenRequested: url => root.widget.openUrl(url)
-                            onAttachRequested: transactionId => {
-                                root.widget.pickerTxId = transactionId;
-                                receiptBrowserLoader.active = true;
-                                if (receiptBrowserLoader.item)
-                                    receiptBrowserLoader.item.open();
-                            }
+                            onAttachRequested: transactionId => root.widget.askForReceipt(transactionId)
                         }
                     }
                 }
@@ -273,31 +274,6 @@ PopoutComponent {
                 x: pager.width
                 width: pager.width
                 widget: root.widget
-            }
-        }
-    }
-
-    // Inside the popout, because that is where `parentPopout` can be reached —
-    // the browser sets it so this popout stays open while the picker is up.
-    // Behind a LazyLoader, which is the repo's pattern for a modal and is also
-    // what keeps a VgsModal's zero-height Item out of this Column's layout.
-    LazyLoader {
-        id: receiptBrowserLoader
-        active: false
-
-        FileBrowserSurfaceModal {
-            browserTitle: I18n.tr("Attach a receipt")
-            browserType: "mercury_receipt"
-            fileExtensions: ["*.pdf", "*.png", "*.jpg", "*.jpeg", "*.webp", "*.gif", "*.heic", "*.tiff"]
-            allowStacking: true
-            parentPopout: root.parentPopout
-
-            onFileSelected: path => {
-                const chosen = decodeURI(String(path || "").replace(/^file:\/\//, ""));
-                const txId = root.widget.pickerTxId;
-                root.widget.pickerTxId = "";
-                if (txId.length > 0)
-                    root.widget.beginUpload(txId, chosen);
             }
         }
     }

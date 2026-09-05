@@ -41,7 +41,11 @@ Column {
             statusProc.running = true;
     }
 
-    function applyReply(text, onOk) {
+    // `owned` says whether this reply belongs to something the user asked for.
+    // The background status read does NOT own `busy`: clearing it there let a
+    // status reply landing mid-Save unlock the buttons under an operation that
+    // was still in flight.
+    function applyReply(text, owned, onOk) {
         let payload = null;
         try {
             if (text.trim().length > 0)
@@ -49,10 +53,13 @@ Column {
         } catch (error) {
             payload = null;
         }
-        root.busy = false;
+        if (owned)
+            root.busy = false;
         if (!payload) {
-            root.testFailed = true;
-            root.testResult = I18n.tr("No answer from the vshell helper.");
+            if (owned) {
+                root.testFailed = true;
+                root.testResult = I18n.tr("No answer from the vshell helper.");
+            }
             return;
         }
         onOk(payload);
@@ -91,13 +98,33 @@ Column {
         }
     }
 
+    // Qt reports nothing when the executable cannot be run at all, so every
+    // one of these needs the same guard: no process, no stdout, and without
+    // this the panel would sit on "Saving…" forever.
+    function launchFailed(owned) {
+        if (!owned)
+            return;
+        root.busy = false;
+        root.testFailed = true;
+        root.testResult = I18n.tr("Could not run the vshell helper.");
+    }
+
     Process {
         id: statusProc
         command: [Paths.vshellCli, "mercury", "token-status"]
         running: false
+
+        property bool sawProcess: false
+        onStarted: statusProc.sawProcess = true
+        onRunningChanged: {
+            if (!running && !statusProc.sawProcess)
+                root.launchFailed(false);
+            if (!running)
+                statusProc.sawProcess = false;
+        }
         stdout: StdioCollector {
             id: statusOut
-            onStreamFinished: root.applyReply(statusOut.text || "", payload => {
+            onStreamFinished: root.applyReply(statusOut.text || "", false, payload => {
                 root.tokenSource = String(payload.tokenSource || "none");
             })
         }
@@ -115,12 +142,21 @@ Column {
         property string pendingKey: ""
 
         onStarted: {
+            saveProc.sawProcess = true;
             saveProc.write(saveProc.pendingKey + "\n");
             saveProc.pendingKey = "";
         }
+        property bool sawProcess: false
+        onRunningChanged: {
+            if (!running && !saveProc.sawProcess)
+                root.launchFailed(true);
+            if (!running)
+                saveProc.sawProcess = false;
+        }
+
         stdout: StdioCollector {
             id: saveOut
-            onStreamFinished: root.applyReply(saveOut.text || "", payload => {
+            onStreamFinished: root.applyReply(saveOut.text || "", true, payload => {
                 if (payload.ok === true) {
                     root.tokenSource = String(payload.tokenSource || "stored");
                     root.testFailed = false;
@@ -141,9 +177,27 @@ Column {
         id: clearProc
         command: [Paths.vshellCli, "mercury", "clear-token"]
         running: false
+        onStarted: clearProc.sawProcess = true
+        property bool sawProcess: false
+        onRunningChanged: {
+            if (!running && !clearProc.sawProcess)
+                root.launchFailed(true);
+            if (!running)
+                clearProc.sawProcess = false;
+        }
+
         stdout: StdioCollector {
             id: clearOut
-            onStreamFinished: root.applyReply(clearOut.text || "", payload => {
+            onStreamFinished: root.applyReply(clearOut.text || "", true, payload => {
+                // A refusal -- an unlink the user does not own, a read-only
+                // state directory -- must not be announced as a removal, or the
+                // panel says the key is gone while the helper still reads it.
+                if (payload.ok !== true) {
+                    root.testFailed = true;
+                    root.testResult = String(payload.error || I18n.tr("Could not remove the key."))
+                        + (payload.detail ? " — " + payload.detail : "");
+                    return;
+                }
                 root.tokenSource = String(payload.tokenSource || "none");
                 root.testFailed = false;
                 root.testResult = I18n.tr("Key removed.");
@@ -157,9 +211,18 @@ Column {
         id: doctorProc
         command: [Paths.vshellCli, "mercury", "doctor"]
         running: false
+        onStarted: doctorProc.sawProcess = true
+        property bool sawProcess: false
+        onRunningChanged: {
+            if (!running && !doctorProc.sawProcess)
+                root.launchFailed(true);
+            if (!running)
+                doctorProc.sawProcess = false;
+        }
+
         stdout: StdioCollector {
             id: doctorOut
-            onStreamFinished: root.applyReply(doctorOut.text || "", payload => {
+            onStreamFinished: root.applyReply(doctorOut.text || "", true, payload => {
                 if (payload.ok === true) {
                     root.testFailed = false;
                     root.testResult = I18n.tr("Connected to %1.").arg(payload.orgName || I18n.tr("Mercury"));

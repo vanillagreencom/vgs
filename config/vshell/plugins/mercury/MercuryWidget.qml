@@ -103,11 +103,18 @@ PluginComponent {
     property bool _sawProcess: false
     property string _outText: ""
 
+    // A request made while a fetch is running is PARKED, not dropped. Changing
+    // the activity window, saving a key and the authoritative re-read after an
+    // upload all land here, and discarding one left the popout showing a
+    // snapshot for settings the user had already changed.
+    property bool _refreshPending: false
+
     function refresh() {
-        // A fetch already in flight owns the next poll; starting a second here
-        // would leave the first one unowned.
-        if (snapshotProc.running)
+        if (snapshotProc.running) {
+            root._refreshPending = true;
             return;
+        }
+        root._refreshPending = false;
         root._outDone = false;
         root._exitDone = false;
         root._sawProcess = false;
@@ -144,6 +151,12 @@ PluginComponent {
             root.snapshotError = Logic.snapshotError(payload, root._outText);
         }
         root.loading = false;
+        // A parked request runs as soon as the channel is free again.
+        if (root._refreshPending) {
+            root._refreshPending = false;
+            Qt.callLater(root.refresh);
+            return;
+        }
         pollTimer.restart();
     }
 
@@ -196,6 +209,23 @@ PluginComponent {
     onRefreshMsChanged: pollTimer.restart()
 
     // ============================ RECEIPT UPLOAD ============================
+
+    // The base owns the file browser, because a bundled plugin may not import
+    // the feature module it lives in.
+    function askForReceipt(txId) {
+        if (root.uploadingTxId !== "")
+            return;
+        root.pickerTxId = txId;
+        root.pickFile(I18n.tr("Attach a receipt"),
+                      ["*.pdf", "*.png", "*.jpg", "*.jpeg", "*.webp", "*.gif", "*.heic", "*.tiff"]);
+    }
+
+    onFileChosen: path => {
+        const txId = root.pickerTxId;
+        root.pickerTxId = "";
+        if (txId.length > 0 && String(path).length > 0)
+            root.beginUpload(txId, String(path));
+    }
 
     function beginUpload(txId, filePath) {
         if (root.uploadingTxId !== "" || uploadProc.running)

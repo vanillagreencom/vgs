@@ -8707,6 +8707,27 @@ MERCURY_USAGE = (
 )
 
 
+def _mercury_emit(sub: str, payload: Dict[str, Any]) -> int:
+    """The one line of JSON a mercury run prints.
+
+    Module level on purpose: CodeQL reads a nested emit as sharing the scope
+    that held the API key and reports clear-text logging of it. Nothing here
+    can reach that value -- payloads carry `tokenSource`, a label like "stored"
+    or "env", never a key -- and hoisting the writer out of that scope is how
+    the code says so rather than asking a reader to take it on trust.
+    """
+    payload["source"] = "mercury"
+    payload["kind"] = sub
+    print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+    return 0
+
+
+def _mercury_fail(sub: str, error: str, **extra: Any) -> int:
+    payload: Dict[str, Any] = {"ok": False, "error": error}
+    payload.update(extra)
+    return _mercury_emit(sub, payload)
+
+
 def cmd_mercury(argv: List[str]) -> int:
     """Mercury banking snapshot, receipt upload and key management.
 
@@ -8722,15 +8743,10 @@ def cmd_mercury(argv: List[str]) -> int:
     sub = argv[0] if argv else "snapshot"
 
     def emit(payload: Dict[str, Any]) -> int:
-        payload["source"] = "mercury"
-        payload["kind"] = sub
-        print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
-        return 0
+        return _mercury_emit(sub, payload)
 
     def fail(error: str, **extra: Any) -> int:
-        payload: Dict[str, Any] = {"ok": False, "error": error}
-        payload.update(extra)
-        return emit(payload)
+        return _mercury_fail(sub, error, **extra)
 
     if sub in {"-h", "--help", "help"}:
         eprint(MERCURY_USAGE)
@@ -8913,19 +8929,23 @@ def cmd_mercury(argv: List[str]) -> int:
         # snapshot shows none, but that snapshot can be minutes old, so the
         # transaction is re-read immediately before the POST.
         #
-        # A guard, not a gate: only a definitive 200 saying a receipt is
-        # already there blocks. Anything else falls through, because the POST
-        # is the authoritative call and reports its own auth, 404 or rate-limit
-        # failure -- refusing on an unreadable pre-check would make a transient
-        # error look like "already done".
+        # A GATE, not a guard: this refuses unless the re-read positively says
+        # there is no receipt. The two failures are not comparable -- a blocked
+        # upload is retried in a second, a duplicate cannot be undone at all --
+        # so an unreadable pre-check has to stop here, and it says which of the
+        # two it is rather than claiming the receipt is already filed.
         pre_status, pre_body = request("GET", f"/transaction/{urllib.parse.quote(tx_id)}")
-        if pre_status == 200:
-            pre_data = _mercury_json(pre_body) or {}
-            pre_tx = pre_data.get("transaction") or pre_data
-            pre_atts = pre_tx.get("attachments") if isinstance(pre_tx, dict) else None
-            if _mercury_has_receipt(pre_atts):
-                return fail("a receipt is already attached to this transaction",
-                            transactionId=tx_id, already=True)
+        if pre_status != 200:
+            return fail(_mercury_reason("could not check for an existing receipt",
+                                        pre_body, pre_status),
+                        detail=_mercury_error_text(pre_body, pre_status),
+                        status=pre_status, transactionId=tx_id)
+        pre_data = _mercury_json(pre_body) or {}
+        pre_tx = pre_data.get("transaction") or pre_data
+        pre_atts = pre_tx.get("attachments") if isinstance(pre_tx, dict) else None
+        if _mercury_has_receipt(pre_atts):
+            return fail("a receipt is already attached to this transaction",
+                        transactionId=tx_id, already=True)
 
     try:
         body_bytes, content_type = _mercury_multipart(att_type, file_path)

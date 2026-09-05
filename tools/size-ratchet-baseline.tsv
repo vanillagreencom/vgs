@@ -19,7 +19,7 @@ bin/codexbar	1255
 bin/vshell	469
 bin/vshell-capture-screenrecording	589
 bin/vshell-capture-screenshot	736
-bin/vshell-helper	15920
+bin/vshell-helper	15940
 bin/vshell_niri.py	1096
 config/vshell/icons/Yaru/cursors/half-busy	10208
 config/vshell/icons/Yaru/cursors/half-busy.ani	3364
@@ -101,7 +101,7 @@ quickshell/vshell/Modules/Greetd/GreeterContent.qml	2133
 quickshell/vshell/Modules/Lock/LockPowerMenu.qml	853
 quickshell/vshell/Modules/Lock/LockScreenContent.qml	1896
 quickshell/vshell/Modules/Lock/Pam.qml	454
-quickshell/vshell/Modules/NetworkUsage/NetworkUsageView.qml	480
+quickshell/vshell/Modules/NetworkUsage/NetworkUsageView.qml	491
 quickshell/vshell/Modules/Notepad/Notepad.qml	798
 quickshell/vshell/Modules/Notepad/NotepadSettings.qml	539
 quickshell/vshell/Modules/Notepad/NotepadTextEditor.qml	1136

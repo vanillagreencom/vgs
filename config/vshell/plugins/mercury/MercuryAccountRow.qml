@@ -1,6 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
-import Quickshell
+import Quickshell.Io
 import qs.Common
 import qs.Services
 import qs.Widgets
@@ -27,6 +27,36 @@ Item {
 
     implicitHeight: card.height
     height: card.height
+
+    // STDIN, not argv. `vshell cl copy` reads the value from its standard
+    // input when none is given, and an account number on a command line is
+    // readable through /proc for as long as the process lives -- the same
+    // exposure this plugin refuses for the API key.
+    Process {
+        id: copyProc
+        command: [Paths.vshellCli, "cl", "copy"]
+        stdinEnabled: true
+        running: false
+
+        function copyNumber() {
+            if (!copyProc.running)
+                copyProc.running = true;
+        }
+
+        onStarted: {
+            copyProc.write(String(root.account.accountNumber || ""));
+            copyProc.stdinEnabled = false;
+        }
+        onExited: exitCode => {
+            copyProc.stdinEnabled = true;
+            if (exitCode === 0)
+                ToastService.showInfo(I18n.tr("Account number copied"),
+                                      root.nameParts.name, "", "mercury-copy");
+            else
+                ToastService.showError(I18n.tr("Could not copy the account number"),
+                                       "", "", "mercury-copy");
+        }
+    }
 
     StyledRect {
         id: card
@@ -133,12 +163,7 @@ Item {
                     buttonSize: 26
                     iconColor: Theme.surfaceVariantText
                     tooltipText: I18n.tr("Copy the account number")
-                    onClicked: {
-                        Quickshell.execDetached([Paths.vshellCli, "cl", "copy",
-                                                 String(root.account.accountNumber || "")]);
-                        ToastService.showInfo(I18n.tr("Account number copied"),
-                                              root.nameParts.name, "", "mercury-copy");
-                    }
+                    onClicked: copyProc.copyNumber()
                 }
             }
         }
