@@ -77,12 +77,22 @@ jobs:
           package=.agents/skills/bot-instructions
           trusted="$RUNNER_TEMP/vgs-bot-policy"
           version() { grep -m1 -oE '^  version: "[^"]*"' "$1/$package/SKILL.md" | cut -d'"' -f2 || echo unknown; }
-          if diff -r "$trusted/$package" "$GITHUB_WORKSPACE/$package" >/dev/null; then
-            checker="$trusted"
-          else
-            checker="$GITHUB_WORKSPACE"
-            echo "::warning::bot-instructions package differs from the default branch ($(version "$trusted") there, $(version "$GITHUB_WORKSPACE") here); running the candidate's checker (kendex #2187)"
-          fi
+          # diff exits 0 for identical trees and 1 for differing ones; anything
+          # else is a comparison failure, and picking a checker on it would be a
+          # guess. Fail instead.
+          compared=0
+          diff -r "$trusted/$package" "$GITHUB_WORKSPACE/$package" >/dev/null || compared=$?
+          case "$compared" in
+            0) checker="$trusted" ;;
+            1)
+              checker="$GITHUB_WORKSPACE"
+              echo "::warning::bot-instructions package differs from the default branch ($(version "$trusted") there, $(version "$GITHUB_WORKSPACE") here); running the candidate's checker (kendex #2187)"
+              ;;
+            *)
+              echo "::error::could not compare the bot-instructions package copies (diff exited $compared), so no checker can be chosen"
+              exit 1
+              ;;
+          esac
           (cd "$checker" && .agents/skills/bot-instructions/scripts/bot-instructions check --repo "$GITHUB_WORKSPACE" --spec "$GITHUB_WORKSPACE/.agents/skills/bot-instructions")
 
       # Run text checks before installing the Go and Qt toolchains.
