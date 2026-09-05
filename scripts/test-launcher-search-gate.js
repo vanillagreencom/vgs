@@ -12,6 +12,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const repoRoot = path.join(__dirname, "..");
+const APP_SEARCH = path.join(repoRoot, "quickshell", "vshell", "Services", "AppSearchService.qml");
 const SERVICE = path.join(repoRoot, "quickshell", "vshell", "Services", "DSearchService.qml");
 const OVERVIEW = path.join(repoRoot, "quickshell", "vshell", "Modules", "WorkspaceOverlays", "OverviewSearch");
 const CONTROLLER = path.join(OVERVIEW, "Controller.qml");
@@ -19,6 +20,7 @@ const RESULTS = path.join(OVERVIEW, "ResultsList.qml");
 const MENU = path.join(repoRoot, "config", "vshell", "plugins", "vgsMenu", "VGSMenu.qml");
 const HELPER = path.join(repoRoot, "bin", "vshell-helper");
 
+const appSearchSource = fs.readFileSync(APP_SEARCH, "utf8");
 const serviceSource = fs.readFileSync(SERVICE, "utf8");
 const controllerSource = fs.readFileSync(CONTROLLER, "utf8");
 const resultsSource = fs.readFileSync(RESULTS, "utf8");
@@ -42,6 +44,15 @@ const backend = evaluateMarked(serviceSource, "SEARCH BACKEND DECISION", [
     "serviceRefuses", "canDispatchFor", "probeSettled", "probeFailureOutcome"
 ], "DSearchService.qml");
 
+const appSearch = evaluateMarked(appSearchSource, "APPLICATION SEARCH RELEVANCE DECISION", [
+    "normalizeSearchText", "tokenize", "wordBoundaryMatch", "levenshteinDistance",
+    "fuzzyMatchScore", "searchFieldValues", "fieldMatchScore", "bestFieldScore",
+    "primaryFieldScore", "aliasFieldScore", "keywordFieldScore", "identifierFieldScore",
+    "bestAllowedWordScore", "allQueryWordsScore", "fuzzyFallbackScore",
+    "secondaryFieldBonus", "textRelevance", "applicationAliasFields",
+    "applicationTextRelevance", "boundedUsageScore", "applicationFinalScore"
+], "AppSearchService.qml");
+
 const view = evaluateMarked(resultsSource, "EMPTY STATE DECISION", [
     "fileEmptyStateKey", "fileHintKey", "fileEmptyIcon", "fileLegActive", "errorLine"
 ], "ResultsList.qml");
@@ -57,6 +68,13 @@ const probe = (state, fd, ripgrep) => ({ state: state, fd: fd, ripgrep: ripgrep 
 const ready = (fd, rg) => probe("ready", fd, rg);
 const TOOL_FLAGS = [[true, true], [true, false], [false, true], [false, false]];
 
+function textScore(args) {
+    return appSearch.textRelevance(
+        args.primary || [], args.aliases || [], args.keywords || [], args.identifiers || [],
+        args.secondary || [], args.query || ""
+    ).score;
+}
+
 // Bound a Python function at the next top-level def. Unbounded slices can borrow
 // an unrelated later statement to satisfy a missing failure branch.
 function pythonFunction(source, name) {
@@ -65,6 +83,62 @@ function pythonFunction(source, name) {
     const end = source.indexOf("\ndef ", start + 1);
     return source.slice(start, end === -1 ? source.length : end);
 }
+
+test("application relevance admits strong fields and rejects secondary-only matches", () => {
+    const exact = textScore({ primary: ["OpenCode"], query: "opencode" });
+    const prefix = textScore({ primary: ["OpenCode editor"], query: "opencode" });
+    const wordPrefix = textScore({ primary: ["Run OpenCode"], query: "opencode" });
+    const substring = textScore({ primary: ["XOpenCode"], query: "opencode" });
+    const aliasExact = textScore({ aliases: ["OpenCode"], query: "opencode" });
+    const keywordExact = textScore({ keywords: ["opencode"], query: "opencode" });
+    const identifierExact = textScore({ identifiers: ["opencode.desktop"], query: "opencode.desktop" });
+
+    assert.ok(exact > prefix, "an exact title or app name outranks a prefix");
+    assert.ok(prefix > wordPrefix, "a title or app-name prefix outranks a word prefix");
+    assert.ok(wordPrefix > substring, "a word prefix outranks a title or app-name substring");
+    assert.ok(substring > aliasExact,
+        "aliases, identifiers and keywords remain below title or app-name substring matches");
+    assert.ok(aliasExact > keywordExact, "an alias match outranks a keyword match");
+    assert.ok(keywordExact > identifierExact, "a keyword match outranks an identifier match");
+
+    assert.equal(textScore({
+        primary: ["Terminal"], secondary: ["OpenCode coding agent"], query: "opencode"
+    }), 0, "subtitle and category text cannot admit a result by themselves");
+
+    assert.ok(textScore({
+        primary: ["OpenCode"], secondary: ["OpenCode coding agent"], query: "opencode"
+    }) > exact, "subtitle and category text can improve a result already admitted by title");
+
+    assert.ok(textScore({
+        primary: ["OpenCode"], keywords: ["agent"], query: "opencode agent"
+    }) > 0, "a multi-word query may match across allowed fields");
+    assert.equal(textScore({
+        primary: ["OpenCode"], secondary: ["agent"], query: "opencode agent"
+    }), 0, "every query word must match an allowed field, not only subtitle or category text");
+
+    assert.ok(appSearch.applicationTextRelevance({ name: "OpenCode" }, "opencdoe").score > 0,
+        "typo fallback admits a bounded title or app-name match");
+    assert.ok(appSearch.applicationTextRelevance({ name: "Editor", aliases: ["OpenCode"] },
+        "opencdoe").score > 0, "typo fallback also covers declared aliases");
+    assert.equal(appSearch.applicationTextRelevance({ name: "Editor", id: "opencode.desktop" },
+        "opencdoe").score, 0, "typo fallback does not run against identifiers");
+
+    assert.ok(appSearch.applicationFinalScore(substring, 0, 999999)
+        > appSearch.applicationFinalScore(keywordExact, 999999, 0),
+        "the usage cap cannot move a keyword match above a title or app-name substring");
+});
+
+test("searchApplicationResults keeps the empty-query browse path scored", () => {
+    const q = qmlSource(appSearchSource, "AppSearchService.qml");
+    q.requires(q.body("searchApplicationResults"), "searchApplicationResults()", [
+        ["const queryLower = normalizeSearchText(query);",
+            "whitespace-only input must follow the empty-query browse path"],
+        ["if (!queryLower)",
+            "the browse check reads the normalized query, not the raw string"],
+        ["return getVisibleApplications().map(app => ({",
+            "the empty-query path preserves the public app-list shape with score metadata"]
+    ]);
+});
 
 // Set declined where the program derives it. A searchable query with a missing or checking
 // backend cannot produce declined:false, so that fixture would cover an unreachable state.
@@ -82,13 +156,14 @@ const declinedFacts = extra => facts(Object.assign({ declined: true }, extra));
 
 // Keep extracted decisions independent of QML state so fixture inputs fully determine their behavior.
 test("marked decision regions stay plain JavaScript", () => {
-    for (const [label, source, marker] of [
-        ["DSearchService.qml", serviceSource, "SEARCH BACKEND DECISION"],
-        ["ResultsList.qml", resultsSource, "EMPTY STATE DECISION"],
-        ["Controller.qml", controllerSource, "FILE SEARCH DECISION"]
+    for (const [label, source, marker, extraForbidden] of [
+        ["AppSearchService.qml", appSearchSource, "APPLICATION SEARCH RELEVANCE DECISION", ["AppUsageHistoryData."]],
+        ["DSearchService.qml", serviceSource, "SEARCH BACKEND DECISION", []],
+        ["ResultsList.qml", resultsSource, "EMPTY STATE DECISION", []],
+        ["Controller.qml", controllerSource, "FILE SEARCH DECISION", []]
     ]) {
         const region = regionOf(source, marker, label);
-        for (const forbidden of ["root.", "Theme.", "I18n.", "Qt."]) {
+        for (const forbidden of ["root.", "Theme.", "I18n.", "Qt.", ...extraForbidden]) {
             assert.ok(!region.includes(forbidden),
                 `the ${marker} block in ${label} must not reference ${forbidden} — it has to stay ` +
                 "plain JavaScript, or the extraction is testing a different program");
@@ -454,24 +529,27 @@ test("fileLegActive is true for files mode and for any mode holding a searchable
     }
 });
 
-test("sortRanked keeps non-file results ahead of file results in All mode, in either order", () => {
-    for (const [items, alphabetical, expected, why] of [
-        [[
-            { id: "folder-high", kind: "file", title: "Folder", rank: 9000, data: { is_dir: true } },
-            { id: "file-mid", kind: "file", title: "File", rank: 4500, data: { is_dir: false } },
-            { id: "tool", kind: "command", title: "OpenCode", rank: 120 },
-            { id: "app", kind: "app", title: "OpenCode", rank: 60 }
-        ], false, ["tool", "app", "folder-high", "file-mid"],
-            "score order keeps launcher results before file and folder results, then score order inside each group"],
-        [[
-            { id: "file-b", kind: "file", title: "B file", rank: 9000 },
-            { id: "cmd-z", kind: "command", title: "Z command", rank: 10 },
-            { id: "cmd-a", kind: "command", title: "A command", rank: 5 },
-            { id: "file-a", kind: "file", title: "A file", rank: 4500 }
-        ], true, ["cmd-a", "cmd-z", "file-a", "file-b"],
-            "alphabetical order keeps the same two groups and sorts inside them"]
-    ]) {
-        assert.deepEqual(menuSort.sortRanked(items, alphabetical, false, true).map(item => item.id), expected, why);
+test("sortRanked preserves ranked sorting and grouped browsing", () => {
+    const sortRegion = qmlSource.flat(stripComments(regionOf(menuSource,
+        "LAUNCHER MENU SORT DECISION", "VGSMenu.qml")));
+
+    assert.deepEqual(menuSort.sortRanked([
+        { id: "low", kind: "command", title: "Low", rank: 120 },
+        { id: "high", kind: "app", title: "High", rank: 9000 },
+        { id: "mid", kind: "command", title: "Mid", rank: 4500 }
+    ], false, false).map(item => item.id), ["high", "mid", "low"],
+        "ranked sorting follows the one relevance score");
+
+    assert.deepEqual(menuSort.sortRanked([
+        { id: "group-b", kind: "command", title: "B command", rank: 10, group: 2 },
+        { id: "group-a", kind: "command", title: "A command", rank: 5, group: 1 },
+        { id: "group-z", kind: "command", title: "Z command", rank: 1, group: 1 }
+    ], true, true).map(item => item.id), ["group-a", "group-z", "group-b"],
+        "alphabetical grouped sorting still keeps a category's own entries above generated ones");
+
+    for (const removed of ["filesLast", "allResultGroup"]) {
+        assert.ok(!sortRegion.includes(removed),
+            `VGSMenu sort logic must not keep the VGS-270 file-last rule: ${removed}`);
     }
 });
 
@@ -851,23 +929,70 @@ test("no launcher surface reads a single-tool flag", () => {
     }
 });
 
-// Verify vgsMenu uses the shared threshold and argv construction rules.
+// Verify vgsMenu uses the shared relevance, explicit file-routing and argv construction rules.
 
-test("VGSMenu asks the one threshold owner", () => {
+test("VGSMenu keeps All search local and uses shared relevance", () => {
+    const q = qmlSource(menuSource, "VGSMenu.qml");
     const code = qmlSource.flat(stripComments(menuSource));
-    for (const call of [
-        "fileSearching = DSearchService.queryIsDispatchable(trimmed);",
-        "if (!DSearchService.queryIsDispatchable(trimmed))",
-        "return DSearchService.queryIsSearchable(DSearchService.kindForType(fileSearchType), trimmed) || fileSearchType === \"zoxide\";"
-    ]) {
-        assert.ok(code.includes(qmlSource.flat(call)),
-            `VGSMenu must ask the one threshold owner: \`${call}\`. Its own literal would keep ` +
-            "searching at two characters while the launcher's own rule moved");
-    }
+
+    q.requires(q.body("buildImmediateAllItems"), "buildImmediateAllItems()", [
+        ["const q = AppSearchService.normalizeSearchText(trimmed);",
+            "the menu uses the shared normalizer before command relevance"],
+        ["const apps = AppSearchService.searchApplicationResults(trimmed);",
+            "applications arrive with the canonical relevance score, not a second menu score"],
+        ["next.push(appItem(apps[i]));",
+            "that scored result is what builds the app row"],
+        ["if (!q || itemMatches(item, q))",
+            "commands are admitted only through their field-aware relevance"]
+    ]);
+    assert.ok(!stripComments(q.body("buildImmediateAllItems")).includes("fileItem("),
+        "All builds no file or folder rows, including remembered file history");
+    assert.ok(!stripComments(q.body("buildImmediateAllItems")).includes("launcherMenuUsageHistory"),
+        "All does not read file history as a substitute file provider");
+
+    q.requires(q.body("refreshAllItems"), "refreshAllItems()", [
+        ["++fileSearchGeneration;", "existing file replies are invalidated when All takes over"],
+        ["fileSearching = false;", "All has no file-provider request to wait for"]
+    ]);
+    assert.ok(!stripComments(q.body("refreshAllItems")).includes("DSearchService."),
+        "unprefixed All does not call the file-search service");
+    q.requires(q.body("refreshItems"), "refreshItems()", [
+        ["if (item.category === \"apps\" && (!q || itemMatches(item, q)))",
+            "empty Apps browsing still includes built-in app-category commands"]
+    ]);
+
+    q.requires(q.body("appItem"), "appItem()", [
+        ["item.rank = (searchResult?.score || 0) + usageBonus(item);",
+            "the row keeps AppSearchService's text score and adds only bounded launcher usage"]
+    ]);
+    q.requires(q.body("commandTextRelevance"), "commandTextRelevance()", [
+        ["return AppSearchService.textRelevance(",
+            "commands use the same field-aware relevance function as applications"],
+        ["[item.title || \"\"]", "the title is the primary admission field"],
+        ["[item.subtitle || \"\", category?.label || \"\", category?.description || \"\"]",
+            "subtitle and category text are secondary fields only"]
+    ]);
+    q.requires(q.body("commandItem"), "commandItem()", [
+        ["const textScore = q ? commandTextRelevance(item, q) : 0;",
+            "command ranking reuses the admission score"],
+        ["result.rank = textScore + usageBonus(result);",
+            "launcher usage is bounded and applied after text relevance"]
+    ]);
+
+    assert.ok(!code.includes("AppSearchService.searchApplications("),
+        "VGSMenu must not select applications with searchApplications() and rank them again");
+});
+
+test("VGSMenu asks the explicit file threshold owner", () => {
+    const code = qmlSource.flat(stripComments(menuSource));
+    assert.ok(code.includes(qmlSource.flat(
+        "return DSearchService.queryIsSearchable(DSearchService.kindForType(fileSearchType), trimmed) || fileSearchType === \"zoxide\";")),
+        "VGSMenu keeps the shared threshold owner for explicit file searches");
 });
 
 test("VGSMenu's dispatch site and files empty state agree through the shared predicate", () => {
-    const q = qmlSource(menuSource, "VGSMenu.qml"); const code = qmlSource.flat(stripComments(menuSource));
+    const q = qmlSource(menuSource, "VGSMenu.qml");
+    const code = qmlSource.flat(stripComments(menuSource));
     // Dispatch and empty state must agree on explicit path exemptions.
     q.requires(q.body("refreshFileItems"), "refreshFileItems()", [
         ["if (!fileSearchDispatches(trimmed))", "the dispatch site asks the shared predicate"]
@@ -898,7 +1023,7 @@ test("openFolder terminates its options before the path and joins the configured
 test("no file dispatch function carries its own two-character literal", () => {
     for (const [label, source, fns] of [
         ["Controller.qml", controllerSource, ["performFileSearch", "fileSearchQuery", "_retryFileSearchAfterProbe"]],
-        ["VGSMenu.qml", menuSource, ["refreshAllItems", "refreshFileItems"]]
+        ["VGSMenu.qml", menuSource, ["refreshFileItems"]]
     ]) {
         const q = qmlSource(source, label);
         for (const fn of fns) {
