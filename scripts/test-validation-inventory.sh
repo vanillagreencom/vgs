@@ -1093,7 +1093,7 @@ NOYAML
 )"
 expect_contains "$pyyaml_out" "IMPORTED" "PyYAML absent"
 # Use an independent expected row count so an empty parser result cannot agree with itself.
-expect_contains "$pyyaml_out" "ROWS 86" "PyYAML absent"
+expect_contains "$pyyaml_out" "ROWS 80" "PyYAML absent"
 expect_contains "$pyyaml_out" "MANIFESTERROR PyYAML is not installed" "PyYAML absent"
 expect_absent "$pyyaml_out" "Traceback" "PyYAML absent"
 ok "without PyYAML the module imports, the other parsers work, and ci.yml fails with one line"

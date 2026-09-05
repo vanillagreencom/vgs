@@ -38,12 +38,6 @@ always    | scripts/check-validation-inventory.py
 docs      | .agents/skills/bot-instructions/scripts/bot-instructions check
 docs      | scripts/check-owned-skills.py
 docs      | scripts/test-owned-skills-e2e.py
-docs      | scripts/check-section-pointers.py
-docs      | scripts/test-section-pointers.py
-docs      | scripts/test-section-pointers-e2e.py
-docs      | python3 scripts/lib/section_pointers_selftest.py
-docs      | python3 scripts/lib/tracked_blobs_selftest.py
-docs      | python3 scripts/lib/prose_blocks_selftest.py
 packaging | scripts/gen-package-metadata.py
 packaging | scripts/check-package-assets.sh
 packaging | scripts/check-aur-sync.py
@@ -105,7 +99,7 @@ helper    | bash -n bin/vshell
 always    | git diff --check
 -         | scripts/check-workflows.sh
 -         | .agents/skills/size-ratchet/scripts/size-ratchet
--         | .agents/skills/growth-guards/scripts/todo-ban
+docs      | .agents/skills/growth-guards/scripts/growth-guards all
 qml       | scripts/qml-smoke.sh --nested --require-static --require-nested
 qml       | scripts/check-validation-safety.sh --require-static
 -         | scripts/check-label-taxonomy.py

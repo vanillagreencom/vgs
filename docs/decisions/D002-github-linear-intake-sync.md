@@ -6,7 +6,7 @@
 
 ## Context
 
-`AGENTS.md` § Conventions and the linear skill's project instructions both stated that "a one-way GitHub → Linear sync mirrors" anything filed on GitHub Issues. No such sync runs.
+`AGENTS.md § Conventions` and the linear skill's project instructions both stated that "a one-way GitHub → Linear sync mirrors" anything filed on GitHub Issues. No such sync runs.
 
 Verified 2026-08-04:
 
@@ -18,7 +18,7 @@ The documented workflow tells agents and humans to work from Linear. A GitHub-fi
 
 ## Decision
 
-**Mirroring GitHub intake into Linear is a manual triage step, and the docs now say so.** The linear skill's project instructions (generated from `kendex.toml`) carry the actual commands and no longer claim a sync exists; `AGENTS.md` § Conventions states the manual step and points there. (`AGENTS.md` carried a duplicate copy of the commands until the VGS-124 diet removed it.)
+**Mirroring GitHub intake into Linear is a manual triage step, and the docs now say so.** The linear skill's project instructions (generated from `kendex.toml`) carry the actual commands and no longer claim a sync exists; `AGENTS.md § Conventions` states the manual step and points there. (`AGENTS.md` carried a duplicate copy of the commands until the VGS-124 diet removed it.)
 
 Neither automated option is taken:
 
@@ -77,4 +77,4 @@ diff /tmp/gh-45-body.md /tmp/vgs-61.md   # no output
 ## References
 
 - VGS-16 — the issue this decision resolves
-- `kendex.toml` `[skill-instructions] linear` — the manual triage step and its commands; `AGENTS.md` § Conventions points there. It is generated into `.claude/skills/linear/SKILL.md`; never hand-edit the generated file
+- `kendex.toml` `[skill-instructions] linear` — the manual triage step and its commands; `AGENTS.md § Conventions` points there. It is generated into `.claude/skills/linear/SKILL.md`; never hand-edit the generated file
