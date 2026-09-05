@@ -48,6 +48,9 @@ const view = evaluateMarked(resultsSource, "EMPTY STATE DECISION", [
 const files = evaluateMarked(controllerSource, "FILE SEARCH DECISION", [
     "fileSearchQueryFrom", "shouldRetryAfterProbe"
 ], "Controller.qml");
+const menuSort = evaluateMarked(menuSource, "LAUNCHER MENU SORT DECISION", [
+    "sortRanked"
+], "VGSMenu.qml");
 
 // Keep extracted decisions independent of QML state so fixture inputs fully determine their behavior.
 for (const [label, source, marker] of [
@@ -751,6 +754,23 @@ for (const [label, source] of [["Controller.qml", controllerSource], ["ResultsLi
 {
     const q = qmlSource(menuSource, "VGSMenu.qml");
     const code = qmlSource.flat(stripComments(menuSource));
+
+    assert.deepEqual(menuSort.sortRanked([
+        { id: "folder-high", kind: "file", title: "Folder", rank: 9000, data: { is_dir: true } },
+        { id: "file-mid", kind: "file", title: "File", rank: 4500, data: { is_dir: false } },
+        { id: "tool", kind: "command", title: "OpenCode", rank: 120 },
+        { id: "app", kind: "app", title: "OpenCode", rank: 60 }
+    ], false, false, true).map(item => item.id), ["tool", "app", "folder-high", "file-mid"],
+        "All-mode sorting must keep non-file launcher results before file and folder results, " +
+        "then preserve score order inside each group");
+
+    assert.deepEqual(menuSort.sortRanked([
+        { id: "file-b", kind: "file", title: "B file", rank: 9000 },
+        { id: "cmd-z", kind: "command", title: "Z command", rank: 10 },
+        { id: "cmd-a", kind: "command", title: "A command", rank: 5 },
+        { id: "file-a", kind: "file", title: "A file", rank: 4500 }
+    ], true, false, true).map(item => item.id), ["cmd-a", "cmd-z", "file-a", "file-b"],
+        "alphabetical All-mode sorting must keep the same two groups and sort inside them");
 
     for (const call of [
         "fileSearching = DSearchService.queryIsDispatchable(trimmed);",
