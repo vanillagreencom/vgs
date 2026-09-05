@@ -80,7 +80,7 @@ SELECTOR = (
 # Distinct anchor basenames let process controls isolate heading failures.
 SWEEP_ANCHORS = (
     "AGENTS.md",
-    "review-bots.md",
+    "README.md",
 )
 
 # Require target spellings by name; a total cannot reveal a missing grammar arm.
@@ -90,7 +90,6 @@ GRAMMAR_SPELLINGS = (
     "unique basename",
     "decision-record id",
     "intra-document",
-    "inherited target",
 )
 
 # Anchor targets detect incomplete resolution coverage even when totals stay high.

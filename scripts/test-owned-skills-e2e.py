@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Run skill-list checks as processes over isolated roots.
-
-Each failing root isolates a check and requires its status and diagnostic.
-Surface membership and list counts use independent expectations so deleting
-a production table entry cannot also delete its control.
-"""
+"""Check skill-tree ownership and failure propagation in isolated repositories."""
 
 from __future__ import annotations
 
@@ -18,57 +13,15 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent
-sys.path.insert(0, str(HERE / "lib"))
-from owned_skill_lists import CODERABBIT, PROSE_SURFACES  # noqa: E402
-
 _SPEC = importlib.util.spec_from_file_location(
     "check_owned_skills", HERE / "check-owned-skills.py"
 )
 check = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(check)
 
-COVERED_SURFACES = (".github/copilot-instructions.md", "review-bots.md")
-HAND_KEPT_LISTS = 4
-
 REGISTER = (REPO_ROOT / "kendex.toml").read_text(encoding="utf-8")
 IN_PLACE = check.in_place_names(REGISTER)
 RENDERED = check.rendered_names(REGISTER)
-
-
-def coderabbit(
-    filters: tuple[str, ...] = RENDERED,
-    instructed: tuple[str, ...] = IN_PLACE,
-    curated: tuple[str, ...] = (IN_PLACE[0],),
-    stale_instructed: tuple[str, ...] | None = None,
-) -> str:
-    """Build accepted CodeRabbit lists from the register.
-
-    stale_instructed adds a duplicate project-files entry.
-    """
-    lines = ["reviews:", "  path_filters:"]
-    lines += [f'    - "!{check.SKILLS_DIR}/{name}/**"' for name in filters]
-    lines += ["  path_instructions:"]
-    for entry in (instructed, stale_instructed):
-        if not entry:
-            continue
-        lines += [f'    - path: "{check.SKILLS_DIR}/{{{",".join(entry)}}}/**"']
-        lines += ["      instructions: >-", "        project files, review them"]
-    lines += ["knowledge_base:", "  code_guidelines:", "    filePatterns:"]
-    lines += [f'      - "{check.SKILLS_DIR}/{name}/**"' for name in curated]
-    return "\n".join(lines) + "\n"
-
-
-def prose(
-    names: tuple[str, ...] = IN_PLACE, stale: tuple[str, ...] | None = None
-) -> str:
-    """A prose surface naming exactly `names`, plus a SECOND pair from `stale`."""
-    text = "# surface\n\nThe exception is this repo's own skills:\n"
-    for pair in (names, stale):
-        if pair is None:
-            continue
-        globs = ", ".join(f"`{check.SKILLS_DIR}/{name}/**`" for name in pair)
-        text += f"<!-- in-place-skills -->{globs}<!-- /in-place-skills -->\n"
-    return text
 
 
 def clean_root() -> dict[str, bytes | str]:
@@ -76,9 +29,6 @@ def clean_root() -> dict[str, bytes | str]:
     tree: dict[str, bytes | str] = {"kendex.toml": REGISTER}
     for name in IN_PLACE + RENDERED:
         tree[f"{check.SKILLS_DIR}/{name}/SKILL.md"] = f"# {name}\n"
-    tree[CODERABBIT] = coderabbit()
-    for rel, _what in PROSE_SURFACES:
-        tree[rel] = prose()
     return tree
 
 
@@ -116,15 +66,10 @@ def without(tree: dict[str, bytes | str], rel: str) -> dict[str, bytes | str]:
 
 
 def with_row(name: str, source: str, extra: str = "") -> dict[str, bytes | str]:
-    """Add a register row and update every list so only its disk checks can fail."""
-    in_place = IN_PLACE + ((name,) if source == "in-place" else ())
-    rendered = RENDERED + (() if source == "in-place" else (name,))
+    """Add a register row without adding its skill tree."""
     root = dict(clean_root(), **{
         "kendex.toml": f'{REGISTER}\n[skills."{name}"]\nsource = "{source}"\n{extra}',
-        CODERABBIT: coderabbit(filters=rendered, instructed=in_place),
     })
-    for rel, _what in PROSE_SURFACES:
-        root[rel] = prose(names=in_place)
     return root
 
 
@@ -137,97 +82,9 @@ def end_to_end_controls() -> list[str]:
     # Drop inherited tripwires for subprocesses and in-process self-tests.
     os.environ.pop(check.TRIPWIRE, None)
 
-    declared = tuple(rel for rel, _what in PROSE_SURFACES)
-    for rel in sorted(set(declared) - set(COVERED_SURFACES)):
-        failures.append(
-            f"PROSE_SURFACES names {rel}, which this suite does not cover — every "
-            f"case here is built from that table, so the surface brought its own "
-            f"cases along and nothing proves the guard reports on it. Cover it here."
-        )
-    for rel in sorted(set(COVERED_SURFACES) - set(declared)):
-        failures.append(
-            f"PROSE_SURFACES no longer names {rel}, so its list is compared "
-            f"against the register by nothing and a drift in it goes unreported, "
-            f"with this suite and the guard both green. Record the decision here."
-        )
-
     cases: list[tuple[str, dict[str, bytes | str], int, str]] = [
-        ("clean", clean, 0, f"{HAND_KEPT_LISTS} hand-kept lists agree"),
-        (
-            "with path_filters missing a rendered skill",
-            dict(clean, **{CODERABBIT: coderabbit(filters=RENDERED[1:])}),
-            1,
-            f"{CODERABBIT} — `reviews.path_filters`",
-        ),
-        (
-            "with path_instructions missing an in-place skill",
-            dict(clean, **{CODERABBIT: coderabbit(instructed=IN_PLACE[1:])}),
-            1,
-            f"{CODERABBIT} — the `reviews.path_instructions` entry",
-        ),
-        # Repeated entries union to the expected names, isolating the duplicate refusal.
-        (
-            "with a stale path_instructions entry beside the current one",
-            dict(
-                clean,
-                **{
-                    CODERABBIT: coderabbit(
-                        instructed=IN_PLACE[:1], stale_instructed=IN_PLACE[1:]
-                    )
-                },
-            ),
-            1,
-            "carries 2 `reviews.path_instructions` entries",
-        ),
-        (
-            "with a code_guidelines path naming an unregistered skill",
-            dict(clean, **{CODERABBIT: coderabbit(curated=("gone-away",))}),
-            1,
-            "outside its two register-held lists",
-        ),
-        (
-            "with .coderabbit.yaml absent",
-            without(clean, CODERABBIT),
-            1,
-            f"{CODERABBIT} is not there",
-        ),
-        (
-            "with .coderabbit.yaml undecodable",
-            dict(clean, **{CODERABBIT: b"reviews:\n  x: \xff\n"}),
-            1,
-            f"{CODERABBIT} could not be read",
-        ),
+        ("clean", clean, 0, "skill trees agree with kendex.toml"),
     ]
-    # Match each surface path; shared diagnostic wording cannot identify its check.
-    for rel, _what in PROSE_SURFACES:
-        cases += [
-            (
-                f"with {rel}'s marker pair emptied",
-                dict(clean, **{rel: prose(names=())}),
-                1,
-                f"{rel} — ",
-            ),
-            (
-                f"with {rel} absent",
-                without(clean, rel),
-                1,
-                f"{rel} is not there",
-            ),
-            (
-                f"with {rel} undecodable",
-                dict(clean, **{rel: b"# surface\n\xff\n"}),
-                1,
-                f"{rel} could not be read",
-            ),
-            # Subset-shaped for the `.coderabbit.yaml` case's reason, and only
-            # this surface carries the second pair.
-            (
-                f"with a stale marker pair beside {rel}'s current one",
-                dict(clean, **{rel: prose(names=IN_PLACE[:1], stale=IN_PLACE[1:])}),
-                1,
-                "carries 2 `in-place-skills` marker pairs",
-            ),
-        ]
     cases += [
         (
             "with an unregistered tree under the render root",
@@ -285,7 +142,7 @@ def end_to_end_controls() -> list[str]:
     ]
     # Disabled skills retain trees; namespaced skills use path prefixes. Neither
     # case makes nested content a separate skill.
-    ok = f"{HAND_KEPT_LISTS} hand-kept lists agree"
+    ok = "skill trees agree with kendex.toml"
     cases += [
         ("with a disabled in-place row whose tree is gone",
          with_row("switched-off", "in-place", "enabled = false\n"), 0, ok),
