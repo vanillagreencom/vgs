@@ -27,11 +27,15 @@ as a file and that this file cannot reach.
 ONE MORE EXCLUSION, and it is not cosmetic: a name this tree defines can also
 be provided by an installed Qt or Quickshell module. `Modules/Bar/Widgets`
 ships an `IdleInhibitor` bar pill, and `Quickshell.Wayland` ships an
-`IdleInhibitor` protocol object that `BarWindow.qml` legitimately uses. So
-before reporting, the scan asks whether any NON-qs module the file imports
-defines that name, by reading the installed qmldir files. When the module tree
-cannot be found the scan says so and fails rather than reporting a wall of
-names it cannot rule on.
+`IdleInhibitor` protocol object that `BarWindow.qml` legitimately uses.
+
+Those collisions are DECLARED, in tools/qml-import-collisions.tsv, one row per
+file and type. They are declared rather than resolved because CI has no Qt
+module tree to resolve against, and a check that cannot run there is not a
+check. A row cannot widen: it names one file and one type. And where the
+module tree IS installed -- a developer's machine, this repo's own validate
+run -- the guard reads that module and fails if the claim is no longer true,
+so a row cannot quietly rot into a blanket exemption.
 """
 from __future__ import annotations
 
@@ -50,6 +54,32 @@ INSTANTIATION = re.compile(r"^\s*([A-Z][A-Za-z0-9_]*)\s*\{", re.M)
 IMPORT = re.compile(r"^\s*import\s+(qs(?:\.[A-Za-z0-9_]+)*)", re.M)
 # `component Foo: Bar {` declares a type inside the file that uses it.
 INLINE_COMPONENT = re.compile(r"^\s*component\s+([A-Z][A-Za-z0-9_]*)\s*:", re.M)
+
+
+def read_collisions() -> tuple[dict[tuple[str, str], str], list[str]]:
+    """The declared (file, type) -> outside module rows, and what is wrong.
+
+    A malformed row is an error rather than a skipped line: a typo would
+    otherwise silently stop covering the file it names.
+    """
+    path = REPO_ROOT / "tools" / "qml-import-collisions.tsv"
+    if not path.is_file():
+        return {}, [f"{path.relative_to(REPO_ROOT)} is missing"]
+    rows: dict[tuple[str, str], str] = {}
+    problems: list[str] = []
+    for number, line in enumerate(path.read_text().splitlines(), start=1):
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        parts = line.split("\t")
+        if len(parts) != 3 or not all(part.strip() for part in parts):
+            problems.append(f"line {number}: expected file<TAB>type<TAB>module")
+            continue
+        rel, name, module = (part.strip() for part in parts)
+        if not (REPO_ROOT / rel).is_file():
+            problems.append(f"line {number}: {rel} does not exist")
+            continue
+        rows[(rel, name)] = module
+    return rows, problems
 
 
 def qml_import_paths() -> list[Path]:
@@ -133,12 +163,26 @@ def main() -> int:
     for path in files:
         defined.setdefault(path.stem, set()).add(path.parent)
 
+    declared, problems = read_collisions()
+    if problems:
+        print("check-qml-imports: FAIL: the collision list could not be read", file=sys.stderr)
+        for problem in problems:
+            print(f"  {problem}", file=sys.stderr)
+        return 1
+
+    # Only where a module tree exists. Its absence is not a failure -- CI has
+    # none -- but where it is present every declaration is checked against it.
     roots = qml_import_paths()
-    if not roots:
-        print("check-qml-imports: FAIL: no QML module directory found, so a name this tree",
-              file=sys.stderr)
-        print("  shares with an installed module could not be ruled out (install qt6-declarative)",
-              file=sys.stderr)
+    stale: list[str] = []
+    if roots:
+        for (rel, name), module in sorted(declared.items()):
+            if name not in installed_types({module}, roots):
+                stale.append(f"{rel}: {name} is declared as coming from {module}, "
+                             f"which no longer provides it")
+    if stale:
+        print("check-qml-imports: FAIL: a declared collision is no longer true", file=sys.stderr)
+        for line in stale:
+            print(f"  {line}", file=sys.stderr)
         return 1
 
     findings: list[str] = []
@@ -147,7 +191,7 @@ def main() -> int:
         imports = set(IMPORT.findall(text))
         # Modules this file imports that are NOT this repo's own.
         outside = {m.split()[0] for m in re.findall(r"^\s*import\s+([A-Z][\w.]*)", text, re.M)}
-        outside_names = installed_types(outside, roots)
+        relative_path = str(path.relative_to(REPO_ROOT))
         local = set(INLINE_COMPONENT.findall(text))
         seen: set[str] = set()
         for name in INSTANTIATION.findall(text):
@@ -164,11 +208,11 @@ def main() -> int:
             modules = {module_of(d) for d in directories} - {""}
             if modules & imports:
                 continue
-            # An installed module this file imports provides the same name, so
-            # which one is meant is beyond a text scan. Quickshell.Wayland's
-            # IdleInhibitor against this tree's bar pill of that name is the
-            # live case.
-            if name in outside_names:
+            # Declared as coming from an outside module this file imports.
+            # Quickshell.Wayland's IdleInhibitor against this tree's bar pill
+            # of that name is the live case.
+            claimed = declared.get((relative_path, name))
+            if claimed and claimed in outside:
                 continue
             relative = path.relative_to(REPO_ROOT)
             wanted = ", ".join(sorted(modules)) or "its own directory"

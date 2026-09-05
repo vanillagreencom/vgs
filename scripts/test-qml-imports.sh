@@ -37,12 +37,23 @@ seed() {
 }
 
 # Runs the guard against a seeded tree. The guard resolves its own repo root
-# from its path, so it is copied in beside the tree it must scan.
+# from its path, so it is copied in beside the tree it must scan, along with an
+# empty collision list -- each case that needs a row writes its own.
 run_guard() {
   local name="$1"
-  mkdir -p "$work/$name/scripts"
+  mkdir -p "$work/$name/scripts" "$work/$name/tools"
   cp "$guard" "$work/$name/scripts/check-qml-imports.py"
+  [[ -f "$work/$name/tools/qml-import-collisions.tsv" ]] \
+    || printf '# file\ttype\tmodule\n' > "$work/$name/tools/qml-import-collisions.tsv"
   ( cd "$work/$name" && python3 scripts/check-qml-imports.py 2>&1 )
+}
+
+# Writes a collision row for a case before it runs.
+declare_collision() {
+  local name="$1" file="$2" type="$3" module="$4"
+  mkdir -p "$work/$name/tools"
+  printf '# file\ttype\tmodule\n%s\t%s\t%s\n' "$file" "$type" "$module" \
+    > "$work/$name/tools/qml-import-collisions.tsv"
 }
 
 # --- must fail: the defect this guard exists for -----------------------------
@@ -155,16 +166,17 @@ else
   fail "an inline component is not reported against the file declaring it"
 fi
 
-# --- must pass: a name an imported installed module also provides -----------
+# --- collisions: declared, undeclared, and mis-declared ---------------------
 # Quickshell.Wayland ships an IdleInhibitor, and so does Modules/Bar/Widgets.
-# Which one a file means is beyond a text scan, so an imported outside module
-# that provides the name has to end the question -- this is the live case in
-# BarWindow.qml, and getting it wrong would fail the build on correct code.
-seed outside_module
-mkdir -p "$work/outside_module/quickshell/vshell/Modules/Bar/Widgets"
-printf 'import QtQuick\nItem {}\n' \
-  > "$work/outside_module/quickshell/vshell/Modules/Bar/Widgets/IdleInhibitor.qml"
-cat > "$work/outside_module/quickshell/vshell/Modules/Bar/BarWindow.qml" <<'QML'
+# Which one a file means is beyond a text scan, so it is declared -- this is
+# the live case in BarWindow.qml, and getting it wrong fails correct code.
+seed_collision() {
+  local name="$1"
+  seed "$name"
+  mkdir -p "$work/$name/quickshell/vshell/Modules/Bar/Widgets"
+  printf 'import QtQuick\nItem {}\n' \
+    > "$work/$name/quickshell/vshell/Modules/Bar/Widgets/IdleInhibitor.qml"
+  cat > "$work/$name/quickshell/vshell/Modules/Bar/BarWindow.qml" <<'QML'
 import QtQuick
 import Quickshell.Wayland
 
@@ -174,10 +186,61 @@ Item {
     }
 }
 QML
-if run_guard outside_module >/dev/null; then
-  ok "a name an imported installed module also provides is not reported"
+}
+
+seed_collision collision_declared
+declare_collision collision_declared \
+  quickshell/vshell/Modules/Bar/BarWindow.qml IdleInhibitor Quickshell.Wayland
+if run_guard collision_declared >/dev/null; then
+  ok "a declared collision is honoured"
 else
-  fail "a name an imported installed module also provides is not reported"
+  fail "a declared collision is honoured"
+fi
+
+# Undeclared, the same tree is reported: the declaration is what excuses it,
+# not the mere existence of an outside module.
+seed_collision collision_undeclared
+if run_guard collision_undeclared >/dev/null; then
+  fail "an undeclared collision is still reported"
+else
+  ok "an undeclared collision is still reported"
+fi
+
+# A row naming a module that does not provide the type is a stale claim, and
+# only fails where a module tree is installed to check it against.
+if [[ -d /usr/lib/qt6/qml || -n "${QML2_IMPORT_PATH:-}" ]]; then
+  seed_collision collision_stale
+  declare_collision collision_stale \
+    quickshell/vshell/Modules/Bar/BarWindow.qml IdleInhibitor QtQuick.Controls
+  if out="$(run_guard collision_stale)"; then
+    fail "a declaration naming the wrong module is reported"
+  elif ! grep -q 'no longer provides' <<<"$out"; then
+    fail "the stale-declaration report says what is wrong"
+  else
+    ok "a declaration naming the wrong module is reported"
+  fi
+else
+  printf '  skip  stale-declaration case (no QML module tree to verify against)\n'
+fi
+
+# A row pointing at a file that does not exist would silently stop covering it.
+seed_collision collision_ghost
+declare_collision collision_ghost quickshell/vshell/Nope.qml IdleInhibitor Quickshell.Wayland
+if run_guard collision_ghost >/dev/null; then
+  fail "a row naming a file that does not exist is reported"
+else
+  ok "a row naming a file that does not exist is reported"
+fi
+
+# A malformed row is an error, not a skipped line.
+seed_collision collision_malformed
+mkdir -p "$work/collision_malformed/tools"
+printf '# file\ttype\tmodule\nquickshell/vshell/Modules/Bar/BarWindow.qml IdleInhibitor\n' \
+  > "$work/collision_malformed/tools/qml-import-collisions.tsv"
+if run_guard collision_malformed >/dev/null; then
+  fail "a malformed row is an error rather than a skipped line"
+else
+  ok "a malformed row is an error rather than a skipped line"
 fi
 
 # --- must pass: a Qt type this tree does not define is none of its business --
