@@ -207,13 +207,11 @@ Column {
                 root.applyReply(statusOut.text || "", false, payload => {
                     root.keySource = String(payload.keySource || "none");
                 });
-                // The retry is left to onRunningChanged rather than fired
-                // here: the stream closing is not ordered after `running` goes
-                // false, so a callLater from this point can land while the
-                // process is still running, where readTokenStatus would simply
-                // park the request again and the read would never happen.
-                if (root._statusPending)
-                    Qt.callLater(root.drainStatus);
+                // The retry is left entirely to onRunningChanged. The stream
+                // closing is not ordered against `running`, so draining from
+                // here can either park the request again or start a second
+                // read while this one's stream is still open. The parked flag
+                // simply stays set until the channel is free.
             }
         }
         stderr: StdioCollector {}

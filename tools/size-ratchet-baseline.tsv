@@ -30,9 +30,9 @@ config/vshell/icons/Yaru/index.theme	790
 config/vshell/nvim/vgs-theme-bridge.lua	423
 config/vshell/plugins/aiUsage/AiUsageWidget.qml	923
 config/vshell/plugins/cloudSync/CloudSyncWidget.qml	671
-config/vshell/plugins/mercury/MercuryKeyPanel.qml	406
+config/vshell/plugins/mercury/MercuryKeyPanel.qml	404
 config/vshell/plugins/mercury/MercuryLogic.js	404
-config/vshell/plugins/mercury/MercuryWidget.qml	433
+config/vshell/plugins/mercury/MercuryWidget.qml	446
 config/vshell/plugins/remoteDesktop/RemoteDesktopWidget.qml	703
 config/vshell/plugins/sudoToggle/SudoToggleWidget.qml	445
 config/vshell/plugins/sysUpdate/SysUpdateWidget.qml	644

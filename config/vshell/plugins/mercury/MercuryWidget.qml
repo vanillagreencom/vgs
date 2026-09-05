@@ -151,13 +151,22 @@ PluginComponent {
             root.snapshotError = Logic.snapshotError(payload, root._outText);
         }
         root.loading = false;
-        // A parked request runs as soon as the channel is free again.
-        if (root._refreshPending) {
-            root._refreshPending = false;
-            Qt.callLater(root.refresh);
+        // A parked request is NOT drained here. The settle runs when both
+        // halves have landed, and `running` can still be true at that point --
+        // refresh() would park the request a second time and nothing would
+        // ever come back for it. onRunningChanged owns the drain, because that
+        // is the moment the channel is free.
+        if (root._refreshPending)
             return;
-        }
         pollTimer.restart();
+    }
+
+    // Runs a parked request once the channel can actually take it.
+    function drainRefresh() {
+        if (snapshotProc.running || !root._refreshPending)
+            return;
+        root._refreshPending = false;
+        root.refresh();
     }
 
     Process {
@@ -193,8 +202,12 @@ PluginComponent {
             // the stop, and reporting here would call a working helper missing.
             // The timer re-checks, and a launch that produced a process never
             // reaches it. The aiUsage channel is the precedent.
-            if (!root._sawProcess && !root._outDone)
+            if (!root._sawProcess && !root._outDone) {
                 snapshotStall.restart();
+                return;
+            }
+            // The channel is free: anything parked while it was busy runs now.
+            Qt.callLater(root.drainRefresh);
         }
     }
 
