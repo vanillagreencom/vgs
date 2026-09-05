@@ -99,7 +99,7 @@ helper    | bash -n bin/vshell
 always    | git diff --check
 -         | scripts/check-workflows.sh
 -         | .agents/skills/size-ratchet/scripts/size-ratchet
--         | .agents/skills/growth-guards/scripts/growth-guards all
+docs      | .agents/skills/growth-guards/scripts/growth-guards all
 qml       | scripts/qml-smoke.sh --nested --require-static --require-nested
 qml       | scripts/check-validation-safety.sh --require-static
 -         | scripts/check-label-taxonomy.py
