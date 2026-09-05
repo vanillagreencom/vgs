@@ -164,139 +164,197 @@ PluginComponent {
                 target: popout.parentPopout
                 function onShouldBeVisibleChanged() {
                     root.popoutOpen = popout.parentPopout && popout.parentPopout.shouldBeVisible;
+                    // A flyout that reopens on the settings page days later is
+                    // disorienting; the front page is the resting state.
+                    if (!root.popoutOpen)
+                        popout.page = 0;
                 }
             }
             Component.onCompleted: root.popoutOpen = popout.parentPopout && popout.parentPopout.shouldBeVisible
             Component.onDestruction: root.popoutOpen = false
-            headerActions: Component {
-                Rectangle {
-                    width: 32
-                    height: 32
-                    radius: Theme.controlRadius
-                    color: gearArea.containsMouse ? Theme.surfaceContainerHighest : Theme.withAlpha(Theme.surfaceContainerHighest, 0)
+            // 0 = printer and jobs, 1 = this widget's own options. They used
+            // to be reachable only by leaving for the settings application;
+            // as a page they sit beside the jobs, which is what every other
+            // flyout with settings does.
+            property int page: 0
+            readonly property bool onSettings: popout.page === 1
 
-                    VgsIcon {
-                        anchors.centerIn: parent
-                        name: "settings"
-                        size: Theme.iconSize - 4
-                        color: Theme.surfaceText
-                    }
-
-                    MouseArea {
-                        id: gearArea
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: root.openPrinterSettings()
-                    }
-                }
+            // PluginPopout owns Escape and uses this contract to pop a pushed
+            // page before dismissing the surface, and to reset one on close.
+            readonly property bool canPopBack: popout.page > 0
+            function popBack() {
+                popout.page = Math.max(0, popout.page - 1);
             }
 
-            Column {
+            // The shared header slot. This was a hand-drawn Rectangle showing
+            // a `settings` cog, which no other flyout used.
+            configurable: true
+            settingsBack: popout.onSettings
+            onSettingsRequested: popout.page = popout.onSettings ? 0 : 1
+
+            Item {
+                id: pager
+
                 width: parent.width
-                spacing: Theme.spacingS
+                clip: true
+                height: popout.onSettings ? settingsPage.implicitHeight : mainPage.implicitHeight
 
-                StyledRect {
-                    width: parent.width
-                    visible: root.showConnected
-                    height: statusCol.implicitHeight + Theme.spacingM * 2
-                    radius: Theme.cornerRadius
-                    color: Theme.surfaceContainerHigh
-
-                    Column {
-                        id: statusCol
-                        anchors.left: parent.left
-                        anchors.right: parent.right
-                        anchors.verticalCenter: parent.verticalCenter
-                        anchors.margins: Theme.spacingM
-                        spacing: Theme.spacingXS
-
-                        StyledText {
-                            text: root.hasPrinters ? root.connectedName : I18n.tr("No printers")
-                            font.pixelSize: Theme.fontSizeMedium
-                            font.weight: Font.Medium
-                            color: Theme.surfaceText
-                            width: parent.width
-                            elide: Text.ElideRight
-                        }
-
-                        StyledText {
-                            text: root.statusLabel()
-                            font.pixelSize: Theme.fontSizeSmall
-                            color: Theme.surfaceVariantText
-                            width: parent.width
-                            elide: Text.ElideRight
-                        }
+                Behavior on height {
+                    NumberAnimation {
+                        duration: Theme.shortDuration
+                        easing.type: Easing.OutCubic
                     }
                 }
 
-                StyledText {
-                    visible: root.showJobs
-                    text: I18n.tr("Jobs")
-                    font.pixelSize: Theme.fontSizeSmall
-                    font.weight: Font.Medium
-                    color: Theme.surfaceVariantText
-                }
+                // Each page placed at an explicit x rather than laid out by a
+                // Row. A positioner SKIPS a child it considers empty, and this
+                // widget's front page is empty whenever both of its sections
+                // are switched off -- which collapsed the strip, left the
+                // settings page sitting at x=0, and then slid it clean out of
+                // the clipped viewport when the page turned. That was the
+                // "flash, then blank".
+                Item {
+                    id: pageStrip
+                    width: pager.width * 2
+                    height: pager.height
+                    x: -popout.page * pager.width
 
-                StyledText {
-                    visible: root.showJobs && root.jobCount === 0
-                    text: root.hasPrinters ? I18n.tr("Idle") : I18n.tr("No printers")
-                    font.pixelSize: Theme.fontSizeMedium
-                    color: Theme.surfaceVariantText
-                    width: parent.width
-                }
+                    Behavior on x {
+                        NumberAnimation {
+                            duration: Theme.mediumDuration
+                            easing.type: Easing.OutCubic
+                        }
+                    }
 
-                Repeater {
-                    model: root.showJobs ? root.visibleJobs : []
+                    Column {
+                        id: mainPage
+                        x: 0
+                        width: pager.width
+                        spacing: Theme.spacingS
 
-                    delegate: Rectangle {
-                        required property var modelData
-                        width: parent ? parent.width : 300
-                        height: 48
-                        radius: Theme.cornerRadius
-                        color: Theme.surfaceLight
+                        // Both sections can be switched off, and a flyout that
+                        // opens on an empty box looks broken rather than
+                        // configured. This says which it is.
+                        StyledText {
+                            width: parent.width
+                            visible: !root.showConnected && !root.showJobs
+                            text: I18n.tr("Printer status and jobs are both hidden. Turn one on in settings.")
+                            font.pixelSize: Theme.fontSizeSmall
+                            color: Theme.surfaceVariantText
+                            wrapMode: Text.WordWrap
+                        }
 
-                        Row {
-                            anchors.fill: parent
-                            anchors.margins: Theme.spacingS
-                            spacing: Theme.spacingS
+                        StyledRect {
+                            width: parent.width
+                            visible: root.showConnected
+                            height: statusCol.implicitHeight + Theme.spacingM * 2
+                            radius: Theme.cornerRadius
+                            color: Theme.surfaceContainerHigh
 
                             Column {
-                                width: parent.width - 72
+                                id: statusCol
+                                anchors.left: parent.left
+                                anchors.right: parent.right
                                 anchors.verticalCenter: parent.verticalCenter
-                                spacing: Theme.spacingXXS
+                                anchors.margins: Theme.spacingM
+                                spacing: Theme.spacingXS
 
                                 StyledText {
-                                    text: root.jobDocument(modelData)
+                                    text: root.hasPrinters ? root.connectedName : I18n.tr("No printers")
                                     font.pixelSize: Theme.fontSizeMedium
+                                    font.weight: Font.Medium
                                     color: Theme.surfaceText
                                     width: parent.width
                                     elide: Text.ElideRight
                                 }
 
                                 StyledText {
-                                    text: (modelData.printer || root.connectedName) + " · " + (CupsService.isJobHeld(modelData) ? I18n.tr("Held") : CupsService.getJobStateTranslation(modelData.state))
+                                    text: root.statusLabel()
                                     font.pixelSize: Theme.fontSizeSmall
                                     color: Theme.surfaceVariantText
                                     width: parent.width
                                     elide: Text.ElideRight
                                 }
                             }
+                        }
 
-                            VgsActionButton {
-                                buttonSize: 28
-                                iconName: CupsService.isJobHeld(modelData) ? "play_arrow" : "pause"
-                                anchors.verticalCenter: parent.verticalCenter
-                                onClicked: root.toggleJobHold(modelData)
-                            }
+                        StyledText {
+                            visible: root.showJobs
+                            text: I18n.tr("Jobs")
+                            font.pixelSize: Theme.fontSizeSmall
+                            font.weight: Font.Medium
+                            color: Theme.surfaceVariantText
+                        }
 
-                            VgsActionButton {
-                                buttonSize: 28
-                                iconName: "close"
-                                anchors.verticalCenter: parent.verticalCenter
-                                onClicked: CupsService.cancelJob(modelData.printer || CupsService.getSelectedPrinter(), modelData.id)
+                        StyledText {
+                            visible: root.showJobs && root.jobCount === 0
+                            text: root.hasPrinters ? I18n.tr("Idle") : I18n.tr("No printers")
+                            font.pixelSize: Theme.fontSizeMedium
+                            color: Theme.surfaceVariantText
+                            width: parent.width
+                        }
+
+                        Repeater {
+                            model: root.showJobs ? root.visibleJobs : []
+
+                            delegate: Rectangle {
+                                required property var modelData
+                                width: parent ? parent.width : 300
+                                height: 48
+                                radius: Theme.cornerRadius
+                                color: Theme.surfaceLight
+
+                                Row {
+                                    anchors.fill: parent
+                                    anchors.margins: Theme.spacingS
+                                    spacing: Theme.spacingS
+
+                                    Column {
+                                        width: parent.width - 72
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        spacing: Theme.spacingXXS
+
+                                        StyledText {
+                                            text: root.jobDocument(modelData)
+                                            font.pixelSize: Theme.fontSizeMedium
+                                            color: Theme.surfaceText
+                                            width: parent.width
+                                            elide: Text.ElideRight
+                                        }
+
+                                        StyledText {
+                                            text: (modelData.printer || root.connectedName) + " · " + (CupsService.isJobHeld(modelData) ? I18n.tr("Held") : CupsService.getJobStateTranslation(modelData.state))
+                                            font.pixelSize: Theme.fontSizeSmall
+                                            color: Theme.surfaceVariantText
+                                            width: parent.width
+                                            elide: Text.ElideRight
+                                        }
+                                    }
+
+                                    VgsActionButton {
+                                        buttonSize: 28
+                                        iconName: CupsService.isJobHeld(modelData) ? "play_arrow" : "pause"
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        onClicked: root.toggleJobHold(modelData)
+                                    }
+
+                                    VgsActionButton {
+                                        buttonSize: 28
+                                        iconName: "close"
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        onClicked: CupsService.cancelJob(modelData.printer || CupsService.getSelectedPrinter(), modelData.id)
+                                    }
+                                }
                             }
                         }
+                    }
+
+                    PrinterFlyoutSettings {
+                        id: settingsPage
+                        x: pager.width
+                        width: pager.width
+                        widgetData: root.widgetData
+                        onOpenSystemSettings: root.openPrinterSettings()
                     }
                 }
             }

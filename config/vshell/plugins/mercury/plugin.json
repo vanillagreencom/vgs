@@ -1,0 +1,16 @@
+{
+    "id": "mercury",
+    "name": "Mercury Banking",
+    "description": "Bank balances in the bar. Open it for accounts, recent activity, and to attach a receipt to a charge.",
+    "version": "1.0.0",
+    "license": "MIT",
+    "author": "VanillaGreen",
+    "icon": "payments",
+    "component": "./MercuryWidget.qml",
+    "settings": "./MercurySettings.qml",
+    "requires_shell": ">=0.1.0",
+    "permissions": [
+        "settings_read",
+        "settings_write"
+    ]
+}

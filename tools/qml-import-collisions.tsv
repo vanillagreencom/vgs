@@ -1,0 +1,13 @@
+# Type names this tree defines as a file AND an installed Qt or Quickshell
+# module also provides. scripts/check-qml-imports.py cannot tell which one a
+# file means, so each row here says: in THIS file, this name comes from that
+# outside module.
+#
+# A row is a declaration, not a skip. It names one file and one type, so it
+# cannot widen; and where the Qt module tree is installed the guard READS that
+# module and fails if the claim is no longer true, so a row cannot rot into a
+# blanket exemption. CI has no Qt modules, which is why the list is tracked
+# rather than resolved every run.
+#
+# file<TAB>type<TAB>module
+quickshell/vshell/Modules/Bar/BarWindow.qml	IdleInhibitor	Quickshell.Wayland

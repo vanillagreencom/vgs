@@ -8436,6 +8436,26 @@ def cmd_download(argv: List[str]) -> int:
     return subprocess.run(curl_args).returncode
 
 
+_MERCURY: Any = None
+
+
+def _mercury() -> Any:
+    """Load the Mercury subsystem only for the command that uses it."""
+    global _MERCURY
+    if _MERCURY is None:
+        import vshell_mercury
+        vshell_mercury.configure(vshell_mercury.MercuryRuntime(
+            state_dir=state_dir,
+            eprint=eprint,
+        ))
+        _MERCURY = vshell_mercury
+    return _MERCURY
+
+
+def cmd_mercury(argv: List[str]) -> int:
+    return _mercury().cmd_mercury(argv)
+
+
 def cmd_trash(argv: List[str]) -> int:
     if not argv:
         eprint("Usage: vshell trash count|put|empty")
@@ -15364,7 +15384,7 @@ def cmd_terminal(argv: List[str]) -> int:
 
 def main() -> int:
     if len(sys.argv) < 2:
-        eprint("Usage: vshell-helper <theme|fonts|deps|notifications|update|mise|agent|dev-env|app|ai-usage|capture|cl|dl|trash|color|keybinds|config|scratchpad|compositor|blur|brightness|auth|greeter> ...")
+        eprint("Usage: vshell-helper <theme|fonts|deps|notifications|update|mise|agent|dev-env|app|ai-usage|mercury|capture|cl|dl|trash|color|keybinds|config|scratchpad|compositor|blur|brightness|auth|greeter> ...")
         return 2
     cmd, argv = sys.argv[1], sys.argv[2:]
     try:
@@ -15383,6 +15403,7 @@ def main() -> int:
         if cmd in {"ocr"}: return cmd_capture(["text", *argv])
         if cmd in {"cl", "clipboard"}: return cmd_clipboard(argv)
         if cmd in {"dl", "download"}: return cmd_download(argv)
+        if cmd in {"mercury"}: return cmd_mercury(argv)
         if cmd == "trash": return cmd_trash(argv)
         if cmd == "color": return cmd_color(argv)
         if cmd == "keybinds": return cmd_keybinds(argv)

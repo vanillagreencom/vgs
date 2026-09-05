@@ -2428,6 +2428,48 @@ Singleton {
         _reconcileIfBarsBecameVisible(hadEnabledBar);
     }
 
+    // Persist one setting on a bar widget, found by id across every bar and
+    // every section. This is what lets a widget's own flyout offer its options
+    // instead of sending the user to the settings application: the settings
+    // tab reaches the same fields through the section and row it is already
+    // rendering, which a popout has no way to know.
+    //
+    // EVERY instance is updated, not the first. The same widget can sit on two
+    // bars, and a control inside the flyout reads as "this widget", not "this
+    // copy of it" -- leaving the others behind would look like the toggle had
+    // failed on the second monitor. A bare string entry is promoted to the
+    // object form the settings tab writes, so the two agree on the shape.
+    function setBarWidgetSetting(widgetId, settingName, value) {
+        if (!widgetId || !settingName)
+            return;
+        const configs = JSON.parse(JSON.stringify(barConfigs));
+        let touched = false;
+        for (const config of configs) {
+            for (const key of ["leftWidgets", "centerWidgets", "rightWidgets"]) {
+                const widgets = config[key];
+                if (!Array.isArray(widgets))
+                    continue;
+                for (let i = 0; i < widgets.length; i++) {
+                    const entry = widgets[i];
+                    const id = typeof entry === "string" ? entry : entry?.id;
+                    if (id !== widgetId)
+                        continue;
+                    const next = typeof entry === "string" ? {
+                        id: entry,
+                        enabled: true
+                    } : entry;
+                    next[settingName] = value;
+                    widgets[i] = next;
+                    touched = true;
+                }
+            }
+        }
+        if (!touched)
+            return;
+        barConfigs = configs;
+        updateBarConfigs();
+    }
+
     function updateBarConfig(barId, updates) {
         const hadEnabledBar = getEnabledBarConfigs().length > 0;
         const configs = JSON.parse(JSON.stringify(barConfigs));

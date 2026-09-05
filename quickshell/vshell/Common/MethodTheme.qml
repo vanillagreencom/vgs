@@ -927,6 +927,13 @@ Singleton {
     readonly property real popupDistance: spacingXS
     // Use this padding for the outer content inset of popouts, dropdowns, and modals.
     property real popoutPadding: 20
+    // The air under a popout's title block, before its content begins. Named
+    // rather than reached for as a spacing step, because it belongs to every
+    // flyout equally -- including the ones that build their own header instead
+    // of using PopoutComponent -- and because it is the one gap that reads as
+    // "this heading is finished", which the general spacing scale was a little
+    // too tight for.
+    property real popoutHeaderGap: 13
     property real fontSizeSmall: Math.round(fontScale * 12)
     property real fontSizeMedium: Math.round(fontScale * 14)
     property real fontSizeLarge: Math.round(fontScale * 16)

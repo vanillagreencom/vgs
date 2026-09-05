@@ -26,6 +26,9 @@ cd "$repo_root" || exit 1
 manifest() {
   cat <<'MANIFEST_EOF'
 qml       | scripts/check-naming.sh
+qml       | scripts/check-qml-imports.py
+qml       | scripts/test-qml-imports.sh
+qml       | scripts/test-qml-import-collisions.sh
 always    | scripts/check-format-lint.sh
 -         | python3 scripts/lib/shell_scan.py
 -         | python3 scripts/lib/qml_source_selftest.py
@@ -60,6 +63,9 @@ packaging | scripts/check-aur-sync.py
 -         | scripts/test-ai-usage-view.js
 -         | scripts/test-ai-usage-filing.js
 -         | scripts/test-ai-usage-lifecycle.js
+qml       | scripts/test-mercury-logic.js
+qml       | scripts/test-mercury-format.js
+qml       | scripts/test-mercury-options.js
 -         | scripts/test-paste-target.js
 -         | scripts/test-paste-lifecycle.js
 -         | scripts/test-compositor-focus.js
