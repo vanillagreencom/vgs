@@ -211,7 +211,6 @@ scripts/test-compositor-focus.js	637
 scripts/test-launcher-search-gate.js	915
 scripts/test-mercury-logic.js	413
 scripts/test-paste-lifecycle.js	1081
-scripts/test-qml-imports.sh	402
 scripts/test-remote-desktop-state.js	1055
 scripts/test-section-pointers-e2e.py	446
 scripts/test-switcher-selection.js	646
