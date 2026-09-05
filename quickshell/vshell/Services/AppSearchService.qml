@@ -137,14 +137,17 @@ Singleton {
         return app?.id || app?.execString || app?.exec || app?.name || "";
     }
 
-    function searchFieldsForApp(app) {
+    function searchPreparedDataForApp(app) {
         const key = searchFieldCacheKey(app);
         if (key && _searchFieldCache[key])
             return _searchFieldCache[key];
-        const fields = applicationSearchFields(app);
+        const data = {
+            "fields": applicationSearchFields(app),
+            "actionFields": applicationActionSearchItems(app)
+        };
         if (key)
-            _searchFieldCache[key] = fields;
-        return fields;
+            _searchFieldCache[key] = data;
+        return data;
     }
 
     function getVisibleSearchItems() {
@@ -152,9 +155,11 @@ Singleton {
             const apps = getVisibleApplications();
             const items = [];
             for (let i = 0; i < apps.length; i++) {
+                const prepared = searchPreparedDataForApp(apps[i]);
                 items.push({
                     "app": apps[i],
-                    "fields": searchFieldsForApp(apps[i])
+                    "fields": prepared.fields,
+                    "actionFields": prepared.actionFields
                 });
             }
             _cachedVisibleSearchItems = items;
@@ -842,6 +847,27 @@ Singleton {
         };
     }
 
+    function applicationActionSearchFields(action, app) {
+        return {
+            primary: normalizedSearchFields([action?.name || ""]),
+            aliases: [],
+            keywords: [],
+            identifiers: [],
+            secondary: normalizedSearchFields([app?.name || ""])
+        };
+    }
+
+    function applicationActionSearchItems(app) {
+        const actions = app?.actions || [];
+        const out = [];
+        for (let i = 0; i < actions.length; i++)
+            out.push({
+                action: actions[i],
+                fields: applicationActionSearchFields(actions[i], app)
+            });
+        return out;
+    }
+
     function applicationTextRelevance(app, query) {
         return textRelevanceFromFields(applicationSearchFields(app), query);
     }
@@ -882,12 +908,15 @@ Singleton {
         const results = [];
         const items = appItems || [];
         for (let i = 0; i < items.length; i++) {
-            const app = appFromSearchItem(items[i]);
+            const item = items[i];
+            const app = appFromSearchItem(item);
             if (!app || !app.actions || app.actions.length === 0)
                 continue;
-            for (let j = 0; j < app.actions.length; j++) {
-                const action = app.actions[j];
-                const relevance = textRelevance([action?.name || ""], [], [], [], [app.name || ""], queryContext);
+            const actionItems = item?.actionFields || applicationActionSearchItems(app);
+            for (let j = 0; j < actionItems.length; j++) {
+                const actionItem = actionItems[j];
+                const action = actionItem.action || actionItem;
+                const relevance = textRelevanceFromFields(actionItem.fields || applicationActionSearchFields(action, app), queryContext);
                 if (!relevance.admitted || relevance.score <= 0)
                     continue;
                 results.push({
