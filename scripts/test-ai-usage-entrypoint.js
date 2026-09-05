@@ -13,7 +13,7 @@ const { spawnSync } = require("node:child_process");
 
 const repoRoot = path.join(__dirname, "..");
 
-// Read provider fields directly here. test-ai-usage-provider.js exercises widget acceptance decisions.
+// Read provider fields directly here. test-ai-usage-logic.js exercises widget acceptance decisions.
 
 
 
@@ -54,7 +54,7 @@ try {
             assert.equal(
                 payload.provider, provider,
                 `${label} must still stamp the provider, or the widget discards the real cause — ` +
-                "payloadIsFor() accepts exactly this, proved in test-ai-usage-provider.js"
+                "payloadIsFor() accepts exactly this, proved in test-ai-usage-logic.js"
             );
         }
     }

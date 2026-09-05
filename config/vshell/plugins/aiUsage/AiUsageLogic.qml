@@ -1,6 +1,6 @@
 import QtQuick
 
-// Provider decisions between the markers must run as plain JavaScript: scripts/test-ai-usage-provider.js extracts and executes them.
+// Provider decisions between the markers must run as plain JavaScript: scripts/test-ai-usage-logic.js extracts and executes them.
 // Do not reference widget properties, Theme, or Qt globals; use unqualified
 // calls between these functions. AiUsageFormat owns locale-dependent display.
 QtObject {
