@@ -45,12 +45,22 @@ const backend = evaluateMarked(serviceSource, "SEARCH BACKEND DECISION", [
 ], "DSearchService.qml");
 
 const appSearch = evaluateMarked(appSearchSource, "APPLICATION SEARCH RELEVANCE DECISION", [
-    "normalizeSearchText", "tokenize", "wordBoundaryMatch", "levenshteinDistance",
-    "fuzzyMatchScore", "searchFieldValues", "fieldMatchScore", "bestFieldScore",
-    "primaryFieldScore", "aliasFieldScore", "keywordFieldScore", "identifierFieldScore",
-    "bestAllowedWordScore", "allQueryWordsScore", "fuzzyFallbackScore",
-    "secondaryFieldBonus", "textRelevance", "applicationAliasFields",
-    "applicationTextRelevance", "boundedUsageScore", "applicationFinalScore"
+    "normalizeSearchText", "tokenizeNormalizedSearchText", "tokenize", "searchQueryContext",
+    "ensureSearchQueryContext", "searchFieldValues", "normalizedSearchField",
+    "normalizedSearchFields", "fieldText", "fieldWords", "wordBoundaryMatchFromWords",
+    "wordBoundaryMatch", "levenshteinDistance", "fuzzyMatchScore",
+    "fuzzyMatchScorePrepared", "fieldMatchScore", "fieldMatchScorePrepared",
+    "bestFieldScore", "bestFieldScorePrepared", "primaryFieldScore",
+    "primaryFieldScoreFor", "aliasFieldScore", "aliasFieldScoreFor", "keywordFieldScore",
+    "keywordFieldScoreFor", "identifierFieldScore", "identifierFieldScoreFor",
+    "bestAllowedWordScore", "bestAllowedWordScoreForFields", "allQueryWordsScore",
+    "allQueryWordsScoreForFields", "fuzzyFallbackScore", "fuzzyFallbackScoreForFields",
+    "secondaryFieldBonus", "secondaryFieldBonusForFields", "textRelevance",
+    "textRelevanceFromFields", "applicationAliasFields", "firstExecToken",
+    "executableBasename", "applicationIdentifierFields", "applicationSearchFields",
+    "applicationTextRelevance", "boundedUsageScore", "applicationFinalScore",
+    "appFromSearchItem", "appUsageFromSearchItem", "applicationActionResultsFor",
+    "applicationSearchResultsFor"
 ], "AppSearchService.qml");
 
 const view = evaluateMarked(resultsSource, "EMPTY STATE DECISION", [
@@ -68,11 +78,40 @@ const probe = (state, fd, ripgrep) => ({ state: state, fd: fd, ripgrep: ripgrep 
 const ready = (fd, rg) => probe("ready", fd, rg);
 const TOOL_FLAGS = [[true, true], [true, false], [false, true], [false, false]];
 
-function textScore(args) {
+function textRelevanceResult(args) {
     return appSearch.textRelevance(
         args.primary || [], args.aliases || [], args.keywords || [], args.identifiers || [],
         args.secondary || [], args.query || ""
-    ).score;
+    );
+}
+
+function textScore(args) {
+    return textRelevanceResult(args).score;
+}
+
+function assertRejected(args, message) {
+    const result = textRelevanceResult(args);
+    assert.equal(result.admitted, false, `${message}: result must not be admitted`);
+    assert.equal(result.score, 0, `${message}: score must stay zero`);
+    assert.equal(result.textScore, 0, `${message}: text score must stay zero`);
+}
+
+function qmlSequence(values) {
+    const sequence = { length: values.length };
+    for (let i = 0; i < values.length; i++)
+        sequence[i] = values[i];
+    return sequence;
+}
+
+function appSearchRows(apps, query, includeActions = false, limit = 10) {
+    return appSearch.applicationSearchResultsFor(apps.map(app => ({
+        app: app,
+        fields: appSearch.applicationSearchFields(app),
+        usage: app.usage || {
+            frecency: 0,
+            daysSinceUsed: 999999
+        }
+    })), query, includeActions, limit);
 }
 
 // Bound a Python function at the next top-level def. Unbounded slices can borrow
@@ -101,9 +140,9 @@ test("application relevance admits strong fields and rejects secondary-only matc
     assert.ok(aliasExact > keywordExact, "an alias match outranks a keyword match");
     assert.ok(keywordExact > identifierExact, "a keyword match outranks an identifier match");
 
-    assert.equal(textScore({
+    assertRejected({
         primary: ["Terminal"], secondary: ["OpenCode coding agent"], query: "opencode"
-    }), 0, "subtitle and category text cannot admit a result by themselves");
+    }, "subtitle and category text cannot admit a result by themselves");
 
     assert.ok(textScore({
         primary: ["OpenCode"], secondary: ["OpenCode coding agent"], query: "opencode"
@@ -112,31 +151,80 @@ test("application relevance admits strong fields and rejects secondary-only matc
     assert.ok(textScore({
         primary: ["OpenCode"], keywords: ["agent"], query: "opencode agent"
     }) > 0, "a multi-word query may match across allowed fields");
-    assert.equal(textScore({
+    assertRejected({
         primary: ["OpenCode"], secondary: ["agent"], query: "opencode agent"
-    }), 0, "every query word must match an allowed field, not only subtitle or category text");
+    }, "every query word must match an allowed field, not only subtitle or category text");
+
+    assert.equal(textScore({
+        keywords: qmlSequence(["alpha", "opencode"]), query: "opencode"
+    }), keywordExact, "a QML keyword sequence is scored one keyword at a time");
+    assert.ok(textScore({
+        keywords: qmlSequence(["alpha", "opencode tools"]), query: "opencode"
+    }) > 0, "a QML keyword sequence also preserves prefix keyword matches");
+
+    assertRejected({
+        identifiers: appSearch.applicationIdentifierFields({
+            id: "other.desktop",
+            execString: "/usr/bin/other --flag"
+        }),
+        query: "usr"
+    }, "path-only Exec words cannot admit an unrelated application");
+    assert.ok(textScore({
+        identifiers: appSearch.applicationIdentifierFields({
+            id: "other.desktop",
+            execString: "/usr/bin/opencode --flag"
+        }),
+        query: "opencode"
+    }) > 0, "the executable basename remains an identifier");
 
     assert.ok(appSearch.applicationTextRelevance({ name: "OpenCode" }, "opencdoe").score > 0,
         "typo fallback admits a bounded title or app-name match");
     assert.ok(appSearch.applicationTextRelevance({ name: "Editor", aliases: ["OpenCode"] },
         "opencdoe").score > 0, "typo fallback also covers declared aliases");
+    assert.ok(appSearch.applicationTextRelevance({ name: "Editor", startupClass: "OpenCode" },
+        "opencode").score > 0, "startupClass is a real desktop-entry alias source");
     assert.equal(appSearch.applicationTextRelevance({ name: "Editor", id: "opencode.desktop" },
         "opencdoe").score, 0, "typo fallback does not run against identifiers");
 
     assert.ok(appSearch.applicationFinalScore(substring, 0, 999999)
         > appSearch.applicationFinalScore(keywordExact, 999999, 0),
         "the usage cap cannot move a keyword match above a title or app-name substring");
+
+    assert.deepEqual(appSearchRows([
+        {
+            name: "Terminal",
+            comment: "OpenCode coding agent",
+            id: "terminal.desktop",
+            usage: { frecency: 999999, daysSinceUsed: 0 }
+        },
+        {
+            name: "OpenCode",
+            id: "opencode.desktop",
+            usage: { frecency: 0, daysSinceUsed: 999999 }
+        }
+    ], "opencode").map(row => row.app.name), ["OpenCode"],
+        "the application result builder drops secondary-only rows before ranking");
 });
 
 test("searchApplicationResults keeps the empty-query browse path scored", () => {
     const q = qmlSource(appSearchSource, "AppSearchService.qml");
     q.requires(q.body("searchApplicationResults"), "searchApplicationResults()", [
-        ["const queryLower = normalizeSearchText(query);",
+        ["const queryContext = searchQueryContext(query);",
             "whitespace-only input must follow the empty-query browse path"],
-        ["if (!queryLower)",
+        ["const visibleItems = getVisibleSearchItems();",
+            "visible application search fields are built once for a search"],
+        ["if (queryContext.empty)",
             "the browse check reads the normalized query, not the raw string"],
-        ["return getVisibleApplications().map(app => ({",
-            "the empty-query path preserves the public app-list shape with score metadata"]
+        ["return applicationSearchResultsFor(visibleItems, queryContext, false);",
+            "the empty-query path uses the shared result builder"],
+        ["return applicationSearchResultsFor(searchItems, queryContext, SessionData.searchAppActions, maxResults);",
+            "the typed-query path uses the same builder that the executable fixtures cover"]
+    ]);
+    q.requires(q.body("applicationSearchResultsFor"), "applicationSearchResultsFor()", [
+        ["if (!relevance.admitted || relevance.score <= 0)",
+            "a score alone cannot admit a row"],
+        ["return results.slice(0, limit);",
+            "the non-empty search result list is capped after sorting"]
     ]);
 });
 
@@ -942,9 +1030,13 @@ test("VGSMenu keeps All search local and uses shared relevance", () => {
             "applications arrive with the canonical relevance score, not a second menu score"],
         ["next.push(appItem(apps[i]));",
             "that scored result is what builds the app row"],
-        ["if (!q || itemMatches(item, q))",
-            "commands are admitted only through their field-aware relevance"]
+        ["const textScore = commandTextRelevance(item, q);",
+            "commands are scored once while the menu decides admission"],
+        ["next.push(commandItem(item, textScore));",
+            "the admitted command row reuses the score already computed"]
     ]);
+    assert.ok(!code.includes("itemMatches("),
+        "VGSMenu must not keep a second command relevance wrapper around commandItem");
     assert.ok(!stripComments(q.body("buildImmediateAllItems")).includes("fileItem("),
         "All builds no file or folder rows, including remembered file history");
     assert.ok(!stripComments(q.body("buildImmediateAllItems")).includes("launcherMenuUsageHistory"),
@@ -957,8 +1049,12 @@ test("VGSMenu keeps All search local and uses shared relevance", () => {
     assert.ok(!stripComments(q.body("refreshAllItems")).includes("DSearchService."),
         "unprefixed All does not call the file-search service");
     q.requires(q.body("refreshItems"), "refreshItems()", [
-        ["if (item.category === \"apps\" && (!q || itemMatches(item, q)))",
-            "empty Apps browsing still includes built-in app-category commands"]
+        ["if (item.category !== \"apps\")",
+            "the Apps branch only admits built-in app-category commands"],
+        ["nextApps.push(commandItem(item, 0));",
+            "empty Apps browsing still includes built-in app-category commands"],
+        ["nextApps.push(commandItem(item, textScore));",
+            "typed Apps search reuses the command score already computed"]
     ]);
 
     q.requires(q.body("appItem"), "appItem()", [
@@ -972,10 +1068,10 @@ test("VGSMenu keeps All search local and uses shared relevance", () => {
         ["[item.subtitle || \"\", category?.label || \"\", category?.description || \"\"]",
             "subtitle and category text are secondary fields only"]
     ]);
+    assert.ok(code.includes(qmlSource.flat("function commandItem(item, textScore)")),
+        "commandItem must take the already computed text score");
     q.requires(q.body("commandItem"), "commandItem()", [
-        ["const textScore = q ? commandTextRelevance(item, q) : 0;",
-            "command ranking reuses the admission score"],
-        ["result.rank = textScore + usageBonus(result);",
+        ["result.rank = (textScore || 0) + usageBonus(result);",
             "launcher usage is bounded and applied after text relevance"]
     ]);
 

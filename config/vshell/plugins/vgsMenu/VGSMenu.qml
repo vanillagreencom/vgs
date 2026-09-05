@@ -264,10 +264,6 @@ PluginComponent {
         return null;
     }
 
-    function itemMatches(item, q) {
-        return commandTextRelevance(item, q) > 0;
-    }
-
     function capabilityAvailable(capability) {
         if (!capability)
             return true;
@@ -343,10 +339,9 @@ PluginComponent {
         ).score;
     }
 
-    function commandItem(item, q) {
+    function commandItem(item, textScore) {
         const result = Object.assign({ kind: "command", id: "command:" + item.title }, item);
-        const textScore = q ? commandTextRelevance(item, q) : 0;
-        result.rank = textScore + usageBonus(result);
+        result.rank = (textScore || 0) + usageBonus(result);
         return result;
     }
 
@@ -406,8 +401,13 @@ PluginComponent {
             const item = allItems[i];
             if (!itemAvailable(item))
                 continue;
-            if (!q || itemMatches(item, q))
-                next.push(commandItem(item, q));
+            if (!q) {
+                next.push(commandItem(item, 0));
+                continue;
+            }
+            const textScore = commandTextRelevance(item, q);
+            if (textScore > 0)
+                next.push(commandItem(item, textScore));
         }
         sortRanked(next, !q, false);
         return next.slice(0, 120);
@@ -450,8 +450,15 @@ PluginComponent {
                 const item = allItems[i];
                 if (!itemAvailable(item))
                     continue;
-                if (item.category === "apps" && (!q || itemMatches(item, q)))
-                    nextApps.push(commandItem(item, q));
+                if (item.category !== "apps")
+                    continue;
+                if (!q) {
+                    nextApps.push(commandItem(item, 0));
+                    continue;
+                }
+                const textScore = commandTextRelevance(item, q);
+                if (textScore > 0)
+                    nextApps.push(commandItem(item, textScore));
             }
             sortRanked(nextApps, !q);
             visibleItems = nextApps;
@@ -464,11 +471,15 @@ PluginComponent {
             const item = allItems[i];
             if (!itemAvailable(item))
                 continue;
-            if (!q && item.category !== selectedCategory)
+            if (!q) {
+                if (item.category === selectedCategory)
+                    next.push(commandItem(item, 0));
                 continue;
-            if (q && !itemMatches(item, q))
+            }
+            const textScore = commandTextRelevance(item, q);
+            if (textScore <= 0)
                 continue;
-            next.push(commandItem(item, q));
+            next.push(commandItem(item, textScore));
         }
         sortRanked(next, !q, true);
         visibleItems = next;
