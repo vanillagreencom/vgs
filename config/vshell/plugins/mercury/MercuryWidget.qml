@@ -200,8 +200,25 @@ PluginComponent {
         id: pollTimer
         interval: root.refreshMs
         repeat: false
+        // Background polling is the setting the user chose, and the pill shows
+        // a live balance, so this keeps running with the popout closed. It
+        // does NOT keep running when the widget is off screen entirely -- a
+        // hidden bar or a visibility condition that turned the widget off --
+        // because nothing is reading the answer.
         running: false
-        onTriggered: root.refresh()
+        onTriggered: {
+            if (root.effectiveVisible)
+                root.refresh();
+        }
+    }
+
+    // Coming back into view is the moment the figures matter again, so the
+    // poll resumes and anything stale is re-read at once.
+    onEffectiveVisibleChanged: {
+        if (root.effectiveVisible)
+            root.refreshIfStale();
+        else
+            pollTimer.stop();
     }
 
     Component.onCompleted: Qt.callLater(root.refresh)

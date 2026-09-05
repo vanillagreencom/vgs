@@ -58,16 +58,26 @@ Column {
         height: 32
         visible: headerText.length > 0
 
+        // The title yields to the buttons rather than sliding under them. It
+        // had unconstrained width, which was survivable when the cluster was
+        // one close button and is not now that a surface can carry refresh,
+        // its own actions and settings beside it -- and Mercury's title is an
+        // organisation name, as long as the bank says it is.
         StyledText {
             anchors.left: parent.left
+            anchors.right: headerActionsRow.left
+            anchors.rightMargin: Theme.spacingS
             anchors.verticalCenter: parent.verticalCenter
             text: root.headerText
             font.pixelSize: Theme.fontSizeXLarge
             font.weight: Font.Bold
             color: Theme.surfaceText
+            elide: Text.ElideRight
+            maximumLineCount: 1
         }
 
         Row {
+            id: headerActionsRow
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
             spacing: Theme.spacingXS

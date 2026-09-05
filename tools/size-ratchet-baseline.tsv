@@ -19,7 +19,7 @@ bin/codexbar	1255
 bin/vshell	469
 bin/vshell-capture-screenrecording	589
 bin/vshell-capture-screenshot	736
-bin/vshell-helper	15975
+bin/vshell-helper	15984
 bin/vshell_niri.py	1096
 config/vshell/icons/Yaru/cursors/half-busy	10208
 config/vshell/icons/Yaru/cursors/half-busy.ani	3364
@@ -29,7 +29,7 @@ config/vshell/icons/Yaru/index.theme	790
 config/vshell/nvim/vgs-theme-bridge.lua	423
 config/vshell/plugins/aiUsage/AiUsageWidget.qml	923
 config/vshell/plugins/cloudSync/CloudSyncWidget.qml	671
-config/vshell/plugins/mercury/MercuryLogic.js	403
+config/vshell/plugins/mercury/MercuryLogic.js	404
 config/vshell/plugins/remoteDesktop/RemoteDesktopWidget.qml	703
 config/vshell/plugins/sudoToggle/SudoToggleWidget.qml	445
 config/vshell/plugins/sysUpdate/SysUpdateWidget.qml	644

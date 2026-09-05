@@ -91,7 +91,7 @@ function accountIcon(account) {
     return "account_balance";
 }
 
-// Money that never left: failed, cancelled or reversed. There is no receipt to
+// Money that never left: failed, cancelled, reversed or blocked by the bank. There is no receipt to
 // chase for a charge that did not happen, and asking for one puts a row on the
 // outstanding list that can never be closed.
 function isVoid(tx) {
@@ -99,6 +99,7 @@ function isVoid(tx) {
     case "failed":
     case "cancelled":
     case "reversed":
+    case "blocked":
         return true;
     default:
         return false;

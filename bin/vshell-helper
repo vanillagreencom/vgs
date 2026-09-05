@@ -8440,6 +8440,9 @@ MERCURY_API_DEFAULT_BASE = "https://api.mercury.com/api/v1"
 # Mercury rejects a larger attachment; the widget cannot stat a file, so this
 # is the only place the limit is enforced before the POST.
 MERCURY_ATTACHMENT_MAX_BYTES = 32 * 1024 * 1024
+# What `upload --type` accepts. The receipt-duplicate gate keys off "receipt",
+# so this list and that check move together.
+MERCURY_ATTACHMENT_TYPES = ("receipt", "other")
 # Every status the widget can render a row for. `blocked` belongs here for the
 # same reason the others do: a transaction the bank stopped is one the user
 # most wants to see, and leaving it out of the query hid it entirely.
@@ -8946,6 +8949,12 @@ def cmd_mercury(argv: List[str]) -> int:
         if type_index + 1 >= len(argv):
             return fail("--type needs a value")
         att_type = argv[type_index + 1]
+    # Refused here rather than by Mercury: a typo would otherwise upload the
+    # file under a type nothing recognises, and there is no way to take an
+    # attachment back.
+    if att_type not in MERCURY_ATTACHMENT_TYPES:
+        return fail("unknown attachment type",
+                    detail=f"{att_type} (expected: {', '.join(MERCURY_ATTACHMENT_TYPES)})")
 
     if not file_path.is_file():
         return fail("that file does not exist", detail=str(file_path))

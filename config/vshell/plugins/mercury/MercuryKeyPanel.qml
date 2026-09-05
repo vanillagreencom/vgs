@@ -83,9 +83,13 @@ Column {
 
     // Split from the field so the key is an argument rather than a widget
     // read: the value passed here goes to the helper's stdin and nowhere else.
+    // The three key actions share one status line and one key file, so they
+    // take turns. Each guarded only its OWN process before, which let Save run
+    // while Remove was still deleting -- and whichever finished second wrote
+    // the line, so the panel could report the opposite of what happened.
     function storeKey(key) {
         const trimmed = String(key || "").trim();
-        if (trimmed.length === 0 || saveProc.running)
+        if (trimmed.length === 0 || root.busy)
             return;
         root.busy = true;
         root.testFailed = false;
@@ -95,7 +99,7 @@ Column {
     }
 
     function runDoctor() {
-        if (doctorProc.running)
+        if (root.busy)
             return;
         root.busy = true;
         root.testFailed = false;
@@ -104,10 +108,10 @@ Column {
     }
 
     function clearKey() {
-        if (!clearProc.running) {
-            root.busy = true;
-            clearProc.running = true;
-        }
+        if (root.busy)
+            return;
+        root.busy = true;
+        clearProc.running = true;
     }
 
     // Qt reports nothing when the executable cannot be run at all, so every
@@ -175,6 +179,8 @@ Column {
                     root.testResult = I18n.tr("Saved. Testing…");
                     keyField.text = "";
                     root.keyChanged();
+                    // applyReply has already released `busy` for this save, so
+                    // the test that follows it can take its turn.
                     root.runDoctor();
                 } else {
                     root.testFailed = true;
