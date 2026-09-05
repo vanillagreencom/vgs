@@ -80,10 +80,8 @@ REVIEW_GATE_CONTEXT = "Review gate"
 # Name matching requires trusted publishers. Shared github-actions check-runs
 # are rejected; legacy statuses use REVIEW_GATE_STATUS_PUBLISHER_REJECT.
 # Skip-pattern filtering and newest-row selection prevent skipped or stale
-# successes from supplying evidence. CodeRabbit is disabled org-wide, so its
-# entry is inert; it stays because the value is fleet-identical and is pruned
-# fleet-wide, never per repo.
-REVIEW_GATE_TRUSTED_STATUS_CONTEXTS = "CodeRabbit;copilot-pull-request-reviewer"
+# successes from supplying evidence.
+REVIEW_GATE_TRUSTED_STATUS_CONTEXTS = "copilot-pull-request-reviewer"
 
 # Reject a trusted pass whose output contains any listed skip substring.
 # Empty disables this filter.
@@ -107,7 +105,7 @@ REVIEW_GATE_OVERRIDE_CONTEXT = "kendex-reviewer-outage"
 # satisfy missing evidence on a public repository. The PR author never qualifies.
 # Every active reviewer must be listed: an unlisted one supplies no evidence
 # yet its engagement holds off the timeout fallback.
-REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS = "coderabbitai[bot];copilot-pull-request-reviewer[bot];qodo-code-review[bot];chatgpt-codex-connector[bot]"
+REVIEW_GATE_REVIEW_OBJECT_TRUSTED_LOGINS = "copilot-pull-request-reviewer[bot];chatgpt-codex-connector[bot]"
 
 # Accept non-dismissed review objects from trusted logins. COMMENTED can
 # represent a clean review; requiring APPROVED would discard that evidence.
@@ -127,7 +125,7 @@ REVIEW_GATE_MODE = "enforce"
 # Require fresh evidence for policy instructions and installation guidance.
 # Exclude harness trees as a whole so new rendered skills inherit this rule.
 # Code paths are also excluded to retain this boundary if comment carry is enabled.
-REVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*AGENTS.md;*CLAUDE.md;.github/*;*review-bots.md;third_party/*;.agents/*;scripts/*;kendex.settings.toml;kendex.toml;packaging/*;backend/*"
+REVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*AGENTS.md;*CLAUDE.md;.github/*;.bot-instructions/*;.macroscope/*;third_party/*;.agents/*;scripts/*;kendex.settings.toml;kendex.toml;packaging/*;backend/*"
 
 # Declared agent-routing label set (e.g. "agent:generalist, agent:rust").
 # Non-empty makes `issues create` refuse a create carrying none of them —
@@ -150,7 +148,7 @@ REVIEW_GATE_API_ATTEMPTS = "1"
 REVIEW_GATE_API_RETRY_DELAY_SECONDS = "2"
 
 # Repository instruction files appended to the review prompt.
-SECOND_OPINION_REVIEW_INSTRUCTIONS = "AGENTS.md backend/AGENTS.md bin/AGENTS.md scripts/AGENTS.md themes/AGENTS.md quickshell/vshell/AGENTS.md config/vshell/AGENTS.md .github/workflows/AGENTS.md review-bots.md .github/copilot-instructions.md"
+SECOND_OPINION_REVIEW_INSTRUCTIONS = "AGENTS.md backend/AGENTS.md bin/AGENTS.md scripts/AGENTS.md themes/AGENTS.md quickshell/vshell/AGENTS.md config/vshell/AGENTS.md .github/workflows/AGENTS.md .github/copilot-instructions.md"
 
 # Seconds per brief-delivery verification pass on tmux handoff lanes.
 ORCH_TMUX_VERIFY_SECS = "15"
@@ -158,7 +156,8 @@ ORCH_TMUX_VERIFY_SECS = "15"
 # Exclusion globs DECLARED to match no tracked path yet, so the selftest
 # accepts them; a declaration not in the exclude list is an orphan and
 # fails the selftest.
-REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = ""
+# The bot package requires Macroscope policy paths to invalidate prior evidence.
+REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = ".macroscope/*"
 
 # Used by: orch (`start-worktree` § 5.5). "auto" merges without asking once
 # every merge gate is green; "ask" presents the merge decision.
@@ -208,7 +207,7 @@ SECOND_OPINION_ARTIFACT_DIR = "tmp/second-opinion"
 # executable following the family exit contract (0 clean, 1 violations,
 # else "could not complete"); any nonzero blocks the commit, and so does a
 # missing or non-executable value. Empty = no repo-local check.
-GROWTH_GUARDS_PRE_COMMIT_LOCAL = ""
+GROWTH_GUARDS_PRE_COMMIT_LOCAL = "scripts/check-bot-instructions-staged.sh"
 
 # Markdown lanes judge every tracked file their globs name minus tools/md-excludes.
 GROWTH_GUARDS_MD_SCOPE = "all"

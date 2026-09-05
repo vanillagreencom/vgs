@@ -1,5 +1,5 @@
-# third_party/
+# Third-party artifacts
 
-Byte-pinned vendored artifacts. Each subdirectory's `README.md` records the pin and the convention that holds it; report a real defect as an issue to file upstream rather than patching here.
+Each directory's `README.md` records its upstream pin and maintenance contract. Report artifact defects upstream instead of patching pinned bytes.
 
-The two `README.md` files are VGS-authored and maintained here, so drift findings on them are wanted.
+The maintenance `README.md` files are VGS-owned. Check them for drift when their artifacts change.

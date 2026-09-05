@@ -25,7 +25,7 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 
 ## VGS review policy
 
-Risk-classed review depth and the regression-test expectation live in `review-bots.md` (repo root, § Risk classes and § Regression-test expectation) — that file is the source; apply both. In short: every bug-fix PR carries a check or test that failed before the fix; a bug-fix PR without one gets that as a standing finding (docs-only fixes exempt). Findings on high-risk classes — gate/CI machinery, lock/session/idle surfaces, packaging/publish install channels, and privileged operations (elevation or system writes, WHEREVER they live — not only `backend/`) — are merge-blocking by default. The class definitions and derivation commands stay in review-bots.md; do not re-derive them from this summary.
+Read root `AGENTS.md` § Code Review Rules and the generated `.github/instructions/` files for the changed paths.
 
 <!-- kendex:project-instructions:end -->
 

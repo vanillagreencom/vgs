@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Compare skill trees and hand-maintained review lists with kendex.toml.
+"""Compare skill trees with their ownership register in kendex.toml.
 
 The register reader defines which skills belong to this repo and which are
-rendered. List comparisons and disk checks report missing or extra entries.
+rendered. Disk checks report missing or extra skill trees.
 Self-tests run on each invocation. Process controls in test-owned-skills-e2e.py
 check how main() combines findings and propagates failure.
 """
@@ -23,18 +23,6 @@ from kendex_skills import (  # noqa: E402
     rendered_names,
     switched_off,
 )
-from owned_skill_lists import (  # noqa: E402
-    CODERABBIT,
-    COMPARED_LISTS,
-    config_problems,
-    disagreement,
-    filtered_skills,
-    instructed_skills,
-    named_in_prose,
-    other_named_skills,
-    read_surface,
-)
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 # The process control sets this to test main() failure propagation.
@@ -133,15 +121,6 @@ def tree_problems(
     return problems
 
 
-def audit(
-    root: Path, in_place: tuple[str, ...], rendered: tuple[str, ...], off: tuple[str, ...]
-) -> list[str]:
-    """Combine the register, disk and review-list findings."""
-    problems = tree_problems(root, in_place, rendered, off)
-    problems.extend(config_problems(root, in_place, rendered))
-    return problems
-
-
 class Controls(NamedTuple):
     """Record self-test failures and the number of controls exercised."""
 
@@ -204,28 +183,6 @@ def self_test(root: Path) -> Controls:
             f"be deleted unnoticed: {said!r}",
         )
 
-    # End-to-end fixtures derive their lists from the register and cannot add extras.
-    extra = disagreement({"a", "z"}, ("a",), "f", "w") or ""
-    record(
-        "names z, which the register does not" in extra,
-        f"a list naming a skill the register does not was not reported as such, "
-        f"so only the absent direction of a drift is ever named: {extra!r}",
-    )
-
-    # These readers expect files, so directories must produce findings.
-    _, absent = read_surface(root / "no-such-root", CODERABBIT, "w")
-    record(
-        absent is not None and "is not there" in absent,
-        f"an absent surface did not produce the sentence saying nothing in it was "
-        f"checked: {absent!r}",
-    )
-    _, undecodable = read_surface(Path(__file__).resolve().parent, "lib", "w")
-    record(
-        undecodable is not None and "could not be read" in undecodable,
-        f"a surface that could not be read as text produced {undecodable!r} rather "
-        f"than the sentence naming it unchecked, so the operator gets a traceback "
-        f"where every other unread surface gets a finding",
-    )
     unlistable = tree_problems(_Unlistable(), (), ())
     record(
         any("could not be listed" in problem for problem in unlistable),
@@ -239,56 +196,6 @@ def self_test(root: Path) -> Controls:
         f"a registered rendered skill with no SKILL.md on disk was not reported "
         f"with the render's own sentence, so an incomplete render is either "
         f"unreported or blamed on the register: {unrendered}",
-    )
-
-    # Valid lists must pass so a function that rejects all inputs cannot pass controls.
-    record(
-        disagreement({"a", "b"}, ("b", "a"), "f", "w") is None,
-        "a list that matches the register was reported as drifted",
-    )
-    record(
-        filtered_skills('    - "!.agents/skills/dev/**"\n') == {"dev"},
-        "a real path_filters exclusion line was not read",
-    )
-    record(
-        instructed_skills('    - path: ".agents/skills/{a,b}/**"\n') == {"a", "b"},
-        "a real path_instructions entry was not read",
-    )
-    # Remove register-held lists before testing paths in the curated selection.
-    curated = (
-        '    - "!.agents/skills/dev/**"\n'
-        '    - path: ".agents/skills/{a,b}/**"\n'
-        '      - ".agents/skills/gone/**"\n'
-    )
-    record(
-        other_named_skills(curated) == {"gone"},
-        f"a skill path outside the two register-held lists was not read on its "
-        f"own: {other_named_skills(curated)}",
-    )
-    marked = "<!-- in-place-skills -->`.agents/skills/vshell-dev/**`<!-- /in-place-skills -->"
-    record(
-        named_in_prose(marked) == {"vshell-dev"},
-        "a real prose glob inside the marker pair was not read",
-    )
-    record(
-        not named_in_prose("see `.agents/skills/review-gate/**`, out of scope"),
-        "a glob OUTSIDE the marker pair was read as a declared skill, so naming "
-        "a render tree elsewhere in the document counts as coverage of it",
-    )
-    record(
-        not named_in_prose(marked.replace("<!-- /in-place-skills -->", "")),
-        "an unclosed marker pair still yielded names, so a marker that moved "
-        "would leave this arm reading whatever follows it",
-    )
-    placeholder = (
-        "<!-- in-place-skills -->`.agents/skills/vshell-dev/**`; every other "
-        "`.agents/skills/<name>/**` is render<!-- /in-place-skills -->"
-    )
-    record(
-        named_in_prose(placeholder) == {"vshell-dev"},
-        f"the `<name>` placeholder these documents write beside their real globs "
-        f"was read as a skill: {named_in_prose(placeholder)}. The arms would then "
-        f"report a drift that is only a sentence",
     )
 
     # Process controls test whether main() uses the control results.
@@ -310,7 +217,7 @@ def main() -> int:
         return 1
 
     controls = self_test(root)
-    problems = audit(root, in_place, rendered, off)
+    problems = tree_problems(root, in_place, rendered, off)
     if controls.failures or problems:
         print("check-owned-skills: FAIL", file=sys.stderr)
         for failure in controls.failures:
@@ -321,7 +228,7 @@ def main() -> int:
 
     print(
         f"check-owned-skills: ok ({len(in_place)} in-place and {len(rendered)} rendered "
-        f"skills; {COMPARED_LISTS} hand-kept lists agree with kendex.toml; "
+        f"skill trees agree with kendex.toml; "
         f"{controls.exercised} controls)"
     )
     return 0

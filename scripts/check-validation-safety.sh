@@ -42,7 +42,7 @@ SENTENCE_SPLIT = re.compile(r"(?<=[.;!?])\s+")
 
 # Exempt only exact sanctioned occurrences containing a launch command.
 # Recheck the remaining line so an appended instruction or neighboring line cannot inherit exemption.
-# The entries cover nested launch text, greeter fixtures, and a wrapped bot prohibition.
+# The entries cover nested launch text and greeter fixtures.
 ALLOWED_CONTEXTS = {
     "backend/internal/runner/runner.go": (
         "extra args appended after `qs -c vshell`",
@@ -52,9 +52,6 @@ ALLOWED_CONTEXTS = {
         "/usr/bin/qs -p /var/cache/vshell-greeter/runtime/quickshell/vshell",
         # Use one span for overlapping command examples so deletion offsets cannot conflict.
         "Config-path matching covers `qs -c vshell` vs `qs -p quickshell/vshell`",
-    ),
-    ".coderabbit.yaml": (
-        "`qs -p quickshell/vshell`. Each starts a second full shell",
     ),
 }
 
@@ -135,16 +132,6 @@ FIXTURES = [
         "// `qs -c vshell` by hand rather than the script.",
         "//   qs -c vshell",
     ], [3]),
-    # Accept the sanctioned continuation but reject another instruction in that file.
-    (".coderabbit.yaml", [
-        "        `qs -p quickshell/vshell`. Each starts a second full shell in the live",
-        "        Validate QML with `qs -c vshell`.",
-    ], [2]),
-    # Append an instruction to each accepted line to verify occurrence-only exemption.
-    (".coderabbit.yaml", [
-        "        `qs -p quickshell/vshell`. Each starts a second full shell in the live",
-        "        `qs -p quickshell/vshell`. Each starts a second full shell in the live; to validate, run qs -c vshell",
-    ], [2]),
     ("backend/internal/runner/runner.go", [
         "\t// QSArgs are extra args appended after `qs -c vshell`.",
         "\t// QSArgs are extra args appended after `qs -c vshell`. To try it: qs -c vshell",
@@ -158,7 +145,6 @@ FIXTURES = [
 
 # Test valid exemptions and an invalid span lacking a command so validation must reject one.
 DEFECT_FIXTURES = [
-    ("`qs -p quickshell/vshell`. Each starts a second full shell", True),
     ("extra args appended after `qs -c vshell`", True),
     ("`qs -c vshell` vs `qs -p quickshell/vshell`", True),
     ("VGS_BACKEND_LISTEN_FD", False),

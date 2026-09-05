@@ -5,20 +5,168 @@ schema = 1
 
 [bot-instructions.repo]
 name = "vgs"
-summary = "VGS is a desktop shell for Hyprland and Niri using Quickshell. It includes a Go backend and a Python helper CLI."
+summary = "VanillaGreen Shell is a desktop shell for Hyprland and Niri using Quickshell 0.3.0. QML provides the interface, a Go daemon provides system integration, and the Python helper owns parsing, generation and privileged writes. The runtime and CLI are named vshell."
 tracker = "VGS"
 
 [bot-instructions.bots]
-codex = false
-copilot = false
+# Setup evidence and remaining vendor checks: .bot-instructions/README.md.
+codex = true
+copilot = true
 coderabbit = false
 qodo = false
 qodo_best_practices = false
 qodo_review_md = false
 macroscope = false
 
+[bot-instructions.cadence]
+coderabbit_incremental = true
+coderabbit_drafts = false
+qodo_commands = ["/agentic_review"]
+qodo_push_trigger = false
+
+[bot-instructions.tone]
+coderabbit = "Terse and technical. Give the defect, its triggering input, and the consequence. No praise, diff restatement, or summary. One finding per thread. If unsure, name the part you could not verify."
+
 [bot-instructions.exclusions]
 derive_render = true
+
+[[bot-instructions.exclusions.path]]
+glob = "**/*.png"
+reason = "Raster theme previews and artwork have no reviewable source text."
+
+[[bot-instructions.exclusions.path]]
+glob = "**/*.jpg"
+reason = "Raster theme previews and artwork have no reviewable source text."
+
+[[bot-instructions.exclusions.path]]
+glob = "**/*.cur"
+reason = "Cursor binaries have no reviewable source text."
+
+[[bot-instructions.exclusions.path]]
+glob = "config/vshell/icons/**/*.svg"
+reason = "Pinned icon artwork is reviewed at its upstream source."
+
+[[bot-instructions.exclusions.path]]
+glob = "config/vshell/icons/**/*.theme"
+reason = "Pinned icon-theme metadata is reviewed at its upstream source."
+
+[bot-instructions.doctrine.append]
+scope = "Apply the local AGENTS.md for each changed path. The generated .github/instructions files hold additional path-specific review rules; read the files whose applyTo paths match the change."
+severity = """
+Review changes to the merge checks, scripts, review policy, lock and idle handling, greeter, install channels, and privileged operations in full depth. Privileged operations include elevation and writes outside the user's home wherever the code resides.
+"""
+declined = """
+The review gate resolves evidence within each evidence type. It does not order review objects, checks and statuses against each other. Comment evidence is disabled in kendex.settings.toml.
+
+The next gate-writer pass corrects state changes between reads. The merge queue checks gate state at admission. Threads added after admission use the dequeue, fix and re-arm procedure.
+
+Documentation-only pushes can carry earlier review evidence. The configured policy and high-risk paths require fresh evidence. Read REVIEW_GATE_CARRY_FORWARD_EXCLUDE in kendex.settings.toml for the enforced path set.
+"""
+no-preferences = """
+The helper owns parsing and generation; a helper module split is separate work. Theme packages intentionally keep parallel per-theme app files. Agent instructions and architecture references do not require product README copies or release notes.
+"""
+
+[[bot-instructions.surface]]
+name = "qml"
+globs = ["quickshell/vshell/**/*.qml"]
+reviewer_only = true
+instructions = """
+Quickshell leaves the Qt.quit() and Qt.exit() signals unconnected. These calls do not terminate the shell. Qt.resolvedUrl() is correct for QML asset URLs. Use Quickshell.shellDir when a subprocess needs a filesystem path. Process.exited precedes running becoming false. A command that fails to start emits no exited signal. Resolve helper calls through Paths.vshellCli.
+
+Parsing, generation and privileged writes belong in bin/vshell-helper. QML calls them through the vshell dispatcher.
+"""
+
+[[bot-instructions.surface]]
+name = "validation"
+globs = ["scripts/**"]
+reviewer_only = true
+instructions = """
+The scripts provide repository checks and regression tests. A failed tool invocation must not become an empty successful result. Check that negative controls reach the intended failure, and that snapshot collection failure stops comparison.
+
+Use scripts/validate qml for isolated runtime validation. Never suggest qs -c vshell, qs -p quickshell/vshell, or pkill quickshell. A second shell can strand lock surfaces and black out the live desktop. Other Quickshell applications share the session. The isolated runtime smoke is scripts/qml-smoke.sh --nested.
+"""
+
+[[bot-instructions.surface]]
+name = "helper"
+globs = ["bin/**"]
+reviewer_only = true
+instructions = """
+The helper owns parsing, generation and privileged operations. bin/vshell stays a thin dispatcher. A helper module split is separate work. External commands use argument arrays. Secrets and raw frame payloads must not enter logs. See docs/architecture/helper.md for the operation contracts.
+"""
+
+[[bot-instructions.surface]]
+name = "backend"
+globs = ["backend/**/*.go"]
+reviewer_only = true
+instructions = """
+Every registered backend method requires a capability in backend/methods.json. scripts/check-backend-inventory.py checks method inventory and rejects raw version comparisons in its scanned QML callers. QML uses advertised capabilities or methods and retains a fallback when they are absent. Each watcher, poller and daemon needs one resource owner. Unix socket paths must fit the socket address limit.
+"""
+
+[[bot-instructions.surface]]
+name = "go-vendor"
+globs = ["backend/vendor/**"]
+reviewer_only = true
+instructions = "Byte-exact upstream Go modules. Report a real defect as an upstream issue. Changes to vendored bytes belong in an upstream update."
+
+[[bot-instructions.surface]]
+name = "nvim-vendor"
+globs = ["config/vshell/nvim/colorschemes/**"]
+reviewer_only = true
+instructions = "Third-party Neovim colourschemes are carried verbatim. Report defects as upstream issues. ATTRIBUTION.md is VGS-owned; check its directory, repository and licence mappings when they change."
+
+[[bot-instructions.surface]]
+name = "sound-vendor"
+globs = ["quickshell/vshell/assets/sounds/plasma/**"]
+reviewer_only = true
+instructions = "The Dream Sounds: Harmony sound theme is carried verbatim with its licence and README. Report defects as upstream issues."
+
+[[bot-instructions.surface]]
+name = "third-party"
+globs = ["third_party/**"]
+reviewer_only = true
+instructions = "Pinned artifacts are carried verbatim under the convention each directory's README records. Report artifact defects as upstream issues. The maintenance README files are VGS-owned and remain in review scope."
+
+[[bot-instructions.surface]]
+name = "themes"
+globs = ["themes/**"]
+reviewer_only = true
+instructions = """
+Palettes marked source: curated pass through the engine unchanged. Contrast enforcement applies to generated palettes. Per-theme app files intentionally share structure so each theme package works independently. Generated app targets must use VGS-owned output paths. See docs/architecture/theme.md.
+"""
+
+[[bot-instructions.surface]]
+name = "agent-docs"
+globs = ["AGENTS.md", "**/AGENTS.md", "docs/**"]
+reviewer_only = true
+instructions = """
+Root and nested AGENTS.md files hold agent process instructions. docs/architecture contains agent references. AGENTS.local.md is a gitignored machine-local companion. Keep these separate from product documentation in README.md and the packaging README files. Check instructions against code because agents execute their commands literally. backend/methods.json is a machine-read contract checked by scripts/check-backend-inventory.py.
+"""
+
+[[bot-instructions.surface]]
+name = "harness-config"
+globs = ["kendex*.toml"]
+reviewer_only = true
+instructions = """
+The agent-frontmatter and agent-skills tables contain kendex render configuration. Default model, effort and sandbox choices come from upstream. Check ownership before proposing a local change that refresh would replace. kendex.settings.toml holds public project defaults. Credentials belong in gitignored .env.local. A public setting is not itself evidence of a credential leak. Settings documentation belongs with the settings.
+"""
+
+[[bot-instructions.surface]]
+name = "owned-skills"
+globs = [".agents/skills/vgs-distro-publish/**", ".agents/skills/vgs-release/**", ".agents/skills/vshell-dev/**"]
+reviewer_only = true
+instructions = "These skills are VGS-owned under source = in-place in kendex.toml. Review their instructions against implementation. Release and publication commands must match scripts and packaging."
+
+[[bot-instructions.surface]]
+name = "workflows"
+globs = [".github/workflows/**"]
+reviewer_only = true
+instructions = "Keep CI coverage consistent with scripts/validate. scripts/check-validation-inventory.py owns CI exceptions. Whitespace checks must use the event's full change range and fail if the base cannot be resolved. Read docs/decisions/D007-ci-single-job-economics.md before changing CI structure."
+
+[[bot-instructions.surface]]
+name = "session"
+globs = ["quickshell/vshell/shell.qml", "quickshell/vshell/Modules/Lock/**", "quickshell/vshell/Modules/Greetd/**", "quickshell/vshell/VGSGreeter.qml", "quickshell/vshell/Services/GreeterUsersService.qml", "quickshell/vshell/Services/IdleService.qml", "quickshell/vshell/Services/SessionService.qml", "config/vshell/settings.default.json"]
+reviewer_only = true
+instructions = "Review lock, idle and greeter changes in full depth. Lock must remain a direct root child with the persistent properties before the session-lock object. scripts/check-lock-reload-order.py checks that order. docs/architecture/session.md records the activity gates, recovery and idle ownership contracts."
 
 [sources.kendex]
 repo = "vanillagreencom/kendex"
@@ -434,7 +582,7 @@ These are live in the workspace and must never be assigned in VGS. The reason ma
 reviewer = """
 ## VGS review policy
 
-Risk-classed review depth and the regression-test expectation live in `review-bots.md` (repo root, § Risk classes and § Regression-test expectation) — that file is the source; apply both. In short: every bug-fix PR carries a check or test that failed before the fix; a bug-fix PR without one gets that as a standing finding (docs-only fixes exempt). Findings on high-risk classes — gate/CI machinery, lock/session/idle surfaces, packaging/publish install channels, and privileged operations (elevation or system writes, WHEREVER they live — not only `backend/`) — are merge-blocking by default. The class definitions and derivation commands stay in review-bots.md; do not re-derive them from this summary.
+Read root `AGENTS.md` § Code Review Rules and the generated `.github/instructions/` files for the changed paths.
 """
 
 [agent-frontmatter.claude.generalist]
