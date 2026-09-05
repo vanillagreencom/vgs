@@ -30,6 +30,7 @@ config/vshell/nvim/vgs-theme-bridge.lua	423
 config/vshell/plugins/aiUsage/AiUsageWidget.qml	923
 config/vshell/plugins/cloudSync/CloudSyncWidget.qml	671
 config/vshell/plugins/mercury/MercuryLogic.js	404
+config/vshell/plugins/mercury/MercuryWidget.qml	404
 config/vshell/plugins/remoteDesktop/RemoteDesktopWidget.qml	703
 config/vshell/plugins/sudoToggle/SudoToggleWidget.qml	445
 config/vshell/plugins/sysUpdate/SysUpdateWidget.qml	644
@@ -214,4 +215,4 @@ scripts/test-switcher-selection.js	646
 scripts/test-toast-actions.js	488
 scripts/test-validate.sh	473
 scripts/test-validation-inventory.sh	1866
-scripts/validate	677
+scripts/validate	679

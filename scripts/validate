@@ -26,6 +26,8 @@ cd "$repo_root" || exit 1
 manifest() {
   cat <<'MANIFEST_EOF'
 qml       | scripts/check-naming.sh
+qml       | scripts/check-qml-imports.py
+qml       | scripts/test-qml-imports.sh
 always    | scripts/check-format-lint.sh
 -         | python3 scripts/lib/shell_scan.py
 -         | python3 scripts/lib/qml_source_selftest.py

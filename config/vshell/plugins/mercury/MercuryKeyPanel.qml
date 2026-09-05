@@ -48,9 +48,18 @@ Column {
         }
     }
 
+    // A read asked for while one is running is PARKED, not dropped. Save and
+    // Remove each raise one, and discarding it left the panel showing the key
+    // source from before the change it had just made.
+    property bool _statusPending: false
+
     function readTokenStatus() {
-        if (!statusProc.running)
-            statusProc.running = true;
+        if (statusProc.running) {
+            root._statusPending = true;
+            return;
+        }
+        root._statusPending = false;
+        statusProc.running = true;
     }
 
     // `owned` says whether this reply belongs to something the user asked for.
@@ -140,9 +149,15 @@ Column {
         }
         stdout: StdioCollector {
             id: statusOut
-            onStreamFinished: root.applyReply(statusOut.text || "", false, payload => {
-                root.keySource = String(payload.keySource || "none");
-            })
+            onStreamFinished: {
+                root.applyReply(statusOut.text || "", false, payload => {
+                    root.keySource = String(payload.keySource || "none");
+                });
+                if (root._statusPending) {
+                    root._statusPending = false;
+                    Qt.callLater(root.readTokenStatus);
+                }
+            }
         }
         stderr: StdioCollector {}
     }

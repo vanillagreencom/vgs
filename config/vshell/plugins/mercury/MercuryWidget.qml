@@ -288,10 +288,17 @@ PluginComponent {
         // the icon change. A new object, because a var property only notifies
         // on assignment.
         if (payload && (payload.ok === true || payload.already === true) && root.hasFigures) {
+            // The helper reports what it filed, and the row is given it. Only
+            // marking hasReceipt left the row saying it had paperwork with no
+            // attachment to open, so the icon turned green and clicking it did
+            // nothing until the re-read below landed.
+            const filed = (payload.attachments && payload.attachments.length > 0)
+                ? payload.attachments : [];
             const updated = root.snapshot.transactions.map(tx => {
                 if (tx.id !== txId)
                     return tx;
-                return Object.assign({}, tx, { hasReceipt: true });
+                const attachments = (tx.attachments || []).concat(filed);
+                return Object.assign({}, tx, { hasReceipt: true, attachments: attachments });
             });
             root.snapshot = Object.assign({}, root.snapshot, { transactions: updated });
         }
