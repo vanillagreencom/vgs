@@ -199,9 +199,15 @@ Column {
 
     // A spacer rather than padding on the line above it: a surface with no
     // subtitle hides that line entirely, and the gap under the title has to
-    // survive that. This Column's spacing is 0, so this is the whole gap.
+    // survive that.
+    //
+    // It subtracts this Column's own spacing, which is NOT zero in practice --
+    // six of the seven flyouts set their own, at two different values. Without
+    // the subtraction the gap was popoutHeaderGap plus whatever each surface
+    // happened to choose, which is the per-surface drift the token exists to
+    // end.
     Item {
         width: 1
-        height: Theme.popoutHeaderGap
+        height: Math.max(0, Theme.popoutHeaderGap - root.spacing)
     }
 }

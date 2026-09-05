@@ -43,8 +43,17 @@ Column {
     Connections {
         target: PluginService
         function onPluginDataChanged(changedPluginId) {
-            if (changedPluginId === "mercury")
-                root.readTokenStatus();
+            if (changedPluginId !== "mercury")
+                return;
+            // The key changed somewhere else -- the other settings surface, or
+            // the CLI. Whatever this panel last reported was about the key
+            // that has just been replaced, so it is dropped rather than left
+            // standing as a verdict on a key it never tested.
+            if (!root.busy) {
+                root.testResult = "";
+                root.testFailed = false;
+            }
+            root.readTokenStatus();
         }
     }
 

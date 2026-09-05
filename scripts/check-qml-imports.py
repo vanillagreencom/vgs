@@ -48,9 +48,16 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 QML_ROOTS = ("quickshell/vshell", "config/vshell/plugins")
 
-# `Name {` at the start of a statement. The `\.` guard drops `Foo.Bar {`, which
-# is a grouped property or an attached type and not an instantiation.
-INSTANTIATION = re.compile(r"^\s*([A-Z][A-Za-z0-9_]*)\s*\{", re.M)
+# `Name {` wherever a QML value can begin: at the start of a statement, and
+# after the `:` of an object binding. Anchoring to the line start alone missed
+# `delegate: MissingType {` and `property Component page: MissingType {`, which
+# are ordinary QML and fail at runtime exactly like a bare one.
+#
+# The leading character class is what keeps it honest. A name is only taken
+# when what precedes it is the start of a line or a binding colon, so
+# `Foo.Bar {` (a grouped property or an attached type), `on Bar {` and a name
+# inside an expression are all left alone.
+INSTANTIATION = re.compile(r"(?:^|:)\s*([A-Z][A-Za-z0-9_]*)\s*\{", re.M)
 IMPORT = re.compile(r"^\s*import\s+(qs(?:\.[A-Za-z0-9_]+)*)", re.M)
 # `component Foo: Bar {` declares a type inside the file that uses it.
 INLINE_COMPONENT = re.compile(r"^\s*component\s+([A-Z][A-Za-z0-9_]*)\s*:", re.M)

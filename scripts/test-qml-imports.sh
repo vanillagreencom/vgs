@@ -95,6 +95,67 @@ else
   fail "the import silences it"
 fi
 
+# --- must fail: a type inside an object binding ------------------------------
+# `delegate: Missing {` and `property Component page: Missing {` are ordinary
+# QML and fail at runtime exactly like a bare one. Anchoring the scan to the
+# start of a line missed both.
+seed binding_forms
+cat > "$work/binding_forms/quickshell/vshell/Widgets/Host.qml" <<'QML'
+import QtQuick
+
+Item {
+    property Component page: SettingsChoiceRow {
+        objectName: "nested"
+    }
+}
+QML
+if out="$(run_guard binding_forms)"; then
+  fail "a type in a property binding is reported"
+elif ! grep -q 'SettingsChoiceRow' <<<"$out"; then
+  fail "the property-binding report names the type"
+else
+  ok "a type in a property binding is reported"
+fi
+
+seed delegate_form
+cat > "$work/delegate_form/quickshell/vshell/Widgets/Host.qml" <<'QML'
+import QtQuick
+
+ListView {
+    delegate: SettingsChoiceRow {
+        objectName: "row"
+    }
+}
+QML
+if run_guard delegate_form >/dev/null; then
+  fail "a type in a delegate binding is reported"
+else
+  ok "a type in a delegate binding is reported"
+fi
+
+# --- must pass: a grouped property is not an instantiation -------------------
+# `anchors.fill:` and `font { ... }` must not be read as types, or the scan
+# would report a name for every styling block in the tree.
+seed grouped_property
+cat > "$work/grouped_property/quickshell/vshell/Widgets/Grouped.qml" <<'QML'
+import QtQuick
+
+Text {
+    font {
+        pixelSize: 12
+    }
+
+    Behavior on opacity {
+        NumberAnimation {}
+    }
+}
+QML
+if run_guard grouped_property >/dev/null; then
+  ok "a grouped property and an on-binding are not read as types"
+else
+  fail "a grouped property and an on-binding are not read as types"
+fi
+
 # --- must pass: a sibling in the same directory needs no import -------------
 seed same_directory
 cat > "$work/same_directory/quickshell/vshell/Widgets/VgsPanel.qml" <<'QML'
