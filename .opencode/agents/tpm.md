@@ -2,7 +2,7 @@
 description: Technical Program Manager for analyzing roadmaps, project lifecycle, and progress. Returns recommendations only. Does not modify project management tools.
 tags: planning
 mode: subagent
-model: openai/gpt-5.6-sol
+model: openai/gpt-6-astra
 color: "#3b82f6"
 options:
   reasoningEffort: high

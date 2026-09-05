@@ -1,5 +1,7 @@
 # Issue Lifecycle
 
+Read [code-quality](../../code-quality/SKILL.md) before writing or modifying code, including for ad-hoc requests.
+
 The workflow for a dev or QA agent receiving a work-item delegation. Skip every tracker update for ad-hoc requests (no issue reference).
 
 Run `pwd -P` before the first repo-relative command; it must print the delegation's `Worktree:` path. On any other path, stop and report where the shell started.
@@ -148,7 +150,7 @@ Update docs when the implementation changes a documented API or architecture.
 
 Before deterministic validation, run `git grep -n -F --untracked --exclude-standard -e <callee> --` for every callee whose call the change deletes, then apply [code-quality § Cleanup](../../code-quality/SKILL.md#cleanup); the build and tests below validate every deletion.
 
-Deterministic gates first — every finding is fixed here, never carried into review. Preflight runs when installed (`test -x .agents/skills/preflight/scripts/preflight`); the size-ratchet gate runs in a repo where a baseline exists:
+Deterministic gates first — every finding is fixed here, never carried into review. Preflight runs when installed (`test -x .agents/skills/preflight/scripts/preflight`); the size-ratchet gate runs when installed (`test -x .agents/skills/size-ratchet/scripts/size-ratchet`):
 
 ```bash
 .agents/skills/preflight/scripts/preflight --repo [WORKTREE_PATH]
@@ -158,7 +160,7 @@ Deterministic gates first — every finding is fixed here, never carried into re
 .agents/skills/size-ratchet/scripts/size-ratchet
 ```
 
-Then the project's validation command — the one `.agents/skills/orch/scripts/orch-env DEV_VALIDATE_CMD ""` prints (empty → the project's documented build/test/lint command), run from the worktree root — plus the delegation's required verification commands in their § 2.4 normalized form. Failure handling and long-running runs: [dev SKILL.md § Validation](../SKILL.md#validation).
+Run the project's full validation once before completion. Its successful result is recorded in the completion artifact for submit to reuse on the same commit. Use the project's validation command — the one `.agents/skills/orch/scripts/orch-env DEV_VALIDATE_CMD ""` prints (empty → the project's documented build/test/lint command), run from the worktree root — plus the delegation's required verification commands in their § 2.4 normalized form. Failure handling and long-running runs: [dev SKILL.md § Validation](../SKILL.md#validation).
 
 A script written only to produce a number for the issue is not committed; put its result in the PR body. Every check, guard, assertion, or test this change adds or modifies must have a must-fail control that runs red once ([code-quality § Prove Your Guards](../../code-quality/SKILL.md#prove-your-guards)); an uncommitted measurement is not a check the change adds or modifies.
 

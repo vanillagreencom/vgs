@@ -1,20 +1,16 @@
-# kendex-guard-dialect: legacy-glob
-# Exclusions use pattern<TAB>reason. Globs match full repository paths; * crosses /.
-# Shipped path classes set limits. Tests outside those classes use the default
-# limit and may require a frozen baseline entry.
-backend/vendor/*	vendored Go modules (go mod vendor for offline Nix builds), upstream-owned
-config/vshell/nvim/colorschemes/*	vendored upstream colorscheme plugins, upstream-owned
-third_party/*	byte-pinned vendored trees (coderabbit-schema, asdcontrol)
-quickshell/*/assets/*	shipped binary/data assets, not source
-themes/*/apps/*	generated per-app theme outputs inside theme packages, not source
-themes/*/backgrounds/*	shipped background images inside theme packages, not source
-themes/*/theme.json	theme-package palette data, not source
-themes/*/colors.toml	theme-package palette data, not source
-themes/*/preview.png	theme-package preview image, not source
-themes/catalog.json	generated theme catalog index, regenerated from packages
-.agents/*	vendored kendex install, upstream-owned
-.coderabbit.yaml	skill path lists grow one line per UPSTREAM-shipped skill; check-owned-skills.py makes the line mandatory
-.claude/hooks/block-repo-copy.sh	kendex-rendered hook copy, 511 lines, source owned upstream
-.codex/hooks/block-repo-copy.sh	kendex-rendered hook copy, 511 lines, source owned upstream
-.pi/kendex/hooks/block-repo-copy.sh	kendex-rendered hook copy, 511 lines, source owned upstream
-.github/workflows/review-gate-writer.yml	adopted verbatim from the review-gate template kendex ships; validate.sh holds it to equality, so its size is the template's
+# Exclusions use pattern<TAB>reason. Globs match full repository paths.
+backend/vendor/*	vendored Go modules for offline builds; documents follow upstream
+!backend/vendor/AGENTS.md	VGS-owned instructions for the vendored tree
+config/vshell/nvim/colorschemes/*	vendored upstream colorscheme plugins; documents follow upstream
+!config/vshell/nvim/colorschemes/AGENTS.md	VGS-owned instructions for the vendored tree
+!config/vshell/nvim/colorschemes/ATTRIBUTION.md	VGS-owned upstream and licence references
+quickshell/vshell/assets/sounds/plasma/*	vendored upstream sound theme and documentation
+.agents/*	kendex render output, owned upstream
+!.agents/skills/vgs-distro-publish/*	VGS-owned in-place skill declared in kendex.toml
+!.agents/skills/vgs-release/*	VGS-owned in-place skill declared in kendex.toml
+!.agents/skills/vshell-dev/*	VGS-owned in-place skill declared in kendex.toml
+.claude/*	kendex render output, owned upstream
+.codex/*	kendex render output, owned upstream
+.opencode/*	kendex render output, owned upstream
+.pi/*	kendex render output, owned upstream
+.cursor/*	kendex render output, owned upstream

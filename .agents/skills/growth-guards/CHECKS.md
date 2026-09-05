@@ -17,10 +17,10 @@ Comment leaders: `//`, `#`, `;`, `/*`, `<!--`. A marker immediately preceded by 
 
 ## byte-ceiling
 
-A tracked file a change puts over `GROWTH_GUARDS_BYTE_CEILING_KB` (KB = 1024 bytes) fails; size is the blob's object size. Exempt by exact basename: `Cargo.lock`, `package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock`, `pnpm-lock.yaml`, `bun.lock`, `bun.lockb`, `flake.lock`, `poetry.lock`, `uv.lock`, `Pipfile.lock`, `Gemfile.lock`, `composer.lock`, `go.sum`, `gradle.lockfile`, `packages.lock.json`, `Package.resolved`. Asset trees go in `GROWTH_GUARDS_BYTE_EXCLUDES`, overridden by `--excludes FILE`.
+A tracked file a change puts over `GROWTH_GUARDS_BYTE_CEILING_KB` (KB = 1024 bytes) fails; size is the blob's object size. An existing file already over the ceiling may stay the same size or shrink, but may not grow. Exempt by exact basename: `Cargo.lock`, `package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock`, `pnpm-lock.yaml`, `bun.lock`, `bun.lockb`, `flake.lock`, `poetry.lock`, `uv.lock`, `Pipfile.lock`, `Gemfile.lock`, `composer.lock`, `go.sum`, `gradle.lockfile`, `packages.lock.json`, `Package.resolved`. Asset trees go in `GROWTH_GUARDS_BYTE_EXCLUDES`, overridden by `--excludes FILE`.
 
 - `--staged` (default): files added, modified or type-changed in the staged diff, renames held to exact content.
-- `--base REF`: files added since the merge-base with REF.
+- `--base REF`: files added, modified or type-changed since the merge-base with REF.
 - `--all`: every tracked file.
 
 A copy is an addition; symlinks and gitlinks are not sized.
@@ -47,7 +47,7 @@ Seven `<`, seven `|`, or seven `>` at column 0, followed by a space or end of li
 
 ## changelog-entries
 
-One judge over two scopes: the fragments a branch writes and the record a release folds them into. A path in both scopes is a config error. Text that is not valid UTF-8 is a collection error naming the line.
+Ordinary runs check fragments. `--collate` also validates the destination record before writing. A path in both roles is a config error. Text that is not valid UTF-8 is a collection error naming the line.
 
 ### Fragments
 
@@ -60,19 +60,15 @@ Every tracked path `GROWTH_GUARDS_CHANGELOG_PATHS` matches must be:
 
 A pattern's root is its leading run of glob-free directories (`changelog.d/*/*.md` roots at `changelog.d`); a glob-free pattern names one file and roots nowhere. Every tracked path under a root that no pattern matches is a violation, except a `README.md` directly under a root and the configured record. No matching file is a clean pass; switch the check off by dropping it from `GROWTH_GUARDS_CHECKS`.
 
-`--collate` judges, then on a clean verdict folds each fragment into the record's `[Unreleased]` section under its section's heading, in Keep a Changelog order and filename order within a section, and deletes the fragment files and each section directory left empty. It refuses, writing nothing, when the index and the working tree disagree about a judged path; the record is replaced whole. The release commit is its only caller.
+`--collate` judges, then on a clean verdict folds each fragment into the record's `[Unreleased]` section under its section's heading, in Keep a Changelog order and filename order within a section, and deletes the fragment files and each section directory left empty. It requires `GROWTH_GUARDS_CHANGELOG_COLLATE=1` and refuses, writing nothing, when the index or working tree has staged, unstaged or non-ignored untracked changes. The record is replaced whole. The release commit is its only caller.
 
 ### The record
 
-`GROWTH_GUARDS_CHANGELOG_RECORD` is the collated file; empty switches this scope off. A line the index carries under `## [Unreleased]` that HEAD does not is a violation.
+`GROWTH_GUARDS_CHANGELOG_RECORD` names the collation destination. Ordinary checks permit edits to its wording and headings. They do not compare it against HEAD.
 
-The heading is found by structure: a fence opens on three or more backticks or tildes and closes only on a run at least as long of the same character alone on its line; nothing inside a fence is a heading; a level-1 or level-2 ATX heading switches the section on or off; the text matches on equality, case-folded, after its leading spaces and hashes.
-
-- Exit 2: an unterminated fence; a second `## [Unreleased]` heading.
-- Violations: the heading staged away where HEAD carries one; no `## [Unreleased]` heading; a level-3 heading inside the section naming no Keep a Changelog section; a record tracked in HEAD and absent from the index (retire the scope by emptying the key).
-- A record HEAD carries that this guard would not accept skips the comparison, naming the reason; shape rules judge the staged copy.
-
-The comparison runs only where HEAD already carries the record. `GROWTH_GUARDS_CHANGELOG_COLLATE=1` in the environment declares the collator's own write and bypasses that comparison and nothing else. Each stand-down names itself in the verdict.
+- `--collate` with accepted fragments requires a tracked, regular text destination with one `## [Unreleased]` section. Section headings use the Keep a Changelog names so each fragment has a destination.
+- Missing or duplicate pending sections, unclosed fences, and unknown section names refuse collation before any write.
+- `GROWTH_GUARDS_CHANGELOG_COLLATE=1` authorizes `--collate` and lets `commit-msg` count a record change as the release changelog entry. It does not change fragment validation.
 
 ### Measuring one entry
 
@@ -80,7 +76,7 @@ Lines joined with CR stripped, whitespace runs collapsed to one space, trimmed, 
 
 ## prose
 
-A history reference in a scanned markdown file fails: a calendar date (`20YY-MM-DD`), a three- or four-digit issue number after `#`, or a past-state term. `GROWTH_GUARDS_PROSE_REVISION_WORDS` sets the terms and defaults to `previously`, `used to`, `no longer`, `reverted`, `an earlier`, `earlier round`, `incident`, `historically`, `originally`, and `at the time`; empty disables the word class. Matching is case-insensitive and whole-word (`incidental`, `unreverted` do not fire). The issue-number shape takes no leading boundary (`<file>.md#1204` fires), and the character after the digits must be neither a digit nor a hex letter (`#12345`, `#1234ab`, `#0088cc` pass). A decision ID (`D042`) carries no `#` and never fires.
+A calendar date (`20YY-MM-DD`) or a three- or four-digit issue number after `#` in a scanned markdown file fails. Ordinary words do not trigger this check. The issue-number shape takes no leading boundary (`<file>.md#1204` fires), and the character after the digits must be neither a digit nor a hex letter (`#12345`, `#1234ab`, `#0088cc` pass). A decision ID (`D042`) carries no `#` and never fires.
 
 Scope is `GROWTH_GUARDS_PROSE_PATHS` minus `GROWTH_GUARDS_MD_EXCLUDES`, the exclusion list the markdown lanes read, so a vendored skill under a render tree is carved out with a reason rather than by narrowing the scan. `docs/architecture/*.md` joins the default only under `GROWTH_GUARDS_MD_SCOPE=all`, the switch a repository flips once its markdown is rewritten; an explicit path list is used as given. The default, each name spelled twice because `*` crosses `/` but never stands in for the separator:
 
@@ -128,23 +124,24 @@ An unterminated fence, front matter, HTML comment or prompt-section block is exi
 
 ## md-refs
 
-A dead reference in a scanned markdown file fails. Fenced code, indented code and front matter are never read. Three forms:
+A dead reference in a scanned markdown file fails. Fenced code, indented code and front matter are never read. Forms:
 
 - A link or reference definition whose destination is relative (no scheme, no leading `/`, not `mailto:`) must name a tracked file or directory, resolved against the citing file's directory; `..` above the repository root is dead. With `#anchor`, the target must be markdown and the anchor one of its heading slugs or an explicit `<a id="...">` or `<a name="...">`; a bare `#anchor` resolves in the citing file. A definition is read only where the line begins with its `[label]:`.
 - A code span holding `<path>.md § Heading` must name a tracked file with a heading equal to `Heading` case-insensitively after trimming; one holding `<path>.md#anchor` a tracked file with that slug or explicit anchor. The path resolves against the citing file's directory, then the repository root. A path alone in a code span is not judged.
+- A relative markdown link followed by `§` must start with an existing heading name from that target. Matching ignores case, backticks, and emphasis markers. The heading name ends at a word boundary; prose can follow it. A section number also resolves to a heading with that number. Text routes check a heading prefix. Use an anchor link or an exact code-span citation where heading names share a prefix.
 - A decision ID, `DECISION_ID_PREFIX` plus at least `DECISION_ID_WIDTH` digits bounded by non-alphanumerics, must have a tracked file `DECISIONS_DIR/<ID>-*.md`; where that directory is not tracked, IDs are not judged and the verdict says so.
 
 The slug is GitHub's: link syntax, code-span backticks and HTML tags reduce to their text; ASCII letters lower-case (a non-ASCII letter keeps its case); every character not a letter, digit, space, `-` or `_` is dropped; each space becomes a hyphen; a repeat takes the first free `-1`, `-2` suffix.
 
-Scopes are md-format's over `GROWTH_GUARDS_MD_REFS_PATHS` minus `GROWTH_GUARDS_MD_EXCLUDES`, with the same `GROWTH_GUARDS_MD_SCOPE`. Targets resolve against the index whatever the scope, so a link into a file the commit deletes is dead; a tracked path holding a newline is no link target.
+`--staged` and `--all` check every tracked file named by `GROWTH_GUARDS_MD_REFS_PATHS` minus `GROWTH_GUARDS_MD_EXCLUDES`. With neither flag, `GROWTH_GUARDS_MD_SCOPE=touched` checks that set when any change is staged, including deletions; `all` checks it unconditionally. This includes references in unchanged documents. Callers and targets resolve against the index; a tracked path holding a newline is no link target.
 
 ## comments
 
-A history reference in the comment text of a scanned source file fails. `GROWTH_GUARDS_COMMENT_REFERENCE_TYPES` selects issue ids, three- or four-digit issue numbers, and calendar dates. `GROWTH_GUARDS_COMMENT_REVISION_WORDS` selects revision narration and defaults to `previously`, `used to`, `no longer`, `reverted`, `an earlier`, `earlier round`, `incident`, `historically`, `originally`, `at the time`, and `existing code`. Either class can run alone. Words and dates are matched case-insensitively and whole-word. An issue id uses `GH_ISSUE_PATTERN`; empty keeps `[A-Z]+-[0-9]+`. The issue id is matched as written, lowered and uppered, so a pattern written in one case matches the id in any case and a mixed-case pattern matches only its own spelling. A quoted example or backticked span inside the comment still counts. String literals and code are never judged. Each hit is reported once per line and shape. The default key shape matches `UTF-8` and `SHA-256`; a repository with one tracker prefix sets `GH_ISSUE_PATTERN` to it. Each configured pattern is a POSIX ERE read by awk and `git grep`; one either tool cannot compile is exit 2.
+A selected reference in the comment text of a scanned source file fails. `GROWTH_GUARDS_COMMENT_REFERENCE_TYPES` selects issue ids, three- or four-digit issue numbers, and calendar dates. It must name at least one type. Ordinary words do not trigger this check. Issue ids are checked only when `GH_ISSUE_PATTERN` declares a tracker pattern. An empty pattern leaves that type inactive; an ID-only scan then fails configuration. The issue id is matched as written, lowered and uppered, so a pattern written in one case matches the id in any case and a mixed-case pattern matches only its own spelling. A quoted example or backticked span inside the comment still counts. String literals and code are never judged. Each hit is reported once per line and shape. Without a tracker pattern, technical names such as `UTF-8` and `SHA-256` pass. Numeric issue references and dates remain checked by default. Each configured pattern is a POSIX ERE read by awk and `git grep`; one either tool cannot compile is exit 2.
 
 Applied migrations are immutable first-party content; the exclusion policy is in [SKILL.md](SKILL.md) § Configuration.
 
-Opt-in: name `comments` in `GROWTH_GUARDS_CHECKS`. Scopes are `todo-ban`'s: `--staged` judges only the lines the staged diff adds, comment state read from the whole staged blob; the default reads every tracked file `GROWTH_GUARDS_COMMENT_PATHS` names minus `GROWTH_GUARDS_COMMENT_EXCLUDES`, overridden by `--excludes FILE`. A matched path the table below gives no grammar is named as unmeasured.
+Optional audit lane: run `.agents/skills/growth-guards/scripts/growth-guards comments` directly when an audit is needed. Keep `comments` out of `GROWTH_GUARDS_CHECKS` so it does not block commits. Scopes are `todo-ban`'s: `--staged` judges only the lines the staged diff adds, comment state read from the whole staged blob; the default reads every tracked file `GROWTH_GUARDS_COMMENT_PATHS` names minus `GROWTH_GUARDS_COMMENT_EXCLUDES`, overridden by `--excludes FILE`. A matched path the table below gives no grammar is named as unmeasured.
 
 Comment text is extracted per family, by extension or, for a path with none, by the interpreter its `#!` line names. The default path list is exactly these extensions, with `Makefile` and `Dockerfile` by basename at the root and below:
 
@@ -152,7 +149,7 @@ Comment text is extracted per family, by extension or, for a path with none, by 
 |---|---|---|---|
 | C | `rs` `go` `c` `h` `cc` `cpp` `hpp` `java` `kt` `kts` `swift` `wgsl` `js` `mjs` `cjs` `jsx` `ts` `tsx` `scss` `less` | `//` `///` `//!` to end of line; `/* */` across lines | `"…"` and `'…'` with backslash escapes; a backtick template literal across lines (`go`, `js`, `ts` and their variants); Rust `r"…"`, `r#"…"#`, a string spanning lines, a char literal, and a lifetime quote that opens nothing |
 | CSS | `css` | `/* */` only | `"…"` `'…'` |
-| Hash | `sh` `bash` `zsh` `py` `rb` `toml` `yml` `yaml` `mk` `Makefile` `Dockerfile`; no extension with a `#!` naming an interpreter ending in `sh`, or python or ruby (`node`, `deno`, `bun` take the C family) | `#` at the start of a word (line start or after whitespace) to end of line; line 1 `#!` is not a comment | `"…"` with escapes; `'…'` without escapes in shell, TOML and YAML, with escapes in Python and Ruby; shell `$'…'` with escapes; a shell string across lines; Python and TOML triple quotes across lines; a shell heredoc body (`<<WORD`, `<<-WORD`; the word runs to a blank or one of `;|&<>`, its quotes stripped; `<<` inside `((…))` is a shift) up to its terminator line |
+| Hash | `sh` `bash` `zsh` `py` `rb` `toml` `yml` `yaml` `mk` `Makefile` `Dockerfile`; no extension with a `#!` naming an interpreter ending in `sh`, or python or ruby (`node`, `deno`, `bun` take the C family) | `#` at the start of a word (line start or after whitespace) to end of line; line 1 `#!` is not a comment | `"…"` with escapes; `'…'` without escapes in shell, TOML and YAML, with escapes in Python and Ruby; shell `$'…'` with escapes; a shell string across lines; quotes, comments and heredocs inside a double-quoted `$(…)`; Python and TOML triple quotes across lines; a shell heredoc body (`<<WORD`, `<<-WORD`; the word runs to a blank or one of `;|&<>`, its quotes stripped; `<<` inside `((…))` is a shift) up to its terminator line |
 | Dash | `sql` `lua` | `--` to end of line; SQL `/* */` and Lua `--[[ ]]` across lines | `"…"` `'…'` with escapes |
 | Markup | `html` `htm` `xml` `svg` `vue` `svelte` | `<!-- -->` across lines | none |
 

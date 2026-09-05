@@ -88,11 +88,12 @@ reviews:
     # Exclude upstream harness renders. Use only negative plain globs; a positive
     # entry changes this list into an allowlist. scripts/check-owned-skills.py
     # checks skill paths against the in-place declarations in kendex.toml.
-    - "!.agents/skills/arch-docs/**"
+    - "!.agents/skills/bot-instructions/**"
     - "!.agents/skills/code-quality/**"
     - "!.agents/skills/decider/**"
     - "!.agents/skills/deep-research/**"
     - "!.agents/skills/dev/**"
+    - "!.agents/skills/docs-writing/**"
     - "!.agents/skills/github/**"
     - "!.agents/skills/growth-guards/**"
     - "!.agents/skills/harness-ci/**"
