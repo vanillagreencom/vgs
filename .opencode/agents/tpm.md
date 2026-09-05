@@ -5,7 +5,7 @@ mode: subagent
 model: openai/gpt-6-astra
 color: "#3b82f6"
 options:
-  reasoningEffort: high
+  reasoningEffort: medium
   reasoningSummary: auto
   textVerbosity: medium
 permission:

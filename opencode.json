@@ -4,7 +4,9 @@
     ".opencode/instructions/kendex-hook-block-repo-copy.md",
     ".opencode/instructions/kendex-hook-block-unsafe-rm.md",
     ".opencode/instructions/kendex-hook-block-bare-cd.md",
-    ".opencode/instructions/kendex-hook-pre-commit-check.md"
+    ".opencode/instructions/kendex-hook-pre-commit-check.md",
+    ".opencode/instructions/kendex-hook-block-argv-kill.md",
+    ".opencode/instructions/kendex-hook-block-worktree-refresh.md"
   ],
   "permission": {
     "bash": {

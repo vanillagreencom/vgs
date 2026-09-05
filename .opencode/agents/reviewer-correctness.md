@@ -2,10 +2,10 @@
 description: Broad correctness and regression reviewer for behavior breakage, boundary/edge-case predicates, API/CLI/devex regressions, feature-gate leaks, migrations, state semantics, and cross-module side effects.
 tags: review
 mode: subagent
-model: openai/gpt-5.5
+model: openai/gpt-6-astra
 color: "#ef4444"
 options:
-  reasoningEffort: xhigh
+  reasoningEffort: high
   reasoningSummary: auto
   textVerbosity: medium
 permission:

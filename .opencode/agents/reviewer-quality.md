@@ -2,10 +2,10 @@
 description: Code quality reviewer for maintainability, simplification, abstraction value, type boundaries, helper reuse, decomposition, and god objects.
 tags: review
 mode: subagent
-model: openai/gpt-5.5
+model: openai/gpt-6-astra
 color: "#a855f7"
 options:
-  reasoningEffort: xhigh
+  reasoningEffort: high
   reasoningSummary: auto
   textVerbosity: medium
 permission:
