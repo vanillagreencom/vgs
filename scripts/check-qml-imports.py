@@ -76,7 +76,8 @@ NOISE = re.compile(
     r"/\*.*?\*/"          # block comment
     r"|//[^\n]*"          # line comment
     r'|"(?:\\.|[^"\\\n])*"'   # double-quoted string
-    r"|'(?:\\.|[^'\\\n])*'",  # single-quoted string
+    r"|'(?:\\.|[^'\\\n])*'"   # single-quoted string
+    r"|`(?:\\.|[^`\\])*`",     # template literal, which may span lines
     re.S,
 )
 
@@ -234,13 +235,14 @@ def main() -> int:
 
     findings: list[str] = []
     for path in files:
-        raw = path.read_text(errors="replace")
-        # Imports are read from the raw text -- an import line has no string or
-        # comment to confuse it -- while types are read from the stripped copy.
-        text = strip_noise(raw)
-        imports = set(IMPORT.findall(raw))
+        # Imports are read from the STRIPPED text, like the types are. Reading
+        # them raw was fail-open: a commented-out `// import qs.X` still
+        # satisfied visibility, so the one edit most likely to cause this error
+        # was the one edit that hid it.
+        text = strip_noise(path.read_text(errors="replace"))
+        imports = set(IMPORT.findall(text))
         # Modules this file imports that are NOT this repo's own.
-        outside = {m.split()[0] for m in re.findall(r"^\s*import\s+([A-Z][\w.]*)", raw, re.M)}
+        outside = {m.split()[0] for m in re.findall(r"^\s*import\s+([A-Z][\w.]*)", text, re.M)}
         relative_path = str(path.relative_to(REPO_ROOT))
         local = set(INLINE_COMPONENT.findall(text))
         seen: set[str] = set()

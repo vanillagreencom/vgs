@@ -236,6 +236,44 @@ else
   ok "real code below such a comment is still reported"
 fi
 
+# --- must fail: a commented-out import does not grant visibility -------------
+# Reading imports from the raw text was fail-open, and in the worst possible
+# direction: commenting an import out is the single edit most likely to cause
+# this error, and it was the edit that hid it.
+seed commented_import
+cat > "$work/commented_import/quickshell/vshell/Modules/Settings/WidgetsTab.qml" <<'QML'
+import QtQuick
+// import qs.Modules.Settings.Widgets
+
+Item {
+    SettingsChoiceRow {
+        text: "Bar"
+    }
+}
+QML
+if run_guard commented_import >/dev/null; then
+  fail "a commented-out import does not grant visibility"
+else
+  ok "a commented-out import does not grant visibility"
+fi
+
+# --- must pass: a type name inside a template literal ------------------------
+seed template_literal
+cat > "$work/template_literal/quickshell/vshell/Widgets/Templated.qml" <<'QML'
+import QtQuick
+
+Item {
+    function describe(name) {
+        return `use SettingsChoiceRow { text: ${name} } here`;
+    }
+}
+QML
+if run_guard template_literal >/dev/null; then
+  ok "a type name inside a template literal is not an instantiation"
+else
+  fail "a type name inside a template literal is not an instantiation"
+fi
+
 # --- must pass: a grouped property is not an instantiation -------------------
 # `anchors.fill:` and `font { ... }` must not be read as types, or the scan
 # would report a name for every styling block in the tree.
