@@ -39,8 +39,14 @@ Item {
         running: false
 
         function copyNumber() {
-            if (!copyProc.running)
-                copyProc.running = true;
+            if (copyProc.running)
+                return;
+            // Cleared at the LAUNCH, never at the exit. `exited` fires before
+            // `running` goes false, so clearing it there let the never-started
+            // branch below fire on a run that had just succeeded.
+            copyProc.sawProcess = false;
+            copyProc.stdinEnabled = true;
+            copyProc.running = true;
         }
 
         property bool sawProcess: false
@@ -56,12 +62,10 @@ Item {
             // paste whatever was in the clipboard before.
             if (running || copyProc.sawProcess)
                 return;
-            copyProc.stdinEnabled = true;
             ToastService.showError(I18n.tr("Could not copy the account number"),
                                    I18n.tr("The vshell helper could not be run."), "", "mercury-copy");
         }
         onExited: exitCode => {
-            copyProc.sawProcess = false;
             copyProc.stdinEnabled = true;
             if (exitCode === 0)
                 ToastService.showInfo(I18n.tr("Account number copied"),

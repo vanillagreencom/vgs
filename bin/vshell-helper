@@ -8440,7 +8440,10 @@ MERCURY_API_DEFAULT_BASE = "https://api.mercury.com/api/v1"
 # Mercury rejects a larger attachment; the widget cannot stat a file, so this
 # is the only place the limit is enforced before the POST.
 MERCURY_ATTACHMENT_MAX_BYTES = 32 * 1024 * 1024
-MERCURY_TRANSACTION_STATUSES = ("pending", "sent", "failed", "cancelled", "reversed")
+# Every status the widget can render a row for. `blocked` belongs here for the
+# same reason the others do: a transaction the bank stopped is one the user
+# most wants to see, and leaving it out of the query hid it entirely.
+MERCURY_TRANSACTION_STATUSES = ("pending", "sent", "failed", "cancelled", "reversed", "blocked")
 
 
 def _mercury_token_path() -> Path:
@@ -8746,9 +8749,15 @@ def _mercury_emit(sub: str, payload: Dict[str, Any]) -> int:
 
 
 def _mercury_fail(sub: str, error: str, **extra: Any) -> int:
+    """A failure still prints its JSON, and still exits nonzero.
+
+    The widget reads stdout and ignores the status; a shell pipeline reads the
+    status and would otherwise treat every failure as a success.
+    """
     payload: Dict[str, Any] = {"ok": False, "error": error}
     payload.update(extra)
-    return _mercury_emit(sub, payload)
+    _mercury_emit(sub, payload)
+    return 1
 
 
 def cmd_mercury(argv: List[str]) -> int:
