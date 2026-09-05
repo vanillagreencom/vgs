@@ -242,7 +242,11 @@ def main() -> int:
         text = strip_noise(path.read_text(errors="replace"))
         imports = set(IMPORT.findall(text))
         # Modules this file imports that are NOT this repo's own.
-        outside = {m.split()[0] for m in re.findall(r"^\s*import\s+([A-Z][\w.]*)", text, re.M)}
+        # UNALIASED outside imports only, for the same reason the qs pattern
+        # takes only unaliased ones: `import Quickshell.Wayland as QW` puts the
+        # module behind `QW.`, so a bare name is still unresolved and a
+        # declared collision must not excuse it.
+        outside = set(re.findall(r"^\s*import\s+([A-Z][\w.]*)\s*$", text, re.M))
         relative_path = str(path.relative_to(REPO_ROOT))
         local = set(INLINE_COMPONENT.findall(text))
         seen: set[str] = set()

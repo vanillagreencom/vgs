@@ -83,8 +83,10 @@ Column {
         } catch (error) {
             payload = null;
         }
-        if (owned)
+        if (owned) {
             root.busy = false;
+            root._stallOwned = false;
+        }
         if (!payload) {
             if (owned) {
                 root.testFailed = true;
@@ -141,10 +143,16 @@ Column {
     // announce itself after the stop, and reporting immediately would call a
     // working helper missing. The timer re-checks every channel, and one that
     // produced a process never reaches it.
+    // Whether an OWNED action -- Save, Test, Remove -- is waiting on this
+    // timer. The background status read can overlap one of those, so the timer
+    // must not decide by asking whether any channel started: a status read
+    // that got a process would otherwise cancel the report for an owned action
+    // that did not, and `busy` would never be released.
     property bool _stallOwned: false
 
     function launchStalled(owned) {
-        root._stallOwned = root._stallOwned || owned;
+        if (owned)
+            root._stallOwned = true;
         stallTimer.restart();
     }
 
@@ -153,16 +161,16 @@ Column {
         interval: 1000
         repeat: false
         onTriggered: {
-            const owned = root._stallOwned;
-            root._stallOwned = false;
-            // Any channel that started, or is still running, settles itself.
-            if (statusProc.sawProcess || statusProc.running
-                || saveProc.sawProcess || saveProc.running
+            if (!root._stallOwned)
+                return;
+            // An owned channel that started, or is still running, settles
+            // itself through its own stdout. The status read is not consulted:
+            // it owns nothing here.
+            if (saveProc.sawProcess || saveProc.running
                 || clearProc.sawProcess || clearProc.running
                 || doctorProc.sawProcess || doctorProc.running)
                 return;
-            if (!owned)
-                return;
+            root._stallOwned = false;
             root.busy = false;
             root.testFailed = true;
             root.testResult = I18n.tr("Could not run the vshell helper.");

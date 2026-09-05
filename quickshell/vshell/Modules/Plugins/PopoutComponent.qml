@@ -201,13 +201,13 @@ Column {
     // subtitle hides that line entirely, and the gap under the title has to
     // survive that.
     //
-    // It subtracts this Column's own spacing, which is NOT zero in practice --
-    // six of the seven flyouts set their own, at two different values. Without
-    // the subtraction the gap was popoutHeaderGap plus whatever each surface
-    // happened to choose, which is the per-surface drift the token exists to
-    // end.
+    // It subtracts TWO of this Column's spacing intervals, because a spacer
+    // between two siblings has one on each side of it. Subtracting one left
+    // the real gap at popoutHeaderGap plus the surface's own spacing, which is
+    // the per-surface drift the token exists to end -- and six of the seven
+    // flyouts set their own spacing, at two different values.
     Item {
         width: 1
-        height: Math.max(0, Theme.popoutHeaderGap - root.spacing)
+        height: Math.max(0, Theme.popoutHeaderGap - root.spacing * 2)
     }
 }

@@ -61,6 +61,29 @@ run_guard() {
   ( cd "$work/$name" && python3 scripts/check-qml-imports.py 2>&1 )
 }
 
+# --- must fail: an ALIASED outside import does not excuse a bare name --------
+# `import Quickshell.Wayland as QW` puts the module behind `QW.`, so a bare
+# `IdleInhibitor {}` in that file is still unresolved and the declaration must
+# not excuse it.
+seed_collision collision_aliased
+declare_collision collision_aliased \
+  quickshell/vshell/Modules/Bar/BarWindow.qml IdleInhibitor Quickshell.Wayland
+cat > "$work/collision_aliased/quickshell/vshell/Modules/Bar/BarWindow.qml" <<'QML'
+import QtQuick
+import Quickshell.Wayland as QW
+
+Item {
+    IdleInhibitor {
+        enabled: true
+    }
+}
+QML
+if run_guard collision_aliased >/dev/null; then
+  fail "an aliased outside import does not excuse a bare name"
+else
+  ok "an aliased outside import does not excuse a bare name"
+fi
+
 # --- must pass: the declared collision ---------------------------------------
 seed_collision collision_declared
 declare_collision collision_declared \
@@ -82,7 +105,11 @@ fi
 
 # A row naming a module that does not provide the type is a stale claim, and
 # only fails where a module tree is installed to check it against.
-if [[ -d /usr/lib/qt6/qml || -n "${QML2_IMPORT_PATH:-}" ]]; then
+# The same three sources the checker itself consults, so this case cannot skip
+# on a machine where the checker would in fact have resolved the module.
+if [[ -d /usr/lib/qt6/qml || -d /usr/lib/qml \
+      || -n "${QML2_IMPORT_PATH:-}" || -n "${QML_IMPORT_PATH:-}" ]] \
+   || command -v qtpaths6 >/dev/null 2>&1; then
   seed_collision collision_stale
   declare_collision collision_stale \
     quickshell/vshell/Modules/Bar/BarWindow.qml IdleInhibitor QtQuick.Controls

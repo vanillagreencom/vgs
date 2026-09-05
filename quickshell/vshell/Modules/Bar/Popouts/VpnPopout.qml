@@ -77,11 +77,11 @@ VgsPopout {
                 }
 
                 // The shared gap under a popout title. A spacer rather than a
-                // margin because this is a plain Column, and it carries only
-                // the difference this column's spacing does not already give.
+                // margin because this is a plain Column, and it absorbs the two
+                // spacing intervals a spacer sits between -- one on each side.
                 Item {
                     width: 1
-                    height: Math.max(0, Theme.popoutHeaderGap - Theme.spacingM)
+                    height: Math.max(0, Theme.popoutHeaderGap - Theme.spacingM * 2)
                 }
 
                 VpnDetailContent {

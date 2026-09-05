@@ -599,15 +599,20 @@ def cmd_mercury(argv: List[str]) -> int:
         # two it is rather than claiming the receipt is already filed.
         pre_status, pre_body = request("GET", f"/transaction/{urllib.parse.quote(tx_id)}")
         if pre_status != 200:
-            return fail(_mercury_reason("could not check for an existing receipt",
+            return fail(_mercury_reason("could not check for an existing attachment",
                                         pre_body, pre_status),
                         detail=_mercury_error_text(pre_body, pre_status),
                         status=pre_status, transactionId=tx_id)
         pre_data = _mercury_json(pre_body) or {}
         pre_tx = pre_data.get("transaction") or pre_data
         pre_atts = pre_tx.get("attachments") if isinstance(pre_tx, dict) else None
-        if _mercury_has_receipt(pre_atts):
-            return fail("a receipt is already attached to this transaction",
+        # ANY attachment blocks, not just a receipt-typed one. The widget calls
+        # a row documented when it carries any attachment -- Mercury files some
+        # invoices as `other` -- so a gate that only counted receipts would let
+        # a stale snapshot file a second copy of a document already there, and
+        # there is no endpoint to remove it.
+        if isinstance(pre_atts, list) and pre_atts:
+            return fail("this transaction already has an attachment",
                         transactionId=tx_id, already=True)
 
     try:
