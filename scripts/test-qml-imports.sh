@@ -90,33 +90,33 @@ else
   fail "the import silences it"
 fi
 
-# --- must fail: every position a type can appear in --------------------------
-# One control, because the scan is now one rule: an uppercase name before `{`
-# unless a `.` or a word character precedes it. These four forms were four
-# separate misses while it was a list of allowed positions -- a property
-# binding, a delegate binding, an inline list, and a child sharing its
-# parent's line -- and each is ordinary QML that fails at runtime.
-seed positions
-cat > "$work/positions/quickshell/vshell/Widgets/Host.qml" <<'QML'
-import QtQuick
-
-Item {
-    property Component page: SettingsChoiceRow { objectName: "binding" }
-
-    ListView { delegate: SettingsChoiceRow { objectName: "delegate" } }
-
-    children: [ SettingsChoiceRow {}, SettingsChoiceRow {} ]
-
-    Item { SettingsChoiceRow { objectName: "inline child" } }
-}
-QML
-if out="$(run_guard positions)"; then
-  fail "a type is reported wherever it appears"
-elif ! grep -q 'SettingsChoiceRow' <<<"$out"; then
-  fail "the report names the type it could not reach"
-else
-  ok "a type is reported wherever it appears"
-fi
+# --- must fail: each position a type can appear in ---------------------------
+# One assertion per form, not one fixture holding all four: a single fixture
+# passes as soon as the guard catches ANY of them, so a regression to a
+# position-limited scanner could miss two and still look green. The loop is
+# only to share the boilerplate.
+#
+# These were four separate misses while the scanner was a list of allowed
+# positions. Each is ordinary QML that fails at runtime.
+for form in binding delegate list child; do
+  case "$form" in
+    binding)  body='    property Component page: SettingsChoiceRow { objectName: "x" }' ;;
+    delegate) body='    ListView { delegate: SettingsChoiceRow { objectName: "x" } }' ;;
+    list)     body='    children: [ SettingsChoiceRow {}, SettingsChoiceRow {} ]' ;;
+    child)    body='    Item { SettingsChoiceRow { objectName: "x" } }' ;;
+  esac
+  name="position_$form"
+  seed "$name"
+  printf 'import QtQuick\n\nItem {\n%s\n}\n' "$body" \
+    > "$work/$name/quickshell/vshell/Widgets/Host.qml"
+  if out="$(run_guard "$name")"; then
+    fail "a type in a $form position is reported"
+  elif ! grep -q 'SettingsChoiceRow' <<<"$out"; then
+    fail "the $form report names the type it could not reach"
+  else
+    ok "a type in a $form position is reported"
+  fi
+done
 
 # --- must fail: an aliased import does not make a bare name visible ----------
 # `import qs.X as W` puts the module behind `W.`, so a bare name in that file
@@ -201,12 +201,15 @@ else
   ok "a commented-out import does not grant visibility"
 fi
 
-# --- must pass: a grouped property is not an instantiation -------------------
-# `anchors.fill:` and `font { ... }` must not be read as types, or the scan
-# would report a name for every styling block in the tree.
+# --- must pass: a name a dot precedes is not an instantiation ----------------
+# `font { }` is a grouped property, `Behavior on x { }` an on-binding, and
+# `W.SettingsChoiceRow { }` the qualified form an aliased import provides.
+# Reading any of them as a type would report a name for every styling block in
+# the tree.
 seed grouped_property
 cat > "$work/grouped_property/quickshell/vshell/Widgets/Grouped.qml" <<'QML'
 import QtQuick
+import qs.Modules.Settings.Widgets as W
 
 Text {
     font {
@@ -216,12 +219,16 @@ Text {
     Behavior on opacity {
         NumberAnimation {}
     }
+
+    W.SettingsChoiceRow {
+        objectName: "qualified"
+    }
 }
 QML
 if run_guard grouped_property >/dev/null; then
-  ok "a grouped property and an on-binding are not read as types"
+  ok "a dot before a name keeps it from being read as a type"
 else
-  fail "a grouped property and an on-binding are not read as types"
+  fail "a dot before a name keeps it from being read as a type"
 fi
 
 # --- must pass: a sibling in the same directory needs no import -------------
