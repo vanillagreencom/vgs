@@ -17,7 +17,7 @@ QML draws the shell and coordinates services. A service owns long-lived state; a
 - Plugin-backed properties remain bindings. Setters persist through the plugin service; dependent work responds to its change notification. See the plugin service implementations under `Modules/Plugins/`.
 - Destructive pill actions require a click origin; unspecified origins are IPC calls. `scripts/test-pill-hover-safety.js` checks the shared dispatch and protected actions.
 - Launcher selection follows pointer movement only while its hover gate is armed. `scripts/test-launcher-hover-latch.js` checks asynchronous result replacement.
-- Provider replies carry their own identity and source-scoped state is cleared before reuse. `scripts/test-ai-usage-provider.js` and `scripts/test-ai-usage-lifecycle.js` cover the usage widget.
+- Provider replies carry their own identity and source-scoped state is cleared before reuse. `scripts/test-ai-usage-logic.js` and `scripts/test-ai-usage-lifecycle.js` cover the usage widget.
 
 ## Decisions
 

@@ -213,7 +213,7 @@ module.exports = { regionOf, evaluateMarked, guardChild };
 
 // Expose guard internals for direct self-tests. Run those tests outside guardChild so
 // a broken guard exit path cannot conceal their failures.
-// qml-region-selftest.js tests termination; qml-region-wiring-selftest.js tests role and deadline handling;
+// qml-region-selftest.js tests termination, role and deadline handling;
 // qml-region-testkit-selftest.js tests fixture setup and cleanup.
 module.exports.internals = {
     CHILD_ARGV_MARKER, CHILD_DEADLINE_GRACE_MS, CHILD_TIMEOUT_DEFAULT_MS, MAX_TIMER_MS,
