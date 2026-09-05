@@ -841,10 +841,6 @@ nickname-candidates = [
     "Scout-Vector",
 ]
 
-# Codex tpm: the catalog pins the retired gpt-5.6-sol (kendex #2182); drop after the fix lands.
-[agent-frontmatter.codex.tpm]
-model = "gpt-6-astra"
-
 [agent-frontmatter.opencode.generalist]
 color = "#22c55e"
 deny-tools = [

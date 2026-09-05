@@ -13,7 +13,9 @@ on:
   # Merge groups need their own required-check result to enter the queue.
   merge_group:
     types: [checks_requested]
-  # Post-merge check on main: without it a red check on main persists unnoticed.
+  # Post-merge check on main. A merge that bypasses the queue (the ruleset
+  # allows it) lands a tree no other run judged; without this a red check on
+  # main persists unnoticed.
   push:
     branches: [main]
 
@@ -64,12 +66,24 @@ jobs:
           REPOSITORY: ${{ github.repository }}
         run: git clone --depth 1 --single-branch --branch "$DEFAULT_BRANCH" "https://github.com/$REPOSITORY.git" "$RUNNER_TEMP/vgs-bot-policy"
 
+      # The default-branch checker runs when its package copy is byte-identical to
+      # the candidate's. A pull request that upgrades the package renders what the
+      # older checker cannot reproduce, so the candidate's copy runs with a warning
+      # naming both versions (kendex #2187). The review gate's policy paths keep
+      # the upgrade honest: a push touching the package invalidates prior evidence.
       - name: Bot instructions
-        working-directory: ${{ runner.temp }}/vgs-bot-policy
-        run: >-
-          .agents/skills/bot-instructions/scripts/bot-instructions check
-          --repo "$GITHUB_WORKSPACE"
-          --spec "$GITHUB_WORKSPACE/.agents/skills/bot-instructions"
+        run: |
+          set -euo pipefail
+          package=.agents/skills/bot-instructions
+          trusted="$RUNNER_TEMP/vgs-bot-policy"
+          version() { grep -m1 -oE '^  version: "[^"]*"' "$1/$package/SKILL.md" | cut -d'"' -f2 || echo unknown; }
+          if diff -r "$trusted/$package" "$GITHUB_WORKSPACE/$package" >/dev/null; then
+            checker="$trusted"
+          else
+            checker="$GITHUB_WORKSPACE"
+            echo "::warning::bot-instructions package differs from the default branch ($(version "$trusted") there, $(version "$GITHUB_WORKSPACE") here); running the candidate's checker (kendex #2187)"
+          fi
+          (cd "$checker" && .agents/skills/bot-instructions/scripts/bot-instructions check --repo "$GITHUB_WORKSPACE" --spec "$GITHUB_WORKSPACE/.agents/skills/bot-instructions")
 
       # Run text checks before installing the Go and Qt toolchains.
       - name: Naming guard
@@ -99,6 +113,11 @@ jobs:
       # tracked file each enabled lane names, markdown references included.
       - name: Growth guards
         run: .agents/skills/growth-guards/scripts/growth-guards all
+
+      # The batch runs byte-ceiling in staged scope, which is empty on a clean
+      # checkout; judge the files this change adds or grows against main.
+      - name: Byte ceiling
+        run: .agents/skills/growth-guards/scripts/byte-ceiling --base origin/main
 
       # A clean checkout has no working-tree diff. Compare the event range so CI
       # checks the whitespace introduced by the change.
