@@ -103,15 +103,12 @@ function qmlSequence(values) {
     return sequence;
 }
 
-function appSearchRows(apps, query, includeActions = false, limit = 10) {
+function appSearchRows(apps, query, includeActions = false, limit = 10, usageForApp = null) {
     return appSearch.applicationSearchResultsFor(apps.map(app => ({
         app: app,
         fields: appSearch.applicationSearchFields(app),
-        usage: app.usage || {
-            frecency: 0,
-            daysSinceUsed: 999999
-        }
-    })), query, includeActions, limit);
+        usage: app.usage
+    })), query, includeActions, limit, usageForApp);
 }
 
 // Bound a Python function at the next top-level def. Unbounded slices can borrow
@@ -204,28 +201,52 @@ test("application relevance admits strong fields and rejects secondary-only matc
         }
     ], "opencode").map(row => row.app.name), ["OpenCode"],
         "the application result builder drops secondary-only rows before ranking");
+
+    const usageLookups = [];
+    assert.deepEqual(appSearchRows([
+        {
+            name: "Terminal",
+            comment: "OpenCode coding agent",
+            id: "terminal.desktop"
+        },
+        {
+            name: "OpenCode",
+            id: "opencode.desktop"
+        }
+    ], "opencode", false, 10, app => {
+        usageLookups.push(app.name);
+        return {
+            frecency: app.name === "OpenCode" ? 25 : 999999,
+            daysSinceUsed: app.name === "OpenCode" ? 2 : 0
+        };
+    }).map(row => row.app.name), ["OpenCode"],
+        "usage is looked up through the result builder only for admitted applications");
+    assert.deepEqual(usageLookups, ["OpenCode"],
+        "a rejected application does not pay a usage lookup");
+
+    const actionRows = appSearchRows([
+        {
+            name: "Terminal",
+            id: "terminal.desktop",
+            actions: [
+                { name: "OpenCode workspace", icon: "run" },
+                { name: "", icon: "blank" }
+            ]
+        }
+    ], "opencode", true);
+    assert.deepEqual(actionRows.map(row => ({
+        name: row.app.name,
+        isAction: !!row.app.isAction
+    })), [{ name: "OpenCode workspace", isAction: true }],
+        "action search returns the matching action row and rejects the empty-name action");
 });
 
-test("searchApplicationResults keeps the empty-query browse path scored", () => {
+test("searchApplicationResults stays a thin adapter to the executable result builder", () => {
     const q = qmlSource(appSearchSource, "AppSearchService.qml");
-    q.requires(q.body("searchApplicationResults"), "searchApplicationResults()", [
-        ["const queryContext = searchQueryContext(query);",
-            "whitespace-only input must follow the empty-query browse path"],
-        ["const visibleItems = getVisibleSearchItems();",
-            "visible application search fields are built once for a search"],
-        ["if (queryContext.empty)",
-            "the browse check reads the normalized query, not the raw string"],
-        ["return applicationSearchResultsFor(visibleItems, queryContext, false);",
-            "the empty-query path uses the shared result builder"],
-        ["return applicationSearchResultsFor(searchItems, queryContext, SessionData.searchAppActions, maxResults);",
-            "the typed-query path uses the same builder that the executable fixtures cover"]
-    ]);
-    q.requires(q.body("applicationSearchResultsFor"), "applicationSearchResultsFor()", [
-        ["if (!relevance.admitted || relevance.score <= 0)",
-            "a score alone cannot admit a row"],
-        ["return results.slice(0, limit);",
-            "the non-empty search result list is capped after sorting"]
-    ]);
+    assert.equal(qmlSource.flat(stripComments(q.body("searchApplicationResults"))),
+        qmlSource.flat(`{
+        return applicationSearchResultsFor(getVisibleSearchItems(), searchQueryContext(query), SessionData.searchAppActions, maxResults, calculateFrecency);
+    }`), "searchApplicationResults stays a thin adapter to the executable result builder");
 });
 
 // Set declined where the program derives it. A searchable query with a missing or checking

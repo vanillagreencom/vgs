@@ -862,11 +862,19 @@ Singleton {
         return item && item.app ? item.app : item;
     }
 
-    function appUsageFromSearchItem(item) {
-        return item && item.usage ? item.usage : {
+    function defaultAppUsage() {
+        return {
             frecency: 0,
             daysSinceUsed: 999999
         };
+    }
+
+    function appUsageFromSearchItem(item, app, usageForApp) {
+        if (item && item.usage)
+            return item.usage;
+        if (usageForApp)
+            return usageForApp(app);
+        return defaultAppUsage();
     }
 
     function applicationActionResultsFor(appItems, query) {
@@ -901,7 +909,7 @@ Singleton {
         return results;
     }
 
-    function applicationSearchResultsFor(appItems, query, includeActions, limit) {
+    function applicationSearchResultsFor(appItems, query, includeActions, limit, usageForApp) {
         const queryContext = ensureSearchQueryContext(query);
         const items = appItems || [];
         if (queryContext.empty) {
@@ -922,7 +930,7 @@ Singleton {
             const relevance = textRelevanceFromFields(item?.fields || applicationSearchFields(app), queryContext);
             if (!relevance.admitted || relevance.score <= 0)
                 continue;
-            const usage = appUsageFromSearchItem(item);
+            const usage = appUsageFromSearchItem(item, app, usageForApp);
             results.push({
                 app: app,
                 score: applicationFinalScore(relevance.score, usage.frecency || 0, usage.daysSinceUsed || 999999),
@@ -988,24 +996,8 @@ Singleton {
     }
 
     function searchApplicationResults(query) {
-        const queryContext = searchQueryContext(query);
-        const visibleItems = getVisibleSearchItems();
-        if (queryContext.empty)
-            return applicationSearchResultsFor(visibleItems, queryContext, false);
-        if (applications.length === 0)
-            return [];
-
-        const searchItems = [];
-        for (let i = 0; i < visibleItems.length; i++) {
-            const app = appFromSearchItem(visibleItems[i]);
-            searchItems.push({
-                "app": app,
-                "fields": visibleItems[i].fields,
-                "usage": calculateFrecency(app)
-            });
-        }
-
-        return applicationSearchResultsFor(searchItems, queryContext, SessionData.searchAppActions, maxResults);
+        return applicationSearchResultsFor(getVisibleSearchItems(), searchQueryContext(query),
+            SessionData.searchAppActions, maxResults, calculateFrecency);
     }
 
     function searchApplications(query) {
