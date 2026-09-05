@@ -197,6 +197,11 @@ VgsPopout {
 
                 Item {
                     id: statsContainer
+                    // This popout builds its own header rather than using
+                    // PopoutComponent, so it applies the shared gap under a
+                    // title by hand: the margin makes up the difference
+                    // between it and the spacing this column already provides.
+                    Layout.topMargin: Math.max(0, Theme.popoutHeaderGap - Theme.spacingS)
                     Layout.fillWidth: true
                     Layout.preferredHeight: Math.max(leftInfo.height, gaugesRow.height) + Theme.spacingS
 

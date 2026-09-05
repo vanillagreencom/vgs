@@ -36,7 +36,16 @@ VgsPopout {
         return (bps / (1024 * 1024 * 1024)).toFixed(1) + " GB/s";
     }
 
-    popupWidth: Math.round(Theme.fontSizeMedium * 34)
+    // Wide enough for the table, always. The fixed multiple below was the
+    // width before, and it cut the last column off; the view reports what its
+    // columns actually need and this takes whichever is larger, so the popout
+    // cannot be narrower than its own contents at any font size.
+    readonly property real chromeWidth: Theme.popoutPadding * 2 + Theme.spacingS * 2
+    // Reported UP by the view rather than read down into it: the content lives
+    // in a Component, so its ids do not resolve from here.
+    property real tableWidth: 0
+    popupWidth: Math.round(Math.max(Theme.fontSizeMedium * 34,
+                                    networkUsagePopout.tableWidth + networkUsagePopout.chromeWidth))
     popupHeight: Math.round(Theme.fontSizeMedium * 34)
     triggerWidth: 55
     positioning: ""
@@ -139,9 +148,13 @@ VgsPopout {
                     }
                 }
 
-
+                // Live totals. This popout builds its own header, so it applies
+                // the shared title gap by hand: the margin makes up what this
+                // column's spacing does not already give.
                 RowLayout {
                     Layout.fillWidth: true
+                    Layout.topMargin: Math.max(0, Theme.popoutHeaderGap - Theme.spacingS)
+                    Layout.bottomMargin: Theme.spacingXXS
                     spacing: Theme.spacingL
 
                     Row {
@@ -199,9 +212,13 @@ VgsPopout {
                     clip: true
 
                     NetworkUsageView {
+                        id: usageView
                         anchors.fill: parent
                         anchors.margins: Theme.spacingS
                         searchText: networkUsagePopout.searchText
+
+                        onNaturalWidthChanged: networkUsagePopout.tableWidth = usageView.naturalWidth
+                        Component.onCompleted: networkUsagePopout.tableWidth = usageView.naturalWidth
                     }
                 }
             }

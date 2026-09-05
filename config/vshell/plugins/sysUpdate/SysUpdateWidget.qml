@@ -30,18 +30,11 @@ PluginComponent {
     readonly property int totalCount: root.repoCount + root.aurCount + root.toolsCount
     readonly property bool useBackend: SystemUpdateService.sysupdateAvailable
 
-    // The CLI stores local check time and helper checkedAt when available.
-    // The backend path reads service timestamps.
-    property double lastCheckedAtMs: 0
-    property int helperCheckedAt: 0
     property string cliSourceLabel: "checkupdates + paru -Qua"
 
-    // Last-check time in milliseconds; zero means unknown.
-    readonly property double lastCheckedMs: root.useBackend
-        ? (SystemUpdateService.lastCheckUnix > 0 ? SystemUpdateService.lastCheckUnix * 1000 : 0)
-        : (root.helperCheckedAt > 0 ? root.helperCheckedAt * 1000 : root.lastCheckedAtMs)
-
-    // Hide the source row until a data source is known.
+    // Hide the source row until a data source is known. It is the only thing
+    // left in that footer: the refresh control moved to the shared header slot
+    // and the "last checked" stamp beside it went with it.
     readonly property string sourceLabel: root.useBackend
         ? ((SystemUpdateService.backends || []).map(b => b.displayName).filter(Boolean).join(", "))
         : root.cliSourceLabel
@@ -193,11 +186,6 @@ PluginComponent {
         root.loading = false;
         try {
             const d = JSON.parse((txt || "").trim());
-            // A parsed result (ok or structured error) means a real check happened;
-            // prefer the helper's own checkedAt when present so the footer reflects
-            // this check even on the error path.
-            root.lastCheckedAtMs = Date.now();
-            root.helperCheckedAt = parseInt(d.checkedAt) || 0;
             if (d.ok === false) {
                 root.errorText = d.error || "update backend unavailable";
                 root.repoCount = 0;
@@ -359,6 +347,17 @@ PluginComponent {
             headerText: "System Updates"
             detailsText: root.loading ? "Checking…" : (root.errorText.length > 0 ? root.errorText : (root.totalCount > 0 ? (root.totalCount + " available  (" + root.repoCount + " repo - " + root.aurCount + " aur" + (root.toolsAvailable ? " - " + (root.toolsError ? "tools ?" : root.toolsCount + " tools") : "") + ")") : (root.toolsError ? "Up to date (tools check failed)" : "")))
             showCloseButton: true
+
+            // Bar -> Widgets, where a bundled plugin's settings live.
+            configurable: true
+            onSettingsRequested: PopoutService.openSettingsWithTab("bar_widgets")
+
+            // The shared header slot. This control used to sit in the footer
+            // beside a "Last checked" line; it is in the header now, where
+            // every other bar flyout keeps it.
+            refreshable: true
+            refreshBusy: root.refreshBusy
+            onRefreshRequested: root.manualRefresh()
 
             Column {
                 id: contentCol
@@ -629,61 +628,14 @@ PluginComponent {
                         color: Theme.surfaceVariantText
                     }
 
-                    Item {
+                    // Which tool answered, and nothing else.
+                    StyledText {
                         width: parent.width
-                        height: Math.max(footerInfo.implicitHeight, refreshBtn.height)
-
-                        Column {
-                            id: footerInfo
-                            anchors.left: parent.left
-                            anchors.right: refreshBtn.left
-                            anchors.rightMargin: Theme.spacingS
-                            anchors.verticalCenter: parent.verticalCenter
-                            spacing: 1
-
-                            StyledText {
-                                width: parent.width
-                                text: root.refreshBusy ? "Checking…" : ("Last checked: " + TimeUtils.agoFromMs(root.lastCheckedMs))
-                                font.pixelSize: Theme.fontSizeSmall - 1
-                                color: Theme.surfaceVariantText
-                                elide: Text.ElideRight
-                            }
-
-                            StyledText {
-                                width: parent.width
-                                visible: root.sourceLabel.length > 0
-                                text: "Source: " + root.sourceLabel
-                                font.pixelSize: Theme.fontSizeSmall - 1
-                                color: Theme.surfaceVariantText
-                                elide: Text.ElideRight
-                            }
-                        }
-
-                        VgsActionButton {
-                            id: refreshBtn
-                            anchors.right: parent.right
-                            anchors.verticalCenter: parent.verticalCenter
-                            buttonSize: 28
-                            iconName: "refresh"
-                            iconSize: 18
-                            iconColor: Theme.surfaceText
-                            tooltipText: "Refresh"
-                            enabled: !root.refreshBusy
-                            opacity: enabled ? 1.0 : 0.5
-                            onClicked: root.manualRefresh()
-
-                            RotationAnimator on rotation {
-                                from: 0
-                                to: 360
-                                duration: 1000
-                                loops: Animation.Infinite
-                                running: root.refreshBusy
-                                onRunningChanged: {
-                                    if (!running)
-                                        refreshBtn.rotation = 0;
-                                }
-                            }
-                        }
+                        visible: root.sourceLabel.length > 0
+                        text: "Source: " + root.sourceLabel
+                        font.pixelSize: Theme.fontSizeSmall - 1
+                        color: Theme.surfaceVariantText
+                        elide: Text.ElideRight
                     }
                 }
             }

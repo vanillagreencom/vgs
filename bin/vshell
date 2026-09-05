@@ -341,7 +341,7 @@ case "${1:-run}" in
   status)
     exec systemctl --user status vshell.service --no-pager
     ;;
-  theme|fonts|deps|notifications|remote-desktop|update|mise|agent|dev-env|app|ai-usage|ai|capture|screenshot|screenrecording|recording|ocr|cl|clipboard|dl|download|trash|color|keybinds|config|scratchpad|compositor|battery|blur|brightness|auth|greeter|sudo-toggle|launcher-search|terminal|instances)
+  theme|fonts|deps|notifications|remote-desktop|update|mise|agent|dev-env|app|ai-usage|ai|mercury|capture|screenshot|screenrecording|recording|ocr|cl|clipboard|dl|download|trash|color|keybinds|config|scratchpad|compositor|battery|blur|brightness|auth|greeter|sudo-toggle|launcher-search|terminal|instances)
     exec "$helper" "$@"
     ;;
   screensaver)
@@ -430,6 +430,7 @@ Usage:
   vshell dev-env list|install <id>|remove <id>
   vshell app uninstall <desktop-id>
   vshell ai-usage <claude|codex>
+  vshell mercury snapshot [--days N]|check <txId>|upload <txId> <file>|doctor|token-status|set-token|clear-token
   vshell capture screenshot|screenrecording|text [...]
   vshell screensaver launch|stop|transcode <image> <output>   (decorative ascii screensaver)
   vshell cl copy <text>

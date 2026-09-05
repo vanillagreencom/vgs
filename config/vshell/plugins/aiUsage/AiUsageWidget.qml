@@ -593,32 +593,17 @@ PluginComponent {
             }
             showCloseButton: true
 
-            // Reuse the header action position for disclosure and back navigation;
-            // PopoutComponent has no separate leading action slot.
-            headerActions: Component {
-                Rectangle {
-                    width: 32
-                    height: 32
-                    radius: Theme.controlRadius
-                    color: gearArea.containsMouse ? Theme.surfaceContainerHighest
-                                                  : Theme.withAlpha(Theme.surfaceContainerHighest, 0)
+            // The shared header slot. This surface could always refresh — the
+            // popout re-reads on open — but it offered no way to ask for one.
+            refreshable: !popout.onSettings
+            refreshBusy: root.pending
+            onRefreshRequested: root.refresh()
 
-                    VgsIcon {
-                        anchors.centerIn: parent
-                        name: popout.onSettings ? "arrow_back" : "tune"
-                        size: Theme.iconSize - 4
-                        color: popout.onSettings ? Theme.primary : Theme.surfaceText
-                    }
-
-                    MouseArea {
-                        id: gearArea
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: popout.page = popout.onSettings ? 0 : 1
-                    }
-                }
-            }
+            // The shared header slot. It was a hand-drawn copy of this, which
+            // PopoutComponent now owns for every flyout.
+            configurable: true
+            settingsBack: popout.onSettings
+            onSettingsRequested: popout.page = popout.onSettings ? 0 : 1
 
             // The viewport follows the active page height so settings replace the
             // usage content instead of increasing its total height.

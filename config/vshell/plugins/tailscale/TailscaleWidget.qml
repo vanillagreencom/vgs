@@ -224,6 +224,15 @@ PluginComponent {
             detailsText: root.awaiting ? "Checking…" : (root.reacquiring ? "Reconnecting…" : (root.connected ? (root.tailnetName || "Connected") : (root.starting ? "Starting…" : (root.backendState === "NeedsLogin" ? "Needs login" : "Disconnected"))))
             showCloseButton: true
 
+            // Re-reads on open; this is how to ask for one.
+            refreshable: true
+            refreshBusy: root.awaiting || root.connecting
+            onRefreshRequested: TailscaleService.refreshStatus()
+
+            // Bar -> Widgets, where a bundled plugin's settings live.
+            configurable: true
+            onSettingsRequested: PopoutService.openSettingsWithTab("bar_widgets")
+
             // PluginPopout assigns itself here when it loads this content.
             property var parentPopout: null
 
