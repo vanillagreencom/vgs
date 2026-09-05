@@ -408,6 +408,7 @@ PluginComponent {
         return result;
     }
 
+    // BEGIN LAUNCHER MENU SORT DECISION
     function compareAlphabetically(left, right) {
         const leftTitle = String(left.title || "").toLocaleLowerCase();
         const rightTitle = String(right.title || "").toLocaleLowerCase();
@@ -417,11 +418,20 @@ PluginComponent {
         return String(left.id || "").localeCompare(String(right.id || ""));
     }
 
+    function allResultGroup(item) {
+        return item?.kind === "file" ? 1 : 0;
+    }
+
     // `grouped` applies an item's `group` before the alphabet, so a category's
     // own entries stay above agents, and agents above environments; the All
     // list and ranked results never use it.
-    function sortRanked(items, alphabetical, grouped) {
+    function sortRanked(items, alphabetical, grouped, filesLast) {
         items.sort((left, right) => {
+            if (filesLast) {
+                const allGroupDifference = allResultGroup(left) - allResultGroup(right);
+                if (allGroupDifference !== 0)
+                    return allGroupDifference;
+            }
             if (alphabetical && grouped) {
                 const groupDifference = (left.group || 0) - (right.group || 0);
                 if (groupDifference !== 0)
@@ -436,6 +446,7 @@ PluginComponent {
         });
         return items;
     }
+    // END LAUNCHER MENU SORT DECISION
 
     function buildImmediateAllItems(trimmed) {
         const q = normalize(trimmed);
@@ -465,7 +476,7 @@ PluginComponent {
                 }, ""));
             }
         }
-        sortRanked(next, !q);
+        sortRanked(next, !q, false, true);
         return next.slice(0, 120);
     }
 
@@ -494,7 +505,7 @@ PluginComponent {
                 for (let i = 0; i < hits.length; i++)
                     merged.push(fileItem(hits[i], normalize(trimmed)));
             }
-            sortRanked(merged);
+            sortRanked(merged, false, false, true);
             visibleItems = merged.slice(0, 160);
             selectedItemIndex = 0;
             filePreviewRevealed = visibleItems.length > 0 && visibleItems[0]?.kind === "file";
