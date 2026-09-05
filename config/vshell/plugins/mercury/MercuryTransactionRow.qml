@@ -176,10 +176,17 @@ Item {
                 // checklist at a glance, without anyone having to tell the two
                 // glyphs apart.
                 iconColor: root.receipt.documented ? Theme.success : Theme.surfaceVariantText
-                enabled: !root.locked
+                // Documented with nothing to open is a real state, briefly: an
+                // upload just landed and the authoritative re-read has not, or
+                // the helper's own flag is holding the row up while the list is
+                // unreadable. The row says so rather than offering a click that
+                // would do nothing.
+                enabled: !root.locked && (!root.receipt.documented || root.receipt.url.length > 0)
                 tooltipText: {
                     if (!root.receipt.documented)
                         return I18n.tr("Attach a receipt");
+                    if (root.receipt.url.length === 0)
+                        return I18n.tr("Receipt filed; still loading");
                     return root.receipt.count > 1
                         ? I18n.tr("Open the first of %1 attachments").arg(root.receipt.count)
                         : I18n.tr("Open the attachment");

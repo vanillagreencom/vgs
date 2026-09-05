@@ -48,18 +48,28 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 QML_ROOTS = ("quickshell/vshell", "config/vshell/plugins")
 
-# `Name {` wherever a QML value can begin: the start of a statement, after the
-# `:` of an object binding, and after the `[` or `,` of a list binding. Each
-# was found missing in turn -- a line-start anchor alone missed
-# `delegate: MissingType {`, and adding the colon still missed
-# `children: [ A {}, B {} ]` written on one line. All of them are ordinary QML
-# that fails at runtime exactly like a bare declaration.
+# `Name {` ANYWHERE, minus the two places it is not an instantiation.
 #
-# The leading character class is what keeps it honest: a name is taken only
-# where a value may legally begin, so `Foo.Bar {` (a grouped property or an
-# attached type), `on Bar {` and a name inside an expression are left alone.
-INSTANTIATION = re.compile(r"(?:^|[:,\[])\s*([A-Z][A-Za-z0-9_]*)\s*\{", re.M)
-IMPORT = re.compile(r"^\s*import\s+(qs(?:\.[A-Za-z0-9_]+)*)", re.M)
+# This started as a list of positions where a QML value may begin -- line
+# start, then also after a binding `:`, then also after a list `[` or `,` --
+# and each revision was found incomplete by someone reading it rather than by
+# the guard itself. Enumerating the legal positions of a language in a regular
+# expression is a losing shape: every form left out is a silent miss, and a
+# guard that misses silently is worth less than no guard.
+#
+# Inverted, the rule is short enough to hold in the head. A type name is an
+# uppercase identifier followed by `{`, except when it is preceded by:
+#
+#   `.`  -- `anchors.fill {`, a grouped property or an attached type;
+#   a word character -- part of a longer identifier, not a new one.
+#
+# Everything else is caught, including forms nobody has thought of yet, which
+# is the point.
+INSTANTIATION = re.compile(r"(?<![.\w])([A-Z][A-Za-z0-9_]*)\s*\{")
+# An UNALIASED qs import only. `import qs.Widgets as W` puts the module behind
+# `W.`, so a bare `VgsButton {` in that file is still unresolved, and treating
+# the alias as plain visibility would let exactly that error through.
+IMPORT = re.compile(r"^\s*import\s+(qs(?:\.[A-Za-z0-9_]+)*)\s*$", re.M)
 # `component Foo: Bar {` declares a type inside the file that uses it.
 INLINE_COMPONENT = re.compile(r"^\s*component\s+([A-Z][A-Za-z0-9_]*)\s*:", re.M)
 
@@ -105,6 +115,12 @@ def qml_import_paths() -> list[Path]:
         pass
     roots.extend(Path(p) for p in ("/usr/lib/qt6/qml", "/usr/lib/qml"))
     return [p for p in roots if p.is_dir()]
+
+
+def module_present(module: str, roots: list[Path]) -> bool:
+    """Whether an installed module directory exists to be read."""
+    relative = Path(*module.split("."))
+    return any((root / relative).is_dir() for root in roots)
 
 
 def installed_types(modules: set[str], roots: list[Path]) -> set[str]:
@@ -184,6 +200,12 @@ def main() -> int:
     stale: list[str] = []
     if roots:
         for (rel, name), module in sorted(declared.items()):
+            # Only when the module is actually present. A partial Qt install --
+            # or a module this machine simply does not ship -- must read as
+            # "cannot check", not as "the claim is false": failing there would
+            # break correct code on a machine that merely lacks a package.
+            if not module_present(module, roots):
+                continue
             if name not in installed_types({module}, roots):
                 stale.append(f"{rel}: {name} is declared as coming from {module}, "
                              f"which no longer provides it")

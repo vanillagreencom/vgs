@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# Controls for scripts/check-qml-imports.py.
+# Controls for the SCAN in scripts/check-qml-imports.py: which QML forms it
+# recognises as instantiating a type, and which it correctly leaves alone.
+# Its sibling scripts/test-qml-import-collisions.sh covers the other half,
+# the declared-collision list that excuses a name two modules both provide.
 #
 # A guard that only ever passes proves nothing, and this one is a text scan
 # over a directory layout: it is exactly the kind of check that can be quietly
@@ -46,14 +49,6 @@ run_guard() {
   [[ -f "$work/$name/tools/qml-import-collisions.tsv" ]] \
     || printf '# file\ttype\tmodule\n' > "$work/$name/tools/qml-import-collisions.tsv"
   ( cd "$work/$name" && python3 scripts/check-qml-imports.py 2>&1 )
-}
-
-# Writes a collision row for a case before it runs.
-declare_collision() {
-  local name="$1" file="$2" type="$3" module="$4"
-  mkdir -p "$work/$name/tools"
-  printf '# file\ttype\tmodule\n%s\t%s\t%s\n' "$file" "$type" "$module" \
-    > "$work/$name/tools/qml-import-collisions.tsv"
 }
 
 # --- must fail: the defect this guard exists for -----------------------------
@@ -151,6 +146,58 @@ else
   ok "a type in an inline list binding is reported"
 fi
 
+# --- must fail: a child object on the same line as its parent's brace --------
+seed inline_child
+cat > "$work/inline_child/quickshell/vshell/Widgets/Inline.qml" <<'QML'
+import QtQuick
+
+Item { SettingsChoiceRow {} }
+QML
+if run_guard inline_child >/dev/null; then
+  fail "a child object after an opening brace is reported"
+else
+  ok "a child object after an opening brace is reported"
+fi
+
+# --- must fail: an aliased import does not make a bare name visible ----------
+# `import qs.X as W` puts the module behind `W.`, so a bare name in that file
+# is still unresolved. Treating the alias as plain visibility would let a real
+# error through.
+seed aliased_import
+cat > "$work/aliased_import/quickshell/vshell/Widgets/Aliased.qml" <<'QML'
+import QtQuick
+import qs.Modules.Settings.Widgets as W
+
+Item {
+    SettingsChoiceRow {
+        objectName: "bare"
+    }
+}
+QML
+if run_guard aliased_import >/dev/null; then
+  fail "an aliased import does not make a bare name visible"
+else
+  ok "an aliased import does not make a bare name visible"
+fi
+
+# --- must pass: the qualified form the alias does provide -------------------
+seed aliased_qualified
+cat > "$work/aliased_qualified/quickshell/vshell/Widgets/Aliased.qml" <<'QML'
+import QtQuick
+import qs.Modules.Settings.Widgets as W
+
+Item {
+    W.SettingsChoiceRow {
+        objectName: "qualified"
+    }
+}
+QML
+if run_guard aliased_qualified >/dev/null; then
+  ok "the qualified form an alias provides is not reported"
+else
+  fail "the qualified form an alias provides is not reported"
+fi
+
 # --- must pass: a grouped property is not an instantiation -------------------
 # `anchors.fill:` and `font { ... }` must not be read as types, or the scan
 # would report a name for every styling block in the tree.
@@ -243,83 +290,6 @@ if run_guard inline_component >/dev/null; then
   ok "an inline component is not reported against the file declaring it"
 else
   fail "an inline component is not reported against the file declaring it"
-fi
-
-# --- collisions: declared, undeclared, and mis-declared ---------------------
-# Quickshell.Wayland ships an IdleInhibitor, and so does Modules/Bar/Widgets.
-# Which one a file means is beyond a text scan, so it is declared -- this is
-# the live case in BarWindow.qml, and getting it wrong fails correct code.
-seed_collision() {
-  local name="$1"
-  seed "$name"
-  mkdir -p "$work/$name/quickshell/vshell/Modules/Bar/Widgets"
-  printf 'import QtQuick\nItem {}\n' \
-    > "$work/$name/quickshell/vshell/Modules/Bar/Widgets/IdleInhibitor.qml"
-  cat > "$work/$name/quickshell/vshell/Modules/Bar/BarWindow.qml" <<'QML'
-import QtQuick
-import Quickshell.Wayland
-
-Item {
-    IdleInhibitor {
-        enabled: true
-    }
-}
-QML
-}
-
-seed_collision collision_declared
-declare_collision collision_declared \
-  quickshell/vshell/Modules/Bar/BarWindow.qml IdleInhibitor Quickshell.Wayland
-if run_guard collision_declared >/dev/null; then
-  ok "a declared collision is honoured"
-else
-  fail "a declared collision is honoured"
-fi
-
-# Undeclared, the same tree is reported: the declaration is what excuses it,
-# not the mere existence of an outside module.
-seed_collision collision_undeclared
-if run_guard collision_undeclared >/dev/null; then
-  fail "an undeclared collision is still reported"
-else
-  ok "an undeclared collision is still reported"
-fi
-
-# A row naming a module that does not provide the type is a stale claim, and
-# only fails where a module tree is installed to check it against.
-if [[ -d /usr/lib/qt6/qml || -n "${QML2_IMPORT_PATH:-}" ]]; then
-  seed_collision collision_stale
-  declare_collision collision_stale \
-    quickshell/vshell/Modules/Bar/BarWindow.qml IdleInhibitor QtQuick.Controls
-  if out="$(run_guard collision_stale)"; then
-    fail "a declaration naming the wrong module is reported"
-  elif ! grep -q 'no longer provides' <<<"$out"; then
-    fail "the stale-declaration report says what is wrong"
-  else
-    ok "a declaration naming the wrong module is reported"
-  fi
-else
-  printf '  skip  stale-declaration case (no QML module tree to verify against)\n'
-fi
-
-# A row pointing at a file that does not exist would silently stop covering it.
-seed_collision collision_ghost
-declare_collision collision_ghost quickshell/vshell/Nope.qml IdleInhibitor Quickshell.Wayland
-if run_guard collision_ghost >/dev/null; then
-  fail "a row naming a file that does not exist is reported"
-else
-  ok "a row naming a file that does not exist is reported"
-fi
-
-# A malformed row is an error, not a skipped line.
-seed_collision collision_malformed
-mkdir -p "$work/collision_malformed/tools"
-printf '# file\ttype\tmodule\nquickshell/vshell/Modules/Bar/BarWindow.qml IdleInhibitor\n' \
-  > "$work/collision_malformed/tools/qml-import-collisions.tsv"
-if run_guard collision_malformed >/dev/null; then
-  fail "a malformed row is an error rather than a skipped line"
-else
-  ok "a malformed row is an error rather than a skipped line"
 fi
 
 # --- must pass: a Qt type this tree does not define is none of its business --
