@@ -148,7 +148,7 @@ REVIEW_GATE_API_ATTEMPTS = "1"
 REVIEW_GATE_API_RETRY_DELAY_SECONDS = "2"
 
 # Repository instruction files appended to the review prompt.
-SECOND_OPINION_REVIEW_INSTRUCTIONS = "AGENTS.md backend/AGENTS.md bin/AGENTS.md scripts/AGENTS.md themes/AGENTS.md quickshell/vshell/AGENTS.md config/vshell/AGENTS.md .github/workflows/AGENTS.md .github/copilot-instructions.md"
+SECOND_OPINION_REVIEW_INSTRUCTIONS = "AGENTS.md backend/AGENTS.md bin/AGENTS.md scripts/AGENTS.md themes/AGENTS.md quickshell/vshell/AGENTS.md config/vshell/AGENTS.md .github/workflows/AGENTS.md .github/instructions/*.instructions.md .github/copilot-instructions.md"
 
 # Seconds per brief-delivery verification pass on tmux handoff lanes.
 ORCH_TMUX_VERIFY_SECS = "15"
