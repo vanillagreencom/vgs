@@ -91,6 +91,20 @@ function accountIcon(account) {
     return "account_balance";
 }
 
+// Money that never left: failed, cancelled or reversed. There is no receipt to
+// chase for a charge that did not happen, and asking for one puts a row on the
+// outstanding list that can never be closed.
+function isVoid(tx) {
+    switch (String((tx && tx.status) || "").toLowerCase()) {
+    case "failed":
+    case "cancelled":
+    case "reversed":
+        return true;
+    default:
+        return false;
+    }
+}
+
 // Whether this line is money moving inside the organisation rather than money
 // spent. Two shapes count: a counterparty that is one of Mercury's own
 // products (a credit-card payment shows as "Mercury Credit"), and one that is
@@ -101,18 +115,32 @@ function accountIcon(account) {
 // to "Cursor" are both `other`, while the card charges that clearly do take a
 // receipt are `creditCardTransaction`. The counterparty is what actually says
 // whether the money left.
+// Whether a counterparty is Mercury's OWN name for something, rather than a
+// vendor whose name merely starts the same way. A word boundary is not enough:
+// "Mercury Checking ••7651" and "Mercury Checking Supplies Ltd" both put a
+// space after the prefix. What separates them is what Mercury writes next --
+// nothing, or the masked digits -- so that is the test.
+function startsAtBoundary(name, prefix) {
+    if (name === prefix)
+        return true;
+    if (name.indexOf(prefix) !== 0)
+        return false;
+    var rest = name.slice(prefix.length);
+    return rest.charAt(0) === "\u2022" || rest.indexOf(" \u2022") === 0;
+}
+
 function isInternalMovement(tx, accounts) {
     var name = String((tx && tx.counterparty) || "").trim().toLowerCase();
     if (name.length === 0)
         return false;
     for (var i = 0; i < MERCURY_INTERNAL_PREFIXES.length; i++) {
-        if (name.indexOf(MERCURY_INTERNAL_PREFIXES[i]) === 0)
+        if (startsAtBoundary(name, MERCURY_INTERNAL_PREFIXES[i]))
             return true;
     }
     var list = isArray(accounts) ? accounts : [];
     for (var j = 0; j < list.length; j++) {
         var own = String((list[j] && list[j].name) || "").trim().toLowerCase();
-        if (own.length > 0 && name.indexOf(own) === 0)
+        if (own.length > 0 && startsAtBoundary(name, own))
             return true;
     }
     return false;
@@ -204,7 +232,9 @@ function receiptState(tx, accounts) {
         // that is the document the user filed deliberately.
         url: receiptUrl !== "" ? receiptUrl : firstUrl,
         count: count,
-        uploadable: Number((tx && tx.amount) || 0) < 0 && !isInternalMovement(tx, accounts)
+        uploadable: Number((tx && tx.amount) || 0) < 0
+            && !isInternalMovement(tx, accounts)
+            && !isVoid(tx)
     };
 }
 

@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Layouts
 import Quickshell.Io
 import qs.Common
+import qs.Services
 import qs.Widgets
 
 import "MercuryLogic.js" as Logic
@@ -35,6 +36,17 @@ Column {
     spacing: Theme.spacingS
 
     Component.onCompleted: root.readTokenStatus()
+
+    // Both settings surfaces embed this panel, and each keeps its own copy of
+    // the source. Saving in one has to re-read in the other, or the settings
+    // application goes on saying "No key yet" after the popout saved one.
+    Connections {
+        target: PluginService
+        function onPluginDataChanged(changedPluginId) {
+            if (changedPluginId === "mercury")
+                root.readTokenStatus();
+        }
+    }
 
     function readTokenStatus() {
         if (!statusProc.running)

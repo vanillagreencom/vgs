@@ -380,7 +380,15 @@ Item {
             allowStacking: true
             parentPopout: pluginPopout
 
-            onFileSelected: path => root.fileChosen(decodeURI(String(path || "").replace(/^file:\/\//, "")))
+            // Only a file:// result is percent-encoded. The browser hands back
+            // plain local paths too, and decoding one of those turns a literal
+            // "%" in a filename into an escape and corrupts the path.
+            onFileSelected: path => {
+                const raw = String(path || "");
+                root.fileChosen(raw.indexOf("file://") === 0
+                    ? decodeURIComponent(raw.slice(7))
+                    : raw);
+            }
         }
     }
 }

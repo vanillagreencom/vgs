@@ -24,10 +24,10 @@ PluginComponent {
 
     // ---- settings (all non-secret, so ordinary plugin data) ----
     readonly property int days: Number(Opt.optionValue(Opt.daysOptions(), pluginData.days, "30"))
-    readonly property int refreshMs: {
-        const value = Math.round(Number(pluginData.refreshSeconds ?? 300));
-        return isFinite(value) && value >= 30 ? value * 1000 : 300000;
-    }
+    // Validated against the offered set, like the other two: a hand-edited
+    // settings file could otherwise ask for a one-second poll against a bank.
+    readonly property int refreshMs:
+        Number(Opt.optionValue(Opt.refreshOptions(), pluginData.refreshSeconds, "300")) * 1000
     // full | noCents | compact | hidden. Validated against the offered set, so
     // a hand-edited settings file cannot leave the bar rendering nothing with
     // no way to fix it from the UI.

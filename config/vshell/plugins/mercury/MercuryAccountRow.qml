@@ -43,11 +43,25 @@ Item {
                 copyProc.running = true;
         }
 
+        property bool sawProcess: false
+
         onStarted: {
+            copyProc.sawProcess = true;
             copyProc.write(String(root.account.accountNumber || ""));
             copyProc.stdinEnabled = false;
         }
+        onRunningChanged: {
+            // Qt reports nothing when the executable cannot be run, so without
+            // this a missing helper would fail silently and the user would
+            // paste whatever was in the clipboard before.
+            if (running || copyProc.sawProcess)
+                return;
+            copyProc.stdinEnabled = true;
+            ToastService.showError(I18n.tr("Could not copy the account number"),
+                                   I18n.tr("The vshell helper could not be run."), "", "mercury-copy");
+        }
         onExited: exitCode => {
+            copyProc.sawProcess = false;
             copyProc.stdinEnabled = true;
             if (exitCode === 0)
                 ToastService.showInfo(I18n.tr("Account number copied"),

@@ -8701,7 +8701,12 @@ def _mercury_multipart(att_type: str, file_path: Path) -> Tuple[bytes, str]:
     and rewrite the line endings Mercury's parser expects.
     """
     boundary = "vgsmercury" + str(time.time_ns())
-    file_name = file_path.name
+    # RFC 2183 filenames are quoted, so a name carrying a quote, a backslash or
+    # a newline would end the header early and hand Mercury a body it would
+    # read as something else. Percent-encoding those three is what curl does.
+    file_name = (file_path.name.replace("\\", "%5C")
+                 .replace('"', "%22")
+                 .replace("\r", "").replace("\n", ""))
     ctype = mimetypes.guess_type(file_name)[0] or "application/octet-stream"
     head = (f"--{boundary}\r\n"
             f"Content-Disposition: form-data; name=\"attachmentType\"\r\n\r\n"
@@ -8850,7 +8855,11 @@ def cmd_mercury(argv: List[str]) -> int:
                 continue
             return fail(f"unknown snapshot option: {flag}")
 
-        acct_status, acct_body = request("GET", f"/accounts?limit={limit}")
+        # A fixed, generous cap of its own: tying this to --limit meant an
+        # organisation with more accounts than the requested transaction count
+        # summed only some of them, and the bar showed a total that was simply
+        # wrong rather than obviously incomplete.
+        acct_status, acct_body = request("GET", "/accounts?limit=500")
         if acct_status != 200:
             return fail(_mercury_reason("could not read accounts", acct_body, acct_status),
                         detail=_mercury_error_text(acct_body, acct_status),

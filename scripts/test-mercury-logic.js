@@ -55,7 +55,7 @@ const logicSource = fs.readFileSync(LOGIC, "utf8");
 
 const F = evaluateMarked(logicSource, "MERCURY LOGIC", [
     "isArray", "snapshotIsUsable", "totalBalance", "accountIcon", "receiptState",
-    "isInternalMovement", "isEarnings", "transactionIcon", "outstandingReceipts",
+    "isInternalMovement", "startsAtBoundary", "isEarnings", "isVoid", "transactionIcon", "outstandingReceipts",
     "statusView", "pillState", "pillProblem", "fileIsUploadable", "shouldRefresh",
     "uploadOutcome", "snapshotError", "keySourceLabel", "dashboardUrl"
 ]);
@@ -198,6 +198,26 @@ assert.equal(F.isInternalMovement({ counterparty: "" }, OWN_ACCOUNTS), false,
     "a nameless counterparty is not evidence of an internal transfer");
 assert.equal(F.isInternalMovement({ counterparty: "mercury credit" }, []), true,
     "the internal-product names hold even before any account list has loaded");
+
+// An own-account name matches at a boundary, not as a bare prefix: a vendor
+// whose name merely starts the same way is somebody else.
+assert.equal(F.isInternalMovement({ counterparty: "Mercury Checking Supplies Ltd" }, OWN_ACCOUNTS),
+    false, "a vendor is not this organisation's account because the name starts alike");
+assert.equal(F.isInternalMovement({ counterparty: "Mercury Checking \u2022\u20227651" }, OWN_ACCOUNTS), true);
+
+// A charge that did not happen has no receipt to chase, and asking for one
+// puts a row on the outstanding list that can never be closed.
+assert.equal(F.isVoid({ status: "failed" }), true);
+assert.equal(F.isVoid({ status: "cancelled" }), true);
+assert.equal(F.isVoid({ status: "reversed" }), true);
+assert.equal(F.isVoid({ status: "sent" }), false);
+assert.equal(F.isVoid({ status: "pending" }), false,
+    "a pending charge still becomes real, so it keeps its receipt slot");
+assert.equal(F.isVoid({}), false);
+assert.equal(F.receiptState({ counterparty: "Blacksmith", amount: -20, status: "failed" },
+    OWN_ACCOUNTS).uploadable, false, "a failed charge is not offered an upload");
+assert.equal(F.receiptState({ counterparty: "Blacksmith", amount: -20, status: "sent" },
+    OWN_ACCOUNTS).uploadable, true);
 
 // ------------------------------------------------------- row kind icons -----
 // The glyph at the head of a row says what KIND of movement it is. Direction is
