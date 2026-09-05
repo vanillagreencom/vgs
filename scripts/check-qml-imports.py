@@ -48,16 +48,17 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 QML_ROOTS = ("quickshell/vshell", "config/vshell/plugins")
 
-# `Name {` wherever a QML value can begin: at the start of a statement, and
-# after the `:` of an object binding. Anchoring to the line start alone missed
-# `delegate: MissingType {` and `property Component page: MissingType {`, which
-# are ordinary QML and fail at runtime exactly like a bare one.
+# `Name {` wherever a QML value can begin: the start of a statement, after the
+# `:` of an object binding, and after the `[` or `,` of a list binding. Each
+# was found missing in turn -- a line-start anchor alone missed
+# `delegate: MissingType {`, and adding the colon still missed
+# `children: [ A {}, B {} ]` written on one line. All of them are ordinary QML
+# that fails at runtime exactly like a bare declaration.
 #
-# The leading character class is what keeps it honest. A name is only taken
-# when what precedes it is the start of a line or a binding colon, so
-# `Foo.Bar {` (a grouped property or an attached type), `on Bar {` and a name
-# inside an expression are all left alone.
-INSTANTIATION = re.compile(r"(?:^|:)\s*([A-Z][A-Za-z0-9_]*)\s*\{", re.M)
+# The leading character class is what keeps it honest: a name is taken only
+# where a value may legally begin, so `Foo.Bar {` (a grouped property or an
+# attached type), `on Bar {` and a name inside an expression are left alone.
+INSTANTIATION = re.compile(r"(?:^|[:,\[])\s*([A-Z][A-Za-z0-9_]*)\s*\{", re.M)
 IMPORT = re.compile(r"^\s*import\s+(qs(?:\.[A-Za-z0-9_]+)*)", re.M)
 # `component Foo: Bar {` declares a type inside the file that uses it.
 INLINE_COMPONENT = re.compile(r"^\s*component\s+([A-Z][A-Za-z0-9_]*)\s*:", re.M)

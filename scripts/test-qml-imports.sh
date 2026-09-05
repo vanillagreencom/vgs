@@ -133,6 +133,24 @@ else
   ok "a type in a delegate binding is reported"
 fi
 
+# --- must fail: a type inside a list binding, written on one line ------------
+# `children: [ A {}, B {} ]`. The first element of a multi-line list already
+# starts its own line; an inline list gives the scan neither a line start nor
+# a colon before the name, and both elements went unseen.
+seed list_binding
+cat > "$work/list_binding/quickshell/vshell/Widgets/ListHost.qml" <<'QML'
+import QtQuick
+
+Item {
+    children: [ SettingsChoiceRow {}, SettingsChoiceRow {} ]
+}
+QML
+if run_guard list_binding >/dev/null; then
+  fail "a type in an inline list binding is reported"
+else
+  ok "a type in an inline list binding is reported"
+fi
+
 # --- must pass: a grouped property is not an instantiation -------------------
 # `anchors.fill:` and `font { ... }` must not be read as types, or the scan
 # would report a name for every styling block in the tree.
