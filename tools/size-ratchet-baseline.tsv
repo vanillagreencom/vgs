@@ -16,10 +16,10 @@ backend/internal/services/tailscale/watch_test.go	494
 backend/internal/services/wallpaper/wallpaper.go	457
 bin/claudebar	1154
 bin/codexbar	1255
-bin/vshell	468
+bin/vshell	469
 bin/vshell-capture-screenrecording	589
 bin/vshell-capture-screenshot	736
-bin/vshell-helper	15413
+bin/vshell-helper	15920
 bin/vshell_niri.py	1096
 config/vshell/icons/Yaru/cursors/half-busy	10208
 config/vshell/icons/Yaru/cursors/half-busy.ani	3364
@@ -27,12 +27,12 @@ config/vshell/icons/Yaru/cursors/wait	5408
 config/vshell/icons/Yaru/cursors/wait.ani	4513
 config/vshell/icons/Yaru/index.theme	790
 config/vshell/nvim/vgs-theme-bridge.lua	423
-config/vshell/plugins/aiUsage/AiUsageWidget.qml	938
-config/vshell/plugins/cloudSync/CloudSyncWidget.qml	667
-config/vshell/plugins/remoteDesktop/RemoteDesktopWidget.qml	699
+config/vshell/plugins/aiUsage/AiUsageWidget.qml	923
+config/vshell/plugins/cloudSync/CloudSyncWidget.qml	671
+config/vshell/plugins/remoteDesktop/RemoteDesktopWidget.qml	703
 config/vshell/plugins/sudoToggle/SudoToggleWidget.qml	445
-config/vshell/plugins/sysUpdate/SysUpdateWidget.qml	692
-config/vshell/plugins/tailscale/TailscaleWidget.qml	781
+config/vshell/plugins/sysUpdate/SysUpdateWidget.qml	644
+config/vshell/plugins/tailscale/TailscaleWidget.qml	790
 config/vshell/plugins/vgsMenu/VGSMenu.qml	2295
 config/vshell/settings.default.json	754
 docs/media/vgs-demo-poster.jpg	1197
@@ -41,9 +41,9 @@ kendex.toml	1032
 packaging/optional-packages.json	594
 quickshell/vshell-preview/shell.qml	456
 quickshell/vshell/Common/KeybindActions.js	1420
-quickshell/vshell/Common/MethodTheme.qml	1416
+quickshell/vshell/Common/MethodTheme.qml	1423
 quickshell/vshell/Common/SessionData.qml	1526
-quickshell/vshell/Common/SettingsData.qml	3638
+quickshell/vshell/Common/SettingsData.qml	3680
 quickshell/vshell/Common/fzf.js	1308
 quickshell/vshell/Common/settings/Processes.qml	741
 quickshell/vshell/Common/settings/SettingsSpec.js	689
@@ -101,7 +101,7 @@ quickshell/vshell/Modules/Greetd/GreeterContent.qml	2133
 quickshell/vshell/Modules/Lock/LockPowerMenu.qml	853
 quickshell/vshell/Modules/Lock/LockScreenContent.qml	1896
 quickshell/vshell/Modules/Lock/Pam.qml	454
-quickshell/vshell/Modules/NetworkUsage/NetworkUsageView.qml	417
+quickshell/vshell/Modules/NetworkUsage/NetworkUsageView.qml	480
 quickshell/vshell/Modules/Notepad/Notepad.qml	798
 quickshell/vshell/Modules/Notepad/NotepadSettings.qml	539
 quickshell/vshell/Modules/Notepad/NotepadTextEditor.qml	1136
@@ -110,7 +110,7 @@ quickshell/vshell/Modules/Notifications/Center/NotificationKeyboardController.qm
 quickshell/vshell/Modules/Notifications/Center/NotificationSettings.qml	418
 quickshell/vshell/Modules/Notifications/Popup/NotificationPopup.qml	1306
 quickshell/vshell/Modules/Plugins/DesktopPluginWrapper.qml	766
-quickshell/vshell/Modules/ProcessList/ProcessListPopout.qml	551
+quickshell/vshell/Modules/ProcessList/ProcessListPopout.qml	556
 quickshell/vshell/Modules/ProcessList/ProcessesView.qml	816
 quickshell/vshell/Modules/Settings/AboutTab.qml	576
 quickshell/vshell/Modules/Settings/AudioTab.qml	516
@@ -152,7 +152,7 @@ quickshell/vshell/Modules/Settings/TimeWeatherTab.qml	1159
 quickshell/vshell/Modules/Settings/TypographyTab.qml	538
 quickshell/vshell/Modules/Settings/UsersTab.qml	505
 quickshell/vshell/Modules/Settings/WidgetSelectionPopup.qml	410
-quickshell/vshell/Modules/Settings/WidgetsTab.qml	1430
+quickshell/vshell/Modules/Settings/WidgetsTab.qml	1431
 quickshell/vshell/Modules/Settings/WidgetsTabSection.qml	492
 quickshell/vshell/Modules/Settings/WindowRulesTab.qml	1062
 quickshell/vshell/Modules/Toast.qml	502
@@ -212,4 +212,4 @@ scripts/test-switcher-selection.js	646
 scripts/test-toast-actions.js	488
 scripts/test-validate.sh	473
 scripts/test-validation-inventory.sh	1866
-scripts/validate	674
+scripts/validate	677

@@ -178,6 +178,9 @@ jobs:
           scripts/test-ai-usage-view.js
           scripts/test-ai-usage-filing.js
           scripts/test-ai-usage-lifecycle.js
+          scripts/test-mercury-logic.js
+          scripts/test-mercury-format.js
+          scripts/test-mercury-options.js
           scripts/test-paste-target.js
           scripts/test-paste-lifecycle.js
           scripts/test-compositor-focus.js

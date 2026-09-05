@@ -22,6 +22,69 @@ Item {
         return (bps / (1024 * 1024 * 1024)).toFixed(1) + " G/s";
     }
 
+    // COLUMN WIDTHS, measured rather than guessed. They used to be three magic
+    // numbers (110, 110, 70) and a 160 minimum, which added up to more than the
+    // popout was wide: the last column was cut off at every font size.
+    //
+    // Every string in this table is monospace at one size, so a column's width
+    // is its longest string in characters times one advance. That is exact, it
+    // needs no per-cell measurement, and it follows the font instead of being
+    // re-guessed whenever the font changes.
+    readonly property int columnGutter: 5
+
+    TextMetrics {
+        id: glyph
+        font.pixelSize: Theme.fontSizeSmall
+        font.family: SettingsData.monoFontFamily
+        text: "0"
+    }
+
+    readonly property real charWidth: glyph.advanceWidth
+
+    // A header carries its own padding, and the sort arrow is reserved whether
+    // or not this column is the sorted one -- otherwise every column jumps
+    // sideways when the sort moves.
+    function headerWidth(label) {
+        return Theme.spacingS * 2 + label.length * root.charWidth
+             + Theme.spacingXS + Theme.fontSizeSmall;
+    }
+
+    function cellWidth(chars, iconSize, iconGap) {
+        return root.columnGutter * 2 + (iconSize > 0 ? iconSize + iconGap : 0) + chars * root.charWidth;
+    }
+
+    // Sized to the widest string a column CAN hold, not the widest it happens
+    // to hold right now. Measuring live data would be tighter by a few pixels
+    // and would resize the flyout under the reader every time a rate crossed
+    // from "9.5 K/s" to "10.2 K/s"; a stable frame is worth more than that.
+    readonly property string widestRate: "888.8 M/s"
+    readonly property string widestConns: "8888"
+
+    // One outsized process name must not widen the popout without limit; past
+    // this the name elides, as it always did.
+    readonly property int nameCharCap: 24
+
+    readonly property real appColumnWidth: Math.ceil(Math.max(
+        headerWidth(I18n.tr("Application")),
+        cellWidth(root.nameCharCap, Theme.iconSize - 4, Theme.spacingS)))
+
+    readonly property real downColumnWidth: Math.ceil(Math.max(
+        headerWidth(I18n.tr("Download")),
+        cellWidth(root.widestRate.length, Theme.fontSizeSmall, Theme.spacingXS)))
+
+    readonly property real upColumnWidth: Math.ceil(Math.max(
+        headerWidth(I18n.tr("Upload")),
+        cellWidth(root.widestRate.length, Theme.fontSizeSmall, Theme.spacingXS)))
+
+    readonly property real connsColumnWidth: Math.ceil(Math.max(
+        headerWidth(I18n.tr("Conns", "short for connections")),
+        cellWidth(root.widestConns.length, 0, 0)))
+
+    // What the table needs to show every column whole. The popout reads this
+    // so it can never be narrower than its own contents.
+    readonly property real naturalWidth: Theme.spacingS * 2 + root.appColumnWidth
+        + root.downColumnWidth + root.upColumnWidth + root.connsColumnWidth
+
     readonly property var filteredApps: {
         let apps = (NetworkUsageService.apps || []).slice();
 
@@ -61,7 +124,7 @@ Item {
 
                 SortableHeader {
                     Layout.fillWidth: true
-                    Layout.minimumWidth: 160
+                    Layout.minimumWidth: root.appColumnWidth
                     text: I18n.tr("Application")
                     sortKey: "name"
                     alignment: Text.AlignLeft
@@ -69,7 +132,7 @@ Item {
                 }
 
                 SortableHeader {
-                    Layout.preferredWidth: 110
+                    Layout.preferredWidth: root.downColumnWidth
                     text: I18n.tr("Download")
                     sortKey: "down"
                     alignment: Text.AlignLeft
@@ -77,7 +140,7 @@ Item {
                 }
 
                 SortableHeader {
-                    Layout.preferredWidth: 110
+                    Layout.preferredWidth: root.upColumnWidth
                     text: I18n.tr("Upload")
                     sortKey: "up"
                     alignment: Text.AlignLeft
@@ -85,7 +148,7 @@ Item {
                 }
 
                 SortableHeader {
-                    Layout.preferredWidth: 70
+                    Layout.preferredWidth: root.connsColumnWidth
                     text: I18n.tr("Conns", "short for connections")
                     sortKey: "connections"
                     alignment: Text.AlignLeft
@@ -313,7 +376,7 @@ Item {
 
             Item {
                 Layout.fillWidth: true
-                Layout.minimumWidth: 160
+                Layout.minimumWidth: root.appColumnWidth
                 height: parent.height
 
                 Row {
@@ -336,19 +399,19 @@ Item {
                         font.weight: Font.Medium
                         color: Theme.surfaceText
                         elide: Text.ElideRight
-                        width: Math.min(implicitWidth, 220)
+                        width: Math.min(implicitWidth, root.nameCharCap * root.charWidth)
                         anchors.verticalCenter: parent.verticalCenter
                     }
                 }
             }
 
             Item {
-                Layout.preferredWidth: 110
+                Layout.preferredWidth: root.downColumnWidth
                 height: parent.height
 
                 Row {
                     anchors.left: parent.left
-                    anchors.leftMargin: Theme.spacingS
+                    anchors.leftMargin: root.columnGutter
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: Theme.spacingXS
 
@@ -371,12 +434,12 @@ Item {
             }
 
             Item {
-                Layout.preferredWidth: 110
+                Layout.preferredWidth: root.upColumnWidth
                 height: parent.height
 
                 Row {
                     anchors.left: parent.left
-                    anchors.leftMargin: Theme.spacingS
+                    anchors.leftMargin: root.columnGutter
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: Theme.spacingXS
 
@@ -399,12 +462,12 @@ Item {
             }
 
             Item {
-                Layout.preferredWidth: 70
+                Layout.preferredWidth: root.connsColumnWidth
                 height: parent.height
 
                 StyledText {
                     anchors.left: parent.left
-                    anchors.leftMargin: Theme.spacingS
+                    anchors.leftMargin: root.columnGutter
                     anchors.verticalCenter: parent.verticalCenter
                     text: appItemRoot.appConns.toString()
                     font.pixelSize: Theme.fontSizeSmall

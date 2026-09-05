@@ -312,6 +312,10 @@ component SectionHeader: StyledText {
             }
             showCloseButton: true
 
+            // Bar -> Widgets, where a bundled plugin's settings live.
+            configurable: true
+            onSettingsRequested: PopoutService.openSettingsWithTab("bar_widgets")
+
             Column {
                 width: parent.width
                 spacing: Theme.spacingS
