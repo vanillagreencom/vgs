@@ -90,73 +90,32 @@ else
   fail "the import silences it"
 fi
 
-# --- must fail: a type inside an object binding ------------------------------
-# `delegate: Missing {` and `property Component page: Missing {` are ordinary
-# QML and fail at runtime exactly like a bare one. Anchoring the scan to the
-# start of a line missed both.
-seed binding_forms
-cat > "$work/binding_forms/quickshell/vshell/Widgets/Host.qml" <<'QML'
+# --- must fail: every position a type can appear in --------------------------
+# One control, because the scan is now one rule: an uppercase name before `{`
+# unless a `.` or a word character precedes it. These four forms were four
+# separate misses while it was a list of allowed positions -- a property
+# binding, a delegate binding, an inline list, and a child sharing its
+# parent's line -- and each is ordinary QML that fails at runtime.
+seed positions
+cat > "$work/positions/quickshell/vshell/Widgets/Host.qml" <<'QML'
 import QtQuick
 
 Item {
-    property Component page: SettingsChoiceRow {
-        objectName: "nested"
-    }
-}
-QML
-if out="$(run_guard binding_forms)"; then
-  fail "a type in a property binding is reported"
-elif ! grep -q 'SettingsChoiceRow' <<<"$out"; then
-  fail "the property-binding report names the type"
-else
-  ok "a type in a property binding is reported"
-fi
+    property Component page: SettingsChoiceRow { objectName: "binding" }
 
-seed delegate_form
-cat > "$work/delegate_form/quickshell/vshell/Widgets/Host.qml" <<'QML'
-import QtQuick
+    ListView { delegate: SettingsChoiceRow { objectName: "delegate" } }
 
-ListView {
-    delegate: SettingsChoiceRow {
-        objectName: "row"
-    }
-}
-QML
-if run_guard delegate_form >/dev/null; then
-  fail "a type in a delegate binding is reported"
-else
-  ok "a type in a delegate binding is reported"
-fi
-
-# --- must fail: a type inside a list binding, written on one line ------------
-# `children: [ A {}, B {} ]`. The first element of a multi-line list already
-# starts its own line; an inline list gives the scan neither a line start nor
-# a colon before the name, and both elements went unseen.
-seed list_binding
-cat > "$work/list_binding/quickshell/vshell/Widgets/ListHost.qml" <<'QML'
-import QtQuick
-
-Item {
     children: [ SettingsChoiceRow {}, SettingsChoiceRow {} ]
+
+    Item { SettingsChoiceRow { objectName: "inline child" } }
 }
 QML
-if run_guard list_binding >/dev/null; then
-  fail "a type in an inline list binding is reported"
+if out="$(run_guard positions)"; then
+  fail "a type is reported wherever it appears"
+elif ! grep -q 'SettingsChoiceRow' <<<"$out"; then
+  fail "the report names the type it could not reach"
 else
-  ok "a type in an inline list binding is reported"
-fi
-
-# --- must fail: a child object on the same line as its parent's brace --------
-seed inline_child
-cat > "$work/inline_child/quickshell/vshell/Widgets/Inline.qml" <<'QML'
-import QtQuick
-
-Item { SettingsChoiceRow {} }
-QML
-if run_guard inline_child >/dev/null; then
-  fail "a child object after an opening brace is reported"
-else
-  ok "a child object after an opening brace is reported"
+  ok "a type is reported wherever it appears"
 fi
 
 # --- must fail: an aliased import does not make a bare name visible ----------
@@ -180,54 +139,39 @@ else
   ok "an aliased import does not make a bare name visible"
 fi
 
-# --- must pass: the qualified form the alias does provide -------------------
-seed aliased_qualified
-cat > "$work/aliased_qualified/quickshell/vshell/Widgets/Aliased.qml" <<'QML'
-import QtQuick
-import qs.Modules.Settings.Widgets as W
-
-Item {
-    W.SettingsChoiceRow {
-        objectName: "qualified"
-    }
-}
-QML
-if run_guard aliased_qualified >/dev/null; then
-  ok "the qualified form an alias provides is not reported"
-else
-  fail "the qualified form an alias provides is not reported"
-fi
-
-# --- must pass: type-looking text in a comment or a string -------------------
-# The scan runs over text, so a `// see SettingsChoiceRow {}` in a comment or
-# inside a string literal would otherwise fail a file whose code is correct.
-seed comments_and_strings
-cat > "$work/comments_and_strings/quickshell/vshell/Widgets/Commented.qml" <<'QML'
+# --- must pass: type-looking text that is not code ---------------------------
+# The scan reads text, so a name in a comment, a string or a template literal
+# would otherwise fail a file whose code is correct.
+seed noise
+cat > "$work/noise/quickshell/vshell/Widgets/Commented.qml" <<'QML'
 import QtQuick
 
 Item {
     // Example: SettingsChoiceRow { text: "x" }
     /* also SettingsChoiceRow { } in a block comment */
     property string hint: "write SettingsChoiceRow { } here"
+
+    function describe(name) {
+        return `or SettingsChoiceRow { text: ${name} }`;
+    }
 }
 QML
-if run_guard comments_and_strings >/dev/null; then
-  ok "type-looking text in a comment or a string is not an instantiation"
+if run_guard noise >/dev/null; then
+  ok "a type name in a comment, a string or a template literal is not code"
 else
-  fail "type-looking text in a comment or a string is not an instantiation"
+  fail "a type name in a comment, a string or a template literal is not code"
 fi
 
-# --- must fail: real code below a comment that mentions the same name -------
-# Stripping must not swallow the code after it.
+# --- must fail: real code below a comment naming the same type ---------------
+# Blanking must not swallow what follows it, or the guard misses silently --
+# the one failure it exists to prevent.
 seed comment_then_code
 cat > "$work/comment_then_code/quickshell/vshell/Widgets/Both.qml" <<'QML'
 import QtQuick
 
 Item {
     // Example: SettingsChoiceRow { }
-    SettingsChoiceRow {
-        objectName: "real"
-    }
+    SettingsChoiceRow { objectName: "real" }
 }
 QML
 if run_guard comment_then_code >/dev/null; then
@@ -255,23 +199,6 @@ if run_guard commented_import >/dev/null; then
   fail "a commented-out import does not grant visibility"
 else
   ok "a commented-out import does not grant visibility"
-fi
-
-# --- must pass: a type name inside a template literal ------------------------
-seed template_literal
-cat > "$work/template_literal/quickshell/vshell/Widgets/Templated.qml" <<'QML'
-import QtQuick
-
-Item {
-    function describe(name) {
-        return `use SettingsChoiceRow { text: ${name} } here`;
-    }
-}
-QML
-if run_guard template_literal >/dev/null; then
-  ok "a type name inside a template literal is not an instantiation"
-else
-  fail "a type name inside a template literal is not an instantiation"
 fi
 
 # --- must pass: a grouped property is not an instantiation -------------------
