@@ -16,7 +16,6 @@ Exit `0` means all selected checks passed; `77` means some checks did not run an
 
 ## Conventions
 
-- Branch names use `vgs-<n>-<slug>` to attach pull requests to Linear issues.
 - Releases use `.agents/skills/vgs-release/SKILL.md`.
 - The session handoff is `docs/handoff/HANDOFF.md`, untracked and overwritten in place. Read or write it only on request.
 - Portable defaults belong in VGS; `~/dotfiles` holds personal wiring and overlays.

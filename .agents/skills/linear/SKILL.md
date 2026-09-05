@@ -73,7 +73,7 @@ The list query carries `url` so the triage table is actionable; `body` is fetche
 
 Automating this needs owner action (Linear workspace admin, or a LINEAR_API_KEY repo secret) — see docs/decisions/D002-github-linear-intake-sync.md.
 
-Link work to its issue through the branch name: `vgs-<n>-<slug>`. Linear's GitHub integration matches that to attach the PR, and `GH_ISSUE_PATTERN` in kendex.settings.toml reads the same shape. Commit subjects carry the identifier as the scope — `area(VGS-12): imperative summary` — per AGENTS.md § Conventions.
+Link work to its issue through the branch name: `vgs-<n>-<slug>`. Linear's GitHub integration matches that to attach the PR, and `GH_ISSUE_PATTERN` in kendex.settings.toml reads the same shape. Commit subjects carry the identifier as the scope: `area(VGS-12): imperative summary`.
 
 Issue labels are live Linear issue labels. Inventory source of truth:
 

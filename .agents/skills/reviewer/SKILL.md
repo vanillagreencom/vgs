@@ -25,7 +25,7 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 
 ## VGS review policy
 
-Read root `AGENTS.md` § Code Review Rules and the generated `.github/instructions/` files for the changed paths.
+Read root `AGENTS.md § Code Review Rules` and the generated `.github/instructions/` files for the changed paths.
 
 <!-- kendex:project-instructions:end -->
 
