@@ -5,15 +5,25 @@
 # not exist, source files citing docs that do not exist, edits to a migration
 # a database has already run, malformed JSON/TOML.
 #
-# Precision before coverage: a lane that cannot decide says nothing. The
+# Precision before coverage: a lane that cannot decide reports no finding. The
 # line-scoped lanes report only on lines this diff added, so an existing
 # violation on an untouched line never fails somebody else's change. A
-# missing optional tool (shellcheck, jq, taplo, python3) skips its lane
-# silently — the run never fails because a tool is absent, and a lane never
-# degrades into a warning: it fails or it says nothing.
+# missing optional tool (shellcheck, jq, taplo, python3) is reported when
+# its lane is needed. Missing tools do not change the exit status; the
+# final result lists the lanes that could not run.
 #
 # Exit codes: 0 clean; 1 findings; 2 usage/environment error.
 set -euo pipefail
+
+PF_BOOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd; printf x)"
+PF_BOOT="${PF_BOOT%x}"
+SCRIPT_DIR="${PF_BOOT%$'\n'}"
+# shellcheck source=lib/kendex-env.sh
+source "$SCRIPT_DIR/lib/kendex-env.sh"
+# shellcheck source=lib/globs.sh
+source "$SCRIPT_DIR/lib/globs.sh"
+# shellcheck source=lib/load-settings.sh
+source "$SCRIPT_DIR/lib/load-settings.sh"
 
 TAB="$(printf '\t')"
 NL='
@@ -36,6 +46,9 @@ non-ignored untracked files; --staged sees only the index.
 Lanes: shell-syntax, shellcheck-errors, masked-returns, fail-open,
 unwired-suite, mktemp-trap, hardcoded-temp-path, docs-cited-paths,
 applied-migration-edited, data-syntax.
+
+Needed checks with unavailable optional tools are reported by lane name.
+The final result lists those lanes without changing the exit status.
 
 Exit codes: 0 clean; 1 findings; 2 usage/environment error.
 EOF
@@ -78,12 +91,15 @@ cleanup() {
   exit "$cleanup_status"
 }
 trap cleanup EXIT
+pf_load_project_env "$MODE" "$REPO_ROOT" "$TMP" || env_error "could not load project settings"
 : >"$TMP/findings.tsv"
+: >"$TMP/skipped.tsv"
 : >"$TMP/added.tsv"
 : >"$TMP/newfiles.list"
 
 emit() { printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" >>"$TMP/findings.tsv"; }
 have() { command -v "$1" >/dev/null 2>&1; }
+record_skip() { printf '%s\t%s\n' "$1" "$2" >>"$TMP/skipped.tsv"; }
 
 # --- content, the only judge of what a lane may read -------------------------
 # Two answers no caller may collapse. Nothing to inspect BY DESIGN — a symlink
@@ -420,6 +436,16 @@ line_hint() { # TEXT -> the line number a tool mentions, else 0
 }
 first_line() { printf '%s' "$1" | awk 'NF { print; exit }'; }
 
+JSONC_GLOBS="${PREFLIGHT_JSONC_GLOBS-**/tsconfig*.json **/jsconfig*.json **/.vscode/*.json **/.devcontainer/*.json **/*-color-theme.json}"
+
+is_jsonc_path() { # PATH — file kind or configured JSONC-by-convention path
+  case "$1" in
+    *.jsonc) return 0 ;;
+    *.json) pf_path_matches_globs "$JSONC_GLOBS" "$1" ;;
+    *) return 1 ;;
+  esac
+}
+
 TOML_PY='import sys, tomllib
 try:
     with open(sys.argv[1], "rb") as fh:
@@ -440,7 +466,7 @@ check_toml() { # CONTENT-PATH — parser diagnostics on stdout, nonzero when inv
   case "$HAVE_TOML" in
     taplo) taplo check -- "$1" 2>&1 ;;
     python) python3 -c "$TOML_PY" "$1" 2>&1 ;;
-    *) return 0 ;;
+    *) record_skip data-syntax "TOML: taplo or python3 with tomllib is unavailable" ;;
   esac
 }
 
@@ -821,6 +847,11 @@ while IFS= read -r f; do
           fi
         fi
       done <<<"$(run_shellcheck "$cpath")"
+    else
+      record_skip shellcheck-errors "shellcheck is unavailable"
+      if [ "$vendored_mirror" = 0 ]; then
+        record_skip masked-returns "shellcheck is unavailable"
+      fi
     fi
 
     # A new script that never turns on errexit, nounset and pipefail
@@ -838,19 +869,16 @@ while IFS= read -r f; do
   fi
 
   case "$f" in
-    *.json)
-      # JSON-with-comments is a real and widespread dialect; jq is right to
-      # reject those files and preflight would be wrong to report them.
-      case "$f" in
-        tsconfig*.json | jsconfig*.json | */tsconfig*.json | */jsconfig*.json | .vscode/* | */.vscode/* | .devcontainer/* | */.devcontainer/*) ;;
-        *)
-          if have jq && ! out="$(jq empty -- "$cpath" 2>&1)"; then
-            msg="$(first_line "$out")"
-            emit "$f" "$(line_hint "$out")" data-syntax "invalid JSON: ${msg#jq: }"
-          fi
-          ;;
-      esac
-      ;;
+    *.json | *.jsonc)
+      # jq owns strict JSON; suffixes and settings declare the comment dialect.
+      if ! is_jsonc_path "$f"; then
+        if ! have jq; then
+          record_skip data-syntax "JSON: jq is unavailable"
+        elif ! out="$(jq empty -- "$cpath" 2>&1)"; then
+          msg="$(first_line "$out")"
+          emit "$f" "$(line_hint "$out")" data-syntax "invalid JSON: ${msg#jq: }"
+        fi
+      fi ;;
     *.toml)
       if ! out="$(check_toml "$cpath")"; then
         emit "$f" "$(line_hint "$out")" data-syntax "invalid TOML: $(first_line "$out")"
@@ -963,44 +991,8 @@ done <"$TMP/files.list"
 # the lane quiet, as does an empty glob set.
 MIGRATION_GLOBS="${PREFLIGHT_MIGRATION_GLOBS-**/migrations/V*__*.sql **/db/migration/V*__*.sql}"
 
-glob_matches() { # PATTERN PATH — a `*` never reaches past its own component
-  local pat="$1" path="$2" pc pp
-  while :; do
-    if [ -z "$pat" ]; then
-      if [ -z "$path" ]; then return 0; fi
-      return 1
-    fi
-    [ -n "$path" ] || return 1
-    case "$pat" in */*) pc="${pat%%/*}"; pat="${pat#*/}" ;; *) pc="$pat"; pat="" ;; esac
-    case "$path" in */*) pp="${path%%/*}"; path="${path#*/}" ;; *) pp="$path"; path="" ;; esac
-    case "$pp" in $pc) ;; *) return 1 ;; esac
-  done
-}
-
 is_migration_path() { # PATH — a configured glob, `**/` the only depth crossing
-  local pat rc=1 rest
-  # The setting holds patterns, so the word split runs with globbing off:
-  # expanded against the working directory they would become file lists.
-  set -f
-  for pat in $MIGRATION_GLOBS; do
-    case "$pat" in
-      '**/'*)
-        pat="${pat#'**/'}"
-        rest="$1"
-        while :; do
-          if glob_matches "$pat" "$rest"; then
-            rc=0
-            break
-          fi
-          case "$rest" in */*) rest="${rest#*/}" ;; *) break ;; esac
-        done
-        ;;
-      *) glob_matches "$pat" "$1" && rc=0 ;;
-    esac
-    [ "$rc" = 1 ] || break
-  done
-  set +f
-  return "$rc"
+  pf_path_matches_globs "$MIGRATION_GLOBS" "$1"
 }
 
 migration_content_moved() { # PATH — the diff moved text, not only the file mode
@@ -1054,12 +1046,22 @@ if [ -n "$MIGRATION_BASE" ] && [ -n "$MIGRATION_GLOBS" ]; then
 fi
 
 # --- verdict -----------------------------------------------------------------
+SKIPPED=""
+LC_ALL=C sort -u "$TMP/skipped.tsv" >"$TMP/skipped.unique"
+while IFS="$TAB" read -r lane reason; do
+  printf 'preflight: [%s] not run: %s\n' "$lane" "$reason"
+  case ", $SKIPPED, " in
+    *", $lane, "*) ;;
+    *) SKIPPED="${SKIPPED:+$SKIPPED, }$lane" ;;
+  esac
+done <"$TMP/skipped.unique"
+SKIP_NOTE="${SKIPPED:+; not run: $SKIPPED}"
 COUNT="$(awk 'END { print NR }' "$TMP/findings.tsv")"
 if [ "$COUNT" -gt 0 ]; then
   LC_ALL=C sort -t"$TAB" -k1,1 -k2,2n "$TMP/findings.tsv" | while IFS="$TAB" read -r p n lane msg; do
     printf '%s:%s: [%s] %s\n' "$p" "$n" "$lane" "$msg"
   done
-  printf 'preflight: %s finding(s) across %s changed file(s)\n' "$COUNT" "$FILE_COUNT"
+  printf 'preflight: %s finding(s) across %s changed file(s)%s\n' "$COUNT" "$FILE_COUNT" "$SKIP_NOTE"
   exit 1
 fi
-printf 'preflight: clean (%s changed file(s))\n' "$FILE_COUNT"
+printf 'preflight: clean (%s changed file(s))%s\n' "$FILE_COUNT" "$SKIP_NOTE"
