@@ -1,4 +1,5 @@
-# Kendex renders and the install ledger are tracked.
+# Kendex renders are tracked. The install ledger is machine-local.
+/.kendex-lock.json
 /.claude/settings.local.json
 # Session-continuation state, never shared.
 /.claude/RESUME.md
@@ -81,7 +82,3 @@ docs/handoff/
 
 # Local git worktrees (kendex worktree skill)
 /trees/
-
-# kendex: this machine's install ledger — the .agents trees and the
-# links into them are committed, so a clone works without kendex.
-/.kendex-lock.json
