@@ -57,7 +57,7 @@ const F = evaluateMarked(logicSource, "MERCURY LOGIC", [
     "isArray", "snapshotIsUsable", "totalBalance", "accountIcon", "receiptState",
     "isInternalMovement", "isEarnings", "transactionIcon", "outstandingReceipts",
     "statusView", "pillState", "pillProblem", "fileIsUploadable", "shouldRefresh",
-    "uploadOutcome", "snapshotError", "tokenSourceLabel", "dashboardUrl"
+    "uploadOutcome", "snapshotError", "keySourceLabel", "dashboardUrl"
 ]);
 
 // ------------------------------------------------------------ locale APIs ---
@@ -379,12 +379,12 @@ assert.equal(F.snapshotError(null, "not json at all"), "the helper returned some
 // The widget must never be able to print a key. These are the only
 // key-adjacent strings it can produce, and none of them is a value.
 for (const source of ["stored", "env", "none", "", null]) {
-    const label = F.tokenSourceLabel(source);
+    const label = F.keySourceLabel(source);
     assert.equal(typeof label, "string");
     assert.equal(label.length > 0, true);
 }
-assert.match(F.tokenSourceLabel("env"), /MERCURY_API_TOKEN/);
-assert.match(F.tokenSourceLabel("none"), /No key yet/);
+assert.match(F.keySourceLabel("env"), /MERCURY_API_TOKEN/);
+assert.match(F.keySourceLabel("none"), /No key yet/);
 
 // The header's external link. mercury.com redirects to app.mercury.com, so
 // linking the destination saves the browser a hop.

@@ -22,7 +22,7 @@ Column {
     id: root
 
     // "stored", "env" or "none", as reported by the helper. Never a value.
-    property string tokenSource: "none"
+    property string keySource: "none"
     property string testResult: ""
     property bool testFailed: false
     property bool busy: false
@@ -125,7 +125,7 @@ Column {
         stdout: StdioCollector {
             id: statusOut
             onStreamFinished: root.applyReply(statusOut.text || "", false, payload => {
-                root.tokenSource = String(payload.tokenSource || "none");
+                root.keySource = String(payload.keySource || "none");
             })
         }
         stderr: StdioCollector {}
@@ -158,7 +158,7 @@ Column {
             id: saveOut
             onStreamFinished: root.applyReply(saveOut.text || "", true, payload => {
                 if (payload.ok === true) {
-                    root.tokenSource = String(payload.tokenSource || "stored");
+                    root.keySource = String(payload.keySource || "stored");
                     root.testFailed = false;
                     root.testResult = I18n.tr("Saved. Testing…");
                     keyField.text = "";
@@ -198,7 +198,7 @@ Column {
                         + (payload.detail ? " — " + payload.detail : "");
                     return;
                 }
-                root.tokenSource = String(payload.tokenSource || "none");
+                root.keySource = String(payload.keySource || "none");
                 root.testFailed = false;
                 root.testResult = I18n.tr("Key removed.");
                 root.keyChanged();
@@ -295,7 +295,7 @@ Column {
             iconSize: Theme.iconSizeSmall
             buttonSize: 30
             iconColor: Theme.error
-            visible: root.tokenSource === "stored"
+            visible: root.keySource === "stored"
             enabled: !root.busy
             tooltipText: I18n.tr("Remove the saved key")
             onClicked: root.clearKey()
@@ -307,7 +307,7 @@ Column {
     // strictly newer information about the same thing.
     StyledText {
         width: parent.width
-        text: root.testResult !== "" ? root.testResult : Logic.tokenSourceLabel(root.tokenSource)
+        text: root.testResult !== "" ? root.testResult : Logic.keySourceLabel(root.keySource)
         font.pixelSize: Theme.fontSizeSmall
         color: root.testResult === "" ? Theme.surfaceVariantText
                                       : (root.testFailed ? Theme.error : Theme.success)

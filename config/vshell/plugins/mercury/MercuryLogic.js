@@ -359,7 +359,7 @@ function snapshotError(payload, rawText) {
 
 // What the settings surfaces say about where the key in use comes from. Never
 // the key itself: this plugin has no code path that can print one.
-function tokenSourceLabel(source) {
+function keySourceLabel(source) {
     switch (String(source === null || source === undefined ? "" : source)) {
     case "stored":
         return "Saved on this machine.";
