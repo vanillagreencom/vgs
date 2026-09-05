@@ -110,4 +110,4 @@ The nested smoke loads the real shell, so a broken import or a renamed component
 
 - Linear: VGS-45 (bundle), VGS-20, VGS-22, VGS-21, VGS-23
 - VGS-13 / PR #30 — the launcher consolidation this is the aftermath of
-- `docs/architecture/shell.md` § Decisions
+- `docs/architecture/shell.md § Decisions`

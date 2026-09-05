@@ -86,29 +86,19 @@ jobs:
       - name: Owned-skill register controls
         run: scripts/test-owned-skills-e2e.py
 
-      - name: Doc section pointers
-        run: scripts/check-section-pointers.py
       # The label taxonomy is the allow-list the issue preflight consults; the
       # guard itself needs Linear and cannot run here, but its parser can.
       - name: Label taxonomy parser controls
         run: scripts/test-label-taxonomy.py
 
-      - name: Doc section pointer controls
-        run: |
-          scripts/test-section-pointers.py
-          scripts/test-section-pointers-e2e.py
-          python3 scripts/lib/section_pointers_selftest.py
-          python3 scripts/lib/tracked_blobs_selftest.py
-          python3 scripts/lib/prose_blocks_selftest.py
-
       # The upstream document classes set byte limits.
       - name: File-size ratchet
         run: .agents/skills/size-ratchet/scripts/size-ratchet
 
-      # The pre-commit marker check sees added lines only. This scan also checks
-      # existing tracked content outside tools/todo-ban-excludes.
-      - name: Work-marker ban
-        run: .agents/skills/growth-guards/scripts/todo-ban
+      # The pre-commit batch judges staged lines only. This run judges every
+      # tracked file each enabled lane names, markdown references included.
+      - name: Growth guards
+        run: .agents/skills/growth-guards/scripts/growth-guards all
 
       # A clean checkout has no working-tree diff. Compare the event range so CI
       # checks the whitespace introduced by the change.
