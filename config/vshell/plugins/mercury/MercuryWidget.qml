@@ -187,12 +187,30 @@ PluginComponent {
             // launch that never produced a process would otherwise leave the
             // pill on its ellipsis forever. This is the only path that reports
             // it.
-            if (!root._sawProcess && !root._outDone) {
-                root._outDone = true;
-                root._exitDone = true;
-                root._outText = "";
-                root._settleSnapshot();
-            }
+            //
+            // DEFERRED, not immediate: `started` is not ordered against this
+            // signal, so a process that DID run can still announce itself after
+            // the stop, and reporting here would call a working helper missing.
+            // The timer re-checks, and a launch that produced a process never
+            // reaches it. The aiUsage channel is the precedent.
+            if (!root._sawProcess && !root._outDone)
+                snapshotStall.restart();
+        }
+    }
+
+    // Long enough that a late `started` still wins, short enough that a broken
+    // command is reported rather than waited out.
+    Timer {
+        id: snapshotStall
+        interval: 1000
+        repeat: false
+        onTriggered: {
+            if (root._sawProcess || root._outDone || snapshotProc.running)
+                return;
+            root._outDone = true;
+            root._exitDone = true;
+            root._outText = "";
+            root._settleSnapshot();
         }
     }
 
@@ -345,13 +363,24 @@ PluginComponent {
             // Qt reports nothing when the executable cannot be run at all, so
             // this is the only path that can report a launch that produced no
             // process. It must not fire for a run that DID produce one, which
-            // is why `sawProcess` survives the settle.
-            if (!uploadProc.sawProcess && root.uploadingTxId !== "") {
-                uploadProc.outText = "";
-                uploadProc.outDone = true;
-                uploadProc.exitDone = true;
-                uploadProc.settle();
-            }
+            // is why `sawProcess` survives the settle -- and why the report is
+            // deferred, exactly as the snapshot channel defers it.
+            if (!uploadProc.sawProcess && root.uploadingTxId !== "")
+                uploadStall.restart();
+        }
+    }
+
+    Timer {
+        id: uploadStall
+        interval: 1000
+        repeat: false
+        onTriggered: {
+            if (uploadProc.sawProcess || uploadProc.running || root.uploadingTxId === "")
+                return;
+            uploadProc.outText = "";
+            uploadProc.outDone = true;
+            uploadProc.exitDone = true;
+            uploadProc.settle();
         }
     }
 

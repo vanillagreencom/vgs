@@ -133,14 +133,49 @@ Column {
     }
 
     // Qt reports nothing when the executable cannot be run at all, so every
-    // one of these needs the same guard: no process, no stdout, and without
-    // this the panel would sit on "Saving…" forever.
-    function launchFailed(owned) {
-        if (!owned)
+    // one of these needs the same guard: no process, no stdout, and without it
+    // the panel would sit on "Saving…" forever.
+    //
+    // DEFERRED through one timer rather than reported on the spot. `started`
+    // is not ordered against `runningChanged`, so a process that did run can
+    // announce itself after the stop, and reporting immediately would call a
+    // working helper missing. The timer re-checks every channel, and one that
+    // produced a process never reaches it.
+    property bool _stallOwned: false
+
+    function launchStalled(owned) {
+        root._stallOwned = root._stallOwned || owned;
+        stallTimer.restart();
+    }
+
+    Timer {
+        id: stallTimer
+        interval: 1000
+        repeat: false
+        onTriggered: {
+            const owned = root._stallOwned;
+            root._stallOwned = false;
+            // Any channel that started, or is still running, settles itself.
+            if (statusProc.sawProcess || statusProc.running
+                || saveProc.sawProcess || saveProc.running
+                || clearProc.sawProcess || clearProc.running
+                || doctorProc.sawProcess || doctorProc.running)
+                return;
+            if (!owned)
+                return;
+            root.busy = false;
+            root.testFailed = true;
+            root.testResult = I18n.tr("Could not run the vshell helper.");
+        }
+    }
+
+    // Runs a parked read once the channel is actually free. Called from both
+    // settle paths, because either can be the last to land.
+    function drainStatus() {
+        if (statusProc.running || !root._statusPending)
             return;
-        root.busy = false;
-        root.testFailed = true;
-        root.testResult = I18n.tr("Could not run the vshell helper.");
+        root._statusPending = false;
+        statusProc.running = true;
     }
 
     Process {
@@ -152,9 +187,11 @@ Column {
         onStarted: statusProc.sawProcess = true
         onRunningChanged: {
             if (!running && !statusProc.sawProcess)
-                root.launchFailed(false);
-            if (!running)
+                root.launchStalled(false);
+            if (!running) {
                 statusProc.sawProcess = false;
+                Qt.callLater(root.drainStatus);
+            }
         }
         stdout: StdioCollector {
             id: statusOut
@@ -162,10 +199,13 @@ Column {
                 root.applyReply(statusOut.text || "", false, payload => {
                     root.keySource = String(payload.keySource || "none");
                 });
-                if (root._statusPending) {
-                    root._statusPending = false;
-                    Qt.callLater(root.readTokenStatus);
-                }
+                // The retry is left to onRunningChanged rather than fired
+                // here: the stream closing is not ordered after `running` goes
+                // false, so a callLater from this point can land while the
+                // process is still running, where readTokenStatus would simply
+                // park the request again and the read would never happen.
+                if (root._statusPending)
+                    Qt.callLater(root.drainStatus);
             }
         }
         stderr: StdioCollector {}
@@ -189,7 +229,7 @@ Column {
         property bool sawProcess: false
         onRunningChanged: {
             if (!running && !saveProc.sawProcess)
-                root.launchFailed(true);
+                root.launchStalled(true);
             if (!running)
                 saveProc.sawProcess = false;
         }
@@ -223,7 +263,7 @@ Column {
         property bool sawProcess: false
         onRunningChanged: {
             if (!running && !clearProc.sawProcess)
-                root.launchFailed(true);
+                root.launchStalled(true);
             if (!running)
                 clearProc.sawProcess = false;
         }
@@ -257,7 +297,7 @@ Column {
         property bool sawProcess: false
         onRunningChanged: {
             if (!running && !doctorProc.sawProcess)
-                root.launchFailed(true);
+                root.launchStalled(true);
             if (!running)
                 doctorProc.sawProcess = false;
         }

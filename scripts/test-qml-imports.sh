@@ -198,6 +198,44 @@ else
   fail "the qualified form an alias provides is not reported"
 fi
 
+# --- must pass: type-looking text in a comment or a string -------------------
+# The scan runs over text, so a `// see SettingsChoiceRow {}` in a comment or
+# inside a string literal would otherwise fail a file whose code is correct.
+seed comments_and_strings
+cat > "$work/comments_and_strings/quickshell/vshell/Widgets/Commented.qml" <<'QML'
+import QtQuick
+
+Item {
+    // Example: SettingsChoiceRow { text: "x" }
+    /* also SettingsChoiceRow { } in a block comment */
+    property string hint: "write SettingsChoiceRow { } here"
+}
+QML
+if run_guard comments_and_strings >/dev/null; then
+  ok "type-looking text in a comment or a string is not an instantiation"
+else
+  fail "type-looking text in a comment or a string is not an instantiation"
+fi
+
+# --- must fail: real code below a comment that mentions the same name -------
+# Stripping must not swallow the code after it.
+seed comment_then_code
+cat > "$work/comment_then_code/quickshell/vshell/Widgets/Both.qml" <<'QML'
+import QtQuick
+
+Item {
+    // Example: SettingsChoiceRow { }
+    SettingsChoiceRow {
+        objectName: "real"
+    }
+}
+QML
+if run_guard comment_then_code >/dev/null; then
+  fail "real code below such a comment is still reported"
+else
+  ok "real code below such a comment is still reported"
+fi
+
 # --- must pass: a grouped property is not an instantiation -------------------
 # `anchors.fill:` and `font { ... }` must not be read as types, or the scan
 # would report a name for every styling block in the tree.

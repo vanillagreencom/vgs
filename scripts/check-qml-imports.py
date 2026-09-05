@@ -66,6 +66,23 @@ QML_ROOTS = ("quickshell/vshell", "config/vshell/plugins")
 # Everything else is caught, including forms nobody has thought of yet, which
 # is the point.
 INSTANTIATION = re.compile(r"(?<![.\w])([A-Z][A-Za-z0-9_]*)\s*\{")
+
+# Comments and string literals, stripped before the scan. A `// see
+# SettingsChoiceRow {}` in a comment, or that text inside a string, is not an
+# instantiation, and reporting one would fail a file whose code is correct.
+# Replaced with spaces rather than removed so nothing on either side of a
+# stripped region is joined into a name that was never written.
+NOISE = re.compile(
+    r"/\*.*?\*/"          # block comment
+    r"|//[^\n]*"          # line comment
+    r'|"(?:\\.|[^"\\\n])*"'   # double-quoted string
+    r"|'(?:\\.|[^'\\\n])*'",  # single-quoted string
+    re.S,
+)
+
+
+def strip_noise(text: str) -> str:
+    return NOISE.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), text)
 # An UNALIASED qs import only. `import qs.Widgets as W` puts the module behind
 # `W.`, so a bare `VgsButton {` in that file is still unresolved, and treating
 # the alias as plain visibility would let exactly that error through.
@@ -217,10 +234,13 @@ def main() -> int:
 
     findings: list[str] = []
     for path in files:
-        text = path.read_text(errors="replace")
-        imports = set(IMPORT.findall(text))
+        raw = path.read_text(errors="replace")
+        # Imports are read from the raw text -- an import line has no string or
+        # comment to confuse it -- while types are read from the stripped copy.
+        text = strip_noise(raw)
+        imports = set(IMPORT.findall(raw))
         # Modules this file imports that are NOT this repo's own.
-        outside = {m.split()[0] for m in re.findall(r"^\s*import\s+([A-Z][\w.]*)", text, re.M)}
+        outside = {m.split()[0] for m in re.findall(r"^\s*import\s+([A-Z][\w.]*)", raw, re.M)}
         relative_path = str(path.relative_to(REPO_ROOT))
         local = set(INLINE_COMPONENT.findall(text))
         seen: set[str] = set()
