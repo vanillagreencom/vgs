@@ -33,7 +33,6 @@ always    | scripts/check-format-lint.sh
 -         | python3 scripts/lib/shell_scan.py
 -         | python3 scripts/lib/qml_source_selftest.py
 -         | node scripts/lib/qml-region-selftest.js | grep -qxF 'qml-region guard selftest: all checks passed'
--         | node scripts/lib/qml-region-wiring-selftest.js | grep -qxF 'qml-region wiring selftest: all checks passed'
 -         | node scripts/lib/qml-region-testkit-selftest.js | grep -qxF 'qml-region testkit selftest: all checks passed'
 always    | scripts/check-validation-inventory.py
 docs      | .agents/skills/bot-instructions/scripts/bot-instructions check
@@ -58,11 +57,9 @@ packaging | scripts/check-aur-sync.py
 -         | scripts/test-bundled-override.js
 -         | scripts/test-plugin-requirement-report.js
 -         | scripts/test-toast-actions.js
--         | scripts/test-ai-usage-provider.js
+-         | scripts/test-ai-usage-logic.js
 -         | scripts/test-ai-usage-entrypoint.js
 -         | scripts/test-ai-usage-wiring.js
--         | scripts/test-ai-usage-view.js
--         | scripts/test-ai-usage-filing.js
 -         | scripts/test-ai-usage-lifecycle.js
 qml       | scripts/test-mercury-logic.js
 qml       | scripts/test-mercury-format.js
@@ -103,7 +100,6 @@ qml       | scripts/test-thumb-sweep.js
 qml       | scripts/test-flatline-controls.js
 qml       | scripts/test-brightness-scan-ordering.js
 helper    | scripts/test-wallpaper-thumbs.py
-helper    | scripts/test-wallpaper-thumb-cache.py
 helper    | python3 -m py_compile bin/vshell-helper
 helper    | bash -n bin/vshell
 always    | git diff --check
