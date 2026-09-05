@@ -42,14 +42,14 @@ The installer writes into `.git/hooks`, never `core.hooksPath`:
 - `--uninstall` drops the helper and the marked line, deletes a hook file this installer created outright, leaves every other line, and runs under `core.hooksPath` too. A line it may not edit keeps the helper and fails the removal.
 - `--check` writes nothing, not even the hooks directory. `0`: helper and both hooks pass the install predicate. `1`: a shim drifted or absent, or `core.hooksPath` set and empty. `2`: unmeasurable, or `core.hooksPath` naming a directory; the verifier reads `.git/hooks` only. Definitive drift outranks an unmeasured component. One stdout line carries every finding.
 - The helper is compared byte for byte against `helper_body`, its head against `helper_head_shape` with the per-checkout value blanked. Only `SCRIPT_DIR` may differ, and only when it round-trips through `gg_shell_quote` and names this project's scripts directory in another checkout of this repository; `project_rel` and `skill_roots` compare exactly.
-- `gg_install_file` in `scripts/lib/atomic-install.sh` is a rename inside the destination's directory; its staging file is declared and removed in `common.sh`.
+- `gg_install_file` in `scripts/lib/atomic-install.sh` replaces baselines, collated changelogs, and reflowed markdown by a rename inside the destination's directory. `common.sh` removes its staging file on exit.
 - kendex runs the installer through the `repo-effects` declaration in `SKILL.md`; every verb that drops the package runs `--uninstall` while the scripts are still on disk; `kendex guard install`, `guard uninstall` and `guard check` call it directly; `kendex check` relays `--check` only where `.git/hooks/kendex-guards` exists.
 
 ## The pre-commit chain
 
 `scripts/pre-commit` judges one commit snapshot: staged content, with tracked configuration read from the index. Order:
 
-1. `size-ratchet --staged`, from the committing work tree's copy first, then this install's; a stated skip where neither exists or the repo-local one rejects `--staged` in its first-line parser diagnostic.
+1. `size-ratchet --staged` for document byte ceilings, from the committing work tree's copy first, then this install's; a stated skip where neither exists or the repo-local one rejects `--staged` in its first-line parser diagnostic.
 2. `preflight --staged`, resolved the same way; a first commit skips it with a note.
 3. `growth-guards all --staged`.
 4. The repo-root-relative executable `GROWTH_GUARDS_PRE_COMMIT_LOCAL` names, when set.
@@ -62,7 +62,7 @@ Every step runs before the verdict; any other companion failure blocks. The shim
 - md-refs runs the `lines` stream through `md-refs.awk`, then resolves in three passes: every selected file's references, the headings of every cited file read from the index whether or not in scope, then the verdict.
 - Both programs are POSIX awk (no interval expressions, no gawk builtins) under `LC_ALL=C`; `mawk` and `gawk --posix` give the same records over the suites' fixtures.
 - The reflow is the check's state machine printing instead of complaining, so a reflowed file passes md-format by construction; `tests/md-reflow.test.sh` proves it over the corpus and proves each rewrite is a fixed point.
-- md-format and md-refs are in `STAGED_SCOPED_CHECKS`; a repository widens them with `GROWTH_GUARDS_MD_SCOPE=all` after reflowing its tree.
+- The batch passes `--staged` to both markdown checks. md-format selects changed documents; md-refs checks all configured documents against the index. `GROWTH_GUARDS_MD_SCOPE=all` makes unflagged checks unconditional.
 
 ## todo-ban marker shapes
 
@@ -70,7 +70,7 @@ Stated once, in CHECKS.md § todo-ban. At `--staged` the change set is collected
 
 ## byte-ceiling sizing
 
-Sizes are `git cat-file -s` of the recorded blob. Rename detection is pinned on, held to exact content in the staged lane; `--base` reads additions alone.
+Sizes are `git cat-file -s` of the diff's source and destination blobs. The source size is the tighten-only baseline when it already exceeds the ceiling. Rename detection is pinned on and held to exact content in the staged and base lanes.
 
 ## suppression-ban patterns
 
@@ -94,3 +94,7 @@ A headless suite cannot reach a branch that exists only at a tty (`mv` prompts b
 - Pair every negative with positive evidence the code was entered: echo a marker before the call and require it back.
 - Check the premise inside the session: mode `0444` is not enforced at euid 0.
 - Every path written into the session goes through `%q`; the session exports `LC_ALL=C`.
+
+## Commit change collection
+
+`scripts/lib/commit-changes.sh::gg_commit_changes` owns the changed, written and product path sets. The changelog message gate and kendex's compile scheduling share these sets. Product paths use `GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS`. Rename sources and destinations both count as changed paths. The written set retains the changelog gate's content and file-mode rules.

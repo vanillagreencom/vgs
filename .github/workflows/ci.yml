@@ -88,7 +88,7 @@ jobs:
           python3 scripts/lib/tracked_blobs_selftest.py
           python3 scripts/lib/prose_blocks_selftest.py
 
-      # The upstream path classes set limits; baseline entries may only shrink.
+      # The upstream document classes set byte limits.
       - name: File-size ratchet
         run: .agents/skills/size-ratchet/scripts/size-ratchet
 

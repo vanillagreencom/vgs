@@ -205,6 +205,41 @@ git -C "$R" add -A
 run_in "$R" "$MDF" --all
 [ "$RC" -eq 0 ] && ok "control: md-format --all passes on what --all reflowed" || bad "control: md-format after --all" "rc=$RC out=$OUT"
 
+echo "=== a failed replacement preserves the file and removes its staging file ==="
+new_repo replacement
+printf 'Wrapped\ntext.\n' >"$R/doc.md"
+cp "$R/doc.md" "$TMP/original.md"
+mkdir -p "$TMP/fail-bin"
+cat >"$TMP/fail-bin/mv" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'injected rename failure\n' >&2
+exit 1
+STUB
+chmod +x "$TMP/fail-bin/mv"
+run_in "$R" env PATH="$TMP/fail-bin:$PATH" "$MDR" doc.md
+[ "$RC" -eq 2 ] && cmp -s "$R/doc.md" "$TMP/original.md" \
+  && ok "rename failure is an error and preserves the original bytes" || bad "failed replacement" "rc=$RC out=$OUT"
+leftovers="$(find "$R" -maxdepth 1 -type f ! -name doc.md -print)"
+[ -z "$leftovers" ] && ok "failed replacement removes the staging file" || bad "staging file cleanup" "$leftovers"
+run_in "$R" "$MDR" doc.md
+[ "$RC" -eq 0 ] && [ "$(cat "$R/doc.md")" = 'Wrapped text.' ] \
+  && ok "the same file reflows when rename succeeds" || bad "successful replacement control" "rc=$RC out=$OUT"
+
+echo "=== staged reflow honors exclusions ==="
+new_repo staged-exclusion
+mkdir -p "$R/tools"
+printf 'Wrapped\ntext.\n' >"$R/doc.md"
+printf 'doc.md\tvendored document\n' >"$R/tools/md-excludes"
+git -C "$R" add -A
+run_in "$R" "$MDR" --staged
+[ "$RC" -eq 0 ] && [ "$(cat "$R/doc.md")" = $'Wrapped\ntext.' ] \
+  && ok "staged reflow leaves the excluded document unchanged" || bad "staged exclusion" "rc=$RC out=$OUT"
+git -C "$R" rm -qf tools/md-excludes
+run_in "$R" "$MDR" --staged
+[ "$RC" -eq 0 ] && [ "$(cat "$R/doc.md")" = 'Wrapped text.' ] \
+  && ok "the same staged document reflows without its exclusion" || bad "staged exclusion control" "rc=$RC out=$OUT"
+
 echo "=== the skill's own shipped markdown is a fixed point ==="
 new_repo self
 mkdir -p "$R/skills/growth-guards"

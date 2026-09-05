@@ -1,5 +1,25 @@
 schema = 6
 
+[bot-instructions]
+schema = 1
+
+[bot-instructions.repo]
+name = "vgs"
+summary = "VGS is a desktop shell for Hyprland and Niri using Quickshell. It includes a Go backend and a Python helper CLI."
+tracker = "VGS"
+
+[bot-instructions.bots]
+codex = false
+copilot = false
+coderabbit = false
+qodo = false
+qodo_best_practices = false
+qodo_review_md = false
+macroscope = false
+
+[bot-instructions.exclusions]
+derive_render = true
+
 [sources.kendex]
 repo = "vanillagreencom/kendex"
 enabled = true
@@ -70,6 +90,10 @@ source = "kendex"
 enabled = true
 
 [skills.code-quality]
+source = "kendex"
+enabled = true
+
+[skills.bot-instructions]
 source = "kendex"
 enabled = true
 
@@ -145,7 +169,7 @@ enabled = true
 source = "kendex"
 enabled = true
 
-[skills.arch-docs]
+[skills.docs-writing]
 source = "kendex"
 harnesses = [
     "claude",

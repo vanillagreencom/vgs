@@ -166,6 +166,51 @@ OUT="$(cd "$R" && GROWTH_GUARDS_MD_REFS_PATHS='docs/*.md' "$MDR" --all 2>&1)" &&
 [ "$RC" -eq 1 ] && case "$OUT" in *"AGENTS.md:1:"*) false ;; *"docs/design.md:1:"*) true ;; *) false ;; esac \
   && ok "GROWTH_GUARDS_MD_REFS_PATHS replaces the list" || bad "path list replaces" "rc=$RC out=$OUT"
 
+echo "=== a link followed by a section name resolves the heading prefix ==="
+new_repo section-links
+put guide.md $'# Guide\n\n## Install\n'
+cite "a plain section route resolves" 0 $'[guide](guide.md) § Install.\n'
+cite "a formatted section route resolves with following prose" 0 $'[guide](guide.md) § `Install` explains setup.\n'
+cite "a missing section route fails" 1 $'[guide](guide.md) § Missing section.\n' 1 "has no heading at the start"
+cite "a section name needs its boundary" 1 $'[guide](guide.md) § Installer.\n' 1 "has no heading at the start"
+cite "a link inside a code example is not a reference" 0 $'`[guide](guide.md) § Missing section.`\n'
+put guide.md $'# Guide\n\n## 1. Install\n\n### 1.1.1 Choose a path\n'
+cite "a numbered section route resolves" 0 $'[guide](guide.md) § 1 describes setup.\n'
+cite "a nested numbered section route resolves" 0 $'[guide](guide.md) § 1.1.1 describes the path.\n'
+cite "a missing numbered section cannot match its parent" 1 $'[guide](guide.md) § 1.1.2 describes the path.\n' 1 "has no heading at the start"
+
+echo "=== section-route regression controls ==="
+new_repo section-regressions
+put guide.md $'# Guide\n\n## 1\n\n## Install\n'
+put 'guide(foo).md' $'# Guide\n\n## Install\n'
+cite "numeric routes cannot fall through to a bare parent prefix" 1 $'[guide](guide.md) § 1.1.2 details.\n' 1 "has no heading at the start"
+cite "balanced destination parentheses do not hide a missing section" 1 $'[guide](guide(foo).md) § Missing.\n' 1 "has no heading at the start"
+cite "underscore emphasis resolves like the other emphasis markers" 0 $'[guide](guide.md) § _Install_ explains setup.\n'
+cite "escaped destination parentheses do not hide a missing section" 1 $'[guide](guide\\(foo\\).md) § Missing.\n' 1 "has no heading at the start"
+cite "parentheses in a link title do not hide a missing section" 1 $'[guide](guide(foo).md "A ) title") § Missing.\n' 1 "has no heading at the start"
+cite "an angle destination and title retain a valid section route" 0 $'[guide](<guide(foo).md> "A ) title") § Install.\n'
+
+echo "=== symmetric normalization, punctuation and anchored section routes ==="
+new_repo section-text
+put guide.md $'# Guide\n\n## snake_case\n\n## Install\n\n## 2.\n\n## 3)\n\n## 4.1.\n\n## Use *tools*\n'
+cite "snake_case resolves with symmetric normalization" 0 $'[guide](guide.md) § snake_case.\n'
+cite "formatted snake_case resolves with symmetric normalization" 0 $'[guide](guide.md) § **snake_case** describes naming.\n'
+cite "emphasis inside a heading resolves" 0 $'[guide](guide.md) § Use tools.\n'
+cite "a question mark ends a section prefix" 0 $'[guide](guide.md) § Install?\n'
+cite "an exclamation mark ends a section prefix" 0 $'[guide](guide.md) § Install!\n'
+cite "punctuation does not accept an incomplete heading" 1 $'[guide](guide.md) § Instal!\n' 1 "has no heading at the start"
+cite "a valid anchor does not hide a missing section" 1 $'[guide](guide.md#install) § Missing.\n' 1 "has no heading at the start"
+cite "an anchored link also accepts a valid section" 0 $'[guide](guide.md#install) § Install.\n'
+cite "a bare anchor does not hide a missing section" 1 $'# Guide\n\n[guide](#guide) § Missing.\n' 3 "has no heading at the start"
+cite "a terminal period in a bare numbered heading resolves" 0 $'[guide](guide.md) § 2 describes setup.\n'
+cite "a terminal parenthesis in a bare numbered heading resolves" 0 $'[guide](guide.md) § 3 describes setup.\n'
+cite "a terminal period in a nested numbered heading resolves" 0 $'[guide](guide.md) § 4.1 describes setup.\n'
+cite "a question mark ends a numbered section prefix" 0 $'[guide](guide.md) § 2?\n'
+cite "an exclamation mark ends a numbered section prefix" 0 $'[guide](guide.md) § 3!\n'
+cite "a missing child cannot resolve to a punctuated number" 1 $'[guide](guide.md) § 4.1.2 describes setup.\n' 1 "has no heading at the start"
+put guide.md $'# Guide\n\n## `snake_case`\n'
+cite "code spans resolve with symmetric normalization" 0 $'[guide](guide.md) § `snake_case`.\n'
+
 echo "=== scopes: touched, --staged, --all ==="
 new_repo scopes
 put ok.md $'# OK\n'
@@ -179,8 +224,8 @@ run_refs --all
   && ok "--all reaches the committed dead link" || bad "--all reaches committed" "rc=$RC out=$OUT"
 put docs/architecture/overview.md $'[live](../../ok.md)\n'
 run_refs --staged
-[ "$RC" -eq 0 ] && case "$OUT" in *"1 staged markdown file(s)"*) true ;; *) false ;; esac \
-  && ok "--staged judges the staged file alone, so the committed dead link is out of scope" || bad "--staged judges staged only" "rc=$RC out=$OUT"
+[ "$RC" -eq 1 ] && case "$OUT" in *"AGENTS.md:1:"*) true ;; *) false ;; esac \
+  && ok "--staged also checks references from unchanged documents" || bad "incoming references" "rc=$RC out=$OUT"
 put AGENTS.md $'[dead](nope.md) again\n'
 run_refs
 [ "$RC" -eq 1 ] && case "$OUT" in *"AGENTS.md:1:"*) true ;; *) false ;; esac \
@@ -196,6 +241,32 @@ git -C "$R" rm -q --cached ok.md
 run_refs --staged
 [ "$RC" -eq 1 ] && case "$OUT" in *"no tracked file or directory at ok.md"*) true ;; *) false ;; esac \
   && ok "a link to a file the commit deletes is dead" || bad "deleted target is dead" "rc=$RC out=$OUT"
+
+echo "=== staged references honor exclusions ==="
+new_repo staged-exclusion
+put AGENTS.md $'[dead](missing.md)\n'
+put tools/md-excludes $'AGENTS.md\tvendored instructions\n'
+run_refs --staged
+[ "$RC" -eq 0 ] && case "$OUT" in *"no tracked markdown file(s) to judge"*) true ;; *) false ;; esac \
+  && ok "the staged scan excludes the declared document" || bad "staged exclusion" "rc=$RC out=$OUT"
+git -C "$R" rm -qf tools/md-excludes
+run_refs --staged
+[ "$RC" -eq 1 ] && case "$OUT" in *"no tracked file or directory at missing.md"*) true ;; *) false ;; esac \
+  && ok "the same staged reference fails without its exclusion" || bad "staged exclusion control" "rc=$RC out=$OUT"
+
+echo "=== target-only edits recheck incoming references ==="
+new_repo incoming
+put guide.md $'# Guide\n\n## Install\n'
+put AGENTS.md $'[setup](guide.md#install)\n'
+git -C "$R" commit -qm seed
+put guide.md $'# Guide\n\n## Setup\n'
+run_refs
+[ "$RC" -eq 1 ] && case "$OUT" in *"guide.md has no heading or explicit anchor #install"*) true ;; *) false ;; esac \
+  && ok "renaming only the target heading finds an unchanged caller" || bad "target rename" "rc=$RC out=$OUT"
+git -C "$R" rm -qf guide.md
+run_refs
+[ "$RC" -eq 1 ] && case "$OUT" in *"no tracked file or directory at guide.md"*) true ;; *) false ;; esac \
+  && ok "deleting only the target finds an unchanged caller" || bad "target deletion" "rc=$RC out=$OUT"
 
 echo "=== refusals and unmeasured paths ==="
 new_repo refuse

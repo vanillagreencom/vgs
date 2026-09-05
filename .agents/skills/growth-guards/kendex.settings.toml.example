@@ -12,8 +12,8 @@
 GROWTH_GUARDS_CHECKS = "todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs"
 
 # Kilobytes a single tracked file may reach before byte-ceiling refuses it.
-# Declared asset trees are exempted through GROWTH_GUARDS_BYTE_EXCLUDES
-# rather than by raising this.
+# Existing files already above it may hold or shrink, but may not grow.
+# Declared asset trees are exempted through GROWTH_GUARDS_BYTE_EXCLUDES.
 GROWTH_GUARDS_BYTE_CEILING_KB = "200"
 
 # The changelog-entries fragment tree: a space-separated list of shell globs
@@ -23,9 +23,8 @@ GROWTH_GUARDS_BYTE_CEILING_KB = "200"
 # a clean pass, so a project with no fragments needs no change here.
 GROWTH_GUARDS_CHANGELOG_PATHS = "changelog.d/*/*.md"
 
-# The collated record the same check's other scope judges: a line this commit
-# adds under its `## [Unreleased]` heading is refused, because entries are
-# written as fragments and folded in at release. Empty = no record scope.
+# The collation destination. Ordinary checks permit edits to this document.
+# Empty disables collation.
 GROWTH_GUARDS_CHANGELOG_RECORD = "CHANGELOG.md"
 
 # Paths whose change obliges a changelog entry, checked by the commit-msg
@@ -35,11 +34,9 @@ GROWTH_GUARDS_CHANGELOG_RECORD = "CHANGELOG.md"
 # Empty = rule off.
 GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS = ""
 
-# What md-format and md-refs judge with neither --staged nor --all: "touched"
-# is the markdown files a commit touches, and nothing when nothing is staged;
-# "all" is every tracked file the path globs name. Set "all" once the
-# repository's markdown is reflowed (scripts/md-reflow --all), so CI judges
-# the whole tree.
+# Without flags, touched runs md-format on changed documents. It runs md-refs
+# on all configured documents when any change is staged. All runs both checks
+# unconditionally. Explicit --staged retains each lane's own scope.
 GROWTH_GUARDS_MD_SCOPE = "touched"
 
 # The markdown md-format and md-reflow take under --all, and the markdown
@@ -57,26 +54,18 @@ GROWTH_GUARDS_MD_REFS_PATHS = "AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md SKILL
 # globs against the full repo-relative path (`*` crosses `/`), replacing the
 # default extension list in CHECKS.md § comments. Add the shapes an
 # extension cannot name (`hooks/* */scripts/*`): a file with no extension
-# takes the grammar its shebang names. The lane is opt-in: name `comments`
-# in GROWTH_GUARDS_CHECKS to run it, and set GH_ISSUE_PATTERN (the github
-# skill's key) to the tracker's own key shape.
+# takes the grammar its shebang names. Run the optional audit as described
+# in CHECKS.md § comments. Set GH_ISSUE_PATTERN (the github skill's key)
+# to the tracker's own key shape.
 # GROWTH_GUARDS_COMMENT_PATHS = ""
 
 # The comments lane's exclusion list, pattern<TAB>reason rows naming the
 # generated and vendored trees whose comments are not this repository's.
 GROWTH_GUARDS_COMMENT_EXCLUDES = "tools/comments-excludes"
 
-# Reference classes the comments lane checks. Empty disables references while
-# GROWTH_GUARDS_COMMENT_REVISION_WORDS can keep revision narration enabled.
+# Reference classes the comments lane checks. Issue IDs need a configured
+# GH_ISSUE_PATTERN; dates and numeric references work without one.
 GROWTH_GUARDS_COMMENT_REFERENCE_TYPES = "issue-id issue-number date"
-
-# POSIX ERE alternatives for revision narration in comments. Empty disables
-# narration while GROWTH_GUARDS_COMMENT_REFERENCE_TYPES can keep references.
-GROWTH_GUARDS_COMMENT_REVISION_WORDS = "previously|used to|no longer|reverted|an earlier|earlier round|incident|historically|originally|at the time|existing code"
-
-# POSIX ERE alternatives for past-state words in agent-loaded prose. Empty
-# disables the word class while dates and issue numbers stay enabled.
-GROWTH_GUARDS_PROSE_REVISION_WORDS = "previously|used to|no longer|reverted|an earlier|earlier round|incident|historically|originally|at the time"
 
 # Repo-local check the pre-commit shim runs LAST: a repo-root-relative
 # executable following the family exit contract (0 clean, 1 violations,

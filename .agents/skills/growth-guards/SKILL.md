@@ -1,7 +1,7 @@
 ---
 name: growth-guards
 description: "Load to add, tune, or debug a repo growth guard, its git hooks, or GROWTH_GUARDS_* settings."
-summary: "Ten commit-time guards beside size-ratchet (markers, bytes, suppressions, conflicts, changelog, prose, markdown format and references, comments, commit message) and the git hook shims that run them."
+summary: "Commit guards for markers, bytes, suppressions, conflicts, changelog, prose, markdown and commit messages, plus an optional comment audit and git hook shims."
 license: MIT
 user-invocable: true
 metadata:
@@ -53,14 +53,14 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 | Check | Verdict |
 |---|---|
 | **todo-ban** | Any work marker (TODO, FIXME, HACK, XXX in comment-marker shapes) in a tracked, non-excluded file fails. No baseline. |
-| **byte-ceiling** | A tracked file over the configured ceiling fails; lockfiles are exempt. |
+| **byte-ceiling** | A new tracked file over the configured ceiling fails; an existing oversized file may hold or shrink but may not grow; lockfiles are exempt. |
 | **suppression-ban** | Blanket lint suppressions fail; reasonless Rust dead or unused allows may only tighten against the baseline. |
 | **conflict-markers** | An unresolved merge-conflict marker in a tracked, non-excluded file fails. |
 | **changelog-entries** | Each `GROWTH_GUARDS_CHANGELOG_PATHS` fragment is one Markdown list item in a Keep a Changelog section and at most `GROWTH_GUARDS_CHANGELOG_CAP` characters. |
 | **prose** | A history reference in Markdown named by `GROWTH_GUARDS_PROSE_PATHS` fails; `GROWTH_GUARDS_CHECKS` controls whether the lane runs. |
 | **md-format** | A hard-wrapped paragraph or list item, a missing blank line around a heading, fence or list, or a trailing-double-space break in Markdown named by `GROWTH_GUARDS_MD_PATHS` fails; `md-reflow` is the remedy. |
-| **md-refs** | A relative link, a `<path>.md § Heading` or `<path>.md#anchor` code-span citation, or a decision ID in Markdown named by `GROWTH_GUARDS_MD_REFS_PATHS` that lands on no tracked file, heading or decision fails. |
-| **comments** | A history reference in the comment text of a source file named by `GROWTH_GUARDS_COMMENT_PATHS` fails: an issue id (`GH_ISSUE_PATTERN`), `#NNN`, a date, or revision narration. Opt-in: name it in `GROWTH_GUARDS_CHECKS`. |
+| **md-refs** | A relative link, a link followed by `§` and a heading prefix, a `<path>.md § Heading` or `<path>.md#anchor` code-span citation, or a decision ID in Markdown named by `GROWTH_GUARDS_MD_REFS_PATHS` that lands on no tracked file, heading or decision fails. |
+| **comments** | A history reference in the comment text of a source file named by `GROWTH_GUARDS_COMMENT_PATHS` fails: an issue id (`GH_ISSUE_PATTERN`), `#NNN`, or a date. Optional audit; see [CHECKS.md § comments](CHECKS.md#comments). |
 | **commit-msg** | The header must be `type(scope)!: subject` within `GROWTH_GUARDS_SUBJECT_MAX`; a commit touching `GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS` also owes a changelog entry or `[no-changelog]`. |
 
 Full check shapes and scopes: [CHECKS.md](CHECKS.md).
@@ -73,11 +73,11 @@ Run `scripts/install-git-hooks [--repo PATH]` to arm the shims.
 
 Pre-commit order: `size-ratchet --staged` when installed -> `preflight --staged` when installed -> `growth-guards all --staged` -> `GROWTH_GUARDS_PRE_COMMIT_LOCAL` when configured. `commit-msg` runs the message gate.
 
-Arming and disarming apply to the whole repository. Disarm before removing the skill. Ownership and layering: [README.md § Who gates a commit](README.md#who-gates-a-commit); install mechanics: [DEVELOPMENT.md § Git hook install contract](DEVELOPMENT.md#git-hook-install-contract).
+Arming and disarming apply to the whole repository. Disarm before removing the skill. Ownership and layering: [README.md § Git hooks](README.md#git-hooks); install mechanics: [DEVELOPMENT.md § Git hook install contract](DEVELOPMENT.md#git-hook-install-contract).
 
 ## Configuration
 
-Exclude immutable first-party sources, including applied SQL migrations, from the comments and prose lanes through their shared excludes lists. Keep preflight’s `applied-migration-edited` lane enabled as the authority on migration bytes.
+Exclude immutable first-party sources, including applied SQL migrations, from the comments and prose lanes through their shared excludes lists. Keep preflight’s `applied-migration-edited` lane enabled as the authority on migration bytes. Set `PREFLIGHT_MIGRATION_GLOBS` for excluded migration paths outside that lane’s defaults.
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -90,23 +90,21 @@ Exclude immutable first-party sources, including applied SQL migrations, from th
 | `GROWTH_GUARDS_CONFLICT_EXCLUDES` | `tools/conflict-markers-excludes` | conflict-markers exclusion list. |
 | `GROWTH_GUARDS_CHANGELOG_CAP` | `200` | Characters per changelog entry. |
 | `GROWTH_GUARDS_CHANGELOG_PATHS` | `changelog.d/*/*.md` | Space-separated globs naming the changelog fragments, matched against the full repo-relative path (`*` crosses `/`). |
-| `GROWTH_GUARDS_CHANGELOG_RECORD` | `CHANGELOG.md` | The collated record file; empty switches that scope off. |
+| `GROWTH_GUARDS_CHANGELOG_RECORD` | `CHANGELOG.md` | The collation destination; empty disables collation. |
 | `GROWTH_GUARDS_CHANGELOG_REQUIRED_PATHS` | *(empty)* | Globs whose change obliges a changelog entry, judged by `commit-msg`; empty switches the rule off. |
 | `GROWTH_GUARDS_PROSE_PATHS` | `SKILL.md */SKILL.md AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md docs/architecture/*.md` | Space-separated globs naming the markdown the prose lane scans, matched against the full repo-relative path (`*` crosses `/`). |
-| `GROWTH_GUARDS_PROSE_REVISION_WORDS` | [CHECKS.md § prose](CHECKS.md#prose) | POSIX ERE alternatives for prose past-state words; empty disables the word class. |
 | `GROWTH_GUARDS_MD_PATHS` | `*.md` | Globs naming the markdown md-format and md-reflow take under `--all`. |
 | `GROWTH_GUARDS_MD_REFS_PATHS` | the `GROWTH_GUARDS_PROSE_PATHS` default | Globs naming the markdown md-refs judges under `--all`. |
 | `GROWTH_GUARDS_MD_EXCLUDES` | `tools/md-excludes` | Exclusion list both markdown lanes honour in every scope, and md-reflow under `--staged` and `--all`. |
-| `GROWTH_GUARDS_MD_SCOPE` | `touched` | What the markdown lanes judge with neither `--staged` nor `--all`: `touched` is the staged files, and nothing when nothing is staged; `all` is every tracked matching file. |
+| `GROWTH_GUARDS_MD_SCOPE` | `touched` | With neither flag, `touched` runs md-format on staged files and md-refs on all configured documents when anything is staged; `all` checks every matching file. |
 | `DECISIONS_DIR`, `DECISION_ID_PREFIX`, `DECISION_ID_WIDTH` | `docs/decisions`, `D`, `3` | The decider skill's scheme, read by md-refs to judge decision IDs; IDs are not judged where the directory is not tracked. |
 | `GROWTH_GUARDS_COMMENT_PATHS` | the extensions in [CHECKS.md § comments](CHECKS.md#comments) | Space-separated globs naming the source files the comments lane scans, matched against the full repo-relative path (`*` crosses `/`); replaces the default. |
-| `GROWTH_GUARDS_COMMENT_EXCLUDES` | `tools/comments-excludes` | comments exclusion list (generated, vendored, and immutable first-party files). `GH_ISSUE_PATTERN` (the github skill's key) is the issue-id shape; empty keeps `[A-Z]+-[0-9]+`. |
-| `GROWTH_GUARDS_COMMENT_REFERENCE_TYPES` | `issue-id issue-number date` | Reference classes the comments lane checks; empty disables this half. |
-| `GROWTH_GUARDS_COMMENT_REVISION_WORDS` | [CHECKS.md § comments](CHECKS.md#comments) | POSIX ERE alternatives for revision narration; empty disables this half. |
+| `GROWTH_GUARDS_COMMENT_EXCLUDES` | `tools/comments-excludes` | comments exclusion list (generated, vendored, and immutable first-party files). `GH_ISSUE_PATTERN` (the github skill's key) declares the tracker ID shape; empty leaves ID checks inactive. |
+| `GROWTH_GUARDS_COMMENT_REFERENCE_TYPES` | `issue-id issue-number date` | Reference classes the comments lane checks; name at least one type. |
 | `GROWTH_GUARDS_COMMIT_TYPES` | `build chore ci docs feat fix perf refactor revert style test` | Accepted commit types. |
 | `GROWTH_GUARDS_SUBJECT_MAX` | `72` | Characters allowed in a hand-written commit header. |
 | `GROWTH_GUARDS_PRE_COMMIT_LOCAL` | *(empty)* | Repo-root-relative executable the pre-commit shim runs last. |
 
-Settings follow [README.md § Configuration](README.md#configuration). `GROWTH_GUARDS_SETTINGS_FILE=/dev/null` skips file sources; `GROWTH_GUARDS_CHANGELOG_COLLATE=1` is environment-only and bypasses only the record comparison.
+Settings follow [README.md § Settings](README.md#settings). `GROWTH_GUARDS_SETTINGS_FILE=/dev/null` skips file sources; `GROWTH_GUARDS_CHANGELOG_COLLATE=1` is environment-only, authorizes `--collate` on a clean index and working tree, and lets `commit-msg` count a record change as the release changelog entry.
 
-**Excludes format.** `pattern<TAB>reason` per line (shell glob against the full repo-relative path; `*` crosses `/`); a pattern without a reason is a config error. A pattern opening with `!` carves its matches back into the scanned set, and wins over every exclusion row whatever the order. That is how hand-written source inside an otherwise excluded render tree (`.agents/**` plus `!.agents/skills/my-skill/**`) stays governed. To exclude a path that literally begins with `!`, escape it: `\!foo`. **Baseline format.** `path<TAB>count`, `LC_ALL=C` sorted, unique paths, positive counts. Seeding a first baseline and CI wiring: [README.md](README.md). Hook install and removal details: [DEVELOPMENT.md](DEVELOPMENT.md).
+**Excludes format.** `pattern<TAB>reason` per line (shell glob against the full repo-relative path; `*` crosses `/`); a pattern without a reason is a config error. A pattern opening with `!` carves its matches back into the scanned set, and wins over every exclusion row whatever the order. That is how hand-written source inside an otherwise excluded render tree (`.agents/**` plus `!.agents/skills/my-skill/**`) stays governed. To exclude a path that literally begins with `!`, escape it: `\!foo`. **Baseline format.** `path<TAB>count`, `LC_ALL=C` sorted, unique paths, positive counts. Initial suppression baseline: [CHECKS.md § suppression-ban](CHECKS.md#suppression-ban). Hook install and removal details: [DEVELOPMENT.md](DEVELOPMENT.md).

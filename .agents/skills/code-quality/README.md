@@ -1,6 +1,6 @@
 # code-quality
 
-Code-authoring standards for dev agents, kept in one upstream copy. For a repository that wants every agent writing code in it to hold the same bar.
+Code-writing rules for AI coding agents. Repository owners use this skill to supply common rules for correctness, tests and cleanup.
 
 ## Install
 
@@ -8,17 +8,19 @@ Code-authoring standards for dev agents, kept in one upstream copy. For a reposi
 kendex add vanillagreencom/kendex --skill code-quality
 ```
 
-## What it does
+kendex also installs docs-writing, which supplies the markdown rules.
 
-- Correctness rules: handle every error, never fail open, name the actual cause.
-- Prove-your-guards: a new check ships with the defect it catches planted and seen red.
-- Language discipline for Rust, Bash and TypeScript.
-- Comment and markdown placement rules, over-engineering limits, and cleanup rules.
+## Features
+
+- Define how agents handle errors and remove unused code.
+- Require checks to fail on the defects they claim to catch.
+- Supply language rules for Rust, Bash and TypeScript.
+- Direct markdown work to the docs-writing skill.
 
 ## How it works
 
-An agent loads [SKILL.md](SKILL.md) before writing or modifying code and follows it. The rules are generic; nothing in the skill names a repository.
+The agent loads [SKILL.md](SKILL.md) before it changes code. It reads the shared rules together with your project instructions. It applies those rules while implementing the change and validating the result.
 
-## Customise
+## Settings
 
 - Repository-specific standards: `[skill-instructions]` in `kendex.toml`, rendered into the installed copy's Project Instructions section and read alongside the generic rules.
