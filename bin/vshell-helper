@@ -8462,21 +8462,36 @@ def _mercury_stored_token() -> str:
         return ""
 
 
-def _mercury_resolve_token() -> Tuple[str, str]:
-    """The token and where it came from.
+def _mercury_env_token() -> str:
+    return os.environ.get("MERCURY_API_TOKEN", "").strip()
+
+
+def _mercury_resolve_token() -> str:
+    """The key to authenticate with, or "" when there is none.
 
     A key typed into settings wins, because that is the one the user can see
     and change from the shell. MERCURY_API_TOKEN in the environment is the
     fallback for a key provisioned outside VGS (a secret manager writing
     ~/.config/environment.d), which the user may never open settings for.
     """
-    stored = _mercury_stored_token()
-    if stored:
-        return stored, "stored"
-    env = os.environ.get("MERCURY_API_TOKEN", "").strip()
-    if env:
-        return env, "env"
-    return "", "none"
+    return _mercury_stored_token() or _mercury_env_token()
+
+
+def _mercury_key_source() -> str:
+    """Which of the two the key came from, as a label for the settings UI.
+
+    Deliberately NOT returned alongside the key. When the two travelled
+    together as a tuple, CodeQL could not tell the label from the secret it
+    was read next to, and reported every reply that carries the label as
+    clear-text logging of the key. Here the return is one of three literals
+    and the key is not in scope, which is true of the code and now visible to
+    a reader and a checker alike.
+    """
+    if _mercury_stored_token():
+        return "stored"
+    if _mercury_env_token():
+        return "env"
+    return "none"
 
 
 def _mercury_request(base: str, token: str, method: str, path: str,
@@ -8760,8 +8775,7 @@ def cmd_mercury(argv: List[str]) -> int:
 
     # ---- key management: no network, no token needed -----------------------
     if sub == "token-status":
-        _, source = _mercury_resolve_token()
-        return emit({"ok": True, "keySource": source})
+        return emit({"ok": True, "keySource": _mercury_key_source()})
 
     if sub == "set-token":
         # Read from stdin, never argv. One line: the caller writes the key and
@@ -8797,15 +8811,15 @@ def cmd_mercury(argv: List[str]) -> int:
             pass
         except OSError as exc:
             return fail("could not remove the stored key", detail=str(exc))
-        _, source = _mercury_resolve_token()
-        return emit({"ok": True, "keySource": source})
+        return emit({"ok": True, "keySource": _mercury_key_source()})
 
     if sub not in {"snapshot", "check", "upload", "doctor"}:
         eprint(MERCURY_USAGE)
         return 2
 
     base = os.environ.get("MERCURY_API_BASE", MERCURY_API_DEFAULT_BASE).rstrip("/")
-    token, token_source = _mercury_resolve_token()
+    token = _mercury_resolve_token()
+    token_source = _mercury_key_source()
     if not token:
         return fail("no Mercury API key: add one in the widget settings, or set MERCURY_API_TOKEN",
                     keySource="none")
