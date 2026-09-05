@@ -2,10 +2,10 @@
 description: Performance validation specialist. Latency validation, benchmark execution, percentile analysis, hot-path cost review, regression detection.
 tags: review, performance
 mode: subagent
-model: openai/gpt-5.5
+model: openai/gpt-6-astra
 color: "#ef4444"
 options:
-  reasoningEffort: xhigh
+  reasoningEffort: high
   reasoningSummary: auto
   textVerbosity: medium
 permission:

@@ -9,7 +9,7 @@ metadata:
   source: kendex
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-  version: "2.0.0"
+  version: "2.1.0"
 tags: [review]
 ---
 
@@ -30,6 +30,8 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 ```
 
 Flags: `--repo`, `--spec`, `--staged`, `--dry-run`; `bot-instructions --help`. Python 3.11+.
+
+Exit codes: 0 clean, 1 findings, 2 could not complete. A pre-commit lane blocks on both nonzero codes.
 
 ## What reads what
 
@@ -63,11 +65,12 @@ A repo enables `[bot-instructions.exclusions] derive_render` or lists every rend
 
 - Treat every policy path below as invalidating prior review evidence.
 - Require trusted human approval on a pull request that touches a policy path.
-- Run `check` in CI from the default branch copy, with `--spec` naming the pull request tree's package copy.
+- Run `check` in CI from the default branch copy, with `--spec` naming the pull request tree's package copy. The package's own source repository runs the pull request's checker instead: a renderer change judged by the default-branch copy drifts by construction.
 
 ## The render inputs
 
 - `kendex.toml`, plus `kendex-local.toml` when the root declares `is_source_catalog = true`.
+- `.kendex-generated.json` when `[bot-instructions.exclusions] derive_render` is on.
 - The spec copy's doctrine source and routing table.
 - `.bot-instructions/coderabbit-schema.json` when CodeRabbit is on.
 - The existing `AGENTS.md` when Codex is on.
@@ -89,7 +92,7 @@ Keep one `## Doctrine` section in the spec copy. `--spec` selects that copy; the
 
 ### scope
 
-Raise a defect only in changed lines or code those lines directly break. Report correctness defects, security defects, data loss, and fail-open paths in gates, guards, or CI. Do not report unrelated defects. Do not question the inclusion of a file that the PR body explicitly includes in its scope.
+Raise a defect only in changed lines or code those lines directly break. Report correctness defects, security defects, data loss, and fail-open paths in gates, guards, or CI. Do not report unrelated defects. Do not question the inclusion of a file that the PR body explicitly includes in its scope. Report an input only after establishing that a shipped producer emits it in normal use; a full disk or a value past 2^53 is not one.
 
 ### rounds
 
@@ -97,7 +100,7 @@ Report all findings about the current diff in one round. Write one comment per r
 
 ### severity
 
-Mark a finding as blocking only if it must stop the merge. Mark other findings as suggestions. Group suggestions together. Omit suggestions when a repeat review covers a one-line fix. Match severity and confidence to the evidence.
+Mark a finding as blocking only if it must stop the merge. Mark other findings as suggestions. Group suggestions together. Omit suggestions when a repeat review covers a one-line fix. Match severity and confidence to the evidence. Name the user-visible consequence in every finding.
 
 ### no-preferences
 
@@ -105,7 +108,7 @@ Do not report style, wording, naming, or comment preferences. Do not request spe
 
 ### declined
 
-Read the PR's decline replies and the repo's instruction files before reporting a finding. Do not repeat a finding class that a stated decline or a documented accepted trade-off already answers. Reopen it only when the relevant code has changed.
+Read the PR's decline replies and the repo's instruction files before reporting a finding. Do not repeat a finding class that a stated decline or a documented accepted trade-off already answers. Reopen it only when the relevant code has changed. Report a gap only after establishing that nothing already covers it: a required CI context, a shipped hook, the file's own stated contract, or the platform's documentation.
 
 ### reply-contract
 

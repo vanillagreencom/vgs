@@ -90,6 +90,7 @@ Once the file lands, everything the file controls moves into it. The dashboard i
 - [ ] Maximum automatic runs per pull request is set.
 - [ ] Spend caps are set: monthly, per pull request, and per review. Macroscope bills per review, and this package's exclusion list is what keeps a vendored tree from being paid for repeatedly.
 - [ ] The generated `.macroscope/ignore.md` excludes what it names. The render writes the grammar Macroscope documents, one glob per line with `#` comments, and `references/limits.md` § Macroscope cites the page. Confirm once that the exclusions took effect.
+- [ ] A repo that lints every tracked `*.md` excludes `.macroscope/ignore.md` from that lint and states why: the file is Macroscope's glob-per-line grammar, where `#` opens a comment, not a heading.
 
 ## If the repo's kendex.toml is a source catalog
 
@@ -109,7 +110,7 @@ Once the file lands, everything the file controls moves into it. The dashboard i
 
 Three classes are worth an exclusion in most repos. Only the first is derived; the other two are `[[bot-instructions.exclusions.path]]` entries a repo writes, because their paths differ per repo and because **an exclusion with no stated reason is indistinguishable from a mistake at the next read** — a shipped default nobody wrote a reason for is that mistake with nothing to catch it.
 
-- **Render trees.** `[bot-instructions.exclusions] derive_render = true`. Derived from the manifest kendex resolves, so it follows a refresh instead of falling behind it, and it carries the one fixed reason `repo-toml.md` § `[bot-instructions.exclusions]` states.
+- **Render trees.** `[bot-instructions.exclusions] derive_render = true`. Derived from the writer inventory `.kendex-generated.json` and the manifest kendex resolves, so it follows a refresh instead of falling behind it, and it carries the one fixed reason `repo-toml.md` § `[bot-instructions.exclusions]` states.
 - **Vendored trees this repo pins byte-for-byte.** One entry per tree. The reason names the upstream and says the fix lands there.
 - **Lock files.** `Cargo.lock`, `package-lock.json`, `pnpm-lock.yaml` and the rest, wherever they sit. The reason is that a package manager writes them, so a finding on one is a finding about a dependency change rather than about the file. Exclude the file, not the manifest beside it.
 

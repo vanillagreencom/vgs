@@ -20,11 +20,20 @@ INPUT=$(cat)
 
 # A payload that does not parse, or that names a command which is not a
 # string, is refused rather than skipped. An absent command is the empty
-# string and passes. The null tests are spelled out because jq's `//` reads
-# `false` as absent, and `false` is not a command either.
+# string and passes. The command is read where each harness carries it:
+# `tool_input.command` (Claude Code, Codex, Gemini CLI and the Pi carrier), a
+# bare `command`, or Copilot's `toolArgs.command`, whose `toolArgs` arrives as
+# an object or as one JSON-encoded string. The null tests are spelled out
+# because jq's `//` reads `false` as absent, and `false` is not a command
+# either.
 if ! COMMAND=$(printf '%s' "$INPUT" \
-  | jq -r 'if .tool_input.command == null then (if .command == null then "" else .command end)
-           else .tool_input.command end
+  | jq -r 'def copilot: .toolArgs
+             | if . == null then null elif type == "string" then fromjson else . end
+             | if . == null then null elif type == "object" then .command else error end;
+           if .tool_input.command != null then .tool_input.command
+           elif .command != null then .command
+           elif copilot != null then copilot
+           else "" end
            | if type == "string" then . else error end' 2>/dev/null); then
   echo "block-repo-copy: hook payload is not valid JSON, or names a command that is not a string; refusing rather than skipping the guard" >&2
   exit 2
@@ -91,11 +100,9 @@ fi
 # expression carries no order, so the set below is the set named above.
 ENDERS='&;'$'\n'
 CROSSABLE="[^${ENDERS}]"
-# BLANK and SPACE_ANY are the class names as they are spelled INSIDE a bracket
-# expression, so the same two definitions serve a class of their own and a
-# member of a larger one.
+# BLANK is the class name as it is spelled INSIDE a bracket expression, so the
+# one definition serves a class of its own and a member of a larger one.
 BLANK='[:blank:]'
-SPACE_ANY='[:space:]'
 GAP="[${BLANK}]"
 # The backslash is doubled twice over: once for the double quotes, once for the
 # regex, so this alternative is a literal backslash or a literal pipe followed

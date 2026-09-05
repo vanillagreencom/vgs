@@ -2,10 +2,10 @@
 description: Planning specialist that explores requirements and code context, weighs architecture trade-offs, and produces ordered implementation plans or plan files. May write planning artifacts; does not edit production code.
 tags: planning, research
 mode: subagent
-model: openai/gpt-5.5
+model: openai/gpt-6-astra
 color: "#3b82f6"
 options:
-  reasoningEffort: xhigh
+  reasoningEffort: high
   reasoningSummary: auto
   textVerbosity: medium
 permission:
