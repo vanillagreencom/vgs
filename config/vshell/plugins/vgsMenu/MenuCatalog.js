@@ -5,7 +5,7 @@ var categories = [
         id: "all",
         label: "All",
         icon: "\uf00a",
-        description: "Apps, actions, files, and folders"
+        description: "Apps, actions, settings, and developer tools"
     },
     {
         id: "apps",
