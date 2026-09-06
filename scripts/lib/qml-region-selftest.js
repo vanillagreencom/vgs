@@ -20,13 +20,19 @@ const nodeTest = require("node:test");
 
 // node:test exits 0 when no case runs (nothing registered, every case skipped or todo), which
 // would turn the validate row and the CI step green with the supervisor unverified. Count the
-// cases that finish and refuse a clean exit short of the declared number.
+// cases that finish without skipping and refuse a clean exit short of the declared number.
 const EXPECTED_CASES = 15;
 let finished = 0;
-const test = (name, body) => nodeTest(name, (...args) => {
-    const result = body(...args);
-    finished += 1;
-    return result;
+const test = (name, body) => nodeTest(name, (t, ...rest) => {
+    let counted = true;
+    for (const verb of ["skip", "todo"]) {
+        const original = t[verb].bind(t);
+        t[verb] = (...args) => { counted = false; return original(...args); };
+    }
+    return Promise.resolve(body(t, ...rest)).then(value => {
+        if (counted) finished += 1;
+        return value;
+    });
 });
 process.on("exit", code => {
     if (code === 0 && finished !== EXPECTED_CASES) {

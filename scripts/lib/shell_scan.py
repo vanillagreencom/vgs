@@ -9,7 +9,7 @@ inside a word can end a function early. Heredoc terminators accept space
 indentation and can expose body text as code. An unmatched parameter expansion
 leaves later comments and glob classes unmasked. Delimiter counts are therefore
 not a substitute for shell parsing.
-Run this file directly for its self-test.
+Controls: scripts/lib/shell_scan_selftest.py.
 """
 
 from __future__ import annotations
@@ -249,9 +249,3 @@ def assignments(text: str, name: str) -> list[str] | None:
         found.append(fragment)
 
     return found
-
-
-if __name__ == "__main__":
-    from shell_scan_selftest import selftest
-
-    raise SystemExit(selftest())
