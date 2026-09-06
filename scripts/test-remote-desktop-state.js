@@ -574,15 +574,20 @@ test("_reportLifecycleFailure toasts once and lets an authoritative verdict repl
         "the helper's own verdict may replace a generic message that arrived first"
     );
 });
+// One reader for the lifecycle process and grace-timer regions, so every case judges the same text.
+function lifecycleSlices() {
+    const running = serviceSource.slice(serviceSource.indexOf("id: lifecycleProc"));
+    const grace = serviceSource.slice(serviceSource.indexOf("id: lifecycleUnansweredTimer"));
+    return {
+        lifecycleRunningBody: running,
+        lifecycleRunningSlice: running.slice(running.indexOf("onRunningChanged"), running.indexOf("onExited")),
+        graceBody: grace.slice(0, grace.indexOf("id: settleTimer"))
+    };
+}
+
 test("the lifecycle running handler defers the verdict to the grace timer", () => {
     // Process stop can precede output collection. Defer failure until grace allows a successful reply to arrive.
-    const lifecycleRunningBody = serviceSource.slice(
-        serviceSource.indexOf("id: lifecycleProc")
-    );
-    const lifecycleRunningSlice = lifecycleRunningBody.slice(
-        lifecycleRunningBody.indexOf("onRunningChanged"),
-        lifecycleRunningBody.indexOf("onExited")
-    );
+    const { lifecycleRunningSlice } = lifecycleSlices();
     assert.ok(
         !/_reportLifecycleFailure/.test(lifecycleRunningSlice),
         "the running=false handler must not report: it cannot yet know the command failed"
@@ -595,8 +600,7 @@ test("the lifecycle running handler defers the verdict to the grace timer", () =
 
 test("the grace timer takes the success path on a zero exit and reports a command that never exited", () => {
     // A recorded zero exit must take the success path when grace expires.
-    const graceSlice = serviceSource.slice(serviceSource.indexOf("id: lifecycleUnansweredTimer"));
-    const graceBody = graceSlice.slice(0, graceSlice.indexOf("id: settleTimer"));
+    const { graceBody } = lifecycleSlices();
     const zeroAt = graceBody.indexOf("root._lifecycleExitCode === 0");
     const reportAt = graceBody.indexOf("_reportLifecycleFailure");
     assert.ok(zeroAt >= 0, "the grace timer must special-case a successful exit");
@@ -613,7 +617,7 @@ test("the grace timer takes the success path on a zero exit and reports a comman
 });
 
 test("onExited records the exit code without reporting", () => {
-    const lifecycleRunningBody = serviceSource.slice(serviceSource.indexOf("id: lifecycleProc"));
+    const { lifecycleRunningBody } = lifecycleSlices();
     // Record exit status without preempting a more informative JSON verdict.
     const exitedSlice = lifecycleRunningBody.slice(lifecycleRunningBody.indexOf("onExited: exitCode =>"));
     const exitedBody = exitedSlice.slice(0, exitedSlice.indexOf("\n        }"));
@@ -628,7 +632,7 @@ test("onExited records the exit code without reporting", () => {
 });
 
 test("a failed spawn still reaches failure reporting through the grace timer", () => {
-    const lifecycleRunningBody = serviceSource.slice(serviceSource.indexOf("id: lifecycleProc")); const lifecycleRunningSlice = lifecycleRunningBody.slice(lifecycleRunningBody.indexOf("onRunningChanged"), lifecycleRunningBody.indexOf("onExited")); const graceSlice = serviceSource.slice(serviceSource.indexOf("id: lifecycleUnansweredTimer")); const graceBody = graceSlice.slice(0, graceSlice.indexOf("id: settleTimer"));
+    const { lifecycleRunningSlice, graceBody } = lifecycleSlices();
     // A failed spawn may emit no exit. Running transition and grace must still reach failure reporting.
     assert.ok(
         /lifecycleUnansweredTimer\.restart\(\)/.test(lifecycleRunningSlice),
@@ -661,7 +665,7 @@ test("_runLifecycle resets the exit code, takes a generation and stops the previ
     );
 });
 test("a superseded verdict returns without reporting or touching busy", () => {
-    const graceSlice = serviceSource.slice(serviceSource.indexOf("id: lifecycleUnansweredTimer")); const graceBody = graceSlice.slice(0, graceSlice.indexOf("id: settleTimer"));
+    const { graceBody } = lifecycleSlices();
     assert.ok(
         /lifecycleUnansweredTimer\.armedFor = root\._lifecycleGeneration/.test(serviceSource),
         "the verdict timer must record which action armed it"
@@ -688,7 +692,7 @@ test("a superseded verdict returns without reporting or touching busy", () => {
 });
 
 test("busy clears with the verdict, not with process stop", () => {
-    const lifecycleRunningBody = serviceSource.slice(serviceSource.indexOf("id: lifecycleProc")); const lifecycleRunningSlice = lifecycleRunningBody.slice(lifecycleRunningBody.indexOf("onRunningChanged"), lifecycleRunningBody.indexOf("onExited")); const graceSlice = serviceSource.slice(serviceSource.indexOf("id: lifecycleUnansweredTimer")); const graceBody = graceSlice.slice(0, graceSlice.indexOf("id: settleTimer"));
+    const { lifecycleRunningSlice, graceBody } = lifecycleSlices();
     // Clear busy with the verdict, not merely process stop.
     assert.ok(
         !/root\.busy = false/.test(lifecycleRunningSlice),
@@ -824,12 +828,17 @@ function tipFacts(overrides) {
 }
 
 // Derive returned states from the shipped decision so a new state enters message coverage automatically.
-const decisionCode = stripComments(marked[1]);
-const ALL_STATES = [...new Set(
-    quotedLiterals(functionBodyIn(decisionCode, "visualStateFor", "the STATE DECISION block"))
-)];
+// Derived inside the cases that read it: at module scope a broken reader would abort the load before
+// the reader's own control case could name the defect.
+function derivedStates() {
+    const decisionCode = stripComments(marked[1]);
+    return [...new Set(
+        quotedLiterals(functionBodyIn(decisionCode, "visualStateFor", "the STATE DECISION block"))
+    )];
+}
 
 test("the derived state list comes from visualStateFor alone and is not vacuous", () => {
+    const ALL_STATES = derivedStates();
     // Require known states and a nonempty result so a broken extractor cannot produce vacuous loops.
     assert.ok(ALL_STATES.length >= 6, `expected visualStateFor() to return at least 6 states, derived ${ALL_STATES.length}`);
     for (const anchor of ["streaming", "listening", "off"]) {
@@ -855,6 +864,7 @@ test("the derived state list comes from visualStateFor alone and is not vacuous"
 });
 
 test("every derived state selects its own tooltip message", () => {
+    const ALL_STATES = derivedStates();
     const keysSeen = new Set();
     for (const state of ALL_STATES) {
         const tip = tooltipFor(state, tipFacts());
