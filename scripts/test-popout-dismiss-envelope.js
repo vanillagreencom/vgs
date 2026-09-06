@@ -15,9 +15,12 @@ const source = fs.readFileSync(POPOUT, "utf8");
 // Blank comments before behavior-oriented source checks so prose cannot satisfy or trip them.
 const code = source.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
 
-let failures = 0;
-const fail = (name, detail) => { console.error(`FAIL [${name}]: ${detail}`); failures += 1; };
-const ok = (name) => console.log(`  ok    ${name}`);
+const test = require("node:test");
+const assert = require("node:assert/strict");
+
+// A failed check fails its case; node:test reports the passes.
+const fail = (name, detail) => assert.fail(`[${name}]: ${detail}`);
+const ok = () => {};
 
 // Read single-line bindings from an ID-bounded block and throw when extraction fails.
 function bindingsOf(id, names) {
@@ -89,7 +92,6 @@ const evalIn = (expr, ctx) => {
   return new Function("ctx", `with (ctx) { return (${src}); }`)(ctx);
 };
 
-
 function makeState(over = {}) {
   const st = {
     shouldBeVisible: true,
@@ -151,10 +153,8 @@ function sweep(label, frames) {
 const lerp = (a, b, t) => a + (b - a) * t;
 const FRAMES = 8;
 
-
-
 // Include overshoot beyond the target; endpoint interpolation cannot represent expressive entry curves.
-{
+test("the carve-out tracks the drawn body through a grow with Y overshoot", () => {
   const startY = 300, targetY = 100;
   const frames = [];
   for (let i = 0; i <= FRAMES; i += 1) {
@@ -166,20 +166,19 @@ const FRAMES = 8;
   const overshot = frames.some((f) => f.renderedAlignedY < Math.min(startY, targetY));
   if (!overshot) fail("grow setup", "no frame overshot the target, so this path cannot witness the defect");
   sweep("grow with Y overshoot", frames);
-}
+});
 
-
-{
+test("the carve-out tracks the drawn body through a shrink with lagging height", () => {
   const frames = [];
   for (let i = 0; i <= FRAMES; i += 1)
     frames.push(makeState({ alignedHeight: 200, renderedAlignedHeight: lerp(600, 200, i / FRAMES) }));
   if (!frames.some((f) => f.renderedAlignedHeight > f.alignedHeight))
     fail("shrink setup", "no frame lagged the target, so this path cannot witness the defect");
   sweep("shrink with lagging height", frames);
-}
+});
 
 // Move position targets while height is still shrinking to model tab changes.
-{
+test("the carve-out tracks the drawn body through a reposition during a shrink", () => {
   const frames = [];
   for (let i = 0; i <= FRAMES; i += 1) {
     const t = i / FRAMES;
@@ -190,10 +189,10 @@ const FRAMES = 8;
     }));
   }
   sweep("reposition during a shrink", frames);
-}
+});
 
 // Change width during shrink to model a settings update within a transition.
-{
+test("the carve-out tracks the drawn body through a width change during a shrink", () => {
   const frames = [];
   for (let i = 0; i <= FRAMES; i += 1) {
     const t = i / FRAMES;
@@ -204,10 +203,18 @@ const FRAMES = 8;
   }
   if (!frames.some((f) => f.alignedWidth !== 400)) fail("width setup", "width never changed");
   sweep("width change during a shrink", frames);
-}
+});
+
+// A hidden popout must not keep a full-size dismissal hole.
+test("a hidden popout carves out nothing", () => {
+  const st = makeState({ shouldBeVisible: false });
+  const c = carveOut(st);
+  if (c.w !== 0 || c.h !== 0) fail("hidden", `a hidden popout still carves out ${c.w}x${c.h}`);
+  ok("a hidden popout carves out nothing");
+});
 
 // Use settled geometry for the hole as a failure control. A useful sweep must detect that disagreement.
-{
+test("deriving the carve-out from the settled rect breaks the invariant (control)", () => {
   const settledHole = { x: "_surfaceBodyX", y: "_surfaceBodyY", width: "_surfaceBodyW", height: "_surfaceBodyH" };
   const saved = { ...hole };
   Object.assign(hole, settledHole);
@@ -216,10 +223,10 @@ const FRAMES = 8;
   Object.assign(hole, saved);
   if (!m) fail("control", "deriving the carve-out from the SETTLED rect did not break the invariant, so the sweeps prove nothing");
   else ok("deriving it from the settled rect breaks the invariant (control)");
-}
+});
 
 // Test the evaluator's rejection rules before trusting repository expressions.
-{
+test("the evaluator refuses anything but a geometry expression and accepts every real binding", () => {
   const rejected = [
     'require("child_process").execSync("id")',
     'root.alignedX + process.env.HOME',
@@ -248,10 +255,10 @@ const FRAMES = 8;
     catch (e) { fail("expression guard", `refused a real shipped binding (${what}): ${e.message}`); }
   }
   ok("the evaluator refuses anything but a geometry expression, and accepts every real one");
-}
+});
 
 // Verify that the actual mask binds to the derived body rectangle.
-{
+test("contentHoleRect is bound to the animated body rect", () => {
   for (const [k, expr] of Object.entries(hole)) {
     if (/_surfaceBody/.test(expr))
       fail("wiring", `contentHoleRect.${k} still reads the settled surface rect: ${expr}`);
@@ -265,21 +272,21 @@ const FRAMES = 8;
     fail("wiring", "bodyRectY/bodyRectH are not the ANIMATED values, so the hole cannot track the animation");
   else
     ok("bodyRectY/bodyRectH are the animated values");
-}
+});
 
 // Reject imperative envelope updates that would create separate geometry owners.
-{
+test("no imperative carve-out writer remains", () => {
   for (const gone of ["_setDismissCarveOutEnvelope", "carveOutSettleTimer"]) {
     if (source.includes(gone))
       fail("no call sites", `${gone} is back: the carve-out is being written imperatively again, so per-path defects have somewhere to occur`);
   }
-  if (!failures) ok("no imperative carve-out writer remains");
-}
+  ok("no imperative carve-out writer remains");
+});
 
 // Separate PanelWindow commits are not atomic. Map the background first on the same layer
 // so content remains above it. During disagreement, a click can reach content or fall through;
 // reversing the stack can turn a content click into dismissal.
-{
+test("the background window is mapped before the content window and never unmapped mid-open", () => {
   // Find content show assignments in comment-free code so explanatory mentions cannot count.
   const SHOW = /(background|content)Window\.visible\s*=\s*true/g;
   const shows = [...code.matchAll(SHOW)].map(m => m[1]);
@@ -309,11 +316,11 @@ const FRAMES = 8;
     else
       ok("the background window is never unmapped mid-open, so the order survives a modal round trip");
   }
-}
+});
 
 // A mask property change needs a surface commit. With a settled popout and no overlay,
 // updatesEnabled needs a temporary commit window even when the background remains mapped.
-{
+test("the disabled input mask is committed on both edges of a modal round trip", () => {
   const mask = bindingsOf("maskRect", ["width", "height"]);
   const upd = /^\s*updatesEnabled:\s*(.+)$/m.exec(code);
   const handler = /onBackgroundDismissWindowRequiredChanged:\s*\{([\s\S]*?)\n    \}/.exec(code);
@@ -357,20 +364,14 @@ const FRAMES = 8;
     else
       ok("the disabled mask is committed on both edges of a modal round trip");
   }
-}
+});
 
 // Surface geometry must remain settled while the hole follows animation to avoid per-frame surface resize.
-{
+test("the layer surface is still sized from settled geometry", () => {
   const m = /function _setSettledSurfaceGeometry\(\)[\s\S]{0,300}?_setSurfaceGeometry\(([^)]*)\)/.exec(source);
   if (!m) fail("surface", "could not read the settle path's _setSurfaceGeometry call");
   else if (/rendered/.test(m[1]))
     fail("surface", `the layer surface is being sized from ANIMATED geometry (${m[1].trim()}) - that is the resize flash`);
   else
     ok("the layer surface is still sized from settled geometry");
-}
-
-if (failures) {
-  console.error(`\ntest-popout-dismiss-envelope: ${failures} failure(s)`);
-  process.exit(1);
-}
-console.log("test-popout-dismiss-envelope: all checks passed");
+});
