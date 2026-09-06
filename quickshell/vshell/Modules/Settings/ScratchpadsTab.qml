@@ -387,7 +387,7 @@ Item {
                     width: parent.width
                     wrapMode: Text.WordWrap
                     color: Theme.surfaceVariantText
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     text: I18n.tr("Scratchpads need Hyprland or Niri. This session is running neither.")
                 }
             }
@@ -403,8 +403,8 @@ Item {
                     width: parent.width
                     wrapMode: Text.WordWrap
                     color: Theme.surfaceVariantText
-                    font.pixelSize: Theme.fontSizeSmall
-                    text: I18n.tr("Niri has no special workspaces, so each pad gets a named workspace of its own and the keybind focuses it and focuses back. Each pad therefore appears in your workspace list instead of overlaying the current view.")
+                    font.pixelSize: Theme.settingsFontSize
+                    text: I18n.tr("On Niri, scratchpads use named workspaces. The shortcut switches there and back.")
                 }
             }
 
@@ -423,7 +423,7 @@ Item {
                         width: parent.width
                         wrapMode: Text.WordWrap
                         color: Theme.surfaceVariantText
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         text: (modelData.id ? modelData.id + " — " : "") + (modelData.reason || "")
                     }
                 }
@@ -440,7 +440,7 @@ Item {
                     width: parent.width
                     wrapMode: Text.WordWrap
                     color: Theme.error
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     text: ScratchpadService.lastError
                 }
             }
@@ -457,7 +457,7 @@ Item {
                     width: parent.width
                     wrapMode: Text.WordWrap
                     color: Theme.error
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     text: root.enableError
                 }
             }
@@ -472,7 +472,7 @@ Item {
                     width: parent.width
                     wrapMode: Text.WordWrap
                     color: Theme.error
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     text: root.removeError
                 }
             }
@@ -492,7 +492,7 @@ Item {
                         width: parent.width
                         wrapMode: Text.WordWrap
                         color: Theme.error
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         text: (modelData.id || "?") + " — " + (modelData.reason || "")
                     }
                 }
@@ -509,7 +509,7 @@ Item {
                     width: parent.width
                     wrapMode: Text.WordWrap
                     color: Theme.surfaceVariantText
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     text: I18n.tr("VGS could not tell whether hyprland.lua includes the generated scratchpad rules. If your scratchpads do not respond, check that this line is present:")
                 }
 
@@ -517,7 +517,7 @@ Item {
                     width: parent.width
                     wrapMode: Text.WrapAnywhere
                     font.family: Theme.monoFontFamily
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.surfaceText
                     text: ScratchpadService.status.includeLine || "pcall(require, \"vgs.scratchpads\")"
                 }
@@ -534,7 +534,7 @@ Item {
                     width: parent.width
                     wrapMode: Text.WordWrap
                     color: Theme.surfaceVariantText
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     text: ScratchpadService.onNiri ? I18n.tr("Add this include to your Niri config for scratchpads to take effect:") : I18n.tr("VGS never edits your Hyprland config. Add this to hyprland.lua for scratchpads to take effect:")
                 }
 
@@ -542,7 +542,7 @@ Item {
                     width: parent.width
                     wrapMode: Text.WrapAnywhere
                     font.family: Theme.monoFontFamily
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.surfaceText
                     text: ScratchpadService.status.includeLine || "pcall(require, \"vgs.scratchpads\")"
                 }
@@ -560,8 +560,8 @@ Item {
                     width: parent.width
                     wrapMode: Text.WordWrap
                     color: Theme.surfaceVariantText
-                    font.pixelSize: Theme.fontSizeSmall
-                    text: I18n.tr("An app parked on a hidden workspace that one keybind slides in and out. Sizes are a percentage of whichever monitor the pad lands on, so one scratchpad is correct on every display.")
+                    font.pixelSize: Theme.settingsFontSize
+                    text: I18n.tr("Show or hide an app with a shortcut. Sizes follow the current display.")
                 }
 
                 StyledText {
@@ -570,7 +570,7 @@ Item {
                     topPadding: Theme.spacingS
                     wrapMode: Text.WordWrap
                     color: Theme.surfaceVariantText
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     text: I18n.tr("No scratchpads yet.")
                 }
 

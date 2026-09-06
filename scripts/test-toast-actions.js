@@ -382,14 +382,14 @@ test("exactly one Info call raises the takeover category, and the call locator n
 // Resolve settingsTab literals against the parsed sidebar and registry. An invalid string
 // otherwise becomes a no-op button at click time without a parse error.
 
-const sidebarPath = path.join(repoRoot, "quickshell/vshell/Modals/Settings/SettingsSidebar.qml");
+const sidebarPath = path.join(repoRoot, "quickshell/vshell/Modals/Settings/SettingsNavigation.qml");
 const registryPath = path.join(repoRoot, "quickshell/vshell/Modals/Settings/SettingsRegistry.qml");
 const sidebarSource = fs.readFileSync(sidebarPath, "utf8");
 const registrySource = fs.readFileSync(registryPath, "utf8");
 
 const registryTabs = evalArrayLiteral(extractArrayLiteral(registrySource, "readonly property var tabs:"));
 const categoryStructure = evalArrayLiteral(
-    extractArrayLiteral(sidebarSource, "readonly property var categoryStructure:")
+    extractArrayLiteral(sidebarSource, "readonly property var categories:")
 );
 assert.ok(registryTabs.length > 0, "SettingsRegistry should declare tabs");
 assert.ok(categoryStructure.length > 0, "SettingsSidebar should declare a category structure");

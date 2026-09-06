@@ -209,7 +209,7 @@ Item {
                     wrapMode: Text.WordWrap
                     text: I18n.tr("VGS owns the greetd login screen. Sync writes the active theme, settings, profiles, and greetd config to /var/cache/vshell-greeter so the greeter has no VGS runtime dependency.")
                     color: Theme.surfaceVariantText
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                 }
 
                 StyledRect {
@@ -239,7 +239,7 @@ Item {
                             wrapMode: Text.WordWrap
                             text: SettingsData.greeterSyncPending ? I18n.tr("Sync after changing greeter appearance or login policy. Existing encrypted keyrings are never replaced without the explicit conversion button below.") : I18n.tr("Changes that affect the greeter will mark this page for sync.")
                             color: Theme.surfaceVariantText
-                            font.pixelSize: Theme.fontSizeSmall
+                            font.pixelSize: Theme.settingsFontSize
                         }
                     }
                 }
@@ -273,7 +273,6 @@ Item {
                     settingKey: "greeterRememberLastUser"
                     tags: ["greeter", "login", "user", "remember"]
                     text: I18n.tr("Remember Last User")
-                    description: I18n.tr("Preselect the last user who logged in successfully")
                     checked: SettingsData.greeterRememberLastUser
                     onToggled: checked => SettingsData.set("greeterRememberLastUser", checked)
                 }
@@ -282,7 +281,6 @@ Item {
                     settingKey: "greeterRememberLastSession"
                     tags: ["greeter", "login", "session", "remember"]
                     text: I18n.tr("Remember Last Session")
-                    description: I18n.tr("Preselect the last launched desktop session")
                     checked: SettingsData.greeterRememberLastSession
                     onToggled: checked => SettingsData.set("greeterRememberLastSession", checked)
                 }
@@ -302,7 +300,7 @@ Item {
                     wrapMode: Text.WordWrap
                     text: I18n.tr("This applies to the graphical VGS greeter after Sync. Firmware, bootloader, and disk-unlock prompts run earlier and are not controlled by VGS.")
                     color: Theme.surfaceVariantText
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                 }
 
                 SettingsToggleRow {
@@ -331,7 +329,7 @@ Item {
                     visible: SettingsData.greeterAutoLogin && SettingsData.greeterAutoLoginKeyringMode === "empty"
                     text: I18n.tr("Existing login keyrings are backed up and converted only when you press the conversion button. This is intended for full-disk-encrypted auto-login systems.")
                     color: Theme.warning
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                 }
 
                 VgsButton {
@@ -355,7 +353,7 @@ Item {
                     wrapMode: Text.WordWrap
                     text: I18n.tr("Password auth uses greetd PAM. Fingerprint/security-key toggles update the greeter PAM stack through vshell auth sync.")
                     color: Theme.surfaceVariantText
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                 }
 
                 SettingsToggleRow {
@@ -390,16 +388,15 @@ Item {
                 StyledText {
                     width: parent.width
                     wrapMode: Text.WordWrap
-                    text: I18n.tr("Colors and default wallpaper come from the active VGS theme. Shape, spacing, and greeter-specific overrides are VGS settings.")
+                    text: I18n.tr("Uses your theme colours and wallpaper.")
                     color: Theme.surfaceVariantText
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                 }
 
                 SettingsFontDropdownRow {
                     settingKey: "greeterFontFamily"
                     tags: ["greeter", "font", "typography"]
                     text: I18n.tr("Font")
-                    description: I18n.tr("Font used for the clock and date on the login screen")
                     currentFont: SettingsData.greeterFontFamily || ""
                     onFontSelected: family => SettingsData.set("greeterFontFamily", family)
                 }
@@ -436,7 +433,7 @@ Item {
                     StyledText {
                         text: I18n.tr("Date Format")
                         color: Theme.surfaceVariantText
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                     }
 
                     VgsTextField {
@@ -464,9 +461,9 @@ Item {
                 StyledText {
                     width: parent.width
                     wrapMode: Text.WordWrap
-                    text: I18n.tr("Leave empty to use the active theme wallpaper. When set, sync copies the image into the greeter cache so the greeter user can read it.")
+                    text: I18n.tr("Leave empty to use the theme wallpaper.")
                     color: Theme.surfaceVariantText
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                 }
 
                 SettingsWallpaperPicker {

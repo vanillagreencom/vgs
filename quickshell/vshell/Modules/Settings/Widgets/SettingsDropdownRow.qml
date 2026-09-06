@@ -19,6 +19,7 @@ VgsDropdown {
 
     width: parent?.width ?? 0
     addHorizontalPadding: false
+    settingsContext: true
     usePopupTransparency: true
 
     Rectangle {

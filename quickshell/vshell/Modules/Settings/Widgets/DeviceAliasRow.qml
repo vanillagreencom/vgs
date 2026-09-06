@@ -70,7 +70,7 @@ Rectangle {
 
                     StyledText {
                         text: root.deviceNode?.name ?? ""
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceVariantText
                         width: parent.width - (customAliasLabel.visible ? customAliasLabel.width + Theme.spacingS : 0)
                         elide: Text.ElideRight
@@ -90,7 +90,7 @@ Rectangle {
                         StyledText {
                             id: customAliasText
                             text: I18n.tr("Custom")
-                            font.pixelSize: Theme.fontSizeSmall - 1
+                            font.pixelSize: Theme.settingsFontSize - 1
                             color: Theme.primary
                             font.weight: Font.Medium
                             anchors.centerIn: parent
@@ -101,7 +101,7 @@ Rectangle {
                 StyledText {
                     visible: root.hasCustomAlias
                     text: I18n.tr("Original: %1").arg(AudioService.originalName(root.deviceNode))
-                    font.pixelSize: Theme.fontSizeSmall - 1
+                    font.pixelSize: Theme.settingsFontSize - 1
                     color: Theme.surfaceVariantText
                     width: parent.width
                     elide: Text.ElideRight

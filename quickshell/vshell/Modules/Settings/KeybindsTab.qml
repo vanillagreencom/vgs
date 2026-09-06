@@ -297,7 +297,7 @@ Item {
                             StyledText {
                                 readonly property string bindsFile: KeybindsService.currentProvider === "niri" ? "vgs/binds.kdl" : KeybindsService.currentProvider === "hyprland" ? "vgs/binds-user.lua" : "vgs/binds.conf"
                                 text: KeybindsService.readOnly ? (KeybindsService.vgsStatus.statusMessage || I18n.tr("Hyprland edits are read-only in Settings")) : I18n.tr("Click any shortcut to edit. Changes save to %1").arg(bindsFile)
-                                font.pixelSize: Theme.fontSizeSmall
+                                font.pixelSize: Theme.settingsFontSize
                                 color: Theme.surfaceVariantText
                                 wrapMode: Text.WordWrap
                                 width: parent.width
@@ -406,7 +406,7 @@ Item {
                                     }
                                     return "";
                                 }
-                                font.pixelSize: Theme.fontSizeSmall
+                                font.pixelSize: Theme.settingsFontSize
                                 color: Theme.surfaceVariantText
                                 wrapMode: Text.WordWrap
                                 width: parent.width
@@ -456,7 +456,7 @@ Item {
                             StyledText {
                                 id: allChip
                                 text: I18n.tr("All")
-                                font.pixelSize: Theme.fontSizeSmall
+                                font.pixelSize: Theme.settingsFontSize
                                 color: !keybindsTab.selectedCategory ? Theme.primaryText : Theme.surfaceVariantText
                                 anchors.centerIn: parent
                             }
@@ -487,7 +487,7 @@ Item {
                                 StyledText {
                                     id: catText
                                     text: keybindsTab.getCategoryLabel(modelData)
-                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.pixelSize: Theme.settingsFontSize
                                     color: keybindsTab.selectedCategory === modelData ? Theme.primaryText : (modelData === "__overrides__" ? Theme.primary : Theme.surfaceVariantText)
                                     anchors.centerIn: parent
                                 }

@@ -33,7 +33,6 @@ Item {
                     tags: ["mux", "multiplexer", "tmux", "zellij", "type", "backend"]
                     settingKey: "muxType"
                     text: I18n.tr("Multiplexer Type")
-                    description: I18n.tr("Terminal multiplexer backend to use")
                     options: root.muxTypeOptions
                     currentValue: SettingsData.muxType
                     onValueChanged: value => SettingsData.set("muxType", value)
@@ -64,7 +63,7 @@ Item {
                     StyledText {
                         width: parent.width
                         text: I18n.tr("The custom command used when attaching to sessions (receives the session name as the first argument)")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceVariantText
                         wrapMode: Text.WordWrap
                     }
@@ -91,7 +90,7 @@ Item {
                     StyledText {
                         width: parent.width
                         text: I18n.tr("Comma-separated list of session names to hide. Wrap in slashes for regex (e.g., /^_.*/).")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceVariantText
                         wrapMode: Text.WordWrap
                     }

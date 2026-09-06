@@ -278,8 +278,8 @@ Item {
                     spacing: Theme.spacingM
 
                     StyledText {
-                        text: I18n.tr("Manage up to 4 independent bar configurations. Each bar has its own position, widgets, styling, and display assignment.")
-                        font.pixelSize: Theme.fontSizeSmall
+                        text: I18n.tr("Each bar has its own position, widgets and displays.")
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceVariantText
                         wrapMode: Text.WordWrap
                         Layout.fillWidth: true
@@ -353,14 +353,14 @@ Item {
                                                     return I18n.tr("Top");
                                                 }
                                             }
-                                            font.pixelSize: Theme.fontSizeSmall
+                                            font.pixelSize: Theme.settingsFontSize
                                             color: Theme.surfaceVariantText
                                             horizontalAlignment: Text.AlignLeft
                                         }
 
                                         StyledText {
                                             text: "•"
-                                            font.pixelSize: Theme.fontSizeSmall
+                                            font.pixelSize: Theme.settingsFontSize
                                             color: Theme.surfaceVariantText
                                             horizontalAlignment: Text.AlignLeft
                                         }
@@ -374,14 +374,14 @@ Item {
                                                     return I18n.tr("All displays");
                                                 return prefs.length === 1 ? I18n.tr("%1 display").arg(prefs.length) : I18n.tr("%1 displays").arg(prefs.length);
                                             }
-                                            font.pixelSize: Theme.fontSizeSmall
+                                            font.pixelSize: Theme.settingsFontSize
                                             color: Theme.surfaceVariantText
                                             horizontalAlignment: Text.AlignLeft
                                         }
 
                                         StyledText {
                                             text: "•"
-                                            font.pixelSize: Theme.fontSizeSmall
+                                            font.pixelSize: Theme.settingsFontSize
                                             color: Theme.surfaceVariantText
                                             horizontalAlignment: Text.AlignLeft
                                         }
@@ -395,14 +395,14 @@ Item {
                                                 const right = cfg?.rightWidgets?.length || 0;
                                                 return I18n.tr("%1 widgets").replace("%1", left + center + right);
                                             }
-                                            font.pixelSize: Theme.fontSizeSmall
+                                            font.pixelSize: Theme.settingsFontSize
                                             color: Theme.surfaceVariantText
                                             horizontalAlignment: Text.AlignLeft
                                         }
 
                                         StyledText {
                                             text: "•"
-                                            font.pixelSize: Theme.fontSizeSmall
+                                            font.pixelSize: Theme.settingsFontSize
                                             color: Theme.surfaceVariantText
                                             horizontalAlignment: Text.AlignLeft
                                             visible: {
@@ -414,7 +414,7 @@ Item {
 
                                         StyledText {
                                             text: I18n.tr("Disabled")
-                                            font.pixelSize: Theme.fontSizeSmall
+                                            font.pixelSize: Theme.settingsFontSize
                                             color: Theme.error
                                             horizontalAlignment: Text.AlignLeft
                                             visible: {
@@ -472,7 +472,6 @@ Item {
 
                 SettingsToggleRow {
                     text: I18n.tr("Enabled")
-                    description: I18n.tr("Show and load this bar configuration")
                     checked: {
                         selectedBarId;
                         return selectedBarConfig?.enabled ?? false;
@@ -551,7 +550,7 @@ Item {
                 StyledText {
                     width: parent.width
                     text: I18n.tr("Configure which displays show \"%1\"").replace("%1", selectedBarConfig?.name || "this bar")
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.surfaceVariantText
                     wrapMode: Text.WordWrap
                     horizontalAlignment: Text.AlignLeft
@@ -654,7 +653,7 @@ Item {
 
                 SettingsToggleRow {
                     text: I18n.tr("Auto-Hide")
-                    description: I18n.tr("Automatically hide the bar when the pointer moves away")
+                    description: I18n.tr("Reveal at the screen edge.")
                     checked: selectedBarConfig?.autoHide ?? false
                     onToggled: toggled => {
                         SettingsData.updateBarConfig(selectedBarId, {
@@ -677,7 +676,6 @@ Item {
                         id: hideDelaySlider
                         width: parent.width
                         text: I18n.tr("Hide Delay")
-                        description: I18n.tr("Time to wait before hiding after the pointer leaves")
                         value: selectedBarConfig?.autoHideDelay ?? 250
                         minimum: 0
                         maximum: 2000
@@ -700,7 +698,7 @@ Item {
                     SettingsToggleRow {
                         width: parent.width
                         text: I18n.tr("Strict Auto-Hide", "Vgs bar setting: hide the bar when the pointer leaves even if a menu or bar popover is still open")
-                        description: I18n.tr("Hide the bar when the pointer leaves even if a popout is still open")
+                        description: I18n.tr("Hide even when a menu is open.")
                         checked: selectedBarConfig?.autoHideStrict ?? false
                         onToggled: toggled => {
                             SettingsData.updateBarConfig(selectedBarId, {
@@ -730,7 +728,7 @@ Item {
 
                 SettingsToggleRow {
                     text: I18n.tr("Manual Show/Hide")
-                    description: I18n.tr("Toggle bar visibility manually via IPC")
+                    description: I18n.tr("Show or hide with a shortcut.")
                     checked: selectedBarConfig?.visible ?? true
                     onToggled: toggled => {
                         SettingsData.updateBarConfig(selectedBarId, {
@@ -761,7 +759,6 @@ Item {
                 SettingsToggleRow {
                     visible: CompositorService.isNiri
                     text: I18n.tr("Show on Overview")
-                    description: I18n.tr("Show the bar when niri overview is active")
                     checked: selectedBarConfig?.openOnOverview ?? false
                     onToggled: toggled => {
                         SettingsData.updateBarConfig(selectedBarId, {
@@ -778,7 +775,7 @@ Item {
                     settingKey: "barUseOverlayLayer"
                     tags: ["bar", "fullscreen", "overlay", "layer", "use"]
                     text: I18n.tr("Overlay Layer", "bar layer toggle: use Wayland overlay layer")
-                    description: I18n.tr("Place the bar on the Wayland overlay layer")
+                    description: I18n.tr("Show above fullscreen windows.")
                     checked: selectedBarConfig?.useOverlayLayer ?? false
                     onToggled: toggled => {
                         SettingsData.updateBarConfig(selectedBarId, {
@@ -799,7 +796,6 @@ Item {
                 SettingsSliderRow {
                     id: barTransparencySlider
                     text: I18n.tr("Bar Opacity")
-                    description: I18n.tr("Controls opacity of the bar background")
                     value: (selectedBarConfig?.transparency ?? 1.0) * 100
                     minimum: 0
                     maximum: 100
@@ -822,7 +818,6 @@ Item {
                 SettingsSliderRow {
                     id: widgetTransparencySlider
                     text: I18n.tr("Widget Opacity")
-                    description: I18n.tr("Controls opacity of widget backgrounds")
                     value: (selectedBarConfig?.widgetTransparency ?? 1.0) * 100
                     minimum: 0
                     maximum: 100
@@ -848,6 +843,8 @@ Item {
                 tab: "appearance"
                 iconName: "space_bar"
                 title: I18n.tr("Spacing")
+                collapsible: true
+                expanded: false
                 settingKey: "barSpacing"
                 visible: barTab.appearanceOnly && (selectedBarConfig?.enabled ?? false)
 
@@ -920,7 +917,6 @@ Item {
                 SettingsSliderRow {
                     id: widgetPaddingSlider
                     text: I18n.tr("Padding")
-                    description: I18n.tr("Inner padding applied to each widget")
                     value: selectedBarConfig?.widgetPadding ?? 8
                     minimum: 0
                     maximum: 32
@@ -975,7 +971,6 @@ Item {
 
                 SettingsToggleRow {
                     text: I18n.tr("Sync Bar Inset Padding")
-                    description: I18n.tr("Use one inset value for every bar")
                     tags: ["bar", "padding", "inset", "edge", "sync", "all", "global"]
                     checked: SettingsData.barInsetPaddingSyncAll
                     onToggled: checked => SettingsData.set("barInsetPaddingSyncAll", checked)
@@ -1009,7 +1004,6 @@ Item {
                         id: popupGapsManualSlider
                         width: parent.width
                         text: I18n.tr("Manual Gap Size")
-                        description: I18n.tr("Override the popup gap size when auto is disabled")
                         value: selectedBarConfig?.popupGapsManual ?? 4
                         minimum: 0
                         maximum: 50
@@ -1036,7 +1030,6 @@ Item {
                 settingKey: "barFontScale"
                 iconName: "text_fields"
                 title: I18n.tr("Font Scale")
-                description: I18n.tr("Scale Bar font sizes independently")
                 visible: barTab.appearanceOnly && selectedBarConfig?.enabled
                 minimum: 50
                 maximum: 200
@@ -1063,7 +1056,6 @@ Item {
                 settingKey: "barIconScale"
                 iconName: "interests"
                 title: I18n.tr("Icon Scale")
-                description: I18n.tr("Scale Bar icon sizes independently")
                 visible: barTab.appearanceOnly && selectedBarConfig?.enabled
                 minimum: 50
                 maximum: 200
@@ -1090,12 +1082,11 @@ Item {
                 title: I18n.tr("Corners & Background")
                 settingKey: "barCorners"
                 collapsible: true
-                expanded: true
+                expanded: false
                 visible: barTab.appearanceOnly && selectedBarConfig?.enabled
 
                 SettingsToggleRow {
                     text: I18n.tr("Square Corners")
-                    description: I18n.tr("Remove corner rounding from the bar")
                     checked: selectedBarConfig?.squareCorners ?? false
                     onToggled: checked => SettingsData.updateBarConfig(selectedBarId, {
                             squareCorners: checked
@@ -1104,7 +1095,6 @@ Item {
 
                 SettingsToggleRow {
                     text: I18n.tr("No Background")
-                    description: I18n.tr("Make the bar background fully transparent")
                     checked: selectedBarConfig?.noBackground ?? false
                     onToggled: checked => SettingsData.updateBarConfig(selectedBarId, {
                             noBackground: checked
@@ -1131,7 +1121,6 @@ Item {
 
                 SettingsToggleRow {
                     text: I18n.tr("Remove Widget Padding")
-                    description: I18n.tr("Remove inner padding from all widgets")
                     checked: selectedBarConfig?.removeWidgetPadding ?? false
                     onToggled: checked => SettingsData.updateBarConfig(selectedBarId, {
                             removeWidgetPadding: checked
@@ -1193,7 +1182,7 @@ Item {
             SettingsToggleCard {
                 iconName: "touch_app"
                 title: I18n.tr("Hover Popouts")
-                description: I18n.tr("Open widget popouts by hovering over the bar. Moving to another widget switches the popout.")
+                description: I18n.tr("Hover over a widget to open its menu.")
                 visible: !barTab.appearanceOnly && selectedBarConfig?.enabled
                 enabled: !(selectedBarConfig?.clickThrough ?? false)
                 opacity: (selectedBarConfig?.clickThrough ?? false) ? 0.5 : 1.0
@@ -1211,7 +1200,6 @@ Item {
                         id: hoverDelaySlider
                         width: parent.width
                         text: I18n.tr("Open Delay")
-                        description: I18n.tr("Time to rest on a widget before its popout opens")
                         value: selectedBarConfig?.hoverPopoutDelay ?? 150
                         minimum: 0
                         maximum: 1000
@@ -1248,12 +1236,14 @@ Item {
                 tab: "appearance"
                 iconName: "filter_b_and_w"
                 title: I18n.tr("System Tray Icon Tint")
+                collapsible: true
+                expanded: false
                 settingKey: "trayIconTint"
                 visible: barTab.appearanceOnly && selectedBarConfig?.enabled
 
                 StyledText {
                     text: I18n.tr("Choose monochrome or a theme color tint for system tray icons")
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.surfaceVariantText
                     wrapMode: Text.WordWrap
                     width: parent.width
@@ -1300,7 +1290,7 @@ Item {
                 SettingsSliderRow {
                     id: trayTintSaturationSlider
                     text: I18n.tr("Tint Saturation")
-                    description: I18n.tr("Controls how much original icon color is removed before applying tint")
+                    description: I18n.tr("Remove original icon colour before tinting.")
                     visible: {
                         const mode = SettingsData.systemTrayIconTintMode || "none";
                         return mode === "primary" || mode === "secondary";
@@ -1323,7 +1313,7 @@ Item {
                 SettingsSliderRow {
                     id: trayTintStrengthSlider
                     text: I18n.tr("Tint Strength")
-                    description: I18n.tr("Controls how strongly the selected tint color is applied")
+                    description: I18n.tr("Tint strength.")
                     visible: {
                         const mode = SettingsData.systemTrayIconTintMode || "none";
                         return mode === "primary" || mode === "secondary";
@@ -1357,7 +1347,6 @@ Item {
 
                 SettingsChoiceRow {
                     text: I18n.tr("Color")
-                    description: I18n.tr("Theme color used for the border")
                     model: ["Surface", "Secondary", "Primary"]
                     currentIndex: {
                         switch (selectedBarConfig?.borderColor || "surfaceText") {
@@ -1395,7 +1384,6 @@ Item {
                 SettingsSliderRow {
                     id: borderOpacitySlider
                     text: I18n.tr("Opacity")
-                    description: I18n.tr("Controls opacity of the border")
                     value: (selectedBarConfig?.borderOpacity ?? 1.0) * 100
                     minimum: 0
                     maximum: 100
@@ -1418,7 +1406,6 @@ Item {
                 SettingsSliderRow {
                     id: borderThicknessSlider
                     text: I18n.tr("Thickness")
-                    description: I18n.tr("Width of the border in pixels")
                     value: selectedBarConfig?.borderThickness ?? 1
                     minimum: 1
                     maximum: 10
@@ -1452,7 +1439,6 @@ Item {
 
                 SettingsChoiceRow {
                     text: I18n.tr("Color")
-                    description: I18n.tr("Theme color used for the widget outline")
                     model: ["Surface", "Secondary", "Primary"]
                     currentIndex: {
                         switch (selectedBarConfig?.widgetOutlineColor || "primary") {
@@ -1490,7 +1476,6 @@ Item {
                 SettingsSliderRow {
                     id: widgetOutlineOpacitySlider
                     text: I18n.tr("Opacity")
-                    description: I18n.tr("Controls opacity of the widget outline")
                     value: (selectedBarConfig?.widgetOutlineOpacity ?? 1.0) * 100
                     minimum: 0
                     maximum: 100
@@ -1513,7 +1498,6 @@ Item {
                 SettingsSliderRow {
                     id: widgetOutlineThicknessSlider
                     text: I18n.tr("Thickness")
-                    description: I18n.tr("Width of the widget outline in pixels")
                     value: selectedBarConfig?.widgetOutlineThickness ?? 1
                     minimum: 1
                     maximum: 10
@@ -1551,7 +1535,7 @@ Item {
                 StyledText {
                     width: parent.width
                     text: I18n.tr("Enable a custom override below to set per-bar shadow intensity, opacity, and color.")
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.surfaceVariantText
                     wrapMode: Text.WordWrap
                     horizontalAlignment: Text.AlignLeft
@@ -1578,7 +1562,6 @@ Item {
                 SettingsSliderRow {
                     visible: shadowCard.shadowActive
                     text: I18n.tr("Intensity", "shadow intensity slider")
-                    description: I18n.tr("Shadow blur radius in pixels")
                     minimum: 0
                     maximum: 100
                     unit: "px"
@@ -1592,7 +1575,6 @@ Item {
                 SettingsSliderRow {
                     visible: shadowCard.shadowActive
                     text: I18n.tr("Opacity")
-                    description: I18n.tr("Controls opacity of the shadow layer")
                     minimum: 10
                     maximum: 100
                     unit: "%"
@@ -1607,7 +1589,6 @@ Item {
                     tab: "appearance"
                     visible: shadowCard.shadowActive
                     text: I18n.tr("Direction Source", "bar shadow direction source")
-                    description: I18n.tr("Choose how this bar resolves shadow direction")
                     settingKey: "barShadowDirectionSource"
                     options: [I18n.tr("Inherit Global (Default)", "bar shadow direction source option"), I18n.tr("Auto (Bar-aware)", "bar shadow direction source option"), I18n.tr("Manual", "bar shadow direction source option")]
                     currentValue: {
@@ -1641,7 +1622,6 @@ Item {
                     tab: "appearance"
                     visible: shadowCard.shadowActive && shadowCard.directionSource === "manual"
                     text: I18n.tr("Manual Direction", "bar manual shadow direction")
-                    description: I18n.tr("Use a fixed shadow direction for this bar")
                     settingKey: "barShadowDirectionManual"
                     options: [I18n.tr("Top", "shadow direction option"), I18n.tr("Top Left", "shadow direction option"), I18n.tr("Top Right", "shadow direction option"), I18n.tr("Bottom", "shadow direction option")]
                     currentValue: {
@@ -1770,7 +1750,6 @@ Item {
 
                 SettingsChoiceRow {
                     text: I18n.tr("Y Axis")
-                    description: I18n.tr("Action performed when scrolling vertically on the bar")
                     model: CompositorService.isNiri ? [I18n.tr("None"), I18n.tr("Workspace"), I18n.tr("Column")] : [I18n.tr("None"), I18n.tr("Workspace")]
                     currentIndex: {
                         switch (selectedBarConfig?.scrollYBehavior || "workspace") {
@@ -1807,7 +1786,6 @@ Item {
 
                 SettingsChoiceRow {
                     text: I18n.tr("X Axis")
-                    description: I18n.tr("Action performed when scrolling horizontally on the bar")
                     visible: CompositorService.isNiri
                     model: [I18n.tr("None"), I18n.tr("Workspace"), I18n.tr("Column")]
                     currentIndex: {

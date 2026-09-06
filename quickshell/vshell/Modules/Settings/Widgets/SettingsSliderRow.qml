@@ -100,7 +100,7 @@ Item {
             Column {
                 id: labelColumn
                 anchors.verticalCenter: parent.verticalCenter
-                spacing: Theme.spacingXS
+                spacing: Theme.spacingXXS
                 width: parent.width - resetButtonContainer.width - Theme.spacingS
 
                 StyledText {
@@ -115,10 +115,11 @@ Item {
 
                 StyledText {
                     text: root.description
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.surfaceVariantText
-                    wrapMode: Text.WordWrap
-                    width: parent.width
+                    wrapMode: Text.Wrap
+                    elide: Text.ElideNone
+                    width: Math.min(parent.width, Theme.settingsDescriptionWidth)
                     visible: root.description !== ""
                     horizontalAlignment: Text.AlignLeft
                 }

@@ -20,6 +20,7 @@ VgsToggle {
     width: parent?.width ?? 0
 
     horizontalPadding: 0
+    settingsContext: true
     rowHoverHighlight: false
 
     function findParentFlickable() {

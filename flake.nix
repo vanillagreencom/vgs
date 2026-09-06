@@ -11,6 +11,7 @@
       packages = forAllSystems (system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
+          python = pkgs.python3.withPackages (ps: [ ps.pillow ]);
         in {
           default = pkgs.stdenvNoCC.mkDerivation {
             pname = "vgs-shell";
@@ -42,7 +43,7 @@
               # config/vshell/dependencies.json and packaging/optional-packages.json.
               # Run scripts/gen-package-metadata.py --write after changing either file.
               wrapProgram $out/lib/vshell/bin/vshell \
-                --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.quickshell pkgs.jq pkgs.python3 pkgs.bash pkgs.grim pkgs.slurp pkgs.hyprpicker pkgs.wl-clipboard pkgs.libnotify pkgs.glib.bin ]}
+                --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.quickshell pkgs.jq python pkgs.bash pkgs.grim pkgs.slurp pkgs.hyprpicker pkgs.wl-clipboard pkgs.libnotify pkgs.glib.bin ]}
               # END GENERATED REQUIRED DEPENDENCIES
               runHook postInstall
             '';

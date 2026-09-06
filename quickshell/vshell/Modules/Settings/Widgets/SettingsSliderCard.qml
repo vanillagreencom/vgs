@@ -96,7 +96,7 @@ StyledRect {
 
             Column {
                 anchors.verticalCenter: parent.verticalCenter
-                spacing: Theme.spacingXS
+                spacing: Theme.spacingXXS
                 width: parent.width - headerIcon.width - (root.defaultValue >= 0 ? resetButton.width + Theme.spacingS : 0) - Theme.spacingM
 
                 StyledText {
@@ -111,10 +111,11 @@ StyledRect {
 
                 StyledText {
                     text: root.description
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.surfaceVariantText
-                    wrapMode: Text.WordWrap
-                    width: parent.width
+                    wrapMode: Text.Wrap
+                    elide: Text.ElideNone
+                    width: Math.min(parent.width, Theme.settingsDescriptionWidth)
                     horizontalAlignment: Text.AlignLeft
                     visible: root.description !== ""
                 }

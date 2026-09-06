@@ -28,7 +28,6 @@ Item {
                 SettingsDropdownRow {
                     settingKey: "osdPosition"
                     text: I18n.tr("OSD Position")
-                    description: I18n.tr("Where on-screen displays appear")
                     currentValue: {
                         switch (SettingsData.osdPosition) {
                         case SettingsData.Position.Top:
@@ -76,7 +75,6 @@ Item {
                 SettingsToggleRow {
                     settingKey: "osdAlwaysShowValue"
                     text: I18n.tr("Always Show Percentage")
-                    description: I18n.tr("Display volume and brightness percentage values in OSD popups")
                     checked: SettingsData.osdAlwaysShowValue
                     onToggled: checked => SettingsData.set("osdAlwaysShowValue", checked)
                 }
@@ -91,7 +89,6 @@ Item {
                 SettingsToggleRow {
                     settingKey: "osdVolumeEnabled"
                     text: I18n.tr("Volume")
-                    description: I18n.tr("Show on-screen display when volume changes")
                     checked: SettingsData.osdVolumeEnabled
                     onToggled: checked => SettingsData.set("osdVolumeEnabled", checked)
                 }
@@ -99,7 +96,6 @@ Item {
                 SettingsToggleRow {
                     settingKey: "osdMediaVolumeEnabled"
                     text: I18n.tr("Media Volume")
-                    description: I18n.tr("Show on-screen display when media player volume changes")
                     checked: SettingsData.osdMediaVolumeEnabled
                     onToggled: checked => SettingsData.set("osdMediaVolumeEnabled", checked)
                 }
@@ -107,7 +103,6 @@ Item {
                 SettingsToggleRow {
                     settingKey: "osdMediaPlaybackEnabled"
                     text: I18n.tr("Media Playback")
-                    description: I18n.tr("Show on-screen display when media player status changes")
                     checked: SettingsData.osdMediaPlaybackEnabled
                     onToggled: checked => SettingsData.set("osdMediaPlaybackEnabled", checked)
                 }
@@ -115,7 +110,6 @@ Item {
                 SettingsToggleRow {
                     settingKey: "osdBrightnessEnabled"
                     text: I18n.tr("Brightness")
-                    description: I18n.tr("Show on-screen display when brightness changes")
                     checked: SettingsData.osdBrightnessEnabled
                     onToggled: checked => SettingsData.set("osdBrightnessEnabled", checked)
                 }
@@ -123,7 +117,6 @@ Item {
                 SettingsToggleRow {
                     settingKey: "osdIdleInhibitorEnabled"
                     text: I18n.tr("Idle Inhibitor")
-                    description: I18n.tr("Show on-screen display when idle inhibitor state changes")
                     checked: SettingsData.osdIdleInhibitorEnabled
                     onToggled: checked => SettingsData.set("osdIdleInhibitorEnabled", checked)
                 }
@@ -131,7 +124,6 @@ Item {
                 SettingsToggleRow {
                     settingKey: "osdMicMuteEnabled"
                     text: I18n.tr("Microphone Mute")
-                    description: I18n.tr("Show on-screen display when the microphone is muted or unmuted")
                     checked: SettingsData.osdMicMuteEnabled
                     onToggled: checked => SettingsData.set("osdMicMuteEnabled", checked)
                 }
@@ -139,7 +131,6 @@ Item {
                 SettingsToggleRow {
                     settingKey: "osdCapsLockEnabled"
                     text: I18n.tr("Caps Lock")
-                    description: I18n.tr("Show on-screen display when caps lock state changes")
                     checked: SettingsData.osdCapsLockEnabled
                     onToggled: checked => SettingsData.set("osdCapsLockEnabled", checked)
                 }
@@ -147,7 +138,6 @@ Item {
                 SettingsToggleRow {
                     settingKey: "osdPowerProfileEnabled"
                     text: I18n.tr("Power Profile")
-                    description: I18n.tr("Show on-screen display when power profile changes")
                     checked: SettingsData.osdPowerProfileEnabled
                     onToggled: checked => SettingsData.set("osdPowerProfileEnabled", checked)
                 }
@@ -155,7 +145,6 @@ Item {
                 SettingsToggleRow {
                     settingKey: "osdAudioOutputEnabled"
                     text: I18n.tr("Audio Output Switch")
-                    description: I18n.tr("Show on-screen display when cycling audio output devices")
                     checked: SettingsData.osdAudioOutputEnabled
                     onToggled: checked => SettingsData.set("osdAudioOutputEnabled", checked)
                 }

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import ast
 import importlib.machinery
 import importlib.util
 import io
@@ -12,10 +13,12 @@ import os
 import re
 import shutil
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
 import time
+from unittest.mock import patch
 from pathlib import Path
 
 
@@ -628,6 +631,9 @@ def test_apply_system_fonts_temp_home():
         settings_dir.mkdir(parents=True)
         (settings_dir / "settings.json").write_text(json.dumps({
             "systemFontsManaged": True,
+            "systemFontInterfaceFamily": "Example & Sans",
+            "systemFontMonoFamily": "Example Mono",
+            "systemFontSize": 13,
             "systemFontInterfaceHinting": "medium",
             "systemFontInterfaceSubpixel": "rgb",
             "systemFontMonoAntialias": False,
@@ -641,6 +647,9 @@ def test_apply_system_fonts_temp_home():
             raise AssertionError("font apply should render fontconfig into temp HOME")
         if helper.GTK_SETTINGS_BEGIN not in gtk3_path.read_text():
             raise AssertionError("font apply should write GTK managed block")
+        assert "Example &amp; Sans" in fc_path.read_text()
+        assert "Example Mono" in fc_path.read_text()
+        assert "gtk-font-name=Example & Sans 13" in gtk3_path.read_text()
 
         helper.set_settings_value("systemFontsManaged", False)
         reset = helper.apply_system_fonts(reset=True)
@@ -657,6 +666,122 @@ def test_apply_system_fonts_temp_home():
         helper.system_font_env = original_env
         helper._gsettings_set_font_rendering = original_gsettings
         helper.shutil.which = original_which
+
+
+def test_system_font_family_targets():
+    settings = {"systemFontInterfaceFamily": "Example Sans", "systemFontMonoFamily": "Example Mono", "systemFontSize": 13}
+    with patch.object(helper, "system_font_env", return_value={"gsettingsKeys": ["font-name", "monospace-font-name"]}):
+        config = helper.normalized_system_font_settings(settings)
+        with patch.object(helper.shutil, "which", return_value="gsettings"), patch.object(helper, "_run_hook_cmd", return_value={"ok": True}) as run:
+            helper._gsettings_set_font_rendering(config)
+            commands = [call.args[1] for call in run.call_args_list]
+            assert ["gsettings", "set", "org.gnome.desktop.interface", "font-name", "'Example Sans 13'"] in commands
+            assert ["gsettings", "set", "org.gnome.desktop.interface", "monospace-font-name", "'Example Mono 13'"] in commands
+            run.reset_mock()
+            config["interface"]["family"] = ""
+            config["monospace"]["family"] = ""
+            helper._gsettings_set_font_rendering(config)
+            assert run.call_count == 0, "Unmanaged app fonts must be preserved"
+            config["ownedFamilies"] = ["sans-serif"]
+            helper._gsettings_set_font_rendering(config)
+            assert run.call_args.args[1] == ["gsettings", "reset", "org.gnome.desktop.interface", "font-name"]
+        try:
+            helper.normalized_system_font_settings({"systemFontInterfaceFamily": "Sans\nInjected=1"})
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("Font names must not inject GTK settings")
+    generated, _ = helper._hyprland_layout_payload(settings)
+    assert 'font_family = "Example Sans"' in generated
+    settings["hyprlandFontFamily"] = 'Custom "Font"'
+    generated, _ = helper._hyprland_layout_payload(settings)
+    assert 'font_family = "Custom \\"Font\\""' in generated
+    with patch.object(helper, "apply_system_fonts", return_value={"success": False, "partial": True}), contextlib.redirect_stdout(io.StringIO()):
+        assert helper.cmd_fonts(["apply", "--json"]) == 1
+
+
+def test_system_font_size_targets():
+    for gtk_fonts, desktop_fonts, prior_family in [
+        ({}, {}, ""),
+        ({}, {"font-name": "Desktop Sans 12", "monospace-font-name": "Desktop Mono 10"}, ""),
+        ({"gtk-3.0": "GTK Three Semi-Bold 12", "gtk-4.0": "GTK Four 13 @wght=450"},
+         {"font-name": "Desktop Sans 12", "monospace-font-name": "Desktop Mono 10"}, ""),
+        ({}, {"font-name": "Desktop Sans 12", "monospace-font-name": "Desktop Mono 10"}, "Chosen Sans"),
+    ]:
+        def run_case(home):
+            settings = home / ".config/vshell/settings.json"
+            settings.parent.mkdir(parents=True)
+            settings.write_text(json.dumps({"systemFontsManaged": True, "systemFontSize": 14}))
+            for version, font in gtk_fonts.items():
+                path = home / ".config" / version / "settings.ini"
+                path.parent.mkdir(parents=True)
+                path.write_text(f"[Settings]\ngtk-font-name={font}\ngtk-cursor-theme-size=24\n")
+            current = dict(desktop_fonts)
+
+            def gsettings(_hook, command, **_kwargs):
+                assert command[0] == "gsettings"
+                action, key = command[1], command[3]
+                if action == "get":
+                    source = desktop_fonts if _kwargs.get("env", {}).get("GSETTINGS_BACKEND") == "memory" else current
+                    return {"ok": True, "stdout": repr(source[key])}
+                if action == "set":
+                    current[key] = ast.literal_eval(command[4])
+                elif prior_family and key == "font-name":
+                    current[key] = desktop_fonts[key]
+                else:
+                    raise AssertionError("Size-only reset must restore the original font description")
+                return {"ok": True}
+
+            with patch.object(helper, "system_font_env", return_value={"gsettingsKeys": list(current)}), \
+                 patch.object(helper.shutil, "which", side_effect=lambda name: "gsettings" if name == "gsettings" and current else None), \
+                 patch.object(helper, "_run_hook_cmd", side_effect=gsettings):
+                helper.apply_system_fonts()
+                assert current == desktop_fonts, "ordinary startup must not claim the default size"
+                for version in ("gtk-3.0", "gtk-4.0"):
+                    text = (home / ".config" / version / "settings.ini").read_text()
+                    managed = text.split(helper.GTK_SETTINGS_BEGIN)[1]
+                    assert "gtk-font-name=" not in managed, "untouched Default remains unmanaged"
+                fc_path = home / ".config/fontconfig/conf.d/60-vgs-fonts.conf"
+                if desktop_fonts:
+                    before = fc_path.read_text()
+                    with patch.object(helper, "_run_hook_cmd", return_value={"ok": False, "error": "font read failed"}):
+                        failed = helper.apply_system_fonts(size_only=True)
+                    assert not failed["success"] and fc_path.read_text() == before
+                    assert current == desktop_fonts, "failed font read must not substitute a different family"
+                if prior_family:
+                    helper.set_settings_value("systemFontInterfaceFamily", prior_family)
+                    helper.apply_system_fonts()
+                with contextlib.redirect_stdout(io.StringIO()):
+                    assert helper.cmd_fonts(["apply", "--size-only", "--json"]) == 0
+                if prior_family:
+                    helper.set_settings_value("systemFontInterfaceFamily", "")
+                    helper.apply_system_fonts()
+                assert helper.normalized_system_font_settings()["interface"]["family"] == ""
+                expected_gtk = {
+                    "gtk-3.0": "GTK Three Semi-Bold 14" if gtk_fonts else ("Desktop Sans 14" if desktop_fonts else "Sans 14"),
+                    "gtk-4.0": "GTK Four 14 @wght=450" if gtk_fonts else ("Desktop Sans 14" if desktop_fonts else "Sans 14"),
+                }
+                for version, font in expected_gtk.items():
+                    text = (home / ".config" / version / "settings.ini").read_text()
+                    assert f"gtk-font-name={font}" in text.split(helper.GTK_SETTINGS_BEGIN)[1]
+                if desktop_fonts:
+                    assert current == {"font-name": "Desktop Sans 14", "monospace-font-name": "Desktop Mono 14"}
+                helper.set_settings_value("systemFontInterfaceHinting", "medium")
+                helper.apply_system_fonts()
+                for version, font in expected_gtk.items():
+                    assert f"gtk-font-name={font}" in (home / ".config" / version / "settings.ini").read_text()
+                if desktop_fonts:
+                    with patch.object(helper, "_run_hook_cmd", return_value={"ok": False, "error": "font reset failed"}):
+                        failed = helper.apply_system_fonts(reset=True)
+                    assert not failed["success"] and fc_path.exists(), "failed reset must retain its restore information"
+                helper.apply_system_fonts(reset=True)
+                assert current == desktop_fonts, "reset must restore size-only GSettings writes"
+                assert not fc_path.exists()
+                for version in ("gtk-3.0", "gtk-4.0"):
+                    text = (home / ".config" / version / "settings.ini").read_text()
+                    assert helper.GTK_SETTINGS_BEGIN not in text
+                    assert (f"gtk-font-name={gtk_fonts[version]}" in text) if version in gtk_fonts else "gtk-font-name=" not in text
+        with_temp_home(run_case)
 
 
 def test_hyprland_layout_payload():
@@ -770,6 +895,20 @@ def test_hyprland_blur_script():
     disabled = helper._hyprland_blur_script(False, -1, False, 1)
     if "if false then" not in disabled:
         raise AssertionError("disabled blur script should disable the runtime rule")
+
+    for enabled, radius, title in [(True, 9, "Settings"), (False, 0, "Settings [Test]")]:
+        generated = helper._hyprland_blur_script(enabled, 0.5, True, 1, "dark", radius, title)
+        match_line = next(line for line in generated.splitlines() if "match = { class =" in line)
+        fields = re.findall(r'"(?:[^"\\]|\\.)*"', match_line)
+        class_rule, title_rule = [re.compile(json.loads(field)) for field in fields]
+        assert_equal(bool(class_rule.search("com.vanillagreen.vshell")), True, "Settings class")
+        for other_class in ["com.vanillagreen.vshell.extra", "comXvanillagreenXvshell", "other"]:
+            assert_equal(bool(class_rule.search(other_class)), False, "unrelated class")
+        assert_equal(bool(title_rule.search(title)), True, "translated Settings title")
+        for other_title in [title + " extra", "prefix " + title, "File Browser"]:
+            assert_equal(bool(title_rule.search(other_title)), False, "unrelated window title")
+        assert_equal(f"rounding = {radius}," in generated, True, "client corner radius")
+        assert_equal("rounding_power = 2.0," in generated, True, "circular client corners")
 
 
 def test_vshell_blur_cli_contract():
@@ -5384,7 +5523,224 @@ def test_tmux_theme_reaches_the_running_server():
                      "a plain file in the socket directory is not a socket")
 
 
+def test_display_output_controls():
+    """Exercise real rendering and preview recovery without touching the seat."""
+    mode = {"width": 6016, "height": 3384, "refresh_rate": 60000}
+    output = {"make": "Apple Computer Inc", "model": "ProDisplayXDR", "serial": "test",
+              "modes": [mode], "current_mode": 0, "enabled": True,
+              "logical": {"x": 0, "y": 0, "scale": 2, "transform": "Normal"},
+              "hyprlandSettings": {"bitdepth": 10, "colorManagement": "srgb"}}
+    live = {"DP-1": output}
+    payload = {"outputs": live, "settings": {"DP-1": {"colorManagement": "dp3"}}}
+    rendered = helper.render_hyprland_outputs(payload, live)
+    assert 'mode = "6016x3384@60.000"' in rendered
+    assert 'cm = "dp3"' in rendered and "bitdepth = 10" in rendered
+    for fields, identifier, selector, naming in [
+        ({}, "desc:Apple Computer Inc ProDisplayXDR test", "desc:Apple Computer Inc ProDisplayXDR test", "model"),
+        ({"make": ""}, "DP-1", "DP-1", "model"),
+        ({"model": ""}, "DP-1", "DP-1", "model"),
+        ({"make": "", "model": "", "serial": ""}, "DP-1", "DP-1", "model"),
+        ({"serial": ""}, "desc:Apple Computer Inc ProDisplayXDR Unknown", "DP-1", "model"),
+        ({"make": "Apple, Inc"}, "desc:Apple Inc ProDisplayXDR test", "desc:Apple Inc ProDisplayXDR test", "model"),
+        ({"explicitIdentifier": True}, "DP-1", "desc:Apple Computer Inc ProDisplayXDR test", "model"),
+        ({"explicitIdentifier": True, "serial": ""}, "DP-1", "DP-1", "model"),
+        ({}, "DP-1", "DP-1", "system"),
+    ]:
+        candidate = {**output, **fields}
+        for connector in ("DP-1", "DP-5"):
+            settings_key = connector if identifier == "DP-1" else identifier
+            persisted_selector = connector if selector == "DP-1" else selector
+            request = {"outputs": {connector: candidate}, "displayNameMode": naming,
+                       "settings": {settings_key: {"colorManagement": "dp3", "vrrFullscreenOnly": True}}}
+            options = helper._hyprland_output_settings(request, connector, candidate)
+            assert options["colorManagement"] == "dp3" and options["vrrFullscreenOnly"], (fields, naming)
+            rendered_rule = helper.render_hyprland_outputs(request, {connector: candidate})
+            assert f"output = {helper._lua_string(persisted_selector)}," in rendered_rule, (fields, naming, connector, rendered_rule)
+            assert 'cm = "dp3"' in rendered_rule and "vrr = 2" in rendered_rule
+            readback = {**candidate, "hyprlandSettings": {**candidate["hyprlandSettings"], "colorManagement": "dp3"}}
+            helper.verify_hyprland_outputs(request, {connector: readback})
+    applied = json.loads(json.dumps(live))
+    applied["DP-1"]["hyprlandSettings"]["colorManagement"] = "dp3"
+    helper.verify_hyprland_outputs(payload, applied)
+    for scale, changed, accepted in [
+        (4 / 3, {"scale": struct.unpack("f", struct.pack("f", 4 / 3))[0]}, True),
+        (8 / 3, {"scale": struct.unpack("f", struct.pack("f", 8 / 3))[0]}, True),
+        (1.6, {"scale": struct.unpack("f", struct.pack("f", 1.6))[0]}, True),
+        (4 / 3, {"scale": 1.5}, False),
+        (4 / 3, {"x": 1}, False),
+        (4 / 3, {"y": 1}, False),
+        (4 / 3, {"transform": "90"}, False),
+    ]:
+        requested = json.loads(json.dumps(payload))
+        requested["outputs"]["DP-1"]["logical"]["scale"] = scale
+        helper.render_hyprland_outputs(requested, live)
+        actual = json.loads(json.dumps(applied))
+        actual["DP-1"]["logical"].update(scale=scale)
+        actual["DP-1"]["logical"].update(changed)
+        try:
+            helper.verify_hyprland_outputs(requested, actual)
+        except ValueError:
+            assert not accepted, (scale, changed)
+        else:
+            assert accepted, (scale, changed)
+    try:
+        helper.verify_hyprland_outputs(payload, live)
+    except ValueError as error:
+        assert "colour mode" in str(error)
+    else:
+        raise AssertionError("Readback accepted an unapplied colour mode")
+
+    def rejected(candidate, expected, current=live):
+        try:
+            helper.render_hyprland_outputs(candidate, current)
+        except (ValueError, OSError) as error:
+            assert expected in str(error), str(error)
+        else:
+            raise AssertionError(f"Accepted invalid display setting: {expected}")
+
+    for options, expected in [({"disabled": True}, "remain enabled"),
+                              ({"bitdepth": 8, "colorManagement": "hdr"}, "requires 10-bit"),
+                              ({"sdrBrightness": float("nan")}, "invalid sdrBrightness"),
+                              ({"colorManagement": "bogus"}, "unknown colour"),
+                              ({"icc": "relative.icc"}, "absolute ICC")]:
+        rejected({"outputs": live, "settings": {"DP-1": options}}, expected)
+    bad = json.loads(json.dumps(payload))
+    bad["outputs"]["DP-1"]["logical"]["scale"] = 1.25
+    rejected(bad, "whole logical pixels")
+    bad = json.loads(json.dumps(payload))
+    bad["outputs"]["DP-1"]["modes"][0]["width"] = 9999
+    rejected(bad, "no longer available")
+    rejected(payload, "disconnected", {})
+
+    with tempfile.TemporaryDirectory() as tmp:
+        config = Path(tmp) / "hyprland.lua"
+        fragment = Path(tmp) / "outputs.lua"
+        transaction = Path(tmp) / "preview.json"
+        config.write_text(helper._HYPRLAND_OUTPUTS_INCLUDE)
+        fragment.write_text("-- saved configuration\n")
+        profile = Path(tmp) / 'display "profile".icc'
+        profile.write_bytes(b"invalid")
+        rejected({"outputs": live, "settings": {"DP-1": {"icc": str(profile)}}}, "not an RGB")
+        icc_payload = {"outputs": live, "settings": {"DP-1": {"icc": str(profile)}}}
+        header = bytearray(128)
+        header[12:16], header[16:20], header[36:40] = b"mntr", b"RGB ", b"acsp"
+        profile.write_bytes(header)
+        with patch.dict(sys.modules, {"PIL": None}):
+            rejected(icc_payload, "require Pillow")
+        from PIL import ImageCms
+        profile.write_bytes(ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes())
+        assert helper._lua_string(str(profile)) in helper.render_hyprland_outputs(icc_payload, live)
+        icc_payload["settings"]["DP-1"]["colorManagement"] = "hdr"
+        rejected(icc_payload, "cannot be used with HDR")
+
+        monitor = {"name": "DP-1", "width": 6016, "height": 3384, "refreshRate": 60,
+                   "x": 0, "y": 0, "scale": 2, "transform": 0,
+                   "currentFormat": "XBGR2101010", "colorManagementPreset": "dp3"}
+        with patch.object(helper, "_hyprland_outputs_paths", return_value=(config, fragment, transaction)), \
+             patch.object(helper, "run", return_value=subprocess.CompletedProcess([], 0, json.dumps([monitor]), "")), \
+             patch.object(helper, "_hyprland_outputs_reload") as reload, \
+             patch.object(helper.subprocess, "Popen") as spawn:
+            target = Path(tmp) / "real-config.lua"
+            target.write_text('-- require("vgs.outputs")\n')
+            config.unlink()
+            config.symlink_to(target)
+            assert not helper.hyprland_outputs_command("status", [])["included"]
+            helper.hyprland_outputs_command("setup", [])
+            assert config.is_symlink() and target.read_text().endswith(helper._HYPRLAND_OUTPUTS_INCLUDE)
+            assert fragment.read_text() == "-- saved configuration\n"
+            assert helper.hyprland_outputs_command("status", [])["included"]
+            fragment.unlink()
+            assert not helper.hyprland_outputs_command("status", [])["included"]
+            helper.hyprland_outputs_command("setup", [])
+            assert fragment.exists()
+            fragment.write_text("-- saved configuration\n")
+            result = helper.hyprland_outputs_command("preview", [json.dumps(payload)])
+            assert fragment.read_text() == rendered and transaction.exists()
+            assert spawn.call_args.kwargs["start_new_session"] is True
+            helper.hyprland_outputs_command("current", [])
+            assert fragment.read_text() == rendered and transaction.exists(), "same-session preview must remain confirmable"
+            try:
+                helper.hyprland_outputs_command("preview", [json.dumps(payload)])
+            except ValueError as error:
+                assert "current display preview" in str(error)
+            else:
+                raise AssertionError("Concurrent preview overwrote rollback state")
+            assert not helper.hyprland_outputs_command("expire", [result["token"]])["finished"]
+            state = json.loads(transaction.read_text())
+            state["deadline"] = 0
+            transaction.write_text(json.dumps(state))
+            helper.hyprland_outputs_command("expire", [result["token"]])
+            assert fragment.read_text() == "-- saved configuration\n"
+            assert not transaction.exists()
+            for action, deadline, instance in (
+                ("current", 0, os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "")),
+                ("preview", 0, os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "")),
+                ("write", 0, os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "")),
+                ("current", time.time() + 20, "previous-compositor-instance"),
+            ):
+                stale = {"token": "previous-session", "deadline": deadline, "previous": "-- saved configuration\n", "instance": instance}
+                transaction.write_text(json.dumps(stale))
+                fragment.write_text("-- unconfirmed configuration\n")
+                recovered = helper.hyprland_outputs_command(action, [] if action == "current" else [json.dumps(payload)])
+                assert recovered["ok"]
+                if action == "preview":
+                    assert json.loads(transaction.read_text())["previous"] == stale["previous"]
+                    helper.hyprland_outputs_command("revert", [recovered["token"]])
+                assert fragment.read_text() == (rendered if action == "write" else stale["previous"])
+                assert not transaction.exists()
+            stale["deadline"] = 0
+            transaction.write_text(json.dumps(stale))
+            reload.side_effect = ValueError("session recovery failed")
+            recovered = helper.hyprland_outputs_command("current", [])
+            assert recovered["recoveryError"] == "session recovery failed"
+            assert recovered["recoveryToken"] == stale["token"]
+            assert json.loads(transaction.read_text())["error"] == "session recovery failed"
+            reload.reset_mock()
+            recovered = helper.hyprland_outputs_command("current", [])
+            assert recovered["recoveryError"] == "session recovery failed"
+            assert recovered["recoveryToken"] == stale["token"]
+            reload.assert_not_called()
+            reload.side_effect = None
+            helper.hyprland_outputs_command("revert", [stale["token"]])
+            assert not transaction.exists()
+            result = helper.hyprland_outputs_command("preview", [json.dumps(payload)])
+            helper.hyprland_outputs_command("confirm", [result["token"]])
+            assert fragment.read_text() == rendered and not transaction.exists()
+            reload.side_effect = [ValueError("apply failed"), ValueError("restore failed")]
+            try:
+                helper.hyprland_outputs_command("preview", [json.dumps(payload)])
+            except ValueError as error:
+                assert str(error) == "restore failed"
+            else:
+                raise AssertionError("Recovery failure disappeared")
+            state = json.loads(transaction.read_text())
+            assert state["error"] == "restore failed"
+            reload.side_effect = None
+            helper.hyprland_outputs_command("revert", [state["token"]])
+            assert not transaction.exists()
+            result = helper.hyprland_outputs_command("preview", [json.dumps(payload)])
+            helper.hyprland_outputs_command("revert", [result["token"]])
+            assert fragment.read_text() == rendered and not transaction.exists()
+            offline_rule = helper.render_hyprland_outputs({"outputs": {"DP-9": output}}, {"DP-9": output}).splitlines(keepends=True)[1]
+            offline_rule = offline_rule.replace(" })", ', icc = "/unmounted/display.icc" })')
+            for preserve in (["DP-9"], []):
+                fragment.write_text(rendered + offline_rule)
+                helper.hyprland_outputs_command("write", [json.dumps({**payload, "preserve": preserve})])
+                assert (offline_rule in fragment.read_text()) == bool(preserve), "preserve last-used offline settings unless explicitly forgotten"
+            reload.side_effect = [ValueError("invalid monitor rule"), None]
+            try:
+                helper.hyprland_outputs_command("preview", [json.dumps(payload)])
+            except ValueError as error:
+                assert str(error) == "invalid monitor rule"
+            else:
+                raise AssertionError("Failed apply was reported as success")
+            assert fragment.read_text() == rendered and not transaction.exists()
+
+
 def main():
+    test_system_font_family_targets()
+    test_system_font_size_targets()
+    test_display_output_controls()
     # Catalog transfer must leave the theme lock available for applies and restyles.
     # The download locks the directory swap that publishes its result.
     for catalog_argv in (["catalog", "install", "ayu"], ["catalog", "install", "--all"],

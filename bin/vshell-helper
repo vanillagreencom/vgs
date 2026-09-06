@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import base64
 import colorsys
 import contextlib
@@ -29,6 +30,8 @@ import urllib.parse
 import urllib.request
 import tomllib
 import mimetypes
+import xml.etree.ElementTree as ET
+from xml.sax.saxutils import escape as xml_escape
 from collections import Counter
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
@@ -3226,6 +3229,7 @@ FC_HINT_CONST = {"none": "hintnone", "slight": "hintslight", "medium": "hintmedi
 FC_LCD_CONST = {"default": "lcddefault", "light": "lcdlight", "legacy": "lcdlegacy", "none": "lcdnone"}
 GTK_SETTINGS_BEGIN = "# BEGIN VGS font rendering"
 GTK_SETTINGS_END = "# END VGS font rendering"
+FONT_SIZE_DESCRIPTION_PREFIX = "VGS font size overrides: "
 
 
 def _choice(value: Any, allowed: Iterable[str], fallback: str) -> str:
@@ -3277,12 +3281,17 @@ def normalized_system_font_settings(settings: Dict[str, Any] | None = None) -> D
     wayland = bool(env.get("isWayland"))
 
     def group(prefix: str) -> Dict[str, Any]:
+        family = str(settings.get(f"{prefix}Family") or "").strip()
+        if any(ord(char) < 32 for char in family):
+            raise ValueError("Font family names cannot contain control characters")
         subpixel = _choice(settings.get(f"{prefix}Subpixel"), FONT_SUBPIXEL, "none")
         if wayland:
             subpixel = "none"
         hinting = _choice(settings.get(f"{prefix}Hinting"), FONT_HINTING, "slight")
         lcd_filter = _choice(settings.get(f"{prefix}LcdFilter"), FONT_LCD_FILTER, "default")
         return {
+            "family": family,
+            "size": _coerce_int(settings.get("systemFontSize", 11), 11, 6, 32),
             "antialias": _bool_setting(settings.get(f"{prefix}Antialias"), True),
             "hinting": hinting,
             "subpixel": subpixel,
@@ -3319,11 +3328,14 @@ def _fontconfig_edits(group: Dict[str, Any], indent: str = "    ") -> List[str]:
 def render_system_fontconfig(config: Dict[str, Any]) -> str:
     interface = config["interface"]
     mono = config["monospace"]
+    description = "VGS managed font rendering"
+    if config.get("sizeOverrides") is not None:
+        description = FONT_SIZE_DESCRIPTION_PREFIX + json.dumps(config["sizeOverrides"])
     lines = [
         '<?xml version="1.0"?>',
         '<!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">',
         '<fontconfig>',
-        '  <description>VGS managed font rendering</description>',
+        f'  <description>{xml_escape(description)}</description>',
         "  <match target=\"font\">",
         *_fontconfig_edits(interface, "    "),
         "  </match>",
@@ -3334,6 +3346,11 @@ def render_system_fontconfig(config: Dict[str, Any]) -> str:
         "</fontconfig>",
         "",
     ]
+    aliases = []
+    for generic, group in (("sans-serif", interface), ("monospace", mono)):
+        if group.get("family"):
+            aliases.append(f'  <alias><family>{generic}</family><prefer><family>{xml_escape(group["family"])}</family></prefer></alias>')
+    lines[-2:-2] = aliases
     return "\n".join(lines)
 
 
@@ -3352,7 +3369,26 @@ def _strip_managed_block(lines: List[str]) -> List[str]:
     return out
 
 
-def _merge_gtk_settings(path: Path, values: Dict[str, str] | None) -> bool:
+def _font_description_with_size(description: str, size: int) -> str:
+    """Replace Pango's size while retaining family, style and variation settings."""
+    parts = re.split(r"(\s+[@#])", description.strip(), maxsplit=1)
+    family_style = re.sub(r"\s+\d+(?:\.\d+)?(?:px)?$", "", parts[0])
+    return f"{family_style} {size}" + "".join(parts[1:])
+
+
+def _gsettings_font_description(key: str, schema_default: bool = False) -> str:
+    options = {"env": {**os.environ, "GSETTINGS_BACKEND": "memory"}} if schema_default else {}
+    result = _run_hook_cmd("system-fonts-read", ["gsettings", "get", "org.gnome.desktop.interface", key], timeout=5, **options)
+    if not result.get("ok"):
+        raise ValueError(result.get("stderr") or result.get("error") or f"Could not read {key}")
+    raw = result["stdout"]
+    description = ast.literal_eval(raw)
+    if not isinstance(description, str) or not description.strip():
+        raise ValueError(f"Invalid font description for {key}")
+    return raw
+
+
+def _merge_gtk_settings(path: Path, values: Dict[str, str] | None, size: int | None = None, default_font: str = "Sans 10") -> bool:
     original = path.read_text().splitlines() if path.exists() else []
     lines = _strip_managed_block(original)
     if values is None:
@@ -3361,11 +3397,6 @@ def _merge_gtk_settings(path: Path, values: Dict[str, str] | None) -> bool:
             write_file(path, text)
             return True
         return False
-
-    block = [GTK_SETTINGS_BEGIN]
-    for key, value in values.items():
-        block.append(f"{key}={value}")
-    block.append(GTK_SETTINGS_END)
 
     settings_start = -1
     insert_at = len(lines)
@@ -3380,6 +3411,19 @@ def _merge_gtk_settings(path: Path, values: Dict[str, str] | None) -> bool:
                     insert_at = j
                     break
             break
+
+    if size is not None and "gtk-font-name" not in values:
+        description = default_font
+        if settings_start >= 0:
+            for line in lines[settings_start + 1:insert_at]:
+                key, separator, value = line.partition("=")
+                if separator and key.strip() == "gtk-font-name":
+                    description = value.strip()
+        values = {**values, "gtk-font-name": _font_description_with_size(description, size)}
+    block = [GTK_SETTINGS_BEGIN]
+    for key, value in values.items():
+        block.append(f"{key}={value}")
+    block.append(GTK_SETTINGS_END)
 
     if settings_start < 0:
         if lines and lines[-1].strip():
@@ -3398,12 +3442,15 @@ def _merge_gtk_settings(path: Path, values: Dict[str, str] | None) -> bool:
 
 
 def _gtk_values(group: Dict[str, Any]) -> Dict[str, str]:
-    return {
+    values = {
         "gtk-xft-antialias": "1" if group["antialias"] else "0",
         "gtk-xft-hinting": "0" if group["hinting"] == "none" else "1",
         "gtk-xft-hintstyle": FC_HINT_CONST[group["hinting"]],
         "gtk-xft-rgba": group["subpixel"],
     }
+    if group.get("family"):
+        values["gtk-font-name"] = f'{group["family"]} {group["size"]}'
+    return values
 
 
 def _gsettings_set_font_rendering(config: Dict[str, Any], reset: bool = False) -> Dict[str, Any]:
@@ -3415,13 +3462,22 @@ def _gsettings_set_font_rendering(config: Dict[str, Any], reset: bool = False) -
         ("font-hinting", "reset" if reset else config["interface"]["hinting"]),
         ("font-rgba-order", "reset" if reset else (config["interface"]["subpixel"] if config["interface"]["subpixel"] != "none" else "rgb")),
     ]
+    for key, generic, group in (("font-name", "sans-serif", config["interface"]), ("monospace-font-name", "monospace", config["monospace"])):
+        family = group.get("family")
+        originals = (config.get("sizeOverrides") or {}).get("gsettings", {})
+        if reset and key in originals:
+            wanted.append((key, originals[key] if originals[key] is not None else "reset"))
+        elif not reset and not family and key in config.get("fontDescriptions", {}):
+            wanted.append((key, repr(_font_description_with_size(config["fontDescriptions"][key], group["size"]))))
+        elif (family and not reset) or generic in config.get("ownedFamilies", []):
+            wanted.append((key, repr(f'{family} {group["size"]}') if family and not reset else "reset"))
     results = []
     failures = []
     for key, value in wanted:
         if key not in keys:
             results.append({"key": key, "skipped": True, "reason": "key missing"})
             continue
-        cmd = ["gsettings", "reset", "org.gnome.desktop.interface", key] if reset else ["gsettings", "set", "org.gnome.desktop.interface", key, value]
+        cmd = ["gsettings", "reset", "org.gnome.desktop.interface", key] if value == "reset" else ["gsettings", "set", "org.gnome.desktop.interface", key, value]
         result = _run_hook_cmd("system-fonts-gsettings", cmd, timeout=5)
         results.append({"key": key, "ok": result.get("ok"), "stderr": result.get("stderr", "")})
         if not result.get("ok"):
@@ -3429,7 +3485,7 @@ def _gsettings_set_font_rendering(config: Dict[str, Any], reset: bool = False) -
     return {"mechanism": "gsettings", "ok": not failures, "results": results, "error": "; ".join(failures)}
 
 
-def apply_system_fonts(reset: bool = False) -> Dict[str, Any]:
+def apply_system_fonts(reset: bool = False, size_only: bool = False) -> Dict[str, Any]:
     ensure_dirs()
     config = normalized_system_font_settings()
     if reset or not config["managed"]:
@@ -3438,6 +3494,28 @@ def apply_system_fonts(reset: bool = False) -> Dict[str, Any]:
     fc_path = home() / ".config" / "fontconfig" / "conf.d" / "60-vgs-fonts.conf"
     gtk3_path = home() / ".config" / "gtk-3.0" / "settings.ini"
     gtk4_path = home() / ".config" / "gtk-4.0" / "settings.ini"
+    previous = ET.parse(fc_path).getroot() if fc_path.exists() else ET.Element("fontconfig")
+    config["ownedFamilies"] = [alias.findtext("family") for alias in previous.findall("alias")]
+    description = previous.findtext("description", "")
+    size_overrides = json.loads(description[len(FONT_SIZE_DESCRIPTION_PREFIX):]) if description.startswith(FONT_SIZE_DESCRIPTION_PREFIX) else None
+    if size_only and config["managed"] and size_overrides is None:
+        size_overrides = {"gsettings": {}}
+    config["sizeOverrides"] = size_overrides
+    config["fontDescriptions"] = {}
+    if size_overrides is not None and config["managed"]:
+        try:
+            for key, generic, group in (("font-name", "sans-serif", config["interface"]), ("monospace-font-name", "monospace", config["monospace"])):
+                if key not in config["environment"].get("gsettingsKeys", []):
+                    continue
+                raw = _gsettings_font_description(key)
+                originals = size_overrides["gsettings"]
+                if key not in originals:
+                    originals[key] = None if generic in config["ownedFamilies"] else raw
+                if not group["family"] and generic in config["ownedFamilies"]:
+                    raw = originals[key] if originals[key] is not None else _gsettings_font_description(key, schema_default=True)
+                config["fontDescriptions"][key] = ast.literal_eval(raw)
+        except (OSError, ValueError, SyntaxError) as error:
+            return {"success": False, "partial": False, "managed": config["managed"], "error": str(error)}
     changed: List[str] = []
     warnings: List[str] = []
 
@@ -3447,20 +3525,23 @@ def apply_system_fonts(reset: bool = False) -> Dict[str, Any]:
             write_file(fc_path, text)
             changed.append(str(fc_path))
         gtk_values = _gtk_values(config["interface"])
-        if _merge_gtk_settings(gtk3_path, gtk_values):
+        size = config["interface"]["size"] if size_overrides is not None else None
+        default_font = config["fontDescriptions"].get("font-name", "Sans 10")
+        if _merge_gtk_settings(gtk3_path, gtk_values, size, default_font):
             changed.append(str(gtk3_path))
-        if _merge_gtk_settings(gtk4_path, gtk_values):
+        if _merge_gtk_settings(gtk4_path, gtk_values, size, default_font):
             changed.append(str(gtk4_path))
         gs = _gsettings_set_font_rendering(config, reset=False)
     else:
-        with contextlib.suppress(FileNotFoundError):
-            fc_path.unlink()
-            changed.append(str(fc_path))
         if _merge_gtk_settings(gtk3_path, None):
             changed.append(str(gtk3_path))
         if _merge_gtk_settings(gtk4_path, None):
             changed.append(str(gtk4_path))
         gs = _gsettings_set_font_rendering(config, reset=True)
+        if gs.get("ok"):
+            with contextlib.suppress(FileNotFoundError):
+                fc_path.unlink()
+                changed.append(str(fc_path))
 
     if not gs.get("ok"):
         warnings.append(gs.get("error") or "gsettings failed")
@@ -6990,6 +7071,7 @@ def cmd_fonts(argv: List[str]) -> int:
     p_status.add_argument("--json", action="store_true")
     p_apply = sub.add_parser("apply")
     p_apply.add_argument("--json", action="store_true")
+    p_apply.add_argument("--size-only", action="store_true", help="Apply the selected size without replacing default font families")
     p_reset = sub.add_parser("reset")
     p_reset.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
@@ -6999,14 +7081,14 @@ def cmd_fonts(argv: List[str]) -> int:
         print(json.dumps(result, indent=2) if args.json else f"managed={result.get('managed')} session={result.get('environment', {}).get('sessionType')}")
         return 0
     if args.cmd == "apply":
-        result = apply_system_fonts(reset=False)
+        result = apply_system_fonts(reset=False, size_only=args.size_only)
         print(json.dumps(result, indent=2) if args.json else ("System fonts applied" if result.get("success") else "System fonts partially applied"))
-        return 0 if result.get("success") or result.get("partial") else 1
+        return 0 if result.get("success") else 1
     if args.cmd == "reset":
         set_settings_value("systemFontsManaged", False)
         result = apply_system_fonts(reset=True)
         print(json.dumps(result, indent=2) if args.json else "VGS system font overrides removed")
-        return 0 if result.get("success") or result.get("partial") else 1
+        return 0 if result.get("success") else 1
     return 2
 
 
@@ -9003,7 +9085,323 @@ def cmd_scratchpad(argv: List[str]) -> int:
     return 2
 
 
+def hyprland_outputs_current() -> Dict[str, Any]:
+    """Read native monitor state without probing USB or I2C devices."""
+    proc = run(["hyprctl", "-j", "monitors", "all"], timeout=5)
+    if proc.returncode:
+        raise ValueError(proc.stderr or proc.stdout or "Could not read displays")
+    monitors = json.loads(proc.stdout)
+    if not isinstance(monitors, list):
+        raise ValueError("Hyprland returned invalid monitor data")
+    outputs = {}
+    transforms = ["Normal", "90", "180", "270", "Flipped", "Flipped90", "Flipped180", "Flipped270"]
+    for monitor in monitors:
+        modes = []
+        for value in monitor.get("availableModes", []):
+            match = re.fullmatch(r"(\d+)x(\d+)@([\d.]+)Hz", value)
+            if not match:
+                raise ValueError(f"Invalid display mode: {value}")
+            mode = {"width": int(match[1]), "height": int(match[2]), "refresh_rate": round(float(match[3]) * 1000)}
+            if mode not in modes:
+                modes.append(mode)
+        current = {"width": monitor["width"], "height": monitor["height"], "refresh_rate": round(monitor["refreshRate"] * 1000)}
+        index = next((i for i, mode in enumerate(modes) if mode["width"] == current["width"] and mode["height"] == current["height"] and abs(mode["refresh_rate"] - current["refresh_rate"]) <= 15), -1)
+        if index < 0 and not monitor.get("disabled", False):
+            modes.append(current)
+            index = len(modes) - 1
+        elif index < 0 and modes:
+            index = 0
+        pixel_format = monitor.get("currentFormat", "")
+        settings = {"bitdepth": 10 if "2101010" in pixel_format else 8,
+                    "colorManagement": monitor.get("colorManagementPreset", "auto"),
+                    "sdrBrightness": monitor.get("sdrBrightness", 1),
+                    "sdrSaturation": monitor.get("sdrSaturation", 1),
+                    "disabled": monitor.get("disabled", False)}
+        outputs[monitor["name"]] = {
+            "name": monitor["name"], "make": monitor.get("make", ""), "model": monitor.get("model", ""),
+            "serial": monitor.get("serial", ""), "enabled": not monitor.get("disabled", False),
+            "physicalWidth": monitor.get("physicalWidth", 0), "physicalHeight": monitor.get("physicalHeight", 0),
+            "connected": True, "modes": modes, "current_mode": index, "currentFormat": pixel_format,
+            "vrr_enabled": monitor.get("vrr", False), "vrr_supported": monitor.get("model") not in {"StudioDisplay", "ProDisplayXDR"},
+            "mirror": "" if monitor.get("mirrorOf", "none") == "none" else monitor["mirrorOf"],
+            "hyprlandSettings": settings,
+            "logical": {"x": monitor["x"], "y": monitor["y"], "scale": monitor["scale"],
+                        "transform": transforms[monitor["transform"]], "width": current["width"], "height": current["height"]}}
+    result: Dict[str, Any] = {"ok": True, "outputs": outputs}
+    _, _, transaction = _hyprland_outputs_paths()
+    if transaction.exists():
+        preview = json.loads(transaction.read_text())
+        if preview.get("error"):
+            result.update(recoveryError=preview["error"], recoveryToken=preview["token"])
+    return result
+
+
+def _hyprland_output_identifier(payload: Dict[str, Any], name: str, output: Dict[str, Any], *, settings_lookup: bool = False) -> str:
+    """Resolve the persisted selector or the existing settings-map key."""
+    if payload.get("displayNameMode") != "model" or not output.get("make") or not output.get("model"):
+        return name
+    if settings_lookup and output.get("explicitIdentifier"):
+        return name
+    # Native rules cannot use the synthetic serial kept in settings-map keys.
+    if not output.get("serial") and not settings_lookup:
+        return name
+    return ("desc:" + output["make"] + " " + output["model"] + " " + (output.get("serial") or "Unknown")).replace(",", "")
+
+
+def _hyprland_output_settings(payload: Dict[str, Any], name: str, output: Dict[str, Any]) -> Dict[str, Any]:
+    identifier = _hyprland_output_identifier(payload, name, output, settings_lookup=True)
+    options = dict(output.get("hyprlandSettings", {}))
+    options.update(payload.get("settings", {}).get(identifier, {}))
+    return options
+
+
+def render_hyprland_outputs(payload: Dict[str, Any], live: Dict[str, Any]) -> str:
+    """Generate complete native rules from the settings page's output snapshot."""
+    outputs = payload["outputs"]
+    if not isinstance(outputs, dict) or not outputs:
+        raise ValueError("No displays to configure")
+    transforms = ["Normal", "90", "180", "270", "Flipped", "Flipped90", "Flipped180", "Flipped270"]
+    lines = ["-- Generated by VGS Displays.\n"]
+    enabled = 0
+    for name, output in outputs.items():
+        if name not in live:
+            raise ValueError(f"Display {name} disconnected. Refresh before applying.")
+        options = _hyprland_output_settings(payload, name, output)
+        fields: Dict[str, Any] = {"output": _hyprland_output_identifier(payload, name, output), "disabled": False}
+        if options.get("disabled", not output.get("enabled", True)):
+            fields["disabled"] = True
+        else:
+            enabled += 1
+            if not 0 <= output["current_mode"] < len(output["modes"]):
+                raise ValueError(f"{name}: select an available resolution before enabling this display")
+            mode = output["modes"][output["current_mode"]]
+            if mode not in live[name]["modes"]:
+                raise ValueError(f"{name}: resolution or refresh rate is no longer available")
+            logical = output["logical"]
+            scale = float(logical["scale"])
+            if not math.isfinite(scale) or scale <= 0 or any(abs(d / scale - round(d / scale)) > 0.001 for d in (mode["width"], mode["height"])):
+                raise ValueError(f"{name}: scale must produce whole logical pixels")
+            fields.update(mode=f'{mode["width"]}x{mode["height"]}@{mode["refresh_rate"] / 1000:.3f}',
+                          position=f'{int(logical["x"])}x{int(logical["y"])}', scale=scale,
+                          transform=transforms.index(logical["transform"]),
+                          vrr=2 if options.get("vrrFullscreenOnly") else int(bool(output.get("vrr_enabled"))))
+            mirror = output.get("mirror", "")
+            fields["mirror"] = mirror
+            if mirror:
+                if mirror == name or mirror not in live:
+                    raise ValueError(f"{name}: invalid mirror display")
+                fields["mirror"] = mirror
+            depth = options.get("bitdepth", 8)
+            if depth not in (8, 10):
+                raise ValueError(f"{name}: choose 8-bit or 10-bit colour")
+            cm = options.get("colorManagement", "auto")
+            if cm not in {"auto", "srgb", "dcip3", "dp3", "adobe", "wide", "edid", "hdr", "hdredid"}:
+                raise ValueError(f"{name}: unknown colour mode")
+            if cm in {"hdr", "hdredid"} and depth != 10:
+                raise ValueError(f"{name}: HDR requires 10-bit output")
+            fields.update(bitdepth=depth, cm=cm)
+            for key, field, minimum, maximum in [("sdrBrightness", "sdrbrightness", 0.1, 5), ("sdrSaturation", "sdrsaturation", 0, 3)]:
+                value = float(options.get(key, 1))
+                if not math.isfinite(value) or not minimum <= value <= maximum:
+                    raise ValueError(f"{name}: invalid {key}")
+                fields[field] = value
+            icc = options.get("icc", "")
+            if icc:
+                if cm in {"hdr", "hdredid"}:
+                    raise ValueError(f"{name}: ICC profiles cannot be used with HDR")
+                path = Path(icc)
+                if not path.is_absolute():
+                    raise ValueError("Choose an absolute ICC profile path")
+                with path.open("rb") as stream:
+                    header = stream.read(128)
+                if len(header) != 128 or header[36:40] != b"acsp" or header[12:16] != b"mntr" or header[16:20] != b"RGB ":
+                    raise ValueError(f"{icc}: not an RGB display ICC profile")
+                try:
+                    from PIL import ImageCms
+                except ImportError as error:
+                    raise ValueError("ICC profiles require Pillow colour management support") from error
+                try:
+                    ImageCms.getOpenProfile(str(path))
+                except ImageCms.PyCMSError as error:
+                    raise ValueError(f"{icc}: invalid ICC profile: {error}") from error
+                fields["icc"] = str(path)
+        rendered = []
+        for key, value in fields.items():
+            encoded = _lua_bool(value) if isinstance(value, bool) else (_lua_string(value) if isinstance(value, str) else str(value))
+            rendered.append(f"{key} = {encoded}")
+        lines.append("hl.monitor({ " + ", ".join(rendered) + " })\n")
+    if not enabled:
+        raise ValueError("At least one display must remain enabled")
+    return "".join(lines)
+
+
+def verify_hyprland_outputs(payload: Dict[str, Any], live: Dict[str, Any]) -> None:
+    """Reject driver fallback instead of asking the user to confirm an unapplied mode."""
+    for name, output in payload["outputs"].items():
+        options = _hyprland_output_settings(payload, name, output)
+        disabled = options.get("disabled", not output.get("enabled", True))
+        actual = live.get(name)
+        if disabled:
+            if actual and actual["enabled"]:
+                raise ValueError(f"{name}: the display did not turn off")
+            continue
+        if not actual or not actual["enabled"]:
+            raise ValueError(f"{name}: the display did not return after applying changes")
+        mode = output["modes"][output["current_mode"]]
+        active = actual["modes"][actual["current_mode"]]
+        if mode["width"] != active["width"] or mode["height"] != active["height"] or abs(mode["refresh_rate"] - active["refresh_rate"]) > 15:
+            raise ValueError(f"{name}: the GPU rejected the selected resolution or refresh rate")
+        for key in ("x", "y", "transform"):
+            if output["logical"][key] != actual["logical"][key]:
+                raise ValueError(f"{name}: the compositor did not apply {key}")
+        # Hyprland stores scale as float32, while the UI sends a double.
+        if not math.isclose(output["logical"]["scale"], actual["logical"]["scale"], rel_tol=1e-6, abs_tol=1e-6):
+            raise ValueError(f"{name}: the compositor did not apply scale")
+        if options.get("bitdepth", 8) != actual["hyprlandSettings"]["bitdepth"]:
+            raise ValueError(f"{name}: the GPU could not use the selected colour depth")
+        cm = options.get("colorManagement", "auto")
+        if not options.get("icc") and cm != "auto" and cm != actual["hyprlandSettings"]["colorManagement"]:
+            raise ValueError(f"{name}: the GPU did not apply the selected colour mode")
+
+
+def _hyprland_outputs_paths() -> Tuple[Path, Path, Path]:
+    config = Path(os.environ.get("XDG_CONFIG_HOME", str(home() / ".config"))) / "hypr"
+    return config / "hyprland.lua", config / "vgs" / "outputs.lua", cfg_dir() / "display-preview.json"
+
+
+_HYPRLAND_OUTPUTS_INCLUDE = '\npackage.loaded["vgs.outputs"] = nil\nrequire("vgs.outputs")\n'
+
+
+def _hyprland_outputs_reload() -> None:
+    proc = run(["hyprctl", "reload"], timeout=5)
+    if proc.returncode:
+        raise ValueError(proc.stderr or proc.stdout or "Hyprland reload failed")
+    errors = run(["hyprctl", "configerrors"], timeout=5)
+    if errors.returncode or errors.stdout.strip():
+        raise ValueError(errors.stderr or errors.stdout or "Could not check display configuration")
+
+
+def _hyprland_outputs_restore(state: Dict[str, Any], fragment: Path, transaction: Path) -> None:
+    try:
+        write_file(fragment, state["previous"])
+        _hyprland_outputs_reload()
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        state["error"] = str(error)
+        write_file(transaction, json.dumps(state))
+        raise
+    transaction.unlink()
+
+
+def hyprland_outputs_command(action: str, args: List[str]) -> Dict[str, Any]:
+    """Own display previews, persistence and recovery independently of QML lifetime."""
+    config, fragment, transaction = _hyprland_outputs_paths()
+    arity = {"current": 0, "status": 0, "setup": 0, "watch": 1, "expire": 1, "confirm": 1, "revert": 1, "preview": 1, "write": 1}
+    if action not in arity or len(args) != arity[action]:
+        raise ValueError(f"Invalid arguments for display action: {action}")
+    if action == "status":
+        return {"ok": True, "exists": config.exists(), "included": fragment.is_file() and config.exists() and config.read_text().endswith(_HYPRLAND_OUTPUTS_INCLUDE), "configFormat": "lua", "readOnly": False}
+    if action == "watch":
+        token = args[0]
+        while transaction.exists():
+            time.sleep(1)
+            result = hyprland_outputs_command("expire", [token])
+            if result.get("finished"):
+                break
+        return {"ok": True}
+    transaction.parent.mkdir(parents=True, exist_ok=True)
+    with transaction.with_suffix(".lock").open("a") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        if action in {"current", "preview", "write"} and transaction.exists():
+            state = json.loads(transaction.read_text())
+            instance = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "")
+            if state["instance"] != instance or (time.time() >= state["deadline"] and not state.get("error")):
+                state["instance"] = instance
+                try:
+                    _hyprland_outputs_restore(state, fragment, transaction)
+                except (OSError, ValueError, subprocess.SubprocessError):
+                    if action != "current":
+                        raise
+                    result = hyprland_outputs_current()
+                    result.update(recoveryError=state["error"], recoveryToken=state["token"])
+                    return result
+        if action == "current":
+            return hyprland_outputs_current()
+        if action == "setup":
+            original = config.read_text()
+            if not fragment.exists():
+                write_file(fragment, "-- Display overrides saved by VGS.\n")
+            if not original.endswith(_HYPRLAND_OUTPUTS_INCLUDE):
+                backup = config.with_name(f"hyprland.lua.backup-{time.time_ns()}")
+                write_file(backup, original)
+                target = config.resolve(strict=True)
+                write_file(target, original.rstrip() + _HYPRLAND_OUTPUTS_INCLUDE)
+                try:
+                    _hyprland_outputs_reload()
+                except (ValueError, subprocess.SubprocessError):
+                    write_file(target, original)
+                    _hyprland_outputs_reload()
+                    raise
+            return {"ok": True}
+        if action in {"confirm", "revert", "expire"}:
+            if not transaction.exists():
+                if action == "expire":
+                    return {"ok": True, "finished": True}
+                raise ValueError("Display preview has expired. Refresh the display settings.")
+            state = json.loads(transaction.read_text())
+            if state["token"] != args[0]:
+                if action == "expire":
+                    return {"ok": True, "finished": True}
+                raise ValueError("Display preview belongs to another change")
+            expired = time.time() >= state["deadline"]
+            if action == "expire" and not expired:
+                return {"ok": True, "finished": False}
+            if action != "confirm" or expired:
+                _hyprland_outputs_restore(state, fragment, transaction)
+                if action == "confirm":
+                    raise ValueError("Display preview expired and was restored")
+            else:
+                transaction.unlink()
+            return {"ok": True, "finished": True}
+        if action not in {"preview", "write"}:
+            raise ValueError(f"Unknown display action: {action}")
+        if transaction.exists():
+            raise ValueError("Confirm or revert the current display preview first")
+        if not config.read_text().endswith(_HYPRLAND_OUTPUTS_INCLUDE):
+            raise ValueError("Set up display configuration before applying changes")
+        payload = json.loads(args[0])
+        live = hyprland_outputs_current()["outputs"]
+        content = render_hyprland_outputs(payload, live)
+        previous = fragment.read_text()
+        # Preserve the writer's exact offline rules; ICC paths need not be available while unplugged.
+        prefixes = tuple(f'hl.monitor({{ output = {_lua_string(name)},' for name in payload.get("preserve", []) if name not in live)
+        content += "".join(line for line in previous.splitlines(keepends=True) if line.startswith(prefixes))
+        state = {"token": str(time.time_ns()), "deadline": time.time() + 20, "previous": previous,
+                 "instance": os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "")}
+        write_file(transaction, json.dumps(state))
+        try:
+            # The helper outlives a failed shell reload and restores the saved rules.
+            subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "config", "hyprland-outputs-watch", state["token"]],
+                             start_new_session=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            write_file(fragment, content)
+            _hyprland_outputs_reload()
+            time.sleep(0.5)
+            verify_hyprland_outputs(payload, hyprland_outputs_current()["outputs"])
+        except (OSError, ValueError, subprocess.SubprocessError):
+            _hyprland_outputs_restore(state, fragment, transaction)
+            raise
+        if action == "write":
+            transaction.unlink()
+        return {"ok": True, "token": state["token"]}
+
+
 def cmd_config(argv: List[str]) -> int:
+    if argv and argv[0].startswith("hyprland-outputs-"):
+        try:
+            result = hyprland_outputs_command(argv[0][len("hyprland-outputs-"):], argv[1:])
+        except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as exc:
+            result = {"ok": False, "error": str(exc)}
+        print(json.dumps(result))
+        return 0 if result.get("ok") else 1
     if len(argv) >= 3 and argv[0] == "repair-include":
         compositor, filename = argv[1], argv[2]
         json_output = "--json" in argv[3:]
@@ -9196,6 +9594,9 @@ def _hyprland_layout_payload(settings: Dict[str, Any]) -> Tuple[str, Dict[str, A
     ]
     if general or manage_hypr_shape:
         lines.append("hl.config({")
+        family = settings.get("hyprlandFontFamily") or (settings.get("systemFontInterfaceFamily") if settings.get("systemFontsManaged", True) else "")
+        if family:
+            lines.append("  misc = { font_family = " + _lua_string(family) + " },")
         if general:
             lines.append("  general = {")
             lines.extend(_lua_table(general, "    "))
@@ -11200,7 +11601,7 @@ def _hyprland_blur_support() -> Dict[str, Any]:
     return {"available": True, "reason": "hyprland layer rules available"}
 
 
-def _hyprland_blur_script(enabled: bool, strength: float, glass: bool, opacity: float, mode: str = "dark") -> str:
+def _hyprland_blur_script(enabled: bool, strength: float, glass: bool, opacity: float, mode: str = "dark", radius: int = 15, settings_title: str = "Settings") -> str:
     strength = _clamp_float(strength)
     opacity = _clamp_float(opacity, 0.08, 1.0)
     light = mode == "light"
@@ -11276,8 +11677,19 @@ def _hyprland_blur_script(enabled: bool, strength: float, glass: bool, opacity: 
         "wifi-qrcode",
     ]
     namespace_pattern = "^(vshell:(" + "|".join(blurred_namespaces) + ")|vshell:plugins:[^:]+)$"
+    window_radius = _coerce_int(radius, 15, 0, 20)
+    title_pattern = _lua_string("^" + re.escape(settings_title) + "$")
     return f"""
 local rule_name = "vgs-shell-layer-blur"
+if _G.VGS_SETTINGS_WINDOW_RULE ~= nil then
+  _G.VGS_SETTINGS_WINDOW_RULE:set_enabled(false)
+end
+_G.VGS_SETTINGS_WINDOW_RULE = hl.window_rule({{
+  name = "vgs-settings-window",
+  match = {{ class = "^(com[.]vanillagreen[.]vshell)$", title = {title_pattern} }},
+  rounding = {window_radius},
+  rounding_power = 2.0,
+}})
 if _G.VGS_SHELL_LAYER_BLUR_RULE ~= nil then
   _G.VGS_SHELL_LAYER_BLUR_RULE:set_enabled(false)
   _G.VGS_SHELL_LAYER_BLUR_RULE = nil
@@ -11312,11 +11724,11 @@ end
 """.strip()
 
 
-def _apply_hyprland_blur(enabled: bool, strength: float, glass: bool, opacity: float, mode: str = "dark") -> Dict[str, Any]:
+def _apply_hyprland_blur(enabled: bool, strength: float, glass: bool, opacity: float, mode: str = "dark", radius: int = 15, settings_title: str = "Settings") -> Dict[str, Any]:
     support = _hyprland_blur_support()
     if not support.get("available"):
         return {"ok": False, "backend": "hyprland-layer", "error": support.get("reason", "not available")}
-    proc = _hyprctl_eval(_hyprland_blur_script(enabled, strength, glass, opacity, mode))
+    proc = _hyprctl_eval(_hyprland_blur_script(enabled, strength, glass, opacity, mode, radius, settings_title))
     ok = proc.returncode == 0
     return {
         "ok": ok,
@@ -11378,6 +11790,8 @@ def cmd_blur(argv: List[str]) -> int:
     p_apply.add_argument("--glass", choices=["true", "false", "1", "0", "yes", "no"], default="false")
     p_apply.add_argument("--opacity", type=float, default=1.0)
     p_apply.add_argument("--mode", choices=["dark", "light"], default="dark")
+    p_apply.add_argument("--radius", type=int, choices=range(21), default=15)
+    p_apply.add_argument("--settings-title", default="Settings")
     p_apply.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
@@ -11402,7 +11816,7 @@ def cmd_blur(argv: List[str]) -> int:
     if args.cmd == "apply":
         enabled = args.enabled in ("true", "1", "yes")
         glass = args.glass in ("true", "1", "yes")
-        result = _apply_hyprland_blur(enabled, args.strength, glass, args.opacity, args.mode)
+        result = _apply_hyprland_blur(enabled, args.strength, glass, args.opacity, args.mode, args.radius, args.settings_title)
         if args.json:
             print(json.dumps(result, indent=2))
         else:

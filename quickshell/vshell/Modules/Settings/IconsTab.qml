@@ -75,11 +75,6 @@ Item {
             topPadding: Theme.spacingS
             spacing: Theme.spacingXL
 
-            ThemeSubNav {
-                width: parent.width
-                parentModal: root.parentModal
-                activeId: "icons"
-            }
 
             SettingsCard {
                 title: I18n.tr("Icon Theme")
@@ -92,7 +87,7 @@ Item {
                     wrapMode: Text.WordWrap
                     text: I18n.tr("Choose whether app icons follow the active theme or always use a set you pick.")
                     color: Theme.surfaceVariantText
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                 }
 
                 SettingsChoiceRow {
@@ -121,7 +116,7 @@ Item {
                         return base;
                     }
                     color: root.themeIcon !== "" && !root.themeIconInstalled ? Theme.warning : Theme.surfaceVariantText
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                 }
 
 
@@ -141,14 +136,14 @@ Item {
                     wrapMode: Text.WordWrap
                     text: I18n.tr("No additional icon themes found in /usr/share/icons or ~/.local/share/icons. Install one (e.g. Papirus or the Yaru color set) to switch icons.")
                     color: Theme.surfaceVariantText
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                 }
 
                 StyledText {
                     width: parent.width
                     text: I18n.tr("Currently applied: %1").arg(root.effectiveIcon)
                     color: Theme.surfaceVariantText
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                 }
             }
         }

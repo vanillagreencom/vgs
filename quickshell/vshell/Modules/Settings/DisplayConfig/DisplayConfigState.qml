@@ -15,7 +15,7 @@ Singleton {
     id: root
     readonly property var log: Log.scoped("DisplayConfigState")
 
-    readonly property bool hasOutputBackend: WlrOutputService.wlrOutputAvailable
+    readonly property bool hasOutputBackend: CompositorService.isHyprland ? HyprlandService.outputsAvailable : CompositorService.isNiri
     readonly property var wlrOutputs: WlrOutputService.outputs
     property var outputs: ({})
     property var savedOutputs: ({})
@@ -78,8 +78,8 @@ Singleton {
         return connected.sort();
     }
 
-    function getOutputIdentifier(output, outputName) {
-        return DisplayProfileUtils.getOutputIdentifier(output, outputName, SettingsData.displayNameMode, CompositorService.compositor);
+    function getOutputIdentifier(output, outputName, mode = SettingsData.displayNameMode) {
+        return DisplayProfileUtils.getOutputIdentifier(output, outputName, mode, CompositorService.compositor);
     }
 
     FileView {
@@ -412,6 +412,12 @@ Singleton {
 
     function generateOutputsDataFromConfig(configEntry) {
         const result = {};
+        if (CompositorService.isHyprland) {
+            for (const name in savedOutputs) {
+                if (!outputs[name])
+                    result[name] = Object.assign({}, savedOutputs[name], {connected: false});
+            }
+        }
         const cfgOutputs = configEntry.outputs || {};
         for (const outputId in cfgOutputs) {
             const cfg = cfgOutputs[outputId];
@@ -442,7 +448,12 @@ Singleton {
             };
             if (cfg.hyprland?.mirror)
                 entry.mirror = cfg.hyprland.mirror;
-            result[outputId] = entry;
+            if (CompositorService.isHyprland) {
+                entry.connected = liveOutput !== null;
+                result[liveOutput ? matchingNames[0] : outputId] = entry;
+            } else {
+                result[outputId] = entry;
+            }
         }
         return result;
     }
@@ -469,8 +480,10 @@ Singleton {
             const settings = Object.assign({}, cfg.hyprland || {});
             if (cfg.disabled)
                 settings.disabled = true;
-            if (Object.keys(settings).length > 0)
-                result[outputId] = settings;
+            if (Object.keys(settings).length > 0) {
+                const matchingNames = DisplayProfileUtils.matchingOutputNames(outputId, outputs, SettingsData.displayNameMode, CompositorService.compositor);
+                result[matchingNames.length === 1 ? matchingNames[0] : outputId] = settings;
+            }
         }
         return result;
     }
@@ -518,6 +531,15 @@ Singleton {
             }
             showHyprlandReadOnlyWarning();
             return;
+        }
+        for (const outputId in (configEntry.outputs || {})) {
+            const matchingNames = DisplayProfileUtils.matchingOutputNames(outputId, outputs, SettingsData.displayNameMode, CompositorService.compositor);
+            if (matchingNames.length > 1) {
+                profilesLoading = false;
+                manualActivation = false;
+                profileError(I18n.tr("More than one display matches %1. Use connector names for this setup.").arg(outputId));
+                return;
+            }
         }
         ensureEnabledOutput(configEntry);
         // Capture the entry being applied so disabled-output settings fields can read
@@ -841,9 +863,11 @@ Singleton {
         if (JSON.stringify(newOutputSet) === JSON.stringify(currentOutputSet))
             return;
         // Pending edits belong to the previous physical output set.
-        if (hasPendingChanges)
+        if (hasPendingChanges) {
+            restoreOriginalSettings();
             clearPendingChanges();
-        currentOutputSet = newOutputSet;
+        }
+        currentOutputSet = buildCurrentOutputSet();
         autoSelectDebounceTimer.restart();
     }
     onSavedOutputsChanged: allOutputs = buildAllOutputsMap()
@@ -852,6 +876,10 @@ Singleton {
     Connections {
         target: WlrOutputService
         function onStateReceived() {
+            if (CompositorService.isHyprland || CompositorService.isNiri) {
+                root.backendFetchOutputs();
+                return;
+            }
             root.outputs = root.buildOutputsMap();
             root.reloadSavedOutputs();
         }
@@ -861,6 +889,23 @@ Singleton {
         target: CompositorService
         function onCompositorChanged() {
             root.checkIncludeStatus();
+            root.backendFetchOutputs();
+        }
+    }
+
+    Connections {
+        target: HyprlandService
+        function onOutputsChanged() {
+            if (CompositorService.isHyprland)
+                root.outputs = HyprlandService.outputs;
+        }
+    }
+
+    Connections {
+        target: NiriService
+        function onOutputsChanged() {
+            if (CompositorService.isNiri)
+                root.outputs = NiriService.outputs;
         }
     }
 
@@ -868,6 +913,7 @@ Singleton {
         outputs = buildOutputsMap();
         reloadSavedOutputs();
         checkIncludeStatus();
+        backendFetchOutputs();
     }
 
     function reloadSavedOutputs() {
@@ -1029,7 +1075,7 @@ Singleton {
         for (const savedName in parsedOutputs) {
             const trimmed = savedName.trim();
             if (!liveByIdentifier[trimmed])
-                result[savedName] = parsedOutputs[savedName];
+                result[savedName] = Object.assign({}, parsedOutputs[savedName], {connected: false});
         }
         return result;
     }
@@ -1392,6 +1438,14 @@ Singleton {
 
     function checkIncludeStatus() {
         const compositor = CompositorService.compositor;
+        if (compositor === "hyprland") {
+            checkingInclude = true;
+            HyprlandService.outputsCommand("status", [], result => {
+                checkingInclude = false;
+                includeStatus = result.ok ? result : {included: false, readOnly: true, statusMessage: result.error};
+            });
+            return;
+        }
         if (compositor !== "niri" && compositor !== "hyprland" && compositor !== "mango") {
             includeStatus = {
                 "exists": false,
@@ -1431,6 +1485,15 @@ Singleton {
     }
 
     function fixOutputsInclude() {
+        if (CompositorService.isHyprland) {
+            fixingInclude = true;
+            HyprlandService.outputsCommand("setup", [], result => {
+                fixingInclude = false;
+                checkIncludeStatus();
+                backendFetchOutputs();
+            });
+            return;
+        }
         if (readOnly) {
             showHyprlandReadOnlyWarning();
             return;
@@ -1576,7 +1639,12 @@ Singleton {
     }
 
     function backendFetchOutputs() {
-        WlrOutputService.requestState();
+        if (CompositorService.isHyprland)
+            HyprlandService.requestOutputs();
+        else if (CompositorService.isNiri)
+            NiriService.fetchOutputs();
+        else
+            WlrOutputService.requestState();
     }
 
     function backendWriteOutputsConfig(outputsData, settingsOrCallback, maybeCallback) {
@@ -1801,7 +1869,7 @@ Singleton {
         const result = {};
 
         for (const outputName in savedOutputs) {
-            if (!outputs[outputName])
+            if (!CompositorService.isHyprland && !outputs[outputName])
                 result[outputName] = JSON.parse(JSON.stringify(savedOutputs[outputName]));
         }
 
@@ -1834,7 +1902,14 @@ Singleton {
             if (changes.mirror !== undefined)
                 result[outputName].mirror = changes.mirror;
         }
-        return normalizeOutputPositions(result);
+        const normalized = normalizeOutputPositions(result);
+        if (CompositorService.isHyprland) {
+            for (const name in savedOutputs) {
+                if (!outputs[name])
+                    normalized[name] = Object.assign({}, savedOutputs[name], {connected: false});
+            }
+        }
+        return normalized;
     }
 
     function backendUpdateOutputPosition(outputName, x, y) {
@@ -1874,10 +1949,10 @@ Singleton {
         return getOutputIdentifier(output, outputName);
     }
 
-    function getNiriOutputIdentifier(output, outputName) {
+    function getNiriOutputIdentifier(output, outputName, mode = SettingsData.displayNameMode) {
         if (output?.explicitIdentifier)
             return outputName;
-        if (SettingsData.displayNameMode === "model" && output?.make && output?.model) {
+        if (mode === "model" && output?.make && output?.model) {
             const serial = output.serial || "Unknown";
             return output.make + " " + output.model + " " + serial;
         }
@@ -1912,10 +1987,10 @@ Singleton {
         originalNiriSettings = JSON.parse(JSON.stringify(SettingsData.niriOutputSettings));
     }
 
-    function getHyprlandOutputIdentifier(output, outputName) {
+    function getHyprlandOutputIdentifier(output, outputName, mode = SettingsData.displayNameMode) {
         if (output?.explicitIdentifier)
             return outputName;
-        if (SettingsData.displayNameMode === "model" && output?.make && output?.model)
+        if (mode === "model" && output?.make && output?.model)
             return ("desc:" + output.make + " " + output.model + " " + (output?.serial || "Unknown")).replace(/,/g, "");
         return outputName;
     }
@@ -1929,6 +2004,8 @@ Singleton {
             const val = pending[key];
             return (val !== null && val !== undefined) ? val : defaultValue;
         }
+        if (output?.hyprlandSettings && key in output.hyprlandSettings)
+            return output.hyprlandSettings[key];
         return SettingsData.getHyprlandOutputSetting(identifier, key, defaultValue);
     }
 
@@ -2063,16 +2140,13 @@ Singleton {
     }
 
     function discardChanges() {
-        if (originalDisplayNameMode !== "") {
-            SettingsData.displayNameMode = originalDisplayNameMode;
-            SettingsData.saveSettings();
-        }
+        restoreOriginalSettings();
         backendFetchOutputs();
         clearPendingChanges();
     }
 
     function applyChanges() {
-        if (!hasPendingChanges)
+        if (!hasPendingChanges || validatingConfig || HyprlandService.outputPreviewToken !== "")
             return;
         if (CompositorService.isHyprland && readOnly) {
             showHyprlandReadOnlyWarning();
@@ -2107,6 +2181,8 @@ Singleton {
                 changeDescriptions.push(outputId + ": " + I18n.tr("VRR On-Demand") + " → " + (changes.vrrOnDemand ? I18n.tr("Enabled") : I18n.tr("Disabled")));
             if (changes.focusAtStartup !== undefined)
                 changeDescriptions.push(outputId + ": " + I18n.tr("Focus at Startup") + " → " + (changes.focusAtStartup ? I18n.tr("Yes") : I18n.tr("No")));
+            if (changes.maxBpc !== undefined)
+                changeDescriptions.push(outputId + ": " + I18n.tr("Maximum colour depth") + " → " + (changes.maxBpc || I18n.tr("Automatic")));
             if (changes.hotCorners !== undefined)
                 changeDescriptions.push(outputId + ": " + I18n.tr("Hot Corners") + " → " + I18n.tr("Modified"));
             if (changes.layout !== undefined)
@@ -2121,6 +2197,8 @@ Singleton {
                 changeDescriptions.push(outputId + ": " + I18n.tr("Bit Depth") + " → " + changes.bitdepth);
             if (changes.colorManagement !== undefined)
                 changeDescriptions.push(outputId + ": " + I18n.tr("Color Management") + " → " + changes.colorManagement);
+            if (changes.icc !== undefined)
+                changeDescriptions.push(outputId + ": " + I18n.tr("ICC profile") + " → " + (changes.icc || I18n.tr("None")));
             if (changes.sdrBrightness !== undefined)
                 changeDescriptions.push(outputId + ": " + I18n.tr("SDR Brightness") + " → " + changes.sdrBrightness);
             if (changes.sdrSaturation !== undefined)
@@ -2135,6 +2213,16 @@ Singleton {
 
         if (CompositorService.isNiri) {
             validateAndApplyNiriConfig(changeDescriptions);
+            return;
+        }
+
+        if (CompositorService.isHyprland) {
+            validatingConfig = true;
+            HyprlandService.generateOutputsConfig(buildOutputsWithPendingChanges(), buildMergedHyprlandSettings(), success => {
+                validatingConfig = false;
+                if (success)
+                    changesApplied(changeDescriptions);
+            }, true);
             return;
         }
 
@@ -2215,6 +2303,10 @@ Singleton {
 
     function buildMergedHyprlandSettings() {
         const merged = JSON.parse(JSON.stringify(SettingsData.hyprlandOutputSettings));
+        for (const name in outputs) {
+            const identifier = getHyprlandOutputIdentifier(outputs[name], name);
+            merged[identifier] = Object.assign({}, merged[identifier] || {}, outputs[name].hyprlandSettings || {});
+        }
         for (const outputId in pendingHyprlandChanges) {
             if (!merged[outputId])
                 merged[outputId] = {};
@@ -2255,6 +2347,20 @@ Singleton {
     }
 
     function confirmChanges(profileId) {
+        if (CompositorService.isHyprland && HyprlandService.outputPreviewToken !== "") {
+            HyprlandService.finishOutputPreview(true, success => {
+                if (success) {
+                    commitHyprlandSettingsChanges();
+                    if (formatChanged)
+                        SettingsData.saveSettings();
+                    confirmChanges(profileId);
+                } else {
+                    restoreOriginalSettings();
+                    clearPendingChanges();
+                }
+            });
+            return;
+        }
         const outputConfigs = buildCurrentOutputConfigs();
         lastAppliedEntry = {
             outputs: outputConfigs
@@ -2277,24 +2383,19 @@ Singleton {
     }
 
     function revertChanges() {
+        if (CompositorService.isHyprland && HyprlandService.outputPreviewToken !== "") {
+            HyprlandService.finishOutputPreview(false, success => {
+                restoreOriginalSettings();
+                clearPendingChanges();
+                changesReverted();
+            });
+            return;
+        }
         const hadFormatChange = originalDisplayNameMode !== "";
         const hadNiriChanges = originalNiriSettings !== null;
         const hadHyprlandChanges = originalHyprlandSettings !== null;
 
-        if (hadFormatChange) {
-            SettingsData.displayNameMode = originalDisplayNameMode;
-            SettingsData.saveSettings();
-        }
-
-        if (hadNiriChanges) {
-            SettingsData.niriOutputSettings = JSON.parse(JSON.stringify(originalNiriSettings));
-            SettingsData.saveSettings();
-        }
-
-        if (hadHyprlandChanges) {
-            SettingsData.hyprlandOutputSettings = JSON.parse(JSON.stringify(originalHyprlandSettings));
-            SettingsData.saveSettings();
-        }
+        restoreOriginalSettings();
 
         pendingHyprlandChanges = {};
         pendingNiriChanges = {};
@@ -2697,8 +2798,86 @@ Singleton {
         return "Normal";
     }
 
-    function setOriginalDisplayNameMode(mode) {
-        if (originalDisplayNameMode === "")
-            originalDisplayNameMode = mode;
+    function restoreOriginalSettings() {
+        if (originalNiriSettings !== null)
+            SettingsData.niriOutputSettings = JSON.parse(JSON.stringify(originalNiriSettings));
+        if (originalHyprlandSettings !== null)
+            SettingsData.hyprlandOutputSettings = JSON.parse(JSON.stringify(originalHyprlandSettings));
+        if (originalDisplayNameMode !== "")
+            SettingsData.displayNameMode = originalDisplayNameMode;
+        currentOutputSet = buildCurrentOutputSet();
+        if (originalDisplayNameMode !== "" || originalNiriSettings !== null || originalHyprlandSettings !== null)
+            SettingsData.saveSettings();
+    }
+
+    function changeDisplayNameMode(mode, saveImmediately = false) {
+        const oldMode = SettingsData.displayNameMode;
+        if (oldMode === mode)
+            return true;
+        if (saveImmediately && hasPendingChanges) {
+            ToastService.showError(I18n.tr("Cannot change display names"), I18n.tr("Apply or discard your display changes first."));
+            return false;
+        }
+        const profileIds = new Set();
+        for (const name in outputs) {
+            const identifier = getOutputIdentifier(outputs[name], name, mode);
+            if (profileIds.has(identifier)) {
+                ToastService.showError(I18n.tr("Cannot change display names"), I18n.tr("Display names are ambiguous. Keep connector names for this setup."));
+                return false;
+            }
+            profileIds.add(identifier);
+        }
+        const backends = [
+            { identify: getNiriOutputIdentifier, stored: SettingsData.niriOutputSettings, pending: pendingNiriChanges },
+            { identify: getHyprlandOutputIdentifier, stored: SettingsData.hyprlandOutputSettings, pending: pendingHyprlandChanges }
+        ];
+        for (const backend of backends) {
+            const transitions = [];
+            const oldIds = new Set();
+            const newIds = new Set();
+            for (const name in outputs) {
+                const oldId = backend.identify(outputs[name], name, oldMode);
+                const newId = backend.identify(outputs[name], name, mode);
+                if (oldIds.has(oldId) || newIds.has(newId)) {
+                    ToastService.showError(I18n.tr("Cannot change display names"), I18n.tr("Display names are ambiguous. Keep connector names for this setup."));
+                    return false;
+                }
+                oldIds.add(oldId);
+                newIds.add(newId);
+                transitions.push([oldId, newId]);
+            }
+            // Only identities from the current snapshot can move. Unrelated saved records stay intact.
+            for (const field of ["stored", "pending"]) {
+                const source = backend[field];
+                const renamed = JSON.parse(JSON.stringify(source));
+                for (const [oldId, newId] of transitions) {
+                    if (oldId !== newId)
+                        delete renamed[oldId];
+                }
+                for (const [oldId, newId] of transitions) {
+                    if (source[oldId])
+                        renamed[newId] = Object.assign({}, source[newId] || {}, source[oldId]);
+                }
+                backend[field] = renamed;
+            }
+        }
+        if (!saveImmediately) {
+            initOriginalNiriSettings();
+            initOriginalHyprlandSettings();
+            if (originalDisplayNameMode === "")
+                originalDisplayNameMode = oldMode;
+        }
+        SettingsData.niriOutputSettings = backends[0].stored;
+        pendingNiriChanges = backends[0].pending;
+        SettingsData.hyprlandOutputSettings = backends[1].stored;
+        pendingHyprlandChanges = backends[1].pending;
+        SettingsData.displayNameMode = mode;
+        // A naming change is not a hotplug and must not discard edits on the next output refresh.
+        currentOutputSet = buildCurrentOutputSet();
+        if (saveImmediately) {
+            SettingsData.saveSettings();
+            clearPendingChanges();
+        }
+        return true;
     }
 }

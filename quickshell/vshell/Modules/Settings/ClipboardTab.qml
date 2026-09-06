@@ -289,7 +289,7 @@ Item {
                     }
 
                     StyledText {
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         text: !VGSBackendService.isConnected ? I18n.tr("VGS service is not connected. Clipboard settings are unavailable.") : I18n.tr("Failed to load clipboard configuration.")
                         wrapMode: Text.WordWrap
                         width: parent.width - Theme.iconSizeSmall - Theme.spacingM
@@ -401,7 +401,6 @@ Item {
                     tags: ["clipboard", "pinned", "max", "limit"]
                     settingKey: "maxPinned"
                     text: I18n.tr("Maximum Pinned Entries")
-                    description: I18n.tr("How many entries can be pinned at once")
                     options: root.maxPinnedOptions.map(opt => opt.text)
 
                     function updateValue() {
@@ -489,7 +488,6 @@ Item {
                     tags: ["clipboard", "actions", "buttons", "hide", "density", "copy", "paste", "pin", "edit", "delete"]
                     settingKey: "clipboardVisibleEntryActions"
                     text: I18n.tr("Visible Entry Actions")
-                    description: I18n.tr("Choose which action buttons appear on clipboard entries")
                     selectionMode: "multi"
                     model: root.entryActionLabels
                     currentSelection: root.visibleEntryActionLabels()
@@ -511,7 +509,7 @@ Item {
                     tags: ["clipboard", "disable", "history", "persistence"]
                     settingKey: "disabled"
                     text: I18n.tr("History Persistence")
-                    description: I18n.tr("Write clipboard history to disk; when off, clipboard still works but nothing is saved")
+                    description: I18n.tr("Keep history after restart.")
                     checked: !(root.config.disabled ?? false)
                     onToggled: checked => root.saveConfig("disabled", !checked)
                 }

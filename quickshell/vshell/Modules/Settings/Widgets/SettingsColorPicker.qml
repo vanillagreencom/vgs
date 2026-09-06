@@ -89,7 +89,7 @@ Item {
 
                         StyledText {
                             text: modelData.label
-                            font.pixelSize: Theme.fontSizeSmall
+                            font.pixelSize: Theme.settingsFontSize
                             color: Theme.surfaceText
                             anchors.horizontalCenter: parent.horizontalCenter
                         }

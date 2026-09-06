@@ -383,7 +383,7 @@ Item {
 
                             StyledText {
                                 text: I18n.tr("Define rules for window behavior. Saves to %1").arg(root.vgsRulesFileName)
-                                font.pixelSize: Theme.fontSizeSmall
+                                font.pixelSize: Theme.settingsFontSize
                                 color: Theme.surfaceVariantText
                                 wrapMode: Text.WordWrap
                                 Layout.fillWidth: true
@@ -412,7 +412,7 @@ Item {
 
                         StyledText {
                             text: I18n.tr("Create rule for")
-                            font.pixelSize: Theme.fontSizeSmall
+                            font.pixelSize: Theme.settingsFontSize
                             color: Theme.surfaceVariantText
                             Layout.alignment: Qt.AlignVCenter
                         }
@@ -485,7 +485,7 @@ Item {
 
                         StyledText {
                             text: warningBox.showLegacy ? I18n.tr("VGS can't edit %1 window rules from Settings; edit your %1 config directly.").arg(root.compositorLabel) : I18n.tr("Click Setup to create %1 and add the include to your compositor config").arg(root.vgsRulesFileName)
-                            font.pixelSize: Theme.fontSizeSmall
+                            font.pixelSize: Theme.settingsFontSize
                             color: Theme.surfaceVariantText
                             wrapMode: Text.WordWrap
                             width: parent.width
@@ -559,7 +559,7 @@ Item {
 
                         StyledText {
                             text: I18n.tr("No window rules yet — use + or pick a window above to create one")
-                            font.pixelSize: Theme.fontSizeSmall
+                            font.pixelSize: Theme.settingsFontSize
                             color: Theme.surfaceVariantText
                             anchors.horizontalCenter: parent.horizontalCenter
                         }
@@ -644,7 +644,7 @@ Item {
                                                         parts.push("title: " + m.title);
                                                     return parts.length > 0 ? parts.join(" · ") : I18n.tr("No match criteria");
                                                 }
-                                                font.pixelSize: Theme.fontSizeSmall
+                                                font.pixelSize: Theme.settingsFontSize
                                                 color: Theme.surfaceVariantText
                                                 elide: Text.ElideRight
                                                 Layout.fillWidth: true
@@ -682,7 +682,7 @@ Item {
                                                             id: chipText
                                                             anchors.centerIn: parent
                                                             text: modelData
-                                                            font.pixelSize: Theme.fontSizeSmall - 2
+                                                            font.pixelSize: Theme.settingsFontSize - 2
                                                             color: Theme.primary
                                                         }
                                                     }
@@ -820,7 +820,7 @@ Item {
 
                             StyledText {
                                 text: I18n.tr("Rules found in your compositor config. These are read-only here, use Convert to VGS to make an editable copy.")
-                                font.pixelSize: Theme.fontSizeSmall
+                                font.pixelSize: Theme.settingsFontSize
                                 color: Theme.surfaceVariantText
                                 wrapMode: Text.WordWrap
                                 Layout.fillWidth: true
@@ -903,7 +903,7 @@ Item {
                                                         id: sourceText
                                                         anchors.centerIn: parent
                                                         text: externalCard.sourceFile
-                                                        font.pixelSize: Theme.fontSizeSmall - 2
+                                                        font.pixelSize: Theme.settingsFontSize - 2
                                                         color: Theme.surfaceVariantText
                                                     }
                                                 }
@@ -921,7 +921,7 @@ Item {
                                                     const count = root.matchesOf(externalCard.modelData).length;
                                                     return count > 1 ? I18n.tr("%1 (+%2 more)").arg(base).arg(count - 1) : base;
                                                 }
-                                                font.pixelSize: Theme.fontSizeSmall
+                                                font.pixelSize: Theme.settingsFontSize
                                                 color: Theme.surfaceVariantText
                                                 elide: Text.ElideRight
                                                 Layout.fillWidth: true
@@ -959,7 +959,7 @@ Item {
                                                             id: extChipText
                                                             anchors.centerIn: parent
                                                             text: modelData
-                                                            font.pixelSize: Theme.fontSizeSmall - 2
+                                                            font.pixelSize: Theme.settingsFontSize - 2
                                                             color: Theme.primary
                                                         }
                                                     }
@@ -1002,7 +1002,7 @@ Item {
 
                                         StyledText {
                                             text: I18n.tr("Match (%1)").arg(root.matchesOf(externalCard.modelData).length)
-                                            font.pixelSize: Theme.fontSizeSmall
+                                            font.pixelSize: Theme.settingsFontSize
                                             font.weight: Font.Medium
                                             color: Theme.surfaceText
                                         }
@@ -1017,7 +1017,7 @@ Item {
                                                     const c = root.formatCriteria(modelData, root.matchLabels);
                                                     return "• " + (c.length > 0 ? c.join("   ·   ") : I18n.tr("Any window"));
                                                 }
-                                                font.pixelSize: Theme.fontSizeSmall
+                                                font.pixelSize: Theme.settingsFontSize
                                                 color: Theme.surfaceVariantText
                                                 wrapMode: Text.WordWrap
                                             }
@@ -1025,7 +1025,7 @@ Item {
 
                                         StyledText {
                                             text: I18n.tr("Actions")
-                                            font.pixelSize: Theme.fontSizeSmall
+                                            font.pixelSize: Theme.settingsFontSize
                                             font.weight: Font.Medium
                                             color: Theme.surfaceText
                                             topPadding: Theme.spacingXS
@@ -1037,7 +1037,7 @@ Item {
                                                 const a = root.formatCriteria(externalCard.modelData.actions, root.actionLabels);
                                                 return a.length > 0 ? a.join("   ·   ") : I18n.tr("None");
                                             }
-                                            font.pixelSize: Theme.fontSizeSmall
+                                            font.pixelSize: Theme.settingsFontSize
                                             color: Theme.surfaceVariantText
                                             wrapMode: Text.WordWrap
                                         }
@@ -1045,7 +1045,7 @@ Item {
                                         StyledText {
                                             width: parent.width
                                             text: I18n.tr("Source: %1").arg(externalCard.modelData.source || "")
-                                            font.pixelSize: Theme.fontSizeSmall - 1
+                                            font.pixelSize: Theme.settingsFontSize - 1
                                             color: Theme.surfaceVariantText
                                             elide: Text.ElideMiddle
                                             topPadding: Theme.spacingXS

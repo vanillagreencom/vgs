@@ -81,6 +81,10 @@ Singleton {
             _surfaceOpacityArg(),
             "--mode",
             Theme.isLightMode ? "light" : "dark",
+            "--radius",
+            String(Math.min(20, Theme.cornerRadius)),
+            "--settings-title",
+            I18n.tr("Settings", "settings window title"),
             "--json"
         ];
         hyprlandApply.running = true;
@@ -165,6 +169,12 @@ Singleton {
     Connections {
         target: Theme
         function onIsLightModeChanged() { root.scheduleHyprlandApply(); }
+        function onCornerRadiusChanged() { root.scheduleHyprlandApply(); }
+    }
+
+    Connections {
+        target: I18n
+        function onTranslationsChanged() { root.scheduleHyprlandApply(); }
     }
 
     Connections {

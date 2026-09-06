@@ -84,7 +84,7 @@ StyledRect {
                 anchors.left: parent.left
                 anchors.right: toggleSwitch.left
                 anchors.rightMargin: Theme.spacingM
-                spacing: Theme.spacingXS
+                spacing: Theme.spacingXXS
 
                 Row {
                     spacing: Theme.spacingM
@@ -115,10 +115,11 @@ StyledRect {
                 StyledText {
                     id: descriptionText
                     text: root.description
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.surfaceVariantText
-                    wrapMode: Text.WordWrap
-                    width: parent.width
+                    wrapMode: Text.Wrap
+                    elide: Text.ElideNone
+                    width: Math.min(parent.width, Theme.settingsDescriptionWidth)
                     horizontalAlignment: Text.AlignLeft
                     visible: root.description !== ""
                 }

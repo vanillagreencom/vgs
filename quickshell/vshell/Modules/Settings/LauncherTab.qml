@@ -71,7 +71,7 @@ Item {
                 StyledText {
                     width: parent.width
                     text: I18n.tr("The VGS Menu plugin is the shell's app launcher. The bar and dock launcher buttons open the same window as the shortcut below.")
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.surfaceVariantText
                     wrapMode: Text.WordWrap
                 }
@@ -108,7 +108,7 @@ Item {
 
                             StyledText {
                                 text: I18n.tr("App Launcher Shortcut")
-                                font.pixelSize: Theme.fontSizeSmall
+                                font.pixelSize: Theme.settingsFontSize
                                 font.weight: Font.Medium
                                 color: Theme.surfaceText
                                 width: parent.width
@@ -117,7 +117,7 @@ Item {
 
                             StyledText {
                                 text: !root.keybindsAvailable ? I18n.tr("Bind the vshell-menu IPC action in your compositor config") : I18n.tr("Opens the VGS Menu launcher")
-                                font.pixelSize: Theme.fontSizeSmall
+                                font.pixelSize: Theme.settingsFontSize
                                 color: Theme.surfaceVariantText
                                 width: parent.width
                                 wrapMode: Text.WordWrap
@@ -127,7 +127,7 @@ Item {
                         StyledText {
                             id: defaultShortcutValue
                             text: root.keysLabel(root.defaultLauncherAction)
-                            font.pixelSize: Theme.fontSizeSmall
+                            font.pixelSize: Theme.settingsFontSize
                             font.weight: Font.Medium
                             color: Theme.primary
                             anchors.verticalCenter: parent.verticalCenter
@@ -151,12 +151,14 @@ Item {
                 width: parent.width
                 iconName: "apps"
                 title: I18n.tr("Launcher Button Logo")
+                collapsible: true
+                expanded: false
                 settingKey: "launcherLogo"
 
                 StyledText {
                     width: parent.width
                     text: I18n.tr("Logo displayed on the launcher button in the bar")
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.surfaceVariantText
                     wrapMode: Text.WordWrap
                 }
@@ -416,12 +418,14 @@ Item {
                 width: parent.width
                 iconName: "terminal"
                 title: I18n.tr("Launch Prefix")
+                collapsible: true
+                expanded: false
                 settingKey: "launchPrefix"
 
                 StyledText {
                     width: parent.width
                     text: I18n.tr("Prefix added to all application launches, e.g. 'uwsm-app', 'systemd-run', or other command wrappers")
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.surfaceVariantText
                     wrapMode: Text.WordWrap
                 }
@@ -447,7 +451,7 @@ Item {
                     visible: root.overviewSearchSettingsApply
                     tags: ["launcher", "sort", "alphabetically", "apps", "order", "niri", "overview"]
                     text: I18n.tr("Sort Alphabetically")
-                    description: I18n.tr("Sort apps alphabetically instead of by usage frequency")
+                    description: I18n.tr("Use alphabetical order instead of recent use.")
                     checked: SettingsData.sortAppsAlphabetically
                     onToggled: checked => SettingsData.set("sortAppsAlphabetically", checked)
                 }
@@ -456,7 +460,6 @@ Item {
                     settingKey: "appLauncherGridColumns"
                     tags: ["launcher", "grid", "columns", "layout"]
                     text: I18n.tr("Grid Columns")
-                    description: I18n.tr("Number of columns in grid view")
                     minimum: 2
                     maximum: 8
                     value: SettingsData.appLauncherGridColumns
@@ -475,7 +478,7 @@ Item {
                 StyledText {
                     width: parent.width
                     text: I18n.tr("Applies to the search overlay in the niri overview, not the VGS Menu launcher")
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.surfaceVariantText
                     wrapMode: Text.WordWrap
                 }
@@ -519,7 +522,7 @@ Item {
                     settingKey: "launcherShowFooter"
                     tags: ["launcher", "footer", "hints", "shortcuts"]
                     text: I18n.tr("Show Footer", "launcher footer visibility")
-                    description: I18n.tr("Show mode tabs and keyboard hints at the bottom", "launcher footer description")
+                    description: I18n.tr("Show tabs and keyboard hints.", "launcher footer description")
                     checked: SettingsData.launcherShowFooter
                     enabled: SettingsData.launcherSize !== "micro"
                     onToggled: checked => SettingsData.set("launcherShowFooter", checked)
@@ -529,7 +532,7 @@ Item {
                     settingKey: "launcherShowSourceBadges"
                     tags: ["launcher", "appearance", "badge", "source", "flatpak"]
                     text: I18n.tr("Show Package Source Badges")
-                    description: I18n.tr("Show Flatpak, Snap, AppImage, or Nix badge icons on launcher items")
+                    description: I18n.tr("Show how each app was installed.")
                     checked: SettingsData.launcherShowSourceBadges
                     onToggled: checked => SettingsData.set("launcherShowSourceBadges", checked)
                 }
@@ -546,7 +549,7 @@ Item {
                     settingKey: "overviewSearchCloseNiriOverview"
                     tags: ["launcher", "niri", "overview", "close", "launch"]
                     text: I18n.tr("Close Overview on Launch")
-                    description: I18n.tr("Auto-close the niri overview when launching apps")
+                    description: I18n.tr("Close the overview after launch.")
                     checked: SettingsData.overviewSearchCloseNiriOverview
                     onToggled: checked => SettingsData.set("overviewSearchCloseNiriOverview", checked)
                 }
@@ -555,7 +558,7 @@ Item {
                     settingKey: "niriOverviewOverlayEnabled"
                     tags: ["launcher", "niri", "overview", "overlay", "enable"]
                     text: I18n.tr("Overview Overlay")
-                    description: I18n.tr("Show the launcher overlay when typing in the niri overview; disable to use another launcher")
+                    description: I18n.tr("Open VGS search when typing in the overview.")
                     checked: SettingsData.niriOverviewOverlayEnabled
                     onToggled: checked => SettingsData.set("niriOverviewOverlayEnabled", checked)
                 }
@@ -611,7 +614,7 @@ Item {
 
                                     StyledText {
                                         text: pluginDelegate.plugin?.comment ?? ""
-                                        font.pixelSize: Theme.fontSizeSmall
+                                        font.pixelSize: Theme.settingsFontSize
                                         color: Theme.surfaceVariantText
                                     }
                                 }
@@ -650,6 +653,8 @@ Item {
                 width: parent.width
                 iconName: "filter_list"
                 title: I18n.tr("Plugin Visibility")
+                collapsible: true
+                expanded: false
                 settingKey: "pluginVisibility"
 
                 property var allLauncherPlugins: {
@@ -727,7 +732,7 @@ Item {
                 StyledText {
                     width: parent.width
                     text: I18n.tr("Control which plugins appear in 'All' mode without requiring a trigger prefix. Drag to reorder.")
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.surfaceVariantText
                     wrapMode: Text.WordWrap
                 }
@@ -812,7 +817,7 @@ Item {
                                                     id: vgsBadgeLabel
                                                     anchors.centerIn: parent
                                                     text: "VGS"
-                                                    font.pixelSize: Theme.fontSizeSmall - 2
+                                                    font.pixelSize: Theme.settingsFontSize - 2
                                                     color: Theme.primary
                                                 }
                                             }
@@ -820,7 +825,7 @@ Item {
 
                                         StyledText {
                                             text: visibilityDelegateItem.modelData.trigger ? I18n.tr("Trigger: %1").arg(visibilityDelegateItem.modelData.trigger) : I18n.tr("No trigger")
-                                            font.pixelSize: Theme.fontSizeSmall
+                                            font.pixelSize: Theme.settingsFontSize
                                             color: Theme.surfaceVariantText
                                         }
                                     }
@@ -925,7 +930,7 @@ Item {
                     settingKey: "searchAppActions"
                     tags: ["launcher", "search", "actions", "shortcuts"]
                     text: I18n.tr("Search App Actions")
-                    description: I18n.tr("Include desktop actions (shortcuts) in search results")
+                    description: I18n.tr("Include app shortcuts in results.")
                     checked: SessionData.searchAppActions
                     onToggled: checked => SessionData.setSearchAppActions(checked)
                 }
@@ -935,7 +940,7 @@ Item {
                     visible: root.overviewSearchSettingsApply
                     tags: ["launcher", "files", "dsearch", "all", "results", "indexed"]
                     text: I18n.tr("Include Files in All Tab")
-                    description: I18n.tr("Merge indexed file results into the All tab (requires dsearch)")
+                    description: I18n.tr("Include files in All. Requires dsearch.")
                     checked: SettingsData.launcherIncludeFilesInAll
                     onToggled: checked => SettingsData.set("launcherIncludeFilesInAll", checked)
                 }
@@ -945,7 +950,7 @@ Item {
                     visible: root.overviewSearchSettingsApply
                     tags: ["launcher", "folders", "dirs", "dsearch", "all", "results", "indexed"]
                     text: I18n.tr("Include Folders in All Tab")
-                    description: I18n.tr("Merge indexed folder results into the All tab (requires dsearch)")
+                    description: I18n.tr("Include folders in All. Requires dsearch.")
                     checked: SettingsData.launcherIncludeFoldersInAll
                     onToggled: checked => SettingsData.set("launcherIncludeFoldersInAll", checked)
                 }
@@ -986,7 +991,7 @@ Item {
                 StyledText {
                     width: parent.width
                     text: I18n.tr("Hidden apps won't appear in the launcher. Right-click an app and select 'Hide App' to hide it.")
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.surfaceVariantText
                     wrapMode: Text.WordWrap
                 }
@@ -1039,7 +1044,7 @@ Item {
 
                                     StyledText {
                                         text: modelData.comment || modelData.id
-                                        font.pixelSize: Theme.fontSizeSmall
+                                        font.pixelSize: Theme.settingsFontSize
                                         color: Theme.surfaceVariantText
                                         visible: text.length > 0
                                     }
@@ -1074,6 +1079,8 @@ Item {
                 width: parent.width
                 iconName: "edit"
                 title: I18n.tr("App Customizations")
+                collapsible: true
+                expanded: false
                 settingKey: "appOverrides"
 
                 property var overridesModel: {
@@ -1097,7 +1104,7 @@ Item {
                 StyledText {
                     width: parent.width
                     text: I18n.tr("Apps with custom display name, icon, or launch options. Right-click an app and select 'Edit App' to customize.")
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.surfaceVariantText
                     wrapMode: Text.WordWrap
                 }
@@ -1150,7 +1157,7 @@ Item {
 
                                     StyledText {
                                         text: modelData.originalName !== modelData.name ? modelData.originalName : modelData.id
-                                        font.pixelSize: Theme.fontSizeSmall
+                                        font.pixelSize: Theme.settingsFontSize
                                         color: Theme.surfaceVariantText
                                     }
                                 }
@@ -1220,7 +1227,7 @@ Item {
                     StyledText {
                         width: parent.width - clearAllButton.width - Theme.spacingM
                         text: I18n.tr("Apps are ordered by usage frequency, then last used, then alphabetically.")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceVariantText
                         wrapMode: Text.WordWrap
                         anchors.verticalCenter: parent.verticalCenter
@@ -1262,7 +1269,7 @@ Item {
 
                                 StyledText {
                                     text: (index + 1).toString()
-                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.pixelSize: Theme.settingsFontSize
                                     font.weight: Font.Medium
                                     color: Theme.primary
                                     width: 20
@@ -1314,7 +1321,7 @@ Item {
                                                 return diffDays === 1 ? I18n.tr("Last launched %1 day ago").arg(diffDays) : I18n.tr("Last launched %1 days ago").arg(diffDays);
                                             return I18n.tr("Last launched %1").arg(date.toLocaleDateString());
                                         }
-                                        font.pixelSize: Theme.fontSizeSmall
+                                        font.pixelSize: Theme.settingsFontSize
                                         color: Theme.surfaceVariantText
                                     }
                                 }

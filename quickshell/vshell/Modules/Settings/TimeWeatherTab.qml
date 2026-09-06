@@ -61,7 +61,6 @@ Item {
                     tags: ["time", "seconds", "clock"]
                     settingKey: "showSeconds"
                     text: I18n.tr("Show Seconds")
-                    description: I18n.tr("Display seconds in the clock")
                     checked: SettingsData.showSeconds
                     onToggled: checked => SettingsData.set("showSeconds", checked)
                 }
@@ -82,6 +81,8 @@ Item {
                 tab: "time"
                 tags: ["date", "format", "calendar"]
                 title: I18n.tr("Date Format")
+                collapsible: true
+                expanded: false
                 settingKey: "dateFormat"
                 iconName: "calendar_today"
 
@@ -90,7 +91,6 @@ Item {
                     tags: ["show", "week"]
                     settingKey: "showWeekNumber"
                     text: I18n.tr("Show Week Number")
-                    description: I18n.tr("Display week numbers alongside the calendar")
                     checked: SettingsData.showWeekNumber
                     onToggled: checked => SettingsData.set("showWeekNumber", checked)
                 }
@@ -324,7 +324,7 @@ Item {
 
                         StyledText {
                             text: I18n.tr("Format Legend")
-                            font.pixelSize: Theme.fontSizeSmall
+                            font.pixelSize: Theme.settingsFontSize
                             color: Theme.primary
                             font.weight: Font.Medium
                         }
@@ -339,27 +339,27 @@ Item {
 
                                 StyledText {
                                     text: I18n.tr("• d - Day (1-31)")
-                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.pixelSize: Theme.settingsFontSize
                                     color: Theme.surfaceVariantText
                                 }
                                 StyledText {
                                     text: I18n.tr("• dd - Day (01-31)")
-                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.pixelSize: Theme.settingsFontSize
                                     color: Theme.surfaceVariantText
                                 }
                                 StyledText {
                                     text: I18n.tr("• ddd - Day name (Mon)")
-                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.pixelSize: Theme.settingsFontSize
                                     color: Theme.surfaceVariantText
                                 }
                                 StyledText {
                                     text: I18n.tr("• dddd - Day name (Monday)")
-                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.pixelSize: Theme.settingsFontSize
                                     color: Theme.surfaceVariantText
                                 }
                                 StyledText {
                                     text: I18n.tr("• M - Month (1-12)")
-                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.pixelSize: Theme.settingsFontSize
                                     color: Theme.surfaceVariantText
                                 }
                             }
@@ -370,27 +370,27 @@ Item {
 
                                 StyledText {
                                     text: I18n.tr("• MM - Month (01-12)")
-                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.pixelSize: Theme.settingsFontSize
                                     color: Theme.surfaceVariantText
                                 }
                                 StyledText {
                                     text: I18n.tr("• MMM - Month (Jan)")
-                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.pixelSize: Theme.settingsFontSize
                                     color: Theme.surfaceVariantText
                                 }
                                 StyledText {
                                     text: I18n.tr("• MMMM - Month (January)")
-                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.pixelSize: Theme.settingsFontSize
                                     color: Theme.surfaceVariantText
                                 }
                                 StyledText {
                                     text: I18n.tr("• yy - Year (24)")
-                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.pixelSize: Theme.settingsFontSize
                                     color: Theme.surfaceVariantText
                                 }
                                 StyledText {
                                     text: I18n.tr("• yyyy - Year (2024)")
-                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.pixelSize: Theme.settingsFontSize
                                     color: Theme.surfaceVariantText
                                 }
                             }
@@ -411,7 +411,6 @@ Item {
                     tags: ["weather", "enable"]
                     settingKey: "weatherEnabled"
                     text: I18n.tr("Weather")
-                    description: I18n.tr("Show weather information in the top bar and control center")
                     checked: SettingsData.weatherEnabled
                     onToggled: checked => SettingsData.set("weatherEnabled", checked)
                 }
@@ -455,7 +454,7 @@ Item {
                         tags: ["weather", "location", "auto", "gps"]
                         settingKey: "useAutoLocation"
                         text: I18n.tr("Auto Location")
-                        description: I18n.tr("Determine your location from your IP address")
+                        description: I18n.tr("Uses your IP address.")
                         checked: SettingsData.useAutoLocation
                         onToggled: checked => SettingsData.set("useAutoLocation", checked)
                     }
@@ -494,7 +493,7 @@ Item {
 
                                         StyledText {
                                             text: I18n.tr("Latitude")
-                                            font.pixelSize: Theme.fontSizeSmall
+                                            font.pixelSize: Theme.settingsFontSize
                                             color: Theme.surfaceVariantText
                                         }
 
@@ -544,7 +543,7 @@ Item {
 
                                         StyledText {
                                             text: I18n.tr("Longitude")
-                                            font.pixelSize: Theme.fontSizeSmall
+                                            font.pixelSize: Theme.settingsFontSize
                                             color: Theme.surfaceVariantText
                                         }
 
@@ -596,7 +595,7 @@ Item {
 
                                     StyledText {
                                         text: I18n.tr("Location Search")
-                                        font.pixelSize: Theme.fontSizeSmall
+                                        font.pixelSize: Theme.settingsFontSize
                                         color: Theme.surfaceVariantText
                                         font.weight: Font.Medium
                                     }
@@ -653,7 +652,7 @@ Item {
                     StyledText {
                         width: parent.width
                         text: I18n.tr("Weather appears here once a location is set and the forecast loads")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceVariantText
                         wrapMode: Text.WordWrap
                         horizontalAlignment: Text.AlignHCenter
@@ -781,7 +780,7 @@ Item {
                                 StyledText {
                                     property var feelsLike: SettingsData.useFahrenheit ? (WeatherService.weather.feelsLikeF || WeatherService.weather.tempF) : (WeatherService.weather.feelsLike || WeatherService.weather.temp)
                                     text: I18n.tr("Feels Like %1°").arg(feelsLike)
-                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.pixelSize: Theme.settingsFontSize
                                     color: Theme.surfaceTextSecondary
                                 }
 
@@ -817,7 +816,7 @@ Item {
                                     StyledText {
                                         id: sunriseText
                                         text: WeatherService.weather.sunrise || ""
-                                        font.pixelSize: Theme.fontSizeSmall
+                                        font.pixelSize: Theme.settingsFontSize
                                         color: Theme.surfaceTextSecondary
                                         anchors.left: sunriseIcon.right
                                         anchors.leftMargin: Theme.spacingXS
@@ -841,7 +840,7 @@ Item {
                                     StyledText {
                                         id: sunsetText
                                         text: WeatherService.weather.sunset || ""
-                                        font.pixelSize: Theme.fontSizeSmall
+                                        font.pixelSize: Theme.settingsFontSize
                                         color: Theme.surfaceTextSecondary
                                         anchors.left: sunsetIcon.right
                                         anchors.leftMargin: Theme.spacingXS
@@ -890,13 +889,13 @@ Item {
                                     spacing: Theme.spacingXXS
                                     StyledText {
                                         text: I18n.tr("Feels Like")
-                                        font.pixelSize: Theme.fontSizeSmall
+                                        font.pixelSize: Theme.settingsFontSize
                                         color: Theme.surfaceTextMedium
                                         anchors.horizontalCenter: parent.horizontalCenter
                                     }
                                     StyledText {
                                         text: (SettingsData.useFahrenheit ? (WeatherService.weather.feelsLikeF || WeatherService.weather.tempF) : (WeatherService.weather.feelsLike || WeatherService.weather.temp)) + "°"
-                                        font.pixelSize: Theme.fontSizeSmall + 1
+                                        font.pixelSize: Theme.settingsFontSize + 1
                                         color: Theme.surfaceText
                                         font.weight: Font.Medium
                                         anchors.horizontalCenter: parent.horizontalCenter
@@ -934,13 +933,13 @@ Item {
                                     spacing: Theme.spacingXXS
                                     StyledText {
                                         text: I18n.tr("Humidity")
-                                        font.pixelSize: Theme.fontSizeSmall
+                                        font.pixelSize: Theme.settingsFontSize
                                         color: Theme.surfaceTextMedium
                                         anchors.horizontalCenter: parent.horizontalCenter
                                     }
                                     StyledText {
                                         text: WeatherService.weather.humidity ? WeatherService.weather.humidity + "%" : "--"
-                                        font.pixelSize: Theme.fontSizeSmall + 1
+                                        font.pixelSize: Theme.settingsFontSize + 1
                                         color: Theme.surfaceText
                                         font.weight: Font.Medium
                                         anchors.horizontalCenter: parent.horizontalCenter
@@ -978,7 +977,7 @@ Item {
                                     spacing: Theme.spacingXXS
                                     StyledText {
                                         text: I18n.tr("Wind")
-                                        font.pixelSize: Theme.fontSizeSmall
+                                        font.pixelSize: Theme.settingsFontSize
                                         color: Theme.surfaceTextMedium
                                         anchors.horizontalCenter: parent.horizontalCenter
                                     }
@@ -989,7 +988,7 @@ Item {
                                             SettingsData.useFahrenheit;
                                             return WeatherService.formatSpeed(WeatherService.weather.wind) || "--";
                                         }
-                                        font.pixelSize: Theme.fontSizeSmall + 1
+                                        font.pixelSize: Theme.settingsFontSize + 1
                                         color: Theme.surfaceText
                                         font.weight: Font.Medium
                                         anchors.horizontalCenter: parent.horizontalCenter
@@ -1035,7 +1034,7 @@ Item {
                                     spacing: Theme.spacingXXS
                                     StyledText {
                                         text: I18n.tr("Pressure")
-                                        font.pixelSize: Theme.fontSizeSmall
+                                        font.pixelSize: Theme.settingsFontSize
                                         color: Theme.surfaceTextMedium
                                         anchors.horizontalCenter: parent.horizontalCenter
                                     }
@@ -1047,7 +1046,7 @@ Item {
                                                 return (WeatherService.weather.pressure * 0.02953).toFixed(2) + " inHg";
                                             return WeatherService.weather.pressure + " hPa";
                                         }
-                                        font.pixelSize: Theme.fontSizeSmall + 1
+                                        font.pixelSize: Theme.settingsFontSize + 1
                                         color: Theme.surfaceText
                                         font.weight: Font.Medium
                                         anchors.horizontalCenter: parent.horizontalCenter
@@ -1085,13 +1084,13 @@ Item {
                                     spacing: Theme.spacingXXS
                                     StyledText {
                                         text: I18n.tr("Rain Chance")
-                                        font.pixelSize: Theme.fontSizeSmall
+                                        font.pixelSize: Theme.settingsFontSize
                                         color: Theme.surfaceTextMedium
                                         anchors.horizontalCenter: parent.horizontalCenter
                                     }
                                     StyledText {
                                         text: WeatherService.weather.precipitationProbability ? WeatherService.weather.precipitationProbability + "%" : "0%"
-                                        font.pixelSize: Theme.fontSizeSmall + 1
+                                        font.pixelSize: Theme.settingsFontSize + 1
                                         color: Theme.surfaceText
                                         font.weight: Font.Medium
                                         anchors.horizontalCenter: parent.horizontalCenter
@@ -1129,7 +1128,7 @@ Item {
                                     spacing: Theme.spacingXXS
                                     StyledText {
                                         text: I18n.tr("Visibility")
-                                        font.pixelSize: Theme.fontSizeSmall
+                                        font.pixelSize: Theme.settingsFontSize
                                         color: Theme.surfaceTextMedium
                                         anchors.horizontalCenter: parent.horizontalCenter
                                     }
@@ -1143,7 +1142,7 @@ Item {
                                                 return (vis / 1609.34).toFixed(1) + " mi";
                                             return (vis / 1000).toFixed(1) + " km";
                                         }
-                                        font.pixelSize: Theme.fontSizeSmall + 1
+                                        font.pixelSize: Theme.settingsFontSize + 1
                                         color: Theme.surfaceText
                                         font.weight: Font.Medium
                                         anchors.horizontalCenter: parent.horizontalCenter

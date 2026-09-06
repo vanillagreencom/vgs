@@ -176,7 +176,7 @@ StyledRect {
                             id: desktopLabel
                             anchors.centerIn: parent
                             text: I18n.tr("Desktop Widget")
-                            font.pixelSize: Theme.fontSizeSmall - 2
+                            font.pixelSize: Theme.settingsFontSize - 2
                             color: Theme.secondary
                         }
                     }
@@ -184,7 +184,7 @@ StyledRect {
 
                 StyledText {
                     text: I18n.tr("v%1 by %2").arg(root.pluginVersion).arg(root.pluginAuthor)
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.surfaceVariantText
                     width: parent.width
                     horizontalAlignment: Text.AlignLeft
@@ -193,7 +193,7 @@ StyledRect {
                 // The card may still show the loaded bundled owner. Identify the refused replacement without calling that owner unavailable.
                 StyledText {
                     text: root.withheldReason
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.error
                     width: parent.width
                     wrapMode: Text.WordWrap
@@ -349,7 +349,7 @@ StyledRect {
                         id: alwaysOnLabel
                         anchors.centerIn: parent
                         text: I18n.tr("Always on")
-                        font.pixelSize: Theme.fontSizeSmall - 1
+                        font.pixelSize: Theme.settingsFontSize - 1
                         font.weight: Font.Medium
                         color: Theme.primary
                     }
@@ -404,7 +404,7 @@ StyledRect {
         StyledText {
             width: parent.width
             text: root.pluginDescription
-            font.pixelSize: Theme.fontSizeSmall
+            font.pixelSize: Theme.settingsFontSize
             color: Theme.surfaceVariantText
             wrapMode: Text.WordWrap
             maximumLineCount: 2
@@ -433,7 +433,7 @@ StyledRect {
                         id: permissionText
                         anchors.centerIn: parent
                         text: modelData
-                        font.pixelSize: Theme.fontSizeSmall - 1
+                        font.pixelSize: Theme.settingsFontSize - 1
                         color: Theme.primary
                     }
                 }
@@ -499,7 +499,7 @@ StyledRect {
         StyledText {
             anchors.centerIn: parent
             text: !root.isLoaded ? I18n.tr("Enable the plugin to access its settings") : (settingsLoader.status === Loader.Error ? I18n.tr("Failed to load settings") : I18n.tr("No configurable settings"))
-            font.pixelSize: Theme.fontSizeSmall
+            font.pixelSize: Theme.settingsFontSize
             color: Theme.surfaceVariantText
             visible: root.isExpanded && (!settingsLoader.active || settingsLoader.status === Loader.Error)
         }

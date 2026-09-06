@@ -40,7 +40,6 @@ Item {
                     settingKey: "showDock"
                     tags: ["dock", "show", "display", "enable"]
                     text: I18n.tr("Show Dock")
-                    description: I18n.tr("Display a dock with pinned and running applications")
                     checked: SettingsData.showDock
                     onToggled: checked => SettingsData.setShowDock(checked)
                 }
@@ -49,7 +48,7 @@ Item {
                     settingKey: "dockAutoHide"
                     tags: ["dock", "autohide", "hide", "hover"]
                     text: I18n.tr("Auto-hide Dock")
-                    description: I18n.tr("Keep the dock hidden and reveal it when hovering near its edge")
+                    description: I18n.tr("Move the pointer to the edge to reveal it.")
                     checked: SettingsData.dockAutoHide
                     visible: SettingsData.showDock
                     onToggled: checked => {
@@ -64,7 +63,7 @@ Item {
                     settingKey: "dockSmartAutoHide"
                     tags: ["dock", "smart", "autohide", "windows", "overlap", "intelligent"]
                     text: I18n.tr("Intelligent Auto-hide")
-                    description: I18n.tr("Show dock when floating windows don't overlap its area")
+                    description: I18n.tr("Keep visible when no window overlaps it.")
                     checked: SettingsData.dockSmartAutoHide
                     visible: SettingsData.showDock && (CompositorService.isNiri || CompositorService.isHyprland || CompositorService.isMango)
                     onToggled: checked => {
@@ -79,7 +78,6 @@ Item {
                     settingKey: "dockOpenOnOverview"
                     tags: ["dock", "overview", "niri"]
                     text: I18n.tr("Show on Overview")
-                    description: I18n.tr("Always show the dock when niri's overview is open")
                     checked: SettingsData.dockOpenOnOverview
                     visible: CompositorService.isNiri
                     onToggled: checked => SettingsData.set("dockOpenOnOverview", checked)
@@ -89,7 +87,7 @@ Item {
                     settingKey: "dockUseOverlayLayer"
                     tags: ["dock", "fullscreen", "overlay", "layer"]
                     text: I18n.tr("Use Overlay Layer", "dock layer toggle: use Wayland overlay layer")
-                    description: I18n.tr("Place the dock on the Wayland overlay layer")
+                    description: I18n.tr("Show above fullscreen windows.")
                     checked: SettingsData.dockUseOverlayLayer
                     visible: SettingsData.showDock
                     onToggled: checked => SettingsData.set("dockUseOverlayLayer", checked)
@@ -151,7 +149,6 @@ Item {
                     settingKey: "dockIsolateDisplays"
                     tags: ["dock", "isolate", "monitor", "multi-monitor"]
                     text: I18n.tr("Isolate Displays")
-                    description: I18n.tr("Only show windows from the current monitor on each dock")
                     checked: SettingsData.dockIsolateDisplays
                     onToggled: checked => SettingsData.set("dockIsolateDisplays", checked)
                 }
@@ -160,7 +157,7 @@ Item {
                     settingKey: "dockGroupByApp"
                     tags: ["dock", "group", "windows", "app"]
                     text: I18n.tr("Group by App")
-                    description: I18n.tr("Group multiple windows of the same app together with a window count indicator")
+                    description: I18n.tr("Show one icon and a window count per app.")
                     checked: SettingsData.dockGroupByApp
                     onToggled: checked => SettingsData.set("dockGroupByApp", checked)
                 }
@@ -169,7 +166,7 @@ Item {
                     settingKey: "dockRestoreSpecialWorkspaceOnClick"
                     tags: ["dock", "hyprland", "special", "workspace", "scratchpad", "restore", "toggle"]
                     text: I18n.tr("Toggle Scratchpad on Click")
-                    description: I18n.tr("Clicking the dock icon of a window on a Hyprland special workspace (scratchpad) shows it, and clicking again hides it")
+                    description: I18n.tr("Click a scratchpad icon to show or hide it.")
                     checked: SettingsData.dockRestoreSpecialWorkspaceOnClick
                     visible: CompositorService.isHyprland
                     onToggled: checked => SettingsData.set("dockRestoreSpecialWorkspaceOnClick", checked)
@@ -179,7 +176,7 @@ Item {
                     settingKey: "dockScratchpadBadge"
                     tags: ["dock", "hyprland", "special", "workspace", "scratchpad", "badge", "indicator"]
                     text: I18n.tr("Scratchpad Badge")
-                    description: I18n.tr("Mark dock icons for windows on a Hyprland special workspace (scratchpad) with a small corner badge")
+                    description: I18n.tr("Mark scratchpad apps with a badge.")
                     checked: SettingsData.dockScratchpadBadge
                     visible: CompositorService.isHyprland
                     onToggled: checked => SettingsData.set("dockScratchpadBadge", checked)
@@ -238,6 +235,8 @@ Item {
                 width: parent.width
                 iconName: "apps"
                 title: I18n.tr("Launcher Button")
+                collapsible: true
+                expanded: false
                 settingKey: "dockLauncher"
 
                 SettingsToggleRow {
@@ -510,7 +509,6 @@ Item {
                     settingKey: "dockShowTrash"
                     tags: ["dock", "trash", "bin", "recycle"]
                     text: I18n.tr("Show Trash in Dock")
-                    description: I18n.tr("Place a trash bin at the end of the dock")
                     checked: SettingsData.dockShowTrash
                     onToggled: checked => SettingsData.set("dockShowTrash", checked)
                 }
@@ -539,7 +537,7 @@ Item {
 
                         StyledText {
                             text: I18n.tr("Custom Command")
-                            font.pixelSize: Theme.fontSizeSmall
+                            font.pixelSize: Theme.settingsFontSize
                             color: Theme.surfaceVariantText
                         }
 
@@ -643,14 +641,12 @@ Item {
 
                 SettingsToggleRow {
                     text: I18n.tr("Border")
-                    description: I18n.tr("Add a border around the dock")
                     checked: SettingsData.dockBorderEnabled
                     onToggled: checked => SettingsData.set("dockBorderEnabled", checked)
                 }
 
                 SettingsChoiceRow {
                     text: I18n.tr("Border Color")
-                    description: I18n.tr("Accent color used for the dock border")
                     visible: SettingsData.dockBorderEnabled
                     model: [I18n.tr("Surface", "color option"), I18n.tr("Secondary", "color option"), I18n.tr("Primary", "color option")]
                     currentIndex: {

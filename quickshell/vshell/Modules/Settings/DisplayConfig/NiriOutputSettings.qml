@@ -64,6 +64,25 @@ Column {
             return DisplayConfigState.getNiriSetting(root.outputData, root.outputName, "disabled", false);
         }
 
+        VgsDropdown {
+            width: parent.width
+            text: I18n.tr("Maximum colour depth")
+            enabled: !settingsColumn.isDisabled
+            options: [I18n.tr("Automatic"), I18n.tr("8-bit"), I18n.tr("10-bit")]
+            currentValue: {
+                const depth = DisplayConfigState.getNiriSetting(root.outputData, root.outputName, "maxBpc", null);
+                return depth === 8 ? options[1] : depth === 10 ? options[2] : options[0];
+            }
+            onValueChanged: value => DisplayConfigState.setNiriSetting(root.outputData, root.outputName, "maxBpc", value === options[1] ? 8 : value === options[2] ? 10 : null)
+        }
+        StyledText {
+            width: parent.width
+            wrapMode: Text.WordWrap
+            text: I18n.tr("Niri chooses the output depth. HDR and colour profiles are unavailable.")
+            color: Theme.surfaceVariantText
+            font.pixelSize: Theme.settingsFontSize
+        }
+
         VgsToggle {
             width: parent.width
             text: I18n.tr("Disable Output")
@@ -192,14 +211,14 @@ Column {
 
                     StyledText {
                         text: I18n.tr("Layout Overrides")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         font.weight: Font.Medium
                         color: Theme.surfaceVariantText
                     }
 
                     StyledText {
                         text: I18n.tr("Override global layout settings for this output")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.withAlpha(Theme.surfaceVariantText, 0.7)
                         wrapMode: Text.WordWrap
                         width: parent.width
@@ -216,7 +235,7 @@ Column {
 
                         StyledText {
                             text: I18n.tr("Window Gaps (px)")
-                            font.pixelSize: Theme.fontSizeSmall
+                            font.pixelSize: Theme.settingsFontSize
                             color: Theme.surfaceVariantText
                         }
 
@@ -254,7 +273,7 @@ Column {
 
                         StyledText {
                             text: I18n.tr("Default Width (%)")
-                            font.pixelSize: Theme.fontSizeSmall
+                            font.pixelSize: Theme.settingsFontSize
                             color: Theme.surfaceVariantText
                         }
 
@@ -299,13 +318,13 @@ Column {
 
                     StyledText {
                         text: I18n.tr("Preset Widths (%)")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceVariantText
                     }
 
                     StyledText {
                         text: "e.g. 33.33, 50, 66.67"
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.withAlpha(Theme.surfaceVariantText, 0.7)
                     }
 

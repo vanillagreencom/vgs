@@ -343,7 +343,7 @@ Item {
                         StyledText {
                             width: parent.width - groupOrderButtons.width
                             text: modelData.label
-                            font.pixelSize: Theme.fontSizeSmall
+                            font.pixelSize: Theme.settingsFontSize
                             font.weight: Font.Medium
                             color: Theme.surfaceVariantText
                             anchors.verticalCenter: parent.verticalCenter
@@ -534,7 +534,7 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 horizontalAlignment: Text.AlignHCenter
                 text: stepper.value === 0 && stepper.zeroLabel ? stepper.zeroLabel : stepper.value + stepper.suffix
-                font.pixelSize: Theme.fontSizeSmall
+                font.pixelSize: Theme.settingsFontSize
                 color: Theme.surfaceText
             }
             VgsActionButton {

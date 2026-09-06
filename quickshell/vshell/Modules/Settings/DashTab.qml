@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import qs.Modules.Settings.Widgets
 import QtQuick.Layouts
 import qs.Common
 import qs.Services
@@ -257,7 +258,7 @@ Item {
 
                                 StyledText {
                                     text: I18n.tr("Reset")
-                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.pixelSize: Theme.settingsFontSize
                                     font.weight: Font.Medium
                                     color: Theme.surfaceText
                                     anchors.verticalCenter: parent.verticalCenter
@@ -289,7 +290,7 @@ Item {
 
                     StyledText {
                         text: I18n.tr("Drag to reorder or click to hide tabs. Use ↑/↓ to highlight a tab and Ctrl+↑/↓ to move it.")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceVariantText
                         width: parent.width
                         wrapMode: Text.WordWrap
@@ -356,17 +357,14 @@ Item {
 
                             StyledText {
                                 text: I18n.tr("Hidden")
-                                font.pixelSize: Theme.fontSizeSmall
+                                font.pixelSize: Theme.settingsFontSize
                                 font.weight: Font.Medium
                                 color: Theme.outline
                                 anchors.verticalCenter: parent.verticalCenter
                             }
 
-                            Rectangle {
+                            SettingsDivider {
                                 width: parent.width - x
-                                height: 1
-                                color: Theme.outline
-                                opacity: 0.2
                                 anchors.verticalCenter: parent.verticalCenter
                             }
                         }
@@ -516,7 +514,7 @@ Item {
 
                                         StyledText {
                                             text: rowItem.present.description
-                                            font.pixelSize: Theme.fontSizeSmall
+                                            font.pixelSize: Theme.settingsFontSize
                                             color: rowItem.isEnabled ? Theme.outline : Theme.outlineVariant
                                             elide: Text.ElideRight
                                             width: parent.width

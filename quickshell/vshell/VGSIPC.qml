@@ -7,6 +7,7 @@ import Quickshell.Services.SystemTray
 import Quickshell.Services.UPower
 import qs.Common
 import qs.Services
+import qs.Modals.Settings
 import qs.Modules.Settings.DisplayConfig
 
 Item {
@@ -1083,6 +1084,18 @@ Item {
             return "SETTINGS_OPEN_SUCCESS";
         }
 
+        function status(): string {
+            const modal = PopoutService.settingsModal;
+            const tab = SettingsRegistry.tabs.find(page => page.tabIndex === modal?.currentTabIndex);
+            return JSON.stringify({
+                visible: modal?.visible ?? false,
+                ready: modal?.pageReady ?? false,
+                tab: tab?.id ?? "",
+                pages: SettingsNavigation.pageIds(),
+                sectionTabs: SettingsNavigation.tabsFor(modal?.currentTabIndex ?? -1).map(page => page.id)
+            });
+        }
+
         function openWith(tab: string): string {
             if (!tab)
                 return "SETTINGS_OPEN_FAILED: No tab specified";
@@ -1999,7 +2012,7 @@ Item {
             const matchedName = profiles[matchedId]?.name || "none";
             const currentOutputs = JSON.stringify(DisplayConfigState.currentOutputSet);
 
-            return `auto: ${auto}\nactive: ${activeName}\nmatched: ${matchedName}\noutputs: ${currentOutputs}`;
+            return `auto: ${auto}\nactive: ${activeName}\nmatched: ${matchedName}\noutputs: ${currentOutputs}\nbackend: ${CompositorService.compositor}\nerror: ${HyprlandService.outputsError}`;
         }
 
         function current(): string {

@@ -126,7 +126,7 @@ Item {
                     settingKey: "lockScreenShowPasswordField"
                     tags: ["lock", "screen", "password", "field", "input", "visible"]
                     text: I18n.tr("Show Password Field", "Enable password field display on the lock screen window")
-                    description: I18n.tr("If hidden, the field appears as soon as a key is pressed")
+                    description: I18n.tr("Appears when you start typing.")
                     checked: SettingsData.lockScreenShowPasswordField
                     onToggled: checked => SettingsData.set("lockScreenShowPasswordField", checked)
                 }
@@ -143,7 +143,7 @@ Item {
                     settingKey: "lockScreenNotificationMode"
                     tags: ["lock", "screen", "notification", "notifications", "privacy"]
                     text: I18n.tr("Notification Display", "lock screen notification privacy setting")
-                    description: I18n.tr("Control what notification information is shown on the lock screen", "lock screen notification privacy setting")
+                    description: I18n.tr("Choose what others can see while locked.", "lock screen notification privacy setting")
                     options: [I18n.tr("Disabled", "lock screen notification mode option"), I18n.tr("Count Only", "lock screen notification mode option"), I18n.tr("App Names", "lock screen notification mode option"), I18n.tr("Full Content", "lock screen notification mode option")]
                     currentValue: options[SettingsData.lockScreenNotificationMode] || options[0]
                     onValueChanged: value => {
@@ -163,7 +163,7 @@ Item {
 
                 StyledText {
                     text: I18n.tr("Customize the font and background of the lock screen, or leave empty to use your theme font and desktop wallpaper. Changes apply instantly.")
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.surfaceVariantText
                     width: parent.width
                     wrapMode: Text.Wrap
@@ -173,7 +173,6 @@ Item {
                     settingKey: "lockScreenFontFamily"
                     tags: ["lock", "screen", "font", "typography"]
                     text: I18n.tr("Font")
-                    description: I18n.tr("Font used for the clock and date on the lock screen")
                     currentFont: SettingsData.lockScreenFontFamily || ""
                     onFontSelected: family => SettingsData.set("lockScreenFontFamily", family)
                 }
@@ -188,7 +187,7 @@ Item {
 
                 StyledText {
                     text: I18n.tr("Use a custom image for the lock screen, or leave empty to use your desktop wallpaper.")
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.surfaceVariantText
                     width: parent.width
                     wrapMode: Text.Wrap
@@ -214,7 +213,7 @@ Item {
 
                 StyledText {
                     text: I18n.tr("loginctl not available — lock integration requires the VGS socket connection")
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.warning
                     visible: !SessionService.loginctlAvailable
                     width: parent.width
@@ -225,7 +224,7 @@ Item {
                     settingKey: "loginctlLockIntegration"
                     tags: ["lock", "screen", "loginctl", "dbus", "integration", "external"]
                     text: I18n.tr("loginctl Lock Integration")
-                    description: I18n.tr("Bind the lock screen to loginctl D-Bus signals; disable when using an external locker")
+                    description: I18n.tr("Turn off when using another lock screen.")
                     checked: SessionService.loginctlAvailable && SettingsData.loginctlLockIntegration
                     enabled: SessionService.loginctlAvailable
                     onToggled: checked => {
@@ -239,7 +238,6 @@ Item {
                     settingKey: "lockBeforeSuspend"
                     tags: ["lock", "screen", "suspend", "sleep", "automatic"]
                     text: I18n.tr("Lock Before Suspend")
-                    description: I18n.tr("Automatically lock the screen when the system prepares to suspend")
                     checked: SettingsData.lockBeforeSuspend
                     visible: SessionService.loginctlAvailable && SettingsData.loginctlLockIntegration
                     onToggled: checked => SettingsData.set("lockBeforeSuspend", checked)
@@ -249,7 +247,7 @@ Item {
                     settingKey: "lockScreenPowerOffMonitorsOnLock"
                     tags: ["lock", "screen", "monitor", "display", "dpms", "power"]
                     text: I18n.tr("Power Off Monitors")
-                    description: I18n.tr("Turn off all displays immediately when the lock screen activates")
+                    description: I18n.tr("Turns displays off as soon as the screen locks.")
                     checked: SettingsData.lockScreenPowerOffMonitorsOnLock
                     onToggled: checked => SettingsData.set("lockScreenPowerOffMonitorsOnLock", checked)
                 }
@@ -258,14 +256,13 @@ Item {
                     settingKey: "lockAtStartup"
                     tags: ["lock", "screen", "startup", "start", "boot", "login", "automatic"]
                     text: I18n.tr("Lock at Startup")
-                    description: I18n.tr("Automatically lock the screen when VGS starts")
                     checked: SettingsData.lockAtStartup
                     onToggled: checked => SettingsData.set("lockAtStartup", checked)
                 }
 
                 StyledText {
                     text: I18n.tr("Lock screen authentication changes apply automatically and may open a terminal when sudo authentication is required.")
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.surfaceVariantText
                     width: parent.width
                     wrapMode: Text.Wrap
@@ -320,7 +317,7 @@ Item {
                 StyledText {
                     visible: !MultimediaService.available
                     text: I18n.tr("QtMultimedia is not available — the video screensaver requires Qt Multimedia")
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.warning
                     width: parent.width
                     wrapMode: Text.WordWrap
@@ -330,7 +327,6 @@ Item {
                     settingKey: "lockScreenVideoEnabled"
                     tags: ["lock", "screen", "video", "screensaver", "animation", "movie"]
                     text: I18n.tr("Video Screensaver")
-                    description: I18n.tr("Play a video when the screen locks")
                     enabled: MultimediaService.available
                     checked: SettingsData.lockScreenVideoEnabled
                     onToggled: checked => SettingsData.set("lockScreenVideoEnabled", checked)
@@ -343,13 +339,13 @@ Item {
 
                     StyledText {
                         text: I18n.tr("Video Path")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceVariantText
                     }
 
                     StyledText {
                         text: I18n.tr("Path to a video file or folder containing videos")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.outlineVariant
                         wrapMode: Text.WordWrap
                         width: parent.width
@@ -384,7 +380,7 @@ Item {
                     settingKey: "lockScreenVideoCycling"
                     tags: ["lock", "screen", "video", "screensaver", "cycling", "random", "shuffle"]
                     text: I18n.tr("Automatic Cycling")
-                    description: I18n.tr("Pick a different random video each time from the same folder")
+                    description: I18n.tr("Pick randomly from the same folder.")
                     visible: SettingsData.lockScreenVideoEnabled && MultimediaService.available
                     enabled: MultimediaService.available
                     checked: SettingsData.lockScreenVideoCycling
@@ -401,7 +397,7 @@ Item {
 
                 StyledText {
                     text: I18n.tr("Choose which monitor shows the lock screen interface. Other monitors will display a solid color for OLED burn-in protection.")
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.surfaceVariantText
                     width: parent.width
                     wrapMode: Text.Wrap
@@ -469,7 +465,7 @@ Item {
 
                         StyledText {
                             text: I18n.tr("Color displayed on monitors without the lock screen")
-                            font.pixelSize: Theme.fontSizeSmall
+                            font.pixelSize: Theme.settingsFontSize
                             color: Theme.surfaceVariantText
                             width: parent.width
                             wrapMode: Text.Wrap

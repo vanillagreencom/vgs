@@ -3,7 +3,7 @@
 
 `config/vshell/dependencies.json` is the single source of truth for which
 commands back which VGS feature group. `packaging/optional-packages.json` maps
-those commands to distribution package names and marks which of them back
+those commands and optional runtime libraries to distribution packages and marks which commands back
 first-class UI. This script joins the two and rewrites the generated blocks in
 the packaging recipes so that the tools behind default UI are installed with the
 package, and a package manager can tell a user what else is missing.
@@ -538,6 +538,7 @@ def collect(
 
     result: dict[str, dict[str, list[str]]] = {distro: {} for distro in DISTROS}
     overrides: dict[str, dict[str, list[str]]] = {distro: {} for distro in DISTROS}
+    entries = [(name, entry, name) for name, entry in mapping.get("libraries", {}).items()]
 
     for name, feature in features.items():
         label = labels[name]
@@ -553,33 +554,36 @@ def collect(
                     "packaging/optional-packages.json; add a package name or a "
                     "\"skip\" reason"
                 )
-            if "skip" in entry:
+            entries.append((command, entry, label))
+
+    for name, entry, label in entries:
+        if "skip" in entry:
+            continue
+        unknown = set(entry) - {"description", "skip"} - set(REQUIRED_DISTROS)
+        if unknown:
+            raise GenError(
+                f"dependency {name!r} has unknown key(s): "
+                + ", ".join(sorted(unknown))
+            )
+        if not any(distro in entry for distro in DISTROS):
+            raise GenError(
+                f"dependency {name!r} names no distribution package and no "
+                "\"skip\" reason"
+            )
+        for distro in DISTROS:
+            packages = entry.get(distro)
+            if packages is None:
                 continue
-            unknown = set(entry) - {"description", "skip"} - set(REQUIRED_DISTROS)
-            if unknown:
-                raise GenError(
-                    f"command {command!r} has unknown key(s): "
-                    + ", ".join(sorted(unknown))
+            if isinstance(packages, str):
+                packages = [packages]
+            for package in packages:
+                bucket = (
+                    overrides[distro] if "description" in entry else result[distro]
                 )
-            if not any(distro in entry for distro in DISTROS):
-                raise GenError(
-                    f"command {command!r} names no distribution package and no "
-                    "\"skip\" reason"
-                )
-            for distro in DISTROS:
-                packages = entry.get(distro)
-                if packages is None:
-                    continue
-                if isinstance(packages, str):
-                    packages = [packages]
-                for package in packages:
-                    bucket = (
-                        overrides[distro] if "description" in entry else result[distro]
-                    )
-                    text = entry.get("description", label)
-                    descriptions = bucket.setdefault(package, [])
-                    if text not in descriptions:
-                        descriptions.append(text)
+                text = entry.get("description", label)
+                descriptions = bucket.setdefault(package, [])
+                if text not in descriptions:
+                    descriptions.append(text)
 
     for distro in DISTROS:
         for package, descriptions in overrides[distro].items():

@@ -1,314 +1,168 @@
 import QtQuick
+import QtQuick.Dialogs
 import qs.Common
-import qs.Modules.Settings.Widgets
 import qs.Widgets
+import qs.Modules.Settings.Widgets
 
 Column {
     id: root
-
     property string outputName: ""
     property var outputData: null
-    property bool expanded: false
-
+    property bool expanded: true
+    readonly property int depth: setting("bitdepth", 8)
+    readonly property string cm: setting("colorManagement", "auto")
+    readonly property string icc: setting("icc", "")
+    readonly property bool hdr: ["hdr", "hdredid"].includes(cm)
+    readonly property bool disabled: setting("disabled", false)
+    readonly property bool studio: outputData?.model === "StudioDisplay"
+    readonly property bool apple: studio || outputData?.model === "ProDisplayXDR"
+    readonly property var colorValues: ["auto", "srgb", "dp3", "dcip3", "adobe", "wide", "edid"]
+    readonly property var colorLabels: [I18n.tr("Automatic"), "sRGB", "Display P3", "DCI-P3", "Adobe RGB", "BT.2020", I18n.tr("Display native (EDID)")]
     width: parent.width
-    spacing: 0
+    spacing: Theme.spacingM
 
-    Rectangle {
-        width: parent.width
-        height: headerRow.implicitHeight + Theme.spacingS * 2
-        color: headerMouse.containsMouse ? Theme.withAlpha(Theme.primary, 0.1) : Theme.withAlpha(Theme.primary, 0)
-        radius: Theme.cornerRadius / 2
-
-        Row {
-            id: headerRow
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            anchors.leftMargin: Theme.spacingS
-            anchors.rightMargin: Theme.spacingS
-            spacing: Theme.spacingS
-
-            VgsIcon {
-                name: root.expanded ? "expand_more" : "chevron_right"
-                size: Theme.iconSize
-                color: Theme.primary
-                anchors.verticalCenter: parent.verticalCenter
-            }
-
-            StyledText {
-                text: I18n.tr("Compositor Settings")
-                font.pixelSize: Theme.fontSizeMedium
-                font.weight: Font.Medium
-                color: Theme.primary
-                anchors.verticalCenter: parent.verticalCenter
-            }
-        }
-
-        MouseArea {
-            id: headerMouse
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onClicked: root.expanded = !root.expanded
-        }
+    function setting(key, fallback) {
+        DisplayConfigState.pendingHyprlandChanges;
+        return DisplayConfigState.getHyprlandSetting(outputData, outputName, key, fallback);
+    }
+    function set(key, value) {
+        DisplayConfigState.setHyprlandSetting(outputData, outputName, key, value);
     }
 
+    StyledText {
+        text: I18n.tr("Colour and dynamic range")
+        font.pixelSize: Theme.fontSizeMedium
+        color: Theme.surfaceText
+    }
+    VgsDropdown {
+        width: parent.width
+        text: I18n.tr("Colour depth")
+        description: I18n.tr("10-bit reduces colour banding.")
+        options: [I18n.tr("8-bit"), I18n.tr("10-bit")]
+        currentValue: root.depth === 10 ? options[1] : options[0]
+        enabled: !root.disabled
+        onValueChanged: value => {
+            const depth = value === options[1] ? 10 : 8;
+            root.set("bitdepth", depth);
+            if (depth === 8 && root.hdr)
+                root.set("colorManagement", "srgb");
+        }
+    }
+    VgsDropdown {
+        width: parent.width
+        text: I18n.tr("Colour mode")
+        enabled: !root.disabled && !root.hdr && root.icc === ""
+        options: root.colorLabels
+        currentValue: root.hdr ? I18n.tr("HDR (PQ)") : root.icc ? I18n.tr("ICC profile") : root.colorLabels[root.colorValues.indexOf(root.cm)] || root.cm
+        onValueChanged: value => {
+            const index = root.colorLabels.indexOf(value);
+            if (index >= 0)
+                root.set("colorManagement", root.colorValues[index]);
+        }
+    }
     Column {
-        id: settingsColumn
         width: parent.width
         spacing: Theme.spacingS
-        visible: root.expanded
-        topPadding: Theme.spacingS
-
-        property int currentBitdepth: {
-            DisplayConfigState.pendingHyprlandChanges;
-            return DisplayConfigState.getHyprlandSetting(root.outputData, root.outputName, "bitdepth", 8);
+        StyledText {
+            text: I18n.tr("Colour profile")
+            font.pixelSize: Theme.fontSizeMedium
+            color: Theme.surfaceText
         }
-        property bool is10Bit: currentBitdepth === 10
-
-        property string currentCm: {
-            DisplayConfigState.pendingHyprlandChanges;
-            return DisplayConfigState.getHyprlandSetting(root.outputData, root.outputName, "colorManagement", "auto");
-        }
-        property bool isHdrMode: currentCm === "hdr" || currentCm === "hdredid"
-        property bool isDisabled: {
-            void (DisplayConfigState.pendingHyprlandChanges);
-            return DisplayConfigState.getHyprlandSetting(root.outputData, root.outputName, "disabled", false);
-        }
-
-        VgsToggle {
+        StyledText {
             width: parent.width
-            text: I18n.tr("Disable Output")
-            enabled: checked || DisplayConfigState.canDisableOutput()
-            description: (!checked && !DisplayConfigState.canDisableOutput()) ? (Object.keys(DisplayConfigState.outputs).length <= 1 ? I18n.tr("Cannot disable the only output") : I18n.tr("At least one output must remain enabled")) : ""
-            checked: DisplayConfigState.getHyprlandSetting(root.outputData, root.outputName, "disabled", false)
-            onToggled: checked => DisplayConfigState.setHyprlandSetting(root.outputData, root.outputName, "disabled", checked)
+            wrapMode: Text.WrapAnywhere
+            text: root.icc || I18n.tr("Uses your compositor profile.")
+            font.pixelSize: Theme.settingsFontSize
+            color: Theme.surfaceVariantText
         }
-
-        VgsDropdown {
+        Row {
+            spacing: Theme.spacingM
+            VgsButton {
+                text: I18n.tr("Choose profile…")
+                variant: "secondary"
+                enabled: !root.disabled && !root.hdr
+                onClicked: profileDialog.open()
+            }
+            VgsButton {
+                text: I18n.tr("Remove profile")
+                variant: "secondary"
+                visible: root.icc !== ""
+                onClicked: root.set("icc", "")
+            }
+        }
+    }
+    FileDialog {
+        id: profileDialog
+        title: I18n.tr("Choose a display ICC profile")
+        nameFilters: [I18n.tr("ICC profiles (*.icc *.icm)")]
+        onAccepted: root.set("icc", decodeURIComponent(String(selectedFile).replace(/^file:\/\//, "")))
+    }
+    VgsToggle {
+        width: parent.width
+        text: I18n.tr("High Dynamic Range (HDR)")
+        checked: root.hdr
+        enabled: !root.disabled && !root.studio && root.icc === ""
+        description: root.studio ? I18n.tr("Studio Display supports SDR only.") : root.icc ? I18n.tr("Remove the colour profile to enable HDR.") : I18n.tr("Requires an HDR display and GPU.")
+        onToggled: checked => {
+            if (checked)
+                root.set("bitdepth", 10);
+            root.set("colorManagement", checked ? "hdr" : "srgb");
+        }
+    }
+    Column {
+        width: parent.width
+        spacing: Theme.spacingS
+        visible: root.hdr
+        StyledText {
+            text: I18n.tr("SDR content brightness")
+            font.pixelSize: Theme.settingsFontSize
+            color: Theme.surfaceText
+        }
+        VgsSlider {
             width: parent.width
-            text: I18n.tr("Mirror Display")
-            enabled: !settingsColumn.isDisabled
-            addHorizontalPadding: true
-
-            property var otherOutputs: {
-                const list = [I18n.tr("None")];
-                for (const name in DisplayConfigState.outputs) {
-                    if (name !== root.outputName)
-                        list.push(name);
-                }
-                return list;
-            }
-            options: otherOutputs
-
-            currentValue: {
-                DisplayConfigState.pendingChanges;
-                const pending = DisplayConfigState.getPendingValue(root.outputName, "mirror");
-                const val = pending !== undefined ? pending : (root.outputData.mirror || "");
-                return val === "" ? I18n.tr("None") : val;
-            }
-
-            onValueChanged: value => {
-                const realVal = value === I18n.tr("None") ? "" : value;
-                DisplayConfigState.setPendingChange(root.outputName, "mirror", realVal);
-            }
+            minimum: 10
+            maximum: 500
+            value: Math.round(root.setting("sdrBrightness", 1) * 100)
+            wheelEnabled: false
+            onSliderValueChanged: value => root.set("sdrBrightness", value / 100)
         }
-
-        VgsToggle {
+        StyledText {
+            text: I18n.tr("SDR content saturation")
+            font.pixelSize: Theme.settingsFontSize
+            color: Theme.surfaceText
+        }
+        VgsSlider {
             width: parent.width
-            text: I18n.tr("10-bit Color")
-            description: I18n.tr("10-bit color depth for a wider color gamut and HDR support")
-            enabled: !settingsColumn.isDisabled
-            checked: settingsColumn.is10Bit
-            onToggled: checked => {
-                if (checked) {
-                    DisplayConfigState.setHyprlandSetting(root.outputData, root.outputName, "bitdepth", 10);
-                } else {
-                    DisplayConfigState.setHyprlandSetting(root.outputData, root.outputName, "bitdepth", null);
-                    if (settingsColumn.isHdrMode)
-                        DisplayConfigState.setHyprlandSetting(root.outputData, root.outputName, "colorManagement", "auto");
-                }
-            }
+            minimum: 0
+            maximum: 300
+            value: Math.round(root.setting("sdrSaturation", 1) * 100)
+            wheelEnabled: false
+            onSliderValueChanged: value => root.set("sdrSaturation", value / 100)
         }
-
-        Column {
-            width: parent.width
-            spacing: Theme.spacingS
-            visible: settingsColumn.is10Bit
-
-            SettingsDivider {}
-
-            VgsDropdown {
-                width: parent.width
-                text: I18n.tr("Color Gamut")
-                addHorizontalPadding: true
-                enabled: !settingsColumn.isDisabled
-                currentValue: {
-                    DisplayConfigState.pendingHyprlandChanges;
-                    const val = DisplayConfigState.getHyprlandSetting(root.outputData, root.outputName, "colorManagement", "auto");
-                    return cmLabelMap[val] || I18n.tr("Auto (Wide)");
-                }
-                options: [I18n.tr("Auto (Wide)"), I18n.tr("Wide (BT2020)"), "DCI-P3", "Apple P3", "Adobe RGB", "EDID", "HDR", I18n.tr("HDR (EDID)")]
-
-                property var cmValueMap: ({
-                        [I18n.tr("Auto (Wide)")]: "auto",
-                        [I18n.tr("Wide (BT2020)")]: "wide",
-                        "DCI-P3": "dcip3",
-                        "Apple P3": "dp3",
-                        "Adobe RGB": "adobe",
-                        "EDID": "edid",
-                        "HDR": "hdr",
-                        [I18n.tr("HDR (EDID)")]: "hdredid"
-                    })
-
-                property var cmLabelMap: ({
-                        "auto": I18n.tr("Auto (Wide)"),
-                        "wide": I18n.tr("Wide (BT2020)"),
-                        "dcip3": "DCI-P3",
-                        "dp3": "Apple P3",
-                        "adobe": "Adobe RGB",
-                        "edid": "EDID",
-                        "hdr": "HDR",
-                        "hdredid": I18n.tr("HDR (EDID)")
-                    })
-
-                onValueChanged: value => {
-                    const cmValue = cmValueMap[value] || "auto";
-                    DisplayConfigState.setHyprlandSetting(root.outputData, root.outputName, "colorManagement", cmValue);
-                }
-            }
-
-            Rectangle {
-                width: parent.width - Theme.spacingM * 2
-                anchors.horizontalCenter: parent.horizontalCenter
-                height: warningColumn.implicitHeight + Theme.spacingM * 2
-                radius: Theme.cornerRadius / 2
-                color: Theme.withAlpha(Theme.warning, 0.15)
-                border.color: Theme.withAlpha(Theme.warning, 0.3)
-                border.width: 1
-                visible: settingsColumn.isHdrMode
-
-                Column {
-                    id: warningColumn
-                    anchors.fill: parent
-                    anchors.margins: Theme.spacingM
-                    spacing: Theme.spacingXS
-
-                    Row {
-                        spacing: Theme.spacingS
-                        VgsIcon {
-                            name: "warning"
-                            size: Theme.iconSize - 4
-                            color: Theme.warning
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
-                        StyledText {
-                            text: I18n.tr("Experimental Feature")
-                            font.pixelSize: Theme.fontSizeSmall
-                            font.weight: Font.Medium
-                            color: Theme.warning
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
-                    }
-                    StyledText {
-                        text: I18n.tr("HDR mode is experimental. Verify your monitor supports HDR before enabling.")
-                        font.pixelSize: Theme.fontSizeSmall
-                        color: Theme.surfaceVariantText
-                        wrapMode: Text.WordWrap
-                        width: parent.width
-                    }
-                }
-            }
-
-            Column {
-                width: parent.width
-                spacing: Theme.spacingS
-                visible: settingsColumn.isHdrMode
-
-                SettingsDivider {}
-
-                StyledText {
-                    text: I18n.tr("HDR Tone Mapping")
-                    font.pixelSize: Theme.fontSizeSmall
-                    font.weight: Font.Medium
-                    color: Theme.surfaceVariantText
-                    leftPadding: Theme.spacingM
-                }
-
-                Row {
-                    width: parent.width - Theme.spacingM * 2
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    spacing: Theme.spacingM
-
-                    Column {
-                        width: (parent.width - Theme.spacingM) / 2
-                        spacing: Theme.spacingXS
-
-                        StyledText {
-                            text: I18n.tr("SDR Brightness")
-                            font.pixelSize: Theme.fontSizeSmall
-                            color: Theme.surfaceVariantText
-                        }
-
-                        VgsTextField {
-                            width: parent.width
-                            height: 40
-                            placeholderText: "1.0 - 2.0"
-                            enabled: !settingsColumn.isDisabled
-                            text: {
-                                DisplayConfigState.pendingHyprlandChanges;
-                                const val = DisplayConfigState.getHyprlandSetting(root.outputData, root.outputName, "sdrBrightness", null);
-                                return val !== null ? val.toString() : "";
-                            }
-                            onEditingFinished: {
-                                const trimmed = text.trim();
-                                if (!trimmed) {
-                                    DisplayConfigState.setHyprlandSetting(root.outputData, root.outputName, "sdrBrightness", null);
-                                    return;
-                                }
-                                const val = parseFloat(trimmed);
-                                if (isNaN(val) || val < 0.1 || val > 5.0)
-                                    return;
-                                DisplayConfigState.setHyprlandSetting(root.outputData, root.outputName, "sdrBrightness", parseFloat(val.toFixed(2)));
-                            }
-                        }
-                    }
-
-                    Column {
-                        width: (parent.width - Theme.spacingM) / 2
-                        spacing: Theme.spacingXS
-
-                        StyledText {
-                            text: I18n.tr("SDR Saturation")
-                            font.pixelSize: Theme.fontSizeSmall
-                            color: Theme.surfaceVariantText
-                        }
-
-                        VgsTextField {
-                            width: parent.width
-                            height: 40
-                            placeholderText: "0.5 - 1.5"
-                            enabled: !settingsColumn.isDisabled
-                            text: {
-                                DisplayConfigState.pendingHyprlandChanges;
-                                const val = DisplayConfigState.getHyprlandSetting(root.outputData, root.outputName, "sdrSaturation", null);
-                                return val !== null ? val.toString() : "";
-                            }
-                            onEditingFinished: {
-                                const trimmed = text.trim();
-                                if (!trimmed) {
-                                    DisplayConfigState.setHyprlandSetting(root.outputData, root.outputName, "sdrSaturation", null);
-                                    return;
-                                }
-                                const val = parseFloat(trimmed);
-                                if (isNaN(val) || val < 0.0 || val > 3.0)
-                                    return;
-                                DisplayConfigState.setHyprlandSetting(root.outputData, root.outputName, "sdrSaturation", parseFloat(val.toFixed(2)));
-                            }
-                        }
-                    }
-                }
-            }
-        }
+    }
+    StyledText {
+        width: parent.width
+        visible: root.apple
+        wrapMode: Text.WordWrap
+        text: I18n.tr("VGS does not support Apple presets, True Tone, auto brightness or calibration.")
+        font.pixelSize: Theme.settingsFontSize
+        color: Theme.surfaceVariantText
+    }
+    SettingsDivider {}
+    VgsDropdown {
+        width: parent.width
+        text: I18n.tr("Mirror display")
+        enabled: !root.disabled
+        options: [I18n.tr("None")].concat(Object.keys(DisplayConfigState.outputs).filter(name => name !== root.outputName))
+        currentValue: DisplayConfigState.getEffectiveValue(root.outputName, "mirror", root.outputData?.mirror || "") || I18n.tr("None")
+        onValueChanged: value => DisplayConfigState.setPendingChange(root.outputName, "mirror", value === I18n.tr("None") ? "" : value)
+    }
+    VgsToggle {
+        width: parent.width
+        text: I18n.tr("Use this display")
+        checked: !root.disabled
+        enabled: !checked || DisplayConfigState.canDisableOutput()
+        description: enabled ? "" : I18n.tr("At least one display must remain enabled.")
+        onToggled: checked => root.set("disabled", !checked)
     }
 }

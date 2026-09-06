@@ -50,7 +50,7 @@ Item {
                     settingKey: "fadeToLockEnabled"
                     tags: ["fade", "lock", "screen", "idle", "grace period"]
                     text: I18n.tr("Fade to Lock Screen")
-                    description: I18n.tr("Gradually fade the screen before locking with a configurable grace period")
+                    description: I18n.tr("Fade before locking.")
                     checked: SettingsData.fadeToLockEnabled
                     onToggled: checked => SettingsData.set("fadeToLockEnabled", checked)
                 }
@@ -59,7 +59,7 @@ Item {
                     settingKey: "fadeToDpmsEnabled"
                     tags: ["fade", "dpms", "monitor", "screen", "idle", "grace period"]
                     text: I18n.tr("Fade to Monitor Off")
-                    description: I18n.tr("Gradually fade the screen before turning off monitors with a configurable grace period")
+                    description: I18n.tr("Fade before turning displays off.")
                     checked: SettingsData.fadeToDpmsEnabled
                     onToggled: checked => SettingsData.set("fadeToDpmsEnabled", checked)
                 }
@@ -254,7 +254,7 @@ Item {
                     settingKey: "lockScreenBlankEnabled"
                     tags: ["blank", "black", "lock", "idle", "screen", "dim", "monitor"]
                     text: I18n.tr("Blank Lock Screen to Black")
-                    description: I18n.tr("After idle while locked, fade the lock screen to full black. Monitors stay powered on — this never turns them off.")
+                    description: I18n.tr("Fade to black while locked. Displays stay on.")
                     checked: SettingsData.lockScreenBlankEnabled
                     onToggled: checked => SettingsData.set("lockScreenBlankEnabled", checked)
                 }
@@ -263,7 +263,7 @@ Item {
                     settingKey: "hideCursorWhenBlanked"
                     tags: ["cursor", "mouse", "pointer", "hide", "blank", "black", "dim", "idle"]
                     text: I18n.tr("Hide Cursor When Screen Blanks")
-                    description: I18n.tr("Hide the mouse pointer while the screen is faded to black, so it isn't left floating on an otherwise dark screen.")
+                    description: I18n.tr("Hide the pointer while faded.")
                     checked: SettingsData.hideCursorWhenBlanked
                     onToggled: checked => SettingsData.set("hideCursorWhenBlanked", checked)
                 }
@@ -320,7 +320,7 @@ Item {
 
                 StyledText {
                     text: I18n.tr("Customize which actions appear in the power menu")
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.surfaceVariantText
                     width: parent.width
                     wrapMode: Text.Wrap
@@ -330,7 +330,6 @@ Item {
                     settingKey: "powerMenuGridLayout"
                     tags: ["power", "menu", "grid", "layout", "list"]
                     text: I18n.tr("Grid Layout")
-                    description: I18n.tr("Display power menu actions in a grid instead of a list")
                     checked: SettingsData.powerMenuGridLayout
                     onToggled: checked => SettingsData.set("powerMenuGridLayout", checked)
                 }
@@ -435,7 +434,7 @@ Item {
                     settingKey: "powerActionConfirm"
                     tags: ["power", "confirm", "hold", "button", "safety"]
                     text: I18n.tr("Hold to Confirm")
-                    description: I18n.tr("Require holding button/key to confirm power off, restart, suspend, hibernate and logout")
+                    description: I18n.tr("Hold to confirm power and logout actions.")
                     checked: SettingsData.powerActionConfirm
                     onToggled: checked => SettingsData.set("powerActionConfirm", checked)
                 }
@@ -470,6 +469,8 @@ Item {
                 width: parent.width
                 iconName: "developer_mode"
                 title: I18n.tr("Custom Power Actions")
+                collapsible: true
+                expanded: false
                 settingKey: "customPowerActions"
                 tags: ["lock", "logout", "suspend", "hibernate", "reboot", "poweroff", "power off", "shutdown", "command", "script", "override"]
 
@@ -514,7 +515,7 @@ Item {
 
                         StyledText {
                             text: modelData.label
-                            font.pixelSize: Theme.fontSizeSmall
+                            font.pixelSize: Theme.settingsFontSize
                             color: Theme.surfaceVariantText
                         }
 

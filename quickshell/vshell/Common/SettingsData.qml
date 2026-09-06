@@ -668,6 +668,10 @@ Singleton {
     property bool textFeatureTabularNumbers: false
     property int textFeatureStylisticSet: 0
     property bool systemFontsManaged: true
+    property string systemFontInterfaceFamily: ""
+    property string systemFontMonoFamily: ""
+    property int systemFontSize: 11
+    property string hyprlandFontFamily: ""
     property bool systemFontInterfaceAntialias: true
     property string systemFontInterfaceHinting: "slight"
     property string systemFontInterfaceSubpixel: "none"
@@ -1459,10 +1463,14 @@ Singleton {
         }
     }
 
-    function applySystemFonts() {
+    function applySystemFonts(who, key, oldValue) {
         if (isGreeterMode)
             return;
-        Proc.runCommand("system-fonts-apply", [Paths.vshellCli, "fonts", "apply", "--json"], (output, exitCode, stderr) => {
+        updateCompositorLayout();
+        const command = [Paths.vshellCli, "fonts", "apply", "--json"];
+        if (key === "systemFontSize")
+            command.push("--size-only");
+        Proc.runCommand("system-fonts-apply", command, (output, exitCode, stderr) => {
             if (exitCode === 0)
                 return;
             const msg = (stderr && stderr.trim().length > 0) ? stderr : (output || I18n.tr("Font settings apply failed"));

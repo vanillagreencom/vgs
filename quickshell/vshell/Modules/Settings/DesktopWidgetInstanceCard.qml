@@ -113,7 +113,7 @@ SettingsCard {
 
                             StyledText {
                                 text: I18n.tr("Duplicate")
-                                font.pixelSize: Theme.fontSizeSmall
+                                font.pixelSize: Theme.settingsFontSize
                                 color: Theme.surfaceText
                             }
                         }
@@ -150,7 +150,7 @@ SettingsCard {
 
                             StyledText {
                                 text: root.confirmingDelete ? I18n.tr("Confirm Delete") : I18n.tr("Delete")
-                                font.pixelSize: Theme.fontSizeSmall
+                                font.pixelSize: Theme.settingsFontSize
                                 color: Theme.error
                             }
                         }
@@ -405,7 +405,7 @@ SettingsCard {
                         StyledText {
                             id: ipcText
                             text: "vshell ipc call desktopWidget toggleOverlay " + root.instanceId
-                            font.pixelSize: Theme.fontSizeSmall
+                            font.pixelSize: Theme.settingsFontSize
                             font.family: Theme.monoFontFamily
                             color: Theme.surfaceVariantText
                             width: parent.width - copyBtn.width - Theme.spacingS

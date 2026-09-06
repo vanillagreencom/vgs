@@ -34,7 +34,6 @@ Item {
                     tags: ["sound", "enable", "system"]
                     settingKey: "soundsEnabled"
                     text: I18n.tr("System Sounds")
-                    description: I18n.tr("Play sounds for system events")
                     checked: SettingsData.soundsEnabled
                     onToggled: checked => SettingsData.set("soundsEnabled", checked)
                 }
@@ -64,7 +63,6 @@ Item {
                         visible: SettingsData.useSystemSoundTheme && AudioService.availableSoundThemes.length > 0
                         enabled: SettingsData.useSystemSoundTheme && AudioService.availableSoundThemes.length > 0
                         text: I18n.tr("Sound Theme")
-                        description: I18n.tr("Installed theme used for event sounds")
                         options: AudioService.availableSoundThemes
                         currentValue: {
                             const theme = AudioService.currentSoundTheme;
@@ -87,7 +85,6 @@ Item {
                         tags: ["sound", "login", "startup", "boot"]
                         settingKey: "soundLogin"
                         text: I18n.tr("Login")
-                        description: I18n.tr("Play sound after logging in")
                         checked: SettingsData.soundLogin
                         onToggled: checked => SettingsData.set("soundLogin", checked)
                     }
@@ -97,7 +94,6 @@ Item {
                         tags: ["sound", "notification", "new"]
                         settingKey: "soundNewNotification"
                         text: I18n.tr("New Notification")
-                        description: I18n.tr("Play sound when new notification arrives")
                         checked: SettingsData.soundNewNotification
                         onToggled: checked => SettingsData.set("soundNewNotification", checked)
                     }
@@ -107,7 +103,6 @@ Item {
                         tags: ["sound", "volume", "changed"]
                         settingKey: "soundVolumeChanged"
                         text: I18n.tr("Volume Changed")
-                        description: I18n.tr("Play sound when volume is adjusted")
                         checked: SettingsData.soundVolumeChanged
                         onToggled: checked => SettingsData.set("soundVolumeChanged", checked)
                     }
@@ -118,7 +113,6 @@ Item {
                         settingKey: "soundPluggedIn"
                         visible: BatteryService.batteryAvailable
                         text: I18n.tr("Plugged In")
-                        description: I18n.tr("Play sound when power cable is connected")
                         checked: SettingsData.soundPluggedIn
                         onToggled: checked => SettingsData.set("soundPluggedIn", checked)
                     }
@@ -158,7 +152,7 @@ Item {
 
                     StyledText {
                         id: notAvailableText
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         text: I18n.tr("System sounds are not available. Install %1 for sound support.").arg("qt6-multimedia")
                         wrapMode: Text.WordWrap
                         width: parent.width - Theme.iconSizeSmall - Theme.spacingM

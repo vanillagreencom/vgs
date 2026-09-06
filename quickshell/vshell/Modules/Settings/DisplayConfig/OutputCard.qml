@@ -3,6 +3,7 @@ import qs.Common
 import qs.Modules.Settings.Widgets
 import qs.Services
 import qs.Widgets
+import "DisplaySettingsLogic.js" as DisplaySettingsLogic
 
 StyledRect {
     id: root
@@ -26,7 +27,7 @@ StyledRect {
     }
 
     width: parent.width
-    height: settingsColumn.implicitHeight + Theme.spacingM * 2
+    height: settingsColumn.implicitHeight + Theme.spacingL * 2
     radius: Theme.cornerRadius
     color: Theme.withAlpha(Theme.surfaceContainerHigh, isConnected ? 0.5 : 0.3)
     border.color: Theme.withAlpha(Theme.outline, 0.3)
@@ -36,8 +37,8 @@ StyledRect {
     Column {
         id: settingsColumn
         anchors.fill: parent
-        anchors.margins: Theme.spacingM
-        spacing: Theme.spacingS
+        anchors.margins: Theme.spacingL
+        spacing: Theme.spacingM
 
         Row {
             width: parent.width
@@ -55,7 +56,7 @@ StyledRect {
                 spacing: Theme.spacingXXS
 
                 StyledText {
-                    text: DisplayConfigState.getOutputDisplayName(root.outputData, root.outputName)
+                    text: DisplaySettingsLogic.displayName(root.outputData, root.outputName)
                     font.pixelSize: Theme.fontSizeMedium
                     font.weight: Font.Medium
                     color: root.isConnected ? Theme.surfaceText : Theme.surfaceVariantText
@@ -64,8 +65,8 @@ StyledRect {
                 }
 
                 StyledText {
-                    text: (root.outputData?.model ?? "") + (root.outputData?.make ? " - " + root.outputData.make : "")
-                    font.pixelSize: Theme.fontSizeSmall
+                    text: root.outputName + (root.outputData?.currentFormat ? " · " + (root.outputData.currentFormat.includes("2101010") ? I18n.tr("10-bit output") : I18n.tr("8-bit output")) : "")
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.surfaceVariantText
                     width: parent.width
                     horizontalAlignment: Text.AlignLeft
@@ -84,7 +85,7 @@ StyledRect {
                 StyledText {
                     id: disconnectedText
                     text: I18n.tr("Disconnected")
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.surfaceVariantText
                     anchors.centerIn: parent
                 }
@@ -127,12 +128,30 @@ StyledRect {
                 StyledText {
                     id: disabledText
                     text: I18n.tr("Disabled")
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.surfaceVariantText
                     anchors.centerIn: parent
                 }
             }
         }
+
+        DisplayScalePicker {
+            width: parent.width
+            visible: root.isConnected && !root.isDisabled
+            outputName: root.outputName
+            outputData: root.outputData
+        }
+
+        SettingsDivider {}
+
+        DisplayBrightness {
+            width: parent.width
+            visible: root.isConnected && !root.isDisabled
+            outputName: root.outputName
+            outputData: root.outputData
+        }
+
+        SettingsDivider {}
 
         VgsDropdown {
             width: parent.width
@@ -164,7 +183,7 @@ StyledRect {
         StyledText {
             visible: !root.isConnected
             text: I18n.tr("Configuration will be preserved when this display reconnects")
-            font.pixelSize: Theme.fontSizeSmall
+            font.pixelSize: Theme.settingsFontSize
             color: Theme.surfaceVariantText
             wrapMode: Text.WordWrap
             width: parent.width
@@ -174,7 +193,7 @@ StyledRect {
         StyledText {
             visible: root.isDisabled
             text: I18n.tr("This output is disabled in the current profile")
-            font.pixelSize: Theme.fontSizeSmall
+            font.pixelSize: Theme.settingsFontSize
             color: Theme.surfaceVariantText
             wrapMode: Text.WordWrap
             width: parent.width
@@ -192,7 +211,7 @@ StyledRect {
 
                 StyledText {
                     text: I18n.tr("Scale")
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.surfaceVariantText
                     width: parent.width
                     horizontalAlignment: Text.AlignLeft
@@ -293,8 +312,8 @@ StyledRect {
                 spacing: Theme.spacingXS
 
                 StyledText {
-                    text: I18n.tr("Transform")
-                    font.pixelSize: Theme.fontSizeSmall
+                    text: I18n.tr("Rotation")
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.surfaceVariantText
                     width: parent.width
                     horizontalAlignment: Text.AlignLeft
@@ -398,6 +417,20 @@ StyledRect {
             onLoaded: {
                 item.outputName = root.outputName;
                 item.outputData = root.outputData;
+                item.expanded = true;
+            }
+
+            Binding {
+                target: compositorSettingsLoader.item
+                property: "outputData"
+                value: root.outputData
+                when: compositorSettingsLoader.status === Loader.Ready
+            }
+            Binding {
+                target: compositorSettingsLoader.item
+                property: "outputName"
+                value: root.outputName
+                when: compositorSettingsLoader.status === Loader.Ready
             }
         }
     }

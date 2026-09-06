@@ -241,6 +241,8 @@ Item {
                 tab: "motion"
                 tags: ["animation", "ripple", "effect", "material", "feedback"]
                 title: I18n.tr("Ripple Effects")
+                collapsible: true
+                expanded: false
                 settingKey: "enableRippleEffects"
                 iconName: "radio_button_unchecked"
 

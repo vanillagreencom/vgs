@@ -48,7 +48,7 @@ StyledRect {
 
                 StyledText {
                     text: I18n.tr("Display configuration is unavailable because the compositor does not support the WLR output management protocol")
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.surfaceVariantText
                     wrapMode: Text.WordWrap
                     width: parent.width

@@ -250,7 +250,7 @@ Item {
                         StyledText {
                             width: parent.width
                             wrapMode: Text.WordWrap
-                            font.pixelSize: Theme.fontSizeSmall
+                            font.pixelSize: Theme.settingsFontSize
                             color: Theme.surfaceVariantText
                             // Only a vgs result confirms bus ownership. Preserve the helper's other states instead of defaulting to ownership.
                             text: {
@@ -285,7 +285,7 @@ Item {
                     settingKey: "notificationServerEnabled"
                     tags: ["notification", "daemon", "server", "dbus", "mako", "dunst", "swaync", "conflict"]
                     text: I18n.tr("Use VGS for Notifications")
-                    description: SettingsData.notificationServerEnabled ? I18n.tr("VGS registers as the session's notification daemon") : I18n.tr("Another notification daemon owns the session; VGS shows no popups or history")
+                    description: SettingsData.notificationServerEnabled ? I18n.tr("VGS handles notifications.") : I18n.tr("Another app handles notifications.")
                     checked: SettingsData.notificationServerEnabled
                     onToggled: checked => SettingsData.set("notificationServerEnabled", checked)
                 }
@@ -302,7 +302,6 @@ Item {
                     settingKey: "notificationSummaryFontSize"
                     tags: ["notification", "font", "summary", "size"]
                     text: I18n.tr("Summary Font Size")
-                    description: I18n.tr("Font size for notification summary text")
                     options: [I18n.tr("Unset"), "10", "12", "14", "16", "18"]
                     currentValue: (SettingsData.notificationSummaryFontSize || I18n.tr("Unset")).toString()
                     onValueChanged: value => {
@@ -315,7 +314,6 @@ Item {
                     settingKey: "notificationBodyFontSize"
                     tags: ["notification", "font", "body", "size"]
                     text: I18n.tr("Body Font Size")
-                    description: I18n.tr("Font size for notification body text (htmlBody)")
                     options: [I18n.tr("Unset"), "10", "12", "14", "16", "18"]
                     currentValue: (SettingsData.notificationBodyFontSize || I18n.tr("Unset")).toString()
                     onValueChanged: value => {
@@ -328,7 +326,6 @@ Item {
                     settingKey: "notificationPopupPosition"
                     tags: ["notification", "popup", "position", "screen", "location"]
                     text: I18n.tr("Popup Position")
-                    description: I18n.tr("Where notification popups appear")
                     currentValue: {
                         if (SettingsData.notificationPopupPosition === -1)
                             return I18n.tr("Top Center", "screen position option");
@@ -377,7 +374,7 @@ Item {
                     settingKey: "notificationOverlayEnabled"
                     tags: ["notification", "overlay", "fullscreen", "priority"]
                     text: I18n.tr("Notification Overlay")
-                    description: I18n.tr("Display all priorities over fullscreen apps")
+                    description: I18n.tr("Also show over fullscreen apps.")
                     checked: SettingsData.notificationOverlayEnabled
                     onToggled: checked => SettingsData.set("notificationOverlayEnabled", checked)
                 }
@@ -386,7 +383,6 @@ Item {
                     settingKey: "notificationCompactMode"
                     tags: ["notification", "compact", "size", "display", "mode"]
                     text: I18n.tr("Compact")
-                    description: I18n.tr("Use smaller notification cards")
                     checked: SettingsData.notificationCompactMode
                     onToggled: checked => SettingsData.set("notificationCompactMode", checked)
                 }
@@ -395,7 +391,7 @@ Item {
                     settingKey: "notificationShowTimeoutBar"
                     tags: ["notification", "timeout", "progress", "bar", "timer", "countdown"]
                     text: I18n.tr("Timeout Progress Bar")
-                    description: I18n.tr("Show a bar that drains as the popup's auto-dismiss timer runs")
+                    description: I18n.tr("Show time remaining.")
                     checked: SettingsData.notificationShowTimeoutBar
                     onToggled: checked => SettingsData.set("notificationShowTimeoutBar", checked)
                 }
@@ -404,7 +400,7 @@ Item {
                     settingKey: "notificationDedupeEnabled"
                     tags: ["notification", "duplicate", "dedupe", "stack", "coalesce", "repeat"]
                     text: I18n.tr("Suppress Duplicate Notifications")
-                    description: SettingsData.notificationDedupeEnabled ? I18n.tr("Identical alerts show as one popup instead of stacking") : I18n.tr("Identical alerts stack as separate notification cards")
+                    description: SettingsData.notificationDedupeEnabled ? I18n.tr("Combine repeated alerts.") : I18n.tr("Show repeated alerts separately.")
                     checked: SettingsData.notificationDedupeEnabled
                     onToggled: checked => SettingsData.set("notificationDedupeEnabled", checked)
                 }
@@ -413,7 +409,7 @@ Item {
                     settingKey: "notificationPopupShadowEnabled"
                     tags: ["notification", "popup", "shadow", "radius", "rounded"]
                     text: I18n.tr("Popup Shadow")
-                    description: I18n.tr("Show a drop shadow on popups; requires M3 Elevation in Theme & Colors")
+                    description: I18n.tr("Requires elevation in Interface.")
                     checked: SettingsData.notificationPopupShadowEnabled
                     onToggled: checked => SettingsData.set("notificationPopupShadowEnabled", checked)
                 }
@@ -422,7 +418,7 @@ Item {
                     settingKey: "notificationPopupPrivacyMode"
                     tags: ["notification", "popup", "privacy", "body", "content", "hide"]
                     text: I18n.tr("Privacy Mode")
-                    description: I18n.tr("Hide notification content until expanded; popups show collapsed by default")
+                    description: I18n.tr("Expand a notification to read it.")
                     checked: SettingsData.notificationPopupPrivacyMode
                     onToggled: checked => SettingsData.set("notificationPopupPrivacyMode", checked)
                 }
@@ -431,7 +427,6 @@ Item {
                     settingKey: "notificationFocusedMonitor"
                     tags: ["notification", "popup", "focused", "monitor", "display", "screen", "active"]
                     text: I18n.tr("Focused Monitor Only")
-                    description: I18n.tr("Show notification popups only on the currently focused monitor")
                     checked: SettingsData.notificationFocusedMonitor
                     onToggled: checked => SettingsData.set("notificationFocusedMonitor", checked)
                 }
@@ -543,8 +538,8 @@ Item {
                     spacing: Theme.spacingS
 
                     StyledText {
-                        text: I18n.tr("Create rules to mute, ignore, hide from history, or override notification priority. Default only overrides priority; notifications still show normally.")
-                        font.pixelSize: Theme.fontSizeSmall
+                        text: I18n.tr("Set app-specific rules. Default changes priority without hiding notifications.")
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceVariantText
                         wrapMode: Text.WordWrap
                         width: parent.width
@@ -574,7 +569,7 @@ Item {
                                     StyledText {
                                         id: ruleLabel
                                         text: I18n.tr("Rule") + " " + (index + 1)
-                                        font.pixelSize: Theme.fontSizeSmall
+                                        font.pixelSize: Theme.settingsFontSize
                                         color: Theme.surfaceVariantText
                                         anchors.verticalCenter: parent.verticalCenter
                                     }
@@ -628,14 +623,14 @@ Item {
 
                                     StyledText {
                                         text: I18n.tr("Pattern")
-                                        font.pixelSize: Theme.fontSizeSmall - 1
+                                        font.pixelSize: Theme.settingsFontSize - 1
                                         color: Theme.surfaceVariantText
                                     }
 
                                     VgsTextField {
                                         width: parent.width
                                         text: modelData.pattern || ""
-                                        font.pixelSize: Theme.fontSizeSmall
+                                        font.pixelSize: Theme.settingsFontSize
                                         placeholderText: I18n.tr("Pattern")
                                         onEditingFinished: SettingsData.updateNotificationRuleField(index, "pattern", text)
                                     }
@@ -651,7 +646,7 @@ Item {
 
                                         StyledText {
                                             text: I18n.tr("Field")
-                                            font.pixelSize: Theme.fontSizeSmall - 1
+                                            font.pixelSize: Theme.settingsFontSize - 1
                                             color: Theme.surfaceVariantText
                                         }
 
@@ -672,7 +667,7 @@ Item {
 
                                         StyledText {
                                             text: I18n.tr("Type")
-                                            font.pixelSize: Theme.fontSizeSmall - 1
+                                            font.pixelSize: Theme.settingsFontSize - 1
                                             color: Theme.surfaceVariantText
                                         }
 
@@ -692,7 +687,7 @@ Item {
 
                                         StyledText {
                                             text: I18n.tr("Action")
-                                            font.pixelSize: Theme.fontSizeSmall - 1
+                                            font.pixelSize: Theme.settingsFontSize - 1
                                             color: Theme.surfaceVariantText
                                         }
 
@@ -713,7 +708,7 @@ Item {
 
                                         StyledText {
                                             text: I18n.tr("Priority")
-                                            font.pixelSize: Theme.fontSizeSmall - 1
+                                            font.pixelSize: Theme.settingsFontSize - 1
                                             color: Theme.surfaceVariantText
                                         }
 
@@ -738,6 +733,8 @@ Item {
                 width: parent.width
                 iconName: "volume_off"
                 title: I18n.tr("Muted Apps")
+                collapsible: true
+                expanded: false
                 settingKey: "mutedApps"
                 tags: ["notification", "mute", "unmute", "popup"]
 
@@ -747,7 +744,7 @@ Item {
 
                     StyledText {
                         text: mutedRules.length > 0 ? I18n.tr("Apps with notification popups muted. Unmute or delete to remove.") : I18n.tr("No apps muted. Right-click a notification and choose \"Mute popups\" to add one here.")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceVariantText
                         wrapMode: Text.WordWrap
                         width: parent.width
@@ -773,7 +770,7 @@ Item {
                                 StyledText {
                                     id: mutedAppLabel
                                     text: (modelData.rule && modelData.rule.pattern) ? modelData.rule.pattern : I18n.tr("Unknown")
-                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.pixelSize: Theme.settingsFontSize
                                     color: Theme.surfaceText
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
@@ -834,7 +831,7 @@ Item {
                     settingKey: "lockScreenNotificationMode"
                     tags: ["lock", "screen", "notification", "notifications", "privacy"]
                     text: I18n.tr("Notification Display", "lock screen notification privacy setting")
-                    description: I18n.tr("Control what notification information is shown on the lock screen", "lock screen notification privacy setting")
+                    description: I18n.tr("Choose what others can see while locked.", "lock screen notification privacy setting")
                     options: [I18n.tr("Disabled", "lock screen notification mode option"), I18n.tr("Count Only", "lock screen notification mode option"), I18n.tr("App Names", "lock screen notification mode option"), I18n.tr("Full Content", "lock screen notification mode option")]
                     currentValue: options[SettingsData.lockScreenNotificationMode] || options[0]
                     onValueChanged: value => {

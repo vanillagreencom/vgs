@@ -88,6 +88,8 @@ Suggests:       niri
 Suggests:       polkit
 # Bluetooth audio codec selection
 Suggests:       pulseaudio-utils
+# ICC colour profiles
+Suggests:       python3-pillow
 # Qt 5 application theming
 Suggests:       qt5ct
 # Qt 6 application theming

@@ -270,7 +270,7 @@ FloatingWindow {
 
                     StyledText {
                         text: I18n.tr("Select a widget to add to your desktop; each is a separate instance with its own settings")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.outline
                         width: parent.width
                         wrapMode: Text.WordWrap
@@ -394,7 +394,7 @@ FloatingWindow {
                                                 StyledText {
                                                     anchors.verticalCenter: parent.verticalCenter
                                                     text: I18n.tr("Featured")
-                                                    font.pixelSize: Theme.fontSizeSmall - 2
+                                                    font.pixelSize: Theme.settingsFontSize - 2
                                                     color: Theme.secondary
                                                     font.weight: Font.Medium
                                                 }
@@ -413,7 +413,7 @@ FloatingWindow {
                                                 id: pluginLabel
                                                 anchors.centerIn: parent
                                                 text: I18n.tr("Plugin")
-                                                font.pixelSize: Theme.fontSizeSmall - 2
+                                                font.pixelSize: Theme.settingsFontSize - 2
                                                 color: Theme.secondary
                                             }
                                         }
@@ -421,7 +421,7 @@ FloatingWindow {
 
                                     StyledText {
                                         text: delegateRoot.modelData.description || ""
-                                        font.pixelSize: Theme.fontSizeSmall
+                                        font.pixelSize: Theme.settingsFontSize
                                         color: Theme.outline
                                         elide: Text.ElideRight
                                         width: parent.width

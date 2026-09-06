@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import qs.Common
 import qs.Modules.Settings.Widgets
+import "DisplayConfig"
 import qs.Services
 import qs.Widgets
 
@@ -145,7 +146,7 @@ Item {
 
                     StyledText {
                         text: I18n.tr("Which displays show each shell component")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceVariantText
                         wrapMode: Text.WordWrap
                         width: parent.width
@@ -184,8 +185,8 @@ Item {
                                 onSelectionChanged: (index, selected) => {
                                     if (!selected)
                                         return;
-                                    SettingsData.displayNameMode = index === 1 ? "model" : "system";
-                                    SettingsData.saveSettings();
+                                    if (!DisplayConfigState.changeDisplayNameMode(index === 1 ? "model" : "system", true))
+                                        displayModeRow.currentIndex = SettingsData.displayNameMode === "model" ? 1 : 0;
                                 }
 
                                 Connections {
@@ -250,19 +251,19 @@ Item {
                                                     }
                                                     return modelData.width + "×" + modelData.height;
                                                 }
-                                                font.pixelSize: Theme.fontSizeSmall
+                                                font.pixelSize: Theme.settingsFontSize
                                                 color: Theme.surfaceVariantText
                                             }
 
                                             StyledText {
                                                 text: "•"
-                                                font.pixelSize: Theme.fontSizeSmall
+                                                font.pixelSize: Theme.settingsFontSize
                                                 color: Theme.surfaceVariantText
                                             }
 
                                             StyledText {
                                                 text: SettingsData.displayNameMode === "system" ? (modelData.model || I18n.tr("Unknown Model")) : modelData.name
-                                                font.pixelSize: Theme.fontSizeSmall
+                                                font.pixelSize: Theme.settingsFontSize
                                                 color: Theme.surfaceVariantText
                                             }
                                         }
@@ -294,7 +295,7 @@ Item {
 
                             StyledText {
                                 text: modelData.description
-                                font.pixelSize: Theme.fontSizeSmall
+                                font.pixelSize: Theme.settingsFontSize
                                 color: Theme.surfaceVariantText
                                 wrapMode: Text.WordWrap
                                 width: parent.width
@@ -307,7 +308,7 @@ Item {
 
                                 StyledText {
                                     text: I18n.tr("Show on Screens")
-                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.pixelSize: Theme.settingsFontSize
                                     color: Theme.surfaceText
                                     font.weight: Font.Medium
                                     width: parent.width
@@ -325,7 +326,6 @@ Item {
                                         rowHoverHighlight: false
                                         width: parent.width
                                         text: I18n.tr("All Displays")
-                                        description: I18n.tr("Show on all connected displays")
                                         checked: {
                                             var prefs = root.getScreenPreferences(parent.componentId);
                                             return prefs.includes("all") || (typeof prefs[0] === "string" && prefs[0] === "all");
@@ -348,7 +348,6 @@ Item {
                                         rowHoverHighlight: false
                                         width: parent.width
                                         text: I18n.tr("Focused Monitor Only")
-                                        description: I18n.tr("Show notifications only on the currently focused monitor")
                                         visible: parent.componentId === "notifications"
                                         checked: SettingsData.notificationFocusedMonitor
                                         onToggled: checked => SettingsData.set("notificationFocusedMonitor", checked)

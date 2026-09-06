@@ -25,6 +25,7 @@ Item {
 
     property string text: ""
     property string description: ""
+    property bool settingsContext: Theme.isSettingsItem(root)
     property string currentValue: ""
     property var options: []
     property bool multiSelect: false
@@ -146,7 +147,7 @@ Item {
         anchors.verticalCenter: parent.verticalCenter
         anchors.leftMargin: root.addHorizontalPadding ? Theme.spacingM : 0
         anchors.rightMargin: Theme.spacingL
-        spacing: Theme.spacingXS
+        spacing: root.settingsContext ? Theme.spacingXXS : Theme.spacingXS
         visible: !root.compactMode && root.showTrigger
 
         StyledText {
@@ -160,11 +161,12 @@ Item {
 
         StyledText {
             text: root.description
-            font.pixelSize: Theme.fontSizeSmall
+            font.pixelSize: root.settingsContext ? Theme.settingsFontSize : Theme.fontSizeSmall
             color: Theme.surfaceVariantText
-            visible: description.length > 0
-            wrapMode: Text.WordWrap
-            width: parent.width
+            visible: root.description.length > 0
+            wrapMode: Text.Wrap
+            elide: Text.ElideNone
+            width: root.settingsContext ? Math.min(parent.width, Theme.settingsDescriptionWidth) : parent.width
             horizontalAlignment: Text.AlignLeft
         }
     }

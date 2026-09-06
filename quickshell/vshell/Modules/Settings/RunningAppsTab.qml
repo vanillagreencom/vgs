@@ -54,7 +54,7 @@ Item {
 
                     StyledText {
                         text: I18n.tr("Map window class names to icon names for proper icon display")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceVariantText
                         wrapMode: Text.WordWrap
                         width: parent.width
@@ -64,7 +64,7 @@ Item {
                     StyledText {
                         width: parent.width
                         text: I18n.tr("No substitutions yet — use + to map a window class to an icon")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceVariantText
                         horizontalAlignment: Text.AlignHCenter
                         wrapMode: Text.WordWrap
@@ -99,7 +99,7 @@ Item {
 
                                         StyledText {
                                             text: I18n.tr("Pattern")
-                                            font.pixelSize: Theme.fontSizeSmall - 1
+                                            font.pixelSize: Theme.settingsFontSize - 1
                                             color: Theme.surfaceVariantText
                                         }
 
@@ -107,7 +107,7 @@ Item {
                                             id: patternField
                                             width: parent.width
                                             text: modelData.pattern
-                                            font.pixelSize: Theme.fontSizeSmall
+                                            font.pixelSize: Theme.settingsFontSize
                                             onEditingFinished: SettingsData.updateAppIdSubstitution(index, text, replacementField.text, modelData.type)
                                         }
                                     }
@@ -118,7 +118,7 @@ Item {
 
                                         StyledText {
                                             text: I18n.tr("Replacement")
-                                            font.pixelSize: Theme.fontSizeSmall - 1
+                                            font.pixelSize: Theme.settingsFontSize - 1
                                             color: Theme.surfaceVariantText
                                         }
 
@@ -126,7 +126,7 @@ Item {
                                             id: replacementField
                                             width: parent.width
                                             text: modelData.replacement
-                                            font.pixelSize: Theme.fontSizeSmall
+                                            font.pixelSize: Theme.settingsFontSize
                                             onEditingFinished: SettingsData.updateAppIdSubstitution(index, patternField.text, text, modelData.type)
                                         }
                                     }
@@ -166,7 +166,7 @@ Item {
 
                                     StyledText {
                                         text: I18n.tr("Type")
-                                        font.pixelSize: Theme.fontSizeSmall - 1
+                                        font.pixelSize: Theme.settingsFontSize - 1
                                         color: Theme.surfaceVariantText
                                     }
 

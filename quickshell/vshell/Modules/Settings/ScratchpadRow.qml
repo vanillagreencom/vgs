@@ -83,7 +83,7 @@ Column {
 
                     text: (row.pad.classRegex || "") + (row.pad.keybind ? "  ·  " + row.pad.keybind : "")
                     elide: Text.ElideMiddle
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     font.family: Theme.monoFontFamily
                     color: Theme.surfaceVariantText
                 }
@@ -93,7 +93,7 @@ Column {
                     visible: row.conflict.length > 0
                     text: row.conflict
                     wrapMode: Text.WordWrap
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.error
                 }
 
@@ -103,7 +103,7 @@ Column {
                     visible: row.matchKind === "error"
                     text: I18n.tr("Could not check this pattern: %1").arg((row.matchState && row.matchState.error) || I18n.tr("unknown error"))
                     wrapMode: Text.WordWrap
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.error
                 }
 
@@ -113,7 +113,7 @@ Column {
                     visible: row.matchKind === "known" && row.matchCount > 1
                     text: I18n.tr("%1 open windows match this pattern — the scratchpad will claim all of them.").arg(row.matchCount)
                     wrapMode: Text.WordWrap
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.warning
                 }
 
@@ -123,7 +123,7 @@ Column {
                     visible: row.matchKind === "known" && row.matchCount === 0 && (row.pad.classRegex || "").length > 0
                     text: I18n.tr("No open window matches this pattern.")
                     wrapMode: Text.WordWrap
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.surfaceVariantText
                 }
             }
@@ -361,7 +361,7 @@ Column {
                 visible: row.conflict.length > 0
                 text: row.conflict
                 wrapMode: Text.WordWrap
-                font.pixelSize: Theme.fontSizeSmall
+                font.pixelSize: Theme.settingsFontSize
                 color: Theme.error
             }
         }
@@ -405,7 +405,7 @@ Column {
                 visible: row.autoNote.length > 0
                 text: row.autoNote
                 wrapMode: Text.WordWrap
-                font.pixelSize: Theme.fontSizeSmall
+                font.pixelSize: Theme.settingsFontSize
                 color: Theme.error
             }
 
@@ -414,7 +414,7 @@ Column {
                 text: row.pad.classRegex || ""
                 wrapMode: Text.WrapAnywhere
                 font.family: Theme.monoFontFamily
-                font.pixelSize: Theme.fontSizeSmall
+                font.pixelSize: Theme.settingsFontSize
                 color: Theme.surfaceVariantText
             }
 
@@ -448,7 +448,7 @@ Column {
                 visible: row.regexNote.length > 0
                 text: row.regexNote
                 wrapMode: Text.WordWrap
-                font.pixelSize: Theme.fontSizeSmall
+                font.pixelSize: Theme.settingsFontSize
                 color: Theme.error
             }
 

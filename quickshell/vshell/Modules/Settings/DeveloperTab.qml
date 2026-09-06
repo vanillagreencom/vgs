@@ -23,6 +23,8 @@ Item {
     function refresh() {
         root.loading = true;
         Proc.runCommand("developer-agents", [Paths.vshellCli, "agent", "list", "--json"], (output, exitCode) => {
+            if (!root)
+                return;
             if (exitCode !== 0) {
                 root.loadError = "vshell agent list failed (" + exitCode + ")";
                 root.loading = false;
@@ -40,6 +42,8 @@ Item {
             root.loading = false;
         }, 0, 15000);
         Proc.runCommand("developer-envs", [Paths.vshellCli, "dev-env", "list", "--json"], (output, exitCode) => {
+            if (!root)
+                return;
             if (exitCode !== 0) {
                 root.loadError = "vshell dev-env list failed (" + exitCode + ")";
                 return;
@@ -56,7 +60,10 @@ Item {
     // the list re-reads once the CLI returns, which for `dev-env` is when the
     // terminal closes.
     function runInTerminal(id, argv) {
-        Proc.runCommand(id, [Paths.vshellCli, "terminal", "exec", "--tui", "--hold", "--wait", "--", Paths.vshellCli].concat(argv), () => root.refresh(), 0, 3600000);
+        Proc.runCommand(id, [Paths.vshellCli, "terminal", "exec", "--tui", "--hold", "--wait", "--", Paths.vshellCli].concat(argv), () => {
+            if (root)
+                root.refresh();
+        }, 0, 3600000);
     }
 
     function agentStatus(agent) {
@@ -106,7 +113,7 @@ Item {
                     width: parent?.width ?? 0
                     visible: !root.miseAvailable
                     text: I18n.tr("mise is not installed. Agents and language environments install through it; install the mise package and reopen this tab.")
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.error
                     wrapMode: Text.WordWrap
                 }
@@ -115,15 +122,15 @@ Item {
                     width: parent?.width ?? 0
                     visible: root.loadError.length > 0
                     text: root.loadError
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.error
                     wrapMode: Text.WordWrap
                 }
 
                 StyledText {
                     width: parent?.width ?? 0
-                    text: I18n.tr("Launchers are stubs in ~/.local/bin that install their agent with mise on first run. A command you installed yourself is left alone. The launcher's Dev tools section (d:) lists every agent.")
-                    font.pixelSize: Theme.fontSizeSmall
+                    text: I18n.tr("Agents install on first launch. Existing commands stay unchanged.")
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.surfaceVariantText
                     wrapMode: Text.WordWrap
                 }
@@ -169,7 +176,7 @@ Item {
                                 anchors.leftMargin: Theme.spacingS
                                 anchors.verticalCenter: parent.verticalCenter
                                 text: agentRow.modelData.command + (agentRow.modelData.kind === "server" ? "  · server, no app" : "")
-                                font.pixelSize: Theme.fontSizeSmall
+                                font.pixelSize: Theme.settingsFontSize
                                 font.family: Theme.monoFontFamily
                                 color: Theme.surfaceVariantText
                             }
@@ -190,7 +197,7 @@ Item {
 
                                 StyledText {
                                     text: root.agentStatus(agentRow.modelData)
-                                    font.pixelSize: Theme.fontSizeSmall - 1
+                                    font.pixelSize: Theme.settingsFontSize - 1
                                     color: Theme.surfaceVariantText
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
@@ -246,7 +253,7 @@ Item {
                 StyledText {
                     width: parent?.width ?? 0
                     text: I18n.tr("Installed globally with mise (Rust through rustup). Installs open a terminal so the download is visible.")
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.surfaceVariantText
                     wrapMode: Text.WordWrap
                 }
@@ -302,7 +309,7 @@ Item {
                                 StyledText {
                                     visible: (envRow.modelData.distroPath || "").length > 0
                                     text: I18n.tr("from your package manager")
-                                    font.pixelSize: Theme.fontSizeSmall - 1
+                                    font.pixelSize: Theme.settingsFontSize - 1
                                     color: Theme.surfaceVariantText
                                     anchors.verticalCenter: parent.verticalCenter
                                 }

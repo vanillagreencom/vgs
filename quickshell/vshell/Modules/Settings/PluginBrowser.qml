@@ -669,7 +669,7 @@ FloatingWindow {
                 anchors.top: headerArea.bottom
                 anchors.topMargin: Theme.spacingM
                 text: I18n.tr("Install plugins from the VGS plugin registry", "plugin browser description")
-                font.pixelSize: Theme.fontSizeSmall
+                font.pixelSize: Theme.settingsFontSize
                 color: Theme.outline
                 wrapMode: Text.WordWrap
             }
@@ -783,7 +783,7 @@ FloatingWindow {
 
                                 StyledText {
                                     text: modelData.label
-                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.pixelSize: Theme.settingsFontSize
                                     font.weight: sortChip.selected ? Font.Medium : Font.Normal
                                     color: sortChip.selected ? Theme.primaryText : Theme.surfaceVariantText
                                     anchors.verticalCenter: parent.verticalCenter
@@ -832,7 +832,7 @@ FloatingWindow {
                     StyledText {
                         id: categoryFilterLabel
                         text: I18n.tr("Filter", "plugin browser category filter label")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.outline
                         Layout.alignment: Qt.AlignVCenter
                     }
@@ -982,7 +982,7 @@ FloatingWindow {
 
                                                 StyledText {
                                                     text: I18n.tr("featured")
-                                                    font.pixelSize: Theme.fontSizeSmall - 2
+                                                    font.pixelSize: Theme.settingsFontSize - 2
                                                     color: Theme.secondary
                                                     font.weight: Font.Medium
                                                     anchors.verticalCenter: parent.verticalCenter
@@ -1004,7 +1004,7 @@ FloatingWindow {
                                                 id: firstPartyText
                                                 anchors.centerIn: parent
                                                 text: I18n.tr("official")
-                                                font.pixelSize: Theme.fontSizeSmall - 2
+                                                font.pixelSize: Theme.settingsFontSize - 2
                                                 color: Theme.primary
                                                 font.weight: Font.Medium
                                             }
@@ -1024,7 +1024,7 @@ FloatingWindow {
                                                 id: thirdPartyText
                                                 anchors.centerIn: parent
                                                 text: I18n.tr("3rd party")
-                                                font.pixelSize: Theme.fontSizeSmall - 2
+                                                font.pixelSize: Theme.settingsFontSize - 2
                                                 color: Theme.warning
                                                 font.weight: Font.Medium
                                             }
@@ -1047,7 +1047,7 @@ FloatingWindow {
                                                     id: statusText
                                                     anchors.centerIn: parent
                                                     text: root.statusLabel(parent.modelData)
-                                                    font.pixelSize: Theme.fontSizeSmall - 2
+                                                    font.pixelSize: Theme.settingsFontSize - 2
                                                     color: root.statusColor(parent.modelData)
                                                     font.weight: Font.Medium
                                                 }
@@ -1078,7 +1078,7 @@ FloatingWindow {
 
                                                 StyledText {
                                                     text: modelData.upvotes || 0
-                                                    font.pixelSize: Theme.fontSizeSmall - 2
+                                                    font.pixelSize: Theme.settingsFontSize - 2
                                                     color: Theme.primary
                                                     font.weight: Font.Medium
                                                     anchors.verticalCenter: parent.verticalCenter
@@ -1094,7 +1094,7 @@ FloatingWindow {
                                             const discuss = modelData.issueUrl ? ` • <a href="${modelData.issueUrl}" style="text-decoration:none; color:${Theme.primary};">${I18n.tr("discuss", "plugin discussion link")}</a>` : "";
                                             return author + source + discuss;
                                         }
-                                        font.pixelSize: Theme.fontSizeSmall
+                                        font.pixelSize: Theme.settingsFontSize
                                         color: Theme.outline
                                         linkColor: Theme.primary
                                         textFormat: Text.RichText
@@ -1113,7 +1113,7 @@ FloatingWindow {
                                     StyledText {
                                         visible: root.relatedNames(modelData).length > 0
                                         text: I18n.tr("Related: %1", "related plugins").arg(root.relatedNames(modelData).join(", "))
-                                        font.pixelSize: Theme.fontSizeSmall
+                                        font.pixelSize: Theme.settingsFontSize
                                         color: Theme.outline
                                         elide: Text.ElideRight
                                         width: parent.width
@@ -1198,7 +1198,7 @@ FloatingWindow {
                                                     return I18n.tr("Install", "install action button");
                                                 }
                                             }
-                                            font.pixelSize: Theme.fontSizeSmall
+                                            font.pixelSize: Theme.settingsFontSize
                                             font.weight: Font.Medium
                                             elide: Text.ElideNone
                                             wrapMode: Text.NoWrap
@@ -1232,7 +1232,7 @@ FloatingWindow {
 
                             StyledText {
                                 text: modelData.description || ""
-                                font.pixelSize: Theme.fontSizeSmall
+                                font.pixelSize: Theme.settingsFontSize
                                 color: Theme.outline
                                 width: parent.width
                                 wrapMode: Text.WordWrap
@@ -1261,7 +1261,7 @@ FloatingWindow {
                                             id: capabilityText
                                             anchors.centerIn: parent
                                             text: modelData
-                                            font.pixelSize: Theme.fontSizeSmall - 2
+                                            font.pixelSize: Theme.settingsFontSize - 2
                                             color: Theme.primary
                                         }
                                     }
@@ -1332,7 +1332,7 @@ FloatingWindow {
                                     StyledText {
                                         anchors.horizontalCenter: parent.horizontalCenter
                                         text: screenshotImageLoader.item && screenshotImageLoader.item.status === Image.Error ? I18n.tr("Screenshot unavailable", "plugin browser screenshot error") : I18n.tr("No screenshot provided", "plugin browser no screenshot")
-                                        font.pixelSize: Theme.fontSizeSmall
+                                        font.pixelSize: Theme.settingsFontSize
                                         color: Theme.outline
                                     }
                                 }
@@ -1471,7 +1471,7 @@ FloatingWindow {
 
                     StyledText {
                         width: parent.width
-                        text: I18n.tr("Third-party plugins are created by the community and are not officially supported by VGS.\n\nThese plugins may pose security and privacy risks - install at your own risk.")
+                        text: I18n.tr("Third-party plugins can access your session. Install only plugins you trust.")
                         font.pixelSize: Theme.fontSizeMedium
                         color: Theme.surfaceText
                         wrapMode: Text.WordWrap
@@ -1483,19 +1483,19 @@ FloatingWindow {
 
                         StyledText {
                             text: I18n.tr("• Plugins may contain bugs or security issues")
-                            font.pixelSize: Theme.fontSizeSmall
+                            font.pixelSize: Theme.settingsFontSize
                             color: Theme.surfaceVariantText
                         }
 
                         StyledText {
                             text: I18n.tr("• Review code before installation when possible")
-                            font.pixelSize: Theme.fontSizeSmall
+                            font.pixelSize: Theme.settingsFontSize
                             color: Theme.surfaceVariantText
                         }
 
                         StyledText {
                             text: I18n.tr("• Install only from trusted sources")
-                            font.pixelSize: Theme.fontSizeSmall
+                            font.pixelSize: Theme.settingsFontSize
                             color: Theme.surfaceVariantText
                         }
                     }

@@ -935,6 +935,16 @@ Singleton {
     // too tight for.
     property real popoutHeaderGap: 13
     property real fontSizeSmall: Math.round(fontScale * 12)
+    readonly property real settingsFontSize: fontSizeSmall + 1
+    readonly property real settingsDescriptionWidth: 360
+
+    function isSettingsItem(item) {
+        for (let p = item; p; p = p.parent) {
+            if (p.settingsSurface === true)
+                return true;
+        }
+        return false;
+    }
     property real fontSizeMedium: Math.round(fontScale * 14)
     property real fontSizeLarge: Math.round(fontScale * 16)
     property real fontSizeXLarge: Math.round(fontScale * 20)

@@ -42,11 +42,6 @@ FocusScope {
             topPadding: Theme.spacingS
             spacing: Theme.spacingXL
 
-            ThemeSubNav {
-                width: parent.width
-                parentModal: root.parentModal
-                activeId: "wallpaper"
-            }
 
             SettingsCard {
                 title: I18n.tr("Behavior")
@@ -85,7 +80,6 @@ FocusScope {
                 SwitcherShortcutRow {
                     action: "spawn vshell ipc call wallpaper-switcher toggle"
                     text: I18n.tr("Wallpaper Switcher Shortcut")
-                    description: I18n.tr("Opens the full-screen wallpaper switcher")
                     bindDescription: I18n.tr("Wallpaper switcher")
                     panelWindow: root.parentModal
                 }
@@ -94,7 +88,6 @@ FocusScope {
                     settingKey: "wallpaperFillMode"
                     tags: ["wallpaper", "fill", "scale"]
                     text: I18n.tr("Fill Mode")
-                    description: I18n.tr("How the image is scaled to your screen")
                     options: ["Stretch", "Fit", "Fill", "Tile", "TileVertically", "TileHorizontally", "Pad"].map(m => I18n.tr(m, "wallpaper fill mode"))
                     currentValue: {
                         const modes = ["Stretch", "Fit", "Fill", "Tile", "TileVertically", "TileHorizontally", "Pad"];
@@ -114,7 +107,7 @@ FocusScope {
                     tags: ["wallpaper", "theme", "source", "folder"]
                     settingKey: "wallpaperSource"
                     text: I18n.tr("Wallpapers Follow Theme")
-                    description: I18n.tr("When on, themes bring their own wallpaper; when off, you pick from your folder")
+                    description: I18n.tr("Use the theme wallpaper instead of your folder.")
                     checked: SettingsData.wallpaperSource !== "folder"
                     onToggled: checked => SettingsData.set("wallpaperSource", checked ? "theme" : "folder")
                 }
@@ -152,7 +145,6 @@ FocusScope {
                     tags: ["wallpaper", "monitor", "per-monitor"]
                     settingKey: "perMonitorWallpaper"
                     text: I18n.tr("Per-Monitor Wallpapers")
-                    description: I18n.tr("Assign a different wallpaper to each monitor")
                     checked: SessionData.perMonitorWallpaper
                     onToggled: checked => SessionData.setPerMonitorWallpaper(checked)
                 }
@@ -162,7 +154,6 @@ FocusScope {
                     tags: ["wallpaper", "light", "dark", "mode"]
                     settingKey: "perModeWallpaper"
                     text: I18n.tr("Light/Dark Wallpapers")
-                    description: I18n.tr("Keep one wallpaper for light mode and one for dark mode")
                     checked: SessionData.perModeWallpaper
                     onToggled: checked => SessionData.setPerModeWallpaper(checked)
                 }
@@ -172,7 +163,6 @@ FocusScope {
                     tags: ["wallpaper", "cycling", "slideshow", "interval"]
                     settingKey: "wallpaperCyclingEnabled"
                     text: I18n.tr("Wallpaper Cycling")
-                    description: I18n.tr("Automatically cycle through the current wallpaper set")
                     checked: SessionData.wallpaperCyclingEnabled
                     onToggled: checked => SessionData.setWallpaperCyclingEnabled(checked)
                 }

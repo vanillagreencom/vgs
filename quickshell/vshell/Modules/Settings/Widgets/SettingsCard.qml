@@ -47,6 +47,13 @@ StyledRect {
     readonly property bool hasHeader: root.title !== "" || root.iconName !== ""
     property bool userToggledCollapse: false
 
+    function toggleExpanded() {
+        if (!root.collapsible)
+            return;
+        root.userToggledCollapse = true;
+        root.expanded = !root.expanded;
+    }
+
     function findParentFlickable() {
         let p = root.parent;
         while (p) {
@@ -126,11 +133,27 @@ StyledRect {
             width: parent.width
             height: root.hasHeader ? Math.max(headerTitleRow.implicitHeight, headerActionsRow.implicitHeight, caretIcon.visible ? caretIcon.implicitHeight : 0) : 0
             visible: root.hasHeader
+            activeFocusOnTab: root.collapsible
+            Accessible.role: root.collapsible ? Accessible.Button : Accessible.Heading
+            Accessible.name: root.title
+            Accessible.onPressAction: root.toggleExpanded()
+            Keys.onReturnPressed: root.toggleExpanded()
+            Keys.onSpacePressed: root.toggleExpanded()
+
+            Rectangle {
+                anchors.fill: parent
+                color: "transparent"
+                radius: Theme.controlRadius
+                border.width: headerRow.activeFocus ? 2 : 0
+                border.color: Theme.primary
+            }
 
             Row {
                 id: headerTitleRow
                 anchors.left: parent.left
                 anchors.leftMargin: root.headerLeftPadding
+                anchors.right: headerActionsRow.left
+                anchors.rightMargin: Theme.spacingS
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: Theme.spacingM
 
@@ -151,7 +174,7 @@ StyledRect {
                     color: Theme.surfaceText
                     anchors.verticalCenter: parent.verticalCenter
                     visible: root.title !== ""
-                    width: implicitWidth
+                    width: Math.max(0, parent.width - (headerIcon.visible ? headerIcon.width + parent.spacing : 0))
                     horizontalAlignment: Text.AlignLeft
                 }
             }
@@ -181,10 +204,7 @@ StyledRect {
                 anchors.bottom: parent.bottom
                 enabled: root.collapsible
                 cursorShape: root.collapsible ? Qt.PointingHandCursor : Qt.ArrowCursor
-                onClicked: {
-                    root.userToggledCollapse = true;
-                    root.expanded = !root.expanded;
-                }
+                onClicked: root.toggleExpanded()
             }
 
             MouseArea {
@@ -196,10 +216,7 @@ StyledRect {
                 anchors.leftMargin: -Theme.spacingS
                 enabled: root.collapsible
                 cursorShape: root.collapsible ? Qt.PointingHandCursor : Qt.ArrowCursor
-                onClicked: {
-                    root.userToggledCollapse = true;
-                    root.expanded = !root.expanded;
-                }
+                onClicked: root.toggleExpanded()
             }
         }
 

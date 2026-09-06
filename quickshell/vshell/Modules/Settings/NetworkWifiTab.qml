@@ -181,7 +181,7 @@ Item {
                                     return NetworkService.currentWifiSSID;
                                 return I18n.tr("Not connected");
                             }
-                            font.pixelSize: Theme.fontSizeSmall
+                            font.pixelSize: Theme.settingsFontSize
                             color: NetworkService.wifiConnected ? Theme.primary : Theme.surfaceVariantText
                             width: parent.width - wifiControls.width - Theme.spacingM
                             horizontalAlignment: Text.AlignLeft
@@ -370,7 +370,7 @@ Item {
 
                             StyledText {
                                 text: NetworkService.wifiNetworks?.length ?? 0
-                                font.pixelSize: Theme.fontSizeSmall
+                                font.pixelSize: Theme.settingsFontSize
                                 color: Theme.surfaceVariantText
                                 anchors.right: parent.right
                                 anchors.verticalCenter: parent.verticalCenter
@@ -415,7 +415,7 @@ Item {
 
                                 StyledText {
                                     text: I18n.tr("Scanning...")
-                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.pixelSize: Theme.settingsFontSize
                                     color: Theme.surfaceVariantText
                                     anchors.horizontalCenter: parent.horizontalCenter
                                 }
@@ -447,7 +447,7 @@ Item {
 
                                 StyledText {
                                     text: I18n.tr("Use the refresh button to scan for nearby networks")
-                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.pixelSize: Theme.settingsFontSize
                                     color: Theme.surfaceVariantText
                                     anchors.horizontalCenter: parent.horizontalCenter
                                 }
@@ -590,47 +590,47 @@ Item {
 
                                                         StyledText {
                                                             text: isConnecting ? I18n.tr("Connecting...") : (isConnected ? I18n.tr("Connected") : (modelData.secured ? I18n.tr("Secured") : I18n.tr("Open")))
-                                                            font.pixelSize: Theme.fontSizeSmall
+                                                            font.pixelSize: Theme.settingsFontSize
                                                             color: isConnecting ? Theme.warning : (isConnected ? Theme.primary : Theme.surfaceVariantText)
                                                         }
 
                                                         StyledText {
                                                             text: "•"
-                                                            font.pixelSize: Theme.fontSizeSmall
+                                                            font.pixelSize: Theme.settingsFontSize
                                                             color: Theme.surfaceVariantText
                                                             visible: modelData.saved
                                                         }
 
                                                         StyledText {
                                                             text: I18n.tr("Saved")
-                                                            font.pixelSize: Theme.fontSizeSmall
+                                                            font.pixelSize: Theme.settingsFontSize
                                                             color: Theme.primary
                                                             visible: modelData.saved
                                                         }
 
                                                         StyledText {
                                                             text: "•"
-                                                            font.pixelSize: Theme.fontSizeSmall
+                                                            font.pixelSize: Theme.settingsFontSize
                                                             color: Theme.surfaceVariantText
                                                             visible: modelData.hidden || false
                                                         }
 
                                                         StyledText {
                                                             text: I18n.tr("Hidden")
-                                                            font.pixelSize: Theme.fontSizeSmall
+                                                            font.pixelSize: Theme.settingsFontSize
                                                             color: Theme.surfaceVariantText
                                                             visible: modelData.hidden || false
                                                         }
 
                                                         StyledText {
                                                             text: "•"
-                                                            font.pixelSize: Theme.fontSizeSmall
+                                                            font.pixelSize: Theme.settingsFontSize
                                                             color: Theme.surfaceVariantText
                                                         }
 
                                                         StyledText {
                                                             text: modelData.signal + "%"
-                                                            font.pixelSize: Theme.fontSizeSmall
+                                                            font.pixelSize: Theme.settingsFontSize
                                                             color: Theme.surfaceVariantText
                                                         }
                                                     }
@@ -725,11 +725,8 @@ Item {
                                             width: parent.width
                                             visible: isExpanded
 
-                                            Rectangle {
+                                            SettingsDivider {
                                                 width: parent.width - Theme.spacingM * 2
-                                                height: 1
-                                                x: Theme.spacingM
-                                                color: Theme.outlineLight
                                             }
 
                                             Item {
@@ -820,14 +817,14 @@ Item {
 
                                                                     StyledText {
                                                                         text: modelData.label + ":"
-                                                                        font.pixelSize: Theme.fontSizeSmall
+                                                                        font.pixelSize: Theme.settingsFontSize
                                                                         color: Theme.surfaceVariantText
                                                                         anchors.verticalCenter: parent.verticalCenter
                                                                     }
 
                                                                     StyledText {
                                                                         text: modelData.value
-                                                                        font.pixelSize: Theme.fontSizeSmall
+                                                                        font.pixelSize: Theme.settingsFontSize
                                                                         color: Theme.surfaceText
                                                                         font.weight: Font.Medium
                                                                         anchors.verticalCenter: parent.verticalCenter
@@ -877,7 +874,7 @@ Item {
                 headerActions: [
                     StyledText {
                         text: savedWifiCard.savedNetworks.length
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceVariantText
                         verticalAlignment: Text.AlignVCenter
                     }
@@ -998,7 +995,7 @@ Item {
                                                         parts.push(I18n.tr("Hidden"));
                                                     return parts.join(" • ");
                                                 }
-                                                font.pixelSize: Theme.fontSizeSmall
+                                                font.pixelSize: Theme.settingsFontSize
                                                 color: isConnecting ? Theme.warning : (isConnected ? Theme.primary : Theme.surfaceVariantText)
                                                 width: parent.width
                                                 elide: Text.ElideRight
@@ -1098,11 +1095,8 @@ Item {
                                     width: parent.width
                                     visible: isExpanded
 
-                                    Rectangle {
+                                    SettingsDivider {
                                         width: parent.width - Theme.spacingM * 2
-                                        height: 1
-                                        x: Theme.spacingM
-                                        color: Theme.outlineLight
                                     }
 
                                     Item {
@@ -1181,14 +1175,14 @@ Item {
 
                                                             StyledText {
                                                                 text: modelData.label + ":"
-                                                                font.pixelSize: Theme.fontSizeSmall
+                                                                font.pixelSize: Theme.settingsFontSize
                                                                 color: Theme.surfaceVariantText
                                                                 anchors.verticalCenter: parent.verticalCenter
                                                             }
 
                                                             StyledText {
                                                                 text: modelData.value
-                                                                font.pixelSize: Theme.fontSizeSmall
+                                                                font.pixelSize: Theme.settingsFontSize
                                                                 color: Theme.surfaceText
                                                                 font.weight: Font.Medium
                                                                 anchors.verticalCenter: parent.verticalCenter
@@ -1221,7 +1215,7 @@ Item {
 
                                     contentItem: StyledText {
                                         text: parent.text
-                                        font.pixelSize: Theme.fontSizeSmall
+                                        font.pixelSize: Theme.settingsFontSize
                                         color: parent.enabled ? Theme.surfaceText : Theme.surfaceVariantText
                                         leftPadding: Theme.spacingS
                                         verticalAlignment: Text.AlignVCenter
@@ -1247,7 +1241,7 @@ Item {
 
                                     contentItem: StyledText {
                                         text: parent.text
-                                        font.pixelSize: Theme.fontSizeSmall
+                                        font.pixelSize: Theme.settingsFontSize
                                         color: Theme.surfaceText
                                         leftPadding: Theme.spacingS
                                         verticalAlignment: Text.AlignVCenter
@@ -1269,7 +1263,7 @@ Item {
 
                                     contentItem: StyledText {
                                         text: parent.text
-                                        font.pixelSize: Theme.fontSizeSmall
+                                        font.pixelSize: Theme.settingsFontSize
                                         color: Theme.error
                                         leftPadding: Theme.spacingS
                                         verticalAlignment: Text.AlignVCenter

@@ -82,7 +82,7 @@ Rectangle {
                             return f;
                         }
                         text: features.length > 0 ? features.join(", ") : I18n.tr("No features enabled")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceVariantText
                         width: parent.width
                         elide: Text.ElideRight
@@ -142,7 +142,7 @@ Rectangle {
 
                     StyledText {
                         text: I18n.tr("Name")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceVariantText
                         width: 80
                         anchors.verticalCenter: parent.verticalCenter
@@ -302,7 +302,7 @@ Rectangle {
 
                             StyledText {
                                 text: modelData.displayName || "Unknown GPU"
-                                font.pixelSize: Theme.fontSizeSmall
+                                font.pixelSize: Theme.settingsFontSize
                                 color: Theme.surfaceText
                                 width: parent.width - Theme.iconSizeSmall - Theme.spacingS
                                 anchors.verticalCenter: parent.verticalCenter
@@ -349,7 +349,7 @@ Rectangle {
                     StyledText {
                         id: transparencyLabel
                         text: I18n.tr("Transparency")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceVariantText
                         anchors.verticalCenter: parent.verticalCenter
                     }
@@ -362,7 +362,7 @@ Rectangle {
                     StyledText {
                         id: transparencyValue
                         text: transparencySlider.value + "%"
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         font.weight: Font.Medium
                         color: Theme.primary
                         anchors.verticalCenter: parent.verticalCenter

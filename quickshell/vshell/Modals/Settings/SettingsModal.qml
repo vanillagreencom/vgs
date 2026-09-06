@@ -34,6 +34,7 @@ FloatingWindow {
     property bool shouldHaveFocus: visible
     property bool allowFocusOverride: false
     property alias shouldBeVisible: settingsModal.visible
+    readonly property bool pageReady: content.ready
     // Derive compact mode from sidebar and content minimum widths so the reading pane cannot collapse.
     readonly property int minContentWidth: 380
     readonly property real maxSidebarWidth: Math.max(270, width * 0.4)
@@ -237,7 +238,7 @@ FloatingWindow {
                         id: bannerText
 
                         text: I18n.tr("Settings are read-only. Changes will not persist.", "read-only settings warning for NixOS home-manager users")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceText
                         anchors.verticalCenter: parent.verticalCenter
                         width: Math.max(100, parent.width - (copySettingsButton.visible ? copySettingsButton.width + Theme.spacingM : 0) - (copySessionButton.visible ? copySessionButton.width + Theme.spacingM : 0) - Theme.spacingM * 2 - Theme.iconSize)

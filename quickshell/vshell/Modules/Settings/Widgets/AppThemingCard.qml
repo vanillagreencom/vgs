@@ -77,9 +77,9 @@ SettingsCard {
     StyledText {
         width: parent.width
         wrapMode: Text.WordWrap
-        text: I18n.tr("Choose which apps follow your theme and expand one to see — and override — the exact colors it receives. Overrides live in the theme and survive re-applying it.")
+        text: I18n.tr("Choose which apps follow this theme. Expand an app to edit its colours.")
         color: Theme.surfaceVariantText
-        font.pixelSize: Theme.fontSizeSmall
+        font.pixelSize: Theme.settingsFontSize
     }
 
     StyledText {
@@ -87,7 +87,7 @@ SettingsCard {
         visible: (VGSThemeService.themeApps || []).length === 0
         text: I18n.tr("No themeable apps detected yet — apps with theme support appear here once found on this system")
         color: Theme.surfaceVariantText
-        font.pixelSize: Theme.fontSizeSmall
+        font.pixelSize: Theme.settingsFontSize
         wrapMode: Text.WordWrap
         horizontalAlignment: Text.AlignHCenter
     }
@@ -176,7 +176,7 @@ SettingsCard {
                                     id: curatedBadge
                                     anchors.centerIn: parent
                                     text: I18n.tr("curated ✎")
-                                    font.pixelSize: Theme.fontSizeSmall - 1
+                                    font.pixelSize: Theme.settingsFontSize - 1
                                     color: Theme.surfaceText
                                 }
                             }
@@ -193,7 +193,7 @@ SettingsCard {
                                     id: generatedBadge
                                     anchors.centerIn: parent
                                     text: I18n.tr("generated ⚙")
-                                    font.pixelSize: Theme.fontSizeSmall - 1
+                                    font.pixelSize: Theme.settingsFontSize - 1
                                     color: Theme.surfaceVariantText
                                 }
                             }
@@ -210,7 +210,7 @@ SettingsCard {
                                     id: overrideBadge
                                     anchors.centerIn: parent
                                     text: I18n.tr("overrides")
-                                    font.pixelSize: Theme.fontSizeSmall - 1
+                                    font.pixelSize: Theme.settingsFontSize - 1
                                     color: Theme.surfaceVariantText
                                 }
                             }
@@ -226,7 +226,7 @@ SettingsCard {
                                 return (appRow.modelData.destinations || []).join("  ·  ");
                             }
                             color: Theme.surfaceVariantText
-                            font.pixelSize: Theme.fontSizeSmall - 1
+                            font.pixelSize: Theme.settingsFontSize - 1
                             visible: text !== ""
                             elide: Text.ElideMiddle
                         }
@@ -272,9 +272,9 @@ SettingsCard {
                     width: parent.width
                     visible: appRow.curatedColors.length > 0
                     wrapMode: Text.WordWrap
-                    text: I18n.tr("Hand-curated file for this theme. Editing a color recolors every place it's used; the edit button opens the raw file.")
+                    text: I18n.tr("Changing a colour updates all its uses. Edit opens the theme file.")
                     color: Theme.surfaceVariantText
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                 }
 
                 StyledText {
@@ -283,7 +283,7 @@ SettingsCard {
                     wrapMode: Text.WordWrap
                     text: I18n.tr("This app uses a hand-curated file rather than palette colors — use the edit button to customize it.")
                     color: Theme.surfaceVariantText
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                 }
 
 

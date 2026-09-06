@@ -148,8 +148,8 @@ Item {
 
                     StyledText {
                         width: parent.width
-                        text: I18n.tr("Rename or hide output devices and set a per-device volume limit", "Audio settings description")
-                        font.pixelSize: Theme.fontSizeSmall
+                        text: I18n.tr("Rename devices, hide them or limit volume.", "Audio settings description")
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceVariantText
                         wrapMode: Text.WordWrap
                         horizontalAlignment: Text.AlignLeft
@@ -191,7 +191,7 @@ Item {
                                     anchors.left: parent.left
                                     anchors.leftMargin: Theme.spacingM + Theme.iconSize + Theme.spacingM
                                     anchors.verticalCenter: parent.verticalCenter
-                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.pixelSize: Theme.settingsFontSize
                                     color: Theme.surfaceVariantText
                                     horizontalAlignment: Text.AlignLeft
                                 }
@@ -229,7 +229,7 @@ Item {
                     StyledText {
                         width: parent.width
                         text: I18n.tr("No output devices found", "Audio settings empty state")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceVariantText
                         horizontalAlignment: Text.AlignHCenter
                         visible: root.outputDevices.filter(d => !root.hiddenOutputDeviceNames.includes(d.name)).length === 0 && root.hiddenOutputDeviceNames.length === 0
@@ -261,7 +261,7 @@ Item {
 
                                 StyledText {
                                     text: I18n.tr("Hidden (%1)", "count of hidden audio devices").arg(root.hiddenOutputDeviceNames.length)
-                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.pixelSize: Theme.settingsFontSize
                                     color: Theme.surfaceVariantText
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
@@ -324,8 +324,8 @@ Item {
 
                     StyledText {
                         width: parent.width
-                        text: I18n.tr("Rename or hide input devices", "Audio settings description")
-                        font.pixelSize: Theme.fontSizeSmall
+                        text: I18n.tr("Rename or hide devices.", "Audio settings description")
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceVariantText
                         wrapMode: Text.WordWrap
                         horizontalAlignment: Text.AlignLeft
@@ -358,7 +358,7 @@ Item {
                     StyledText {
                         width: parent.width
                         text: I18n.tr("No input devices found", "Audio settings empty state")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceVariantText
                         horizontalAlignment: Text.AlignHCenter
                         visible: root.inputDevices.filter(d => !root.hiddenInputDeviceNames.includes(d.name)).length === 0 && root.hiddenInputDeviceNames.length === 0
@@ -390,7 +390,7 @@ Item {
 
                                 StyledText {
                                     text: I18n.tr("Hidden (%1)", "count of hidden audio devices").arg(root.hiddenInputDeviceNames.length)
-                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.pixelSize: Theme.settingsFontSize
                                     color: Theme.surfaceVariantText
                                     anchors.verticalCenter: parent.verticalCenter
                                 }

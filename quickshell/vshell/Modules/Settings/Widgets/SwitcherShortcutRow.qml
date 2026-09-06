@@ -110,7 +110,7 @@ Rectangle {
                         return I18n.tr("Run Setup first — until VGS's binds file is included in your compositor config, a shortcut saved here will not load");
                     return root.description;
                 }
-                font.pixelSize: Theme.fontSizeSmall
+                font.pixelSize: Theme.settingsFontSize
                 color: (root.needsSetup || root.readOnly) ? Theme.warning : Theme.surfaceVariantText
                 wrapMode: Text.WordWrap
                 visible: text !== ""
@@ -129,7 +129,7 @@ Rectangle {
                     anchors.verticalCenter: parent.verticalCenter
                     width: parent.width - replaceButton.width - cancelButton.width - Theme.spacingS * 2
                     text: root.pendingConflicts.length > 0 ? I18n.tr("%1 already runs %2").arg(root.pendingKey).arg(root.pendingConflicts[0].desc) : ""
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.warning
                     wrapMode: Text.WordWrap
                     horizontalAlignment: Text.AlignLeft
@@ -192,8 +192,8 @@ Rectangle {
 
             VgsActionButton {
                 anchors.verticalCenter: parent.verticalCenter
-                width: Math.round(Theme.fontSizeSmall * 2.3)
-                height: Math.round(Theme.fontSizeSmall * 2.3)
+                width: Math.round(Theme.settingsFontSize * 2.3)
+                height: Math.round(Theme.settingsFontSize * 2.3)
                 circular: false
                 iconName: "delete"
                 iconSize: Theme.iconSizeSmall

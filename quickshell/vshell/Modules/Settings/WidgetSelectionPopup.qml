@@ -271,7 +271,7 @@ FloatingWindow {
 
                     StyledText {
                         text: I18n.tr("Select a widget to add. You can add multiple instances of the same widget if needed.")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.outline
                         width: parent.width
                         wrapMode: Text.WordWrap
@@ -361,7 +361,7 @@ FloatingWindow {
 
                                     StyledText {
                                         text: modelData.description
-                                        font.pixelSize: Theme.fontSizeSmall
+                                        font.pixelSize: Theme.settingsFontSize
                                         color: Theme.outline
                                         elide: Text.ElideRight
                                         width: parent.width

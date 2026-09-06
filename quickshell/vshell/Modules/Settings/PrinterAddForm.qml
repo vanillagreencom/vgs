@@ -88,7 +88,7 @@ Column {
 
                 StyledText {
                     text: I18n.tr("Discover Devices", "Toggle button to scan CUPS for local and network printers")
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: !tab.manualEntryMode ? Theme.onPrimary : Theme.surfaceText
                     font.weight: Font.Medium
                 }
@@ -129,7 +129,7 @@ Column {
 
                 StyledText {
                     text: I18n.tr("Add by Address", "Toggle button to manually add a printer by IP or hostname")
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: tab.manualEntryMode ? Theme.onPrimary : Theme.surfaceText
                     font.weight: Font.Medium
                 }
@@ -225,7 +225,7 @@ Column {
 
             StyledText {
                 text: CupsService.getDeviceSubtitle(tab.selectedDevice)
-                font.pixelSize: Theme.fontSizeSmall
+                font.pixelSize: Theme.settingsFontSize
                 color: Theme.surfaceVariantText
                 width: parent.width - 80 - Theme.spacingS
                 elide: Text.ElideRight
@@ -237,7 +237,7 @@ Column {
             width: parent.width
             leftPadding: 80
             text: CupsService.devicesError
-            font.pixelSize: Theme.fontSizeSmall
+            font.pixelSize: Theme.settingsFontSize
             color: Theme.error
             wrapMode: Text.WordWrap
         }

@@ -228,6 +228,7 @@ jobs:
           scripts/test-thumb-sweep.js
           scripts/test-flatline-controls.js
           scripts/test-brightness-scan-ordering.js
+          scripts/test-settings-navigation.js
           scripts/test-wallpaper-thumbs.py
       - name: Fixture and capability regressions
         run: |
@@ -244,6 +245,7 @@ jobs:
 
       - name: Helper and CLI checks
         run: |
+          python3 -m pip install --user --break-system-packages Pillow
           scripts/check-vshell-helper.py
           scripts/check-keybinds-display.py
           scripts/check-dev-tools.py
