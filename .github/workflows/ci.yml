@@ -189,7 +189,7 @@ jobs:
 
       - name: Queue, theme-request and plugin-policy regressions
         run: |
-          # pipefail preserves self-test failures when output is piped to grep.
+          # errexit fails the step on the first failing suite; each suite exits nonzero on any failing case.
           set -euo pipefail
           scripts/test-restyle-queue.js
           scripts/test-theme-requests.js
@@ -197,8 +197,8 @@ jobs:
           scripts/test-bundled-override.js
           scripts/test-plugin-requirement-report.js
           scripts/test-toast-actions.js
-          node scripts/lib/qml-region-selftest.js | grep -qxF 'qml-region guard selftest: all checks passed'
-          node scripts/lib/qml-region-testkit-selftest.js | grep -qxF 'qml-region testkit selftest: all checks passed'
+          node scripts/lib/qml-region-selftest.js
+          node scripts/lib/qml-region-testkit-selftest.js
           scripts/test-ai-usage-logic.js
           scripts/test-ai-usage-entrypoint.js
           scripts/test-ai-usage-wiring.js

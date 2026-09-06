@@ -34,8 +34,8 @@ qml       | scripts/test-qml-import-collisions.sh
 always    | scripts/check-format-lint.sh
 -         | python3 scripts/lib/shell_scan.py
 -         | python3 scripts/lib/qml_source_selftest.py
--         | node scripts/lib/qml-region-selftest.js | grep -qxF 'qml-region guard selftest: all checks passed'
--         | node scripts/lib/qml-region-testkit-selftest.js | grep -qxF 'qml-region testkit selftest: all checks passed'
+-         | node scripts/lib/qml-region-selftest.js
+-         | node scripts/lib/qml-region-testkit-selftest.js
 always    | scripts/check-validation-inventory.py
 docs      | .agents/skills/bot-instructions/scripts/bot-instructions check
 docs      | scripts/check-owned-skills.py
