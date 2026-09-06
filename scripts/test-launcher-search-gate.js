@@ -124,9 +124,15 @@ test("backendStateFor follows one tool flag per kind on a ready probe", () => {
 test("backendStateFor reports checking, unknown or nothing for unsettled and foreign probes", () => {
     for (const [kind, snapshot, expected, why] of [
         ["files", { state: "pending" }, "checking", "a probe that has not answered means CHECKING, not missing"],
-        ["text", { state: "pending", fd: true, ripgrep: true }, "checking",
+        ["folders", { state: "pending" }, "checking", "for every fd-backed kind"],
+        ["all", { state: "pending" }, "checking", "for every fd-backed kind"],
+        ["text", { state: "pending" }, "checking", "and for text"],
+        ["files", { state: "pending", fd: true, ripgrep: true }, "checking",
             "even with stale flags attached: telling a user to install a tool they already have " +
             "is the same dead end as saying nothing"],
+        ["folders", { state: "pending", fd: true, ripgrep: true }, "checking", "stale flags, fd-backed kind"],
+        ["all", { state: "pending", fd: true, ripgrep: true }, "checking", "stale flags, fd-backed kind"],
+        ["text", { state: "pending", fd: true, ripgrep: true }, "checking", "stale flags, text"],
         ["files", { state: "retrying", fd: true, ripgrep: true }, "unknown",
             "a retry episode answers nothing about the tools, whatever the last flags said"],
         ["files", { state: "failed" }, "unknown", "a failed probe answers nothing about fd"],
@@ -145,7 +151,8 @@ test("backendStateFor reports checking, unknown or nothing for unsettled and for
 // Kind and query order matters; swapping them can leave every backend lookup unknown.
 test("backendStateFor's kind and query slots are not symmetric", () => {
     assert.notEqual(backend.backendStateFor("folders", "~/dev", ready(false, false)),
-        backend.backendStateFor("~/dev", "folders", ready(false, false)));
+        backend.backendStateFor("~/dev", "folders", ready(false, false)),
+        "backendStateFor's kind and query slots must not be symmetric");
 });
 
 // Pass the kind as well as probe state. Unknown name-search availability must not authorize
