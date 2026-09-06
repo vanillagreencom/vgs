@@ -412,6 +412,12 @@ Singleton {
 
     function generateOutputsDataFromConfig(configEntry) {
         const result = {};
+        if (CompositorService.isHyprland) {
+            for (const name in savedOutputs) {
+                if (!outputs[name])
+                    result[name] = Object.assign({}, savedOutputs[name], {connected: false});
+            }
+        }
         const cfgOutputs = configEntry.outputs || {};
         for (const outputId in cfgOutputs) {
             const cfg = cfgOutputs[outputId];
@@ -442,7 +448,12 @@ Singleton {
             };
             if (cfg.hyprland?.mirror)
                 entry.mirror = cfg.hyprland.mirror;
-            result[outputId] = entry;
+            if (CompositorService.isHyprland) {
+                entry.connected = liveOutput !== null;
+                result[liveOutput ? matchingNames[0] : outputId] = entry;
+            } else {
+                result[outputId] = entry;
+            }
         }
         return result;
     }
@@ -469,8 +480,10 @@ Singleton {
             const settings = Object.assign({}, cfg.hyprland || {});
             if (cfg.disabled)
                 settings.disabled = true;
-            if (Object.keys(settings).length > 0)
-                result[outputId] = settings;
+            if (Object.keys(settings).length > 0) {
+                const matchingNames = DisplayProfileUtils.matchingOutputNames(outputId, outputs, SettingsData.displayNameMode, CompositorService.compositor);
+                result[matchingNames.length === 1 ? matchingNames[0] : outputId] = settings;
+            }
         }
         return result;
     }
@@ -1051,7 +1064,7 @@ Singleton {
         for (const savedName in parsedOutputs) {
             const trimmed = savedName.trim();
             if (!liveByIdentifier[trimmed])
-                result[savedName] = parsedOutputs[savedName];
+                result[savedName] = Object.assign({}, parsedOutputs[savedName], {connected: false});
         }
         return result;
     }
@@ -1845,7 +1858,7 @@ Singleton {
         const result = {};
 
         for (const outputName in savedOutputs) {
-            if (!outputs[outputName])
+            if (!CompositorService.isHyprland && !outputs[outputName])
                 result[outputName] = JSON.parse(JSON.stringify(savedOutputs[outputName]));
         }
 
@@ -1878,7 +1891,14 @@ Singleton {
             if (changes.mirror !== undefined)
                 result[outputName].mirror = changes.mirror;
         }
-        return normalizeOutputPositions(result);
+        const normalized = normalizeOutputPositions(result);
+        if (CompositorService.isHyprland) {
+            for (const name in savedOutputs) {
+                if (!outputs[name])
+                    normalized[name] = Object.assign({}, savedOutputs[name], {connected: false});
+            }
+        }
+        return normalized;
     }
 
     function backendUpdateOutputPosition(outputName, x, y) {

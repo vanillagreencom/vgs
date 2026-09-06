@@ -61,7 +61,15 @@ Singleton {
     }
 
     function generateOutputsConfig(outputsData, settings, callback, preview = false) {
-        const payload = JSON.stringify({outputs: outputsData, settings: settings, displayNameMode: SettingsData.displayNameMode});
+        const connected = {};
+        const preserve = [];
+        for (const name in outputsData) {
+            if (outputsData[name].connected !== false)
+                connected[name] = outputsData[name];
+            else
+                preserve.push(name);
+        }
+        const payload = JSON.stringify({outputs: connected, preserve: preserve, settings: settings, displayNameMode: SettingsData.displayNameMode});
         outputsCommand(preview ? "preview" : "write", [payload], result => {
             if (result.ok && preview)
                 outputPreviewToken = result.token;
@@ -87,6 +95,13 @@ Singleton {
         }
     }
 
+    Connections {
+        target: CompositorService
+        function onIsHyprlandChanged() {
+            root.requestOutputs();
+        }
+    }
+
     Timer {
         id: outputRefreshTimer
         interval: 500
@@ -96,7 +111,10 @@ Singleton {
     function setLayoutXray(enabled) { layoutXrayEnabled = !!enabled; }
     function setLayoutBarXray(enabled) { layoutBarXrayEnabled = !!enabled; }
 
-    Component.onCompleted: generateLayoutConfig()
+    Component.onCompleted: {
+        generateLayoutConfig();
+        requestOutputs();
+    }
 
     Timer {
         id: layoutApplyTimer

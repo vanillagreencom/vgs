@@ -5449,6 +5449,21 @@ def test_display_output_controls():
     rendered = helper.render_hyprland_outputs(payload, live)
     assert 'mode = "6016x3384@60.000"' in rendered
     assert 'cm = "dp3"' in rendered and "bitdepth = 10" in rendered
+    for fields, identifier, naming in [
+        ({}, "desc:Apple Computer Inc ProDisplayXDR test", "model"),
+        ({"make": ""}, "DP-1", "model"),
+        ({"model": ""}, "DP-1", "model"),
+        ({"make": "", "model": "", "serial": ""}, "DP-1", "model"),
+        ({"serial": ""}, "desc:Apple Computer Inc ProDisplayXDR Unknown", "model"),
+        ({"make": "Apple, Inc"}, "desc:Apple Inc ProDisplayXDR test", "model"),
+        ({"explicitIdentifier": True}, "DP-1", "model"),
+        ({}, "DP-1", "name"),
+    ]:
+        candidate = {**output, **fields}
+        options = helper._hyprland_output_settings(
+            {"displayNameMode": naming, "settings": {identifier: {"colorManagement": "dp3", "vrrFullscreenOnly": True}}},
+            "DP-1", candidate)
+        assert options["colorManagement"] == "dp3" and options["vrrFullscreenOnly"], (fields, naming)
     applied = json.loads(json.dumps(live))
     applied["DP-1"]["hyprlandSettings"]["colorManagement"] = "dp3"
     helper.verify_hyprland_outputs(payload, applied)
@@ -5459,9 +5474,9 @@ def test_display_output_controls():
     else:
         raise AssertionError("Readback accepted an unapplied colour mode")
 
-    def rejected(candidate, expected):
+    def rejected(candidate, expected, current=live):
         try:
-            helper.render_hyprland_outputs(candidate, live)
+            helper.render_hyprland_outputs(candidate, current)
         except (ValueError, OSError) as error:
             assert expected in str(error), str(error)
         else:
@@ -5479,7 +5494,7 @@ def test_display_output_controls():
     bad = json.loads(json.dumps(payload))
     bad["outputs"]["DP-1"]["modes"][0]["width"] = 9999
     rejected(bad, "no longer available")
-    rejected({"outputs": {"DP-9": output}}, "disconnected")
+    rejected(payload, "disconnected", {})
 
     with tempfile.TemporaryDirectory() as tmp:
         config = Path(tmp) / "hyprland.lua"
@@ -5490,15 +5505,27 @@ def test_display_output_controls():
         profile = Path(tmp) / 'display "profile".icc'
         profile.write_bytes(b"invalid")
         rejected({"outputs": live, "settings": {"DP-1": {"icc": str(profile)}}}, "not an RGB")
-        from PIL import ImageCms
-        profile.write_bytes(ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes())
         icc_payload = {"outputs": live, "settings": {"DP-1": {"icc": str(profile)}}}
-        assert helper._lua_string(str(profile)) in helper.render_hyprland_outputs(icc_payload, live)
+        header = bytearray(128)
+        header[12:16], header[16:20], header[36:40] = b"mntr", b"RGB ", b"acsp"
+        profile.write_bytes(header)
+        with patch.dict(sys.modules, {"PIL": None}):
+            rejected(icc_payload, "require Pillow")
+        try:
+            from PIL import ImageCms
+        except ImportError:
+            print("SKIP: successful ICC profile validation requires optional Pillow")
+        else:
+            profile.write_bytes(ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes())
+            assert helper._lua_string(str(profile)) in helper.render_hyprland_outputs(icc_payload, live)
         icc_payload["settings"]["DP-1"]["colorManagement"] = "hdr"
         rejected(icc_payload, "cannot be used with HDR")
 
+        monitor = {"name": "DP-1", "width": 6016, "height": 3384, "refreshRate": 60,
+                   "x": 0, "y": 0, "scale": 2, "transform": 0,
+                   "currentFormat": "XBGR2101010", "colorManagementPreset": "dp3"}
         with patch.object(helper, "_hyprland_outputs_paths", return_value=(config, fragment, transaction)), \
-             patch.object(helper, "hyprland_outputs_current", return_value={"ok": True, "outputs": applied}), \
+             patch.object(helper, "run", return_value=subprocess.CompletedProcess([], 0, json.dumps([monitor]), "")), \
              patch.object(helper, "_hyprland_outputs_reload") as reload, \
              patch.object(helper.subprocess, "Popen") as spawn:
             target = Path(tmp) / "real-config.lua"
@@ -5518,6 +5545,8 @@ def test_display_output_controls():
             result = helper.hyprland_outputs_command("preview", [json.dumps(payload)])
             assert fragment.read_text() == rendered and transaction.exists()
             assert spawn.call_args.kwargs["start_new_session"] is True
+            helper.hyprland_outputs_command("current", [])
+            assert fragment.read_text() == rendered and transaction.exists(), "same-session preview must remain confirmable"
             try:
                 helper.hyprland_outputs_command("preview", [json.dumps(payload)])
             except ValueError as error:
@@ -5530,6 +5559,37 @@ def test_display_output_controls():
             transaction.write_text(json.dumps(state))
             helper.hyprland_outputs_command("expire", [result["token"]])
             assert fragment.read_text() == "-- saved configuration\n"
+            assert not transaction.exists()
+            for action, deadline, instance in (
+                ("current", 0, os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "")),
+                ("preview", 0, os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "")),
+                ("write", 0, os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "")),
+                ("current", time.time() + 20, "previous-compositor-instance"),
+            ):
+                stale = {"token": "previous-session", "deadline": deadline, "previous": "-- saved configuration\n", "instance": instance}
+                transaction.write_text(json.dumps(stale))
+                fragment.write_text("-- unconfirmed configuration\n")
+                recovered = helper.hyprland_outputs_command(action, [] if action == "current" else [json.dumps(payload)])
+                assert recovered["ok"]
+                if action == "preview":
+                    assert json.loads(transaction.read_text())["previous"] == stale["previous"]
+                    helper.hyprland_outputs_command("revert", [recovered["token"]])
+                assert fragment.read_text() == (rendered if action == "write" else stale["previous"])
+                assert not transaction.exists()
+            stale["deadline"] = 0
+            transaction.write_text(json.dumps(stale))
+            reload.side_effect = ValueError("session recovery failed")
+            recovered = helper.hyprland_outputs_command("current", [])
+            assert recovered["recoveryError"] == "session recovery failed"
+            assert recovered["recoveryToken"] == stale["token"]
+            assert json.loads(transaction.read_text())["error"] == "session recovery failed"
+            reload.reset_mock()
+            recovered = helper.hyprland_outputs_command("current", [])
+            assert recovered["recoveryError"] == "session recovery failed"
+            assert recovered["recoveryToken"] == stale["token"]
+            reload.assert_not_called()
+            reload.side_effect = None
+            helper.hyprland_outputs_command("revert", [stale["token"]])
             assert not transaction.exists()
             result = helper.hyprland_outputs_command("preview", [json.dumps(payload)])
             helper.hyprland_outputs_command("confirm", [result["token"]])
@@ -5549,6 +5609,12 @@ def test_display_output_controls():
             result = helper.hyprland_outputs_command("preview", [json.dumps(payload)])
             helper.hyprland_outputs_command("revert", [result["token"]])
             assert fragment.read_text() == rendered and not transaction.exists()
+            offline_rule = helper.render_hyprland_outputs({"outputs": {"DP-9": output}}, {"DP-9": output}).splitlines(keepends=True)[1]
+            offline_rule = offline_rule.replace(" })", ', icc = "/unmounted/display.icc" })')
+            for preserve in (["DP-9"], []):
+                fragment.write_text(rendered + offline_rule)
+                helper.hyprland_outputs_command("write", [json.dumps({**payload, "preserve": preserve})])
+                assert (offline_rule in fragment.read_text()) == bool(preserve), "preserve last-used offline settings unless explicitly forgotten"
             reload.side_effect = [ValueError("invalid monitor rule"), None]
             try:
                 helper.hyprland_outputs_command("preview", [json.dumps(payload)])

@@ -85,3 +85,63 @@ assert(scales.includes(2));
 assert(scales.every((scale, index) => index === 0 || scale < scales[index - 1]));
 assert(controls.previewScales([1, 2, 3], 1.5).includes(1.5));
 console.log('Display selection and brightness matching tests passed.');
+
+const { extractBlock } = require('./lib/qml-block.js');
+const stateSource = fs.readFileSync(path.join(__dirname, '..', 'quickshell/vshell/Modules/Settings/DisplayConfig/DisplayConfigState.qml'), 'utf8');
+const serviceSource = fs.readFileSync(path.join(__dirname, '..', 'quickshell/vshell/Services/HyprlandService.qml'), 'utf8');
+const buildSnapshot = new Function('state', 'with (state) {' + extractBlock(stateSource, 'function buildOutputsWithPendingChanges()') + '}');
+const normalize = new Function('outputsData', extractBlock(stateSource, 'function normalizeOutputPositions(outputsData)'));
+const saved = { 'DP-9': output({ logical: { x: -4096, y: 0, scale: 1, transform: 'Normal' } }) };
+const pending = { 'DP-1': { scale: 2 } };
+const snapshot = buildSnapshot({ savedOutputs: saved, outputs, pendingChanges: pending, normalizeOutputPositions: normalize, CompositorService: { isHyprland: true } });
+let sent;
+function applySnapshot(data, settings, displayNameMode, source = serviceSource) {
+  new Function('outputsData', 'settings', 'callback', 'preview', 'SettingsData', 'outputsCommand',
+      extractBlock(source, 'function generateOutputsConfig(outputsData, settings, callback, preview = false)'))(
+      data, settings, null, true, { displayNameMode }, (action, args) => { sent = JSON.parse(args[0]); });
+  return sent;
+}
+applySnapshot(snapshot, {}, 'name');
+assert.deepEqual(Object.keys(sent.outputs).sort(), Object.keys(outputs).sort(), 'offline saved rules must not enter a live apply');
+assert.equal(sent.outputs['DP-1'].logical.x, 0, 'offline positions must not move the live layout');
+assert.equal(sent.outputs['DP-1'].logical.scale, 2);
+assert.deepEqual(sent.preserve, ['DP-9']);
+assert.equal(saved['DP-9'].logical.x, -4096, 'the saved setup is retained');
+assert.equal(outputs['DP-1'].logical.scale, 1.25, 'pending changes must not mutate the original snapshot');
+
+const generateProfile = new Function('configEntry', 'outputs', 'SettingsData', 'CompositorService', 'DisplayProfileUtils', 'savedOutputs',
+    extractBlock(stateSource, 'function generateOutputsDataFromConfig(configEntry)'));
+const profileSettings = new Function('configEntry', 'outputs', 'SettingsData', 'CompositorService', 'DisplayProfileUtils',
+    extractBlock(stateSource, 'function getHyprlandSettingsFromConfig(configEntry)'));
+for (const [key, naming] of [['DP-1', 'name'], ['Dell U2723QE', 'model'], ['desc:Dell U2723QE ABC123', 'model']]) {
+  const profile = { outputs: { [key]: { mode: '2560x1440@143.981', scale: 1.25, hyprland: { colorManagement: 'dp3', bitdepth: 10 } },
+    'DP-9': { mode: '2560x1440@143.981', scale: 1 } } };
+  const original = JSON.stringify(profile);
+  const args = [profile, { 'DP-1': dp1 }, { displayNameMode: naming }, { isHyprland: true, compositor: 'hyprland' }, utils, saved];
+  const data = generateProfile(...args);
+  const settings = profileSettings(...args);
+  const sentProfile = applySnapshot(data, settings, naming);
+  assert.deepEqual(Object.keys(sentProfile.outputs), ['DP-1'], key);
+  assert.equal(sentProfile.outputs['DP-1'].connected, true);
+  assert.equal(sentProfile.outputs['DP-1'].explicitIdentifier, true);
+  assert.deepEqual(sentProfile.preserve, ['DP-9']);
+  assert.equal(sentProfile.settings['DP-1'].colorManagement, 'dp3', 'profile settings follow the resolved connector');
+  assert.equal(sentProfile.settings['DP-1'].bitdepth, 10);
+  assert.equal(JSON.stringify(profile), original, 'applying cannot remove offline saved outputs');
+  const unfiltered = serviceSource.replace('outputsData[name].connected !== false', 'true');
+  assert.notEqual(unfiltered, serviceSource);
+  assert.throws(() => assert.deepEqual(Object.keys(applySnapshot(data, settings, naming, unfiltered).outputs), ['DP-1']), assert.AssertionError);
+}
+
+const startup = new Function('generateLayoutConfig', 'requestOutputs', extractBlock(serviceSource, 'Component.onCompleted:'));
+let requests = 0;
+startup(() => {}, () => requests++);
+assert.equal(requests, 1, 'service startup must recover previews before Settings opens');
+const noRecovery = extractBlock(serviceSource, 'Component.onCompleted:').replace('requestOutputs();', '');
+assert.notEqual(noRecovery, extractBlock(serviceSource, 'Component.onCompleted:'));
+let missingRequests = 0;
+new Function('generateLayoutConfig', 'requestOutputs', noRecovery)(() => {}, () => missingRequests++);
+assert.throws(() => assert.equal(missingRequests, 1), assert.AssertionError);
+const readiness = new Function('root', extractBlock(serviceSource, 'function onIsHyprlandChanged()'));
+readiness({ requestOutputs: () => requests++ });
+assert.equal(requests, 2, 'late compositor detection must request recovery');

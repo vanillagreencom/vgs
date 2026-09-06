@@ -9075,9 +9075,11 @@ def hyprland_outputs_current() -> Dict[str, Any]:
 
 
 def _hyprland_output_settings(payload: Dict[str, Any], name: str, output: Dict[str, Any]) -> Dict[str, Any]:
-    identifier = ("desc:" + output.get("make", "") + " " + output.get("model", "") + " " + (output.get("serial") or "Unknown")).replace(",", "")
+    identifier = name
+    if payload.get("displayNameMode") == "model" and not output.get("explicitIdentifier") and output.get("make") and output.get("model"):
+        identifier = ("desc:" + output["make"] + " " + output["model"] + " " + (output.get("serial") or "Unknown")).replace(",", "")
     options = dict(output.get("hyprlandSettings", {}))
-    options.update(payload.get("settings", {}).get(identifier if payload.get("displayNameMode") == "model" else name, {}))
+    options.update(payload.get("settings", {}).get(identifier, {}))
     return options
 
 
@@ -9221,8 +9223,6 @@ def hyprland_outputs_command(action: str, args: List[str]) -> Dict[str, Any]:
     arity = {"current": 0, "status": 0, "setup": 0, "watch": 1, "expire": 1, "confirm": 1, "revert": 1, "preview": 1, "write": 1}
     if action not in arity or len(args) != arity[action]:
         raise ValueError(f"Invalid arguments for display action: {action}")
-    if action == "current":
-        return hyprland_outputs_current()
     if action == "status":
         return {"ok": True, "exists": config.exists(), "included": fragment.is_file() and config.exists() and config.read_text().endswith(_HYPRLAND_OUTPUTS_INCLUDE), "configFormat": "lua", "readOnly": False}
     if action == "watch":
@@ -9236,6 +9236,21 @@ def hyprland_outputs_command(action: str, args: List[str]) -> Dict[str, Any]:
     transaction.parent.mkdir(parents=True, exist_ok=True)
     with transaction.with_suffix(".lock").open("a") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        if action in {"current", "preview", "write"} and transaction.exists():
+            state = json.loads(transaction.read_text())
+            instance = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "")
+            if state["instance"] != instance or (time.time() >= state["deadline"] and not state.get("error")):
+                state["instance"] = instance
+                try:
+                    _hyprland_outputs_restore(state, fragment, transaction)
+                except (OSError, ValueError, subprocess.SubprocessError):
+                    if action != "current":
+                        raise
+                    result = hyprland_outputs_current()
+                    result.update(recoveryError=state["error"], recoveryToken=state["token"])
+                    return result
+        if action == "current":
+            return hyprland_outputs_current()
         if action == "setup":
             original = config.read_text()
             if not fragment.exists():
@@ -9279,8 +9294,14 @@ def hyprland_outputs_command(action: str, args: List[str]) -> Dict[str, Any]:
         if not config.read_text().endswith(_HYPRLAND_OUTPUTS_INCLUDE):
             raise ValueError("Set up display configuration before applying changes")
         payload = json.loads(args[0])
-        content = render_hyprland_outputs(payload, hyprland_outputs_current()["outputs"])
-        state = {"token": str(time.time_ns()), "deadline": time.time() + 20, "previous": fragment.read_text()}
+        live = hyprland_outputs_current()["outputs"]
+        content = render_hyprland_outputs(payload, live)
+        previous = fragment.read_text()
+        # Preserve the writer's exact offline rules; ICC paths need not be available while unplugged.
+        prefixes = tuple(f'hl.monitor({{ output = {_lua_string(name)},' for name in payload.get("preserve", []) if name not in live)
+        content += "".join(line for line in previous.splitlines(keepends=True) if line.startswith(prefixes))
+        state = {"token": str(time.time_ns()), "deadline": time.time() + 20, "previous": previous,
+                 "instance": os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "")}
         write_file(transaction, json.dumps(state))
         try:
             # The helper outlives a failed shell reload and restores the saved rules.
