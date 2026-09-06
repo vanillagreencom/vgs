@@ -362,11 +362,10 @@ func argvLineMatches(line, want string) bool {
 	if page == "" || strings.Contains(page, " ") {
 		return false
 	}
-	samples := []string{"/usr/share/cups/data/testprint", "/usr/share/cups/data/default-testpage.pdf"}
-	for _, sample := range samples {
-		if page == sample {
-			return true
-		}
+	// firstExisting takes the two named samples or any *test* file in the CUPS
+	// data directory; the generated fallback lives in the temp directory.
+	if strings.HasPrefix(page, "/usr/share/cups/data/") {
+		return true
 	}
-	return strings.HasPrefix(filepath.Base(page), "vshell-cups-test-")
+	return filepath.Dir(page) == os.TempDir() && strings.HasPrefix(filepath.Base(page), "vshell-cups-test-")
 }

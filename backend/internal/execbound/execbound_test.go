@@ -22,6 +22,12 @@ const maxBoundedElapsed = 5 * time.Second
 // the clamp for a zero or negative one, which os/exec would read as no bound
 // at all and so reopen the wedge this package prevents.
 func TestWaitDelayResolution(t *testing.T) {
+	// The rows below derive their expectation from the default, so the default
+	// itself must be a real bound: os/exec reads zero as no bound and a negative
+	// value as a timer that has already fired.
+	if DefaultWaitDelay <= 0 {
+		t.Fatalf("DefaultWaitDelay = %v, want positive", DefaultWaitDelay)
+	}
 	cases := []struct {
 		name  string
 		given *time.Duration
