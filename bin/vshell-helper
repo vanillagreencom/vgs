@@ -9179,9 +9179,12 @@ def verify_hyprland_outputs(payload: Dict[str, Any], live: Dict[str, Any]) -> No
         active = actual["modes"][actual["current_mode"]]
         if mode["width"] != active["width"] or mode["height"] != active["height"] or abs(mode["refresh_rate"] - active["refresh_rate"]) > 15:
             raise ValueError(f"{name}: the GPU rejected the selected resolution or refresh rate")
-        for key in ("x", "y", "scale", "transform"):
+        for key in ("x", "y", "transform"):
             if output["logical"][key] != actual["logical"][key]:
                 raise ValueError(f"{name}: the compositor did not apply {key}")
+        # Hyprland stores scale as float32, while the UI sends a double.
+        if not math.isclose(output["logical"]["scale"], actual["logical"]["scale"], rel_tol=1e-6, abs_tol=1e-6):
+            raise ValueError(f"{name}: the compositor did not apply scale")
         if options.get("bitdepth", 8) != actual["hyprlandSettings"]["bitdepth"]:
             raise ValueError(f"{name}: the GPU could not use the selected colour depth")
         cm = options.get("colorManagement", "auto")

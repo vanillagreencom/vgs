@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
@@ -5467,6 +5468,27 @@ def test_display_output_controls():
     applied = json.loads(json.dumps(live))
     applied["DP-1"]["hyprlandSettings"]["colorManagement"] = "dp3"
     helper.verify_hyprland_outputs(payload, applied)
+    for scale, changed, accepted in [
+        (4 / 3, {"scale": struct.unpack("f", struct.pack("f", 4 / 3))[0]}, True),
+        (8 / 3, {"scale": struct.unpack("f", struct.pack("f", 8 / 3))[0]}, True),
+        (1.6, {"scale": struct.unpack("f", struct.pack("f", 1.6))[0]}, True),
+        (4 / 3, {"scale": 1.5}, False),
+        (4 / 3, {"x": 1}, False),
+        (4 / 3, {"y": 1}, False),
+        (4 / 3, {"transform": "90"}, False),
+    ]:
+        requested = json.loads(json.dumps(payload))
+        requested["outputs"]["DP-1"]["logical"]["scale"] = scale
+        helper.render_hyprland_outputs(requested, live)
+        actual = json.loads(json.dumps(applied))
+        actual["DP-1"]["logical"].update(scale=scale)
+        actual["DP-1"]["logical"].update(changed)
+        try:
+            helper.verify_hyprland_outputs(requested, actual)
+        except ValueError:
+            assert not accepted, (scale, changed)
+        else:
+            assert accepted, (scale, changed)
     try:
         helper.verify_hyprland_outputs(payload, live)
     except ValueError as error:
