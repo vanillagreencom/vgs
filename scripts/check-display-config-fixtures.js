@@ -178,6 +178,15 @@ const readiness = new Function('root', extractBlock(serviceSource, 'function onI
 readiness({ requestOutputs: () => requests++ });
 assert.equal(requests, 2, 'late compositor detection must request recovery');
 
+function bindStateFunctions(context, names, source = stateSource) {
+  for (const name of names) {
+    const declaration = source.match(new RegExp('function ' + name + '\\(([^\\n]*)\\) \\{'));
+    assert(declaration, name);
+    context[name] = new Function('context', 'with (context) { return function(' + declaration[1] + ') {' +
+      extractBlock(source, declaration[0]) + '}; }')(context);
+  }
+}
+
 for (const action of ['confirm', 'failed-confirm', 'revert']) {
   let persisted = 'system';
   const context = { CompositorService: { isHyprland: true },
@@ -189,8 +198,8 @@ for (const action of ['confirm', 'failed-confirm', 'revert']) {
     formatChanged: true, originalDisplayNameMode: 'system', outputs, pendingChanges: {}, pendingHyprlandChanges: {}, pendingNiriChanges: {},
     originalOutputs: null, originalNiriSettings: null, originalHyprlandSettings: null, lastAppliedEntry: null,
     buildCurrentOutputConfigs: () => ({}), readMonitorsJson: callback => callback({}),
-    findConfigEntryByFingerprint: () => null, currentOutputSet: [], changesConfirmed: () => {}, changesReverted: () => {} };
-  for (const name of ['clearPendingChanges', 'commitHyprlandSettingsChanges', 'revertChanges']) {
+    findConfigEntryByFingerprint: () => null, currentOutputSet: [], buildCurrentOutputSet: () => [], changesConfirmed: () => {}, changesReverted: () => {} };
+  for (const name of ['clearPendingChanges', 'restoreOriginalSettings', 'commitHyprlandSettingsChanges', 'revertChanges']) {
     const body = extractBlock(stateSource, `function ${name}()`);
     context[name] = () => new Function('context', 'with (context) {' + body + '}')(context);
   }
@@ -205,7 +214,177 @@ for (const action of ['confirm', 'failed-confirm', 'revert']) {
     assert.equal(context.SettingsData.displayNameMode, 'system');
 }
 
+function namingContext(compositor, mode, source = stateSource) {
+  const context = {
+    CompositorService: { compositor, isHyprland: compositor === 'hyprland', isNiri: compositor === 'niri' },
+    SettingsData: { displayNameMode: mode, niriOutputSettings: {}, hyprlandOutputSettings: {},
+      saveSettings: () => context.saves++ },
+    DisplayProfileUtils: utils, I18n: { tr: value => value }, ToastService: { showError: () => context.errors++ },
+    outputs: { 'DP-1': output(), 'DP-2': output({ make: 'Apple', model: 'StudioDisplay', serial: 'TWO' }) },
+    allOutputs: {}, savedOutputs: {}, originalOutputs: null, originalDisplayNameMode: '',
+    originalNiriSettings: null, originalHyprlandSettings: null,
+    pendingChanges: {}, pendingNiriChanges: {}, pendingHyprlandChanges: {}, currentOutputSet: [],
+    backendFetchOutputs: () => {}, buildAllOutputsMap: () => context.outputs,
+    autoSelectDebounceTimer: { restart: () => context.hotplugs++ }, saves: 0, errors: 0, hotplugs: 0
+  };
+  Object.defineProperty(context, 'hasPendingChanges', { get: () => context.originalDisplayNameMode !== '' && context.originalDisplayNameMode !== context.SettingsData.displayNameMode ||
+    [context.pendingChanges, context.pendingNiriChanges, context.pendingHyprlandChanges].some(map => Object.keys(map).length > 0) });
+  bindStateFunctions(context, ['changeDisplayNameMode', 'restoreOriginalSettings', 'discardChanges', 'clearPendingChanges',
+    'initOriginalNiriSettings', 'initOriginalHyprlandSettings', 'getOutputIdentifier', 'getNiriOutputIdentifier', 'getHyprlandOutputIdentifier',
+    'buildCurrentOutputSet', 'buildMergedNiriSettings', 'buildMergedHyprlandSettings', 'extractOutputNeutralConfig'], source);
+  context.currentOutputSet = context.buildCurrentOutputSet();
+  return context;
+}
+
+for (const compositor of ['hyprland', 'niri']) {
+  for (const mode of ['system', 'model']) {
+    const context = namingContext(compositor, mode);
+    const next = mode === 'system' ? 'model' : 'system';
+    const records = [
+      ['niriOutputSettings', 'pendingNiriChanges', context.getNiriOutputIdentifier, { focusAtStartup: true, layout: { alwaysCenterSingleColumn: true } }, { variableRefreshRate: true }, { maxBpc: 8 }],
+      ['hyprlandOutputSettings', 'pendingHyprlandChanges', context.getHyprlandOutputIdentifier, { icc: '/fixture/display.icc', vrrFullscreenOnly: true, supportsHdr: true }, { bitdepth: 10 }, { sdrBrightness: 0.8 }]
+    ];
+    for (const [stored, pendingMap, identify, savedRecord, pendingRecord, extraRecord] of records) {
+      context.SettingsData[stored] = { [identify(dp1, 'DP-1', mode)]: savedRecord,
+        [identify(dp1, 'DP-1', next)]: extraRecord, 'DP-9': { disabled: true } };
+      context[pendingMap] = { [identify(dp1, 'DP-1', mode)]: pendingRecord };
+    }
+    const original = JSON.parse(JSON.stringify(context.SettingsData));
+    context.initOriginalNiriSettings();
+    context.initOriginalHyprlandSettings();
+    assert.equal(context.changeDisplayNameMode(next), true);
+    assert.equal(context.saves, 0, 'format preview must not save before confirmation');
+    for (const [stored, pendingMap, identify, savedRecord, pendingRecord, extraRecord] of records) {
+      const newId = identify(dp1, 'DP-1', next);
+      assert.deepEqual(context.SettingsData[stored][newId], { ...extraRecord, ...savedRecord }, compositor + ' ' + mode + ' complete ' + stored);
+      assert.deepEqual(context[pendingMap][newId], pendingRecord, 'partial pending edit must follow the same identity');
+      assert.equal(context.SettingsData[stored][identify(dp1, 'DP-1', mode)], undefined);
+      assert.deepEqual(context.SettingsData[stored]['DP-9'], { disabled: true }, 'unknown disconnected records must survive');
+    }
+    const config = context.extractOutputNeutralConfig('DP-1', dp1, context.buildMergedNiriSettings(), context.buildMergedHyprlandSettings());
+    const selected = records[compositor === 'niri' ? 0 : 1];
+    assert.deepEqual(config[compositor], { ...selected[5], ...selected[3], ...selected[4] }, 'profile extraction must retain stored-only fields and pending edits');
+    new Function('context', 'with (context) {' + extractBlock(stateSource, 'onOutputsChanged:') + '}')(context);
+    assert.equal(context.hasPendingChanges, true, 'same-output refresh must not clear a renamed edit');
+    assert.equal(context.hotplugs, 0);
+    assert.equal(context.changeDisplayNameMode(mode), true, 'round trip must use current records');
+    assert.deepEqual(context.originalNiriSettings, original.niriOutputSettings, 'round trip must not replace the rollback snapshot');
+    context.discardChanges();
+    assert.equal(context.SettingsData.displayNameMode, mode);
+    assert.deepEqual(context.SettingsData.niriOutputSettings, original.niriOutputSettings);
+    assert.deepEqual(context.SettingsData.hyprlandOutputSettings, original.hyprlandOutputSettings);
+    assert.equal(context.hasPendingChanges, false);
+  }
+}
+
+// Real duplicate monitors can share a model or the full backend identifier.
+for (const [compositor, mode, duplicate, condition] of [
+  ['hyprland', 'system', output({ serial: 'OTHER' }), 'profileIds.has(identifier)'],
+  ['niri', 'model', output(), 'oldIds.has(oldId) || newIds.has(newId)']
+]) {
+  assert.equal(stateSource.split(condition).length, 2);
+  for (const mutated of [false, true]) {
+    const source = mutated ? stateSource.replace(condition, 'false') : stateSource;
+    const context = namingContext(compositor, mode, source);
+    context.outputs['DP-2'] = duplicate;
+    context.SettingsData.hyprlandOutputSettings = { [context.getHyprlandOutputIdentifier(dp1, 'DP-1')]: { icc: '/fixture/one.icc' } };
+    const before = JSON.stringify(context.SettingsData);
+    const accepted = context.changeDisplayNameMode(mode === 'system' ? 'model' : 'system');
+    if (mutated) assert.throws(() => assert.equal(accepted, false), assert.AssertionError, condition);
+    else {
+      assert.equal(accepted, false);
+      assert.equal(JSON.stringify(context.SettingsData), before, 'collision must reject before either map changes');
+      assert.equal(context.errors, 1);
+      assert.equal(context.saves, 0);
+    }
+  }
+}
+
+for (const compositor of ['hyprland', 'niri']) {
+  for (const action of ['discard', 'revert', 'hotplug', ...(compositor === 'hyprland' ? ['failed-confirm'] : [])]) {
+    const context = namingContext(compositor, 'system');
+    context.SettingsData.niriOutputSettings = { 'DP-1': { focusAtStartup: true } };
+    context.SettingsData.hyprlandOutputSettings = { 'DP-1': { icc: '/fixture/display.icc' } };
+    const original = JSON.parse(JSON.stringify(context.SettingsData));
+    context.HyprlandService = { outputPreviewToken: compositor === 'hyprland' ? 'preview' : '', finishOutputPreview: (_keep, callback) => {
+      context.HyprlandService.outputPreviewToken = '';
+      callback(action !== 'failed-confirm');
+    } };
+    context.changesReverted = () => {};
+    context.buildOutputsWithPendingChanges = () => context.outputs;
+    context.backendWriteOutputsConfig = () => assert.deepEqual(context.SettingsData.niriOutputSettings, original.niriOutputSettings);
+    bindStateFunctions(context, ['revertChanges', 'confirmChanges']);
+    context.changeDisplayNameMode('model');
+    if (action === 'hotplug') {
+      delete context.outputs['DP-2'];
+      new Function('context', 'with (context) {' + extractBlock(stateSource, 'onOutputsChanged:') + '}')(context);
+      assert.equal(context.hotplugs, 1);
+    }
+    else if (action === 'failed-confirm') context.confirmChanges();
+    else if (action === 'revert') context.revertChanges();
+    else context.discardChanges();
+    assert.deepEqual(JSON.parse(JSON.stringify(context.SettingsData)), original, compositor + ' ' + action + ' must restore both maps with the mode');
+    assert.equal(context.hasPendingChanges, false);
+  }
+}
+
+for (const [needle, replacement, check] of [
+  ['SettingsData.niriOutputSettings = backends[0].stored;', '', context => assert.equal(context.SettingsData.niriOutputSettings['Dell U2723QE ABC123']?.focusAtStartup, true)],
+  ['SettingsData.hyprlandOutputSettings = backends[1].stored;', '', context => assert.equal(context.SettingsData.hyprlandOutputSettings['desc:Dell U2723QE ABC123']?.icc, '/fixture/display.icc')],
+  ['pendingNiriChanges = backends[0].pending;', '', context => assert.equal(context.pendingNiriChanges['Dell U2723QE ABC123']?.maxBpc, 10)],
+  ['pendingHyprlandChanges = backends[1].pending;', '', context => assert.equal(context.pendingHyprlandChanges['desc:Dell U2723QE ABC123']?.bitdepth, 10)],
+  ['currentOutputSet = buildCurrentOutputSet();', '', context => {
+    new Function('context', 'with (context) {' + extractBlock(stateSource, 'onOutputsChanged:') + '}')(context);
+    assert.equal(context.hasPendingChanges, true);
+  }]
+]) {
+  const body = extractBlock(stateSource, 'function changeDisplayNameMode(');
+  assert.equal(body.split(needle).length, 2, 'control must change exactly one transition statement');
+  for (const mutated of [false, true]) {
+    const source = mutated ? stateSource.replace(body, body.replace(needle, replacement)) : stateSource;
+    const context = namingContext('hyprland', 'system', source);
+    context.SettingsData.niriOutputSettings = { 'DP-1': { focusAtStartup: true } };
+    context.SettingsData.hyprlandOutputSettings = { 'DP-1': { icc: '/fixture/display.icc' } };
+    context.pendingNiriChanges = { 'DP-1': { maxBpc: 10 } };
+    context.pendingHyprlandChanges = { 'DP-1': { bitdepth: 10 } };
+    context.changeDisplayNameMode('model');
+    if (mutated) assert.throws(() => check(context), assert.AssertionError, needle);
+    else check(context);
+  }
+}
+
+for (const [field, snapshot] of [['niriOutputSettings', 'originalNiriSettings'], ['hyprlandOutputSettings', 'originalHyprlandSettings']]) {
+  const needle = `SettingsData.${field} = JSON.parse(JSON.stringify(${snapshot}));`;
+  assert.equal(stateSource.split(needle).length, 2);
+  const context = namingContext('hyprland', 'system', stateSource.replace(needle, `SettingsData.${field} = SettingsData.${field};`));
+  context.SettingsData[field] = { 'DP-1': { disabled: false } };
+  context.changeDisplayNameMode('model');
+  context.discardChanges();
+  assert.throws(() => assert.deepEqual(context.SettingsData[field], { 'DP-1': { disabled: false } }), assert.AssertionError, field + ' rollback control');
+}
+
+for (const [file, immediate] of [['DisplayConfigTab.qml', false], ['DisplayWidgetsTab.qml', true]]) {
+  const selectorSource = fs.readFileSync(path.join(__dirname, '..', 'quickshell/vshell/Modules/Settings', file), 'utf8');
+  const selector = selectorSource.slice(selectorSource.indexOf('id: ' + (immediate ? 'displayModeRow' : 'displayFormatGroup')));
+  const select = new Function('context', 'index', 'selected', 'with (context) {' + extractBlock(selector, 'onSelectionChanged: (index, selected) =>') + '}');
+  for (const pendingEdit of [false, true]) {
+    const state = namingContext('hyprland', 'system');
+    state.SettingsData.hyprlandOutputSettings = { 'DP-1': { icc: '/fixture/display.icc' } };
+    if (pendingEdit) state.pendingChanges = { 'DP-1': { scale: 2 } };
+    const row = { currentIndex: 1 };
+    select({ DisplayConfigState: state, SettingsData: state.SettingsData, displayModeRow: row, displayFormatGroup: row }, 1, true);
+    const accepted = !immediate || !pendingEdit;
+    assert.equal(state.SettingsData.displayNameMode, accepted ? 'model' : 'system', file);
+    assert.equal(state.saves, immediate && accepted ? 1 : 0, 'widget names save without committing pending output edits');
+    assert.equal(row.currentIndex, accepted ? 1 : 0, 'rejected selection must show the unchanged mode');
+    if (accepted)
+      assert.equal(state.SettingsData.hyprlandOutputSettings['desc:Dell U2723QE ABC123'].icc, '/fixture/display.icc');
+    assert.deepEqual(state.pendingChanges, pendingEdit ? { 'DP-1': { scale: 2 } } : {});
+  }
+}
+
 const readQml = relative => fs.readFileSync(path.join(__dirname, '..', 'quickshell/vshell', relative), 'utf8');
+console.log('Display naming transitions, rollback and must-fail controls passed.');
 const fontApply = new Function('context', 'who', 'key', 'oldValue', 'with (context) {' + extractBlock(readQml('Common/SettingsData.qml'), 'function applySystemFonts(') + '}');
 for (const key of [undefined, 'systemFontInterfaceHinting', 'systemFontSize']) {
   let command;

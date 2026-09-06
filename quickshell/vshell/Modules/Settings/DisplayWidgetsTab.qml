@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import qs.Common
 import qs.Modules.Settings.Widgets
+import "DisplayConfig"
 import qs.Services
 import qs.Widgets
 
@@ -184,8 +185,8 @@ Item {
                                 onSelectionChanged: (index, selected) => {
                                     if (!selected)
                                         return;
-                                    SettingsData.displayNameMode = index === 1 ? "model" : "system";
-                                    SettingsData.saveSettings();
+                                    if (!DisplayConfigState.changeDisplayNameMode(index === 1 ? "model" : "system", true))
+                                        displayModeRow.currentIndex = SettingsData.displayNameMode === "model" ? 1 : 0;
                                 }
 
                                 Connections {

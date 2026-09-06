@@ -507,8 +507,8 @@ Item {
                         if (!selected)
                             return;
                         const newMode = index === 1 ? "model" : "system";
-                        DisplayConfigState.setOriginalDisplayNameMode(SettingsData.displayNameMode);
-                        SettingsData.displayNameMode = newMode;
+                        if (!DisplayConfigState.changeDisplayNameMode(newMode))
+                            displayFormatGroup.currentIndex = SettingsData.displayNameMode === "model" ? 1 : 0;
                     }
 
                     Connections {

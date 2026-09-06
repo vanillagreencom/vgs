@@ -78,8 +78,8 @@ Singleton {
         return connected.sort();
     }
 
-    function getOutputIdentifier(output, outputName) {
-        return DisplayProfileUtils.getOutputIdentifier(output, outputName, SettingsData.displayNameMode, CompositorService.compositor);
+    function getOutputIdentifier(output, outputName, mode = SettingsData.displayNameMode) {
+        return DisplayProfileUtils.getOutputIdentifier(output, outputName, mode, CompositorService.compositor);
     }
 
     FileView {
@@ -863,9 +863,11 @@ Singleton {
         if (JSON.stringify(newOutputSet) === JSON.stringify(currentOutputSet))
             return;
         // Pending edits belong to the previous physical output set.
-        if (hasPendingChanges)
+        if (hasPendingChanges) {
+            restoreOriginalSettings();
             clearPendingChanges();
-        currentOutputSet = newOutputSet;
+        }
+        currentOutputSet = buildCurrentOutputSet();
         autoSelectDebounceTimer.restart();
     }
     onSavedOutputsChanged: allOutputs = buildAllOutputsMap()
@@ -1947,10 +1949,10 @@ Singleton {
         return getOutputIdentifier(output, outputName);
     }
 
-    function getNiriOutputIdentifier(output, outputName) {
+    function getNiriOutputIdentifier(output, outputName, mode = SettingsData.displayNameMode) {
         if (output?.explicitIdentifier)
             return outputName;
-        if (SettingsData.displayNameMode === "model" && output?.make && output?.model) {
+        if (mode === "model" && output?.make && output?.model) {
             const serial = output.serial || "Unknown";
             return output.make + " " + output.model + " " + serial;
         }
@@ -1985,10 +1987,10 @@ Singleton {
         originalNiriSettings = JSON.parse(JSON.stringify(SettingsData.niriOutputSettings));
     }
 
-    function getHyprlandOutputIdentifier(output, outputName) {
+    function getHyprlandOutputIdentifier(output, outputName, mode = SettingsData.displayNameMode) {
         if (output?.explicitIdentifier)
             return outputName;
-        if (SettingsData.displayNameMode === "model" && output?.make && output?.model)
+        if (mode === "model" && output?.make && output?.model)
             return ("desc:" + output.make + " " + output.model + " " + (output?.serial || "Unknown")).replace(/,/g, "");
         return outputName;
     }
@@ -2138,10 +2140,7 @@ Singleton {
     }
 
     function discardChanges() {
-        if (originalDisplayNameMode !== "") {
-            SettingsData.displayNameMode = originalDisplayNameMode;
-            SettingsData.saveSettings();
-        }
+        restoreOriginalSettings();
         backendFetchOutputs();
         clearPendingChanges();
     }
@@ -2356,6 +2355,7 @@ Singleton {
                         SettingsData.saveSettings();
                     confirmChanges(profileId);
                 } else {
+                    restoreOriginalSettings();
                     clearPendingChanges();
                 }
             });
@@ -2385,8 +2385,7 @@ Singleton {
     function revertChanges() {
         if (CompositorService.isHyprland && HyprlandService.outputPreviewToken !== "") {
             HyprlandService.finishOutputPreview(false, success => {
-                if (originalDisplayNameMode !== "")
-                    SettingsData.displayNameMode = originalDisplayNameMode;
+                restoreOriginalSettings();
                 clearPendingChanges();
                 changesReverted();
             });
@@ -2396,20 +2395,7 @@ Singleton {
         const hadNiriChanges = originalNiriSettings !== null;
         const hadHyprlandChanges = originalHyprlandSettings !== null;
 
-        if (hadFormatChange) {
-            SettingsData.displayNameMode = originalDisplayNameMode;
-            SettingsData.saveSettings();
-        }
-
-        if (hadNiriChanges) {
-            SettingsData.niriOutputSettings = JSON.parse(JSON.stringify(originalNiriSettings));
-            SettingsData.saveSettings();
-        }
-
-        if (hadHyprlandChanges) {
-            SettingsData.hyprlandOutputSettings = JSON.parse(JSON.stringify(originalHyprlandSettings));
-            SettingsData.saveSettings();
-        }
+        restoreOriginalSettings();
 
         pendingHyprlandChanges = {};
         pendingNiriChanges = {};
@@ -2812,8 +2798,86 @@ Singleton {
         return "Normal";
     }
 
-    function setOriginalDisplayNameMode(mode) {
-        if (originalDisplayNameMode === "")
-            originalDisplayNameMode = mode;
+    function restoreOriginalSettings() {
+        if (originalNiriSettings !== null)
+            SettingsData.niriOutputSettings = JSON.parse(JSON.stringify(originalNiriSettings));
+        if (originalHyprlandSettings !== null)
+            SettingsData.hyprlandOutputSettings = JSON.parse(JSON.stringify(originalHyprlandSettings));
+        if (originalDisplayNameMode !== "")
+            SettingsData.displayNameMode = originalDisplayNameMode;
+        currentOutputSet = buildCurrentOutputSet();
+        if (originalDisplayNameMode !== "" || originalNiriSettings !== null || originalHyprlandSettings !== null)
+            SettingsData.saveSettings();
+    }
+
+    function changeDisplayNameMode(mode, saveImmediately = false) {
+        const oldMode = SettingsData.displayNameMode;
+        if (oldMode === mode)
+            return true;
+        if (saveImmediately && hasPendingChanges) {
+            ToastService.showError(I18n.tr("Cannot change display names"), I18n.tr("Apply or discard your display changes first."));
+            return false;
+        }
+        const profileIds = new Set();
+        for (const name in outputs) {
+            const identifier = getOutputIdentifier(outputs[name], name, mode);
+            if (profileIds.has(identifier)) {
+                ToastService.showError(I18n.tr("Cannot change display names"), I18n.tr("Display names are ambiguous. Keep connector names for this setup."));
+                return false;
+            }
+            profileIds.add(identifier);
+        }
+        const backends = [
+            { identify: getNiriOutputIdentifier, stored: SettingsData.niriOutputSettings, pending: pendingNiriChanges },
+            { identify: getHyprlandOutputIdentifier, stored: SettingsData.hyprlandOutputSettings, pending: pendingHyprlandChanges }
+        ];
+        for (const backend of backends) {
+            const transitions = [];
+            const oldIds = new Set();
+            const newIds = new Set();
+            for (const name in outputs) {
+                const oldId = backend.identify(outputs[name], name, oldMode);
+                const newId = backend.identify(outputs[name], name, mode);
+                if (oldIds.has(oldId) || newIds.has(newId)) {
+                    ToastService.showError(I18n.tr("Cannot change display names"), I18n.tr("Display names are ambiguous. Keep connector names for this setup."));
+                    return false;
+                }
+                oldIds.add(oldId);
+                newIds.add(newId);
+                transitions.push([oldId, newId]);
+            }
+            // Only identities from the current snapshot can move. Unrelated saved records stay intact.
+            for (const field of ["stored", "pending"]) {
+                const source = backend[field];
+                const renamed = JSON.parse(JSON.stringify(source));
+                for (const [oldId, newId] of transitions) {
+                    if (oldId !== newId)
+                        delete renamed[oldId];
+                }
+                for (const [oldId, newId] of transitions) {
+                    if (source[oldId])
+                        renamed[newId] = Object.assign({}, source[newId] || {}, source[oldId]);
+                }
+                backend[field] = renamed;
+            }
+        }
+        if (!saveImmediately) {
+            initOriginalNiriSettings();
+            initOriginalHyprlandSettings();
+            if (originalDisplayNameMode === "")
+                originalDisplayNameMode = oldMode;
+        }
+        SettingsData.niriOutputSettings = backends[0].stored;
+        pendingNiriChanges = backends[0].pending;
+        SettingsData.hyprlandOutputSettings = backends[1].stored;
+        pendingHyprlandChanges = backends[1].pending;
+        SettingsData.displayNameMode = mode;
+        // A naming change is not a hotplug and must not discard edits on the next output refresh.
+        currentOutputSet = buildCurrentOutputSet();
+        if (saveImmediately) {
+            SettingsData.saveSettings();
+            clearPendingChanges();
+        }
+        return true;
     }
 }
