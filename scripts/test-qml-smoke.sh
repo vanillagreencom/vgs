@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Exercise extracted smoke helpers without starting a nested compositor.
-# Remedy text must follow the failed prerequisite; an unset display does not explain a missing binary.
-# Extraction must fail if the helper shape changes.
+# Exercise the extracted smoke helpers without starting a nested compositor.
+# Three surfaces, one table each: the remedy the unavailability notice prints, the layer
+# state the sandbox measures, and the geometry reply the assertion accepts.
+# The notice helper writes advice and nothing else, so its wording is the only channel
+# a caller can read; the other two tables assert status and measured geometry.
 set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -23,21 +25,28 @@ ok() {
   case_failed=0
 }
 
-awk '/^nested_unavailable\(\) \{$/{f=1} f{print} f&&/^\}$/{exit}' \
-  "$smoke" >"$tmp/fn.sh"
-if ! grep -q '^nested_unavailable() {$' "$tmp/fn.sh" || ! grep -q '^}$' "$tmp/fn.sh"; then
-  echo "test-qml-smoke: could not slice nested_unavailable out of $smoke" >&2
-  exit 1
-fi
+# Cut one shipped helper out of the smoke script into $tmp/<name>.sh. A helper that no
+# longer has this shape is a broken fixture, not a failed case: stop rather than test nothing.
+slice() {
+  local name="$1" dst="$tmp/$1.sh"
+  awk -v open="$name() {" '$0 == open {f = 1} f {print} f && $0 == "}" {exit}' "$smoke" >"$dst"
+  if ! grep -qF "$name() {" "$dst" || ! grep -q '^}$' "$dst"; then
+    printf 'test-qml-smoke: could not slice %s out of %s\n' "$name" "$smoke" >&2
+    exit 1
+  fi
+}
+slice nested_unavailable
+slice sandbox_layer_state
+slice assert_popout_geometry
 
-# Run the extracted helper with its script variables. A dash requests an unset WAYLAND_DISPLAY.
+# Run the extracted notice helper with its script variables. A dash requests an unset display.
 drive() {
   local wayland="$1"
   shift
   (
     set +e
     # shellcheck source=/dev/null
-    . "$tmp/fn.sh"
+    . "$tmp/nested_unavailable.sh"
     # These variables are consumed by the sourced helper.
     # shellcheck disable=SC2034  # read by the sliced nested_unavailable
     require_nested=false
@@ -57,64 +66,72 @@ drive() {
 }
 
 REMEDY="point the sandbox at the session's own socket"
+SOCKET_REASON="no host Wayland socket to nest inside (WAYLAND_DISPLAY unset)"
 
-# An unset display must not produce socket advice for a missing Hyprland binary.
-out="$(drive - "Hyprland not installed")"
-if [[ "$out" == *"$REMEDY"* ]]; then
-  fail "non-WAYLAND reason" "printed the socket remedy for a missing Hyprland:
+# Remedy text must follow the failed prerequisite: an unset display does not explain a
+# missing binary, and a display that is already set needs no socket advice.
+REMEDIES="-;Hyprland not installed;;absent
+-;$SOCKET_REASON;no-host-socket;present
+wayland-1;$SOCKET_REASON;no-host-socket;absent"
+
+case_remedies() {
+  local wayland reason cause verdict rows=0
+  while IFS=';' read -r wayland reason cause verdict; do
+    [[ -n "$wayland" ]] || continue
+    rows=$((rows + 1))
+    if [[ -n "$cause" ]]; then
+      out="$(drive "$wayland" "$reason" "$cause")"
+    else
+      out="$(drive "$wayland" "$reason")"
+    fi
+    case "$verdict" in
+      present)
+        [[ "$out" == *"$REMEDY"* ]] || fail "remedies" "no socket remedy for $reason (display $wayland):
 $out"
-fi
-ok "a non-host-socket reason does not print the socket remedy"
-
-
-out="$(drive - "no host Wayland socket to nest inside (WAYLAND_DISPLAY unset)" no-host-socket)"
-if [[ "$out" != *"$REMEDY"* ]]; then
-  fail "host-socket reason" "did not print the socket remedy:
+        # Wiring evidence for the row that names a cause: a remedy no shipped call site
+        # ever requests reaches nobody.
+        grep -qE "nested_unavailable \"[^\"]*\" +$cause" "$smoke" ||
+          fail "remedies" "no call site passes $cause to nested_unavailable, so the gate is dead"
+        ;;
+      absent)
+        [[ "$out" != *"$REMEDY"* ]] || fail "remedies" "socket remedy printed for $reason (display $wayland):
 $out"
-fi
-ok "the host-socket cause prints the socket remedy"
+        ;;
+      *) fail "remedies" "unknown verdict column: $verdict" ;;
+    esac
+  done <<<"$REMEDIES"
+  [[ $rows -eq 3 ]] || fail "remedies" "expected 3 table rows, drove $rows"
+  ok "the socket remedy follows the host-socket cause and no other"
+}
 
+case_unconditional_options() {
+  # Retain the unconditional advice, so suppressing all output cannot satisfy the remedy table.
+  local needed reason rows=0
+  while IFS= read -r needed; do
+    [[ -n "$needed" ]] || continue
+    rows=$((rows + 1))
+    for reason in "Hyprland not installed" "nested compositor did not come up"; do
+      [[ "$(drive - "$reason")" == *"$needed"* ]] ||
+        fail "unconditional options" "missing '$needed' for reason: $reason"
+    done
+  done <<'FRAGMENTS'
+install a nested compositor
+spare TTY/VM session
+vshell logs -n 200
+never run 'qs -c vshell'
+FRAGMENTS
+  [[ $rows -eq 4 ]] || fail "unconditional options" "expected 4 table rows, drove $rows"
+  ok "the three unconditional options and the prohibition print for every reason"
+}
 
-out="$(drive wayland-1 "no host Wayland socket to nest inside (WAYLAND_DISPLAY unset)" no-host-socket)"
-if [[ "$out" == *"$REMEDY"* ]]; then
-  fail "WAYLAND set" "printed the socket remedy with WAYLAND_DISPLAY already set:
-$out"
-fi
-ok "the remedy stays out when WAYLAND_DISPLAY is already set"
-
-# Retain the unconditional remedies so suppressing all output cannot satisfy conditional-advice tests.
-for reason in "Hyprland not installed" "nested compositor did not come up"; do
-  out="$(drive - "$reason")"
-  for needed in "install a nested compositor" "spare TTY/VM session" "vshell logs -n 200" \
-    "never run 'qs -c vshell'"; do
-    [[ "$out" == *"$needed"* ]] || fail "unconditional options" "missing '$needed' for reason: $reason"
-  done
-done
-ok "the three unconditional options and the prohibition always print"
-
-# Require the no-host-socket argument at its actual call, not merely elsewhere in the source.
-if ! grep -qE 'nested_unavailable "[^"]*" +no-host-socket' "$smoke"; then
-  fail "call-site wiring" "no call site passes no-host-socket to nested_unavailable, so the gate is dead and the remedy reaches nobody"
-fi
-ok "the host-socket call site passes the cause explicitly"
-
-# Drive extracted geometry helpers with stubbed compositor replies. Output size must come
-# from monitor mode and scale, not another layer that can be smaller than the output.
-awk '/^sandbox_layer_state\(\) \{$/{f=1} f{print} f&&/^\}$/{exit}' \
-  "$smoke" >"$tmp/layerfn.sh"
-if ! grep -q '^sandbox_layer_state() {$' "$tmp/layerfn.sh" || ! grep -q '^}$' "$tmp/layerfn.sh"; then
-  echo "test-qml-smoke: could not slice sandbox_layer_state out of $smoke" >&2
-  exit 1
-fi
-
-# Print status before helper stdout so tests can distinguish absence from failed measurement.
+# Print status before helper stdout so a row can distinguish absence from failed measurement.
 layer_state() {
   local layers="$1" mons="$2" ns="$3"
   (
     set +e
     export LAYERS_FIXTURE="$layers" MONITORS_FIXTURE="$mons"
     # shellcheck source=/dev/null
-    . "$tmp/layerfn.sh"
+    . "$tmp/sandbox_layer_state.sh"
     # shellcheck disable=SC2317,SC2329  # called by the sliced function, not from here
     sandbox_layers() { printf '%s' "$LAYERS_FIXTURE"; }
     # shellcheck disable=SC2317,SC2329  # called by the sliced function, not from here
@@ -125,130 +142,102 @@ layer_state() {
 }
 
 NS="vshell:plugins:aiUsage"
-
-MON1='[{"name":"MON1","width":1756,"height":933,"scale":1,"transform":0}]'
-BAR='{"namespace":"vshell:bar","w":1756,"h":40}'
-POPOUT='{"namespace":"'"$NS"'","w":444,"h":933}'
 mon() { printf '{"levels":{"2":[%s]}}' "$1"; }
 
-# With no other layer, output measurement must still succeed.
-out="$(layer_state "{\"MON1\":$(mon "$POPOUT")}" "$MON1" "$NS")"
-[[ "$(head -n1 <<<"$out")" == 0 ]] || fail "lone surface" "a lone popout must still be measured against its real output, got:
-$out"
-[[ "$out" == *"444x933 1756x933"* ]] || fail "lone surface" "wrong geometry - the output size was not measured:
-$out"
-[[ "$out" == *"0x0"* ]] && fail "lone surface" "fell back to a 0x0 output size:
-$out"
-ok "a surface alone on its output is measured, not compared against 0x0"
-
-# Smaller neighboring layers must not shrink the measured output.
-out="$(layer_state "{\"MON1\":$(mon "$BAR,$POPOUT")}" "$MON1" "$NS")"
-[[ "$(head -n1 <<<"$out")" == 0 ]] || fail "small others" "a correct popout must not fail because the only other layer is bar-height, got:
-$out"
-[[ "$out" == *"444x933 1756x933"* ]] || fail "small others" "inferred the output from the bar instead of measuring it:
-$out"
-ok "a bar-only output does not make a correct popout look wrong"
-
-# A bar-height popout must not pass merely because another layer has the same height.
+BAR='{"namespace":"vshell:bar","w":1756,"h":40}'
+POPOUT='{"namespace":"'"$NS"'","w":444,"h":933}'
 SHORT='{"namespace":"'"$NS"'","w":444,"h":40}'
-out="$(layer_state "{\"MON1\":$(mon "$BAR,$SHORT")}" "$MON1" "$NS")"
-[[ "$out" == *"444x40 1756x933"* ]] || fail "small others accept" "a bar-height popout must be measured against the real 933-tall output, got:
-$out"
-ok "a bar-height popout is measured against the real output, not the bar"
-
-
-out="$(layer_state "{\"MON1\":$(mon "$BAR,$POPOUT")}" '[]' "$NS")"
-[[ "$(head -n1 <<<"$out")" == 3 ]] || fail "no monitor" "an output hyprctl does not report must be a failed reading (status 3), got:
-$out"
-[[ "$out" == *"0x0"* ]] && fail "no monitor" "fell back to a 0x0 output size:
-$out"
-ok "an output with no reported size is refused, not guessed at"
-
-out="$(layer_state "{\"MON1\":$(mon "$BAR,$POPOUT")}" '[{"name":"MON1","width":1756,"height":933,"scale":0,"transform":0}]' "$NS")"
-[[ "$(head -n1 <<<"$out")" == 3 ]] || fail "bad scale" "a monitor whose numbers do not convert must be a failed reading (status 3), got:
-$out"
-ok "a monitor whose numbers do not convert is refused, not entered as zero"
-
-# Exercise physical-to-logical conversion with quarter-turn axis swap.
-ROT='[{"name":"MON1","width":5120,"height":2880,"scale":2,"transform":1}]'
-TALL='{"namespace":"'"$NS"'","w":444,"h":2560}'
-out="$(layer_state "{\"MON1\":$(mon "$TALL")}" "$ROT" "$NS")"
-[[ "$out" == *"444x2560 1440x2560"* ]] || fail "transform" "5120x2880 @ scale 2, transform 1 must read as 1440x2560, got:
-$out"
-ok "the mode is converted to logical size, including the quarter-turn swap"
-
-SCALED='[{"name":"MON1","width":6016,"height":3384,"scale":2,"transform":0}]'
-BIG='{"namespace":"'"$NS"'","w":444,"h":1692}'
-out="$(layer_state "{\"MON1\":$(mon "$BIG")}" "$SCALED" "$NS")"
-[[ "$out" == *"444x1692 3008x1692"* ]] || fail "scale" "6016x3384 @ scale 2 must read as 3008x1692, got:
-$out"
-ok "a scaled output is divided by its scale"
-
-
 FULL='{"namespace":"'"$NS"'","w":1756,"h":933}'
-out="$(layer_state "{\"MON1\":$(mon "$BAR,$FULL")}" "$MON1" "$NS")"
-[[ "$(head -n1 <<<"$out")" == 2 ]] || fail "degenerate" "a popout as large as its output should be status 2, got:
-$out"
-ok "a popout as large as its measured output is still degenerate"
+TALL='{"namespace":"'"$NS"'","w":444,"h":2560}'
+BIG='{"namespace":"'"$NS"'","w":444,"h":1692}'
 
-out="$(layer_state "{\"MON1\":$(mon "$BAR")}" "$MON1" "$NS")"
-[[ "$(head -n1 <<<"$out")" == 1 ]] || fail "absent" "an unmapped namespace should be status 1, got:
-$out"
-ok "an absent surface is still reported absent"
+declare -A LAYERS=(
+  [popout]="{\"MON1\":$(mon "$POPOUT")}"
+  [bar]="{\"MON1\":$(mon "$BAR")}"
+  [bar+popout]="{\"MON1\":$(mon "$BAR,$POPOUT")}"
+  [bar+short]="{\"MON1\":$(mon "$BAR,$SHORT")}"
+  [bar+full]="{\"MON1\":$(mon "$BAR,$FULL")}"
+  [tall]="{\"MON1\":$(mon "$TALL")}"
+  [big]="{\"MON1\":$(mon "$BIG")}"
+  [two-outputs]="{\"MON1\":$(mon "$BAR,$POPOUT"),\"MON2\":$(mon "$BAR,$POPOUT")}"
+)
 
-# A popout binds one screen, so duplicate mapping must fail the one-record contract.
-MON2='[{"name":"MON1","width":1756,"height":933,"scale":1,"transform":0},{"name":"MON2","width":1756,"height":933,"scale":1,"transform":0}]'
-out="$(layer_state "{\"MON1\":$(mon "$BAR,$POPOUT"),\"MON2\":$(mon "$BAR,$POPOUT")}" "$MON2" "$NS")"
-[[ "$(head -n1 <<<"$out")" == 3 ]] || fail "duplicate mapping" "a popout mapped on two outputs must be a failed reading (status 3), got:
-$out"
-ok "a popout mapped twice is a reported defect, not two lines"
+# A NaN scale can pass float parsing and later fail integer conversion; unusable metadata
+# must stay "cannot measure" (status 3) rather than "not there" (status 1).
+declare -A MONS=(
+  [one]='[{"name":"MON1","width":1756,"height":933,"scale":1,"transform":0}]'
+  [two]='[{"name":"MON1","width":1756,"height":933,"scale":1,"transform":0},{"name":"MON2","width":1756,"height":933,"scale":1,"transform":0}]'
+  [none]='[]'
+  [rotated]='[{"name":"MON1","width":5120,"height":2880,"scale":2,"transform":1}]'
+  [scaled]='[{"name":"MON1","width":6016,"height":3384,"scale":2,"transform":0}]'
+  [zero-scale]='[{"name":"MON1","width":1756,"height":933,"scale":0,"transform":0}]'
+  [nan-scale]='[{"name":"MON1","width":1756,"height":933,"scale":"NaN","transform":0}]'
+  [inf-scale]='[{"name":"MON1","width":1756,"height":933,"scale":"Infinity","transform":0}]'
+  [bad-transform]='[{"name":"MON1","width":1756,"height":933,"scale":1,"transform":99}]'
+  [word-transform]='[{"name":"MON1","width":1756,"height":933,"scale":1,"transform":"sideways"}]'
+  [not-dicts]='["not-a-dict"]'
+  [not-a-list]='{"MON1":{"width":1756,"height":933,"scale":1,"transform":0}}'
+  [name-list]='[{"name":["MON1"],"width":1756,"height":933,"scale":1,"transform":0}]'
+  [name-dict]='[{"name":{"a":1},"width":1756,"height":933,"scale":1,"transform":0}]'
+  [name-number]='[{"name":7,"width":1756,"height":933,"scale":1,"transform":0}]'
+)
 
-out="$(layer_state "{\"MON1\":$(mon "$BAR,$POPOUT")}" "$MON1" "$NS")"
-[[ "$(tail -n +2 <<<"$out" | grep -c .)" == 1 ]] || fail "one line" "the emitter must produce exactly one line, got:
-$out"
-ok "the emitter produces exactly one line"
+# label; layers fixture; monitors fixture; expected status; expected geometry or -.
+# Output size must come from the monitor mode and scale, never from another layer that can
+# be smaller than the output; a status the caller reads as absence must mean absence.
+LAYER_STATES='a surface alone on its output;popout;one;0;444x933 1756x933
+a bar-only neighbour does not shrink the output;bar+popout;one;0;444x933 1756x933
+a bar-height popout is measured against the output;bar+short;one;0;444x40 1756x933
+a quarter turn swaps the logical axes;tall;rotated;0;444x2560 1440x2560
+a scaled output is divided by its scale;big;scaled;0;444x1692 3008x1692
+a popout as large as its output is degenerate;bar+full;one;2;-
+an unmapped namespace is absent;bar;one;1;-
+an unreported output cannot be measured;bar+popout;none;3;-
+a zero scale does not convert;bar+popout;zero-scale;3;-
+a popout mapped on two outputs breaks the one-record contract;two-outputs;two;3;-
+a NaN scale does not convert;bar+popout;nan-scale;3;-
+an infinite scale does not convert;bar+popout;inf-scale;3;-
+an unknown transform does not convert;bar+popout;bad-transform;3;-
+a word where a transform belongs;bar+popout;word-transform;3;-
+a list of non-objects;bar+popout;not-dicts;3;-
+an object where a list belongs;bar+popout;not-a-list;3;-
+a list-valued output name;bar+popout;name-list;3;-
+an object-valued output name;bar+popout;name-dict;3;-
+a number-valued output name;bar+popout;name-number;3;-'
 
-# A NaN scale can pass float parsing and later fail integer conversion. That error must
-# remain unreadable status rather than exit 1, which means surface absence.
-for bad in \
-  '[{"name":"MON1","width":1756,"height":933,"scale":"NaN","transform":0}]' \
-  '[{"name":"MON1","width":1756,"height":933,"scale":"Infinity","transform":0}]' \
-  '[{"name":"MON1","width":1756,"height":933,"scale":1,"transform":99}]' \
-  '[{"name":"MON1","width":1756,"height":933,"scale":1,"transform":"sideways"}]' \
-  '["not-a-dict"]' \
-  '{"MON1":{"width":1756,"height":933,"scale":1,"transform":0}}' \
-  '[{"name":["MON1"],"width":1756,"height":933,"scale":1,"transform":0}]' \
-  '[{"name":{"a":1},"width":1756,"height":933,"scale":1,"transform":0}]' \
-  '[{"name":7,"width":1756,"height":933,"scale":1,"transform":0}]'; do
-  out="$(layer_state "{\"MON1\":$(mon "$BAR,$POPOUT")}" "$bad" "$NS")"
-  st="$(head -n1 <<<"$out")"
-  if [[ "$st" == 1 ]]; then
-    fail "malformed monitor" "unusable monitor metadata read as ABSENCE (status 1) for: $bad"
-  elif [[ "$st" != 3 ]]; then
-    fail "malformed monitor" "unusable monitor metadata should be a failed reading (status 3), got $st for: $bad"
-  fi
-done
-ok "malformed monitor metadata is 'cannot measure', never 'not there'"
-
-# A valid reply must still measure so blanket rejection cannot pass.
-out="$(layer_state "{\"MON1\":$(mon "$BAR,$POPOUT")}" "$MON1" "$NS")"
-[[ "$(head -n1 <<<"$out")" == 0 ]] || fail "malformed control" "a well-formed payload should still be status 0, got:
-$out"
-ok "a well-formed payload still measures (control)"
-
-# Require geometry evidence in the declared one-line format.
-awk '/^assert_popout_geometry\(\) \{$/{f=1} f{print} f&&/^\}$/{exit}' \
-  "$smoke" >"$tmp/geomfn.sh"
-if ! grep -q '^assert_popout_geometry() {$' "$tmp/geomfn.sh" || ! grep -q '^}$' "$tmp/geomfn.sh"; then
-  echo "test-qml-smoke: could not slice assert_popout_geometry out of $smoke" >&2
-  exit 1
-fi
+case_layer_states() {
+  local label layers_key mons_key want_status want_geometry state status body rows=0
+  while IFS=';' read -r label layers_key mons_key want_status want_geometry; do
+    [[ -n "$label" ]] || continue
+    rows=$((rows + 1))
+    if [[ -z "${LAYERS[$layers_key]+set}" || -z "${MONS[$mons_key]+set}" ]]; then
+      fail "layer states" "$label: no fixture named $layers_key or $mons_key"
+      continue
+    fi
+    state="$(layer_state "${LAYERS[$layers_key]}" "${MONS[$mons_key]}" "$NS")"
+    status="$(head -n1 <<<"$state")"
+    body="$(tail -n +2 <<<"$state")"
+    if [[ "$status" != "$want_status" ]]; then
+      fail "layer states" "$label: expected status $want_status, got $status:
+$state"
+    elif [[ "$want_geometry" != - && "$body" != *"$want_geometry"* ]]; then
+      fail "layer states" "$label: expected geometry $want_geometry, got:
+$state"
+    elif [[ "$status" == 0 && "$(grep -c . <<<"$body")" != 1 ]]; then
+      # The emitter promises one line; a caller parses the first one it finds.
+      fail "layer states" "$label: expected exactly one emitted line, got:
+$state"
+    fi
+  done <<<"$LAYER_STATES"
+  [[ $rows -eq 19 ]] || fail "layer states" "expected 19 table rows, drove $rows"
+  ok "each layer and monitor payload measures, refuses or reports absence as declared"
+}
 
 geom() {
   (
     set +e
     # shellcheck source=/dev/null
-    . "$tmp/geomfn.sh"
+    . "$tmp/assert_popout_geometry.sh"
     # shellcheck disable=SC2317,SC2329  # called by the sliced function, not from here
     fail() { printf 'FAILMSG: %s\n' "$*"; }
     assert_popout_geometry "$1" aiUsage
@@ -256,31 +245,36 @@ geom() {
   ) 2>&1
 }
 
-out="$(geom '444x933 1756x933')"
-[[ "$out" == *"rc=0"* ]] || fail "single line" "a valid single line should pass, got: $out"
-ok "a valid single line passes"
+# label; reply, with \n for the line break; expected status.
+GEOMETRY='a valid single line;444x933 1756x933;0
+a popout shorter than its output;444x206 1756x933;1
+an empty reply;;1
+a whitespace-only reply;   ;1
+a single field cannot compare equal to itself;444x933;1
+a multi-line reply breaks the emitter contract;444x933 1756x933\n444x933 1756x933;1'
 
-out="$(geom '444x206 1756x933')"
-[[ "$out" == *"rc=1"* ]] || fail "height mismatch" "a short popout must fail, got: $out"
-ok "a popout shorter than its output fails"
+case_geometry_replies() {
+  local label reply want_rc rows=0
+  while IFS=';' read -r label reply want_rc; do
+    [[ -n "$label" ]] || continue
+    rows=$((rows + 1))
+    out="$(geom "$(printf '%b' "$reply")")"
+    [[ "$out" == *"rc=$want_rc"* ]] ||
+      fail "geometry replies" "$label: expected rc=$want_rc, got: $out"
+  done <<<"$GEOMETRY"
+  [[ $rows -eq 6 ]] || fail "geometry replies" "expected 6 table rows, drove $rows"
+  ok "only a well-formed reply that measures full height passes"
+}
 
-out="$(geom '')"
-[[ "$out" == *"rc=1"* ]] || fail "empty" "an empty reply must fail rather than pass on no evidence, got: $out"
-ok "an empty reply refuses to pass on no evidence"
-
-out="$(geom '   ')"
-[[ "$out" == *"rc=1"* ]] || fail "blank" "a whitespace-only reply must fail, got: $out"
-ok "a whitespace-only reply refuses to pass on no evidence"
-
-out="$(geom '444x933')"
-[[ "$out" == *"rc=1"* ]] || fail "single field" "a single field must fail rather than compare equal to itself, got: $out"
-ok "a single field cannot pass by comparing equal to itself"
-
-
-out="$(geom '444x933 1756x933
-444x933 1756x933')"
-[[ "$out" == *"rc=1"* ]] || fail "multi-line" "a multi-line reply breaks the emitter contract and must fail, got: $out"
-ok "a multi-line reply is refused, since the emitter promises one"
+CASES=(
+  case_remedies
+  case_unconditional_options
+  case_layer_states
+  case_geometry_replies
+)
+for smoke_case in "${CASES[@]}"; do
+  "$smoke_case"
+done
 
 if [[ $failures -ne 0 ]]; then
   printf '\ntest-qml-smoke: %d failure(s)\n' "$failures" >&2
