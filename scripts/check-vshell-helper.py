@@ -5511,13 +5511,9 @@ def test_display_output_controls():
         profile.write_bytes(header)
         with patch.dict(sys.modules, {"PIL": None}):
             rejected(icc_payload, "require Pillow")
-        try:
-            from PIL import ImageCms
-        except ImportError:
-            print("SKIP: successful ICC profile validation requires optional Pillow")
-        else:
-            profile.write_bytes(ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes())
-            assert helper._lua_string(str(profile)) in helper.render_hyprland_outputs(icc_payload, live)
+        from PIL import ImageCms
+        profile.write_bytes(ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes())
+        assert helper._lua_string(str(profile)) in helper.render_hyprland_outputs(icc_payload, live)
         icc_payload["settings"]["DP-1"]["colorManagement"] = "hdr"
         rejected(icc_payload, "cannot be used with HDR")
 

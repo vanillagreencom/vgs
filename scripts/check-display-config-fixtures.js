@@ -133,6 +133,38 @@ for (const [key, naming] of [['DP-1', 'name'], ['Dell U2723QE', 'model'], ['desc
   assert.throws(() => assert.deepEqual(Object.keys(applySnapshot(data, settings, naming, unfiltered).outputs), ['DP-1']), assert.AssertionError);
 }
 
+const applyProfileBody = extractBlock(stateSource, 'function applyConfigEntry(configEntry, configId, profileName, isManual)');
+const applyProfile = new Function('context', 'configEntry', 'isManual', 'with (context) {' + applyProfileBody + '}');
+for (const [key, ambiguous, isManual] of [
+  ['Dell U2723QE', true, true], ['desc:Dell U2723QE', true, false],
+  ['DP-1', false, true], ['desc:Dell U2723QE ABC123', false, false], ['DP-9', false, true]
+]) {
+  const profile = { outputs: { [key]: { mode: '2560x1440@143.981', scale: 1.25 },
+    'eDP-1': { mode: '2560x1440@143.981', scale: 1.25 } } };
+  const liveOutputs = { 'DP-1': dp1, 'DP-2': hdmi, 'eDP-1': output({ make: 'Built-in', model: 'Panel' }) };
+  const errors = [];
+  let writes = 0;
+  const context = {
+    root: { lastAppliedEntry: null }, outputs: liveOutputs, DisplayProfileUtils: utils,
+    SettingsData: { displayNameMode: 'model' }, CompositorService: { isHyprland: true, compositor: 'hyprland' },
+    readOnly: false, profilesLoading: true, manualActivation: isManual,
+    I18n: { tr: text => ({ arg: value => text.replace('%1', value) }) },
+    profileError: error => errors.push(error),
+    ensureEnabledOutput: new Function('configEntry', extractBlock(stateSource, 'function ensureEnabledOutput(configEntry)')),
+    generateOutputsDataFromConfig: entry => generateProfile(entry, liveOutputs, { displayNameMode: 'model' }, { isHyprland: true, compositor: 'hyprland' }, utils, saved),
+    backendSettingsFromConfig: entry => profileSettings(entry, liveOutputs, { displayNameMode: 'model' }, { compositor: 'hyprland' }, utils),
+    backendWriteOutputsConfig: () => writes++
+  };
+  applyProfile(context, profile, isManual);
+  assert.equal(writes, ambiguous ? 0 : 1, key);
+  assert.equal(errors.length, ambiguous ? 1 : 0, key);
+  if (ambiguous) {
+    assert.equal(context.root.lastAppliedEntry, null, 'a rejected setup must not replace applied state');
+    assert.equal(context.profilesLoading, false);
+    assert.equal(context.manualActivation, false);
+  }
+}
+
 const startup = new Function('generateLayoutConfig', 'requestOutputs', extractBlock(serviceSource, 'Component.onCompleted:'));
 let requests = 0;
 startup(() => {}, () => requests++);

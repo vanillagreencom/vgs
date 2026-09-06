@@ -532,6 +532,15 @@ Singleton {
             showHyprlandReadOnlyWarning();
             return;
         }
+        for (const outputId in (configEntry.outputs || {})) {
+            const matchingNames = DisplayProfileUtils.matchingOutputNames(outputId, outputs, SettingsData.displayNameMode, CompositorService.compositor);
+            if (matchingNames.length > 1) {
+                profilesLoading = false;
+                manualActivation = false;
+                profileError(I18n.tr("More than one display matches %1. Use connector names for this setup.").arg(outputId));
+                return;
+            }
+        }
         ensureEnabledOutput(configEntry);
         // Capture the entry being applied so disabled-output settings fields can read
         // scale/position/transform back even when wlr reports no logical viewport.
