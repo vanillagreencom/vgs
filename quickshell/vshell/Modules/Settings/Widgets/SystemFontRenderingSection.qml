@@ -52,7 +52,7 @@ Column {
     StyledText {
         width: parent.width
         text: root.note
-        font.pixelSize: Theme.fontSizeSmall
+        font.pixelSize: Theme.settingsFontSize
         color: Theme.surfaceVariantText
         wrapMode: Text.WordWrap
         visible: root.note !== ""

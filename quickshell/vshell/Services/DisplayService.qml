@@ -230,6 +230,8 @@ Singleton {
                 "percentage": device.currentPercent,
                 "max": device.max,
                 "backend": device.backend,
+                "connector": device.connector || "",
+                "serial": device.serial || "",
                 "displayMax": displayMax
             };
             devices = newDevices;
@@ -292,6 +294,8 @@ Singleton {
                 "percentage": d.currentPercent,
                 "max": d.max,
                 "backend": d.backend,
+                "connector": d.connector || "",
+                "serial": d.serial || "",
                 "displayMax": displayMax
             };
         });

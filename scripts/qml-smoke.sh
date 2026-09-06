@@ -8,6 +8,7 @@
 # --require-nested: enable nesting and fail if its prerequisites are absent.
 # --require-static: fail if the QML parser is unavailable.
 # --timeout SECONDS: set the sandbox shell lifetime.
+# --settings: open every available Settings page and verify it loads.
 # -h, --help: print this help.
 #
 # Nested mode needs Hyprland, qs, Python, and a host Wayland socket.
@@ -16,6 +17,7 @@
 # The runtime check waits for bundled plugins and exercises user overrides.
 # Popouts and switchers are checked for mapping and dismissal.
 # wtype enables Escape-key dismissal checks.
+# VSHELL_SMOKE_ARTIFACT_DIR saves a Displays screenshot when grim is installed.
 # Live-session snapshots check process instances and excess layer surfaces; cleanup targets only process groups this run created.
 # Never launches into the live session and never runs pkill quickshell; other Quickshell apps on the seat are legitimate.
 set -euo pipefail
@@ -24,6 +26,7 @@ repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 qml_roots=("$repo_root/quickshell/vshell" "$repo_root/config/vshell/plugins")
 
 nested=false
+check_settings=false
 require_nested=false
 require_static=false
 static_ran=false
@@ -39,6 +42,7 @@ usage() {
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --nested) nested=true ;;
+    --settings) check_settings=true; nested=true ;;
     --require-nested) nested=true; require_nested=true ;;
     --require-static) require_static=true ;;
     --timeout) shift; nested_timeout="${1:?--timeout needs a value}" ;;
@@ -1073,6 +1077,30 @@ override_state_settles() {
   return 0
 }
 
+settings_check() {
+  local report pages page ready expected
+  report="$(sandbox_ipc settings status)" || { fail "could not read Settings status"; return 1; }
+  pages="$(jq -er '.pages | select(type == "array" and length > 0) | .[]' <<<"$report")" || { fail "Settings returned no page inventory"; return 1; }
+  while IFS= read -r page; do
+    sandbox_ipc settings openWith "$page" >/dev/null || { fail "could not open Settings page: $page"; return 1; }
+    ready=false
+    for _ in {1..20}; do
+      report="$(sandbox_ipc settings status)" || { fail "could not read Settings page status: $page"; return 1; }
+      if jq -e --arg page "$page" '.visible and .ready and .tab == $page' <<<"$report" >/dev/null; then
+        ready=true
+        break
+      fi
+      sleep 0.1
+    done
+    if [[ "$ready" != true ]]; then
+      fail "Settings page did not load: $page ($report)"
+      return 1
+    fi
+  done <<<"$pages"
+  expected="$(wc -l <<<"$pages")" || return 1
+  note "Settings page check passed ($expected available pages loaded)"
+}
+
 nested_check() {
   local host_socket sandbox rt_dir conf log nested_socket candidate exit_code findings
   local compositor_pgid qs_launcher qs_group loaded targets plugins_loaded plugin_report candidate
@@ -1151,19 +1179,19 @@ stamp("settings.json", (skey,), int(svalue))
 stamp("plugin_settings.json", (pplugin, pkey), pvalue)
 PY
 
-  conf="$sandbox/hyprland.conf"
+  mkdir -p "$sandbox/home/.config/hypr" || { prep_fail "creating the compositor config directory"; return; }
+  conf="$sandbox/home/.config/hypr/hyprland.lua"
   cat >"$conf" <<'EOF'
-# Minimal throwaway config: no autostart, no user includes, no keybinds.
-monitor = , preferred, auto, 1
-misc {
-    disable_hyprland_logo = true
-    disable_splash_rendering = true
-    force_default_wallpaper = 0
-    disable_autoreload = true
-}
-animations {
-    enabled = false
-}
+-- Minimal isolated native config. No autostart or user includes.
+hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1 })
+hl.config({
+    misc = {
+        disable_hyprland_logo = true,
+        disable_splash_rendering = true,
+        disable_autoreload = true,
+    },
+    animations = { enabled = false },
+})
 EOF
 
   log="$sandbox/qs.log"
@@ -1217,8 +1245,24 @@ EOF
   fi
 
   note "running the shell inside the sandbox (timeout ${nested_timeout}s)"
+  local nested_signature="" nested_control
+  for _ in $(seq 1 40); do
+    for nested_control in "$rt_dir"/hypr/*/.socket.sock; do
+      [[ -S "$nested_control" ]] || continue
+      nested_signature="${nested_control%/.socket.sock}"
+      nested_signature="${nested_signature##*/}"
+      break
+    done
+    [[ -n "$nested_signature" ]] && break
+    sleep 0.1
+  done
+  if [[ -z "$nested_signature" ]]; then
+    fail "could not identify the isolated compositor for display control"
+    return
+  fi
   if ! spawn_group "$sandbox/qs.pgid" \
     "${sandbox_env[@]}" \
+    HYPRLAND_INSTANCE_SIGNATURE="$nested_signature" \
     WAYLAND_DISPLAY="$nested_socket" \
     VSHELL_ROOT="$repo_root" \
     VSHELL_DISABLE_HOT_RELOAD=1 \
@@ -1296,6 +1340,46 @@ EOF
   # Their failure has already set exit status; keep teardown reachable.
   if [[ "$loaded" == true ]]; then
     switcher_check || true
+    local display_reply
+    sandbox_ipc changelog close >/dev/null || fail "could not dismiss release notes before checking Displays"
+    display_reply="$(sandbox_ipc settings openWith display_config)"
+    if [[ "$display_reply" != "SETTINGS_OPEN_SUCCESS: display_config" ]]; then
+      fail "could not open the Displays settings page: $display_reply"
+    else
+      # Settings loads its selected tab asynchronously. The log scan below checks its components.
+      sleep 2
+      if [[ -n "${VSHELL_SMOKE_ARTIFACT_DIR:-}" ]]; then
+        local capture_focus
+        capture_focus="$(hyprctl activewindow -j | jq -er '.address | select(test("^0x[0-9a-f]+$"))')" || { fail "could not save focus for display capture"; return; }
+        hyprctl dispatch "hl.dsp.focus({ window = \"pid:$compositor_pgid\" })" >/dev/null || { fail "could not show the sandbox for display capture"; return; }
+        sleep 5
+        if ! mkdir -p -- "$VSHELL_SMOKE_ARTIFACT_DIR" || ! "${sandbox_env[@]}" WAYLAND_DISPLAY="$nested_socket" timeout 5 grim "$VSHELL_SMOKE_ARTIFACT_DIR/displays.png"; then
+          fail "could not capture the Displays settings page"
+        fi
+        hyprctl dispatch "hl.dsp.focus({ window = \"address:$capture_focus\" })" >/dev/null || fail "could not restore focus after display capture"
+      fi
+      display_reply="$(sandbox_ipc outputs current)"
+      if ! jq -e 'type == "array" and length > 0' <<<"$display_reply" >/dev/null; then
+        fail "Displays settings did not receive native monitor state: $display_reply"
+        sandbox_ipc outputs status >&2 || fail "could not read display diagnostics"
+      fi
+      sandbox_ipc settings close >/dev/null || fail "could not close Displays settings"
+      local display_snapshot display_payload display_preview display_token
+      if display_snapshot="$("${sandbox_env[@]}" HYPRLAND_INSTANCE_SIGNATURE="$nested_signature" "$repo_root/bin/vshell" config hyprland-outputs-current)" &&
+         display_payload="$(jq -ce '{outputs: (.outputs | with_entries(.value.logical.scale = 0.5))}' <<<"$display_snapshot")" &&
+         "${sandbox_env[@]}" HYPRLAND_INSTANCE_SIGNATURE="$nested_signature" "$repo_root/bin/vshell" config hyprland-outputs-setup >/dev/null &&
+         display_preview="$("${sandbox_env[@]}" HYPRLAND_INSTANCE_SIGNATURE="$nested_signature" "$repo_root/bin/vshell" config hyprland-outputs-preview "$display_payload")" &&
+         display_token="$(jq -er '.token' <<<"$display_preview")" &&
+         "${sandbox_env[@]}" HYPRLAND_INSTANCE_SIGNATURE="$nested_signature" "$repo_root/bin/vshell" config hyprland-outputs-revert "$display_token" >/dev/null; then
+        note "display control check passed (native scale apply, readback and revert in the sandbox)"
+      else
+        fail "native display preview or recovery failed: ${display_preview:-no preview response}"
+      fi
+    fi
+  fi
+
+  if [[ "$loaded" == true && "$check_settings" == true ]]; then
+    settings_check || true
   fi
 
   kill_pgid "$qs_group"

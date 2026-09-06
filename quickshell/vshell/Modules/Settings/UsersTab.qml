@@ -100,14 +100,14 @@ Item {
 
                     StyledText {
                         text: I18n.tr("Administrator Group:")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceVariantText
                         anchors.verticalCenter: parent.verticalCenter
                     }
 
                     StyledText {
                         text: UsersService.adminGroup
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         font.weight: Font.Medium
                         color: Theme.surfaceText
                         anchors.verticalCenter: parent.verticalCenter
@@ -120,14 +120,14 @@ Item {
 
                     StyledText {
                         text: I18n.tr("Greeter Group:")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceVariantText
                         anchors.verticalCenter: parent.verticalCenter
                     }
 
                     StyledText {
                         text: UsersService.greeterGroup
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         font.weight: Font.Medium
                         color: Theme.surfaceText
                         anchors.verticalCenter: parent.verticalCenter
@@ -140,7 +140,7 @@ Item {
 
                     StyledText {
                         text: UsersService.refreshing ? I18n.tr("Refreshing...") : ""
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceVariantText
                         anchors.verticalCenter: parent.verticalCenter
                     }
@@ -149,7 +149,7 @@ Item {
                 StyledText {
                     width: parent.width
                     text: I18n.tr("Greeter group members can sync their login-screen theme with vshell greeter sync --profile after logging out and back in.")
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.surfaceVariantText
                     wrapMode: Text.Wrap
                 }
@@ -208,7 +208,7 @@ Item {
                                             id: adminChipText
                                             anchors.centerIn: parent
                                             text: I18n.tr("admin")
-                                            font.pixelSize: Theme.fontSizeSmall
+                                            font.pixelSize: Theme.settingsFontSize
                                             color: Theme.primary
                                             font.weight: Font.Medium
                                         }
@@ -226,7 +226,7 @@ Item {
                                             id: greeterChipText
                                             anchors.centerIn: parent
                                             text: I18n.tr("Greeter")
-                                            font.pixelSize: Theme.fontSizeSmall
+                                            font.pixelSize: Theme.settingsFontSize
                                             color: Theme.secondary
                                             font.weight: Font.Medium
                                         }
@@ -235,7 +235,7 @@ Item {
 
                                 StyledText {
                                     text: userRow.modelData.gecos && userRow.modelData.gecos.length > 0 ? userRow.modelData.gecos + " · UID " + userRow.modelData.uid : "UID " + userRow.modelData.uid
-                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.pixelSize: Theme.settingsFontSize
                                     color: Theme.surfaceVariantText
                                     elide: Text.ElideRight
                                     width: parent.width
@@ -338,7 +338,7 @@ Item {
                     width: parent.width
                     visible: UsersService.users.length === 0 && !UsersService.refreshing
                     text: I18n.tr("No user accounts found — create one with the form below")
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.surfaceVariantText
                     horizontalAlignment: Text.AlignHCenter
                     wrapMode: Text.WordWrap
@@ -358,7 +358,7 @@ Item {
 
                     StyledText {
                         text: I18n.tr("Username")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceVariantText
                     }
 
@@ -381,7 +381,7 @@ Item {
                         width: parent.width
                         visible: usernameField.text.length > 0 && !UsersService.isValidUsername(usernameField.text)
                         text: I18n.tr("Username must start with a lowercase letter or underscore and contain only lowercase letters, digits, hyphens, or underscores.")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.error
                         wrapMode: Text.WordWrap
                     }
@@ -390,7 +390,7 @@ Item {
                         width: parent.width
                         visible: usernameField.text.length > 0 && UsersService.isValidUsername(usernameField.text) && UsersService.userExists(usernameField.text)
                         text: I18n.tr("A user with that name already exists.")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.error
                         wrapMode: Text.WordWrap
                     }
@@ -402,7 +402,7 @@ Item {
 
                     StyledText {
                         text: I18n.tr("Password")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceVariantText
                     }
 
@@ -425,7 +425,7 @@ Item {
 
                     StyledText {
                         text: I18n.tr("Confirm Password")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceVariantText
                     }
 
@@ -448,7 +448,7 @@ Item {
                         width: parent.width
                         visible: confirmField.text.length > 0 && confirmField.text !== passwordField.text
                         text: I18n.tr("Passwords do not match.")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.error
                     }
                 }
@@ -494,7 +494,7 @@ Item {
                         anchors.verticalCenter: parent.verticalCenter
                         text: root.statusText
                         color: root.statusIsError ? Theme.error : Theme.primary
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         wrapMode: Text.WordWrap
                         width: parent.width - parent.children[0].width - Theme.spacingM
                     }

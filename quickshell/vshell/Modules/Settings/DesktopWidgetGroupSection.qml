@@ -103,7 +103,7 @@ Column {
 
             StyledText {
                 text: "(" + section.instances.length + ")"
-                font.pixelSize: Theme.fontSizeSmall
+                font.pixelSize: Theme.settingsFontSize
                 color: Theme.surfaceVariantText
                 anchors.verticalCenter: parent.verticalCenter
             }
@@ -235,7 +235,7 @@ Column {
             StyledText {
                 anchors.centerIn: parent
                 text: I18n.tr("Drop here")
-                font.pixelSize: Theme.fontSizeSmall
+                font.pixelSize: Theme.settingsFontSize
                 color: section.isDropTarget ? Theme.primary : Theme.surfaceVariantText
             }
         }

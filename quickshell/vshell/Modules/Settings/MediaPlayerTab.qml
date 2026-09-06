@@ -54,7 +54,6 @@ Item {
 
                 SettingsToggleRow {
                     text: I18n.tr("Audio Visualizer")
-                    description: I18n.tr("Show cava audio visualizer in media widget")
                     checked: SettingsData.audioVisualizerEnabled
                     onToggled: checked => SettingsData.set("audioVisualizerEnabled", checked)
                 }
@@ -71,7 +70,6 @@ Item {
                     property var scrollOptsDisplay: [I18n.tr("Change Volume", "media scroll wheel option"), I18n.tr("Change Song", "media scroll wheel option"), I18n.tr("Nothing", "media scroll wheel option")]
 
                     text: I18n.tr("Scroll Wheel")
-                    description: I18n.tr("Action performed when scrolling on the media widget")
                     settingKey: "audioScrollMode"
                     tags: ["media", "music", "scroll"]
                     options: scrollOptsDisplay
@@ -101,7 +99,7 @@ Item {
                         StyledText {
                             anchors.left: parent.left
                             text: I18n.tr("Volume Step")
-                            font.pixelSize: Theme.fontSizeSmall
+                            font.pixelSize: Theme.settingsFontSize
                             color: Theme.surfaceVariantText
                             font.weight: Font.Medium
                             horizontalAlignment: Text.AlignLeft
@@ -114,7 +112,7 @@ Item {
                             placeholderText: "5"
                             text: SettingsData.audioWheelScrollAmount
                             maximumLength: 2
-                            font.pixelSize: Theme.fontSizeSmall
+                            font.pixelSize: Theme.settingsFontSize
                             topPadding: Theme.spacingXS
                             bottomPadding: Theme.spacingXS
                             onEditingFinished: SettingsData.set("audioWheelScrollAmount", parseInt(text, 10))
@@ -149,8 +147,8 @@ Item {
                     spacing: Theme.spacingM
 
                     StyledText {
-                        text: I18n.tr("Hide specific applications from media controls (e.g., browser audio streams, background tools). Matches player identity or desktop file name case-insensitively.")
-                        font.pixelSize: Theme.fontSizeSmall
+                        text: I18n.tr("Hide players by name or desktop file name. Case does not matter.")
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceVariantText
                         wrapMode: Text.WordWrap
                         width: parent.width
@@ -165,7 +163,7 @@ Item {
                             width: parent.width - addBtn.width - selectAppBtn.width - Theme.spacingS * 2
                             height: 36
                             placeholderText: I18n.tr("App name or identity (e.g., firefox)")
-                            font.pixelSize: Theme.fontSizeSmall
+                            font.pixelSize: Theme.settingsFontSize
                             onAccepted: {
                                 if (text.trim() !== "") {
                                     SettingsData.addMediaExcludePlayer(text.trim());
@@ -233,7 +231,7 @@ Item {
 
                                         StyledText {
                                             text: modelData
-                                            font.pixelSize: Theme.fontSizeSmall
+                                            font.pixelSize: Theme.settingsFontSize
                                             color: Theme.surfaceText
                                             anchors.verticalCenter: parent.verticalCenter
                                         }
@@ -257,7 +255,7 @@ Item {
                     StyledText {
                         visible: !SettingsData.mediaExcludePlayers || SettingsData.mediaExcludePlayers.length === 0
                         text: I18n.tr("No players excluded yet — add an app name above to hide it from media controls")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         font.italic: true
                         color: Theme.surfaceVariantText
                         horizontalAlignment: Text.AlignHCenter

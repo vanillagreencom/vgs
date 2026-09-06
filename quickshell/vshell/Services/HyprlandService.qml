@@ -23,7 +23,75 @@ Singleton {
     function generateLayoutConfig() {
         layoutApplyTimer.restart();
     }
-    function generateOutputsConfig() {}
+    property var outputs: ({})
+    property bool outputsAvailable: false
+    property bool outputsLoading: false
+    property string outputsError: ""
+    property string outputRecoveryToken: ""
+    property string outputPreviewToken: ""
+
+    function requestOutputs() {
+        if (outputsLoading || !CompositorService.isHyprland)
+            return;
+        outputsLoading = true;
+        outputsCommand("current", [], result => {
+            outputsLoading = false;
+            outputsAvailable = result.ok;
+            outputsError = result.ok ? result.recoveryError || "" : result.error || I18n.tr("Could not read displays");
+            outputRecoveryToken = result.recoveryToken || "";
+            if (result.ok)
+                outputs = result.outputs;
+        });
+    }
+
+    function outputsCommand(action, args, callback) {
+        Proc.runCommand(null, [Paths.vshellCli, "config", "hyprland-outputs-" + action].concat(args), (output, exitCode, errorOutput) => {
+            let result;
+            try {
+                result = JSON.parse(output);
+            } catch (error) {
+                result = {ok: false, error: errorOutput || output || I18n.tr("No response from display control")};
+            }
+            if (exitCode !== 0)
+                result.ok = false;
+            if (!result.ok)
+                ToastService.showError(I18n.tr("Display settings failed"), result.error || errorOutput, "", "display-config");
+            callback(result);
+        }, 0, 15000);
+    }
+
+    function generateOutputsConfig(outputsData, settings, callback, preview = false) {
+        const payload = JSON.stringify({outputs: outputsData, settings: settings, displayNameMode: SettingsData.displayNameMode});
+        outputsCommand(preview ? "preview" : "write", [payload], result => {
+            if (result.ok && preview)
+                outputPreviewToken = result.token;
+            requestOutputs();
+            if (callback)
+                callback(result.ok);
+        });
+    }
+
+    function finishOutputPreview(keep, callback) {
+        outputsCommand(keep ? "confirm" : "revert", [outputPreviewToken], result => {
+            outputPreviewToken = "";
+            requestOutputs();
+            callback(result.ok);
+        });
+    }
+
+    Connections {
+        target: Hyprland
+        function onRawEvent(event) {
+            if (["monitoradded", "monitorremoved", "configreloaded"].includes(event.name))
+                outputRefreshTimer.restart();
+        }
+    }
+
+    Timer {
+        id: outputRefreshTimer
+        interval: 500
+        onTriggered: root.requestOutputs()
+    }
     function generateCursorConfig() {}
     function setLayoutXray(enabled) { layoutXrayEnabled = !!enabled; }
     function setLayoutBarXray(enabled) { layoutBarXrayEnabled = !!enabled; }

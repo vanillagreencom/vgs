@@ -235,7 +235,7 @@ Column {
             anchors.centerIn: parent
             width: parent.width - Theme.spacingL * 2
             text: I18n.tr("No widgets in this section. Use \"Add Widget\" to place one here.")
-            font.pixelSize: Theme.fontSizeSmall
+            font.pixelSize: Theme.settingsFontSize
             color: Theme.surfaceVariantText
             wrapMode: Text.WordWrap
             horizontalAlignment: Text.AlignHCenter
@@ -382,7 +382,7 @@ Column {
                             StyledText {
                                 width: parent.width
                                 text: modelData.description || ""
-                                font.pixelSize: Theme.fontSizeSmall
+                                font.pixelSize: Theme.settingsFontSize
                                 color: modelData.enabled ? Theme.outline : Theme.outlineVariant
                                 elide: Text.ElideRight
                             }
@@ -438,15 +438,14 @@ Column {
                         }
                     }
 
-                    Rectangle {
+                    Item {
                         visible: delegateItem.expanded
                         anchors.left: parent.left
                         anchors.right: parent.right
                         anchors.top: header.bottom
                         anchors.leftMargin: Theme.spacingL
                         anchors.rightMargin: Theme.spacingL
-                        height: 1
-                        color: Theme.withAlpha(Theme.outline, 0.35)
+                        height: Theme.spacingS
                     }
 
                     Loader {

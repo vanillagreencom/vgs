@@ -15,7 +15,7 @@ Singleton {
     id: root
     readonly property var log: Log.scoped("DisplayConfigState")
 
-    readonly property bool hasOutputBackend: WlrOutputService.wlrOutputAvailable
+    readonly property bool hasOutputBackend: CompositorService.isHyprland ? HyprlandService.outputsAvailable : CompositorService.isNiri
     readonly property var wlrOutputs: WlrOutputService.outputs
     property var outputs: ({})
     property var savedOutputs: ({})
@@ -852,6 +852,10 @@ Singleton {
     Connections {
         target: WlrOutputService
         function onStateReceived() {
+            if (CompositorService.isHyprland || CompositorService.isNiri) {
+                root.backendFetchOutputs();
+                return;
+            }
             root.outputs = root.buildOutputsMap();
             root.reloadSavedOutputs();
         }
@@ -861,6 +865,23 @@ Singleton {
         target: CompositorService
         function onCompositorChanged() {
             root.checkIncludeStatus();
+            root.backendFetchOutputs();
+        }
+    }
+
+    Connections {
+        target: HyprlandService
+        function onOutputsChanged() {
+            if (CompositorService.isHyprland)
+                root.outputs = HyprlandService.outputs;
+        }
+    }
+
+    Connections {
+        target: NiriService
+        function onOutputsChanged() {
+            if (CompositorService.isNiri)
+                root.outputs = NiriService.outputs;
         }
     }
 
@@ -868,6 +889,7 @@ Singleton {
         outputs = buildOutputsMap();
         reloadSavedOutputs();
         checkIncludeStatus();
+        backendFetchOutputs();
     }
 
     function reloadSavedOutputs() {
@@ -1392,6 +1414,14 @@ Singleton {
 
     function checkIncludeStatus() {
         const compositor = CompositorService.compositor;
+        if (compositor === "hyprland") {
+            checkingInclude = true;
+            HyprlandService.outputsCommand("status", [], result => {
+                checkingInclude = false;
+                includeStatus = result.ok ? result : {included: false, readOnly: true, statusMessage: result.error};
+            });
+            return;
+        }
         if (compositor !== "niri" && compositor !== "hyprland" && compositor !== "mango") {
             includeStatus = {
                 "exists": false,
@@ -1431,6 +1461,15 @@ Singleton {
     }
 
     function fixOutputsInclude() {
+        if (CompositorService.isHyprland) {
+            fixingInclude = true;
+            HyprlandService.outputsCommand("setup", [], result => {
+                fixingInclude = false;
+                checkIncludeStatus();
+                backendFetchOutputs();
+            });
+            return;
+        }
         if (readOnly) {
             showHyprlandReadOnlyWarning();
             return;
@@ -1576,7 +1615,12 @@ Singleton {
     }
 
     function backendFetchOutputs() {
-        WlrOutputService.requestState();
+        if (CompositorService.isHyprland)
+            HyprlandService.requestOutputs();
+        else if (CompositorService.isNiri)
+            NiriService.fetchOutputs();
+        else
+            WlrOutputService.requestState();
     }
 
     function backendWriteOutputsConfig(outputsData, settingsOrCallback, maybeCallback) {
@@ -1929,6 +1973,8 @@ Singleton {
             const val = pending[key];
             return (val !== null && val !== undefined) ? val : defaultValue;
         }
+        if (output?.hyprlandSettings && key in output.hyprlandSettings)
+            return output.hyprlandSettings[key];
         return SettingsData.getHyprlandOutputSetting(identifier, key, defaultValue);
     }
 
@@ -2072,7 +2118,7 @@ Singleton {
     }
 
     function applyChanges() {
-        if (!hasPendingChanges)
+        if (!hasPendingChanges || validatingConfig || HyprlandService.outputPreviewToken !== "")
             return;
         if (CompositorService.isHyprland && readOnly) {
             showHyprlandReadOnlyWarning();
@@ -2107,6 +2153,8 @@ Singleton {
                 changeDescriptions.push(outputId + ": " + I18n.tr("VRR On-Demand") + " → " + (changes.vrrOnDemand ? I18n.tr("Enabled") : I18n.tr("Disabled")));
             if (changes.focusAtStartup !== undefined)
                 changeDescriptions.push(outputId + ": " + I18n.tr("Focus at Startup") + " → " + (changes.focusAtStartup ? I18n.tr("Yes") : I18n.tr("No")));
+            if (changes.maxBpc !== undefined)
+                changeDescriptions.push(outputId + ": " + I18n.tr("Maximum colour depth") + " → " + (changes.maxBpc || I18n.tr("Automatic")));
             if (changes.hotCorners !== undefined)
                 changeDescriptions.push(outputId + ": " + I18n.tr("Hot Corners") + " → " + I18n.tr("Modified"));
             if (changes.layout !== undefined)
@@ -2121,6 +2169,8 @@ Singleton {
                 changeDescriptions.push(outputId + ": " + I18n.tr("Bit Depth") + " → " + changes.bitdepth);
             if (changes.colorManagement !== undefined)
                 changeDescriptions.push(outputId + ": " + I18n.tr("Color Management") + " → " + changes.colorManagement);
+            if (changes.icc !== undefined)
+                changeDescriptions.push(outputId + ": " + I18n.tr("ICC profile") + " → " + (changes.icc || I18n.tr("None")));
             if (changes.sdrBrightness !== undefined)
                 changeDescriptions.push(outputId + ": " + I18n.tr("SDR Brightness") + " → " + changes.sdrBrightness);
             if (changes.sdrSaturation !== undefined)
@@ -2135,6 +2185,16 @@ Singleton {
 
         if (CompositorService.isNiri) {
             validateAndApplyNiriConfig(changeDescriptions);
+            return;
+        }
+
+        if (CompositorService.isHyprland) {
+            validatingConfig = true;
+            HyprlandService.generateOutputsConfig(buildOutputsWithPendingChanges(), buildMergedHyprlandSettings(), success => {
+                validatingConfig = false;
+                if (success)
+                    changesApplied(changeDescriptions);
+            }, true);
             return;
         }
 
@@ -2215,6 +2275,10 @@ Singleton {
 
     function buildMergedHyprlandSettings() {
         const merged = JSON.parse(JSON.stringify(SettingsData.hyprlandOutputSettings));
+        for (const name in outputs) {
+            const identifier = getHyprlandOutputIdentifier(outputs[name], name);
+            merged[identifier] = Object.assign({}, merged[identifier] || {}, outputs[name].hyprlandSettings || {});
+        }
         for (const outputId in pendingHyprlandChanges) {
             if (!merged[outputId])
                 merged[outputId] = {};
@@ -2255,6 +2319,17 @@ Singleton {
     }
 
     function confirmChanges(profileId) {
+        if (CompositorService.isHyprland && HyprlandService.outputPreviewToken !== "") {
+            HyprlandService.finishOutputPreview(true, success => {
+                if (success) {
+                    commitHyprlandSettingsChanges();
+                    confirmChanges(profileId);
+                } else {
+                    clearPendingChanges();
+                }
+            });
+            return;
+        }
         const outputConfigs = buildCurrentOutputConfigs();
         lastAppliedEntry = {
             outputs: outputConfigs
@@ -2277,6 +2352,15 @@ Singleton {
     }
 
     function revertChanges() {
+        if (CompositorService.isHyprland && HyprlandService.outputPreviewToken !== "") {
+            HyprlandService.finishOutputPreview(false, success => {
+                if (originalDisplayNameMode !== "")
+                    SettingsData.displayNameMode = originalDisplayNameMode;
+                clearPendingChanges();
+                changesReverted();
+            });
+            return;
+        }
         const hadFormatChange = originalDisplayNameMode !== "";
         const hadNiriChanges = originalNiriSettings !== null;
         const hadHyprlandChanges = originalHyprlandSettings !== null;

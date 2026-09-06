@@ -13,6 +13,7 @@ Item {
     property bool toggling: false
     property string text: ""
     property string description: ""
+    property bool settingsContext: Theme.isSettingsItem(toggle)
     property color descriptionColor: Theme.surfaceVariantText
     property bool hideText: false
     // Inset between the row bounds and the label/track. Settings rows set 0 so
@@ -77,7 +78,7 @@ Item {
             id: textColumn
             width: parent.width
             anchors.verticalCenter: parent.verticalCenter
-            spacing: Theme.spacingXS
+            spacing: toggle.settingsContext ? Theme.spacingXXS : Theme.spacingXS
 
             StyledText {
                 id: labelText
@@ -92,10 +93,11 @@ Item {
             StyledText {
                 id: descriptionText
                 text: toggle.description
-                font.pixelSize: Theme.fontSizeSmall
+                font.pixelSize: toggle.settingsContext ? Theme.settingsFontSize : Theme.fontSizeSmall
                 color: toggle.descriptionColor
-                wrapMode: Text.WordWrap
-                width: parent.width
+                wrapMode: Text.Wrap
+                elide: Text.ElideNone
+                width: toggle.settingsContext ? Math.min(parent.width, Theme.settingsDescriptionWidth) : parent.width
                 visible: toggle.description.length > 0
                 horizontalAlignment: Text.AlignLeft
             }

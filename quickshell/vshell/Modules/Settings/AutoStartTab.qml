@@ -426,7 +426,7 @@ Item {
 
                             StyledText {
                                 text: I18n.tr("Select a desktop application")
-                                font.pixelSize: Theme.fontSizeSmall
+                                font.pixelSize: Theme.settingsFontSize
                                 color: Theme.surfaceVariantText
                             }
                         }
@@ -521,7 +521,7 @@ Item {
 
                             StyledText {
                                 text: I18n.tr("Wrap the app command. %command% is replaced with the actual executable")
-                                font.pixelSize: Theme.fontSizeSmall
+                                font.pixelSize: Theme.settingsFontSize
                                 color: Theme.surfaceVariantText
                             }
                         }
@@ -558,7 +558,7 @@ Item {
 
                             StyledText {
                                 text: I18n.tr("Display name for this entry")
-                                font.pixelSize: Theme.fontSizeSmall
+                                font.pixelSize: Theme.settingsFontSize
                                 color: Theme.surfaceVariantText
                             }
                         }
@@ -589,7 +589,7 @@ Item {
 
                             StyledText {
                                 text: I18n.tr("Full command to execute")
-                                font.pixelSize: Theme.fontSizeSmall
+                                font.pixelSize: Theme.settingsFontSize
                                 color: Theme.surfaceVariantText
                             }
                         }
@@ -606,7 +606,7 @@ Item {
                 StyledText {
                     width: parent.width
                     text: I18n.tr("These add entries to the XDG autostart directory (~/.config/autostart/*.desktop)")
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.surfaceVariantText
                     wrapMode: Text.WordWrap
                     horizontalAlignment: Text.AlignHCenter
@@ -647,7 +647,7 @@ Item {
                     StyledText {
                         width: parent.width - clearAllButton.width - Theme.spacingM
                         text: I18n.tr("Applications and commands to start automatically when you log in")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceVariantText
                         wrapMode: Text.WordWrap
                         anchors.verticalCenter: parent.verticalCenter
@@ -701,7 +701,7 @@ Item {
 
                                 StyledText {
                                     text: (index + 1).toString()
-                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.pixelSize: Theme.settingsFontSize
                                     font.weight: Font.Medium
                                     color: Theme.primary
                                     width: 20
@@ -742,7 +742,7 @@ Item {
                                     StyledText {
                                         width: parent.width
                                         text: modelData.hidden ? I18n.tr("Disabled") : modelData.exec
-                                        font.pixelSize: Theme.fontSizeSmall
+                                        font.pixelSize: Theme.settingsFontSize
                                         color: Theme.surfaceVariantText
                                         maximumLineCount: 1
                                         elide: Text.ElideRight
@@ -800,7 +800,7 @@ Item {
                     StyledText {
                         width: parent.width
                         text: I18n.tr("If autostart app icons don't appear in the system tray, generate a systemd override to ensure VGS starts before autostart apps")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceVariantText
                         wrapMode: Text.WordWrap
                     }

@@ -54,11 +54,6 @@ Item {
             topPadding: Theme.spacingS
             spacing: Theme.spacingXL
 
-            ThemeSubNav {
-                width: parent.width
-                parentModal: root.parentModal
-                activeId: "screensaver"
-            }
 
             SettingsCard {
                 title: I18n.tr("Screensaver")
@@ -70,15 +65,14 @@ Item {
                 StyledText {
                     width: parent.width
                     wrapMode: Text.WordWrap
-                    text: I18n.tr("A decorative screensaver shown after idle, before the lock and monitor-off stages. Any key or mouse movement dismisses it; locking always replaces it.")
+                    text: I18n.tr("Appears before locking. Move the pointer or press a key to dismiss.")
                     color: Theme.surfaceVariantText
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                 }
 
                 SettingsToggleRow {
                     settingKey: "screensaverEnabled"
                     text: I18n.tr("Screensaver")
-                    description: I18n.tr("Start the screensaver when the session goes idle")
                     checked: SettingsData.screensaverEnabled
                     onToggled: checked => SettingsData.set("screensaverEnabled", checked)
                 }
@@ -125,7 +119,7 @@ Item {
                         wrapMode: Text.WordWrap
                         text: I18n.tr("Converts a picture into animated braille art. Leave empty to use the built-in VGS logo.")
                         color: Theme.surfaceVariantText
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                     }
 
                     StyledText {
@@ -133,9 +127,9 @@ Item {
                         visible: ScreensaverService.lastError !== "" && SettingsData.screensaverAsciiImagePath !== ""
                         wrapMode: Text.WordWrap
                         // Conversion requires optional ImageMagick. Report its absence instead of leaving a stale picture without an error.
-                        text: I18n.tr("Could not convert this picture — the screensaver keeps its previous art. %1").arg(ScreensaverService.lastError)
+                        text: I18n.tr("Could not load this picture. Previous image kept. %1").arg(ScreensaverService.lastError)
                         color: Theme.warning
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                     }
 
                     Item {
@@ -177,7 +171,7 @@ Item {
                         wrapMode: Text.WordWrap
                         text: I18n.tr("QtMultimedia is not available — the video screensaver requires Qt Multimedia")
                         color: Theme.warning
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                     }
 
                     Item {

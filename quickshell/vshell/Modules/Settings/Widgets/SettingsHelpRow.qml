@@ -52,10 +52,11 @@ Item {
 
         StyledText {
             text: root.description
-            font.pixelSize: Theme.fontSizeSmall
+            font.pixelSize: Theme.settingsFontSize
             color: Theme.surfaceVariantText
-            width: parent.width
-            wrapMode: Text.WordWrap
+            width: Math.min(parent.width, Theme.settingsDescriptionWidth)
+            wrapMode: Text.Wrap
+            elide: Text.ElideNone
             horizontalAlignment: Text.AlignLeft
         }
     }

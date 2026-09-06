@@ -105,6 +105,17 @@ Singleton {
 
         if (!contentItem)
             return;
+        let expanded = false;
+        for (let ancestor = item; ancestor && ancestor !== contentItem; ancestor = ancestor.parent) {
+            if (ancestor.collapsible === true && ancestor.expanded === false) {
+                ancestor.expanded = true;
+                expanded = true;
+            }
+        }
+        if (expanded) {
+            scrollTimer.restart();
+            return;
+        }
         const mapped = item.mapToItem(contentItem, 0, 0);
         const maxY = Math.max(0, flickable.contentHeight - flickable.height);
         const targetY = Math.min(maxY, Math.max(0, mapped.y - 16));

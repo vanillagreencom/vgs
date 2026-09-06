@@ -64,3 +64,24 @@ assert.equal(utils.modeIndexForConfig(dp1.modes, '2560x1440@143.981'), 1);
 assert.equal(utils.modeIndexForConfig(dp1.modes, '1920x1080@240.000'), -1, 'unknown configured mode stays explicit instead of silently falling back to preferred');
 
 console.log('Display config fixture tests passed.');
+
+const controlsSource = fs.readFileSync(path.join(__dirname, '..', 'quickshell/vshell/Modules/Settings/DisplayConfig/DisplaySettingsLogic.js'), 'utf8');
+const controls = new Function(`${controlsSource}\nreturn {brightnessDeviceName, previewScales, displayName};`)();
+const appleDevices = [
+  {name: 'apple-xdr', class: 'apple', label: 'Apple Pro Display XDR'},
+  {name: 'apple-studio', class: 'apple', label: 'Apple Studio Display'},
+];
+assert.equal(controls.brightnessDeviceName('DP-1', {model: 'ProDisplayXDR'}, appleDevices), 'apple-xdr');
+assert.equal(controls.brightnessDeviceName('DP-2', {model: 'StudioDisplay'}, appleDevices), 'apple-studio');
+assert.equal(controls.brightnessDeviceName('DP-3', {model: 'Unknown'}, appleDevices), '');
+assert.equal(controls.brightnessDeviceName('DP-2', {model: 'StudioDisplay'}, appleDevices, 'missing'), '', 'a disconnected pin must not control another monitor');
+assert.equal(controls.brightnessDeviceName('DP-2', {model: 'StudioDisplay'}, [...appleDevices, {...appleDevices[1], name: 'second-studio'}]), '', 'duplicate models require an explicit assignment');
+assert.equal(controls.brightnessDeviceName('DP-2', {model: 'StudioDisplay'}, appleDevices, 'apple-xdr'), 'apple-xdr');
+assert.equal(controls.brightnessDeviceName('DP-2', {}, [{name: 'ddc', class: 'ddc', connector: 'DP-2'}]), 'ddc');
+assert.equal(controls.displayName({model: 'StudioDisplay'}, 'DP-2'), 'Studio Display');
+const scales = controls.previewScales([1, 4 / 3, 1.6, 2, 2.5, 8 / 3, 3.2, 4], 2);
+assert.equal(scales.length, 5);
+assert(scales.includes(2));
+assert(scales.every((scale, index) => index === 0 || scale < scales[index - 1]));
+assert(controls.previewScales([1, 2, 3], 1.5).includes(1.5));
+console.log('Display selection and brightness matching tests passed.');

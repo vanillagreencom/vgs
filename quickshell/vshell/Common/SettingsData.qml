@@ -668,6 +668,10 @@ Singleton {
     property bool textFeatureTabularNumbers: false
     property int textFeatureStylisticSet: 0
     property bool systemFontsManaged: true
+    property string systemFontInterfaceFamily: ""
+    property string systemFontMonoFamily: ""
+    property int systemFontSize: 11
+    property string hyprlandFontFamily: ""
     property bool systemFontInterfaceAntialias: true
     property string systemFontInterfaceHinting: "slight"
     property string systemFontInterfaceSubpixel: "none"
@@ -1462,6 +1466,7 @@ Singleton {
     function applySystemFonts() {
         if (isGreeterMode)
             return;
+        updateCompositorLayout();
         Proc.runCommand("system-fonts-apply", [Paths.vshellCli, "fonts", "apply", "--json"], (output, exitCode, stderr) => {
             if (exitCode === 0)
                 return;

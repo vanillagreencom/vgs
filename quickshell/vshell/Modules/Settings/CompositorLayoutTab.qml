@@ -219,7 +219,7 @@ Item {
                                     return I18n.tr("Click Setup to create %1 and add the include to your compositor config").arg("vgs/layout");
                                 return "";
                             }
-                            font.pixelSize: Theme.fontSizeSmall
+                            font.pixelSize: Theme.settingsFontSize
                             color: Theme.surfaceVariantText
                             wrapMode: Text.WordWrap
                             width: parent.width
@@ -266,7 +266,7 @@ Item {
                         width: parent.width - Theme.iconSize - Theme.spacingM
                         anchors.verticalCenter: parent.verticalCenter
                         text: I18n.tr("An xray rule at %1 may conflict with the Xray settings below").arg(root.xrayConflictSource)
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceVariantText
                         wrapMode: Text.WordWrap
                     }
@@ -327,7 +327,7 @@ Item {
                     tags: ["niri", "xray", "blur", "background-effect", "performance"]
                     settingKey: "niriLayoutXrayEnabled"
                     text: I18n.tr("Xray Blur Effect")
-                    description: I18n.tr("Blurred surfaces show the wallpaper instead of the content beneath")
+                    description: I18n.tr("Blur the wallpaper instead of windows.")
                     checked: NiriService.layoutXrayEnabled
                     onToggled: checked => NiriService.setLayoutXray(checked)
                 }
@@ -337,7 +337,7 @@ Item {
                     tags: ["niri", "xray", "bar", "performance"]
                     settingKey: "niriLayoutBarXrayEnabled"
                     text: I18n.tr("VGS Bar Xray")
-                    description: I18n.tr("Always blur against the wallpaper, even with Xray off")
+                    description: I18n.tr("Use wallpaper blur even when Xray is off.")
                     checked: NiriService.layoutBarXrayEnabled
                     onToggled: checked => NiriService.setLayoutBarXray(checked)
                 }
@@ -420,7 +420,7 @@ Item {
                     tags: ["hyprland", "xray", "blur", "background-effect", "performance"]
                     settingKey: "hyprlandLayoutXrayEnabled"
                     text: I18n.tr("Xray Blur Effect")
-                    description: I18n.tr("Blurred surfaces show the wallpaper instead of the content beneath")
+                    description: I18n.tr("Blur the wallpaper instead of windows.")
                     checked: HyprlandService.layoutXrayEnabled
                     onToggled: checked => HyprlandService.setLayoutXray(checked)
                 }
@@ -430,7 +430,7 @@ Item {
                     tags: ["hyprland", "xray", "bar", "performance"]
                     settingKey: "hyprlandLayoutBarXrayEnabled"
                     text: I18n.tr("VGS Bar Xray")
-                    description: I18n.tr("Always blur against the wallpaper, even with Xray off")
+                    description: I18n.tr("Use wallpaper blur even when Xray is off.")
                     checked: HyprlandService.layoutBarXrayEnabled
                     onToggled: checked => HyprlandService.setLayoutBarXray(checked)
                 }

@@ -280,7 +280,7 @@ Item {
 
                         StyledText {
                             text: I18n.tr("Version")
-                            font.pixelSize: Theme.fontSizeSmall
+                            font.pixelSize: Theme.settingsFontSize
                             color: Theme.surfaceVariantText
                             horizontalAlignment: Text.AlignLeft
                         }
@@ -305,7 +305,7 @@ Item {
 
                         StyledText {
                             text: I18n.tr("API")
-                            font.pixelSize: Theme.fontSizeSmall
+                            font.pixelSize: Theme.settingsFontSize
                             color: Theme.surfaceVariantText
                             horizontalAlignment: Text.AlignLeft
                         }
@@ -330,7 +330,7 @@ Item {
 
                         StyledText {
                             text: I18n.tr("Status")
-                            font.pixelSize: Theme.fontSizeSmall
+                            font.pixelSize: Theme.settingsFontSize
                             color: Theme.surfaceVariantText
                             horizontalAlignment: Text.AlignLeft
                         }
@@ -363,7 +363,7 @@ Item {
 
                     StyledText {
                         text: I18n.tr("Socket")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceVariantText
                         width: parent.width
                         horizontalAlignment: Text.AlignLeft
@@ -371,7 +371,7 @@ Item {
 
                     StyledText {
                         text: VGSBackendService.socketPath.length > 0 ? VGSBackendService.socketPath : I18n.tr("Not exported")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         font.family: "monospace"
                         color: Theme.surfaceText
                         width: parent.width
@@ -387,7 +387,7 @@ Item {
 
                     StyledText {
                         text: I18n.tr("Last Error")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceVariantText
                         width: parent.width
                         horizontalAlignment: Text.AlignLeft
@@ -395,7 +395,7 @@ Item {
 
                     StyledText {
                         text: VGSBackendService.lastError
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.error
                         width: parent.width
                         wrapMode: Text.WordWrap
@@ -409,7 +409,7 @@ Item {
 
                     StyledText {
                         text: I18n.tr("Build Log")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceVariantText
                         width: parent.width
                         horizontalAlignment: Text.AlignLeft
@@ -417,7 +417,7 @@ Item {
 
                     StyledText {
                         text: VGSBackendService.backendBuildLogPath
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         font.family: "monospace"
                         color: Theme.surfaceText
                         width: parent.width
@@ -436,7 +436,7 @@ Item {
 
                         StyledText {
                             text: I18n.tr("VGS Protocol")
-                            font.pixelSize: Theme.fontSizeSmall
+                            font.pixelSize: Theme.settingsFontSize
                             color: Theme.surfaceVariantText
                             horizontalAlignment: Text.AlignLeft
                         }
@@ -461,7 +461,7 @@ Item {
 
                         StyledText {
                             text: I18n.tr("Methods")
-                            font.pixelSize: Theme.fontSizeSmall
+                            font.pixelSize: Theme.settingsFontSize
                             color: Theme.surfaceVariantText
                             horizontalAlignment: Text.AlignLeft
                         }
@@ -483,7 +483,7 @@ Item {
 
                     StyledText {
                         text: I18n.tr("Unavailable Capabilities")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceVariantText
                         width: parent.width
                         horizontalAlignment: Text.AlignLeft
@@ -506,7 +506,7 @@ Item {
                                     id: missingCapText
                                     anchors.centerIn: parent
                                     text: modelData
-                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.pixelSize: Theme.settingsFontSize
                                     color: Theme.warning
                                 }
                             }
@@ -521,7 +521,7 @@ Item {
 
                     StyledText {
                         text: I18n.tr("Capabilities")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceVariantText
                         width: parent.width
                         horizontalAlignment: Text.AlignLeft
@@ -544,7 +544,7 @@ Item {
                                     id: capText
                                     anchors.centerIn: parent
                                     text: modelData
-                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.pixelSize: Theme.settingsFontSize
                                     color: Theme.primary
                                 }
                             }

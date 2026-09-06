@@ -62,7 +62,7 @@ Item {
                                 return devices.length === 1 ? I18n.tr("%1 adapter, none connected").arg(devices.length) : I18n.tr("%1 adapters, none connected").arg(devices.length);
                             return I18n.tr("%1 connected").arg(connected);
                         }
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: NetworkService.ethernetConnected ? Theme.primary : Theme.surfaceVariantText
                         width: parent.width
                         horizontalAlignment: Text.AlignLeft
@@ -96,7 +96,7 @@ Item {
 
                             StyledText {
                                 text: I18n.tr("Wired adapters appear here when detected")
-                                font.pixelSize: Theme.fontSizeSmall
+                                font.pixelSize: Theme.settingsFontSize
                                 color: Theme.surfaceVariantText
                                 anchors.horizontalCenter: parent.horizontalCenter
                             }
@@ -198,20 +198,20 @@ Item {
                                                                 return modelData.state || I18n.tr("Unknown");
                                                             }
                                                         }
-                                                        font.pixelSize: Theme.fontSizeSmall
+                                                        font.pixelSize: Theme.settingsFontSize
                                                         color: isConnected ? Theme.primary : Theme.surfaceVariantText
                                                     }
 
                                                     StyledText {
                                                         text: "•"
-                                                        font.pixelSize: Theme.fontSizeSmall
+                                                        font.pixelSize: Theme.settingsFontSize
                                                         color: Theme.surfaceVariantText
                                                         visible: (modelData.ip || "").length > 0
                                                     }
 
                                                     StyledText {
                                                         text: modelData.ip || ""
-                                                        font.pixelSize: Theme.fontSizeSmall
+                                                        font.pixelSize: Theme.settingsFontSize
                                                         color: Theme.surfaceVariantText
                                                         visible: (modelData.ip || "").length > 0
                                                     }
@@ -293,11 +293,8 @@ Item {
                                         width: parent.width
                                         visible: isExpanded
 
-                                        Rectangle {
+                                        SettingsDivider {
                                             width: parent.width - Theme.spacingM * 2
-                                            height: 1
-                                            x: Theme.spacingM
-                                            color: Theme.outlineLight
                                         }
 
                                         Item {
@@ -367,14 +364,14 @@ Item {
 
                                                                 StyledText {
                                                                     text: modelData.label + ":"
-                                                                    font.pixelSize: Theme.fontSizeSmall
+                                                                    font.pixelSize: Theme.settingsFontSize
                                                                     color: Theme.surfaceVariantText
                                                                     anchors.verticalCenter: parent.verticalCenter
                                                                 }
 
                                                                 StyledText {
                                                                     text: modelData.value
-                                                                    font.pixelSize: Theme.fontSizeSmall
+                                                                    font.pixelSize: Theme.settingsFontSize
                                                                     color: Theme.surfaceText
                                                                     font.weight: Font.Medium
                                                                     anchors.verticalCenter: parent.verticalCenter
@@ -458,7 +455,7 @@ Item {
 
                                         StyledText {
                                             text: modelData.isActive ? I18n.tr("Active") : ""
-                                            font.pixelSize: Theme.fontSizeSmall
+                                            font.pixelSize: Theme.settingsFontSize
                                             color: Theme.primary
                                             visible: modelData.isActive
                                         }

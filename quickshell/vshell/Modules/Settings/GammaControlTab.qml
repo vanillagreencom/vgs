@@ -199,7 +199,7 @@ Item {
 
                                 StyledText {
                                     text: I18n.tr("Hour")
-                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.pixelSize: Theme.settingsFontSize
                                     color: Theme.surfaceVariantText
                                     width: 70
                                     horizontalAlignment: Text.AlignHCenter
@@ -207,7 +207,7 @@ Item {
 
                                 StyledText {
                                     text: I18n.tr("Minute")
-                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.pixelSize: Theme.settingsFontSize
                                     color: Theme.surfaceVariantText
                                     width: 70
                                     horizontalAlignment: Text.AlignHCenter
@@ -314,7 +314,7 @@ Item {
                             id: ipLocationToggle
                             width: parent.width
                             text: I18n.tr("Use IP Location")
-                            description: I18n.tr("Detect your location automatically from your IP address")
+                            description: I18n.tr("Uses your IP address.")
                             checked: SessionData.nightModeUseIPLocation || false
                             onToggled: checked => {
                                 SessionData.setNightModeUseIPLocation(checked);
@@ -347,7 +347,7 @@ Item {
 
                                     StyledText {
                                         text: I18n.tr("Latitude")
-                                        font.pixelSize: Theme.fontSizeSmall
+                                        font.pixelSize: Theme.settingsFontSize
                                         color: Theme.surfaceVariantText
                                     }
 
@@ -370,7 +370,7 @@ Item {
 
                                     StyledText {
                                         text: I18n.tr("Longitude")
-                                        font.pixelSize: Theme.fontSizeSmall
+                                        font.pixelSize: Theme.settingsFontSize
                                         color: Theme.surfaceVariantText
                                     }
 
@@ -391,7 +391,7 @@ Item {
 
                             StyledText {
                                 text: I18n.tr("Night mode follows sunrise and sunset at these coordinates")
-                                font.pixelSize: Theme.fontSizeSmall
+                                font.pixelSize: Theme.settingsFontSize
                                 color: Theme.surfaceVariantText
                                 width: parent.width
                                 wrapMode: Text.WordWrap
@@ -444,7 +444,7 @@ Item {
 
                                 StyledText {
                                     text: I18n.tr("Current Temperature")
-                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.pixelSize: Theme.settingsFontSize
                                     color: Theme.surfaceVariantText
                                     anchors.horizontalCenter: parent.horizontalCenter
                                 }
@@ -479,7 +479,7 @@ Item {
 
                                 StyledText {
                                     text: I18n.tr("Current Period")
-                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.pixelSize: Theme.settingsFontSize
                                     color: Theme.surfaceVariantText
                                     anchors.horizontalCenter: parent.horizontalCenter
                                 }
@@ -521,7 +521,7 @@ Item {
 
                                 StyledText {
                                     text: I18n.tr("Sunrise")
-                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.pixelSize: Theme.settingsFontSize
                                     color: Theme.surfaceVariantText
                                     anchors.horizontalCenter: parent.horizontalCenter
                                 }
@@ -557,7 +557,7 @@ Item {
 
                                 StyledText {
                                     text: I18n.tr("Sunset")
-                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.pixelSize: Theme.settingsFontSize
                                     color: Theme.surfaceVariantText
                                     anchors.horizontalCenter: parent.horizontalCenter
                                 }
@@ -590,7 +590,7 @@ Item {
 
                                 StyledText {
                                     text: I18n.tr("Next Transition")
-                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.pixelSize: Theme.settingsFontSize
                                     color: Theme.surfaceVariantText
                                 }
 

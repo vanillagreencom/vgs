@@ -211,7 +211,7 @@ FloatingWindow {
                             .arg(VGSThemeCatalogService.entries.length)
                             .arg(VGSThemeCatalogService.installedCount)
                           : I18n.tr("No theme catalog found in this install.")
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.outline
                     wrapMode: Text.WordWrap
                 }
@@ -328,7 +328,7 @@ FloatingWindow {
                                         anchors.centerIn: parent
                                         visible: (cell.modelData.preview || "") === ""
                                         text: I18n.tr("No screenshot")
-                                        font.pixelSize: Theme.fontSizeSmall
+                                        font.pixelSize: Theme.settingsFontSize
                                         color: cell.modelData.foreground || Theme.surfaceVariantText
                                     }
 
@@ -349,7 +349,7 @@ FloatingWindow {
                                             id: installedLabel
                                             anchors.centerIn: parent
                                             text: cell.modelData.builtin ? I18n.tr("Included") : I18n.tr("Installed")
-                                            font.pixelSize: Theme.fontSizeSmall - 1
+                                            font.pixelSize: Theme.settingsFontSize - 1
                                             color: Theme.surfaceText
                                         }
                                     }
@@ -380,7 +380,7 @@ FloatingWindow {
                                     StyledText {
                                         id: sizeLabel
                                         text: VGSThemeCatalogService.formatSize(cell.modelData.size)
-                                        font.pixelSize: Theme.fontSizeSmall
+                                        font.pixelSize: Theme.settingsFontSize
                                         color: Theme.surfaceVariantText
                                         anchors.verticalCenter: parent.verticalCenter
                                     }

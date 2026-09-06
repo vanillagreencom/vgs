@@ -133,11 +133,6 @@ Item {
             topPadding: Theme.spacingS
             spacing: Theme.spacingXL
 
-            ThemeSubNav {
-                width: parent.width
-                parentModal: root.parentModal
-                activeId: "theme"
-            }
 
             SettingsCard {
                 title: I18n.tr("Current Theme")
@@ -182,7 +177,7 @@ Item {
                             StyledText {
                                 anchors.horizontalCenter: parent.horizontalCenter
                                 text: VGSThemeService.previewsGenerating ? I18n.tr("Rendering…") : I18n.tr("No preview")
-                                font.pixelSize: Theme.fontSizeSmall
+                                font.pixelSize: Theme.settingsFontSize
                                 color: Theme.surfaceVariantText
                             }
                         }
@@ -220,7 +215,7 @@ Item {
                                     id: modifiedBadgeText
                                     anchors.centerIn: parent
                                     text: I18n.tr("Modified")
-                                    font.pixelSize: Theme.fontSizeSmall - 1
+                                    font.pixelSize: Theme.settingsFontSize - 1
                                     color: Theme.surfaceText
                                 }
                             }
@@ -239,7 +234,7 @@ Item {
                                     id: modeText
                                     anchors.centerIn: parent
                                     text: (VGSThemeService.currentTheme.mode || "dark") === "light" ? I18n.tr("Light") : I18n.tr("Dark")
-                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.pixelSize: Theme.settingsFontSize
                                     color: Theme.surfaceVariantText
                                 }
                             }
@@ -254,7 +249,7 @@ Item {
                                     id: sourceText
                                     anchors.centerIn: parent
                                     text: (VGSThemeService.currentTheme.source || "generated") === "curated" ? I18n.tr("Curated") : I18n.tr("Generated")
-                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.pixelSize: Theme.settingsFontSize
                                     color: Theme.surfaceVariantText
                                 }
                             }
@@ -265,7 +260,7 @@ Item {
                             visible: (root.currentEntry.pair || "") !== ""
                             text: I18n.tr("Pairs with %1 for light/dark toggle").arg(root.currentEntry.pair || "")
                             color: Theme.surfaceVariantText
-                            font.pixelSize: Theme.fontSizeSmall
+                            font.pixelSize: Theme.settingsFontSize
                             elide: Text.ElideRight
                         }
                     }
@@ -331,7 +326,6 @@ Item {
                 SwitcherShortcutRow {
                     action: "spawn vshell ipc call theme-switcher toggle"
                     text: I18n.tr("Theme Switcher Shortcut")
-                    description: I18n.tr("Opens the full-screen theme switcher")
                     bindDescription: I18n.tr("Theme switcher")
                     panelWindow: root.parentModal
                 }
@@ -346,7 +340,7 @@ Item {
                 StyledText {
                     width: parent.width
                     wrapMode: Text.WordWrap
-                    text: I18n.tr("Pick any image and VGS builds a matching color theme for your whole desktop. Try it instantly — nothing is saved until you say so.")
+                    text: I18n.tr("Create a theme from an image. Preview before saving.")
                     color: Theme.surfaceVariantText
                     font.pixelSize: Theme.fontSizeMedium
                 }
@@ -398,7 +392,7 @@ Item {
                             width: parent.width
                             text: root.selectedWallpaper || I18n.tr("Choose an image, then set it as wallpaper or generate a full app palette.")
                             color: Theme.surfaceVariantText
-                            font.pixelSize: Theme.fontSizeSmall
+                            font.pixelSize: Theme.settingsFontSize
                             elide: Text.ElideMiddle
                         }
                     }
@@ -434,7 +428,7 @@ Item {
                             StyledText {
                                 text: I18n.tr("Light or Dark Result")
                                 color: Theme.surfaceVariantText
-                                font.pixelSize: Theme.fontSizeSmall
+                                font.pixelSize: Theme.settingsFontSize
                             }
 
                             VgsDropdown {
@@ -457,7 +451,7 @@ Item {
                                 StyledText {
                                     text: I18n.tr("Color Style")
                                     color: Theme.surfaceVariantText
-                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.pixelSize: Theme.settingsFontSize
                                 }
 
                                 VgsDropdown {
@@ -476,7 +470,7 @@ Item {
                                 StyledText {
                                     text: I18n.tr("Contrast")
                                     color: Theme.surfaceVariantText
-                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.pixelSize: Theme.settingsFontSize
                                 }
 
                                 VgsDropdown {
@@ -530,9 +524,9 @@ Item {
                 StyledText {
                     width: parent.width
                     wrapMode: Text.WordWrap
-                    text: I18n.tr("Keeps your current colors and wallpaper as a theme you can reapply anytime, with editable per-app files (saved under ~/.config/vshell/themes/).")
+                    text: I18n.tr("Save your current colours and wallpaper as a theme.")
                     color: Theme.surfaceVariantText
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                 }
                 Item {
                     width: Math.min(parent.width, Math.max(180, parent.width * 0.25))
