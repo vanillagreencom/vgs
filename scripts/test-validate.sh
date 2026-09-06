@@ -143,21 +143,24 @@ case_area_selection() {
   ok "each area selects exactly its own rows, the universal row, and nothing else"
 }
 
-USAGE_ERRORS='an unknown area;nope
-two area arguments;--list go qml
-an unknown option;--bogus'
+# label | argv | the fragment naming the arm: exit 2 covers all three.
+USAGE_ERRORS='an unknown area|nope|unknown area nope
+two area arguments|--list go qml|one area per run; got go and qml
+an unknown option|--bogus|unknown option --bogus'
 
 case_usage_errors() {
-  local name argv rows=0
+  local name argv arm rows=0
   local -a args
   write_runner "$FIXTURE_MANIFEST"
-  while IFS=';' read -r name argv; do
+  while IFS='|' read -r name argv arm; do
     [[ -n "$name" ]] || continue
     rows=$((rows + 1))
     read -r -a args <<<"$argv"
     fixture "${args[@]}"
     expect_rc 2 "$name"
     [[ -z "$out" ]] || fail "$name" "expected empty stdout, got: $out"
+    [[ "$err" == *"$arm"* ]] || fail "$name" "the arm was not named: $arm
+$err"
   done <<<"$USAGE_ERRORS"
   [[ $rows -eq 3 ]] || fail "usage errors" "expected 3 table rows, drove $rows"
   ok "a malformed invocation exits 2 having listed and run nothing"

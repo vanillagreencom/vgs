@@ -39,7 +39,8 @@ declare -A MESSAGES=(
   [lib-depth]='%s lives under a scripts/lib/ subdirectory this check does not route'
   [undetermined]='could not be determined'
 )
-ROUTER_RAN="no Go files matched backend/*.go"
+# Printed after the collection loop the router sits in, so a row that reached it has run it.
+ROUTER_RAN="no JS files found"
 
 # Plant tracked probes by path, mode, and first line. Binary probes contain NUL bytes and are
 # executable so they exercise content classification rather than the non-executable exemption.
@@ -106,6 +107,10 @@ expect_messages() { # reported path, comma-separated keys or -, present|absent
   local rel="$1" keys="$2" want="$3" key
   local -a list
   [[ "$keys" != - ]] || return 0
+  if [[ -z "$keys" ]]; then
+    fail "$rel" "empty message column: a row that asserts nothing is a lost field, not a clean row"
+    return
+  fi
   IFS=',' read -r -a list <<<"$keys"
   for key in "${list[@]}"; do
     expect_message "$rel" "$key" "$want"

@@ -140,9 +140,12 @@ expect_rc() {
   [[ "$rc" == "$1" ]] || fail "$2" "expected exit $1, got $rc"
 }
 
-# One sentinel per outcome class, on the channel that class reports through.
+# One sentinel per outcome class, on the channel that class reports through. The failing
+# classes also carry the cause the reader acts on (the foreign checkout, the entry the
+# classifier refused, the registry command's own diagnostic), because the FAILED header
+# alone is printed by a catch-all arm for any classifier exit.
 verdict_check() {
-  local label="$1" verdict="$2" sentinel channel
+  local label="$1" verdict="$2" sentinel channel cause=""
   case "$verdict" in
     passed)
       sentinel="surface smoke passed"
@@ -162,14 +165,27 @@ verdict_check() {
       ;;
     foreign)
       sentinel="surface smoke FAILED: a live VGS shell belongs to a different checkout"
+      cause="$foreign_root (pid 202)"
       channel="$err"
       ;;
-    unclassifiable)
+    malformed)
       sentinel="surface smoke FAILED: could not classify the instance registry"
+      cause="registry entries this script does not understand:"
+      channel="$err"
+      ;;
+    unparsable)
+      sentinel="surface smoke FAILED: could not classify the instance registry"
+      cause="unparsable qs list output"
+      channel="$err"
+      ;;
+    not-a-list)
+      sentinel="surface smoke FAILED: could not classify the instance registry"
+      cause="unexpected qs list output"
       channel="$err"
       ;;
     unreadable)
       sentinel="surface smoke FAILED: could not read the Quickshell instance registry"
+      cause="qs: could not open the instance directory"
       channel="$err"
       ;;
     *)
@@ -178,6 +194,7 @@ verdict_check() {
       ;;
   esac
   grep -qF -- "$sentinel" <<<"$channel" || fail "$label" "no verdict sentinel: $sentinel"
+  [[ -z "$cause" ]] || grep -qF -- "$cause" <<<"$channel" || fail "$label" "no cause reported: $cause"
 }
 
 # label; qs behaviour; registry JSON; process table; expected exit; verdict class.
@@ -195,15 +212,15 @@ a foreign shell.qml config path;ok;[$(entry 202 "$foreign_config/shell.qml")];pr
 a foreign entry whose process is a zombie;ok;[$(entry 303 "$foreign_config")];proc;$SKIP_STATUS;no-live
 a foreign entry whose pid was reused;ok;[$(entry 404 "$foreign_config")];proc;$SKIP_STATUS;no-live
 a foreign entry whose process is gone;ok;[$(entry 202 "$foreign_config")];empty;$SKIP_STATUS;no-live
-an unparsable registry;ok;not json at all;proc;1;unclassifiable
-an entry with no config_path;ok;[{\"pid\":101}];proc;1;unclassifiable
-an entry that is not an object;ok;[\"quickshell\"];proc;1;unclassifiable
-an entry with no pid;ok;[{\"config_path\":\"$own_config\"}];proc;1;unclassifiable
-an entry whose pid is a word;ok;[{\"config_path\":\"$own_config\",\"pid\":\"soon\"}];proc;1;unclassifiable
-an entry whose pid is zero;ok;[$(entry 0 "$own_config")];proc;1;unclassifiable
-an entry whose pid is negative;ok;[$(entry -1 "$own_config")];proc;1;unclassifiable
-an unreadable entry beside our own live shell;ok;[$(entry 101 "$own_config"), {\"pid\":202}];proc;1;unclassifiable
-a registry that is not a list;ok;{\"pid\":1};proc;1;unclassifiable
+an unparsable registry;ok;not json at all;proc;1;unparsable
+an entry with no config_path;ok;[{\"pid\":101}];proc;1;malformed
+an entry that is not an object;ok;[\"quickshell\"];proc;1;malformed
+an entry with no pid;ok;[{\"config_path\":\"$own_config\"}];proc;1;malformed
+an entry whose pid is a word;ok;[{\"config_path\":\"$own_config\",\"pid\":\"soon\"}];proc;1;malformed
+an entry whose pid is zero;ok;[$(entry 0 "$own_config")];proc;1;malformed
+an entry whose pid is negative;ok;[$(entry -1 "$own_config")];proc;1;malformed
+an unreadable entry beside our own live shell;ok;[$(entry 101 "$own_config"), {\"pid\":202}];proc;1;malformed
+a registry that is not a list;ok;{\"pid\":1};proc;1;not-a-list
 a registry command that fails;exit3;-;proc;1;unreadable"
 
 case_registry() {
