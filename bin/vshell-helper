@@ -9136,10 +9136,20 @@ def hyprland_outputs_current() -> Dict[str, Any]:
     return result
 
 
+def _hyprland_output_identifier(payload: Dict[str, Any], name: str, output: Dict[str, Any], *, settings_lookup: bool = False) -> str:
+    """Resolve the persisted selector or the existing settings-map key."""
+    if payload.get("displayNameMode") != "model" or not output.get("make") or not output.get("model"):
+        return name
+    if settings_lookup and output.get("explicitIdentifier"):
+        return name
+    # Native rules cannot use the synthetic serial kept in settings-map keys.
+    if not output.get("serial") and not settings_lookup:
+        return name
+    return ("desc:" + output["make"] + " " + output["model"] + " " + (output.get("serial") or "Unknown")).replace(",", "")
+
+
 def _hyprland_output_settings(payload: Dict[str, Any], name: str, output: Dict[str, Any]) -> Dict[str, Any]:
-    identifier = name
-    if payload.get("displayNameMode") == "model" and not output.get("explicitIdentifier") and output.get("make") and output.get("model"):
-        identifier = ("desc:" + output["make"] + " " + output["model"] + " " + (output.get("serial") or "Unknown")).replace(",", "")
+    identifier = _hyprland_output_identifier(payload, name, output, settings_lookup=True)
     options = dict(output.get("hyprlandSettings", {}))
     options.update(payload.get("settings", {}).get(identifier, {}))
     return options
@@ -9157,7 +9167,7 @@ def render_hyprland_outputs(payload: Dict[str, Any], live: Dict[str, Any]) -> st
         if name not in live:
             raise ValueError(f"Display {name} disconnected. Refresh before applying.")
         options = _hyprland_output_settings(payload, name, output)
-        fields: Dict[str, Any] = {"output": name, "disabled": False}
+        fields: Dict[str, Any] = {"output": _hyprland_output_identifier(payload, name, output), "disabled": False}
         if options.get("disabled", not output.get("enabled", True)):
             fields["disabled"] = True
         else:

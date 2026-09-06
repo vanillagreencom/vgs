@@ -5535,21 +5535,30 @@ def test_display_output_controls():
     rendered = helper.render_hyprland_outputs(payload, live)
     assert 'mode = "6016x3384@60.000"' in rendered
     assert 'cm = "dp3"' in rendered and "bitdepth = 10" in rendered
-    for fields, identifier, naming in [
-        ({}, "desc:Apple Computer Inc ProDisplayXDR test", "model"),
-        ({"make": ""}, "DP-1", "model"),
-        ({"model": ""}, "DP-1", "model"),
-        ({"make": "", "model": "", "serial": ""}, "DP-1", "model"),
-        ({"serial": ""}, "desc:Apple Computer Inc ProDisplayXDR Unknown", "model"),
-        ({"make": "Apple, Inc"}, "desc:Apple Inc ProDisplayXDR test", "model"),
-        ({"explicitIdentifier": True}, "DP-1", "model"),
-        ({}, "DP-1", "name"),
+    for fields, identifier, selector, naming in [
+        ({}, "desc:Apple Computer Inc ProDisplayXDR test", "desc:Apple Computer Inc ProDisplayXDR test", "model"),
+        ({"make": ""}, "DP-1", "DP-1", "model"),
+        ({"model": ""}, "DP-1", "DP-1", "model"),
+        ({"make": "", "model": "", "serial": ""}, "DP-1", "DP-1", "model"),
+        ({"serial": ""}, "desc:Apple Computer Inc ProDisplayXDR Unknown", "DP-1", "model"),
+        ({"make": "Apple, Inc"}, "desc:Apple Inc ProDisplayXDR test", "desc:Apple Inc ProDisplayXDR test", "model"),
+        ({"explicitIdentifier": True}, "DP-1", "desc:Apple Computer Inc ProDisplayXDR test", "model"),
+        ({"explicitIdentifier": True, "serial": ""}, "DP-1", "DP-1", "model"),
+        ({}, "DP-1", "DP-1", "system"),
     ]:
         candidate = {**output, **fields}
-        options = helper._hyprland_output_settings(
-            {"displayNameMode": naming, "settings": {identifier: {"colorManagement": "dp3", "vrrFullscreenOnly": True}}},
-            "DP-1", candidate)
-        assert options["colorManagement"] == "dp3" and options["vrrFullscreenOnly"], (fields, naming)
+        for connector in ("DP-1", "DP-5"):
+            settings_key = connector if identifier == "DP-1" else identifier
+            persisted_selector = connector if selector == "DP-1" else selector
+            request = {"outputs": {connector: candidate}, "displayNameMode": naming,
+                       "settings": {settings_key: {"colorManagement": "dp3", "vrrFullscreenOnly": True}}}
+            options = helper._hyprland_output_settings(request, connector, candidate)
+            assert options["colorManagement"] == "dp3" and options["vrrFullscreenOnly"], (fields, naming)
+            rendered_rule = helper.render_hyprland_outputs(request, {connector: candidate})
+            assert f"output = {helper._lua_string(persisted_selector)}," in rendered_rule, (fields, naming, connector, rendered_rule)
+            assert 'cm = "dp3"' in rendered_rule and "vrr = 2" in rendered_rule
+            readback = {**candidate, "hyprlandSettings": {**candidate["hyprlandSettings"], "colorManagement": "dp3"}}
+            helper.verify_hyprland_outputs(request, {connector: readback})
     applied = json.loads(json.dumps(live))
     applied["DP-1"]["hyprlandSettings"]["colorManagement"] = "dp3"
     helper.verify_hyprland_outputs(payload, applied)
