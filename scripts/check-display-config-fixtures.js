@@ -392,6 +392,25 @@ for (const key of [undefined, 'systemFontInterfaceHinting', 'systemFontSize']) {
     Proc: { runCommand: (_name, args) => command = args } }, null, key, 11);
   assert.equal(command.includes('--size-only'), key === 'systemFontSize', 'only a size edit claims size ownership');
 }
+const fontSpec = new Function(readQml('Common/settings/SettingsSpec.js').replace(/^\.pragma library\s*/, '') + '\nreturn {set};')();
+const compositorFontUpdate = new Function('context', 'with (context) {' + extractBlock(readQml('Common/SettingsData.qml'), 'function updateCompositorLayout()') + '}');
+for (const key of ['hyprlandFontFamily', 'systemFontInterfaceFamily']) {
+  for (const value of ['Noto Sans', '']) {
+    const calls = [];
+    const context = { isGreeterMode: false, systemFontsManaged: true,
+      hyprlandFontFamily: '', systemFontInterfaceFamily: '', Paths: { vshellCli: '/fixture/vshell' },
+      CompositorService: { isHyprland: true }, HyprlandService: { generateLayoutConfig: () => calls.push('layout') },
+      Proc: { runCommand: () => calls.push('app fonts') } };
+    context.updateCompositorLayout = () => compositorFontUpdate(context);
+    fontSpec.set(context, key, value, () => calls.push('save'), {
+      updateCompositorLayout: context.updateCompositorLayout,
+      applySystemFonts: (...args) => fontApply(context, ...args)
+    });
+    assert.equal(context[key], value, 'font selection and Default must persist');
+    assert.deepEqual(calls, key === 'hyprlandFontFamily' ? ['layout', 'save'] : ['layout', 'app fonts', 'save'],
+      key + ' must invoke only its owned font callbacks');
+  }
+}
 const testedPinFiles = new Set();
 function readPinSource(file) {
   testedPinFiles.add(file);

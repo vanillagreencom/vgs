@@ -326,7 +326,7 @@ var SPEC = {
     systemFontInterfaceFamily: { def: "", onChange: "applySystemFonts" },
     systemFontMonoFamily: { def: "", onChange: "applySystemFonts" },
     systemFontSize: { def: 11, onChange: "applySystemFonts" },
-    hyprlandFontFamily: { def: "", onChange: "applySystemFonts" },
+    hyprlandFontFamily: { def: "", onChange: "updateCompositorLayout" },
     systemFontInterfaceAntialias: { def: true, onChange: "applySystemFonts" },
     systemFontInterfaceHinting: { def: "slight", onChange: "applySystemFonts" },
     systemFontInterfaceSubpixel: { def: "none", onChange: "applySystemFonts" },
