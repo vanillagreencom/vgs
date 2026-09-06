@@ -63,8 +63,10 @@ case_row_shapes() { # One manifest row, replaced whole, must be refused by its o
   # Every row below replaces the same real row, so the tag half and the command half are
   # judged on one input and no row can pass because another row stayed well formed.
   local label row expect probe="$tmp/probe-runner"
+  rows=0
   while IFS=';' read -r label row expect; do
     [[ -n "$label" ]] || continue
+    rows=$((rows + 1))
     if ! ROW="$row" python3 - "$runner" >"$probe" <<'MUT'
 import os, sys
 t = open(sys.argv[1], encoding="utf-8").read()
@@ -91,6 +93,7 @@ a row combining the dash tag;-,go      | scripts/check-format-lint.sh;malformed 
 a row carrying only a modifier;may-skip  | scripts/check-format-lint.sh;cannot stand alone
 a row whose command is invalid shell;always    | scripts/check-format-lint.sh "oops;invalid shell syntax
 ROW_SHAPES
+  [[ $rows -eq 10 ]] || fail "ROW_SHAPES" "expected 10 table rows, drove $rows"
   ok "every malformed shape of a manifest row is refused by the diagnostic that names it"
 }
 
@@ -129,8 +132,10 @@ case_grammar_refusals() { # Every malformed grammar record is refused by its own
   # `append` adds a record, `drop` removes the lines matching a pattern, and `inert` adds a
   # token in a class that grants nothing.
   local label op argument expect from to grammar probe="$tmp/probe-grammar.conf"
+  rows=0
   while IFS=';' read -r label op argument expect; do
     [[ -n "$label" ]] || continue
+    rows=$((rows + 1))
     case "$op" in
       replace)
         from="${argument%%|*}"
@@ -186,6 +191,7 @@ a duplicated message;append;message row-empty-tags  a different wording;declares
 a duplicated line kind;append;kind token   min=5;declares the same record twice
 the default argument removed;drop;^token all ;wrong number of tokens in a class
 GRAMMAR_REFUSALS
+  [[ $rows -eq 19 ]] || fail "GRAMMAR_REFUSALS" "expected 19 table rows, drove $rows"
   ok "every malformed grammar record is refused by the diagnostic that names it"
 }
 
@@ -219,8 +225,10 @@ class argument   }" >"$tmp/unterminated.conf"
 case_arity() { # Every line kind refuses an incomplete record, through the runner and the guard.
   # Require runner usage status with no execution, and a named guard diagnostic without a traceback.
   local label bad expect rc out err
+  rows=0
   while IFS=';' read -r label bad expect; do
     [[ -n "$label" ]] || continue
+    rows=$((rows + 1))
     printf '%s\n%s\n' "$real_grammar" "$bad" >"$tmp/arity.conf"
     cp "$runner" "$fixture_dir/scripts/validate"
     chmod +x "$fixture_dir/scripts/validate"
@@ -246,6 +254,7 @@ a kind line with no counts;kind bogus;wrong number of fields
 a message line with no text;message somekey;wrong number of fields
 an unknown line kind;bogus x y;unknown line kind
 ARITY
+  [[ $rows -eq 8 ]] || fail "ARITY" "expected 8 table rows, drove $rows"
   ok "every line kind refuses an incomplete record: exit 2, nothing run, no traceback"
 }
 
@@ -260,8 +269,10 @@ case_zero_arity_kind() { # A line kind may not permit zero fields.
 
 case_counts() { # A non-integer count is diagnosed as a count, not as a boolean.
   local label from to
+  rows=0
   while IFS=';' read -r label from to; do
     [[ -n "$label" ]] || continue
+    rows=$((rows + 1))
     # Require mutation anchors in uncommented records so fixture edits affect parsed grammar.
     if ! sed -e 's/#.*//' "$repo_root/scripts/lib/validation-grammar.conf" | grep -qF -- "$from"; then
       fail "$label" "the anchor '$from' is not on an uncommented line, so the mutation is inert"
@@ -275,6 +286,7 @@ case_counts() { # A non-integer count is diagnosed as a count, not as a boolean.
 a non-integer class count is reported;skips=no  min=1;skips=no  min=banana
 a non-integer kind arity is reported;kind class   min=2;kind class   min=banana
 COUNTS
+  [[ $rows -eq 2 ]] || fail "COUNTS" "expected 2 table rows, drove $rows"
   ok "a count that is not an integer is diagnosed as a count at both the kind and class sites"
 }
 
@@ -282,8 +294,10 @@ case_canonical_counts() { # Noncanonical decimals are refused before Bash arithm
   # Leading zeros would otherwise be interpreted as octal. Require no listed commands and no
   # raw shell error as well as usage status.
   local label from to area rc out err
+  rows=0
   while IFS=';' read -r label from to; do
     [[ -n "$label" ]] || continue
+    rows=$((rows + 1))
     printf '%s' "${real_grammar/$from/$to}" >"$tmp/canon.conf"
     cp "$tmp/canon.conf" "$fixture_dir/scripts/lib/validation-grammar.conf"
     cp "$runner" "$fixture_dir/scripts/validate"
@@ -307,6 +321,7 @@ a decimal-point kind count is reported;kind token   min=2;kind token   min=2.0
 an empty kind count is reported;kind token   min=2;kind token   min=
 a signed class count is reported;skips=no  min=1;skips=no  min=+1
 CANON
+  [[ $rows -eq 6 ]] || fail "CANON" "expected 6 table rows, drove $rows"
   ok "a noncanonical decimal count is refused by both readers, with no shell arithmetic error"
 }
 
@@ -325,8 +340,10 @@ case_canonical_counts_accepted() { # Ordinary decimal counts still parse, includ
 case_defaults() { # Duplicate default eligibility is refused within a class and across classes.
   # A per-class cardinality check alone cannot establish global uniqueness.
   local label extra expect invocation rc out
+  rows=0
   while IFS=';' read -r label extra expect; do
     [[ -n "$label" ]] || continue
+    rows=$((rows + 1))
     printf '%s\n%s\n' "$real_grammar" "${extra//%%/$'\n'}" >"$tmp/default.conf"
     cp "$tmp/default.conf" "$fixture_dir/scripts/lib/validation-grammar.conf"
     cp "$runner" "$fixture_dir/scripts/validate"
@@ -347,6 +364,7 @@ case_defaults() { # Duplicate default eligibility is refused within a class and 
 two default-eligible tokens in different classes are reported;class other      selects=no  standalone=no  rowtag=no   exclusive=no  cli=yes universal=no  skips=no  min=1 max=1%%token everything other;exactly one CLI default token
 two default-eligible tokens in one class are reported;token everything argument;wrong number of tokens in a class
 DEFAULTS
+  [[ $rows -eq 2 ]] || fail "DEFAULTS" "expected 2 table rows, drove $rows"
   ok "a second default-eligible token is refused, whether it shares a class or not"
 }
 
@@ -354,8 +372,10 @@ case_repeats() { # A repeated named field is refused in kind and class records.
   # Positional token and message records have no named-field repetition; token arity rejects
   # the extra field instead.
   local label from to expect area rc out
+  rows=0
   while IFS=';' read -r label from to expect; do
     [[ -n "$label" ]] || continue
+    rows=$((rows + 1))
     printf '%s' "${real_grammar/$from/$to}" >"$tmp/repeat.conf"
     grep -qF -- "$to" "$tmp/repeat.conf" ||
       fail "$label" "the mutation did not apply, so the case cannot fail"
@@ -378,6 +398,7 @@ a repeated boolean on a class record is reported;class area       selects=yes;cl
 a repeated count on a class record is reported;skips=no  min=1;skips=no  min=1 min=9;repeats a field
 a repeated token field is refused as arity;token go         area;token go         area area;wrong number of fields
 REPEATS
+  [[ $rows -eq 5 ]] || fail "REPEATS" "expected 5 table rows, drove $rows"
   ok "a repeated field is refused by both readers wherever a record names its fields"
 }
 

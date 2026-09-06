@@ -16,8 +16,10 @@ echo "=== check-validation-inventory.py document area arms ==="
 # document that no longer anchors its list exactly once, so a moved anchor fails here
 # rather than leaving a row that cannot apply its own defect.
 anchored="$tmp/anchored-agents.md"
+rows=0
 while IFS='|' read -r label mutation verdict; do
   [[ -n "$label" ]] || continue
+  rows=$((rows + 1))
   if ! MUTATION="$mutation" python3 - "$repo_root/AGENTS.md" >"$anchored" <<'MUT'
 import os, pathlib, re, sys
 source = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
@@ -63,6 +65,7 @@ a second anchored region follows|append <!-- validate-areas -->areas `go`<!-- /v
 a second closing marker follows|append stray `docs-only`<!-- /validate-areas -->|refuse:must be anchored exactly once
 the anchored list names an area the runner refuses|replace-region areas `go`, `qml`, `helper`, `packaging`, `docs`, `docs-only`, `all`|refuse:as a validate area, but scripts/validate does not
 ANCHOR_MUTATIONS
+[[ $rows -eq 7 ]] || fail "ANCHOR_MUTATIONS" "expected 7 table rows, drove $rows"
 ok "the anchored region decides the stated area list, and every way of breaking it is named"
 
 # Every clean page below carries the live area list. Derive it from the tokens the runner
@@ -82,8 +85,10 @@ LIVE_ANCHOR="areas: <!-- validate-areas -->$live_areas<!-- /validate-areas -->"
 # for the live anchored line above; a row that needs a partial or wrong list spells it out.
 # The rows carry `;` and `|` inside their documents, so `~` separates the columns.
 areas_probe="$tmp/areas-probe.md"
+rows=0
 while IFS='~' read -r label document verdict wrong; do
   [[ -n "$label" ]] || continue
+  rows=$((rows + 1))
   printf '%b' "${document//@LIVE@/$LIVE_ANCHOR}" >"$areas_probe"
   run_guard "AGENTS_PATH=$areas_probe"
   if [[ "$verdict" == clean ]]; then
@@ -112,6 +117,7 @@ a marker nested two fences deep~how to write the anchor:\n\n````markdown\n```md\
 a nested fenced illustration beside a real anchor~@LIVE@\n\n````markdown\n```md\n<!-- validate-areas -->areas `bogus-area`<!-- /validate-areas -->\n```\n````\n~clean~
 punctuation and a line break inside the anchor~<!-- validate-areas -->areas `go`; `qml` / `helper`\n| `packaging` | `docs` | and `all`.<!-- /validate-areas -->\n~clean~
 FENCE_DOCS
+[[ $rows -eq 17 ]] || fail "FENCE_DOCS" "expected 17 table rows, drove $rows"
 ok "a fence decides whether the markers it holds are a picture or the contract"
 
 # Require actual documents to yield lists so wording controls cannot pass on an empty extraction.

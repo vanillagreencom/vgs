@@ -212,8 +212,10 @@ ok "an unreadable surface raises ManifestError naming the path, not a traceback"
 # Require shared diagnostics to match the definition, not merely another reader that can drift with them.
 drift_probe="$fixture_dir/scripts/drift-probe"
 cp "$repo_root/scripts/lib/validation-grammar.conf" "$fixture_dir/scripts/lib/"
+rows=0
 while IFS=';' read -r key row; do
   [[ -n "$key" ]] || continue
+  rows=$((rows + 1))
   text="$(sed -n "s/^message  *$key  *//p" "$repo_root/scripts/lib/validation-grammar.conf")"
   if [[ -z "$text" ]]; then
     fail "shared diagnostics" "the grammar declares no message for \`$key\`"
@@ -250,6 +252,7 @@ row-not-standalone;may-skip  | scripts/check-naming.sh
 row-empty-command;qml       |
 row-bad-syntax;qml       | scripts/check-naming.sh &&
 SHAPES
+[[ $rows -eq 6 ]] || fail "SHAPES" "expected 6 table rows, drove $rows"
 ok "both readers word every shared diagnostic exactly as the grammar does"
 
 # Compare reader diagnostics on duplicate tags. Membership can use a set, but cardinality
@@ -290,8 +293,10 @@ LIB
   library ($library_rc): ${library_said:-accepted}"
   fi
 }
+rows=0
 while IFS= read -r row_tags; do
   [[ -n "$row_tags" ]] || continue
+  rows=$((rows + 1))
   agree_row "$row_tags"
 done <<'ROWS'
 may-skip,may-skip
@@ -303,6 +308,7 @@ may-skip
 qml,
 notatoken
 ROWS
+[[ $rows -eq 8 ]] || fail "ROWS" "expected 8 table rows, drove $rows"
 ok "both readers classify every duplicate and malformed row identically"
 
 # Require accepted control rows to be listed by both readers. Agreement on refusal cannot prove whitespace acceptance.
@@ -449,8 +455,10 @@ fi
 # so partial grammar or manifest output cannot silently narrow validation.
 wrapper_dir="$tmp/failing-producers"
 mkdir -p "$wrapper_dir"
+rows=0
 while IFS=';' read -r tool invocations label; do
   [[ -n "$tool" ]] || continue
+  rows=$((rows + 1))
   real="$(command -v "$tool")"
   [[ -n "$real" ]] || { fail "$label" "no $tool on PATH to wrap"; continue; }
   printf '#!/usr/bin/env bash\n%s "$@"\nexit 42\n' "$real" >"$wrapper_dir/$tool"
@@ -474,6 +482,7 @@ done <<'PRODUCERS'
 sed;--list+docs --list+all docs --dump-grammar;a failing grammar producer exits 2 with nothing listed
 cat;--list+docs --list+all docs;a failing manifest producer exits 2 with nothing listed
 PRODUCERS
+[[ $rows -eq 2 ]] || fail "PRODUCERS" "expected 2 table rows, drove $rows"
 ok "a producer that emits valid bytes and then fails still exits 2 with nothing listed"
 
 # The same wrapper with successful status must pass so wrapper presence alone cannot satisfy the refusal.

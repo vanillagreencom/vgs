@@ -82,8 +82,10 @@ ok "a manifest row outside scripts/ that ci.yml never runs is reported"
 # Replace one real CI invocation per case with a nonexecuting mention or conditional path.
 # Arguments, comments, quoted separators, redirects, definitions, arrays, and optional branches
 # cannot establish unconditional command execution. Heredoc terminators need a multiline fixture.
+rows=0
 while IFS='|' read -r shape replacement; do
   [[ -n "$shape" ]] || continue
+  rows=$((rows + 1))
   doctored="$tmp/ci-$shape.yml"
   SHAPE_REPLACEMENT="$replacement" python3 - "$repo_root" "$doctored" <<'MENTION_ONLY'
 import os, pathlib, sys
@@ -105,12 +107,13 @@ done <<'SHAPES'
 argument|echo @
 comment|true  # was @
 quoted-separator|echo "( @ )"
-redirection|: > @
+redirection|> @
 function-definition|@() { :; }
 short-circuit|true || @
 conditional-branch|if false; then @; fi
 array-element|saved=(@)
 SHAPES
+[[ $rows -eq 8 ]] || fail "SHAPES" "expected 8 table rows, drove $rows"
 ok "a path CI only mentions in any shape above is not a path CI runs"
 
 # For <<EOF, only the exact delimiter ends the body. An indented look-alike remains data

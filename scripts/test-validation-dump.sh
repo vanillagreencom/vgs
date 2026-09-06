@@ -19,8 +19,10 @@ good_dump="$("$runner" --dump-grammar)"
 # Each row names the record it damages and the diagnostic that record must produce.
 # APPEND adds the `from` line to a valid dump, DROP removes every line that starts with it,
 # and BLANK empties the field beside it; any other `to` replaces the `from` text.
+rows=0
 while IFS=';' read -r label from to expect; do
   [[ -n "$label" ]] || continue
+  rows=$((rows + 1))
   case "$to" in
     APPEND) corrupt="$good_dump
 $from" ;;
@@ -59,6 +61,7 @@ a dump with no default line is refused;default;DROP;no `default` line
 a dump with no whitespace line is refused;whitespace;DROP;no `whitespace` line
 a dump whose source field is empty is refused;source;BLANK;`source` line is empty
 DUMPS
+[[ $rows -eq 22 ]] || fail "DUMPS" "expected 22 table rows, drove $rows"
 ok "a corrupt dump is refused, naming the record at fault"
 
 # Compare bare --list with the default resolved by the real dump.
@@ -119,8 +122,10 @@ dump_line_dir="$tmp/dump-line"
 mkdir -p "$dump_line_dir/scripts/lib"
 cp "$runner" "$dump_line_dir/scripts/validate"
 chmod +x "$dump_line_dir/scripts/validate"
+rows=0
 while IFS=';' read -r label escape; do
   [[ -n "$label" ]] || continue
+  rows=$((rows + 1))
   printf -v control_char '%b' "$escape"
   MARK="$control_char" python3 - "$repo_root/scripts/lib/validation-grammar.conf" \
     >"$dump_line_dir/scripts/lib/validation-grammar.conf" <<'MUT'
@@ -155,6 +160,7 @@ done <<'DUMPLINES'
 a vertical tab;\x0b
 a carriage return;\x0d
 DUMPLINES
+[[ $rows -eq 2 ]] || fail "DUMPLINES" "expected 2 table rows, drove $rows"
 ok "a \\v or \\r inside a dumped message is one dump line to the decoder, as the runner emitted it"
 
 # Build a real fixture tree under a spaced path so the emitted source field exercises its transport.
