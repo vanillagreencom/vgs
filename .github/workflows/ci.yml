@@ -241,6 +241,7 @@ jobs:
           # Exercise the validation runner itself, including its skip status.
           scripts/test-validate.sh
           scripts/test-qml-smoke.sh
+          scripts/test-validation-ci-coverage.sh
           # test-validation-inventory.sh runs in its own final step; see that step.
 
       - name: Helper and CLI checks
