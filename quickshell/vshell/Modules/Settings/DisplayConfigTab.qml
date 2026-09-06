@@ -28,6 +28,11 @@ Item {
     property string newProfileName: ""
     property string renameProfileName: ""
     property var editMonitorSelection: ({})
+    property string selectedOutput: ""
+    property bool showProfiles: false
+    property bool showArrangement: false
+    readonly property var outputNames: Object.keys(DisplayConfigState.allOutputs).filter(name => SettingsData.displayShowDisconnected || DisplayConfigState.allOutputs[name].connected)
+    readonly property string effectiveOutput: outputNames.includes(selectedOutput) ? selectedOutput : (outputNames[0] || "")
 
     function getProfileOptions() {
         return Object.values(DisplayConfigState.validatedProfiles).filter(p => p.name !== "").map(p => p.name);
@@ -92,7 +97,7 @@ Item {
             id: mainColumn
             topPadding: Theme.spacingXS
 
-            width: Math.min(550, parent.width - Theme.spacingL * 2)
+            width: Math.min(720, parent.width - Theme.spacingL * 2)
             anchors.horizontalCenter: parent.horizontalCenter
             spacing: Theme.spacingXL
 
@@ -100,11 +105,78 @@ Item {
                 width: parent.width
             }
 
+            StyledText {
+                text: I18n.tr("Displays")
+                font.pixelSize: Theme.fontSizeXLarge
+                font.weight: Font.Medium
+                color: Theme.surfaceText
+            }
+
+            DisplayPicker {
+                width: parent.width
+                selectedOutput: root.effectiveOutput
+                onSelected: name => root.selectedOutput = name
+            }
+
+            Flow {
+                width: parent.width
+                spacing: Theme.spacingM
+                VgsButton {
+                    text: root.showArrangement ? I18n.tr("Hide arrangement") : I18n.tr("Arrange…")
+                    variant: "secondary"
+                    iconName: "dashboard"
+                    onClicked: root.showArrangement = !root.showArrangement
+                }
+                VgsButton {
+                    text: root.showProfiles ? I18n.tr("Hide saved setups") : I18n.tr("Saved setups…")
+                    variant: "secondary"
+                    iconName: "tune"
+                    onClicked: root.showProfiles = !root.showProfiles
+                }
+                VgsButton {
+                    text: I18n.tr("Detect displays")
+                    variant: "secondary"
+                    iconName: "refresh"
+                    onClicked: DisplayConfigState.backendFetchOutputs()
+                }
+                VgsButton {
+                    text: I18n.tr("Retry display recovery")
+                    visible: HyprlandService.outputRecoveryToken !== ""
+                    onClicked: HyprlandService.outputsCommand("revert", [HyprlandService.outputRecoveryToken], result => DisplayConfigState.backendFetchOutputs())
+                }
+            }
+
+            OutputCard {
+                width: parent.width
+                visible: root.effectiveOutput !== ""
+                outputName: root.effectiveOutput
+                outputData: DisplayConfigState.allOutputs[root.effectiveOutput] || ({})
+                enabled: !DisplayConfigState.validatingConfig && HyprlandService.outputPreviewToken === ""
+            }
+
+            Row {
+                width: parent.width
+                spacing: Theme.spacingM
+                visible: DisplayConfigState.hasPendingChanges
+                VgsButton {
+                    text: DisplayConfigState.validatingConfig ? I18n.tr("Applying…") : I18n.tr("Apply changes")
+                    iconName: "check"
+                    enabled: !DisplayConfigState.validatingConfig && DisplayConfigState.includeStatus.included && HyprlandService.outputPreviewToken === ""
+                    onClicked: DisplayConfigState.applyChanges()
+                }
+                VgsButton {
+                    text: I18n.tr("Discard")
+                    variant: "secondary"
+                    enabled: !DisplayConfigState.validatingConfig && HyprlandService.outputPreviewToken === ""
+                    onClicked: DisplayConfigState.discardChanges()
+                }
+            }
+
             SettingsCard {
                 title: I18n.tr("Display Profiles")
                 iconName: "tune"
                 width: parent.width
-                visible: DisplayConfigState.hasOutputBackend
+                visible: DisplayConfigState.hasOutputBackend && root.showProfiles
 
                 headerActions: [
                     Column {
@@ -113,7 +185,7 @@ Item {
 
                         StyledText {
                             text: I18n.tr("Auto")
-                            font.pixelSize: Theme.fontSizeSmall
+                            font.pixelSize: Theme.settingsFontSize
                             color: Theme.surfaceVariantText
                             horizontalAlignment: Text.AlignHCenter
                             anchors.horizontalCenter: parent.horizontalCenter
@@ -141,7 +213,7 @@ Item {
 
                     StyledText {
                         text: I18n.tr("Save and switch between display configurations")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceVariantText
                         wrapMode: Text.WordWrap
                         width: parent.width
@@ -361,7 +433,7 @@ Item {
 
                                         StyledText {
                                             text: DisplayConfigState.allOutputs[modelData]?.connected ? I18n.tr("Connected") : I18n.tr("Disconnected")
-                                            font.pixelSize: Theme.fontSizeSmall
+                                            font.pixelSize: Theme.settingsFontSize
                                             color: DisplayConfigState.allOutputs[modelData]?.connected ? Theme.success : Theme.surfaceVariantText
                                         }
                                     }
@@ -395,10 +467,10 @@ Item {
             }
 
             SettingsCard {
-                title: I18n.tr("Monitor Configuration")
+                title: I18n.tr("Arrange displays")
                 iconName: "monitor"
                 width: parent.width
-                visible: DisplayConfigState.hasOutputBackend
+                visible: DisplayConfigState.hasOutputBackend && root.showArrangement
 
                 headerActions: [
                     Column {
@@ -407,7 +479,7 @@ Item {
 
                         StyledText {
                             text: I18n.tr("Snap")
-                            font.pixelSize: Theme.fontSizeSmall
+                            font.pixelSize: Theme.settingsFontSize
                             color: Theme.surfaceVariantText
                             horizontalAlignment: Text.AlignHCenter
                             anchors.horizontalCenter: parent.horizontalCenter
@@ -435,8 +507,8 @@ Item {
                         if (!selected)
                             return;
                         const newMode = index === 1 ? "model" : "system";
-                        DisplayConfigState.setOriginalDisplayNameMode(SettingsData.displayNameMode);
-                        SettingsData.displayNameMode = newMode;
+                        if (!DisplayConfigState.changeDisplayNameMode(newMode))
+                            displayFormatGroup.currentIndex = SettingsData.displayNameMode === "model" ? 1 : 0;
                     }
 
                     Connections {
@@ -454,7 +526,7 @@ Item {
 
                     StyledText {
                         text: I18n.tr("Arrange displays and configure resolution, refresh rate, and VRR")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceVariantText
                         wrapMode: Text.WordWrap
                         width: parent.width
@@ -486,14 +558,14 @@ Item {
                                         return I18n.tr("%1 disconnected").arg(disconnected.length);
                                     return I18n.tr("%1 disconnected (hidden)").arg(disconnected.length);
                                 }
-                                font.pixelSize: Theme.fontSizeSmall
+                                font.pixelSize: Theme.settingsFontSize
                                 color: Theme.surfaceVariantText
                                 anchors.verticalCenter: parent.verticalCenter
                             }
 
                             StyledText {
                                 text: SettingsData.displayShowDisconnected ? I18n.tr("Hide") : I18n.tr("Show")
-                                font.pixelSize: Theme.fontSizeSmall
+                                font.pixelSize: Theme.settingsFontSize
                                 color: Theme.primary
                                 anchors.verticalCenter: parent.verticalCenter
 
@@ -508,47 +580,22 @@ Item {
                             }
                         }
 
-                        Repeater {
-                            model: {
-                                const keys = Object.keys(DisplayConfigState.allOutputs || {});
-                                if (SettingsData.displayShowDisconnected)
-                                    return keys;
-                                return keys.filter(k => DisplayConfigState.allOutputs[k]?.connected);
-                            }
-
-                            delegate: OutputCard {
-                                required property string modelData
-                                outputName: modelData
-                                outputData: DisplayConfigState.allOutputs[modelData]
-                            }
-                        }
                     }
 
-                    Row {
-                        LayoutMirroring.enabled: false
-                        width: parent.width
-                        spacing: Theme.spacingS
-                        visible: DisplayConfigState.hasPendingChanges
-                        layoutDirection: Qt.RightToLeft
-
-                        VgsButton {
-                            text: I18n.tr("Apply Changes")
-                            iconName: "check"
-                            onClicked: DisplayConfigState.applyChanges()
-                        }
-
-                        VgsButton {
-                            variant: "secondary"
-                            text: I18n.tr("Discard")
-                            onClicked: DisplayConfigState.discardChanges()
-                        }
-                    }
                 }
             }
 
             NoBackendMessage {
                 width: parent.width
                 visible: !DisplayConfigState.hasOutputBackend
+            }
+            StyledText {
+                width: parent.width
+                visible: CompositorService.isHyprland && HyprlandService.outputsError !== ""
+                text: HyprlandService.outputsError
+                color: Theme.error
+                wrapMode: Text.WordWrap
+                font.pixelSize: Theme.settingsFontSize
             }
         }
     }

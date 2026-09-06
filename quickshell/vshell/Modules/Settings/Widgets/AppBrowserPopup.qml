@@ -206,7 +206,7 @@ FloatingWindow {
 
                                     StyledText {
                                         text: modelData.comment || modelData.genericName || ""
-                                        font.pixelSize: Theme.fontSizeSmall
+                                        font.pixelSize: Theme.settingsFontSize
                                         color: Theme.outline
                                         elide: Text.ElideRight
                                         width: parent.width

@@ -18,9 +18,13 @@ The helper owns parsing, generation and privileged operations. `bin/vshell` disp
 - Scratchpad removal releases the window instead of closing the application. Niri pads use persistent named workspaces; the toggle moves the window and restores focus. See `cmd_scratchpad`, `SCRATCHPAD_NIRI_ANCHORS` and the helper scratchpad tests.
 - A rejected scratchpad must not be launched or emitted into compositor configuration. See the validation paths in `bin/vshell-helper` and `scripts/check-vshell-niri.py`.
 - Brightness scans must not publish stale results. Repeated failures quarantine scans; potentially blocking probes run in separate processes. See `scripts/check-brightness.py` and `scripts/test-brightness-scan-ordering.js`.
+- Hyprland display previews retain the previous generated fragment under a transaction lock. A separate helper restores it if confirmation does not arrive. Startup reads and new applies recover expired previews or previews from another compositor session under that same lock; internal snapshot reads never acquire it recursively. `test_display_output_controls` in `scripts/check-vshell-helper.py` checks recovery, rejection and confirmation.
+- Live display validation excludes saved offline outputs. Preserve-only names retain the helper's exact generated rules until the user forgets them. `test_display_output_controls` checks offline ICC retention and removal; `scripts/check-display-config-fixtures.js` checks live and saved-setup payloads.
 - The remote-desktop unit starts only after its capture output is verified. Cleanup requires VGS ownership tied to the compositor instance. The remote-desktop lifecycle tests in `scripts/check-vshell-helper.py` enforce this contract.
 - Unknown remote-desktop state must not clear a known streaming indicator. `scripts/test-remote-desktop-state.js` checks state handling; helper journal tests cover the bounded session read.
 - Coding-agent stubs replace only VGS-owned files and must not hide an existing external command. See the stub installation code in `bin/vshell-helper`.
+- System font families use fontconfig aliases and GTK/GSettings preferences. Hyprland text uses its existing generated layout fragment. `test_system_font_family_targets` and `test_apply_system_fonts_temp_home` in `scripts/check-vshell-helper.py` check these targets and reset ownership.
+- User font-size edits preserve Default families. The generated font file retains size-only ownership and prior GSettings descriptions for reset; ordinary startup does not claim a size override. `test_system_font_size_targets` checks these paths.
 - Wallpaper upscaling runs as a one-shot process. See `bin/vshell-upscale` and its helper invocation.
 
 ## Decisions

@@ -1068,7 +1068,7 @@ Item {
 
                                 StyledText {
                                     text: I18n.tr("Reset")
-                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.pixelSize: Theme.settingsFontSize
                                     font.weight: Font.Medium
                                     color: Theme.surfaceText
                                     anchors.verticalCenter: parent.verticalCenter
@@ -1099,7 +1099,7 @@ Item {
                     StyledText {
                         width: parent.width
                         text: I18n.tr("Drag widgets to reorder within sections. Use the eye icon to hide/show widgets (maintains spacing), or X to remove them completely.")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceVariantText
                         wrapMode: Text.WordWrap
                     }

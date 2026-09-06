@@ -76,6 +76,7 @@ pkg_postinst() {
 	optfeature "terminal file manager for the launcher Yazi folder opener" app-misc/yazi
 	optfeature "launcher recent-directory search" app-shells/zoxide
 	optfeature "region OCR" app-text/tesseract
+	optfeature "ICC colour profiles" dev-python/pillow[lcms]
 	optfeature "desktop-entry cache refresh after installing a web app" dev-util/desktop-file-utils
 	optfeature "greeter and keyring integration" gnome-base/gnome-keyring
 	optfeature "file manager for the launcher folder opener" gnome-base/nautilus

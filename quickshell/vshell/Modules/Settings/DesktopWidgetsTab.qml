@@ -178,7 +178,7 @@ Item {
                     StyledText {
                         width: parent.width
                         text: I18n.tr("Add and configure widgets that appear on your desktop")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceVariantText
                         wrapMode: Text.WordWrap
                         horizontalAlignment: Text.AlignLeft
@@ -218,7 +218,7 @@ Item {
                     StyledText {
                         width: parent.width
                         text: I18n.tr("Organize widgets into collapsible groups")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceVariantText
                         wrapMode: Text.WordWrap
                         horizontalAlignment: Text.AlignLeft

@@ -159,7 +159,7 @@ Column {
 
                     StyledText {
                         text: root.customColor.toString()
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceVariantText
                         width: parent.width
                         elide: Text.ElideRight

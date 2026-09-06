@@ -33,7 +33,6 @@ Item {
                     settingKey: "showWorkspaceIndex"
                     tags: ["workspace", "index", "numbers", "labels"]
                     text: I18n.tr("Workspace Index Numbers")
-                    description: I18n.tr("Show workspace index numbers in the top bar workspace switcher")
                     checked: SettingsData.showWorkspaceIndex
                     onToggled: checked => SettingsData.set("showWorkspaceIndex", checked)
                 }
@@ -42,7 +41,7 @@ Item {
                     settingKey: "showWorkspaceName"
                     tags: ["workspace", "name", "labels"]
                     text: I18n.tr("Workspace Names")
-                    description: I18n.tr("Show workspace name on horizontal bars, and first letter on vertical bars")
+                    description: I18n.tr("Vertical bars show the first letter.")
                     checked: SettingsData.showWorkspaceName
                     onToggled: checked => SettingsData.set("showWorkspaceName", checked)
                 }
@@ -51,7 +50,7 @@ Item {
                     settingKey: "showWorkspacePadding"
                     tags: ["workspace", "padding", "minimum"]
                     text: I18n.tr("Workspace Padding")
-                    description: I18n.tr("Always show a minimum of 3 workspaces, even if fewer are available")
+                    description: I18n.tr("Keep at least 3 workspaces visible.")
                     checked: SettingsData.showWorkspacePadding
                     onToggled: checked => SettingsData.set("showWorkspacePadding", checked)
                 }
@@ -60,7 +59,6 @@ Item {
                     settingKey: "showWorkspaceApps"
                     tags: ["workspace", "apps", "icons", "applications", "show"]
                     text: I18n.tr("Workspace Apps")
-                    description: I18n.tr("Display application icons in workspace indicators")
                     checked: SettingsData.showWorkspaceApps
                     visible: CompositorService.isNiri || CompositorService.isHyprland || CompositorService.isMango
                     onToggled: checked => SettingsData.set("showWorkspaceApps", checked)
@@ -80,7 +78,7 @@ Item {
 
                         StyledText {
                             text: I18n.tr("Max App Icons")
-                            font.pixelSize: Theme.fontSizeSmall
+                            font.pixelSize: Theme.settingsFontSize
                             color: Theme.surfaceText
                             font.weight: Font.Medium
                             horizontalAlignment: Text.AlignLeft
@@ -92,7 +90,7 @@ Item {
                             placeholderText: "3"
                             text: SettingsData.maxWorkspaceIcons
                             maximumLength: 2
-                            font.pixelSize: Theme.fontSizeSmall
+                            font.pixelSize: Theme.settingsFontSize
                             topPadding: Theme.spacingXS
                             bottomPadding: Theme.spacingXS
                             onEditingFinished: SettingsData.set("maxWorkspaceIcons", parseInt(text, 10))
@@ -122,7 +120,7 @@ Item {
                     settingKey: "groupWorkspaceApps"
                     tags: ["workspace", "apps", "icons", "group", "grouped", "collapse"]
                     text: I18n.tr("Group Workspace Apps")
-                    description: I18n.tr("Group repeated application icons in unfocused workspaces")
+                    description: I18n.tr("Show one icon per app.")
                     checked: SettingsData.groupWorkspaceApps
                     visible: SettingsData.showWorkspaceApps
                     onToggled: checked => SettingsData.set("groupWorkspaceApps", checked)
@@ -132,7 +130,7 @@ Item {
                     settingKey: "groupActiveWorkspaceApps"
                     tags: ["workspace", "apps", "icons", "group", "grouped", "active", "focused"]
                     text: I18n.tr("Group Active Workspace")
-                    description: I18n.tr("Also group repeated application icons on the active workspace")
+                    description: I18n.tr("Also group icons on the active workspace.")
                     checked: SettingsData.groupActiveWorkspaceApps
                     visible: SettingsData.showWorkspaceApps && SettingsData.groupWorkspaceApps
                     onToggled: checked => SettingsData.set("groupActiveWorkspaceApps", checked)
@@ -142,7 +140,7 @@ Item {
                     settingKey: "workspaceActiveAppHighlightEnabled"
                     tags: ["workspace", "apps", "icons", "highlight", "active", "focused"]
                     text: I18n.tr("Highlight Active Workspace App")
-                    description: I18n.tr("Highlight the currently focused app inside workspace indicators")
+                    description: I18n.tr("Highlight the focused app.")
                     checked: SettingsData.workspaceActiveAppHighlightEnabled
                     visible: SettingsData.showWorkspaceApps
                     onToggled: checked => SettingsData.set("workspaceActiveAppHighlightEnabled", checked)
@@ -152,7 +150,6 @@ Item {
                     settingKey: "workspaceFollowFocus"
                     tags: ["workspace", "focus", "follow", "monitor"]
                     text: I18n.tr("Follow Monitor Focus")
-                    description: I18n.tr("Show workspaces of the currently focused monitor")
                     checked: SettingsData.workspaceFollowFocus
                     visible: CompositorService.isNiri || CompositorService.isHyprland || CompositorService.isMango || CompositorService.isSway || CompositorService.isScroll || CompositorService.isMiracle
                     onToggled: checked => SettingsData.set("workspaceFollowFocus", checked)
@@ -162,7 +159,6 @@ Item {
                     settingKey: "showOccupiedWorkspacesOnly"
                     tags: ["workspace", "occupied", "active", "windows", "show"]
                     text: I18n.tr("Occupied Workspaces Only")
-                    description: I18n.tr("Display only workspaces that contain windows")
                     checked: SettingsData.showOccupiedWorkspacesOnly
                     visible: CompositorService.isNiri || CompositorService.isHyprland || CompositorService.isMango
                     onToggled: checked => SettingsData.set("showOccupiedWorkspacesOnly", checked)
@@ -172,7 +168,7 @@ Item {
                     settingKey: "reverseScrolling"
                     tags: ["workspace", "scroll", "scrolling", "reverse", "direction"]
                     text: I18n.tr("Reverse Scrolling Direction")
-                    description: I18n.tr("Reverse workspace switch direction when scrolling over the bar")
+                    description: I18n.tr("Reverse the scroll direction.")
                     checked: SettingsData.reverseScrolling
                     visible: CompositorService.isNiri || CompositorService.isHyprland || CompositorService.isMango
                     onToggled: checked => SettingsData.set("reverseScrolling", checked)
@@ -182,7 +178,6 @@ Item {
                     settingKey: "workspaceDragReorder"
                     tags: ["workspace", "drag", "reorder", "sort", "move"]
                     text: I18n.tr("Drag to Reorder")
-                    description: I18n.tr("Drag workspace indicators to reorder them")
                     checked: SettingsData.workspaceDragReorder
                     visible: CompositorService.isNiri
                     onToggled: checked => SettingsData.set("workspaceDragReorder", checked)
@@ -207,13 +202,15 @@ Item {
                 width: parent.width
                 iconName: "label"
                 title: I18n.tr("Named Workspace Icons")
+                collapsible: true
+                expanded: false
                 settingKey: "workspaceIcons"
                 visible: SettingsData.hasNamedWorkspaces()
 
                 StyledText {
                     width: parent.width
                     text: I18n.tr("Configure icons for named workspaces. Icons take priority over numbers when both are enabled.")
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.surfaceVariantText
                     wrapMode: Text.WordWrap
                 }

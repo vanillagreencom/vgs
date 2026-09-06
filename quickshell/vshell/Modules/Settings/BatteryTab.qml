@@ -189,7 +189,6 @@ Item {
                 SettingsSliderRow {
                     settingKey: "batteryLowThreshold"
                     text: I18n.tr("Low Battery Threshold")
-                    description: I18n.tr("Percentage at which the battery counts as low")
                     value: SettingsData.batteryLowThreshold
                     minimum: 5
                     maximum: 40
@@ -200,7 +199,6 @@ Item {
                 SettingsToggleRow {
                     settingKey: "batteryNotifyLow"
                     text: I18n.tr("Low Battery Notifications")
-                    description: I18n.tr("Show a warning when the battery is running low")
                     checked: SettingsData.batteryNotifyLow
                     onToggled: checked => SettingsData.set("batteryNotifyLow", checked)
                 }
@@ -208,7 +206,6 @@ Item {
                 SettingsChoiceRow {
                     settingKey: "batteryNotificationType"
                     text: I18n.tr("Notification Type")
-                    description: I18n.tr("How battery alerts are shown")
                     model: [I18n.tr("Toast"), I18n.tr("Notification")]
                     currentIndex: SettingsData.batteryNotificationType
                     onSelectionChanged: (index, selected) => {
@@ -240,7 +237,6 @@ Item {
                 SettingsSliderRow {
                     settingKey: "batteryCriticalThreshold"
                     text: I18n.tr("Critical Threshold")
-                    description: I18n.tr("Battery percentage that triggers a critical alert")
                     value: SettingsData.batteryCriticalThreshold
                     minimum: 1
                     maximum: 30
@@ -251,7 +247,6 @@ Item {
                 SettingsToggleRow {
                     settingKey: "batteryNotifyCritical"
                     text: I18n.tr("Critical Battery Notifications")
-                    description: I18n.tr("Show an urgent alert when the battery reaches the critical level")
                     checked: SettingsData.batteryNotifyCritical
                     onToggled: checked => SettingsData.set("batteryNotifyCritical", checked)
                 }

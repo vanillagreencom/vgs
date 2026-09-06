@@ -667,6 +667,11 @@ def _niri_outputs_payload(payload: Dict[str, Any]) -> str:
                          if output_settings.get("vrrOnDemand") else "    variable-refresh-rate")
         if output_settings.get("focusAtStartup"):
             lines.append("    focus-at-startup")
+        max_bpc = output_settings.get("maxBpc")
+        if max_bpc is not None:
+            if type(max_bpc) is not int or max_bpc not in (8, 10):
+                raise ValueError(f"invalid colour depth for output {name}")
+            lines.append(f"    max-bpc {max_bpc}")
         backdrop = output_settings.get("backdropColor")
         if backdrop:
             lines.append(f"    backdrop-color {json.dumps(str(backdrop))}")

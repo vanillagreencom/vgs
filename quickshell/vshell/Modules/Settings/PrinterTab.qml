@@ -249,7 +249,7 @@ Item {
 
                                 StyledText {
                                     text: I18n.tr("Configure a new printer")
-                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.pixelSize: Theme.settingsFontSize
                                     color: Theme.surfaceVariantText
                                     width: parent.width
                                     horizontalAlignment: Text.AlignLeft
@@ -342,7 +342,7 @@ Item {
                                         return I18n.tr("No printers configured");
                                     return I18n.ntr("%1 printer", "%1 printers", count).arg(count);
                                 }
-                                font.pixelSize: Theme.fontSizeSmall
+                                font.pixelSize: Theme.settingsFontSize
                                 color: Theme.surfaceVariantText
                                 width: parent.width
                                 horizontalAlignment: Text.AlignLeft
@@ -463,7 +463,7 @@ Item {
 
                                                     StyledText {
                                                         text: CupsService.getPrinterStateTranslation(printerData?.state || "")
-                                                        font.pixelSize: Theme.fontSizeSmall
+                                                        font.pixelSize: Theme.settingsFontSize
                                                         color: {
                                                             switch (printerData?.state) {
                                                             case "idle":
@@ -480,14 +480,14 @@ Item {
 
                                                     StyledText {
                                                         text: "•"
-                                                        font.pixelSize: Theme.fontSizeSmall
+                                                        font.pixelSize: Theme.settingsFontSize
                                                         color: Theme.surfaceVariantText
                                                         visible: (printerData?.jobs?.length ?? 0) > 0
                                                     }
 
                                                     StyledText {
                                                         text: I18n.ntr("%1 job", "%1 jobs", printerData?.jobs?.length ?? 0).arg(printerData?.jobs?.length ?? 0)
-                                                        font.pixelSize: Theme.fontSizeSmall
+                                                        font.pixelSize: Theme.settingsFontSize
                                                         color: Theme.surfaceVariantText
                                                         visible: (printerData?.jobs?.length ?? 0) > 0
                                                     }
@@ -574,11 +574,8 @@ Item {
                                         width: parent.width
                                         visible: isExpanded
 
-                                        Rectangle {
+                                        SettingsDivider {
                                             width: parent.width - Theme.spacingM * 2
-                                            height: 1
-                                            x: Theme.spacingM
-                                            color: Theme.outlineLight
                                         }
 
                                         Item {
@@ -647,14 +644,14 @@ Item {
 
                                                                 StyledText {
                                                                     text: modelData.label + ":"
-                                                                    font.pixelSize: Theme.fontSizeSmall
+                                                                    font.pixelSize: Theme.settingsFontSize
                                                                     color: Theme.surfaceVariantText
                                                                     anchors.verticalCenter: parent.verticalCenter
                                                                 }
 
                                                                 StyledText {
                                                                     text: modelData.value
-                                                                    font.pixelSize: Theme.fontSizeSmall
+                                                                    font.pixelSize: Theme.settingsFontSize
                                                                     color: Theme.surfaceText
                                                                     font.weight: Font.Medium
                                                                     anchors.verticalCenter: parent.verticalCenter
@@ -687,7 +684,7 @@ Item {
 
                                                             StyledText {
                                                                 text: isStopped ? I18n.tr("Resume") : I18n.tr("Pause")
-                                                                font.pixelSize: Theme.fontSizeSmall
+                                                                font.pixelSize: Theme.settingsFontSize
                                                                 color: Theme.surfaceText
                                                                 font.weight: Font.Medium
                                                             }
@@ -727,7 +724,7 @@ Item {
 
                                                             StyledText {
                                                                 text: I18n.tr("Test Page")
-                                                                font.pixelSize: Theme.fontSizeSmall
+                                                                font.pixelSize: Theme.settingsFontSize
                                                                 color: Theme.surfaceText
                                                                 font.weight: Font.Medium
                                                             }
@@ -761,7 +758,7 @@ Item {
 
                                                             StyledText {
                                                                 text: printerData?.accepting ? I18n.tr("Reject Jobs") : I18n.tr("Accept Jobs")
-                                                                font.pixelSize: Theme.fontSizeSmall
+                                                                font.pixelSize: Theme.settingsFontSize
                                                                 color: Theme.surfaceText
                                                                 font.weight: Font.Medium
                                                             }
@@ -794,7 +791,7 @@ Item {
 
                                                         StyledText {
                                                             text: I18n.tr("Jobs")
-                                                            font.pixelSize: Theme.fontSizeSmall
+                                                            font.pixelSize: Theme.settingsFontSize
                                                             font.weight: Font.Medium
                                                             color: Theme.surfaceText
                                                             anchors.left: parent.left
@@ -822,7 +819,7 @@ Item {
 
                                                                 StyledText {
                                                                     text: I18n.tr("Clear All")
-                                                                    font.pixelSize: Theme.fontSizeSmall - 1
+                                                                    font.pixelSize: Theme.settingsFontSize - 1
                                                                     color: purgeArea.containsMouse ? Theme.error : Theme.surfaceText
                                                                     font.weight: Font.Medium
                                                                 }
@@ -882,7 +879,7 @@ Item {
 
                                                                     StyledText {
                                                                         text: "[" + modelData.id + "] " + (CupsService.isJobHeld(modelData) ? I18n.tr("Held") : CupsService.getJobStateTranslation(modelData.state))
-                                                                        font.pixelSize: Theme.fontSizeSmall
+                                                                        font.pixelSize: Theme.settingsFontSize
                                                                         color: Theme.surfaceText
                                                                         elide: Text.ElideRight
                                                                         width: parent.width
@@ -895,7 +892,7 @@ Item {
                                                                             const date = new Date(modelData.timeCreated);
                                                                             return size + " KB • " + date.toLocaleString(Qt.locale(), Locale.ShortFormat);
                                                                         }
-                                                                        font.pixelSize: Theme.fontSizeSmall - 1
+                                                                        font.pixelSize: Theme.settingsFontSize - 1
                                                                         color: Theme.surfaceVariantText
                                                                         anchors.left: parent.left
                                                                     }
@@ -1031,7 +1028,7 @@ Item {
 
                             StyledText {
                                 text: I18n.ntr("%1 class", "%1 classes", CupsService.printerClasses.length).arg(CupsService.printerClasses.length)
-                                font.pixelSize: Theme.fontSizeSmall
+                                font.pixelSize: Theme.settingsFontSize
                                 color: Theme.surfaceVariantText
                                 width: parent.width
                                 horizontalAlignment: Text.AlignLeft
@@ -1092,7 +1089,7 @@ Item {
 
                                         StyledText {
                                             text: I18n.ntr("%1 printer", "%1 printers", modelData.members?.length ?? 0).arg(modelData.members?.length ?? 0)
-                                            font.pixelSize: Theme.fontSizeSmall
+                                            font.pixelSize: Theme.settingsFontSize
                                             color: Theme.surfaceVariantText
                                         }
                                     }

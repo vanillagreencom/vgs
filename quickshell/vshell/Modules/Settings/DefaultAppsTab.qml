@@ -154,7 +154,7 @@ Item {
     }
 
     function getDefaultTerminal() {
-        // Read the first xdg-terminals.list entry, which vshell terminal also uses to resolve the terminal.
+        // The helper owns terminal preference parsing, including an absent user preference.
         const proc = xdgGetDefaultTerminal.createObject(root, {
             running: true
         });
@@ -186,16 +186,16 @@ Item {
     Component {
         id: xdgGetDefaultTerminal
         Process {
-            property string configPath: Quickshell.env("XDG_CONFIG_HOME") || (Quickshell.env("HOME") + "/.config")
-
-            command: ["cat", configPath + "/xdg-terminals.list"]
+            command: [Paths.vshellCli, "terminal", "resolve", "--json"]
             stdout: StdioCollector {
                 onStreamFinished: {
-                    const firstEntry = text.split("\n").map(line => line.trim()).find(line => line && !line.startsWith("#"));
-                    if (firstEntry) {
-                        root.currentTerminalAppId = firstEntry;
-                    } else {
-                        log.warn("No default terminal found");
+                    try {
+                        const result = JSON.parse(text);
+                        if (!Array.isArray(result.xdgTerminalsList))
+                            throw new Error("Missing terminal preferences");
+                        root.currentTerminalAppId = result.xdgTerminalsList[0] || "";
+                    } catch (error) {
+                        ToastService.showError(I18n.tr("Could not read terminal settings"), String(error));
                     }
                 }
             }
@@ -286,7 +286,7 @@ Item {
                     width: parent.width
                     text: I18n.tr("Install or repair the desktop entry used when VGS is selected as the default handler")
                     color: Theme.surfaceVariantText
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     wrapMode: Text.WordWrap
                 }
 
@@ -305,14 +305,12 @@ Item {
                     text: I18n.tr("Web Browser", "Web Browser")
                     tags: ["web", "browser", "internet"]
                     category: root.appCategory.WebBrowser
-                    description: I18n.tr("Handles links and opens HTML files", "Handles links and opens HTML files")
                 }
 
                 AppSelector {
                     text: I18n.tr("Mail", "Mail")
                     category: root.appCategory.Mail
                     tags: ["mail", "email"]
-                    description: I18n.tr("Handles mailto links", "Handles mailto links")
                 }
             }
 
@@ -324,7 +322,6 @@ Item {
                     text: I18n.tr("File Manager", "File Manager")
                     tags: ["file", "manager"]
                     category: root.appCategory.FileManager
-                    description: I18n.tr("Manages files and directories", "Manages files and directories")
                 }
                 AppSelector {
                     text: I18n.tr("Terminal", "Terminal")
@@ -336,7 +333,6 @@ Item {
                     text: I18n.tr("Calendar", "Calendar")
                     category: root.appCategory.Calendar
                     tags: ["calendar", "events"]
-                    description: I18n.tr("Manages calendar events", "Manages calendar events")
                 }
             }
 
@@ -348,13 +344,11 @@ Item {
                     text: I18n.tr("Text Editor", "Text Editor")
                     category: root.appCategory.TextEditor
                     tags: ["text", "editor"]
-                    description: I18n.tr("For editing plain text files", "For editing plain text files")
                 }
                 AppSelector {
                     text: I18n.tr("PDF Reader", "PDF Reader")
                     category: root.appCategory.PDFReader
                     tags: ["pdf", "reader"]
-                    description: I18n.tr("For reading PDF files", "For reading PDF files")
                 }
             }
 
@@ -365,19 +359,16 @@ Item {
                     text: I18n.tr("Image Viewer", "Image Viewer")
                     category: root.appCategory.ImageViewer
                     tags: ["image", "viewer"]
-                    description: I18n.tr("Opens image files", "Opens image files")
                 }
                 AppSelector {
                     text: I18n.tr("Video Player", "Video Player")
                     category: root.appCategory.VideoPlayer
                     tags: ["video", "player"]
-                    description: I18n.tr("Plays video files", "Plays video files")
                 }
                 AppSelector {
                     text: I18n.tr("Music Player", "Music Player")
                     category: root.appCategory.MusicPlayer
                     tags: ["music", "player"]
-                    description: I18n.tr("Plays audio files", "Plays audio files")
                 }
             }
         }

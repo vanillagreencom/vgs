@@ -221,7 +221,7 @@ StyledRect {
 
                                 StyledText {
                                     text: modelData.author ? I18n.tr("By %1").arg(modelData.author) : ""
-                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.pixelSize: Theme.settingsFontSize
                                     color: Theme.surfaceVariantText
                                     elide: Text.ElideRight
                                     width: parent.width

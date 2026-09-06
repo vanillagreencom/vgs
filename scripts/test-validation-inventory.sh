@@ -1074,8 +1074,8 @@ ok "the guard's grammar is exactly what the runner dumped, with nothing supplied
 
 # Simulate absent yaml on import. Non-YAML readers must still work and CI parsing must
 # report the prerequisite without a module-import traceback.
-pyyaml_out="$(python3 - "$repo_root" 2>&1 <<'NOYAML' || true
-import importlib.util, pathlib, sys
+pyyaml_out="$(python3 - "$repo_root" "$tmp" 2>&1 <<'NOYAML' || true
+import importlib.util, pathlib, shlex, sys
 sys.modules["yaml"] = None
 root = pathlib.Path(sys.argv[1])
 spec = importlib.util.spec_from_file_location(
@@ -1084,7 +1084,15 @@ spec = importlib.util.spec_from_file_location(
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 print("IMPORTED")
-print("ROWS", len(mod.manifest_rows(root / "scripts" / "validate")))
+# Keep the real grammar producer, but give the row reader a fixed manifest.
+probe = pathlib.Path(sys.argv[2]) / "noyaml-manifest"
+probe.write_text(
+    "#!/usr/bin/env bash\n"
+    f"if [[ ${{1:-}} == --dump-grammar ]]; then exec bash {shlex.quote(str(root / 'scripts' / 'validate'))} --dump-grammar; fi\n"
+    "cat <<'MANIFEST_EOF'\nqml | true\nhelper | false\nMANIFEST_EOF\n",
+    encoding="utf-8",
+)
+print("ROWS", mod.manifest_rows(probe))
 try:
     mod.ci_run_commands(root / ".github" / "workflows" / "ci.yml")
 except mod.ManifestError as error:
@@ -1092,8 +1100,7 @@ except mod.ManifestError as error:
 NOYAML
 )"
 expect_contains "$pyyaml_out" "IMPORTED" "PyYAML absent"
-# Use an independent expected row count so an empty parser result cannot agree with itself.
-expect_contains "$pyyaml_out" "ROWS 81" "PyYAML absent"
+expect_contains "$pyyaml_out" "ROWS [('qml', 'true'), ('helper', 'false')]" "PyYAML absent"
 expect_contains "$pyyaml_out" "MANIFESTERROR PyYAML is not installed" "PyYAML absent"
 expect_absent "$pyyaml_out" "Traceback" "PyYAML absent"
 ok "without PyYAML the module imports, the other parsers work, and ci.yml fails with one line"

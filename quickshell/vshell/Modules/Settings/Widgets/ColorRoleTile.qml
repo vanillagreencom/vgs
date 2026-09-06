@@ -50,7 +50,7 @@ StyledRect {
                 width: parent.width
                 text: root.primaryLabel
                 color: Theme.surfaceText
-                font.pixelSize: Theme.fontSizeSmall - 1
+                font.pixelSize: Theme.settingsFontSize - 1
                 font.weight: Font.Medium
                 elide: Text.ElideRight
                 maximumLineCount: 1
@@ -61,7 +61,7 @@ StyledRect {
                 width: parent.width
                 text: root.secondaryLabel
                 color: Theme.surfaceVariantText
-                font.pixelSize: Theme.fontSizeSmall - 2
+                font.pixelSize: Theme.settingsFontSize - 2
                 elide: Text.ElideRight
                 maximumLineCount: 1
                 wrapMode: Text.NoWrap

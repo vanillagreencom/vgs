@@ -79,7 +79,7 @@ Item {
 
                     StyledText {
                         text: I18n.tr("VPN is not available on this system")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceVariantText
                         width: parent.width
                         horizontalAlignment: Text.AlignLeft
@@ -100,7 +100,7 @@ Item {
                                     return names[0] || I18n.tr("Connected");
                                 return names[0] + " +" + (names.length - 1);
                             }
-                            font.pixelSize: Theme.fontSizeSmall
+                            font.pixelSize: Theme.settingsFontSize
                             color: NetworkBackendService.connected ? Theme.primary : Theme.surfaceVariantText
                             width: parent.width - vpnHeaderControls.width - Theme.spacingM
                             horizontalAlignment: Text.AlignLeft
@@ -126,13 +126,13 @@ Item {
 
                                     VgsIcon {
                                         name: VPNService.importing ? "sync" : "add"
-                                        size: Theme.fontSizeSmall
+                                        size: Theme.settingsFontSize
                                         color: Theme.primary
                                     }
 
                                     StyledText {
                                         text: I18n.tr("Import")
-                                        font.pixelSize: Theme.fontSizeSmall
+                                        font.pixelSize: Theme.settingsFontSize
                                         color: Theme.primary
                                         font.weight: Font.Medium
                                     }
@@ -163,13 +163,13 @@ Item {
 
                                     VgsIcon {
                                         name: "link_off"
-                                        size: Theme.fontSizeSmall
+                                        size: Theme.settingsFontSize
                                         color: Theme.surfaceText
                                     }
 
                                     StyledText {
                                         text: I18n.tr("Disconnect")
-                                        font.pixelSize: Theme.fontSizeSmall
+                                        font.pixelSize: Theme.settingsFontSize
                                         color: Theme.surfaceText
                                         font.weight: Font.Medium
                                     }
@@ -216,7 +216,7 @@ Item {
 
                             StyledText {
                                 text: I18n.tr("Import a .ovpn or .conf file to add your first profile")
-                                font.pixelSize: Theme.fontSizeSmall
+                                font.pixelSize: Theme.settingsFontSize
                                 color: Theme.surfaceVariantText
                                 anchors.horizontalCenter: parent.horizontalCenter
                             }
@@ -301,7 +301,7 @@ Item {
 
                                             StyledText {
                                                 text: VPNService.getVpnTypeFromProfile(modelData)
-                                                font.pixelSize: Theme.fontSizeSmall
+                                                font.pixelSize: Theme.settingsFontSize
                                                 color: Theme.surfaceVariantText
                                                 anchors.left: parent.left
                                             }
@@ -382,10 +382,8 @@ Item {
                                         spacing: Theme.spacingXS
                                         visible: !isTransient && isExpanded
 
-                                        Rectangle {
+                                        SettingsDivider {
                                             width: parent.width
-                                            height: 1
-                                            color: Theme.outlineLight
                                         }
 
                                         Item {
@@ -467,14 +465,14 @@ Item {
 
                                                         StyledText {
                                                             text: modelData.label + ":"
-                                                            font.pixelSize: Theme.fontSizeSmall
+                                                            font.pixelSize: Theme.settingsFontSize
                                                             color: Theme.surfaceVariantText
                                                             anchors.verticalCenter: parent.verticalCenter
                                                         }
 
                                                         StyledText {
                                                             text: modelData.value
-                                                            font.pixelSize: Theme.fontSizeSmall
+                                                            font.pixelSize: Theme.settingsFontSize
                                                             color: Theme.surfaceText
                                                             font.weight: Font.Medium
                                                             anchors.verticalCenter: parent.verticalCenter

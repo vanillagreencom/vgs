@@ -121,7 +121,7 @@ Column {
         width: parent.width
         leftPadding: 80
         text: !tab.selectedDeviceUri || CupsDiscovery.isIppUri(tab.selectedDeviceUri) ? I18n.tr("Use this only if the recommended driver fails") : I18n.tr("This printer can't use IPP Everywhere — select your printer model")
-        font.pixelSize: Theme.fontSizeSmall
+        font.pixelSize: Theme.settingsFontSize
         color: Theme.surfaceVariantText
         wrapMode: Text.WordWrap
     }
@@ -177,7 +177,7 @@ Column {
         StyledText {
             id: advancedToggle
             text: root.showAdvanced ? I18n.tr("Hide Advanced") : I18n.tr("Advanced")
-            font.pixelSize: Theme.fontSizeSmall
+            font.pixelSize: Theme.settingsFontSize
             color: advancedArea.containsMouse ? Theme.primary : Theme.surfaceVariantText
             anchors.left: parent.left
 

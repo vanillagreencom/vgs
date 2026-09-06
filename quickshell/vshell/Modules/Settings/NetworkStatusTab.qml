@@ -52,7 +52,7 @@ Item {
 
                     StyledText {
                         text: I18n.tr("Overview of your network connections")
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceVariantText
                         width: parent.width
                         horizontalAlignment: Text.AlignLeft

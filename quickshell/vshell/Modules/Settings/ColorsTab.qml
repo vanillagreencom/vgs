@@ -183,11 +183,6 @@ Item {
             topPadding: Theme.spacingS
             spacing: Theme.spacingXL
 
-            ThemeSubNav {
-                width: parent.width
-                parentModal: root.parentModal
-                activeId: "colors"
-            }
 
             SettingsCard {
                 title: I18n.tr("Theme Colors")
@@ -226,7 +221,7 @@ Item {
                                     id: modifiedBadge
                                     anchors.centerIn: parent
                                     text: I18n.tr("modified")
-                                    font.pixelSize: Theme.fontSizeSmall - 1
+                                    font.pixelSize: Theme.settingsFontSize - 1
                                     color: Theme.surfaceText
                                 }
                             }
@@ -239,18 +234,18 @@ Item {
                             StyledText {
                                 width: parent.width
                                 wrapMode: Text.WordWrap
-                                text: I18n.tr("Select a swatch to edit its base color. Changes are saved immediately; built-in themes can always be restored.")
+                                text: I18n.tr("Select a colour to edit. Changes save immediately.")
                                 color: Theme.surfaceVariantText
-                                font.pixelSize: Theme.fontSizeSmall
+                                font.pixelSize: Theme.settingsFontSize
                             }
 
                             StyledText {
                                 width: parent.width
                                 visible: root.hasAdjustments
                                 wrapMode: Text.WordWrap
-                                text: I18n.tr("Palette adjustments are active. Swatches show the adjusted result, while edits update the underlying base palette. Reset adjustments before matching an exact color.")
+                                text: I18n.tr("Swatches include palette adjustments. Reset adjustments to match an exact colour.")
                                 color: Theme.warning
-                                font.pixelSize: Theme.fontSizeSmall
+                                font.pixelSize: Theme.settingsFontSize
                             }
                         }
                     }
@@ -318,7 +313,7 @@ Item {
                                         width: parent.width
                                         text: modelData.label
                                         color: Theme.surfaceText
-                                        font.pixelSize: Theme.fontSizeSmall
+                                        font.pixelSize: Theme.settingsFontSize
                                         font.weight: Font.Medium
                                         elide: Text.ElideRight
                                     }
@@ -327,7 +322,7 @@ Item {
                                         width: parent.width
                                         text: modelData.hint
                                         color: Theme.surfaceVariantText
-                                        font.pixelSize: Theme.fontSizeSmall - 1
+                                        font.pixelSize: Theme.settingsFontSize - 1
                                         elide: Text.ElideRight
                                     }
 
@@ -335,7 +330,7 @@ Item {
                                         width: parent.width
                                         text: root.roleColor(modelData.key)
                                         color: Theme.surfaceVariantText
-                                        font.pixelSize: Theme.fontSizeSmall - 1
+                                        font.pixelSize: Theme.settingsFontSize - 1
                                         elide: Text.ElideRight
                                     }
                                 }
@@ -362,7 +357,7 @@ Item {
                     wrapMode: Text.WordWrap
                     text: I18n.tr("The 16 ANSI colors terminals and TUI apps use. Normal on top, bright below.")
                     color: Theme.surfaceVariantText
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                 }
 
                 Repeater {
@@ -380,7 +375,7 @@ Item {
                         StyledText {
                             text: ansiGroup.modelData.header
                             color: Theme.surfaceVariantText
-                            font.pixelSize: Theme.fontSizeSmall
+                            font.pixelSize: Theme.settingsFontSize
                             font.weight: Font.Medium
                         }
 
@@ -416,7 +411,7 @@ Item {
                                         width: parent.width
                                         text: ansiTile.modelData.label
                                         color: Theme.surfaceVariantText
-                                        font.pixelSize: Theme.fontSizeSmall - 1
+                                        font.pixelSize: Theme.settingsFontSize - 1
                                         elide: Text.ElideRight
                                         horizontalAlignment: Text.AlignHCenter
                                     }
@@ -436,16 +431,16 @@ Item {
                 StyledText {
                     width: parent.width
                     wrapMode: Text.WordWrap
-                    text: I18n.tr("Reshape the whole palette at once. Adjustments are non-destructive — the theme's base colors stay intact and Reset returns to them.")
+                    text: I18n.tr("Adjust all colours. Reset restores the base palette.")
                     color: Theme.surfaceVariantText
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                 }
 
                 StyledText {
                     width: parent.width
                     text: I18n.tr("Updating palette preview…")
                     color: Theme.surfaceVariantText
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     visible: VGSThemeService.restyling
                 }
 

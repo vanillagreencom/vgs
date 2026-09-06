@@ -47,7 +47,7 @@ StyledRect {
                         if (root.showLegacy)
                             return I18n.tr("Hyprland edits are read-only");
                         if (root.showSetup)
-                            return I18n.tr("First-Time Setup");
+                            return I18n.tr("Enable display settings");
                         return "";
                     }
                     font.pixelSize: Theme.fontSizeMedium
@@ -62,13 +62,13 @@ StyledRect {
                         if (root.showLegacy)
                             return DisplayConfigState.includeStatus.statusMessage || I18n.tr("VGS can't edit Hyprland display settings from Settings; edit your Hyprland config directly.");
                         if (root.showSetup)
-                            return I18n.tr("Click Setup to create the outputs config and add the include to your compositor config");
+                            return I18n.tr("Save display changes. Your configuration is backed up first.");
                         return "";
                     }
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.surfaceVariantText
                     wrapMode: Text.WordWrap
-                    width: parent.width
+                    width: Math.min(parent.width, Theme.settingsDescriptionWidth)
                     horizontalAlignment: Text.AlignLeft
                 }
             }
@@ -76,7 +76,7 @@ StyledRect {
             VgsButton {
                 id: fixButton
                 visible: !root.showLegacy && root.showSetup
-                text: DisplayConfigState.fixingInclude ? I18n.tr("Setting up...") : I18n.tr("Setup")
+                text: DisplayConfigState.fixingInclude ? I18n.tr("Enabling…") : I18n.tr("Enable")
                 backgroundColor: Theme.primary
                 textColor: Theme.primaryText
                 enabled: !DisplayConfigState.fixingInclude

@@ -240,7 +240,7 @@ Column {
 
         StyledText {
             text: tab.testConnectionResult?.data?.error || tab.testConnectionResult?.error || ""
-            font.pixelSize: Theme.fontSizeSmall
+            font.pixelSize: Theme.settingsFontSize
             color: Theme.surfaceVariantText
             width: parent.parent.width - 80 - Theme.spacingS
             wrapMode: Text.WordWrap

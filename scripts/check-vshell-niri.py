@@ -307,6 +307,7 @@ def test_niri_outputs_renderer():
             "Acme Panel 123": {
                 "vrrOnDemand": True,
                 "focusAtStartup": True,
+                "maxBpc": 10,
                 "backdropColor": "#112233",
                 "hotCorners": {"corners": ["top-left", "invalid-corner"]},
                 "layout": {
@@ -327,6 +328,7 @@ def test_niri_outputs_renderer():
         "position x=0 y=0",
         "variable-refresh-rate on-demand=true",
         "focus-at-startup",
+        "max-bpc 10",
         'backdrop-color "#112233"',
         "top-left",
         "default-column-width { proportion 0.5; }",

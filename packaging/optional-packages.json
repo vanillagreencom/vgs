@@ -4,6 +4,7 @@
     "config/vshell/dependencies.json. scripts/gen-package-metadata.py joins the",
     "two files and regenerates the optional-dependency blocks in the packaging",
     "recipes, so the feature manifest and the packaging cannot drift apart.",
+    "The libraries section declares optional runtime modules without inventing executable probes.",
     "",
     "Every command in dependencies.json must appear in \"commands\" or the",
     "generator fails. Use \"skip\" for commands already covered by a hard",
@@ -72,7 +73,7 @@
       "fedora": ["quickshell", "jq", "python3", "bash", "coreutils", "systemd"],
       "gentoo": ["${PYTHON_DEPS}", "app-misc/jq", "gui-apps/quickshell"],
       "void": ["quickshell", "jq", "python3"],
-      "nix": ["pkgs.quickshell", "pkgs.jq", "pkgs.python3", "pkgs.bash"]
+      "nix": ["pkgs.quickshell", "pkgs.jq", "python", "pkgs.bash"]
     }
   },
   "conflicts": {
@@ -177,6 +178,15 @@
     "fingerprint-auth": "fingerprint unlock on the lock screen and greeter",
     "theme-qt": "Qt application theming",
     "polkit": "privileged actions run from the shell"
+  },
+  "libraries": {
+    "pillow": {
+      "description": "ICC colour profiles",
+      "arch": "python-pillow",
+      "debian": "python3-pil",
+      "fedora": "python3-pillow",
+      "gentoo": "dev-python/pillow[lcms]"
+    }
   },
   "commands": {
     "qs": { "skip": "quickshell is a hard dependency" },

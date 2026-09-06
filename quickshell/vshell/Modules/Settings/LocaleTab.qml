@@ -9,10 +9,8 @@ Item {
     readonly property string _systemDefaultLabel: I18n.tr("System Default")
 
     function _localeDisplayName(localeCode) {
-        if (!I18n.presentLocales[localeCode])
-            return;
-        const nativeName = I18n.presentLocales[localeCode].nativeLanguageName;
-        return nativeName[0].toUpperCase() + nativeName.slice(1);
+        const nativeName = I18n.presentLocales[localeCode]?.nativeLanguageName || localeCode;
+        return nativeName.charAt(0).toUpperCase() + nativeName.slice(1);
     }
 
     function _allLocaleOptions() {
@@ -54,13 +52,10 @@ Item {
                     tags: ["locale", "language", "country"]
                     settingKey: "locale"
                     text: I18n.tr("Interface Language")
-                    description: I18n.tr("Locale used for VGS interface text")
                     options: localeTab._allLocaleOptions()
                     enableFuzzySearch: true
 
-                    Component.onCompleted: {
-                        currentValue = SessionData.locale ? localeTab._localeDisplayName(SessionData.locale) : localeTab._systemDefaultLabel;
-                    }
+                    currentValue: SessionData.locale ? localeTab._localeDisplayName(SessionData.locale) : localeTab._systemDefaultLabel
 
                     onValueChanged: value => {
                         SessionData.set("locale", localeTab._codeForDisplayName(value));
@@ -73,13 +68,11 @@ Item {
                     tags: ["locale", "time", "date", "format", "region"]
                     settingKey: "timeLocale"
                     text: I18n.tr("Time & Date Locale")
-                    description: I18n.tr("Locale used for date and time formatting, independent of the interface language")
+                    description: I18n.tr("Controls date and time formats.")
                     options: localeTab._allLocaleOptions()
                     enableFuzzySearch: true
 
-                    Component.onCompleted: {
-                        currentValue = SessionData.timeLocale ? localeTab._localeDisplayName(SessionData.timeLocale) : localeTab._systemDefaultLabel;
-                    }
+                    currentValue: SessionData.timeLocale ? localeTab._localeDisplayName(SessionData.timeLocale) : localeTab._systemDefaultLabel
 
                     onValueChanged: value => {
                         SessionData.set("timeLocale", localeTab._codeForDisplayName(value));

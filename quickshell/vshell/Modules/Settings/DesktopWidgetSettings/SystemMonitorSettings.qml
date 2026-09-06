@@ -169,7 +169,7 @@ Column {
 
                                 StyledText {
                                     text: modelData.displayName || "Unknown GPU"
-                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.pixelSize: Theme.settingsFontSize
                                     color: Theme.surfaceText
                                     width: parent.width
                                     elide: Text.ElideRight
@@ -177,7 +177,7 @@ Column {
 
                                 StyledText {
                                     text: modelData.driver || ""
-                                    font.pixelSize: Theme.fontSizeSmall - 2
+                                    font.pixelSize: Theme.settingsFontSize - 2
                                     color: Theme.surfaceVariantText
                                     visible: text !== ""
                                 }

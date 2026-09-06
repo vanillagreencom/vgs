@@ -81,7 +81,7 @@ FocusScope {
 
                 StyledText {
                     text: I18n.tr("Manage third-party and system extensions installed outside VGS")
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.surfaceVariantText
                     width: parent.width
                     wrapMode: Text.WordWrap
@@ -115,7 +115,7 @@ FocusScope {
 
                             StyledText {
                                 text: I18n.tr("Online Plugin Catalog Unavailable")
-                                font.pixelSize: Theme.fontSizeSmall
+                                font.pixelSize: Theme.settingsFontSize
                                 color: Theme.warning
                                 font.weight: Font.Medium
                                 anchors.verticalCenter: parent.verticalCenter
@@ -123,8 +123,8 @@ FocusScope {
                         }
 
                         StyledText {
-                            text: I18n.tr("Browse and automated update checks require the optional VGS backend. Locally installed extensions still scan, enable, reload, and show settings normally.")
-                            font.pixelSize: Theme.fontSizeSmall - 1
+                            text: I18n.tr("Browsing and update checks require the VGS backend. Installed plugins still work.")
+                            font.pixelSize: Theme.settingsFontSize - 1
                             color: Theme.surfaceVariantText
                             wrapMode: Text.WordWrap
                             width: parent.width
@@ -168,7 +168,7 @@ FocusScope {
 
                             StyledText {
                                 text: I18n.tr("Incompatible Plugins Loaded")
-                                font.pixelSize: Theme.fontSizeSmall
+                                font.pixelSize: Theme.settingsFontSize
                                 color: Theme.error
                                 font.weight: Font.Medium
                                 anchors.verticalCenter: parent.verticalCenter
@@ -177,7 +177,7 @@ FocusScope {
 
                         StyledText {
                             text: I18n.tr("Some plugins require a newer version of VGS:") + " " + incompatWarning.incompatPlugins.map(p => p.name + " (" + p.requires_vgs + ")").join(", ")
-                            font.pixelSize: Theme.fontSizeSmall - 1
+                            font.pixelSize: Theme.settingsFontSize - 1
                             color: Theme.surfaceVariantText
                             wrapMode: Text.WordWrap
                             width: parent.width
@@ -268,7 +268,7 @@ FocusScope {
 
                 StyledText {
                     text: PluginService.pluginDirectory
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.surfaceVariantText
                     font.family: "monospace"
                     width: parent.width
@@ -277,7 +277,7 @@ FocusScope {
 
                 StyledText {
                     text: I18n.tr("Place plugin directories here. Each plugin should have a plugin.json manifest file.")
-                    font.pixelSize: Theme.fontSizeSmall
+                    font.pixelSize: Theme.settingsFontSize
                     color: Theme.surfaceVariantText
                     wrapMode: Text.WordWrap
                     width: parent.width
