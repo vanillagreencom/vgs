@@ -16,9 +16,11 @@ const { armChildDeadline, CHILD_ARGV_MARKER, CHILD_DEADLINE_GRACE_MS, CHILD_TIME
 const { withGuardedSuite, hangingRegion, fixtureEnv, plantSuite, cmdlineOf, orphanDiagnostics,
     reapUntilQuiet, pidRunning, waitFor, guardPath } = require("./qml-region-testkit.js");
 
-function regionGuardSelfTest() {
+const test = require("node:test");
+
     // A synchronous loop blocks the call. A runaway microtask can start after the call returns.
     // Both must be terminated by the process deadline.
+test("a region that hangs from a loop or a runaway microtask is killed at the deadline and named", () => {
     for (const [what, planted] of [
         ["a synchronous loop", "function boom() { while (true) {} return 1; }"],
         ["a non-terminating microtask",
@@ -48,10 +50,11 @@ function regionGuardSelfTest() {
                 "one failure mode a passing suite cannot be told from a slow one");
         });
     }
+});
 
     // Worker startup errors reach the main event loop, which the region can block.
     // Test both broken Worker source and a confirmation budget too short to arm.
-    {
+test("a worker that cannot arm its deadline throws instead of leaving the process unbounded", () => {
         // The worker error fixture intentionally writes a diagnostic to stderr.
         process.stderr.write(
             "region guard: the stderr line below about a worker that could not arm is this " +
@@ -95,11 +98,11 @@ function regionGuardSelfTest() {
             assert.ok(elapsed < 6000,
                 `refusing has to be fast; it took ${elapsed}ms`);
         });
-    }
+});
 
     // An external SIGKILL must not be attributed to the supervisor timeout.
     // The same result can come from the child deadline, an operator, or the OOM killer.
-    {
+test("an external SIGKILL is not attributed to the supervisor timeout", () => {
         withGuardedSuite({
             prefix: "vgs-region-attrib-",
             timeout: 9000,
@@ -124,10 +127,10 @@ function regionGuardSelfTest() {
                 "and must point at the bounds that could have; stderr was " +
                 JSON.stringify(stderr));
         });
-    }
+});
 
     // Closing stderr makes the diagnostic fail deterministically. The Worker must still send its kill.
-    {
+test("a closed stderr still lets the worker send its kill", () => {
         withGuardedSuite({
             prefix: "vgs-region-mute-",
             timeout: 9000,
@@ -149,11 +152,11 @@ function regionGuardSelfTest() {
                 "the fixture must genuinely silence the child, or it proves nothing about a " +
                 `kill surviving a failed write; stderr was ${JSON.stringify(stderr)}`);
         });
-    }
+});
 
     // Separate the deadlines so only the child deadline can end the orphan within this fixture.
     // Use a file for stderr because output arrives after the supervisor exits and no event loop drains a pipe.
-    {
+test("an orphaned child is ended by its own deadline and diagnosed from a file", () => {
         const DEADLINE_MS = 1000;
         // Allow scheduling contention; this assertion detects a surviving orphan, not exact kill latency.
         const WAIT_MS = DEADLINE_MS * 15;
@@ -225,11 +228,11 @@ function regionGuardSelfTest() {
                 fs.closeSync(errFd);
             fs.rmSync(dir, { recursive: true, force: true });
         }
-    }
+});
 
     // Test deadline derivation directly. Fixtures with explicit overrides cannot detect
     // a default child deadline that runs before its supervisor limit.
-    {
+test("the default child deadline is derived to run before its supervisor limit", () => {
         assert.equal(childDeadlineFor(1000, undefined, () => {}), 1000 + CHILD_DEADLINE_GRACE_MS,
             "with no override the child's deadline is the supervisor's limit plus the grace");
         assert.ok(childDeadlineFor(1000, undefined, () => {}) > 1000,
@@ -251,10 +254,10 @@ function regionGuardSelfTest() {
         const quiet = [];
         childDeadlineFor(1000, undefined, text => quiet.push(text));
         assert.deepEqual(quiet, [], "and an ordered pair must say nothing at all");
-    }
+});
 
     // Assert an uncommon exact exit status so either an always-zero or always-one result fails.
-    {
+test("the child's exit status is propagated exactly", () => {
         withGuardedSuite({
             prefix: "vgs-region-status-",
             body: () => ["guardChild();", "process.exit(3);"]
@@ -269,10 +272,10 @@ function regionGuardSelfTest() {
         }, ({ run }) => {
             assert.equal(run.status, 0, "and a clean child must still be a clean supervisor");
         });
-    }
+});
 
     // Remove the guard marker from suite arguments while retaining it in the kernel command line.
-    {
+test("the guard marker is removed from suite arguments and kept in the kernel command line", () => {
         withGuardedSuite({
             prefix: "vgs-region-argv-",
             args: ["--suite-own-flag"],
@@ -287,11 +290,11 @@ function regionGuardSelfTest() {
                 "the marker must be spliced back out of process.argv, or every suite's own " +
                 `argument handling sees it; the child reported ${JSON.stringify(stdout)}`);
         });
-    }
+});
 
     // Repeated guardChild calls in one process must not start a recursive chain after marker removal.
     // Check both the completion status and process census.
-    {
+test("repeated guardChild calls do not start a recursive chain", () => {
         withGuardedSuite({
             prefix: "vgs-region-twice-",
             timeout: 9000,
@@ -331,11 +334,11 @@ function regionGuardSelfTest() {
                 "a healthy run must never re-exec at all, so the cap that bounds the failure " +
                 `path must go untouched; stdout was ${JSON.stringify(stdout)}`);
         });
-    }
+});
 
     // A role can be recorded before arming succeeds. A retry after arming failure must throw,
     // not return as if bounded or restart supervision after the marker was removed.
-    {
+test("a retry after an arming failure throws rather than passing as bounded", () => {
         withGuardedSuite({
             prefix: "vgs-region-unarmed-twice-",
             timeout: 9000,
@@ -362,11 +365,11 @@ function regionGuardSelfTest() {
                 "and it must say why it refused the second call; stderr was " +
                 JSON.stringify(stderr));
         });
-    }
+});
 
     // A marker among suite arguments must not select the child role.
     // At argv[2] it cannot be distinguished from a supervisor insertion.
-    {
+test("a marker among suite arguments does not select the child role", () => {
         withGuardedSuite({
             prefix: "vgs-region-argv-pos-",
             timeout: 9000,
@@ -392,10 +395,10 @@ function regionGuardSelfTest() {
                 "and the suite must still SEE its own argument — a splice that hunts for the " +
                 `marker eats it and changes the suite's CLI; it reported ${JSON.stringify(stdout)}`);
         });
-    }
+});
 
     // A spawned script must select its own role. Process arguments do not descend like environment variables.
-    {
+test("a spawned script selects its own role", () => {
         withGuardedSuite({
             prefix: "vgs-region-descend-",
             body: (dir) => {
@@ -425,10 +428,9 @@ function regionGuardSelfTest() {
                 "a descendant that calls guardChild() must supervise itself and re-exec, so its " +
                 `own command line carries the marker; it reported ${JSON.stringify(stdout)}`);
         });
-    }
+});
 
-
-    {
+test("spawnOutcome classifies kills, spawn failures and exits", () => {
         // Use observed spawn result forms for timeout and missing-interpreter cases.
         const killedRun = spawnSync(process.execPath, ["-e", "setInterval(() => {}, 1000);"],
             { timeout: 200, killSignal: "SIGKILL" });
@@ -458,10 +460,9 @@ function regionGuardSelfTest() {
 
         assert.equal(spawnOutcome(spawnSync(process.execPath, ["-e", "process.exit(3);"])), "ran",
             "and an ordinary exit is neither");
-    }
+});
 
-
-    {
+test("msFromEnv and childDeadlineFor refuse and clamp overrides as documented", () => {
         const NAME = "VGS_REGION_CHILD_TIMEOUT_MS";
         assert.equal(msFromEnv(undefined, NAME, CHILD_TIMEOUT_DEFAULT_MS), CHILD_TIMEOUT_DEFAULT_MS,
             "unset uses the default");
@@ -496,10 +497,9 @@ function regionGuardSelfTest() {
             "the fallback must name the variable it read; said " + JSON.stringify(said.join("")));
         assert.ok(said.join("").includes("using 4000ms"),
             "and the value it fell back to; said " + JSON.stringify(said.join("")));
-    }
+});
 
-
-    {
+test("evaluateMarked returns callable functions over host data and refuses a missing region", () => {
         const region = body => ["// BEGIN SELF TEST", body, "// END SELF TEST"].join("\n");
         const marked = region("function two() { return Math.max(1, JSON.parse('2')); }\n" +
                               "function shaped() { return { pct: 2, slots: [{ ok: true }] }; }");
@@ -511,11 +511,4 @@ function regionGuardSelfTest() {
         assert.throws(() => evaluateMarked(marked, "NO SUCH MARKER", ["two"], "self-test"),
             /must carry the NO SUCH MARKER markers/,
             "a missing region must fail loudly rather than evaluate whatever it found");
-    }
-
-    console.log("qml-region guard selftest: all checks passed");
-}
-
-// Keep the completion message inside the test function. The manifest requires it,
-// so deleting the call must also remove the message.
-regionGuardSelfTest();
+});
