@@ -482,6 +482,76 @@ Singleton {
         return searchQueryContext(query);
     }
 
+    function applicationScoreBand(field, tier) {
+        if (field === "primary") {
+            if (tier === "exact")
+                return 90000;
+            if (tier === "prefix")
+                return 80000;
+            if (tier === "wordPrefix")
+                return 70000;
+            if (tier === "substring")
+                return 60000;
+        } else if (field === "alias") {
+            if (tier === "exact")
+                return 50000;
+            if (tier === "prefix")
+                return 47000;
+            if (tier === "wordPrefix")
+                return 44000;
+            if (tier === "substring")
+                return 41000;
+        } else if (field === "keyword") {
+            if (tier === "exact")
+                return 36000;
+            if (tier === "prefix")
+                return 34000;
+            if (tier === "wordPrefix")
+                return 32000;
+            if (tier === "substring")
+                return 30000;
+        } else if (field === "identifier") {
+            if (tier === "exact")
+                return 26000;
+            if (tier === "prefix")
+                return 24000;
+            if (tier === "wordPrefix")
+                return 22000;
+            if (tier === "substring")
+                return 20000;
+        } else if (field === "secondary") {
+            if (tier === "exact")
+                return 350;
+            if (tier === "prefix")
+                return 260;
+            if (tier === "wordPrefix")
+                return 180;
+            if (tier === "substring")
+                return 120;
+        } else if (field === "fuzzy") {
+            if (tier === "base")
+                return 18000;
+            if (tier === "minimum")
+                return 0.72;
+        }
+        return 0;
+    }
+
+    function applicationScorePenalty() {
+        return 500;
+    }
+
+    function actionScoreForApplicationTier(tier) {
+        const gap = 1;
+        if (tier === "exact")
+            return applicationScoreBand("primary", "exact") - gap;
+        if (tier === "prefix")
+            return applicationScoreBand("primary", "prefix") - applicationScorePenalty() - gap;
+        if (tier === "substring")
+            return applicationScoreBand("primary", "substring") - applicationScorePenalty() - gap;
+        return 0;
+    }
+
     function searchFieldValues(value) {
         const out = [];
         if (value === undefined || value === null)
@@ -627,12 +697,12 @@ Singleton {
         if (text === q)
             return exact;
         if (text.startsWith(q))
-            return prefix - Math.min(500, text.length - q.length);
+            return prefix - Math.min(applicationScorePenalty(), text.length - q.length);
         if (wordBoundaryMatchFromWords(fieldWords(field), queryContext.words))
             return wordPrefix;
         const at = text.indexOf(q);
         if (q.length >= 2 && at >= 0)
-            return substring - Math.min(500, at * 2);
+            return substring - Math.min(applicationScorePenalty(), at * 2);
         return 0;
     }
 
@@ -653,7 +723,11 @@ Singleton {
     }
 
     function primaryFieldScoreFor(fields, query) {
-        return bestFieldScorePrepared(fields, query, 90000, 80000, 70000, 60000);
+        return bestFieldScorePrepared(fields, query,
+            applicationScoreBand("primary", "exact"),
+            applicationScoreBand("primary", "prefix"),
+            applicationScoreBand("primary", "wordPrefix"),
+            applicationScoreBand("primary", "substring"));
     }
 
     function aliasFieldScore(fields, query) {
@@ -661,7 +735,11 @@ Singleton {
     }
 
     function aliasFieldScoreFor(fields, query) {
-        return bestFieldScorePrepared(fields, query, 50000, 47000, 44000, 41000);
+        return bestFieldScorePrepared(fields, query,
+            applicationScoreBand("alias", "exact"),
+            applicationScoreBand("alias", "prefix"),
+            applicationScoreBand("alias", "wordPrefix"),
+            applicationScoreBand("alias", "substring"));
     }
 
     function keywordFieldScore(fields, query) {
@@ -669,7 +747,11 @@ Singleton {
     }
 
     function keywordFieldScoreFor(fields, query) {
-        return bestFieldScorePrepared(fields, query, 36000, 34000, 32000, 30000);
+        return bestFieldScorePrepared(fields, query,
+            applicationScoreBand("keyword", "exact"),
+            applicationScoreBand("keyword", "prefix"),
+            applicationScoreBand("keyword", "wordPrefix"),
+            applicationScoreBand("keyword", "substring"));
     }
 
     function identifierFieldScore(fields, query) {
@@ -677,7 +759,11 @@ Singleton {
     }
 
     function identifierFieldScoreFor(fields, query) {
-        return bestFieldScorePrepared(fields, query, 26000, 24000, 22000, 20000);
+        return bestFieldScorePrepared(fields, query,
+            applicationScoreBand("identifier", "exact"),
+            applicationScoreBand("identifier", "prefix"),
+            applicationScoreBand("identifier", "wordPrefix"),
+            applicationScoreBand("identifier", "substring"));
     }
 
     function bestAllowedWordScore(word, primaryFields, aliasFields, keywordFields, identifierFields) {
@@ -711,7 +797,7 @@ Singleton {
         const queryWords = queryContext.words || [];
         if (queryWords.length === 0)
             return 0;
-        let weakest = 90000;
+        let weakest = applicationScoreBand("primary", "exact");
         for (let i = 0; i < queryWords.length; i++) {
             const wordContext = {
                 text: queryWords[i],
@@ -739,9 +825,9 @@ Singleton {
         let best = 0;
         for (let i = 0; i < fields.length; i++)
             best = Math.max(best, fuzzyMatchScorePrepared(fields[i], queryContext));
-        if (best < 0.72)
+        if (best < applicationScoreBand("fuzzy", "minimum"))
             return 0;
-        return 18000 + Math.round(best * 1000);
+        return applicationScoreBand("fuzzy", "base") + Math.round(best * 1000);
     }
 
     function secondaryFieldBonus(fields, query) {
@@ -749,7 +835,12 @@ Singleton {
     }
 
     function secondaryFieldBonusForFields(fields, query) {
-        return Math.min(350, bestFieldScorePrepared(fields, query, 350, 260, 180, 120));
+        return Math.min(applicationScoreBand("secondary", "exact"),
+            bestFieldScorePrepared(fields, query,
+                applicationScoreBand("secondary", "exact"),
+                applicationScoreBand("secondary", "prefix"),
+                applicationScoreBand("secondary", "wordPrefix"),
+                applicationScoreBand("secondary", "substring")));
     }
 
     function textRelevance(primaryFields, aliasFields, keywordFields, identifierFields, secondaryFields, query) {
@@ -889,11 +980,11 @@ Singleton {
 
                 let score = 0;
                 if (actionName === query) {
-                    score = 8000;
+                    score = actionScoreForApplicationTier("exact");
                 } else if (actionName.startsWith(query)) {
-                    score = 4000;
-                } else if (actionName.includes(query)) {
-                    score = 400;
+                    score = actionScoreForApplicationTier("prefix");
+                } else if (query.length >= 2 && actionName.includes(query)) {
+                    score = actionScoreForApplicationTier("substring");
                 }
 
                 if (score > 0) {

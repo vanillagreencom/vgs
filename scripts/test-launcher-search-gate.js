@@ -46,7 +46,8 @@ const backend = evaluateMarked(serviceSource, "SEARCH BACKEND DECISION", [
 
 const appSearch = evaluateMarked(appSearchSource, "APPLICATION SEARCH RELEVANCE DECISION", [
     "normalizeSearchText", "tokenizeNormalizedSearchText", "tokenize", "searchQueryContext",
-    "ensureSearchQueryContext", "searchFieldValues", "normalizedSearchField",
+    "ensureSearchQueryContext", "applicationScoreBand", "applicationScorePenalty",
+    "actionScoreForApplicationTier", "searchFieldValues", "normalizedSearchField",
     "normalizedSearchFields", "fieldText", "fieldWords", "wordBoundaryMatchFromWords",
     "wordBoundaryMatch", "levenshteinDistance", "fuzzyMatchScore",
     "fuzzyMatchScorePrepared", "fieldMatchScore", "fieldMatchScorePrepared",
@@ -109,6 +110,24 @@ function appSearchRows(apps, query, includeActions = false, limit = 10, usageFor
         fields: appSearch.applicationSearchFields(app),
         usage: app.usage
     })), query, includeActions, limit, usageForApp);
+}
+
+function actionRowNames(rows) {
+    return rows.filter(row => row.app.isAction).map(row => row.app.name);
+}
+
+function searchRowSummaries(rows) {
+    return rows.map(row => ({
+        name: row.app.name,
+        isAction: !!row.app.isAction,
+        score: row.score
+    }));
+}
+
+function expectedActionScore(tier) {
+    if (tier === "exact")
+        return appSearch.applicationScoreBand("primary", "exact") - 1;
+    return appSearch.applicationScoreBand("primary", tier) - appSearch.applicationScorePenalty() - 1;
 }
 
 // Bound a Python function at the next top-level def. Unbounded slices can borrow
@@ -187,6 +206,66 @@ test("application relevance admits strong fields and rejects secondary-only matc
         > appSearch.applicationFinalScore(keywordExact, 999999, 0),
         "the usage cap cannot move a keyword match above a title or app-name substring");
 
+    const exactActionApp = {
+        name: "Terminal",
+        id: "terminal.desktop",
+        icon: "terminal",
+        categories: ["System"],
+        actions: [{ name: "OpenCode", icon: "run" }]
+    };
+    const exactAction = appSearch.searchAppActions("opencode", [exactActionApp]);
+    assert.deepEqual(searchRowSummaries(exactAction), [{
+        name: "OpenCode",
+        isAction: true,
+        score: expectedActionScore("exact")
+    }], "action search executes the exact action tier");
+    assert.deepEqual({
+        icon: exactAction[0].app.icon,
+        comment: exactAction[0].app.comment,
+        categories: exactAction[0].app.categories,
+        parentName: exactAction[0].app.parentApp.name,
+        actionName: exactAction[0].app.actionData.name
+    }, {
+        icon: "run",
+        comment: "Terminal",
+        categories: ["System"],
+        parentName: "Terminal",
+        actionName: "OpenCode"
+    }, "action search keeps the returned action row payload");
+    assert.ok(exact > exactAction[0].score, "an exact application stays above an exact action");
+
+    const prefixAction = appSearch.searchAppActions("opencode", [{
+        name: "Terminal",
+        id: "terminal.desktop",
+        actions: [{ name: "OpenCode workspace", icon: "run" }]
+    }]);
+    assert.deepEqual(searchRowSummaries(prefixAction), [{
+        name: "OpenCode workspace",
+        isAction: true,
+        score: expectedActionScore("prefix")
+    }], "action search executes the prefix action tier");
+    assert.ok(textScore({ primary: ["OpenCode workspace"], query: "opencode" }) > prefixAction[0].score,
+        "a prefix application stays above a prefix action");
+
+    const substringAction = appSearch.searchAppActions("opencode", [{
+        name: "Terminal",
+        id: "terminal.desktop",
+        actions: [{ name: "XOpenCode", icon: "run" }]
+    }]);
+    assert.deepEqual(searchRowSummaries(substringAction), [{
+        name: "XOpenCode",
+        isAction: true,
+        score: expectedActionScore("substring")
+    }], "action search executes the substring action tier");
+    assert.ok(textScore({ primary: ["XOpenCode"], query: "opencode" }) > substringAction[0].score,
+        "a substring application stays above a substring action");
+
+    assert.deepEqual(appSearch.searchAppActions("p", [{
+        name: "Terminal",
+        id: "terminal.desktop",
+        actions: [{ name: "OpenCode", icon: "run" }]
+    }]), [], "one-character queries do not admit substring-only action matches");
+
     assert.deepEqual(appSearchRows([
         {
             name: "Terminal",
@@ -234,11 +313,28 @@ test("application relevance admits strong fields and rejects secondary-only matc
             ]
         }
     ], "opencode", true);
+    assert.deepEqual(actionRowNames(appSearchRows([{
+        name: "Terminal",
+        id: "terminal.desktop",
+        actions: [{ name: "OpenCode workspace", icon: "run" }]
+    }], "opencode", false)), [], "disabled action search returns no action rows");
     assert.deepEqual(actionRows.map(row => ({
         name: row.app.name,
         isAction: !!row.app.isAction
     })), [{ name: "OpenCode workspace", isAction: true }],
         "action search returns the matching action row and rejects the empty-name action");
+    assert.deepEqual(searchRowSummaries(appSearchRows([
+        { name: "OpenCode", id: "opencode.desktop" },
+        { name: "OpenCode workspace", id: "opencode-workspace.desktop" },
+        {
+            name: "Terminal",
+            id: "terminal.desktop",
+            actions: [{ name: "OpenCode", icon: "run" }]
+        }
+    ], "opencode", true, 2)), [
+        { name: "OpenCode", isAction: false, score: exact },
+        { name: "OpenCode", isAction: true, score: expectedActionScore("exact") }
+    ], "the result cap keeps a high-ranked matching action above lower-ranked applications");
 });
 
 test("searchApplicationResults stays a thin adapter to the executable result builder", () => {
