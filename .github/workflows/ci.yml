@@ -120,14 +120,10 @@ jobs:
         run: .agents/skills/doc-limits/scripts/doc-limits
 
       # The pre-commit batch judges staged lines only. This run judges every
-      # tracked file each enabled lane names, markdown references included.
+      # tracked file each enabled lane names, markdown references included;
+      # byte-ceiling judges the files this change adds or grows against main.
       - name: Commit guards
-        run: .agents/skills/commit-guards/scripts/commit-guards all
-
-      # The batch runs byte-ceiling in staged scope, which is empty on a clean
-      # checkout; judge the files this change adds or grows against main.
-      - name: Byte ceiling
-        run: .agents/skills/commit-guards/scripts/byte-ceiling --base origin/main
+        run: .agents/skills/commit-guards/scripts/commit-guards all --base origin/main
 
       # A clean checkout has no working-tree diff. Compare the event range so CI
       # checks the whitespace introduced by the change.
