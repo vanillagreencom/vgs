@@ -220,10 +220,9 @@ GROWTH_GUARDS_MD_REFS_PATHS = "*.md"
 # re-entry refuses once cycles is past it.
 REVIEW_MAX_CYCLES = "4"
 
-# The validation areas that pass from a worktree. `all` also runs the exclusive
-# rows and scripts/smoke-surfaces.sh, which exits 1 from any checkout that does
-# not own the live shell; run `scripts/validate all` from the main checkout.
-DEV_VALIDATE_CMD = "scripts/validate go && scripts/validate helper && scripts/validate docs"
+# The full manifest minus the rows that address the running shell, which a
+# worktree never owns; those rows run from the checkout that does.
+DEV_VALIDATE_CMD = "scripts/validate --no-live all"
 
 # Optional extra verification command for GitHub-side checks; empty means
 # none beyond the guard chain.

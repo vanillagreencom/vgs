@@ -2,6 +2,8 @@
 # Run the selected validation area and collect every command failure.
 # scripts/validate [AREA] runs checks; --list [AREA] lists commands without execution;
 # --dump-grammar emits normalized grammar. Accept one area argument per invocation.
+# --no-live omits rows tagged live: they address the running shell, which runs the
+# checkout that owns it, so from any other checkout they judge nothing of that tree.
 # Exit 0 means all selected checks ran and passed. Exit 77 means allowed checks skipped
 # while executed checks passed. Exit 1 means a check failed. Exit 2 means invalid usage
 # or manifest, before checks execute.
@@ -100,10 +102,11 @@ always    | git diff --check
 -         | scripts/check-workflows.sh
 -         | .agents/skills/size-ratchet/scripts/size-ratchet
 docs      | .agents/skills/growth-guards/scripts/growth-guards all
+always    | .agents/skills/growth-guards/scripts/byte-ceiling --base origin/main
 qml       | scripts/qml-smoke.sh --nested --require-static --require-nested
 qml       | scripts/check-validation-safety.sh --require-static
 -         | scripts/check-label-taxonomy.py
-qml,may-skip | scripts/smoke-surfaces.sh
+qml,may-skip,live | scripts/smoke-surfaces.sh
 go        | (cd backend && go build ./... && go vet ./... && go test -race ./...)
 MANIFEST_EOF
 }
@@ -441,7 +444,7 @@ fi
 SKIP_STATUS=77
 
 usage() {
-  printf 'usage: scripts/validate [--list] [%s]\n' "$(
+  printf 'usage: scripts/validate [--no-live] [--list] [%s]\n' "$(
     IFS='|'
     printf '%s' "${AREAS[*]}"
   )" >&2
@@ -449,12 +452,23 @@ usage() {
 }
 
 list_only=0
+no_live=0
+LIVE_TAG=live
+omitted=()
 # Use the resolved grammar default for a bare invocation.
 area="$default_area"
 area_given=0
 for arg in "$@"; do
   case "$arg" in
     --list) list_only=1 ;;
+    --no-live)
+      # The tag must exist in the grammar, or the flag would silently omit nothing.
+      if [[ -z "${TOKEN_CLASS[$LIVE_TAG]:-}" ]]; then
+        printf 'scripts/validate: --no-live needs a %s token in the grammar\n' "$LIVE_TAG" >&2
+        exit 2
+      fi
+      no_live=1
+      ;;
     # Grammar dumping must work independently of manifest validity so consumers can inspect vocabulary errors separately.
     --dump-grammar)
       dump_grammar
@@ -596,14 +610,23 @@ while IFS= read -r line; do
       continue
     fi
   fi
+  if [[ $no_live -eq 1 && ",$tags," == *",$LIVE_TAG,"* ]]; then
+    omitted+=("$cmd")
+    continue
+  fi
   selected+=("$cmd")
   selected_tags+=("$tags")
 done <<<"$manifest_text"
 
 if [[ ${#selected[@]} -eq 0 ]]; then
   # Reject an empty selection so a missing area's checks cannot report success.
-  printf 'scripts/validate: area %s selects no commands — the manifest lost its rows\n' \
-    "$area" >&2
+  if [[ ${#omitted[@]} -gt 0 ]]; then
+    printf 'scripts/validate: area %s selects only live commands and --no-live omitted every one\n' \
+      "$area" >&2
+  else
+    printf 'scripts/validate: area %s selects no commands — the manifest lost its rows\n' \
+      "$area" >&2
+  fi
   exit 2
 fi
 
@@ -648,6 +671,14 @@ if [[ ${#skipped[@]} -gt 0 ]]; then
   )"
 fi
 ran=$((${#selected[@]} - ${#skipped[@]}))
+# Name every omitted row so a --no-live run never reads as the full manifest.
+if [[ ${#omitted[@]} -gt 0 ]]; then
+  printf 'validate: %d live command%s omitted (--no-live): %s\n' \
+    "${#omitted[@]}" "$([[ ${#omitted[@]} -eq 1 ]] || printf s)" "$(
+      IFS=,
+      printf '%s' "${omitted[*]}"
+    )"
+fi
 
 if [[ ${#failed[@]} -eq 0 ]]; then
   if [[ ${#skipped[@]} -eq 0 ]]; then

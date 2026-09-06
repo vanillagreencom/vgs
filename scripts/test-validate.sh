@@ -461,6 +461,45 @@ $(diff <(printf '%s\n' "$python_rows") <(printf '%s\n' "$("$runner" --list all)"
   ok "parser agreement"
 fi
 
+echo "=== --no-live (fixture manifest with a failing live row) ==="
+
+# The live stub fails, so its presence in a run is observable: without the flag
+# the run fails on it; with the flag it is omitted, named, and the rest pass.
+printf '#!/usr/bin/env bash\necho "ran stub-live"\nexit 1\n' >"$fixture_repo/scripts/stub-live"
+chmod +x "$fixture_repo/scripts/stub-live"
+write_runner "$FIXTURE_MANIFEST
+qml,may-skip,live | scripts/stub-live"
+
+fixture qml
+expect_rc 1 "live row runs without the flag"
+expect_contains "$out" "ran stub-live" "live row runs without the flag"
+ok "without --no-live the live row runs and its failure fails the area (control)"
+
+fixture --no-live qml
+expect_rc 0 "live row omitted"
+expect_absent "$out" "ran stub-live" "live row omitted"
+expect_contains "$out" "1 live command omitted (--no-live): scripts/stub-live" "live row omitted"
+ok "--no-live omits the live row, names it, and exits 0 on the rest"
+
+fixture --list --no-live all
+expect_rc 0 "list without live"
+expect_absent "$out" "scripts/stub-live" "list without live"
+expect_contains "$out" "scripts/stub-only-all" "list without live"
+ok "--list --no-live lists every row but the live one"
+
+# The live tag marks a row; it does not permit exit 77. A live row without
+# may-skip that exits 77 is a plain failure, as any other row would be.
+printf '#!/usr/bin/env bash\necho "ran stub-live77"\nexit 77\n' >"$fixture_repo/scripts/stub-live77"
+chmod +x "$fixture_repo/scripts/stub-live77"
+write_runner "$FIXTURE_MANIFEST
+qml,live  | scripts/stub-live77"
+fixture qml
+expect_rc 1 "live grants no skip"
+expect_absent "$out" "skipped" "live grants no skip"
+ok "a live row exiting 77 without may-skip is a plain failure (live is not a skip permission)"
+
+write_runner "$FIXTURE_MANIFEST"
+
 # Require non-skipping modes when the check exposes a forcing flag.
 expect_contains "$real_qml" "--require-nested" "qml-smoke require flags"
 expect_contains "$real_qml" "--require-static" "qml-smoke require flags"

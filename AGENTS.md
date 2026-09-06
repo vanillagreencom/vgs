@@ -14,6 +14,8 @@ Never run `qs -c vshell` or `qs -p quickshell/vshell`: a second instance can lea
 
 Exit `0` means all selected checks passed; `77` means some checks did not run and must be named; `1` means a check failed; `2` means an invalid invocation. Exit `77` is not a pass.
 
+`--no-live` omits the rows that address the running shell. Use it from any checkout that does not own the live session; the omitted rows run from the checkout that does.
+
 ## Conventions
 
 - Releases use `.agents/skills/vgs-release/SKILL.md`.
