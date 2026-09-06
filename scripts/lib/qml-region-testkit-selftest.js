@@ -33,10 +33,28 @@ function plantMarkedChild(dir, name, marked) {
     return { child, script };
 }
 
-function regionGuardTestkitSelfTest() {
+const nodeTest = require("node:test");
+
+// node:test exits 0 when no case runs (nothing registered, every case skipped or todo), which
+// would turn the validate row and the CI step green with the supervisor unverified. Count the
+// cases that finish and refuse a clean exit short of the declared number.
+const EXPECTED_CASES = 5;
+let finished = 0;
+const test = (name, body) => nodeTest(name, (...args) => {
+    const result = body(...args);
+    finished += 1;
+    return result;
+});
+process.on("exit", code => {
+    if (code === 0 && finished !== EXPECTED_CASES) {
+        process.stderr.write(`qml-region testkit selftest: ${finished} of ${EXPECTED_CASES} cases finished; a clean exit with cases missing is not a pass\n`);
+        process.exitCode = 1;
+    }
+});
+
     // Remove ambient VGS_REGION_ overrides so the caller cannot retune fixture deadlines.
     // Test the prefix rule with an unknown name as well as declared settings.
-    {
+test("fixtureEnv strips ambient VGS_REGION_ overrides and applies the declared knobs", () => {
         process.env.VGS_REGION_NOT_A_REAL_KNOB = "leaked";
         try {
             assert.equal(fixtureEnv().VGS_REGION_NOT_A_REAL_KNOB, undefined,
@@ -64,11 +82,11 @@ function regionGuardTestkitSelfTest() {
                 "a fixture that pins nothing must see nothing, so a knob exported around this " +
                 `run cannot steer it; the child reported ${JSON.stringify(stdout)}`);
         });
-    }
+});
 
     // Test cleanup against another script in the fixture directory, an unmarked process,
     // and a sibling whose path has the same prefix. Setup belongs inside cleanup protection.
-    {
+test("cleanup reaps only marked children of the fixture directory, not siblings or unmarked processes", () => {
         let mine;
         let theirs;
         let sibling;
@@ -112,7 +130,6 @@ function regionGuardTestkitSelfTest() {
                 "a sweep that read every entry says nothing; it said " +
                 JSON.stringify(said.join("")));
 
-
             reapUntilQuiet(mine, "reaper check");
             assert.ok(waitFor(() => !pidRunning(ours.child.pid), 5000),
                 "the selected child must actually be gone afterwards");
@@ -126,11 +143,11 @@ function regionGuardTestkitSelfTest() {
                 if (dir)
                     fs.rmSync(dir, { recursive: true, force: true });
         }
-    }
+});
 
     // Repeat the sweep until no child matches. Injected process listings test concurrent spawning
     // without constructing an uncontrolled process chain.
-    {
+test("the sweep repeats until no child matches", () => {
         let remaining = 3;
         const sweeps = [];
         reapUntilQuiet("/tmp/whatever", "converging", {
@@ -142,7 +159,6 @@ function regionGuardTestkitSelfTest() {
         assert.deepEqual(sweeps, [101, 101, 101],
             "the sweep must keep going while it is still finding children, and stop on the pass " +
             `that finds none; it swept ${JSON.stringify(sweeps)}`);
-
 
         const gaveUp = [];
         reapUntilQuiet("/tmp/whatever", "endless", {
@@ -189,11 +205,11 @@ function regionGuardTestkitSelfTest() {
             read: () => ["/tmp/whatever/suite.js", CHILD_ARGV_MARKER],
             kill: () => {}, warn: () => {}
         }), 1, "and one that took something answers how many");
-    }
+});
 
     // Cleanup runs in finally. Reading failures must report their cause without replacing
     // the original assertion or preventing directory removal.
-    {
+test("a reading failure during cleanup names its cause without hiding the original assertion", () => {
         const said = [];
         const denied = new Error("EACCES: permission denied, scandir '/proc'");
         denied.code = "EACCES";
@@ -219,10 +235,9 @@ function regionGuardTestkitSelfTest() {
         assert.ok(unreadable.join("").includes("1 /proc entries were unreadable"),
             "an entry that could not be read must be counted and reported, never folded in with " +
             "one that was read and did not match; it said " + JSON.stringify(unreadable.join("")));
-    }
+});
 
-
-    {
+test("cmdlineOf answers a live process argv and an absent pid empty", () => {
         // The kernel stores the invoked command line, which can use a relative script path.
         const own = cmdlineOf(process.pid);
         assert.ok(own && own.some(arg => arg.endsWith(path.basename(__filename))),
@@ -230,10 +245,4 @@ function regionGuardTestkitSelfTest() {
         // ENOENT means the process is absent; it does not mean its command line was unreadable.
         assert.deepEqual(cmdlineOf(0x7ffffffe), [],
             "a pid that does not exist answers empty, not null");
-    }
-
-    console.log("qml-region testkit selftest: all checks passed");
-}
-
-// Keep the required completion message inside the test function so deleting its call cannot pass.
-regionGuardTestkitSelfTest();
+});
