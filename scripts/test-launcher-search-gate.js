@@ -51,8 +51,8 @@ const appSearch = evaluateMarked(appSearchSource, "APPLICATION SEARCH RELEVANCE 
     "normalizedFieldSet", "wordBoundaryMatchFromWords", "levenshteinDistance",
     "fuzzyMatchScoreForField", "fieldMatchScore", "bestFieldScore",
     "bestAllowedWordScore", "allQueryWordsScore", "fuzzyFallbackScore",
-    "secondaryFieldBonus", "textRelevance", "applicationAliasFields", "firstExecToken",
-    "executableBasename", "applicationIdentifierFields", "applicationSearchFields",
+    "secondaryFieldBonus", "textRelevance", "applicationAliasFields",
+    "applicationIdentifierFields", "applicationSearchFields",
     "boundedUsageScore", "applicationFinalScore", "appFromSearchItem",
     "appUsageFromSearchItem", "searchAppActions", "applicationSearchResultsFor"
 ], "AppSearchService.qml");
@@ -199,20 +199,18 @@ test("application relevance admits strong fields and rejects secondary-only matc
         keywords: qmlSequence(["alpha", "opencode tools"]), query: "opencode"
     }) > 0, "a QML keyword sequence also preserves prefix keyword matches");
 
-    assertRejected({
-        identifiers: appSearch.applicationIdentifierFields({
-            id: "other.desktop",
-            execString: "/usr/bin/other --flag"
-        }),
-        query: "usr"
-    }, "path-only Exec words cannot admit an unrelated application");
-    assert.ok(textScore({
-        identifiers: appSearch.applicationIdentifierFields({
-            id: "other.desktop",
-            execString: "/usr/bin/opencode --flag"
-        }),
-        query: "opencode"
-    }) > 0, "the executable basename remains an identifier");
+    for (const [query, execString] of [
+        ["usr", "/usr/bin/other --flag"],
+        ["flatpak", "flatpak run org.example.Other"]
+    ]) {
+        assertRejected({
+            identifiers: appSearch.applicationIdentifierFields({
+                id: "org.example.Other.desktop",
+                execString: execString
+            }),
+            query: query
+        }, `${query} from the Exec command cannot admit an unrelated application`);
+    }
 
     const desktopIdApps = [
         { name: "OpenCode", id: "org.example.OpenCode.desktop" },

@@ -739,31 +739,10 @@ Singleton {
         return aliases;
     }
 
-    function firstExecToken(command) {
-        const text = String(command || "").trim();
-        if (!text)
-            return "";
-        const match = text.match(/^(?:"([^"]+)"|'([^']+)'|(\S+))/);
-        if (!match)
-            return "";
-        return match[1] || match[2] || match[3] || "";
-    }
-
-    function executableBasename(command) {
-        const token = firstExecToken(command);
-        if (!token)
-            return "";
-        const parts = token.split(/[\\/]+/);
-        return parts.length > 0 ? parts[parts.length - 1] : token;
-    }
-
     function applicationIdentifierFields(app) {
         const identifiers = [];
         if (app?.id)
             identifiers.push(String(app.id).replace(/\.desktop$/i, ""));
-        const executable = executableBasename(app?.execString || app?.exec || "");
-        if (executable)
-            identifiers.push(executable);
         return identifiers;
     }
 
