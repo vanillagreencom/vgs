@@ -81,14 +81,19 @@ test("a backend-provided stamp is preserved, never overwritten", () => {
 });
 
 // The repository backend prevents the missing-backend fixture, so inspect wrapper emissions at source.
-const helperSource = fs.readFileSync(path.join(repoRoot, "bin", "vshell-helper"), "utf8");
-// Blank comments before counting print and stamp calls so prose cannot satisfy emission checks.
-const helperCode = helperSource.split("\n").map(l => (/^\s*#/.test(l) ? "" : l)).join("\n");
-const cmdAiUsage = helperCode.slice(
-    helperCode.indexOf("def cmd_ai_usage("),
-    helperCode.indexOf("def cmd_fonts(")
-);
+// Read inside the cases: a module-scope read that throws would run before the after hook and
+// leave the executable fake backends behind.
+function cmdAiUsageSource() {
+    const helperSource = fs.readFileSync(path.join(repoRoot, "bin", "vshell-helper"), "utf8");
+    // Blank comments before counting print and stamp calls so prose cannot satisfy emission checks.
+    const helperCode = helperSource.split("\n").map(l => (/^\s*#/.test(l) ? "" : l)).join("\n");
+    return helperCode.slice(
+        helperCode.indexOf("def cmd_ai_usage("),
+        helperCode.indexOf("def cmd_fonts(")
+    );
+}
 test("cmd_ai_usage stamps the provider and prints only through the stamping helper", () => {
+    const cmdAiUsage = cmdAiUsageSource();
     assert.ok(cmdAiUsage.includes('payload.setdefault("provider", provider)'),
         "cmd_ai_usage must stamp the provider on the payloads it emits");
     assert.equal((cmdAiUsage.match(/print\(/g) || []).length, 1,
@@ -100,7 +105,6 @@ test("cmd_ai_usage stamps the provider and prints only through the stamping help
 // Inspect each payload object. A jq program can emit both success and failure objects,
 // and a stamp in one must not cover the other.
 
-const backend = fs.readFileSync(path.join(repoRoot, "bin", "vshell-ai-usage"), "utf8");
 
 // Read object fields at their own brace depth. A nested provider key cannot stamp its parent.
 function objectLiterals(text) {
@@ -168,11 +172,16 @@ function jqBuildPrograms(text) {
 }
 
 // Blank comment lines so a documented payload example cannot count as an emission.
-const backendCode = backend.split("\n").map(l => (/^\s*#/.test(l) ? "" : l)).join("\n");
+function backendSource() {
+    const backend = fs.readFileSync(path.join(repoRoot, "bin", "vshell-ai-usage"), "utf8");
+    return backend.split("\n").map(l => (/^\s*#/.test(l) ? "" : l)).join("\n");
+}
 
 // Recognize payloads by their own ok field, with bare jq or quoted JSON keys.
-const hasKey = (text, key) => new RegExp(`(^|[{,\\s])"?${key}"?\\s*:`).test(text);
+// Blank string interiors first: an error message reading "unknown provider: " is not a key.
+const hasKey = (text, key) => new RegExp(`(^|[{,\\s])"?${key}"?\\s*:`).test(text.replace(/"[^"]*"/g, '""'));
 test("every payload bin/vshell-ai-usage builds names its provider at its own level, through jq", () => {
+    const backendCode = backendSource();
     const programs = jqBuildPrograms(backendCode);
     assert.ok(programs.length >= 4,
         `expected the backend's payload-building jq programs to be found, got ${programs.length}`);

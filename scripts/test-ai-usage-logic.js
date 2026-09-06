@@ -242,7 +242,8 @@ test("headOf reads the tightest lane over the visible accounts, falling back to 
     for (const [payload, mode, hidden, expected, why] of [
         [claudePayload, "pool", [], { pct: 40 }, "the head is the account's tightest lane"],
         [codexPayload, "pool", [], { pct: 90 }, "the head is the account's tightest lane"],
-        [{ ok: false, provider: "claude" }, "pool", [], null, "a failed payload has no head"],
+        [{ ok: false, provider: "claude", weekly: { pct: 40 }, aggregate: { pct: 40 } }, "pool", [], null,
+            "a failed payload has no head, whatever lanes it carries — a number on the pill beside the error mark"],
         [null, "pool", [], null, "no payload has no head"],
         [twoAccounts, "pool", [], { pct: 60 }, "the pool head averages the visible accounts"],
         [twoAccounts, "pool", ["b"], { pct: 40 }, "a head counts only the accounts the user still shows"],
