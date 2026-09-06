@@ -544,6 +544,7 @@ Singleton {
             aliases: normalizedSearchFields(source.aliases || []),
             keywords: normalizedSearchFields(source.keywords || []),
             identifiers: normalizedSearchFields(source.identifiers || []),
+            exactIdentifiers: normalizedSearchFields(source.exactIdentifiers || []),
             secondary: normalizedSearchFields(source.secondary || [])
         };
     }
@@ -616,7 +617,7 @@ Singleton {
         return bestScore;
     }
 
-    function fieldMatchScore(field, query, exact, prefix, wordPrefix, substring) {
+    function fieldMatchScore(field, query, exact, prefix, wordPrefix, substring, exactOnly) {
         const queryContext = ensureSearchQueryContext(query);
         const text = field.text || "";
         const q = queryContext.text;
@@ -624,6 +625,8 @@ Singleton {
             return 0;
         if (text === q)
             return exact;
+        if (exactOnly)
+            return 0;
         if (text.startsWith(q))
             return prefix - Math.min(fieldScorePenalty(), text.length - q.length);
         if (wordBoundaryMatchFromWords(field.words || [], queryContext.words))
@@ -634,12 +637,12 @@ Singleton {
         return 0;
     }
 
-    function bestFieldScore(fields, query, exact, prefix, wordPrefix, substring) {
+    function bestFieldScore(fields, query, exact, prefix, wordPrefix, substring, exactOnly) {
         const queryContext = ensureSearchQueryContext(query);
         let best = 0;
         const source = fields || [];
         for (let i = 0; i < source.length; i++)
-            best = Math.max(best, fieldMatchScore(source[i], queryContext, exact, prefix, wordPrefix, substring));
+            best = Math.max(best, fieldMatchScore(source[i], queryContext, exact, prefix, wordPrefix, substring, exactOnly));
         return best;
     }
 
@@ -697,13 +700,16 @@ Singleton {
 
         const searchFields = fields && fields.prepared ? fields : normalizedFieldSet(fields);
         const wordScore = allQueryWordsScore(queryContext, searchFields);
-        const phraseScore = wordScore <= 0 ? 0 : Math.max(
-            bestFieldScore(searchFields.primary, queryContext, 90000, 80000, 70000, 60000),
-            bestFieldScore(searchFields.aliases, queryContext, 50000, 47000, 44000, 41000),
-            bestFieldScore(searchFields.keywords, queryContext, 36000, 34000, 32000, 30000),
-            bestFieldScore(searchFields.identifiers, queryContext, 26000, 24000, 22000, 20000),
-            wordScore
-        );
+        const exactIdentifierScore = bestFieldScore(searchFields.exactIdentifiers, queryContext,
+            26000, 24000, 22000, 20000, true);
+        const phraseScore = wordScore <= 0 ? exactIdentifierScore : Math.max(
+                exactIdentifierScore,
+                bestFieldScore(searchFields.primary, queryContext, 90000, 80000, 70000, 60000),
+                bestFieldScore(searchFields.aliases, queryContext, 50000, 47000, 44000, 41000),
+                bestFieldScore(searchFields.keywords, queryContext, 36000, 34000, 32000, 30000),
+                bestFieldScore(searchFields.identifiers, queryContext, 26000, 24000, 22000, 20000),
+                wordScore
+            );
         const fallbackScore = phraseScore > 0 ? 0 : fuzzyFallbackScore(searchFields, queryContext);
         const textScore = Math.max(phraseScore, fallbackScore);
         if (textScore <= 0)
@@ -754,7 +760,7 @@ Singleton {
     function applicationIdentifierFields(app) {
         const identifiers = [];
         if (app?.id)
-            identifiers.push(app.id);
+            identifiers.push(String(app.id).replace(/\.desktop$/i, ""));
         const executable = executableBasename(app?.execString || app?.exec || "");
         if (executable)
             identifiers.push(executable);
@@ -767,6 +773,7 @@ Singleton {
             aliases: applicationAliasFields(app),
             keywords: app?.keywords || [],
             identifiers: applicationIdentifierFields(app),
+            exactIdentifiers: [app?.id || ""],
             secondary: [app?.comment || ""]
         });
     }
@@ -864,7 +871,7 @@ Singleton {
             const usage = appUsageFromSearchItem(item, app, usageForApp);
             results.push({
                 app: app,
-                score: applicationFinalScore(relevance.score, usage.frecency || 0, usage.daysSinceUsed || 999999),
+                score: applicationFinalScore(relevance.score, usage.frecency ?? 0, usage.daysSinceUsed ?? 999999),
                 textScore: relevance.score,
                 matchType: relevance.matchType
             });

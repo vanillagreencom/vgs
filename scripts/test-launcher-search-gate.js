@@ -214,6 +214,17 @@ test("application relevance admits strong fields and rejects secondary-only matc
         query: "opencode"
     }) > 0, "the executable basename remains an identifier");
 
+    const desktopIdApps = [
+        { name: "OpenCode", id: "org.example.OpenCode.desktop" },
+        { name: "Terminal", id: "org.example.Terminal.desktop" }
+    ];
+    for (const query of ["desktop", ".desktop"]) {
+        assert.deepEqual(appSearchRows(desktopIdApps, query), [],
+            `${query} must not admit applications through the desktop-entry suffix`);
+    }
+    assert.deepEqual(appSearchRows(desktopIdApps, "org.example.OpenCode.desktop").map(row => row.app.name),
+        ["OpenCode"], "an exact full desktop-entry identifier remains searchable");
+
     assert.ok(appSearch.textRelevance(appSearch.applicationSearchFields({ name: "OpenCode" }), "opencdoe").score > 0,
         "typo fallback admits a bounded title or app-name match");
     assert.ok(appSearch.textRelevance(appSearch.applicationSearchFields({ name: "Editor", aliases: ["OpenCode"] }),
@@ -325,6 +336,20 @@ test("application relevance admits strong fields and rejects secondary-only matc
         "usage is looked up through the result builder only for admitted applications");
     assert.deepEqual(usageLookups, ["OpenCode"],
         "a rejected application does not pay a usage lookup");
+
+    for (const [label, usage, expectedFrecency, expectedDaysSinceUsed] of [
+        ["present zero values", { frecency: 0, daysSinceUsed: 0 }, 0, 0],
+        ["null usage values", { frecency: null, daysSinceUsed: null }, 0, 999999],
+        ["missing usage values", {}, 0, 999999]
+    ]) {
+        const rows = appSearchRows([{
+            name: "OpenCode",
+            id: "opencode.desktop",
+            usage: usage
+        }], "opencode");
+        assert.equal(rows[0].score, appSearch.applicationFinalScore(exact, expectedFrecency, expectedDaysSinceUsed),
+            `${label} must use only nullish defaults in the application result builder`);
+    }
 
     const actionRows = appSearchRows([
         {
