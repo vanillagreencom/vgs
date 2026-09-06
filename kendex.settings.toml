@@ -14,7 +14,7 @@ GIT_HOST_CLI = ".agents/skills/github/scripts/github.sh"
 LINEAR_FORMAT = "safe"
 ORCH_STATE_DIR = "tmp"
 
-# File-size thresholds come from the shipped path classes. No SIZE_RATCHET_*
+# File-size thresholds come from the shipped path classes. No DOC_LIMITS_*
 # key here: a repeated default goes stale when the class changes.
 
 SECOND_OPINION_CLAUDE_CMD = "claude -p --no-session-persistence --model opus --effort max --allowedTools Bash(read-only:true),Read,Glob,Grep"
@@ -207,14 +207,14 @@ SECOND_OPINION_ARTIFACT_DIR = "tmp/second-opinion"
 # executable following the family exit contract (0 clean, 1 violations,
 # else "could not complete"); any nonzero blocks the commit, and so does a
 # missing or non-executable value. Empty = no repo-local check.
-GROWTH_GUARDS_PRE_COMMIT_LOCAL = "scripts/check-bot-instructions-staged.sh"
+COMMIT_GUARDS_PRE_COMMIT_LOCAL = "scripts/check-bot-instructions-staged.sh"
 
 # Markdown lanes judge every tracked file their globs name minus tools/md-excludes.
-GROWTH_GUARDS_MD_SCOPE = "all"
+COMMIT_GUARDS_MD_SCOPE = "all"
 
 # md-refs judges every tracked markdown file, decision records and READMEs
 # included, not only the agent-loaded set.
-GROWTH_GUARDS_MD_REFS_PATHS = "*.md"
+COMMIT_GUARDS_MD_REFS_PATHS = "*.md"
 
 # Max re-review cycles per issue before the verdict pass; the re-review
 # re-entry refuses once cycles is past it.

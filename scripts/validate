@@ -100,9 +100,9 @@ helper    | python3 -m py_compile bin/vshell-helper
 helper    | bash -n bin/vshell
 always    | git diff --check
 -         | scripts/check-workflows.sh
--         | .agents/skills/size-ratchet/scripts/size-ratchet
-docs      | .agents/skills/growth-guards/scripts/growth-guards all
-always    | .agents/skills/growth-guards/scripts/byte-ceiling --base origin/main
+-         | .agents/skills/doc-limits/scripts/doc-limits
+docs      | .agents/skills/commit-guards/scripts/commit-guards all
+always    | .agents/skills/commit-guards/scripts/byte-ceiling --base origin/main
 qml       | scripts/qml-smoke.sh --nested --require-static --require-nested
 qml       | scripts/check-validation-safety.sh --require-static
 -         | scripts/check-label-taxonomy.py

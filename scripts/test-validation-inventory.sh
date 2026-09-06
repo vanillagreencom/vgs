@@ -1790,10 +1790,10 @@ while IFS='|' read -r shape replacement; do
 import os, pathlib, sys
 root, out = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
 text = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-step = "        run: .agents/skills/size-ratchet/scripts/size-ratchet\n"
+step = "        run: .agents/skills/doc-limits/scripts/doc-limits\n"
 if step not in text:
-    sys.exit("the size-ratchet ci.yml step these fixtures doctor has moved")
-body = os.environ["SHAPE_REPLACEMENT"].replace("@", ".agents/skills/size-ratchet/scripts/size-ratchet")
+    sys.exit("the doc-limits ci.yml step these fixtures doctor has moved")
+body = os.environ["SHAPE_REPLACEMENT"].replace("@", ".agents/skills/doc-limits/scripts/doc-limits")
 out.write_text(text.replace(step, f"        run: |\n          {body}\n", 1), encoding="utf-8")
 MENTION_ONLY
   if [[ ! -s "$doctored" ]]; then
@@ -1821,15 +1821,15 @@ python3 - "$repo_root" "$heredoc_ci" <<'HEREDOC_SHAPE'
 import pathlib, sys
 root, out = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
 text = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-step = "        run: .agents/skills/size-ratchet/scripts/size-ratchet\n"
+step = "        run: .agents/skills/doc-limits/scripts/doc-limits\n"
 if step not in text:
-    sys.exit("the size-ratchet ci.yml step these fixtures doctor has moved")
+    sys.exit("the doc-limits ci.yml step these fixtures doctor has moved")
 # The space-indented EOF remains body text under the shell's delimiter rule.
 out.write_text(text.replace(step,
     "        run: |\n"
     "          cat <<EOF\n"
     "           EOF\n"
-    "          .agents/skills/size-ratchet/scripts/size-ratchet\n"
+    "          .agents/skills/doc-limits/scripts/doc-limits\n"
     "          EOF\n", 1), encoding="utf-8")
 HEREDOC_SHAPE
 if [[ ! -s "$heredoc_ci" ]]; then

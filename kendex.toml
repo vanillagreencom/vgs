@@ -261,7 +261,7 @@ enabled = true
 source = "kendex"
 enabled = true
 
-[skills.growth-guards]
+[skills.commit-guards]
 source = "kendex"
 enabled = true
 
@@ -297,7 +297,7 @@ enabled = true
 source = "kendex"
 enabled = true
 
-[skills.size-ratchet]
+[skills.doc-limits]
 source = "kendex"
 enabled = true
 
