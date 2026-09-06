@@ -87,6 +87,7 @@ go        | scripts/check-execbound-adoption-tests.py
 -         | scripts/test-validate.sh
 -         | scripts/test-validation-inventory.sh
 -         | scripts/test-validation-areas.sh
+-         | scripts/test-validation-dump.sh
 -         | scripts/test-validation-ci-coverage.sh
 -         | scripts/test-qml-smoke.sh
 -         | scripts/test-format-lint.sh

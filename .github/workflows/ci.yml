@@ -242,6 +242,7 @@ jobs:
           scripts/test-validate.sh
           scripts/test-qml-smoke.sh
           scripts/test-validation-areas.sh
+          scripts/test-validation-dump.sh
           scripts/test-validation-ci-coverage.sh
           # test-validation-inventory.sh runs in its own final step; see that step.
 
