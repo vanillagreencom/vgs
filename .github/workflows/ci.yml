@@ -241,7 +241,11 @@ jobs:
           # Exercise the validation runner itself, including its skip status.
           scripts/test-validate.sh
           scripts/test-qml-smoke.sh
-          # test-validation-inventory.sh runs in its own final step; see that step.
+          scripts/test-validation-areas.sh
+          scripts/test-validation-dump.sh
+          scripts/test-validation-ci-coverage.sh
+          scripts/test-validation-inventory.sh
+          # test-validation-readers.sh runs in its own final step; see that step.
 
       - name: Helper and CLI checks
         run: |
@@ -333,5 +337,5 @@ jobs:
       # Keep this step last. Exit 77 means a control could not run and must fail
       # the job. GitHub skips later steps after a failure, so last position lets
       # the other checks finish. Do not convert the skip status into success.
-      - name: Validation inventory regressions
-        run: scripts/test-validation-inventory.sh
+      - name: Reader agreement regressions
+        run: scripts/test-validation-readers.sh
