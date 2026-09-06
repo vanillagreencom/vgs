@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
-import sys
+import re
 import tempfile
+import unittest
 from pathlib import Path
+from unittest import mock
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -30,6 +32,8 @@ TAXONOMY = """
 | `ios` | Wrong platform. |
 | `2.0` | Numeric here as well. |
 """
+USABLE = {"releases", "1.0", "agent:generalist"}
+NEVER = {"ios", "2.0"}
 
 
 def load_guard():
@@ -44,71 +48,37 @@ def load_guard():
 guard = load_guard()
 
 
-def assert_equal(actual, expected, message):
-    if actual != expected:
-        raise AssertionError(f"{message}: expected {expected!r}, got {actual!r}")
-
-
 def sections_for(text):
     """Run the real parser over a manifest holding `text`."""
     with tempfile.TemporaryDirectory() as tmp:
         manifest = Path(tmp) / "kendex.toml"
         manifest.write_text(text, encoding="utf-8")
-        original = guard.MANIFEST
-        guard.MANIFEST = manifest
-        try:
+        with mock.patch.object(guard, "MANIFEST", manifest):
             return guard.taxonomy_sections()
-        finally:
-            guard.MANIFEST = original
 
 
-def test_a_label_name_may_begin_with_a_digit():
-    usable, never = sections_for(TAXONOMY)
-    assert_equal("1.0" in usable, True, "a leading-digit label is read from a usable table")
-    assert_equal("2.0" in never, True, "and from the never-use table")
-    assert_equal("releases" in usable, True, "an ordinary name still parses")
-    assert_equal("agent:generalist" in usable, True, "a colon in the name still parses")
-    assert_equal("1.0" in never, False, "the two tables stay separate")
+class LabelTaxonomyParser(unittest.TestCase):
+    def test_each_table_yields_its_own_labels_digit_led_and_colon_names_included(self):
+        self.assertEqual(sections_for(TAXONOMY), (USABLE, NEVER))
 
+    def test_control_the_letter_only_pattern_loses_the_numeric_labels(self):
+        """The mutant that hid the bug: a leading-letter pattern still reads the rest."""
+        letter_led = re.compile(r"`([A-Za-z][A-Za-z0-9:._-]*)`")
+        with mock.patch.object(guard, "LABEL_SPAN", letter_led):
+            self.assertEqual(sections_for(TAXONOMY), (USABLE - {"1.0"}, NEVER - {"2.0"}))
 
-def test_the_leading_letter_pattern_is_what_hid_it():
-    """Require the letter-only mutant to lose numeric labels."""
-    import re
-
-    original = guard.LABEL_SPAN
-    guard.LABEL_SPAN = re.compile(r"`([A-Za-z][A-Za-z0-9:._-]*)`")
-    try:
-        usable, never = sections_for(TAXONOMY)
-    finally:
-        guard.LABEL_SPAN = original
-    assert_equal("1.0" in usable, False, "the old pattern could not see a numeric label")
-    assert_equal("2.0" in never, False, "in either table")
-    assert_equal("releases" in usable, True, "while still reading the rest, which is why it hid")
-
-
-def test_prose_backticks_are_not_labels():
-    """Both sets, because this fixture appends past the never-use heading and
-    so lands there: checking only the usable set would let the filter be
-    removed with the control still green."""
-    usable, never = sections_for(TAXONOMY + """
+    def test_prose_backticks_are_not_labels(self):
+        """Both sets: the appended text lands after the never-use heading, so an
+        assertion on the usable set alone would let the filter go with the control green."""
+        prose = TAXONOMY + """
 Prose naming `kendex` and `docs/architecture/` must not become labels.
 
 | Label | Use when |
 |-------|----------|
 | `linear` | Filtered as prose, not a label. |
-""")
-    for name in ("kendex", "docs/architecture/", "linear"):
-        assert_equal(name in usable, False, f"{name!r} is prose, not a usable label")
-        assert_equal(name in never, False, f"{name!r} is prose, not a never-use label")
-
-
-def main() -> int:
-    test_a_label_name_may_begin_with_a_digit()
-    test_the_leading_letter_pattern_is_what_hid_it()
-    test_prose_backticks_are_not_labels()
-    print("label taxonomy parser controls passed.")
-    return 0
+"""
+        self.assertEqual(sections_for(prose), (USABLE, NEVER))
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    unittest.main()

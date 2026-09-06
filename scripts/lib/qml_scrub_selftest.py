@@ -1,199 +1,135 @@
-"""Controls for qml_scrub, invoked by qml_source_selftest.py."""
+"""Controls for qml_scrub: what `live_code` blanks and what it must leave standing.
+
+Run with python3 scripts/lib/qml_scrub_selftest.py.
+"""
 
 import sys
+import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from qml_scrub import ScrubError, live_code  # noqa: E402
 
 
-def scrub_checks(check) -> None:
-    """Pin what `live_code` blanks and what it must leave standing."""
-    def blanked_template(source: str) -> str:
-        return live_code(source, blank_strings=True)
+def blanked(source: str) -> str:
+    return live_code(source, blank_strings=True)
 
-    def refusal(source: str) -> str:
-        """The problem the scrubber refuses with, or a marker that it did not."""
-        try:
-            live_code(source, blank_strings=True)
-        except ScrubError as error:
-            return error.problem
-        return "RETURNED A VIEW"
 
-    commented = "a();\n// b();\nc();\n"
-    blanked = live_code(commented)
-    check("comment contents are gone", "b()" in blanked, False)
-    check("comment blanking preserves offsets", len(blanked), len(commented))
-    check("code around a comment survives", "a();" in blanked and "c();" in blanked, True)
-    check("block comment is blanked", "x" in live_code("/* x */\n"), False)
-    check("string contents survive by default", "hi" in live_code('log("hi");'), True)
-    check("string contents blank on request", "hi" in live_code('log("hi");', blank_strings=True), False)
-    check("string delimiters remain", live_code('log("hi");', blank_strings=True), 'log("  ");')
-    check("blanking a string preserves offsets", len(live_code('log("hi");', blank_strings=True)), len('log("hi");'))
-    check(
-        "an unterminated string ends at the newline",
-        "after" in live_code("var a = 'oops\nvar after = 1;\n", blank_strings=True),
-        True,
-    )
+# Comments go in both views; strings only on request: (label, source, blank_strings, expected).
+COMMENTS_AND_STRINGS = [
+    ("a line comment is blanked, the code around it survives", "a();\n// b();\nc();\n", False, "a();\n       \nc();\n"),
+    ("a block comment is blanked", "/* x */\n", False, "       \n"),
+    ("string contents survive by default", 'log("hi");', False, 'log("hi");'),
+    ("string contents blank on request, delimiters remain", 'log("hi");', True, 'log("  ");'),
+    ("an unterminated string ends at the newline", "var a = 'oops\nvar after = 1;\n", True, "var a = '    \nvar after = 1;\n"),
+    ("a line continuation inside a string keeps its newline", 'var a = "one\\\ntwo";\nb();\n', True, 'var a = "    \n   ";\nb();\n'),
+]
 
-    # Unsupported unterminated constructs must raise instead of hiding the remainder.
-    check("an unterminated block comment is refused", refusal("/* x"), "unterminated block comment")
-    check("an unterminated string is refused", refusal('x = "abc'), "unterminated string literal")
-    check("an unbalanced paren is refused", refusal("f(a;\n"), "unbalanced parentheses: the scan ended inside an open `(`")
-    # Offsets and line count are a contract, not a nicety: a caller may hold
-    # both views of one file and compare positions between them, so a shape
-    # that shifts one against the other mismatches every later offset.
-    continuation = 'var a = "one\\\ntwo";\nb();\n'
-    check(
-        "a line continuation inside a string keeps its newline",
-        live_code(continuation, blank_strings=True).count("\n"),
-        continuation.count("\n"),
-    )
-    check(
-        "a line continuation preserves offsets too",
-        len(live_code(continuation, blank_strings=True)),
-        len(continuation),
-    )
+# Template text is blanked; interpolation code survives: (label, source, expected).
+TEMPLATES = [
+    ("literal text is blanked, delimiters and interpolation markers intact",
+     "log(`text danger(x) ${danger(y)} tail`);\n", "log(`               ${danger(y)}     `);\n"),
+    ("a brace inside an interpolation does not end it",
+     "`${f({a: 1}) && danger(z)} tail`", "`${f({a: 1}) && danger(z)}     `"),
+    ("an arrow body inside an interpolation does not end it",
+     "`${xs.map(x => { return danger(z); })} tail`", "`${xs.map(x => { return danger(z); })}     `"),
+    ("a template nested in an interpolation exposes its code and blanks its own text",
+     "`outer ${`inner text ${danger(z)} more`} tail`", "`      ${`           ${danger(z)}     `}     `"),
+    ("a quoted brace inside an interpolation neither ends it nor survives as text",
+     "`${f('}') && danger(z)} tail`", "`${f(' ') && danger(z)}     `"),
+    ("a quoted backtick inside an interpolation does not end the literal",
+     "`${f('`') && danger(z)} tail`", "`${f(' ') && danger(z)}     `"),
+    ("an escaped dollar-brace is literal text, not an interpolation",
+     "`\\${danger(z)}`", "`             `"),
+    ("a comment inside an interpolation is still blanked",
+     "`${/* gone */ danger(z)}`", "`${           danger(z)}`"),
+    ("a multi-line literal keeps its newlines",
+     "`a\nb ${danger(z)}\nc`", "` \n  ${danger(z)}\n `"),
+]
 
-    # Interpolation code must survive while surrounding template text is blanked.
-    interpolated = "log(`text danger(x) ${danger(y)} tail`);\n"
-    seen = blanked_template(interpolated)
-    check("a call inside an interpolation survives", "danger(y)" in seen, True)
-    check("literal text around an interpolation is still blanked", "danger(x)" in seen, False)
-    check("interpolation blanking preserves offsets", len(seen), len(interpolated))
-    check(
-        "the whole literal is read, delimiters and interpolation markers intact",
-        seen,
-        "log(`               ${danger(y)}     `);\n",
-    )
-    check(
-        "a brace inside an interpolation does not end it",
-        "danger(z)" in blanked_template("`${f({a: 1}) && danger(z)} tail`"),
-        True,
-    )
-    check(
-        "an arrow body inside an interpolation does not end it",
-        "danger(z)" in blanked_template("`${xs.map(x => { return danger(z); })} tail`"),
-        True,
-    )
-    nested_template = blanked_template("`outer ${`inner text ${danger(z)} more`} tail`")
-    check("a template nested in an interpolation still exposes its code", "danger(z)" in nested_template, True)
-    check("the nested literal's own text is blanked", "inner text" in nested_template, False)
-    check(
-        "a quoted brace inside an interpolation neither ends it nor survives as text",
-        blanked_template("`${f('}') && danger(z)} tail`"),
-        "`${f(' ') && danger(z)}     `",
-    )
-    check(
-        "a quoted backtick inside an interpolation does not end the literal",
-        "danger(z)" in blanked_template("`${f('`') && danger(z)} tail`"),
-        True,
-    )
-    check(
-        "an escaped dollar-brace is literal text, not an interpolation",
-        "danger" in blanked_template("`\\${danger(z)}`"),
-        False,
-    )
-    check(
-        "a comment inside an interpolation is still blanked",
-        "gone" in blanked_template("`${/* gone */ danger(z)}`"),
-        False,
-    )
-    for unterminated, problem in (
-        ("`text ${danger(z)", "unterminated ${...} interpolation"),
-        ("`text ${", "unterminated ${...} interpolation"),
-        ("`text ", "unterminated template literal"),
-    ):
-        check(f"an unterminated literal is refused: {unterminated!r}", refusal(unterminated), problem)
-    multiline = "`a\nb ${danger(z)}\nc`"
-    check("line count survives a multi-line literal", blanked_template(multiline).count("\n"), multiline.count("\n"))
-
-    # Quotes inside regex bodies must not open strings or hide later code.
-    check(
-        "a quote in a regex does not swallow the rest of the line",
-        "danger(z)" in blanked_template("s.replace(/'/g, \"x\"); danger(z);\n"),
-        True,
-    )
-    check(
-        "a backtick in a regex does not swallow the rest of the file",
-        "danger(z)" in blanked_template("return /[;&|`\"']/.test(p);\ndanger(z);\n"),
-        True,
-    )
-    # A regex after a control-condition parenthesis is a statement body.
-    check(
-        "a regex after a control condition is a regex, not division",
-        blanked_template('function f(x) {\n  if (x) /a`b/.test(x);\n  const bad = ["wtype"];\n}\n'),
-        'function f(x) {\n  if (x) /   /.test(x);\n  const bad = ["     "];\n}\n',
-    )
-    for head in ("if", "while", "for", "switch", "catch"):
-        check(
-            f"a regex after `{head} (...)` is a regex",
-            blanked_template(f"{head} (x) /a`b/.test(x);\n"),
-            f"{head} (x) /   /.test(x);\n",
-        )
-    check(
-        "the regex body is text, blanked like a string's",
-        blanked_template("m = /wtype/g;\n"),
-        "m = /     /g;\n",
-    )
-    check("the regex body survives in the other view", "wtype" in live_code("m = /wtype/g;\n"), True)
-    check(
-        "a slash inside a character class does not close the regex",
-        blanked_template("m = /[/'\"]/g;\n"),
-        "m = /     /g;\n",
-    )
-    check(
-        "an escaped slash does not close the regex",
-        blanked_template("m = /a\\/'b/;\n"),
-        "m = /     /;\n",
-    )
-    # ...and the other direction: division must not be read as a regex, or the
-    # code between two divisions would be blanked as a regex body.
-    check(
-        "division after a value is division",
-        blanked_template("a = b / c; danger(z); d = e / f;\n"),
-        "a = b / c; danger(z); d = e / f;\n",
-    )
-    check(
-        "division after a call or an index is division",
-        blanked_template("a = f(x) / g[i] / 2;\n"),
-        "a = f(x) / g[i] / 2;\n",
-    )
-    check(
-        "division after a postfix increment is division",
-        blanked_template("a = counter++ / total-- / 2;\n"),
-        "a = counter++ / total-- / 2;\n",
-    )
-    # Division after an object literal must leave the following code visible.
-    check(
-        "division after an object literal is division",
-        blanked_template('const x = {} / 2; run(["wtype"]); const y = a / b;\n'),
-        'const x = {} / 2; run(["     "]); const y = a / b;\n',
-    )
-    check(
-        "a brace does not swallow the code after it",
-        "danger(z)" in blanked_template("if (a) {} / 2; danger(z); b = c / d;\n"),
-        True,
-    )
-    check(
-        "a keyword still opens a regex",
-        blanked_template("return /ab/.test(x);\n"),
-        "return /  /.test(x);\n",
-    )
-    check(
-        "an unterminated regex falls through to division",
-        blanked_template("a = (b) ? c : d / e;\nf(g);\n"),
-        "a = (b) ? c : d / e;\nf(g);\n",
-    )
-    check(
-        "a comment still wins over a regex",
-        "gone" in blanked_template("a = b;\n// gone /x/\n"),
-        False,
-    )
+# A regex body is text, blanked like a string's; a slash after a value is division.
+REGEXES = [
+    ("a quote in a regex does not swallow the rest of the line",
+     "s.replace(/'/g, \"x\"); danger(z);\n", "s.replace(/ /g, \" \"); danger(z);\n"),
+    ("a backtick in a regex does not swallow the rest of the file",
+     "return /[;&|`\"']/.test(p);\ndanger(z);\n", "return /        /.test(p);\ndanger(z);\n"),
+    ("a regex after a control condition is a regex, not division",
+     'function f(x) {\n  if (x) /a`b/.test(x);\n  const bad = ["wtype"];\n}\n',
+     'function f(x) {\n  if (x) /   /.test(x);\n  const bad = ["     "];\n}\n'),
+    *[(f"a regex after `{head} (...)` is a regex", f"{head} (x) /a`b/.test(x);\n", f"{head} (x) /   /.test(x);\n")
+      for head in ("if", "while", "for", "switch", "catch")],
+    ("the regex body is blanked", "m = /wtype/g;\n", "m = /     /g;\n"),
+    ("a slash inside a character class does not close the regex", "m = /[/'\"]/g;\n", "m = /     /g;\n"),
+    ("an escaped slash does not close the regex", "m = /a\\/'b/;\n", "m = /     /;\n"),
+    ("a keyword still opens a regex", "return /ab/.test(x);\n", "return /  /.test(x);\n"),
+    ("a comment still wins over a regex", "a = b;\n// gone /x/\n", "a = b;\n           \n"),
     # The two readings meet inside an interpolation: a brace in a regex there
     # must not be counted as one of the braces that ends the interpolation.
-    check(
-        "a brace inside a regex inside an interpolation does not end it",
-        "danger(z)" in blanked_template("`${s.replace(/{/g, '') && danger(z)} tail`"),
-        True,
-    )
+    ("a brace inside a regex inside an interpolation does not end it",
+     "`${s.replace(/{/g, '') && danger(z)} tail`", "`${s.replace(/ /g, '') && danger(z)}     `"),
+    # The other direction: division read as a regex would blank the code between two slashes.
+    ("division after a value is division",
+     "a = b / c; danger(z); d = e / f;\n", "a = b / c; danger(z); d = e / f;\n"),
+    ("division after a call or an index is division", "a = f(x) / g[i] / 2;\n", "a = f(x) / g[i] / 2;\n"),
+    ("division after a postfix increment is division",
+     "a = counter++ / total-- / 2;\n", "a = counter++ / total-- / 2;\n"),
+    ("division after an object literal is division",
+     'const x = {} / 2; run(["wtype"]); const y = a / b;\n', 'const x = {} / 2; run(["     "]); const y = a / b;\n'),
+    ("a brace does not swallow the code after it",
+     "if (a) {} / 2; danger(z); b = c / d;\n", "if (a) {} / 2; danger(z); b = c / d;\n"),
+    ("an unterminated regex falls through to division",
+     "a = (b) ? c : d / e;\nf(g);\n", "a = (b) ? c : d / e;\nf(g);\n"),
+]
+
+# Unsupported unterminated constructs raise instead of hiding the remainder.
+REFUSALS = [
+    ("an unterminated block comment", "/* x", "unterminated block comment"),
+    ("an unterminated string", 'x = "abc', "unterminated string literal"),
+    ("an unbalanced paren", "f(a;\n", "unbalanced parentheses: the scan ended inside an open `(`"),
+    ("an unterminated interpolation", "`text ${danger(z)", "unterminated ${...} interpolation"),
+    ("an empty unterminated interpolation", "`text ${", "unterminated ${...} interpolation"),
+    ("an unterminated template literal", "`text ", "unterminated template literal"),
+]
+
+
+class LiveCode(unittest.TestCase):
+    def test_comments_are_blanked_and_strings_only_on_request(self):
+        for label, source, blank_strings, expected in COMMENTS_AND_STRINGS:
+            with self.subTest(label):
+                self.assertEqual(live_code(source, blank_strings=blank_strings), expected)
+
+    def test_template_text_is_blanked_and_interpolation_code_survives(self):
+        for label, source, expected in TEMPLATES:
+            with self.subTest(label):
+                self.assertEqual(blanked(source), expected)
+
+    def test_a_regex_body_is_text_and_division_is_not_a_regex(self):
+        for label, source, expected in REGEXES:
+            with self.subTest(label):
+                self.assertEqual(blanked(source), expected)
+
+    def test_the_regex_body_survives_in_the_unblanked_view(self):
+        self.assertEqual(live_code("m = /wtype/g;\n"), "m = /wtype/g;\n")
+
+    def test_the_blanked_view_keeps_the_offsets_of_the_unblanked_one(self):
+        """A caller may hold both views of one file and compare positions between
+        them; a shape that shifts one against the other mismatches every later offset.
+        The exact tables pin this for every row they blank; these rows are the ones
+        they only read unblanked."""
+        for label, source, blank_strings, _ in COMMENTS_AND_STRINGS:
+            if blank_strings:
+                continue
+            with self.subTest(label):
+                seen = blanked(source)
+                self.assertEqual((len(seen), seen.count("\n")), (len(source), source.count("\n")))
+
+    def test_an_unterminated_construct_is_refused(self):
+        for label, source, problem in REFUSALS:
+            with self.subTest(label):
+                with self.assertRaises(ScrubError) as refused:
+                    blanked(source)
+                self.assertEqual(refused.exception.problem, problem)
+
+
+if __name__ == "__main__":
+    unittest.main()

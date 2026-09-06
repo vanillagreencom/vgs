@@ -3,7 +3,8 @@
 ffmpeg build ladder, and the cache housekeeping around it.
 
 The temporary destination needs a JPEG suffix for decoders that infer format.
-Stub decoders keep build paths testable when no real decoder is installed.
+Stub decoders keep build paths testable when no real decoder is installed; the
+cases that need a real one skip visibly when it is absent.
 Each pruning case includes a live entry so deleting everything cannot pass.
 """
 from __future__ import annotations
@@ -13,13 +14,21 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "bin"))
 import vshell_wallpaper_thumbs as thumbs  # noqa: E402
 
-FAILURES: list[str] = []
+HAS_PIL = thumbs.Image is not None
+REAL_WHICH = shutil.which
+INSTALLED = [rung for rung, available in (
+    ("pil", HAS_PIL),
+    ("magick", shutil.which("magick") is not None),
+    ("ffmpeg", shutil.which("ffmpeg") is not None),
+) if available]
 
 # A real JPEG lets stub decoders exercise the build without installed tools.
 TINY_JPEG = base64.b64decode(
@@ -39,10 +48,8 @@ TINY_JPEG = base64.b64decode(
 
 
 def stub_runner(recorded: list[list[str]]):
-    """Stub destination-extension format selection for magick and ffmpeg.
-
-    The stub exercises build_one argv and rename handling, not image decoding.
-    """
+    """Stand in for magick and ffmpeg: refuse a destination whose extension names
+    no format, else land TINY_JPEG. Exercises build_one's argv and rename, not decoding."""
     def run(cmd, **kwargs):
         recorded.append(list(cmd))
         dest = Path(cmd[-1])
@@ -54,27 +61,36 @@ def stub_runner(recorded: list[list[str]]):
     return run
 
 
-def build_stubbed(src: Path, rung: str, recorded: list[list[str]]) -> Path | None:
-    """Run one rung with the tool STUBBED, so the ladder is reachable without it."""
-    out_dir = Path(tempfile.mkdtemp())
-    thumbs.configure(thumbs.ThumbRuntime(cache_dir=lambda: out_dir, run=stub_runner(recorded)))
-    real_image, real_which = thumbs.Image, thumbs.shutil.which
-    try:
-        thumbs.Image = None
-        thumbs.shutil.which = lambda name: (
-            f"/usr/bin/{name}" if name == rung else None)
-        return thumbs.build_one(src)
-    finally:
-        thumbs.Image, thumbs.shutil.which = real_image, real_which
+def runner(cmd, **kwargs):
+    return subprocess.run(cmd, text=True, stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE, **kwargs)
 
 
-def ok(message: str) -> None:
-    print(f"  ok    {message}")
+def is_jpeg(path: Path) -> bool:
+    with path.open("rb") as handle:
+        return handle.read(3) == b"\xff\xd8\xff"
 
 
-def fail(message: str) -> None:
-    FAILURES.append(message)
-    print(f"FAIL: {message}")
+def jpeg_size(path: Path) -> tuple[int, int]:
+    """Width and height from the JPEG's own frame header. Parsed here rather
+    than with Pillow because the rungs under test are the ones that run when
+    Pillow is absent: a verifier that needed it could not check them."""
+    data = path.read_bytes()
+    index = 2
+    while index < len(data) - 9:
+        if data[index] != 0xFF:
+            index += 1
+            continue
+        marker = data[index + 1]
+        if marker in {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}:
+            height = int.from_bytes(data[index + 5:index + 7], "big")
+            width = int.from_bytes(data[index + 7:index + 9], "big")
+            return width, height
+        if marker == 0xD8 or 0xD0 <= marker <= 0xD9:
+            index += 2
+            continue
+        index += 2 + int.from_bytes(data[index + 2:index + 4], "big")
+    raise ValueError(f"no frame header in {path}")
 
 
 def a_wallpaper() -> Path | None:
@@ -96,299 +112,169 @@ def a_wallpaper() -> Path | None:
     return None
 
 
-def jpeg_size(path: Path) -> tuple[int, int]:
-    """Width and height from the JPEG's own frame header. Parsed here rather
-    than with Pillow because the rungs under test are the ones that run when
-    Pillow is absent — a verifier that needed it could not check them."""
-    data = path.read_bytes()
-    index = 2
-    while index < len(data) - 9:
-        if data[index] != 0xFF:
-            index += 1
-            continue
-        marker = data[index + 1]
-        if marker in {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}:
-            height = int.from_bytes(data[index + 5:index + 7], "big")
-            width = int.from_bytes(data[index + 7:index + 9], "big")
-            return width, height
-        if marker == 0xD8 or 0xD0 <= marker <= 0xD9:
-            index += 2
-            continue
-        index += 2 + int.from_bytes(data[index + 2:index + 4], "big")
-    raise ValueError(f"no frame header in {path}")
+SRC = a_wallpaper()
 
 
-def runner(cmd, **kwargs):
-    return subprocess.run(cmd, text=True, stdout=subprocess.PIPE,
-                          stderr=subprocess.PIPE, **kwargs)
+def setUpModule():
+    if SRC is None:
+        raise AssertionError("no tracked wallpaper larger than the budget to build from")
 
 
-def build_with(src: Path, rung: str) -> Path | None:
-    """Build one thumbnail with the ladder forced down to `rung`."""
-    out_dir = Path(tempfile.mkdtemp())
-    thumbs.configure(thumbs.ThumbRuntime(cache_dir=lambda: out_dir, run=runner))
-    real_image, real_which = thumbs.Image, thumbs.shutil.which
-    try:
-        # Disable later rungs so fallback cannot conceal a failure in the selected one.
-        if rung != "pil":
-            thumbs.Image = None
-        thumbs.shutil.which = lambda name: real_which(name) if name == rung else None
-        return thumbs.build_one(src)
-    finally:
-        thumbs.Image, thumbs.shutil.which = real_image, real_which
+class ThumbCases(unittest.TestCase):
+    def fresh_dir(self) -> Path:
+        path = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, path, ignore_errors=True)
+        return path
+
+    def patch(self, target, name, value):
+        patcher = mock.patch.object(target, name, value)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def configure(self, run) -> Path:
+        """A fresh cache with `run` as the tool runner; returns the cache root."""
+        cache = self.fresh_dir()
+        thumbs.configure(thumbs.ThumbRuntime(cache_dir=lambda: cache, run=run))
+        return cache
+
+    def build(self, rung: str, run, src: Path | None = None, stub: bool = False) -> Path | None:
+        """Build one thumbnail with the ladder forced down to `rung`: Pillow off
+        unless it is the rung, `which` answering for the rung alone (with a made-up
+        path when the tool is stubbed), so a later rung cannot conceal a failure."""
+        self.configure(run)
+        which = (lambda name: f"/usr/bin/{name}") if stub else REAL_WHICH
+        with mock.patch.object(thumbs, "Image", thumbs.Image if rung == "pil" else None), \
+                mock.patch.object(shutil, "which", lambda name: which(name) if name == rung else None):
+            return thumbs.build_one(src or SRC)
+
+    def cache_with_live_and_orphan(self) -> tuple[Path, Path]:
+        self.configure(runner)
+        thumbs.thumb_dir().mkdir(parents=True, exist_ok=True)
+        live = thumbs.thumb_dir() / thumbs.thumb_name(SRC)
+        orphan = thumbs.thumb_dir() / "deadbeefcafe.jpg"
+        live.write_bytes(TINY_JPEG)
+        orphan.write_bytes(b"stale")
+        return live, orphan
 
 
-def is_jpeg(path: Path) -> bool:
-    with path.open("rb") as handle:
-        return handle.read(3) == b"\xff\xd8\xff"
+class BuildLadder(ThumbCases):
+    def test_a_stubbed_rung_is_handed_a_jpg_destination_that_carries_the_budget(self):
+        """These tools pick their output FORMAT from the extension (ffmpeg refuses
+        without one), and on a machine with no decoder the argv is the only place
+        the pre-sizing can be seen."""
+        width, height = str(thumbs.WIDTH), str(thumbs.HEIGHT)
+        for rung in ("magick", "ffmpeg"):
+            with self.subTest(rung):
+                recorded: list[list[str]] = []
+                out = self.build(rung, stub_runner(recorded), stub=True)
+                self.assertTrue(recorded, f"the {rung} rung never invoked its tool")
+                argv = recorded[-1]
+                landed = out is not None and out.is_file() and is_jpeg(out)
+                self.assertEqual(
+                    (Path(argv[-1]).suffix.lower(), any(width in str(part) and height in str(part) for part in argv), landed),
+                    (".jpg", True, True), argv)
 
-
-def main() -> int:
-    src = a_wallpaper()
-    if src is None:
-        fail("no tracked wallpaper to build from")
-        return 1
-
-    exercised = 0
-    real_runs = 0
-
-    # Stub decoders keep argv and rename checks active without installed tools.
-    for rung in ("magick", "ffmpeg"):
+    def test_control_the_stub_refuses_a_destination_without_the_jpg_suffix(self):
+        """Must-fail control for the case above: without the suffix the stubbed layer sees nothing land."""
         recorded: list[list[str]] = []
-        out = build_stubbed(src, rung, recorded)
-        exercised += 1
-        if not recorded:
-            fail(f"the {rung} rung never invoked its tool")
-        elif Path(recorded[-1][-1]).suffix.lower() != ".jpg":
-            fail(f"the {rung} rung was handed {recorded[-1][-1]!r} — these tools "
-                 f"pick their output FORMAT from that extension, and ffmpeg "
-                 f"refuses without one")
-        elif out is None or not out.is_file() or not is_jpeg(out):
-            fail(f"the {rung} rung did not land a JPEG at its final path")
-        elif not any(f"{thumbs.WIDTH}" in str(part) and f"{thumbs.HEIGHT}" in str(part)
-                     for part in recorded[-1]):
-            fail(f"the {rung} rung's command carries no {thumbs.WIDTH}x{thumbs.HEIGHT} "
-                 f"budget: {recorded[-1]!r}. Pre-sizing is the whole point, and on a "
-                 f"machine with no decoder this is the only place it can be seen")
-        else:
-            ok(f"the {rung} rung asks for the budget, writes to .jpg and renames into place")
+        self.patch(thumbs, "temp_path", lambda out: out.with_name(f".{out.name}.0.1"))
+        self.assertIsNone(self.build("ffmpeg", stub_runner(recorded), stub=True))
+        self.assertTrue(recorded, "the stub was never invoked, so its refusal was not what stopped the build")
 
-    # Remove the required suffix to verify that the stub control fails.
-    recorded = []
-    real_temp = thumbs.temp_path
-    thumbs.temp_path = lambda out: out.with_name(f".{out.name}.0.1")
-    try:
-        broken = build_stubbed(src, "ffmpeg", recorded)
-    finally:
-        thumbs.temp_path = real_temp
-    if broken is not None:
-        fail("MUST-FAIL CONTROL DID NOT FIRE: a destination with no .jpg suffix "
-             "still produced a thumbnail, so this layer cannot see the bug")
-    else:
-        ok("control: a destination with no .jpg suffix is refused")
-
-    # Pillow codec support varies by build. A decode failure must reach another rung.
-    if thumbs.Image is not None:
-        recorded = []
-        out_dir = Path(tempfile.mkdtemp())
-        thumbs.configure(thumbs.ThumbRuntime(cache_dir=lambda: out_dir, run=stub_runner(recorded)))
-        real_open, real_which = thumbs.Image.open, thumbs.shutil.which
+    @unittest.skipUnless(HAS_PIL, "Pillow is not installed here")
+    def test_a_rung_that_cannot_decode_falls_through_to_the_next(self):
+        """Pillow codec support varies by build; the ladder exists for the formats one decoder cannot open."""
+        recorded: list[list[str]] = []
+        self.configure(stub_runner(recorded))
 
         def no_codec(*args, **kwargs):
             raise OSError("cannot identify image file")
 
-        thumbs.Image.open = no_codec
-        thumbs.shutil.which = lambda name: "/usr/bin/magick" if name == "magick" else None
-        try:
-            fell_through = thumbs.build_one(src)
-        finally:
-            thumbs.Image.open, thumbs.shutil.which = real_open, real_which
-        exercised += 1
-        if fell_through is None or not fell_through.is_file():
-            fail("a Pillow codec failure ended the build instead of falling "
-                 "through to ImageMagick — the ladder exists for exactly the "
-                 "formats one decoder cannot open")
-        elif not recorded:
-            fail("the build claimed success without reaching the next rung")
-        else:
-            ok("a rung that cannot decode falls through to the next")
+        self.patch(thumbs.Image, "open", no_codec)
+        self.patch(shutil, "which", lambda name: "/usr/bin/magick" if name == "magick" else None)
+        fell_through = thumbs.build_one(SRC)
+        self.assertTrue(recorded, "the build claimed success without reaching the next rung")
+        self.assertTrue(fell_through is not None and fell_through.is_file(), fell_through)
 
-    for rung, available in (
-        ("pil", thumbs.Image is not None),
-        ("magick", shutil.which("magick") is not None),
-        ("ffmpeg", shutil.which("ffmpeg") is not None),
-    ):
-        if not available:
-            print(f"  skip  {rung} rung: not installed here")
-            continue
-        exercised += 1
-        real_runs += 1
-        out = build_with(src, rung)
-        if out is None or not out.is_file() or out.stat().st_size == 0:
-            fail(f"the {rung} rung produced no thumbnail — the format the "
-                 f"destination's extension selects is how these rungs decide")
-        elif not is_jpeg(out):
-            fail(f"the {rung} rung produced a file that is not a JPEG")
-        else:
-            width, height = jpeg_size(out)
-            source_width, source_height = jpeg_size(src)
-            if width > thumbs.WIDTH or height > thumbs.HEIGHT:
-                fail(f"the {rung} rung wrote {width}x{height}, outside the "
-                     f"{thumbs.WIDTH}x{thumbs.HEIGHT} budget — pre-sizing to the "
-                     f"carousel's budget is the whole optimisation, and a rung "
-                     f"that skipped the resize still writes a valid JPEG")
-            elif abs((width / height) - (source_width / source_height)) > 0.02:
-                fail(f"the {rung} rung wrote {width}x{height}, aspect "
-                     f"{width / height:.3f} against the source's "
-                     f"{source_width / source_height:.3f} — the box FITS, it "
-                     f"must not crop or stretch")
-            else:
-                ok(f"the {rung} rung writes a JPEG at {width}x{height}, "
-                   f"inside the budget and in aspect")
+    def test_an_installed_rung_writes_a_jpeg_inside_the_budget_and_in_aspect(self):
+        """The box FITS: pre-sizing to the carousel's budget without cropping or stretching."""
+        if not INSTALLED:
+            self.skipTest("no decoder installed: the stubbed cases pinned the argv and the rename; "
+                          "dimensions and aspect did not run")
+        source_width, source_height = jpeg_size(SRC)
+        for rung in INSTALLED:
+            with self.subTest(rung):
+                out = self.build(rung, runner)
+                self.assertTrue(out is not None and out.is_file() and is_jpeg(out), out)
+                width, height = jpeg_size(out)
+                self.assertTrue(width <= thumbs.WIDTH and height <= thumbs.HEIGHT,
+                                f"{width}x{height} is outside the {thumbs.WIDTH}x{thumbs.HEIGHT} budget")
+                self.assertAlmostEqual(width / height, source_width / source_height, delta=0.02)
 
-    # Widen the budget beyond the source to test whether dimension assertions
-    # distinguish a resized image from an unchanged JPEG.
-    if thumbs.Image is not None:
-        real_w, real_h = thumbs.WIDTH, thumbs.HEIGHT
-        source_width, source_height = jpeg_size(src)
-        thumbs.WIDTH, thumbs.HEIGHT = source_width * 2, source_height * 2
-        try:
-            unresized = build_with(src, "pil")
-        finally:
-            thumbs.WIDTH, thumbs.HEIGHT = real_w, real_h
-        if unresized is None or not unresized.is_file():
-            fail("control: the widened-budget build produced nothing, so it "
-                 "cannot show the budget assertion discriminating")
-        else:
-            width, height = jpeg_size(unresized)
-            if width <= real_w and height <= real_h:
-                fail("MUST-FAIL CONTROL DID NOT FIRE: an unresized build landed "
-                     f"at {width}x{height}, inside the {real_w}x{real_h} budget, "
-                     "so the dimension check cannot catch a dropped resize")
-            else:
-                ok(f"control: an unresized build is {width}x{height}, which the "
-                   "budget check rejects")
+    @unittest.skipUnless(HAS_PIL, "Pillow is not installed here")
+    def test_control_an_unresized_build_lands_outside_the_budget(self):
+        """Widen the budget past the source: the dimension assertion above must then reject the result."""
+        source_width, source_height = jpeg_size(SRC)
+        with mock.patch.object(thumbs, "WIDTH", source_width * 2), \
+                mock.patch.object(thumbs, "HEIGHT", source_height * 2):
+            unresized = self.build("pil", runner)
+        self.assertTrue(unresized is not None and unresized.is_file(), unresized)
+        width, height = jpeg_size(unresized)
+        self.assertTrue(width > thumbs.WIDTH or height > thumbs.HEIGHT,
+                        f"an unresized build landed at {width}x{height}, inside the budget")
 
-    # A build whose source is deleted mid-decode must not publish its result:
-    # a prune running in that window skips the temp file deliberately, and the
-    # deletion has already spent its one prune, so a rename after it would
-    # leave an orphan nothing sweeps.
-    doomed_dir = Path(tempfile.mkdtemp())
-    doomed_src = doomed_dir / "doomed.jpg"
-    doomed_src.write_bytes(src.read_bytes())
-    cache = Path(tempfile.mkdtemp())
+    @unittest.skipUnless(shutil.which("ffmpeg"), "ffmpeg is not installed here")
+    def test_control_the_ffmpeg_rung_produces_nothing_without_the_jpg_suffix(self):
+        """The bug this suite exists to pin, against the real tool."""
+        self.patch(thumbs, "temp_path", lambda out: out.with_name(f".{out.name}.0.1"))
+        broken = self.build("ffmpeg", runner)
+        self.assertFalse(broken is not None and broken.is_file() and broken.stat().st_size > 0, broken)
 
-    def deleting_runner(cmd, **kwargs):
-        dest = Path(cmd[-1])
-        dest.write_bytes(TINY_JPEG)
-        doomed_src.unlink()
-        return subprocess.CompletedProcess(cmd, 0, "", "")
+    def test_a_build_whose_source_is_deleted_mid_decode_publishes_nothing(self):
+        """A prune running in that window skips the temp file deliberately and the
+        deletion has already spent its one prune, so a rename after it would leave
+        an orphan nothing sweeps."""
+        doomed = self.fresh_dir() / "doomed.jpg"
+        doomed.write_bytes(SRC.read_bytes())
 
-    thumbs.configure(thumbs.ThumbRuntime(cache_dir=lambda: cache, run=deleting_runner))
-    real_image, real_which = thumbs.Image, thumbs.shutil.which
-    try:
-        thumbs.Image = None
-        thumbs.shutil.which = lambda name: "/usr/bin/magick" if name == "magick" else None
-        published = thumbs.build_one(doomed_src)
-    finally:
-        thumbs.Image, thumbs.shutil.which = real_image, real_which
-    exercised += 1
-    leftovers = [f for f in thumbs.thumb_dir().iterdir() if not f.name.startswith(".")] \
-        if thumbs.thumb_dir().is_dir() else []
-    if published is not None or leftovers:
-        fail(f"a build whose source was deleted mid-decode published "
-             f"{published or leftovers} — nothing prunes it afterwards, so it "
-             f"would sit in the cache for good")
-    else:
-        ok("a build whose source is deleted mid-decode publishes nothing")
+        def deleting_runner(cmd, **kwargs):
+            Path(cmd[-1]).write_bytes(TINY_JPEG)
+            doomed.unlink()
+            return subprocess.CompletedProcess(cmd, 0, "", "")
 
-    # Run the suffix-removal control after successful builds.
-    if shutil.which("ffmpeg") and thumbs.Image is not None:
-        real_temp = thumbs.temp_path
-        thumbs.temp_path = lambda out: out.with_name(f".{out.name}.0.{1}")
-        try:
-            broken = build_with(src, "ffmpeg")
-        finally:
-            thumbs.temp_path = real_temp
-        if broken is not None and broken.is_file() and broken.stat().st_size > 0:
-            fail("MUST-FAIL CONTROL DID NOT FIRE: the ffmpeg rung still produced "
-                 "a thumbnail with no .jpg suffix, so this suite cannot see the "
-                 "bug it exists to pin")
-        else:
-            ok("control: without the .jpg suffix the ffmpeg rung produces nothing")
-
-    # Temporary JPEG paths are deliberately absent from wanted. Removing one during
-    # decode would make publication fail.
-    prune_dir = Path(tempfile.mkdtemp())
-    thumbs.configure(thumbs.ThumbRuntime(cache_dir=lambda: prune_dir, run=runner))
-    thumbs.thumb_dir().mkdir(parents=True, exist_ok=True)
-    in_progress = thumbs.thumb_dir() / ".abc123.4321.999.jpg"
-    orphan = thumbs.thumb_dir() / "deadbeefcafe.jpg"
-    # A live entry prevents pruning everything from satisfying the orphan check.
-    live = thumbs.thumb_dir() / thumbs.thumb_name(src)
-    in_progress.write_bytes(b"partial")
-    orphan.write_bytes(b"stale")
-    live.write_bytes(TINY_JPEG)
-    pruned = thumbs.prune_orphans([src])
-    exercised += 1
-    if not live.exists():
-        fail("pruning deleted a LIVE wallpaper's thumbnail — the cache would "
-             "rebuild it, but a sweep that drops what it should keep is the "
-             "same bug pointed the other way")
-    elif not in_progress.exists():
-        fail("pruning unlinked an in-progress build: the rename that follows "
-             "would fail and the thumbnail would be lost")
-    elif orphan.exists() or pruned != 1:
-        fail(f"pruning removed {pruned} entries and the orphan "
-             f"{'survived' if orphan.exists() else 'went'}: it must drop exactly "
-             f"the entry no wallpaper claims")
-    else:
-        ok("pruning drops the orphan, keeps the live thumbnail, and leaves an "
-           "in-progress build alone")
-
-    orphan.write_bytes(b"stale")
-    result = thumbs.build_all([src], prune=True)
-    exercised += 1
-    if orphan.exists() or not live.exists() or result["pruned"] != 1:
-        fail(f"build_all(prune=True) pruned {result['pruned']}, live kept: "
-             f"{live.exists()}, orphan gone: {not orphan.exists()}")
-    else:
-        ok("build_all prunes the orphan and reuses the live thumbnail")
+        published = self.build("magick", deleting_runner, src=doomed, stub=True)
+        leftovers = [f.name for f in thumbs.thumb_dir().iterdir() if not f.name.startswith(".")] \
+            if thumbs.thumb_dir().is_dir() else []
+        self.assertEqual((published, leftovers), (None, []))
 
 
-    # An unwritable cache must remain a miss so the caller can use the original.
-    blocked = Path(tempfile.mkdtemp()) / "a-file"
-    blocked.write_text("not a directory")
-    thumbs.configure(thumbs.ThumbRuntime(cache_dir=lambda: blocked, run=runner))
-    exercised += 1
-    try:
-        built = thumbs.build_one(src)
-        summary = thumbs.build_all([src])
-    except Exception as error:  # noqa: BLE001 - the point is that nothing escapes
-        fail(f"an unwritable cache raised {type(error).__name__} instead of "
-             f"answering like a miss: the command dies with a traceback")
-    else:
-        if built is not None or summary["built"] or len(summary["failed"]) != 1:
-            fail(f"an unwritable cache reported built={summary['built']} "
-                 f"failed={len(summary['failed'])}: it must count as a miss")
-        else:
-            ok("an unwritable cache answers like a miss, not a traceback")
+class CacheHousekeeping(ThumbCases):
+    def test_pruning_drops_the_orphan_and_keeps_the_live_and_in_progress_entries(self):
+        """An in-progress temp file is deliberately absent from wanted; unlinking it
+        would fail the rename that follows and lose the thumbnail."""
+        live, orphan = self.cache_with_live_and_orphan()
+        in_progress = thumbs.thumb_dir() / ".abc123.4321.999.jpg"
+        in_progress.write_bytes(b"partial")
+        pruned = thumbs.prune_orphans([SRC])
+        self.assertEqual((pruned, live.exists(), in_progress.exists(), orphan.exists()),
+                         (1, True, True, False))
 
-    # An empty run fails. Stub tests cannot verify real image dimensions or aspect
-    # ratio, so report separately when no real decoder ran.
-    if exercised == 0:
-        fail("nothing was exercised at all: this suite proved nothing and must "
-             "not read as a pass")
-    if real_runs == 0:
-        print("  note  no decoder installed: the stubbed layer pinned the command "
-              "and the rename, the dimension and aspect assertions did not run")
+    def test_build_all_prunes_the_orphan_and_reuses_the_live_thumbnail(self):
+        live, orphan = self.cache_with_live_and_orphan()
+        result = thumbs.build_all([SRC], prune=True)
+        self.assertEqual((result["pruned"], result["built"], result["reused"],
+                          live.read_bytes() == TINY_JPEG, orphan.exists()),
+                         (1, 0, 1, True, False))
 
-    if FAILURES:
-        print(f"test-wallpaper-thumbs: {len(FAILURES)} failure(s)")
-        return 1
-    print("test-wallpaper-thumbs: all checks passed")
-    return 0
+    def test_an_unwritable_cache_answers_like_a_miss_not_a_traceback(self):
+        """The caller falls back to the original; an exception here kills the command."""
+        blocked = self.fresh_dir() / "a-file"
+        blocked.write_text("not a directory")
+        thumbs.configure(thumbs.ThumbRuntime(cache_dir=lambda: blocked, run=runner))
+        built = thumbs.build_one(SRC)
+        summary = thumbs.build_all([SRC])
+        self.assertEqual((built, summary["built"], len(summary["failed"])), (None, 0, 1))
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    unittest.main()
