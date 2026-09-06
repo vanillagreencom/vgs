@@ -83,18 +83,6 @@ func TestWlsunsetSkipsIdenticalProcessReplacement(t *testing.T) {
 	manager.mu.Unlock()
 }
 
-func TestHyprsunsetIPCTimeoutStaysBounded(t *testing.T) {
-	if hyprsunsetIPCAttemptTimeout <= 0 || hyprsunsetIPCAttemptTimeout > 500*time.Millisecond {
-		t.Fatalf("hyprsunsetIPCAttemptTimeout = %v, want a bound in (0, 500ms]", hyprsunsetIPCAttemptTimeout)
-	}
-	if hyprsunsetIPCRetryDelay < 0 || hyprsunsetIPCRetryDelay > 120*time.Millisecond {
-		t.Fatalf("hyprsunsetIPCRetryDelay = %v, want a bound in [0, 120ms]", hyprsunsetIPCRetryDelay)
-	}
-	if hyprsunsetIPCAttempts != 12 {
-		t.Fatalf("hyprsunsetIPCAttempts = %d, want 12", hyprsunsetIPCAttempts)
-	}
-}
-
 func TestHyprsunsetIPCTimesOutEachAttempt(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "hyprctl.log")
@@ -150,10 +138,18 @@ esac
 		state:   State{Config: cfg},
 	}
 
+	started := time.Now()
 	_, err := manager.handleSetGamma(json.RawMessage(`{"gamma":0.8}`))
+	elapsed := time.Since(started)
 
 	if err == nil {
 		t.Fatal("handleSetGamma error = nil, want gamma timeout")
+	}
+	// This is the one path that runs the production attempt count, attempt
+	// timeout and retry delay; their product must stay inside a UI-tolerable
+	// wait, so a change to any of them shows up here.
+	if elapsed > 10*time.Second {
+		t.Fatalf("handleSetGamma took %v, want every retry inside 10s", elapsed)
 	}
 	if !strings.Contains(err.Error(), "set hyprsunset gamma") || !strings.Contains(err.Error(), "timed out") {
 		t.Fatalf("handleSetGamma error = %v, want gamma timeout", err)
@@ -162,8 +158,10 @@ esac
 	if readErr != nil {
 		t.Fatal(readErr)
 	}
-	if !strings.Contains(string(content), "hyprsunset gamma 80") {
-		t.Fatalf("hyprctl log = %q, want gamma IPC attempts", content)
+	// More than one attempt: the retry window covers hyprsunset's socket
+	// start-up, and a single attempt would drop it without changing the bound.
+	if attempts := strings.Count(string(content), "hyprsunset gamma 80"); attempts < 2 {
+		t.Fatalf("hyprctl log = %q, want repeated gamma IPC attempts, got %d", content, attempts)
 	}
 	if strings.Contains(string(content), "temperature") {
 		t.Fatalf("hyprctl log = %q, want no temperature IPC after gamma failure", content)

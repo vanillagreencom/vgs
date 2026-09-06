@@ -527,8 +527,8 @@ func TestRescanConflictsPreservesListOnScanFailure(t *testing.T) {
 	m.mu.Lock()
 	status := *m.statusLocked(folder.ID)
 	m.mu.Unlock()
-	if status.State != StateError || status.LastError == "" {
-		t.Fatalf("scan failure was not surfaced in folder status: %+v", status)
+	if status.State != StateError || !strings.Contains(status.LastError, "conflict scan failed") {
+		t.Fatalf("scan failure was not surfaced in folder status with its cause: %+v", status)
 	}
 }
 
@@ -1673,93 +1673,52 @@ func TestBrowseRejectsTraversal(t *testing.T) {
 	}
 }
 
-func TestPauseFolderDoesNotPersistWhenStreamUnmountFails(t *testing.T) {
-	m := testManager(t)
-	stream := Folder{ID: "stream", Name: "Stream", Remote: "gdrive", LocalPath: filepath.Join(t.TempDir(), "mount"), Mode: ModeStream}
-	if err := m.store.putFolder(stream); err != nil {
-		t.Fatalf("putFolder: %v", err)
+// A stream whose FUSE mount cannot be torn down keeps its persisted state:
+// pausing it, removing it, or pausing everything fails, returns no result, and
+// changes nothing on disk; the global pause also surfaces the teardown error
+// on the folder.
+func TestStreamUnmountFailureDoesNotPersist(t *testing.T) {
+	cases := []struct {
+		name  string
+		call  func(m *Manager) (any, error)
+		check func(t *testing.T, m *Manager, stream Folder)
+	}{
+		{"pause folder", func(m *Manager) (any, error) { return m.handlePauseFolder(json.RawMessage(`{"id":"stream"}`)) }, nil},
+		{"remove folder", func(m *Manager) (any, error) { return m.handleRemoveFolder(json.RawMessage(`{"id":"stream"}`)) }, nil},
+		{"global pause", func(m *Manager) (any, error) { return m.handlePauseAll(nil) }, func(t *testing.T, m *Manager, stream Folder) {
+			if m.store.snapshotSettings().Paused {
+				t.Fatal("global pause was persisted despite failed mount teardown")
+			}
+			if status := m.statusLocked(stream.ID); status.State != StateError || !strings.Contains(status.LastError, "device is busy") {
+				t.Fatalf("mount teardown failure was not made visible: %+v", status)
+			}
+		}},
 	}
-	fakeRC(t, m, map[string]http.HandlerFunc{
-		"mount/unmount": errorRoute("device is busy"),
-	})
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := testManager(t)
+			stream := Folder{ID: "stream", Name: "Stream", Remote: "gdrive", LocalPath: filepath.Join(t.TempDir(), "mount"), Mode: ModeStream}
+			if err := m.store.putFolder(stream); err != nil {
+				t.Fatalf("putFolder: %v", err)
+			}
+			fakeRC(t, m, map[string]http.HandlerFunc{
+				"mount/unmount": errorRoute("device is busy"),
+			})
 
-	result, err := m.handlePauseFolder(json.RawMessage(`{"id":"stream"}`))
-	if err == nil {
-		t.Fatal("pause must fail when a stream could not be unmounted")
-	}
-	if result != nil {
-		t.Fatalf("failed pause reported a success result: %#v", result)
-	}
-	stored, ok := m.store.folder(stream.ID)
-	if !ok || !reflect.DeepEqual(stored, stream) {
-		t.Fatalf("failed pause changed persisted folder state: %+v", stored)
-	}
-}
-
-func TestRemoveFolderDoesNotDeleteWhenStreamUnmountFails(t *testing.T) {
-	m := testManager(t)
-	stream := Folder{ID: "stream", Name: "Stream", Remote: "gdrive", LocalPath: filepath.Join(t.TempDir(), "mount"), Mode: ModeStream}
-	if err := m.store.putFolder(stream); err != nil {
-		t.Fatalf("putFolder: %v", err)
-	}
-	fakeRC(t, m, map[string]http.HandlerFunc{
-		"mount/unmount": errorRoute("device is busy"),
-	})
-
-	result, err := m.handleRemoveFolder(json.RawMessage(`{"id":"stream"}`))
-	if err == nil {
-		t.Fatal("remove must fail when a stream could not be unmounted")
-	}
-	if result != nil {
-		t.Fatalf("failed remove reported a success result: %#v", result)
-	}
-	stored, ok := m.store.folder(stream.ID)
-	if !ok || !reflect.DeepEqual(stored, stream) {
-		t.Fatalf("failed remove changed persisted folder state: %+v", stored)
-	}
-}
-
-func TestGlobalPauseDoesNotPersistWhenStreamUnmountFails(t *testing.T) {
-	m := testManager(t)
-	stream := Folder{ID: "stream", Name: "Stream", Remote: "gdrive", LocalPath: filepath.Join(t.TempDir(), "mount"), Mode: ModeStream}
-	if err := m.store.putFolder(stream); err != nil {
-		t.Fatalf("putFolder: %v", err)
-	}
-	fakeRC(t, m, map[string]http.HandlerFunc{
-		"mount/unmount": errorRoute("device is busy"),
-	})
-
-	result, err := m.handlePauseAll(nil)
-	if err == nil {
-		t.Fatal("global pause must fail when a stream could not be unmounted")
-	}
-	if result != nil {
-		t.Fatalf("failed global pause reported a success result: %#v", result)
-	}
-	if m.store.snapshotSettings().Paused {
-		t.Fatal("global pause was persisted despite failed mount teardown")
-	}
-	if status := m.statusLocked(stream.ID); status.State != StateError || !strings.Contains(status.LastError, "device is busy") {
-		t.Fatalf("mount teardown failure was not made visible: %+v", status)
-	}
-}
-
-func TestConflictScanFailurePreservesExistingConflicts(t *testing.T) {
-	m := testManager(t)
-	missing := filepath.Join(t.TempDir(), "missing")
-	folder := Folder{ID: "f1", Name: "Docs", Remote: "gdrive", LocalPath: missing, Mode: ModeTwoWay}
-	m.mu.Lock()
-	m.conflicts = []Conflict{{ID: "existing", FolderID: folder.ID, RelPath: "keep-me"}}
-	m.mu.Unlock()
-
-	if err := m.rescanConflicts(folder); err == nil {
-		t.Fatal("a missing conflict tree must be reported")
-	}
-	conflicts := m.snapshot().Conflicts
-	if len(conflicts) != 1 || conflicts[0].ID != "existing" {
-		t.Fatalf("failed scan erased known conflicts: %+v", conflicts)
-	}
-	if status := m.statusLocked(folder.ID); status.State != StateError || !strings.Contains(status.LastError, "conflict scan failed") {
-		t.Fatalf("failed scan was not visible in folder status: %+v", status)
+			result, err := tc.call(m)
+			if err == nil {
+				t.Fatal("the action must fail when a stream could not be unmounted")
+			}
+			if result != nil {
+				t.Fatalf("a failed action reported a success result: %#v", result)
+			}
+			stored, ok := m.store.folder(stream.ID)
+			if !ok || !reflect.DeepEqual(stored, stream) {
+				t.Fatalf("a failed action changed persisted folder state: %+v", stored)
+			}
+			if tc.check != nil {
+				tc.check(t, m, stream)
+			}
+		})
 	}
 }

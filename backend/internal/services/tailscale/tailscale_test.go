@@ -82,42 +82,50 @@ func TestStatusMapsFixture(t *testing.T) {
 	}
 }
 
+// Each write handler runs the tailscale argv its parameters name; the log holds one line per invocation.
 func TestActionsInvokeExpectedArgv(t *testing.T) {
-	m, logPath := fakeManager(t)
-	if _, err := m.handleConnect(nil); err != nil {
-		t.Fatal(err)
+	cases := []struct {
+		name string
+		call func(m *Manager) error
+		want string
+	}{
+		{"connect", func(m *Manager) error { _, err := m.handleConnect(nil); return err }, "up"},
+		{"disconnect", func(m *Manager) error { _, err := m.handleDisconnect(nil); return err }, "down"},
+		{"set exit node", func(m *Manager) error {
+			_, err := m.handleSetExitNode(mustJSON(t, exitNodeParams{ID: "node-b"}))
+			return err
+		}, "set --exit-node=100.64.0.2"},
+		{"allow LAN access", func(m *Manager) error {
+			_, err := m.handleSetAllowLANAccess(mustJSON(t, lanParams{Enabled: true}))
+			return err
+		}, "set --exit-node-allow-lan-access=true"},
+		{"refuse routes", func(m *Manager) error {
+			_, err := m.handleSetAcceptRoutes(mustJSON(t, lanParams{Enabled: false}))
+			return err
+		}, "set --accept-routes=false"},
+		{"accept routes", func(m *Manager) error {
+			_, err := m.handleSetAcceptRoutes(mustJSON(t, lanParams{Enabled: true}))
+			return err
+		}, "set --accept-routes"},
+		{"clear exit node", func(m *Manager) error {
+			_, err := m.handleSetExitNode(mustJSON(t, exitNodeParams{ID: ""}))
+			return err
+		}, "set --exit-node="},
 	}
-	if _, err := m.handleDisconnect(nil); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := m.handleSetExitNode(mustJSON(t, exitNodeParams{ID: "node-b"})); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := m.handleSetAllowLANAccess(mustJSON(t, lanParams{Enabled: true})); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := m.handleSetAcceptRoutes(mustJSON(t, lanParams{Enabled: false})); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := m.handleSetAcceptRoutes(mustJSON(t, lanParams{Enabled: true})); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := m.handleSetExitNode(mustJSON(t, exitNodeParams{ID: ""})); err != nil {
-		t.Fatal(err)
-	}
-	log := readLog(t, logPath)
-	for _, want := range []string{
-		"up",
-		"down",
-		"set --exit-node=100.64.0.2",
-		"set --exit-node-allow-lan-access=true",
-		"set --accept-routes=false",
-		"set --accept-routes",
-		"set --exit-node=",
-	} {
-		if !strings.Contains(log, want) {
-			t.Fatalf("log missing %q\n%s", want, log)
-		}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m, logPath := fakeManager(t)
+			if err := tc.call(m); err != nil {
+				t.Fatal(err)
+			}
+			log := readLog(t, logPath)
+			for _, line := range strings.Split(log, "\n") {
+				if line == tc.want {
+					return
+				}
+			}
+			t.Fatalf("log has no line %q\n%s", tc.want, log)
+		})
 	}
 }
 

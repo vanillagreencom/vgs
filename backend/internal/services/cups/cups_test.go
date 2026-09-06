@@ -38,50 +38,49 @@ func TestParseJobs(t *testing.T) {
 	}
 }
 
+// handleTestConnection reports reachability and the URI it would create,
+// whether or not the port answers.
 func TestHandleTestConnectionReturnsURI(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	port := ln.Addr().(*net.TCPAddr).Port
+	ippURI, err := buildManualDeviceURI("ipp", "127.0.0.1", port, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name      string
+		params    testParams
+		listening bool
+		reachable bool
+		uri       string
+	}{
+		{"ipp reachable", testParams{Host: "127.0.0.1", Port: port, Protocol: "ipp"}, true, true, ippURI},
+		{"lpd queue reachable", testParams{Host: "127.0.0.1", Port: port, Protocol: "lpd", Queue: "rawq"}, true, true, "lpd://127.0.0.1:" + strconv.Itoa(port) + "/rawq"},
+		{"ipp closed", testParams{Host: "127.0.0.1", Port: port, Protocol: "ipp"}, false, false, ippURI},
+	}
 	m, _ := fakeManager(t)
-	got, err := m.handleTestConnection(mustJSON(t, testParams{Host: "127.0.0.1", Port: port, Protocol: "ipp"}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	out, ok := got.(map[string]any)
-	if !ok {
-		t.Fatalf("result type %T", got)
-	}
-	wantURI, err := buildManualDeviceURI("ipp", "127.0.0.1", port, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out["reachable"] != true || out["uri"] != wantURI {
-		t.Fatalf("reachable result = %#v, want uri %q", out, wantURI)
-	}
-	got, err = m.handleTestConnection(mustJSON(t, testParams{Host: "127.0.0.1", Port: port, Protocol: "lpd", Queue: "rawq"}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	out, ok = got.(map[string]any)
-	if !ok {
-		t.Fatalf("lpd result type %T", got)
-	}
-	if out["reachable"] != true || out["uri"] != "lpd://127.0.0.1:"+strconv.Itoa(port)+"/rawq" {
-		t.Fatalf("lpd queue result = %#v", out)
-	}
-	_ = ln.Close()
-	got, err = m.handleTestConnection(mustJSON(t, testParams{Host: "127.0.0.1", Port: port, Protocol: "ipp"}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	out, ok = got.(map[string]any)
-	if !ok {
-		t.Fatalf("closed result type %T", got)
-	}
-	if out["reachable"] != false || out["uri"] != wantURI {
-		t.Fatalf("closed result = %#v, want uri %q", out, wantURI)
+	// Closing the listener cannot be undone, so the rows run in order and every
+	// row that needs the port answering precedes the first that does not.
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if !tc.listening {
+				_ = ln.Close()
+			}
+			got, err := m.handleTestConnection(mustJSON(t, tc.params))
+			if err != nil {
+				t.Fatal(err)
+			}
+			out, ok := got.(map[string]any)
+			if !ok {
+				t.Fatalf("result type %T", got)
+			}
+			if out["reachable"] != tc.reachable || out["uri"] != tc.uri {
+				t.Fatalf("result = %#v, want reachable %v uri %q", out, tc.reachable, tc.uri)
+			}
+		})
 	}
 }
 
@@ -114,78 +113,96 @@ func TestParsePPDsAndClasses(t *testing.T) {
 	}
 }
 
-func TestCupsWriteHandlersValidateAndInvokeExpectedCommands(t *testing.T) {
-	m, logPath := fakeManager(t)
+// Every write handler runs exactly the CUPS argv its parameters name; the
+// command log holds one line per invocation and the line must match whole.
+func TestCupsWriteHandlersInvokeExpectedCommands(t *testing.T) {
 	shared := true
-
-	if _, err := m.handleCreatePrinter(mustJSON(t, createParams{
-		Name:        "Office",
-		DeviceURI:   "ipp://printer.local/ipp/print",
-		PPD:         "sample.ppd",
-		Shared:      &shared,
-		Location:    "Lab",
-		Information: "Office printer",
-		ErrorPolicy: "retry-job",
-	})); err != nil {
+	cases := []struct {
+		name string
+		call func(m *Manager) (any, error)
+		want string
+	}{
+		{"create printer", func(m *Manager) (any, error) {
+			return m.handleCreatePrinter(mustJSON(t, createParams{
+				Name:        "Office",
+				DeviceURI:   "ipp://printer.local/ipp/print",
+				PPD:         "sample.ppd",
+				Shared:      &shared,
+				Location:    "Lab",
+				Information: "Office printer",
+				ErrorPolicy: "retry-job",
+			}))
+		}, "lpadmin -p Office -E -v ipp://printer.local/ipp/print -m sample.ppd -L Lab -D Office printer -o printer-is-shared=true -o printer-error-policy=retry-job"},
+		{"create printer with a Bonjour device URI", func(m *Manager) (any, error) {
+			return m.handleCreatePrinter(mustJSON(t, createParams{
+				Name:      "Brother",
+				DeviceURI: "dnssd://Brother%20HL-L2460DW._ipp._tcp.local/?uuid=e3248000-80ce-11db-8000-94ddf8e120ec",
+				PPD:       "everywhere",
+			}))
+		}, "lpadmin -p Brother -E -v dnssd://Brother%20HL-L2460DW._ipp._tcp.local/?uuid=e3248000-80ce-11db-8000-94ddf8e120ec -m everywhere"},
+		{"create printer with a driverless PPD", func(m *Manager) (any, error) {
+			return m.handleCreatePrinter(mustJSON(t, createParams{
+				Name:      "Brother",
+				DeviceURI: "ipps://Brother%20HL-L2460DW._ipps._tcp.local/",
+				PPD:       "driverless:ipps://Brother%20HL-L2460DW._ipps._tcp.local/",
+			}))
+		}, "lpadmin -p Brother -E -v ipps://Brother%20HL-L2460DW._ipps._tcp.local/ -m driverless:ipps://Brother%20HL-L2460DW._ipps._tcp.local/"},
+		{"cancel job", func(m *Manager) (any, error) { return m.handleCancelJob(mustJSON(t, jobParams{JobID: "Office-42"})) }, "cancel Office-42"},
+		{"move job", func(m *Manager) (any, error) {
+			return m.handleMoveJob(mustJSON(t, jobParams{JobID: "Office-42", DestPrinter: "Shipping"}))
+		}, "lpmove Office-42 Shipping"},
+		{"hold job", func(m *Manager) (any, error) {
+			return m.handleHoldJob(mustJSON(t, jobParams{JobID: "Office-42", HoldUntil: "indefinite"}))
+		}, "lp -i Office-42 -H indefinite"},
+		{"add printer to class", func(m *Manager) (any, error) {
+			return m.handleAddPrinterToClass(mustJSON(t, classParams{ClassName: "Lab", PrinterName: "Office"}))
+		}, "lpadmin -p Office -c Lab"},
+		{"purge jobs", func(m *Manager) (any, error) {
+			return m.handlePurgeJobs(mustJSON(t, printerParams{PrinterName: "Office"}))
+		}, "cancel -a Office"},
+		{"set shared", func(m *Manager) (any, error) {
+			return m.handleSetPrinterShared(mustJSON(t, sharedParams{PrinterName: "Office", Shared: false}))
+		}, "lpadmin -p Office -o printer-is-shared=false"},
+		{"set location", func(m *Manager) (any, error) {
+			return m.handleSetPrinterLocation(mustJSON(t, locationParams{PrinterName: "Office", Location: "Front Desk"}))
+		}, "lpadmin -p Office -L Front Desk"},
+		{"set info", func(m *Manager) (any, error) {
+			return m.handleSetPrinterInfo(mustJSON(t, infoParams{PrinterName: "Office", Info: "Shared laser"}))
+		}, "lpadmin -p Office -D Shared laser"},
+		// The test page is the host's CUPS sample when one exists, else a file
+		// the handler generates; the argv shape is exact and the path is judged
+		// by where it may come from.
+		{"print test page", func(m *Manager) (any, error) {
+			return m.handlePrintTestPage(mustJSON(t, printerParams{PrinterName: "Office"}))
+		}, "lp -d Office <test page>"},
+		{"restart job", func(m *Manager) (any, error) { return m.handleRestartJob(mustJSON(t, jobParams{JobID: "Office-42"})) }, "lp -i Office-42 -H restart"},
+		{"remove printer from class", func(m *Manager) (any, error) {
+			return m.handleRemovePrinterFromClass(mustJSON(t, classParams{ClassName: "Lab", PrinterName: "Office"}))
+		}, "lpadmin -p Office -r Lab"},
+		{"delete class", func(m *Manager) (any, error) { return m.handleDeleteClass(mustJSON(t, classParams{ClassName: "Lab"})) }, "lpadmin -x Lab"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m, logPath := fakeManager(t)
+			if _, err := tc.call(m); err != nil {
+				t.Fatal(err)
+			}
+			log := readLog(t, logPath)
+			for _, line := range strings.Split(log, "\n") {
+				if argvLineMatches(line, tc.want) {
+					return
+				}
+			}
+			t.Fatalf("command log has no line %q\n%s", tc.want, log)
+		})
+	}
+	// A create consults the PPD catalog before it mutates anything.
+	m, logPath := fakeManager(t)
+	if _, err := cases[0].call(m); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.handleCancelJob(mustJSON(t, jobParams{JobID: "Office-42"})); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := m.handleMoveJob(mustJSON(t, jobParams{JobID: "Office-42", DestPrinter: "Shipping"})); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := m.handleHoldJob(mustJSON(t, jobParams{JobID: "Office-42", HoldUntil: "indefinite"})); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := m.handleAddPrinterToClass(mustJSON(t, classParams{ClassName: "Lab", PrinterName: "Office"})); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := m.handlePurgeJobs(mustJSON(t, printerParams{PrinterName: "Office"})); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := m.handleSetPrinterShared(mustJSON(t, sharedParams{PrinterName: "Office", Shared: false})); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := m.handleSetPrinterLocation(mustJSON(t, locationParams{PrinterName: "Office", Location: "Front Desk"})); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := m.handleSetPrinterInfo(mustJSON(t, infoParams{PrinterName: "Office", Info: "Shared laser"})); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := m.handlePrintTestPage(mustJSON(t, printerParams{PrinterName: "Office"})); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := m.handleRestartJob(mustJSON(t, jobParams{JobID: "Office-42"})); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := m.handleRemovePrinterFromClass(mustJSON(t, classParams{ClassName: "Lab", PrinterName: "Office"})); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := m.handleDeleteClass(mustJSON(t, classParams{ClassName: "Lab"})); err != nil {
-		t.Fatal(err)
-	}
-
-	log := readLog(t, logPath)
-	for _, want := range []string{
-		"lpinfo -m",
-		"lpadmin -p Office -E -v ipp://printer.local/ipp/print -m sample.ppd -L Lab -D Office printer -o printer-is-shared=true -o printer-error-policy=retry-job",
-		"cancel Office-42",
-		"lpmove Office-42 Shipping",
-		"lp -i Office-42 -H indefinite",
-		"lpadmin -p Office -c Lab",
-		"cancel -a Office",
-		"lpadmin -p Office -o printer-is-shared=false",
-		"lpadmin -p Office -L Front Desk",
-		"lpadmin -p Office -D Shared laser",
-		"lp -d Office ",
-		"lp -i Office-42 -H restart",
-		"lpadmin -p Office -r Lab",
-		"lpadmin -x Lab",
-	} {
-		if !strings.Contains(log, want) {
-			t.Fatalf("command log missing %q\n%s", want, log)
-		}
+	if log := readLog(t, logPath); !strings.Contains(log, "lpinfo -m") {
+		t.Fatalf("command log missing %q\n%s", "lpinfo -m", log)
 	}
 }
 
@@ -237,38 +254,6 @@ func TestCupsWriteHandlersRejectInvalidInput(t *testing.T) {
 	}
 	if log := readLog(t, logPath); log != "" {
 		t.Fatalf("invalid inputs ran commands:\n%s", log)
-	}
-}
-
-func TestCreatePrinterAcceptsBonjourDeviceURI(t *testing.T) {
-	m, logPath := fakeManager(t)
-	if _, err := m.handleCreatePrinter(mustJSON(t, createParams{
-		Name:      "Brother",
-		DeviceURI: "dnssd://Brother%20HL-L2460DW._ipp._tcp.local/?uuid=e3248000-80ce-11db-8000-94ddf8e120ec",
-		PPD:       "everywhere",
-	})); err != nil {
-		t.Fatal(err)
-	}
-	log := readLog(t, logPath)
-	if !strings.Contains(log, "lpadmin -p Brother -E -v dnssd://Brother%20HL-L2460DW._ipp._tcp.local/?uuid=e3248000-80ce-11db-8000-94ddf8e120ec -m everywhere") {
-		t.Fatalf("bonjour create missing lpadmin:\n%s", log)
-	}
-}
-
-func TestCreatePrinterAcceptsDriverlessPPD(t *testing.T) {
-	m, logPath := fakeManager(t)
-	ppd := "driverless:ipps://Brother%20HL-L2460DW._ipps._tcp.local/"
-	if _, err := m.handleCreatePrinter(mustJSON(t, createParams{
-		Name:      "Brother",
-		DeviceURI: "ipps://Brother%20HL-L2460DW._ipps._tcp.local/",
-		PPD:       ppd,
-	})); err != nil {
-		t.Fatal(err)
-	}
-	log := readLog(t, logPath)
-	want := "lpadmin -p Brother -E -v ipps://Brother%20HL-L2460DW._ipps._tcp.local/ -m " + ppd
-	if !strings.Contains(log, want) {
-		t.Fatalf("driverless create missing lpadmin:\n%s", log)
 	}
 }
 
@@ -359,4 +344,28 @@ func readLog(t *testing.T, path string) string {
 
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
+// argvLineMatches compares a logged argv line with a wanted one whole. The one
+// placeholder, <test page>, stands for a single trailing argument that is the
+// host's CUPS sample page or the file handlePrintTestPage generates.
+func argvLineMatches(line, want string) bool {
+	const placeholder = " <test page>"
+	if !strings.HasSuffix(want, placeholder) {
+		return line == want
+	}
+	prefix := strings.TrimSuffix(want, placeholder) + " "
+	if !strings.HasPrefix(line, prefix) {
+		return false
+	}
+	page := strings.TrimPrefix(line, prefix)
+	if page == "" || strings.Contains(page, " ") {
+		return false
+	}
+	// firstExisting takes the two named samples or any *test* file in the CUPS
+	// data directory; the generated fallback lives in the temp directory.
+	if strings.HasPrefix(page, "/usr/share/cups/data/") {
+		return true
+	}
+	return filepath.Dir(page) == os.TempDir() && strings.HasPrefix(filepath.Base(page), "vshell-cups-test-")
 }

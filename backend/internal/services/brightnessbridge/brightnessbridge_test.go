@@ -85,74 +85,52 @@ func TestCallAbandonsStuckHelper(t *testing.T) {
 }
 
 // A helper that exits promptly with a complete response must not have that
-// response discarded just because a descendant held the pipes past waitDelay.
+// response discarded because a descendant held the pipes past waitDelay. The
+// second row is the boundary where the deadline also expires during that wait:
+// exec.ErrWaitDelay and a DeadlineExceeded context are both true, and the
+// salvage must still win over the timeout classification.
 func TestCallSalvagesOutputFromHeldPipes(t *testing.T) {
-	helper := writePipeHolderHelper(t, "echo '{\"devices\":[]}'\nexit 0\n")
-	m := &Manager{helper: helper, timeout: 5 * time.Second, waitDelay: 300 * time.Millisecond}
-
-	done := make(chan struct {
-		res any
-		err error
-	}, 1)
-	go func() {
-		res, err := m.call("list", "--json")
-		done <- struct {
-			res any
-			err error
-		}{res, err}
-	}()
-
-	select {
-	case r := <-done:
-		if r.err != nil {
-			t.Fatalf("expected salvaged response, got error: %v", r.err)
-		}
-		obj, ok := r.res.(map[string]any)
-		if !ok {
-			t.Fatalf("expected decoded JSON object, got %T", r.res)
-		}
-		if _, ok := obj["devices"]; !ok {
-			t.Fatalf("expected devices key in %v", obj)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("call still blocked long past waitDelay on pipes held by a descendant")
+	cases := []struct {
+		name      string
+		timeout   time.Duration
+		waitDelay time.Duration
+	}{
+		{"deadline far off", 5 * time.Second, 300 * time.Millisecond},
+		{"deadline expires during the held-pipe wait", 300 * time.Millisecond, 700 * time.Millisecond},
 	}
-}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			helper := writePipeHolderHelper(t, "echo '{\"devices\":[]}'\nexit 0\n")
+			m := &Manager{helper: helper, timeout: tc.timeout, waitDelay: tc.waitDelay}
 
-// The boundary where the helper exits cleanly with a complete response but
-// the deadline expires while Output waits on the descendant-held pipes: both
-// exec.ErrWaitDelay and a DeadlineExceeded context are true, and the salvage
-// must still win over the timeout classification.
-func TestCallSalvagesAtTimeoutBoundary(t *testing.T) {
-	helper := writePipeHolderHelper(t, "echo '{\"devices\":[]}'\nexit 0\n")
-	m := &Manager{helper: helper, timeout: 300 * time.Millisecond, waitDelay: 700 * time.Millisecond}
+			done := make(chan struct {
+				res any
+				err error
+			}, 1)
+			go func() {
+				res, err := m.call("list", "--json")
+				done <- struct {
+					res any
+					err error
+				}{res, err}
+			}()
 
-	done := make(chan struct {
-		res any
-		err error
-	}, 1)
-	go func() {
-		res, err := m.call("list", "--json")
-		done <- struct {
-			res any
-			err error
-		}{res, err}
-	}()
-
-	select {
-	case r := <-done:
-		if r.err != nil {
-			t.Fatalf("expected salvaged response at the timeout boundary, got error: %v", r.err)
-		}
-		obj, ok := r.res.(map[string]any)
-		if !ok {
-			t.Fatalf("expected decoded JSON object, got %T", r.res)
-		}
-		if _, ok := obj["devices"]; !ok {
-			t.Fatalf("expected devices key in %v", obj)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("call still blocked long past timeout and waitDelay")
+			select {
+			case r := <-done:
+				if r.err != nil {
+					t.Fatalf("expected salvaged response, got error: %v", r.err)
+				}
+				obj, ok := r.res.(map[string]any)
+				if !ok {
+					t.Fatalf("expected decoded JSON object, got %T", r.res)
+				}
+				if _, ok := obj["devices"]; !ok {
+					t.Fatalf("expected devices key in %v", obj)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("call still blocked long past timeout and waitDelay on pipes held by a descendant")
+			}
+		})
 	}
 }
 

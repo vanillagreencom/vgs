@@ -68,15 +68,51 @@ func TestUpgradeModeRequiresItsUpdater(t *testing.T) {
 }
 
 // The CLI owns the per-source commands; the daemon hands it the mode and
-// nothing else, so there is exactly one spelling of "how to upgrade".
-func TestTerminalArgvRunsTheCLIUpdater(t *testing.T) {
-	m := &Manager{vshell: "/usr/bin/vshell"}
-	argv, err := m.terminalArgv("", "tools")
-	if err != nil {
-		t.Fatal(err)
+// nothing else, so there is exactly one spelling of "how to upgrade". The
+// terminal must stay open for the upgrade's whole lifetime (waitUpgrade treats
+// the launched process exiting as the upgrade finishing), and an explicit
+// terminal from the caller must reach the resolver.
+func TestTerminalArgv(t *testing.T) {
+	cases := []struct {
+		name     string
+		terminal string
+		mode     string
+		check    func(t *testing.T, argv []string)
+	}{
+		{"runs the CLI updater", "", "tools", func(t *testing.T, argv []string) {
+			if len(argv) < 5 || argv[len(argv)-5] != "--" || argv[len(argv)-4] != "/usr/bin/vshell" || argv[len(argv)-3] != "update" || argv[len(argv)-2] != "run" || argv[len(argv)-1] != "tools" {
+				t.Fatalf("terminal argv tail = %#v, want -- vshell update run tools", argv)
+			}
+		}},
+		{"waits for the upgrade to finish", "", "all", func(t *testing.T, argv []string) {
+			if !contains(strings.Join(argv, " "), "--wait") {
+				t.Fatalf("terminal argv = %#v, want --wait", argv)
+			}
+		}},
+		{"forwards the caller's terminal", "foot", "all", func(t *testing.T, argv []string) {
+			found := false
+			for i, arg := range argv {
+				if arg == "--prefer" && i+1 < len(argv) && argv[i+1] == "foot" {
+					found = true
+				}
+				if arg == "--" {
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("terminal argv = %#v, want --prefer foot before --", argv)
+			}
+		}},
 	}
-	if len(argv) < 5 || argv[len(argv)-5] != "--" || argv[len(argv)-4] != "/usr/bin/vshell" || argv[len(argv)-3] != "update" || argv[len(argv)-2] != "run" || argv[len(argv)-1] != "tools" {
-		t.Fatalf("terminal argv tail = %#v, want -- vshell update run tools", argv)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &Manager{vshell: "/usr/bin/vshell"}
+			argv, err := m.terminalArgv(tc.terminal, tc.mode)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tc.check(t, argv)
+		})
 	}
 	if _, err := (&Manager{}).terminalArgv("", "all"); err == nil {
 		t.Fatal("terminalArgv without the vshell CLI must fail")
@@ -113,43 +149,6 @@ func TestBackendsListsMise(t *testing.T) {
 	backends := m.backends()
 	if len(backends) != 1 || backends[0].ID != "mise" || backends[0].Repo != "tools" || backends[0].NeedsAuth {
 		t.Fatalf("backends = %#v, want one mise/tools backend without auth", backends)
-	}
-}
-
-// waitUpgrade treats the launched process exiting as the upgrade finishing, so
-// the helper must be told to stay alive for the terminal's whole lifetime.
-// Without this the phase returns to idle while pacman is still running and a
-// second upgrade can be started on top of it.
-func TestTerminalArgvWaitsForTheUpgradeToFinish(t *testing.T) {
-	m := &Manager{vshell: "/usr/bin/vshell"}
-	argv, err := m.terminalArgv("", "all")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !contains(strings.Join(argv, " "), "--wait") {
-		t.Fatalf("terminal argv = %#v, want --wait", argv)
-	}
-}
-
-// An explicit terminal from upgradeParams must reach the resolver rather than
-// being dropped because the CLI happens to be on PATH.
-func TestTerminalArgvForwardsTheCallersTerminal(t *testing.T) {
-	m := &Manager{vshell: "/usr/bin/vshell"}
-	argv, err := m.terminalArgv("foot", "all")
-	if err != nil {
-		t.Fatal(err)
-	}
-	found := false
-	for i, arg := range argv {
-		if arg == "--prefer" && i+1 < len(argv) && argv[i+1] == "foot" {
-			found = true
-		}
-		if arg == "--" {
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("terminal argv = %#v, want --prefer foot before --", argv)
 	}
 }
 
