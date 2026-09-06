@@ -190,7 +190,7 @@ a bar-only neighbour does not shrink the output;bar+popout;one;0;444x933 1756x93
 a bar-height popout is measured against the output;bar+short;one;0;444x40 1756x933
 a quarter turn swaps the logical axes;tall;rotated;0;444x2560 1440x2560
 a scaled output is divided by its scale;big;scaled;0;444x1692 3008x1692
-a popout as large as its output is degenerate;bar+full;one;2;-
+a popout as large as its output is degenerate;bar+full;one;2;1756x933 1756x933
 an unmapped namespace is absent;bar;one;1;-
 an unreported output cannot be measured;bar+popout;none;3;-
 a zero scale does not convert;bar+popout;zero-scale;3;-
@@ -220,12 +220,10 @@ case_layer_states() {
     if [[ "$status" != "$want_status" ]]; then
       fail "layer states" "$label: expected status $want_status, got $status:
 $state"
-    elif [[ "$want_geometry" != - && "$body" != *"$want_geometry"* ]]; then
-      fail "layer states" "$label: expected geometry $want_geometry, got:
-$state"
-    elif [[ "$status" == 0 && "$(grep -c . <<<"$body")" != 1 ]]; then
-      # The emitter promises one line; a caller parses the first one it finds.
-      fail "layer states" "$label: expected exactly one emitted line, got:
+    elif [[ "$body" != "${want_geometry/#-/}" ]]; then
+      # Exact: the emitter promises one geometry line on success and nothing on a
+      # refusal or an absence, so a fallback such as 0x0 has nowhere to hide.
+      fail "layer states" "$label: expected body '${want_geometry/#-/}', got:
 $state"
     fi
   done <<<"$LAYER_STATES"
