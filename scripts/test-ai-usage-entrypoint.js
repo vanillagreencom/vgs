@@ -178,8 +178,23 @@ function backendSource() {
 }
 
 // Recognize payloads by their own ok field, with bare jq or quoted JSON keys.
-// Blank string interiors first: an error message reading "unknown provider: " is not a key.
-const hasKey = (text, key) => new RegExp(`(^|[{,\\s])"?${key}"?\\s*:`).test(text.replace(/"[^"]*"/g, '""'));
+// Blank string values first: an error message reading "unknown provider: " is not a key.
+// Strings are consumed in order so quotes pair correctly; one followed by a colon is a
+// quoted key and stays.
+const blankStringValues = text => text.replace(/"[^"]*"(\s*:)?/g, (m, colon) => (colon ? m : '""'));
+const hasKey = (text, key) => new RegExp(`(^|[{,\\s])"?${key}"?\\s*:`).test(blankStringValues(text));
+test("hasKey reads bare and quoted keys at the object's own level and ignores string values", () => {
+    const rows = [
+        ["ok:false,provider:$p", "provider", true, "a bare key"],
+        ['"ok":false,"provider":$p', "provider", true, "a quoted key"],
+        ['"ok":false,"provider":$p', "ok", true, "a quoted ok key still marks a payload"],
+        ['ok:false,error:("unknown provider: "+$p)', "provider", false, "a key name inside a string value"],
+        ['ok:false,error:"provider:"', "provider", false, "a key-shaped string value"],
+        ["ok:false,note:$p", "provider", false, "an absent key"],
+    ];
+    for (const [own, key, expected, why] of rows)
+        assert.equal(hasKey(own, key), expected, `${why}: ${own}`);
+});
 test("every payload bin/vshell-ai-usage builds names its provider at its own level, through jq", () => {
     const backendCode = backendSource();
     const programs = jqBuildPrograms(backendCode);
