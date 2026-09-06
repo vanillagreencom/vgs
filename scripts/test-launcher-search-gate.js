@@ -137,6 +137,29 @@ function pythonFunction(source, name) {
     return source.slice(start, end === -1 ? source.length : end);
 }
 
+function replaceOnce(source, before, after, label) {
+    const count = source.split(before).length - 1;
+    assert.equal(count, 1, `${label} control needs one insertion point, found ${count}`);
+    return source.replace(before, after);
+}
+
+function assertAllSearchRouteAvoidsFileProvider(source, label) {
+    const q = qmlSource(source, label);
+    const route = `${q.body("buildImmediateAllItems")}\n${q.body("refreshAllItems")}`;
+    const routeCode = stripComments(route);
+    for (const [pattern, reason] of [
+        [/\bDSearchService\s*\.\s*search\s*\(/,
+            "calling DSearchService.search starts the shared file and folder provider"],
+        [/\bPaths\s*\.\s*vshellCli\b|["']launcher-search["']/,
+            "starting vshell launcher-search search bypasses DSearchService"],
+        [/\bfileItem\s*\(/, "building fileItem rows brings files back into All results"],
+        [/\blauncherMenuUsageHistory\b/, "reading file history brings previous files back into All results"]
+    ]) {
+        assert.ok(!pattern.test(routeCode),
+            `VGSMenu All search must not ${reason}; keep files in the Files category and prefixes`);
+    }
+}
+
 test("application relevance admits strong fields and rejects secondary-only matches", () => {
     const exact = textScore({ primary: ["OpenCode"], query: "opencode" });
     const prefix = textScore({ primary: ["OpenCode editor"], query: "opencode" });
@@ -1194,6 +1217,17 @@ test("VGSMenu keeps All search local and uses shared relevance", () => {
 
     assert.ok(!code.includes("AppSearchService.searchApplications("),
         "VGSMenu must not select applications with searchApplications() and rank them again");
+});
+
+test("VGSMenu All search avoids the file provider", () => {
+    assertAllSearchRouteAvoidsFileProvider(menuSource, "VGSMenu.qml");
+    assert.throws(() => assertAllSearchRouteAvoidsFileProvider(replaceOnce(menuSource,
+        "    function refreshAllItems() {\n        folderCompletion = \"\";",
+        "    function refreshAllItems() {\n        DSearchService.search(trimmed, { kind: \"all\", limit: 80 }, () => {});\n        folderCompletion = \"\";",
+        "All search provider"), "mutated VGSMenu.qml"),
+        /calling DSearchService\.search/,
+        "the All-search provider guard must fail when refreshAllItems starts DSearchService.search");
+
 });
 
 test("VGSMenu asks the explicit file threshold owner", () => {
