@@ -3,8 +3,8 @@
 # scripts/lib/validation_manifest.py and scripts/check-validation-inventory.py.
 # Sourcing this installs the temporary tree, its trap, the failure counters and the
 # guard drivers; `finish <suite>` reports and exits.
-# A suite whose manifest row permits exit 77 sets SKIPS_ALLOWED=1 before sourcing;
-# in every other suite a `skip` call is a failure, so only that suite can exit 77.
+# The suite CI runs last sets SKIPS_ALLOWED=1 before sourcing; in every other suite a
+# `skip` call is a failure, so only that one can exit 77.
 
 # The fixtures below abort on an unchecked failure rather than run on a half-built tree.
 # A sourced file cannot assume the caller chose that mode, so state it here.
@@ -28,9 +28,9 @@ fail() {
   failures=$((failures + 1))
   case_failed=1
 }
-# Uncreatable controls return skip status instead of passing. A manifest row that does not
-# permit skips reports that status as failure, so a suite on such a row fails here instead
-# of recording a skip that its row cannot carry.
+# An uncreatable control returns skip status rather than passing, and 77 is a failure to both
+# consumers: no manifest row here carries `may-skip`, and CI must not read it as success. Only
+# the suite CI runs last can report it without hiding the steps that would have followed.
 SKIPS_ALLOWED="${SKIPS_ALLOWED:-0}"
 skips=0
 skipped_names=()
@@ -41,7 +41,7 @@ skip() { # Report an uncreatable control by name and reason. Missing arguments a
     return 0
   fi
   if [[ "$SKIPS_ALLOWED" != 1 ]]; then
-    fail "$1" "this suite's manifest row permits no skip status, so an uncreatable control is a failure: $2"
+    fail "$1" "this suite is not the one CI runs last, so a control it cannot create is a failure rather than a skip: $2"
     return 0
   fi
   local name="$1"
