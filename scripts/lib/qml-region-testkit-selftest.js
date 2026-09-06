@@ -33,7 +33,24 @@ function plantMarkedChild(dir, name, marked) {
     return { child, script };
 }
 
-const test = require("node:test");
+const nodeTest = require("node:test");
+
+// node:test exits 0 when no case runs (nothing registered, every case skipped or todo), which
+// would turn the validate row and the CI step green with the supervisor unverified. Count the
+// cases that finish and refuse a clean exit short of the declared number.
+const EXPECTED_CASES = 5;
+let finished = 0;
+const test = (name, body) => nodeTest(name, (...args) => {
+    const result = body(...args);
+    finished += 1;
+    return result;
+});
+process.on("exit", code => {
+    if (code === 0 && finished !== EXPECTED_CASES) {
+        process.stderr.write(`qml-region testkit selftest: ${finished} of ${EXPECTED_CASES} cases finished; a clean exit with cases missing is not a pass\n`);
+        process.exitCode = 1;
+    }
+});
 
     // Remove ambient VGS_REGION_ overrides so the caller cannot retune fixture deadlines.
     // Test the prefix rule with an unknown name as well as declared settings.

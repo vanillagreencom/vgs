@@ -16,7 +16,24 @@ const { armChildDeadline, CHILD_ARGV_MARKER, CHILD_DEADLINE_GRACE_MS, CHILD_TIME
 const { withGuardedSuite, hangingRegion, fixtureEnv, plantSuite, cmdlineOf, orphanDiagnostics,
     reapUntilQuiet, pidRunning, waitFor, guardPath } = require("./qml-region-testkit.js");
 
-const test = require("node:test");
+const nodeTest = require("node:test");
+
+// node:test exits 0 when no case runs (nothing registered, every case skipped or todo), which
+// would turn the validate row and the CI step green with the supervisor unverified. Count the
+// cases that finish and refuse a clean exit short of the declared number.
+const EXPECTED_CASES = 15;
+let finished = 0;
+const test = (name, body) => nodeTest(name, (...args) => {
+    const result = body(...args);
+    finished += 1;
+    return result;
+});
+process.on("exit", code => {
+    if (code === 0 && finished !== EXPECTED_CASES) {
+        process.stderr.write(`qml-region selftest: ${finished} of ${EXPECTED_CASES} cases finished; a clean exit with cases missing is not a pass\n`);
+        process.exitCode = 1;
+    }
+});
 
     // A synchronous loop blocks the call. A runaway microtask can start after the call returns.
     // Both must be terminated by the process deadline.
@@ -57,8 +74,8 @@ test("a region that hangs from a loop or a runaway microtask is killed at the de
 test("a worker that cannot arm its deadline throws instead of leaving the process unbounded", () => {
         // The worker error fixture intentionally writes a diagnostic to stderr.
         process.stderr.write(
-            "region guard: the stderr line below about a worker that could not arm is this " +
-            "check working.\n");
+            "region guard: a stderr line at the end of this run about a worker that could not arm " +
+            "is this check working.\n");
         assert.throws(
             () => armChildDeadline(1000, {
                 source: "throw new Error('deliberately unable to arm');",

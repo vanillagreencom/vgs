@@ -189,7 +189,7 @@ jobs:
 
       - name: Queue, theme-request and plugin-policy regressions
         run: |
-          # pipefail preserves self-test failures when output is piped to grep.
+          # errexit fails the step on the first failing suite; each suite exits nonzero on any failing case.
           set -euo pipefail
           scripts/test-restyle-queue.js
           scripts/test-theme-requests.js
