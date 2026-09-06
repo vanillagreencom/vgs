@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import ast
 import importlib.machinery
 import importlib.util
 import io
@@ -697,6 +698,90 @@ def test_system_font_family_targets():
     assert 'font_family = "Custom \\"Font\\""' in generated
     with patch.object(helper, "apply_system_fonts", return_value={"success": False, "partial": True}), contextlib.redirect_stdout(io.StringIO()):
         assert helper.cmd_fonts(["apply", "--json"]) == 1
+
+
+def test_system_font_size_targets():
+    for gtk_fonts, desktop_fonts, prior_family in [
+        ({}, {}, ""),
+        ({}, {"font-name": "Desktop Sans 12", "monospace-font-name": "Desktop Mono 10"}, ""),
+        ({"gtk-3.0": "GTK Three Semi-Bold 12", "gtk-4.0": "GTK Four 13 @wght=450"},
+         {"font-name": "Desktop Sans 12", "monospace-font-name": "Desktop Mono 10"}, ""),
+        ({}, {"font-name": "Desktop Sans 12", "monospace-font-name": "Desktop Mono 10"}, "Chosen Sans"),
+    ]:
+        def run_case(home):
+            settings = home / ".config/vshell/settings.json"
+            settings.parent.mkdir(parents=True)
+            settings.write_text(json.dumps({"systemFontsManaged": True, "systemFontSize": 14}))
+            for version, font in gtk_fonts.items():
+                path = home / ".config" / version / "settings.ini"
+                path.parent.mkdir(parents=True)
+                path.write_text(f"[Settings]\ngtk-font-name={font}\ngtk-cursor-theme-size=24\n")
+            current = dict(desktop_fonts)
+
+            def gsettings(_hook, command, **_kwargs):
+                assert command[0] == "gsettings"
+                action, key = command[1], command[3]
+                if action == "get":
+                    source = desktop_fonts if _kwargs.get("env", {}).get("GSETTINGS_BACKEND") == "memory" else current
+                    return {"ok": True, "stdout": repr(source[key])}
+                if action == "set":
+                    current[key] = ast.literal_eval(command[4])
+                elif prior_family and key == "font-name":
+                    current[key] = desktop_fonts[key]
+                else:
+                    raise AssertionError("Size-only reset must restore the original font description")
+                return {"ok": True}
+
+            with patch.object(helper, "system_font_env", return_value={"gsettingsKeys": list(current)}), \
+                 patch.object(helper.shutil, "which", side_effect=lambda name: "gsettings" if name == "gsettings" and current else None), \
+                 patch.object(helper, "_run_hook_cmd", side_effect=gsettings):
+                helper.apply_system_fonts()
+                assert current == desktop_fonts, "ordinary startup must not claim the default size"
+                for version in ("gtk-3.0", "gtk-4.0"):
+                    text = (home / ".config" / version / "settings.ini").read_text()
+                    managed = text.split(helper.GTK_SETTINGS_BEGIN)[1]
+                    assert "gtk-font-name=" not in managed, "untouched Default remains unmanaged"
+                fc_path = home / ".config/fontconfig/conf.d/60-vgs-fonts.conf"
+                if desktop_fonts:
+                    before = fc_path.read_text()
+                    with patch.object(helper, "_run_hook_cmd", return_value={"ok": False, "error": "font read failed"}):
+                        failed = helper.apply_system_fonts(size_only=True)
+                    assert not failed["success"] and fc_path.read_text() == before
+                    assert current == desktop_fonts, "failed font read must not substitute a different family"
+                if prior_family:
+                    helper.set_settings_value("systemFontInterfaceFamily", prior_family)
+                    helper.apply_system_fonts()
+                with contextlib.redirect_stdout(io.StringIO()):
+                    assert helper.cmd_fonts(["apply", "--size-only", "--json"]) == 0
+                if prior_family:
+                    helper.set_settings_value("systemFontInterfaceFamily", "")
+                    helper.apply_system_fonts()
+                assert helper.normalized_system_font_settings()["interface"]["family"] == ""
+                expected_gtk = {
+                    "gtk-3.0": "GTK Three Semi-Bold 14" if gtk_fonts else ("Desktop Sans 14" if desktop_fonts else "Sans 14"),
+                    "gtk-4.0": "GTK Four 14 @wght=450" if gtk_fonts else ("Desktop Sans 14" if desktop_fonts else "Sans 14"),
+                }
+                for version, font in expected_gtk.items():
+                    text = (home / ".config" / version / "settings.ini").read_text()
+                    assert f"gtk-font-name={font}" in text.split(helper.GTK_SETTINGS_BEGIN)[1]
+                if desktop_fonts:
+                    assert current == {"font-name": "Desktop Sans 14", "monospace-font-name": "Desktop Mono 14"}
+                helper.set_settings_value("systemFontInterfaceHinting", "medium")
+                helper.apply_system_fonts()
+                for version, font in expected_gtk.items():
+                    assert f"gtk-font-name={font}" in (home / ".config" / version / "settings.ini").read_text()
+                if desktop_fonts:
+                    with patch.object(helper, "_run_hook_cmd", return_value={"ok": False, "error": "font reset failed"}):
+                        failed = helper.apply_system_fonts(reset=True)
+                    assert not failed["success"] and fc_path.exists(), "failed reset must retain its restore information"
+                helper.apply_system_fonts(reset=True)
+                assert current == desktop_fonts, "reset must restore size-only GSettings writes"
+                assert not fc_path.exists()
+                for version in ("gtk-3.0", "gtk-4.0"):
+                    text = (home / ".config" / version / "settings.ini").read_text()
+                    assert helper.GTK_SETTINGS_BEGIN not in text
+                    assert (f"gtk-font-name={gtk_fonts[version]}" in text) if version in gtk_fonts else "gtk-font-name=" not in text
+        with_temp_home(run_case)
 
 
 def test_hyprland_layout_payload():
@@ -5645,6 +5730,7 @@ def test_display_output_controls():
 
 def main():
     test_system_font_family_targets()
+    test_system_font_size_targets()
     test_display_output_controls()
     # Catalog transfer must leave the theme lock available for applies and restyles.
     # The download locks the directory swap that publishes its result.

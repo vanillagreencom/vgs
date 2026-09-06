@@ -2352,6 +2352,8 @@ Singleton {
             HyprlandService.finishOutputPreview(true, success => {
                 if (success) {
                     commitHyprlandSettingsChanges();
+                    if (formatChanged)
+                        SettingsData.saveSettings();
                     confirmChanges(profileId);
                 } else {
                     clearPendingChanges();

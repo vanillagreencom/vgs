@@ -181,6 +181,7 @@ Item {
                     tab: "typography"
                     settingKey: "systemFontSize"
                     text: I18n.tr("App text size")
+                    enabled: SettingsData.systemFontsManaged
                     description: I18n.tr("Reopen apps to see changes.")
                     minimum: 6
                     maximum: 32

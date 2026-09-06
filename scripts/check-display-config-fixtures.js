@@ -178,7 +178,41 @@ const readiness = new Function('root', extractBlock(serviceSource, 'function onI
 readiness({ requestOutputs: () => requests++ });
 assert.equal(requests, 2, 'late compositor detection must request recovery');
 
+for (const action of ['confirm', 'failed-confirm', 'revert']) {
+  let persisted = 'system';
+  const context = { CompositorService: { isHyprland: true },
+    HyprlandService: { outputPreviewToken: 'preview', finishOutputPreview: (keep, callback) => {
+      context.HyprlandService.outputPreviewToken = '';
+      callback(action !== 'failed-confirm');
+    } },
+    SettingsData: { displayNameMode: 'model', hyprlandOutputSettings: {}, saveSettings: () => persisted = context.SettingsData.displayNameMode },
+    formatChanged: true, originalDisplayNameMode: 'system', outputs, pendingChanges: {}, pendingHyprlandChanges: {}, pendingNiriChanges: {},
+    originalOutputs: null, originalNiriSettings: null, originalHyprlandSettings: null, lastAppliedEntry: null,
+    buildCurrentOutputConfigs: () => ({}), readMonitorsJson: callback => callback({}),
+    findConfigEntryByFingerprint: () => null, currentOutputSet: [], changesConfirmed: () => {}, changesReverted: () => {} };
+  for (const name of ['clearPendingChanges', 'commitHyprlandSettingsChanges', 'revertChanges']) {
+    const body = extractBlock(stateSource, `function ${name}()`);
+    context[name] = () => new Function('context', 'with (context) {' + body + '}')(context);
+  }
+  const confirmBody = extractBlock(stateSource, 'function confirmChanges(profileId)');
+  context.confirmChanges = profileId => new Function('context', 'profileId', 'with (context) {' + confirmBody + '}')(context, profileId);
+  if (action === 'revert')
+    context.revertChanges();
+  else
+    context.confirmChanges();
+  assert.equal(persisted, action === 'confirm' ? 'model' : 'system', 'format-only ' + action);
+  if (action === 'revert')
+    assert.equal(context.SettingsData.displayNameMode, 'system');
+}
+
 const readQml = relative => fs.readFileSync(path.join(__dirname, '..', 'quickshell/vshell', relative), 'utf8');
+const fontApply = new Function('context', 'who', 'key', 'oldValue', 'with (context) {' + extractBlock(readQml('Common/SettingsData.qml'), 'function applySystemFonts(') + '}');
+for (const key of [undefined, 'systemFontInterfaceHinting', 'systemFontSize']) {
+  let command;
+  fontApply({ isGreeterMode: false, updateCompositorLayout: () => {}, Paths: { vshellCli: '/fixture/vshell' },
+    Proc: { runCommand: (_name, args) => command = args } }, null, key, 11);
+  assert.equal(command.includes('--size-only'), key === 'systemFontSize', 'only a size edit claims size ownership');
+}
 const testedPinFiles = new Set();
 function readPinSource(file) {
   testedPinFiles.add(file);

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import base64
 import colorsys
 import contextlib
@@ -3228,6 +3229,7 @@ FC_HINT_CONST = {"none": "hintnone", "slight": "hintslight", "medium": "hintmedi
 FC_LCD_CONST = {"default": "lcddefault", "light": "lcdlight", "legacy": "lcdlegacy", "none": "lcdnone"}
 GTK_SETTINGS_BEGIN = "# BEGIN VGS font rendering"
 GTK_SETTINGS_END = "# END VGS font rendering"
+FONT_SIZE_DESCRIPTION_PREFIX = "VGS font size overrides: "
 
 
 def _choice(value: Any, allowed: Iterable[str], fallback: str) -> str:
@@ -3326,11 +3328,14 @@ def _fontconfig_edits(group: Dict[str, Any], indent: str = "    ") -> List[str]:
 def render_system_fontconfig(config: Dict[str, Any]) -> str:
     interface = config["interface"]
     mono = config["monospace"]
+    description = "VGS managed font rendering"
+    if config.get("sizeOverrides") is not None:
+        description = FONT_SIZE_DESCRIPTION_PREFIX + json.dumps(config["sizeOverrides"])
     lines = [
         '<?xml version="1.0"?>',
         '<!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">',
         '<fontconfig>',
-        '  <description>VGS managed font rendering</description>',
+        f'  <description>{xml_escape(description)}</description>',
         "  <match target=\"font\">",
         *_fontconfig_edits(interface, "    "),
         "  </match>",
@@ -3364,7 +3369,26 @@ def _strip_managed_block(lines: List[str]) -> List[str]:
     return out
 
 
-def _merge_gtk_settings(path: Path, values: Dict[str, str] | None) -> bool:
+def _font_description_with_size(description: str, size: int) -> str:
+    """Replace Pango's size while retaining family, style and variation settings."""
+    parts = re.split(r"(\s+[@#])", description.strip(), maxsplit=1)
+    family_style = re.sub(r"\s+\d+(?:\.\d+)?(?:px)?$", "", parts[0])
+    return f"{family_style} {size}" + "".join(parts[1:])
+
+
+def _gsettings_font_description(key: str, schema_default: bool = False) -> str:
+    options = {"env": {**os.environ, "GSETTINGS_BACKEND": "memory"}} if schema_default else {}
+    result = _run_hook_cmd("system-fonts-read", ["gsettings", "get", "org.gnome.desktop.interface", key], timeout=5, **options)
+    if not result.get("ok"):
+        raise ValueError(result.get("stderr") or result.get("error") or f"Could not read {key}")
+    raw = result["stdout"]
+    description = ast.literal_eval(raw)
+    if not isinstance(description, str) or not description.strip():
+        raise ValueError(f"Invalid font description for {key}")
+    return raw
+
+
+def _merge_gtk_settings(path: Path, values: Dict[str, str] | None, size: int | None = None, default_font: str = "Sans 10") -> bool:
     original = path.read_text().splitlines() if path.exists() else []
     lines = _strip_managed_block(original)
     if values is None:
@@ -3373,11 +3397,6 @@ def _merge_gtk_settings(path: Path, values: Dict[str, str] | None) -> bool:
             write_file(path, text)
             return True
         return False
-
-    block = [GTK_SETTINGS_BEGIN]
-    for key, value in values.items():
-        block.append(f"{key}={value}")
-    block.append(GTK_SETTINGS_END)
 
     settings_start = -1
     insert_at = len(lines)
@@ -3392,6 +3411,19 @@ def _merge_gtk_settings(path: Path, values: Dict[str, str] | None) -> bool:
                     insert_at = j
                     break
             break
+
+    if size is not None and "gtk-font-name" not in values:
+        description = default_font
+        if settings_start >= 0:
+            for line in lines[settings_start + 1:insert_at]:
+                key, separator, value = line.partition("=")
+                if separator and key.strip() == "gtk-font-name":
+                    description = value.strip()
+        values = {**values, "gtk-font-name": _font_description_with_size(description, size)}
+    block = [GTK_SETTINGS_BEGIN]
+    for key, value in values.items():
+        block.append(f"{key}={value}")
+    block.append(GTK_SETTINGS_END)
 
     if settings_start < 0:
         if lines and lines[-1].strip():
@@ -3432,7 +3464,12 @@ def _gsettings_set_font_rendering(config: Dict[str, Any], reset: bool = False) -
     ]
     for key, generic, group in (("font-name", "sans-serif", config["interface"]), ("monospace-font-name", "monospace", config["monospace"])):
         family = group.get("family")
-        if (family and not reset) or generic in config.get("ownedFamilies", []):
+        originals = (config.get("sizeOverrides") or {}).get("gsettings", {})
+        if reset and key in originals:
+            wanted.append((key, originals[key] if originals[key] is not None else "reset"))
+        elif not reset and not family and key in config.get("fontDescriptions", {}):
+            wanted.append((key, repr(_font_description_with_size(config["fontDescriptions"][key], group["size"]))))
+        elif (family and not reset) or generic in config.get("ownedFamilies", []):
             wanted.append((key, repr(f'{family} {group["size"]}') if family and not reset else "reset"))
     results = []
     failures = []
@@ -3448,7 +3485,7 @@ def _gsettings_set_font_rendering(config: Dict[str, Any], reset: bool = False) -
     return {"mechanism": "gsettings", "ok": not failures, "results": results, "error": "; ".join(failures)}
 
 
-def apply_system_fonts(reset: bool = False) -> Dict[str, Any]:
+def apply_system_fonts(reset: bool = False, size_only: bool = False) -> Dict[str, Any]:
     ensure_dirs()
     config = normalized_system_font_settings()
     if reset or not config["managed"]:
@@ -3457,7 +3494,28 @@ def apply_system_fonts(reset: bool = False) -> Dict[str, Any]:
     fc_path = home() / ".config" / "fontconfig" / "conf.d" / "60-vgs-fonts.conf"
     gtk3_path = home() / ".config" / "gtk-3.0" / "settings.ini"
     gtk4_path = home() / ".config" / "gtk-4.0" / "settings.ini"
-    config["ownedFamilies"] = [alias.findtext("family") for alias in ET.parse(fc_path).getroot().findall("alias")] if fc_path.exists() else []
+    previous = ET.parse(fc_path).getroot() if fc_path.exists() else ET.Element("fontconfig")
+    config["ownedFamilies"] = [alias.findtext("family") for alias in previous.findall("alias")]
+    description = previous.findtext("description", "")
+    size_overrides = json.loads(description[len(FONT_SIZE_DESCRIPTION_PREFIX):]) if description.startswith(FONT_SIZE_DESCRIPTION_PREFIX) else None
+    if size_only and config["managed"] and size_overrides is None:
+        size_overrides = {"gsettings": {}}
+    config["sizeOverrides"] = size_overrides
+    config["fontDescriptions"] = {}
+    if size_overrides is not None and config["managed"]:
+        try:
+            for key, generic, group in (("font-name", "sans-serif", config["interface"]), ("monospace-font-name", "monospace", config["monospace"])):
+                if key not in config["environment"].get("gsettingsKeys", []):
+                    continue
+                raw = _gsettings_font_description(key)
+                originals = size_overrides["gsettings"]
+                if key not in originals:
+                    originals[key] = None if generic in config["ownedFamilies"] else raw
+                if not group["family"] and generic in config["ownedFamilies"]:
+                    raw = originals[key] if originals[key] is not None else _gsettings_font_description(key, schema_default=True)
+                config["fontDescriptions"][key] = ast.literal_eval(raw)
+        except (OSError, ValueError, SyntaxError) as error:
+            return {"success": False, "partial": False, "managed": config["managed"], "error": str(error)}
     changed: List[str] = []
     warnings: List[str] = []
 
@@ -3467,20 +3525,23 @@ def apply_system_fonts(reset: bool = False) -> Dict[str, Any]:
             write_file(fc_path, text)
             changed.append(str(fc_path))
         gtk_values = _gtk_values(config["interface"])
-        if _merge_gtk_settings(gtk3_path, gtk_values):
+        size = config["interface"]["size"] if size_overrides is not None else None
+        default_font = config["fontDescriptions"].get("font-name", "Sans 10")
+        if _merge_gtk_settings(gtk3_path, gtk_values, size, default_font):
             changed.append(str(gtk3_path))
-        if _merge_gtk_settings(gtk4_path, gtk_values):
+        if _merge_gtk_settings(gtk4_path, gtk_values, size, default_font):
             changed.append(str(gtk4_path))
         gs = _gsettings_set_font_rendering(config, reset=False)
     else:
-        with contextlib.suppress(FileNotFoundError):
-            fc_path.unlink()
-            changed.append(str(fc_path))
         if _merge_gtk_settings(gtk3_path, None):
             changed.append(str(gtk3_path))
         if _merge_gtk_settings(gtk4_path, None):
             changed.append(str(gtk4_path))
         gs = _gsettings_set_font_rendering(config, reset=True)
+        if gs.get("ok"):
+            with contextlib.suppress(FileNotFoundError):
+                fc_path.unlink()
+                changed.append(str(fc_path))
 
     if not gs.get("ok"):
         warnings.append(gs.get("error") or "gsettings failed")
@@ -7010,6 +7071,7 @@ def cmd_fonts(argv: List[str]) -> int:
     p_status.add_argument("--json", action="store_true")
     p_apply = sub.add_parser("apply")
     p_apply.add_argument("--json", action="store_true")
+    p_apply.add_argument("--size-only", action="store_true", help="Apply the selected size without replacing default font families")
     p_reset = sub.add_parser("reset")
     p_reset.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
@@ -7019,7 +7081,7 @@ def cmd_fonts(argv: List[str]) -> int:
         print(json.dumps(result, indent=2) if args.json else f"managed={result.get('managed')} session={result.get('environment', {}).get('sessionType')}")
         return 0
     if args.cmd == "apply":
-        result = apply_system_fonts(reset=False)
+        result = apply_system_fonts(reset=False, size_only=args.size_only)
         print(json.dumps(result, indent=2) if args.json else ("System fonts applied" if result.get("success") else "System fonts partially applied"))
         return 0 if result.get("success") else 1
     if args.cmd == "reset":

@@ -24,6 +24,7 @@ The helper owns parsing, generation and privileged operations. `bin/vshell` disp
 - Unknown remote-desktop state must not clear a known streaming indicator. `scripts/test-remote-desktop-state.js` checks state handling; helper journal tests cover the bounded session read.
 - Coding-agent stubs replace only VGS-owned files and must not hide an existing external command. See the stub installation code in `bin/vshell-helper`.
 - System font families use fontconfig aliases and GTK/GSettings preferences. Hyprland text uses its existing generated layout fragment. `test_system_font_family_targets` and `test_apply_system_fonts_temp_home` in `scripts/check-vshell-helper.py` check these targets and reset ownership.
+- User font-size edits preserve Default families. The generated font file retains size-only ownership and prior GSettings descriptions for reset; ordinary startup does not claim a size override. `test_system_font_size_targets` checks these paths.
 - Wallpaper upscaling runs as a one-shot process. See `bin/vshell-upscale` and its helper invocation.
 
 ## Decisions

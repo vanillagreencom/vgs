@@ -1463,11 +1463,14 @@ Singleton {
         }
     }
 
-    function applySystemFonts() {
+    function applySystemFonts(who, key, oldValue) {
         if (isGreeterMode)
             return;
         updateCompositorLayout();
-        Proc.runCommand("system-fonts-apply", [Paths.vshellCli, "fonts", "apply", "--json"], (output, exitCode, stderr) => {
+        const command = [Paths.vshellCli, "fonts", "apply", "--json"];
+        if (key === "systemFontSize")
+            command.push("--size-only");
+        Proc.runCommand("system-fonts-apply", command, (output, exitCode, stderr) => {
             if (exitCode === 0)
                 return;
             const msg = (stderr && stderr.trim().length > 0) ? stderr : (output || I18n.tr("Font settings apply failed"));
