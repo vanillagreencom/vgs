@@ -6,7 +6,7 @@ backend/vendor/** -text -whitespace
 .opencode/** -whitespace
 .pi/** -whitespace
 # Binary assets: declared binary so git keeps them out of textual diffs and
-# size-ratchet does not read their NUL bytes as a text file gone binary.
+# doc-limits does not read their NUL bytes as a text file gone binary.
 *.png binary
 *.jpg binary
 *.cur binary

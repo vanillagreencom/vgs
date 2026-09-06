@@ -35,7 +35,6 @@ SCRIPTS = REPO_ROOT / "scripts"
 # Executable scripts outside the suite need a reason for exclusion.
 NOT_A_SUITE_CHECK = {
     "validate": "the suite runner itself: it invokes the checks below rather than being one",
-    "check-bot-instructions-staged.sh": "git pre-commit adapter; the suite and CI invoke the package check directly on their checkout",
     "build-release.sh": "release tooling, driven by .github/workflows/release.yml",
     "build-assets.sh": "release tooling: builds the extras bundle, driven by .github/workflows/release.yml",
     "check-release.sh": "release preflight, driven by the release path and packaging/README.md",
