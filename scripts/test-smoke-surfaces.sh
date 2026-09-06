@@ -2,6 +2,8 @@
 # Exercise live-smoke prerequisites in a temporary layout with stubbed shell, compositor,
 # and instance registry commands. VSHELL_PROC_ROOT supplies fixture process data.
 # This permits checkout-ownership and unreadable-registry cases without the live session.
+# Exit 1 covers three unrelated failures, so each row pins the sentinel of its outcome
+# class; the per-entry detail lines under it are diagnostics, not a contract.
 set -euo pipefail
 
 # Require skip status 77 so an unmet prerequisite cannot report success.
@@ -10,6 +12,26 @@ SKIP_STATUS=77
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
+
+failures=0
+case_failed=0
+out=""
+err=""
+rc=0
+fail() {
+  {
+    printf 'FAIL [%s]: %s\n' "$1" "$2"
+    printf '  exit: %s\n  --- stdout ---\n%s\n  --- stderr ---\n%s\n' "$rc" "$out" "$err"
+  } >&2
+  failures=$((failures + 1))
+  case_failed=1
+}
+ok() {
+  if [[ $case_failed -eq 0 ]]; then
+    printf '  ok    %s\n' "$1"
+  fi
+  case_failed=0
+}
 
 fake_repo="$tmp/repo"
 bin_dir="$tmp/bin"
@@ -20,13 +42,10 @@ chmod +x "$fake_repo/scripts/smoke-surfaces.sh"
 own_config="$fake_repo/quickshell/vshell"
 foreign_root="$tmp/other-checkout"
 foreign_config="$foreign_root/quickshell/vshell"
+other_config="$tmp/somebody-else/quickshell/caelestia"
 mkdir -p "$foreign_config"
 
-
-cat >"$fake_repo/bin/vshell" <<'EOF'
-#!/usr/bin/env bash
-exit 0
-EOF
+printf '#!/usr/bin/env bash\nexit 0\n' >"$fake_repo/bin/vshell"
 chmod +x "$fake_repo/bin/vshell"
 
 # Keep stub stdout, stderr, and status independent to exercise a successful listing with warnings.
@@ -52,6 +71,21 @@ mkdir -p "$min_path"
 for tool in bash env dirname python3 mktemp cat rm sleep grep; do
   ln -sf "$(command -v "$tool")" "$min_path/$tool"
 done
+only_quickshell="$tmp/bin-quickshell-only"
+mkdir -p "$only_quickshell"
+cp -a "$min_path/." "$only_quickshell/"
+cp "$bin_dir/qs" "$only_quickshell/quickshell"
+cp "$bin_dir/hyprctl" "$only_quickshell/hyprctl"
+no_cli="$tmp/bin-no-cli"
+mkdir -p "$no_cli"
+cp -a "$min_path/." "$no_cli/"
+cp "$bin_dir/hyprctl" "$no_cli/hyprctl"
+declare -A PATHS=(
+  [full]="$bin_dir:$PATH"
+  [only-quickshell]="$only_quickshell"
+  [no-cli]="$no_cli"
+  [no-hyprctl]="$min_path"
+)
 
 layers_json='{"DP-1":{"levels":{"2":[
   {"namespace":"vshell:wallpaper","w":1920,"h":1080},
@@ -81,260 +115,172 @@ make_proc "$proc" 404 S bash ""
 
 entry() { printf '{"pid":%s,"config_path":"%s"}' "$1" "$2"; }
 
-
-out=""
-err=""
-rc=0
-case_name=""
-
+# Run the smoke with a chosen PATH and Hyprland signature ("-" leaves the signature unset),
+# followed by the row's own environment assignments.
 run_smoke() {
-  run_smoke_on "$bin_dir:$PATH" "$@"
-}
-
-# Run smoke with a specified PATH so the fixture controls CLI discovery.
-run_smoke_on() {
-  local path="$1"
-  case_name="$2"
+  local path="$1" signature="$2"
   shift 2
   rc=0
-  out="$(env "$@" \
-    PATH="$path" \
-    HYPRLAND_INSTANCE_SIGNATURE=test \
-    FAKE_LAYERS_JSON="$layers_json" \
-    "$fake_repo/scripts/smoke-surfaces.sh" 2>"$tmp/stderr")" || rc=$?
+  if [[ "$signature" == - ]]; then
+    out="$(env -u HYPRLAND_INSTANCE_SIGNATURE "$@" \
+      PATH="$path" \
+      FAKE_LAYERS_JSON="$layers_json" \
+      "$fake_repo/scripts/smoke-surfaces.sh" 2>"$tmp/stderr")" || rc=$?
+  else
+    out="$(env "$@" \
+      PATH="$path" \
+      HYPRLAND_INSTANCE_SIGNATURE="$signature" \
+      FAKE_LAYERS_JSON="$layers_json" \
+      "$fake_repo/scripts/smoke-surfaces.sh" 2>"$tmp/stderr")" || rc=$?
+  fi
   err="$(cat "$tmp/stderr")"
-}
-
-# Run without an injected Hyprland signature to exercise its prerequisite.
-# Apply explicit fixture assignments after env -u so a case can still set the signature.
-run_smoke_bare() {
-  local path="$1"
-  case_name="$2"
-  shift 2
-  rc=0
-  out="$(env -u HYPRLAND_INSTANCE_SIGNATURE "$@" \
-    PATH="$path" \
-    FAKE_LAYERS_JSON="$layers_json" \
-    "$fake_repo/scripts/smoke-surfaces.sh" 2>"$tmp/stderr")" || rc=$?
-  err="$(cat "$tmp/stderr")"
-}
-
-fail() {
-  {
-    echo "FAIL [$case_name]: $*"
-    echo "  exit: $rc"
-    echo "  --- stdout ---"
-    printf '%s\n' "$out"
-    echo "  --- stderr ---"
-    printf '%s\n' "$err"
-  } >&2
-  exit 1
 }
 
 expect_rc() {
-  [[ "$rc" == "$1" ]] || fail "expected exit $1, got $rc"
+  [[ "$rc" == "$1" ]] || fail "$2" "expected exit $1, got $rc"
 }
 
-expect_stdout() {
-  grep -qF -- "$1" <<<"$out" || fail "stdout does not mention: $1"
+# One sentinel per outcome class, on the channel that class reports through.
+verdict_check() {
+  local label="$1" verdict="$2" sentinel channel
+  case "$verdict" in
+    passed)
+      sentinel="surface smoke passed"
+      channel="$out"
+      ;;
+    no-live)
+      sentinel="surface smoke skipped: no live VGS shell on this session"
+      channel="$out"
+      ;;
+    no-cli)
+      sentinel="no Quickshell CLI (qs, quickshell) on PATH"
+      channel="$out"
+      ;;
+    no-hyprland)
+      sentinel="surface smoke skipped: Hyprland session not available"
+      channel="$out"
+      ;;
+    foreign)
+      sentinel="surface smoke FAILED: a live VGS shell belongs to a different checkout"
+      channel="$err"
+      ;;
+    unclassifiable)
+      sentinel="surface smoke FAILED: could not classify the instance registry"
+      channel="$err"
+      ;;
+    unreadable)
+      sentinel="surface smoke FAILED: could not read the Quickshell instance registry"
+      channel="$err"
+      ;;
+    *)
+      fail "$label" "unknown verdict column: $verdict"
+      return
+      ;;
+  esac
+  grep -qF -- "$sentinel" <<<"$channel" || fail "$label" "no verdict sentinel: $sentinel"
 }
 
-expect_stderr() {
-  grep -qF -- "$1" <<<"$err" || fail "stderr does not mention: $1"
+# label; qs behaviour; registry JSON; process table; expected exit; verdict class.
+# A live shell this checkout does not own must fail, because compositor layers aggregate
+# every shell on the session and this checkout cannot validate another one's surfaces.
+# An entry the reader cannot classify must fail too, never become an empty skip.
+REGISTRY="our own live shell;ok;[$(entry 101 "$own_config")];proc;0;passed
+warnings on stderr do not corrupt the listing;warn;[$(entry 101 "$own_config")];proc;0;passed
+an empty registry;ok;[];proc;$SKIP_STATUS;no-live
+an unrelated Quickshell app;ok;[$(entry 101 "$other_config")];proc;$SKIP_STATUS;no-live
+an unrelated app beside our own;ok;[$(entry 101 "$other_config"), $(entry 101 "$own_config")];proc;0;passed
+a foreign checkout;ok;[$(entry 202 "$foreign_config")];proc;1;foreign
+our own shell and a foreign one;ok;[$(entry 101 "$own_config"), $(entry 202 "$foreign_config")];proc;1;foreign
+a foreign shell.qml config path;ok;[$(entry 202 "$foreign_config/shell.qml")];proc;1;foreign
+a foreign entry whose process is a zombie;ok;[$(entry 303 "$foreign_config")];proc;$SKIP_STATUS;no-live
+a foreign entry whose pid was reused;ok;[$(entry 404 "$foreign_config")];proc;$SKIP_STATUS;no-live
+a foreign entry whose process is gone;ok;[$(entry 202 "$foreign_config")];empty;$SKIP_STATUS;no-live
+an unparsable registry;ok;not json at all;proc;1;unclassifiable
+an entry with no config_path;ok;[{\"pid\":101}];proc;1;unclassifiable
+an entry that is not an object;ok;[\"quickshell\"];proc;1;unclassifiable
+an entry with no pid;ok;[{\"config_path\":\"$own_config\"}];proc;1;unclassifiable
+an entry whose pid is a word;ok;[{\"config_path\":\"$own_config\",\"pid\":\"soon\"}];proc;1;unclassifiable
+an entry whose pid is zero;ok;[$(entry 0 "$own_config")];proc;1;unclassifiable
+an entry whose pid is negative;ok;[$(entry -1 "$own_config")];proc;1;unclassifiable
+an unreadable entry beside our own live shell;ok;[$(entry 101 "$own_config"), {\"pid\":202}];proc;1;unclassifiable
+a registry that is not a list;ok;{\"pid\":1};proc;1;unclassifiable
+a registry command that fails;exit3;-;proc;1;unreadable"
+
+case_registry() {
+  local label qs registry proc_key want_rc verdict proc_root rows=0
+  while IFS=';' read -r label qs registry proc_key want_rc verdict; do
+    [[ -n "$label" ]] || continue
+    rows=$((rows + 1))
+    case "$proc_key" in
+      proc) proc_root="$proc" ;;
+      empty) proc_root="$tmp/empty-proc" ;;
+      *)
+        fail "$label" "unknown process table column: $proc_key"
+        continue
+        ;;
+    esac
+    case "$qs" in
+      ok) run_smoke "${PATHS[full]}" test VSHELL_PROC_ROOT="$proc_root" FAKE_QS_JSON="$registry" ;;
+      warn)
+        run_smoke "${PATHS[full]}" test VSHELL_PROC_ROOT="$proc_root" \
+          FAKE_QS_JSON="$registry" FAKE_QS_STDERR="warning: some deprecated thing"
+        ;;
+      exit3)
+        run_smoke "${PATHS[full]}" test VSHELL_PROC_ROOT="$proc_root" \
+          FAKE_QS_EXIT=3 FAKE_QS_STDERR="qs: could not open the instance directory"
+        ;;
+      *)
+        fail "$label" "unknown qs column: $qs"
+        continue
+        ;;
+    esac
+    expect_rc "$want_rc" "$label"
+    verdict_check "$label" "$verdict"
+  done <<<"$REGISTRY"
+  [[ $rows -eq 21 ]] || fail "registry" "expected 21 table rows, drove $rows"
+  ok "each registry payload passes, skips or fails in the class it belongs to"
 }
 
+# label; PATH; Hyprland signature; registry JSON or -; expected exit; verdict class.
+# Both Quickshell CLI names are supported, and a missing prerequisite skips rather than
+# reporting success.
+DISCOVERY="the quickshell CLI name with our own shell;only-quickshell;test;[$(entry 101 "$own_config")];0;passed
+the quickshell CLI name with a foreign shell;only-quickshell;test;[$(entry 202 "$foreign_config")];1;foreign
+no Quickshell CLI on PATH;no-cli;test;-;$SKIP_STATUS;no-cli
+no hyprctl on PATH;no-hyprctl;test;-;$SKIP_STATUS;no-hyprland
+no Hyprland signature in the environment;full;-;-;$SKIP_STATUS;no-hyprland"
 
+case_discovery() {
+  local label path_key signature registry want_rc verdict rows=0
+  while IFS=';' read -r label path_key signature registry want_rc verdict; do
+    [[ -n "$label" ]] || continue
+    rows=$((rows + 1))
+    if [[ -z "${PATHS[$path_key]+set}" ]]; then
+      fail "$label" "no PATH fixture named $path_key"
+      continue
+    fi
+    if [[ "$registry" == - ]]; then
+      run_smoke "${PATHS[$path_key]}" "$signature" VSHELL_PROC_ROOT="$proc"
+    else
+      run_smoke "${PATHS[$path_key]}" "$signature" VSHELL_PROC_ROOT="$proc" FAKE_QS_JSON="$registry"
+    fi
+    expect_rc "$want_rc" "$label"
+    verdict_check "$label" "$verdict"
+  done <<<"$DISCOVERY"
+  [[ $rows -eq 5 ]] || fail "discovery" "expected 5 table rows, drove $rows"
+  ok "each missing prerequisite skips, and either CLI name finds the registry"
+}
 
+CASES=(
+  case_registry
+  case_discovery
+)
+for surfaces_case in "${CASES[@]}"; do
+  "$surfaces_case"
+done
 
-run_smoke "own shell" \
-  VSHELL_PROC_ROOT="$proc" \
-  FAKE_QS_JSON="[$(entry 101 "$own_config")]"
-expect_rc 0
-expect_stdout "surface smoke passed"
-
-# Warnings on stderr must not corrupt valid registry JSON on stdout.
-run_smoke "own shell, qs warns on stderr" \
-  VSHELL_PROC_ROOT="$proc" \
-  FAKE_QS_STDERR="warning: some deprecated thing" \
-  FAKE_QS_JSON="[$(entry 101 "$own_config")]"
-expect_rc 0
-expect_stdout "surface smoke passed"
-
-
-run_smoke "no VGS shell" \
-  VSHELL_PROC_ROOT="$proc" \
-  FAKE_QS_JSON="[]"
-expect_rc "$SKIP_STATUS"
-expect_stdout "surface smoke skipped: no live VGS shell on this session"
-
-# A well-formed unrelated Quickshell app is outside this smoke's ownership and must be skipped.
-run_smoke "unrelated quickshell shell" \
-  VSHELL_PROC_ROOT="$proc" \
-  FAKE_QS_JSON="[$(entry 101 "$tmp/somebody-else/quickshell/caelestia")]"
-expect_rc "$SKIP_STATUS"
-expect_stdout "surface smoke skipped: no live VGS shell on this session"
-
-# An unrelated app beside the owned shell must also remain ignored.
-run_smoke "unrelated quickshell shell beside our own" \
-  VSHELL_PROC_ROOT="$proc" \
-  FAKE_QS_JSON="[$(entry 101 "$tmp/somebody-else/quickshell/caelestia"), $(entry 101 "$own_config")]"
-expect_rc 0
-expect_stdout "surface smoke passed"
-
-# A live foreign checkout must fail because this checkout cannot validate its shell.
-run_smoke "foreign checkout" \
-  VSHELL_PROC_ROOT="$proc" \
-  FAKE_QS_JSON="[$(entry 202 "$foreign_config")]"
-expect_rc 1
-expect_stderr "surface smoke FAILED: a live VGS shell belongs to a different checkout"
-expect_stderr "$foreign_root (pid 202)"
-expect_stderr "this run:      $fake_repo"
-
-# A foreign live shell must take precedence over an owned one because compositor layers aggregate both.
-run_smoke "own shell AND a foreign shell both live" \
-  VSHELL_PROC_ROOT="$proc" \
-  FAKE_QS_JSON="[$(entry 101 "$own_config"), $(entry 202 "$foreign_config")]"
-expect_rc 1
-expect_stderr "surface smoke FAILED: a live VGS shell belongs to a different checkout"
-expect_stderr "$foreign_root (pid 202)"
-expect_stderr "hyprctl layers"
-
-
-run_smoke "foreign checkout, shell.qml config path" \
-  VSHELL_PROC_ROOT="$proc" \
-  FAKE_QS_JSON="[$(entry 202 "$foreign_config/shell.qml")]"
-expect_rc 1
-expect_stderr "$foreign_root (pid 202)"
-
-# A zombie has a readable process entry but owns no surfaces; existence alone cannot prove liveness.
-run_smoke "foreign entry whose process is a zombie" \
-  VSHELL_PROC_ROOT="$proc" \
-  FAKE_QS_JSON="[$(entry 303 "$foreign_config")]"
-expect_rc "$SKIP_STATUS"
-expect_stdout "surface smoke skipped: no live VGS shell on this session"
-
-
-run_smoke "foreign entry whose pid was reused" \
-  VSHELL_PROC_ROOT="$proc" \
-  FAKE_QS_JSON="[$(entry 404 "$foreign_config")]"
-expect_rc "$SKIP_STATUS"
-expect_stdout "surface smoke skipped: no live VGS shell on this session"
-
-
-run_smoke "foreign entry whose process is gone" \
-  VSHELL_PROC_ROOT="$tmp/empty-proc" \
-  FAKE_QS_JSON="[$(entry 202 "$foreign_config")]"
-expect_rc "$SKIP_STATUS"
-expect_stdout "surface smoke skipped: no live VGS shell on this session"
-
-# Malformed registry data must fail instead of becoming an empty skip.
-run_smoke "unparsable registry" \
-  VSHELL_PROC_ROOT="$proc" \
-  FAKE_QS_JSON="not json at all"
-expect_rc 1
-expect_stderr "surface smoke FAILED: could not classify the instance registry"
-expect_stderr "unparsable qs list output"
-
-# Invalid entry shapes must fail even when the JSON document parses.
-run_smoke "entry missing config_path" \
-  VSHELL_PROC_ROOT="$proc" \
-  FAKE_QS_JSON='[{"pid":101}]'
-expect_rc 1
-expect_stderr "surface smoke FAILED: could not classify the instance registry"
-expect_stderr "entry 0: no usable config_path"
-
-run_smoke "entry is not an object" \
-  VSHELL_PROC_ROOT="$proc" \
-  FAKE_QS_JSON='["quickshell"]'
-expect_rc 1
-expect_stderr "entry 0: expected an object, got str"
-
-run_smoke "entry missing pid" \
-  VSHELL_PROC_ROOT="$proc" \
-  FAKE_QS_JSON="[{\"config_path\":\"$own_config\"}]"
-expect_rc 1
-expect_stderr "entry 0: pid is not an integer"
-
-run_smoke "entry pid is not a number" \
-  VSHELL_PROC_ROOT="$proc" \
-  FAKE_QS_JSON="[{\"config_path\":\"$own_config\",\"pid\":\"soon\"}]"
-expect_rc 1
-expect_stderr "entry 0: pid is not an integer"
-
-run_smoke "entry pid is zero" \
-  VSHELL_PROC_ROOT="$proc" \
-  FAKE_QS_JSON="[$(entry 0 "$own_config")]"
-expect_rc 1
-expect_stderr "entry 0: pid is not a positive integer"
-
-run_smoke "entry pid is negative" \
-  VSHELL_PROC_ROOT="$proc" \
-  FAKE_QS_JSON="[$(entry -1 "$own_config")]"
-expect_rc 1
-expect_stderr "entry 0: pid is not a positive integer"
-
-# A healthy sibling entry cannot excuse an unreadable entry that might identify a foreign shell.
-run_smoke "malformed entry beside our own live shell" \
-  VSHELL_PROC_ROOT="$proc" \
-  FAKE_QS_JSON="[$(entry 101 "$own_config"), {\"pid\":202}]"
-expect_rc 1
-expect_stderr "entry 1: no usable config_path"
-
-
-run_smoke "registry is not a list" \
-  VSHELL_PROC_ROOT="$proc" \
-  FAKE_QS_JSON='{"pid":1}'
-expect_rc 1
-expect_stderr "surface smoke FAILED: could not classify the instance registry"
-
-# Preserve the failed registry command's diagnostic.
-run_smoke "qs list exits non-zero" \
-  VSHELL_PROC_ROOT="$proc" \
-  FAKE_QS_EXIT=3 \
-  FAKE_QS_STDERR="qs: could not open the instance directory"
-expect_rc 1
-expect_stderr "surface smoke FAILED: could not read the Quickshell instance registry (qs list exited 3)"
-expect_stderr "qs: could not open the instance directory"
-
-# Control PATH to test both supported Quickshell CLI names independently of host tools.
-
-
-onlyq="$tmp/bin-quickshell-only"
-mkdir -p "$onlyq"
-cp -a "$min_path/." "$onlyq/"
-cp "$bin_dir/qs" "$onlyq/quickshell"
-cp "$bin_dir/hyprctl" "$onlyq/hyprctl"
-
-run_smoke_on "$onlyq" "only quickshell on PATH, own shell" \
-  VSHELL_PROC_ROOT="$proc" \
-  FAKE_QS_JSON="[$(entry 101 "$own_config")]"
-expect_rc 0
-expect_stdout "surface smoke passed"
-
-run_smoke_on "$onlyq" "only quickshell on PATH, foreign shell" \
-  VSHELL_PROC_ROOT="$proc" \
-  FAKE_QS_JSON="[$(entry 202 "$foreign_config")]"
-expect_rc 1
-expect_stderr "$foreign_root (pid 202)"
-
-
-nocli="$tmp/bin-no-cli"
-mkdir -p "$nocli"
-cp -a "$min_path/." "$nocli/"
-cp "$bin_dir/hyprctl" "$nocli/hyprctl"
-
-run_smoke_on "$nocli" "no Quickshell CLI on PATH" \
-  VSHELL_PROC_ROOT="$proc"
-expect_rc "$SKIP_STATUS"
-expect_stdout "no Quickshell CLI (qs, quickshell) on PATH"
-
-# Exercise both Hyprland prerequisite branches so a skip cannot silently become success.
-run_smoke_bare "$min_path" "no hyprctl on PATH" HYPRLAND_INSTANCE_SIGNATURE=test
-expect_rc "$SKIP_STATUS"
-expect_stdout "surface smoke skipped: Hyprland session not available"
-
-run_smoke_bare "$bin_dir:$PATH" "HYPRLAND_INSTANCE_SIGNATURE unset"
-expect_rc "$SKIP_STATUS"
-expect_stdout "surface smoke skipped: Hyprland session not available"
-
-echo "smoke-surfaces precondition checks passed"
+if [[ $failures -ne 0 ]]; then
+  printf '\ntest-smoke-surfaces: %d failure(s)\n' "$failures" >&2
+  exit 1
+fi
+echo "test-smoke-surfaces: all checks passed"
