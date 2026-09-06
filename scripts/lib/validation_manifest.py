@@ -486,6 +486,20 @@ def token_participates(runner: Path, rules: "Grammar", token: str, workdir: Path
                 f"so the tag changes nothing"
             )
         return True, ""
+    # A marker token participates through its omission flag: --no-<token> lists
+    # every selected row but the tagged one. A runner without the flag exits 2
+    # here and the skip probe below judges the token instead.
+    omitted = run(
+        f"go,{token}    | scripts/stub-x\ngo        | scripts/stub-go",
+        "--list", f"--no-{token}", "go",
+    )
+    if omitted.returncode == 0:
+        if "stub-x" not in omitted.stdout and "stub-go" in omitted.stdout:
+            return True, ""
+        return False, (
+            f"`--no-{token}` is accepted but a row tagged `{token}` is still listed, "
+            f"so the flag omits nothing"
+        )
     tagged = run(f"go,{token}    | scripts/stub-skip", "go")
     plain = run("go        | scripts/stub-skip", "go")
     if tagged.returncode == plain.returncode:
