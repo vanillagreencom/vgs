@@ -63,9 +63,14 @@ probe_add() {
     if [[ "$mode" == exec ]]; then chmod +x "$fixture/$rel"; else chmod -x "$fixture/$rel"; fi
   fi
 }
+# Run the check as it stands. A case whose index must disagree with the worktree calls this
+# directly: staging again would erase the divergence it exists to exercise.
+probe_execute() {
+  out="$( (cd "$fixture" && ./scripts/check-format-lint.sh) 2>&1 || true)"
+}
 probe_check() {
   git -C "$fixture" add -A
-  out="$( (cd "$fixture" && ./scripts/check-format-lint.sh) 2>&1 || true)"
+  probe_execute
 }
 probe_run() {
   probe_init
@@ -165,7 +170,7 @@ case_worktree_column() {
   git -C "$fixture" add -A
   printf 'echo hi\n' >"$fixture/bin/swap"
   chmod +x "$fixture/bin/swap"
-  probe_check
+  probe_execute
   assert_router_ran bin/swap
   expect_message bin/swap exec present
   ok "the binary exemption reads the worktree, not the index"
