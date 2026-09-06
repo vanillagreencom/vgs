@@ -172,7 +172,8 @@ jobs:
       # checks so AUR availability does not gate unrelated pull requests.
       - name: Packaging metadata and assets
         run: |
-          python3 scripts/lib/shell_scan.py
+          python3 scripts/lib/shell_scan_selftest.py
+          python3 scripts/lib/qml_scrub_selftest.py
           python3 scripts/lib/qml_source_selftest.py
           scripts/gen-package-metadata.py
           scripts/check-package-assets.sh

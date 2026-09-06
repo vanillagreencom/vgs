@@ -1,18 +1,21 @@
 """Controls for shell_scan masks and recipe boundaries.
 
-Run through python3 scripts/lib/shell_scan.py.
+Run with python3 scripts/lib/shell_scan_selftest.py.
 """
 
 import re
 import sys
+import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from shell_scan import assignments, code_mask, split_scopes  # noqa: E402
 
+PACKAGE_FUNCTION = re.compile(r"^(package(?:_[\w.+-]+)?)\s*\(\)")
 
-# Exact masks test which characters remain visible to recipe readers.
-_MASK_CONTROLS = [
+# Exact masks: which characters remain visible to recipe readers. Every row keeps
+# the source's length and line count, the contract every caller slices against.
+MASKS = [
     ("a bare single-quoted body", "x='a # } b'\n", "x='       '\n"),
     # POSIX: no escapes inside '...', so the first quote really does close it.
     ("a backslash is literal in a bare quote", "x='a\\' y=1\n", "x='  ' y=1\n"),
@@ -25,7 +28,7 @@ _MASK_CONTROLS = [
     ("a hash inside a word is not a comment", "x=foo#bar\n", "x=foo#bar\n"),
     # The `#` must not start a comment, which the trailing code proves: it is
     # still there. The expansion's own body is blanked because it is pattern
-    # text, not structure — a delimiter in there opens and closes nothing.
+    # text, not structure: a delimiter in there opens and closes nothing.
     ("a hash in a parameter expansion is not a comment", "x=${v#pat} y=1\n", "x=${     } y=1\n"),
     ("an expansion's body is not structure", "x=${v//(/z} y=1\n", "x=${      } y=1\n"),
     ("a nested expansion is blanked in one pass", "x=${a:-${b}} y=1\n", "x=${       } y=1\n"),
@@ -44,142 +47,87 @@ _MASK_CONTROLS = [
     ("a substitution inside double quotes", 'x="$(f() { echo; }; f)"\n', 'x="                   "\n'),
 ]
 
-
-def selftest() -> int:
-    failures: list[str] = []
-
-    def check(label: str, actual: object, expected: object) -> None:
-        if actual != expected:
-            failures.append(f"{label}: expected {expected!r}, got {actual!r}")
-
-    for label, source, expected in _MASK_CONTROLS:
-        check(label, code_mask(source), expected)
-        # Offsets and line numbers are the contract every caller slices against.
-        check(f"{label} preserves offsets", len(code_mask(source)), len(source))
-        check(f"{label} preserves lines", code_mask(source).count("\n"), source.count("\n"))
-
-    check(
-        "an ANSI-C escape does not hide the next declaration",
-        assignments("pkgname=$'can\\'t'\nconflicts=()\n", "conflicts"),
-        [""],
-    )
-    check(
-        "a herestring does not swallow the lines after it",
-        assignments("cat <<<EOF\nconflicts=('b')\n", "conflicts"),
-        ["'b'"],
-    )
-    check(
-        "a substitution inside an array does not end the array",
-        assignments("conflicts=(a $(uname) c)\n", "conflicts"),
-        ["a $(uname) c"],
-    )
-    check(
-        "arithmetic inside an array does not end it either",
-        assignments("conflicts=(a $((1 + 2)) c)\n", "conflicts"),
-        ["a $((1 + 2)) c"],
-    )
+# The fragments `assignments` reads for a name: (label, source, name, expected).
+FRAGMENTS = [
+    ("an ANSI-C escape does not hide the next declaration",
+     "pkgname=$'can\\'t'\nconflicts=()\n", "conflicts", [""]),
+    ("a herestring does not swallow the lines after it",
+     "cat <<<EOF\nconflicts=('b')\n", "conflicts", ["'b'"]),
+    ("a substitution inside an array does not end the array",
+     "conflicts=(a $(uname) c)\n", "conflicts", ["a $(uname) c"]),
+    ("arithmetic inside an array does not end it either",
+     "conflicts=(a $((1 + 2)) c)\n", "conflicts", ["a $((1 + 2)) c"]),
     # Literal parentheses must not change array nesting.
-    check(
-        "a paren in a parameter expansion does not open nesting",
-        assignments("conflicts=(a ${value//(/x} c)\n", "conflicts"),
-        ["a ${value//(/x} c"],
-    )
-    check(
-        "a paren in a glob class does not open nesting",
-        assignments("conflicts=(a b[(]c d)\n", "conflicts"),
-        ["a b[(]c d"],
-    )
-    check(
-        "a plain array is untouched by any of it",
-        assignments("conflicts=(a b c)\n", "conflicts"),
-        ["a b c"],
-    )
-    # This case documents the scanner limit that ends an array early.
-    check(
-        "a case pattern inside a substitution still ends the array early",
-        assignments("conflicts=(a $(case x in b) echo;; esac) c)\n", "conflicts"),
-        ["a $(case x in b) echo;; esac"],
-    )
-    func = re.compile(r"^(package(?:_[\w.+-]+)?)\s*\(\)")
-    for label, source in (
-        ("a brace inside an expansion", "package_sub() {\n  x=${v//\\}/y}\n  conflicts=('b')\n}\nafter=1\n"),
-        ("a brace inside a glob class", "package_sub() {\n  x=a[}]b\n  conflicts=('b')\n}\nafter=1\n"),
-    ):
-        top, bodies = split_scopes(source, func)
-        check(f"{label} does not close the scope", "conflicts=('b')" in bodies["package_sub"], True)
-        check(f"{label} does not leak to top", "conflicts=('b')" in top, False)
+    ("a paren in a parameter expansion does not open nesting",
+     "conflicts=(a ${value//(/x} c)\n", "conflicts", ["a ${value//(/x} c"]),
+    ("a paren in a glob class does not open nesting",
+     "conflicts=(a b[(]c d)\n", "conflicts", ["a b[(]c d"]),
+    ("a paren inside a string does not close the array",
+     'conflicts=("a)b" c)\n', "conflicts", ['"a)b" c']),
+    # The scanner limit the module docstring names: a case pattern ends an array early.
+    ("a case pattern inside a substitution still ends the array early",
+     "conflicts=(a $(case x in b) echo;; esac) c)\n", "conflicts", ["a $(case x in b) echo;; esac"]),
+    ("a plain array", "conflicts=(a b c)\n", "conflicts", ["a b c"]),
+    ("a quoted array", "conflicts=('a' 'b')\n", "conflicts", ["'a' 'b'"]),
+    ("an unassigned name is None", "depends=(x)\n", "conflicts", None),
+    ("an assigned empty array is not None", "conflicts=()\n", "conflicts", [""]),
+    ("a commented assignment is not an assignment",
+     "# conflicts=('a')\nconflicts=('b')\n", "conflicts", ["'b'"]),
+    ("a quoted string fragment", 'conflicts="a b" # )\n', "conflicts", ["a b"]),
+    ("a bare word fragment", "pkgbase=vgs-shell\n", "pkgbase", ["vgs-shell"]),
+    ("an apostrophe in a comment inside the array",
+     "conflicts=(\n  # it doesn't matter\n  'a'\n)\n", "conflicts", ["\n  # it doesn't matter\n  'a'\n"]),
+]
 
-    # A valid twin prevents a constant rejection from passing.
-    for unterminated in ("conflicts=(a b\n", "conflicts=(a ${v//(/x} b\n"):
-        try:
-            assignments(unterminated, "conflicts")
-        except ValueError:
-            pass
-        else:
-            failures.append(f"unterminated {unterminated!r}: expected ValueError, got a result")
+UNTERMINATED_ARRAYS = [
+    ("a bare open array", "conflicts=('a'\n"),
+    ("an open array of words", "conflicts=(a b\n"),
+    ("an open array with a paren-carrying expansion", "conflicts=(a ${v//(/x} b\n"),
+]
 
-    top, bodies = split_scopes(
-        "conflicts=('a')\n"
-        "package_main() {\n"
-        "  true\n"
-        "}\n"
-        "package_sub() {\n"
-        "  # }\n"
-        "  conflicts=('b')\n"
-        "}\n",
-        func,
-    )
-    check("comment brace stays in the subpackage", "conflicts=('b')" in bodies["package_sub"], True)
-    check("comment brace does not leak to top", "conflicts=('b')" in top, False)
+# Text that carries a brace but is not structure: the subpackage keeps its line.
+BRACES_IN_TEXT = [
+    ("a brace inside an expansion", "package_sub() {\n  x=${v//\\}/y}\n  conflicts=('b')\n}\nafter=1\n"),
+    ("a brace inside a glob class", "package_sub() {\n  x=a[}]b\n  conflicts=('b')\n}\nafter=1\n"),
+    ("a brace in a comment", "conflicts=('a')\npackage_main() {\n  true\n}\npackage_sub() {\n  # }\n  conflicts=('b')\n}\n"),
+    ("a brace in a double-quoted string", 'package_sub() {\n  echo "}"\n  conflicts=(\'b\')\n}\n'),
+    ("a brace in a heredoc body", "package_sub() {\n  cat <<'EOF'\n}\nEOF\n  conflicts=('b')\n}\n"),
+]
 
-    _, bodies = split_scopes(
-        'package_sub() {\n  echo "}"\n  conflicts=(\'b\')\n}\n',
-        func,
-    )
-    check("quoted brace stays in the subpackage", "conflicts=('b')" in bodies["package_sub"], True)
 
-    top, bodies = split_scopes(
-        "package_sub() {\n  cat <<'EOF'\n}\nEOF\n  conflicts=('b')\n}\n",
-        func,
-    )
-    check("heredoc brace stays in the subpackage", "conflicts=('b')" in bodies["package_sub"], True)
+class CodeMask(unittest.TestCase):
+    def test_masks_blank_text_and_keep_structure(self):
+        for label, source, expected in MASKS:
+            with self.subTest(label):
+                self.assertEqual(code_mask(source), expected)
 
-    top, bodies = split_scopes("# package_sub() {\nconflicts=('a')\n", func)
-    check("commented-out header is not a function", bodies, {})
-    check("commented-out header leaves the top level whole", "conflicts=('a')" in top, True)
 
-    check("array fragment", assignments("conflicts=('a' 'b')\n", "conflicts"), ["'a' 'b'"])
-    check("unassigned is None", assignments("depends=(x)\n", "conflicts"), None)
-    check("assigned empty is not None", assignments("conflicts=()\n", "conflicts"), [""])
-    check(
-        "paren inside a string does not close the array",
-        assignments('conflicts=("a)b" c)\n', "conflicts"),
-        ['"a)b" c'],
-    )
-    check(
-        "commented assignment is not an assignment",
-        assignments("# conflicts=('a')\nconflicts=('b')\n", "conflicts"),
-        ["'b'"],
-    )
-    check("quoted string fragment", assignments('conflicts="a b" # )\n', "conflicts"), ["a b"])
-    check("bare word fragment", assignments("pkgbase=vgs-shell\n", "pkgbase"), ["vgs-shell"])
+class Assignments(unittest.TestCase):
+    def test_the_fragment_read_for_a_name(self):
+        for label, source, name, expected in FRAGMENTS:
+            with self.subTest(label):
+                self.assertEqual(assignments(source, name), expected)
 
-    check(
-        "apostrophe in a comment",
-        assignments("conflicts=(\n  # it doesn't matter\n  'a'\n)\n", "conflicts"),
-        ["\n  # it doesn't matter\n  'a'\n"],
-    )
+    def test_an_unterminated_array_is_refused(self):
+        for label, source in UNTERMINATED_ARRAYS:
+            with self.subTest(label):
+                with self.assertRaises(ValueError):
+                    assignments(source, "conflicts")
 
-    try:
-        assignments("conflicts=('a'\n", "conflicts")
-    except ValueError:
-        pass
-    else:
-        failures.append("unterminated array: expected ValueError, got a result")
 
-    for failure in failures:
-        print(f"shell_scan selftest: {failure}", file=sys.stderr)
-    if failures:
-        return 1
-    print("shell_scan selftest: ok")
-    return 0
+class SplitScopes(unittest.TestCase):
+    def test_a_brace_that_is_text_does_not_close_the_scope(self):
+        for label, source in BRACES_IN_TEXT:
+            with self.subTest(label):
+                top, bodies = split_scopes(source, PACKAGE_FUNCTION)
+                self.assertIn("conflicts=('b')", bodies["package_sub"])
+                self.assertNotIn("conflicts=('b')", top)
+
+    def test_a_commented_out_header_is_not_a_function(self):
+        top, bodies = split_scopes("# package_sub() {\nconflicts=('a')\n", PACKAGE_FUNCTION)
+        self.assertEqual(bodies, {})
+        self.assertIn("conflicts=('a')", top)
+
+
+if __name__ == "__main__":
+    unittest.main()
