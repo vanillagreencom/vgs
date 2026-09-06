@@ -34,6 +34,11 @@ Item {
         id: chrome
         anchors.fill: parent
 
+        // Hyprland's render:expand_undersized_textures (on by default) repeats a stale
+        // buffer's outermost pixel across the area an interactive resize has already
+        // exposed. Holding the border one pixel in makes that band the surface colour
+        // instead of Theme.primary, which is what filled the window mid-drag (VGS-273).
+        borderInset: 1
         radius: root.radius
         surfaceColor: root.surfaceColor
         borderColor: root.borderColor

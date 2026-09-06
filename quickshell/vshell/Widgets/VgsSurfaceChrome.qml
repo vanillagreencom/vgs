@@ -13,6 +13,10 @@ Item {
     property real borderWidth: BlurService.borderWidth
     property bool drawSurface: true
     property bool drawBorder: true
+    // Distance the border keeps from the surface edge. A compositor that expands a stale
+    // buffer over the area a resize exposes repeats the outermost pixel, so a window sets
+    // this to keep the accent border off that pixel. See VgsFloatingSurface.
+    property real borderInset: 0
     property bool enableGlass: true
     property bool maskContent: true
     readonly property bool glassActive: root.enableGlass && Theme.popupGlassActiveForSurface(root.blurAvailable)
@@ -56,8 +60,9 @@ Item {
 
     Rectangle {
         anchors.fill: parent
+        anchors.margins: root.borderInset
         visible: root.drawBorder
-        radius: root.radius
+        radius: Math.max(0, root.radius - root.borderInset)
         color: "transparent"
         border.color: root.borderColor
         border.width: root.borderWidth

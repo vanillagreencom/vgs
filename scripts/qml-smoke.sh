@@ -30,7 +30,11 @@ check_settings=false
 require_nested=false
 require_static=false
 static_ran=false
-nested_timeout=40
+# Ceiling on the sandboxed shell's lifetime, not a schedule: teardown kills the process
+# group as soon as the phase finishes, so a healthy run never spends it. It has to cover
+# every nested check end to end; 40s reaped the shell mid-run on a loaded workstation and
+# turned each later IPC call into 'No running instances'.
+nested_timeout=120
 compositor_timeout=15
 # Plugin discovery is asynchronous. Core IPC readiness alone does not establish plugin loading.
 plugin_timeout=30
@@ -54,7 +58,9 @@ done
 
 status=0
 note() { printf 'qml-smoke: %s\n' "$*"; }
-fail() { printf 'qml-smoke: FAIL: %s\n' "$*" >&2; status=1; }
+# declare -g so a function with its own local 'status' cannot swallow the run's verdict:
+# a plain assignment would land on the shadowing local and the run would exit 0 after a FAIL.
+fail() { printf 'qml-smoke: FAIL: %s\n' "$*" >&2; declare -g status=1; }
 
 # shellcheck source=scripts/lib/session-snapshot.sh
 source "$repo_root/scripts/lib/session-snapshot.sh"
@@ -132,7 +138,16 @@ cleanup() {
     fi
   done
   for dir in "${scratch_dirs[@]:-}"; do
-    [[ -n "$dir" && -d "$dir" ]] && rm -rf -- "$dir"
+    [[ -n "$dir" && -d "$dir" ]] || continue
+    # Services the sandbox's own D-Bus activated (dconf, gvfs) outlive the tracked process
+    # groups and keep writing into its home, so one removal pass can lose that race.
+    for _ in $(seq 1 14); do
+      rm -rf -- "$dir" 2>/dev/null || true
+      [[ -d "$dir" ]] || break
+      sleep 0.2
+    done
+    # The last pass keeps its diagnostic: a directory that still survives is a real leak.
+    [[ ! -d "$dir" ]] || rm -rf -- "$dir" || code=1
   done
   assert_live_session_untouched || code=1
   exit "$code"
@@ -1077,6 +1092,75 @@ override_state_settles() {
   return 0
 }
 
+# Decide whether a window keeps its themed border off its own outermost pixel. A compositor
+# expanding a stale buffer over the area an interactive resize has already exposed repeats
+# that pixel across it, so an accent border sitting there floods the window mid-drag.
+# Samples run from the window edge inward: edge, border, interior.
+# Status 0 means inset, 1 means the border owns the edge, 2 means no border was found.
+window_border_is_inset() {
+  local edge="$1" border="$2" interior="$3"
+  [[ "$border" != "$interior" ]] || return 2
+  [[ "$edge" != "$border" ]] || return 1
+  return 0
+}
+
+# Read one pixel of the sandbox output as lowercase hex. grim writes binary PPM, whose
+# header is four whitespace-separated ASCII fields ahead of the RGB bytes.
+sandbox_pixel() {
+  "${sandbox_env[@]}" WAYLAND_DISPLAY="$nested_socket" grim -t ppm -g "$1,$2 1x1" - 2>/dev/null | python3 -c '
+import sys
+
+data = sys.stdin.buffer.read()
+fields, i = [], 0
+while len(fields) < 4:
+    while i < len(data) and data[i:i + 1].isspace():
+        i += 1
+    j = i
+    while j < len(data) and not data[j:j + 1].isspace():
+        j += 1
+    if j == i:
+        raise SystemExit(1)
+    fields.append(data[i:j])
+    i = j
+if fields[0] != b"P6" or len(data) < i + 4:
+    raise SystemExit(1)
+print(data[i + 1:i + 4].hex())
+'
+}
+
+# Sample the Settings window's left edge in the sandbox. A capture or query failure is
+# reported as such: it is not evidence about where the border sits.
+settings_border_check() {
+  local clients geometry="" x y edge border interior verdict=0
+  # The Settings window maps asynchronously. Poll for it so a slow map reads as a wait,
+  # not as a verdict about the border.
+  for _ in $(seq 1 20); do
+    clients="$("${sandbox_env[@]}" HYPRLAND_INSTANCE_SIGNATURE="$nested_signature" hyprctl -i 0 clients -j 2>/dev/null)" || clients=""
+    geometry="$(jq -er '.[] | select(.title == "Settings" and .mapped) |
+      "\(.at[0]) \(.at[1] + (.size[1] / 2 | floor))"' <<<"${clients:-[]}" 2>/dev/null)" && break
+    geometry=""
+    sleep 0.5
+  done
+  if [[ -z "$geometry" ]]; then
+    fail "the Settings window did not map in the sandbox within 10s"
+    return 1
+  fi
+  read -r x y <<<"$geometry"
+  if ! edge="$(sandbox_pixel "$x" "$y")" ||
+    ! border="$(sandbox_pixel "$((x + 1))" "$y")" ||
+    ! interior="$(sandbox_pixel "$((x + 4))" "$y")"; then
+    fail "could not sample the Settings window edge at ${x},${y}"
+    return 1
+  fi
+  window_border_is_inset "$edge" "$border" "$interior" || verdict=$?
+  case "$verdict" in
+    0) note "window border check passed (edge $edge, border $border, interior $interior)" ;;
+    1) fail "the Settings window paints its border on its outermost pixel ($edge): a compositor expanding a stale buffer floods the window with it during a resize" ;;
+    2) fail "no window border found at the Settings window edge (edge $edge, border $border, interior $interior)" ;;
+  esac
+  return "$verdict"
+}
+
 settings_check() {
   local report pages page ready expected
   report="$(sandbox_ipc settings status)" || { fail "could not read Settings status"; return 1; }
@@ -1348,6 +1432,7 @@ EOF
     else
       # Settings loads its selected tab asynchronously. The log scan below checks its components.
       sleep 2
+      settings_border_check || true
       if [[ -n "${VSHELL_SMOKE_ARTIFACT_DIR:-}" ]]; then
         local capture_focus
         capture_focus="$(hyprctl activewindow -j | jq -er '.address | select(test("^0x[0-9a-f]+$"))')" || { fail "could not save focus for display capture"; return; }

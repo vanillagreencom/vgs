@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Exercise the extracted smoke helpers without starting a nested compositor.
-# Three surfaces, one table each: the remedy the unavailability notice prints, the layer
-# state the sandbox measures, and the geometry reply the assertion accepts.
+# Five surfaces: the remedy the unavailability notice prints, the layer state the sandbox
+# measures, the geometry reply the assertion accepts, the window edge samples the border
+# check reads, and the scope the failure verdict lands in.
 # The notice helper writes advice and nothing else, so its wording is the only channel
-# a caller can read; the other two tables assert status and measured geometry.
+# a caller can read; the others assert status, measured geometry and sampled colour.
 set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -38,6 +39,17 @@ slice() {
 slice nested_unavailable
 slice sandbox_layer_state
 slice assert_popout_geometry
+slice window_border_is_inset
+
+# Cut a one-line helper definition out of the smoke script. Same contract as slice: a helper
+# that no longer has this shape is a broken fixture, not a failed case.
+slice_line() {
+  local name="$1" dst="$tmp/$1.sh"
+  grep -m1 -E "^$name\(\) \{.*\}\$" "$smoke" >"$dst" && [[ -s "$dst" ]] && return 0
+  printf 'test-qml-smoke: could not slice %s out of %s\n' "$name" "$smoke" >&2
+  exit 1
+}
+slice_line fail
 
 # Run the extracted notice helper with its script variables. A dash requests an unset display.
 drive() {
@@ -264,11 +276,62 @@ case_geometry_replies() {
   ok "only a well-formed reply that measures full height passes"
 }
 
+edge_samples() {
+  (
+    set +e
+    # shellcheck source=/dev/null
+    . "$tmp/window_border_is_inset.sh"
+    window_border_is_inset "$1" "$2" "$3"
+    printf 'rc=%s\n' "$?"
+  ) 2>&1
+}
+
+# label; edge; border; interior; expected status. Samples run from the window edge inward.
+EDGES='an inset border leaves the surface on the edge;1c1c28;fab387;1c1c28;0
+a border on the outermost pixel floods a resize;fab387;fab387;1c1c28;1
+a translucent edge still differs from the border;2a2b3f;fab387;1c1c28;0
+no border drawn at all;1c1c28;1c1c28;1c1c28;2
+a border colour equal to the interior is not a border;fab387;1c1c28;1c1c28;2'
+
+case_window_border_samples() {
+  local label edge border interior want_rc out rows=0
+  while IFS=';' read -r label edge border interior want_rc; do
+    [[ -n "$label" ]] || continue
+    rows=$((rows + 1))
+    out="$(edge_samples "$edge" "$border" "$interior")"
+    [[ "$out" == *"rc=$want_rc"* ]] ||
+      fail "window border samples" "$label: expected rc=$want_rc, got: $out"
+  done <<<"$EDGES"
+  [[ $rows -eq 5 ]] || fail "window border samples" "expected 5 table rows, drove $rows"
+  ok "only an edge pixel that differs from a border distinct from the interior passes"
+}
+
+# The run's verdict lives in a global 'status'. A check with its own local 'status' must not
+# be able to swallow a FAIL: the shipped fail() has to reach the global from inside one.
+case_fail_pierces_local_status() {
+  local out
+  out="$(
+    exec 2>/dev/null
+    set +e
+    status=0
+    # shellcheck source=/dev/null
+    . "$tmp/fail.sh"
+    shadowing_check() { local status=0; fail "boom"; }
+    shadowing_check
+    printf 'status=%s\n' "$status"
+  )"
+  [[ "$out" == *'status=1'* ]] ||
+    fail "fail pierces a local status" "expected the global status to reach 1, got: $out"
+  ok "a check's own local status cannot swallow the run's FAIL verdict"
+}
+
 CASES=(
   case_remedies
   case_unconditional_options
   case_layer_states
   case_geometry_replies
+  case_window_border_samples
+  case_fail_pierces_local_status
 )
 for smoke_case in "${CASES[@]}"; do
   "$smoke_case"

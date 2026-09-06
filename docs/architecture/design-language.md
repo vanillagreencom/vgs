@@ -16,5 +16,6 @@ Shared tokens define form while the palette supplies colour. The token sources a
 - Popout surfaces remain anchored to the output while input and dismissal track the body rectangle. See `Modules/Plugins/PluginPopout.qml`, `scripts/test-popout-dismiss-envelope.js` and the popout check in `scripts/qml-smoke.sh`.
 - The blur allowlist includes only namespaces whose full rectangle can be blurred. `test_hyprland_blur_script` in `scripts/check-vshell-helper.py` checks membership and namespace matches.
 - Settings window blur follows the client corner radius, independently of app-window rounding. `test_hyprland_blur_script` checks the window match, translated title and circular rounding.
+- A floating window keeps its themed border off its outermost pixel (`Widgets/VgsFloatingSurface.qml` sets `borderInset`). A compositor expanding a stale buffer over the area a resize exposes repeats that pixel across it, so a border there floods the window mid-drag. See the window border check in `scripts/qml-smoke.sh`.
 - Layer-surface tooltips use `Widgets/VgsTooltip.qml`; floating windows use `Widgets/VgsInlineTooltip.qml`. The shared body receives an explicit backdrop property.
 - Pushed plugin settings are view state. Escape returns to the previous page; other dismissal closes the surface. See `Modules/Plugins/PluginPopout.qml`.
