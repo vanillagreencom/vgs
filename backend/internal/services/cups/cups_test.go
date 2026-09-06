@@ -169,9 +169,12 @@ func TestCupsWriteHandlersInvokeExpectedCommands(t *testing.T) {
 		{"set info", func(m *Manager) (any, error) {
 			return m.handleSetPrinterInfo(mustJSON(t, infoParams{PrinterName: "Office", Info: "Shared laser"}))
 		}, "lpadmin -p Office -D Shared laser"},
+		// The test page is the host's CUPS sample when one exists, else a file
+		// the handler generates; the argv shape is exact and the path is judged
+		// by where it may come from.
 		{"print test page", func(m *Manager) (any, error) {
 			return m.handlePrintTestPage(mustJSON(t, printerParams{PrinterName: "Office"}))
-		}, "lp -d Office " + firstExisting("/usr/share/cups/data/testprint", "/usr/share/cups/data/default-testpage.pdf")},
+		}, "lp -d Office <test page>"},
 		{"restart job", func(m *Manager) (any, error) { return m.handleRestartJob(mustJSON(t, jobParams{JobID: "Office-42"})) }, "lp -i Office-42 -H restart"},
 		{"remove printer from class", func(m *Manager) (any, error) {
 			return m.handleRemovePrinterFromClass(mustJSON(t, classParams{ClassName: "Lab", PrinterName: "Office"}))
@@ -186,7 +189,7 @@ func TestCupsWriteHandlersInvokeExpectedCommands(t *testing.T) {
 			}
 			log := readLog(t, logPath)
 			for _, line := range strings.Split(log, "\n") {
-				if line == tc.want {
+				if argvLineMatches(line, tc.want) {
 					return
 				}
 			}
@@ -341,4 +344,29 @@ func readLog(t *testing.T, path string) string {
 
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
+// argvLineMatches compares a logged argv line with a wanted one whole. The one
+// placeholder, <test page>, stands for a single trailing argument that is the
+// host's CUPS sample page or the file handlePrintTestPage generates.
+func argvLineMatches(line, want string) bool {
+	const placeholder = " <test page>"
+	if !strings.HasSuffix(want, placeholder) {
+		return line == want
+	}
+	prefix := strings.TrimSuffix(want, placeholder) + " "
+	if !strings.HasPrefix(line, prefix) {
+		return false
+	}
+	page := strings.TrimPrefix(line, prefix)
+	if page == "" || strings.Contains(page, " ") {
+		return false
+	}
+	samples := []string{"/usr/share/cups/data/testprint", "/usr/share/cups/data/default-testpage.pdf"}
+	for _, sample := range samples {
+		if page == sample {
+			return true
+		}
+	}
+	return strings.HasPrefix(filepath.Base(page), "vshell-cups-test-")
 }
