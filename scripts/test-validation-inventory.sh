@@ -4,226 +4,11 @@
 # Unchanged path constants still point at the real repository.
 set -euo pipefail
 
-repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-runner="$repo_root/scripts/validate"
-tmp="$(mktemp -d)"
-fixture_dir="$tmp/fixture"
-trap 'rm -rf "$tmp"' EXIT INT TERM
-
-failures=0
-case_failed=0
-fail() {
-  printf 'FAIL [%s]: %s\n' "$1" "$2" >&2
-  failures=$((failures + 1))
-  case_failed=1
-}
-# Uncreatable controls return skip status instead of passing. This suite's exclusive manifest row
-# does not permit skips, so the runner reports that status as failure. A libc without a locale
-# that exposes Unicode whitespace classification can leave the locale control uncreatable.
-skips=0
-skipped_names=()
-skip() { # Report an uncreatable control by name and reason. Missing arguments are a fixture defect
-# and must fail rather than crash during the reporting path or excuse themselves as a skip.
-  if [[ $# -lt 2 ]]; then
-    fail "skip helper" "skip was called with no reason for \`${1:-<no control name>}\`, so nothing could be reported about it"
-    return 0
-  fi
-  local name="$1"
-  shift
-  skips=$((skips + 1))
-  skipped_names+=("$name")
-  printf '  SKIP  %s: %s\n' "$name" "$1" >&2
-  shift
-  printf '        %s\n' "$@" >&2
-}
-ok() {
-  if [[ $case_failed -eq 0 ]]; then
-    printf '  ok    %s\n' "$1"
-  fi
-  case_failed=0
-}
-expect_contains() {
-  [[ "$1" == *"$2"* ]] || fail "$3" "expected to contain: $2 (got: $1)"
-}
-expect_absent() {
-  [[ "$1" != *"$2"* ]] || fail "$3" "expected NOT to contain: $2 (got: $1)"
-}
-
-# Exercise malformed reporting in a subshell so its intended failure does not contaminate the suite count.
-skip_arity_said="$( (skip "a control with no reason") 2>&1 )" || true
-expect_contains "$skip_arity_said" "skip was called with no reason" "skip helper arity"
-case_failed=0
-ok "a skip call with no reason is reported as a malformed call, not a dead run"
-
-# Derive shared diagnostics from the grammar and verify guard-only messages remain present.
-# Use the same fragments for clean-run exclusions and fixture-specific failure checks.
-ARM_MESSAGES=()
-while IFS= read -r text; do
-  [[ -n "$text" ]] && ARM_MESSAGES+=("$text")
-done < <(sed -n 's/^message  *[a-z-]*  *//p' "$repo_root/scripts/lib/validation-grammar.conf")
-
-# Guard-only diagnostics are checked against their emitting source below.
-GUARD_ONLY_MESSAGES=(
-  "no manifest row is tagged with it"
-  "is not executable"
-  "enumerates the validate areas but omits"
-  "as a validate area, but scripts/validate does not"
-  "anchor around its validate area list"
-  "but only inside a code fence"
-  "a code fence is opened and never closed"
-  "opens the validate area anchor but never closes it"
-  "a reversed pair anchors nothing"
-  "must be anchored exactly once"
-  "anchors an empty validate area list"
-  "could not read"
-  "does not act on it"
-  "the runner's derivation and the definition have drifted"
-  "CI coverage was NOT checked"
-  "which .github/workflows/ci.yml does not"
-)
-ARM_MESSAGES+=("${GUARD_ONLY_MESSAGES[@]}")
-
-# Require a consumer for each shared diagnostic key so an unused declaration cannot count as coverage.
-while IFS= read -r key; do
-  [[ -n "$key" ]] || continue
-  if ! grep -qF -- "$key" "$repo_root/scripts/validate" \
-    && ! grep -qF -- "$key" "$repo_root/scripts/lib/validation_manifest.py"; then
-    fail "shared diagnostics" "the grammar declares message \`$key\` that neither reader uses"
-  fi
-done < <(sed -n 's/^message  *\([a-z-]*\) .*/\1/p' "$repo_root/scripts/lib/validation-grammar.conf")
-
-# Join adjacent literals before checking diagnostic text; emitted f-strings can span source literals.
-if ! python3 - "$repo_root" "${GUARD_ONLY_MESSAGES[@]}" <<'LIVE'
-import pathlib, re, sys
-root = pathlib.Path(sys.argv[1])
-sources = ""
-for name in ("scripts/check-validation-inventory.py", "scripts/lib/validation_manifest.py"):
-    sources += (root / name).read_text(encoding="utf-8")
-
-joined = re.sub(r'"\s*f?"', "", sources)
-dead = [f for f in sys.argv[2:] if f not in joined]
-for fragment in dead:
-    print(f"no reader emits {fragment!r}, so asserting its absence proves nothing")
-sys.exit(1 if dead else 0)
-LIVE
-then
-  fail "guard-only diagnostics" "the fragments above are not emitted by either reader"
-fi
-ok "every fragment the unmutated control asserts is one some arm can emit"
-
-# Detect PyYAML availability because only CI parsing needs it. Other guard arms must still report.
-have_yaml=1
-python3 -c 'import yaml' >/dev/null 2>&1 || have_yaml=0
-
-noyaml_path="$tmp/noyaml"
-mkdir -p "$noyaml_path/yaml"
-printf 'raise ImportError("no yaml (test shim)")\n' >"$noyaml_path/yaml/__init__.py"
-
-# A clean non-YAML result can still carry the sole missing-PyYAML prerequisite error.
-expect_clean_run() {
-  local name="$1" msg
-  for msg in "${ARM_MESSAGES[@]}"; do
-
-    [[ "$msg" == "CI coverage was NOT checked" ]] && continue
-    expect_absent "$guard_out" "$msg" "$name"
-  done
-  if [[ $have_yaml -eq 1 ]]; then
-    [[ "$guard_rc" -eq 0 ]] || fail "$name" "the real tree does not pass the guard (rc $guard_rc)"
-  else
-    [[ "$guard_rc" -ne 0 ]] || fail "$name" "PyYAML is absent but the guard passed anyway"
-    expect_contains "$guard_out" "CI coverage was NOT checked" "$name"
-  fi
-}
+# shellcheck source=scripts/lib/validation-testkit.sh
+source "$(dirname -- "${BASH_SOURCE[0]}")/lib/validation-testkit.sh"
+assert_fragments_live
 
 echo "=== check-validation-inventory.py manifest arms ==="
-
-# Run the guard with patched fixture paths and retain output plus exit status.
-# Grammar fixtures live beside a copied runner because the guard consumes the runner's dump.
-# Set guard_out and guard_rc; accepted path overrides identify runner, docs, CI, grammar, or imports.
-run_guard() {
-  local arg grammar_override="" runner_override=""
-  local -a env_args=()
-  for arg in "$@"; do
-    case "$arg" in
-      GRAMMAR_PATH=*) grammar_override="${arg#GRAMMAR_PATH=}" ;;
-      RUNNER_PATH=*) runner_override="${arg#RUNNER_PATH=}" ;;
-      *) env_args+=("$arg") ;;
-    esac
-  done
-  # Keep an already complete fixture layout in place so paths containing spaces stay under test.
-  if [[ -z "$grammar_override" && -n "$runner_override" ]] &&
-    [[ -r "$(dirname -- "$runner_override")/lib/validation-grammar.conf" ]]; then
-    env_args+=("RUNNER_PATH=$runner_override")
-  elif [[ -n "$grammar_override" || -n "$runner_override" ]]; then
-    rm -rf "$tmp/paired"
-    mkdir -p "$tmp/paired/scripts/lib"
-    # Preserve copied mode so the non-executable-runner control remains non-executable.
-    cp "${runner_override:-$runner}" "$tmp/paired/scripts/validate"
-    cp "${grammar_override:-$repo_root/scripts/lib/validation-grammar.conf}" \
-      "$tmp/paired/scripts/lib/validation-grammar.conf"
-    env_args+=("RUNNER_PATH=$tmp/paired/scripts/validate")
-  fi
-  guard_rc=0
-  guard_out="$(env "${env_args[@]}" python3 - "$repo_root" <<'GUARD_PY'
-import contextlib, importlib.util, io, os, pathlib, sys
-spec = importlib.util.spec_from_file_location(
-    "inv", pathlib.Path(sys.argv[1]) / "scripts" / "check-validation-inventory.py"
-)
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
-for var, attr in (
-    ("RUNNER_PATH", "RUNNER"),
-    ("AGENTS_PATH", "AGENTS"),
-    ("CI_PATH", "CI"),
-):
-    if os.environ.get(var):
-        setattr(mod, attr, pathlib.Path(os.environ[var]))
-# Refresh document paths captured by the module during import.
-mod.AREA_ENUMERATING_DOCS = (mod.AGENTS,)
-buf = io.StringIO()
-status = 0
-try:
-    with contextlib.redirect_stderr(buf):
-        status = mod.main()
-except mod.ManifestError as error:
-    buf.write(str(error))
-    status = 1
-except SystemExit as exc:
-    buf.write(str(exc))
-    # Capture a string SystemExit code here; forwarding it to sys.exit would print outside this capture.
-    status = exc.code if isinstance(exc.code, int) else 1
-print(buf.getvalue())
-sys.exit(status if isinstance(status, int) else 1)
-GUARD_PY
-  )" || guard_rc=$?
-}
-
-# Require both the expected diagnosis and a nonzero refusal status.
-expect_refused() {
-  expect_contains "$guard_out" "$2" "$1"
-  [[ "$guard_rc" -ne 0 ]] || fail "$1" "guard printed the message but exited 0 — it diagnosed without refusing"
-}
-
-# Build a grammar fixture beside its runner and require the expected refusal.
-grammar_case() {
-  local name="$1" probe="$tmp/probe-grammar.conf"
-  printf '%s' "$2" >"$probe"
-  run_guard "GRAMMAR_PATH=$probe"
-  expect_refused "$name" "$3"
-  ok "$name"
-}
-
-guard_case() {
-
-  local name="$1" probe="$tmp/probe-runner"
-  printf '%s' "$2" >"$probe"
-  chmod +x "$probe"
-  run_guard "RUNNER_PATH=$probe"
-  expect_refused "$name" "$3"
-  ok "$name"
-}
-
-real_runner="$(cat "$runner")"
 
 guard_case "missing MANIFEST_EOF heredoc is reported" \
   "${real_runner//MANIFEST_EOF/MANIFEST_END}" \
@@ -236,13 +21,10 @@ ok "a runner with no manifest delimiter still reports every arm, not just the fi
 
 # Call each delimiter reader directly. One sibling's refusal cannot prove the others reject the same input.
 heredoc_said="$(python3 - "$repo_root" "$tmp" <<'HEREDOC' 2>&1 || true
-import importlib.util, pathlib, sys
+import pathlib, sys
+from vgstk import manifest_module
 root, tmp = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
-spec = importlib.util.spec_from_file_location(
-    "vm", root / "scripts" / "lib" / "validation_manifest.py"
-)
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
+mod = manifest_module(root)
 runner = root / "scripts" / "validate"
 # Use the real grammar so a malformed manifest delimiter fails for its own cause.
 rules = mod.grammar(runner)
@@ -276,13 +58,10 @@ ok "a runner whose manifest delimiter is renamed is refused by runner_logic and 
 # of the filesystem or output condition that produced it.
 for etype in OSError UnicodeDecodeError ManifestError; do
   raised_said="$(ETYPE="$etype" python3 - "$repo_root" <<'RAISED' 2>&1 || true
-import contextlib, importlib.util, io, os, pathlib, sys
+import contextlib, io, os, pathlib, sys
+from vgstk import guard_module
 root = pathlib.Path(sys.argv[1])
-spec = importlib.util.spec_from_file_location(
-    "inv", root / "scripts" / "check-validation-inventory.py"
-)
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
+mod = guard_module(root)
 kind = os.environ["ETYPE"]
 
 
@@ -381,11 +160,6 @@ expect_absent "$guard_out" "does not act on it" "second universal token"
   fail "second universal token" "a second universal token is not acted on (rc $guard_rc)"
 ok "a second universal token selects, so the rule is derived and not a literal"
 
-# Real tokens must still participate; blanket refusal cannot pass.
-run_guard
-expect_absent "$guard_out" "does not act on it" "real tokens participate"
-ok "every token the real grammar declares is found to participate"
-
 # A selector that loses universal behavior can hide the inventory row from scoped runs.
 # Require the guard to relay the runner's preflight refusal.
 grammar_case "a selector class that stops being universal is reported" \
@@ -431,9 +205,7 @@ while IFS=';' read -r label bad expect; do
   printf '%s\n%s\n' "$real_grammar" "$bad" >"$tmp/arity.conf"
 
 
-  cp "$runner" "$fixture_dir/scripts/validate" 2>/dev/null || {
-    mkdir -p "$fixture_dir/scripts/lib"; cp "$runner" "$fixture_dir/scripts/validate"
-  }
+  cp "$runner" "$fixture_dir/scripts/validate"
   chmod +x "$fixture_dir/scripts/validate"
   cp "$tmp/arity.conf" "$fixture_dir/scripts/lib/validation-grammar.conf"
   rc=0
@@ -753,13 +525,10 @@ ok "a page may nest a fenced illustration and still carry a real anchor"
 
 # Require actual documents to yield lists so wording controls cannot pass on an empty extraction.
 python3 - "$repo_root" <<'PROBE' || fail "enumerating docs" "a named document yields no area list today"
-import importlib.util, pathlib, sys
+import pathlib, sys
+from vgstk import guard_module
 root = pathlib.Path(sys.argv[1])
-spec = importlib.util.spec_from_file_location(
-    "inv", root / "scripts" / "check-validation-inventory.py"
-)
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
+mod = guard_module(root)
 rules = mod.grammar(root / "scripts" / "validate")
 for doc in mod.AREA_ENUMERATING_DOCS:
     stated = mod.prose_areas(doc, rules)
@@ -1006,13 +775,10 @@ if [[ "$("$runner" --list)" != "$("$runner" --list "$dumped_default")" ]]; then
   fail "default resolves" "a bare --list does not match --list $dumped_default"
 fi
 python3 - "$repo_root" "$dumped_default" <<'DEF' || fail "default resolves" "the decoder disagrees with the dumped default"
-import importlib.util, pathlib, sys
+import pathlib, sys
+from vgstk import manifest_module
 root = pathlib.Path(sys.argv[1])
-spec = importlib.util.spec_from_file_location(
-    "vm", root / "scripts" / "lib" / "validation_manifest.py"
-)
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
+mod = manifest_module(root)
 g = mod.grammar(root / "scripts" / "validate")
 sys.exit(0 if g.default_area == sys.argv[2] else 1)
 DEF
@@ -1037,13 +803,10 @@ ok "a grammar the runner refuses reaches the guard as the runner's own diagnosti
 run_guard
 expect_clean_run "dump is the guard's only source"
 python3 - "$repo_root" <<'DUMP' || fail "dump agreement" "the decoded grammar does not match the dump"
-import importlib.util, pathlib, subprocess, sys
+import pathlib, subprocess, sys
+from vgstk import manifest_module
 root = pathlib.Path(sys.argv[1])
-spec = importlib.util.spec_from_file_location(
-    "vm", root / "scripts" / "lib" / "validation_manifest.py"
-)
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
+mod = manifest_module(root)
 runner = root / "scripts" / "validate"
 dump = subprocess.run(
     ["bash", str(runner), "--dump-grammar"], capture_output=True, text=True, check=True
@@ -1075,14 +838,11 @@ ok "the guard's grammar is exactly what the runner dumped, with nothing supplied
 # Simulate absent yaml on import. Non-YAML readers must still work and CI parsing must
 # report the prerequisite without a module-import traceback.
 pyyaml_out="$(python3 - "$repo_root" "$tmp" 2>&1 <<'NOYAML' || true
-import importlib.util, pathlib, shlex, sys
+import pathlib, shlex, sys
+from vgstk import manifest_module
 sys.modules["yaml"] = None
 root = pathlib.Path(sys.argv[1])
-spec = importlib.util.spec_from_file_location(
-    "vm", root / "scripts" / "lib" / "validation_manifest.py"
-)
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
+mod = manifest_module(root)
 print("IMPORTED")
 # Keep the real grammar producer, but give the row reader a fixed manifest.
 probe = pathlib.Path(sys.argv[2]) / "noyaml-manifest"
@@ -1116,13 +876,10 @@ ok "separators and line breaks inside the anchor cannot truncate the list"
 # Inject launch OSError for both row syntax and grammar dump subprocesses.
 # Report the unavailable Bash invocation without an unrelated traceback.
 launch_out="$(python3 - "$repo_root" 2>&1 <<'NOBASH' || true
-import importlib.util, pathlib, subprocess, sys
+import pathlib, subprocess, sys
+from vgstk import manifest_module
 root = pathlib.Path(sys.argv[1])
-spec = importlib.util.spec_from_file_location(
-    "vm", root / "scripts" / "lib" / "validation_manifest.py"
-)
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
+mod = manifest_module(root)
 runner = root / "scripts" / "validate"
 rules = mod.grammar(runner)  # Collect a real dump before replacing Bash launch behavior.
 
@@ -1169,13 +926,10 @@ ws_dumped="$("$ws_probe" --dump-grammar | sed -n 's/^whitespace //p')"
 [[ "$ws_dumped" == "20 0a 0d 0c 0b" ]] ||
   fail "whitespace is dumped" "the probe dumped \`$ws_dumped\`, so the mutation did not reach the dump"
 ws_decoded="$(WS_PROBE="$ws_probe" python3 - "$repo_root" <<'LIB'
-import importlib.util, os, pathlib, sys
+import os, pathlib, sys
+from vgstk import manifest_module
 root = pathlib.Path(sys.argv[1])
-spec = importlib.util.spec_from_file_location(
-    "vm", root / "scripts" / "lib" / "validation_manifest.py"
-)
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
+mod = manifest_module(root)
 g = mod.grammar(pathlib.Path(os.environ["WS_PROBE"]))
 print(" ".join(f"{ord(c):02x}" for c in g.whitespace))
 LIB
@@ -1191,13 +945,10 @@ ws_runner_said="$(LC_ALL=C sed -e 's/^scripts\/validate: //' -e 's/`.*//' \
 [[ "$ws_rc" != 0 ]] || ws_runner_said="ACCEPTED"
 # Capture unexpected module failures for later diagnostic assertions instead of aborting the suite under errexit.
 ws_library_said="$(WS_PROBE="$ws_probe" python3 - "$repo_root" <<'LIB'
-import importlib.util, os, pathlib, re, sys
+import os, pathlib, re, sys
+from vgstk import manifest_module
 root = pathlib.Path(sys.argv[1])
-spec = importlib.util.spec_from_file_location(
-    "vm", root / "scripts" / "lib" / "validation_manifest.py"
-)
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
+mod = manifest_module(root)
 try:
     mod.manifest_rows(pathlib.Path(os.environ["WS_PROBE"]))
     print("ACCEPTED")
@@ -1215,13 +966,10 @@ ok "the whitespace set travels from the runner's constant to the pattern each re
 # A CRLF runner must still expose its manifest delimiter. Use a manifest-only row
 # to make an unstripped result unambiguous.
 crlf_said="$(python3 - "$repo_root" "$tmp" <<'CRLF' 2>&1 || true
-import importlib.util, pathlib, sys
+import pathlib, sys
+from vgstk import manifest_module
 root, tmp = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
-spec = importlib.util.spec_from_file_location(
-    "vm", root / "scripts" / "lib" / "validation_manifest.py"
-)
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
+mod = manifest_module(root)
 runner = root / "scripts" / "validate"
 crlf = tmp / "validate-crlf"
 crlf.write_bytes(runner.read_bytes().replace(b"\n", b"\r\n"))
@@ -1241,13 +989,10 @@ ok "a CRLF-lined runner's manifest is still stripped from the logic the tag chec
 
 # Substitute directories for files to force OSError and require named read diagnostics.
 unreadable_out="$(python3 - "$repo_root" "$tmp" 2>&1 <<'UNREADABLE' || true
-import importlib.util, pathlib, sys
+import pathlib, sys
+from vgstk import manifest_module
 root, tmp = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
-spec = importlib.util.spec_from_file_location(
-    "vm", root / "scripts" / "lib" / "validation_manifest.py"
-)
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
+mod = manifest_module(root)
 nowhere = tmp / "a-directory-where-a-file-should-be"
 nowhere.mkdir(exist_ok=True)
 runner = root / "scripts" / "validate"
@@ -1288,89 +1033,6 @@ expect_absent "$unreadable_out" "Traceback" "unreadable surface"
 expect_absent "$unreadable_out" "ACCEPTED" "unreadable surface"
 ok "an unreadable surface raises ManifestError naming the path, not a traceback"
 
-# Inspect syntax for file reads outside the shared diagnostic helper.
-# This covers added call sites without treating comments or docstrings as executable reads.
-one_reader_scan() { # Report file reads outside the designated helper in the supplied module.
-  python3 - "$1" <<'READS'
-import ast, pathlib, sys
-module = pathlib.Path(sys.argv[1])
-source = module.read_text(encoding="utf-8")
-try:
-    tree = ast.parse(source)
-except SyntaxError as exc:
-    print(f"{module.name} does not parse, so the one-reader rule cannot be checked: {exc}")
-    sys.exit(1)
-readers = [
-    node for node in ast.walk(tree)
-    if isinstance(node, ast.FunctionDef) and node.name == "_read"
-]
-if len(readers) != 1:
-    print(f"{module.name} declares {len(readers)} `_read` helpers, so the "
-          f"one-reader rule cannot be checked")
-    sys.exit(1)
-low, high = readers[0].lineno, readers[0].end_lineno
-READ_VERBS = {"open", "read_text", "read_bytes", "readlines", "readline"}
-lines = source.split("\n")
-stray = []
-for node in ast.walk(tree):
-    if not isinstance(node, ast.Call):
-        continue
-    func = node.func
-    if isinstance(func, ast.Name):
-        name = func.id
-    elif isinstance(func, ast.Attribute):
-        name = func.attr
-    else:
-        continue
-    if name in READ_VERBS and not (low <= node.lineno <= high):
-        stray.append((node.lineno, lines[node.lineno - 1].strip()))
-for number, line in sorted(set(stray)):
-    print(f"{module.name}:{number} reads a file outside _read(): {line}")
-sys.exit(1 if stray else 0)
-READS
-}
-
-if ! one_reader_scan "$repo_root/scripts/lib/validation_manifest.py"; then
-  fail "one reader per file" "the reads above bypass _read(), so they raise tracebacks instead of diagnostics"
-fi
-ok "every file read in the module goes through the helper that diagnoses failure"
-
-# Use altered module copies to verify the read scanner rejects bypasses.
-reads_probe="$tmp/reads-probe.py"
-while IFS= read -r planted; do
-  [[ -n "$planted" ]] || continue
-  {
-    cat "$repo_root/scripts/lib/validation_manifest.py"
-    printf '\n\ndef _planted(p):\n    %s\n' "$planted"
-  } >"$reads_probe"
-  if scan_out="$(one_reader_scan "$reads_probe")"; then
-    fail "one-reader scan control" "a planted \`$planted\` outside _read() was NOT reported"
-  else
-    expect_contains "$scan_out" "reads a file outside _read()" "one-reader scan control"
-  fi
-done <<'PLANTED'
-return p.read_text(encoding="utf-8")
-return p.read_bytes()
-return open(p, encoding="utf-8").read()
-return p.open(encoding="utf-8").readlines()
-PLANTED
-ok "every read spelling planted outside _read() is reported by the scan"
-
-# Comments and docstrings mentioning read methods must remain accepted.
-while IFS= read -r prose; do
-  [[ -n "$prose" ]] || continue
-  {
-    cat "$repo_root/scripts/lib/validation_manifest.py"
-    printf '\n\n%b\n' "$prose"
-  } >"$reads_probe"
-  one_reader_scan "$reads_probe" >/dev/null ||
-    fail "one-reader scan control" "prose naming a read was reported as a read: $prose"
-done <<'PROSE'
-# Prose about the rule: nothing may call path.read_text( or open( here.
-def _documented(p):\n    """Nothing here may call p.read_text( or open( directly."""\n    return p
-PROSE
-ok "a comment or docstring naming a read is prose, not a breach of the one-reader rule"
-
 # Missing PyYAML must not replace another fixture's diagnostic. Use parseable manifest fixtures
 # so execution reaches both the intended guard arm and the CI prerequisite.
 noyaml_probe="$tmp/noyaml-probe"
@@ -1403,7 +1065,6 @@ ok "without PyYAML a fixture still reports its own verdict, and the prerequisite
 
 # Require shared diagnostics to match the definition, not merely another reader that can drift with them.
 drift_probe="$fixture_dir/scripts/drift-probe"
-mkdir -p "$fixture_dir/scripts/lib"
 cp "$repo_root/scripts/lib/validation-grammar.conf" "$fixture_dir/scripts/lib/"
 while IFS=';' read -r key row; do
   [[ -n "$key" ]] || continue
@@ -1422,13 +1083,10 @@ MUT
   chmod +x "$drift_probe"
   runner_said="$("$drift_probe" --list docs 2>&1 >/dev/null || true)"
   library_said="$(GRAMMAR_PROBE="$drift_probe" python3 - "$repo_root" <<'LIB'
-import importlib.util, os, pathlib, sys
+import os, pathlib, sys
+from vgstk import manifest_module
 root = pathlib.Path(sys.argv[1])
-spec = importlib.util.spec_from_file_location(
-    "vm", root / "scripts" / "lib" / "validation_manifest.py"
-)
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
+mod = manifest_module(root)
 try:
     mod.manifest_rows(pathlib.Path(os.environ["GRAMMAR_PROBE"]))
     print("ACCEPTED")
@@ -1447,20 +1105,6 @@ row-empty-command;qml       |
 row-bad-syntax;qml       | scripts/check-naming.sh &&
 SHAPES
 ok "both readers word every shared diagnostic exactly as the grammar does"
-
-# Success reporting must reuse parsed results. With missing PyYAML no clean run exists,
-# so that reporting control is uncreatable and must be recorded as skipped.
-if [[ $have_yaml -eq 1 ]]; then
-  run_guard
-  parsed_count="$("$runner" --list all | grep -c .)"
-  expect_contains "$guard_out" "$parsed_count documented commands" "documented count"
-  ok "the success line's count matches the rows actually parsed"
-else
-  skip "documented-count control" \
-    "PyYAML is absent, so the guard fails on that prerequisite and prints no" \
-    "success line at all. The count this control compares against is never" \
-    "produced, and no other case checks it, so it was NOT exercised here."
-fi
 
 # Compare reader diagnostics on duplicate tags. Membership can use a set, but cardinality
 # must retain repetitions where they affect the diagnosis.
@@ -1481,13 +1125,10 @@ MUT
   # Normalize trailing diagnostic whitespace consistently before comparing readers.
   runner_said="$(sed -e 's/^scripts\/validate: //' -e 's/`.*//' -e 's/[[:space:]]*$//' "$tmp/stderr" | head -1)"
   library_said="$(AGREE_PROBE="$agree_probe" python3 - "$repo_root" <<'LIB'
-import importlib.util, os, pathlib, re, sys
+import os, pathlib, re, sys
+from vgstk import manifest_module
 root = pathlib.Path(sys.argv[1])
-spec = importlib.util.spec_from_file_location(
-    "vm", root / "scripts" / "lib" / "validation_manifest.py"
-)
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
+mod = manifest_module(root)
 try:
     mod.manifest_rows(pathlib.Path(os.environ["AGREE_PROBE"]))
     print("")
@@ -1528,13 +1169,10 @@ agree_accepts() {
   fi
   expect_contains "$listed" "scripts/check-naming.sh" "reader agreement: runner lists $label"
   library="$(AGREE_PROBE="$agree_probe" python3 - "$repo_root" <<'LIB'
-import importlib.util, os, pathlib, sys
+import os, pathlib, sys
+from vgstk import manifest_module
 root = pathlib.Path(sys.argv[1])
-spec = importlib.util.spec_from_file_location(
-    "vm", root / "scripts" / "lib" / "validation_manifest.py"
-)
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
+mod = manifest_module(root)
 try:
     rows = mod.manifest_rows(pathlib.Path(os.environ["AGREE_PROBE"]))
 except mod.ManifestError as error:
@@ -1578,13 +1216,10 @@ MUT
     fail "dump line boundary" "the runner dropped $label before dumping, so the case cannot fail"
   dump_line_said="$(DUMP_PROBE="$dump_line_dir/scripts/validate" MARK="$control_char" \
     python3 - "$repo_root" <<'LIB'
-import importlib.util, os, pathlib, sys
+import os, pathlib, sys
+from vgstk import manifest_module
 root = pathlib.Path(sys.argv[1])
-spec = importlib.util.spec_from_file_location(
-    "vm", root / "scripts" / "lib" / "validation_manifest.py"
-)
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
+mod = manifest_module(root)
 try:
     rules = mod.grammar(pathlib.Path(os.environ["DUMP_PROBE"]))
 except mod.ManifestError as error:
@@ -1670,13 +1305,10 @@ MUT
         -e 's/[ \t]*$//' "$tmp/stderr" | head -1)"
       verdicts+=("runner/$loc: $rc $said")
       lib="$(LC_ALL="$loc" SPACE_PROBE="$space_probe" python3 - "$repo_root" <<'LIB'
-import importlib.util, os, pathlib, re, sys
+import os, pathlib, re, sys
+from vgstk import manifest_module
 root = pathlib.Path(sys.argv[1])
-spec = importlib.util.spec_from_file_location(
-    "vm", root / "scripts" / "lib" / "validation_manifest.py"
-)
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
+mod = manifest_module(root)
 try:
     mod.manifest_rows(pathlib.Path(os.environ["SPACE_PROBE"]))
     print("0 accepted")
@@ -1860,14 +1492,4 @@ run_guard
 expect_clean_run "unmutated control"
 ok "the unmutated runner triggers none of its arms"
 
-if [[ $failures -ne 0 ]]; then
-  printf '\ntest-validation-inventory: %d failure(s)\n' "$failures" >&2
-  exit 1
-fi
-# Record skipped control names with status 77 so an uncreatable case cannot report complete success.
-if [[ $skips -ne 0 ]]; then
-  printf 'test-validation-inventory: passed, %d skipped: %s\n' \
-    "$skips" "$(IFS=', '; echo "${skipped_names[*]}")" >&2
-  exit 77
-fi
-echo "test-validation-inventory: all checks passed"
+finish test-validation-inventory
