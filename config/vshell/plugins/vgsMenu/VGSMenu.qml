@@ -291,7 +291,7 @@ PluginComponent {
         const countBonus = Math.min(700, Math.log(1 + (usage.count || 0)) * 190);
         const ageDays = Math.max(0, (Date.now() - (usage.lastUsed || 0)) / 86400000);
         const recencyBonus = ageDays < 1 ? 600 : ageDays < 7 ? 420 : ageDays < 30 ? 220 : 0;
-        return Math.min(600, countBonus + recencyBonus);
+        return Math.min(AppSearchService.usageScoreCap(), countBonus + recencyBonus);
     }
 
     function recordUsage(item) {
@@ -329,14 +329,13 @@ PluginComponent {
 
     function commandTextRelevance(item, q) {
         const category = categoryFor(item.category);
-        return AppSearchService.textRelevance(
-            [item.title || ""],
-            item.aliases || [],
-            item.keywords || [],
-            [item.id || "", item.devId || ""],
-            [item.subtitle || "", category?.label || "", category?.description || ""],
-            q
-        ).score;
+        return AppSearchService.textRelevance({
+            primary: [item.title || ""],
+            aliases: item.aliases || [],
+            keywords: item.keywords || [],
+            identifiers: [item.id || "", item.devId || ""],
+            secondary: [item.subtitle || "", category?.label || "", category?.description || ""]
+        }, q).score;
     }
 
     function commandItem(item, textScore) {

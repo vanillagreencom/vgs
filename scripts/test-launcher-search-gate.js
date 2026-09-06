@@ -46,22 +46,15 @@ const backend = evaluateMarked(serviceSource, "SEARCH BACKEND DECISION", [
 
 const appSearch = evaluateMarked(appSearchSource, "APPLICATION SEARCH RELEVANCE DECISION", [
     "normalizeSearchText", "tokenizeNormalizedSearchText", "tokenize", "searchQueryContext",
-    "ensureSearchQueryContext", "applicationScoreBand", "applicationScorePenalty",
-    "actionScoreForApplicationTier", "searchFieldValues", "normalizedSearchField",
-    "normalizedSearchFields", "fieldText", "fieldWords", "wordBoundaryMatchFromWords",
-    "wordBoundaryMatch", "levenshteinDistance", "fuzzyMatchScore",
-    "fuzzyMatchScorePrepared", "fieldMatchScore", "fieldMatchScorePrepared",
-    "bestFieldScore", "bestFieldScorePrepared", "primaryFieldScore",
-    "primaryFieldScoreFor", "aliasFieldScore", "aliasFieldScoreFor", "keywordFieldScore",
-    "keywordFieldScoreFor", "identifierFieldScore", "identifierFieldScoreFor",
-    "bestAllowedWordScore", "bestAllowedWordScoreForFields", "allQueryWordsScore",
-    "allQueryWordsScoreForFields", "fuzzyFallbackScore", "fuzzyFallbackScoreForFields",
-    "secondaryFieldBonus", "secondaryFieldBonusForFields", "textRelevance",
-    "textRelevanceFromFields", "applicationAliasFields", "firstExecToken",
+    "ensureSearchQueryContext", "fieldScorePenalty", "usageScoreCap", "actionScoreGap",
+    "searchFieldValues", "normalizedSearchField", "normalizedSearchFields",
+    "normalizedFieldSet", "wordBoundaryMatchFromWords", "levenshteinDistance",
+    "fuzzyMatchScoreForField", "fieldMatchScore", "bestFieldScore",
+    "bestAllowedWordScore", "allQueryWordsScore", "fuzzyFallbackScore",
+    "secondaryFieldBonus", "textRelevance", "applicationAliasFields", "firstExecToken",
     "executableBasename", "applicationIdentifierFields", "applicationSearchFields",
-    "applicationTextRelevance", "boundedUsageScore", "applicationFinalScore",
-    "appFromSearchItem", "defaultAppUsage", "appUsageFromSearchItem",
-    "searchAppActions", "applicationSearchResultsFor"
+    "boundedUsageScore", "applicationFinalScore", "appFromSearchItem",
+    "appUsageFromSearchItem", "searchAppActions", "applicationSearchResultsFor"
 ], "AppSearchService.qml");
 
 const view = evaluateMarked(resultsSource, "EMPTY STATE DECISION", [
@@ -80,10 +73,13 @@ const ready = (fd, rg) => probe("ready", fd, rg);
 const TOOL_FLAGS = [[true, true], [true, false], [false, true], [false, false]];
 
 function textRelevanceResult(args) {
-    return appSearch.textRelevance(
-        args.primary || [], args.aliases || [], args.keywords || [], args.identifiers || [],
-        args.secondary || [], args.query || ""
-    );
+    return appSearch.textRelevance({
+        primary: args.primary || [],
+        aliases: args.aliases || [],
+        keywords: args.keywords || [],
+        identifiers: args.identifiers || [],
+        secondary: args.secondary || []
+    }, args.query || "");
 }
 
 function textScore(args) {
@@ -126,8 +122,10 @@ function searchRowSummaries(rows) {
 
 function expectedActionScore(tier) {
     if (tier === "exact")
-        return appSearch.applicationScoreBand("primary", "exact") - 1;
-    return appSearch.applicationScoreBand("primary", tier) - appSearch.applicationScorePenalty() - 1;
+        return 90000 - appSearch.actionScoreGap();
+    if (tier === "prefix")
+        return 80000 - appSearch.fieldScorePenalty() - appSearch.actionScoreGap();
+    return 60000 - appSearch.fieldScorePenalty() - appSearch.actionScoreGap();
 }
 
 // Bound a Python function at the next top-level def. Unbounded slices can borrow
@@ -193,18 +191,20 @@ test("application relevance admits strong fields and rejects secondary-only matc
         query: "opencode"
     }) > 0, "the executable basename remains an identifier");
 
-    assert.ok(appSearch.applicationTextRelevance({ name: "OpenCode" }, "opencdoe").score > 0,
+    assert.ok(appSearch.textRelevance(appSearch.applicationSearchFields({ name: "OpenCode" }), "opencdoe").score > 0,
         "typo fallback admits a bounded title or app-name match");
-    assert.ok(appSearch.applicationTextRelevance({ name: "Editor", aliases: ["OpenCode"] },
+    assert.ok(appSearch.textRelevance(appSearch.applicationSearchFields({ name: "Editor", aliases: ["OpenCode"] }),
         "opencdoe").score > 0, "typo fallback also covers declared aliases");
-    assert.ok(appSearch.applicationTextRelevance({ name: "Editor", startupClass: "OpenCode" },
+    assert.ok(appSearch.textRelevance(appSearch.applicationSearchFields({ name: "Editor", startupClass: "OpenCode" }),
         "opencode").score > 0, "startupClass is a real desktop-entry alias source");
-    assert.equal(appSearch.applicationTextRelevance({ name: "Editor", id: "opencode.desktop" },
+    assert.equal(appSearch.textRelevance(appSearch.applicationSearchFields({ name: "Editor", id: "opencode.desktop" }),
         "opencdoe").score, 0, "typo fallback does not run against identifiers");
 
     assert.ok(appSearch.applicationFinalScore(substring, 0, 999999)
         > appSearch.applicationFinalScore(keywordExact, 999999, 0),
         "the usage cap cannot move a keyword match above a title or app-name substring");
+    assert.equal(appSearch.boundedUsageScore(999999, 0), appSearch.usageScoreCap(),
+        "the usage cap is the shared boundary for app and menu score boosts");
 
     const exactActionApp = {
         name: "Terminal",
