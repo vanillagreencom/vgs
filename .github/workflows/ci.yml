@@ -116,12 +116,12 @@ jobs:
         run: scripts/test-label-taxonomy.py
 
       # The upstream document classes set byte limits.
-      - name: File-size ratchet
+      - name: Document limits
         run: .agents/skills/doc-limits/scripts/doc-limits
 
       # The pre-commit batch judges staged lines only. This run judges every
       # tracked file each enabled lane names, markdown references included.
-      - name: Growth guards
+      - name: Commit guards
         run: .agents/skills/commit-guards/scripts/commit-guards all
 
       # The batch runs byte-ceiling in staged scope, which is empty on a clean
