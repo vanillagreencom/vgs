@@ -2,6 +2,7 @@
 
 "use strict";
 
+const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -76,34 +77,45 @@ function assertDuplicateRecords(records) {
 
 const duplicateRecords = Array.from(DropdownLogic.optionRecords(
     ["Same", "Other", "Same"], ["first", "middle", "last"], { Same: "red", Other: "blue" }));
-assertDuplicateRecords(duplicateRecords);
-const corruptRecord = (field, value) => duplicateRecords.map((record, index) => (
-    index === 2 ? { ...record, [field]: value } : { ...record }));
-assert.throws(() => assertDuplicateRecords(corruptRecord("value", "Other")),
-    /duplicate option records must preserve/, "selection-value corruption must fail");
-assert.throws(() => assertDuplicateRecords(corruptRecord("color", "blue")),
-    /duplicate option records must preserve/, "swatch-color corruption must fail");
-
-const largeOptions = Array.from({ length: 10000 }, (_, index) => `Option ${index}`);
-const largeRecords = DropdownLogic.optionRecords(largeOptions, [], {});
-const finder = new Fzf.Finder(largeRecords, {
-    selector: option => option.label,
-    limit: 50,
-    casing: "case-insensitive",
-    sort: true
+test("optionRecords keeps identity, value, label, icon and colour on duplicate options, and the check rejects corruption", () => {
+    assertDuplicateRecords(duplicateRecords);
+    const corruptRecord = (field, value) => duplicateRecords.map((record, index) => (
+        index === 2 ? { ...record, [field]: value } : { ...record }));
+    assert.throws(() => assertDuplicateRecords(corruptRecord("value", "Other")),
+        /duplicate option records must preserve/, "selection-value corruption must fail");
+    assert.throws(() => assertDuplicateRecords(corruptRecord("color", "blue")),
+        /duplicate option records must preserve/, "swatch-color corruption must fail");
 });
-const filteredRecords = Array.from(finder.find("Option 9999"), result => result.item);
-assert.equal(filteredRecords.length, 1);
-assert.equal(filteredRecords[0], largeRecords[9999], "filtering must retain the original record");
-assert.equal(filteredRecords[0].sourceIndex, 9999);
-const duplicateMatches = Array.from(new Fzf.Finder(duplicateRecords, {
-    selector: option => option.label,
-    casing: "case-insensitive",
-    sort: true
-}).find("Same"), result => result.item.sourceIndex);
-assert.deepEqual(duplicateMatches, [0, 2]);
-assert.deepEqual(Array.from(DropdownLogic.toggledValues(["Copy"], "Paste")), ["Copy", "Paste"]);
-assert.deepEqual(Array.from(DropdownLogic.toggledValues(["Copy", "Paste"], "Copy")), ["Paste"]);
+
+test("the finder returns the original records with their source indexes, over ten thousand options and duplicates", () => {
+    const largeOptions = Array.from({ length: 10000 }, (_, index) => `Option ${index}`);
+    const largeRecords = DropdownLogic.optionRecords(largeOptions, [], {});
+    const finder = new Fzf.Finder(largeRecords, {
+        selector: option => option.label,
+        limit: 50,
+        casing: "case-insensitive",
+        sort: true
+    });
+    const filteredRecords = Array.from(finder.find("Option 9999"), result => result.item);
+    assert.equal(filteredRecords.length, 1);
+    assert.equal(filteredRecords[0], largeRecords[9999], "filtering must retain the original record");
+    assert.equal(filteredRecords[0].sourceIndex, 9999);
+    const duplicateMatches = Array.from(new Fzf.Finder(duplicateRecords, {
+        selector: option => option.label,
+        casing: "case-insensitive",
+        sort: true
+    }).find("Same"), result => result.item.sourceIndex);
+    assert.deepEqual(duplicateMatches, [0, 2]);
+});
+
+test("toggledValues adds an absent value and removes a present one", () => {
+    for (const [values, toggled, expected] of [
+        [["Copy"], "Paste", ["Copy", "Paste"]],
+        [["Copy", "Paste"], "Copy", ["Paste"]]
+    ]) {
+        assert.deepEqual(Array.from(DropdownLogic.toggledValues(values, toggled)), expected);
+    }
+});
 
 function assertButtonOwnsOnlyDeclaredGeometry(source) {
     const q = qmlSource(source, buttonPath);
@@ -245,12 +257,12 @@ function assertLockVideoActionSharesUnderline(source) {
     assert.ok(row.includes(field) && row.includes(button), "video field and Browse button must share one row");
 }
 
-assertButtonOwnsOnlyDeclaredGeometry(buttonSource);
-assertDropdownUsesStableRecords(dropdownSource, optionSource);
-assertKeyboardSelectionUsesStableRecord(dropdownSource);
-assertChoiceForwardsSelection(choiceSource);
-assertWindowSelectorKeepsIndexedIdentity(windowRulesSource);
-assertLockVideoActionSharesUnderline(lockScreenSource);
+test("VgsButton owns only its declared geometry", () => assertButtonOwnsOnlyDeclaredGeometry(buttonSource));
+test("VgsDropdown renders and selects through stable option records", () => assertDropdownUsesStableRecords(dropdownSource, optionSource));
+test("keyboard selection emits the record's source index and value", () => assertKeyboardSelectionUsesStableRecord(dropdownSource));
+test("SettingsChoiceRow forwards the source index and selected state", () => assertChoiceForwardsSelection(choiceSource));
+test("the window selector keeps indexed identity over duplicate labels", () => assertWindowSelectorKeepsIndexedIdentity(windowRulesSource));
+test("the lock video field and its Browse button share one row and underline", () => assertLockVideoActionSharesUnderline(lockScreenSource));
 
 const controls = [
     ["button live binding replaced by a dead satisfied label", assertButtonOwnsOnlyDeclaredGeometry, buttonSource,
@@ -313,9 +325,9 @@ const controls = [
         lockScreenSource.replace("id: browseVideoButton", "id: detachedBrowseButton")]
 ];
 
-for (const [name, check, source, mutant] of controls) {
-    assert.notEqual(mutant, source, `control did not apply: ${name}`);
-    assert.throws(() => check(mutant), undefined, `must-fail control survived: ${name}`);
-}
-
-console.log(`flatline control checks passed (${controls.length} source mutants, 2 record mutants, 10000 filtered records)`);
+test("every planted source mutant is caught by its predicate", () => {
+    for (const [name, check, source, mutant] of controls) {
+        assert.notEqual(mutant, source, `control did not apply: ${name}`);
+        assert.throws(() => check(mutant), undefined, `must-fail control survived: ${name}`);
+    }
+});
