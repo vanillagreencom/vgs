@@ -114,7 +114,7 @@ func TestParsePPDsAndClasses(t *testing.T) {
 }
 
 // Every write handler runs exactly the CUPS argv its parameters name; the
-// command log is the contract.
+// command log holds one line per invocation and the line must match whole.
 func TestCupsWriteHandlersInvokeExpectedCommands(t *testing.T) {
 	shared := true
 	cases := []struct {
@@ -171,7 +171,7 @@ func TestCupsWriteHandlersInvokeExpectedCommands(t *testing.T) {
 		}, "lpadmin -p Office -D Shared laser"},
 		{"print test page", func(m *Manager) (any, error) {
 			return m.handlePrintTestPage(mustJSON(t, printerParams{PrinterName: "Office"}))
-		}, "lp -d Office "},
+		}, "lp -d Office " + firstExisting("/usr/share/cups/data/testprint", "/usr/share/cups/data/default-testpage.pdf")},
 		{"restart job", func(m *Manager) (any, error) { return m.handleRestartJob(mustJSON(t, jobParams{JobID: "Office-42"})) }, "lp -i Office-42 -H restart"},
 		{"remove printer from class", func(m *Manager) (any, error) {
 			return m.handleRemovePrinterFromClass(mustJSON(t, classParams{ClassName: "Lab", PrinterName: "Office"}))
@@ -184,9 +184,13 @@ func TestCupsWriteHandlersInvokeExpectedCommands(t *testing.T) {
 			if _, err := tc.call(m); err != nil {
 				t.Fatal(err)
 			}
-			if log := readLog(t, logPath); !strings.Contains(log, tc.want) {
-				t.Fatalf("command log missing %q\n%s", tc.want, log)
+			log := readLog(t, logPath)
+			for _, line := range strings.Split(log, "\n") {
+				if line == tc.want {
+					return
+				}
 			}
+			t.Fatalf("command log has no line %q\n%s", tc.want, log)
 		})
 	}
 	// A create consults the PPD catalog before it mutates anything.

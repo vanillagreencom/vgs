@@ -158,8 +158,10 @@ esac
 	if readErr != nil {
 		t.Fatal(readErr)
 	}
-	if !strings.Contains(string(content), "hyprsunset gamma 80") {
-		t.Fatalf("hyprctl log = %q, want gamma IPC attempts", content)
+	// More than one attempt: the retry window covers hyprsunset's socket
+	// start-up, and a single attempt would drop it without changing the bound.
+	if attempts := strings.Count(string(content), "hyprsunset gamma 80"); attempts < 2 {
+		t.Fatalf("hyprctl log = %q, want repeated gamma IPC attempts, got %d", content, attempts)
 	}
 	if strings.Contains(string(content), "temperature") {
 		t.Fatalf("hyprctl log = %q, want no temperature IPC after gamma failure", content)

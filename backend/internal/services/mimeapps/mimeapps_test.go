@@ -30,24 +30,27 @@ func warnLogger() (*slog.Logger, *bytes.Buffer) {
 // the injected-timeout paths, with and without a pipe-holding descendant, and
 // the production wrappers with their default timeout.
 func TestMimeCommandsTimeOut(t *testing.T) {
+	// The production rows also have a floor: a zero timeout would report a
+	// timeout at once and make every MIME operation fail.
 	cases := []struct {
 		name   string
 		script string
+		floor  time.Duration
 		bound  time.Duration
 		call   func() error
 	}{
-		{"queryDefaultWithTimeout with a pipe-holding descendant", "sleep 6 &\nwait\n", 4 * time.Second, func() error {
+		{"queryDefaultWithTimeout with a pipe-holding descendant", "sleep 6 &\nwait\n", 0, 4 * time.Second, func() error {
 			_, err := queryDefaultWithTimeout("text/plain", 50*time.Millisecond, nil)
 			return err
 		}},
-		{"setDefaultWithTimeout", "exec sleep 60\n", time.Second, func() error {
+		{"setDefaultWithTimeout", "exec sleep 60\n", 0, time.Second, func() error {
 			return setDefaultWithTimeout("org.example.App.desktop", []string{"text/plain"}, 50*time.Millisecond, nil)
 		}},
-		{"queryDefault on the production path", "exec sleep 8\n", 7 * time.Second, func() error {
+		{"queryDefault on the production path", "exec sleep 8\n", time.Second, 7 * time.Second, func() error {
 			_, err := queryDefault("text/plain", nil)
 			return err
 		}},
-		{"setDefault on the production path", "exec sleep 8\n", 7 * time.Second, func() error {
+		{"setDefault on the production path", "exec sleep 8\n", time.Second, 7 * time.Second, func() error {
 			return setDefault("org.example.App.desktop", []string{"text/plain"}, nil)
 		}},
 	}
@@ -60,8 +63,8 @@ func TestMimeCommandsTimeOut(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), "timed out") {
 				t.Fatalf("error = %v, want timeout", err)
 			}
-			if elapsed > tc.bound {
-				t.Fatalf("took %v, want under %v", elapsed, tc.bound)
+			if elapsed < tc.floor || elapsed > tc.bound {
+				t.Fatalf("took %v, want between %v and %v", elapsed, tc.floor, tc.bound)
 			}
 		})
 	}

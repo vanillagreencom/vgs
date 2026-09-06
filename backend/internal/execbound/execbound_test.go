@@ -182,7 +182,8 @@ func TestOutputWarnsOnlyWhenItSalvages(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 			defer cancel()
 			var buf bytes.Buffer
-			log := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+			// Capture every level: a clean run must log nothing at all.
+			log := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 			if _, err := tc.cmd(ctx).WithLogger(log).Output(); err != nil {
 				t.Fatalf("err = %v, want nil", err)
