@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
-# Test routing in an isolated Git repository because discovery uses tracked files.
-# The fixture lacks unrelated source areas and can fail for those; assert the specific routing diagnostic.
-# Executable text without a shebang can still run through Bash ENOEXEC fallback.
+# Test routing in an isolated Git repository, because discovery reads tracked files.
+# Executable text without a shebang can still run through the Bash ENOEXEC fallback.
+# The fixture repository has no Go, Python or JS surfaces and fails the tool preamble for
+# that unrelated reason, so probe_check swallows the status and the router's own diagnostic
+# is the only channel a row can read. Every row therefore pins a message, and every row
+# first requires evidence that the run reached the discovery loop: absence of a diagnostic
+# in a run that died early proves nothing.
 set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -10,6 +14,7 @@ trap 'rm -rf "$tmp"' EXIT INT TERM
 
 failures=0
 case_failed=0
+out=""
 fail() {
   printf 'FAIL [%s]: %s\n' "$1" "$2" >&2
   failures=$((failures + 1))
@@ -22,14 +27,22 @@ ok() {
   case_failed=0
 }
 
-EXEC_MSG="is executable with no shebang"
-EXT_MSG="language extension but no shebang"
-# Binary exemptions must exclude both executable-text and unable-to-classify diagnostics.
-# Classification failure suppresses the first message, so its absence alone cannot prove exemption.
-UNDETERMINED_MSG="could not be determined"
+# Each router verdict as its own format string; %s is the reported path. The binary
+# classification failure names the path mid-sentence, so it carries no placeholder:
+# classification failure suppresses the executable-bit message, and its absence alone
+# cannot prove an exemption.
+declare -A MESSAGES=(
+  [exec]='%s is executable with no shebang'
+  [ext]='%s has a language extension but no shebang'
+  [unrouted]='%s has an unrouted shebang'
+  [depth]='%s lives under a scripts/ subdirectory this check does not collect'
+  [lib-depth]='%s lives under a scripts/lib/ subdirectory this check does not route'
+  [undetermined]='could not be determined'
+)
+ROUTER_RAN="no Go files matched backend/*.go"
 
-# Plant tracked probes by path, mode, and first line. Binary probes contain NUL bytes and are executable
-# so they exercise content classification rather than the non-executable exemption.
+# Plant tracked probes by path, mode, and first line. Binary probes contain NUL bytes and are
+# executable so they exercise content classification rather than the non-executable exemption.
 # Separate setup and execution permit filenames that interact in one fixture.
 fixture="$tmp/repo"
 probe_init() {
@@ -52,7 +65,7 @@ probe_add() {
 }
 probe_check() {
   git -C "$fixture" add -A
-  (cd "$fixture" && ./scripts/check-format-lint.sh) 2>&1 || true
+  out="$( (cd "$fixture" && ./scripts/check-format-lint.sh) 2>&1 || true)"
 }
 probe_run() {
   probe_init
@@ -60,176 +73,138 @@ probe_run() {
   probe_check
 }
 
-# Require evidence that the router ran; a missing diagnostic after preamble failure proves nothing.
-out="$(probe_run scripts/probe-exec exec)"
-if [[ "$out" != *"$EXEC_MSG"* && "$out" != *"$EXT_MSG"* && "$out" != *"no Go files matched"* ]]; then
-  fail "fixture reaches the router" "the fixture check produced none of its own messages — it probably died in the tool preamble:
+# Require evidence that the run reached the collection loop the router sits in.
+assert_router_ran() {
+  [[ "$out" == *"$ROUTER_RAN"* ]] ||
+    fail "$1" "the fixture check produced none of its own messages — it died in the tool preamble:
 $out"
-fi
-ok "the fixture repo reaches the discovery loop"
+}
 
-
-[[ "$out" == *"$EXEC_MSG"* ]] ||
-  fail "executable no-shebang" "an extensionless executable with no shebang was not reported:
+expect_message() { # reported path, message key, present|absent
+  local rel="$1" key="$2" want="$3" text
+  if [[ -z "${MESSAGES[$key]+set}" ]]; then
+    fail "$rel" "no router message named $key"
+    return
+  fi
+  # shellcheck disable=SC2059  # the message table holds the format string; %s is the path
+  text="$(printf "${MESSAGES[$key]}" "$rel")"
+  if [[ "$want" == present ]]; then
+    [[ "$out" == *"$text"* ]] || fail "$rel" "the router did not report: $text
 $out"
-ok "an extensionless executable with no shebang fails closed"
-
-
-out="$(probe_run scripts/probe-data noexec)"
-[[ "$out" != *"$EXEC_MSG"* ]] ||
-  fail "non-executable fixture" "a non-executable extensionless fixture was reported as unlinted:
+  else
+    [[ "$out" != *"$text"* ]] || fail "$rel" "the router reported what it must not: $text
 $out"
-ok "a non-executable extensionless fixture still passes"
+  fi
+}
 
-# The extension rule must still catch non-executable shell scripts without shebang routing.
-out="$(probe_run scripts/probe-data.sh noexec)"
-[[ "$out" == *"$EXT_MSG"* ]] ||
-  fail "extension arm" "a non-executable .sh with no shebang was not reported:
-$out"
-ok "a non-executable .sh with no shebang still fails on the extension arm"
+expect_messages() { # reported path, comma-separated keys or -, present|absent
+  local rel="$1" keys="$2" want="$3" key
+  local -a list
+  [[ "$keys" != - ]] || return 0
+  IFS=',' read -r -a list <<<"$keys"
+  for key in "${list[@]}"; do
+    expect_message "$rel" "$key" "$want"
+  done
+}
 
-# bin shell and JS files lack importable-module pathspecs, so their language extensions require routing.
-for probe in bin/probe-data.sh bin/probe-data.js; do
-  out="$(probe_run "$probe" noexec)"
-  [[ "$out" == *"$EXT_MSG"* ]] ||
-    fail "extension arm under bin" "a non-executable shebang-less $probe was not reported:
-$out"
+# path; mode; first line or - for the default; messages required; messages forbidden.
+# Deeper paths matter because Bash case wildcards cross directory separators: a later switch
+# to pathname matching must not silently narrow coverage.
+PROBES='scripts/probe-exec;exec;-;exec;-
+scripts/probe-data;noexec;-;-;exec
+scripts/probe-data.sh;noexec;-;ext;-
+bin/probe-data.sh;noexec;-;ext;-
+bin/probe-data.js;noexec;-;ext;-
+bin/probe_module.py;noexec;import sys;-;ext,unrouted,exec
+scripts/probe-sh;exec;#!/bin/sh;unrouted;-
+scripts/probe-zsh;exec;#!/usr/bin/env zsh;unrouted;-
+bin/probe-sh;exec;#!/bin/sh;unrouted;-
+bin/probe-zsh;exec;#!/usr/bin/env zsh;unrouted;-
+bin/probe-exec;exec;-;exec;-
+bin/probe-binary;binary;-;-;exec,undetermined
+bin/probe[1];exec;-;exec;-
+scripts/sub/probe;noexec;-;depth;-
+scripts/a/b/probe;noexec;-;depth;-
+scripts/lib/probe.py;noexec;import sys;-;depth,lib-depth
+scripts/lib/sub/probe;noexec;-;lib-depth;-'
+
+case_probes() {
+  local rel mode first present absent rows=0
+  while IFS=';' read -r rel mode first present absent; do
+    [[ -n "$rel" ]] || continue
+    rows=$((rows + 1))
+    [[ "$first" != - ]] || first='echo probe'
+    probe_run "$rel" "$mode" "$first"
+    assert_router_ran "$rel"
+    expect_messages "$rel" "$present" present
+    expect_messages "$rel" "$absent" absent
+  done <<<"$PROBES"
+  [[ $rows -eq 17 ]] || fail "probes" "expected 17 table rows, drove $rows"
+  ok "each tracked path is routed, exempted or reported as unlinted"
+}
+
+case_pathspec_magic() {
+  # A bracketed filename must not inherit binary classification from another path matched as
+  # a pattern. Both files must exist in the same fixture to exercise that interaction.
+  probe_init
+  probe_add 'bin/probe1' binary
+  probe_add 'bin/probe[1]' exec
+  probe_check
+  assert_router_ran 'bin/probe[1]'
+  expect_message 'bin/probe[1]' exec present
+  expect_message 'bin/probe1' exec absent
+  expect_message 'bin/probe1' undetermined absent
+  ok "a glob-shaped filename cannot borrow a neighbouring binary's exemption"
+}
+
+case_worktree_column() {
+  # Stage binary content, then replace only the worktree content. The exemption must follow
+  # what runs, not what the index holds.
+  probe_init
+  probe_add bin/swap binary
+  git -C "$fixture" add -A
+  printf 'echo hi\n' >"$fixture/bin/swap"
+  chmod +x "$fixture/bin/swap"
+  probe_check
+  assert_router_ran bin/swap
+  expect_message bin/swap exec present
+  ok "the binary exemption reads the worktree, not the index"
+}
+
+case_text_attribute_on_text() {
+  # The w/ column reports content independently of the attr/ text policy.
+  probe_init
+  probe_add bin/attributed exec
+  printf 'bin/** -text\n' >"$fixture/.gitattributes"
+  probe_check
+  assert_router_ran bin/attributed
+  expect_message bin/attributed exec present
+  ok "a -text attribute cannot buy a text file the binary exemption"
+}
+
+case_text_attribute_on_binary() {
+  probe_init
+  probe_add bin/probe-binary binary
+  printf 'bin/** -text\n' >"$fixture/.gitattributes"
+  probe_check
+  assert_router_ran bin/probe-binary
+  expect_message bin/probe-binary exec absent
+  expect_message bin/probe-binary undetermined absent
+  ok "a real binary stays exempt whatever .gitattributes says"
+}
+
+# These fixtures inject no git failure and no ambiguous --eol result, so those refusal paths
+# remain uncovered.
+CASES=(
+  case_probes
+  case_pathspec_magic
+  case_worktree_column
+  case_text_attribute_on_text
+  case_text_attribute_on_binary
+)
+for lint_case in "${CASES[@]}"; do
+  "$lint_case"
 done
-ok "a non-executable shebang-less bin/*.sh or bin/*.js is reported"
-
-# bin Python modules have an explicit ruff pathspec and must not be reported as unclaimed.
-out="$(probe_run bin/probe_module.py noexec 'import sys')"
-[[ "$out" != *"$EXT_MSG"* ]] ||
-  fail "bin python extension" "a shebang-less bin/*.py module was reported by the extension arm:
-$out"
-ok "a shebang-less bin/*.py module is still exempt: the ruff pathspec lints it"
-
-UNROUTED_MSG="has an unrouted shebang"
-
-# Unrouted shebangs must fail under both bin and scripts.
-for tree in scripts bin; do
-  out="$(probe_run "$tree/probe-sh" exec '#!/bin/sh')"
-  [[ "$out" == *"$UNROUTED_MSG"* ]] ||
-    fail "unrouted shebang in $tree" "an unrouted #!/bin/sh under $tree/ was not reported:
-$out"
-  out="$(probe_run "$tree/probe-zsh" exec '#!/usr/bin/env zsh')"
-  [[ "$out" == *"$UNROUTED_MSG"* ]] ||
-    fail "unrouted shebang in $tree" "an unrouted zsh shebang under $tree/ was not reported:
-$out"
-done
-ok "an unrouted shebang is reported under scripts/ AND under bin/"
-
-# Non-executable importable modules can legitimately lack a shebang.
-out="$(probe_run bin/vshell_module.py noexec 'import sys')"
-[[ "$out" != *"$UNROUTED_MSG"* && "$out" != *"$EXEC_MSG"* ]] ||
-  fail "bin module" "a shebang-less bin/ Python module was reported:
-$out"
-ok "a shebang-less bin/ Python module still passes"
-
-# Use an extensionless executable so the extension arm cannot satisfy the no-shebang control.
-out="$(probe_run bin/probe-exec exec)"
-[[ "$out" == *"$EXEC_MSG"* ]] ||
-  fail "executable no-shebang under bin" "an executable shebang-less bin/ file was not reported:
-$out"
-ok "an executable shebang-less bin/ file fails closed"
-
-# Executable binaries need an exemption because source linters cannot parse them.
-out="$(probe_run bin/probe-binary binary)"
-[[ "$out" != *"$EXEC_MSG"* ]] ||
-  fail "binary exemption" "a tracked binary under bin/ was reported as unlinted:
-$out"
-[[ "$out" != *"$UNDETERMINED_MSG"* ]] ||
-  fail "binary exemption" "the binary was not classified at all, so its silence is not an exemption:
-$out"
-ok "a tracked binary under bin/ is exempt from the executable-bit rule"
-
-# A bracketed filename must not inherit binary classification from another path matched as a pattern.
-# Both files must exist in the same fixture to exercise that interaction.
-probe_init
-probe_add 'bin/probe1' binary
-probe_add 'bin/probe[1]' exec
-out="$(probe_check)"
-[[ "$out" == *"bin/probe[1] $EXEC_MSG"* ]] ||
-  fail "pathspec magic" "an executable shebang-less bin/probe[1] was exempted by a neighbouring binary:
-$out"
-[[ "$out" != *"bin/probe1 $EXEC_MSG"* ]] ||
-  fail "pathspec magic" "the binary bin/probe1 was reported:
-$out"
-[[ "$out" != *"$UNDETERMINED_MSG"* ]] ||
-  fail "pathspec magic" "a probe was not classified at all, so the exemption is not what was observed:
-$out"
-ok "a glob-shaped filename cannot borrow a neighbouring binary's exemption"
-
-# Check the same text file alone to distinguish filename interaction from ordinary classification.
-out="$(probe_run 'bin/probe[1]' exec)"
-[[ "$out" == *"bin/probe[1] $EXEC_MSG"* ]] ||
-  fail "pathspec magic control" "the same file alone was not reported:
-$out"
-ok "a glob-shaped filename is reported on its own"
-
-# Stage binary content, then replace only the worktree content. Exemption must follow what runs.
-probe_init
-probe_add bin/swap binary
-git -C "$fixture" add -A
-printf 'echo hi\n' >"$fixture/bin/swap"
-chmod +x "$fixture/bin/swap"
-out="$( (cd "$fixture" && ./scripts/check-format-lint.sh) 2>&1 || true)"
-[[ "$out" == *"bin/swap $EXEC_MSG"* ]] ||
-  fail "worktree column" "a text script staged as a binary was exempted on its index blob:
-$out"
-ok "the binary exemption reads the worktree, not the index"
-
-# The w/ column reports content independently of the attr/ text policy.
-# Test both text refusal and binary exemption under the same attribute.
-probe_init
-probe_add bin/attributed exec
-printf 'bin/** -text\n' >"$fixture/.gitattributes"
-out="$(probe_check)"
-[[ "$out" == *"bin/attributed $EXEC_MSG"* ]] ||
-  fail "gitattributes -text" "an executable shebang-less text file under a -text attribute was exempted:
-$out"
-ok "a -text attribute cannot buy a text file the binary exemption"
-
-
-probe_init
-probe_add bin/probe-binary binary
-printf 'bin/** -text\n' >"$fixture/.gitattributes"
-out="$(probe_check)"
-[[ "$out" != *"bin/probe-binary $EXEC_MSG"* ]] ||
-  fail "gitattributes -text" "a real binary under a -text attribute was reported as unlinted:
-$out"
-[[ "$out" != *"$UNDETERMINED_MSG"* ]] ||
-  fail "gitattributes -text" "the binary was not classified at all, so this proves nothing about the attribute:
-$out"
-ok "a real binary stays exempt whatever .gitattributes says"
-
-# These fixtures do not inject git failures or ambiguous --eol results, so those refusal paths remain uncovered.
-
-DEPTH_MSG="lives under a scripts/ subdirectory this check does not collect"
-LIB_DEPTH_MSG="lives under a scripts/lib/ subdirectory this check does not route"
-
-# Test deeper paths because Bash case wildcards cross directory separators.
-# A later switch to pathname matching must not silently narrow coverage.
-for probe in scripts/sub/probe scripts/a/b/probe; do
-  out="$(probe_run "$probe" noexec)"
-  [[ "$out" == *"$DEPTH_MSG"* ]] ||
-    fail "scripts depth guard" "$probe was not reported as uncollected:
-$out"
-done
-ok "a file under a scripts/ subdirectory is reported at any depth"
-
-# Nested extensionless libraries are outside extension pathspecs and need explicit routing.
-out="$(probe_run scripts/lib/probe.py noexec 'import sys')"
-[[ "$out" != *"$DEPTH_MSG"* && "$out" != *"$LIB_DEPTH_MSG"* ]] ||
-  fail "lib exemption" "a file directly under scripts/lib/ was reported as uncollected:
-$out"
-ok "a file directly under scripts/lib/ stays exempt"
-
-out="$(probe_run scripts/lib/sub/probe noexec)"
-[[ "$out" == *"$LIB_DEPTH_MSG"* ]] ||
-  fail "lib depth guard" "a nested file under scripts/lib/ was not reported:
-$out"
-ok "a nested directory under scripts/lib/ is reported"
 
 if [[ $failures -ne 0 ]]; then
   printf '\ntest-format-lint: %d failure(s)\n' "$failures" >&2
