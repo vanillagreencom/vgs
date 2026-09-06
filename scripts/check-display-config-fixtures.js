@@ -177,3 +177,41 @@ assert.throws(() => assert.equal(missingRequests, 1), assert.AssertionError);
 const readiness = new Function('root', extractBlock(serviceSource, 'function onIsHyprlandChanged()'));
 readiness({ requestOutputs: () => requests++ });
 assert.equal(requests, 2, 'late compositor detection must request recovery');
+
+const readQml = relative => fs.readFileSync(path.join(__dirname, '..', 'quickshell/vshell', relative), 'utf8');
+const pinSources = [
+  ['Modules/Settings/DisplayConfig/DisplayBrightness.qml', 'readonly property string pinKey:'],
+  ['Modules/ControlCenter/Details/BrightnessDetail.qml', 'function getScreenPinKey()'],
+  ['Modules/Bar/Widgets/ControlCenterButton.qml', 'function getScreenPinKey()']
+];
+for (const [file, opener] of pinSources) {
+  const source = readQml(file);
+  const tail = source.slice(source.indexOf(opener) + opener.length).trimStart();
+  const body = tail.startsWith('{') ? extractBlock(source, opener) : 'return ' + tail.split('\n')[0] + ';';
+  const pinKey = new Function('context', 'with (context) {' + body + '}');
+  for (const [displayNameMode, left] of [['name', 'DP-1'], ['model', 'DP-1'], ['model', 'DP-5']]) {
+    const screens = [{ name: 'DP-1', model: 'ProDisplayXDR' }, { name: 'DP-5', model: 'ProDisplayXDR' }];
+    for (const screen of screens) {
+      const context = { outputName: screen.name, screenName: screen.name, screenModel: screen.model,
+        root: { screenName: screen.name, screenModel: screen.model }, Quickshell: { screens },
+        SettingsData: { displayNameMode, getScreenDisplayName: s => displayNameMode === 'name' ? s.name : s.model + (s.name === left ? '-0' : '-1') } };
+      assert.equal(pinKey(context), screen.name, file + ' must not follow labels or arrangement');
+    }
+  }
+}
+const focusedPin = new Function('context', 'with (context) {' + extractBlock(readQml('Services/DisplayService.qml'), 'function getPinnedDeviceForFocusedScreen()') + '}');
+for (const [connected, expected] of [[true, 'apple-one'], [false, '']]) {
+  const context = { CompositorService: { getFocusedScreen: () => ({ name: 'DP-1', model: 'ProDisplayXDR' }) },
+    SettingsData: { brightnessDevicePins: { 'DP-1': 'apple-one', 'ProDisplayXDR-0': 'apple-two' }, getScreenDisplayName: () => 'ProDisplayXDR-0' },
+    devices: connected ? [{ id: 'apple-one' }] : [{ id: 'apple-two' }] };
+  assert.equal(focusedPin(context), expected, 'focused-screen brightness must use its connector and reject an absent pinned device');
+}
+
+for (const [file, action] of [['DisplayPicker.qml', 'root.selected(modelData)'], ['DisplayScalePicker.qml', 'choose()']]) {
+  const source = readQml('Modules/Settings/DisplayConfig/' + file);
+  const handler = source.match(/^\s*Accessible\.onPressAction:\s*(.+)$/m);
+  assert.ok(handler, file + ' must expose the assistive press action');
+  let selected;
+  new Function('root', 'modelData', 'choose', handler[1])({ selected: value => selected = value }, 'DP-1', () => selected = 'scale');
+  assert.equal(selected, action === 'choose()' ? 'scale' : 'DP-1');
+}

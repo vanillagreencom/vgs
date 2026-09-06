@@ -16,6 +16,7 @@ QML draws the shell and coordinates services. A service owns long-lived state; a
 ## Invariants
 
 - Instance detection yields only when a live peer is provably older. Unavailable evidence permits startup. See `vgs_instance_report` in `bin/vshell-helper` and `test_duplicate_shell_guard` in `scripts/check-vshell-helper.py`.
+- Brightness pins use connector names, not position-dependent display labels. `scripts/check-display-config-fixtures.js` checks the shared Settings, Control Center and focused-screen readers.
 - Plugin-backed properties remain bindings. Setters persist through the plugin service; dependent work responds to its change notification. See the plugin service implementations under `Modules/Plugins/`.
 - Destructive pill actions require a click origin; unspecified origins are IPC calls. `scripts/test-pill-hover-safety.js` checks the shared dispatch and protected actions.
 - Launcher selection follows pointer movement only while its hover gate is armed. `scripts/test-launcher-hover-latch.js` checks asynchronous result replacement.

@@ -34,6 +34,7 @@ Column {
                 activeFocusOnTab: true
                 Accessible.role: Accessible.Button
                 Accessible.name: DisplaySettingsLogic.displayName(output, modelData) + " " + modelData
+                Accessible.onPressAction: root.selected(modelData)
                 Keys.onSpacePressed: root.selected(modelData)
                 Keys.onReturnPressed: root.selected(modelData)
 

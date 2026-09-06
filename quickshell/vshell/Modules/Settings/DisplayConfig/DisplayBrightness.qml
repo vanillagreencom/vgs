@@ -1,5 +1,4 @@
 import QtQuick
-import Quickshell
 import qs.Common
 import qs.Services
 import qs.Widgets
@@ -10,10 +9,7 @@ Column {
     required property string outputName
     required property var outputData
     readonly property var devices: (DisplayService.devices || []).filter(device => DisplayService.isDisplayBrightnessClass(device.class))
-    readonly property string pinKey: {
-        const screen = Quickshell.screens.find(screen => screen.name === outputName);
-        return screen ? SettingsData.getScreenDisplayName(screen) : outputName;
-    }
+    readonly property string pinKey: outputName
     readonly property string deviceName: DisplaySettingsLogic.brightnessDeviceName(outputName, outputData, devices, (SettingsData.brightnessDevicePins || {})[pinKey])
     readonly property var device: devices.find(device => device.name === deviceName) || null
     readonly property string colorMode: outputData?.hyprlandSettings?.colorManagement || ""

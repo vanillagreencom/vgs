@@ -31,6 +31,24 @@ while IFS= read -r caller; do
 done < <(git -C "$root" grep -l 'install-system\.sh' -- . ':!docs' ':!*.md')
 test "$missing" -eq 0
 
+python3 - "$root" <<'PY'
+import json
+import runpy
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+generator = runpy.run_path(str(root / "scripts/gen-package-metadata.py"))
+mapping = json.loads((root / "packaging/optional-packages.json").read_text())
+manifest = json.loads((root / "config/vshell/dependencies.json").read_text())
+required, _ = generator["required_packages"](mapping)
+collected = generator["collect"](manifest, mapping, required)
+library = mapping["libraries"]["pillow"]
+for distro in generator["DISTROS"]:
+    assert library[distro] in collected[distro], f"{distro}: ICC library omitted from optional packages"
+    assert library[distro] not in required[distro], f"{distro}: optional ICC library became required"
+PY
+
 DESTDIR="$core" VGS_THEME_BUNDLE=core VGS_BACKEND_BINARY=/bin/true \
   "$root/packaging/install-system.sh"
 test -f "$core/usr/lib/vshell/themes/coppernight/theme.json"

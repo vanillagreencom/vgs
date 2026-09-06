@@ -31,6 +31,7 @@ Column {
                 activeFocusOnTab: true
                 Accessible.role: Accessible.Button
                 Accessible.name: I18n.tr("Scale %1").arg(DisplayConfigState.formatScaleLabel(modelData))
+                Accessible.onPressAction: choose()
                 function choose() {
                     DisplayConfigState.setPendingChange(root.outputName, "scale", modelData);
                     DisplayConfigState.recalculateAdjacentPositions(root.outputName, modelData);

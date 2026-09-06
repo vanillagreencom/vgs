@@ -596,7 +596,7 @@ Singleton {
             return "";
 
         const pins = SettingsData.brightnessDevicePins || {};
-        const screenKey = SettingsData.getScreenDisplayName(focusedScreen);
+        const screenKey = focusedScreen.name;
         if (!screenKey)
             return "";
 
