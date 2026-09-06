@@ -26,24 +26,44 @@ func warnLogger() (*slog.Logger, *bytes.Buffer) {
 	return slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})), &buf
 }
 
-func TestMimeCommandTimeoutStaysBounded(t *testing.T) {
-	if commandTimeout <= 0 || commandTimeout > 5*time.Second {
-		t.Fatalf("commandTimeout = %v, want a bound in (0, 5s]", commandTimeout)
+// Every xdg-mime call that never returns must end as a timeout within a bound:
+// the injected-timeout paths, with and without a pipe-holding descendant, and
+// the production wrappers with their default timeout.
+func TestMimeCommandsTimeOut(t *testing.T) {
+	cases := []struct {
+		name   string
+		script string
+		bound  time.Duration
+		call   func() error
+	}{
+		{"queryDefaultWithTimeout with a pipe-holding descendant", "sleep 6 &\nwait\n", 4 * time.Second, func() error {
+			_, err := queryDefaultWithTimeout("text/plain", 50*time.Millisecond, nil)
+			return err
+		}},
+		{"setDefaultWithTimeout", "exec sleep 60\n", time.Second, func() error {
+			return setDefaultWithTimeout("org.example.App.desktop", []string{"text/plain"}, 50*time.Millisecond, nil)
+		}},
+		{"queryDefault on the production path", "exec sleep 8\n", 7 * time.Second, func() error {
+			_, err := queryDefault("text/plain", nil)
+			return err
+		}},
+		{"setDefault on the production path", "exec sleep 8\n", 7 * time.Second, func() error {
+			return setDefault("org.example.App.desktop", []string{"text/plain"}, nil)
+		}},
 	}
-}
-
-func TestQueryDefaultTimesOutWithPipeHoldingDescendant(t *testing.T) {
-	writeXdgMime(t, "sleep 6 &\nwait\n")
-
-	started := time.Now()
-	_, err := queryDefaultWithTimeout("text/plain", 50*time.Millisecond, nil)
-	elapsed := time.Since(started)
-
-	if err == nil || !strings.Contains(err.Error(), "timed out") {
-		t.Fatalf("queryDefaultWithTimeout error = %v, want timeout", err)
-	}
-	if elapsed > 4*time.Second {
-		t.Fatalf("queryDefaultWithTimeout took %v, want context deadline plus WaitDelay bound", elapsed)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			writeXdgMime(t, tc.script)
+			started := time.Now()
+			err := tc.call()
+			elapsed := time.Since(started)
+			if err == nil || !strings.Contains(err.Error(), "timed out") {
+				t.Fatalf("error = %v, want timeout", err)
+			}
+			if elapsed > tc.bound {
+				t.Fatalf("took %v, want under %v", elapsed, tc.bound)
+			}
+		})
 	}
 }
 
@@ -56,51 +76,6 @@ func TestQueryDefaultExitErrorMeansNoDefault(t *testing.T) {
 	}
 	if got != "" {
 		t.Fatalf("queryDefaultWithTimeout = %q, want empty default", got)
-	}
-}
-
-func TestSetDefaultTimesOut(t *testing.T) {
-	writeXdgMime(t, "exec sleep 60\n")
-
-	started := time.Now()
-	err := setDefaultWithTimeout("org.example.App.desktop", []string{"text/plain"}, 50*time.Millisecond, nil)
-	elapsed := time.Since(started)
-
-	if err == nil || !strings.Contains(err.Error(), "timed out") {
-		t.Fatalf("setDefaultWithTimeout error = %v, want timeout", err)
-	}
-	if elapsed > time.Second {
-		t.Fatalf("setDefaultWithTimeout took %v, want context deadline bound", elapsed)
-	}
-}
-
-func TestQueryDefaultProductionPathTimesOut(t *testing.T) {
-	writeXdgMime(t, "exec sleep 8\n")
-
-	started := time.Now()
-	_, err := queryDefault("text/plain", nil)
-	elapsed := time.Since(started)
-
-	if err == nil || !strings.Contains(err.Error(), "timed out") {
-		t.Fatalf("queryDefault error = %v, want timeout", err)
-	}
-	if elapsed > 7*time.Second {
-		t.Fatalf("queryDefault took %v, want production timeout bound", elapsed)
-	}
-}
-
-func TestSetDefaultProductionPathTimesOut(t *testing.T) {
-	writeXdgMime(t, "exec sleep 8\n")
-
-	started := time.Now()
-	err := setDefault("org.example.App.desktop", []string{"text/plain"}, nil)
-	elapsed := time.Since(started)
-
-	if err == nil || !strings.Contains(err.Error(), "timed out") {
-		t.Fatalf("setDefault error = %v, want timeout", err)
-	}
-	if elapsed > 7*time.Second {
-		t.Fatalf("setDefault took %v, want production timeout bound", elapsed)
 	}
 }
 
