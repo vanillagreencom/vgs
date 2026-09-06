@@ -7,6 +7,7 @@
 
 "use strict";
 
+const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -15,8 +16,6 @@ const { extractBlock } = require("./lib/qml-block.js");
 
 const IDLE_QML = path.join(__dirname, "..", "quickshell", "vshell", "Services", "IdleService.qml");
 const source = fs.readFileSync(IDLE_QML, "utf8");
-
-
 
 const requestBody = extractBlock(source, "function requestLock(source: string): void");
 const timerIndex = source.indexOf("id: uiLockRetry");
@@ -32,12 +31,12 @@ assert.ok(intervalMatch, "the retry timer must declare an interval");
 const INTERVAL = Number(intervalMatch[1]);
 
 // The retry budget must outlast the duplicate-instance guard's startup wait.
-assert.ok(
-    BOUND * INTERVAL >= 2000,
-    `retry window ${BOUND * INTERVAL}ms must outlast shell.qml's 2000ms guard fail-open`,
-);
-
-
+test("the retry window outlasts the duplicate-instance guard", () => {
+    assert.ok(
+        BOUND * INTERVAL >= 2000,
+        `retry window ${BOUND * INTERVAL}ms must outlast shell.qml's 2000ms guard fail-open`,
+    );
+});
 
 // with models QML component lookup. Keep source as a function parameter ahead of that scope.
 // The generated function requires non-strict mode, so this file uses CommonJS.
@@ -94,9 +93,7 @@ function withComponent(harness) {
     harness.root.lockComponent = { activate: () => harness.activations.push("activate") };
 }
 
-
-
-{
+test("an available lock is activated once with no retry armed", () => {
     const h = makeHarness();
     withComponent(h);
     h.root.requestLock("control center");
@@ -105,11 +102,9 @@ function withComponent(harness) {
     assert.equal(h.timer.running, false, "no retry should be armed when the component is present");
     assert.deepEqual(h.root._pendingLockSources, [], "nothing should be left pending");
     assert.deepEqual(h.warnings, [], "the ready path must not warn");
-}
+});
 
-
-
-{
+test("a missing component retains the request, serves it once when it arrives, and never twice", () => {
     const h = makeHarness();
     h.root.requestLock("power menu");
 
@@ -130,15 +125,12 @@ function withComponent(harness) {
     assert.equal(h.timer.running, false, "the retry must stop once served");
     assert.deepEqual(h.root._pendingLockSources, [], "pending state must be cleared");
 
-
     h.tick();
     h.tick();
     assert.deepEqual(h.activations, ["activate"], "a served request must never fire twice");
-}
+});
 
-
-
-{
+test("distinct requesters are announced and remembered once each and served by one activation", () => {
     const h = makeHarness();
     h.root.requestLock("control center");
     h.root.requestLock("power menu");
@@ -158,11 +150,9 @@ function withComponent(harness) {
     withComponent(h);
     h.tick();
     assert.deepEqual(h.activations, ["activate"], "three presses while waiting must lock once, not three times");
-}
+});
 
-
-
-{
+test("giving up reports one drop naming every requester", () => {
     const h = makeHarness();
     h.root.requestLock("control center");
     h.root.requestLock("power menu");
@@ -171,11 +161,9 @@ function withComponent(harness) {
     assert.equal(h.errors.length, 1, "one drop report, not one per requester");
     assert.match(h.errors[0], /control center/, "the drop must name the first requester");
     assert.match(h.errors[0], /power menu/, "the drop must name the later requester too");
-}
+});
 
-
-
-{
+test("the retry gives up after exactly the bound, reports the drop, and later requests still work", () => {
     const h = makeHarness();
     h.root.requestLock("control center");
 
@@ -193,23 +181,20 @@ function withComponent(harness) {
     assert.deepEqual(h.root._pendingLockSources, [], "pending state must not leak past the give-up");
     assert.equal(h.timer.running, false, "the timer must be stopped on give-up");
 
-
     withComponent(h);
     h.root.requestLock("power menu");
     assert.deepEqual(h.activations, ["activate"], "giving up must not poison later requests");
-}
-
-
+});
 
 const VGS_QML = path.join(__dirname, "..", "quickshell", "vshell", "VGS.qml");
 const vgs = fs.readFileSync(VGS_QML, "utf8");
-assert.ok(
-    !/lockComponent\s*\?\./.test(vgs),
-    "VGS.qml must not call lockComponent?.activate() — an unavailable lock would be a silent no-op",
-);
-assert.ok(
-    /IdleService\.requestLock\(/.test(vgs),
-    "VGS.qml must route lock requests through IdleService.requestLock()",
-);
-
-console.log(`idle lock request checks passed (retry bound ${BOUND} x ${INTERVAL}ms)`);
+test("VGS.qml routes lock requests through requestLock and never optional-chains the component", () => {
+    assert.ok(
+        !/lockComponent\s*\?\./.test(vgs),
+        "VGS.qml must not call lockComponent?.activate() — an unavailable lock would be a silent no-op",
+    );
+    assert.ok(
+        /IdleService\.requestLock\(/.test(vgs),
+        "VGS.qml must route lock requests through IdleService.requestLock()",
+    );
+});

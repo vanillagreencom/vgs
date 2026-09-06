@@ -7,6 +7,7 @@
 
 "use strict";
 
+const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -16,28 +17,27 @@ const { extractBlock } = require("./lib/qml-block.js");
 const IDLE_QML = path.join(__dirname, "..", "quickshell", "vshell", "Services", "IdleService.qml");
 const source = fs.readFileSync(IDLE_QML, "utf8");
 
-
 const WATCHED = ["lockBlackoutActive", "blackoutLockPending", "desiredDisplaysOff", "secureManualOffPending"];
 
-for (const name of WATCHED) {
-    const handler = `on${name[0].toUpperCase()}${name.slice(1)}Changed: reloadState.snapshot()`;
-    assert.ok(
-        source.includes(handler),
-        `expected IdleService.qml to snapshot on ${name} changes (${handler})`,
-    );
-}
-
-
+test("IdleService snapshots on every watched property change", () => {
+    for (const name of WATCHED) {
+        const handler = `on${name[0].toUpperCase()}${name.slice(1)}Changed: reloadState.snapshot()`;
+        assert.ok(
+            source.includes(handler),
+            `expected IdleService.qml to snapshot on ${name} changes (${handler})`,
+        );
+    }
+});
 
 const snapshotBody = extractBlock(source, "function snapshot(): void");
 const reloadedBody = extractBlock(source, "onReloaded:");
 
-assert.match(snapshotBody, /restoring/, "snapshot() must consult the restoring guard");
-assert.match(reloadedBody, /restoring\s*=\s*true/, "onReloaded must raise the restoring guard");
-assert.match(reloadedBody, /restoring\s*=\s*false/, "onReloaded must lower the restoring guard");
-assert.match(reloadedBody, /snapshot\(\)/, "onReloaded must re-snapshot once fully restored");
-
-
+test("snapshot consults the restoring guard and onReloaded raises, lowers and re-snapshots it", () => {
+    assert.match(snapshotBody, /restoring/, "snapshot() must consult the restoring guard");
+    assert.match(reloadedBody, /restoring\s*=\s*true/, "onReloaded must raise the restoring guard");
+    assert.match(reloadedBody, /restoring\s*=\s*false/, "onReloaded must lower the restoring guard");
+    assert.match(reloadedBody, /snapshot\(\)/, "onReloaded must re-snapshot once fully restored");
+});
 
 // with models reloadState lookup without rewriting extracted code. The generated function
 // requires non-strict mode, so this file uses CommonJS.
@@ -63,7 +63,6 @@ function run(snapshotSource) {
         snapshot: () => runSnapshot(root, state),
     };
 
-
     const target = {
         lockBlackoutActive: false,
         _blackoutBrightness: {},
@@ -84,45 +83,43 @@ function run(snapshotSource) {
     return { root: target, state };
 }
 
+test("the shipped restore carries blackout, brightness and DPMS state across the reload and re-records it", () => {
+    const shipped = run(snapshotBody);
 
+    assert.equal(shipped.root.lockBlackoutActive, true, "blackout latch must survive the reload");
+    assert.deepEqual(
+        shipped.root._blackoutBrightness,
+        { "eDP-1": 80, "DP-2": 65 },
+        "captured pre-blackout brightness must survive the reload — without it the blackout cannot be undone",
+    );
+    assert.equal(shipped.root.desiredDisplaysOff, true, "DPMS-off must survive the reload");
+    assert.equal(shipped.root._lastAppliedOff, true, "the applied DPMS state must survive the reload");
+    assert.equal(shipped.state.isReload, true, "isReload must be set so the startup recoveries stand down");
+    assert.equal(shipped.state.restoring, false, "the restoring guard must be lowered again");
 
-const shipped = run(snapshotBody);
+    // The persisted result must also survive the following reload.
+    assert.deepEqual(
+        shipped.state.blackoutBrightness,
+        { "eDP-1": 80, "DP-2": 65 },
+        "the closing snapshot must re-record the restored map for the next reload",
+    );
+    assert.equal(shipped.state.displaysApplied, true, "the closing snapshot must re-record the applied DPMS state");
+});
 
-assert.equal(shipped.root.lockBlackoutActive, true, "blackout latch must survive the reload");
-assert.deepEqual(
-    shipped.root._blackoutBrightness,
-    { "eDP-1": 80, "DP-2": 65 },
-    "captured pre-blackout brightness must survive the reload — without it the blackout cannot be undone",
-);
-assert.equal(shipped.root.desiredDisplaysOff, true, "DPMS-off must survive the reload");
-assert.equal(shipped.root._lastAppliedOff, true, "the applied DPMS state must survive the reload");
-assert.equal(shipped.state.isReload, true, "isReload must be set so the startup recoveries stand down");
-assert.equal(shipped.state.restoring, false, "the restoring guard must be lowered again");
+test("without the restoring guard the restore destroys the captured state (control)", () => {
+    // Remove only the guard so the control proves that guard prevents destructive reentry.
+    const unguarded = snapshotBody.replace(/if\s*\(\s*restoring\s*\)\s*\n?\s*return;/, "");
+    assert.notEqual(unguarded, snapshotBody, "failed to strip the restoring guard — has snapshot() changed shape?");
 
-// The persisted result must also survive the following reload.
-assert.deepEqual(
-    shipped.state.blackoutBrightness,
-    { "eDP-1": 80, "DP-2": 65 },
-    "the closing snapshot must re-record the restored map for the next reload",
-);
-assert.equal(shipped.state.displaysApplied, true, "the closing snapshot must re-record the applied DPMS state");
-
-
-
-// Remove only the guard so the control proves that guard prevents destructive reentry.
-const unguarded = snapshotBody.replace(/if\s*\(\s*restoring\s*\)\s*\n?\s*return;/, "");
-assert.notEqual(unguarded, snapshotBody, "failed to strip the restoring guard — has snapshot() changed shape?");
-
-const broken = run(unguarded);
-assert.deepEqual(
-    broken.root._blackoutBrightness,
-    {},
-    "without the guard the captured brightness is expected to be destroyed mid-restore",
-);
-assert.equal(
-    broken.root._lastAppliedOff,
-    false,
-    "without the guard the applied DPMS state is expected to be destroyed mid-restore",
-);
-
-console.log("idle reload snapshot checks passed");
+    const broken = run(unguarded);
+    assert.deepEqual(
+        broken.root._blackoutBrightness,
+        {},
+        "without the guard the captured brightness is expected to be destroyed mid-restore",
+    );
+    assert.equal(
+        broken.root._lastAppliedOff,
+        false,
+        "without the guard the applied DPMS state is expected to be destroyed mid-restore",
+    );
+});
