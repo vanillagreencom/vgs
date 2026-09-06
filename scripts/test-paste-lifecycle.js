@@ -328,6 +328,18 @@ test("a normal paste finishes silently and clears the latch", () => {
     assert.equal(h.root._injectorAwaitingStart, false, "the latch must be clear");
 });
 
+// An exit proves execution even when started arrives late, so it must clear the start latch itself.
+test("an injector exit clears the start latch even before started arrives", () => {
+    const h = makeHarness();
+    queuePaste(h);
+    h.exit("injector", 0);
+
+    assert.equal(h.root._injectorAwaitingStart, false, "an exit must clear the start latch");
+    assert.equal(h.root.watchdogTimer.running, false, "and disarm the watchdog watching for a start");
+    assert.equal(h.fire("watchdogTimer", "watchdogTriggered"), false, "so no tick can report a start failure");
+    assert.deepEqual(h.toasts, [], "for an injector that ran");
+});
+
 test("a paste during an injection is recorded and replayed after a clean exit", () => {
     const h = makeHarness();
     queuePaste(h);
