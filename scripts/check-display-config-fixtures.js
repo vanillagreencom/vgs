@@ -179,13 +179,18 @@ readiness({ requestOutputs: () => requests++ });
 assert.equal(requests, 2, 'late compositor detection must request recovery');
 
 const readQml = relative => fs.readFileSync(path.join(__dirname, '..', 'quickshell/vshell', relative), 'utf8');
+const testedPinFiles = new Set();
+function readPinSource(file) {
+  testedPinFiles.add(file);
+  return readQml(file);
+}
 const pinSources = [
   ['Modules/Settings/DisplayConfig/DisplayBrightness.qml', 'readonly property string pinKey:'],
   ['Modules/ControlCenter/Details/BrightnessDetail.qml', 'function getScreenPinKey()'],
   ['Modules/Bar/Widgets/ControlCenterButton.qml', 'function getScreenPinKey()']
 ];
 for (const [file, opener] of pinSources) {
-  const source = readQml(file);
+  const source = readPinSource(file);
   const tail = source.slice(source.indexOf(opener) + opener.length).trimStart();
   const body = tail.startsWith('{') ? extractBlock(source, opener) : 'return ' + tail.split('\n')[0] + ';';
   const pinKey = new Function('context', 'with (context) {' + body + '}');
@@ -199,13 +204,38 @@ for (const [file, opener] of pinSources) {
     }
   }
 }
-const focusedPin = new Function('context', 'with (context) {' + extractBlock(readQml('Services/DisplayService.qml'), 'function getPinnedDeviceForFocusedScreen()') + '}');
+const focusedPin = new Function('context', 'with (context) {' + extractBlock(readPinSource('Services/DisplayService.qml'), 'function getPinnedDeviceForFocusedScreen()') + '}');
 for (const [connected, expected] of [[true, 'apple-one'], [false, '']]) {
   const context = { CompositorService: { getFocusedScreen: () => ({ name: 'DP-1', model: 'ProDisplayXDR' }) },
     SettingsData: { brightnessDevicePins: { 'DP-1': 'apple-one', 'ProDisplayXDR-0': 'apple-two' }, getScreenDisplayName: () => 'ProDisplayXDR-0' },
     devices: connected ? [{ id: 'apple-one' }] : [{ id: 'apple-two' }] };
   assert.equal(focusedPin(context), expected, 'focused-screen brightness must use its connector and reject an absent pinned device');
 }
+
+const embeddedPin = new Function('context', 'with (context) {' + extractBlock(readPinSource('Modules/ControlCenter/Widgets/BrightnessSliderRow.qml'), 'property string targetDeviceName:') + '}');
+for (const [displayNameMode, left] of [['name', 'DP-1'], ['model', 'DP-1'], ['model', 'DP-5']]) {
+  const screens = [{ name: 'DP-1', model: 'ProDisplayXDR' }, { name: 'DP-5', model: 'ProDisplayXDR' }];
+  for (const screen of screens) {
+    const pins = { 'DP-1': 'apple-one', 'DP-5': 'apple-two' };
+    const context = { screenName: screen.name, deviceName: '', Quickshell: { screens },
+      SettingsData: { brightnessDevicePins: pins, getScreenDisplayName: s => displayNameMode === 'name' ? s.name : s.model + (s.name === left ? '-0' : '-1') },
+      DisplayService: { brightnessAvailable: true, currentDevice: 'fallback',
+        devices: [{ name: 'fallback', class: 'apple' }, { name: 'apple-one', class: 'apple' }, { name: 'apple-two', class: 'apple' }] } };
+    assert.equal(embeddedPin(context), pins[screen.name], 'embedded slider must retain its connector assignment');
+  }
+}
+
+const qmlRoot = path.join(__dirname, '..', 'quickshell/vshell');
+const { stripComments } = require('./lib/qml-source.js');
+const pinReferences = fs.readdirSync(qmlRoot, { recursive: true }).filter(file => /\.(qml|js)$/.test(file)).filter(file => {
+  const source = stripComments(readQml(file))
+      .replace(/^\s*property var brightnessDevicePins:\s*\(\{\}\)\s*$/m, '')
+      .replace(/^\s*brightnessDevicePins:\s*\{ def: \{\} \},?\s*$/m, '');
+  return /\bbrightnessDevicePins\b/.test(source);
+}).sort();
+assert.deepEqual([...testedPinFiles].sort(), pinReferences, 'every runtime brightness pin reference needs a behavioral fixture');
+const omittedConsumer = [...testedPinFiles].filter(file => file !== 'Services/DisplayService.qml').sort();
+assert.throws(() => assert.deepEqual(omittedConsumer, pinReferences), assert.AssertionError, 'an incomplete fixture inventory must fail');
 
 for (const [file, action] of [['DisplayPicker.qml', 'root.selected(modelData)'], ['DisplayScalePicker.qml', 'choose()']]) {
   const source = readQml('Modules/Settings/DisplayConfig/' + file);
