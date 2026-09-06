@@ -205,6 +205,14 @@ test("the carve-out tracks the drawn body through a width change during a shrink
   sweep("width change during a shrink", frames);
 });
 
+// A hidden popout must not keep a full-size dismissal hole.
+test("a hidden popout carves out nothing", () => {
+  const st = makeState({ shouldBeVisible: false });
+  const c = carveOut(st);
+  if (c.w !== 0 || c.h !== 0) fail("hidden", `a hidden popout still carves out ${c.w}x${c.h}`);
+  ok("a hidden popout carves out nothing");
+});
+
 // Use settled geometry for the hole as a failure control. A useful sweep must detect that disagreement.
 test("deriving the carve-out from the settled rect breaks the invariant (control)", () => {
   const settledHole = { x: "_surfaceBodyX", y: "_surfaceBodyY", width: "_surfaceBodyW", height: "_surfaceBodyH" };

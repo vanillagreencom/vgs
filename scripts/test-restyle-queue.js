@@ -52,24 +52,15 @@ test("a superseded completion starts the latest request and discards its outcome
         assert.equal(transition.success, null, "a superseded outcome is discarded");
     }
 
-    for (const [success, expected] of [[false, false], [true, true]]) {
-        const handoff = Queue.complete(state, success).state;
+    for (const [success, expected, queued] of [[false, false, latest], [true, true, latest], [true, true, { reset: true }]]) {
+        const handoff = Queue.complete(Queue.submit(Queue.submit(Queue.emptyState(), request(10)).state, queued).state, success).state;
         const terminal = Queue.complete(handoff, success);
         assert.equal(Queue.isBusy(terminal.state), false, "a terminal completion settles the queue");
         assert.equal(terminal.superseded, false);
         assert.equal(terminal.refresh, true, "a terminal completion refreshes authoritative state");
         assert.equal(terminal.announce, true, "a terminal completion is announced");
-        assert.equal(terminal.success, expected, "with its own outcome");
+        assert.equal(terminal.success, expected, `with its own outcome (${JSON.stringify(queued)})`);
     }
-});
-
-test("a reset request completes as a terminal success", () => {
-    const state = Queue.submit(Queue.emptyState(), { reset: true }).state;
-    const transition = Queue.complete(state, true);
-    assert.equal(Queue.isBusy(transition.state), false);
-    assert.equal(transition.refresh, true);
-    assert.equal(transition.announce, true);
-    assert.equal(transition.success, true, "a terminal success is announced as successful");
 });
 
 test("a commit queued behind a preview runs and refreshes; a preview behind a commit is dropped", () => {

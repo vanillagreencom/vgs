@@ -142,6 +142,17 @@ test("an older fallback success does not restore devices after a newer committed
 });
 
 // A stale failure after success belongs to the prior episode and must not clear or count.
+// A failure whose scan was superseded while a newer one is still in flight counts but must not commit.
+test("a superseded failure with a newer scan in flight counts and does not commit", () => {
+    const s = makeService();
+    const older = launch(s);
+    launch(s);
+    fail(s, older);
+    assert.equal(s.failures, 1, "the superseded failure still counts toward quarantine");
+    assert.equal(s.hasDevices, true, "but it must not clear state while a newer scan can still answer");
+    assert.equal(s.settled, 0, "and nothing is settled by it");
+});
+
 test("a stale failure after a success neither clears nor counts", () => {
     const s = makeService();
     const older = launch(s);

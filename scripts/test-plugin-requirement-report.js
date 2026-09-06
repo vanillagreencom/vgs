@@ -70,6 +70,8 @@ test("_withheldOnRequirement reports only a recorded, still-unmet refusal of a n
         assert.equal(judge(meta, shell), expected, `${JSON.stringify(meta)} @ ${JSON.stringify(shell)}: ${why}`);
     }
     assert.equal(withheld(null, SHELL, false), false, "a path with no manifest record is not a refused package");
+    assert.equal(withheld({ source: "user", demoted: true }, SHELL, false), false,
+        "an incompatible shell with no RECORDED refusal reports nothing: the record is what proves the version was the cause");
 });
 
 // Bundled manifests must not report refusal because their requirement declarations are not enforced there.
