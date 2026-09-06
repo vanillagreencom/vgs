@@ -215,7 +215,7 @@ test("isInternalMovement matches this organisation's accounts and products, whol
 // outstanding list that can never be closed.
 test("isVoid is true for a failed, cancelled or reversed charge and false for one that still becomes real", () => {
     for (const [status, expected] of [
-        ["failed", true], ["cancelled", true], ["reversed", true], ["sent", false],
+        ["failed", true], ["cancelled", true], ["reversed", true], ["blocked", true], ["sent", false],
         ["pending", false], [undefined, false]
     ]) {
         assert.equal(F.isVoid(status === undefined ? {} : { status }), expected,
@@ -343,6 +343,7 @@ test("fileIsUploadable refuses no file, a folder, an empty file and one over the
         ["/home/me/", undefined, { ok: false, why: "a folder was chosen" }, "a trailing slash is a folder"],
         ["/home/me/r.pdf", null, { ok: true, why: "" }, "QML cannot stat a file: a null size skips the size checks and the helper keeps them"],
         ["/home/me/r.pdf", 0, { ok: false, why: "the file is empty" }, "an empty file"],
+        ["/home/me/r.pdf", NaN, { ok: false, why: "the file size is unknown" }, "a size that could not be read refuses rather than guessing"],
         ["/home/me/r.pdf", 33 * 1024 * 1024, { ok: false, why: "the file is over Mercury's 32 MiB limit" }, "over the cap"],
         ["/home/me/r.pdf", 32 * 1024 * 1024, { ok: true, why: "" }, "exactly the cap is allowed, matching the helper's 'greater than' check"]
     ]) {
