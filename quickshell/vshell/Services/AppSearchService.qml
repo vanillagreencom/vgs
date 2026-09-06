@@ -877,33 +877,39 @@ Singleton {
         return defaultAppUsage();
     }
 
-    function applicationActionResultsFor(appItems, query) {
-        const queryContext = ensureSearchQueryContext(query);
+    function searchAppActions(query, apps) {
         const results = [];
-        const items = appItems || [];
-        for (let i = 0; i < items.length; i++) {
-            const app = appFromSearchItem(items[i]);
-            if (!app || !app.actions || app.actions.length === 0)
+        for (const app of apps) {
+            if (!app.actions || app.actions.length === 0)
                 continue;
-            for (let j = 0; j < app.actions.length; j++) {
-                const action = app.actions[j];
-                const relevance = textRelevance([action?.name || ""], [], [], [], [app.name || ""], queryContext);
-                if (!relevance.admitted || relevance.score <= 0)
+            for (const action of app.actions) {
+                const actionName = (action.name || "").toLowerCase();
+                if (!actionName)
                     continue;
-                results.push({
-                    app: {
-                        name: action.name,
-                        icon: action.icon || app.icon,
-                        comment: app.name,
-                        categories: app.categories || [],
-                        isAction: true,
-                        parentApp: app,
-                        actionData: action
-                    },
-                    score: relevance.score,
-                    textScore: relevance.score,
-                    matchType: relevance.matchType
-                });
+
+                let score = 0;
+                if (actionName === query) {
+                    score = 8000;
+                } else if (actionName.startsWith(query)) {
+                    score = 4000;
+                } else if (actionName.includes(query)) {
+                    score = 400;
+                }
+
+                if (score > 0) {
+                    results.push({
+                        app: {
+                            name: action.name,
+                            icon: action.icon || app.icon,
+                            comment: app.name,
+                            categories: app.categories || [],
+                            isAction: true,
+                            parentApp: app,
+                            actionData: action
+                        },
+                        score: score
+                    });
+                }
             }
         }
         return results;
@@ -940,7 +946,13 @@ Singleton {
         }
 
         if (includeActions) {
-            const actionResults = applicationActionResultsFor(items, queryContext);
+            const actionApps = [];
+            for (let i = 0; i < items.length; i++) {
+                const app = appFromSearchItem(items[i]);
+                if (app)
+                    actionApps.push(app);
+            }
+            const actionResults = searchAppActions(queryContext.text, actionApps);
             for (let i = 0; i < actionResults.length; i++)
                 results.push(actionResults[i]);
         }

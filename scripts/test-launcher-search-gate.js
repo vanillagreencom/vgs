@@ -59,8 +59,8 @@ const appSearch = evaluateMarked(appSearchSource, "APPLICATION SEARCH RELEVANCE 
     "textRelevanceFromFields", "applicationAliasFields", "firstExecToken",
     "executableBasename", "applicationIdentifierFields", "applicationSearchFields",
     "applicationTextRelevance", "boundedUsageScore", "applicationFinalScore",
-    "appFromSearchItem", "appUsageFromSearchItem", "applicationActionResultsFor",
-    "applicationSearchResultsFor"
+    "appFromSearchItem", "defaultAppUsage", "appUsageFromSearchItem",
+    "searchAppActions", "applicationSearchResultsFor"
 ], "AppSearchService.qml");
 
 const view = evaluateMarked(resultsSource, "EMPTY STATE DECISION", [
