@@ -100,10 +100,6 @@ PluginComponent {
         menuOpen ? close() : open();
     }
 
-    function normalize(value) {
-        return String(value || "").toLowerCase();
-    }
-
     function escapeMarkup(value) {
         return String(value || "").replace(/&/g, "&amp;")
             .replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -268,16 +264,6 @@ PluginComponent {
         return null;
     }
 
-    function itemMatches(item, q) {
-        return relevanceScore([
-            item.title,
-            item.subtitle,
-            categoryFor(item.category)?.label,
-            categoryFor(item.category)?.description,
-            (item.keywords || []).join(" ")
-        ].join(" "), q) >= 0;
-    }
-
     function capabilityAvailable(capability) {
         if (!capability)
             return true;
@@ -288,36 +274,6 @@ PluginComponent {
 
     function itemAvailable(item) {
         return capabilityAvailable(item?.requiresCapability || "");
-    }
-
-    function relevanceScore(value, q) {
-        if (!q)
-            return 0;
-        const haystack = normalize(value);
-        const needle = normalize(q);
-        if (!needle)
-            return 0;
-        if (haystack === needle)
-            return 5200;
-        if (haystack.indexOf(needle) === 0)
-            return 4700 - Math.min(500, haystack.length - needle.length);
-        const wordIndex = haystack.search(new RegExp("(^|\\s)" + needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-        if (wordIndex >= 0)
-            return 4200 - wordIndex;
-        const exactIndex = haystack.indexOf(needle);
-        if (exactIndex >= 0)
-            return 3500 - exactIndex * 2;
-        let position = -1;
-        let gaps = 0;
-        for (let i = 0; i < needle.length; i++) {
-            const next = haystack.indexOf(needle[i], position + 1);
-            if (next < 0)
-                return -1;
-            if (position >= 0)
-                gaps += next - position - 1;
-            position = next;
-        }
-        return 2200 - gaps * 8 - Math.min(600, haystack.length - needle.length);
     }
 
     function usageKey(item) {
@@ -335,7 +291,7 @@ PluginComponent {
         const countBonus = Math.min(700, Math.log(1 + (usage.count || 0)) * 190);
         const ageDays = Math.max(0, (Date.now() - (usage.lastUsed || 0)) / 86400000);
         const recencyBonus = ageDays < 1 ? 600 : ageDays < 7 ? 420 : ageDays < 30 ? 220 : 0;
-        return countBonus + recencyBonus;
+        return Math.min(AppSearchService.usageScoreCap(), countBonus + recencyBonus);
     }
 
     function recordUsage(item) {
@@ -355,7 +311,8 @@ PluginComponent {
         SettingsData.set("launcherMenuUsageHistory", history);
     }
 
-    function appItem(app, q) {
+    function appItem(searchResult) {
+        const app = searchResult?.app || searchResult;
         const item = {
             id: app.id || app.execString || app.name,
             kind: "app",
@@ -366,31 +323,28 @@ PluginComponent {
             iconType: "image",
             app: app
         };
-        const appFrecency = AppSearchService.calculateFrecency(app);
-        const appRecency = appFrecency.daysSinceUsed < 1 ? 600
-            : appFrecency.daysSinceUsed < 7 ? 420
-            : appFrecency.daysSinceUsed < 30 ? 220 : 0;
-        item.rank = (q ? relevanceScore([
-            app.name, app.genericName, app.comment, app.id, (app.keywords || []).join(" ")
-        ].join(" "), q) : 0)
-            + Math.min(700, appFrecency.frecency || 0)
-            + appRecency + usageBonus(item);
+        item.rank = (searchResult?.score || 0) + usageBonus(item);
         return item;
     }
 
-    function commandItem(item, q) {
+    function commandTextRelevance(item, q) {
+        const category = categoryFor(item.category);
+        return AppSearchService.textRelevance({
+            primary: [item.title || ""],
+            aliases: item.aliases || [],
+            keywords: item.keywords || [],
+            identifiers: [item.id || "", item.devId || ""],
+            secondary: [item.subtitle || "", category?.label || "", category?.description || ""]
+        }, q).score;
+    }
+
+    function commandItem(item, textScore) {
         const result = Object.assign({ kind: "command", id: "command:" + item.title }, item);
-        result.rank = (q ? relevanceScore([
-            item.title,
-            item.subtitle,
-            categoryFor(item.category)?.label,
-            categoryFor(item.category)?.description,
-            (item.keywords || []).join(" ")
-        ].join(" "), q) : 0) + usageBonus(result);
+        result.rank = (textScore || 0) + usageBonus(result);
         return result;
     }
 
-    function fileItem(hit, q) {
+    function fileItem(hit) {
         const result = {
             id: (hit.path || "") + (hit.line ? ":" + hit.line : ""),
             kind: "file",
@@ -402,9 +356,7 @@ PluginComponent {
             iconType: "material",
             data: hit
         };
-        result.rank = Math.max(hit.score || 0, relevanceScore(
-            [hit.name, hit.parent, hit.path].join(" "), q
-        )) + usageBonus(result);
+        result.rank = (hit.score || 0) + usageBonus(result);
         return result;
     }
 
@@ -418,20 +370,10 @@ PluginComponent {
         return String(left.id || "").localeCompare(String(right.id || ""));
     }
 
-    function allResultGroup(item) {
-        return item?.kind === "file" ? 1 : 0;
-    }
-
     // `grouped` applies an item's `group` before the alphabet, so a category's
-    // own entries stay above agents, and agents above environments; the All
-    // list and ranked results never use it.
-    function sortRanked(items, alphabetical, grouped, filesLast) {
+    // own entries stay above agents, and agents above environments.
+    function sortRanked(items, alphabetical, grouped) {
         items.sort((left, right) => {
-            if (filesLast) {
-                const allGroupDifference = allResultGroup(left) - allResultGroup(right);
-                if (allGroupDifference !== 0)
-                    return allGroupDifference;
-            }
             if (alphabetical && grouped) {
                 const groupDifference = (left.group || 0) - (right.group || 0);
                 if (groupDifference !== 0)
@@ -449,74 +391,43 @@ PluginComponent {
     // END LAUNCHER MENU SORT DECISION
 
     function buildImmediateAllItems(trimmed) {
-        const q = normalize(trimmed);
+        const q = AppSearchService.normalizeSearchText(trimmed);
         const next = [];
-        const apps = AppSearchService.searchApplications(trimmed);
+        const apps = AppSearchService.searchApplicationResults(trimmed);
         for (let i = 0; i < apps.length; i++)
-            next.push(appItem(apps[i], q));
+            next.push(appItem(apps[i]));
         for (let i = 0; i < allItems.length; i++) {
             const item = allItems[i];
             if (!itemAvailable(item))
                 continue;
-            if (!q || itemMatches(item, q))
-                next.push(commandItem(item, q));
-        }
-        if (!q) {
-            const history = SettingsData.launcherMenuUsageHistory || {};
-            for (const key in history) {
-                const used = history[key] || {};
-                if ((key.indexOf("file:") !== 0 && key.indexOf("folder:") !== 0) || !used.path)
-                    continue;
-                next.push(fileItem({
-                    path: used.path,
-                    name: used.title || used.path.substring(used.path.lastIndexOf("/") + 1),
-                    parent: used.parent || used.path.substring(0, used.path.lastIndexOf("/")),
-                    is_dir: key.indexOf("folder:") === 0 || !!used.isDir,
-                    score: 0
-                }, ""));
+            if (!q) {
+                next.push(commandItem(item, 0));
+                continue;
             }
+            const textScore = commandTextRelevance(item, q);
+            if (textScore > 0)
+                next.push(commandItem(item, textScore));
         }
-        sortRanked(next, !q, false, true);
+        sortRanked(next, !q, false);
         return next.slice(0, 120);
     }
 
     function refreshAllItems() {
         folderCompletion = "";
         const trimmed = query.trim();
-        const generation = ++fileSearchGeneration;
+        ++fileSearchGeneration;
         allImmediateItems = buildImmediateAllItems(trimmed);
         visibleItems = allImmediateItems;
         selectedItemIndex = 0;
-        filePreviewRevealed = visibleItems.length > 0 && visibleItems[0]?.kind === "file";
-        fileSearching = DSearchService.queryIsDispatchable(trimmed);
+        filePreviewRevealed = false;
+        fileSearching = false;
         resetResultListPosition();
-        if (!DSearchService.queryIsDispatchable(trimmed))
-            return;
-
-        DSearchService.search(trimmed, { kind: "all", limit: 80 }, response => {
-            if (generation !== fileSearchGeneration
-                    || categories[selectedCategoryIndex]?.id !== "all"
-                    || query.trim() !== trimmed)
-                return;
-            fileSearching = false;
-            const merged = allImmediateItems.slice();
-            if (!response.error) {
-                const hits = response.result?.hits || [];
-                for (let i = 0; i < hits.length; i++)
-                    merged.push(fileItem(hits[i], normalize(trimmed)));
-            }
-            sortRanked(merged, false, false, true);
-            visibleItems = merged.slice(0, 160);
-            selectedItemIndex = 0;
-            filePreviewRevealed = visibleItems.length > 0 && visibleItems[0]?.kind === "file";
-            resetResultListPosition();
-        });
     }
 
     function refreshItems() {
         if (resettingState || routingPrefix)
             return;
-        const q = normalize(query.trim());
+        const q = AppSearchService.normalizeSearchText(query.trim());
         const selectedCategory = categories[selectedCategoryIndex]?.id || categories[0]?.id || "";
         if (selectedCategory === "all") {
             refreshAllItems();
@@ -530,16 +441,23 @@ PluginComponent {
         fileSearching = false;
         folderCompletion = "";
         if (selectedCategory === "apps") {
-            const apps = AppSearchService.searchApplications(query.trim());
+            const apps = AppSearchService.searchApplicationResults(query.trim());
             const nextApps = [];
             for (let i = 0; i < apps.length; i++)
-                nextApps.push(appItem(apps[i], q));
+                nextApps.push(appItem(apps[i]));
             for (let i = 0; i < allItems.length; i++) {
                 const item = allItems[i];
                 if (!itemAvailable(item))
                     continue;
-                if (item.category === "apps" && itemMatches(item, q))
-                    nextApps.push(commandItem(item, q));
+                if (item.category !== "apps")
+                    continue;
+                if (!q) {
+                    nextApps.push(commandItem(item, 0));
+                    continue;
+                }
+                const textScore = commandTextRelevance(item, q);
+                if (textScore > 0)
+                    nextApps.push(commandItem(item, textScore));
             }
             sortRanked(nextApps, !q);
             visibleItems = nextApps;
@@ -552,11 +470,15 @@ PluginComponent {
             const item = allItems[i];
             if (!itemAvailable(item))
                 continue;
-            if (!q && item.category !== selectedCategory)
+            if (!q) {
+                if (item.category === selectedCategory)
+                    next.push(commandItem(item, 0));
                 continue;
-            if (q && !itemMatches(item, q))
+            }
+            const textScore = commandTextRelevance(item, q);
+            if (textScore <= 0)
                 continue;
-            next.push(commandItem(item, q));
+            next.push(commandItem(item, textScore));
         }
         sortRanked(next, !q, true);
         visibleItems = next;
@@ -599,7 +521,7 @@ PluginComponent {
             const hits = response.result?.hits || [];
             const next = [];
             for (let i = 0; i < hits.length; i++)
-                next.push(fileItem(hits[i], normalize(trimmed)));
+                next.push(fileItem(hits[i]));
             if (!trimmed)
                 sortRanked(next, true);
             visibleItems = next;
@@ -676,7 +598,7 @@ PluginComponent {
 
     function revealFilePreview() {
         const category = categories[selectedCategoryIndex]?.id;
-        filePreviewRevealed = (category === "files" || category === "all")
+        filePreviewRevealed = category === "files"
             && selectedItem?.kind === "file";
     }
 
@@ -1499,7 +1421,7 @@ PluginComponent {
                                 text: root.categories[root.selectedCategoryIndex]?.id === "files"
                                     ? "Search files, folders, text, or zoxide"
                                     : root.categories[root.selectedCategoryIndex]?.id === "all"
-                                        ? "Search apps, actions, files, and folders"
+                                        ? "Search apps, actions, settings, and tools"
                                         : "Search " + (root.categories[root.selectedCategoryIndex]?.label || "VGS")
                                 font.pixelSize: Theme.fontSizeMedium
                                 font.weight: Font.Medium
@@ -1802,8 +1724,7 @@ PluginComponent {
                                 width: root.filePreviewRevealed ? expandedWidth : 0
                                 opacity: root.filePreviewRevealed ? 1 : 0
                                 visible: (root.categories[root.selectedCategoryIndex]?.id === "files"
-                                    || root.categories[root.selectedCategoryIndex]?.id === "all")
-                                    && !root.fileSettingsVisible
+                                    && !root.fileSettingsVisible)
                                     && (root.filePreviewRevealed || width > 1)
                                 item: root.filePreviewRevealed && root.selectedItem?.kind === "file" ? {
                                     name: root.selectedItem.title,
