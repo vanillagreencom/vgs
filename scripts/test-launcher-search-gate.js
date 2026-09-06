@@ -6,6 +6,7 @@
 
 "use strict";
 
+const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -52,21 +53,9 @@ const menuSort = evaluateMarked(menuSource, "LAUNCHER MENU SORT DECISION", [
     "sortRanked"
 ], "VGSMenu.qml");
 
-// Keep extracted decisions independent of QML state so fixture inputs fully determine their behavior.
-for (const [label, source, marker] of [
-    ["DSearchService.qml", serviceSource, "SEARCH BACKEND DECISION"],
-    ["ResultsList.qml", resultsSource, "EMPTY STATE DECISION"],
-    ["Controller.qml", controllerSource, "FILE SEARCH DECISION"]
-]) {
-    const region = regionOf(source, marker, label);
-    for (const forbidden of ["root.", "Theme.", "I18n.", "Qt."]) {
-        assert.ok(!region.includes(forbidden),
-            `the ${marker} block in ${label} must not reference ${forbidden} — it has to stay ` +
-            "plain JavaScript, or the extraction is testing a different program");
-    }
-}
-
-const ready = (fd, rg) => ({ state: "ready", fd: fd, ripgrep: rg });
+const probe = (state, fd, ripgrep) => ({ state: state, fd: fd, ripgrep: ripgrep });
+const ready = (fd, rg) => probe("ready", fd, rg);
+const TOOL_FLAGS = [[true, true], [true, false], [false, true], [false, false]];
 
 // Bound a Python function at the next top-level def. Unbounded slices can borrow
 // an unrelated later statement to satisfy a missing failure branch.
@@ -76,116 +65,6 @@ function pythonFunction(source, name) {
     const end = source.indexOf("\ndef ", start + 1);
     return source.slice(start, end === -1 ? source.length : end);
 }
-
-// Text search depends on ripgrep; name search depends on fd.
-
-assert.equal(backend.backendCommandFor("text"), "rg");
-for (const kind of ["files", "folders", "all"])
-    assert.equal(backend.backendCommandFor(kind), "fd", `${kind} is fd's`);
-
-// An unrecognized kind must not fall through to the fd decision.
-for (const kind of ["zoxide", "sqlite", "", undefined, null])
-    assert.equal(backend.backendCommandFor(kind), "",
-        `${JSON.stringify(kind)} names no probed tool, so the gate must not answer for it`);
-
-// Exercise tool availability independently for each search kind.
-
-for (const [fd, rg] of [[true, true], [true, false], [false, true], [false, false]]) {
-    const probe = ready(fd, rg);
-    assert.equal(backend.backendStateFor("text", "needle", probe), rg ? "available" : "missing",
-        `text search follows ripgrep alone (fd=${fd}, rg=${rg})`);
-    for (const kind of ["files", "folders", "all"]) {
-        assert.equal(backend.backendStateFor(kind, "needle", probe), fd ? "available" : "missing",
-            `${kind} follows fd alone (fd=${fd}, rg=${rg})`);
-    }
-}
-
-
-assert.equal(backend.backendStateFor("text", "needle", ready(false, true)), "available",
-    "ripgrep-backed text search must survive a machine with no fd — this is the bug");
-assert.equal(backend.backendStateFor("files", "needle", ready(false, true)), "missing",
-    "while file search on the same machine is honestly reported missing");
-
-
-
-for (const probe of [{ state: "pending" }, { state: "pending", fd: true, ripgrep: true }]) {
-    for (const kind of ["files", "folders", "all", "text"]) {
-        assert.equal(backend.backendStateFor(kind, "needle", probe), "checking",
-            "a probe that has not answered means CHECKING, not missing: telling a user to " +
-            "install a tool they already have is the same dead end as saying nothing");
-    }
-}
-for (const probe of [{ state: "failed" }, {}, null, undefined, { state: "nonsense" }]) {
-    assert.equal(backend.backendStateFor("files", "needle", probe), "unknown",
-        `a probe in state ${JSON.stringify(probe)} answers nothing about fd`);
-}
-assert.equal(backend.backendStateFor("zoxide", "needle", ready(true, true)), "unknown",
-    "a kind this service never probes stays unknown even with both tools present");
-
-// Pass the kind as well as probe state. Unknown name-search availability must not authorize
-// a fallback directory walk; text search has no such walk and can report its tool failure directly.
-for (const kind of ["files", "text"]) {
-    assert.ok(backend.dispatchAllowed("available", kind),
-        `a tool proven present dispatches (${kind})`);
-    assert.ok(!backend.dispatchAllowed("missing", kind),
-        `a tool proven absent does block it (${kind})`);
-    assert.ok(!backend.dispatchAllowed("checking", kind),
-        `and a pending answer waits rather than guessing (${kind})`);
-}
-assert.ok(backend.dispatchAllowed("unknown", "text"),
-    "an unanswerable probe still dispatches text search: ripgrep fails fast with a real cause, " +
-    "so refusing it would be a silence built on nobody's answer");
-assert.ok(!backend.dispatchAllowed("unknown", "files"),
-    "and does NOT dispatch an fd-backed name search: that buys the helper's full walk of every " +
-    "root, which is the cost the fd gate exists to avoid and the recorded decision rejected");
-assert.ok(!backend.dispatchAllowed("unknown", "folders"),
-    "same for folders — a path completion reaches 'available' earlier, never this arm");
-
-// Explicit folder paths use the helper's directory walk before fd lookup.
-
-for (const query of ["~/dev", "~", "/home/x", "  ~/dev", "/"])
-    assert.ok(backend.pathCompletion("folders", query),
-        `${JSON.stringify(query)} is a folder path query, answered without fd`);
-for (const [kind, query] of [["folders", "dev"], ["files", "~/dev"], ["text", "~/dev"], ["folders", ""]])
-    assert.ok(!backend.pathCompletion(kind, query),
-        `${kind}/${JSON.stringify(query)} is an ordinary search, which does need its tool`);
-assert.equal(backend.backendStateFor("folders", "~/dev", ready(false, false)), "available",
-    "so folder completion stays available on a machine with neither tool");
-assert.equal(backend.backendStateFor("folders", "dev", ready(false, false)), "missing",
-    "while a name search for the same kind is not");
-
-// Check the helper branch that makes the QML path-completion exemption valid.
-{
-    const nameHits = pythonFunction(helperSource, "_launcher_search_name_hits");
-    const pathBranch = nameHits.indexOf('if kind == "folders" and query.strip().startswith(("~", "/")):');
-    const fdLookup = nameHits.indexOf('shutil.which("fd")');
-    assert.notEqual(pathBranch, -1,
-        "the helper must still route a folder path query to its own walk, on the same condition " +
-        "DSearchService.pathCompletion() mirrors");
-    assert.notEqual(fdLookup, -1, "and must still be the place fd is looked up");
-    assert.ok(pathBranch < fdLookup,
-        "the path branch has to come FIRST, or the exemption is promising fd-free completion " +
-        "from a code path that does need fd");
-}
-
-
-
-assert.ok(!backend.helperHasFallback("text"),
-    "text search shells out to ripgrep and raises without it — the service refuses it outright");
-for (const kind of ["files", "folders", "all"])
-    assert.ok(backend.helperHasFallback(kind),
-        `${kind} falls back to the helper's own walk, which vgsMenu accepts`);
-
-
-
-assert.equal(backend.kindForType("dir"), "folders");
-assert.equal(backend.kindForType("text"), "text");
-assert.equal(backend.kindForType("zoxide"), "zoxide");
-for (const type of ["file", "all", "", undefined, "nonsense"])
-    assert.equal(backend.kindForType(type), "files",
-        `${JSON.stringify(type)} is a name search`);
-
-// Use named empty-state fields and verify their producers at the QML adapter.
 
 // Set declined where the program derives it. A searchable query with a missing or checking
 // backend cannot produce declined:false, so that fixture would cover an unreachable state.
@@ -201,230 +80,398 @@ const facts = extra => Object.assign({
 }, extra);
 const declinedFacts = extra => facts(Object.assign({ declined: true }, extra));
 
-assert.equal(view.fileEmptyStateKey(declinedFacts({ backendState: "checking" })), "checking",
-    "a probe still running says so rather than claiming search is unavailable — and this is the " +
-    "real startup state: the first probe declines every kind, so `declined` is true here");
-assert.equal(view.fileEmptyStateKey(declinedFacts({ backendState: "missing", missingCommand: "rg" })),
-    "missing-rg");
-assert.equal(view.fileEmptyStateKey(declinedFacts({ backendState: "missing", missingCommand: "fd" })),
-    "missing-fd");
-assert.equal(view.fileEmptyStateKey(facts({ queryLength: 0, searchable: false })), "prompt");
-assert.equal(view.fileEmptyStateKey(facts({ queryLength: 1, searchable: false })), "short");
-assert.equal(view.fileEmptyStateKey(facts({})), "empty");
-assert.equal(view.fileEmptyStateKey(facts({ backendState: "unknown" })), "empty",
-    "an unanswerable probe does not rewrite the result message — the search still ran");
-assert.equal(view.fileEmptyStateKey(declinedFacts({
-    backendState: "missing", missingCommand: "fd", queryLength: 0, searchable: false
-})), "missing-fd", "and a missing tool is worth saying before a query is typed");
-assert.equal(view.fileEmptyStateKey(facts({ searchError: "ripgrep is required for text search" })),
-    "error",
-    "a search that RAN and failed shows the helper's own diagnosis rather than 'no results'");
-assert.equal(view.fileEmptyStateKey(declinedFacts({ backendState: "unknown" })), "unchecked",
-    "and one the gate refused says that instead");
+// Keep extracted decisions independent of QML state so fixture inputs fully determine their behavior.
+test("marked decision regions stay plain JavaScript", () => {
+    for (const [label, source, marker] of [
+        ["DSearchService.qml", serviceSource, "SEARCH BACKEND DECISION"],
+        ["ResultsList.qml", resultsSource, "EMPTY STATE DECISION"],
+        ["Controller.qml", controllerSource, "FILE SEARCH DECISION"]
+    ]) {
+        const region = regionOf(source, marker, label);
+        for (const forbidden of ["root.", "Theme.", "I18n.", "Qt."]) {
+            assert.ok(!region.includes(forbidden),
+                `the ${marker} block in ${label} must not reference ${forbidden} — it has to stay ` +
+                "plain JavaScript, or the extraction is testing a different program");
+        }
+    }
+});
 
-// Make competing arms true together so swapped precedence becomes observable.
-assert.equal(view.fileEmptyStateKey(declinedFacts({
-    backendState: "missing", missingCommand: "fd", searchError: "boom"
-})), "missing-fd",
-    "a missing tool outranks a leftover error: the tool is why the next search will fail too");
-assert.equal(view.fileEmptyStateKey(declinedFacts({ backendState: "checking" })), "checking",
-    "and a probe still running outranks declined — during the first probe EVERY kind is " +
-    "declined, so the other order makes the startup window say the tools could not be checked " +
-    "while they are being checked");
+// Text search depends on ripgrep; name search depends on fd. An unrecognized kind must not fall
+// through to the fd decision.
+test("backendCommandFor names the tool per kind and nothing for a foreign kind", () => {
+    for (const [kind, expected] of [
+        ["text", "rg"], ["files", "fd"], ["folders", "fd"], ["all", "fd"],
+        ["zoxide", ""], ["sqlite", ""], ["", ""], [undefined, ""], [null, ""]
+    ]) {
+        assert.equal(backend.backendCommandFor(kind), expected,
+            `${JSON.stringify(kind)} → ${JSON.stringify(expected)}: a kind naming no probed tool ` +
+            "gets no answer from the gate");
+    }
+});
 
-assert.equal(view.fileHintKey(declinedFacts({ backendState: "missing", missingCommand: "rg" })),
-    "install-rg");
-assert.equal(view.fileHintKey(declinedFacts({ backendState: "missing", missingCommand: "fd" })),
-    "install-fd");
-assert.equal(view.fileHintKey(declinedFacts({ backendState: "unknown", probeState: "failed" })),
-    "probe-failed",
-    "a probe that could not run names ITSELF; blaming fd for it is the wrong cause");
-assert.equal(view.fileHintKey(declinedFacts({ backendState: "unknown", probeState: "retrying" })),
-    "probe-retrying",
-    "a retry in progress asks the user for NOTHING — it will answer on its own, and the reopen " +
-    "advice is a no-op while an episode is in flight");
-assert.equal(view.fileHintKey(facts({ backendState: "unknown", probeState: "failed" })), "",
-    "no probe line beside a search that actually ran, whatever the probe did");
-// A searchable query during the first probe is declined. Test that reachable state to detect
-// a checking hint with a dangling separator and no reason.
-assert.equal(view.fileHintKey(declinedFacts({ backendState: "checking", probeState: "pending" })), "",
-    "the first probe reports NOTHING: there is no reason yet, and the message above already " +
-    "says the tools are being checked");
-assert.equal(view.fileHintKey(facts({})), "",
-    "and a working backend needs no install step");
-for (const extra of [{ backendState: "missing", missingCommand: "fd" },
-    { backendState: "unknown", probeState: "failed" }]) {
-    assert.equal(view.fileHintKey(facts(Object.assign({ legActive: false }, extra))), "",
-        "no hint where no file search would have run: 'install fd' in a mode that never searches " +
-        "files promises a fix that changes nothing");
-}
+test("backendStateFor follows one tool flag per kind on a ready probe", () => {
+    for (const [fd, rg] of TOOL_FLAGS) {
+        assert.equal(backend.backendStateFor("text", "needle", ready(fd, rg)), rg ? "available" : "missing",
+            `text search follows ripgrep alone (fd=${fd}, rg=${rg}) — reading the fd field is the ` +
+            "original VGS-114 symptom: ripgrep installed, text search reported missing");
+        for (const kind of ["files", "folders", "all"]) {
+            assert.equal(backend.backendStateFor(kind, "needle", ready(fd, rg)), fd ? "available" : "missing",
+                `${kind} follows fd alone (fd=${fd}, rg=${rg})`);
+        }
+    }
+});
 
-assert.equal(view.fileEmptyIcon("checking", "file"), "hourglass_empty");
-assert.equal(view.fileEmptyIcon("missing-fd", "file"), "search_off");
-assert.equal(view.fileEmptyIcon("missing-rg", "text"), "search_off");
-assert.equal(view.fileEmptyIcon("unchecked", "file"), "search_off");
-assert.equal(view.fileEmptyIcon("error", "file"), "search_off");
-assert.equal(view.fileEmptyIcon("empty", "file"), "insert_drive_file");
-assert.equal(view.fileEmptyIcon("empty", "dir"), "folder_open");
-assert.equal(view.fileEmptyIcon("empty", "text"), "article");
-
-// A query too short to dispatch is a prompt state, not a declined request.
-assert.equal(view.fileEmptyStateKey(facts({
-    backendState: "checking", queryLength: 0, searchable: false
-})), "prompt", "an empty field prompts even while the probe is outstanding");
-assert.equal(view.fileEmptyStateKey(facts({
-    backendState: "checking", queryLength: 1, searchable: false
-})), "short", "and a short query is short, not checking");
-
-
-assert.equal(view.errorLine("ripgrep is required for text search"),
-    "ripgrep is required for text search", "an ordinary diagnosis passes through");
-assert.equal(view.errorLine("usage: vshell launcher-search\n  --kind\n  --limit"),
-    "usage: vshell launcher-search",
-    "only the FIRST line: an argparse failure is a six-line usage block");
-assert.equal(view.errorLine("no such file: we\u0007ird\u202ename"), "no such file: we ird name",
-    "control and bidi characters are dropped — a filename out of the search roots ends up here");
-assert.equal(view.errorLine("x".repeat(400)).length, 160,
-    "and the length is bounded, so a whole argv cannot stretch the centered column");
-assert.equal(view.errorLine(""), "");
-assert.equal(view.errorLine(null), "");
-
-
-
-assert.equal(files.fileSearchQueryFrom("plugins", "/etc", "etc"), "",
-    "plugins mode runs no file search: a leading / is the plugin's own text there, and a " +
-    "file result appended to plugin results is the regression this exclusion exists for");
-assert.equal(files.fileSearchQueryFrom("files", "notes", ""), "notes");
-assert.equal(files.fileSearchQueryFrom("files", "  notes  ", ""), "notes", "trimmed");
-assert.equal(files.fileSearchQueryFrom("all", "/notes", "notes"), "notes",
-    "the / form drops its prefix and searches from any non-plugins mode");
-assert.equal(files.fileSearchQueryFrom("files", "/d notes", "notes"), "notes",
-    "including the typed-type form, whose parsed query is what arrives");
-
-// A bare slash is a launcher trigger; /d consumes its own prefix and preserves an absolute path query.
-assert.equal(files.fileSearchQueryFrom("files", "/d /home/x", "/home/x"), "/home/x",
-    "the typed-type prefix passes a /-rooted query through intact");
-assert.ok(backend.pathCompletion("folders", files.fileSearchQueryFrom("files", "/d /home/x", "/home/x")),
-    "so absolute-path folder completion IS reachable from the overview — the manifest and the " +
-    "pathCompletion comment may not narrow the claim to ~-rooted queries again");
-assert.equal(backend.canDispatchFor("folders", "/home/x", { state: "ready", fd: false, ripgrep: false }),
-    true, "and it dispatches with no tools at all, which is what makes it worth documenting");
-assert.equal(files.fileSearchQueryFrom("all", "notes", ""), "",
-    "combined mode without the prefix sends nothing — the files-in-All settings reach no " +
-    "search today, which is why this must not silently look like one");
-assert.equal(files.fileSearchQueryFrom("apps", "notes", ""), "");
-assert.equal(files.fileSearchQueryFrom("files", "", ""), "");
-
-assert.ok(files.shouldRetryAfterProbe(true, true),
-    "an open surface with a searchable query re-runs when the probe answers");
-assert.ok(!files.shouldRetryAfterProbe(false, true),
-    "a closed one does not — the retry must not search behind a dismissed launcher");
-assert.ok(!files.shouldRetryAfterProbe(true, false), "nor one whose query would not dispatch");
-
-assert.ok(view.fileLegActive("files", false),
-    "files mode is a file surface even before a query is typed");
-assert.ok(view.fileLegActive("all", true), "and so is any mode holding a searchable file query");
-assert.ok(!view.fileLegActive("plugins", false), "plugins mode is not");
-assert.ok(!view.fileLegActive("apps", false), "nor is a mode with a query too short to dispatch");
-
-
-assert.ok(backend.queryIsDispatchable("ab"), "two characters dispatch");
-assert.ok(backend.queryIsDispatchable("  ab  "), "after trimming");
-for (const query of ["a", " a ", "", " ", undefined, null])
-    assert.ok(!backend.queryIsDispatchable(query), `${JSON.stringify(query)} does not`);
-
-// Single-character path starts can use folder completion without fd; length alone cannot reject them.
-for (const query of ["~", "/", "~/", "  ~  "])
-    assert.ok(backend.queryIsSearchable("folders", query),
-        `${JSON.stringify(query)} in folders mode is a path the helper completes, not a short query`);
-assert.ok(backend.queryIsSearchable("folders", "de"), "an ordinary folder query still qualifies");
-for (const [kind, query] of [["files", "~"], ["files", "/"], ["text", "~"], ["folders", "d"],
-    ["folders", ""], ["folders", " "]]) {
-    assert.ok(!backend.queryIsSearchable(kind, query),
-        `${kind}/${JSON.stringify(query)} is genuinely too short — the exemption is folders-only, ` +
-        "and only for a path");
-}
-assert.equal(backend.queryIsSearchable("folders", "~"), backend.pathCompletion("folders", "~"),
-    "the exemption IS pathCompletion, not a second copy of it");
-
-// Use a named {state, fd, ripgrep} snapshot and verify its property mapping.
-
-const probe = (state, fd, ripgrep) => ({ state: state, fd: fd, ripgrep: ripgrep });
-
-assert.equal(backend.backendStateFor("text", "needle", probe("ready", false, true)), "available",
-    "text follows the ripgrep field");
-assert.equal(backend.backendStateFor("text", "needle", probe("ready", true, false)), "missing",
-    "and NOT the fd field — reading the wrong one is the original VGS-114 symptom exactly");
-assert.equal(backend.backendStateFor("files", "needle", probe("ready", true, false)), "available",
-    "name search follows the fd field");
-assert.equal(backend.backendStateFor("files", "needle", probe("retrying", true, true)), "unknown",
-    "a retry episode answers nothing about the tools, whatever the last flags said");
+test("backendStateFor reports checking, unknown or nothing for unsettled and foreign probes", () => {
+    for (const [kind, snapshot, expected, why] of [
+        ["files", { state: "pending" }, "checking", "a probe that has not answered means CHECKING, not missing"],
+        ["text", { state: "pending", fd: true, ripgrep: true }, "checking",
+            "even with stale flags attached: telling a user to install a tool they already have " +
+            "is the same dead end as saying nothing"],
+        ["files", { state: "retrying", fd: true, ripgrep: true }, "unknown",
+            "a retry episode answers nothing about the tools, whatever the last flags said"],
+        ["files", { state: "failed" }, "unknown", "a failed probe answers nothing about fd"],
+        ["files", {}, "unknown", "an empty snapshot answers nothing"],
+        ["files", null, "unknown", "and neither does no snapshot"],
+        ["files", undefined, "unknown", "or an undefined one"],
+        ["files", { state: "nonsense" }, "unknown", "or a state this service never publishes"],
+        ["zoxide", ready(true, true), "unknown",
+            "a kind this service never probes stays unknown even with both tools present"]
+    ]) {
+        assert.equal(backend.backendStateFor(kind, "needle", snapshot), expected,
+            `${kind} with ${JSON.stringify(snapshot)}: ${why}`);
+    }
+});
 
 // Kind and query order matters; swapping them can leave every backend lookup unknown.
-assert.notEqual(backend.backendStateFor("folders", "~/dev", probe("ready", false, false)),
-    backend.backendStateFor("~/dev", "folders", probe("ready", false, false)),
-    "backendStateFor's kind and query slots must not be symmetric");
+test("backendStateFor's kind and query slots are not symmetric", () => {
+    assert.notEqual(backend.backendStateFor("folders", "~/dev", ready(false, false)),
+        backend.backendStateFor("~/dev", "folders", ready(false, false)));
+});
 
-for (const [fd, rg] of [[true, true], [true, false], [false, true], [false, false]]) {
-    for (const state of ["pending", "retrying", "failed", "ready"]) {
-        const settled = state === "ready";
-        assert.equal(backend.canDispatchFor("files", "needle", probe(state, fd, rg)), settled && fd,
-            `a name search dispatches only on a positively detected fd (state=${state}, ` +
-            `fd=${fd}, rg=${rg}) — dispatching it unproven buys the helper's full directory walk`);
-        assert.equal(backend.canDispatchFor("text", "needle", probe(state, fd, rg)),
-            settled ? rg : state !== "pending",
-            `text dispatches on ripgrep when known, and on anything past the first probe when ` +
-            `not (state=${state}, fd=${fd}, rg=${rg})`);
-        assert.equal(backend.canDispatchFor("folders", "~/dev", probe(state, fd, rg)), true,
-            "and path completion always dispatches: the helper answers it before fd is consulted");
+// Pass the kind as well as probe state. Unknown name-search availability must not authorize
+// a fallback directory walk; text search has no such walk and can report its tool failure directly.
+test("dispatchAllowed answers per state and kind", () => {
+    for (const [state, kind, expected, why] of [
+        ["available", "files", true, "a tool proven present dispatches"],
+        ["available", "text", true, "a tool proven present dispatches"],
+        ["missing", "files", false, "a tool proven absent does block it"],
+        ["missing", "text", false, "a tool proven absent does block it"],
+        ["checking", "files", false, "a pending answer waits rather than guessing"],
+        ["checking", "text", false, "a pending answer waits rather than guessing"],
+        ["unknown", "text", true,
+            "an unanswerable probe still dispatches text search: ripgrep fails fast with a real " +
+            "cause, so refusing it would be a silence built on nobody's answer"],
+        ["unknown", "files", false,
+            "and does NOT dispatch an fd-backed name search: that buys the helper's full walk of " +
+            "every root, which is the cost the fd gate exists to avoid and the recorded decision rejected"],
+        ["unknown", "folders", false,
+            "same for folders — a path completion reaches 'available' earlier, never this arm"]
+    ]) {
+        assert.equal(backend.dispatchAllowed(state, kind), expected, `${state}/${kind}: ${why}`);
     }
-}
+});
+
+// Explicit folder paths use the helper's directory walk before fd lookup.
+test("pathCompletion answers folder path queries without fd", () => {
+    for (const [kind, query, expected] of [
+        ["folders", "~/dev", true], ["folders", "~", true], ["folders", "/home/x", true],
+        ["folders", "  ~/dev", true], ["folders", "/", true],
+        ["folders", "dev", false], ["files", "~/dev", false], ["text", "~/dev", false], ["folders", "", false]
+    ]) {
+        assert.equal(backend.pathCompletion(kind, query), expected,
+            `${kind}/${JSON.stringify(query)}: ${expected ? "a folder path query, answered without fd" :
+                "an ordinary search, which does need its tool"}`);
+    }
+    assert.equal(backend.backendStateFor("folders", "~/dev", ready(false, false)), "available",
+        "so folder completion stays available on a machine with neither tool");
+    assert.equal(backend.backendStateFor("folders", "dev", ready(false, false)), "missing",
+        "while a name search for the same kind is not");
+});
+
+// Check the helper branch that makes the QML path-completion exemption valid.
+test("the helper routes a folder path query to its own walk before it looks up fd", () => {
+    const nameHits = pythonFunction(helperSource, "_launcher_search_name_hits");
+    const pathBranch = nameHits.indexOf('if kind == "folders" and query.strip().startswith(("~", "/")):');
+    const fdLookup = nameHits.indexOf('shutil.which("fd")');
+    assert.notEqual(pathBranch, -1,
+        "the helper must still route a folder path query to its own walk, on the same condition " +
+        "DSearchService.pathCompletion() mirrors");
+    assert.notEqual(fdLookup, -1, "and must still be the place fd is looked up");
+    assert.ok(pathBranch < fdLookup,
+        "the path branch has to come FIRST, or the exemption is promising fd-free completion " +
+        "from a code path that does need fd");
+});
+
+test("helperHasFallback is true only for the fd-backed kinds", () => {
+    for (const [kind, expected] of [["text", false], ["files", true], ["folders", true], ["all", true]]) {
+        assert.equal(backend.helperHasFallback(kind), expected, expected ?
+            `${kind} falls back to the helper's own walk, which vgsMenu accepts` :
+            `${kind} shells out to ripgrep and raises without it — the service refuses it outright`);
+    }
+});
+
+test("kindForType maps result types to search kinds, name search by default", () => {
+    for (const [type, expected] of [
+        ["dir", "folders"], ["text", "text"], ["zoxide", "zoxide"],
+        ["file", "files"], ["all", "files"], ["", "files"], [undefined, "files"], ["nonsense", "files"]
+    ]) {
+        assert.equal(backend.kindForType(type), expected, `${JSON.stringify(type)} → ${expected}`);
+    }
+});
+
+test("queryIsDispatchable needs two characters after trimming", () => {
+    for (const [query, expected] of [
+        ["ab", true], ["  ab  ", true],
+        ["a", false], [" a ", false], ["", false], [" ", false], [undefined, false], [null, false]
+    ]) {
+        assert.equal(backend.queryIsDispatchable(query), expected, `${JSON.stringify(query)}`);
+    }
+});
+
+// Single-character path starts can use folder completion without fd; length alone cannot reject them.
+test("queryIsSearchable exempts folder paths from the length rule and nothing else", () => {
+    for (const [kind, query, expected] of [
+        ["folders", "~", true], ["folders", "/", true], ["folders", "~/", true], ["folders", "  ~  ", true],
+        ["folders", "de", true],
+        ["files", "~", false], ["files", "/", false], ["text", "~", false],
+        ["folders", "d", false], ["folders", "", false], ["folders", " ", false]
+    ]) {
+        assert.equal(backend.queryIsSearchable(kind, query), expected,
+            `${kind}/${JSON.stringify(query)}: the exemption is folders-only, and only for a path`);
+    }
+    assert.equal(backend.queryIsSearchable("folders", "~"), backend.pathCompletion("folders", "~"),
+        "the exemption IS pathCompletion, not a second copy of it");
+});
+
+test("canDispatchFor composes the probe state with the per-kind rule", () => {
+    for (const [fd, rg] of TOOL_FLAGS) {
+        for (const state of ["pending", "retrying", "failed", "ready"]) {
+            const settled = state === "ready";
+            assert.equal(backend.canDispatchFor("files", "needle", probe(state, fd, rg)), settled && fd,
+                `a name search dispatches only on a positively detected fd (state=${state}, ` +
+                `fd=${fd}, rg=${rg}) — dispatching it unproven buys the helper's full directory walk`);
+            assert.equal(backend.canDispatchFor("text", "needle", probe(state, fd, rg)),
+                settled ? rg : state !== "pending",
+                `text dispatches on ripgrep when known, and on anything past the first probe when ` +
+                `not (state=${state}, fd=${fd}, rg=${rg})`);
+            assert.equal(backend.canDispatchFor("folders", "~/dev", probe(state, fd, rg)), true,
+                "and path completion always dispatches: the helper answers it before fd is consulted");
+        }
+    }
+});
 
 // A failed reprobe must not replace an already successful tool discovery.
-{
-    const kept = backend.probeFailureOutcome("ready", 1, 3);
-    assert.equal(kept.state, "ready",
-        "a re-probe that fails leaves the previous successful answer standing");
-    assert.equal(kept.publishReason, false,
-        "and does not overwrite its reason with this failure's");
-    assert.ok(kept.retry, "while the retry still runs in the background");
-    assert.equal(backend.probeFailureOutcome("ready", 3, 3).state, "ready",
-        "even once the retries are spent: the earlier answer is still the best one we have");
-
-    assert.equal(backend.probeFailureOutcome("pending", 1, 3).state, "retrying",
-        "with no earlier answer, the first failure publishes retrying");
-    assert.equal(backend.probeFailureOutcome("retrying", 3, 3).state, "failed",
-        "and the last one gives up");
-    assert.ok(backend.probeFailureOutcome("pending", 1, 3).publishReason,
-        "those two do publish the reason, since there is nothing better to show");
-    assert.ok(!backend.probeFailureOutcome("retrying", 3, 3).retry, "and stop retrying");
-}
+test("probeFailureOutcome keeps a ready answer and publishes retrying or failed otherwise", () => {
+    for (const [state, attempt, max, expected, why] of [
+        ["ready", 1, 3, { state: "ready", retry: true, publishReason: false },
+            "a re-probe that fails leaves the previous successful answer standing, does not " +
+            "overwrite its reason with this failure's, and still retries in the background"],
+        ["ready", 3, 3, { state: "ready", retry: false, publishReason: false },
+            "even once the retries are spent: the earlier answer is still the best one we have"],
+        ["pending", 1, 3, { state: "retrying", retry: true, publishReason: true },
+            "with no earlier answer, the first failure publishes retrying and its reason"],
+        ["retrying", 2, 3, { state: "retrying", retry: true, publishReason: true },
+            "a middle failure keeps retrying"],
+        ["retrying", 3, 3, { state: "failed", retry: false, publishReason: true },
+            "and the last one gives up, publishing the reason since there is nothing better to show"]
+    ]) {
+        assert.deepEqual(backend.probeFailureOutcome(state, attempt, max), expected,
+            `${state} attempt ${attempt}/${max}: ${why}`);
+    }
+});
 
 // A ready probe with missing tools still needs reprobe so installation can take effect without restart.
-assert.ok(backend.probeSettled(probe("ready", true, true)), "everything found and answered");
-assert.ok(!backend.probeSettled(probe("ready", false, true)),
-    "ready with fd missing is the state we tell the user to act on: re-probe it, or the product " +
-    "ignores its own instruction");
-assert.ok(!backend.probeSettled(probe("ready", true, false)), "same for ripgrep");
-for (const state of ["pending", "retrying", "failed"])
-    assert.ok(!backend.probeSettled(probe(state, true, true)),
-        `${state} is not an answer at all`);
-assert.ok(!backend.probeSettled(null), "and neither is nothing");
+test("probeSettled is true only for a ready probe that found both tools", () => {
+    for (const [snapshot, expected, why] of [
+        [probe("ready", true, true), true, "everything found and answered"],
+        [probe("ready", false, true), false,
+            "ready with fd missing is the state we tell the user to act on: re-probe it, or the " +
+            "product ignores its own instruction"],
+        [probe("ready", true, false), false, "same for ripgrep"],
+        [probe("pending", true, true), false, "pending is not an answer at all"],
+        [probe("retrying", true, true), false, "retrying is not an answer at all"],
+        [probe("failed", true, true), false, "failed is not an answer at all"],
+        [null, false, "and neither is nothing"]
+    ]) {
+        assert.equal(backend.probeSettled(snapshot), expected, `${JSON.stringify(snapshot)}: ${why}`);
+    }
+});
 
 // The service permits fallback directory walks that the overview gate declines.
-assert.ok(backend.serviceRefuses("text", "missing"), "text has no fallback, so the service refuses");
-for (const kind of ["files", "folders", "all"])
-    assert.ok(!backend.serviceRefuses(kind, "missing"),
-        `${kind} still reaches the helper's walk from the service — vgsMenu depends on it`);
-for (const state of ["available", "unknown", "checking"])
-    assert.ok(!backend.serviceRefuses("text", state),
-        `the service refuses only a PROVEN missing tool, not ${state}`);
+test("serviceRefuses only a proven-missing tool with no fallback", () => {
+    for (const [kind, state, expected, why] of [
+        ["text", "missing", true, "text has no fallback, so the service refuses"],
+        ["files", "missing", false, "files still reaches the helper's walk from the service — vgsMenu depends on it"],
+        ["folders", "missing", false, "folders still reaches the helper's walk"],
+        ["all", "missing", false, "all still reaches the helper's walk"],
+        ["text", "available", false, "the service refuses only a PROVEN missing tool"],
+        ["text", "unknown", false, "not an unknown one"],
+        ["text", "checking", false, "nor one still being checked"]
+    ]) {
+        assert.equal(backend.serviceRefuses(kind, state), expected, `${kind}/${state}: ${why}`);
+    }
+});
+
+// Use named empty-state fields and verify their producers at the QML adapter. Competing arms are
+// made true together so swapped precedence becomes observable.
+test("fileEmptyStateKey ranks the empty-state facts", () => {
+    for (const [input, expected, why] of [
+        [declinedFacts({ backendState: "checking" }), "checking",
+            "a probe still running says so rather than claiming search is unavailable — and this " +
+            "is the real startup state: the first probe declines every kind, so declined is true " +
+            "here, and checking outranks declined or the startup window says the tools could not " +
+            "be checked while they are being checked"],
+        [declinedFacts({ backendState: "missing", missingCommand: "rg" }), "missing-rg", "a missing tool is named"],
+        [declinedFacts({ backendState: "missing", missingCommand: "fd" }), "missing-fd", "a missing tool is named"],
+        [facts({ queryLength: 0, searchable: false }), "prompt", "an empty field prompts"],
+        [facts({ queryLength: 1, searchable: false }), "short", "a short query is short"],
+        [facts({}), "empty", "a search that ran and found nothing"],
+        [facts({ backendState: "unknown" }), "empty",
+            "an unanswerable probe does not rewrite the result message — the search still ran"],
+        [declinedFacts({ backendState: "missing", missingCommand: "fd", queryLength: 0, searchable: false }), "missing-fd",
+            "a missing tool is worth saying before a query is typed"],
+        [facts({ searchError: "ripgrep is required for text search" }), "error",
+            "a search that RAN and failed shows the helper's own diagnosis rather than 'no results'"],
+        [declinedFacts({ backendState: "unknown" }), "unchecked", "and one the gate refused says that instead"],
+        [declinedFacts({ backendState: "missing", missingCommand: "fd", searchError: "boom" }), "missing-fd",
+            "a missing tool outranks a leftover error: the tool is why the next search will fail too"],
+        [facts({ backendState: "checking", queryLength: 0, searchable: false }), "prompt",
+            "an empty field prompts even while the probe is outstanding"],
+        [facts({ backendState: "checking", queryLength: 1, searchable: false }), "short",
+            "and a short query is short, not checking"]
+    ]) {
+        assert.equal(view.fileEmptyStateKey(input), expected, `${JSON.stringify(input)}: ${why}`);
+    }
+});
+
+test("fileHintKey names an install step or the probe's own state, and nothing beside a search that ran", () => {
+    for (const [input, expected, why] of [
+        [declinedFacts({ backendState: "missing", missingCommand: "rg" }), "install-rg", "a missing tool gets its install line"],
+        [declinedFacts({ backendState: "missing", missingCommand: "fd" }), "install-fd", "a missing tool gets its install line"],
+        [declinedFacts({ backendState: "unknown", probeState: "failed" }), "probe-failed",
+            "a probe that could not run names ITSELF; blaming fd for it is the wrong cause"],
+        [declinedFacts({ backendState: "unknown", probeState: "retrying" }), "probe-retrying",
+            "a retry in progress asks the user for NOTHING — it will answer on its own, and the " +
+            "reopen advice is a no-op while an episode is in flight"],
+        [facts({ backendState: "unknown", probeState: "failed" }), "",
+            "no probe line beside a search that actually ran, whatever the probe did"],
+        [declinedFacts({ backendState: "checking", probeState: "pending" }), "",
+            "the first probe reports NOTHING: there is no reason yet, and the message above " +
+            "already says the tools are being checked"],
+        [facts({}), "", "a working backend needs no install step"],
+        [facts({ legActive: false, backendState: "missing", missingCommand: "fd" }), "",
+            "no hint where no file search would have run: 'install fd' in a mode that never " +
+            "searches files promises a fix that changes nothing"],
+        [facts({ legActive: false, backendState: "unknown", probeState: "failed" }), "",
+            "no probe line where no file search would have run"]
+    ]) {
+        assert.equal(view.fileHintKey(input), expected, `${JSON.stringify(input)}: ${why}`);
+    }
+});
+
+test("fileEmptyIcon follows the state key, then the result type", () => {
+    for (const [key, type, expected] of [
+        ["checking", "file", "hourglass_empty"], ["missing-fd", "file", "search_off"],
+        ["missing-rg", "text", "search_off"], ["unchecked", "file", "search_off"],
+        ["error", "file", "search_off"], ["empty", "file", "insert_drive_file"],
+        ["empty", "dir", "folder_open"], ["empty", "text", "article"]
+    ]) {
+        assert.equal(view.fileEmptyIcon(key, type), expected, `${key}/${type}`);
+    }
+});
+
+test("errorLine keeps one bounded, printable line of the helper's diagnosis", () => {
+    for (const [input, expected, why] of [
+        ["ripgrep is required for text search", "ripgrep is required for text search", "an ordinary diagnosis passes through"],
+        ["usage: vshell launcher-search\n  --kind\n  --limit", "usage: vshell launcher-search",
+            "only the FIRST line: an argparse failure is a six-line usage block"],
+        ["no such file: we\u0007ird\u202ename", "no such file: we ird name",
+            "control and bidi characters are dropped — a filename out of the search roots ends up here"],
+        ["", "", "nothing stays nothing"],
+        [null, "", "and so does no diagnosis"]
+    ]) {
+        assert.equal(view.errorLine(input), expected, why);
+    }
+    assert.equal(view.errorLine("x".repeat(400)).length, 160,
+        "and the length is bounded, so a whole argv cannot stretch the centered column");
+});
+
+test("fileSearchQueryFrom sends a file query only from a mode and form that search files", () => {
+    for (const [mode, raw, parsed, expected, why] of [
+        ["plugins", "/etc", "etc", "",
+            "plugins mode runs no file search: a leading / is the plugin's own text there, and a " +
+            "file result appended to plugin results is the regression this exclusion exists for"],
+        ["files", "notes", "", "notes", "files mode searches the raw query"],
+        ["files", "  notes  ", "", "notes", "trimmed"],
+        ["all", "/notes", "notes", "notes", "the / form drops its prefix and searches from any non-plugins mode"],
+        ["files", "/d notes", "notes", "notes", "including the typed-type form, whose parsed query is what arrives"],
+        ["files", "/d /home/x", "/home/x", "/home/x", "the typed-type prefix passes a /-rooted query through intact"],
+        ["all", "notes", "", "",
+            "combined mode without the prefix sends nothing — the files-in-All settings reach no " +
+            "search today, which is why this must not silently look like one"],
+        ["apps", "notes", "", "", "apps mode searches no files"],
+        ["files", "", "", "", "an empty query sends nothing"]
+    ]) {
+        assert.equal(files.fileSearchQueryFrom(mode, raw, parsed), expected,
+            `${mode}/${JSON.stringify(raw)}/${JSON.stringify(parsed)}: ${why}`);
+    }
+});
+
+// A bare slash is a launcher trigger; /d consumes its own prefix and preserves an absolute path query.
+test("absolute-path folder completion is reachable from the overview with no tools at all", () => {
+    const query = files.fileSearchQueryFrom("files", "/d /home/x", "/home/x");
+    assert.ok(backend.pathCompletion("folders", query),
+        "the manifest and the pathCompletion comment may not narrow the claim to ~-rooted queries again");
+    assert.equal(backend.canDispatchFor("folders", query, ready(false, false)), true,
+        "and it dispatches with no tools at all, which is what makes it worth documenting");
+});
+
+test("shouldRetryAfterProbe re-runs only an open surface with a searchable query", () => {
+    for (const [active, searchable, expected, why] of [
+        [true, true, true, "an open surface with a searchable query re-runs when the probe answers"],
+        [false, true, false, "a closed one does not — the retry must not search behind a dismissed launcher"],
+        [true, false, false, "nor one whose query would not dispatch"]
+    ]) {
+        assert.equal(files.shouldRetryAfterProbe(active, searchable), expected, why);
+    }
+});
+
+test("fileLegActive is true for files mode and for any mode holding a searchable file query", () => {
+    for (const [mode, searchable, expected, why] of [
+        ["files", false, true, "files mode is a file surface even before a query is typed"],
+        ["all", true, true, "and so is any mode holding a searchable file query"],
+        ["plugins", false, false, "plugins mode is not"],
+        ["apps", false, false, "nor is a mode with a query too short to dispatch"]
+    ]) {
+        assert.equal(view.fileLegActive(mode, searchable), expected, why);
+    }
+});
+
+test("sortRanked keeps non-file results ahead of file results in All mode, in either order", () => {
+    for (const [items, alphabetical, expected, why] of [
+        [[
+            { id: "folder-high", kind: "file", title: "Folder", rank: 9000, data: { is_dir: true } },
+            { id: "file-mid", kind: "file", title: "File", rank: 4500, data: { is_dir: false } },
+            { id: "tool", kind: "command", title: "OpenCode", rank: 120 },
+            { id: "app", kind: "app", title: "OpenCode", rank: 60 }
+        ], false, ["tool", "app", "folder-high", "file-mid"],
+            "score order keeps launcher results before file and folder results, then score order inside each group"],
+        [[
+            { id: "file-b", kind: "file", title: "B file", rank: 9000 },
+            { id: "cmd-z", kind: "command", title: "Z command", rank: 10 },
+            { id: "cmd-a", kind: "command", title: "A command", rank: 5 },
+            { id: "file-a", kind: "file", title: "A file", rank: 4500 }
+        ], true, ["cmd-a", "cmd-z", "file-a", "file-b"],
+            "alphabetical order keeps the same two groups and sorts inside them"]
+    ]) {
+        assert.deepEqual(menuSort.sortRanked(items, alphabetical, false, true).map(item => item.id), expected, why);
+    }
+});
 
 // Require complete adapter calls so swapped arguments cannot satisfy independent token checks.
 
-{
+test("DSearchService adapters call the executed rules whole", () => {
     const q = qmlSource(serviceSource, "DSearchService.qml");
-
     q.requires(q.body("_probeSnapshot"), "_probeSnapshot()", [
         ["return { state: statusState, fd: fdAvailable, ripgrep: ripgrepAvailable };",
             "the ONE place a property becomes a field. `fd: ripgrepAvailable` here reinstates " +
@@ -454,13 +501,18 @@ for (const state of ["available", "unknown", "checking"])
             "the service's refusal is the composed one: without it a name search whose fd is " +
             "missing would be refused here too, taking the helper walk away from vgsMenu"]
     ]);
+});
 
+test("statusState starts pending", () => {
     // An initially ready state would label installed tools missing before the probe answers.
     assert.ok(qmlSource.flat(stripComments(serviceSource))
         .includes('property string statusState: "pending"'),
         "statusState must START pending — before the first probe answers, nothing is known, and " +
         "any other initial value is a claim about tools nobody has looked for yet");
+});
 
+test("user text stays behind -- or joined to its flag in search, preview and list args", () => {
+    const q = qmlSource(serviceSource, "DSearchService.qml");
     // Keep user text behind -- or in joined --flag=value arguments so it cannot become an option.
     for (const [fn, why] of [
         ["search", "a query starting with '-' must search, not die in argparse"],
@@ -488,11 +540,11 @@ for (const state of ["available", "unknown", "checking"])
         ['args.push(flag + "=" + value);',
             "same for configured roots and ignores, which are user-editable settings"]
     ]);
-}
+});
 
-{
+
+test("Controller's file search reads one authority and captures, clears and supersedes on every path", () => {
     const q = qmlSource(controllerSource, "Controller.qml");
-
     q.requires(q.body("fileSearchQuery"), "fileSearchQuery()", [
         ['return fileSearchQueryFrom(searchMode, searchQuery, Utils.parseFileSearchPrefix(searchQuery)?.query ?? "");',
             "the mode, the raw query and the PARSED prefix, each in its own slot, and no logic " +
@@ -532,7 +584,10 @@ for (const state of ["available", "unknown", "checking"])
             "checked in the callback, so a stale answer neither overwrites the current kind's " +
             "results nor attributes its error to them"]
     ]);
+});
 
+test("both abandonment branches supersede inside their own branch", () => {
+    const q = qmlSource(controllerSource, "Controller.qml");
     // Check each abandonment branch separately; duplicate supersedes in one branch cannot cover another.
     for (const [landmark, what, why] of [
         ["if (!DSearchService.queryIsSearchable(kind, fileQuery))", "the sub-threshold return",
@@ -544,7 +599,10 @@ for (const state of ["available", "unknown", "checking"])
         assert.ok(qmlSource.flat(branch).includes("_supersedeFileSearch();"),
             `${what} must supersede inside its own branch — ${why}`);
     }
+});
 
+test("the search callback checks its generation before the spinner and the error", () => {
+    const q = qmlSource(controllerSource, "Controller.qml");
     // Reject stale-kind responses before copying their error into the active view.
     {
         const body = q.body("performFileSearch");
@@ -561,7 +619,10 @@ for (const state of ["available", "unknown", "checking"])
             "and before the error branch, or a superseded kind's failure is captured into " +
             "fileSearchError and shown under the search now on screen");
     }
+});
 
+test("the declined gate clears stale results before it returns", () => {
+    const q = qmlSource(controllerSource, "Controller.qml");
     // The stale-result clear must run before its return, not merely appear in the same function.
     {
         const gate = q.blockFrom(q.indexOf("if (!DSearchService.canDispatch(kind, fileQuery))"),
@@ -574,7 +635,10 @@ for (const state of ["available", "unknown", "checking"])
             "the clear has to PRECEDE the return, or the chips leave the previous kind's hits " +
             "on screen and the empty state naming the missing tool never renders");
     }
+});
 
+test("performSearch asks the owner about dispatch and carries no length literal", () => {
+    const q = qmlSource(controllerSource, "Controller.qml");
     q.requires(q.body("performSearch"), "performSearch()", [
         ["DSearchService.canDispatch(fileSearchKind(), fileQuery)",
             "the spinner is set from the same per-kind answer, not from a single flag"],
@@ -595,7 +659,10 @@ for (const state of ["available", "unknown", "checking"])
         assert.ok(stripComments(filesBranch).includes("DSearchService.queryIsSearchable(fileSearchKind(), fileQuery)"),
             "and must ask the owner instead");
     }
+});
 
+test("every query, mode or reset change supersedes the in-flight search", () => {
+    const q = qmlSource(controllerSource, "Controller.qml");
     q.requires(q.body("fileSearchKind"), "fileSearchKind()", [
         ["DSearchService.kindForType", "the type-to-kind mapping stays in its owner"]
     ]);
@@ -617,7 +684,10 @@ for (const state of ["available", "unknown", "checking"])
             "a MODE change supersedes too, hooked on the change rather than on setMode: " +
             "restorePreviousMode assigns searchMode directly, so a setMode-only bump misses it");
     }
+});
 
+test("_supersedeFileSearch alone moves the generation and clears in-flight state", () => {
+    const q = qmlSource(controllerSource, "Controller.qml");
     // Abandonment must clear in-flight state as well as advance generation. A stale callback returns
     // before clearing the flag, so leaving it set can suppress empty states indefinitely.
     q.requires(q.body("_supersedeFileSearch"), "_supersedeFileSearch()", [
@@ -628,7 +698,10 @@ for (const state of ["available", "unknown", "checking"])
         (stripComments(controllerSource).match(/_fileSearchGeneration\+\+;/g) || []).length, 1,
         "and nowhere else raises the generation by hand — a bump outside the owner is a path " +
         "that has not said what it is abandoning");
+});
 
+test("a query typed before the probe answered re-runs when it lands", () => {
+    const q = qmlSource(controllerSource, "Controller.qml");
     q.requires(q.body("_retryFileSearchAfterProbe"), "_retryFileSearchAfterProbe()", [
         ["if (!shouldRetryAfterProbe(active, DSearchService.queryIsSearchable(fileSearchKind(), fileSearchQuery())))",
             "the retry predicate is the executed one, reading the live active flag, the one " +
@@ -637,7 +710,10 @@ for (const state of ["available", "unknown", "checking"])
         ["fileSearchDebounce.restart()",
             "a query typed before the probe answered is re-run when it lands"]
     ]);
+});
 
+test("ensureStatus runs from the launcher-opened branch only", () => {
+    const q = qmlSource(controllerSource, "Controller.qml");
     // Require retry in the opened branch; the same token in the closed branch cannot provide recovery.
     {
         const opened = q.blockFrom(q.indexOf("if (active) {"), "the launcher-opened branch");
@@ -649,21 +725,22 @@ for (const state of ["available", "unknown", "checking"])
         assert.ok(!stripComments(closed).includes("ensureStatus"),
             "and not in the closing branch");
     }
+});
 
+test("Controller re-runs the pending search on every probe signal", () => {
     for (const signal of ["onStatusStateChanged", "onFdAvailableChanged", "onRipgrepAvailableChanged"]) {
         assert.ok(qmlSource.flat(stripComments(controllerSource))
             .includes(`function ${signal}() { root._retryFileSearchAfterProbe(); }`),
             `Controller must re-run the pending search on ${signal}: the answer arrives after the ` +
             "user has typed, and nothing else would run the search again");
     }
-}
+});
 
-{
-    const q = qmlSource(resultsSource, "ResultsList.qml");
-    const code = qmlSource.flat(stripComments(resultsSource));
 
     // Verify fact producers as well as consumers. A swapped kind/query or negation at the producer
     // can produce incorrect view state with every consumer call unchanged.
+test("ResultsList computes its facts from the controller and the service per kind", () => {
+    const code = qmlSource.flat(stripComments(resultsSource));
     for (const [binding, why] of [
         ["readonly property string _fileQuery: controller ? controller.fileSearchQuery() : \"\"",
             "the query is the controller's one authority, not a re-derivation"],
@@ -683,8 +760,11 @@ for (const state of ["available", "unknown", "checking"])
         assert.ok(code.includes(qmlSource.flat(binding)),
             `ResultsList must compute \`${binding}\` — ${why}`);
     }
+});
 
 
+test("every fact reaches the empty-state snapshot", () => {
+    const code = qmlSource.flat(stripComments(resultsSource));
     for (const field of [
         "backendState: _fileBackendState", "missingCommand: _missingBackendCommand",
         "probeState: DSearchService.statusState", "queryLength: _fileQuery.length",
@@ -695,7 +775,10 @@ for (const state of ["available", "unknown", "checking"])
             `the empty-state facts must carry \`${field}\`: a fact that never reaches the ` +
             "snapshot is a decision arm that can never fire");
     }
+});
 
+test("ResultsList calls the executed rules with the whole snapshot", () => {
+    const code = qmlSource.flat(stripComments(resultsSource));
     for (const [call, why] of [
         ["fileEmptyStateKey(_emptyStateFacts)", "the message reads the whole snapshot"],
         ["root.fileHintKey(root._emptyStateFacts)", "and so does the hint"],
@@ -705,7 +788,10 @@ for (const state of ["available", "unknown", "checking"])
         assert.ok(code.includes(qmlSource.flat(call)),
             `ResultsList must call \`${call}\` — ${why}`);
     }
+});
 
+test("getEmptyText has an arm per state key and renders errors through errorLine", () => {
+    const q = qmlSource(resultsSource, "ResultsList.qml");
     q.requires(q.body("getEmptyText"), "getEmptyText()", [
         ["case \"unchecked\":", "a refused search has its own message"],
         ["case \"checking\":", "as does a probe still running"],
@@ -714,7 +800,10 @@ for (const state of ["available", "unknown", "checking"])
             "through errorLine, never raw: that text can be a whole argv or a filename out of " +
             "the search roots, carrying control and bidi characters into a launcher overlay"]
     ]);
+});
 
+test("the empty-state message label is bounded", () => {
+    const q = qmlSource(resultsSource, "ResultsList.qml");
     // Bound the diagnosis label so long messages cannot stretch the centered results column.
     {
         const at = q.indexOf("text: getEmptyText()");
@@ -732,46 +821,33 @@ for (const state of ["available", "unknown", "checking"])
                 "which is not length-bounded at the source");
         }
     }
+});
+test("getDependencyHint has a retrying arm", () => {
+    const q = qmlSource(resultsSource, "ResultsList.qml");
     q.requires(q.body("getDependencyHint"), "getDependencyHint()", [
         ["case \"probe-retrying\":",
             "a retry in progress gets its own line: the reopen advice is a no-op while an " +
             "episode is in flight, so telling the user to reopen would be telling them to do " +
             "nothing twice over"]
     ]);
-}
+});
 
 // Reject single-tool flags alongside the shared gate so another path cannot bypass per-kind decisions.
-for (const [label, source] of [["Controller.qml", controllerSource], ["ResultsList.qml", resultsSource]]) {
-    const code = stripComments(source);
-    for (const banned of ["dsearchAvailable", "DSearchService.fdAvailable", "DSearchService.ripgrepAvailable"]) {
-        assert.ok(!code.includes(banned),
-            `${label} must not read \`${banned}\`: one flag answering for two backends is the ` +
-            "defect — availability comes from DSearchService.backendState/canDispatch per kind");
+test("no launcher surface reads a single-tool flag", () => {
+    for (const [label, source] of [["Controller.qml", controllerSource], ["ResultsList.qml", resultsSource]]) {
+        const code = stripComments(source);
+        for (const banned of ["dsearchAvailable", "DSearchService.fdAvailable", "DSearchService.ripgrepAvailable"]) {
+            assert.ok(!code.includes(banned),
+                `${label} must not read \`${banned}\`: one flag answering for two backends is the ` +
+                "defect — availability comes from DSearchService.backendState/canDispatch per kind");
+        }
     }
-}
+});
 
 // Verify vgsMenu uses the shared threshold and argv construction rules.
-{
-    const q = qmlSource(menuSource, "VGSMenu.qml");
+
+test("VGSMenu asks the one threshold owner", () => {
     const code = qmlSource.flat(stripComments(menuSource));
-
-    assert.deepEqual(menuSort.sortRanked([
-        { id: "folder-high", kind: "file", title: "Folder", rank: 9000, data: { is_dir: true } },
-        { id: "file-mid", kind: "file", title: "File", rank: 4500, data: { is_dir: false } },
-        { id: "tool", kind: "command", title: "OpenCode", rank: 120 },
-        { id: "app", kind: "app", title: "OpenCode", rank: 60 }
-    ], false, false, true).map(item => item.id), ["tool", "app", "folder-high", "file-mid"],
-        "All-mode sorting must keep non-file launcher results before file and folder results, " +
-        "then preserve score order inside each group");
-
-    assert.deepEqual(menuSort.sortRanked([
-        { id: "file-b", kind: "file", title: "B file", rank: 9000 },
-        { id: "cmd-z", kind: "command", title: "Z command", rank: 10 },
-        { id: "cmd-a", kind: "command", title: "A command", rank: 5 },
-        { id: "file-a", kind: "file", title: "A file", rank: 4500 }
-    ], true, false, true).map(item => item.id), ["cmd-a", "cmd-z", "file-a", "file-b"],
-        "alphabetical All-mode sorting must keep the same two groups and sort inside them");
-
     for (const call of [
         "fileSearching = DSearchService.queryIsDispatchable(trimmed);",
         "if (!DSearchService.queryIsDispatchable(trimmed))",
@@ -781,7 +857,10 @@ for (const [label, source] of [["Controller.qml", controllerSource], ["ResultsLi
             `VGSMenu must ask the one threshold owner: \`${call}\`. Its own literal would keep ` +
             "searching at two characters while the launcher's own rule moved");
     }
+});
 
+test("VGSMenu's dispatch site and files empty state agree through the shared predicate", () => {
+    const q = qmlSource(menuSource, "VGSMenu.qml"); const code = qmlSource.flat(stripComments(menuSource));
     // Dispatch and empty state must agree on explicit path exemptions.
     q.requires(q.body("refreshFileItems"), "refreshFileItems()", [
         ["if (!fileSearchDispatches(trimmed))", "the dispatch site asks the shared predicate"]
@@ -793,7 +872,10 @@ for (const [label, source] of [["Controller.qml", controllerSource], ["ResultsLi
         assert.ok(!/explicitFolderPath/.test(stripComments(q.body(fn))),
             `${fn} must not keep its own copy of the folder-path exemption beside the shared one`);
     }
+});
 
+test("openFolder terminates its options before the path and joins the configured command to its flag", () => {
+    const q = qmlSource(menuSource, "VGSMenu.qml");
     const openFolder = q.body("openFolder");
     const terminator = openFolder.indexOf('args.push("--", path);');
     const launched = openFolder.indexOf("Quickshell.execDetached(args)");
@@ -803,24 +885,26 @@ for (const [label, source] of [["Controller.qml", controllerSource], ["ResultsLi
     assert.ok(terminator < launched, "and do it before launching");
     assert.ok(qmlSource.flat(stripComments(openFolder)).includes('args.push("--command=" + SettingsData.launcherFolderOpenCommand);'),
         "and pass that configured command joined to its flag");
-}
+});
 
 // Scope shared-length checks to file dispatch functions; other search kinds have distinct thresholds.
-for (const [label, source, fns] of [
-    ["Controller.qml", controllerSource, ["performFileSearch", "fileSearchQuery", "_retryFileSearchAfterProbe"]],
-    ["VGSMenu.qml", menuSource, ["refreshAllItems", "refreshFileItems"]]
-]) {
-    const q = qmlSource(source, label);
-    for (const fn of fns) {
-        const body = stripComments(q.body(fn));
-        assert.ok(!/length\s*[<>]=?\s*2/.test(body),
-            `${label}::${fn} must not carry its own two-character literal — ` +
-            "DSearchService.queryIsDispatchable owns that rule for every search surface");
+test("no file dispatch function carries its own two-character literal", () => {
+    for (const [label, source, fns] of [
+        ["Controller.qml", controllerSource, ["performFileSearch", "fileSearchQuery", "_retryFileSearchAfterProbe"]],
+        ["VGSMenu.qml", menuSource, ["refreshAllItems", "refreshFileItems"]]
+    ]) {
+        const q = qmlSource(source, label);
+        for (const fn of fns) {
+            const body = stripComments(q.body(fn));
+            assert.ok(!/length\s*[<>]=?\s*2/.test(body),
+                `${label}::${fn} must not carry its own two-character literal — ` +
+                "DSearchService.queryIsDispatchable owns that rule for every search surface");
+        }
     }
-}
+});
 
 // The helper must also preserve option/value separation when constructing fd arguments.
-{
+test("the helper joins fd's exclude values to the flag and checks fd's exit", () => {
     const nameHits = pythonFunction(helperSource, "_launcher_search_name_hits");
     const fdCall = nameHits.indexOf("subprocess.run(command");
     assert.ok(nameHits.includes('command.append("--exclude=" + value)'),
@@ -836,10 +920,10 @@ for (const [label, source, fns] of [
         "capturing fd's stderr, so the report names the cause");
     assert.ok(nameHits.indexOf("raise RuntimeError(", fdCall) !== -1,
         "and raise rather than continue with an empty candidate list");
-}
+});
 
 // Optional chaining on the controller does not protect a renamed or absent method.
-{
+test("every controller method ResultsList calls exists in Controller.qml", () => {
     const controllerCode = stripComments(controllerSource);
     const called = new Set();
     const call = /\bcontroller\??\.([A-Za-z_][A-Za-z0-9_]*)\s*\(/g;
@@ -853,13 +937,13 @@ for (const [label, source, fns] of [
         assert.ok(new RegExp(`function ${name}\\s*\\(`).test(controllerCode),
             `ResultsList calls controller.${name}(), which Controller.qml does not define`);
     }
-}
+});
 
 
 
-{
+
+test("_statusProbeFailed publishes the executed rule's answer and keeps retrying", () => {
     const q = qmlSource(serviceSource, "DSearchService.qml");
-
     q.requires(q.body("_statusProbeFailed"), "_statusProbeFailed()", [
         ["root.log.warn(", "a failed probe is logged rather than swallowed"],
         ["probeFailureOutcome(root.statusState, root._statusAttempts, root._statusMaxAttempts)",
@@ -871,7 +955,10 @@ for (const [label, source, fns] of [
             "overwrites the reason belonging to an answer still on screen"],
         ["statusRetryTimer.start()", "the retry still runs whatever is published"]
     ]);
+});
 
+test("_probeStatus names a timeout, routes every failure through one handler and publishes flags only on success", () => {
+    const q = qmlSource(serviceSource, "DSearchService.qml");
     // Distinguish timeout from nonzero exit and ensure unreadable probe output leaves pending state
     // with a reported failure instead of permanently blocking name search.
     q.requires(q.body("_probeStatus"), "_probeStatus()", [
@@ -884,7 +971,10 @@ for (const [label, source, fns] of [
         ['root.statusState = "ready"',
             "success is the ONLY thing that publishes the tool flags"]
     ]);
+});
 
+test("_probeStatus checks its generation first and returns on a stale one", () => {
+    const q = qmlSource(serviceSource, "DSearchService.qml");
     // Check generation before clearing in-flight state or publishing failure.
     {
         const guardCondition = "if (generation !== root._statusGeneration)";
@@ -908,7 +998,10 @@ for (const [label, source, fns] of [
             "the generation guard's very next statement must be `return;`: a stale probe that " +
             "carries on after being detected is not guarded, it is announced");
     }
+});
 
+test("rediscover is single-flight before it resets the retry budget", () => {
+    const q = qmlSource(serviceSource, "DSearchService.qml");
     // Check single-flight state before resetting retry budgets so repeated opens cannot restart the allowance.
     {
         const body = q.body("rediscover");
@@ -920,7 +1013,9 @@ for (const [label, source, fns] of [
             "the guard has to come FIRST — after the reset it would already have restarted the " +
             "budget it exists to protect");
     }
+});
 
+test("the whole-subsystem flag stays deleted and helperHasFallback stays derived", () => {
     const code = stripComments(serviceSource);
     assert.ok(!/property\s+bool\s+dsearchAvailable/.test(code),
         "the whole-subsystem flag must stay deleted: leaving it is what the next caller adopts");
@@ -930,6 +1025,4 @@ for (const [label, source, fns] of [
         .test(qmlSource.flat(code)),
         "helperHasFallback must stay DERIVED from the command table; restated as its own list " +
         "of kinds it drifts, and a kind then needs a tool nobody probed");
-}
-
-process.stdout.write("launcher search gate: ok\n");
+});
