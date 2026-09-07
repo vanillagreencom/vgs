@@ -581,3 +581,19 @@ test("every provider mark fills its own box, so no provider's slot looks smaller
             "icon at one call site");
     }
 });
+
+test("the bar draws in the shell's own widget colours, not this plugin's idea of them", () => {
+    for (const which of ["horizontalBarPill", "verticalBarPill"]) {
+        const pill = blockFrom(indexOf(which + ":"), which);
+        assert.ok(pill.includes("Theme.widgetIconColor"),
+            `${which} takes the icon colour every other bar widget takes, or this widget's marks ` +
+            "sit on the bar at a different brightness from its neighbours'");
+        assert.ok(pill.includes("Theme.widgetTextColor"),
+            `${which} takes the same token for a number carrying no severity colour`);
+        // The two orientations were on different tokens, which is how the horizontal one came
+        // to render dimmer than the vertical one for the same payload.
+        assert.ok(!/Theme\.surfaceVariantText|Theme\.surfaceText/.test(pill),
+            `${which} reaches past the widget tokens to a surface one: those do not follow the ` +
+            "bar's own colour mode, and the two orientations then disagree about one payload");
+    }
+});
