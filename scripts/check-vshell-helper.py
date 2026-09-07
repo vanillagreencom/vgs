@@ -11,6 +11,7 @@ import json
 import math
 import os
 import pwd
+import signal
 import re
 import shutil
 import socket
@@ -787,7 +788,6 @@ def test_system_font_size_targets():
 
 def test_hyprland_layout_payload():
     script, meta = helper._hyprland_layout_payload({
-        "surfaceGeometryTarget": "sync",
         "cornerRadius": 99,
         "surfaceBorderWidth": 12,
         "hyprlandLayoutGapsOverride": 6,
@@ -795,7 +795,6 @@ def test_hyprland_layout_payload():
         "hyprlandResizeOnBorder": False,
         "configVersion": 15,
     })
-    assert_equal(meta["target"], "sync", "layout target")
     assert_equal(meta["radius"], 20, "layout radius clamp")
     assert_equal(meta["border"], 10, "layout border clamp")
     assert_equal(meta["gaps"], {"gaps_in": 6, "gaps_out": 8}, "layout gaps")
@@ -803,24 +802,25 @@ def test_hyprland_layout_payload():
     if "rounding = 20" not in script or "border_size = 10" not in script:
         raise AssertionError("layout script should include clamped shape")
 
-    script, meta = helper._hyprland_layout_payload({
+    # One radius and one border thickness reach both surfaces. A retired target or override
+    # left in a settings file must not resurrect a compositor shape of its own.
+    _, meta = helper._hyprland_layout_payload({
         "surfaceGeometryTarget": "quickshell",
         "cornerRadius": 11,
         "surfaceBorderWidth": 2,
+        "hyprlandLayoutRadiusOverride": 4,
+        "hyprlandLayoutBorderSize": 7,
     })
-    assert_equal(meta["manageHyprlandShape"], False, "quickshell target should not manage Hyprland shape")
-    assert_equal(meta["radius"], None, "quickshell target radius")
-    if "rounding =" in script or "border_size =" in script:
-        raise AssertionError("quickshell target should not render Hyprland shape settings")
+    assert_equal(meta["manageHyprlandShape"], True, "the compositor shape is always managed")
+    assert_equal(meta["radius"], 11, "the shell radius reaches the compositor")
+    assert_equal(meta["border"], 2, "the shell border reaches the compositor")
 
     _, meta = helper._hyprland_layout_payload({
-        "surfaceGeometryTarget": "hyprland",
         "cornerRadius": 12,
-        "hyprlandLayoutRadiusOverride": 4,
         "hyprlandResizeOnBorder": False,
         "configVersion": 14,
     })
-    assert_equal(meta["radius"], 4, "hyprland override radius")
+    assert_equal(meta["radius"], 12, "the shell radius with no override present")
     assert_equal(meta["resizeOnBorder"], True, "legacy resize_on_border false should be upgraded")
 
 
@@ -953,6 +953,30 @@ def test_chromium_policy_refuses_a_sandbox_home():
         assert_equal(ran.called, False, "a sandboxed shell must not reach sudo at all")
 
     with_temp_home(run)
+
+
+def test_theme_hooks_stay_out_of_the_login_session():
+    """A shell on a throwaway HOME must not restyle the login session's running apps.
+
+    The nested smoke sandbox and the preview capture run a full shell against a temporary
+    home with its own default theme. Its hooks find kitty, btop and ghostty through /proc,
+    and tmux and nvim through runtime paths named by the real uid, so without a guard the
+    user's terminals were repainted from a test's palette.
+    """
+    real_home = os.environ.get("HOME")
+    try:
+        os.environ["HOME"] = str(Path(pwd.getpwuid(os.getuid()).pw_dir))
+        assert_equal(helper._sandboxed_home(), False, "the login user's own home is not a sandbox")
+        for sandbox in ("/tmp/vshell-smoke.AbCdEf/home", "/var/tmp/agents/vgs273.XyZ/home"):
+            os.environ["HOME"] = sandbox
+            assert_equal(helper._sandboxed_home(), True, f"sandbox home {sandbox}")
+            assert_equal(helper.process_pids_by_comm("kitty"), [], "no host process is reachable")
+            assert_equal(helper.tmux_sockets(), [], "no host tmux socket is reachable")
+            assert_equal(helper.nvim_sockets(), [], "no host nvim socket is reachable")
+            result = helper.signal_reload_hook("kitty-reload", "kitty", signal.SIGUSR1)
+            assert_equal(result["skipped"], True, "the reload hook reports a skip, not a signal")
+    finally:
+        _restore_env("HOME", real_home)
 
 
 def test_vshell_blur_cli_contract():
@@ -5830,6 +5854,7 @@ def main():
     test_hyprland_layout_payload()
     test_hyprland_blur_script()
     test_chromium_policy_refuses_a_sandbox_home()
+    test_theme_hooks_stay_out_of_the_login_session()
     test_vshell_blur_cli_contract()
     test_generated_theme_consumer_wiring()
     test_shell_only_theme_preview()

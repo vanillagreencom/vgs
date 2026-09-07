@@ -39,7 +39,7 @@ const settingsDataSource = fs.readFileSync(settingsDataPath, "utf8");
 
 const barWidgets = loadModule(path.join(settingsDir, "BarWidgets.js"), {});
 
-const TARGET_VERSION = 24;
+const TARGET_VERSION = 25;
 
 // Anchor the seed and test version to the runtime migration version.
 // Comparing only test constants can leave a new runtime migration untested.
@@ -128,12 +128,9 @@ assertDefaultParity([
   "popupTransparency",
   "popupBlurStrength",
   "popupGlassEffect",
-  "surfaceGeometryTarget",
   "surfaceBorderWidth",
   "cornerRadius",
   "controlRadius",
-  "hyprlandLayoutRadiusOverride",
-  "hyprlandLayoutBorderSize",
   "hyprlandResizeOnBorder",
   "fontFamily",
   "monoFontFamily",
@@ -348,6 +345,8 @@ const legacyThemeKeysMigrated = migrate({
 assert.strictEqual(legacyThemeKeysMigrated.currentThemeName, "tokyo-night");
 assertMissing(legacyThemeKeysMigrated, ["customThemeFile", "registryThemeVariants"]);
 
+// Surface shape collapsed to one radius and one border thickness. A file that shaped both
+// surfaces alike keeps its values; the target and the compositor-only pair are retired.
 const surfaceGeometryMigrated = migrate({
   configVersion: 14,
   cornerRadius: 18,
@@ -355,24 +354,40 @@ const surfaceGeometryMigrated = migrate({
   hyprlandLayoutBorderSize: -1,
   hyprlandResizeOnBorder: false,
 });
-assert.strictEqual(surfaceGeometryMigrated.surfaceGeometryTarget, "sync");
+assert.strictEqual(surfaceGeometryMigrated.cornerRadius, 18);
 assert.strictEqual(surfaceGeometryMigrated.surfaceBorderWidth, 1);
 assert.strictEqual(surfaceGeometryMigrated.hyprlandResizeOnBorder, true);
+assertMissing(surfaceGeometryMigrated, [
+  "surfaceGeometryTarget",
+  "hyprlandLayoutRadiusOverride",
+  "hyprlandLayoutBorderSize",
+  "niriLayoutRadiusOverride",
+  "niriLayoutBorderSize",
+]);
 
-const hyprlandOnlyGeometryMigrated = migrate({
+// A file whose windows were shaped only by the compositor override keeps what it showed on
+// screen: the override becomes the one radius, rather than silently reverting to the shell
+// value the user never saw on their windows.
+const compositorOnlyGeometryMigrated = migrate({
   configVersion: 14,
   cornerRadius: 12,
   hyprlandLayoutRadiusOverride: 4,
-});
-assert.strictEqual(hyprlandOnlyGeometryMigrated.surfaceGeometryTarget, "hyprland");
-
-const hyprlandBorderGeometryMigrated = migrate({
-  configVersion: 14,
-  cornerRadius: 12,
-  hyprlandLayoutRadiusOverride: 12,
   hyprlandLayoutBorderSize: 3,
 });
-assert.strictEqual(hyprlandBorderGeometryMigrated.surfaceGeometryTarget, "hyprland");
+assert.strictEqual(compositorOnlyGeometryMigrated.cornerRadius, 4);
+assert.strictEqual(compositorOnlyGeometryMigrated.surfaceBorderWidth, 3);
+assertMissing(compositorOnlyGeometryMigrated, ["surfaceGeometryTarget", "hyprlandLayoutRadiusOverride"]);
+
+// A file that already targeted the shell keeps the shell values.
+const quickshellGeometryMigrated = migrate({
+  configVersion: 24,
+  surfaceGeometryTarget: "quickshell",
+  cornerRadius: 7,
+  surfaceBorderWidth: 2,
+  hyprlandLayoutRadiusOverride: 19,
+});
+assert.strictEqual(quickshellGeometryMigrated.cornerRadius, 7);
+assert.strictEqual(quickshellGeometryMigrated.surfaceBorderWidth, 2);
 
 const legacyLauncherMigrated = migrate({
   configVersion: 18,
@@ -835,7 +850,7 @@ for (const from of [1, 19, 21, 22]) {
   const walked = migrate({ configVersion: from });
   assert.strictEqual(
     walked.configVersion,
-    24,
+    TARGET_VERSION,
     `a v${from} config must land on the current schema version`
   );
   assert.deepStrictEqual(
@@ -865,7 +880,7 @@ const collapsedViewMode = migrate({
   configVersion: 23,
   launcherMenuViewModes: { apps: "grid", files: "list", folders: "list" },
 });
-assert.strictEqual(collapsedViewMode.configVersion, 24);
+assert.strictEqual(collapsedViewMode.configVersion, TARGET_VERSION);
 assert.strictEqual(collapsedViewMode.launcherMenuViewMode, "grid");
 assert.strictEqual(collapsedViewMode.launcherMenuViewModes, undefined);
 assert.strictEqual(migrate({ configVersion: 23 }).launcherMenuViewMode, undefined);

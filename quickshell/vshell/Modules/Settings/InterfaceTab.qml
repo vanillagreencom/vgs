@@ -3,27 +3,10 @@ import qs.Common
 import qs.Services
 import qs.Widgets
 import qs.Modules.Settings.Widgets
-import "../../Common/settings/SurfaceGeometry.js" as SurfaceGeometry
 
 Item {
     id: root
     property var parentModal: null
-
-    readonly property string surfaceGeometryTarget: SettingsData.normalizedSurfaceGeometryTarget
-    readonly property bool shapeTargetsQuickshell: SurfaceGeometry.appliesToQuickshell(surfaceGeometryTarget)
-    readonly property bool shapeTargetsCompositorOnly: surfaceGeometryTarget === "compositor" && SurfaceGeometry.appliesToCompositor(surfaceGeometryTarget)
-    readonly property int compositorRadiusOverride: CompositorService.isNiri
-        ? SettingsData.niriLayoutRadiusOverride : SettingsData.hyprlandLayoutRadiusOverride
-    readonly property int compositorBorderOverride: CompositorService.isNiri
-        ? SettingsData.niriLayoutBorderSize : SettingsData.hyprlandLayoutBorderSize
-
-    function geometryTargetIndex() {
-        return SurfaceGeometry.targetIndex(surfaceGeometryTarget);
-    }
-
-    function setGeometryTargetIndex(index) {
-        SettingsData.set("surfaceGeometryTarget", SurfaceGeometry.targetFromIndex(index));
-    }
 
     VgsFlickable {
         anchors.fill: parent
@@ -106,25 +89,11 @@ Item {
                 width: parent.width
                 tags: ["surface", "shape", "radius", "rounding", "border", "thickness", "quickshell", "hyprland", "window"]
 
-                SettingsChoiceRow {
-                    settingKey: "surfaceGeometryTarget"
-                    tags: ["surface", "shape", "sync", "quickshell", "compositor", "hyprland", "niri"]
-                    text: I18n.tr("Apply To")
-                    description: I18n.tr("Apply these settings to:")
-                    model: [I18n.tr("Both"), I18n.tr("Quickshell"), I18n.tr("Compositor")]
-                    currentIndex: root.geometryTargetIndex()
-                    onSelectionChanged: (index, selected) => {
-                        if (selected)
-                            root.setGeometryTargetIndex(index);
-                    }
-                }
-
                 SettingsSliderRow {
                     settingKey: "cornerRadius"
-                    tags: ["surface", "shape", "radius", "rounding", "corner", "container", "quickshell", "hyprland"]
-                    text: root.surfaceGeometryTarget === "sync" ? I18n.tr("Container Radius") : I18n.tr("Quickshell Container Radius")
-                    description: root.surfaceGeometryTarget === "sync" ? I18n.tr("Corners of VGS and app windows.") : I18n.tr("Corners of VGS windows and menus.")
-                    visible: root.shapeTargetsQuickshell
+                    tags: ["surface", "shape", "radius", "rounding", "corner", "container", "quickshell", "hyprland", "niri", "compositor", "window"]
+                    text: I18n.tr("Container Radius")
+                    description: I18n.tr("Corners of VGS surfaces and app windows.")
                     value: SettingsData.effectiveContainerRadius
                     minimum: 0
                     maximum: 20
@@ -138,7 +107,6 @@ Item {
                     tags: ["surface", "shape", "radius", "rounding", "corner", "button", "toggle", "control", "field", "quickshell"]
                     text: I18n.tr("Control Radius")
                     description: I18n.tr("Corners of buttons and controls.")
-                    visible: root.shapeTargetsQuickshell
                     value: SettingsData.effectiveControlRadius
                     minimum: 0
                     maximum: 20
@@ -149,48 +117,15 @@ Item {
 
                 SettingsSliderRow {
                     settingKey: "surfaceBorderWidth"
-                    tags: ["surface", "shape", "border", "thickness", "quickshell", "hyprland"]
-                    text: root.surfaceGeometryTarget === "sync" ? I18n.tr("Border Thickness") : I18n.tr("Quickshell Border Thickness")
-                    description: root.surfaceGeometryTarget === "sync" ? I18n.tr("Borders of VGS and app windows.") : I18n.tr("Borders of VGS windows and menus.")
-                    visible: root.shapeTargetsQuickshell
+                    tags: ["surface", "shape", "border", "thickness", "quickshell", "hyprland", "niri", "compositor", "window"]
+                    text: I18n.tr("Border Thickness")
+                    description: I18n.tr("Borders of VGS surfaces and app windows.")
                     value: Math.max(0, Math.round(SettingsData.surfaceBorderWidth))
                     minimum: 0
                     maximum: 10
                     unit: "px"
                     defaultValue: 1
                     onSliderValueChanged: newValue => SettingsData.set("surfaceBorderWidth", newValue)
-                }
-
-                SettingsSliderRow {
-                    settingKey: CompositorService.isNiri ? "niriLayoutRadiusOverride" : "hyprlandLayoutRadiusOverride"
-                    tags: ["surface", "shape", "radius", "rounding", "corner", "compositor", "hyprland", "niri", "window"]
-                    text: CompositorService.isNiri ? I18n.tr("Niri Window Radius") : I18n.tr("Hyprland Window Radius")
-                    description: I18n.tr("Corners of app windows.")
-                    visible: root.shapeTargetsCompositorOnly
-                    value: Math.min(20, SurfaceGeometry.effectiveCompositorRadius(root.surfaceGeometryTarget,
-                        SettingsData.cornerRadius, root.compositorRadiusOverride))
-                    minimum: 0
-                    maximum: 20
-                    unit: "px"
-                    defaultValue: Math.min(20, Math.max(0, Math.round(SettingsData.cornerRadius)))
-                    onSliderValueChanged: newValue => SettingsData.set(
-                        CompositorService.isNiri ? "niriLayoutRadiusOverride" : "hyprlandLayoutRadiusOverride", newValue)
-                }
-
-                SettingsSliderRow {
-                    settingKey: CompositorService.isNiri ? "niriLayoutBorderSize" : "hyprlandLayoutBorderSize"
-                    tags: ["surface", "shape", "border", "thickness", "compositor", "hyprland", "niri", "window"]
-                    text: CompositorService.isNiri ? I18n.tr("Niri Border Thickness") : I18n.tr("Hyprland Border Thickness")
-                    description: I18n.tr("Borders of app windows.")
-                    visible: root.shapeTargetsCompositorOnly
-                    value: SurfaceGeometry.effectiveCompositorBorderWidth(root.surfaceGeometryTarget,
-                        SettingsData.surfaceBorderWidth, root.compositorBorderOverride)
-                    minimum: 0
-                    maximum: 10
-                    unit: "px"
-                    defaultValue: Math.max(0, Math.round(SettingsData.surfaceBorderWidth))
-                    onSliderValueChanged: newValue => SettingsData.set(
-                        CompositorService.isNiri ? "niriLayoutBorderSize" : "hyprlandLayoutBorderSize", newValue)
                 }
             }
         }

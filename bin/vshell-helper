@@ -2121,6 +2121,17 @@ def write_chromium_policy(roles: Dict[str, str], allow_prompt: bool = False) -> 
     return False
 
 
+def _sandboxed_home() -> bool:
+    """Whether this process runs against a throwaway HOME instead of the login user's.
+
+    The nested smoke sandbox and the preview capture each run a full shell on a temporary
+    home carrying its own default theme. Its theme hooks reach running apps through /proc
+    and through runtime paths that name the real uid, so without this they restyle the
+    login session's terminals, editors and monitors from a test's palette.
+    """
+    return not _is_real_user_config(Path(os.environ.get("HOME") or "/nonexistent") / ".config")
+
+
 def _is_real_user_config(path: Path) -> bool:
     """Whether `path` lives under the login user's own config directory.
 
@@ -2168,6 +2179,8 @@ def _run_hook_cmd(hook: str, cmd: List[str], **kwargs: Any) -> Dict[str, Any]:
 def tmux_sockets() -> List[Path]:
     """Find tmux sockets through environment paths and process environments.
     A server using TMUX_TMPDIR can be unreachable through the default socket."""
+    if _sandboxed_home():
+        return []
     uid = os.getuid()
     # /tmp by name as well as by $TMPDIR: tmux falls back to /tmp itself, whatever
     # TMPDIR says, so a shell with TMPDIR elsewhere would miss the default socket.
@@ -2228,6 +2241,9 @@ def source_tmux_theme_hook(hook: str) -> Dict[str, Any]:
 
 def process_pids_by_comm(comm: str) -> List[int]:
     pids: List[int] = []
+    # Every signal-reload hook (kitty, btop, ghostty) finds its target here.
+    if _sandboxed_home():
+        return pids
     proc = Path("/proc")
     if not proc.exists():
         return pids
@@ -2275,6 +2291,8 @@ def reload_ghostty_hook() -> Dict[str, Any]:
 
 def nvim_sockets() -> List[Path]:
     candidates: List[Path] = []
+    if _sandboxed_home():
+        return candidates
     runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
     for base in [Path(runtime), Path("/tmp")]:
         if not base.exists():
@@ -9578,20 +9596,13 @@ def _lua_table(fields: Dict[str, Any], indent: str = "    ") -> List[str]:
 def _hyprland_layout_payload(settings: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     shell_radius = _coerce_int(settings.get("cornerRadius", 15), 15, 0, 20)
     shell_border = _coerce_int(settings.get("surfaceBorderWidth", 1), 1, 0, 10)
-    hypr_radius = _optional_nonnegative_int(settings.get("hyprlandLayoutRadiusOverride"), 0, 20)
-    hypr_border = _optional_nonnegative_int(settings.get("hyprlandLayoutBorderSize"), 0, 10)
-    target_value = settings.get("surfaceGeometryTarget")
-    if target_value is None:
-        target = "hyprland" if (hypr_radius is not None and hypr_radius != shell_radius) or hypr_border is not None else "sync"
-    else:
-        target = str(target_value or "sync")
-    if target == "hyprland":
-        target = "compositor"
-    if target not in {"sync", "quickshell", "compositor"}:
-        target = "sync"
-    manage_hypr_shape = target != "quickshell"
-    radius = shell_radius if target == "sync" else (hypr_radius if hypr_radius is not None else shell_radius)
-    border = shell_border if target == "sync" else (hypr_border if hypr_border is not None else shell_border)
+    # One radius and one border thickness govern VGS surfaces and app windows together.
+    # The separate compositor-only values and the target that chose between them are gone:
+    # they let a window's own border differ from the border VGS draws on the same window,
+    # which is visible on every VGS window now the compositor draws its chrome.
+    manage_hypr_shape = True
+    radius = shell_radius
+    border = shell_border
 
     gaps_mode = _coerce_int(settings.get("hyprlandLayoutGapsOverride", -1), -1, -2, 50)
     general: Dict[str, Any] = {}
@@ -9644,7 +9655,6 @@ def _hyprland_layout_payload(settings: Dict[str, Any]) -> Tuple[str, Dict[str, A
         lines.append("")
 
     meta = {
-        "target": target,
         "manageHyprlandShape": manage_hypr_shape,
         "radius": radius if manage_hypr_shape else None,
         "groupbarRadius": (radius // 2) if manage_hypr_shape else None,

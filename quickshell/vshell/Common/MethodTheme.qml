@@ -249,7 +249,7 @@ Singleton {
     readonly property real blurLayerOutlineOpacity: Math.max(0, Math.min(1, typeof SettingsData === "undefined" ? 0.12 : (SettingsData.blurLayerOutlineOpacity ?? 0.12)))
     readonly property real layerOutlineOpacity: blurLayerOutlineOpacity
     readonly property int defaultSurfaceBorderWidth: 1
-    readonly property int surfaceBorderWidth: typeof SettingsData === "undefined" || !SettingsData.surfaceGeometryAppliesToQuickshell ? defaultSurfaceBorderWidth : Math.max(0, Math.round(SettingsData.surfaceBorderWidth ?? defaultSurfaceBorderWidth))
+    readonly property int surfaceBorderWidth: typeof SettingsData === "undefined" ? defaultSurfaceBorderWidth : Math.max(0, Math.round(SettingsData.surfaceBorderWidth ?? defaultSurfaceBorderWidth))
     readonly property int layerOutlineWidth: layerOutlineOpacity > 0 ? 1 : 0
     property color surfaceTextHover: withAlpha(surfaceText, 0.08)
     property color surfaceTextAlpha: withAlpha(surfaceText, 0.3)
@@ -903,9 +903,9 @@ Singleton {
     readonly property real maxSurfaceRadius: 14
     readonly property real defaultContainerRadius: 10
     readonly property real defaultControlRadius: 7
-    property real cornerRadius: typeof SettingsData === "undefined" || !SettingsData.surfaceGeometryAppliesToQuickshell ? defaultContainerRadius : SettingsData.effectiveContainerRadius
+    property real cornerRadius: typeof SettingsData === "undefined" ? defaultContainerRadius : SettingsData.effectiveContainerRadius
     property real containerRadius: cornerRadius
-    property real controlRadius: typeof SettingsData === "undefined" || !SettingsData.surfaceGeometryAppliesToQuickshell ? defaultControlRadius : SettingsData.effectiveControlRadius
+    property real controlRadius: typeof SettingsData === "undefined" ? defaultControlRadius : SettingsData.effectiveControlRadius
 
     property string fontFamily: typeof SettingsData !== "undefined" ? SettingsData.fontFamily : "Inter Variable"
 

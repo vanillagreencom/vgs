@@ -17,7 +17,7 @@ Singleton {
     id: root
     readonly property var log: Log.scoped("SettingsData")
 
-    readonly property int settingsConfigVersion: 24
+    readonly property int settingsConfigVersion: 25
 
     readonly property bool isGreeterMode: Quickshell.env("VSHELL_RUN_GREETER") === "1" || Quickshell.env("VSHELL_RUN_GREETER") === "true"
 
@@ -183,17 +183,12 @@ Singleton {
     property string widgetColorMode: "default"
     property string controlCenterTileColorMode: "primary"
     property string buttonColorMode: "primary"
-    property string surfaceGeometryTarget: "sync"
     property int surfaceBorderWidth: 1
     property real cornerRadius: 15
     property real controlRadius: 10
     property int niriLayoutGapsOverride: -1
-    property int niriLayoutRadiusOverride: -1
-    property int niriLayoutBorderSize: -1
     property int hyprlandLayoutGapsOverride: -1
     property int hyprlandLayoutGapsOutOverride: -1
-    property int hyprlandLayoutRadiusOverride: -1
-    property int hyprlandLayoutBorderSize: -1
     property bool hyprlandResizeOnBorder: true
     property int mangoLayoutGapsOverride: -1
     property int mangoLayoutGapsOutOverride: -1
@@ -201,14 +196,10 @@ Singleton {
     property int mangoLayoutBorderSize: -1
     property bool mangoTrackpadNaturalScrolling: true
 
-    readonly property string normalizedSurfaceGeometryTarget: SurfaceGeometry.normalizeTarget(surfaceGeometryTarget)
-    readonly property bool surfaceGeometryAppliesToQuickshell: SurfaceGeometry.appliesToQuickshell(surfaceGeometryTarget)
-    readonly property bool surfaceGeometryAppliesToCompositor: SurfaceGeometry.appliesToCompositor(surfaceGeometryTarget)
-    readonly property bool surfaceGeometryAppliesToHyprland: SurfaceGeometry.appliesToHyprland(surfaceGeometryTarget)
-    readonly property int effectiveContainerRadius: SurfaceGeometry.boundedInt(cornerRadius, 15, 0, 20)
+    readonly property int effectiveContainerRadius: SurfaceGeometry.effectiveRadius(cornerRadius)
     readonly property int effectiveControlRadius: SurfaceGeometry.boundedInt(controlRadius, 10, 0, 20)
-    readonly property int effectiveHyprlandSurfaceRadius: SurfaceGeometry.effectiveHyprlandRadius(surfaceGeometryTarget, cornerRadius, hyprlandLayoutRadiusOverride)
-    readonly property int effectiveHyprlandSurfaceBorderWidth: SurfaceGeometry.effectiveHyprlandBorderWidth(surfaceGeometryTarget, surfaceBorderWidth, hyprlandLayoutBorderSize)
+    readonly property int effectiveHyprlandSurfaceRadius: SurfaceGeometry.effectiveRadius(cornerRadius)
+    readonly property int effectiveHyprlandSurfaceBorderWidth: SurfaceGeometry.effectiveBorderWidth(surfaceBorderWidth)
 
     property int firstDayOfWeek: -1
     property bool showWeekNumber: false

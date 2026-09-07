@@ -1154,8 +1154,12 @@ PluginComponent {
             height: Theme.px(root.modalHeight, root.dpr)
             radius: Theme.cornerRadius
             surfaceColor: Theme.popupSurfaceColor(Theme.surfaceContainer)
-            borderWidth: BlurService.borderWidth
-            borderColor: BlurService.borderColor
+            // The launcher is the active surface whenever it is shown, so it carries
+            // Hyprland's active window border like every other VGS surface. The blur
+            // border is a translucent outline, the same hue Hyprland gives an inactive
+            // window, which read as though the launcher had lost focus.
+            borderWidth: Theme.windowBorderWidth
+            borderColor: Theme.windowBorderActive
             opacity: root.contentVisible ? 1 : 0
             scale: root.contentVisible ? 1 : 0.985
 
