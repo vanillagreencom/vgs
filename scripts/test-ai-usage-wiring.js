@@ -310,12 +310,16 @@ test("detailsText answers pending, setup and all-hidden before any percentage, a
 test("every account renders through the one card, and nothing hand-draws a second layout", () => {
     const cards = blockFrom(indexOf("AiUsageAccountCard {"), "the account card delegate");
     requires(cards, "the account card delegate", [
-        ["account: modelData", "a card renders the card the deck built"],
-        ["host: root", "reaching the formatting helpers through the host"],
-        ["expanded: root.cardExpanded(modelData.key)",
-            "and expansion is keyed by the provider-qualified key, so two providers' accounts " +
-            "sharing an id cannot expand each other"]
+        ["host: root", "reaching the formatting helpers through the host"]
     ]);
+    // The card sits inside a slot Item that holds the gap above it, so the delegate's model
+    // object is reached through that slot's id. What matters is that the binding is the deck's
+    // own card object and that expansion is keyed by `.key`, not which id carries it here.
+    assert.ok(/account: (cardSlot\.)?modelData\b/.test(cards),
+        "a card renders the card the deck built");
+    assert.ok(/expanded: root\.cardExpanded\((cardSlot\.)?modelData\.key\)/.test(cards),
+        "and expansion is keyed by the provider-qualified key, so two providers' accounts " +
+        "sharing an id cannot expand each other");
     assert.equal((code.match(/AiUsageAccountCard \{/g) || []).length, 1,
         "one card component, used once: a single-account layout beside a multi-account one is " +
         "what made an account change shape when a sibling appeared");
@@ -618,4 +622,20 @@ test("a mark is drawn at a Material glyph's optical size, and its fallback at th
     assert.ok(icon.slice(fallbackAt).includes("size: root.size"),
         "and the Material fallback takes the plain one: it IS a Material glyph, so adjusting it " +
         "toward one would shrink it below every other glyph on the bar");
+});
+
+test("the gap above an account card sits outside the card's own rectangle", () => {
+    const slot = blockFrom(lastIndexOf("Item {", indexOf("id: cardSlot")), "the account card's slot");
+    const offset = slot.match(/y:\s*(\d+)/);
+    const reserved = slot.match(/height:\s*card\.height \+ (\d+)/);
+    assert.ok(offset && reserved, "the slot offsets the card and reserves room for that offset");
+    assert.equal(offset[1], reserved[1],
+        "the gap is entirely ABOVE the card: reserving more than the offset leaves the remainder " +
+        "below it, which doubles the gap everywhere two cards meet");
+
+    const card = stripComments(fs.readFileSync(path.join(PLUGIN, "AiUsageAccountCard.qml"), "utf8"));
+    assert.ok(/height:\s*cardColumn\.implicitHeight/.test(card),
+        "and the card's own height stays its content's. A card that padded itself would put the " +
+        "gap inside the rectangle that IS its hover wash and its click target, so the row would " +
+        "light up and respond 5px above where the card is drawn");
 });

@@ -789,15 +789,32 @@ PluginComponent {
                                 Repeater {
                                     model: section.modelData.cards
 
-                                    AiUsageAccountCard {
+                                    // The gap sits OUTSIDE the card rather than
+                                    // as column spacing or card padding. Spacing
+                                    // would leave the first card flush against
+                                    // its section header, and padding inside the
+                                    // card would put the gap inside the card's
+                                    // own rectangle, which is its hover wash and
+                                    // its click target.
+                                    Item {
+                                        id: cardSlot
+
                                         required property var modelData
 
                                         width: section.width
-                                        host: root
-                                        account: modelData
-                                        showProviderIcon: !root.view.grouped
-                                        expanded: root.cardExpanded(modelData.key)
-                                        onToggleExpanded: root.toggleCard(modelData.key)
+                                        height: card.height + 5
+
+                                        AiUsageAccountCard {
+                                            id: card
+
+                                            y: 5
+                                            width: cardSlot.width
+                                            host: root
+                                            account: cardSlot.modelData
+                                            showProviderIcon: !root.view.grouped
+                                            expanded: root.cardExpanded(cardSlot.modelData.key)
+                                            onToggleExpanded: root.toggleCard(cardSlot.modelData.key)
+                                        }
                                     }
                                 }
 
