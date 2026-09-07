@@ -658,3 +658,48 @@ test("no control on the display page carries explanatory prose", () => {
         "and the page's own header says nothing under its title either — but it still ANSWERS, " +
         "or the settings page falls through and wears the usage page's details line");
 });
+
+test("a multi-way choice is a dropdown, and its keys and labels stay parallel", () => {
+    const display = stripComments(fs.readFileSync(path.join(PLUGIN, "AiUsageDisplaySettings.qml"), "utf8"));
+    assert.ok(display.includes("VgsDropdown {"),
+        "a choice is the same dropdown SelectionSetting and MercuryOptionRow each end at, so a " +
+        "choice reads the same wherever the shell asks for one");
+    assert.ok(!/VgsButtonGroup/.test(display),
+        "and not a segmented track, which charged the full page width for three words and grew a " +
+        "segment narrower with every option added");
+    assert.ok(display.includes("currentValue: choice.currentLabel"),
+        "the trigger shows the label belonging to the CURRENT key — VgsDropdown renders " +
+        "currentValue verbatim, so a key left in it would put a storage id on screen");
+
+    // The dropdown reports a LABEL and the page stores a KEY, matched by position. Two lists of
+    // different lengths do not fail: they quietly select the wrong setting, or none.
+    const blocks = display.match(/\n    Choice \{[\s\S]*?\n    \}/g) || [];
+    assert.ok(blocks.length >= 3,
+        `the choice extractor found ${blocks.length} — read that as the EXTRACTOR being broken, ` +
+        "not the page having lost its choices");
+    const logic = stripComments(fs.readFileSync(path.join(PLUGIN, "AiUsageLogic.qml"), "utf8"));
+    for (const block of blocks) {
+        const title = (block.match(/title: "([^"]+)"/) || [, "?"])[1];
+        const labels = block.match(/labels: \[([^\]]*)\]/);
+        assert.ok(labels, `${title} lists no labels`);
+        const wanted = labels[1].split(",").length;
+
+        const keys = block.match(/keys: \[([^\]]*)\]/);
+        if (keys) {
+            assert.equal(keys[1].split(",").length, wanted,
+                `${title} offers ${wanted} label(s) against a different number of keys: the two ` +
+                "are matched by position, so a pick past the shorter list stores nothing or the " +
+                "wrong thing, and neither shows up as an error");
+            continue;
+        }
+        // The catalog-driven choice: compare against the catalog's own list rather than a
+        // second copy of it written out here.
+        assert.ok(/keys: catalog\.iconModes\(\)/.test(block),
+            `${title} takes its keys from neither a literal nor the catalog`);
+        const modes = logic.match(/function iconModes\(\)\s*\{\s*return \[([^\]]*)\]/);
+        assert.ok(modes, "the catalog states its icon modes in one place");
+        assert.equal(modes[1].split(",").length, wanted,
+            `${title} labels ${wanted} mode(s) where the catalog offers a different number: a ` +
+            "mode added to the catalog would take whichever label happened to sit at its index");
+    }
+});

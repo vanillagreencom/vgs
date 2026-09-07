@@ -59,10 +59,21 @@ Column {
     readonly property bool expanded: root.values.cardDetail === "expanded"
     readonly property var providerFilter: root.values.providerFilter || []
 
-    // One multi-way choice: a label and the track. No caption under it — the
-    // segment labels already say what each option does, and a line of prose
-    // repeating them cost more vertical space than the control itself.
-    component Choice: Column {
+    // One multi-way choice: its name on the left, its current value in a
+    // dropdown on the right. The same shape both Mercury settings surfaces use,
+    // and VgsDropdown is what SelectionSetting and MercuryOptionRow each end at,
+    // so a choice reads the same wherever the shell asks for one.
+    //
+    // It replaced a segmented track, which charged the full width of the page
+    // for three words and grew a segment narrower with every option added — the
+    // three tracks together were taller than everything else on this page.
+    //
+    // VgsDropdown speaks in LABELS: the list it shows and the value it reports
+    // back are both label strings. Everything that stores a setting here speaks
+    // in keys. The two lists are parallel by construction, and this component
+    // owns that translation so neither the rows above nor the catalog below has
+    // to carry it.
+    component Choice: Item {
         id: choice
 
         property string title: ""
@@ -73,26 +84,30 @@ Column {
         signal picked(string key)
 
         width: parent ? parent.width : 0
-        spacing: Theme.spacingXS
-        topPadding: Theme.spacingXS
+        implicitHeight: dropdown.implicitHeight
+        height: implicitHeight
 
-        StyledText {
-            text: choice.title
-            font.pixelSize: Theme.fontSizeSmall
-            font.weight: Font.Medium
-            color: Theme.surfaceText
+        readonly property string currentLabel: {
+            const at = choice.keys.indexOf(choice.current);
+            return at >= 0 && at < choice.labels.length ? String(choice.labels[at]) : "";
         }
 
-        VgsButtonGroup {
+        VgsDropdown {
+            id: dropdown
+
             width: parent.width
-            model: choice.labels
-            currentIndex: choice.keys.indexOf(choice.current)
-            selectionMode: "single"
-            size: "small"
-            fillWidth: true
-            onSelectionChanged: (index, selected) => {
-                if (selected)
-                    choice.picked(choice.keys[index]);
+            text: choice.title
+            options: choice.labels
+            currentValue: choice.currentLabel
+            dropdownWidth: 170
+
+            onValueChanged: newValue => {
+                const at = choice.labels.indexOf(String(newValue));
+                // Report the KEY, and only for a real change: the dropdown
+                // announces a pick whether or not it moved, and a settings write
+                // per open would stamp the store for nothing.
+                if (at >= 0 && at < choice.keys.length && choice.keys[at] !== choice.current)
+                    choice.picked(String(choice.keys[at]));
             }
         }
     }
