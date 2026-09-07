@@ -338,7 +338,11 @@ Singleton {
     // Keep window border colors in sync with the helper-generated Hyprland decorations.
     readonly property color windowBorderActive: primary
     readonly property color windowBorderInactive: outline
-    readonly property int windowBorderWidth: 2
+    // One Border Thickness governs VGS surfaces and app windows alike, so the border the
+    // compositor draws on a VGS window, the border a popout draws itself, and the border
+    // Hyprland draws on an app window are the same setting. A fixed value here left the
+    // slider unable to move any VGS window's border.
+    readonly property int windowBorderWidth: surfaceBorderWidth
     // Opaque 1px separator for lists/dividers/group boundaries. Named separatorColor to avoid colliding with the hairline(dpr) width helper.
     readonly property color separatorColor: blend(surfaceContainerHigh, outline, 0.35)
 

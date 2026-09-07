@@ -178,6 +178,8 @@ Singleton {
         target: Theme
         function onIsLightModeChanged() { root.scheduleHyprlandApply(); }
         function onCornerRadiusChanged() { root.scheduleHyprlandApply(); }
+        // The rule carries the window border width, so a change to it has to be re-applied.
+        function onWindowBorderWidthChanged() { root.scheduleHyprlandApply(); }
     }
 
     Connections {
