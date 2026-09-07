@@ -21,6 +21,10 @@ PluginComponent {
     // Account keys the user has hidden. They stay out of the list AND out of
     // the headline, so the number never contradicts what is on screen.
     property var hiddenAccounts: pluginData.hiddenAccounts || []
+    // Bumped whenever a provider's sources change, on any surface.
+    readonly property real sourcesStamp: pluginData.sourcesStamp || 0
+
+    onSourcesStampChanged: root.refresh()
 
     AiUsageLogic {
         id: logic
@@ -51,6 +55,12 @@ PluginComponent {
     }
     function setHeadlineMode(m) {
         root.saveSetting("headlineMode", m);
+    }
+    // A source changed on some surface. The stamp travels through the plugin
+    // service, so every bar instance refetches — including the one whose popout
+    // is open, and including bars on other screens that never saw the change.
+    function stampSources() {
+        root.saveSetting("sourcesStamp", Date.now());
     }
 
     // Keep raw payloads keyed by provider so filter, headline and visibility
@@ -150,12 +160,6 @@ PluginComponent {
     }
     function providerIcon(p) {
         return logic.providerIcon(p);
-    }
-    function providerNeedsCredential(p) {
-        return logic.providerNeedsCredential(p);
-    }
-    function providerCredentialHint(p) {
-        return logic.providerCredentialHint(p);
     }
     function filterHas(p) {
         return logic.filterHas(root.providerFilter, p);
@@ -840,13 +844,12 @@ PluginComponent {
 
                         AiUsageProviderSetup {
                             width: parent.width
-                            host: root
                             provider: popout.setupProvider
                             // Only mount the processes for the provider being
                             // looked at: this page is one of three in a Row and
                             // is built whether or not it is on screen.
                             active: popout.onSetup
-                            onSourcesChanged: root.refresh()
+                            onSourcesChanged: root.stampSources()
                         }
                     }
                 }

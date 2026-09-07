@@ -5,9 +5,19 @@ import qs.Services
 import qs.Widgets
 import qs.Modules.Plugins
 
+// The AI Usage page in the settings app. Everything on it also lives behind the
+// filter in the widget's own popout; both surfaces embed AiUsageProviderSetup,
+// so neither can offer a source the other does not.
+//
+// The API key is the one thing here that does NOT go through saveValue() —
+// AiUsageProviderSetup says why.
 PluginSettings {
     id: root
     pluginId: "aiUsage"
+
+    AiUsageLogic {
+        id: catalog
+    }
 
     StyledText {
         width: parent.width
@@ -43,6 +53,28 @@ PluginSettings {
                 description: "How often to poll usage. The provider usage APIs rate-limit aggressively; keep this at 300 or higher."
                 placeholder: "300"
                 defaultValue: "300"
+            }
+        }
+    }
+
+    // One section per provider: an API key field for the providers configured
+    // with one, and the config directories the others are discovered in. The
+    // popout shows the same component one provider at a time.
+    Column {
+        width: parent.width
+        spacing: Theme.spacingL
+
+        Repeater {
+            model: catalog.providerOrder()
+
+            AiUsageProviderSetup {
+                required property string modelData
+
+                width: parent.width
+                provider: modelData
+                // Every section is on screen here, unlike the popout's one page.
+                active: true
+                onSourcesChanged: root.saveValue("sourcesStamp", Date.now())
             }
         }
     }

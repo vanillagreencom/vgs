@@ -317,18 +317,49 @@ test("provider identity is the logic's, and no surface spells a provider out", (
         assert.ok(!code.includes(literal),
             `${literal} must live only in AiUsageLogic — a second copy in CODE is where a rename drifts`);
 
-    // The child surfaces take identity from the host rather than holding their own reference to
-    // the decision module, so a component property cannot shadow it.
+    // A child never takes the decision module through a property: `logic: logic` resolves the
+    // right-hand side against the object being declared, so the property being assigned shadows
+    // the id and the child silently binds to itself. It reaches the catalog through the host, or
+    // it constructs one.
     for (const file of ["AiUsageFilterMenu.qml", "AiUsageFilterRow.qml", "AiUsageAccountCard.qml",
                         "AiUsageProviderNotice.qml", "AiUsageProviderSetup.qml"]) {
         const child = stripComments(fs.readFileSync(path.join(PLUGIN, file), "utf8"));
-        assert.ok(!/AiUsageLogic\s*\{/.test(child),
-            `${file} must not build its own copy of the decision module`);
+        assert.ok(!/property\s+var\s+logic\b/.test(child),
+            `${file} must not take the decision module through a property`);
         for (const literal of ['"Claude"', '"Codex"', '"AI Gateway"', '"smart_toy"', '"terminal"']) {
             assert.ok(!child.includes(literal),
                 `${file} spells out ${literal}: provider identity has exactly one owner`);
         }
     }
+    assert.ok(!/property\s+var\s+logic\b/.test(code),
+        "and the widget names its own instance rather than exposing it for a child to bind to");
+});
+
+test("both settings surfaces embed the same setup component", () => {
+    const settings = stripComments(fs.readFileSync(path.join(PLUGIN, "AiUsageSettings.qml"), "utf8"));
+    assert.ok(/AiUsageProviderSetup\s*\{/.test(settings),
+        "the settings application shows the same sources page the popout does, or a key can only " +
+        "be added from a bar flyout and the two surfaces drift into offering different sources");
+    assert.ok(settings.includes("model: catalog.providerOrder()"),
+        "with one section per provider, from the catalog rather than a list written out here");
+    assert.ok(/AiUsageProviderSetup\s*\{/.test(code), "and the popout embeds it too");
+
+    const setup = stripComments(fs.readFileSync(path.join(PLUGIN, "AiUsageProviderSetup.qml"), "utf8"));
+    assert.ok(!/\broot\.host\b/.test(setup),
+        "which it can only do because the page depends on no widget: the settings application is " +
+        "not one and has no catalog to lend it");
+    assert.ok(setup.includes("signal sourcesChanged"),
+        "a source change is announced rather than acted on, because what to do about it differs " +
+        "between a widget that can refetch and a settings page that cannot");
+    for (const surface of [code, settings]) {
+        assert.ok(/onSourcesChanged:\s*(root\.stampSources\(\)|root\.saveValue\("sourcesStamp")/.test(surface),
+            "and each surface stamps it, so a key added on either one reaches every bar instance " +
+            "instead of waiting out a poll interval");
+    }
+    assert.ok(body("stampSources").includes('root.saveSetting("sourcesStamp", Date.now())'),
+        "the stamp travels through the plugin service, which is what reaches bars on other screens");
+    assert.ok(code.includes("onSourcesStampChanged: root.refresh()"),
+        "and every widget instance refetches when it changes");
 });
 
 test("the filter is persisted through the shared toggle, and clearing it means all", () => {
@@ -356,9 +387,7 @@ test("the setup page is mounted only while it is on screen", () => {
         ["provider: popout.setupProvider", "it shows the provider the user asked about"],
         ["active: popout.onSetup",
             "and reads the helper only while it is on screen: this page is one of three in a Row " +
-            "and is built whether or not anyone opened it"],
-        ["onSourcesChanged: root.refresh()",
-            "and a source the user just changed is refetched, rather than waiting out a poll interval"]
+            "and is built whether or not anyone opened it"]
     ]);
 });
 

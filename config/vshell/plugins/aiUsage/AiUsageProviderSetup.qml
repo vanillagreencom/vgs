@@ -22,20 +22,27 @@ import qs.Widgets
 Column {
     id: root
 
-    // The AiUsageWidget root. Supplies provider identity.
-    property var host: null
     property string provider: ""
-    // The page lives in a Row of three and is built whether or not it is shown.
-    // Reading the helper for a page nobody opened is a process per poll.
+    // In the popout this page lives in a Row of three and is built whether or
+    // not it is shown; reading the helper for a page nobody opened is a process
+    // per poll. The settings application shows every provider at once and sets
+    // this true for each.
     property bool active: false
 
-    // Raised after a source changes, so the host can refetch this provider.
+    // Raised after a source changes, so the embedding surface can stamp the
+    // change and every bar instance refetches instead of waiting out a poll.
     signal sourcesChanged
 
     spacing: Theme.spacingM
 
-    readonly property bool takesKey: root.host ? root.host.providerNeedsCredential(root.provider) : false
-    readonly property string hint: root.host ? root.host.providerCredentialHint(root.provider) : ""
+    // The provider catalog, owned rather than handed in: this page is embedded
+    // by two surfaces and only one of them is a widget with a catalog to lend.
+    AiUsageLogic {
+        id: catalog
+    }
+
+    readonly property bool takesKey: catalog.providerNeedsCredential(root.provider)
+    readonly property string hint: catalog.providerCredentialHint(root.provider)
 
     // What the helper last reported. Never a key value.
     property var entries: []
@@ -307,14 +314,14 @@ Column {
                 spacing: Theme.spacingS
 
                 VgsIcon {
-                    name: root.host ? root.host.providerIcon(root.provider) : ""
+                    name: catalog.providerIcon(root.provider)
                     size: Theme.iconSize
                     color: Theme.primary
                     anchors.verticalCenter: parent.verticalCenter
                 }
 
                 StyledText {
-                    text: root.host ? root.host.providerName(root.provider) : ""
+                    text: catalog.providerName(root.provider)
                     font.pixelSize: Theme.fontSizeMedium
                     font.weight: Font.Medium
                     color: Theme.surfaceText
