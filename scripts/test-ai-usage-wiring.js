@@ -11,9 +11,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const repoRoot = path.join(__dirname, "..");
-const WIDGET = path.join(
-    repoRoot, "config", "vshell", "plugins", "aiUsage", "AiUsageWidget.qml"
-);
+const PLUGIN = path.join(repoRoot, "config", "vshell", "plugins", "aiUsage");
+const WIDGET = path.join(PLUGIN, "AiUsageWidget.qml");
 const source = fs.readFileSync(WIDGET, "utf8");
 
 const { blockFrom, body, handlers, requires, indexOf, lastIndexOf, stripComments } =
@@ -27,10 +26,10 @@ const code = stripComments(source);
 require("./lib/qml-source.js").selfTest();
 
 test("the shared source reader walks whole blocks and strips comments from the widget source", () => {
-    const walked = body("clearProviderState");
+    const walked = body("storeHeadline");
     assert.ok(walked.startsWith("{") && walked.endsWith("}"), "the walk returns a whole block");
-    assert.ok(walked.includes("otherFetch.reset()"), "the walk reaches the end of the block");
-    assert.ok(!walked.includes("function refresh"), "the walk stops at the block it was asked for");
+    assert.ok(walked.includes("root.providerFiledAt = nextAt"), "the walk reaches the end of the block");
+    assert.ok(!walked.includes("function noteHeadline"), "the walk stops at the block it was asked for");
     const stripped = stripComments('a(); // "Claude" lives here\nb("kept"); /* gone */ c();');
     assert.ok(!stripped.includes("Claude"), "a line comment must not survive stripping");
     assert.ok(!stripped.includes("gone"), "a block comment must not survive stripping");
@@ -43,13 +42,14 @@ test("storeHeadline files by key with a stamp and noteHeadline files under the p
         ["next[which] = data", "a headline is filed by key, never by branch"],
         ['if (which === "")', "an unidentifiable provider files nothing"],
         ["root.fileSeq += 1", "every filing takes the next stamp"],
-        ["nextAt[which] = root.fileSeq", "and records it — the ordering evidence failures read"]]);
-    assert.ok(!/(claudeData|codexData)\s*=/.test(store),
+        ["nextAt[which] = root.fileSeq", "and records it — the ordering evidence failures read"],
+        ["const order = logic.providerOrder()",
+            "and the copy it files into is built from the catalog, so a provider added there " +
+            "keeps its filed payload instead of being dropped by a hand-written field list"]]);
+    assert.ok(!/(claudeData|codexData|vercelData)\s*=/.test(store),
         "a per-provider branch is what let an unknown provider land under Claude");
     assert.ok(body("noteHeadline").includes("logic.payloadProvider(data)"),
         "the provider filed under is the payload's own, not the fetch's tag");
-    assert.ok(!body("noteHeadline").includes("root.provider"),
-        "filing by the CURRENT selection is the bug this issue is about");
 });
 
 test("acceptPayload decodes against its own channel's tag and files by the payload's provider", () => {
@@ -61,27 +61,12 @@ test("acceptPayload decodes against its own channel's tag and files by the paylo
         // Match the complete call; separate operands can also appear in unrelated statements.
         ["logic.acceptOutcome(logic.payloadProvider(got.data), ch.want)",
             "the outcome is decided from the payload's OWN provider and what this channel wants"],
-        ["outcome.file", "a payload that names a provider updates that provider's pill slot"],
+        ["outcome.file", "a payload that names a provider updates that provider's slot"],
         ["root.noteHeadline(got.data)", "which is what files it"],
-        ["root.promoteSelected()", "and the popout takes it if it is the selection's"],
         ["outcome.satisfies", "a payload that does not satisfy this channel goes no further"],
         ["ch.loaded = ch.want", "the channel records what it holds, or relaunch answers true"],
         ["ch.retries = 0", "a satisfying payload restores the retry budget"]
     ]);
-});
-
-test("promoteSelected uses the accepted-ordering rule whichever channel fetched", () => {
-    // Promotion uses result ordering independently of the fetching channel.
-    requires(body("promoteSelected"), "promoteSelected()", [
-        // Accepted failure payloads must also reach promotion.
-        ["logic.newerAccepted(filed, filedAt, root.currentFiledAt)",
-            "the same ordering the failure paths ask"],
-        ["root.current = filed", "the popout state is the payload that was filed"],
-        ["root.currentFiledAt = filedAt", "stamped, so the next promotion can compare"],
-        ['root.fetchError = ""', "a promoted payload clears the failure text"],
-        ["root.loading = false", "and ends loading"]]);
-    assert.ok(!/ch\.primary/.test(stripComments(body("acceptPayload"))),
-        "acceptPayload must not gate the popout on which channel fetched");
 });
 
 const channel = blockFrom(indexOf("component FetchChannel:"), "FetchChannel");
@@ -94,7 +79,6 @@ test("FetchChannel owns its process, collectors and timers and settles on both h
         ["property Timer retryTimer: Timer {", "and the timer its retries wait on"],
         ["onTriggered: root.launch(chan)", "which relaunches THIS channel when the wait is over"],
         ['property string want: ""', "and the provider it fetches"],
-        ["property bool primary: false", "and whether a failure of its reaches the popout"],
         ["chan.outDone = true; root.acceptPayload(chan, outCollector.text);",
             "stdout marks its half done and goes to this channel's accept path, IN THAT ORDER"],
         ["root.completeFetch(chan)",
@@ -128,23 +112,25 @@ test("no per-channel process or collector is nameable outside the channel", () =
         "per-channel processes and collectors are not nameable from outside the channel");
 });
 
-function channelNamed(id) {
-    const at = indexOf(`id: ${id}`);
-    assert.notEqual(at, -1, `AiUsageWidget.qml must declare ${id}`);
-    const opens = lastIndexOf("FetchChannel {", at);
-    assert.notEqual(opens, -1, `${id} must be a FetchChannel`);
-    return blockFrom(opens, id);
-}
-
-test("the usage channel fetches the selection and owns the popout; the other channel does neither", () => {
-    const usageChannel = channelNamed("usageFetch");
-    requires(usageChannel, "the usage channel", [
-        ["want: root.provider", "it fetches the SELECTED provider"],
-        ["primary: true", "and owns the popout"]
+test("one channel per provider is built from the catalog, and none is named by hand", () => {
+    const instantiator = blockFrom(indexOf("Instantiator {"), "the channel Instantiator");
+    requires(instantiator, "the channel Instantiator", [
+        ["model: logic.providerOrder()",
+            "channels come from the same catalog the slots and the filter come from, so a provider " +
+            "cannot be listed on the bar with nothing able to fetch it"],
+        ["delegate: FetchChannel {", "each entry gets its own channel"],
+        ["want: modelData", "fetching the provider it was built for"]
     ]);
-    const otherChannel = channelNamed("otherFetch");
-    assert.ok(otherChannel.includes("want: root.otherProvider"), "the other channel fetches the other provider");
-    assert.ok(!otherChannel.includes("primary"), "and does not own the popout");
+    assert.ok(!/\bid:\s*(usageFetch|otherFetch|claudeFetch|codexFetch|vercelFetch)\b/.test(code),
+        "no channel is named for one provider by hand: that is how a provider gets added to the " +
+        "catalog and silently never fetched");
+    assert.ok(!/\botherProvider\b/.test(code),
+        "and there is no 'the other provider' any more — every selected provider is fetched");
+    const refresh = body("refresh");
+    requires(refresh, "refresh()", [
+        ["for (let i = 0; i < channels.count; i++)", "a refresh visits every channel there is"],
+        ["root.launch(ch)", "launching each through the shared decision"]
+    ]);
 });
 
 test("completeFetch and finishFetch settle once, on both halves, with a bounded flush wait", () => {
@@ -194,7 +180,7 @@ test("finishFetch names a signal death apart from a failure, captures stderr's l
         "installed and lands in the popout and in logs people paste into bug reports");
 });
 
-test("settleFetch relaunches through the shared predicate before clearing the tag and reports through the ordering rule", () => {
+test("settleFetch relaunches through the shared predicate before clearing the tag and files through the ordering rule", () => {
     const settle = body("settleFetch");
     requires(settle, "settleFetch()", [
         // Use channel fields to avoid exchanging same-typed provider arguments.
@@ -212,20 +198,17 @@ test("settleFetch relaunches through the shared predicate before clearing the ta
         ["Qt.callLater(() => root.launch(ch))",
             "by launching it promptly — and this is the ONLY immediate deferral left in settleFetch", 1],
         ["ch.loaded !== ch.want || !ch.accepted",
-            "a poll that delivered nothing for the provider on screen is a failure"],
+            "a poll that delivered nothing for this channel's provider is a failure"],
         ['ch.issue !== "" ? ch.issue : "usage unavailable"', "the recorded reason, else the generic"],
-        // Both the filed failure and popout error must respect newer data from the other channel.
-        ["const authoritative = logic.failureWins(", "the newer-success rule is decided once", 1],
-        ["root.providerData[ch.want], root.providerFiledAt[ch.want], ch.launchSeq)",
-            "from what is filed for that provider, against this launch's stamp", 1],
-        ["if (authoritative)", "and consulted by BOTH the headline write and the popout's", 2],
-        ["root.storeHeadline(ch.want, { ok: false, provider: ch.want", "filed for its own provider"],
-        ["root.loading = false", "loading ends either way: this fetch settled"],
-        ["root.fetchError = why", "only the failure TEXT is conditional"]]);
-    assert.ok(!/launchedFor !== (root\.)?(other)?[Pp]rovider/.test(stripComments(settle)),
-        "comparing the tag to the selection is the dropped-refetch bug");
+        ["logic.failureWins(root.providerData[ch.want], root.providerFiledAt[ch.want], ch.launchSeq)",
+            "and it is filed only if no newer answer for that provider has landed since this launch", 1],
+        ["root.storeHeadline(ch.want, { ok: false, provider: ch.want", "filed for its own provider"]]);
     assert.ok(settle.indexOf("logic.shouldRelaunch") < settle.indexOf('ch.inFlight = ""'),
         "the decision reads the tag, so it is taken BEFORE the tag is cleared");
+    assert.ok(!/root\.(fetchError|loading)\b/.test(stripComments(settle)),
+        "a failure reaches the popout as the FILED payload for its provider and nowhere else — a " +
+        "second widget-level error string is what let one provider's failure caption a popout " +
+        "showing another provider's accounts");
 });
 
 test("the one exit handler lives on the channel's own process", () => {
@@ -233,85 +216,68 @@ test("the one exit handler lives on the channel's own process", () => {
     assert.equal(exits.length, 1, "the one exit handler lives on the channel's own process");
 });
 
-test("clearProviderState resets the popout behind the switch stamp and keeps per-provider headlines", () => {
-    const cleared = body("clearProviderState");
-    requires(cleared, "clearProviderState()", [
-        ["root.current = null", "one payload property holds every provider-scoped lane"],
-        // Preserve a switch barrier because per-provider data survives selection changes.
-        ["root.currentFiledAt = root.fileSeq", "the switch's stamp, so only later filings promote"],
-        ['root.fetchError = ""', "the failure text is provider-scoped too"],
-        ["root.loading = true", "a switch puts the popout back into loading"],
-        ['root.expandedAccountId = ""', "the expanded account belongs to the previous provider's list"],
-        ["usageFetch.reset()", "the usage channel is invalidated"],
-        ["otherFetch.reset()", "the other channel is invalidated through the same path"]]);
-    assert.ok(!/providerData/.test(stripComments(cleared)),
-        "the per-provider headlines are keyed by identity and survive a switch");
-});
-
-test("a provider switch invalidates before it refetches, and root.current has exactly two writers", () => {
-    const switched = blockFrom(indexOf("onProviderChanged:"), "onProviderChanged");
-    const invalidateAt = switched.indexOf("clearProviderState()");
-    const refetchAt = switched.indexOf("root.refresh()");
-    assert.notEqual(invalidateAt, -1, "a switch must invalidate the previous provider's state");
-    assert.notEqual(refetchAt, -1, "a provider switch must refetch");
-    assert.ok(invalidateAt < refetchAt,
-        "and must invalidate BEFORE refetching, so no window renders the previous provider's data " +
-        "under the new provider's label");
-
-    assert.equal((code.match(/root\.current = /g) || []).length, 2,
-        "root.current is written in exactly two places: the promotion path and the switch's reset");
-});
-
-test("the popout headline and the vertical bar come from the shared head decision", () => {
-    // Bar and popout headers must use the shared headline decision.
+test("every surface reads one description of what is in scope", () => {
     requires(source, "AiUsageWidget.qml", [
-        ["logic.headOf(root.current, root.headlineMode, root.hiddenAccounts)",
-            "the popout's headline comes from the same function the pill slots use"],
-        ["root.currentHead ? root.currentHead.pct : 0",
-            "and the percentage is that head's, with no second arithmetic beside it"],
-        ["readonly property var selectedSlot: logic.pillSlot(",
-            "the vertical bar renders the selected provider's slot, the shape the pill uses"]
+        ["readonly property var deckState:",
+            "the pill, the deck and the header counts read ONE object, so they cannot disagree " +
+            "about which providers or accounts are in scope"],
+        ["providerData: root.providerData", "which carries every filed payload"],
+        ["filter: root.providerFilter", "the providers the user is looking at"],
+        ["hidden: root.hiddenAccounts", "the accounts they are not"],
+        ["mode: root.headlineMode", "how several accounts combine into one number"],
+        ["fetching: root.fetchingProviders", "and which providers are mid-fetch"],
+        ["readonly property var view: logic.deckView(root.deckState)",
+            "the popout is that state's deck"],
+        ["return logic.pillSlots(root.deckState)", "and the bar is that same state's slots"]
     ]);
     assert.ok(!/aggregatePct|primaryPct/.test(code), "a second owner is a second answer");
+    assert.ok(!/root\.current\b/.test(code),
+        "there is no single 'current provider' payload any more: every selected provider is on " +
+        "screen at once, and one of them being selected is what made looking at Codex move the " +
+        "bar off Claude");
 });
 
-test("the vertical pill shows the slot's text and icon, never a raw percentage", () => {
-    const vertical = blockFrom(indexOf("verticalBarPill:"), "verticalBarPill");
-    requires(vertical, "the vertical pill", [
-        ["text: root.selectedSlot.text", "it shows what the slot says, not its own reading of the payload"],
-        ["name: root.selectedSlot.icon", "including the slot's own provider icon"]
-    ]);
-    assert.ok(!/headlinePct/.test(stripComments(vertical)),
-        "a raw percentage here is how it came to show 60% beside an error glyph");
+test("both pill orientations render the same slots, and neither invents a number", () => {
+    for (const which of ["horizontalBarPill", "verticalBarPill"]) {
+        const pill = blockFrom(indexOf(which + ":"), which);
+        assert.ok(pill.includes("model: root.pillHeads()"),
+            `${which} renders the shared slots, so the two orientations cannot say different ` +
+            "things about one payload");
+        assert.ok(pill.includes("text: modelData.text"),
+            `${which} shows what the slot says, not its own reading of the payload`);
+        assert.ok(pill.includes("name: modelData.icon"), `${which} carries the slot's provider icon`);
+        assert.ok(!/headlinePct/.test(stripComments(pill)),
+            `a raw percentage in ${which} is how it came to show 60% beside an error glyph`);
+    }
 });
 
-test("the popout's account-scoped state comes from the view, not the payload's top-level fields", () => {
-    // Visible-account decisions must govern plan, status, and errors rather than hidden top-level data.
+test("the popout's account-scoped state comes from the view, not the payloads' top-level fields", () => {
     requires(source, "AiUsageWidget.qml", [
-        ["readonly property var view: logic.popoutView(root.current, root.hiddenAccounts, root.loading)",
-            "the popout's account-scoped state is one function's, hidden accounts already out"],
-        ["readonly property bool pending: root.fetchError === \"\" && root.view.pending",
+        ["readonly property bool ok: root.view.ok",
+            "whether anything usable is on screen is that view's answer, not a payload's own field"],
+        ["readonly property bool pending: root.view.pending",
             "and whether it is merely still fetching comes from there too"],
-        ["readonly property bool ok: root.fetchError === \"\" && root.view.ok",
-            "usable is that view's answer, not the payload's top-level field"],
-        ["readonly property string plan: root.view.plan", "and so is the plan line"],
-        ["readonly property bool multiAccount: root.view.cards", "and the card path"],
-        ["readonly property bool allHidden: root.view.allHidden", "and the all-hidden case"]
+        ["readonly property bool allHidden: root.view.allHidden", "and the all-hidden case"],
+        ["readonly property string errorText: root.view.error", "and the cause"],
+        ["readonly property var view: logic.deckView(root.deckState)", "from one function"]
     ]);
-    assert.ok(source.includes("root.view.error"), "and the error text");
-    assert.ok(!/root\.current\.(plan|ok|error)\b/.test(code),
-        "no surface reaches past the view into the payload's top-level account fields");
+    assert.ok(!/root\.providerData\.(claude|codex|vercel)\b/.test(code),
+        "no surface reaches past the view into one named provider's payload");
 });
 
-test("detailsText answers pending and all-hidden before any percentage and counts through accountCount", () => {
+test("detailsText answers pending, setup and all-hidden before any percentage, and counts through accountCount", () => {
     const details = blockFrom(indexOf("detailsText:"), "detailsText");
-    assert.ok(details.includes("root.pending ?"),
+    assert.ok(details.includes("root.pending ?") || details.includes("if (root.pending)"),
         "a popout with nothing yet must say it is fetching, not that usage is Unavailable — a " +
-        "fault invented on every first load and every provider switch");
+        "fault invented on every first load");
+    assert.ok(details.includes("root.view.needsSetup"),
+        "a provider nobody has configured is not a failure to report either");
     assert.ok(details.includes("if (root.allHidden)"),
         "the header must answer the all-hidden case before it prints any percentage");
     assert.ok(details.indexOf("root.allHidden") < details.indexOf("% used"),
         "and answer it BEFORE the percentage, not after");
+    assert.ok(details.indexOf("root.view.needsSetup") < details.indexOf("root.errorText"),
+        "and offer setup before it reports a fault");
 
     const detailsCode = stripComments(details);
     assert.ok(!/\+\s*" accounts?\b/.test(detailsCode),
@@ -322,22 +288,82 @@ test("detailsText answers pending and all-hidden before any percentage and count
     assert.ok(details.includes("root.hasHeadline ?"),
         "and print no percentage when there is no headline — several accounts on screen, none ok, " +
         "where the pill already shows its placeholder");
-
-    const meters = blockFrom(indexOf("readonly property var primaryMeters:"), "primaryMeters");
-    assert.ok(meters.includes("root.view.account") && meters.includes("root.view.flat"),
-        "the single-account view renders the account the view says is on screen, falling back to " +
-        "the payload's own lanes only for the older shape that reports no accounts");
 });
 
-test("tabs, icons and the provider setting share the logic's provider identity", () => {
-    // Tabs and pill slots must share provider identity, including name and icon.
+test("every account renders through the one card, and nothing hand-draws a second layout", () => {
+    const cards = blockFrom(indexOf("AiUsageAccountCard {"), "the account card delegate");
+    requires(cards, "the account card delegate", [
+        ["account: modelData", "a card renders the card the deck built"],
+        ["host: root", "reaching the formatting helpers through the host"],
+        ["expanded: root.expandedCardKey === modelData.key",
+            "and expansion is keyed by the provider-qualified key, so two providers' accounts " +
+            "sharing an id cannot expand each other"]
+    ]);
+    assert.equal((code.match(/AiUsageAccountCard \{/g) || []).length, 1,
+        "one card component, used once: a single-account layout beside a multi-account one is " +
+        "what made an account change shape when a sibling appeared");
+    assert.ok(!/MeterRow \{|MeterCard \{/.test(code),
+        "and the meters live inside that card rather than being drawn again by the widget");
+});
+
+test("provider identity is the logic's, and no surface spells a provider out", () => {
     assert.ok(code.includes("model: logic.providerOrder()"),
-        "the provider tabs are generated from the same order the pill uses");
-    for (const literal of ['"Claude"', '"Codex"', '"smart_toy"', '"terminal"'])
+        "the channels are generated from the same order the slots and the filter use");
+    for (const literal of ['"Claude"', '"Codex"', '"AI Gateway"', '"smart_toy"', '"terminal"',
+                           '"change_history"'])
         assert.ok(!code.includes(literal),
             `${literal} must live only in AiUsageLogic — a second copy in CODE is where a rename drifts`);
-    assert.ok(
-        code.includes('property string provider: logic.normalizeProvider(pluginData.provider) || "claude"'),
-        "the provider setting is normalised with a default, so a junk persisted value degrades " +
-        "instead of leaving every payload unattributable");
+
+    // The child surfaces take identity from the host rather than holding their own reference to
+    // the decision module, so a component property cannot shadow it.
+    for (const file of ["AiUsageFilterMenu.qml", "AiUsageFilterRow.qml", "AiUsageAccountCard.qml",
+                        "AiUsageProviderNotice.qml", "AiUsageProviderSetup.qml"]) {
+        const child = stripComments(fs.readFileSync(path.join(PLUGIN, file), "utf8"));
+        assert.ok(!/AiUsageLogic\s*\{/.test(child),
+            `${file} must not build its own copy of the decision module`);
+        for (const literal of ['"Claude"', '"Codex"', '"AI Gateway"', '"smart_toy"', '"terminal"']) {
+            assert.ok(!child.includes(literal),
+                `${file} spells out ${literal}: provider identity has exactly one owner`);
+        }
+    }
+});
+
+test("the filter is persisted through the shared toggle, and clearing it means all", () => {
+    requires(body("toggleProvider"), "toggleProvider()", [
+        ['root.saveSetting("providerFilter", logic.toggleFilter(root.providerFilter, p))',
+            "a filter change is the shared decision's result, persisted — computing the next " +
+            "filter at the call site is where 'unchecking the last provider' loses its way back"]]);
+    requires(body("selectAllProviders"), "selectAllProviders()", [
+        ['root.saveSetting("providerFilter", [])',
+            "and 'all' is stored as nothing, so a provider added later is included without a migration"]]);
+    requires(body("toggleHidden"), "toggleHidden()", [
+        ["logic.toggleHiddenCard(root.hiddenAccounts, card)",
+            "hiding an account writes the provider-qualified key through the shared rule, which is " +
+            "also what drops a legacy bare id for the same account"]]);
+    assert.ok(body("saveSetting").includes('root.pluginService.savePluginData("aiUsage"'),
+        "every setting is persisted through the plugin service rather than by assigning the bound " +
+        "property, so each bar instance keeps receiving pluginData updates");
+    assert.ok(!/pluginData\.provider\b/.test(code),
+        "the single-selected-provider setting is gone; a filter of providers replaced it");
+});
+
+test("the setup page is mounted only while it is on screen", () => {
+    const setup = blockFrom(indexOf("AiUsageProviderSetup {"), "the setup page");
+    requires(setup, "the setup page", [
+        ["provider: popout.setupProvider", "it shows the provider the user asked about"],
+        ["active: popout.onSetup",
+            "and reads the helper only while it is on screen: this page is one of three in a Row " +
+            "and is built whether or not anyone opened it"],
+        ["onSourcesChanged: root.refresh()",
+            "and a source the user just changed is refetched, rather than waiting out a poll interval"]
+    ]);
+});
+
+test("the poll interval scales with the accounts actually being visited", () => {
+    const timer = blockFrom(lastIndexOf("Timer {", indexOf("onTriggered: root.refresh()")), "pollTimer");
+    assert.ok(timer.includes("root.view.totalCount"),
+        "polling visits accounts sequentially across every provider, so the floor has to count " +
+        "all of them — counting one provider's set left three providers' accounts sharing one " +
+        "provider's interval");
+    assert.ok(timer.includes("root.refreshSeconds"), "and the user's interval is still the floor");
 });

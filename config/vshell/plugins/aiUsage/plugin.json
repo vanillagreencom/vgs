@@ -1,8 +1,8 @@
 {
     "id": "aiUsage",
     "name": "AI Usage",
-    "description": "Shows Claude and Codex plan usage in the bar.",
-    "version": "1.0.0",
+    "description": "Shows Claude, Codex and Vercel AI Gateway plan usage in the bar.",
+    "version": "1.1.0",
     "license": "MIT",
     "author": "VanillaGreen",
     "icon": "smart_toy",

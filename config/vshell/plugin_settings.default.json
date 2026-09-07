@@ -1,6 +1,6 @@
 {
   "aiUsage": {
-    "provider": "claude",
+    "providerFilter": [],
     "refreshSeconds": "300"
   },
   "tailscale": {

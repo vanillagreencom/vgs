@@ -3,8 +3,10 @@ import QtQuick
 // Usage-meter presentation helpers. Qt.locale() is available here; the
 // extractable provider-decision functions must remain independent of Qt.
 QtObject {
-    // Meters for one account entry, in the same order the single-account view
-    // uses: session, weekly, then every per-model lane the provider reported.
+    // Meters for one account card, in reading order: session, weekly, every
+    // per-model lane the provider reported, then the spend pool. Every card in
+    // the popout is built from this one function, so a provider that reports
+    // only a spend pool and one that reports five windows render alike.
     function metersFor(account) {
         if (!account)
             return [];
@@ -15,28 +17,18 @@ QtObject {
             out.push({ label: "Weekly (7d)", pct: account.weekly.pct || 0, reset: account.weekly.reset || "", resetAt: account.weekly.resetAt || 0 });
         const models = account.models || [];
         for (let i = 0; i < models.length; i++)
-            out.push({ label: models[i].label || "Model", pct: models[i].pct || 0, reset: models[i].reset || "", resetAt: models[i].resetAt || 0 });
-        // Credit-billed seats have no rate-limit windows at all — their monthly
-        // spend pool is the only usage there is, so it stands in for them.
+            out.push({ label: models[i].label || "Model", pct: models[i].pct || 0,
+                       reset: models[i].reset || "", resetAt: models[i].resetAt || 0,
+                       detail: models[i].detail || "" });
+        // Credit-billed seats have no rate-limit windows at all — their spend
+        // pool is the only usage there is, so it stands in for them. The
+        // provider names the pool, because a prepaid balance, a monthly budget
+        // and an overage allowance are not the same thing.
         if (account.spend)
-            out.push({ label: "Credits", pct: account.spend.pct || 0, reset: "", resetAt: 0,
+            out.push({ label: account.spend.label || "Credits", pct: account.spend.pct || 0,
+                       reset: account.spend.reset || "", resetAt: account.spend.resetAt || 0,
                        detail: account.spend.detail || "",
                        used: account.spend.used, limit: account.spend.limit, currency: account.spend.currency || "USD" });
-        return out;
-    }
-
-    // The lanes a payload carries at top level when it reports no accounts
-    // (session/weekly/third instead of an accounts list).
-    function flatMeters(data) {
-        if (!data)
-            return [];
-        const out = [];
-        if (data.session)
-            out.push({ label: "Session (5h)", pct: data.session.pct || 0, reset: data.session.reset || "", resetAt: data.session.resetAt || 0, detail: "" });
-        if (data.weekly)
-            out.push({ label: "Weekly (7d)", pct: data.weekly.pct || 0, reset: data.weekly.reset || "", resetAt: data.weekly.resetAt || 0, detail: "" });
-        if (data.third)
-            out.push({ label: data.third.label || "", pct: data.third.pct || 0, reset: data.third.reset || "", resetAt: data.third.resetAt || 0, detail: "" });
         return out;
     }
 
@@ -76,13 +68,35 @@ QtObject {
         return when.toLocaleDateString(Qt.locale(), "d MMM").toLowerCase() + " " + time;
     }
 
+    // Currency symbols for the codes providers actually report. An unknown code
+    // prints as a suffix rather than being dropped, so the number keeps its unit.
+    function currencySymbol(code) {
+        switch (String(code || "USD").toUpperCase()) {
+        case "USD":
+            return "$";
+        case "EUR":
+            return "€";
+        case "GBP":
+            return "£";
+        case "JPY":
+            return "¥";
+        default:
+            return "";
+        }
+    }
+
+    function money(amount, code, decimals) {
+        const sym = currencySymbol(code);
+        const text = Number(amount).toLocaleString(Qt.locale(), "f", decimals);
+        return sym !== "" ? sym + text : text + " " + String(code || "").toUpperCase();
+    }
+
     // Round compact-row spending to whole currency units. Expanded cards retain cents.
     function formatSpend(meter) {
         if (!meter || meter.used === undefined || meter.limit === undefined)
             return "";
-        const sym = meter.currency === "USD" ? "$" : "";
-        const round = n => Math.round(n).toLocaleString(Qt.locale(), "f", 0);
-        return sym + round(meter.used) + " / " + sym + round(meter.limit);
+        return money(Math.round(meter.used), meter.currency, 0)
+            + " / " + money(Math.round(meter.limit), meter.currency, 0);
     }
 
     // Format exact spending, with the helper detail string as a fallback.
@@ -91,9 +105,7 @@ QtObject {
             return "";
         if (meter.used === undefined || meter.limit === undefined)
             return meter.detail || "";
-        const sym = meter.currency === "USD" ? "$" : "";
-        const money = n => sym + n.toLocaleString(Qt.locale(), "f", 2);
-        return money(meter.used) + " of " + money(meter.limit);
+        return money(meter.used, meter.currency, 2) + " of " + money(meter.limit, meter.currency, 2);
     }
 
     // "Resets in 4d 17h · thu 04:00", degrading to whichever half we have.

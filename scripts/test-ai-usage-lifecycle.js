@@ -17,10 +17,10 @@ const { evaluateMarked, guardChild } = require("./lib/qml-region.js");
 
 guardChild();
 
-const { launchDecision, watchdogArms, settleIsComing, shouldRelaunch, decodePayload } =
+const { launchDecision, watchdogArms, shouldRelaunch, decodePayload } =
     evaluateMarked(
         fs.readFileSync(path.join(PLUGIN, "AiUsageLogic.qml"), "utf8"), "PROVIDER DECISION",
-        ["launchDecision", "watchdogArms", "settleIsComing", "shouldRelaunch", "decodePayload"],
+        ["launchDecision", "watchdogArms", "shouldRelaunch", "decodePayload"],
         "AiUsageLogic.qml");
 
 const source = fs.readFileSync(path.join(PLUGIN, "AiUsageWidget.qml"), "utf8");
@@ -70,7 +70,7 @@ test("the runningChanged handler arms the watchdog before it drains a parked req
         ['if (chan.inFlight === "" && chan.pending) root.launch(chan)',
             "and a parked launch is applied only once the channel can TAKE it: draining it against " +
             "a tag that is still owned re-parked it, leaving the channel with nothing running, " +
-            "nothing armed and no settle path — no fetch again until a provider switch"],
+            "nothing armed and no settle path — no fetch again until the poll timer"],
         ["onTriggered: root.failLaunch(chan)", "the watchdog routes a failed start into the failure path"]
     ]);
     // A stopped channel with a tag must retain a path to settlement before any early return.
@@ -81,24 +81,20 @@ test("the runningChanged handler arms the watchdog before it drains a parked req
         "swallows it and nothing settles the channel at all");
 });
 
-// Require literal reset values; a self-assignment also matches an assignment prefix.
-test("reset returns every field to idle, stops every timer and releases a tag nothing will settle", () => {
-    const reset = blockFrom(indexOf("function reset()"), "FetchChannel.reset()");
-    for (const [field, value] of [["loaded", '""'], ["retries", "0"], ["accepted", "false"],
-                                  ["issue", '""']])
-        assert.ok(reset.includes(`${field} = ${value};`),
-            `a channel reset must set ${field} back to ${value}`);
-    requires(reset, "FetchChannel.reset()", [
-        ["stallTimer.stop()", "a switch disarms the watchdog: nothing armed before the generation " +
-            "boundary may act after it"],
-        ["retryTimer.stop()", "and the retry that was waiting to relaunch into it"],
-        ["flushTimer.stop()", "and the grace an exit was giving stdout"],
-        ["pending = false", "and drops a request parked for the previous selection"],
-        // Retain tags only while a running process or undelivered exit still owns settlement.
-        // A tag retained after its stopped grace timer would park future refreshes indefinitely.
-        ["if (!logic.settleIsComing({ inFlight: inFlight, running: proc.running, " +
-            "sawProcess: sawProcess, exitDone: exitDone })) inFlight = \"\"",
-            "so a switch settles every fetch nothing else will, and only those"]]);
+// A channel fetches one provider for its whole life. There is no reset path and no
+// generation boundary to invalidate, which is what removed every switch-ordering hazard.
+test("a channel's provider is fixed for its life, so nothing invalidates a fetch in flight", () => {
+    assert.ok(!stripComments(source).includes("function clearProviderState"),
+        "a fetch channel is per provider now, so there is no selected-provider state to clear — " +
+        "keeping the path would leave a way to invalidate a channel that cannot go stale");
+    assert.ok(!/\breset\s*\(\s*\)/.test(stripComments(channel)),
+        "and no channel reset, which existed only to abandon a fetch for a provider nobody wanted " +
+        "any more — the case a per-provider channel does not have");
+    assert.equal((stripComments(source).match(/want:\s*modelData/g) || []).length, 1,
+        "each channel takes its provider from the catalog once, at construction");
+    assert.ok(!/want\s*=/.test(stripComments(source)),
+        "and nothing reassigns it afterwards: a payload can only ever be filed under the identity " +
+        "the channel that asked for it was built with");
 });
 
 test("launchDecision starts an idle channel, skips a fetching one and parks behind a stopping or unsettled one", () => {
@@ -184,19 +180,6 @@ const replay = (signals, park) => {
             ch.retryArmed = false;
             request();
         },
-
-        switched: () => {
-            ch.want = "codex";
-            ch.loaded = "";
-            ch.armed = false;
-            ch.retryArmed = false;
-            ch.pending = false;
-            ch.graced = false;
-            if (!settleIsComing({ inFlight: ch.inFlight, running: ch.running,
-                                  sawProcess: ch.sawProcess, exitDone: ch.exitDone }))
-                ch.inFlight = "";
-            request();
-        },
         watchdog: () => {
             if (!ch.armed || !watchdogArms(ch.inFlight, ch.sawProcess))
                 return;
@@ -235,53 +218,12 @@ test("a refresh against an unsettled tag parks and runs once the tag settles", (
     assert.equal(replay(["stopped", "refresh", "watchdog"]).starts, 2, "running once it settles");
 });
 
-test("a switch disarms timers armed before it and settles a launch that produced no process", () => {
-    // Timers armed before a provider switch must not act on the rebound channel.
-    const switched = replay(["stopped", "armRetry", "switched"]);
-    assert.equal(switched.armed, false, "the switch disarms a watchdog armed before it");
-    assert.equal(switched.retryArmed, false, "and the retry that was waiting");
-    assert.equal(switched.inFlight, "codex",
-        "and settles the tag of a launch that produced no process: nothing else would, once " +
-        "the watchdog is stopped");
-    assert.equal(switched.starts, 2,
-        "so the switch's own refresh RUNS: one fetch, not a request parked behind it");
-});
-
-test("a switch releases the tag of an exited process held by flush grace", () => {
-    // Once the process exited, stopping flush grace during reset must also release its tag
-    // or every later refresh remains parked without a settlement path.
-    const held = replay(["started", "exitHeld", "stopped", "switched"]);
-    assert.equal(held.inFlight, "codex",
-        "with the grace stopped nothing was left to settle that fetch, so the switch must");
-    assert.equal(held.starts, 2, "and the switch's own refresh RUNS rather than parking");
-    assert.deepEqual(replay(["started", "exitHeld", "stopped", "switched", "flush"]).settled, [],
-        "while the grace the switch stopped writes nothing afterwards");
-});
-
-test("a running process keeps its tag across a switch and its exit settles its own fetch", () => {
-    // A running process still owes its own exit. Preserve its tag so that exit cannot settle a newer fetch.
-    const live = replay(["started", "switched"]);
-    assert.equal(live.inFlight, "claude", "a running process keeps its tag across a switch");
-    assert.equal(live.starts, 1, "so no second launch starts against it");
-    assert.deepEqual(replay(["started", "switched", "exited"]).settled, ["exit"],
-        "and the exit it owed settles ITS fetch, which is what the tag was kept for");
-});
-
-test("a failed start after a switch still arms the watchdog and settles", () => {
-    // During process startup, running can read true even when startup later fails.
-    // Preserve the tag until the stop event can arm the watchdog.
-    const failedStart = replay(["switched", "stopped", "watchdog"]);
-    assert.deepEqual(failedStart.settled, ["failed-start"],
-        "the stop still arms the watchdog after the switch, which settles that launch");
-    assert.equal(replay(["switched", "stopped", "watchdog", "refresh"]).starts, 2,
-        "so the channel fetches again without waiting for the poll timer");
-});
-
-test("a timer armed before the switch writes nothing after it", () => {
-    const late = replay(["stopped", "armRetry", "switched", "watchdog", "retryFires"]);
-    assert.deepEqual(late.settled, [],
-        "a timer armed before the switch writes nothing after it — not for the provider it was " +
-        "launched for, and above all not for the one just selected");
+test("a poll while a fetch is already running is skipped, not queued behind it", () => {
+    const busy = replay(["refresh"]);
+    assert.equal(busy.starts, 1,
+        "the poll timer fires against every channel, and one still fetching has its answer on the " +
+        "way — queueing a second would double the API calls this widget is rate-limited on");
+    assert.equal(busy.pending, false, "and nothing is parked for it either");
 });
 
 test("a process that ran settles as an exit in either signal order, with no watchdog armed", () => {
@@ -297,10 +239,29 @@ test("a process that ran settles as an exit in either signal order, with no watc
         "business, whichever signal lands first");
 });
 
+test("an exit whose stdout never closes settles on the flush grace and is retried", () => {
+    const held = replay(["started", "exitHeld", "stopped"]);
+    assert.deepEqual(held.settled, [], "an exit alone does not settle: the payload may still arrive");
+    assert.deepEqual(replay(["started", "exitHeld", "stopped", "flush"]).settled, ["flush"],
+        "so a stream that never closes settles on a bound instead of hanging the channel");
+    assert.equal(shouldRelaunch({ inFlight: "claude", want: "claude", loaded: "", accepted: false,
+                                  retries: 0 }, 3), true,
+        "and a fetch that delivered no payload is retried");
+});
+
 test("a genuine failed start is reported and clears its tag", () => {
     const failed = replay(["stopped", "watchdog"]);
     assert.deepEqual(failed.settled, ["failed-start"],
         "while a genuine failed start — no process, so no exit is ever coming — is still " +
         "reported rather than leaving the pill on the in-flight ellipsis forever");
     assert.equal(failed.inFlight, "", "and its tag is cleared, so the channel can fetch again");
+});
+
+test("a retry armed by one fetch cannot start a second while that fetch is still running", () => {
+    const late = replay(["armRetry", "retryFires"]);
+    assert.equal(late.starts, 1,
+        "the launch decision is re-asked when the timer fires, so a retry armed before the channel " +
+        "recovered does not launch a second process beside a live one");
+    const payload = decodePayload("claude", '{"ok":true,"provider":"claude"}');
+    assert.equal(payload.issue, "", "and a good payload for this channel's own provider is accepted");
 });

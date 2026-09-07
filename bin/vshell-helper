@@ -7124,7 +7124,93 @@ def _update() -> Any:
     return _UPDATE
 
 
+_AI_USAGE: Any = None
+
+
+def _ai_usage() -> Any:
+    """Load the AI-usage source store and the AI Gateway provider on demand."""
+    global _AI_USAGE
+    if _AI_USAGE is None:
+        import vshell_ai_usage
+        vshell_ai_usage.configure(vshell_ai_usage.AiUsageRuntime(
+            state_dir=state_dir,
+            cache_dir=cache_dir,
+            eprint=eprint,
+        ))
+        _AI_USAGE = vshell_ai_usage
+    return _AI_USAGE
+
+
+def _ai_usage_backend() -> str:
+    """The discovery backend that finds Claude and Codex logins on disk.
+
+    The repository copy wins so a checkout tests its own backend; an installed
+    ~/.local/bin/ai-usage is what a packaged shell uses.
+    """
+    cmd_env = os.environ.get("VSHELL_AI_USAGE_CMD", "").strip()
+    candidates = [cmd_env] if cmd_env else []
+    candidates.extend([str(repo_root() / "bin" / "vshell-ai-usage"), str(home() / ".local" / "bin" / "ai-usage"), "ai-usage"])
+    return next((c for c in candidates if ("/" in c and Path(c).exists()) or ("/" not in c and shutil.which(c))), "")
+
+
+def _ai_usage_admin(argv: List[str]) -> int:
+    """Read and change where a provider's accounts come from.
+
+    Separate from the fetch path because these emit their own shapes and take
+    a key on stdin. The fetch path emits one provider-stamped usage payload and
+    nothing else, which is the contract the widget rejects payloads against.
+    """
+    module = _ai_usage()
+    sub = argv[0]
+    args = argv[1:]
+    provider = args[0] if args else ""
+
+    def reply(payload: Dict[str, Any]) -> int:
+        print(json.dumps(payload))
+        return 0
+
+    if sub in {"-h", "--help", "help"}:
+        eprint(module.AI_USAGE_USAGE)
+        return 0
+    if provider == "":
+        eprint(module.AI_USAGE_USAGE)
+        return 2
+    if sub == "sources":
+        return reply(module.sources_report(provider, _ai_usage_backend()))
+    if sub == "set-key":
+        parser = argparse.ArgumentParser(prog="vshell ai-usage set-key", add_help=False)
+        parser.add_argument("provider")
+        parser.add_argument("--label", default="")
+        parser.add_argument("--key-id", dest="key_id", default="")
+        try:
+            parsed = parser.parse_args(args)
+        except SystemExit:
+            return reply({"ok": False, "error": "could not read the arguments for set-key"})
+        # Read from stdin, never argv. One line: the caller writes the key and
+        # a newline, so this returns without waiting for the stream to close.
+        return reply(module.set_key(parsed.provider, sys.stdin.readline().strip(),
+                                    parsed.label.strip(), parsed.key_id.strip()))
+    if sub == "clear-key":
+        if len(args) < 2:
+            return reply({"ok": False, "error": "clear-key needs a provider and an account id"})
+        return reply(module.clear_key(provider, args[1]))
+    if sub == "add-dir":
+        if len(args) < 2:
+            return reply({"ok": False, "error": "add-dir needs a provider and a path"})
+        return reply(module.add_dir(provider, args[1]))
+    if sub == "remove-dir":
+        if len(args) < 2:
+            return reply({"ok": False, "error": "remove-dir needs a provider and a path"})
+        return reply(module.remove_dir(provider, args[1]))
+    eprint(module.AI_USAGE_USAGE)
+    return 2
+
+
 def cmd_ai_usage(argv: List[str]) -> int:
+    # A provider name asks for usage; anything else administers the sources
+    # that usage is read from, and answers in its own shape.
+    if argv and argv[0] not in _ai_usage().PROVIDERS:
+        return _ai_usage_admin(argv)
     provider = argv[0] if argv else "claude"
 
     def emit(payload: Dict[str, Any]) -> int:
@@ -7134,12 +7220,11 @@ def cmd_ai_usage(argv: List[str]) -> int:
         print(json.dumps(payload))
         return 0
 
-    cmd_env = os.environ.get("VSHELL_AI_USAGE_CMD", "").strip()
-    candidates = []
-    if cmd_env:
-        candidates.append(cmd_env)
-    candidates.extend([str(repo_root() / "bin" / "vshell-ai-usage"), str(home() / ".local" / "bin" / "ai-usage"), "ai-usage"])
-    runner = next((c for c in candidates if ("/" in c and Path(c).exists()) or ("/" not in c and shutil.which(c))), "")
+    # AI Gateway has no local login to discover, so it is fetched here from a
+    # stored key rather than through the on-disk discovery backend.
+    if provider in _ai_usage().KEY_PROVIDERS:
+        return emit(_ai_usage().gateway_payload())
+    runner = _ai_usage_backend()
     if not runner:
         return emit({"ok": False, "error": "ai-usage backend not found"})
     proc = subprocess.run([runner, provider], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)

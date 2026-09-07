@@ -19,7 +19,7 @@ PluginSettings {
 
     StyledText {
         width: parent.width
-        text: "Show Claude Code and OpenAI Codex subscription usage in the bar — one labelled slot each. Click the widget for the full breakdown and to switch which provider it opens on."
+        text: "Show Claude Code, OpenAI Codex and Vercel AI Gateway usage in the bar — one labelled slot per provider. Click the widget for per-account limits, to filter which providers count, and to tell a provider where its accounts are."
         font.pixelSize: Theme.fontSizeSmall
         color: Theme.surfaceVariantText
         wrapMode: Text.WordWrap
@@ -36,17 +36,6 @@ PluginSettings {
             anchors.fill: parent
             anchors.margins: Theme.spacingL
             spacing: Theme.spacingM
-
-            SelectionSetting {
-                settingKey: "provider"
-                label: "Selected provider"
-                description: "Which provider the popout opens on, and the one a vertical bar shows. A horizontal bar shows both."
-                defaultValue: "claude"
-                options: [
-                    { value: "claude", label: "Claude" },
-                    { value: "codex", label: "Codex" }
-                ]
-            }
 
             StringSetting {
                 settingKey: "refreshSeconds"
@@ -91,7 +80,7 @@ PluginSettings {
 
             StyledText {
                 width: parent.width
-                text: "Backed by the 'ai-usage' helper (in ~/.local/bin), which wraps the claudebar/codexbar engines.\n\n• Claude: log in with the 'claude' CLI (reads ~/.claude/.credentials.json)\n• Codex: log in with 'codex login' (reads ~/.codex)\n\nExtra accounts are picked up automatically: any config directory holding its own login (the ones your CLAUDE_CONFIG_DIR / CODEX_HOME wrappers point at) is listed separately, labelled by its signed-in email. Profiles whose tokens live in the desktop keyring can't be polled and are left out.\n\nThe bar pill keeps one slot per provider, each with its own icon and in a fixed order, so a number never changes meaning; a vertical bar has room for one and shows the selected provider's. A slot shows that provider's usage %: each account counts at its tightest window, and the Bar number setting chooses how several of them combine — averaged by default, or the account with the most headroom, or the most used. A slot reads an exclamation mark instead when that provider answered and the answer was unusable — not signed in, or the usage API failed; an ellipsis while a fetch for it is running; and a dash when the provider is fine but there is nothing left to show, which is every one of its accounts hidden. Click it for session, weekly and per-model limits with reset countdowns; with several accounts you get a per-account overview, and clicking a row expands it."
+                text: "Backed by `vshell ai-usage`, which wraps the claudebar/codexbar engines and calls the AI Gateway REST API directly.\n\n• Claude: log in with the 'claude' CLI (reads ~/.claude/.credentials.json)\n• Codex: log in with 'codex login' (reads ~/.codex)\n• AI Gateway: add an API key in the widget's provider setup, or export AI_GATEWAY_API_KEY\n\nExtra Claude and Codex accounts are picked up automatically: any config directory holding its own login (the ones your CLAUDE_CONFIG_DIR / CODEX_HOME wrappers point at) is listed separately, labelled by its signed-in address. A wrapper pointing somewhere no naming convention can guess is added by hand in provider setup. Profiles whose tokens live in the desktop keyring can't be polled and are left out. AI Gateway keys are stored in a private 0600 file under ~/.local/state/vshell, never in this settings file.\n\nThe bar keeps one slot per provider, each with its own icon and in a fixed order, so a number never changes meaning; a vertical bar stacks them. A slot shows that provider's usage %: each account counts at its tightest window, and the Bar number setting in the popout chooses how several of them combine — averaged by default, or the account with the most headroom, or the most used. A slot reads an exclamation mark instead when that provider answered and the answer was unusable — not signed in, or the usage API failed; an ellipsis while a fetch for it is running; and a dash when the provider is fine but there is nothing left to show, which is every one of its accounts hidden.\n\nClick the widget for one card per account, whichever provider it belongs to, with session, weekly, per-model and credit limits and reset countdowns; clicking a card expands it. The filter at the top chooses which providers count, and each row there opens that provider's setup."
                 font.pixelSize: Theme.fontSizeSmall
                 color: Theme.surfaceVariantText
                 wrapMode: Text.WordWrap
