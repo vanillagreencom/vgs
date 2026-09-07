@@ -351,7 +351,9 @@ case_unmeasured_is_its_own_channel() {
     not_measured=()
     # shellcheck source=/dev/null
     . "$tmp/unmeasured.sh"
-    shadowing_check() { local -a not_measured=(); unmeasured "the window border"; }
+    # Unquoted, so the record has to be the whole cause the helper printed rather than its
+    # first word: the exit-77 summary that prints the array is where a skip is named.
+    shadowing_check() { local -a not_measured=(); unmeasured the window border; }
     shadowing_check
     printf 'status=%s count=%s first=%s\n' "$status" "${#not_measured[@]}" "${not_measured[0]:-none}"
   )"

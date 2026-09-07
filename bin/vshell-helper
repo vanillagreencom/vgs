@@ -2122,10 +2122,10 @@ SANDBOX_REFUSAL = "refused: not the login user's own session"
 
 def write_chromium_policy(roles: Dict[str, str], allow_prompt: bool = False) -> Tuple[bool, str]:
     """Push the theme colour into the system Chromium policy. Returns (ok, reason)."""
-    # A shell started against a throwaway HOME (the nested test sandbox, a preview capture)
-    # applies its own default theme, and this hook would push that theme's colour into the
-    # real system policy for every browser on the machine. Only a shell running from the
-    # user's own config may write outside their home.
+    # A shell started against a throwaway HOME (the nested test sandbox) applies its own
+    # default theme, and this hook would push that theme's colour into the real system
+    # policy for every browser on the machine. Only a shell running from the user's own
+    # config may write outside their home.
     if _sandboxed_home():
         return False, SANDBOX_REFUSAL
     color = roles.get("surfaceContainerHigh") or roles.get("background") or "#1a1b26"
@@ -2157,14 +2157,19 @@ def write_chromium_policy(roles: Dict[str, str], allow_prompt: bool = False) -> 
 def _sandboxed_home() -> bool:
     """Whether this process runs against a throwaway HOME instead of the login user's.
 
-    The nested smoke sandbox and the preview capture each run a full shell on a temporary
-    home carrying its own default theme. Its theme hooks reach running apps through /proc
-    and through runtime paths that name the real uid, so without this they restyle the
-    login session's terminals, editors and monitors from a test's palette.
+    The nested smoke sandbox runs a full shell on a temporary home carrying its own default
+    theme. Its theme hooks reach running apps through /proc and through runtime paths that
+    name the real uid, so without this they restyle the login session's terminals, editors
+    and monitors from a test's palette.
 
-    Identity, not containment: both shipped sandbox producers build their home with a
-    mktemp that honours $TMPDIR, so a sandbox home sits wherever $TMPDIR points, the login
-    home included. A missing $HOME or an unresolvable login user is treated as sandboxed.
+    Identity, not containment: that sandbox builds its home with a mktemp that honours
+    $TMPDIR, so a sandbox home sits wherever $TMPDIR points, the login home included. A
+    missing $HOME or an unresolvable login user is treated as sandboxed.
+
+    A sudo run is sandboxed too, because sudo's env_reset rewrites $HOME to the target
+    user's home while the acting user resolves through SUDO_USER, so the two differ and
+    every theme hook skips. Theme commands are meant to be run unprivileged; no shipped
+    producer runs them as root.
     """
     env_home = os.environ.get("HOME", "").strip()
     if not env_home:

@@ -941,17 +941,16 @@ def test_hyprland_blur_script():
 
 @contextlib.contextmanager
 def sandbox_homes():
-    """Two fixed literals, then the homes the two shipped producers actually create.
+    """Two fixed literals, then two homes the shipped producer's own mktemp can create.
 
-    scripts/qml-smoke.sh builds its home with `mktemp -d -t vshell-smoke.XXXXXX` and the
-    preview capture with tempfile.mkdtemp(prefix="vgs-preview-"), and both honour $TMPDIR:
-    the third row therefore lands wherever this machine points TMPDIR, and the fourth
-    directly under the login home. That last one is the case a containment test cannot
-    tell apart from the login user's own session.
+    scripts/qml-smoke.sh builds its home with `mktemp -d -t vshell-smoke.XXXXXX`, which
+    honours $TMPDIR: the third row lands wherever this machine points TMPDIR, and the
+    fourth directly under the login home, where a $TMPDIR inside $HOME puts it. That last
+    one is the case a containment test cannot tell apart from the login user's own session.
     """
     login = Path(pwd.getpwuid(os.getuid()).pw_dir)
     ambient = tempfile.mkdtemp(prefix="vshell-smoke.")
-    under_login = tempfile.mkdtemp(prefix="vgs-preview-", dir=str(login))
+    under_login = tempfile.mkdtemp(prefix="vshell-smoke.", dir=str(login))
     try:
         yield ["/tmp/vshell-smoke.AbCdEf/home", "/var/tmp/agents/vgs273.XyZ/home", ambient, under_login]
     finally:
@@ -976,9 +975,9 @@ def as_home(path):
 def test_chromium_policy_refuses_a_sandbox_home():
     """A shell on a throwaway HOME must not push its default theme into the system policy.
 
-    The nested smoke sandbox and the preview capture both run a full shell against a
-    temporary home. Without this the hook wrote that shell's colour to
-    /etc/chromium/policies/managed for every browser on the machine.
+    The nested smoke sandbox runs a full shell against a temporary home. Without this the
+    hook wrote that shell's colour to /etc/chromium/policies/managed for every browser on
+    the machine.
     """
     login = Path(pwd.getpwuid(os.getuid()).pw_dir)
     with as_home(login):
@@ -999,10 +998,10 @@ def test_chromium_policy_refuses_a_sandbox_home():
 def test_theme_hooks_stay_out_of_the_login_session():
     """A shell on a throwaway HOME must not restyle the login session's running apps.
 
-    The nested smoke sandbox and the preview capture run a full shell against a temporary
-    home with its own default theme. Its hooks find kitty, btop and ghostty through /proc,
-    and tmux and nvim through runtime paths named by the real uid, so without a guard the
-    user's terminals were repainted from a test's palette.
+    The nested smoke sandbox runs a full shell against a temporary home with its own
+    default theme. Its hooks find kitty, btop and ghostty through /proc, and tmux and nvim
+    through runtime paths named by the real uid, so without a guard the user's terminals
+    were repainted from a test's palette.
     """
     login = Path(pwd.getpwuid(os.getuid()).pw_dir)
     # The scans each hook reaches its targets through. Patching them is what makes the

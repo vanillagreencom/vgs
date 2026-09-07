@@ -71,7 +71,7 @@ note() { printf 'qml-smoke: %s\n' "$*"; }
 # a plain assignment would land on the shadowing local and the run would exit 0 after a FAIL.
 fail() { printf 'qml-smoke: FAIL: %s\n' "$*" >&2; declare -g status=1; }
 # Same reason for -g as fail(): a check with a local of this name must not swallow the record.
-unmeasured() { printf 'qml-smoke: NOT MEASURED: %s\n' "$*" >&2; declare -g -a not_measured+=("$1"); }
+unmeasured() { printf 'qml-smoke: NOT MEASURED: %s\n' "$*" >&2; declare -g -a not_measured+=("$*"); }
 
 # shellcheck source=scripts/lib/session-snapshot.sh
 source "$repo_root/scripts/lib/session-snapshot.sh"
