@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Exercise the extracted smoke helpers without starting a nested compositor.
-# Five surfaces: the remedy the unavailability notice prints, the layer state the sandbox
+# Six surfaces: the remedy the unavailability notice prints, the layer state the sandbox
 # measures, the geometry reply the assertion accepts, the window edge samples the border
 # check reads, and the scope the failure verdict lands in.
 # The notice helper writes advice and nothing else, so its wording is the only channel
@@ -51,6 +51,7 @@ slice_line() {
   exit 1
 }
 slice_line fail
+slice_line unmeasured
 
 # Run the extracted notice helper with its script variables. A dash requests an unset display.
 drive() {
@@ -334,6 +335,33 @@ case_fail_pierces_local_status() {
   ok "a check's own local status cannot swallow the run's FAIL verdict"
 }
 
+# A check that could not obtain its evidence belongs in its own channel: it must not set the
+# run's FAIL verdict, and a check declaring a local of the record's name must not swallow it.
+# Those two together are what keeps `exit 77 — did not run` distinct from both a green run
+# and a red one, so an unobtainable frame never reads as a verdict about the border.
+case_unmeasured_is_its_own_channel() {
+  local out
+  out="$(
+    exec 2>/dev/null
+    set +e
+    # Plain assignment, not `declare`: a command substitution runs inside the calling
+    # function's scope, so `declare` here would make a second variable the helper's
+    # `declare -g` never reaches, and the case would fail on its own fixture.
+    status=0
+    not_measured=()
+    # shellcheck source=/dev/null
+    . "$tmp/unmeasured.sh"
+    shadowing_check() { local -a not_measured=(); unmeasured "the window border"; }
+    shadowing_check
+    printf 'status=%s count=%s first=%s\n' "$status" "${#not_measured[@]}" "${not_measured[0]:-none}"
+  )"
+  [[ "$out" == *'status=0'* ]] ||
+    fail "unmeasured is its own channel" "an unmeasured check must not set the run's FAIL verdict, got: $out"
+  [[ "$out" == *'count=1'* && "$out" == *'first=the window border'* ]] ||
+    fail "unmeasured is its own channel" "the record must reach the run's own array, got: $out"
+  ok "a check that could not run is recorded without becoming a pass or a failure"
+}
+
 # `qs ipc` waits forever on a shell that has already been reaped, and a poll loop's own
 # liveness check cannot run while its command substitution is blocked — that is what left
 # every later check unrun while the run still reported success. So every invocation carries
@@ -410,6 +438,7 @@ CASES=(
   case_geometry_replies
   case_window_border_samples
   case_fail_pierces_local_status
+  case_unmeasured_is_its_own_channel
 )
 for smoke_case in "${CASES[@]}"; do
   "$smoke_case"

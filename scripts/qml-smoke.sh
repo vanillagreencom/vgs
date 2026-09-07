@@ -11,6 +11,8 @@
 # --settings: open every available Settings page and verify it loads.
 # -h, --help: print this help.
 #
+# Exit 0 means every check that ran passed. Exit 77 means they passed but at least one
+# could not obtain its evidence and is named; it is not a pass. Exit 1 is a failed check.
 # Nested mode needs Hyprland, qs, Python, grim, and a host Wayland socket.
 # Sandbox settings come from repository defaults.
 # Theme loading is outside this smoke's coverage.
@@ -59,10 +61,17 @@ while [[ $# -gt 0 ]]; do
 done
 
 status=0
+# Checks that could not obtain their evidence. A check here is neither a pass nor a
+# failure: it did not run, and the run exits 77 rather than claiming a verdict it never
+# measured. Whole phases use nested_unavailable; this is the same idea for one check.
+declare -a not_measured=()
+skip_status=77
 note() { printf 'qml-smoke: %s\n' "$*"; }
 # declare -g so a function with its own local 'status' cannot swallow the run's verdict:
 # a plain assignment would land on the shadowing local and the run would exit 0 after a FAIL.
 fail() { printf 'qml-smoke: FAIL: %s\n' "$*" >&2; declare -g status=1; }
+# Same reason for -g as fail(): a check with a local of this name must not swallow the record.
+unmeasured() { printf 'qml-smoke: NOT MEASURED: %s\n' "$*" >&2; declare -g -a not_measured+=("$1"); }
 
 # shellcheck source=scripts/lib/session-snapshot.sh
 source "$repo_root/scripts/lib/session-snapshot.sh"
@@ -1172,8 +1181,11 @@ print(data[i + 1:i + 4].hex())
 ' 2>>"$sink"
 }
 
-# Sample the Settings window's left edge in the sandbox. A capture or query failure is
-# reported as such: it is not evidence about where the border sits.
+# Sample the Settings window's left edge in the sandbox. Samples that cannot be obtained
+# are not evidence about where the border sits, so they leave the border NOT MEASURED
+# rather than failed: the nested output only renders while its host window is presented,
+# which no unattended run can arrange without driving the live session. A frame that IS
+# obtained is judged in full.
 # The sandbox always runs the Lua config manager, so the compositor is what draws the VGS
 # window border here. A client-drawn border is a real finding — the window rule did not
 # reach this window — and is failed rather than accepted as the other valid arm.
@@ -1199,16 +1211,17 @@ settings_border_check() {
   read -r x y <<<"$geometry"
   far_x=$((x - far_offset))
   if [[ "$far_x" -lt 0 ]]; then
-    fail "the Settings window maps ${x}px from the output edge, too close to sample past its border"
-    return 1
+    unmeasured "the window border: the Settings window maps ${x}px from the output edge, too close to sample past its border"
+    return "$skip_status"
   fi
   if ! edge="$(sandbox_pixel "$x" "$y")" ||
     ! border="$(sandbox_pixel "$((x + 1))" "$y")" ||
     ! interior="$(sandbox_pixel "$((x + 4))" "$y")" ||
     ! near="$(sandbox_pixel "$((x - 1))" "$y")" ||
     ! far="$(sandbox_pixel "$far_x" "$y")"; then
-    fail "could not sample the Settings window edge at ${x},${y}: $(tail -c 400 -- "${pixel_error_log:-/dev/null}" 2>/dev/null)"
-    return 1
+    # One line per record: the summary lists them, and grim's own report spans two.
+    unmeasured "the window border: no frame from the sandbox output at ${x},${y}: $(tail -c 400 -- "${pixel_error_log:-/dev/null}" 2>/dev/null | tr '\n' ' ')"
+    return "$skip_status"
   fi
   window_border_is_inset "$edge" "$border" "$interior" "$near" "$far" || verdict=$?
   case "$verdict" in
@@ -1617,6 +1630,12 @@ EOF
 
   # fail sets status without stopping the run. Print success only while status remains successful.
   [[ "$status" -eq 0 ]] || return
+  # An unmeasured check is not covered by this phase's success line, so name it here too:
+  # "passed" must not be read as covering a check that never obtained its evidence.
+  if [[ ${#not_measured[@]} -gt 0 ]]; then
+    note "isolated runtime check passed except for ${#not_measured[@]} check(s) that could not run (shell loaded, all ${#expected_plugins[@]} bundled plugins loaded, answered IPC in the sandbox)"
+    return
+  fi
   note "isolated runtime check passed (shell loaded, all ${#expected_plugins[@]} bundled plugins loaded, answered IPC in the sandbox)"
 }
 
@@ -1630,6 +1649,12 @@ fi
 if [[ "$status" -eq 0 ]]; then
   if [[ "$static_ran" == false && "$nested" == false ]]; then
     note "nothing was checked (no qmllint, and --nested was not requested)"
+  elif [[ ${#not_measured[@]} -gt 0 ]]; then
+    # A failure outranks an unmeasured check: status 1 keeps its own exit below.
+    printf 'qml-smoke: exit %s — everything that ran passed, but %d check(s) did not run:\n' \
+      "$skip_status" "${#not_measured[@]}" >&2
+    printf 'qml-smoke:   %s\n' "${not_measured[@]}" >&2
+    exit "$skip_status"
   else
     note "ok"
   fi
