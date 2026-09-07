@@ -50,10 +50,14 @@ QtObject {
         if (account.weekly)
             out.push({ label: "Weekly (7d)", pct: account.weekly.pct || 0, reset: account.weekly.reset || "", resetAt: account.weekly.resetAt || 0 });
         const models = account.models || [];
+        // Marked as a model lane, because that is the only kind a compact card
+        // may drop: a session or a weekly window at 0% is a window that has
+        // reset, which is news, while a model the account has never called is
+        // a row that has never said anything.
         for (let i = 0; i < models.length; i++)
             out.push({ label: laneLabel(models[i].label) || "Model", pct: models[i].pct || 0,
                        reset: models[i].reset || "", resetAt: models[i].resetAt || 0,
-                       detail: models[i].detail || "" });
+                       detail: models[i].detail || "", model: true });
         // Credit-billed seats have no rate-limit windows at all — their spend
         // pool is the only usage there is, so it stands in for them. The
         // provider names the pool, because a prepaid balance, a monthly budget
@@ -64,6 +68,18 @@ QtObject {
                        detail: account.spend.detail || "",
                        used: account.spend.used, limit: account.spend.limit, currency: account.spend.currency || "USD" });
         return out;
+    }
+
+    // The lanes a card actually draws. An expanded card draws every one it was
+    // given: opening a card is the request to see all of it. A compact card
+    // drops model lanes at nothing when the user asked it to, which is how a
+    // provider that reports a model nobody on this machine calls stops costing
+    // a row on every card forever.
+    function shownMeters(meters, expanded, hideUnused) {
+        const all = meters || [];
+        if (expanded || !hideUnused)
+            return all.slice();
+        return all.filter(m => !m.model || (m.pct || 0) > 0);
     }
 
     // Classify each meter by its own percentage, independent of other account lanes.

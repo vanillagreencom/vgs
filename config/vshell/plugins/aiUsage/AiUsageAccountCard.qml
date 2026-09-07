@@ -21,8 +21,11 @@ StyledRect {
     signal toggleExpanded
 
     readonly property bool ok: !!accountCard.account && accountCard.account.ok === true
+    // Expanded is passed in rather than filtered here: which lanes a card draws
+    // is a display decision, and opening the card is the request to see all of
+    // them whatever the compact card was told to leave out.
     readonly property var meters: (accountCard.host && accountCard.account)
-        ? accountCard.host.metersFor(accountCard.account) : []
+        ? accountCard.host.metersFor(accountCard.account, accountCard.expanded) : []
     readonly property string footer: (accountCard.host && accountCard.account)
         ? accountCard.host.accountFooter(accountCard.account) : ""
 

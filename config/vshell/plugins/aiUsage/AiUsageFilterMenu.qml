@@ -20,10 +20,13 @@ Column {
     signal providerToggled(string provider)
     signal allRequested
     signal setupRequested(string provider)
+    signal moveRequested(string provider, int delta)
 
     spacing: Theme.spacingXS
 
-    readonly property var providers: root.host ? root.host.providerOrder() : []
+    // Listed in the order the bar uses, not the catalog's, so the arrows move a
+    // row to where its slot will actually be.
+    readonly property var providers: root.host ? root.host.filterOrder() : []
 
     StyledRect {
         id: trigger
@@ -140,8 +143,13 @@ Column {
                     // every row offers the way in rather than only the ones
                     // that happen to need a secret.
                     showSetup: true
+                    showMove: true
+                    canMoveUp: root.host ? root.host.canMoveProvider(modelData, -1) : false
+                    canMoveDown: root.host ? root.host.canMoveProvider(modelData, 1) : false
                     onToggled: root.providerToggled(modelData)
                     onSetupClicked: root.setupRequested(modelData)
+                    onMoveUp: root.moveRequested(modelData, -1)
+                    onMoveDown: root.moveRequested(modelData, 1)
                 }
             }
         }

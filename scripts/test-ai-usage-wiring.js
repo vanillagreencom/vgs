@@ -252,8 +252,17 @@ test("both pill orientations render the same slots, and neither invents a number
         // hide it — an empty slot leaves the way in unreachable.
         assert.ok(pill.includes("visible: modelData.setup") && pill.includes("color: Theme.primary"),
             `${which} draws a setup slot as an invitation, unconditionally`);
-        assert.ok(pill.includes("visible: root.barIcons && !modelData.setup"),
-            `${which} hides only a provider MARK when the icon setting is off`);
+        assert.ok(pill.includes("visible: root.barSlotIcons && !modelData.setup"),
+            `${which} hides only a provider MARK when the icon mode is not the per-slot one`);
+        // The single-icon mode is the widget's own mark, drawn once ahead of the numbers.
+        // It is a sibling of the Repeater, not inside it, or a bar with three slots would
+        // draw the same widget icon three times.
+        assert.ok(pill.includes("visible: root.barWidgetIcon") && pill.includes("name: root.widgetIcon()"),
+            `${which} draws the widget's own mark once for the whole widget in the "one" mode`);
+        assert.ok(pill.indexOf("visible: root.barWidgetIcon") < pill.indexOf("Repeater {"),
+            `${which} draws that mark ahead of the slots rather than once per slot`);
+        assert.ok(!/"smart_toy"|"data_usage"/.test(pill),
+            `${which} takes the widget's glyph from the catalog rather than spelling it out`);
         assert.ok(!/headlinePct/.test(stripComments(pill)),
             `a raw percentage in ${which} is how it came to show 60% beside an error glyph`);
     }
@@ -427,4 +436,148 @@ test("the poll interval scales with the accounts actually being visited", () => 
         "all of them — counting one provider's set left three providers' accounts sharing one " +
         "provider's interval");
     assert.ok(timer.includes("root.refreshSeconds"), "and the user's interval is still the floor");
+});
+
+test("the display page's unpadded switch rows carry no row-wide hover wash", () => {
+    const display = stripComments(fs.readFileSync(path.join(PLUGIN, "AiUsageDisplaySettings.qml"), "utf8"));
+    const unpadded = (display.match(/horizontalPadding:\s*0\b/g) || []).length;
+    const unwashed = (display.match(/rowHoverHighlight:\s*false\b/g) || []).length;
+    assert.ok(unpadded > 0, "the switch rows still set their own inset to nothing");
+    assert.equal(unwashed, unpadded,
+        "and every row that drops that inset drops the row-wide hover wash with it: a full-bleed " +
+        "rectangle behind a label with no padding reads as a box drawn around the text. The " +
+        "switch's own press feedback and the row's click are unaffected");
+});
+
+test("every value the shared display page reads is supplied by BOTH surfaces", () => {
+    const display = stripComments(fs.readFileSync(path.join(PLUGIN, "AiUsageDisplaySettings.qml"), "utf8"));
+    const settings = stripComments(fs.readFileSync(path.join(PLUGIN, "AiUsageSettings.qml"), "utf8"));
+    const read = new Set(Array.from(display.matchAll(/root\.values\.([A-Za-z]+)/g), m => m[1]));
+    assert.ok(read.size >= 5,
+        `the reader extractor found ${read.size} value(s) — read that as the EXTRACTOR being ` +
+        "broken, not the page being empty");
+
+    const block = (text, label, re) => {
+        const m = text.match(re);
+        assert.ok(m, `${label} has no values object for this row to check`);
+        return m[1];
+    };
+    const fromWidget = block(stripComments(source), "AiUsageWidget.qml",
+        /displaySettings:\s*\(\{([\s\S]*?)\}\)/);
+    const fromSettings = block(settings, "AiUsageSettings.qml", /values:\s*\(\{([\s\S]*?)\}\)/);
+    for (const key of read) {
+        // A key one surface omits is not an error the page can see: `values.x` is
+        // simply undefined and the page silently falls back to its default, so the
+        // same switch reads one way in the popout and another in the settings app.
+        assert.ok(new RegExp("\\b" + key + ":").test(fromWidget),
+            `the widget does not send ${key}, which the display page reads: the popout's copy of ` +
+            "that control would show its default however the setting is actually stored");
+        assert.ok(new RegExp("\\b" + key + ":").test(fromSettings),
+            `the settings application does not send ${key}, which the display page reads`);
+    }
+    assert.ok(read.has("providerFilter") && read.has("barIconMode") && read.has("hideUnusedLanes"),
+        "and the page is the one that reads them, so neither surface has a control the other lacks");
+});
+
+test("the display page offers the icon modes the catalog defines, and names none of them itself", () => {
+    const display = stripComments(fs.readFileSync(path.join(PLUGIN, "AiUsageDisplaySettings.qml"), "utf8"));
+    assert.ok(display.includes("keys: catalog.iconModes()"),
+        "the modes come from the catalog, so a mode added there reaches both settings surfaces " +
+        "without either one carrying a list of its own");
+    assert.ok(!/"none"|"one"|"provider"/.test(display.replace(/root\.barIconMode === "[a-z]+"/g, "")),
+        "and the page spells a mode out only to caption the one that is selected");
+    assert.ok(display.includes('root.changed("barIconMode", key)'),
+        "picking a mode writes the mode key, not a boolean the bar would have to guess at");
+});
+
+test("the display page's slot list orders through the catalog and writes one setting", () => {
+    const display = stripComments(fs.readFileSync(path.join(PLUGIN, "AiUsageDisplaySettings.qml"), "utf8"));
+    assert.ok(display.includes("model: catalog.filterOrder(root.providerFilter)"),
+        "the rows are listed in the order the bar uses, so an arrow moves a row to where its " +
+        "slot will actually be");
+    for (const [call, why] of [
+        ["catalog.toggleFilter(root.providerFilter, modelData)",
+            "checking a provider goes through the shared rule, which is also what collapses a " +
+            "full selection back to the value 'all' is stored as"],
+        ["catalog.moveProvider(root.providerFilter, modelData, -1)", "and so does moving one up"],
+        ["catalog.moveProvider(root.providerFilter, modelData, 1)", "and down"],
+        ["canMoveUp: catalog.canMoveProvider(root.providerFilter, modelData, -1)",
+            "an arrow that would do nothing says so before it is used"],
+        ["canMoveDown: catalog.canMoveProvider(root.providerFilter, modelData, 1)", "at both ends"]
+    ])
+        assert.ok(display.includes(call), why);
+    assert.ok(!/changed\("providerOrder"|changed\("barProviders"/.test(display),
+        "selection and order are ONE stored list: a second one would let the bar and the popout " +
+        "disagree about which providers exist");
+});
+
+test("the filter menu lists providers in the bar's order and can rearrange it", () => {
+    const menu = stripComments(fs.readFileSync(path.join(PLUGIN, "AiUsageFilterMenu.qml"), "utf8"));
+    assert.ok(menu.includes("root.host.filterOrder()"),
+        "the popout's filter lists the same arrangement the display page does, or the two would " +
+        "show one provider in two places");
+    assert.ok(!/providerOrder\(\)/.test(menu),
+        "and never the catalog's raw order, which would put the arrows beside the wrong rows");
+    assert.ok(menu.includes("signal moveRequested(string provider, int delta)"),
+        "the row asks its host to move a provider rather than writing the setting itself: the " +
+        "menu has no save path and the popout and the settings app reach one differently");
+    assert.ok(code.includes("onMoveRequested: (p, delta) => root.moveProvider(p, delta)"),
+        "and the widget answers it through the same persisted setting");
+});
+
+test("a card asks for the lanes its own state should draw", () => {
+    const card = stripComments(fs.readFileSync(path.join(PLUGIN, "AiUsageAccountCard.qml"), "utf8"));
+    assert.ok(card.includes("metersFor(accountCard.account, accountCard.expanded)"),
+        "an expanded card lists every limit and a compact one may drop the untouched ones, so " +
+        "the card's own state has to reach the decision that filters them");
+    assert.ok(!/hideUnusedLanes/.test(card),
+        "but WHICH lanes to drop is not the card's to decide: it would then differ between the " +
+        "popout's cards and any other surface that renders one");
+    assert.ok(code.includes("fmt.shownMeters(fmt.metersFor(card), expanded, root.hideUnusedLanes)"),
+        "the widget filters the shared list once, through the shared rule");
+});
+
+test("the plugin declares the same glyph the bar draws for the whole widget", () => {
+    const manifest = JSON.parse(fs.readFileSync(path.join(PLUGIN, "plugin.json"), "utf8"));
+    const logic = stripComments(fs.readFileSync(path.join(PLUGIN, "AiUsageLogic.qml"), "utf8"));
+    const declared = logic.match(/function widgetIcon\(\)\s*\{\s*return "([a-z_]+)";/);
+    assert.ok(declared, "the catalog names the widget's own glyph in one place");
+    assert.equal(manifest.icon, declared[1],
+        "the icon the bar draws in the single-icon mode is the icon the settings list and the " +
+        "widget picker show for this plugin: two glyphs for one widget is two widgets to a user");
+});
+
+test("every provider mark fills its own box, so no provider's slot looks smaller than the rest", () => {
+    // Vendor artwork arrives boxed to the vendor's own margins. Codex's mark sat in 65% of a
+    // 24x24 box where Claude's filled 95% of a 248x248 one, so on a bar drawn at one icon size
+    // it rendered two thirds the size of its neighbours and, being a thin-stroke glyph with a
+    // third less ink, read as dimmer as well. The fix is the box, not a per-provider scale
+    // factor: a number tuned to one drawing is wrong the moment the drawing is replaced.
+    //
+    // Extents come from the coordinate pairs in each path, so a curve is measured by its control
+    // points and this reads slightly WIDE, never narrow. The threshold has room for that.
+    const catalog = stripComments(fs.readFileSync(path.join(PLUGIN, "AiUsageLogic.qml"), "utf8"));
+    const marks = Array.from(catalog.matchAll(/return "([a-z0-9-]+\.svg)";/g), m => m[1]);
+    assert.ok(marks.length > 0,
+        "the mark extractor found none — read that as the EXTRACTOR being broken, not the " +
+        "catalog shipping no artwork");
+    for (const mark of marks) {
+        const svg = fs.readFileSync(path.join(PLUGIN, mark), "utf8");
+        const box = svg.match(/viewBox="([-\d.\s]+)"/);
+        assert.ok(box, `${mark} has no viewBox, so it has no defined size to be drawn at`);
+        const [, , boxW, boxH] = box[1].trim().split(/\s+/).map(Number);
+        const xs = [], ys = [];
+        for (const d of svg.matchAll(/\sd="([^"]+)"/g)) {
+            const n = (d[1].match(/-?\d*\.?\d+(?:e-?\d+)?/gi) || []).map(Number);
+            for (let i = 0; i + 1 < n.length; i += 2) { xs.push(n[i]); ys.push(n[i + 1]); }
+        }
+        assert.ok(xs.length > 1, `${mark}: no path coordinates to measure`);
+        const fill = Math.max((Math.max(...xs) - Math.min(...xs)) / boxW,
+                              (Math.max(...ys) - Math.min(...ys)) / boxH);
+        assert.ok(fill >= 0.85,
+            `${mark} draws across only ${(fill * 100).toFixed(0)}% of its own box, so beside a ` +
+            "mark that fills its own it renders visibly smaller and, spreading the same ink over " +
+            "fewer pixels, dimmer. Tighten the viewBox to the artwork rather than scaling the " +
+            "icon at one call site");
+    }
 });

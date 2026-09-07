@@ -99,6 +99,33 @@ QtObject {
         }
     }
 
+    // ---- Bar icons -----------------------------------------------------------
+    // What the bar draws in front of its numbers. "provider" marks every slot,
+    // which is what tells two numbers apart; "one" marks the WIDGET once, for a
+    // bar that is already crowded and where the popout can say which is which;
+    // "none" is numbers alone.
+    function iconModes() {
+        return ["none", "one", "provider"];
+    }
+
+    // The stored mode, or what the switch this replaced was left on. `legacy` is
+    // the old boolean barIcons: only a stored false was ever an instruction, so
+    // it becomes "none" and everything else takes the per-slot default.
+    function barIconMode(stored, legacy) {
+        const want = String(stored === undefined || stored === null ? "" : stored);
+        if (iconModes().indexOf(want) !== -1)
+            return want;
+        return legacy === false ? "none" : "provider";
+    }
+
+    // The mark for the whole widget, used by the "one" mode. It is the plugin's
+    // own glyph — the same one plugin.json declares — and never a provider's:
+    // an icon standing in for several providers cannot be any one of them
+    // without lying about the rest.
+    function widgetIcon() {
+        return "data_usage";
+    }
+
     // ---- Provider filter -----------------------------------------------------
     // The filter is a list of provider ids. Empty means every provider, so a
     // fresh install and "All" are the same stored value and neither has to be
@@ -115,9 +142,42 @@ QtObject {
         }
         if (want.length === 0)
             return order.slice();
-        // Return in catalog order, never in the order the user clicked, so a
-        // slot never changes position because of how the filter was built.
-        return order.filter(p => want.indexOf(p) !== -1);
+        // Return in the order STORED, which is the order the user arranged. An
+        // empty filter is the catalog's own order, so a shell that never opened
+        // the list still gets a fixed arrangement rather than click order.
+        return want;
+    }
+
+    // Every provider, in the order the surfaces walk them: the selected ones
+    // first, as arranged, then the rest in catalog order. The filter list
+    // renders this, so an unselected provider keeps a stable place to be found
+    // in rather than jumping position as its neighbours are turned on and off.
+    function filterOrder(filter) {
+        const picked = selectedProviders(filter);
+        return picked.concat(providerOrder().filter(p => picked.indexOf(p) === -1));
+    }
+
+    // The one spelling of "every provider, catalog order". A fresh install, the
+    // All row, and unchecking the last remaining provider all store [], so a
+    // provider added to the catalog later appears without a migration. A full
+    // selection in a DIFFERENT order is written out instead, or arranging every
+    // provider would silently snap back to the catalog's order.
+    function canonicalFilter(list) {
+        const order = providerOrder();
+        const next = [];
+        const raw = list || [];
+        for (let i = 0; i < raw.length; i++) {
+            const q = normalizeProvider(raw[i]);
+            if (q !== "" && next.indexOf(q) === -1)
+                next.push(q);
+        }
+        if (next.length !== order.length)
+            return next;
+        for (let j = 0; j < order.length; j++) {
+            if (next[j] !== order[j])
+                return next;
+        }
+        return [];
     }
 
     function filterIsAll(filter) {
@@ -128,20 +188,46 @@ QtObject {
         return selectedProviders(filter).indexOf(normalizeProvider(p)) !== -1;
     }
 
-    // Toggle one provider, in catalog order. Selecting every provider stores
-    // the same empty value a fresh install has, so "all" has one spelling.
-    // Unchecking the LAST one lands on that value too, which is why an empty
-    // selection means all: an empty bar would hide every row that could bring
-    // a provider back.
+    // Toggle one provider. A provider turned on joins the END of the arrangement
+    // rather than at its catalog index, because the stored list is an order the
+    // user built and inserting into the middle of it moves slots they placed.
+    // Unchecking the LAST one lands on the empty value, which is why an empty
+    // selection means all: an empty bar would hide every row that could bring a
+    // provider back.
     function toggleFilter(filter, p) {
         const which = normalizeProvider(p);
         const current = selectedProviders(filter);
         if (which === "")
-            return current;
-        const wanted = current.indexOf(which) === -1;
-        const next = providerOrder().filter(
-            q => q === which ? wanted : current.indexOf(q) !== -1);
-        return next.length === providerOrder().length ? [] : next;
+            return canonicalFilter(current);
+        const next = current.indexOf(which) === -1
+            ? current.concat([which])
+            : current.filter(q => q !== which);
+        return canonicalFilter(next);
+    }
+
+    // Move one selected provider by `delta` places. Only selected providers can
+    // move: the unselected tail of the list is not on the bar, so a position in
+    // it means nothing. Arranging inside "all" writes the order out, because []
+    // carries no order to edit.
+    function moveProvider(filter, p, delta) {
+        const which = normalizeProvider(p);
+        const list = selectedProviders(filter).slice();
+        const at = list.indexOf(which);
+        const to = at + (delta || 0);
+        if (at === -1 || to < 0 || to >= list.length)
+            return canonicalFilter(list);
+        list.splice(at, 1);
+        list.splice(to, 0, which);
+        return canonicalFilter(list);
+    }
+
+    // Whether a provider has anywhere to move, so a button that would do
+    // nothing is not offered. Both are false for an unselected provider.
+    function canMoveProvider(filter, p, delta) {
+        const list = selectedProviders(filter);
+        const at = list.indexOf(normalizeProvider(p));
+        const to = at + (delta || 0);
+        return at !== -1 && to >= 0 && to < list.length;
     }
 
     // A label for the filter trigger: what is on the bar, in as few words as fit.

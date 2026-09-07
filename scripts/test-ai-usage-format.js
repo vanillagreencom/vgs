@@ -26,10 +26,10 @@ const { evaluateMarked, regionOf, guardChild } = require("./lib/qml-region.js");
 guardChild();
 
 const formatSource = fs.readFileSync(FORMAT, "utf8");
-const { metersFor, percentageClass, currencySymbol, groupDigits, money, formatSpend,
+const { metersFor, shownMeters, percentageClass, currencySymbol, groupDigits, money, formatSpend,
         formatSpendExact, laneLabel } =
     evaluateMarked(formatSource, "FORMAT DECISION", [
-        "metersFor", "percentageClass", "currencySymbol", "groupDigits", "money",
+        "metersFor", "shownMeters", "percentageClass", "currencySymbol", "groupDigits", "money",
         "formatSpend", "formatSpendExact", "laneLabel"
     ], "AiUsageFormat.qml");
 
@@ -172,4 +172,40 @@ test("metersFor builds a card's rows in reading order, whatever lanes the provid
         "a model lane carries its own detail through, which is how a partial failure reaches a card");
     assert.deepEqual(metersFor(null), [], "no account has no rows");
     assert.deepEqual(metersFor({}), [], "and an account with no lanes has none either");
+});
+
+test("only model lanes are marked as one, because only a model lane may be dropped", () => {
+    const account = {
+        session: { pct: 0 },
+        weekly: { pct: 0 },
+        models: [{ label: "Opus", pct: 0 }],
+        spend: { label: "Credits", pct: 0 }
+    };
+    assert.deepEqual(metersFor(account).map(m => m.model === true),
+        [false, false, true, false],
+        "a session or a weekly window at 0% is a window that has RESET, and a credit pool at 0% " +
+        "is a pool nothing has been drawn from — both are readings. Only a model the account has " +
+        "never called is a row that has never said anything");
+});
+
+test("a compact card drops model lanes at nothing, and an expanded one drops none", () => {
+    const meters = metersFor({
+        session: { pct: 0 },
+        models: [{ label: "Sonnet", pct: 76 }, { label: "GPT-5.3-Codex-Spark", pct: 0 }]
+    });
+    assert.deepEqual(shownMeters(meters, false, true).map(m => m.label), ["Session (5h)", "Sonnet"],
+        "a limit the account has never used costs no row on a compact card");
+    assert.deepEqual(shownMeters(meters, true, true).map(m => m.label),
+        ["Session (5h)", "Sonnet", "Spark"],
+        "and expanding the card lists every one: opening a card IS the request to see all of it, " +
+        "so nothing the provider reported is lost");
+    assert.deepEqual(shownMeters(meters, false, false).map(m => m.label),
+        ["Session (5h)", "Sonnet", "Spark"],
+        "and a user who turned the setting off keeps every row on the compact card too");
+
+    assert.notEqual(shownMeters(meters, true, true), meters,
+        "the list handed back is this card's own, never the array metersFor built — a card that " +
+        "filtered in place would empty the list every other card reads");
+    assert.deepEqual(shownMeters(null, false, true), [], "no meters is no rows, not a throw");
+    assert.deepEqual(shownMeters(undefined, true, false), []);
 });

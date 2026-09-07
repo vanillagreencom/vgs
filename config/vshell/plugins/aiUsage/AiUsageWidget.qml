@@ -130,10 +130,18 @@ PluginComponent {
     // Whether cards open expanded. Compact shows one row per limit; expanded
     // shows each limit as its own bar with its reset countdown under it.
     readonly property bool expandByDefault: pluginData.cardDetail === "expanded"
-    // Absent means on: a fresh install shows icons and colour, and only a
-    // stored false turns either off.
-    readonly property bool barIcons: pluginData.barIcons !== false
+    // Absent means on: a fresh install shows the colour, and only a stored
+    // false turns it off.
     readonly property bool barColor: pluginData.barColor !== false
+    // What the bar draws in front of its numbers. The catalog resolves the
+    // stored mode, falling back to whatever the boolean switch this replaced
+    // was left on, so nobody's bar changes when they upgrade.
+    readonly property string barIconMode: logic.barIconMode(pluginData.barIconMode, pluginData.barIcons)
+    readonly property bool barSlotIcons: root.barIconMode === "provider"
+    readonly property bool barWidgetIcon: root.barIconMode === "one"
+    // Absent means on: a model lane the account has never called is dropped
+    // from a compact card, and an expanded card still lists every one.
+    readonly property bool hideUnusedLanes: pluginData.hideUnusedLanes !== false
     readonly property string barValue: pluginData.barValue === "left" ? "left" : "used"
 
     // The one card whose state is the opposite of the default. Storing the
@@ -151,9 +159,16 @@ PluginComponent {
     readonly property var displaySettings: ({
         headlineMode: root.headlineMode,
         barValue: root.barValue,
-        barIcons: root.barIcons,
+        // Raw, both of them: the page resolves the mode from the stored value or
+        // from the switch it replaced, exactly as the settings application's
+        // copy does, so the two surfaces cannot disagree about an upgraded
+        // setting.
+        barIconMode: pluginData.barIconMode || "",
+        barIcons: pluginData.barIcons !== false,
         barColor: root.barColor,
-        cardDetail: pluginData.cardDetail || "compact"
+        hideUnusedLanes: root.hideUnusedLanes,
+        cardDetail: pluginData.cardDetail || "compact",
+        providerFilter: root.providerFilter
     })
 
     function pillHeads() {
@@ -172,8 +187,8 @@ PluginComponent {
     function resetLabel(meter) {
         return fmt.resetLabel(meter);
     }
-    function metersFor(card) {
-        return fmt.metersFor(card);
+    function metersFor(card, expanded) {
+        return fmt.shownMeters(fmt.metersFor(card), expanded, root.hideUnusedLanes);
     }
 
     // Provider identity for the child surfaces. They reach the catalog through
@@ -197,8 +212,22 @@ PluginComponent {
     function accountFooter(card) {
         return logic.accountFooter(card);
     }
+    function widgetIcon() {
+        return logic.widgetIcon();
+    }
     function filterHas(p) {
         return logic.filterHas(root.providerFilter, p);
+    }
+    // The provider list every filter surface renders: selected first, as
+    // arranged, then the rest.
+    function filterOrder() {
+        return logic.filterOrder(root.providerFilter);
+    }
+    function canMoveProvider(p, delta) {
+        return logic.canMoveProvider(root.providerFilter, p, delta);
+    }
+    function moveProvider(p, delta) {
+        root.saveSetting("providerFilter", logic.moveProvider(root.providerFilter, p, delta));
     }
     function filterIsAll() {
         return logic.filterIsAll(root.providerFilter);
@@ -490,6 +519,17 @@ PluginComponent {
         Row {
             spacing: Theme.spacingXS
 
+            // One mark for the whole widget, ahead of every number. A crowded
+            // bar pays for one icon here instead of one per slot; the popout
+            // still says which number belongs to whom.
+            VgsIcon {
+                visible: root.barWidgetIcon
+                name: root.widgetIcon()
+                size: root.iconSize
+                color: Theme.widgetIconColor
+                anchors.verticalCenter: parent.verticalCenter
+            }
+
             Repeater {
                 model: root.pillHeads()
 
@@ -510,11 +550,11 @@ PluginComponent {
                     }
 
                     AiUsageProviderIcon {
-                        visible: root.barIcons && !modelData.setup
+                        visible: root.barSlotIcons && !modelData.setup
                         host: root
                         provider: modelData.provider
                         size: root.iconSize
-                        color: modelData.error ? Theme.error : Theme.surfaceVariantText
+                        color: modelData.error ? Theme.error : Theme.widgetIconColor
                         anchors.verticalCenter: parent.verticalCenter
                     }
 
@@ -523,7 +563,7 @@ PluginComponent {
                         visible: text.length > 0
                         font.pixelSize: root.pillFontSize
                         font.weight: Font.Medium
-                        color: root.slotColor(modelData, Theme.surfaceVariantText)
+                        color: root.slotColor(modelData, Theme.widgetTextColor)
                         anchors.verticalCenter: parent.verticalCenter
                     }
                 }
@@ -536,6 +576,14 @@ PluginComponent {
     verticalBarPill: Component {
         Column {
             spacing: 2
+
+            VgsIcon {
+                visible: root.barWidgetIcon
+                name: root.widgetIcon()
+                size: root.iconSize
+                color: Theme.widgetIconColor
+                anchors.horizontalCenter: parent.horizontalCenter
+            }
 
             Repeater {
                 model: root.pillHeads()
@@ -554,11 +602,11 @@ PluginComponent {
                     }
 
                     AiUsageProviderIcon {
-                        visible: root.barIcons && !modelData.setup
+                        visible: root.barSlotIcons && !modelData.setup
                         host: root
                         provider: modelData.provider
                         size: root.iconSize
-                        color: modelData.error ? Theme.error : Theme.surfaceText
+                        color: modelData.error ? Theme.error : Theme.widgetIconColor
                         anchors.horizontalCenter: parent.horizontalCenter
                     }
 
@@ -566,7 +614,7 @@ PluginComponent {
                         text: modelData.text
                         visible: text.length > 0
                         font.pixelSize: root.pillFontSize
-                        color: root.slotColor(modelData, Theme.surfaceText)
+                        color: root.slotColor(modelData, Theme.widgetTextColor)
                         anchors.horizontalCenter: parent.horizontalCenter
                     }
                 }
@@ -688,6 +736,7 @@ PluginComponent {
                             width: parent.width
                             host: root
                             onProviderToggled: p => root.toggleProvider(p)
+                            onMoveRequested: (p, delta) => root.moveProvider(p, delta)
                             onAllRequested: root.selectAllProviders()
                             onSetupRequested: p => popout.openSetup(p)
                         }

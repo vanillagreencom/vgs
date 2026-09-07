@@ -5,7 +5,7 @@
     "version": "1.1.0",
     "license": "MIT",
     "author": "VanillaGreen",
-    "icon": "smart_toy",
+    "icon": "data_usage",
     "component": "./AiUsageWidget.qml",
     "settings": "./AiUsageSettings.qml",
     "requires_shell": ">=0.1.0",

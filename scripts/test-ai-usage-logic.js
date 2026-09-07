@@ -27,6 +27,8 @@ const {
     providerOrder, normalizeProvider, providerIcon, providerName, providerNeedsCredential,
     providerAsset,
     selectedProviders, filterIsAll, filterHas, toggleFilter, filterLabel,
+    filterOrder, canonicalFilter, moveProvider, canMoveProvider,
+    iconModes, barIconMode, widgetIcon,
     payloadProvider, payloadIsFor, shouldRelaunch, decodePayload, acceptOutcome, stderrReason,
     cardKey, isCardHidden, toggleHiddenCard, providerCards, allCards,
     headOf, slotShown, pillSlot, pillSlots, deckView, accountCount, accountFooter,
@@ -35,6 +37,8 @@ const {
     "providerOrder", "normalizeProvider", "providerIcon", "providerName", "providerNeedsCredential",
     "providerAsset",
     "selectedProviders", "filterIsAll", "filterHas", "toggleFilter", "filterLabel",
+    "filterOrder", "canonicalFilter", "moveProvider", "canMoveProvider",
+    "iconModes", "barIconMode", "widgetIcon",
     "payloadProvider", "payloadIsFor", "shouldRelaunch", "decodePayload", "acceptOutcome",
     "stderrReason", "cardKey", "isCardHidden", "toggleHiddenCard", "providerCards", "allCards",
     "headOf", "slotShown", "pillSlot", "pillSlots", "deckView", "accountCount", "accountFooter",
@@ -145,14 +149,87 @@ test("an empty, junk or complete filter all mean every provider", () => {
     }
 });
 
-test("a filter selects in catalog order, never in the order it was clicked", () => {
+test("a filter is an arrangement: the stored order is the order the surfaces walk", () => {
     const [first, second] = providerOrder();
-    assert.deepEqual(selectedProviders([second, first]), [first, second],
-        "a slot must not change position because of the order the user ticked the boxes");
+    assert.deepEqual(selectedProviders([second, first]), [second, first],
+        "the stored order IS the arrangement — it is what the bar slots and the popout sections " +
+        "are ordered by, so re-sorting it here would discard the only copy of the user's choice");
+    assert.deepEqual(selectedProviders([]), providerOrder(),
+        "and an empty filter is the catalog's own order, so a shell that never opened the list " +
+        "still gets a fixed arrangement rather than one built out of click order");
     assert.deepEqual(selectedProviders([first, first]), [first], "a repeated provider is one provider");
+    assert.deepEqual(selectedProviders([first, "gemini"]), [first], "an unknown id is not a provider");
     assert.equal(filterIsAll([first]), false, "one of three is not all");
+    assert.equal(filterIsAll([...providerOrder()].reverse()), true,
+        "and every provider is all however they are arranged: order is not selection");
     assert.equal(filterHas([first], first), true);
     assert.equal(filterHas([first], second), false);
+});
+
+test("the list every filter surface renders puts the selected first and the rest behind them", () => {
+    const [first, second, third] = providerOrder();
+    assert.deepEqual(filterOrder([]), providerOrder(), "all selected is the catalog's own order");
+    assert.deepEqual(filterOrder([third]), [third, first, second],
+        "a selected provider leads, and the unselected keep catalog order behind it so a row does " +
+        "not jump position as its neighbours are switched on and off");
+    assert.deepEqual(filterOrder([third, first]), [third, first, second],
+        "the selected group keeps ITS arrangement, not the catalog's");
+    assert.deepEqual(filterOrder([]).slice().sort(), providerOrder().slice().sort(),
+        "and every provider is listed exactly once, or one would be unreachable");
+});
+
+test("[] is the one spelling of every provider in catalog order", () => {
+    const order = providerOrder();
+    assert.deepEqual(canonicalFilter(order), [],
+        "a full selection in catalog order collapses, so a fresh install, the All row and " +
+        "checking the last provider back on all store the same value and a provider added to " +
+        "the catalog later appears without a migration");
+    assert.deepEqual(canonicalFilter([...order].reverse()), [...order].reverse(),
+        "a full selection in a DIFFERENT order is written out, or arranging every provider " +
+        "would silently snap back to the catalog's order");
+    assert.deepEqual(canonicalFilter([order[0], order[0]]), [order[0]], "written once");
+    assert.deepEqual(canonicalFilter(["gemini"]), [], "an unknown id contributes nothing");
+    assert.deepEqual(canonicalFilter(null), [], "and no list is the empty one");
+});
+
+test("providers move only within the selection, and moving inside 'all' writes the order out", () => {
+    const order = providerOrder();
+    const [first, second, third] = order;
+    assert.deepEqual(moveProvider([], second, -1), [second, first, third],
+        "moving inside 'all' writes the arrangement out, because [] carries no order to edit");
+    assert.deepEqual(moveProvider([], first, 1), [second, first, third], "and down is the same swap");
+    assert.deepEqual(moveProvider([], first, -1), [],
+        "the first provider cannot move up: the arrangement is unchanged, so it stays collapsed");
+    assert.deepEqual(moveProvider([], third, 1), [], "nor the last one down");
+    assert.deepEqual(moveProvider([third, first], "gemini", -1), [third, first],
+        "an unknown id moves nothing");
+    assert.deepEqual(moveProvider([third, first], second, -1), [third, first],
+        "and neither does a provider that is not selected: a position among slots it does not " +
+        "take is not a position");
+
+    assert.equal(canMoveProvider([], first, -1), false, "the head has nowhere up");
+    assert.equal(canMoveProvider([], first, 1), true);
+    assert.equal(canMoveProvider([], third, 1), false, "the tail has nowhere down");
+    assert.equal(canMoveProvider([third], first, -1), false,
+        "and an unselected provider can move neither way, so its arrows say so before they are used");
+    assert.equal(canMoveProvider([third], first, 1), false);
+});
+
+test("the bar icon mode resolves the stored value, or the switch it replaced", () => {
+    assert.deepEqual(iconModes(), ["none", "one", "provider"],
+        "the three modes are the catalog's, so neither settings surface writes its own list");
+    for (const mode of iconModes())
+        assert.equal(barIconMode(mode, undefined), mode, `${mode} is kept as stored`);
+    assert.equal(barIconMode(undefined, undefined), "provider",
+        "a fresh install marks every slot: that is what tells two numbers apart");
+    assert.equal(barIconMode(undefined, false), "none",
+        "a shell that switched the old barIcons off keeps a bar with no marks on it");
+    assert.equal(barIconMode(undefined, true), "provider", "and one that left it on keeps its marks");
+    assert.equal(barIconMode("", false), "none", "an empty stored mode is not a mode");
+    assert.equal(barIconMode("both", false), "none", "and neither is one this catalog does not offer");
+    assert.equal(providerOrder().map(providerIcon).indexOf(widgetIcon()), -1,
+        "the widget's own mark is no provider's: an icon standing in for several providers " +
+        "cannot be any one of them without lying about the rest");
 });
 
 test("toggling clears back to all rather than to an empty bar", () => {
@@ -175,8 +252,8 @@ test("the filter trigger names what is on the bar", () => {
     const [first, second] = providerOrder();
     assert.equal(filterLabel([]), "All providers", "the default says so in one phrase");
     assert.equal(filterLabel([first]), providerName(first), "one provider is named");
-    assert.equal(filterLabel([second, first]), providerName(first) + ", " + providerName(second),
-        "and several are listed in catalog order, matching the slots on the bar");
+    assert.equal(filterLabel([second, first]), providerName(second) + ", " + providerName(first),
+        "and several are listed in the arranged order, matching the slots on the bar");
 });
 
 // ---- Payload identity -------------------------------------------------------
@@ -498,7 +575,7 @@ test("pillSlots gives every selected provider a fixed-order slot with its own ic
     assert.deepEqual(slots.map(s => s.setup), [false, false, false]);
 });
 
-test("the filter decides which providers get a slot, and does not reorder the rest", () => {
+test("the filter decides which providers get a slot, and the arrangement decides where", () => {
     const data = { claude: claudePayload, codex: codexPayload };
     const [first, second] = providerOrder();
     assert.deepEqual(
@@ -506,7 +583,15 @@ test("the filter decides which providers get a slot, and does not reorder the re
         [second], "a filter of one provider puts one slot on the bar");
     assert.deepEqual(
         pillSlots(slotState({ providerData: data, filter: [second, first] })).map(s => s.provider),
-        [first, second], "and several stay in catalog order whatever order they were ticked in");
+        [second, first], "and several sit where the arrangement put them");
+    assert.deepEqual(
+        pillSlots(slotState({ providerData: data, filter: [] })).map(s => s.provider),
+        [first, second], "while an unarranged filter is the catalog's order");
+    assert.deepEqual(
+        deckView(slotState({ providerData: data, filter: [second, first] })).sections.map(x => x.provider),
+        [second, first],
+        "and the popout's sections follow the SAME arrangement, or a slot and its section would " +
+        "disagree about where a provider sits");
 });
 
 test("a provider without a number keeps its slot and never shows another provider's number", () => {
