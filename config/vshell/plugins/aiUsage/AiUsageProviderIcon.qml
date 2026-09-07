@@ -28,13 +28,24 @@ Item {
     implicitWidth: root.size
     implicitHeight: root.size
 
+    // A Material Symbol draws its body inside about three quarters of the size
+    // it is asked for — the font reserves the rest as padding. A mark shipped
+    // beside this file fills 95% of its own viewBox, which a test pins, so at
+    // the same requested size it renders a quarter larger than the Material
+    // glyph next to it on the bar. This is the ratio that puts the two at one
+    // optical size. It is one number for every mark rather than a scale factor
+    // per drawing, which is what makes it survive replacing the artwork.
+    readonly property real materialGlyphFill: 0.75
+    readonly property real markArtworkFill: 0.95
+    readonly property int markSize: Math.round(root.size * (materialGlyphFill / markArtworkFill))
+
     VgsSVGIcon {
         anchors.centerIn: parent
         visible: root.asset !== ""
         // Resolved beside this file: a user override loads the plugin from
         // ~/.config/vshell/plugins, where any shell-relative path is wrong.
         source: root.asset === "" ? "" : Qt.resolvedUrl(root.asset)
-        size: root.size
+        size: root.markSize
         colorOverride: root.color
     }
 

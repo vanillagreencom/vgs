@@ -597,3 +597,25 @@ test("the bar draws in the shell's own widget colours, not this plugin's idea of
             "bar's own colour mode, and the two orientations then disagree about one payload");
     }
 });
+
+test("a mark is drawn at a Material glyph's optical size, and its fallback at the plain one", () => {
+    const icon = stripComments(fs.readFileSync(path.join(PLUGIN, "AiUsageProviderIcon.qml"), "utf8"));
+    // Filling the box is right for artwork and wrong for a bar: a Material Symbol reserves
+    // roughly a quarter of the size it is asked for as padding, so a mark drawn at the same
+    // number renders visibly larger than the glyph beside it. Measured on the bar, the marks
+    // came out 26-28px tall against 22px for the Material glyphs before this ratio.
+    assert.ok(/materialGlyphFill/.test(icon) && /markArtworkFill/.test(icon),
+        "the adjustment is the ratio of two named fills, not a tuned constant: a bare 0.79 says " +
+        "nothing about which of the two numbers behind it moved when the artwork is replaced");
+    assert.ok(/markSize:.*root\.size \* \(materialGlyphFill \/ markArtworkFill\)/.test(icon),
+        "and the size is derived from both of them");
+
+    const at = icon.indexOf("VgsSVGIcon {");
+    const fallbackAt = icon.indexOf("VgsIcon {");
+    assert.ok(at !== -1 && fallbackAt > at, "the mark is drawn before its Material fallback");
+    assert.ok(icon.slice(at, fallbackAt).includes("size: root.markSize"),
+        "the shipped mark takes the adjusted size");
+    assert.ok(icon.slice(fallbackAt).includes("size: root.size"),
+        "and the Material fallback takes the plain one: it IS a Material glyph, so adjusting it " +
+        "toward one would shrink it below every other glyph on the bar");
+});
