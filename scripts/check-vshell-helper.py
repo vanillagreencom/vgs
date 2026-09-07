@@ -923,12 +923,54 @@ def test_hyprland_blur_script():
                  "the Lua config manager's success reply")
     assert_equal(helper._hyprctl_eval_ok(_sp.CompletedProcess(["hyprctl", "eval"], 7, "error: boom", "")), False,
                  "a failed Lua chunk is not an applied eval")
-    with patch.object(helper, "_hyprctl_eval", return_value=refusal):
-        assert_equal(helper._hyprland_blur_support().get("available"), False,
-                     "blur support must not be claimed on a session that refused the probe")
+    # hyprctl on PATH and a session signature, or _hyprland_blur_support returns
+    # unavailable from its own early return and the arm passes on every CI runner without
+    # ever reaching the patched eval. The reason pins which of the two answered.
+    with patch.object(helper.shutil, "which", return_value="/usr/bin/hyprctl"), \
+            patch.dict(os.environ, {"HYPRLAND_INSTANCE_SIGNATURE": "test"}), \
+            patch.object(helper, "_hyprctl_eval", return_value=refusal):
+        support = helper._hyprland_blur_support()
+    assert_equal(support.get("available"), False,
+                 "blur support must not be claimed on a session that refused the probe")
+    assert_equal(support.get("reason"), "eval is only supported with the lua config manager",
+                 "the refusal text, not an absent hyprctl, is why blur is unavailable")
     bordered = helper._hyprland_blur_script(True, 0.5, True, 1, "dark", 9, 3)
     assert_equal("border_size = 3," in bordered, True, "the border width follows the shell")
     assert_equal("border_size = 10," in helper._hyprland_blur_script(True, 0.5, True, 1, "dark", 9, 40), True, "the border width clamps")
+
+
+@contextlib.contextmanager
+def sandbox_homes():
+    """Two fixed literals, then the homes the two shipped producers actually create.
+
+    scripts/qml-smoke.sh builds its home with `mktemp -d -t vshell-smoke.XXXXXX` and the
+    preview capture with tempfile.mkdtemp(prefix="vgs-preview-"), and both honour $TMPDIR:
+    the third row therefore lands wherever this machine points TMPDIR, and the fourth
+    directly under the login home. That last one is the case a containment test cannot
+    tell apart from the login user's own session.
+    """
+    login = Path(pwd.getpwuid(os.getuid()).pw_dir)
+    ambient = tempfile.mkdtemp(prefix="vshell-smoke.")
+    under_login = tempfile.mkdtemp(prefix="vgs-preview-", dir=str(login))
+    try:
+        yield ["/tmp/vshell-smoke.AbCdEf/home", "/var/tmp/agents/vgs273.XyZ/home", ambient, under_login]
+    finally:
+        shutil.rmtree(ambient, ignore_errors=True)
+        shutil.rmtree(under_login, ignore_errors=True)
+
+
+@contextlib.contextmanager
+def as_home(path):
+    """Run the block with $HOME (and the config root that travels with it) at `path`."""
+    saved = {n: os.environ.get(n) for n in ("HOME", "XDG_CONFIG_HOME", "SUDO_USER")}
+    os.environ.pop("SUDO_USER", None)
+    os.environ["HOME"] = str(path)
+    os.environ["XDG_CONFIG_HOME"] = str(Path(path) / ".config")
+    try:
+        yield Path(path)
+    finally:
+        for name, value in saved.items():
+            _restore_env(name, value)
 
 
 def test_chromium_policy_refuses_a_sandbox_home():
@@ -938,21 +980,20 @@ def test_chromium_policy_refuses_a_sandbox_home():
     temporary home. Without this the hook wrote that shell's colour to
     /etc/chromium/policies/managed for every browser on the machine.
     """
-    real = Path(pwd.getpwuid(os.getuid()).pw_dir)
-    assert_equal(helper._is_real_user_config(real / ".config" / "vshell" / "generated" / "x.json"), True,
-                 "the login user's own config is not a sandbox")
-    for sandbox in ("/tmp/vshell-smoke.AbCdEf/home/.config/vshell/generated/x.json",
-                    "/var/tmp/agents/vgs273.XyZ/home/.config/vshell/generated/x.json"):
-        assert_equal(helper._is_real_user_config(Path(sandbox)), False, f"sandbox path {sandbox}")
-
-    def run(temp_home: Path):
-        # write_chromium_policy must refuse before it ever reaches sudo.
-        with patch.object(helper.subprocess, "run") as ran:
-            wrote = helper.write_chromium_policy({"surfaceContainerHigh": "#123456"})
-        assert_equal(wrote, False, "a sandboxed shell must not write the system policy")
-        assert_equal(ran.called, False, "a sandboxed shell must not reach sudo at all")
-
-    with_temp_home(run)
+    login = Path(pwd.getpwuid(os.getuid()).pw_dir)
+    with as_home(login):
+        assert_equal(helper._sandboxed_home(), False, "the login user's own home is not a sandbox")
+    with sandbox_homes() as homes:
+        for sandbox in homes:
+            with as_home(sandbox):
+                assert_equal(helper._sandboxed_home(), True, f"sandbox home {sandbox}")
+                # write_chromium_policy must refuse before it ever reaches sudo.
+                with patch.object(helper.subprocess, "run") as ran:
+                    wrote, reason = helper.write_chromium_policy({"surfaceContainerHigh": "#123456"})
+                assert_equal(wrote, False, f"a sandboxed shell must not write the system policy ({sandbox})")
+                assert_equal(reason, helper.SANDBOX_REFUSAL,
+                             "the refusal names itself, not a missing privilege")
+                assert_equal(ran.called, False, "a sandboxed shell must not reach sudo at all")
 
 
 def test_theme_hooks_stay_out_of_the_login_session():
@@ -963,20 +1004,49 @@ def test_theme_hooks_stay_out_of_the_login_session():
     and tmux and nvim through runtime paths named by the real uid, so without a guard the
     user's terminals were repainted from a test's palette.
     """
-    real_home = os.environ.get("HOME")
-    try:
-        os.environ["HOME"] = str(Path(pwd.getpwuid(os.getuid()).pw_dir))
+    login = Path(pwd.getpwuid(os.getuid()).pw_dir)
+    # The scans each hook reaches its targets through. Patching them is what makes the
+    # empty result attributable to the guard: a host with no kitty, no tmux server and no
+    # nvim returns the same [] with every guard deleted.
+    scans = [
+        ("the /proc scan", "iterdir", lambda: helper.process_pids_by_comm("kitty")),
+        ("the tmux socket probe", "iterdir", lambda: helper.tmux_sockets()),
+        ("the nvim runtime-dir walk", "glob", lambda: helper.nvim_sockets()),
+    ]
+    with sandbox_homes() as homes:
+        for sandbox in homes:
+            with as_home(sandbox):
+                assert_equal(helper._sandboxed_home(), True, f"sandbox home {sandbox}")
+                for label, method, call in scans:
+                    tripwire = AssertionError(f"{label} ran under a sandbox HOME")
+                    with patch.object(helper.Path, method, side_effect=tripwire) as scan:
+                        assert_equal(call(), [], f"{label} yields nothing under a sandbox HOME")
+                    assert_equal(scan.called, False, f"the guard, not an empty result, stops {label}")
+                result = helper.signal_reload_hook("kitty-reload", "kitty", signal.SIGUSR1)
+                assert_equal(result["skipped"], True, "the reload hook reports a skip, not a signal")
+                assert_equal(result["reason"], helper.SANDBOX_REFUSAL,
+                             "the skip names the refusal, not an absent kitty")
+                # Every hook that reaches the login session, refused as a whole rather
+                # than only where it scans: ghostty falls through to a session-bus reload
+                # with no pid to signal, hypr-reload picks the newest live compositor
+                # instance, and shell-reload finds the running shell through the real
+                # uid's runtime directory. None of the three passes through a scan.
+                trip = AssertionError("a sandboxed hook must not run a command")
+                with patch.object(helper, "_run_hook_cmd", side_effect=trip), \
+                        patch.object(helper.subprocess, "run", side_effect=trip):
+                    for hook in ("ghostty-reload", "hypr-reload", "shell-reload", "tmux-source", "nvim-reload"):
+                        skipped = helper.run_hook(hook, {"background": "#123456"})
+                        assert_equal(skipped.get("skipped"), True, f"{hook} reports a skip under a sandbox HOME")
+                        assert_equal(skipped.get("reason"), helper.SANDBOX_REFUSAL,
+                                     f"{hook} names the refusal rather than an absent app")
+    # The inverse: with the login user's own HOME the same patched scans ARE reached, so
+    # the assertions above pin the guard rather than a scan that never runs.
+    with as_home(login):
         assert_equal(helper._sandboxed_home(), False, "the login user's own home is not a sandbox")
-        for sandbox in ("/tmp/vshell-smoke.AbCdEf/home", "/var/tmp/agents/vgs273.XyZ/home"):
-            os.environ["HOME"] = sandbox
-            assert_equal(helper._sandboxed_home(), True, f"sandbox home {sandbox}")
-            assert_equal(helper.process_pids_by_comm("kitty"), [], "no host process is reachable")
-            assert_equal(helper.tmux_sockets(), [], "no host tmux socket is reachable")
-            assert_equal(helper.nvim_sockets(), [], "no host nvim socket is reachable")
-            result = helper.signal_reload_hook("kitty-reload", "kitty", signal.SIGUSR1)
-            assert_equal(result["skipped"], True, "the reload hook reports a skip, not a signal")
-    finally:
-        _restore_env("HOME", real_home)
+        for label, method, call in scans:
+            with patch.object(helper.Path, method, side_effect=lambda *a, **k: iter([])) as scan:
+                call()
+            assert_equal(scan.called, True, f"{label} is reached from the login user's own home")
 
 
 def test_vshell_blur_cli_contract():
@@ -1052,6 +1122,33 @@ exit 0
         assert_equal(refused_payload["ok"], False, "a refused eval must not report success")
         assert_equal(refused_payload.get("windowChrome"), None,
                      "a refused eval must not claim the compositor owns the window chrome")
+
+        # Must-fail control for the second _hyprctl_eval_ok site, the one that produces
+        # windowChrome. A config manager that accepts the layer_rule probe and rejects the
+        # window rule answers per chunk, so only the rule chunk fails and the support
+        # probe no longer short-circuits the apply. Reading the return code alone here
+        # reports windowChrome true for a rule the compositor never installed, and every
+        # VGS window then renders square and borderless.
+        fake_hyprctl.write_text("""#!/usr/bin/env bash
+set -euo pipefail
+if [[ ${1:-} == eval ]]; then
+  if [[ ${2:-} == *"hl.layer_rule unavailable"* ]]; then
+    printf 'ok\\n'
+  else
+    printf 'error: attempt to index a nil value\\n'
+  fi
+fi
+exit 0
+""")
+        fake_hyprctl.chmod(0o755)
+        rejected = subprocess.run(
+            [str(REPO_ROOT / "bin" / "vshell"), "blur", "apply", "--enabled", "true", "--json"],
+            check=False, capture_output=True, text=True, env=env,
+        )
+        rejected_payload = json.loads(rejected.stdout)
+        assert_equal(rejected_payload["ok"], False, "a rejected rule chunk must not report success")
+        assert_equal(rejected_payload["windowChrome"], False,
+                     "a rejected rule chunk must not hand the window chrome to the compositor")
 
 
 def test_generated_theme_consumer_wiring():

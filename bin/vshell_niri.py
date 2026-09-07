@@ -441,7 +441,6 @@ def _niri_layout_payload(settings: Dict[str, Any]) -> tuple[str, Dict[str, Any]]
     shell_border = runtime().coerce_int(settings.get("surfaceBorderWidth"), 1, 0, 32)
     # One radius and one border thickness govern VGS surfaces and app windows together;
     # the compositor-only pair and the target that chose between them are retired.
-    manage_niri_shape = True
     radius = shell_radius
     border = shell_border
     raw_gaps = settings.get("niriLayoutGapsOverride", -1)
@@ -460,33 +459,30 @@ def _niri_layout_payload(settings: Dict[str, Any]) -> tuple[str, Dict[str, Any]]
     ]
     if gaps is not None:
         lines.append(f"    gaps {gaps}")
-    if manage_niri_shape:
-        lines.extend([
-            "    focus-ring {",
-            "        off",
-            f"        width {border}",
-            "    }",
-            "    border {",
-            "        " + ("on" if border > 0 else "off"),
-            f"        width {border}",
-            "    }",
-        ])
-    lines.extend(["}", ""])
-    if manage_niri_shape:
-        lines.extend([
-            "window-rule {",
-            f"    geometry-corner-radius {radius}",
-            "    clip-to-geometry true",
-            "    tiled-state true",
-            "    draw-border-with-background false",
-            "}",
-            "",
-        ])
+    lines.extend([
+        "    focus-ring {",
+        "        off",
+        f"        width {border}",
+        "    }",
+        "    border {",
+        "        " + ("on" if border > 0 else "off"),
+        f"        width {border}",
+        "    }",
+        "}",
+        "",
+        "window-rule {",
+        f"    geometry-corner-radius {radius}",
+        "    clip-to-geometry true",
+        "    tiled-state true",
+        "    draw-border-with-background false",
+        "}",
+        "",
+    ])
     return "\n".join(lines), {
-        "manageNiriShape": manage_niri_shape,
-        "radius": radius if manage_niri_shape else None,
+        "manageNiriShape": True,
+        "radius": radius,
         "gaps": gaps,
-        "border": border if manage_niri_shape else None,
+        "border": border,
     }
 
 def _reload_niri() -> Dict[str, Any]:
