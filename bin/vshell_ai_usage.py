@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import math
 import os
 import subprocess
 import tempfile
@@ -65,7 +66,9 @@ KEY_PROVIDERS = ("vercel",)
 # Providers whose accounts are config directories holding a CLI login.
 DIR_PROVIDERS = ("claude", "codex")
 
-AI_GATEWAY_BASE = "https://ai-gateway.vercel.sh/v1"
+# AI_GATEWAY_BASE overrides this, which is what lets the suite point the
+# provider at a stub and assert what it sends and what it makes of the answer.
+AI_GATEWAY_DEFAULT_BASE = "https://ai-gateway.vercel.sh/v1"
 # Both are documented ways to authenticate an AI Gateway call, and a machine
 # provisioned outside VGS may have either. A key typed into the widget wins.
 AI_GATEWAY_ENV = ("AI_GATEWAY_API_KEY", "VERCEL_OIDC_TOKEN")
@@ -132,12 +135,13 @@ def _write_store(store: Dict[str, Any]) -> Optional[str]:
                 json.dump({"version": 1, "keys": store.get("keys", {}), "dirs": store.get("dirs", {})},
                           handle, indent=2, sort_keys=True)
                 handle.write("\n")
+            # os.replace carries the temp file's mode across, so the 0600 set on
+            # the descriptor above is the mode the store ends up with.
             os.replace(tmp_name, str(path))
         except BaseException:
             with contextlib.suppress(OSError):
                 os.unlink(tmp_name)
             raise
-        os.chmod(str(path), 0o600)
     except OSError as exc:
         return str(exc)
     return None
@@ -224,7 +228,8 @@ def _request(path: str, key: str, query: Optional[Dict[str, str]] = None) -> Tup
     """
     from urllib.error import HTTPError, URLError
 
-    url = AI_GATEWAY_BASE + path
+    base = os.environ.get("AI_GATEWAY_BASE", AI_GATEWAY_DEFAULT_BASE).rstrip("/")
+    url = base + path
     if query:
         url += "?" + urllib.parse.urlencode(query)
     req = urllib.request.Request(url, method="GET", headers={
@@ -232,8 +237,11 @@ def _request(path: str, key: str, query: Optional[Dict[str, str]] = None) -> Tup
         "User-Agent": "vshell-ai-usage",
         "Accept": "application/json",
     })
+    # An HTTP proxy would send the key somewhere it was never meant to go, so
+    # this opener ignores the proxy environment.
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
-        with urllib.request.urlopen(req, timeout=GATEWAY_TIMEOUT) as resp:
+        with opener.open(req, timeout=GATEWAY_TIMEOUT) as resp:
             return resp.status, resp.read()
     except HTTPError as exc:
         return exc.code, exc.read()
@@ -325,10 +333,20 @@ def _money(amount: float) -> str:
     return f"${amount:,.2f}"
 
 
+def _round_half_up(value: float) -> int:
+    """Round the way every other percentage in this widget rounds.
+
+    Python's round() is banker's rounding: it takes 4.5 to 4 and 5.5 to 6. The
+    QML side aggregates the same percentages with Math.round, which is half-up,
+    so one figure disagreed with the average computed over it.
+    """
+    return int(math.floor(value + 0.5))
+
+
 def _pct(used: float, limit: float) -> int:
     if limit <= 0:
         return 0
-    return max(0, min(100, round(100.0 * used / limit)))
+    return max(0, min(100, _round_half_up(100.0 * used / limit)))
 
 
 def _number(value: Any) -> Optional[float]:
@@ -477,7 +495,7 @@ def gateway_payload() -> Dict[str, Any]:
         lanes = [account["spend"]["pct"]] if account["spend"] else []
         lanes += [m.get("pct", 0) for m in account["models"]]
         peaks.append(max(lanes) if lanes else 0)
-    aggregate = round(sum(peaks) / len(peaks)) if peaks else 0
+    aggregate = _round_half_up(sum(peaks) / len(peaks)) if peaks else 0
     return {
         "ok": True,
         "configured": True,

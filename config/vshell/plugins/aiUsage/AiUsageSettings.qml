@@ -57,6 +57,33 @@ PluginSettings {
         }
     }
 
+    // The same display page the popout shows behind its gear. Its values are
+    // read back through loadValue so this surface reflects a change made in
+    // the popout, and vice versa.
+    StyledRect {
+        width: parent.width
+        height: displayPage.implicitHeight + Theme.spacingL * 2
+        radius: Theme.cornerRadius
+        color: Theme.surfaceContainerHigh
+
+        AiUsageDisplaySettings {
+            id: displayPage
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.margins: Theme.spacingL
+
+            values: ({
+                headlineMode: root.loadValue("headlineMode", "pool"),
+                barValue: root.loadValue("barValue", "used"),
+                barIcons: root.loadValue("barIcons", true),
+                barColor: root.loadValue("barColor", true),
+                cardDetail: root.loadValue("cardDetail", "compact")
+            })
+            onChanged: (key, value) => root.saveValue(key, value)
+        }
+    }
+
     // One section per provider: an API key field for the providers configured
     // with one, and the config directories the others are discovered in. The
     // popout shows the same component one provider at a time.

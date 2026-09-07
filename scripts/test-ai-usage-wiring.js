@@ -298,7 +298,7 @@ test("every account renders through the one card, and nothing hand-draws a secon
     requires(cards, "the account card delegate", [
         ["account: modelData", "a card renders the card the deck built"],
         ["host: root", "reaching the formatting helpers through the host"],
-        ["expanded: root.expandedCardKey === modelData.key",
+        ["expanded: root.cardExpanded(modelData.key)",
             "and expansion is keyed by the provider-qualified key, so two providers' accounts " +
             "sharing an id cannot expand each other"]
     ]);
@@ -309,11 +309,30 @@ test("every account renders through the one card, and nothing hand-draws a secon
         "and the meters live inside that card rather than being drawn again by the widget");
 });
 
+// A QML binding against hover state has no executable surface, so this is pinned in source.
+test("the card's hover folds in the hide button's own, and nothing re-anchors on it", () => {
+    const card = stripComments(fs.readFileSync(path.join(PLUGIN, "AiUsageAccountCard.qml"), "utf8"));
+    assert.ok(card.includes("cardArea.containsMouse || hideButton.hovering"),
+        "the button carries a hover-enabled state layer that TAKES hover from the card's area as " +
+        "the pointer reaches it, so the card's area alone reads false exactly while the pointer " +
+        "is on the button — the button hid itself under the pointer, handed hover back, and " +
+        "flickered");
+    assert.equal((card.match(/cardArea\.containsMouse/g) || []).length, 1,
+        "and every surface that follows hover reads the FOLDED value: the card's own highlight " +
+        "dropped on the same edge for the same reason");
+    assert.ok(!/visible:\s*cardArea\.containsMouse/.test(card),
+        "the button fades rather than unmapping, so it never stops being hit-testable while the " +
+        "pointer is over it — which is the state that cannot report itself");
+    assert.ok(!/anchors\.right:\s*hideButton\.visible\s*\?/.test(card),
+        "and the plan text does not re-anchor past a button that comes and goes: its place is " +
+        "reserved, or the plan moves on every hover");
+});
+
 test("provider identity is the logic's, and no surface spells a provider out", () => {
     assert.ok(code.includes("model: logic.providerOrder()"),
         "the channels are generated from the same order the slots and the filter use");
-    for (const literal of ['"Claude"', '"Codex"', '"AI Gateway"', '"smart_toy"', '"terminal"',
-                           '"change_history"'])
+    for (const literal of ['"Claude"', '"Codex"', '"Vercel"', '"Vercel AI Gateway"', '"smart_toy"',
+                           '"terminal"', '"change_history"'])
         assert.ok(!code.includes(literal),
             `${literal} must live only in AiUsageLogic — a second copy in CODE is where a rename drifts`);
 
@@ -322,11 +341,12 @@ test("provider identity is the logic's, and no surface spells a provider out", (
     // the id and the child silently binds to itself. It reaches the catalog through the host, or
     // it constructs one.
     for (const file of ["AiUsageFilterMenu.qml", "AiUsageFilterRow.qml", "AiUsageAccountCard.qml",
-                        "AiUsageProviderNotice.qml", "AiUsageProviderSetup.qml"]) {
+                        "AiUsageProviderNotice.qml", "AiUsageProviderSetup.qml",
+                        "AiUsageDisplaySettings.qml"]) {
         const child = stripComments(fs.readFileSync(path.join(PLUGIN, file), "utf8"));
         assert.ok(!/property\s+var\s+logic\b/.test(child),
             `${file} must not take the decision module through a property`);
-        for (const literal of ['"Claude"', '"Codex"', '"AI Gateway"', '"smart_toy"', '"terminal"']) {
+        for (const literal of ['"Claude"', '"Codex"', '"Vercel"', '"smart_toy"', '"terminal"']) {
             assert.ok(!child.includes(literal),
                 `${file} spells out ${literal}: provider identity has exactly one owner`);
         }
@@ -342,6 +362,9 @@ test("both settings surfaces embed the same setup component", () => {
         "be added from a bar flyout and the two surfaces drift into offering different sources");
     assert.ok(settings.includes("model: catalog.providerOrder()"),
         "with one section per provider, from the catalog rather than a list written out here");
+    assert.ok(/AiUsageDisplaySettings\s*\{/.test(settings) && /AiUsageDisplaySettings\s*\{/.test(code),
+        "and BOTH surfaces carry the display page: bar number, what the slots read, the icons, " +
+        "the colour and the card default are one set of choices, or the two pages drift");
     assert.ok(/AiUsageProviderSetup\s*\{/.test(code), "and the popout embeds it too");
 
     const setup = stripComments(fs.readFileSync(path.join(PLUGIN, "AiUsageProviderSetup.qml"), "utf8"));

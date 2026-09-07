@@ -31,16 +31,29 @@ QtObject {
         }
     }
 
+    // The short name: a bar slot, a section header and a filter row all have
+    // room for one word, and that word is the vendor.
     function providerName(p) {
         switch (normalizeProvider(p)) {
         case "codex":
             return "Codex";
         case "vercel":
-            return "AI Gateway";
+            return "Vercel";
         case "claude":
             return "Claude";
         default:
             return "Claude";
+        }
+    }
+
+    // The full product name, for the surfaces with room for it: a setup page
+    // header, and prose. Same name where the vendor ships one product.
+    function providerFullName(p) {
+        switch (normalizeProvider(p)) {
+        case "vercel":
+            return "Vercel AI Gateway";
+        default:
+            return providerName(p);
         }
     }
 
@@ -297,8 +310,30 @@ QtObject {
             session: a.session || null,
             weekly: a.weekly || null,
             models: a.models || [],
-            spend: a.spend || null
+            spend: a.spend || null,
+            // Not usage windows, so they are not meters: an allowance of
+            // usage-limit resets, and a credit balance. Absent unless the
+            // provider reports them, and zero is a real answer for both.
+            resets: a.resets === undefined || a.resets === null ? null : a.resets,
+            creditsBalance: a.creditsBalance === undefined || a.creditsBalance === null
+                ? null : String(a.creditsBalance)
         };
+    }
+
+    // The line under a card's meters, or "" when the provider reported neither
+    // figure. Zero resets is worth saying: it is the answer to "can I reset
+    // this window", and leaving it out reads as the widget not knowing.
+    function accountFooter(card) {
+        if (!card)
+            return "";
+        const parts = [];
+        if (card.resets !== null && card.resets !== undefined)
+            parts.push(card.resets === 1 ? "1 reset available" : card.resets + " resets available");
+        const balance = String(card.creditsBalance === null || card.creditsBalance === undefined
+                               ? "" : card.creditsBalance).trim();
+        if (balance !== "" && balance !== "0")
+            parts.push(balance + " credits");
+        return parts.join(" · ");
     }
 
     // A payload that reports no accounts still describes one: its own top-level
@@ -406,9 +441,18 @@ QtObject {
         return shown.filter(c => c.ok).length > 0 ? "ok" : "error";
     }
 
+    // What a slot's number READS as. `pct` stays consumption whatever this
+    // answers, because severity is a property of how full a limit is, not of
+    // which end the user prefers to count from: 90% used and 10% left are the
+    // same red.
+    function slotReading(pct, display) {
+        const value = (display || {}).value === "left" ? 100 - pct : pct;
+        return value + "%";
+    }
+
     // Build a stable provider slot. Keep its icon and position when no number
     // is available; text indicates errors, fetching, or absence.
-    function pillSlot(provider, head, data, fetching, hidden) {
+    function pillSlot(provider, head, data, fetching, hidden, display) {
         const slot = {
             provider: provider,
             icon: providerIcon(provider),
@@ -419,7 +463,7 @@ QtObject {
         };
         if (head && head.pct !== null && head.pct !== undefined) {
             slot.pct = head.pct;
-            slot.text = head.pct + "%";
+            slot.text = slotReading(head.pct, display);
         } else if (payloadHealth(provider, data, hidden) === "error") {
             // Hidden successes cannot make failed visible accounts healthy.
             // Hiding every account is not an error.
@@ -456,7 +500,8 @@ QtObject {
             const p = picked[i];
             if (!slotShown(p, data[p]))
                 continue;
-            out.push(pillSlot(p, headOf(p, data[p], s.mode, s.hidden), data[p], s.fetching, s.hidden));
+            out.push(pillSlot(p, headOf(p, data[p], s.mode, s.hidden), data[p], s.fetching,
+                              s.hidden, s.display));
         }
         if (out.length === 0 && picked.length > 0)
             out.push(setupSlot(picked[0]));

@@ -28,14 +28,14 @@ const {
     selectedProviders, filterIsAll, filterHas, toggleFilter, filterLabel,
     payloadProvider, payloadIsFor, shouldRelaunch, decodePayload, acceptOutcome, stderrReason,
     cardKey, isCardHidden, toggleHiddenCard, providerCards, allCards,
-    headOf, slotShown, pillSlot, pillSlots, deckView, accountCount,
+    headOf, slotShown, pillSlot, pillSlots, deckView, accountCount, accountFooter,
     failureWins, newerSuccess, newerAccepted
 } = evaluateMarked(logicSource, "PROVIDER DECISION", [
     "providerOrder", "normalizeProvider", "providerIcon", "providerName", "providerNeedsCredential",
     "selectedProviders", "filterIsAll", "filterHas", "toggleFilter", "filterLabel",
     "payloadProvider", "payloadIsFor", "shouldRelaunch", "decodePayload", "acceptOutcome",
     "stderrReason", "cardKey", "isCardHidden", "toggleHiddenCard", "providerCards", "allCards",
-    "headOf", "slotShown", "pillSlot", "pillSlots", "deckView", "accountCount",
+    "headOf", "slotShown", "pillSlot", "pillSlots", "deckView", "accountCount", "accountFooter",
     "failureWins", "newerSuccess", "newerAccepted"
 ], "AiUsageLogic.qml");
 
@@ -60,7 +60,29 @@ test("the PROVIDER DECISION region stays plain JavaScript", () => {
 
 test("every provider in the order has its own name and icon, and nothing else is a provider", () => {
     const order = providerOrder();
-    assert.ok(order.length >= 3, `the catalog must list every supported provider, got ${order.length}`);
+
+    // Derive the expected set from a DIFFERENT statement of the same catalog in the same file:
+    // the switch arms that give each provider its icon and its name. A provider listed in the
+    // order with no arm of its own silently takes the default icon and the default name, which is
+    // another provider's. Both directions are closed below; neither stays open.
+    const armed = new Set(Array.from(region.matchAll(/case "([a-z]+)":/g), m => m[1]));
+    assert.ok(armed.size >= order.length,
+        `the arm extractor found ${armed.size} provider(s) for ${order.length} in the order — read ` +
+        "that as the EXTRACTOR being broken, not the catalog being sparse");
+    for (const p of order) {
+        assert.ok(armed.has(p),
+            `${p} is in the order but no switch arm names it: it falls through to the default, ` +
+            "which hands it another provider's icon and another provider's name");
+    }
+    for (const p of armed) {
+        assert.ok(order.indexOf(p) !== -1,
+            `${p} has switch arms but is not in the order: nothing fetches it, nothing gives it a ` +
+            "slot, and normalizeProvider rejects every payload naming it");
+    }
+    assert.equal(order.indexOf("gemini"), -1,
+        "and a provider nobody added is not in the catalog — this row fails if the order is ever " +
+        "widened to whatever the arms happen to mention");
+
     const icons = order.map(providerIcon);
     const names = order.map(providerName);
     assert.equal(new Set(icons).size, order.length,
@@ -501,6 +523,38 @@ test("a bar with nothing to show still offers the way to set a provider up", () 
     assert.equal(slots[0].setup, true, "which says it is an invitation, not a reading");
     assert.equal(slots[0].pct, null, "and carries no number");
     assert.equal(slots[0].error, false, "nor a fault");
+});
+
+test("a slot reads from whichever end the bar counts from, and severity from consumption", () => {
+    for (const [pct, value, expected] of [
+        [40, "used", "40%"], [40, "left", "60%"],
+        [0, "used", "0%"], [0, "left", "100%"],
+        [100, "used", "100%"], [100, "left", "0%"],
+        [40, undefined, "40%"], [40, "junk", "40%"]
+    ]) {
+        const slot = pillSlot("claude", { pct: pct }, claudePayload, [], [], { value: value });
+        assert.equal(slot.text, expected,
+            `${pct}% as ${JSON.stringify(value)} reads ${expected}; anything but "left" counts used`);
+        assert.equal(slot.pct, pct,
+            "and `pct` stays CONSUMPTION whatever the reading says: severity is a property of how " +
+            "full a limit is, so turning the reading around must not turn a full limit green");
+    }
+});
+
+test("the account footer says what is not a usage window, and zero resets is an answer", () => {
+    const card = providerCards("codex", payloadOf("codex", [
+        acct("a", { resets: 0, creditsBalance: "0" })]))[0];
+    assert.equal(accountFooter(card), "0 resets available",
+        "zero is the answer to 'can I reset this window', and leaving it out reads as the widget " +
+        "not knowing rather than as the account having none");
+    assert.equal(accountFooter(providerCards("codex", payloadOf("codex", [
+        acct("a", { resets: 1 })]))[0]), "1 reset available", "one is singular");
+    assert.equal(accountFooter(providerCards("codex", payloadOf("codex", [
+        acct("a", { resets: 3, creditsBalance: "12.50" })]))[0]),
+        "3 resets available · 12.50 credits", "and both figures share the one line");
+    assert.equal(accountFooter(providerCards("claude", payloadOf("claude", [acct("a")]))[0]), "",
+        "a provider that reports neither figure prints no line at all");
+    assert.equal(accountFooter(null), "", "and no card prints nothing");
 });
 
 // ---- The deck ---------------------------------------------------------------

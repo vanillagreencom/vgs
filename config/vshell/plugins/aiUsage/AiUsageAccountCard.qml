@@ -24,10 +24,24 @@ StyledRect {
     readonly property bool ok: !!accountCard.account && accountCard.account.ok === true
     readonly property var meters: (accountCard.host && accountCard.account)
         ? accountCard.host.metersFor(accountCard.account) : []
+    readonly property string footer: (accountCard.host && accountCard.account)
+        ? accountCard.host.accountFooter(accountCard.account) : ""
+
+    // Whether the pointer is anywhere over this card, INCLUDING over the hide
+    // button. That button carries a hover-enabled state layer of its own, which
+    // takes hover from the card's area as the pointer arrives on it: reading
+    // the card's area alone made the button hide itself under the pointer,
+    // which handed hover straight back and flickered the button and the plan
+    // text beside it against each other. Both sources are folded in, and the
+    // button only fades — it never stops being hit-testable, so there is no
+    // state in which it is under the pointer and cannot report it.
+    readonly property bool hovered: cardArea.containsMouse || hideButton.hovering
 
     height: cardColumn.implicitHeight + Theme.spacingM * 2
     radius: Theme.cornerRadius
-    color: cardArea.containsMouse ? Theme.surfaceContainerHighest : Theme.surfaceContainerHigh
+    // The same folded hover: reading the card's area alone dropped the card's
+    // own highlight the moment the pointer reached the button inside it.
+    color: accountCard.hovered ? Theme.surfaceContainerHighest : Theme.surfaceContainerHigh
 
     Behavior on height {
         NumberAnimation {
@@ -78,30 +92,46 @@ StyledRect {
                 color: Theme.surfaceText
             }
 
-            // The plan yields to the hide button while the pointer is over the
-            // card, so hiding an account is done where the account is rather
-            // than on a settings page two taps away.
+            // The button's place is reserved whether or not it is showing, so
+            // the plan text never re-anchors: anchoring it past a button that
+            // appears and disappears moved the plan on every hover.
             StyledText {
                 id: planText
-                anchors.right: hideButton.visible ? hideButton.left : parent.right
-                anchors.rightMargin: hideButton.visible ? Theme.spacingXS : 0
+                anchors.right: hideButton.left
+                anchors.rightMargin: Theme.spacingXS
                 anchors.verticalCenter: labelText.verticalCenter
                 text: accountCard.ok ? (accountCard.account.plan || "") : "unavailable"
                 font.pixelSize: Theme.fontSizeSmall
                 color: Theme.surfaceVariantText
+                elide: Text.ElideRight
             }
 
+            // Hiding an account is done where the account is, rather than on a
+            // settings page two taps away.
             VgsActionButton {
                 id: hideButton
+
+                // Its own hover, kept because the card's area cannot see it.
+                property bool hovering: false
+
                 anchors.right: parent.right
                 anchors.verticalCenter: labelText.verticalCenter
-                visible: cardArea.containsMouse
+                opacity: accountCard.hovered ? 1 : 0
                 iconName: "visibility_off"
                 iconSize: Theme.iconSizeSmall
                 buttonSize: 24
                 iconColor: Theme.surfaceVariantText
                 tooltipText: "Hide this account"
+                onEntered: hideButton.hovering = true
+                onExited: hideButton.hovering = false
                 onClicked: accountCard.hideRequested()
+
+                Behavior on opacity {
+                    NumberAnimation {
+                        duration: Theme.shortDuration
+                        easing.type: Easing.OutCubic
+                    }
+                }
             }
         }
 
@@ -138,6 +168,18 @@ StyledRect {
                     ? (accountCard.host.formatSpendExact(modelData) || accountCard.host.resetLabel(modelData))
                     : ""
             }
+        }
+
+        // Figures that are not usage windows, so they are not meters: an
+        // allowance of usage-limit resets, and a credit balance.
+        StyledText {
+            visible: accountCard.footer !== ""
+            width: parent.width
+            text: accountCard.footer
+            topPadding: Theme.spacingXS
+            wrapMode: Text.WordWrap
+            font.pixelSize: Theme.fontSizeSmall
+            color: Theme.surfaceVariantText
         }
 
         // An account with no lanes at all is not a failure; the provider simply

@@ -24,12 +24,17 @@ Column {
         width: parent.width
         height: compactLabel.implicitHeight
 
+        // One line, always. StyledText wraps by default, and elide does not
+        // stop wrapping: a lane named for a model ran to three lines inside
+        // this fixed width and pushed its own bar and every row below it down.
         StyledText {
             id: compactLabel
             anchors.left: parent.left
             anchors.top: parent.top
             width: 74
             text: row.meter ? row.meter.label : ""
+            wrapMode: Text.NoWrap
+            maximumLineCount: 1
             elide: Text.ElideRight
             font.pixelSize: Theme.fontSizeSmall
             color: Theme.surfaceVariantText

@@ -100,11 +100,28 @@ test("cmd_ai_usage stamps the provider and prints only through the stamping help
     // payload, and a substring match on it counted the helper's own diagnostics as payload paths.
     assert.equal((cmdAiUsage.match(/(?<![A-Za-z_])print\(/g) || []).length, 1,
         "cmd_ai_usage must print through the stamping helper only — a second print is an unstamped path");
-    assert.ok(/\beprint\(/.test(cmdAiUsage),
-        "and a backend that answered while reporting a degradation on stderr has that reported: " +
-        "discarding it on success left the cause of a dropped account nowhere at all");
     assert.ok(cmdAiUsage.includes('emit({"ok": False, "error": "ai-usage backend not found"})'),
         "the backend-not-found payload is emitted through the stamping helper");
+});
+
+// A backend can answer and still have degraded: one account it could not normalize, one source
+// file it could not read. Its diagnostic is the only record of that, established here by running a
+// backend that emits both halves rather than by reading the helper for an eprint call.
+test("a backend that answers while reporting a degradation has both halves kept apart", () => {
+    const backend = fakeBackend("degraded",
+        'echo "vshell-ai-usage: jq exited 2; continuing without what it was asked for" >&2\n' +
+        "echo '{\"ok\":true,\"provider\":\"claude\",\"accounts\":[]}'");
+    const r = spawnSync(VSHELL, ["ai-usage", "claude"], {
+        encoding: "utf8",
+        env: Object.assign({}, process.env, { VSHELL_AI_USAGE_CMD: backend })
+    });
+    assert.equal(r.status, 0, "a degraded answer is still an answer");
+    assert.deepEqual(JSON.parse(r.stdout.trim()), { ok: true, provider: "claude", accounts: [] },
+        "stdout carries the payload alone — a diagnostic mixed into it would not parse, and the " +
+        "widget would discard the answer whose cause it was explaining");
+    assert.match(r.stderr, /jq exited 2/,
+        "and the diagnostic reaches stderr, which is where the shell log reads it: discarding it " +
+        "on success left the cause of a dropped account nowhere at all");
 });
 
 // Inspect each payload object. A jq program can emit both success and failure objects,

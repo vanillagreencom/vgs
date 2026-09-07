@@ -277,6 +277,11 @@ for dir in "${dirs[@]}"; do
             enterprise: (((($entry.plan // "") | ascii_downcase) | startswith("enterprise"))
                          or ($entry.spend != null)),
             class: ($entry.class // "low"),
+            # Per-account figures that are not usage windows: how many
+            # usage-limit resets this account may still spend, and its credit
+            # balance. Absent for a provider that reports neither.
+            resets: ($entry.resets // null),
+            creditsBalance: ($entry.creditsBalance // null),
             session: ($entry.session // null),
             weekly: ($entry.weekly // null),
             # Normalize model labels and spend details for the same plain-text widget.

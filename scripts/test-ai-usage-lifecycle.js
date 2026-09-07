@@ -17,6 +17,8 @@ const { evaluateMarked, guardChild } = require("./lib/qml-region.js");
 
 guardChild();
 
+// shouldRelaunch's own table lives in test-ai-usage-logic.js; it is imported here only because
+// the replay harness below settles through it.
 const { launchDecision, watchdogArms, shouldRelaunch, decodePayload } =
     evaluateMarked(
         fs.readFileSync(path.join(PLUGIN, "AiUsageLogic.qml"), "utf8"), "PROVIDER DECISION",
@@ -244,9 +246,6 @@ test("an exit whose stdout never closes settles on the flush grace and is retrie
     assert.deepEqual(held.settled, [], "an exit alone does not settle: the payload may still arrive");
     assert.deepEqual(replay(["started", "exitHeld", "stopped", "flush"]).settled, ["flush"],
         "so a stream that never closes settles on a bound instead of hanging the channel");
-    assert.equal(shouldRelaunch({ inFlight: "claude", want: "claude", loaded: "", accepted: false,
-                                  retries: 0 }, 3), true,
-        "and a fetch that delivered no payload is retried");
 });
 
 test("a genuine failed start is reported and clears its tag", () => {

@@ -7178,7 +7178,11 @@ def _ai_usage_admin(argv: List[str]) -> int:
     if sub == "sources":
         return reply(module.sources_report(provider, _ai_usage_backend()))
     if sub == "set-key":
-        parser = argparse.ArgumentParser(prog="vshell ai-usage set-key", add_help=False)
+        # allow_abbrev=False, or argparse accepts `--key` as an unambiguous
+        # prefix of `--key-id` and stores a SECRET as a key id — which is then
+        # written to the store in the clear and sent in a URL query string.
+        parser = argparse.ArgumentParser(prog="vshell ai-usage set-key", add_help=False,
+                                         allow_abbrev=False)
         parser.add_argument("provider")
         parser.add_argument("--label", default="")
         parser.add_argument("--key-id", dest="key_id", default="")

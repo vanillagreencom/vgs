@@ -25,11 +25,18 @@ Column {
         width: parent.width
         height: Math.max(labelText.implicitHeight, pctText.implicitHeight)
 
+        // Yields to the percentage rather than running under it: a lane named
+        // for a model is longer than this row is wide.
         StyledText {
             id: labelText
             anchors.left: parent.left
+            anchors.right: pctText.left
+            anchors.rightMargin: Theme.spacingS
             anchors.verticalCenter: parent.verticalCenter
             text: card.meter ? card.meter.label : ""
+            wrapMode: Text.NoWrap
+            maximumLineCount: 1
+            elide: Text.ElideRight
             font.pixelSize: Theme.fontSizeMedium
             font.weight: card.labelWeight
             color: Theme.surfaceText

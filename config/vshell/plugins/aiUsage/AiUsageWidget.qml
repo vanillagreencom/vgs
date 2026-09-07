@@ -112,6 +112,7 @@ PluginComponent {
         filter: root.providerFilter,
         hidden: root.hiddenAccounts,
         mode: root.headlineMode,
+        display: { value: root.barValue },
         fetching: root.fetchingProviders
     })
 
@@ -126,8 +127,34 @@ PluginComponent {
     readonly property int pillFontSize: Theme.barTextSize(
         root.barThickness, root.barConfig?.fontScale, root.barConfig?.maximizeWidgetText)
 
-    // The card whose meters are expanded, by its provider-qualified key.
-    property string expandedCardKey: ""
+    // Whether cards open expanded. Compact shows one row per limit; expanded
+    // shows each limit as its own bar with its reset countdown under it.
+    readonly property bool expandByDefault: pluginData.cardDetail === "expanded"
+    // Absent means on: a fresh install shows icons and colour, and only a
+    // stored false turns either off.
+    readonly property bool barIcons: pluginData.barIcons !== false
+    readonly property bool barColor: pluginData.barColor !== false
+    readonly property string barValue: pluginData.barValue === "left" ? "left" : "used"
+
+    // The one card whose state is the opposite of the default. Storing the
+    // exception rather than a set means changing the default flips every card,
+    // which is what a default is for.
+    property string toggledCardKey: ""
+
+    function cardExpanded(key) {
+        return root.expandByDefault !== (root.toggledCardKey === key);
+    }
+    function toggleCard(key) {
+        root.toggledCardKey = root.toggledCardKey === key ? "" : key;
+    }
+    // Everything the shared display page reads and writes back by key.
+    readonly property var displaySettings: ({
+        headlineMode: root.headlineMode,
+        barValue: root.barValue,
+        barIcons: root.barIcons,
+        barColor: root.barColor,
+        cardDetail: pluginData.cardDetail || "compact"
+    })
 
     function pillHeads() {
         return logic.pillSlots(root.deckState);
@@ -161,6 +188,12 @@ PluginComponent {
     function providerIcon(p) {
         return logic.providerIcon(p);
     }
+    function providerFullName(p) {
+        return logic.providerFullName(p);
+    }
+    function accountFooter(card) {
+        return logic.accountFooter(card);
+    }
     function filterHas(p) {
         return logic.filterHas(root.providerFilter, p);
     }
@@ -189,6 +222,18 @@ PluginComponent {
 
     function percentageColor(pct) {
         return classColor(fmt.percentageClass(pct));
+    }
+
+    // A slot's colour. Severity is read from CONSUMPTION whichever end the bar
+    // counts from, so turning the reading to "left" does not turn a full limit
+    // green. `plain` is the neutral this orientation uses when there is no
+    // number, or when the user asked for one colour.
+    function slotColor(slot, plain) {
+        if (slot.error)
+            return Theme.error;
+        if (slot.pct === null || !root.barColor)
+            return plain;
+        return root.percentageColor(slot.pct);
     }
 
     readonly property string aiUsageCommand: Paths.vshellCli
@@ -453,6 +498,10 @@ PluginComponent {
                     VgsIcon {
                         name: modelData.icon
                         size: root.iconSize
+                        // A setup slot keeps its icon whatever the icon setting
+                        // says: it has no number, so hiding it would leave the
+                        // slot empty and the way in unreachable.
+                        visible: root.barIcons || modelData.setup
                         // An invitation to set a provider up is not a reading and
                         // not a fault: it takes the accent, so it does not sit on
                         // the bar looking like a number that failed to load.
@@ -466,9 +515,7 @@ PluginComponent {
                         visible: text.length > 0
                         font.pixelSize: root.pillFontSize
                         font.weight: Font.Medium
-                        color: modelData.error ? Theme.error
-                            : (modelData.pct === null ? Theme.surfaceVariantText
-                                                    : root.percentageColor(modelData.pct))
+                        color: root.slotColor(modelData, Theme.surfaceVariantText)
                         anchors.verticalCenter: parent.verticalCenter
                     }
                 }
@@ -493,6 +540,7 @@ PluginComponent {
                     VgsIcon {
                         name: modelData.icon
                         size: root.iconSize
+                        visible: root.barIcons || modelData.setup
                         color: modelData.setup ? Theme.primary
                             : (modelData.error ? Theme.error : Theme.surfaceText)
                         anchors.horizontalCenter: parent.horizontalCenter
@@ -502,9 +550,7 @@ PluginComponent {
                         text: modelData.text
                         visible: text.length > 0
                         font.pixelSize: root.pillFontSize
-                        color: modelData.error ? Theme.error
-                            : (modelData.pct === null ? Theme.surfaceVariantText
-                                                      : root.percentageColor(modelData.pct))
+                        color: root.slotColor(modelData, Theme.surfaceText)
                         anchors.horizontalCenter: parent.horizontalCenter
                     }
                 }
@@ -539,7 +585,7 @@ PluginComponent {
 
             headerText: {
                 if (popout.onSetup)
-                    return logic.providerName(popout.setupProvider) + " setup";
+                    return logic.providerFullName(popout.setupProvider) + " setup";
                 if (popout.onSettings)
                     return "Display settings";
                 const picked = logic.selectedProviders(root.providerFilter);
@@ -681,9 +727,8 @@ PluginComponent {
                                         host: root
                                         account: modelData
                                         showProviderIcon: !root.view.grouped
-                                        expanded: root.expandedCardKey === modelData.key
-                                        onToggleExpanded: root.expandedCardKey =
-                                            (root.expandedCardKey === modelData.key ? "" : modelData.key)
+                                        expanded: root.cardExpanded(modelData.key)
+                                        onToggleExpanded: root.toggleCard(modelData.key)
                                         onHideRequested: root.toggleHidden(modelData)
                                     }
                                 }
@@ -719,48 +764,10 @@ PluginComponent {
                                 anchors.margins: Theme.spacingM
                                 spacing: Theme.spacingS
 
-                                StyledText {
-                                    text: "Bar number"
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    font.weight: Font.Medium
-                                    color: Theme.surfaceText
-                                }
-
-                                StyledText {
+                                AiUsageDisplaySettings {
                                     width: parent.width
-                                    text: root.headlineMode === "best"
-                                        ? "The account with the most headroom left."
-                                        : (root.headlineMode === "worst"
-                                           ? "The most exhausted account."
-                                           : "Average across accounts, each counted at its tightest limit.")
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    color: Theme.surfaceVariantText
-                                    wrapMode: Text.WordWrap
-                                }
-
-                                Row {
-                                    id: modeRow
-                                    width: parent.width
-                                    spacing: Theme.spacingXS
-
-                                    Repeater {
-                                        model: [
-                                            { key: "pool", label: "Average" },
-                                            { key: "best", label: "Most left" },
-                                            { key: "worst", label: "Most used" }
-                                        ]
-
-                                        VgsButton {
-                                            required property var modelData
-                                            text: modelData.label
-                                            width: (modeRow.width - Theme.spacingXS * 2) / 3
-                                            backgroundColor: root.headlineMode === modelData.key
-                                                ? Theme.primary : Theme.surfaceContainerHighest
-                                            textColor: root.headlineMode === modelData.key
-                                                ? Theme.primaryText : Theme.surfaceText
-                                            onClicked: root.setHeadlineMode(modelData.key)
-                                        }
-                                    }
+                                    values: root.displaySettings
+                                    onChanged: (key, value) => root.saveSetting(key, value)
                                 }
 
                                 StyledText {

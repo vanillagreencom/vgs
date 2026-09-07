@@ -90,29 +90,72 @@ Column {
         statusProc.running = true;
     }
 
-    // `owned` says whether this reply belongs to something the user asked for.
-    // The background read does NOT own `busy`: clearing it there let a reply
-    // landing mid-save unlock the buttons under an operation still in flight.
-    function applyReply(text, owned, onOk) {
-        let payload = null;
+    // BEGIN REPLY DECISION
+    // What one helper reply means, decided without touching this page's state
+    // so scripts/test-ai-usage-setup.js can execute it. `owned` says whether
+    // the reply belongs to something the user asked for; the background read
+    // does not own `busy`, because clearing it there let a reply landing
+    // mid-save unlock the buttons under an operation still in flight.
+
+    function decodeReply(text) {
+        const body = String(text === undefined || text === null ? "" : text).trim();
+        if (body.length === 0)
+            return null;
         try {
-            if (String(text).trim().length > 0)
-                payload = JSON.parse(text);
+            const parsed = JSON.parse(body);
+            // A bare number or string parses but answers nothing. Only an
+            // object can carry ok, error or a source list.
+            return parsed && typeof parsed === "object" ? parsed : null;
         } catch (error) {
-            payload = null;
+            return null;
         }
-        if (owned) {
+    }
+
+    // `release` frees the buttons, `announce` is the line to show or "" for
+    // none, and `deliver` says the payload may be applied.
+    function replyDecision(text, owned) {
+        const payload = decodeReply(text);
+        if (!payload)
+            return { payload: null, release: !!owned, deliver: false,
+                     failed: !!owned, announce: owned ? "No answer from the vshell helper." : "" };
+        return { payload: payload, release: !!owned, deliver: true, failed: false, announce: "" };
+    }
+
+    // What an action's own reply says on the one status line. A refusal must
+    // never be announced as a change: the page would report a key removed
+    // while the helper went on reading it.
+    function actionOutcome(payload, success) {
+        if (!payload || payload.ok !== true) {
+            const why = String((payload && payload.error) || "Could not apply the change.");
+            const detail = payload && payload.detail ? " — " + payload.detail : "";
+            return { applied: false, failed: true, announce: why + detail };
+        }
+        return { applied: true, failed: false, announce: success };
+    }
+
+    // END REPLY DECISION
+
+    function applyReply(text, owned, onOk) {
+        const decision = root.replyDecision(text, owned);
+        if (decision.release) {
             root.busy = false;
             root._stallOwned = false;
         }
-        if (!payload) {
-            if (owned) {
-                root.statusFailed = true;
-                root.status = "No answer from the vshell helper.";
-            }
-            return;
+        if (decision.announce !== "") {
+            root.statusFailed = decision.failed;
+            root.status = decision.announce;
         }
-        onOk(payload);
+        if (decision.deliver)
+            onOk(decision.payload);
+    }
+
+    // Apply one action's reply through the shared outcome rule.
+    function applyAction(payload, success, onApplied) {
+        const outcome = root.actionOutcome(payload, success);
+        root.statusFailed = outcome.failed;
+        root.status = outcome.announce;
+        if (outcome.applied)
+            onApplied();
     }
 
     // Qt reports nothing when the executable cannot be run at all, so every
@@ -242,19 +285,13 @@ Column {
         stdout: StdioCollector {
             id: keyOut
             onStreamFinished: root.applyReply(keyOut.text || "", true, payload => {
-                if (payload.ok !== true) {
-                    root.statusFailed = true;
-                    root.status = String(payload.error || "Could not save the key.")
-                        + (payload.detail ? " — " + payload.detail : "");
-                    return;
-                }
-                root.statusFailed = false;
-                root.status = "Saved.";
-                keyField.text = "";
-                labelField.text = "";
-                keyIdField.text = "";
-                root.readSources();
-                root.sourcesChanged();
+                root.applyAction(payload, "Saved.", () => {
+                    keyField.text = "";
+                    labelField.text = "";
+                    keyIdField.text = "";
+                    root.readSources();
+                    root.sourcesChanged();
+                });
             })
         }
         stderr: StdioCollector {}
@@ -278,19 +315,11 @@ Column {
         stdout: StdioCollector {
             id: actionOut
             onStreamFinished: root.applyReply(actionOut.text || "", true, payload => {
-                // A refusal must not be announced as a change, or the page says
-                // the source is gone while the helper still reads it.
-                if (payload.ok !== true) {
-                    root.statusFailed = true;
-                    root.status = String(payload.error || "Could not apply the change.")
-                        + (payload.detail ? " — " + payload.detail : "");
-                    return;
-                }
-                root.statusFailed = false;
-                root.status = "Updated.";
-                dirField.text = "";
-                root.readSources();
-                root.sourcesChanged();
+                root.applyAction(payload, "Updated.", () => {
+                    dirField.text = "";
+                    root.readSources();
+                    root.sourcesChanged();
+                });
             })
         }
         stderr: StdioCollector {}
@@ -321,7 +350,7 @@ Column {
                 }
 
                 StyledText {
-                    text: catalog.providerName(root.provider)
+                    text: catalog.providerFullName(root.provider)
                     font.pixelSize: Theme.fontSizeMedium
                     font.weight: Font.Medium
                     color: Theme.surfaceText
