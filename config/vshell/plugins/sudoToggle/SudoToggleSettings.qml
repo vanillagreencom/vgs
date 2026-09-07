@@ -45,6 +45,7 @@ PluginSettings {
             VgsToggle {
                 width: parent.width
                 horizontalPadding: 0
+                rowHoverHighlight: false
                 text: I18n.tr("Confirm before granting", "Setting: show the sudo grant confirmation modal")
                 description: I18n.tr("Ask for confirmation in a dialog before installing the passwordless sudo rule", "Setting description")
                 checked: !SettingsData.sudoToggleSkipGrantConfirm
