@@ -27,6 +27,8 @@ The helper owns parsing, generation and privileged operations. `bin/vshell` disp
 - User font-size edits preserve Default families. The generated font file retains size-only ownership and prior GSettings descriptions for reset; ordinary startup does not claim a size override. `test_system_font_size_targets` checks these paths.
 - A shell running against a throwaway `HOME` must not write `/etc/chromium/policies/managed` nor reach the login session's tmux, nvim, kitty, btop, ghostty, compositor or shell IPC. `_sandboxed_home` decides this by comparing `$HOME` against `login_home`, the passwd home of the user the process acts for, and every refusal carries `SANDBOX_REFUSAL` so a guard is not read as a machine with no kitty or no root. `test_chromium_policy_refuses_a_sandbox_home` and `test_theme_hooks_stay_out_of_the_login_session` in `scripts/check-vshell-helper.py` check both, including a sandbox home directly under the login home, which a containment test cannot tell apart from the user's own session.
 - Wallpaper upscaling runs as a one-shot process. See `bin/vshell-upscale` and its helper invocation.
+- AI-usage credentials are read from stdin, never argv, and the store is written 0600 under the state directory with its mode narrowed on the descriptor before the key goes through it. Nothing prints a key back; `sources` reports only which source a key came from. `scripts/test-ai-usage-sources.js` checks each of these against the real helper.
+- Which config directories an AI-usage provider reads has one owner, `bin/vshell-ai-usage`, and its `--dirs` mode is what the widget's setup page lists. A separate reader could report directories the fetch ignores.
 
 ## Decisions
 

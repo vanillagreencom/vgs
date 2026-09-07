@@ -67,12 +67,6 @@ QtObject {
         }
     }
 
-    // Whether this provider is configured by storing a key rather than by
-    // logging a CLI in. Only key providers render a key field.
-    function providerTakesKey(p) {
-        return providerNeedsCredential(p);
-    }
-
     // ---- Provider filter -----------------------------------------------------
     // The filter is a list of provider ids. Empty means every provider, so a
     // fresh install and "All" are the same stored value and neither has to be
@@ -102,23 +96,20 @@ QtObject {
         return selectedProviders(filter).indexOf(normalizeProvider(p)) !== -1;
     }
 
-    // Toggle one provider. Clearing the last one is read as "all" rather than
-    // as an empty bar: an empty selection can show nothing and offers no way
-    // back, because every row that could restore it would be unchecked.
+    // Toggle one provider, in catalog order. Selecting every provider stores
+    // the same empty value a fresh install has, so "all" has one spelling.
+    // Unchecking the LAST one lands on that value too, which is why an empty
+    // selection means all: an empty bar would hide every row that could bring
+    // a provider back.
     function toggleFilter(filter, p) {
         const which = normalizeProvider(p);
-        if (which === "")
-            return selectedProviders(filter);
         const current = selectedProviders(filter);
-        const at = current.indexOf(which);
-        const next = current.slice();
-        if (at === -1)
-            next.push(which);
-        else
-            next.splice(at, 1);
-        if (next.length === 0 || next.length === providerOrder().length)
-            return [];
-        return providerOrder().filter(q => next.indexOf(q) !== -1);
+        if (which === "")
+            return current;
+        const wanted = current.indexOf(which) === -1;
+        const next = providerOrder().filter(
+            q => q === which ? wanted : current.indexOf(q) !== -1);
+        return next.length === providerOrder().length ? [] : next;
     }
 
     // A label for the filter trigger: what is on the bar, in as few words as fit.

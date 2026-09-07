@@ -34,7 +34,7 @@ Column {
 
     spacing: Theme.spacingM
 
-    readonly property bool takesKey: root.host ? root.host.providerTakesKey(root.provider) : false
+    readonly property bool takesKey: root.host ? root.host.providerNeedsCredential(root.provider) : false
     readonly property string hint: root.host ? root.host.providerCredentialHint(root.provider) : ""
 
     // What the helper last reported. Never a key value.

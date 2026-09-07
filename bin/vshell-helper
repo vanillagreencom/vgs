@@ -7230,6 +7230,11 @@ def cmd_ai_usage(argv: List[str]) -> int:
     proc = subprocess.run([runner, provider], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if proc.returncode != 0:
         return emit({"ok": False, "error": proc.stderr.strip() or "ai-usage failed"})
+    # A backend that answered can still have degraded: one account it could not
+    # normalize, one source file it could not read. Its diagnostic is the only
+    # record of that, and discarding it on success left the cause nowhere.
+    if proc.stderr.strip():
+        eprint(proc.stderr.strip())
     out = proc.stdout.strip()
     try:
         parsed = json.loads(out) if out else None

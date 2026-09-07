@@ -96,8 +96,13 @@ test("cmd_ai_usage stamps the provider and prints only through the stamping help
     const cmdAiUsage = cmdAiUsageSource();
     assert.ok(cmdAiUsage.includes('payload.setdefault("provider", provider)'),
         "cmd_ai_usage must stamp the provider on the payloads it emits");
-    assert.equal((cmdAiUsage.match(/print\(/g) || []).length, 1,
+    // Count STDOUT emissions only. eprint() writes to stderr, which the widget never reads as a
+    // payload, and a substring match on it counted the helper's own diagnostics as payload paths.
+    assert.equal((cmdAiUsage.match(/(?<![A-Za-z_])print\(/g) || []).length, 1,
         "cmd_ai_usage must print through the stamping helper only — a second print is an unstamped path");
+    assert.ok(/\beprint\(/.test(cmdAiUsage),
+        "and a backend that answered while reporting a degradation on stderr has that reported: " +
+        "discarding it on success left the cause of a dropped account nowhere at all");
     assert.ok(cmdAiUsage.includes('emit({"ok": False, "error": "ai-usage backend not found"})'),
         "the backend-not-found payload is emitted through the stamping helper");
 });

@@ -151,8 +151,8 @@ PluginComponent {
     function providerIcon(p) {
         return logic.providerIcon(p);
     }
-    function providerTakesKey(p) {
-        return logic.providerTakesKey(p);
+    function providerNeedsCredential(p) {
+        return logic.providerNeedsCredential(p);
     }
     function providerCredentialHint(p) {
         return logic.providerCredentialHint(p);
@@ -449,7 +449,11 @@ PluginComponent {
                     VgsIcon {
                         name: modelData.icon
                         size: root.iconSize
-                        color: modelData.error ? Theme.error : Theme.surfaceVariantText
+                        // An invitation to set a provider up is not a reading and
+                        // not a fault: it takes the accent, so it does not sit on
+                        // the bar looking like a number that failed to load.
+                        color: modelData.setup ? Theme.primary
+                            : (modelData.error ? Theme.error : Theme.surfaceVariantText)
                         anchors.verticalCenter: parent.verticalCenter
                     }
 
@@ -485,7 +489,8 @@ PluginComponent {
                     VgsIcon {
                         name: modelData.icon
                         size: root.iconSize
-                        color: modelData.error ? Theme.error : Theme.surfaceText
+                        color: modelData.setup ? Theme.primary
+                            : (modelData.error ? Theme.error : Theme.surfaceText)
                         anchors.horizontalCenter: parent.horizontalCenter
                     }
 

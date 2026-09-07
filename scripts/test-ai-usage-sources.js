@@ -96,6 +96,15 @@ test("a stored key round-trips as a source label and never as a value", () => {
     assert.equal(fs.statSync(storePath).mode & 0o777, 0o600,
         "the store holds a secret, so it is written 0600 — it is under ~/.local/state and not " +
         "under ~/.config for the same reason: operators symlink that into dotfiles repositories");
+    const writer = fs.readFileSync(MODULE, "utf8");
+    const narrowedAt = writer.indexOf("os.fchmod(fd, 0o600)");
+    // indexOf answers -1 for absent, which compares BELOW every real offset: an
+    // ordering assertion alone passes when the call it orders is gone.
+    assert.notEqual(narrowedAt, -1,
+        "the mode is set on the descriptor the key is written through, not only on the path " +
+        "afterwards: a file created at the umask is world-readable until the chmod lands");
+    assert.ok(narrowedAt < writer.indexOf("json.dump("),
+        "and it is narrowed BEFORE the key goes through it");
     assert.ok(fs.readFileSync(storePath, "utf8").includes("vck_secret_value"),
         "and the key really is what was saved, or the account would fail on every poll");
 });

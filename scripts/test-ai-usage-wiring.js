@@ -246,6 +246,9 @@ test("both pill orientations render the same slots, and neither invents a number
         assert.ok(pill.includes("text: modelData.text"),
             `${which} shows what the slot says, not its own reading of the payload`);
         assert.ok(pill.includes("name: modelData.icon"), `${which} carries the slot's provider icon`);
+        assert.ok(pill.includes("modelData.setup ? Theme.primary"),
+            `${which} colours a setup slot as an invitation rather than leaving it looking like a ` +
+            "reading that failed to load");
         assert.ok(!/headlinePct/.test(stripComments(pill)),
             `a raw percentage in ${which} is how it came to show 60% beside an error glyph`);
     }

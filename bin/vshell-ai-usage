@@ -98,7 +98,7 @@ extra_dirs() {
     # shellcheck disable=SC2016  # $p is a jq variable bound by --arg, not a shell expansion
     jq_read --arg p "$provider" \
         '((.dirs[$p] // []) | .[] | select(type == "string") | select(. != ""))' \
-        "$SOURCES_FILE" || return 0
+        -- "$SOURCES_FILE" || return 0
 }
 
 # Both providers are found the same way: a directory holding this provider's
@@ -122,11 +122,11 @@ dir_usable() {
     case "$provider" in
         claude)
             [[ -f "$dir/.credentials.json" ]] || return 1
-            jq -e '.claudeAiOauth.accessToken // empty' "$dir/.credentials.json" >/dev/null 2>&1
+            jq -e '.claudeAiOauth.accessToken // empty' -- "$dir/.credentials.json" >/dev/null 2>&1
             ;;
         codex)
             [[ -f "$dir/auth.json" ]] || return 1
-            jq -e '.tokens.access_token // empty' "$dir/auth.json" >/dev/null 2>&1
+            jq -e '.tokens.access_token // empty' -- "$dir/auth.json" >/dev/null 2>&1
             ;;
         *) return 1 ;;
     esac
@@ -164,22 +164,22 @@ label_for() {
     case "$provider" in
         claude)
             if [[ -f "$dir/.claude.json" ]]; then
-                email=$(jq_read '.oauthAccount.emailAddress // empty' "$dir/.claude.json") || email=""
+                email=$(jq_read '.oauthAccount.emailAddress // empty' -- "$dir/.claude.json") || email=""
             fi
             # Only the default config dir falls back to the home-root profile. The
             # loop this replaced skipped that guard whenever the alt directory had
             # no profile file of its own -- exactly the case the guard is for -- so
             # every such directory was labelled with the DEFAULT account's address.
             if [[ -z "$email" && "$dir" == "$HOME/.claude" && -f "$HOME/.claude.json" ]]; then
-                email=$(jq_read '.oauthAccount.emailAddress // empty' "$HOME/.claude.json") || email=""
+                email=$(jq_read '.oauthAccount.emailAddress // empty' -- "$HOME/.claude.json") || email=""
             fi
             if [[ -z "$email" && -f "$dir/.auth-email-cache" ]]; then
-                email=$(head -n1 "$dir/.auth-email-cache" 2>/dev/null) || email=""
+                email=$(head -n1 -- "$dir/.auth-email-cache" 2>/dev/null) || email=""
             fi
             ;;
         codex)
             if [[ -f "$dir/auth.json" ]]; then
-                token=$(jq_read '.tokens.id_token // empty' "$dir/auth.json") || token=""
+                token=$(jq_read '.tokens.id_token // empty' -- "$dir/auth.json") || token=""
                 [[ -n "$token" ]] && email=$(jwt_field "$token" email)
             fi
             ;;
