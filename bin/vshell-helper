@@ -2096,6 +2096,12 @@ def write_chromium_policy(roles: Dict[str, str], allow_prompt: bool = False) -> 
     generated = generated_dir() / "chromium-policy.json"
     write_file(generated, json.dumps(payload, indent=2) + "\n")
     target = Path("/etc/chromium/policies/managed/color.json")
+    # A shell started against a throwaway HOME (the nested test sandbox, a preview capture)
+    # applies its own default theme, and this hook would push that theme's colour into the
+    # real system policy for every browser on the machine. Only a shell running from the
+    # user's own config may write outside their home.
+    if not _is_real_user_config(generated):
+        return False
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
         write_file(target, json.dumps(payload, indent=2) + "\n")
@@ -2113,6 +2119,23 @@ def write_chromium_policy(roles: Dict[str, str], allow_prompt: bool = False) -> 
     except Exception:
         return False
     return False
+
+
+def _is_real_user_config(path: Path) -> bool:
+    """Whether `path` lives under the login user's own config directory.
+
+    Compares against the passwd entry rather than $HOME, which is exactly what a sandbox
+    overrides. A caller that cannot resolve the login user is treated as sandboxed.
+    """
+    try:
+        real_home = Path(pwd.getpwuid(os.getuid()).pw_dir).resolve()
+    except Exception:
+        return False
+    try:
+        Path(path).resolve().relative_to(real_home)
+        return True
+    except ValueError:
+        return False
 
 
 def resolve_vshell_cli() -> str:
@@ -11592,16 +11615,28 @@ def _hyprctl_eval(script: str) -> subprocess.CompletedProcess[str]:
     return run(["hyprctl", "eval", script])
 
 
+def _hyprctl_eval_ok(proc: subprocess.CompletedProcess[str]) -> bool:
+    """Whether a `hyprctl eval` chunk actually ran.
+
+    A session on a classic config answers "eval is only supported with the lua config
+    manager" on stdout and still exits 0, so a return code alone reports rules as applied
+    that never ran, and every caller then believes the compositor owns decoration it does
+    not draw. The Lua config manager answers exactly "ok", and prefixes a failed chunk
+    with "error:".
+    """
+    return proc.returncode == 0 and (proc.stdout or "").strip() == "ok"
+
+
 def _hyprland_blur_support() -> Dict[str, Any]:
     if not shutil.which("hyprctl") or not os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
         return {"available": False, "reason": "hyprctl or Hyprland session not available"}
     proc = _hyprctl_eval('if hl == nil or hl.layer_rule == nil then error("hl.layer_rule unavailable") end')
-    if proc.returncode != 0:
+    if not _hyprctl_eval_ok(proc):
         return {"available": False, "reason": (proc.stderr or proc.stdout or "hyprctl eval failed").strip()}
     return {"available": True, "reason": "hyprland layer rules available"}
 
 
-def _hyprland_blur_script(enabled: bool, strength: float, glass: bool, opacity: float, mode: str = "dark", radius: int = 15, settings_title: str = "Settings") -> str:
+def _hyprland_blur_script(enabled: bool, strength: float, glass: bool, opacity: float, mode: str = "dark", radius: int = 15, window_border: int = 2) -> str:
     strength = _clamp_float(strength)
     opacity = _clamp_float(opacity, 0.08, 1.0)
     light = mode == "light"
@@ -11678,17 +11713,24 @@ def _hyprland_blur_script(enabled: bool, strength: float, glass: bool, opacity: 
     ]
     namespace_pattern = "^(vshell:(" + "|".join(blurred_namespaces) + ")|vshell:plugins:[^:]+)$"
     window_radius = _coerce_int(radius, 15, 0, 20)
-    title_pattern = _lua_string("^" + re.escape(settings_title) + "$")
+    # The compositor owns the corners and border of every VGS window. Hyprland warps a
+    # dragged window's geometry per pointer event and draws the client's previous buffer
+    # in it, so chrome painted by the client always trails the edge by a frame (VGS-273).
+    # Rounding and a border drawn here track the true geometry. Every VGS window is
+    # resizable and shares the class, so the rule matches the class alone; layer surfaces
+    # cannot take part, because Hyprland's layer rules accept neither field.
+    window_border_size = _coerce_int(window_border, 2, 0, 10)
     return f"""
 local rule_name = "vgs-shell-layer-blur"
 if _G.VGS_SETTINGS_WINDOW_RULE ~= nil then
   _G.VGS_SETTINGS_WINDOW_RULE:set_enabled(false)
 end
 _G.VGS_SETTINGS_WINDOW_RULE = hl.window_rule({{
-  name = "vgs-settings-window",
-  match = {{ class = "^(com[.]vanillagreen[.]vshell)$", title = {title_pattern} }},
+  name = "vgs-window-chrome",
+  match = {{ class = "^(com[.]vanillagreen[.]vshell)$" }},
   rounding = {window_radius},
   rounding_power = 2.0,
+  border_size = {window_border_size},
 }})
 if _G.VGS_SHELL_LAYER_BLUR_RULE ~= nil then
   _G.VGS_SHELL_LAYER_BLUR_RULE:set_enabled(false)
@@ -11724,15 +11766,18 @@ end
 """.strip()
 
 
-def _apply_hyprland_blur(enabled: bool, strength: float, glass: bool, opacity: float, mode: str = "dark", radius: int = 15, settings_title: str = "Settings") -> Dict[str, Any]:
+def _apply_hyprland_blur(enabled: bool, strength: float, glass: bool, opacity: float, mode: str = "dark", radius: int = 15, window_border: int = 2) -> Dict[str, Any]:
     support = _hyprland_blur_support()
     if not support.get("available"):
         return {"ok": False, "backend": "hyprland-layer", "error": support.get("reason", "not available")}
-    proc = _hyprctl_eval(_hyprland_blur_script(enabled, strength, glass, opacity, mode, radius, settings_title))
-    ok = proc.returncode == 0
+    proc = _hyprctl_eval(_hyprland_blur_script(enabled, strength, glass, opacity, mode, radius, window_border))
+    ok = _hyprctl_eval_ok(proc)
     return {
         "ok": ok,
         "backend": "hyprland-layer",
+        # True once the compositor rounds and borders VGS windows, so they can stop
+        # painting that chrome themselves.
+        "windowChrome": ok,
         "enabled": enabled,
         "strength": _clamp_float(strength),
         "glass": glass,
@@ -11791,7 +11836,7 @@ def cmd_blur(argv: List[str]) -> int:
     p_apply.add_argument("--opacity", type=float, default=1.0)
     p_apply.add_argument("--mode", choices=["dark", "light"], default="dark")
     p_apply.add_argument("--radius", type=int, choices=range(21), default=15)
-    p_apply.add_argument("--settings-title", default="Settings")
+    p_apply.add_argument("--window-border", type=int, choices=range(11), default=2)
     p_apply.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
@@ -11816,7 +11861,7 @@ def cmd_blur(argv: List[str]) -> int:
     if args.cmd == "apply":
         enabled = args.enabled in ("true", "1", "yes")
         glass = args.glass in ("true", "1", "yes")
-        result = _apply_hyprland_blur(enabled, args.strength, glass, args.opacity, args.mode, args.radius, args.settings_title)
+        result = _apply_hyprland_blur(enabled, args.strength, glass, args.opacity, args.mode, args.radius, args.window_border)
         if args.json:
             print(json.dumps(result, indent=2))
         else:

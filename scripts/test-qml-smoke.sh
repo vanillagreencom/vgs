@@ -40,6 +40,7 @@ slice nested_unavailable
 slice sandbox_layer_state
 slice assert_popout_geometry
 slice window_border_is_inset
+slice sandbox_ipc
 
 # Cut a one-line helper definition out of the smoke script. Same contract as slice: a helper
 # that no longer has this shape is a broken fixture, not a failed case.
@@ -281,29 +282,33 @@ edge_samples() {
     set +e
     # shellcheck source=/dev/null
     . "$tmp/window_border_is_inset.sh"
-    window_border_is_inset "$1" "$2" "$3"
+    window_border_is_inset "$1" "$2" "$3" "$4"
     printf 'rc=%s\n' "$?"
   ) 2>&1
 }
 
-# label; edge; border; interior; expected status. Samples run from the window edge inward.
-EDGES='an inset border leaves the surface on the edge;1c1c28;fab387;1c1c28;0
-a border on the outermost pixel floods a resize;fab387;fab387;1c1c28;1
-a translucent edge still differs from the border;2a2b3f;fab387;1c1c28;0
-no border drawn at all;1c1c28;1c1c28;1c1c28;2
-a border colour equal to the interior is not a border;fab387;1c1c28;1c1c28;2'
+# label; edge; border; interior; outside; expected status. Samples run from the window edge
+# inward; outside is the pixel just past the edge, where a compositor border lands.
+EDGES='an inset border leaves the surface on the edge;1c1c28;fab387;1c1c28;0000ff;0
+a border on the outermost pixel floods a resize;fab387;fab387;1c1c28;0000ff;1
+a translucent edge still differs from the border;2a2b3f;fab387;1c1c28;0000ff;0
+no border drawn at all;1c1c28;1c1c28;1c1c28;1c1c28;2
+a border colour equal to the interior is not a border;fab387;1c1c28;1c1c28;0000ff;2
+a compositor border outside an opaque edge passes;1c1c28;1c1c28;1c1c28;00ff00;0
+a compositor border does not excuse an edge that differs from the interior;fab387;1c1c28;1c1c28;00ff00;2
+no outside sample keeps the client-border contract;1c1c28;1c1c28;1c1c28;;2'
 
 case_window_border_samples() {
-  local label edge border interior want_rc out rows=0
-  while IFS=';' read -r label edge border interior want_rc; do
+  local label edge border interior outside want_rc out rows=0
+  while IFS=';' read -r label edge border interior outside want_rc; do
     [[ -n "$label" ]] || continue
     rows=$((rows + 1))
-    out="$(edge_samples "$edge" "$border" "$interior")"
+    out="$(edge_samples "$edge" "$border" "$interior" "$outside")"
     [[ "$out" == *"rc=$want_rc"* ]] ||
       fail "window border samples" "$label: expected rc=$want_rc, got: $out"
   done <<<"$EDGES"
-  [[ $rows -eq 5 ]] || fail "window border samples" "expected 5 table rows, drove $rows"
-  ok "only an edge pixel that differs from a border distinct from the interior passes"
+  [[ $rows -eq 8 ]] || fail "window border samples" "expected 8 table rows, drove $rows"
+  ok "an inset client border or a compositor border outside an opaque edge passes"
 }
 
 # The run's verdict lives in a global 'status'. A check with its own local 'status' must not
@@ -325,8 +330,58 @@ case_fail_pierces_local_status() {
   ok "a check's own local status cannot swallow the run's FAIL verdict"
 }
 
+# A bare `var="$(sandbox_ipc ...)"` aborts its function under `set -e`, taking every later
+# check with it and leaving the run green. The shipped script must not reintroduce one.
+case_ipc_assignments_report_failure() {
+  local matches bare status=0
+  matches="$(grep -nE '^[[:space:]]*[a-z_]+="\$\(sandbox_ipc[^)]*\)"[[:space:]]*$' "$smoke")" || status=$?
+  # grep exits 1 for no matches and above 1 for a real failure, such as an unreadable
+  # file. Swallowing that would pass this case without ever reading the script.
+  [[ $status -le 1 ]] ||
+    fail "unguarded sandbox_ipc assignments" "could not scan $smoke (grep exit $status)"
+  # awk filters without a second exit status to interpret.
+  bare="$(awk '!/^[0-9]+:[[:space:]]*(reply|original)=/' <<<"$matches")"
+  [[ -z "${bare//[[:space:]]/}" ]] ||
+    fail "unguarded sandbox_ipc assignments" "these abort their check sequence silently: $bare"
+  ok "no sandbox_ipc assignment can end a check sequence without reporting it"
+}
+
+# A hanging shell must not hang the run: one call against a reaped sandbox shell used to
+# block until the outer timeout killed everything, and every later check went unrun.
+case_ipc_call_cannot_hang() {
+  local stub="$tmp/ipcbin" out start elapsed
+  mkdir -p "$stub"
+  printf '#!/usr/bin/env bash\nsleep 300\n' >"$stub/qs"
+  chmod +x "$stub/qs"
+  out="$(
+    set +e
+    # Read by the sliced sandbox_ipc, not by this function.
+    # shellcheck disable=SC2034
+    sandbox_env=(env "PATH=$stub:$PATH")
+    # shellcheck disable=SC2034
+    repo_root="$tmp"
+    # shellcheck disable=SC2034
+    sandbox_ipc_timeout=2
+    # shellcheck source=/dev/null
+    . "$tmp/sandbox_ipc.sh"
+    start=$SECONDS
+    reply="$(sandbox_ipc settings status)"
+    printf 'rc=%s elapsed=%s reply=%s\n' "$?" "$((SECONDS - start))" "$reply"
+  )"
+  [[ "$out" == *"rc=0"* ]] ||
+    fail "ipc call cannot hang" "a bounded failure must not abort its caller: $out"
+  [[ "$out" == *"IPC_CALL_FAILED"* ]] ||
+    fail "ipc call cannot hang" "the reply must carry the failure: $out"
+  elapsed="$(sed -n 's/.*elapsed=\([0-9]*\).*/\1/p' <<<"$out")"
+  [[ -n "$elapsed" && "$elapsed" -lt 10 ]] ||
+    fail "ipc call cannot hang" "the call must return on its own bound, took ${elapsed:-?}s"
+  ok "an unanswered IPC call fails within its bound instead of hanging the run"
+}
+
 CASES=(
   case_remedies
+  case_ipc_assignments_report_failure
+  case_ipc_call_cannot_hang
   case_unconditional_options
   case_layer_states
   case_geometry_replies

@@ -10,6 +10,7 @@ import io
 import json
 import math
 import os
+import pwd
 import re
 import shutil
 import socket
@@ -896,19 +897,62 @@ def test_hyprland_blur_script():
     if "if false then" not in disabled:
         raise AssertionError("disabled blur script should disable the runtime rule")
 
-    for enabled, radius, title in [(True, 9, "Settings"), (False, 0, "Settings [Test]")]:
-        generated = helper._hyprland_blur_script(enabled, 0.5, True, 1, "dark", radius, title)
+    # Every VGS window is a resizable toplevel sharing one class, and each shows the same
+    # trailing chrome during a drag, so the rule matches the class alone. A title match
+    # would leave every window but Settings drawing its own border.
+    for enabled, radius in [(True, 9), (False, 0)]:
+        generated = helper._hyprland_blur_script(enabled, 0.5, True, 1, "dark", radius)
         match_line = next(line for line in generated.splitlines() if "match = { class =" in line)
+        assert_equal("title" in match_line, False, "the window rule must not narrow to one title")
         fields = re.findall(r'"(?:[^"\\]|\\.)*"', match_line)
-        class_rule, title_rule = [re.compile(json.loads(field)) for field in fields]
-        assert_equal(bool(class_rule.search("com.vanillagreen.vshell")), True, "Settings class")
+        assert_equal(len(fields), 1, "the window rule matches on class alone")
+        class_rule = re.compile(json.loads(fields[0]))
+        assert_equal(bool(class_rule.search("com.vanillagreen.vshell")), True, "the VGS window class")
         for other_class in ["com.vanillagreen.vshell.extra", "comXvanillagreenXvshell", "other"]:
             assert_equal(bool(class_rule.search(other_class)), False, "unrelated class")
-        assert_equal(bool(title_rule.search(title)), True, "translated Settings title")
-        for other_title in [title + " extra", "prefix " + title, "File Browser"]:
-            assert_equal(bool(title_rule.search(other_title)), False, "unrelated window title")
         assert_equal(f"rounding = {radius}," in generated, True, "client corner radius")
         assert_equal("rounding_power = 2.0," in generated, True, "circular client corners")
+        assert_equal("border_size = 2," in generated, True, "compositor-drawn window border")
+    # A classic-config session refuses `hyprctl eval` on stdout and still exits 0. Treating
+    # that as applied would leave the Settings window with no border and square corners,
+    # because the shell stops drawing chrome the compositor never took over.
+    import subprocess as _sp
+    refusal = _sp.CompletedProcess(["hyprctl", "eval"], 0, "eval is only supported with the lua config manager\n", "")
+    assert_equal(helper._hyprctl_eval_ok(refusal), False, "a refused eval is not an applied eval")
+    assert_equal(helper._hyprctl_eval_ok(_sp.CompletedProcess(["hyprctl", "eval"], 0, "ok\n", "")), True,
+                 "the Lua config manager's success reply")
+    assert_equal(helper._hyprctl_eval_ok(_sp.CompletedProcess(["hyprctl", "eval"], 7, "error: boom", "")), False,
+                 "a failed Lua chunk is not an applied eval")
+    with patch.object(helper, "_hyprctl_eval", return_value=refusal):
+        assert_equal(helper._hyprland_blur_support().get("available"), False,
+                     "blur support must not be claimed on a session that refused the probe")
+    bordered = helper._hyprland_blur_script(True, 0.5, True, 1, "dark", 9, 3)
+    assert_equal("border_size = 3," in bordered, True, "the border width follows the shell")
+    assert_equal("border_size = 10," in helper._hyprland_blur_script(True, 0.5, True, 1, "dark", 9, 40), True, "the border width clamps")
+
+
+def test_chromium_policy_refuses_a_sandbox_home():
+    """A shell on a throwaway HOME must not push its default theme into the system policy.
+
+    The nested smoke sandbox and the preview capture both run a full shell against a
+    temporary home. Without this the hook wrote that shell's colour to
+    /etc/chromium/policies/managed for every browser on the machine.
+    """
+    real = Path(pwd.getpwuid(os.getuid()).pw_dir)
+    assert_equal(helper._is_real_user_config(real / ".config" / "vshell" / "generated" / "x.json"), True,
+                 "the login user's own config is not a sandbox")
+    for sandbox in ("/tmp/vshell-smoke.AbCdEf/home/.config/vshell/generated/x.json",
+                    "/var/tmp/agents/vgs273.XyZ/home/.config/vshell/generated/x.json"):
+        assert_equal(helper._is_real_user_config(Path(sandbox)), False, f"sandbox path {sandbox}")
+
+    def run(temp_home: Path):
+        # write_chromium_policy must refuse before it ever reaches sudo.
+        with patch.object(helper.subprocess, "run") as ran:
+            wrote = helper.write_chromium_policy({"surfaceContainerHigh": "#123456"})
+        assert_equal(wrote, False, "a sandboxed shell must not write the system policy")
+        assert_equal(ran.called, False, "a sandboxed shell must not reach sudo at all")
+
+    with_temp_home(run)
 
 
 def test_vshell_blur_cli_contract():
@@ -918,10 +962,13 @@ def test_vshell_blur_cli_contract():
         fake_bin.mkdir()
         record_path = tmp_path / "hyprctl-eval.txt"
         fake_hyprctl = fake_bin / "hyprctl"
+        # Stand in for a session running the Lua config manager: it records the chunk and
+        # answers "ok", the reply the helper requires before it reports a rule as applied.
         fake_hyprctl.write_text("""#!/usr/bin/env bash
 set -euo pipefail
 if [[ ${1:-} == eval ]]; then
   printf '%s' "${2:-}" > "$HYPRCTL_RECORD"
+  printf 'ok\\n'
 fi
 exit 0
 """)
@@ -961,6 +1008,26 @@ exit 0
         assert_equal(payload["opacity"], 0.08, "blur CLI opacity clamp")
 
         assert_blur_namespace_rule(record_path.read_text(), "blur CLI hyprctl eval payload")
+
+        # Must-fail control: a session on a classic config prints its refusal and still
+        # exits 0. The CLI has to report that as a failure, or the shell drops the window
+        # chrome it believes the compositor took over.
+        fake_hyprctl.write_text("""#!/usr/bin/env bash
+set -euo pipefail
+if [[ ${1:-} == eval ]]; then
+  printf 'eval is only supported with the lua config manager\\n'
+fi
+exit 0
+""")
+        fake_hyprctl.chmod(0o755)
+        refused = subprocess.run(
+            [str(REPO_ROOT / "bin" / "vshell"), "blur", "apply", "--enabled", "true", "--json"],
+            check=False, capture_output=True, text=True, env=env,
+        )
+        refused_payload = json.loads(refused.stdout)
+        assert_equal(refused_payload["ok"], False, "a refused eval must not report success")
+        assert_equal(refused_payload.get("windowChrome"), None,
+                     "a refused eval must not claim the compositor owns the window chrome")
 
 
 def test_generated_theme_consumer_wiring():
@@ -5762,6 +5829,7 @@ def main():
     test_apply_system_fonts_temp_home()
     test_hyprland_layout_payload()
     test_hyprland_blur_script()
+    test_chromium_policy_refuses_a_sandbox_home()
     test_vshell_blur_cli_contract()
     test_generated_theme_consumer_wiring()
     test_shell_only_theme_preview()

@@ -33,8 +33,10 @@ static_ran=false
 # Ceiling on the sandboxed shell's lifetime, not a schedule: teardown kills the process
 # group as soon as the phase finishes, so a healthy run never spends it. It has to cover
 # every nested check end to end; 40s reaped the shell mid-run on a loaded workstation and
-# turned each later IPC call into 'No running instances'.
-nested_timeout=120
+# turned each later IPC call into 'No running instances'. 120 then proved too short for the
+# full sequence on a workstation running other work, which reaped the shell before the
+# Displays and window-border checks and left them unrun.
+nested_timeout=240
 compositor_timeout=15
 # Plugin discovery is asynchronous. Core IPC readiness alone does not establish plugin loading.
 plugin_timeout=30
@@ -273,8 +275,20 @@ host_wayland_socket() {
 
 # Plugin phases use dynamically scoped sandbox variables from nested_check.
 
+# `qs ipc` waits forever when the sandbox shell has already exited, so one call against a
+# reaped shell hung the whole run until the outer timeout killed it, leaving every later
+# check unrun while the run still reported success. Bound the wait and put the failure in
+# the reply: callers compare reply text, and returning non-zero would instead abort the
+# ones that assign this under `set -e`.
+sandbox_ipc_timeout=15
 sandbox_ipc() {
-  "${sandbox_env[@]}" qs ipc -p "$repo_root/quickshell/vshell" --any-display call "$@" 2>&1 || true
+  local reply status=0
+  reply="$(timeout "$sandbox_ipc_timeout" "${sandbox_env[@]}" qs ipc -p "$repo_root/quickshell/vshell" --any-display call "$@" 2>&1)" || status=$?
+  if [[ $status -ne 0 ]]; then
+    printf 'IPC_CALL_FAILED(%s) %s: %s' "$status" "$*" "${reply:-no reply}"
+    return 0
+  fi
+  printf '%s' "$reply"
 }
 
 # env -i and the sandbox runtime directory keep hyprctl on the nested compositor.
@@ -1097,11 +1111,18 @@ override_state_settles() {
 # that pixel across it, so an accent border sitting there floods the window mid-drag.
 # Samples run from the window edge inward: edge, border, interior.
 # Status 0 means inset, 1 means the border owns the edge, 2 means no border was found.
+# Samples run from the window edge inward, plus the pixel just outside it. A client
+# border must sit inside the edge (0); on the edge it floods a resize (1). With the
+# compositor drawing the border, the edge is plain surface and the outside pixel
+# carries the border (0). Anything else is no border at all (2).
 window_border_is_inset() {
-  local edge="$1" border="$2" interior="$3"
-  [[ "$border" != "$interior" ]] || return 2
-  [[ "$edge" != "$border" ]] || return 1
-  return 0
+  local edge="$1" border="$2" interior="$3" outside="${4:-}"
+  if [[ "$border" != "$interior" ]]; then
+    [[ "$edge" != "$border" ]] || return 1
+    return 0
+  fi
+  [[ -n "$outside" && "$outside" != "$edge" && "$edge" == "$interior" ]] && return 0
+  return 2
 }
 
 # Read one pixel of the sandbox output as lowercase hex. grim writes binary PPM, whose
@@ -1131,7 +1152,7 @@ print(data[i + 1:i + 4].hex())
 # Sample the Settings window's left edge in the sandbox. A capture or query failure is
 # reported as such: it is not evidence about where the border sits.
 settings_border_check() {
-  local clients geometry="" x y edge border interior verdict=0
+  local clients geometry="" x y edge border interior outside verdict=0
   # The Settings window maps asynchronously. Poll for it so a slow map reads as a wait,
   # not as a verdict about the border.
   for _ in $(seq 1 20); do
@@ -1148,15 +1169,16 @@ settings_border_check() {
   read -r x y <<<"$geometry"
   if ! edge="$(sandbox_pixel "$x" "$y")" ||
     ! border="$(sandbox_pixel "$((x + 1))" "$y")" ||
-    ! interior="$(sandbox_pixel "$((x + 4))" "$y")"; then
+    ! interior="$(sandbox_pixel "$((x + 4))" "$y")" ||
+    ! outside="$(sandbox_pixel "$((x - 1))" "$y")"; then
     fail "could not sample the Settings window edge at ${x},${y}"
     return 1
   fi
-  window_border_is_inset "$edge" "$border" "$interior" || verdict=$?
+  window_border_is_inset "$edge" "$border" "$interior" "$outside" || verdict=$?
   case "$verdict" in
-    0) note "window border check passed (edge $edge, border $border, interior $interior)" ;;
+    0) note "window border check passed (outside $outside, edge $edge, border $border, interior $interior)" ;;
     1) fail "the Settings window paints its border on its outermost pixel ($edge): a compositor expanding a stale buffer floods the window with it during a resize" ;;
-    2) fail "no window border found at the Settings window edge (edge $edge, border $border, interior $interior)" ;;
+    2) fail "no window border found at the Settings window edge (outside $outside, edge $edge, border $border, interior $interior)" ;;
   esac
   return "$verdict"
 }
@@ -1426,7 +1448,11 @@ EOF
     switcher_check || true
     local display_reply
     sandbox_ipc changelog close >/dev/null || fail "could not dismiss release notes before checking Displays"
-    display_reply="$(sandbox_ipc settings openWith display_config)"
+    # An assignment from a failing command substitution aborts this function under `set -e`,
+    # which silently skipped every later check — the window border check among them — while
+    # the run still reported success. Capture the failure so the branch below reports it.
+    display_reply="$(sandbox_ipc settings openWith display_config)" ||
+      display_reply="the Settings IPC call failed (the sandbox shell may already be gone)"
     if [[ "$display_reply" != "SETTINGS_OPEN_SUCCESS: display_config" ]]; then
       fail "could not open the Displays settings page: $display_reply"
     else
@@ -1443,7 +1469,8 @@ EOF
         fi
         hyprctl dispatch "hl.dsp.focus({ window = \"address:$capture_focus\" })" >/dev/null || fail "could not restore focus after display capture"
       fi
-      display_reply="$(sandbox_ipc outputs current)"
+      display_reply="$(sandbox_ipc outputs current)" ||
+        display_reply="the outputs IPC call failed"
       if ! jq -e 'type == "array" and length > 0' <<<"$display_reply" >/dev/null; then
         fail "Displays settings did not receive native monitor state: $display_reply"
         sandbox_ipc outputs status >&2 || fail "could not read display diagnostics"
