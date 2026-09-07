@@ -9,9 +9,13 @@ import qs.Widgets
 //
 // A choice between two states where one is plainly the absence of the other is
 // a SWITCH, not a pair of buttons: rendering "Show/Hide" and "On/Off" as two
-// full-width segments each cost a heading, a caption and a 40px control for
-// what a switch says in one row, and five of them ran the page off the screen.
-// The real multi-way choices keep a segmented track, at the small size.
+// full-width segments each cost a heading and a 40px control for what a switch
+// says in one row, and five of them ran the page off the screen. The real
+// multi-way choices keep a segmented track, at the small size.
+//
+// No row carries explanatory prose. Every control here is named by what it
+// does, and a caption under each one doubled the height of the page to repeat
+// its own label back.
 //
 // It persists nothing itself. The embedding surface owns the save path,
 // because a widget instance and a settings page reach the plugin service by
@@ -55,14 +59,13 @@ Column {
     readonly property bool expanded: root.values.cardDetail === "expanded"
     readonly property var providerFilter: root.values.providerFilter || []
 
-    // One multi-way choice: a label, the track, and a caption that follows the
-    // selection so the page says what the current setting means rather than
-    // what all of them mean.
+    // One multi-way choice: a label and the track. No caption under it — the
+    // segment labels already say what each option does, and a line of prose
+    // repeating them cost more vertical space than the control itself.
     component Choice: Column {
         id: choice
 
         property string title: ""
-        property string caption: ""
         property var keys: []
         property var labels: []
         property string current: ""
@@ -92,23 +95,10 @@ Column {
                     choice.picked(choice.keys[index]);
             }
         }
-
-        StyledText {
-            width: parent.width
-            text: choice.caption
-            font.pixelSize: Theme.fontSizeSmall
-            color: Theme.surfaceVariantText
-            wrapMode: Text.WordWrap
-        }
     }
 
     Choice {
         title: "Bar number"
-        caption: root.headlineMode === "best"
-            ? "The account with the most headroom left."
-            : (root.headlineMode === "worst"
-               ? "The most exhausted account."
-               : "Average across accounts, each counted at its tightest limit.")
         keys: ["pool", "best", "worst"]
         labels: ["Average", "Most left", "Most used"]
         current: root.headlineMode
@@ -117,9 +107,6 @@ Column {
 
     Choice {
         title: "Bar shows"
-        caption: root.barValue === "left"
-            ? "How much of each limit is still available."
-            : "How much of each limit has been consumed."
         keys: ["used", "left"]
         labels: ["Used", "Left"]
         current: root.barValue
@@ -130,11 +117,6 @@ Column {
     // settings surfaces without either one listing modes of its own.
     Choice {
         title: "Bar icons"
-        caption: root.barIconMode === "none"
-            ? "Numbers only."
-            : (root.barIconMode === "one"
-               ? "One icon for the whole widget, ahead of every number."
-               : "Each slot carries its provider's mark, so a number cannot change meaning.")
         keys: catalog.iconModes()
         labels: ["None", "One", "Per slot"]
         current: root.barIconMode
@@ -151,7 +133,6 @@ Column {
         horizontalPadding: 0
         rowHoverHighlight: false
         text: "Colour by usage"
-        description: "Numbers turn amber and red as a limit fills."
         checked: root.barColor
         onToggled: on => root.changed("barColor", on)
     }
@@ -196,15 +177,6 @@ Column {
                                          catalog.moveProvider(root.providerFilter, modelData, 1))
             }
         }
-
-        StyledText {
-            width: parent.width
-            text: "A provider that is off takes no bar slot and no popout section. " +
-                  "Turning the last one off brings them all back."
-            font.pixelSize: Theme.fontSizeSmall
-            color: Theme.surfaceVariantText
-            wrapMode: Text.WordWrap
-        }
     }
 
     VgsToggle {
@@ -212,7 +184,6 @@ Column {
         horizontalPadding: 0
         rowHoverHighlight: false
         text: "Expand cards"
-        description: "Every limit gets its own bar and reset countdown, without clicking a card."
         checked: root.expanded
         onToggled: on => root.changed("cardDetail", on ? "expanded" : "compact")
     }
@@ -222,7 +193,6 @@ Column {
         horizontalPadding: 0
         rowHoverHighlight: false
         text: "Hide unused limits"
-        description: "A per-model limit you have never used is left off compact cards. Expanding a card still lists every one."
         checked: root.hideUnused
         onToggled: on => root.changed("hideUnusedLanes", on)
     }

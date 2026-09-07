@@ -488,8 +488,9 @@ test("the display page offers the icon modes the catalog defines, and names none
     assert.ok(display.includes("keys: catalog.iconModes()"),
         "the modes come from the catalog, so a mode added there reaches both settings surfaces " +
         "without either one carrying a list of its own");
-    assert.ok(!/"none"|"one"|"provider"/.test(display.replace(/root\.barIconMode === "[a-z]+"/g, "")),
-        "and the page spells a mode out only to caption the one that is selected");
+    assert.ok(!/"none"|"one"|"provider"/.test(display),
+        "and the page never spells a mode out: the labels are positional against those keys, so " +
+        "a mode added to the catalog shows up here rather than silently shifting the labels");
     assert.ok(display.includes('root.changed("barIconMode", key)'),
         "picking a mode writes the mode key, not a boolean the bar would have to guess at");
 });
@@ -638,4 +639,22 @@ test("the gap above an account card sits outside the card's own rectangle", () =
         "and the card's own height stays its content's. A card that padded itself would put the " +
         "gap inside the rectangle that IS its hover wash and its click target, so the row would " +
         "light up and respond 5px above where the card is drawn");
+});
+
+test("no control on the display page carries explanatory prose", () => {
+    const display = stripComments(fs.readFileSync(path.join(PLUGIN, "AiUsageDisplaySettings.qml"), "utf8"));
+    assert.ok(!/\bdescription:/.test(display),
+        "a switch here is named by what it does, and a caption under it repeated its own label " +
+        "back at the cost of doubling the page's height");
+    assert.ok(!/\bcaption:/.test(display),
+        "and a segmented choice is read from its segment labels, not from a line of prose that " +
+        "follows the selection");
+    // The switch rows are the ones that would regrow a description first, since VgsToggle takes
+    // one; the choices have no such property left to set.
+    const rows = (display.match(/VgsToggle \{/g) || []).length;
+    assert.ok(rows >= 3, `the row extractor found ${rows} switch(es) — read that as the EXTRACTOR ` +
+        "being broken, not the page being empty");
+    assert.ok(code.includes('if (popout.onSettings)\n                    return "";'),
+        "and the page's own header says nothing under its title either — but it still ANSWERS, " +
+        "or the settings page falls through and wears the usage page's details line");
 });

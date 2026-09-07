@@ -658,8 +658,11 @@ PluginComponent {
             detailsText: {
                 if (popout.onSetup)
                     return "Where this provider's accounts come from.";
+                // The settings page says nothing under its title: every control
+                // on it is named by what it does. It still has to answer here,
+                // or it would fall through and wear the usage page's line.
                 if (popout.onSettings)
-                    return "How the bar number is chosen, and which accounts count.";
+                    return "";
                 if (root.pending)
                     return "Checking usage…";
                 // A provider nobody has set up yet is not a fault to report.
