@@ -38,9 +38,13 @@ func socketDir(t *testing.T, leaf string) string {
 		bases = append(bases, "/tmp")
 	}
 	for _, base := range bases {
+		// Only a measured over-limit path may reach the fallback. A base that
+		// cannot be created is an environment fault, and skipping it here would
+		// quietly ignore a deliberately configured TMPDIR and then blame the
+		// sun_path limit below for a failure that was never about length.
 		dir, err := os.MkdirTemp(base, "vgs")
 		if err != nil {
-			continue
+			t.Fatalf("creating a socket directory under %s: %v", base, err)
 		}
 		if len(filepath.Join(dir, leaf)) < socketPathMax {
 			t.Cleanup(func() {
