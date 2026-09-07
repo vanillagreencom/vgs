@@ -55,9 +55,15 @@ Column {
 
     Rectangle {
         width: parent.width
+        // A TRANSLUCENT track, not a container token. The card's hover state
+        // is surfaceContainerHighest and so was this, so the empty half of
+        // every bar vanished into the card under the pointer — and that
+        // token falls back to surfaceContainerHigh on themes that do not
+        // define it, which collides at rest too. A wash over whatever is
+        // behind it cannot collide with either.
         height: 6
         radius: 3
-        color: Theme.surfaceContainerHighest
+        color: Theme.withAlpha(Theme.outline, 0.35)
 
         Rectangle {
             width: parent.width * Math.max(0, Math.min(card.pct, 100)) / 100

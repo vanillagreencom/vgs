@@ -4,9 +4,11 @@ import qs.Widgets
 
 // A provider's own mark, with the Material symbol behind it.
 //
-// The marks are monochrome and drawn with fill="currentColor", which Qt's SVG
-// renderer has no context for and paints BLACK — invisible on a dark bar. The
-// colour is therefore always applied as a colorisation, never left to the file.
+// The marks are filled WHITE, not currentColor. Qt's SVG renderer has no CSS
+// context for currentColor and paints it black, and colorising a black source
+// does not help: MultiEffect's colorisation preserves luminance, so black stays
+// black whatever colour is asked for. A white source colorises to the requested
+// colour exactly, which is why the shell's own matrix-logo-white.svg is white.
 //
 // The fallback is not decoration: a provider added to the catalog before its
 // mark is shipped would otherwise take an empty slot on the bar, and an empty

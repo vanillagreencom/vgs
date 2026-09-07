@@ -105,10 +105,13 @@ test("every provider's mark is its own, and a provider without one still has a s
         const asset = providerAsset(p);
         assert.ok(asset === "" || /^[a-z0-9-]+\.svg$/.test(asset),
             `${p}: a mark is a file beside the plugin, named plainly — got ${JSON.stringify(asset)}`);
-        assert.notEqual(providerIcon(p), "",
-            `${p} must keep a Material symbol whether or not VGS ships its mark: a provider added ` +
-            "before its mark would otherwise take an EMPTY slot on the bar, and an empty slot is " +
-            "indistinguishable from a provider that answered nothing");
+        // Not merely non-empty: the switch has a default, and a provider that lost its own arm
+        // would fall through to it wearing whatever that default is.
+        assert.notEqual(providerIcon(p), providerIcon("gemini"),
+            `${p} has no symbol of its own and falls through to the unknown-provider default: it ` +
+            "would wear another provider's glyph, or the placeholder, on the bar");
+        assert.notEqual(providerName(p), providerName("gemini"),
+            `${p} falls through to the unknown-provider name`);
     }
     assert.equal(providerAsset("gemini"), "", "a provider nobody added has no mark");
 });

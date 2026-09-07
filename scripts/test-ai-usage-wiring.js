@@ -371,6 +371,26 @@ test("both settings surfaces embed the same setup component", () => {
         "and every widget instance refetches when it changes");
 });
 
+test("every provider mark ships beside the plugin and is colorisable", () => {
+    const logicSource = fs.readFileSync(path.join(PLUGIN, "AiUsageLogic.qml"), "utf8");
+    const assets = Array.from(logicSource.matchAll(/return "([a-z0-9-]+\.svg)";/g), m => m[1]);
+    assert.ok(assets.length > 0, "the catalog must name the marks it ships, or this checks nothing");
+    for (const asset of assets) {
+        const file = path.join(PLUGIN, asset);
+        assert.ok(fs.existsSync(file),
+            `${asset} is named by the catalog but not shipped beside the plugin: the icon falls ` +
+            "back to its Material symbol, which is the fallback working, not the mark loading");
+        const svg = fs.readFileSync(file, "utf8");
+        assert.ok(!/currentColor/.test(svg),
+            `${asset} fills with currentColor: Qt's SVG renderer has no CSS context for it and ` +
+            "paints BLACK, and colorising black does nothing — MultiEffect's colorisation keeps " +
+            "luminance. That is a black glyph on a dark bar");
+        assert.match(svg, /fill="#(FFFFFF|ffffff)"/,
+            `${asset} must fill white, which is the source a colorisation turns into the asked-for ` +
+            "colour — the convention the shell's own matrix-logo-white.svg follows");
+    }
+});
+
 test("the filter is persisted through the shared toggle, and clearing it means all", () => {
     requires(body("toggleProvider"), "toggleProvider()", [
         ['root.saveSetting("providerFilter", logic.toggleFilter(root.providerFilter, p))',

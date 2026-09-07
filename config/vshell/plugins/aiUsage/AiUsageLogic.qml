@@ -27,7 +27,11 @@ QtObject {
         case "claude":
             return "smart_toy";
         default:
-            return "smart_toy";
+            // Reached only for an id normalizeProvider rejected. Returning
+            // Claude's glyph here labelled an UNKNOWN provider as Claude, and
+            // hid a provider that had lost its own arm behind a default that
+            // happened to look right.
+            return "help";
         }
     }
 
@@ -42,7 +46,7 @@ QtObject {
         case "claude":
             return "Claude";
         default:
-            return "Claude";
+            return "Unknown";
         }
     }
 
