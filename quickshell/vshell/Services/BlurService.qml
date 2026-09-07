@@ -88,7 +88,7 @@ Singleton {
             "--radius",
             String(Math.min(20, Theme.cornerRadius)),
             "--window-border",
-            String(Theme.windowBorderWidth),
+            String(Math.min(10, Theme.windowBorderWidth)),
             "--json"
         ];
         hyprlandApply.running = true;

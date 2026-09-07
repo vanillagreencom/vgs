@@ -196,10 +196,8 @@ Singleton {
     property int mangoLayoutBorderSize: -1
     property bool mangoTrackpadNaturalScrolling: true
 
-    readonly property int effectiveContainerRadius: SurfaceGeometry.effectiveRadius(cornerRadius)
+    readonly property int effectiveContainerRadius: SurfaceGeometry.boundedInt(cornerRadius, 15, 0, 20)
     readonly property int effectiveControlRadius: SurfaceGeometry.boundedInt(controlRadius, 10, 0, 20)
-    readonly property int effectiveHyprlandSurfaceRadius: SurfaceGeometry.effectiveRadius(cornerRadius)
-    readonly property int effectiveHyprlandSurfaceBorderWidth: SurfaceGeometry.effectiveBorderWidth(surfaceBorderWidth)
 
     property int firstDayOfWeek: -1
     property bool showWeekNumber: false

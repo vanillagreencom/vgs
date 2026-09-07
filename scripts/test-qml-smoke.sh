@@ -282,33 +282,37 @@ edge_samples() {
     set +e
     # shellcheck source=/dev/null
     . "$tmp/window_border_is_inset.sh"
-    window_border_is_inset "$1" "$2" "$3" "$4"
+    window_border_is_inset "$1" "$2" "$3" "$4" "$5"
     printf 'rc=%s\n' "$?"
   ) 2>&1
 }
 
-# label; edge; border; interior; outside; expected status. Samples run from the window edge
-# inward; outside is the pixel just past the edge, where a compositor border lands.
-EDGES='an inset border leaves the surface on the edge;1c1c28;fab387;1c1c28;0000ff;0
-a border on the outermost pixel floods a resize;fab387;fab387;1c1c28;0000ff;1
-a translucent edge still differs from the border;2a2b3f;fab387;1c1c28;0000ff;0
-no border drawn at all;1c1c28;1c1c28;1c1c28;1c1c28;2
-a border colour equal to the interior is not a border;fab387;1c1c28;1c1c28;0000ff;2
-a compositor border outside an opaque edge passes;1c1c28;1c1c28;1c1c28;00ff00;0
-a compositor border does not excuse an edge that differs from the interior;fab387;1c1c28;1c1c28;00ff00;2
-no outside sample keeps the client-border contract;1c1c28;1c1c28;1c1c28;;2'
+# label; edge; border; interior; near; far; expected status. Samples run from the window edge
+# inward; near is the pixel just past the edge, where a compositor border lands, and far is
+# past the widest border VGS can ask for. Status 0 is a compositor border, 1 a client border
+# on the outermost pixel, 2 no border at all and 3 an inset client border.
+EDGES='an inset client border is the client arm, not the compositor one;1c1c28;fab387;1c1c28;0000ff;0000ff;3
+a border on the outermost pixel floods a resize;fab387;fab387;1c1c28;0000ff;0000ff;1
+a translucent edge still differs from the border;2a2b3f;fab387;1c1c28;0000ff;0000ff;3
+no border drawn at all;1c1c28;1c1c28;1c1c28;1c1c28;1c1c28;2
+a border colour equal to the interior is not a border;fab387;1c1c28;1c1c28;0000ff;00ff00;2
+a uniform background outside an opaque edge is not a border;1c1c28;1c1c28;1c1c28;00ff00;00ff00;2
+a compositor border between the edge and the background passes;1c1c28;1c1c28;1c1c28;fab387;00ff00;0
+a compositor border does not excuse an edge that differs from the interior;fab387;1c1c28;1c1c28;fab387;00ff00;2
+no outside samples keep the client-border contract;1c1c28;1c1c28;1c1c28;;;2
+a near sample with nothing beyond it cannot stand in for a border;1c1c28;1c1c28;1c1c28;fab387;;2'
 
 case_window_border_samples() {
-  local label edge border interior outside want_rc out rows=0
-  while IFS=';' read -r label edge border interior outside want_rc; do
+  local label edge border interior near far want_rc out rows=0
+  while IFS=';' read -r label edge border interior near far want_rc; do
     [[ -n "$label" ]] || continue
     rows=$((rows + 1))
-    out="$(edge_samples "$edge" "$border" "$interior" "$outside")"
+    out="$(edge_samples "$edge" "$border" "$interior" "$near" "$far")"
     [[ "$out" == *"rc=$want_rc"* ]] ||
       fail "window border samples" "$label: expected rc=$want_rc, got: $out"
   done <<<"$EDGES"
-  [[ $rows -eq 8 ]] || fail "window border samples" "expected 8 table rows, drove $rows"
-  ok "an inset client border or a compositor border outside an opaque edge passes"
+  [[ $rows -eq 10 ]] || fail "window border samples" "expected 10 table rows, drove $rows"
+  ok "only a border that differs from both the edge and the background beyond it passes"
 }
 
 # The run's verdict lives in a global 'status'. A check with its own local 'status' must not
@@ -330,20 +334,37 @@ case_fail_pierces_local_status() {
   ok "a check's own local status cannot swallow the run's FAIL verdict"
 }
 
-# A bare `var="$(sandbox_ipc ...)"` aborts its function under `set -e`, taking every later
-# check with it and leaving the run green. The shipped script must not reintroduce one.
-case_ipc_assignments_report_failure() {
-  local matches bare status=0
-  matches="$(grep -nE '^[[:space:]]*[a-z_]+="\$\(sandbox_ipc[^)]*\)"[[:space:]]*$' "$smoke")" || status=$?
+# `qs ipc` waits forever on a shell that has already been reaped, and a poll loop's own
+# liveness check cannot run while its command substitution is blocked — that is what left
+# every later check unrun while the run still reported success. So every invocation carries
+# a deadline, and --kill-after is part of it: plain `timeout` sends SIGTERM and then waits
+# for as long as the child ignores it, which is the same hang under a different name.
+#
+# The rule is sited on the invocation, not on the names its callers give their variables:
+# an assignment from sandbox_ipc is safe under `set -e` because sandbox_ipc folds failure
+# into the reply and returns 0 — which case_ipc_call_cannot_hang drives — so no list of
+# exempt variable names is needed, and no raw call can escape by choosing one.
+case_ipc_bounded_calls() {
+  local joined sites unbounded status=0
+  # Backslash continuations first, so an invocation whose bound sits on the previous
+  # physical line is judged whole. Comment lines are dropped: a `qs ipc` in prose satisfies
+  # a text match without being a call.
+  joined="$(awk '{ line = $0
+                   while (line ~ /\\$/) { sub(/\\$/, "", line); if ((getline more) <= 0) break; line = line more }
+                   if (line !~ /^[[:space:]]*#/) print line }' "$smoke")"
+  sites="$(grep -F 'qs ipc' <<<"$joined")" || status=$?
   # grep exits 1 for no matches and above 1 for a real failure, such as an unreadable
   # file. Swallowing that would pass this case without ever reading the script.
   [[ $status -le 1 ]] ||
-    fail "unguarded sandbox_ipc assignments" "could not scan $smoke (grep exit $status)"
+    fail "unbounded qs ipc calls" "could not scan $smoke (grep exit $status)"
+  # No invocation at all means the extractor is broken, not that the script is clean.
+  [[ -n "${sites//[[:space:]]/}" ]] ||
+    fail "unbounded qs ipc calls" "found no qs ipc invocation in $smoke"
   # awk filters without a second exit status to interpret.
-  bare="$(awk '!/^[0-9]+:[[:space:]]*(reply|original)=/' <<<"$matches")"
-  [[ -z "${bare//[[:space:]]/}" ]] ||
-    fail "unguarded sandbox_ipc assignments" "these abort their check sequence silently: $bare"
-  ok "no sandbox_ipc assignment can end a check sequence without reporting it"
+  unbounded="$(awk '!/timeout --kill-after=/' <<<"$sites")"
+  [[ -z "${unbounded//[[:space:]]/}" ]] ||
+    fail "unbounded qs ipc calls" "these can block a check sequence indefinitely: $unbounded"
+  ok "every qs ipc invocation carries a kill-after deadline"
 }
 
 # A hanging shell must not hang the run: one call against a reaped sandbox shell used to
@@ -351,7 +372,9 @@ case_ipc_assignments_report_failure() {
 case_ipc_call_cannot_hang() {
   local stub="$tmp/ipcbin" out start elapsed
   mkdir -p "$stub"
-  printf '#!/usr/bin/env bash\nsleep 300\n' >"$stub/qs"
+  # Long enough to outlast the 2s bound below, short enough that a regression reads as a
+  # failed assertion within seconds rather than as a stalled suite.
+  printf '#!/usr/bin/env bash\nsleep 20\n' >"$stub/qs"
   chmod +x "$stub/qs"
   out="$(
     set +e
@@ -380,7 +403,7 @@ case_ipc_call_cannot_hang() {
 
 CASES=(
   case_remedies
-  case_ipc_assignments_report_failure
+  case_ipc_bounded_calls
   case_ipc_call_cannot_hang
   case_unconditional_options
   case_layer_states

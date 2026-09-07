@@ -11,13 +11,13 @@
 # --settings: open every available Settings page and verify it loads.
 # -h, --help: print this help.
 #
-# Nested mode needs Hyprland, qs, Python, and a host Wayland socket.
+# Nested mode needs Hyprland, qs, Python, grim, and a host Wayland socket.
 # Sandbox settings come from repository defaults.
 # Theme loading is outside this smoke's coverage.
 # The runtime check waits for bundled plugins and exercises user overrides.
 # Popouts and switchers are checked for mapping and dismissal.
 # wtype enables Escape-key dismissal checks.
-# VSHELL_SMOKE_ARTIFACT_DIR saves a Displays screenshot when grim is installed.
+# VSHELL_SMOKE_ARTIFACT_DIR saves a Displays screenshot.
 # Live-session snapshots check process instances and excess layer surfaces; cleanup targets only process groups this run created.
 # Never launches into the live session and never runs pkill quickshell; other Quickshell apps on the seat are legitimate.
 set -euo pipefail
@@ -280,10 +280,13 @@ host_wayland_socket() {
 # check unrun while the run still reported success. Bound the wait and put the failure in
 # the reply: callers compare reply text, and returning non-zero would instead abort the
 # ones that assign this under `set -e`.
+# --kill-after is what makes the bound unconditional: plain `timeout` sends SIGTERM and
+# then waits for as long as the child cares to ignore it, which is the same hang under a
+# different name. Every raw `qs ipc` in this script carries the same pair.
 sandbox_ipc_timeout=15
 sandbox_ipc() {
   local reply status=0
-  reply="$(timeout "$sandbox_ipc_timeout" "${sandbox_env[@]}" qs ipc -p "$repo_root/quickshell/vshell" --any-display call "$@" 2>&1)" || status=$?
+  reply="$(timeout --kill-after=5 "$sandbox_ipc_timeout" "${sandbox_env[@]}" qs ipc -p "$repo_root/quickshell/vshell" --any-display call "$@" 2>&1)" || status=$?
   if [[ $status -ne 0 ]]; then
     printf 'IPC_CALL_FAILED(%s) %s: %s' "$status" "$*" "${reply:-no reply}"
     return 0
@@ -475,7 +478,10 @@ await_sentinel() {
   local reply="" last_good="" answered=false gone=false
   for _ in $(seq 1 40); do
     # Keep transport errors separate from replies; sandbox_ipc merges them and swallows status.
-    if reply="$("${sandbox_env[@]}" qs ipc -p "$repo_root/quickshell/vshell" \
+    # The bound is sandbox_ipc's: the liveness check below cannot run while this command
+    # substitution is blocked, so an unbounded call hangs the poll loop it protects.
+    if reply="$(timeout --kill-after=5 "$sandbox_ipc_timeout" \
+        "${sandbox_env[@]}" qs ipc -p "$repo_root/quickshell/vshell" \
         --any-display call settings get "$key" 2>/dev/null)"; then
       answered=true
       last_good="$reply"
@@ -1109,26 +1115,41 @@ override_state_settles() {
 # Decide whether a window keeps its themed border off its own outermost pixel. A compositor
 # expanding a stale buffer over the area an interactive resize has already exposed repeats
 # that pixel across it, so an accent border sitting there floods the window mid-drag.
-# Samples run from the window edge inward: edge, border, interior.
-# Status 0 means inset, 1 means the border owns the edge, 2 means no border was found.
-# Samples run from the window edge inward, plus the pixel just outside it. A client
-# border must sit inside the edge (0); on the edge it floods a resize (1). With the
-# compositor drawing the border, the edge is plain surface and the outside pixel
-# carries the border (0). Anything else is no border at all (2).
+# Samples run from the window edge inward — edge, border, interior — plus two outside it:
+# the pixel a compositor border occupies, and one past the widest border VGS can ask for.
+# A client border must sit inside the edge (3); on the edge it floods a resize (1). With the
+# compositor drawing the border the client paints one flat surface out to its own edge, so
+# the near outside pixel has to differ from the far one as well as from the edge (0) —
+# against the edge alone any wallpaper, gap or neighbouring window passes. Anything else is
+# no border at all (2).
 window_border_is_inset() {
-  local edge="$1" border="$2" interior="$3" outside="${4:-}"
+  local edge="$1" border="$2" interior="$3" near="${4:-}" far="${5:-}"
   if [[ "$border" != "$interior" ]]; then
     [[ "$edge" != "$border" ]] || return 1
-    return 0
+    return 3
   fi
-  [[ -n "$outside" && "$outside" != "$edge" && "$edge" == "$interior" ]] && return 0
+  [[ -n "$near" && -n "$far" && "$near" != "$edge" && "$near" != "$far" && "$edge" == "$interior" ]] && return 0
   return 2
 }
 
+# Where sandbox_pixel parks grim's stderr, so a capture failure names grim's own cause
+# rather than only the coordinates that could not be read.
+pixel_error_log=""
+
 # Read one pixel of the sandbox output as lowercase hex. grim writes binary PPM, whose
 # header is four whitespace-separated ASCII fields ahead of the RGB bytes.
+# The deadline is not optional: a nested compositor that stops answering would otherwise
+# block the border check with no verdict — the outer run timeout bounds only qs, and the
+# compositor's process group survives until cleanup.
 sandbox_pixel() {
-  "${sandbox_env[@]}" WAYLAND_DISPLAY="$nested_socket" grim -t ppm -g "$1,$2 1x1" - 2>/dev/null | python3 -c '
+  local sink="${pixel_error_log:-/dev/null}"
+  # Name the sample the log belongs to: the caller takes several and reports the window's
+  # own coordinates, which are not the ones that failed.
+  [[ "$sink" == /dev/null ]] || printf 'sampling %s,%s: ' "$1" "$2" >"$sink"
+  # -v so a killed capture says so; a silent kill is indistinguishable from a frame grim
+  # never produced, and both reach the caller as the same empty reply.
+  "${sandbox_env[@]}" WAYLAND_DISPLAY="$nested_socket" timeout -v 5 grim -t ppm -g "$1,$2 1x1" - \
+    2>>"$sink" | python3 -c '
 import sys
 
 data = sys.stdin.buffer.read()
@@ -1140,19 +1161,28 @@ while len(fields) < 4:
     while j < len(data) and not data[j:j + 1].isspace():
         j += 1
     if j == i:
-        raise SystemExit(1)
+        raise SystemExit(f"grim wrote {len(data)} byte(s), not a PPM header")
     fields.append(data[i:j])
     i = j
-if fields[0] != b"P6" or len(data) < i + 4:
-    raise SystemExit(1)
+if fields[0] != b"P6":
+    raise SystemExit(f"grim wrote {fields[0]!r}, not a binary PPM frame")
+if len(data) < i + 4:
+    raise SystemExit(f"grim wrote a {fields[1]!r}x{fields[2]!r} header with no pixel behind it")
 print(data[i + 1:i + 4].hex())
-'
+' 2>>"$sink"
 }
 
 # Sample the Settings window's left edge in the sandbox. A capture or query failure is
 # reported as such: it is not evidence about where the border sits.
+# The sandbox always runs the Lua config manager, so the compositor is what draws the VGS
+# window border here. A client-drawn border is a real finding — the window rule did not
+# reach this window — and is failed rather than accepted as the other valid arm.
 settings_border_check() {
-  local clients geometry="" x y edge border interior outside verdict=0
+  local clients geometry="" x y far_x edge border interior near far verdict=0
+  # The far sample has to clear the border rather than land in it. Border Thickness clamps
+  # at 10, matching cmd_blur's --window-border choices, so 13 pixels out is past the widest
+  # border VGS can ask the compositor for whatever the current setting is.
+  local far_offset=13
   # The Settings window maps asynchronously. Poll for it so a slow map reads as a wait,
   # not as a verdict about the border.
   for _ in $(seq 1 20); do
@@ -1167,18 +1197,25 @@ settings_border_check() {
     return 1
   fi
   read -r x y <<<"$geometry"
+  far_x=$((x - far_offset))
+  if [[ "$far_x" -lt 0 ]]; then
+    fail "the Settings window maps ${x}px from the output edge, too close to sample past its border"
+    return 1
+  fi
   if ! edge="$(sandbox_pixel "$x" "$y")" ||
     ! border="$(sandbox_pixel "$((x + 1))" "$y")" ||
     ! interior="$(sandbox_pixel "$((x + 4))" "$y")" ||
-    ! outside="$(sandbox_pixel "$((x - 1))" "$y")"; then
-    fail "could not sample the Settings window edge at ${x},${y}"
+    ! near="$(sandbox_pixel "$((x - 1))" "$y")" ||
+    ! far="$(sandbox_pixel "$far_x" "$y")"; then
+    fail "could not sample the Settings window edge at ${x},${y}: $(tail -c 400 -- "${pixel_error_log:-/dev/null}" 2>/dev/null)"
     return 1
   fi
-  window_border_is_inset "$edge" "$border" "$interior" "$outside" || verdict=$?
+  window_border_is_inset "$edge" "$border" "$interior" "$near" "$far" || verdict=$?
   case "$verdict" in
-    0) note "window border check passed (outside $outside, edge $edge, border $border, interior $interior)" ;;
+    0) note "window border check passed (far $far, near $near, edge $edge, border $border, interior $interior)" ;;
     1) fail "the Settings window paints its border on its outermost pixel ($edge): a compositor expanding a stale buffer floods the window with it during a resize" ;;
-    2) fail "no window border found at the Settings window edge (outside $outside, edge $edge, border $border, interior $interior)" ;;
+    2) fail "no window border found at the Settings window edge (far $far, near $near, edge $edge, border $border, interior $interior)" ;;
+    3) fail "the Settings window draws its own border ($border) instead of the compositor: the sandbox runs the Lua config manager, so the window rule should be drawing it" ;;
   esac
   return "$verdict"
 }
@@ -1220,6 +1257,11 @@ nested_check() {
   command -v qs >/dev/null 2>&1 || { nested_unavailable "quickshell (qs) not installed"; return; }
   # Require the JSON parser before geometry queries so a missing interpreter cannot look like absence.
   command -v python3 >/dev/null 2>&1 || { nested_unavailable "python3 not installed (needed to read the compositor's layer list)"; return; }
+  # The window border check samples the output on every nested run, so grim is a
+  # prerequisite rather than the optional artifact tool it once was. Without this its
+  # absence surfaces inside the pixel pipeline as a sampling failure at coordinates that
+  # were never the problem.
+  command -v grim >/dev/null 2>&1 || { nested_unavailable "grim not installed (needed to sample the window border)"; return; }
   if ! host_socket="$(host_wayland_socket)" || [[ ! -S "$host_socket" ]]; then
     # A host Wayland socket prevents the nested compositor from falling back to the live GPU and VT.
     nested_unavailable "no host Wayland socket to nest inside (WAYLAND_DISPLAY unset)" no-host-socket
@@ -1228,6 +1270,7 @@ nested_check() {
 
   sandbox="$(mktemp -d -t vshell-smoke.XXXXXX)"
   track_dir "$sandbox"
+  pixel_error_log="$sandbox/grim.err"
   # Keep the runtime directory short enough for Hyprland's IPC socket path.
   rt_dir="${XDG_RUNTIME_DIR:?}/vs.$$"
   rm -rf -- "$rt_dir"
@@ -1387,7 +1430,8 @@ EOF
   loaded=false
   targets=""
   for _ in $(seq 1 $((nested_timeout * 2))); do
-    targets="$("${sandbox_env[@]}" qs ipc -p "$repo_root/quickshell/vshell" --any-display show 2>/dev/null || true)"
+    targets="$(timeout --kill-after=5 "$sandbox_ipc_timeout" \
+      "${sandbox_env[@]}" qs ipc -p "$repo_root/quickshell/vshell" --any-display show 2>/dev/null || true)"
     if printf '%s\n' "$targets" | grep -q '^target '; then
       loaded=true
       break
@@ -1420,7 +1464,8 @@ EOF
     for _ in $(seq 1 $((plugin_timeout * 2))); do
       # Match plugins list output, which uses [loaded|disabled]. plugin-scan list uses tab-separated fields.
       # This view distinguishes an undiscovered ID from a discovered ID that failed to load.
-      plugin_report="$("${sandbox_env[@]}" qs ipc -p "$repo_root/quickshell/vshell" \
+      plugin_report="$(timeout --kill-after=5 "$sandbox_ipc_timeout" \
+        "${sandbox_env[@]}" qs ipc -p "$repo_root/quickshell/vshell" \
         --any-display call plugins list 2>/dev/null || true)"
       missing_plugins=()
       for candidate in "${expected_plugins[@]}"; do
@@ -1448,9 +1493,10 @@ EOF
     switcher_check || true
     local display_reply
     sandbox_ipc changelog close >/dev/null || fail "could not dismiss release notes before checking Displays"
-    # An assignment from a failing command substitution aborts this function under `set -e`,
-    # which silently skipped every later check — the window border check among them — while
-    # the run still reported success. Capture the failure so the branch below reports it.
+    # What left the window border check and everything after it unrun was the unbounded IPC
+    # wait, which sandbox_ipc_timeout now bounds. sandbox_ipc folds its failure into the
+    # reply and returns 0, so this fallback cannot fire today; it keeps the assignment
+    # correct should sandbox_ipc ever propagate status instead.
     display_reply="$(sandbox_ipc settings openWith display_config)" ||
       display_reply="the Settings IPC call failed (the sandbox shell may already be gone)"
     if [[ "$display_reply" != "SETTINGS_OPEN_SUCCESS: display_config" ]]; then

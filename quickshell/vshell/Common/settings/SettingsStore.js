@@ -472,14 +472,17 @@ function migrateToVersion(obj, targetVersion) {
         if (geometryTarget === "hyprland")
             geometryTarget = "compositor";
         if (geometryTarget === "compositor") {
-            var keptRadius = settings.niriLayoutRadiusOverride;
+            // A settings file that drove both compositors carries both override pairs.
+            // Hyprland is this repo's reference implementation, so its value is the one
+            // the single setting adopts; the niri pair only stands where it is absent.
+            var keptRadius = settings.hyprlandLayoutRadiusOverride;
             if (keptRadius === undefined || keptRadius === null || Number(keptRadius) < 0)
-                keptRadius = settings.hyprlandLayoutRadiusOverride;
+                keptRadius = settings.niriLayoutRadiusOverride;
             if (keptRadius !== undefined && keptRadius !== null && Number(keptRadius) >= 0)
                 settings.cornerRadius = Math.max(0, Math.min(20, Math.round(Number(keptRadius))));
-            var keptBorder = settings.niriLayoutBorderSize;
+            var keptBorder = settings.hyprlandLayoutBorderSize;
             if (keptBorder === undefined || keptBorder === null || Number(keptBorder) < 0)
-                keptBorder = settings.hyprlandLayoutBorderSize;
+                keptBorder = settings.niriLayoutBorderSize;
             if (keptBorder !== undefined && keptBorder !== null && Number(keptBorder) >= 0)
                 settings.surfaceBorderWidth = Math.max(0, Math.min(10, Math.round(Number(keptBorder))));
         }

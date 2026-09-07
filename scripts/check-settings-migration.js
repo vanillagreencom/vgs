@@ -378,6 +378,62 @@ assert.strictEqual(compositorOnlyGeometryMigrated.cornerRadius, 4);
 assert.strictEqual(compositorOnlyGeometryMigrated.surfaceBorderWidth, 3);
 assertMissing(compositorOnlyGeometryMigrated, ["surfaceGeometryTarget", "hyprlandLayoutRadiusOverride"]);
 
+// A Niri user's windows were shaped by the niri pair alone, so those are the values the
+// single radius and border thickness adopt.
+const niriOnlyGeometryMigrated = migrate({
+  configVersion: 24,
+  surfaceGeometryTarget: "compositor",
+  cornerRadius: 12,
+  surfaceBorderWidth: 1,
+  niriLayoutRadiusOverride: 6,
+  niriLayoutBorderSize: 4,
+});
+assert.strictEqual(niriOnlyGeometryMigrated.cornerRadius, 6);
+assert.strictEqual(niriOnlyGeometryMigrated.surfaceBorderWidth, 4);
+
+// A settings file carried from one compositor to the other holds both override pairs.
+// Hyprland is the reference implementation, so its pair is the one that survives.
+const bothCompositorOverridesMigrated = migrate({
+  configVersion: 24,
+  surfaceGeometryTarget: "compositor",
+  cornerRadius: 12,
+  surfaceBorderWidth: 1,
+  hyprlandLayoutRadiusOverride: 8,
+  hyprlandLayoutBorderSize: 2,
+  niriLayoutRadiusOverride: 6,
+  niriLayoutBorderSize: 4,
+});
+assert.strictEqual(bothCompositorOverridesMigrated.cornerRadius, 8);
+assert.strictEqual(bothCompositorOverridesMigrated.surfaceBorderWidth, 2);
+
+// -1 is the shipped default of every override key and means "no override": a user who set
+// only the border keeps their shell radius rather than having every surface squared off.
+const unsetRadiusOverrideMigrated = migrate({
+  configVersion: 24,
+  surfaceGeometryTarget: "compositor",
+  cornerRadius: 9,
+  surfaceBorderWidth: 1,
+  hyprlandLayoutRadiusOverride: -1,
+  niriLayoutRadiusOverride: -1,
+  hyprlandLayoutBorderSize: 5,
+  niriLayoutBorderSize: -1,
+});
+assert.strictEqual(unsetRadiusOverrideMigrated.cornerRadius, 9);
+assert.strictEqual(unsetRadiusOverrideMigrated.surfaceBorderWidth, 5);
+
+// Niri accepted a wider range than the single setting does, so an override past the new
+// bounds lands on the cap rather than on a value the sliders cannot represent.
+const outOfRangeOverrideMigrated = migrate({
+  configVersion: 24,
+  surfaceGeometryTarget: "compositor",
+  cornerRadius: 12,
+  surfaceBorderWidth: 1,
+  niriLayoutRadiusOverride: 40,
+  niriLayoutBorderSize: 24,
+});
+assert.strictEqual(outOfRangeOverrideMigrated.cornerRadius, 20);
+assert.strictEqual(outOfRangeOverrideMigrated.surfaceBorderWidth, 10);
+
 // A file that already targeted the shell keeps the shell values.
 const quickshellGeometryMigrated = migrate({
   configVersion: 24,
