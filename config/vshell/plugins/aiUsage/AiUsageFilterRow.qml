@@ -9,7 +9,9 @@ Item {
     id: row
 
     property string label: ""
-    property string iconName: ""
+    // The AiUsageWidget root, for the provider's own mark. Absent on the "All" row.
+    property var host: null
+    property string provider: ""
     property bool checked: false
     property bool showSetup: false
 
@@ -46,19 +48,20 @@ Item {
         color: row.checked ? Theme.primary : Theme.surfaceVariantText
     }
 
-    VgsIcon {
+    AiUsageProviderIcon {
         id: providerIcon
         anchors.left: box.right
         anchors.leftMargin: Theme.spacingS
         anchors.verticalCenter: parent.verticalCenter
-        name: row.iconName
+        host: row.host
+        provider: row.provider
         size: Theme.iconSizeSmall
         color: Theme.surfaceVariantText
-        visible: row.iconName !== ""
+        visible: row.provider !== ""
     }
 
     StyledText {
-        anchors.left: row.iconName !== "" ? providerIcon.right : box.right
+        anchors.left: row.provider !== "" ? providerIcon.right : box.right
         anchors.leftMargin: Theme.spacingS
         anchors.right: row.showSetup ? setupButton.left : parent.right
         anchors.rightMargin: Theme.spacingS

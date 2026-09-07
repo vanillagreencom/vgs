@@ -132,7 +132,8 @@ Column {
 
                     width: panelColumn.width
                     label: root.host ? root.host.providerName(modelData) : modelData
-                    iconName: root.host ? root.host.providerIcon(modelData) : ""
+                    host: root.host
+                    provider: modelData
                     checked: root.host ? root.host.filterHas(modelData) : false
                     // Every provider has somewhere to point its accounts at,
                     // whether that is a key or an extra config directory, so

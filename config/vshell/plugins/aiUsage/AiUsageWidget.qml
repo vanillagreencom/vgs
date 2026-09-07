@@ -191,6 +191,9 @@ PluginComponent {
     function providerFullName(p) {
         return logic.providerFullName(p);
     }
+    function providerAsset(p) {
+        return logic.providerAsset(p);
+    }
     function accountFooter(card) {
         return logic.accountFooter(card);
     }
@@ -495,18 +498,23 @@ PluginComponent {
                     spacing: 2
                     anchors.verticalCenter: parent.verticalCenter
 
+                    // A setup slot keeps the key glyph and its accent: it is an
+                    // invitation, not a reading, and hiding it would leave the
+                    // slot empty and the way in unreachable.
                     VgsIcon {
+                        visible: modelData.setup
                         name: modelData.icon
                         size: root.iconSize
-                        // A setup slot keeps its icon whatever the icon setting
-                        // says: it has no number, so hiding it would leave the
-                        // slot empty and the way in unreachable.
-                        visible: root.barIcons || modelData.setup
-                        // An invitation to set a provider up is not a reading and
-                        // not a fault: it takes the accent, so it does not sit on
-                        // the bar looking like a number that failed to load.
-                        color: modelData.setup ? Theme.primary
-                            : (modelData.error ? Theme.error : Theme.surfaceVariantText)
+                        color: Theme.primary
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+
+                    AiUsageProviderIcon {
+                        visible: root.barIcons && !modelData.setup
+                        host: root
+                        provider: modelData.provider
+                        size: root.iconSize
+                        color: modelData.error ? Theme.error : Theme.surfaceVariantText
                         anchors.verticalCenter: parent.verticalCenter
                     }
 
@@ -538,11 +546,19 @@ PluginComponent {
                     anchors.horizontalCenter: parent.horizontalCenter
 
                     VgsIcon {
+                        visible: modelData.setup
                         name: modelData.icon
                         size: root.iconSize
-                        visible: root.barIcons || modelData.setup
-                        color: modelData.setup ? Theme.primary
-                            : (modelData.error ? Theme.error : Theme.surfaceText)
+                        color: Theme.primary
+                        anchors.horizontalCenter: parent.horizontalCenter
+                    }
+
+                    AiUsageProviderIcon {
+                        visible: root.barIcons && !modelData.setup
+                        host: root
+                        provider: modelData.provider
+                        size: root.iconSize
+                        color: modelData.error ? Theme.error : Theme.surfaceText
                         anchors.horizontalCenter: parent.horizontalCenter
                     }
 
@@ -691,7 +707,10 @@ PluginComponent {
                                 // on screen; the popout title already names it.
                                 Item {
                                     width: parent.width
-                                    height: root.view.grouped ? sectionLabel.implicitHeight + Theme.spacingXS : 0
+                                    // Room above the header so a provider's group reads as its
+                                    // own block rather than as a caption on the card above it.
+                                    height: root.view.grouped
+                                        ? sectionLabel.implicitHeight + Theme.spacingXS + 10 : 0
                                     visible: root.view.grouped
 
                                     Row {
@@ -699,8 +718,9 @@ PluginComponent {
                                         anchors.bottom: parent.bottom
                                         spacing: Theme.spacingXS
 
-                                        VgsIcon {
-                                            name: section.modelData.icon
+                                        AiUsageProviderIcon {
+                                            host: root
+                                            provider: section.modelData.provider
                                             size: Theme.iconSizeSmall
                                             color: Theme.surfaceVariantText
                                             anchors.verticalCenter: parent.verticalCenter
@@ -729,7 +749,6 @@ PluginComponent {
                                         showProviderIcon: !root.view.grouped
                                         expanded: root.cardExpanded(modelData.key)
                                         onToggleExpanded: root.toggleCard(modelData.key)
-                                        onHideRequested: root.toggleHidden(modelData)
                                     }
                                 }
 
@@ -791,11 +810,12 @@ PluginComponent {
                                         width: settingsCol.width
                                         height: 26
 
-                                        VgsIcon {
+                                        AiUsageProviderIcon {
                                             id: rowIcon
                                             anchors.left: parent.left
                                             anchors.verticalCenter: parent.verticalCenter
-                                            name: modelData.providerIcon
+                                            host: root
+                                            provider: modelData.provider
                                             size: Theme.iconSizeSmall
                                             color: Theme.surfaceVariantText
                                         }

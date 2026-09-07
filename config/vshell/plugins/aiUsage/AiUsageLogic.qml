@@ -57,6 +57,21 @@ QtObject {
         }
     }
 
+    // The provider's own mark, as a file beside this one, or "" for a provider
+    // whose mark VGS does not ship. Codex is OpenAI's mark, not its own.
+    function providerAsset(p) {
+        switch (normalizeProvider(p)) {
+        case "codex":
+            return "openai.svg";
+        case "vercel":
+            return "vercel.svg";
+        case "claude":
+            return "claude.svg";
+        default:
+            return "";
+        }
+    }
+
     // Whether accounts for this provider can be discovered from a local login.
     // A provider that cannot needs a key before it has anything to report, so
     // it stays off the bar until one is stored rather than showing a permanent

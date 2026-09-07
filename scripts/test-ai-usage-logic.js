@@ -25,6 +25,7 @@ guardChild();
 
 const {
     providerOrder, normalizeProvider, providerIcon, providerName, providerNeedsCredential,
+    providerAsset,
     selectedProviders, filterIsAll, filterHas, toggleFilter, filterLabel,
     payloadProvider, payloadIsFor, shouldRelaunch, decodePayload, acceptOutcome, stderrReason,
     cardKey, isCardHidden, toggleHiddenCard, providerCards, allCards,
@@ -32,6 +33,7 @@ const {
     failureWins, newerSuccess, newerAccepted
 } = evaluateMarked(logicSource, "PROVIDER DECISION", [
     "providerOrder", "normalizeProvider", "providerIcon", "providerName", "providerNeedsCredential",
+    "providerAsset",
     "selectedProviders", "filterIsAll", "filterHas", "toggleFilter", "filterLabel",
     "payloadProvider", "payloadIsFor", "shouldRelaunch", "decodePayload", "acceptOutcome",
     "stderrReason", "cardKey", "isCardHidden", "toggleHiddenCard", "providerCards", "allCards",
@@ -92,6 +94,23 @@ test("every provider in the order has its own name and icon, and nothing else is
         assert.equal(normalizeProvider(p), p, `${p} is in the order, so it must normalise to itself`);
         assert.ok(providerIcon(p) !== "" && providerName(p) !== "", `${p} needs both an icon and a name`);
     }
+});
+
+test("every provider's mark is its own, and a provider without one still has a symbol", () => {
+    const order = providerOrder();
+    const assets = order.map(providerAsset).filter(a => a !== "");
+    assert.equal(new Set(assets).size, assets.length,
+        `two providers sharing a mark makes position the only thing identifying a slot: ${assets}`);
+    for (const p of order) {
+        const asset = providerAsset(p);
+        assert.ok(asset === "" || /^[a-z0-9-]+\.svg$/.test(asset),
+            `${p}: a mark is a file beside the plugin, named plainly — got ${JSON.stringify(asset)}`);
+        assert.notEqual(providerIcon(p), "",
+            `${p} must keep a Material symbol whether or not VGS ships its mark: a provider added ` +
+            "before its mark would otherwise take an EMPTY slot on the bar, and an empty slot is " +
+            "indistinguishable from a provider that answered nothing");
+    }
+    assert.equal(providerAsset("gemini"), "", "a provider nobody added has no mark");
 });
 
 test("normalizeProvider keeps a known provider and turns an unknown one into nothing", () => {

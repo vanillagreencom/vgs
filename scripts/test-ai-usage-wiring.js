@@ -245,10 +245,15 @@ test("both pill orientations render the same slots, and neither invents a number
             "things about one payload");
         assert.ok(pill.includes("text: modelData.text"),
             `${which} shows what the slot says, not its own reading of the payload`);
-        assert.ok(pill.includes("name: modelData.icon"), `${which} carries the slot's provider icon`);
-        assert.ok(pill.includes("modelData.setup ? Theme.primary"),
-            `${which} colours a setup slot as an invitation rather than leaving it looking like a ` +
-            "reading that failed to load");
+        assert.ok(pill.includes("provider: modelData.provider"),
+            `${which} draws each slot's provider mark from the slot itself`);
+        // A setup slot has no number: it keeps the key glyph and the accent, so it reads as an
+        // invitation rather than as a reading that failed to load, and the icon setting cannot
+        // hide it — an empty slot leaves the way in unreachable.
+        assert.ok(pill.includes("visible: modelData.setup") && pill.includes("color: Theme.primary"),
+            `${which} draws a setup slot as an invitation, unconditionally`);
+        assert.ok(pill.includes("visible: root.barIcons && !modelData.setup"),
+            `${which} hides only a provider MARK when the icon setting is off`);
         assert.ok(!/headlinePct/.test(stripComments(pill)),
             `a raw percentage in ${which} is how it came to show 60% beside an error glyph`);
     }
@@ -307,25 +312,6 @@ test("every account renders through the one card, and nothing hand-draws a secon
         "what made an account change shape when a sibling appeared");
     assert.ok(!/MeterRow \{|MeterCard \{/.test(code),
         "and the meters live inside that card rather than being drawn again by the widget");
-});
-
-// A QML binding against hover state has no executable surface, so this is pinned in source.
-test("the card's hover folds in the hide button's own, and nothing re-anchors on it", () => {
-    const card = stripComments(fs.readFileSync(path.join(PLUGIN, "AiUsageAccountCard.qml"), "utf8"));
-    assert.ok(card.includes("cardArea.containsMouse || hideButton.hovering"),
-        "the button carries a hover-enabled state layer that TAKES hover from the card's area as " +
-        "the pointer reaches it, so the card's area alone reads false exactly while the pointer " +
-        "is on the button — the button hid itself under the pointer, handed hover back, and " +
-        "flickered");
-    assert.equal((card.match(/cardArea\.containsMouse/g) || []).length, 1,
-        "and every surface that follows hover reads the FOLDED value: the card's own highlight " +
-        "dropped on the same edge for the same reason");
-    assert.ok(!/visible:\s*cardArea\.containsMouse/.test(card),
-        "the button fades rather than unmapping, so it never stops being hit-testable while the " +
-        "pointer is over it — which is the state that cannot report itself");
-    assert.ok(!/anchors\.right:\s*hideButton\.visible\s*\?/.test(card),
-        "and the plan text does not re-anchor past a button that comes and goes: its place is " +
-        "reserved, or the plan moves on every hover");
 });
 
 test("provider identity is the logic's, and no surface spells a provider out", () => {

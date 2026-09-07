@@ -342,8 +342,9 @@ Column {
             Row {
                 spacing: Theme.spacingS
 
-                VgsIcon {
-                    name: catalog.providerIcon(root.provider)
+                AiUsageProviderIcon {
+                    host: catalog
+                    provider: root.provider
                     size: Theme.iconSize
                     color: Theme.primary
                     anchors.verticalCenter: parent.verticalCenter
