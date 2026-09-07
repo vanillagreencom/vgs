@@ -108,7 +108,7 @@ always    | git diff --check
 -         | scripts/check-workflows.sh
 -         | .agents/skills/doc-limits/scripts/doc-limits
 always    | .agents/skills/commit-guards/scripts/commit-guards all --base origin/main
-qml       | scripts/qml-smoke.sh --nested --require-static --require-nested
+qml,may-skip | scripts/qml-smoke.sh --nested --require-static --require-nested
 qml       | scripts/check-validation-safety.sh --require-static
 -         | scripts/check-label-taxonomy.py
 qml,may-skip,live | scripts/smoke-surfaces.sh

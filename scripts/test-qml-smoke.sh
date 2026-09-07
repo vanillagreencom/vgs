@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Exercise the extracted smoke helpers without starting a nested compositor.
-# Three surfaces, one table each: the remedy the unavailability notice prints, the layer
-# state the sandbox measures, and the geometry reply the assertion accepts.
+# Six surfaces: the remedy the unavailability notice prints, the layer state the sandbox
+# measures, the geometry reply the assertion accepts, the window edge samples the border
+# check reads, and the scope the failure verdict lands in.
 # The notice helper writes advice and nothing else, so its wording is the only channel
-# a caller can read; the other two tables assert status and measured geometry.
+# a caller can read; the others assert status, measured geometry and sampled colour.
 set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -38,6 +39,19 @@ slice() {
 slice nested_unavailable
 slice sandbox_layer_state
 slice assert_popout_geometry
+slice window_border_is_inset
+slice sandbox_ipc
+
+# Cut a one-line helper definition out of the smoke script. Same contract as slice: a helper
+# that no longer has this shape is a broken fixture, not a failed case.
+slice_line() {
+  local name="$1" dst="$tmp/$1.sh"
+  grep -m1 -E "^$name\(\) \{.*\}\$" "$smoke" >"$dst" && [[ -s "$dst" ]] && return 0
+  printf 'test-qml-smoke: could not slice %s out of %s\n' "$name" "$smoke" >&2
+  exit 1
+}
+slice_line fail
+slice_line unmeasured
 
 # Run the extracted notice helper with its script variables. A dash requests an unset display.
 drive() {
@@ -264,11 +278,169 @@ case_geometry_replies() {
   ok "only a well-formed reply that measures full height passes"
 }
 
+edge_samples() {
+  (
+    set +e
+    # shellcheck source=/dev/null
+    . "$tmp/window_border_is_inset.sh"
+    window_border_is_inset "$1" "$2" "$3" "$4" "$5"
+    printf 'rc=%s\n' "$?"
+  ) 2>&1
+}
+
+# label; edge; border; interior; near; far; expected status. Samples run from the window edge
+# inward; near is the pixel just past the edge, where a compositor border lands, and far is
+# past the widest border VGS can ask for. Status 0 is a compositor border, 1 a client border
+# on the outermost pixel, 2 no border at all and 3 an inset client border.
+EDGES='an inset client border is the client arm, not the compositor one;1c1c28;fab387;1c1c28;0000ff;0000ff;3
+a border on the outermost pixel floods a resize;fab387;fab387;1c1c28;0000ff;0000ff;1
+a translucent edge still differs from the border;2a2b3f;fab387;1c1c28;0000ff;0000ff;3
+no border drawn at all;1c1c28;1c1c28;1c1c28;1c1c28;1c1c28;2
+a border colour equal to the interior is not a border;fab387;1c1c28;1c1c28;0000ff;00ff00;2
+a uniform background outside an opaque edge is not a border;1c1c28;1c1c28;1c1c28;00ff00;00ff00;2
+a compositor border between the edge and the background passes;1c1c28;1c1c28;1c1c28;fab387;00ff00;0
+a compositor border does not excuse an edge that differs from the interior;fab387;1c1c28;1c1c28;fab387;00ff00;2
+no outside samples keep the client-border contract;1c1c28;1c1c28;1c1c28;;;2
+a near sample with nothing beyond it cannot stand in for a border;1c1c28;1c1c28;1c1c28;fab387;;2'
+
+case_window_border_samples() {
+  local label edge border interior near far want_rc out rows=0
+  while IFS=';' read -r label edge border interior near far want_rc; do
+    [[ -n "$label" ]] || continue
+    rows=$((rows + 1))
+    out="$(edge_samples "$edge" "$border" "$interior" "$near" "$far")"
+    [[ "$out" == *"rc=$want_rc"* ]] ||
+      fail "window border samples" "$label: expected rc=$want_rc, got: $out"
+  done <<<"$EDGES"
+  [[ $rows -eq 10 ]] || fail "window border samples" "expected 10 table rows, drove $rows"
+  ok "only a border that differs from both the edge and the background beyond it passes"
+}
+
+# The run's verdict lives in a global 'status'. A check with its own local 'status' must not
+# be able to swallow a FAIL: the shipped fail() has to reach the global from inside one.
+case_fail_pierces_local_status() {
+  local out
+  out="$(
+    exec 2>/dev/null
+    set +e
+    status=0
+    # shellcheck source=/dev/null
+    . "$tmp/fail.sh"
+    shadowing_check() { local status=0; fail "boom"; }
+    shadowing_check
+    printf 'status=%s\n' "$status"
+  )"
+  [[ "$out" == *'status=1'* ]] ||
+    fail "fail pierces a local status" "expected the global status to reach 1, got: $out"
+  ok "a check's own local status cannot swallow the run's FAIL verdict"
+}
+
+# A check that could not obtain its evidence belongs in its own channel: it must not set the
+# run's FAIL verdict, and a check declaring a local of the record's name must not swallow it.
+# Those two together are what keeps `exit 77 — did not run` distinct from both a green run
+# and a red one, so an unobtainable frame never reads as a verdict about the border.
+case_unmeasured_is_its_own_channel() {
+  local out
+  out="$(
+    exec 2>/dev/null
+    set +e
+    # Plain assignment, not `declare`: a command substitution runs inside the calling
+    # function's scope, so `declare` here would make a second variable the helper's
+    # `declare -g` never reaches, and the case would fail on its own fixture.
+    status=0
+    not_measured=()
+    # shellcheck source=/dev/null
+    . "$tmp/unmeasured.sh"
+    # Unquoted, so the record has to be the whole cause the helper printed rather than its
+    # first word: the exit-77 summary that prints the array is where a skip is named.
+    shadowing_check() { local -a not_measured=(); unmeasured the window border; }
+    shadowing_check
+    printf 'status=%s count=%s first=%s\n' "$status" "${#not_measured[@]}" "${not_measured[0]:-none}"
+  )"
+  [[ "$out" == *'status=0'* ]] ||
+    fail "unmeasured is its own channel" "an unmeasured check must not set the run's FAIL verdict, got: $out"
+  [[ "$out" == *'count=1'* && "$out" == *'first=the window border'* ]] ||
+    fail "unmeasured is its own channel" "the record must reach the run's own array, got: $out"
+  ok "a check that could not run is recorded without becoming a pass or a failure"
+}
+
+# `qs ipc` waits forever on a shell that has already been reaped, and a poll loop's own
+# liveness check cannot run while its command substitution is blocked — that is what left
+# every later check unrun while the run still reported success. So every invocation carries
+# a deadline, and --kill-after is part of it: plain `timeout` sends SIGTERM and then waits
+# for as long as the child ignores it, which is the same hang under a different name.
+#
+# The rule is sited on the invocation, not on the names its callers give their variables:
+# an assignment from sandbox_ipc is safe under `set -e` because sandbox_ipc folds failure
+# into the reply and returns 0 — which case_ipc_call_cannot_hang drives — so no list of
+# exempt variable names is needed, and no raw call can escape by choosing one.
+case_ipc_bounded_calls() {
+  local joined sites unbounded status=0
+  # Backslash continuations first, so an invocation whose bound sits on the previous
+  # physical line is judged whole. Comment lines are dropped: a `qs ipc` in prose satisfies
+  # a text match without being a call.
+  joined="$(awk '{ line = $0
+                   while (line ~ /\\$/) { sub(/\\$/, "", line); if ((getline more) <= 0) break; line = line more }
+                   if (line !~ /^[[:space:]]*#/) print line }' "$smoke")"
+  sites="$(grep -F 'qs ipc' <<<"$joined")" || status=$?
+  # grep exits 1 for no matches and above 1 for a real failure, such as an unreadable
+  # file. Swallowing that would pass this case without ever reading the script.
+  [[ $status -le 1 ]] ||
+    fail "unbounded qs ipc calls" "could not scan $smoke (grep exit $status)"
+  # No invocation at all means the extractor is broken, not that the script is clean.
+  [[ -n "${sites//[[:space:]]/}" ]] ||
+    fail "unbounded qs ipc calls" "found no qs ipc invocation in $smoke"
+  # awk filters without a second exit status to interpret.
+  unbounded="$(awk '!/timeout --kill-after=/' <<<"$sites")"
+  [[ -z "${unbounded//[[:space:]]/}" ]] ||
+    fail "unbounded qs ipc calls" "these can block a check sequence indefinitely: $unbounded"
+  ok "every qs ipc invocation carries a kill-after deadline"
+}
+
+# A hanging shell must not hang the run: one call against a reaped sandbox shell used to
+# block until the outer timeout killed everything, and every later check went unrun.
+case_ipc_call_cannot_hang() {
+  local stub="$tmp/ipcbin" out start elapsed
+  mkdir -p "$stub"
+  # Long enough to outlast the 2s bound below, short enough that a regression reads as a
+  # failed assertion within seconds rather than as a stalled suite.
+  printf '#!/usr/bin/env bash\nsleep 20\n' >"$stub/qs"
+  chmod +x "$stub/qs"
+  out="$(
+    set +e
+    # Read by the sliced sandbox_ipc, not by this function.
+    # shellcheck disable=SC2034
+    sandbox_env=(env "PATH=$stub:$PATH")
+    # shellcheck disable=SC2034
+    repo_root="$tmp"
+    # shellcheck disable=SC2034
+    sandbox_ipc_timeout=2
+    # shellcheck source=/dev/null
+    . "$tmp/sandbox_ipc.sh"
+    start=$SECONDS
+    reply="$(sandbox_ipc settings status)"
+    printf 'rc=%s elapsed=%s reply=%s\n' "$?" "$((SECONDS - start))" "$reply"
+  )"
+  [[ "$out" == *"rc=0"* ]] ||
+    fail "ipc call cannot hang" "a bounded failure must not abort its caller: $out"
+  [[ "$out" == *"IPC_CALL_FAILED"* ]] ||
+    fail "ipc call cannot hang" "the reply must carry the failure: $out"
+  elapsed="$(sed -n 's/.*elapsed=\([0-9]*\).*/\1/p' <<<"$out")"
+  [[ -n "$elapsed" && "$elapsed" -lt 10 ]] ||
+    fail "ipc call cannot hang" "the call must return on its own bound, took ${elapsed:-?}s"
+  ok "an unanswered IPC call fails within its bound instead of hanging the run"
+}
+
 CASES=(
   case_remedies
+  case_ipc_bounded_calls
+  case_ipc_call_cannot_hang
   case_unconditional_options
   case_layer_states
   case_geometry_replies
+  case_window_border_samples
+  case_fail_pierces_local_status
+  case_unmeasured_is_its_own_channel
 )
 for smoke_case in "${CASES[@]}"; do
   "$smoke_case"

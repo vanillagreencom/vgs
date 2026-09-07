@@ -10,6 +10,8 @@ import io
 import json
 import math
 import os
+import pwd
+import signal
 import re
 import shutil
 import socket
@@ -786,7 +788,6 @@ def test_system_font_size_targets():
 
 def test_hyprland_layout_payload():
     script, meta = helper._hyprland_layout_payload({
-        "surfaceGeometryTarget": "sync",
         "cornerRadius": 99,
         "surfaceBorderWidth": 12,
         "hyprlandLayoutGapsOverride": 6,
@@ -794,7 +795,6 @@ def test_hyprland_layout_payload():
         "hyprlandResizeOnBorder": False,
         "configVersion": 15,
     })
-    assert_equal(meta["target"], "sync", "layout target")
     assert_equal(meta["radius"], 20, "layout radius clamp")
     assert_equal(meta["border"], 10, "layout border clamp")
     assert_equal(meta["gaps"], {"gaps_in": 6, "gaps_out": 8}, "layout gaps")
@@ -802,24 +802,25 @@ def test_hyprland_layout_payload():
     if "rounding = 20" not in script or "border_size = 10" not in script:
         raise AssertionError("layout script should include clamped shape")
 
-    script, meta = helper._hyprland_layout_payload({
+    # One radius and one border thickness reach both surfaces. A retired target or override
+    # left in a settings file must not resurrect a compositor shape of its own.
+    _, meta = helper._hyprland_layout_payload({
         "surfaceGeometryTarget": "quickshell",
         "cornerRadius": 11,
         "surfaceBorderWidth": 2,
+        "hyprlandLayoutRadiusOverride": 4,
+        "hyprlandLayoutBorderSize": 7,
     })
-    assert_equal(meta["manageHyprlandShape"], False, "quickshell target should not manage Hyprland shape")
-    assert_equal(meta["radius"], None, "quickshell target radius")
-    if "rounding =" in script or "border_size =" in script:
-        raise AssertionError("quickshell target should not render Hyprland shape settings")
+    assert_equal(meta["manageHyprlandShape"], True, "the compositor shape is always managed")
+    assert_equal(meta["radius"], 11, "the shell radius reaches the compositor")
+    assert_equal(meta["border"], 2, "the shell border reaches the compositor")
 
     _, meta = helper._hyprland_layout_payload({
-        "surfaceGeometryTarget": "hyprland",
         "cornerRadius": 12,
-        "hyprlandLayoutRadiusOverride": 4,
         "hyprlandResizeOnBorder": False,
         "configVersion": 14,
     })
-    assert_equal(meta["radius"], 4, "hyprland override radius")
+    assert_equal(meta["radius"], 12, "the shell radius with no override present")
     assert_equal(meta["resizeOnBorder"], True, "legacy resize_on_border false should be upgraded")
 
 
@@ -896,19 +897,155 @@ def test_hyprland_blur_script():
     if "if false then" not in disabled:
         raise AssertionError("disabled blur script should disable the runtime rule")
 
-    for enabled, radius, title in [(True, 9, "Settings"), (False, 0, "Settings [Test]")]:
-        generated = helper._hyprland_blur_script(enabled, 0.5, True, 1, "dark", radius, title)
+    # Every VGS window is a resizable toplevel sharing one class, and each shows the same
+    # trailing chrome during a drag, so the rule matches the class alone. A title match
+    # would leave every window but Settings drawing its own border.
+    for enabled, radius in [(True, 9), (False, 0)]:
+        generated = helper._hyprland_blur_script(enabled, 0.5, True, 1, "dark", radius)
         match_line = next(line for line in generated.splitlines() if "match = { class =" in line)
+        assert_equal("title" in match_line, False, "the window rule must not narrow to one title")
         fields = re.findall(r'"(?:[^"\\]|\\.)*"', match_line)
-        class_rule, title_rule = [re.compile(json.loads(field)) for field in fields]
-        assert_equal(bool(class_rule.search("com.vanillagreen.vshell")), True, "Settings class")
+        assert_equal(len(fields), 1, "the window rule matches on class alone")
+        class_rule = re.compile(json.loads(fields[0]))
+        assert_equal(bool(class_rule.search("com.vanillagreen.vshell")), True, "the VGS window class")
         for other_class in ["com.vanillagreen.vshell.extra", "comXvanillagreenXvshell", "other"]:
             assert_equal(bool(class_rule.search(other_class)), False, "unrelated class")
-        assert_equal(bool(title_rule.search(title)), True, "translated Settings title")
-        for other_title in [title + " extra", "prefix " + title, "File Browser"]:
-            assert_equal(bool(title_rule.search(other_title)), False, "unrelated window title")
         assert_equal(f"rounding = {radius}," in generated, True, "client corner radius")
         assert_equal("rounding_power = 2.0," in generated, True, "circular client corners")
+        assert_equal("border_size = 2," in generated, True, "compositor-drawn window border")
+    # A classic-config session refuses `hyprctl eval` on stdout and still exits 0. Treating
+    # that as applied would leave the Settings window with no border and square corners,
+    # because the shell stops drawing chrome the compositor never took over.
+    import subprocess as _sp
+    refusal = _sp.CompletedProcess(["hyprctl", "eval"], 0, "eval is only supported with the lua config manager\n", "")
+    assert_equal(helper._hyprctl_eval_ok(refusal), False, "a refused eval is not an applied eval")
+    assert_equal(helper._hyprctl_eval_ok(_sp.CompletedProcess(["hyprctl", "eval"], 0, "ok\n", "")), True,
+                 "the Lua config manager's success reply")
+    assert_equal(helper._hyprctl_eval_ok(_sp.CompletedProcess(["hyprctl", "eval"], 7, "error: boom", "")), False,
+                 "a failed Lua chunk is not an applied eval")
+    # hyprctl on PATH and a session signature, or _hyprland_blur_support returns
+    # unavailable from its own early return and the arm passes on every CI runner without
+    # ever reaching the patched eval. The reason pins which of the two answered.
+    with patch.object(helper.shutil, "which", return_value="/usr/bin/hyprctl"), \
+            patch.dict(os.environ, {"HYPRLAND_INSTANCE_SIGNATURE": "test"}), \
+            patch.object(helper, "_hyprctl_eval", return_value=refusal):
+        support = helper._hyprland_blur_support()
+    assert_equal(support.get("available"), False,
+                 "blur support must not be claimed on a session that refused the probe")
+    assert_equal(support.get("reason"), "eval is only supported with the lua config manager",
+                 "the refusal text, not an absent hyprctl, is why blur is unavailable")
+    bordered = helper._hyprland_blur_script(True, 0.5, True, 1, "dark", 9, 3)
+    assert_equal("border_size = 3," in bordered, True, "the border width follows the shell")
+    assert_equal("border_size = 10," in helper._hyprland_blur_script(True, 0.5, True, 1, "dark", 9, 40), True, "the border width clamps")
+
+
+@contextlib.contextmanager
+def sandbox_homes():
+    """Two fixed literals, then two homes the shipped producer's own mktemp can create.
+
+    scripts/qml-smoke.sh builds its home with `mktemp -d -t vshell-smoke.XXXXXX`, which
+    honours $TMPDIR: the third row lands wherever this machine points TMPDIR, and the
+    fourth directly under the login home, where a $TMPDIR inside $HOME puts it. That last
+    one is the case a containment test cannot tell apart from the login user's own session.
+    """
+    login = Path(pwd.getpwuid(os.getuid()).pw_dir)
+    ambient = tempfile.mkdtemp(prefix="vshell-smoke.")
+    under_login = tempfile.mkdtemp(prefix="vshell-smoke.", dir=str(login))
+    try:
+        yield ["/tmp/vshell-smoke.AbCdEf/home", "/var/tmp/agents/vgs273.XyZ/home", ambient, under_login]
+    finally:
+        shutil.rmtree(ambient, ignore_errors=True)
+        shutil.rmtree(under_login, ignore_errors=True)
+
+
+@contextlib.contextmanager
+def as_home(path):
+    """Run the block with $HOME (and the config root that travels with it) at `path`."""
+    saved = {n: os.environ.get(n) for n in ("HOME", "XDG_CONFIG_HOME", "SUDO_USER")}
+    os.environ.pop("SUDO_USER", None)
+    os.environ["HOME"] = str(path)
+    os.environ["XDG_CONFIG_HOME"] = str(Path(path) / ".config")
+    try:
+        yield Path(path)
+    finally:
+        for name, value in saved.items():
+            _restore_env(name, value)
+
+
+def test_chromium_policy_refuses_a_sandbox_home():
+    """A shell on a throwaway HOME must not push its default theme into the system policy.
+
+    The nested smoke sandbox runs a full shell against a temporary home. Without this the
+    hook wrote that shell's colour to /etc/chromium/policies/managed for every browser on
+    the machine.
+    """
+    login = Path(pwd.getpwuid(os.getuid()).pw_dir)
+    with as_home(login):
+        assert_equal(helper._sandboxed_home(), False, "the login user's own home is not a sandbox")
+    with sandbox_homes() as homes:
+        for sandbox in homes:
+            with as_home(sandbox):
+                assert_equal(helper._sandboxed_home(), True, f"sandbox home {sandbox}")
+                # write_chromium_policy must refuse before it ever reaches sudo.
+                with patch.object(helper.subprocess, "run") as ran:
+                    wrote, reason = helper.write_chromium_policy({"surfaceContainerHigh": "#123456"})
+                assert_equal(wrote, False, f"a sandboxed shell must not write the system policy ({sandbox})")
+                assert_equal(reason, helper.SANDBOX_REFUSAL,
+                             "the refusal names itself, not a missing privilege")
+                assert_equal(ran.called, False, "a sandboxed shell must not reach sudo at all")
+
+
+def test_theme_hooks_stay_out_of_the_login_session():
+    """A shell on a throwaway HOME must not restyle the login session's running apps.
+
+    The nested smoke sandbox runs a full shell against a temporary home with its own
+    default theme. Its hooks find kitty, btop and ghostty through /proc, and tmux and nvim
+    through runtime paths named by the real uid, so without a guard the user's terminals
+    were repainted from a test's palette.
+    """
+    login = Path(pwd.getpwuid(os.getuid()).pw_dir)
+    # The scans each hook reaches its targets through. Patching them is what makes the
+    # empty result attributable to the guard: a host with no kitty, no tmux server and no
+    # nvim returns the same [] with every guard deleted.
+    scans = [
+        ("the /proc scan", "iterdir", lambda: helper.process_pids_by_comm("kitty")),
+        ("the tmux socket probe", "iterdir", lambda: helper.tmux_sockets()),
+        ("the nvim runtime-dir walk", "glob", lambda: helper.nvim_sockets()),
+    ]
+    with sandbox_homes() as homes:
+        for sandbox in homes:
+            with as_home(sandbox):
+                assert_equal(helper._sandboxed_home(), True, f"sandbox home {sandbox}")
+                for label, method, call in scans:
+                    tripwire = AssertionError(f"{label} ran under a sandbox HOME")
+                    with patch.object(helper.Path, method, side_effect=tripwire) as scan:
+                        assert_equal(call(), [], f"{label} yields nothing under a sandbox HOME")
+                    assert_equal(scan.called, False, f"the guard, not an empty result, stops {label}")
+                result = helper.signal_reload_hook("kitty-reload", "kitty", signal.SIGUSR1)
+                assert_equal(result["skipped"], True, "the reload hook reports a skip, not a signal")
+                assert_equal(result["reason"], helper.SANDBOX_REFUSAL,
+                             "the skip names the refusal, not an absent kitty")
+                # Every hook that reaches the login session, refused as a whole rather
+                # than only where it scans: ghostty falls through to a session-bus reload
+                # with no pid to signal, hypr-reload picks the newest live compositor
+                # instance, and shell-reload finds the running shell through the real
+                # uid's runtime directory. None of the three passes through a scan.
+                trip = AssertionError("a sandboxed hook must not run a command")
+                with patch.object(helper, "_run_hook_cmd", side_effect=trip), \
+                        patch.object(helper.subprocess, "run", side_effect=trip):
+                    for hook in ("ghostty-reload", "hypr-reload", "shell-reload", "tmux-source", "nvim-reload"):
+                        skipped = helper.run_hook(hook, {"background": "#123456"})
+                        assert_equal(skipped.get("skipped"), True, f"{hook} reports a skip under a sandbox HOME")
+                        assert_equal(skipped.get("reason"), helper.SANDBOX_REFUSAL,
+                                     f"{hook} names the refusal rather than an absent app")
+    # The inverse: with the login user's own HOME the same patched scans ARE reached, so
+    # the assertions above pin the guard rather than a scan that never runs.
+    with as_home(login):
+        assert_equal(helper._sandboxed_home(), False, "the login user's own home is not a sandbox")
+        for label, method, call in scans:
+            with patch.object(helper.Path, method, side_effect=lambda *a, **k: iter([])) as scan:
+                call()
+            assert_equal(scan.called, True, f"{label} is reached from the login user's own home")
 
 
 def test_vshell_blur_cli_contract():
@@ -918,10 +1055,13 @@ def test_vshell_blur_cli_contract():
         fake_bin.mkdir()
         record_path = tmp_path / "hyprctl-eval.txt"
         fake_hyprctl = fake_bin / "hyprctl"
+        # Stand in for a session running the Lua config manager: it records the chunk and
+        # answers "ok", the reply the helper requires before it reports a rule as applied.
         fake_hyprctl.write_text("""#!/usr/bin/env bash
 set -euo pipefail
 if [[ ${1:-} == eval ]]; then
   printf '%s' "${2:-}" > "$HYPRCTL_RECORD"
+  printf 'ok\\n'
 fi
 exit 0
 """)
@@ -961,6 +1101,53 @@ exit 0
         assert_equal(payload["opacity"], 0.08, "blur CLI opacity clamp")
 
         assert_blur_namespace_rule(record_path.read_text(), "blur CLI hyprctl eval payload")
+
+        # Must-fail control: a session on a classic config prints its refusal and still
+        # exits 0. The CLI has to report that as a failure, or the shell drops the window
+        # chrome it believes the compositor took over.
+        fake_hyprctl.write_text("""#!/usr/bin/env bash
+set -euo pipefail
+if [[ ${1:-} == eval ]]; then
+  printf 'eval is only supported with the lua config manager\\n'
+fi
+exit 0
+""")
+        fake_hyprctl.chmod(0o755)
+        refused = subprocess.run(
+            [str(REPO_ROOT / "bin" / "vshell"), "blur", "apply", "--enabled", "true", "--json"],
+            check=False, capture_output=True, text=True, env=env,
+        )
+        refused_payload = json.loads(refused.stdout)
+        assert_equal(refused_payload["ok"], False, "a refused eval must not report success")
+        assert_equal(refused_payload.get("windowChrome"), None,
+                     "a refused eval must not claim the compositor owns the window chrome")
+
+        # Must-fail control for the second _hyprctl_eval_ok site, the one that produces
+        # windowChrome. A config manager that accepts the layer_rule probe and rejects the
+        # window rule answers per chunk, so only the rule chunk fails and the support
+        # probe no longer short-circuits the apply. Reading the return code alone here
+        # reports windowChrome true for a rule the compositor never installed, and every
+        # VGS window then renders square and borderless.
+        fake_hyprctl.write_text("""#!/usr/bin/env bash
+set -euo pipefail
+if [[ ${1:-} == eval ]]; then
+  if [[ ${2:-} == *"hl.layer_rule unavailable"* ]]; then
+    printf 'ok\\n'
+  else
+    printf 'error: attempt to index a nil value\\n'
+  fi
+fi
+exit 0
+""")
+        fake_hyprctl.chmod(0o755)
+        rejected = subprocess.run(
+            [str(REPO_ROOT / "bin" / "vshell"), "blur", "apply", "--enabled", "true", "--json"],
+            check=False, capture_output=True, text=True, env=env,
+        )
+        rejected_payload = json.loads(rejected.stdout)
+        assert_equal(rejected_payload["ok"], False, "a rejected rule chunk must not report success")
+        assert_equal(rejected_payload["windowChrome"], False,
+                     "a rejected rule chunk must not hand the window chrome to the compositor")
 
 
 def test_generated_theme_consumer_wiring():
@@ -5762,6 +5949,8 @@ def main():
     test_apply_system_fonts_temp_home()
     test_hyprland_layout_payload()
     test_hyprland_blur_script()
+    test_chromium_policy_refuses_a_sandbox_home()
+    test_theme_hooks_stay_out_of_the_login_session()
     test_vshell_blur_cli_contract()
     test_generated_theme_consumer_wiring()
     test_shell_only_theme_preview()
