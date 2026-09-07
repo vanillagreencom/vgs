@@ -102,11 +102,35 @@ def repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
+def _sudo_user() -> str:
+    """The non-root user a sudo invocation acts for, empty when there is none."""
+    user = os.environ.get("SUDO_USER", "").strip()
+    return "" if user == "root" else user
+
+
+def login_home() -> Path:
+    """The passwd home of the user this process acts for, ignoring $HOME.
+
+    Under sudo the acting user is SUDO_USER, which is what makes `sudo vshell` write into
+    the invoking user's home rather than root's; otherwise it is the process's own uid.
+    Raises when the user cannot be resolved, so a guard built on it fails closed instead
+    of falling back to a home it did not establish.
+    """
+    sudo_user = _sudo_user()
+    if os.geteuid() == 0 and sudo_user:
+        return Path(pwd.getpwnam(sudo_user).pw_dir)
+    return Path(pwd.getpwuid(os.getuid()).pw_dir)
+
+
 def home() -> Path:
-    sudo_user = os.environ.get("SUDO_USER", "").strip()
-    if os.geteuid() == 0 and sudo_user and sudo_user != "root":
+    """The home VGS reads and writes: $HOME, which a sandbox deliberately overrides.
+
+    Only a sudo run leaves $HOME behind, so a privileged apply does not scatter the
+    invoking user's config through /root.
+    """
+    if os.geteuid() == 0 and _sudo_user():
         try:
-            return Path(pwd.getpwnam(sudo_user).pw_dir)
+            return login_home()
         except Exception:
             pass
     return Path.home()
@@ -2090,7 +2114,20 @@ def _niri() -> Any:
     return _NIRI_SUPPORT
 
 
-def write_chromium_policy(roles: Dict[str, str], allow_prompt: bool = False) -> bool:
+# The reason a theme hook reports when it refuses to act on the login session from a
+# throwaway HOME. Distinct from every absent-app skip, so a working guard is not read as
+# a machine with no kitty, no tmux server or no root.
+SANDBOX_REFUSAL = "refused: not the login user's own session"
+
+
+def write_chromium_policy(roles: Dict[str, str], allow_prompt: bool = False) -> Tuple[bool, str]:
+    """Push the theme colour into the system Chromium policy. Returns (ok, reason)."""
+    # A shell started against a throwaway HOME (the nested test sandbox) applies its own
+    # default theme, and this hook would push that theme's colour into the real system
+    # policy for every browser on the machine. Only a shell running from the user's own
+    # config may write outside their home.
+    if _sandboxed_home():
+        return False, SANDBOX_REFUSAL
     color = roles.get("surfaceContainerHigh") or roles.get("background") or "#1a1b26"
     payload = {"BrowserThemeColor": color.lower()}
     generated = generated_dir() / "chromium-policy.json"
@@ -2099,20 +2136,48 @@ def write_chromium_policy(roles: Dict[str, str], allow_prompt: bool = False) -> 
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
         write_file(target, json.dumps(payload, indent=2) + "\n")
-        return True
+        return True, ""
     except PermissionError:
-        if shutil.which("sudo"):
-            cmd = ["sudo"]
-            if not allow_prompt:
-                cmd.append("-n")
-            cmd.extend(["install", "-Dm644", str(generated), str(target)])
-            proc = subprocess.run(cmd, text=True, stdout=subprocess.PIPE if not allow_prompt else None, stderr=subprocess.PIPE if not allow_prompt else None)
-            if proc.returncode != 0 and not allow_prompt:
-                eprint("chromium policy needs root; run `vshell theme chromium-policy` in a terminal")
-            return proc.returncode == 0
-    except Exception:
-        return False
-    return False
+        if not shutil.which("sudo"):
+            return False, "chromium policy needs root, and sudo is not installed"
+        cmd = ["sudo"]
+        if not allow_prompt:
+            cmd.append("-n")
+        cmd.extend(["install", "-Dm644", str(generated), str(target)])
+        proc = subprocess.run(cmd, text=True, stdout=subprocess.PIPE if not allow_prompt else None, stderr=subprocess.PIPE if not allow_prompt else None)
+        if proc.returncode == 0:
+            return True, ""
+        if not allow_prompt:
+            eprint("chromium policy needs root; run `vshell theme chromium-policy` in a terminal")
+        return False, "chromium policy needs root"
+    except Exception as exc:
+        return False, f"chromium policy write failed: {exc}"
+
+
+def _sandboxed_home() -> bool:
+    """Whether this process runs against a throwaway HOME instead of the login user's.
+
+    The nested smoke sandbox runs a full shell on a temporary home carrying its own default
+    theme. Its theme hooks reach running apps through /proc and through runtime paths that
+    name the real uid, so without this they restyle the login session's terminals, editors
+    and monitors from a test's palette.
+
+    Identity, not containment: that sandbox builds its home with a mktemp that honours
+    $TMPDIR, so a sandbox home sits wherever $TMPDIR points, the login home included. A
+    missing $HOME or an unresolvable login user is treated as sandboxed.
+
+    A sudo run is sandboxed too, because sudo's env_reset rewrites $HOME to the target
+    user's home while the acting user resolves through SUDO_USER, so the two differ and
+    every theme hook skips. Theme commands are meant to be run unprivileged; no shipped
+    producer runs them as root.
+    """
+    env_home = os.environ.get("HOME", "").strip()
+    if not env_home:
+        return True
+    try:
+        return Path(env_home).resolve() != login_home().resolve()
+    except (KeyError, OSError):
+        return True
 
 
 def resolve_vshell_cli() -> str:
@@ -2145,6 +2210,8 @@ def _run_hook_cmd(hook: str, cmd: List[str], **kwargs: Any) -> Dict[str, Any]:
 def tmux_sockets() -> List[Path]:
     """Find tmux sockets through environment paths and process environments.
     A server using TMUX_TMPDIR can be unreachable through the default socket."""
+    if _sandboxed_home():
+        return []
     uid = os.getuid()
     # /tmp by name as well as by $TMPDIR: tmux falls back to /tmp itself, whatever
     # TMPDIR says, so a shell with TMPDIR elsewhere would miss the default socket.
@@ -2182,6 +2249,8 @@ def source_tmux_theme_hook(hook: str) -> Dict[str, Any]:
     """Load the generated theme into every RUNNING tmux server. Sourcing
     against a socket with no server would create one, so each socket is probed
     with a command that fails rather than starting a server."""
+    if _sandboxed_home():
+        return {"hook": hook, "ok": True, "skipped": True, "reason": SANDBOX_REFUSAL}
     if not shutil.which("tmux"):
         return {"hook": hook, "ok": True, "skipped": True, "reason": "tmux not found"}
     theme = home() / ".config" / "tmux" / "vgs-theme.conf"
@@ -2205,6 +2274,9 @@ def source_tmux_theme_hook(hook: str) -> Dict[str, Any]:
 
 def process_pids_by_comm(comm: str) -> List[int]:
     pids: List[int] = []
+    # Every signal-reload hook (kitty, btop, ghostty) finds its target here.
+    if _sandboxed_home():
+        return pids
     proc = Path("/proc")
     if not proc.exists():
         return pids
@@ -2223,6 +2295,10 @@ def process_pids_by_comm(comm: str) -> List[int]:
 
 
 def reload_ghostty_hook() -> Dict[str, Any]:
+    # Guarded as a whole, not only in its /proc half: with no pid to signal this falls
+    # through to a session-bus reload that reaches the login session's ghostty directly.
+    if _sandboxed_home():
+        return {"hook": "ghostty-reload", "ok": True, "skipped": True, "reason": SANDBOX_REFUSAL}
     pids = process_pids_by_comm("ghostty")
     signaled: List[int] = []
     failures: List[str] = []
@@ -2252,6 +2328,8 @@ def reload_ghostty_hook() -> Dict[str, Any]:
 
 def nvim_sockets() -> List[Path]:
     candidates: List[Path] = []
+    if _sandboxed_home():
+        return candidates
     runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
     for base in [Path(runtime), Path("/tmp")]:
         if not base.exists():
@@ -2262,6 +2340,8 @@ def nvim_sockets() -> List[Path]:
 
 
 def reload_nvim_hook() -> Dict[str, Any]:
+    if _sandboxed_home():
+        return {"hook": "nvim-reload", "ok": True, "skipped": True, "reason": SANDBOX_REFUSAL}
     if not shutil.which("nvim"):
         return {"hook": "nvim-reload", "ok": True, "skipped": True, "reason": "nvim not found"}
     sockets = nvim_sockets()
@@ -2427,6 +2507,11 @@ def run_hook(hook: Any, roles: Dict[str, str]) -> Dict[str, Any]:
         return {"hook": name, "ok": True, "skipped": True, "reason": "object hooks are not enabled by default"}
 
     if hook == "hypr-reload":
+        # This branch discards the inherited HYPRLAND_INSTANCE_SIGNATURE and picks the
+        # newest live instance, so from a throwaway HOME it reloads the login session's
+        # compositor from the sandbox's config.
+        if _sandboxed_home():
+            return {"hook": hook, "ok": True, "skipped": True, "reason": SANDBOX_REFUSAL}
         if not shutil.which("hyprctl"):
             return {"hook": hook, "ok": True, "skipped": True, "reason": "hyprctl not found"}
         env = os.environ.copy()
@@ -2499,6 +2584,10 @@ def run_hook(hook: Any, roles: Dict[str, str]) -> Dict[str, Any]:
         except Exception as exc:
             return {"hook": hook, "ok": False, "error": str(exc)}
     if hook == "shell-reload":
+        # The IPC socket is found through the real uid's runtime directory, so a shell on
+        # a throwaway HOME reloads the login session's theme from the sandbox's palette.
+        if _sandboxed_home():
+            return {"hook": hook, "ok": True, "skipped": True, "reason": SANDBOX_REFUSAL}
         cli = resolve_vshell_cli()
         result = _run_hook_cmd(hook, [cli, "ipc", "call", "theme", "reload"], timeout=5)
         # During hermetic/CI smoke there may be no running qs IPC service. Theme files are still valid.
@@ -2506,8 +2595,8 @@ def run_hook(hook: Any, roles: Dict[str, str]) -> Dict[str, Any]:
             result["optional"] = True
         return result
     if hook == "chromium-policy":
-        ok = write_chromium_policy(roles)
-        return {"hook": hook, "ok": ok, "optional": True, "error": "chromium policy needs root" if not ok else ""}
+        ok, reason = write_chromium_policy(roles)
+        return {"hook": hook, "ok": ok, "optional": True, "error": reason}
     if hook == "gtk-settings":
         return apply_gtk_settings_hook(roles)
     if hook == "claude-theme":
@@ -2606,6 +2695,8 @@ def ensure_btop_color_theme(value: str = "vgs") -> bool:
 
 
 def signal_reload_hook(hook: str, comm: str, sig: int) -> Dict[str, Any]:
+    if _sandboxed_home():
+        return {"hook": hook, "ok": True, "skipped": True, "reason": SANDBOX_REFUSAL}
     pids = process_pids_by_comm(comm)
     if not pids:
         return {"hook": hook, "ok": True, "skipped": True, "reason": f"no running {comm} process"}
@@ -7837,8 +7928,11 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
         return cmd_theme_preview_capture(args)
     if args.cmd == "chromium-policy":
         roles = target_roles(blueprint_from_current_theme())
-        ok = write_chromium_policy(roles, allow_prompt=sys.stdin.isatty())
-        print(json.dumps({"success": ok}, indent=2) if args.json else ("ok" if ok else "failed"))
+        ok, reason = write_chromium_policy(roles, allow_prompt=sys.stdin.isatty())
+        if args.json:
+            print(json.dumps({"success": ok, "error": reason}, indent=2))
+        else:
+            print("ok" if ok else f"failed: {reason}")
         return 0 if ok else 1
     if args.cmd == "lint":
         if args.name:
@@ -9555,20 +9649,12 @@ def _lua_table(fields: Dict[str, Any], indent: str = "    ") -> List[str]:
 def _hyprland_layout_payload(settings: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     shell_radius = _coerce_int(settings.get("cornerRadius", 15), 15, 0, 20)
     shell_border = _coerce_int(settings.get("surfaceBorderWidth", 1), 1, 0, 10)
-    hypr_radius = _optional_nonnegative_int(settings.get("hyprlandLayoutRadiusOverride"), 0, 20)
-    hypr_border = _optional_nonnegative_int(settings.get("hyprlandLayoutBorderSize"), 0, 10)
-    target_value = settings.get("surfaceGeometryTarget")
-    if target_value is None:
-        target = "hyprland" if (hypr_radius is not None and hypr_radius != shell_radius) or hypr_border is not None else "sync"
-    else:
-        target = str(target_value or "sync")
-    if target == "hyprland":
-        target = "compositor"
-    if target not in {"sync", "quickshell", "compositor"}:
-        target = "sync"
-    manage_hypr_shape = target != "quickshell"
-    radius = shell_radius if target == "sync" else (hypr_radius if hypr_radius is not None else shell_radius)
-    border = shell_border if target == "sync" else (hypr_border if hypr_border is not None else shell_border)
+    # One radius and one border thickness govern VGS surfaces and app windows together.
+    # The separate compositor-only values and the target that chose between them are gone:
+    # they let a window's own border differ from the border VGS draws on the same window,
+    # which is visible on every VGS window now the compositor draws its chrome.
+    radius = shell_radius
+    border = shell_border
 
     gaps_mode = _coerce_int(settings.get("hyprlandLayoutGapsOverride", -1), -1, -2, 50)
     general: Dict[str, Any] = {}
@@ -9578,8 +9664,7 @@ def _hyprland_layout_payload(settings: Dict[str, Any]) -> Tuple[str, Dict[str, A
         general["gaps_in"] = gaps_in
         general["gaps_out"] = gaps_out_override if gaps_out_override is not None else gaps_in
 
-    if manage_hypr_shape:
-        general["border_size"] = border
+    general["border_size"] = border
 
     resize_on_border = bool(settings.get("hyprlandResizeOnBorder", True))
     if int(settings.get("configVersion") or 0) < 15 and settings.get("hyprlandResizeOnBorder") is False:
@@ -9592,40 +9677,34 @@ def _hyprland_layout_payload(settings: Dict[str, Any]) -> Tuple[str, Dict[str, A
         "-- Surface geometry is stored in VGS settings; themes only own colors and wallpapers.",
         "",
     ]
-    if general or manage_hypr_shape:
-        lines.append("hl.config({")
-        family = settings.get("hyprlandFontFamily") or (settings.get("systemFontInterfaceFamily") if settings.get("systemFontsManaged", True) else "")
-        if family:
-            lines.append("  misc = { font_family = " + _lua_string(family) + " },")
-        if general:
-            lines.append("  general = {")
-            lines.extend(_lua_table(general, "    "))
-            lines.append("  },")
-        if manage_hypr_shape:
-            # Groupbar tabs round at half the window radius: softened so grouped
-            # tabs start to round, but visibly less than the windows. Tracks the
-            # radius slider (regenerated on cornerRadius / hyprlandLayoutRadiusOverride).
-            groupbar_radius = radius // 2
-            lines.append("  group = {")
-            lines.append("    groupbar = {")
-            lines.append(f"      rounding = {groupbar_radius},")
-            lines.append("    },")
-            lines.append("  },")
-            lines.append("  decoration = {")
-            lines.append(f"    rounding = {radius},")
-            lines.append("  },")
-        lines.append("})")
-        lines.append("")
-    else:
-        lines.append("-- Hyprland surface geometry is unmanaged by VGS in the current mode.")
-        lines.append("")
+    lines.append("hl.config({")
+    family = settings.get("hyprlandFontFamily") or (settings.get("systemFontInterfaceFamily") if settings.get("systemFontsManaged", True) else "")
+    if family:
+        lines.append("  misc = { font_family = " + _lua_string(family) + " },")
+    if general:
+        lines.append("  general = {")
+        lines.extend(_lua_table(general, "    "))
+        lines.append("  },")
+    # Groupbar tabs round at half the window radius: softened so grouped tabs
+    # start to round, but visibly less than the windows. Tracks the radius
+    # slider (regenerated on cornerRadius).
+    groupbar_radius = radius // 2
+    lines.append("  group = {")
+    lines.append("    groupbar = {")
+    lines.append(f"      rounding = {groupbar_radius},")
+    lines.append("    },")
+    lines.append("  },")
+    lines.append("  decoration = {")
+    lines.append(f"    rounding = {radius},")
+    lines.append("  },")
+    lines.append("})")
+    lines.append("")
 
     meta = {
-        "target": target,
-        "manageHyprlandShape": manage_hypr_shape,
-        "radius": radius if manage_hypr_shape else None,
-        "groupbarRadius": (radius // 2) if manage_hypr_shape else None,
-        "border": border if manage_hypr_shape else None,
+        "manageHyprlandShape": True,
+        "radius": radius,
+        "groupbarRadius": groupbar_radius,
+        "border": border,
         "gaps": {k: general[k] for k in ("gaps_in", "gaps_out") if k in general},
         "resizeOnBorder": resize_on_border,
     }
@@ -11592,16 +11671,28 @@ def _hyprctl_eval(script: str) -> subprocess.CompletedProcess[str]:
     return run(["hyprctl", "eval", script])
 
 
+def _hyprctl_eval_ok(proc: subprocess.CompletedProcess[str]) -> bool:
+    """Whether a `hyprctl eval` chunk actually ran.
+
+    A session on a classic config answers "eval is only supported with the lua config
+    manager" on stdout and still exits 0, so a return code alone reports rules as applied
+    that never ran, and every caller then believes the compositor owns decoration it does
+    not draw. The Lua config manager answers exactly "ok", and prefixes a failed chunk
+    with "error:".
+    """
+    return proc.returncode == 0 and (proc.stdout or "").strip() == "ok"
+
+
 def _hyprland_blur_support() -> Dict[str, Any]:
     if not shutil.which("hyprctl") or not os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
         return {"available": False, "reason": "hyprctl or Hyprland session not available"}
     proc = _hyprctl_eval('if hl == nil or hl.layer_rule == nil then error("hl.layer_rule unavailable") end')
-    if proc.returncode != 0:
+    if not _hyprctl_eval_ok(proc):
         return {"available": False, "reason": (proc.stderr or proc.stdout or "hyprctl eval failed").strip()}
     return {"available": True, "reason": "hyprland layer rules available"}
 
 
-def _hyprland_blur_script(enabled: bool, strength: float, glass: bool, opacity: float, mode: str = "dark", radius: int = 15, settings_title: str = "Settings") -> str:
+def _hyprland_blur_script(enabled: bool, strength: float, glass: bool, opacity: float, mode: str = "dark", radius: int = 15, window_border: int = 2) -> str:
     strength = _clamp_float(strength)
     opacity = _clamp_float(opacity, 0.08, 1.0)
     light = mode == "light"
@@ -11678,17 +11769,24 @@ def _hyprland_blur_script(enabled: bool, strength: float, glass: bool, opacity: 
     ]
     namespace_pattern = "^(vshell:(" + "|".join(blurred_namespaces) + ")|vshell:plugins:[^:]+)$"
     window_radius = _coerce_int(radius, 15, 0, 20)
-    title_pattern = _lua_string("^" + re.escape(settings_title) + "$")
+    # The compositor owns the corners and border of every VGS window. Hyprland warps a
+    # dragged window's geometry per pointer event and draws the client's previous buffer
+    # in it, so chrome painted by the client always trails the edge by a frame (VGS-273).
+    # Rounding and a border drawn here track the true geometry. Every VGS window is
+    # resizable and shares the class, so the rule matches the class alone; layer surfaces
+    # cannot take part, because Hyprland's layer rules accept neither field.
+    window_border_size = _coerce_int(window_border, 2, 0, 10)
     return f"""
 local rule_name = "vgs-shell-layer-blur"
 if _G.VGS_SETTINGS_WINDOW_RULE ~= nil then
   _G.VGS_SETTINGS_WINDOW_RULE:set_enabled(false)
 end
 _G.VGS_SETTINGS_WINDOW_RULE = hl.window_rule({{
-  name = "vgs-settings-window",
-  match = {{ class = "^(com[.]vanillagreen[.]vshell)$", title = {title_pattern} }},
+  name = "vgs-window-chrome",
+  match = {{ class = "^(com[.]vanillagreen[.]vshell)$" }},
   rounding = {window_radius},
   rounding_power = 2.0,
+  border_size = {window_border_size},
 }})
 if _G.VGS_SHELL_LAYER_BLUR_RULE ~= nil then
   _G.VGS_SHELL_LAYER_BLUR_RULE:set_enabled(false)
@@ -11724,15 +11822,18 @@ end
 """.strip()
 
 
-def _apply_hyprland_blur(enabled: bool, strength: float, glass: bool, opacity: float, mode: str = "dark", radius: int = 15, settings_title: str = "Settings") -> Dict[str, Any]:
+def _apply_hyprland_blur(enabled: bool, strength: float, glass: bool, opacity: float, mode: str = "dark", radius: int = 15, window_border: int = 2) -> Dict[str, Any]:
     support = _hyprland_blur_support()
     if not support.get("available"):
         return {"ok": False, "backend": "hyprland-layer", "error": support.get("reason", "not available")}
-    proc = _hyprctl_eval(_hyprland_blur_script(enabled, strength, glass, opacity, mode, radius, settings_title))
-    ok = proc.returncode == 0
+    proc = _hyprctl_eval(_hyprland_blur_script(enabled, strength, glass, opacity, mode, radius, window_border))
+    ok = _hyprctl_eval_ok(proc)
     return {
         "ok": ok,
         "backend": "hyprland-layer",
+        # True once the compositor rounds and borders VGS windows, so they can stop
+        # painting that chrome themselves.
+        "windowChrome": ok,
         "enabled": enabled,
         "strength": _clamp_float(strength),
         "glass": glass,
@@ -11791,7 +11892,7 @@ def cmd_blur(argv: List[str]) -> int:
     p_apply.add_argument("--opacity", type=float, default=1.0)
     p_apply.add_argument("--mode", choices=["dark", "light"], default="dark")
     p_apply.add_argument("--radius", type=int, choices=range(21), default=15)
-    p_apply.add_argument("--settings-title", default="Settings")
+    p_apply.add_argument("--window-border", type=int, choices=range(11), default=2)
     p_apply.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
@@ -11816,7 +11917,7 @@ def cmd_blur(argv: List[str]) -> int:
     if args.cmd == "apply":
         enabled = args.enabled in ("true", "1", "yes")
         glass = args.glass in ("true", "1", "yes")
-        result = _apply_hyprland_blur(enabled, args.strength, glass, args.opacity, args.mode, args.radius, args.settings_title)
+        result = _apply_hyprland_blur(enabled, args.strength, glass, args.opacity, args.mode, args.radius, args.window_border)
         if args.json:
             print(json.dumps(result, indent=2))
         else:

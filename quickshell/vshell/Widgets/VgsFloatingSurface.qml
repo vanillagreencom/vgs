@@ -16,6 +16,9 @@ Item {
     property color borderColor: windowActive ? Theme.windowBorderActive : Theme.windowBorderInactive
     property real borderWidth: Theme.windowBorderWidth
     property bool drawBorder: true
+    // Every VGS window is an XDG toplevel the compositor rule covers, so this follows the
+    // rule's state for all of them. See VgsSurfaceChrome.
+    property bool compositorChrome: BlurService.windowChromeByCompositor
     property bool enableBlur: true
     property bool enableGlass: true
     property bool maskContent: true
@@ -34,6 +37,12 @@ Item {
         id: chrome
         anchors.fill: parent
 
+        // Hyprland's render:expand_undersized_textures (on by default) repeats a stale
+        // buffer's outermost pixel across the area an interactive resize has already
+        // exposed. Holding the border one pixel in makes that band the surface colour
+        // instead of Theme.primary, which is what filled the window mid-drag (VGS-273).
+        borderInset: 1
+        compositorChrome: root.compositorChrome
         radius: root.radius
         surfaceColor: root.surfaceColor
         borderColor: root.borderColor

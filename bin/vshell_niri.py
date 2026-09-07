@@ -439,18 +439,10 @@ def _kdl_bool(value: bool) -> str:
 def _niri_layout_payload(settings: Dict[str, Any]) -> tuple[str, Dict[str, Any]]:
     shell_radius = runtime().coerce_int(settings.get("cornerRadius"), 12, 0, 64)
     shell_border = runtime().coerce_int(settings.get("surfaceBorderWidth"), 1, 0, 32)
-    radius_override = runtime().optional_nonnegative_int(settings.get("niriLayoutRadiusOverride"), 0, 64)
-    border_override = runtime().optional_nonnegative_int(settings.get("niriLayoutBorderSize"), 0, 32)
-    target = str(settings.get("surfaceGeometryTarget") or "sync")
-    if target == "hyprland":
-        target = "compositor"
-    if target not in {"sync", "quickshell", "compositor"}:
-        target = "sync"
-    manage_niri_shape = target != "quickshell"
-    radius = shell_radius if target == "sync" else (
-        radius_override if radius_override is not None else shell_radius)
-    border = shell_border if target == "sync" else (
-        border_override if border_override is not None else shell_border)
+    # One radius and one border thickness govern VGS surfaces and app windows together;
+    # the compositor-only pair and the target that chose between them are retired.
+    radius = shell_radius
+    border = shell_border
     raw_gaps = settings.get("niriLayoutGapsOverride", -1)
     try:
         gap_mode = int(raw_gaps)
@@ -467,34 +459,30 @@ def _niri_layout_payload(settings: Dict[str, Any]) -> tuple[str, Dict[str, Any]]
     ]
     if gaps is not None:
         lines.append(f"    gaps {gaps}")
-    if manage_niri_shape:
-        lines.extend([
-            "    focus-ring {",
-            "        off",
-            f"        width {border}",
-            "    }",
-            "    border {",
-            "        " + ("on" if border > 0 else "off"),
-            f"        width {border}",
-            "    }",
-        ])
-    lines.extend(["}", ""])
-    if manage_niri_shape:
-        lines.extend([
-            "window-rule {",
-            f"    geometry-corner-radius {radius}",
-            "    clip-to-geometry true",
-            "    tiled-state true",
-            "    draw-border-with-background false",
-            "}",
-            "",
-        ])
+    lines.extend([
+        "    focus-ring {",
+        "        off",
+        f"        width {border}",
+        "    }",
+        "    border {",
+        "        " + ("on" if border > 0 else "off"),
+        f"        width {border}",
+        "    }",
+        "}",
+        "",
+        "window-rule {",
+        f"    geometry-corner-radius {radius}",
+        "    clip-to-geometry true",
+        "    tiled-state true",
+        "    draw-border-with-background false",
+        "}",
+        "",
+    ])
     return "\n".join(lines), {
-        "target": target,
-        "manageNiriShape": manage_niri_shape,
-        "radius": radius if manage_niri_shape else None,
+        "manageNiriShape": True,
+        "radius": radius,
         "gaps": gaps,
-        "border": border if manage_niri_shape else None,
+        "border": border,
     }
 
 def _reload_niri() -> Dict[str, Any]:

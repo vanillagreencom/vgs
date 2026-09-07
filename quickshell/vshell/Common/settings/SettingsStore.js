@@ -462,6 +462,38 @@ function migrateToVersion(obj, targetVersion) {
         settings.configVersion = 24;
     }
 
+    if (currentVersion < 25) {
+        console.info("Migrating settings from version", currentVersion, "to version 25");
+        console.info("Surface shape is one radius and one border thickness for VGS surfaces and app windows");
+        // Keep what the user could see. Where the target made the compositor-only pair the
+        // values in effect on their windows, those become the single values; otherwise the
+        // shell values stand, which is what every VGS surface already showed.
+        var geometryTarget = String(settings.surfaceGeometryTarget || "sync");
+        if (geometryTarget === "hyprland")
+            geometryTarget = "compositor";
+        if (geometryTarget === "compositor") {
+            // A settings file that drove both compositors carries both override pairs.
+            // Hyprland is this repo's reference implementation, so its value is the one
+            // the single setting adopts; the niri pair only stands where it is absent.
+            var keptRadius = settings.hyprlandLayoutRadiusOverride;
+            if (keptRadius === undefined || keptRadius === null || Number(keptRadius) < 0)
+                keptRadius = settings.niriLayoutRadiusOverride;
+            if (keptRadius !== undefined && keptRadius !== null && Number(keptRadius) >= 0)
+                settings.cornerRadius = Math.max(0, Math.min(20, Math.round(Number(keptRadius))));
+            var keptBorder = settings.hyprlandLayoutBorderSize;
+            if (keptBorder === undefined || keptBorder === null || Number(keptBorder) < 0)
+                keptBorder = settings.niriLayoutBorderSize;
+            if (keptBorder !== undefined && keptBorder !== null && Number(keptBorder) >= 0)
+                settings.surfaceBorderWidth = Math.max(0, Math.min(10, Math.round(Number(keptBorder))));
+        }
+        delete settings.surfaceGeometryTarget;
+        delete settings.hyprlandLayoutRadiusOverride;
+        delete settings.hyprlandLayoutBorderSize;
+        delete settings.niriLayoutRadiusOverride;
+        delete settings.niriLayoutBorderSize;
+        settings.configVersion = 25;
+    }
+
     var validKeys = SpecModule.getValidKeys();
     var filtered = {};
     for (var key in settings) {

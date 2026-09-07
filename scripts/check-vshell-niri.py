@@ -36,15 +36,17 @@ with_temp_home = shared.with_temp_home
 
 
 def test_niri_layout_keybinds_and_windowrules():
+    # One radius and one border thickness reach VGS surfaces and app windows alike. A
+    # retired target or override left in a settings file must not shape the compositor.
     layout, meta = niri._niri_layout_payload({
         "surfaceGeometryTarget": "compositor",
-        "cornerRadius": 11,
-        "niriLayoutRadiusOverride": 13,
+        "cornerRadius": 13,
+        "surfaceBorderWidth": 3,
+        "niriLayoutRadiusOverride": 11,
         "niriLayoutGapsOverride": 7,
-        "niriLayoutBorderSize": 3,
+        "niriLayoutBorderSize": 9,
     })
     assert_equal(meta, {
-        "target": "compositor",
         "manageNiriShape": True,
         "radius": 13,
         "gaps": 7,
@@ -65,7 +67,6 @@ def test_niri_layout_keybinds_and_windowrules():
     if "tab-indicator" in layout:
         raise AssertionError("Niri window radius must not be rendered as tab-indicator radius")
     zero_border_layout, _ = niri._niri_layout_payload({
-        "surfaceGeometryTarget": "sync",
         "cornerRadius": 0,
         "surfaceBorderWidth": 0,
     })
@@ -77,12 +78,13 @@ def test_niri_layout_keybinds_and_windowrules():
         "surfaceBorderWidth": 2,
         "niriLayoutGapsOverride": 5,
     })
-    assert_equal(meta["manageNiriShape"], False, "Quickshell target should not manage Niri shape")
-    if ("focus-ring" in layout or "window-rule" in layout or "border {" in layout
-            or "geometry-corner-radius" in layout or "clip-to-geometry" in layout):
-        raise AssertionError("Quickshell target should omit Niri shape blocks")
+    assert_equal(meta["manageNiriShape"], True, "the compositor shape is always managed")
+    assert_equal(meta["radius"], 11, "the shell radius reaches Niri")
+    assert_equal(meta["border"], 2, "the shell border reaches Niri")
+    if "geometry-corner-radius 11" not in layout:
+        raise AssertionError("the shell radius should shape Niri windows")
     if "gaps 5" not in layout:
-        raise AssertionError("Quickshell target should preserve non-shape Niri layout")
+        raise AssertionError("non-shape Niri layout should survive")
     unmanaged_layout, unmanaged_meta = niri._niri_layout_payload({
         "niriLayoutGapsOverride": -2,
         "barConfigs": [{"spacing": 17}],

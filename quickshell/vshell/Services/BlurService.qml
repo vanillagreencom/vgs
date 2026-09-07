@@ -16,6 +16,10 @@ Singleton {
     property bool hyprlandLayerBlurSupported: false
     property string backend: "none"
     property bool _applyPending: false
+    // True while Hyprland rounds and borders VGS windows through the rule the helper
+    // installs. Client-painted chrome trails a dragged edge by a frame there, so every
+    // VGS window hands corners and border to the compositor (VGS-273).
+    property bool windowChromeByCompositor: false
 
     readonly property bool compositorSupported: CompositorService.isHyprland
     readonly property bool available: compositorSupported && (backgroundEffectSupported || hyprlandLayerBlurSupported)
@@ -83,8 +87,8 @@ Singleton {
             Theme.isLightMode ? "light" : "dark",
             "--radius",
             String(Math.min(20, Theme.cornerRadius)),
-            "--settings-title",
-            I18n.tr("Settings", "settings window title"),
+            "--window-border",
+            String(Math.min(10, Theme.windowBorderWidth)),
             "--json"
         ];
         hyprlandApply.running = true;
@@ -140,17 +144,21 @@ Singleton {
                     return;
                 try {
                     const payload = JSON.parse(text);
+                    root.windowChromeByCompositor = payload.ok === true && payload.windowChrome === true;
                     if (!payload.ok)
                         log.warn("Hyprland blur apply failed:", payload.error || payload.stderr || "unknown");
                 } catch (e) {
+                    root.windowChromeByCompositor = false;
                     log.warn("Hyprland blur apply returned invalid JSON:", e);
                 }
             }
         }
 
         onExited: exitCode => {
-            if (exitCode !== 0)
+            if (exitCode !== 0) {
+                root.windowChromeByCompositor = false;
                 log.warn("Hyprland blur apply failed with code:", exitCode);
+            }
             if (root._applyPending) {
                 root._applyPending = false;
                 root.scheduleHyprlandApply();
@@ -170,6 +178,8 @@ Singleton {
         target: Theme
         function onIsLightModeChanged() { root.scheduleHyprlandApply(); }
         function onCornerRadiusChanged() { root.scheduleHyprlandApply(); }
+        // The rule carries the window border width, so a change to it has to be re-applied.
+        function onWindowBorderWidthChanged() { root.scheduleHyprlandApply(); }
     }
 
     Connections {
