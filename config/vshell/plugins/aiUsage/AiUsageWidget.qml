@@ -860,8 +860,8 @@ PluginComponent {
 
                                 StyledText {
                                     text: "Accounts"
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    font.weight: Font.Medium
+                                    font.pixelSize: Theme.fontSizeMedium
+                                    font.weight: Theme.fontWeightSectionHeader
                                     color: Theme.surfaceText
                                     visible: accountVisibility.count > 0
                                     topPadding: Theme.spacingXS

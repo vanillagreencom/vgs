@@ -497,7 +497,8 @@ test("the display page offers the icon modes the catalog defines, and names none
 
 test("the display page's slot list orders through the catalog and writes one setting", () => {
     const display = stripComments(fs.readFileSync(path.join(PLUGIN, "AiUsageDisplaySettings.qml"), "utf8"));
-    assert.ok(display.includes("model: catalog.filterOrder(root.providerFilter)"),
+    assert.ok(/readonly property var committed: catalog\.filterOrder\(root\.providerFilter\)/.test(display)
+              && display.includes("model: slots.committed"),
         "the rows are listed in the order the bar uses, so an arrow moves a row to where its " +
         "slot will actually be");
     for (const [call, why] of [
@@ -702,4 +703,43 @@ test("a multi-way choice is a dropdown, and its keys and labels stay parallel", 
             `${title} labels ${wanted} mode(s) where the catalog offers a different number: a ` +
             "mode added to the catalog would take whichever label happened to sit at its index");
     }
+});
+
+test("a slot drag holds a working order and commits once, on release", () => {
+    const display = stripComments(fs.readFileSync(path.join(PLUGIN, "AiUsageDisplaySettings.qml"), "utf8"));
+
+    // THE reason this list is positioned rather than laid out in a Column. The model is
+    // derived from the stored setting, so a write mid-drag rebuilds every delegate — including
+    // the one holding the mouse grab — and the drag dies after its first step. The model must
+    // stay on the committed order for the whole gesture.
+    assert.ok(display.includes("model: slots.committed"),
+        "the Repeater's model is the COMMITTED order");
+    assert.ok(!/model: slots\.working/.test(display),
+        "and never the working one: rebuilding the delegates mid-drag destroys the grab");
+    assert.ok(/function dragTo[\s\S]*?slots\.working = next;/.test(display),
+        "a crossing moves the working order only");
+    assert.ok(/function endDrag[\s\S]*?root\.changed\("providerFilter", catalog\.canonicalFilter\(settled\)\)/.test(display),
+        "and release is the single write, through the same canonical rule the arrows and the " +
+        "checkboxes go through, so a drag cannot store a spelling of 'all' the others would not");
+
+    assert.ok(/y: slots\.slotY\(modelData\)/.test(display),
+        "each row takes its y from the order rather than from a Column, which would own that y " +
+        "and fight the drag for it");
+    assert.ok(/const limit = Math\.max\(0, slots\.selectedCount - 1\)/.test(display),
+        "the drop target is clamped to the SELECTED range: the unselected tail takes no bar " +
+        "slot, so a position among it is not a position");
+    assert.ok(/enabled: slots\.dragging !== slotRow\.modelData/.test(display),
+        "the row under the hand is not animated toward the cursor that is already there; the " +
+        "rows it displaces are");
+
+    const grip = stripComments(fs.readFileSync(path.join(PLUGIN, "AiUsageFilterRow.qml"), "utf8"));
+    assert.ok(/onCanceled: row\.dragEnded\(\)/.test(grip),
+        "a grab lost to anything else still ends the drag, or the list keeps rendering a working " +
+        "order nobody is holding and the next click commits it");
+    assert.ok(/mapToItem\(row\.parent, 0, gripArea\.mouseY\)/.test(grip),
+        "the pointer is reported in the LIST's coordinates: the row moves under the cursor " +
+        "during its own drag, so a row-relative y walks as it is read");
+    assert.ok(/anchors\.leftMargin: grip\.visible \? grip\.width/.test(grip),
+        "and the row's own click target starts after the grip, so a press meant for the handle " +
+        "is never taken as a toggle");
 });

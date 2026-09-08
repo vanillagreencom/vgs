@@ -20,11 +20,21 @@ Item {
     property bool showMove: false
     property bool canMoveUp: false
     property bool canMoveDown: false
+    // The grip, and with it dragging. Separate from showMove because the popout's
+    // filter menu lays its rows out in a Column, where a row has no y of its own
+    // to move; only the settings page's positioned list can answer a drag.
+    property bool showDrag: false
 
     signal toggled
     signal setupClicked
     signal moveUp
     signal moveDown
+    // The pointer's y, in the coordinates of whatever laid this row out. The row
+    // cannot resolve it itself: the list is what knows the pitch and how many
+    // slots there are to land in.
+    signal dragStarted
+    signal dragMoved(real listY)
+    signal dragEnded
 
     width: parent ? parent.width : 0
     height: 32
@@ -40,16 +50,52 @@ Item {
     MouseArea {
         id: rowArea
         anchors.fill: parent
+        anchors.leftMargin: grip.visible ? grip.width + Theme.spacingXS : 0
         anchors.rightMargin: controls.width > 0 ? controls.width + Theme.spacingXS : 0
         hoverEnabled: true
         cursorShape: Qt.PointingHandCursor
         onClicked: row.toggled()
     }
 
+    // The grab handle. A row that reorders on drag says so with a grip rather
+    // than leaving the whole row draggable: the row is already a click target
+    // for its checkbox, and one gesture would have had to guess which was meant.
+    VgsIcon {
+        id: grip
+
+        anchors.left: parent.left
+        anchors.leftMargin: Theme.spacingXS
+        anchors.verticalCenter: parent.verticalCenter
+        visible: row.showDrag
+        name: "drag_indicator"
+        size: Theme.iconSizeSmall
+        color: gripArea.pressed ? Theme.surfaceText : Theme.outline
+
+        MouseArea {
+            id: gripArea
+
+            anchors.fill: parent
+            anchors.margins: -Theme.spacingXS
+            cursorShape: pressed ? Qt.ClosedHandCursor : Qt.OpenHandCursor
+            preventStealing: true
+
+            onPressed: row.dragStarted()
+            onReleased: row.dragEnded()
+            // A grab lost to anything else still has to end the drag, or the
+            // list would keep rendering a working order nobody is holding.
+            onCanceled: row.dragEnded()
+            onPositionChanged: {
+                if (!gripArea.pressed)
+                    return;
+                row.dragMoved(gripArea.mapToItem(row.parent, 0, gripArea.mouseY).y);
+            }
+        }
+    }
+
     VgsIcon {
         id: box
-        anchors.left: parent.left
-        anchors.leftMargin: Theme.spacingM
+        anchors.left: grip.visible ? grip.right : parent.left
+        anchors.leftMargin: grip.visible ? Theme.spacingS : Theme.spacingM
         anchors.verticalCenter: parent.verticalCenter
         name: row.checked ? "check_box" : "check_box_outline_blank"
         size: Theme.iconSizeSmall
@@ -76,7 +122,7 @@ Item {
         anchors.verticalCenter: parent.verticalCenter
         text: row.label
         elide: Text.ElideRight
-        font.pixelSize: Theme.fontSizeSmall
+        font.pixelSize: Theme.fontSizeMedium
         font.weight: row.checked ? Font.Medium : Font.Normal
         color: row.checked ? Theme.surfaceText : Theme.surfaceVariantText
     }

@@ -211,6 +211,8 @@ jobs:
           scripts/test-mercury-format.js
           scripts/test-mercury-options.js
           scripts/check-qml-imports.py
+          scripts/check-settings-type.py
+          scripts/test-settings-type.py
           scripts/test-qml-imports.sh
           scripts/test-qml-import-collisions.sh
           scripts/test-paste-target.js

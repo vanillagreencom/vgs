@@ -29,6 +29,12 @@ Column {
 
     signal changed(string key, var value)
 
+    // Declared here rather than left to the embedding surface: the settings
+    // application supplies one through PluginSettings, the popout does not, and
+    // a page that rendered in two typographies depending on where it was shown
+    // is the thing this page exists to prevent.
+    readonly property bool settingsSurface: true
+
     spacing: Theme.spacingS
 
     // Its own catalog rather than the widget's. This page is embedded by the
@@ -162,34 +168,119 @@ Column {
 
         StyledText {
             text: "Bar slots"
-            font.pixelSize: Theme.fontSizeSmall
-            font.weight: Font.Medium
+            font.pixelSize: Theme.fontSizeMedium
+            font.weight: Theme.fontWeightSectionHeader
             color: Theme.surfaceText
         }
 
-        Repeater {
-            model: catalog.filterOrder(root.providerFilter)
+        // Rows are POSITIONED, not laid out by a Column, because a drag has to
+        // move them: a Column owns its children's y and would fight the working
+        // order for it.
+        Item {
+            id: slots
 
-            AiUsageFilterRow {
-                required property string modelData
+            width: parent.width
+            height: slots.committed.length * slots.pitch
 
-                host: root
-                provider: modelData
-                label: catalog.providerName(modelData)
-                checked: catalog.filterHas(root.providerFilter, modelData)
-                showMove: true
-                canMoveUp: catalog.canMoveProvider(root.providerFilter, modelData, -1)
-                canMoveDown: catalog.canMoveProvider(root.providerFilter, modelData, 1)
-                // Setup belongs to the popout's filter, which is a step away
-                // from the accounts it configures. This page is already inside
-                // settings and has the provider sections under it.
-                showSetup: false
-                onToggled: root.changed("providerFilter",
-                                        catalog.toggleFilter(root.providerFilter, modelData))
-                onMoveUp: root.changed("providerFilter",
-                                       catalog.moveProvider(root.providerFilter, modelData, -1))
-                onMoveDown: root.changed("providerFilter",
-                                         catalog.moveProvider(root.providerFilter, modelData, 1))
+            readonly property var committed: catalog.filterOrder(root.providerFilter)
+            readonly property int selectedCount: catalog.selectedProviders(root.providerFilter).length
+            readonly property int rowHeight: 32
+            readonly property int pitch: slots.rowHeight + Theme.spacingXS
+
+            // The arrangement under the cursor, and the row holding the grab.
+            // The Repeater's model stays `committed` for the whole drag: the
+            // model is derived from the stored setting, so writing on every
+            // crossing would rebuild every delegate — including the one holding
+            // the mouse grab — and the drag would end after its first step.
+            property var working: []
+            property string dragging: ""
+
+            function slotY(provider) {
+                const order = slots.dragging === "" ? slots.committed : slots.working;
+                const at = order.indexOf(provider);
+                return (at < 0 ? 0 : at) * slots.pitch;
+            }
+
+            function beginDrag(provider) {
+                slots.working = slots.committed.slice();
+                slots.dragging = provider;
+            }
+
+            // Land on the slot the pointer is over, clamped to the SELECTED
+            // range: the unselected providers sit in a tail that takes no bar
+            // slot, so a position among them is not a position.
+            function dragTo(provider, listY) {
+                if (slots.dragging !== provider)
+                    return;
+                const limit = Math.max(0, slots.selectedCount - 1);
+                const want = Math.max(0, Math.min(limit, Math.floor(listY / slots.pitch)));
+                const next = slots.working.slice();
+                const at = next.indexOf(provider);
+                if (at < 0 || at === want)
+                    return;
+                next.splice(at, 1);
+                next.splice(want, 0, provider);
+                slots.working = next;
+            }
+
+            function endDrag(provider) {
+                if (slots.dragging !== provider)
+                    return;
+                const settled = slots.working.slice();
+                slots.dragging = "";
+                root.changed("providerFilter", catalog.canonicalFilter(settled));
+            }
+
+            Repeater {
+                model: slots.committed
+
+                AiUsageFilterRow {
+                    id: slotRow
+
+                    required property string modelData
+
+                    width: slots.width
+                    height: slots.rowHeight
+                    y: slots.slotY(modelData)
+                    // The row being dragged draws over the ones moving past it.
+                    z: slots.dragging === modelData ? 1 : 0
+
+                    host: root
+                    provider: modelData
+                    label: catalog.providerName(modelData)
+                    checked: catalog.filterHas(root.providerFilter, modelData)
+                    showMove: true
+                    canMoveUp: catalog.canMoveProvider(root.providerFilter, modelData, -1)
+                    canMoveDown: catalog.canMoveProvider(root.providerFilter, modelData, 1)
+                    // Only a provider that HAS a slot can be dragged to another
+                    // one, which is the same rule the arrows follow.
+                    showDrag: catalog.filterHas(root.providerFilter, modelData)
+                    // Setup belongs to the popout's filter, which is a step away
+                    // from the accounts it configures. This page is already inside
+                    // settings and has the provider sections under it.
+                    showSetup: false
+
+                    // The row under the hand snaps; the ones it displaces slide,
+                    // so the list reads as one arrangement rather than as rows
+                    // appearing in new places.
+                    Behavior on y {
+                        enabled: slots.dragging !== slotRow.modelData
+                        NumberAnimation {
+                            duration: Theme.shortDuration
+                            easing.type: Easing.OutCubic
+                        }
+                    }
+
+                    onToggled: root.changed("providerFilter",
+                                            catalog.toggleFilter(root.providerFilter, modelData))
+                    onMoveUp: root.changed("providerFilter",
+                                           catalog.moveProvider(root.providerFilter, modelData, -1))
+                    onMoveDown: root.changed("providerFilter",
+                                             catalog.moveProvider(root.providerFilter, modelData, 1))
+                    onDragStarted: slots.beginDrag(modelData)
+                    onDragMoved: listY => slots.dragTo(modelData, listY)
+                    onDragEnded: slots.endDrag(modelData)
+                }
             }
         }
     }

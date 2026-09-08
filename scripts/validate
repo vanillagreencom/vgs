@@ -29,6 +29,7 @@ manifest() {
   cat <<'MANIFEST_EOF'
 qml       | scripts/check-naming.sh
 qml       | scripts/check-qml-imports.py
+qml       | scripts/check-settings-type.py
 qml       | scripts/test-qml-imports.sh
 qml       | scripts/test-qml-import-collisions.sh
 always    | scripts/check-format-lint.sh
@@ -69,6 +70,7 @@ qml       | scripts/test-mercury-options.js
 -         | scripts/test-compositor-focus.js
 -         | scripts/check-paste-injection.py
 -         | scripts/test-label-taxonomy.py
+-         | scripts/test-settings-type.py
 -         | scripts/test-launcher-search-gate.js
 -         | scripts/check-notification-takeover.js
 -         | scripts/test-remote-desktop-state.js

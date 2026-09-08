@@ -23,14 +23,14 @@ PluginSettings {
         width: parent.width
         text: "AI Usage Settings"
         font.pixelSize: Theme.fontSizeLarge
-        font.weight: Font.Bold
+        font.weight: Theme.fontWeightSectionHeader
         color: Theme.surfaceText
     }
 
     StyledText {
         width: parent.width
         text: "Show Claude Code, OpenAI Codex and Vercel AI Gateway usage in the bar — one labelled slot per provider. Click the widget for per-account limits, to filter which providers count, and to tell a provider where its accounts are."
-        font.pixelSize: Theme.fontSizeSmall
+        font.pixelSize: Theme.settingsFontSize
         color: Theme.surfaceVariantText
         wrapMode: Text.WordWrap
     }
@@ -137,7 +137,7 @@ PluginSettings {
                 StyledText {
                     text: "Requirements"
                     font.pixelSize: Theme.fontSizeMedium
-                    font.weight: Font.Medium
+                    font.weight: Theme.fontWeightSectionHeader
                     color: Theme.surfaceText
                     anchors.verticalCenter: parent.verticalCenter
                 }
@@ -146,7 +146,7 @@ PluginSettings {
             StyledText {
                 width: parent.width
                 text: "Backed by `vshell ai-usage`, which wraps the claudebar/codexbar engines and calls the AI Gateway REST API directly.\n\n• Claude: log in with the 'claude' CLI (reads ~/.claude/.credentials.json)\n• Codex: log in with 'codex login' (reads ~/.codex)\n• AI Gateway: add an API key in the widget's provider setup, or export AI_GATEWAY_API_KEY\n\nExtra Claude and Codex accounts are picked up automatically: any config directory holding its own login (the ones your CLAUDE_CONFIG_DIR / CODEX_HOME wrappers point at) is listed separately, labelled by its signed-in address. A wrapper pointing somewhere no naming convention can guess is added by hand in provider setup. Profiles whose tokens live in the desktop keyring can't be polled and are left out. AI Gateway keys are stored in a private 0600 file under ~/.local/state/vshell, never in this settings file.\n\nThe bar keeps one slot per provider, in the order set under Bar slots above, so a number never changes meaning; a vertical bar stacks them. Bar icons chooses whether each slot carries its provider's mark, the widget carries one mark for all of them, or the bar is numbers alone. A slot shows that provider's usage %: each account counts at its tightest window, and the Bar number setting in the popout chooses how several of them combine — averaged by default, or the account with the most headroom, or the most used. A slot reads an exclamation mark instead when that provider answered and the answer was unusable — not signed in, or the usage API failed; an ellipsis while a fetch for it is running; and a dash when the provider is fine but there is nothing left to show, which is every one of its accounts hidden.\n\nClick the widget for one card per account, whichever provider it belongs to, with session, weekly, per-model and credit limits and reset countdowns; clicking a card expands it. The filter at the top chooses which providers count and in what order, and each row there opens that provider's setup."
-                font.pixelSize: Theme.fontSizeSmall
+                font.pixelSize: Theme.settingsFontSize
                 color: Theme.surfaceVariantText
                 wrapMode: Text.WordWrap
                 lineHeight: 1.4
