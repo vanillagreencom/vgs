@@ -55,6 +55,11 @@ Column {
         if (root.active)
             root.readSources();
     }
+    // Embedded by the popout as well as by PluginSettings, so it declares the
+    // marker itself: without it the same fields render in settings typography in
+    // the settings application and in bar typography in the popout.
+    readonly property bool settingsSurface: true
+
     onProviderChanged: {
         // The page is reused for whichever provider was asked for. Anything on
         // screen describes the previous one and is dropped rather than left
@@ -181,6 +186,10 @@ Column {
                 return;
             root._stallOwned = false;
             root.busy = false;
+            // The key is written to stdin by onStarted, which never ran. Nothing
+            // else clears it, so without this the secret stays resident in a
+            // long-lived QML object for the rest of the session.
+            keyProc.pendingKey = "";
             root.statusFailed = true;
             root.status = "Could not run the vshell helper.";
         }
@@ -226,6 +235,12 @@ Column {
     }
 
     function applySources(payload) {
+        // The page is reused, and switching provider parks a new read while the
+        // running one finishes. A reply names the provider it answered for, so
+        // an answer about the provider that WAS on screen is dropped rather than
+        // rendered as this one's accounts.
+        if (payload.provider && payload.provider !== root.provider)
+            return;
         root.entries = payload.accounts || [];
         root.dirs = payload.dirs || [];
         // A read that could not answer has to say so. Rendering its empty lists
@@ -353,7 +368,7 @@ Column {
                 StyledText {
                     text: catalog.providerFullName(root.provider)
                     font.pixelSize: Theme.fontSizeMedium
-                    font.weight: Font.Medium
+                    font.weight: Theme.fontWeightSectionHeader
                     color: Theme.surfaceText
                     anchors.verticalCenter: parent.verticalCenter
                 }
@@ -363,7 +378,7 @@ Column {
                 width: parent.width
                 text: root.hint
                 wrapMode: Text.WordWrap
-                font.pixelSize: Theme.fontSizeSmall
+                font.pixelSize: Theme.settingsFontSize
                 color: Theme.surfaceVariantText
             }
         }
@@ -387,8 +402,8 @@ Column {
             StyledText {
                 width: parent.width
                 text: "API keys"
-                font.pixelSize: Theme.fontSizeSmall
-                font.weight: Font.Medium
+                font.pixelSize: Theme.fontSizeMedium
+                font.weight: Theme.fontWeightSectionHeader
                 color: Theme.surfaceText
             }
 
@@ -398,7 +413,7 @@ Column {
                 width: parent.width
                 text: "Kept in a private 0600 file, not in your VGS settings. Add one key per team or budget; each becomes its own account card."
                 wrapMode: Text.WordWrap
-                font.pixelSize: Theme.fontSizeSmall
+                font.pixelSize: Theme.settingsFontSize
                 color: Theme.surfaceVariantText
             }
 
@@ -428,7 +443,7 @@ Column {
                         anchors.verticalCenter: parent.verticalCenter
                         text: modelData.label || modelData.id
                         elide: Text.ElideMiddle
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceText
                     }
 
@@ -438,7 +453,7 @@ Column {
                         anchors.rightMargin: Theme.spacingXS
                         anchors.verticalCenter: parent.verticalCenter
                         text: modelData.source === "env" ? "from environment" : ""
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: Theme.surfaceVariantText
                     }
 
@@ -508,8 +523,8 @@ Column {
             StyledText {
                 width: parent.width
                 text: "Config directories"
-                font.pixelSize: Theme.fontSizeSmall
-                font.weight: Font.Medium
+                font.pixelSize: Theme.fontSizeMedium
+                font.weight: Theme.fontWeightSectionHeader
                 color: Theme.surfaceText
             }
 
@@ -517,7 +532,7 @@ Column {
                 width: parent.width
                 text: "Each directory holding its own login becomes one account. Add one for a wrapper that points somewhere discovery cannot guess."
                 wrapMode: Text.WordWrap
-                font.pixelSize: Theme.fontSizeSmall
+                font.pixelSize: Theme.settingsFontSize
                 color: Theme.surfaceVariantText
             }
 
@@ -549,7 +564,7 @@ Column {
                         anchors.verticalCenter: parent.verticalCenter
                         text: modelData.label ? (modelData.label + " — " + modelData.path) : modelData.path
                         elide: Text.ElideMiddle
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.settingsFontSize
                         color: modelData.usable ? Theme.surfaceText : Theme.surfaceVariantText
                     }
 
@@ -573,7 +588,7 @@ Column {
                 width: parent.width
                 visible: root.dirs.length === 0
                 text: "No signed-in directories found."
-                font.pixelSize: Theme.fontSizeSmall
+                font.pixelSize: Theme.settingsFontSize
                 color: Theme.surfaceVariantText
             }
 
@@ -603,7 +618,7 @@ Column {
         visible: root.status !== ""
         text: root.status
         wrapMode: Text.WordWrap
-        font.pixelSize: Theme.fontSizeSmall
+        font.pixelSize: Theme.settingsFontSize
         color: root.statusFailed ? Theme.error : Theme.success
     }
 }

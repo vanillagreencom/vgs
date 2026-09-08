@@ -65,10 +65,10 @@ TITLE = """    StyledText {
         color: Theme.surfaceText
     }"""
 
-LABEL = """    StyledText {
-        text: "A control"
+HEADER = """    StyledText {
+        text: "A section"
         font.pixelSize: Theme.fontSizeMedium
-        font.weight: Font.Medium
+        font.weight: Theme.fontWeightSectionHeader
         color: Theme.surfaceText
     }"""
 
@@ -78,30 +78,38 @@ SUB = """    StyledText {
         color: Theme.surfaceVariantText
     }"""
 
+BODY = """    StyledText {
+        text: modelData.label
+        font.pixelSize: Theme.settingsFontSize
+        color: Theme.surfaceText
+    }"""
+
 
 class RolesAccepted(unittest.TestCase):
     def test_every_role_passes(self):
-        self.assertEqual(check("\n\n".join([TITLE, LABEL, SUB])), [])
+        self.assertEqual(check("\n\n".join([TITLE, HEADER, SUB, BODY])), [])
 
-    def test_section_header_shares_the_label_size_and_differs_by_weight(self):
-        header = LABEL.replace("Font.Medium", "Theme.fontWeightSectionHeader")
-        self.assertEqual(check(header), [])
+    def test_a_status_line_may_take_a_state_colour(self):
+        status = BODY.replace("Theme.surfaceText",
+                              "root.failed ? Theme.error : Theme.success")
+        self.assertEqual(check(status), [])
 
-    def test_body_text_needs_no_weight_at_all(self):
-        body = LABEL.replace("        font.weight: Font.Medium\n", "")
-        self.assertEqual(check(body), [])
+    def test_a_list_row_may_dim_itself_with_a_ternary(self):
+        row = BODY.replace("Theme.surfaceText",
+                           "modelData.usable ? Theme.surfaceText : Theme.surfaceVariantText")
+        self.assertEqual(check(row), [])
 
 
 class RolesRefused(unittest.TestCase):
     def test_the_bar_size_is_refused(self):
         # The defect that started this: a section header at the bar's size renders
         # smaller than the controls it introduces.
-        problems = check(LABEL.replace("Theme.fontSizeMedium", "Theme.fontSizeSmall"))
+        problems = check(HEADER.replace("Theme.fontSizeMedium", "Theme.fontSizeSmall"))
         self.assertEqual(len(problems), 1)
         self.assertIn("Theme.fontSizeSmall is the bar's size", problems[0])
 
     def test_a_literal_size_is_refused(self):
-        problems = check(LABEL.replace("Theme.fontSizeMedium", "13"))
+        problems = check(HEADER.replace("Theme.fontSizeMedium", "13"))
         self.assertEqual(len(problems), 1)
         self.assertIn("font.pixelSize is 13", problems[0])
 
@@ -115,25 +123,44 @@ class RolesRefused(unittest.TestCase):
         self.assertEqual(len(problems), 1)
         self.assertIn("the inherited weight", problems[0])
 
-    def test_a_third_weight_at_the_shared_size_is_refused(self):
-        problems = check(LABEL.replace("Font.Medium", "Font.Bold"))
+    def test_a_header_drifting_to_a_label_weight_is_refused(self):
+        # The exact drift D012 exists to stop, and the case the first version of
+        # this guard accepted: a heading reverted to Font.Medium became
+        # indistinguishable from a control label and nothing reported it. The
+        # guard can require the header weight because a settings page never
+        # hand-writes a control label — VgsToggle and VgsDropdown render theirs.
+        problems = check(HEADER.replace("Theme.fontWeightSectionHeader", "Font.Medium"))
         self.assertEqual(len(problems), 1)
-        self.assertIn("told apart by weight alone", problems[0])
+        self.assertIn("must take Theme.fontWeightSectionHeader", problems[0])
 
-    def test_sub_text_off_its_colour_is_refused(self):
+    def test_a_header_with_no_weight_is_refused(self):
+        problems = check(HEADER.replace("        font.weight: Theme.fontWeightSectionHeader\n", ""))
+        self.assertEqual(len(problems), 1)
+        self.assertIn("the inherited weight", problems[0])
+
+    def test_a_near_miss_colour_in_the_small_tier_is_refused(self):
+        # The live defect this found: cloudSync's rclone line on surfaceTextMedium,
+        # which reads as sub text at a different alpha.
         problems = check(SUB.replace("Theme.surfaceVariantText", "Theme.surfaceTextMedium"))
         self.assertEqual(len(problems), 1)
-        self.assertIn("must take color Theme.surfaceVariantText", problems[0])
+        self.assertIn("Theme.surfaceTextMedium", problems[0])
 
-    def test_sub_text_with_no_colour_is_refused(self):
+    def test_a_stray_colour_inside_a_ternary_is_refused(self):
+        row = BODY.replace("Theme.surfaceText",
+                           "modelData.usable ? Theme.surfaceText : Theme.surfaceTextMedium")
+        problems = check(row)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("Theme.surfaceTextMedium", problems[0])
+
+    def test_small_tier_text_with_no_colour_is_refused(self):
         problems = check(SUB.replace("        color: Theme.surfaceVariantText\n", ""))
         self.assertEqual(len(problems), 1)
-        self.assertIn("the inherited colour", problems[0])
+        self.assertIn("states no colour", problems[0])
 
 
 class SurfaceRecognition(unittest.TestCase):
     def test_a_file_without_the_marker_is_not_a_surface(self):
-        self.assertEqual(check(LABEL.replace("Theme.fontSizeMedium", "Theme.fontSizeSmall"),
+        self.assertEqual(check(HEADER.replace("Theme.fontSizeMedium", "Theme.fontSizeSmall"),
                                marker=""), [])
 
     def test_a_pluginsettings_root_is_a_surface_without_the_marker(self):

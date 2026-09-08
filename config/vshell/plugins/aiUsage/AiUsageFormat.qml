@@ -79,7 +79,12 @@ QtObject {
         const all = meters || [];
         if (expanded || !hideUnused)
             return all.slice();
-        return all.filter(m => !m.model || (m.pct || 0) > 0);
+        // A lane carrying a detail is a lane with something to SAY, whatever its
+        // percentage. The backend reports a failed budget lookup as a model lane
+        // at 0% whose detail is the reason, so dropping every 0% model lane took
+        // the only notice that budget tracking is unavailable off the card and
+        // left it reading as a healthy account.
+        return all.filter(m => !m.model || (m.pct || 0) > 0 || !!m.detail);
     }
 
     // Classify each meter by its own percentage, independent of other account lanes.

@@ -435,10 +435,14 @@ test("the setup page is mounted only while it is on screen", () => {
 
 test("the poll interval scales with the accounts actually being visited", () => {
     const timer = blockFrom(lastIndexOf("Timer {", indexOf("onTriggered: root.refresh()")), "pollTimer");
-    assert.ok(timer.includes("root.view.totalCount"),
-        "polling visits accounts sequentially across every provider, so the floor has to count " +
-        "all of them — counting one provider's set left three providers' accounts sharing one " +
-        "provider's interval");
+    assert.ok(timer.includes("logic.polledAccountCount(root.providerData)"),
+        "polling visits accounts sequentially across every provider, so the floor counts all of " +
+        "them. root.view.totalCount is the SELECTED providers' accounts, and refresh() launches " +
+        "a channel per catalog provider: scaling by the selected subset spent the whole " +
+        "catalog's work against a fraction of its budget");
+    assert.ok(!timer.includes("root.view.totalCount"),
+        "and never the filtered count, which is what made the interval shrink as providers were " +
+        "deselected even though the same accounts were still being visited");
     assert.ok(timer.includes("root.refreshSeconds"), "and the user's interval is still the floor");
 });
 
@@ -742,4 +746,25 @@ test("a slot drag holds a working order and commits once, on release", () => {
     assert.ok(/anchors\.leftMargin: grip\.visible \? grip\.width/.test(grip),
         "and the row's own click target starts after the grip, so a press meant for the handle " +
         "is never taken as a toggle");
+});
+
+test("the setup page answers for the provider it is showing, and outlives no secret", () => {
+    const setup = stripComments(fs.readFileSync(path.join(PLUGIN, "AiUsageProviderSetup.qml"), "utf8"));
+
+    // The page is reused across providers and a switch parks a new read while the running one
+    // finishes. Replies name the provider they answered for, so the stale one is dropped rather
+    // than rendered as this provider's directories.
+    assert.ok(/if \(payload\.provider && payload\.provider !== root\.provider\)\s*\n\s*return;/.test(setup),
+        "a source read that answered for another provider is dropped");
+
+    // storeKey holds the key until onStarted writes it to stdin. A helper that never starts
+    // leaves it resident in a long-lived QML object for the rest of the session.
+    const stall = setup.slice(setup.indexOf("id: stallTimer"), setup.indexOf("function storeKey"));
+    assert.ok(stall.includes('keyProc.pendingKey = ""'),
+        "the stall path clears the pending key: nothing else does, and the process it was " +
+        "waiting on never ran");
+
+    assert.ok(/readonly property bool settingsSurface: true/.test(setup),
+        "and the page declares the settings marker, since the popout embeds it outside " +
+        "PluginSettings and its fields would otherwise render in bar typography there");
 });

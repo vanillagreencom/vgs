@@ -27,7 +27,7 @@ const {
     providerOrder, normalizeProvider, providerIcon, providerName, providerNeedsCredential,
     providerAsset,
     selectedProviders, filterIsAll, filterHas, toggleFilter, filterLabel,
-    filterOrder, canonicalFilter, moveProvider, canMoveProvider,
+    filterOrder, canonicalFilter, moveProvider, canMoveProvider, polledAccountCount,
     iconModes, barIconMode, widgetIcon,
     payloadProvider, payloadIsFor, shouldRelaunch, decodePayload, acceptOutcome, stderrReason,
     cardKey, isCardHidden, toggleHiddenCard, providerCards, allCards,
@@ -37,7 +37,7 @@ const {
     "providerOrder", "normalizeProvider", "providerIcon", "providerName", "providerNeedsCredential",
     "providerAsset",
     "selectedProviders", "filterIsAll", "filterHas", "toggleFilter", "filterLabel",
-    "filterOrder", "canonicalFilter", "moveProvider", "canMoveProvider",
+    "filterOrder", "canonicalFilter", "moveProvider", "canMoveProvider", "polledAccountCount",
     "iconModes", "barIconMode", "widgetIcon",
     "payloadProvider", "payloadIsFor", "shouldRelaunch", "decodePayload", "acceptOutcome",
     "stderrReason", "cardKey", "isCardHidden", "toggleHiddenCard", "providerCards", "allCards",
@@ -860,4 +860,25 @@ test("newerSuccess and newerAccepted order results the same way, and only one ac
     assert.equal(newerAccepted({ ok: false, provider: "claude" }, 3, 4), false,
         "the ordering rule is unchanged: an older failure does not displace a newer payload");
     assert.equal(newerAccepted(null, 9, 0), false, "nothing filed promotes nothing");
+});
+
+test("the poll floor counts every account a refresh visits, not the selected ones", () => {
+    const [first, second, third] = providerOrder();
+    const data = {};
+    data[first] = { ok: true, provider: first, accounts: [{ id: "a" }, { id: "b" }] };
+    data[second] = { ok: true, provider: second, accounts: [{ id: "c" }] };
+    data[third] = { ok: false, provider: third, error: "no key" };
+
+    assert.equal(polledAccountCount(data), 3,
+        "the widget builds a fetch channel per CATALOG provider and refresh() launches all of " +
+        "them, so the interval has to cover every account they will visit — scaling by the " +
+        "selected subset spent the whole catalog's work against a fraction of its budget");
+    assert.equal(polledAccountCount({}), 0, "nothing filed yet is no accounts");
+    assert.equal(polledAccountCount(null), 0, "and no payload map is not a throw");
+
+    const stray = Object.assign({}, data);
+    stray.gemini = { ok: true, provider: "gemini", accounts: [{ id: "x" }, { id: "y" }] };
+    assert.equal(polledAccountCount(stray), 3,
+        "a payload filed under an id the catalog does not name is visited by no channel, so it " +
+        "does not lengthen the interval either");
 });

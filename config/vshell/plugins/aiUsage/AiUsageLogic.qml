@@ -718,6 +718,22 @@ QtObject {
     }
 
     // Format the account count with singular or plural wording.
+    // Every account a refresh will visit. That is every provider's, not the
+    // selected ones': the widget builds a fetch channel per CATALOG provider and
+    // refresh() launches all of them, so scaling the interval by the selected
+    // subset spends the whole catalog's work against a fraction of its budget.
+    function polledAccountCount(providerData) {
+        const data = providerData || {};
+        const order = providerOrder();
+        let n = 0;
+        for (let i = 0; i < order.length; i++) {
+            const filed = data[order[i]];
+            const accounts = filed && filed.accounts;
+            n += accounts && accounts.length ? accounts.length : 0;
+        }
+        return n;
+    }
+
     function accountCount(n) {
         const count = Number(n) || 0;
         return count === 1 ? "1 account" : count + " accounts";

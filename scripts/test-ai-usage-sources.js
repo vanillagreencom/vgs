@@ -309,7 +309,7 @@ test("a budget on the key becomes the tighter lane, and the pool keeps its own r
     });
 }));
 
-test("a key with no budget is not a key that failed, and a refused key is", () => withHome(ctx => {
+test("a key with no budget is an absence, not a fault", () => withHome(ctx => {
     ctx.run(["set-key", "vercel", "--label", "Team", "--key-id", "key_none"], { stdin: "vck_k\n" });
     // The documented answer for a key with no budget configured is 404, which the stub gives for
     // any route it was not handed.
@@ -319,9 +319,17 @@ test("a key with no budget is not a key that failed, and a refused key is", () =
         assert.equal(account.spend.label, "Credits", "so the pool stays the lane");
         assert.deepEqual(account.models, [], "and nothing invents a budget row for it");
     });
+}));
 
-        return withGateway({ "/credits": { status: 401, body: { error: "Authentication failed" } } },
-                           async (base) => {
+// Its OWN home. These two cases shared one, and the refused-key half sat behind a `return` that
+// made it unreachable — a suite that never ran the 401 path while claiming to. Made reachable, it
+// failed, because a successful read caches the account (vshell_ai_usage.py:402) and the refusal
+// was answered from that cache without a request being made. Sharing a home would test the cache,
+// not the refusal.
+test("a refused key is a fault of a configured provider", () => withHome(ctx => {
+    ctx.run(["set-key", "vercel", "--label", "Team", "--key-id", "key_bad"], { stdin: "vck_k\n" });
+    return withGateway({ "/credits": { status: 401, body: { error: "Authentication failed" } } },
+                       async (base) => {
         const payload = await runAsync(ctx.home, ["vercel"], { AI_GATEWAY_BASE: base });
         assert.equal(payload.ok, false, "a refused key IS a fault");
         assert.equal(payload.configured, true,

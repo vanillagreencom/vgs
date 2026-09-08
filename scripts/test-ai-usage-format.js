@@ -209,3 +209,17 @@ test("a compact card drops model lanes at nothing, and an expanded one drops non
     assert.deepEqual(shownMeters(null, false, true), [], "no meters is no rows, not a throw");
     assert.deepEqual(shownMeters(undefined, true, false), []);
 });
+
+test("a lane with something to say survives a compact card whatever its percentage", () => {
+    // The backend reports a failed budget lookup as a model lane at 0% whose detail carries the
+    // reason (vshell_ai_usage.py: "budget unavailable: ..."). Dropping every 0% model lane took
+    // the only notice of it off the card and left a broken account reading as a healthy one.
+    const meters = metersFor({
+        models: [{ label: "Budget", pct: 0, detail: "budget unavailable: HTTP 500" },
+                 { label: "GPT-5.3-Codex-Spark", pct: 0 }]
+    });
+    assert.deepEqual(shownMeters(meters, false, true).map(m => m.label), ["Budget"],
+        "the lane carrying a reason stays; the one that has never been used goes");
+    assert.deepEqual(shownMeters(meters, true, true).map(m => m.label), ["Budget", "Spark"],
+        "and expanding still shows both");
+});

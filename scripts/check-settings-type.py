@@ -11,9 +11,12 @@ The roles, and why each is told apart from its neighbour:
 
     page title       Theme.fontSizeLarge      + Theme.fontWeightSectionHeader
     section header   Theme.fontSizeMedium     + Theme.fontWeightSectionHeader
-    control label    Theme.fontSizeMedium     + Font.Medium or Font.Normal
-    body             Theme.fontSizeMedium
     sub text         Theme.settingsFontSize   + Theme.surfaceVariantText
+
+A control label sits at fontSizeMedium as well, but VgsToggle and VgsDropdown
+render their own from their `text` property; a settings page does not write one
+by hand. So hand-written text at that size IS a heading, and this check can
+require the header weight rather than accepting either and enforcing neither.
 
 A header and a control label share a size and are separated by WEIGHT; a label
 and its sub text share a weight and are separated by size and colour. The size
@@ -34,8 +37,14 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 PLUGIN_ROOT = REPO_ROOT / "config" / "vshell" / "plugins"
 
 SECTION_WEIGHT = "Theme.fontWeightSectionHeader"
-LABEL_WEIGHTS = ("Font.Medium", "Font.Normal", "Font.DemiBold")
-SUB_TEXT_COLOR = "Theme.surfaceVariantText"
+# What the smaller tier may be coloured. Sub text is surfaceVariantText and body
+# or a list row is surfaceText; a status line takes the state colour it reports.
+# The set is closed so a near-miss like surfaceTextMedium, which reads as sub
+# text at a different alpha, is reported rather than quietly joining the tier.
+SMALL_TIER_COLORS = {
+    "Theme.surfaceText", "Theme.surfaceVariantText", "Theme.error",
+    "Theme.success", "Theme.warning", "Theme.primary", "Theme.outline",
+}
 
 TITLE_SIZE = "Theme.fontSizeLarge"
 BODY_SIZE = "Theme.fontSizeMedium"
@@ -50,6 +59,8 @@ ROOT_TYPE = re.compile(r"([A-Z]\w*)\s*\{")
 PIXEL_SIZE = re.compile(r"font\.pixelSize\s*:\s*([^\n]+)")
 WEIGHT = re.compile(r"font\.weight\s*:\s*([^\n]+)")
 COLOR = re.compile(r"(?<!\.)\bcolor\s*:\s*([^\n]+)")
+THEME_TOKEN = re.compile(r"Theme\.\w+")
+SUB_TEXT_COLOR = "Theme.surfaceVariantText"
 
 
 def blanked(text: str) -> str:
@@ -148,8 +159,8 @@ def check_file(path: Path) -> tuple[list[str], int]:
         if size not in ALLOWED_SIZES:
             problems.append(
                 f"{where}: font.pixelSize is {size}. A settings surface has three sizes: "
-                f"{TITLE_SIZE} for a page title, {BODY_SIZE} for a section header, a control "
-                f"label or body text, and {SUB_SIZE} for sub text. Theme.fontSizeSmall is the "
+                f"{TITLE_SIZE} for a page title, {BODY_SIZE} for a section header, and "
+                f"{SUB_SIZE} for sub text. Theme.fontSizeSmall is the "
                 f"bar's size, and a header at it renders smaller than the controls under it"
             )
             continue
@@ -167,19 +178,33 @@ def check_file(path: Path) -> tuple[list[str], int]:
                 f"{weight or 'the inherited weight'}. The token is what a reader greps for to "
                 f"find every heading, and Font.Bold spelled out is invisible to that"
             )
-        if size == BODY_SIZE and weight not in ("", SECTION_WEIGHT) and weight not in LABEL_WEIGHTS:
+        if size == BODY_SIZE and weight != SECTION_WEIGHT:
             problems.append(
-                f"{where}: {BODY_SIZE} carries {weight}. A section header takes {SECTION_WEIGHT}; "
-                f"a control label or body text takes one of {', '.join(LABEL_WEIGHTS)}. Those two "
-                f"share a size and are told apart by weight alone, so a third weight reads as "
-                f"neither"
+                f"{where}: a section header at {BODY_SIZE} must take {SECTION_WEIGHT}, not "
+                f"{weight or 'the inherited weight'}. A control label sits at this size too, but "
+                f"VgsToggle and VgsDropdown render their own, so hand-written text at it in a "
+                f"settings surface is a heading. Accepting a label weight here let a heading drift "
+                f"back to Font.Medium with nothing reported"
             )
-        if size == SUB_SIZE and color != SUB_TEXT_COLOR:
-            problems.append(
-                f"{where}: sub text at {SUB_SIZE} must take color {SUB_TEXT_COLOR}, not "
-                f"{color or 'the inherited colour'}. Sub text shares its weight with the label "
-                f"above it, so colour is what separates them"
-            )
+        if size == SUB_SIZE:
+            # A colour can be a ternary — a list row dims when it is unusable —
+            # so every theme token in the expression is judged, not just the
+            # whole string.
+            tokens = set(THEME_TOKEN.findall(color))
+            stray = sorted(tokens - SMALL_TIER_COLORS)
+            if not color:
+                problems.append(
+                    f"{where}: text at {SUB_SIZE} states no colour. This tier carries both sub "
+                    f"text and body, and colour is the only thing separating them, so it cannot "
+                    f"be inherited"
+                )
+            elif stray:
+                problems.append(
+                    f"{where}: text at {SUB_SIZE} is coloured {', '.join(stray)}. This tier takes "
+                    f"{SUB_TEXT_COLOR} for sub text, Theme.surfaceText for body or a list row, or "
+                    f"a state colour for a status line. A near-miss reads as sub text at a "
+                    f"different alpha and drifts without anything reporting it"
+                )
 
     return problems, checked
 

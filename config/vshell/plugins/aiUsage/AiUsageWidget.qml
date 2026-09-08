@@ -504,7 +504,8 @@ PluginComponent {
         id: pollTimer
         // Polling visits accounts sequentially, so scale the minimum interval with
         // the reported account count across every provider.
-        interval: Math.max(60 * Math.max(1, root.view.totalCount), root.refreshSeconds) * 1000
+        interval: Math.max(60 * Math.max(1, logic.polledAccountCount(root.providerData)),
+                           root.refreshSeconds) * 1000
         repeat: true
         // Start once the channels exist rather than at this timer's own completion:
         // triggeredOnStart against an empty Instantiator would fetch nothing and
