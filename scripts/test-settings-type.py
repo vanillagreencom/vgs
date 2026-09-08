@@ -11,6 +11,7 @@ from __future__ import annotations
 import importlib.machinery
 import importlib.util
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -149,6 +150,29 @@ class SurfaceRecognition(unittest.TestCase):
             finally:
                 GUARD.REPO_ROOT = original
         self.assertEqual(len(problems), 1)
+
+
+class RootDetection(unittest.TestCase):
+    def test_a_block_comment_before_the_root_does_not_hide_it(self):
+        text = ("import QtQuick\n\n/* A licence header,\n   several lines of it. */\n"
+                "PluginSettings {\n    id: root\n}\n")
+        self.assertTrue(GUARD.is_surface(text))
+
+    def test_a_non_settings_root_is_not_a_surface(self):
+        self.assertFalse(GUARD.is_surface("import QtQuick\n\nColumn {\n    id: root\n}\n"))
+
+    def test_a_run_of_blank_lines_does_not_hang(self):
+        # The first version matched the whole preamble in one pattern and
+        # alternated a whitespace run inside a repetition. That backtracks
+        # exponentially, and it was not theoretical: 40 blank lines above a root
+        # that does not match ran for minutes before it was killed. CodeQL
+        # flagged it py/redos. Any settings file with a long enough gap above
+        # its root would have hung the check in CI.
+        text = "import QtQuick\n" + "\n" * 400 + "notATypeName\n"
+        started = time.monotonic()
+        self.assertFalse(GUARD.is_surface(text))
+        self.assertLess(time.monotonic() - started, 2.0,
+                        "root detection is superlinear in the blank lines above the root")
 
 
 class BraceWalking(unittest.TestCase):

@@ -43,7 +43,10 @@ SUB_SIZE = "Theme.settingsFontSize"
 ALLOWED_SIZES = (TITLE_SIZE, BODY_SIZE, SUB_SIZE)
 
 MARKER = re.compile(r"\bsettingsSurface\s*:\s*true\b")
-ROOT_TYPE = re.compile(r"^\s*(?:pragma[^\n]*\n|import[^\n]*\n|//[^\n]*\n|\s*\n)*\s*([A-Z]\w*)\s*\{", re.M)
+# Anchored at a line start by `match`, with no nested quantifier. An earlier
+# version walked the whole preamble in one pattern and alternated `\s*\n`
+# inside a `*`, which backtracks exponentially on a run of blank lines.
+ROOT_TYPE = re.compile(r"([A-Z]\w*)\s*\{")
 PIXEL_SIZE = re.compile(r"font\.pixelSize\s*:\s*([^\n]+)")
 WEIGHT = re.compile(r"font\.weight\s*:\s*([^\n]+)")
 COLOR = re.compile(r"(?<!\.)\bcolor\s*:\s*([^\n]+)")
@@ -112,10 +115,18 @@ def enclosing_block(view: str, at: int) -> tuple[int, int]:
 
 
 def is_surface(text: str) -> bool:
+    """Whether this file is a settings surface: marked, or rooted in PluginSettings."""
     if MARKER.search(text):
         return True
-    root = ROOT_TYPE.search(text)
-    return bool(root and root.group(1) == "PluginSettings")
+    # Scanned line by line over the blanked view, so both comment forms are
+    # already gone and the walk stays linear in the length of the file.
+    for raw in blanked(text).splitlines():
+        line = raw.strip()
+        if not line or line.startswith("pragma ") or line.startswith("import "):
+            continue
+        root = ROOT_TYPE.match(line)
+        return bool(root and root.group(1) == "PluginSettings")
+    return False
 
 
 def check_file(path: Path) -> tuple[list[str], int]:
