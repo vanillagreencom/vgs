@@ -213,7 +213,7 @@ usage_table \
   "a banner below the last user turn is the event, the Claude signature deciding the boundary|new|banner_after_turn|claude|$RESET_NOW|UTC|rc=0 first=$AT_0950" \
   "an unrecognized last input line never swallows the screen|new|unrecognized_composer|claude|$RESET_NOW|UTC|rc=0 first=$AT_0950" \
   "transcript lines between the banner and the composer are not markers|new|realistic|claude|$RESET_NOW|UTC|rc=0 first=$AT_0950" \
-  "...and under a byte-oriented locale, where a marker class would degrade|cont|realistic|claude|-|C|rc=0 first=$AT_0950" \
+  "...and under a byte-oriented locale, where a marker class would degrade|new|realistic|claude|$RESET_NOW|C|rc=0 first=$AT_0950" \
   "a stale banner never masks the live question on a dialog screen|new|stale_over_question|claude|-|-|rc=0 first=EVENT+lane-asking+gh-2 out~EVENT+usage-limit=false" \
   "a banner below the turn on a dialog screen is still the event, and outranks the question|new|live_over_question|claude|$RESET_NOW|UTC|rc=0 first=$AT_0950" \
   "a dialog's column-0 selected row is live input, not the turn: the banner above it is still the event|new|banner_over_column0_dialog|claude|$RESET_NOW|UTC|rc=0 first=$AT_0950 out~EVENT+lane-asking=false" \
@@ -231,6 +231,25 @@ echo "=== the account is the actionable part ==="
 usage_table \
   "the event names the config dir the lane was claimed on, never a same-named window elsewhere|new|banner:You've hit your weekly limit|claim_live|-|-|rc=0 first=EVENT+usage-limit+gh-2+/home/me/.eclaude out~otherclaude=false out~thirdclaude=false" \
   "a claim whose pane is gone names no account and is pruned|new|banner:You've hit your weekly limit|claim_dead|-|-|rc=0 first=EVENT+usage-limit+gh-2 claims=0"
+
+# The note is about the event line it qualifies: a re-run that suppresses the
+# standing wall prints neither. Red with the claim read above the suppression.
+new_case claim_note_only_with_event
+# one live claim on this server, on a pane other than the one captured
+printf '900 %%3\n900 %%9\n' > "$STUB_DIR/panes.txt"
+printf '900 %%3\n' > "$STUB_DIR/pane-key-gh-2.txt"
+mkdir -p "$STATE_DIR/claims"
+printf '900\t%%9\t/home/me/.eclaude\tgh-9\t2026-08-16T00:00:00Z\n' > "$STATE_DIR/claims/a.claim"
+screen "banner:You've hit your weekly limit"
+run
+expect="rc=0 first=EVENT+usage-limit+gh-2"
+assert_eq "$(watch "$expect")" "$expect" "the run that reports the wall notes the missing claim" "$ERR"
+assert_eq "$(grep -c 'oversee-watch: claim-missing lane=gh-2' "$ERR")" "1" "and prints the note once"
+rm -f "$STUB_DIR/pane-gh-2.calls" "$STUB_DIR/cmd-gh-2.calls"
+run
+expect="rc=0 first=$HEARTBEAT out~EVENT+usage-limit=false"
+assert_eq "$(watch "$expect")" "$expect" "a re-run over the same wall reports nothing" "$ERR"
+assert_eq "$(grep -c 'oversee-watch: claim-missing lane=gh-2' "$ERR" || true)" "0" "and the note about an event it did not print stays silent"
 
 echo "=== the reset the banner states ==="
 # SURFACE 1: the reset parsed out of each banner form the grammar accepts,
@@ -256,12 +275,14 @@ usage_table \
 # SURFACE 2: a clause naming no day is usage-limit-passed only once this watch
 # has seen that wall standing (the case the issue was filed on); the same
 # screen at the same instant with nothing observed before it cannot know which
-# 9:50am the banner meant, so it parks. SURFACE 3: a dated clause names its
-# own day and needs no sighting. SURFACE 4: one predicate answers
-# is-the-account-speaking for both consumers, so a turn in flight neither
-# emits nor stamps.
+# 9:50am the banner meant, so it parks. A wall reported once is not reported
+# again by a re-run while it stands; the reset going by is what is news.
+# SURFACE 3: a dated clause names its own day and needs no sighting. SURFACE
+# 4: one predicate answers is-the-account-speaking for both consumers, so a
+# turn in flight neither emits nor stamps.
 usage_table \
   "the first pass observes the wall and carries the reset it names|new|banner:$BANNER|claude|$RESET_NOW|UTC|rc=0 first=$AT_0950" \
+  "a re-run over the same standing wall does not report it again|cont|banner:$BANNER|claude|$RESET_NOW|UTC|rc=0 first=$HEARTBEAT out~EVENT+usage-limit=false" \
   "the reset the first pass observed, now behind us, is its own event|cont|banner:$BANNER|claude|1788369300|UTC|rc=0 first=EVENT+usage-limit-passed+gh-2+resets=2026-09-02T16:50:00Z" \
   "a wall this watch never saw standing is parked, not bumped|new|banner:$BANNER|claude|1788369300|UTC|rc=0 first=EVENT+usage-limit+gh-2+resets=2026-09-03T16:50:00Z" \
   "a dated reset already behind us is passed without an observation|new|banner:You've hit your weekly limit \\xc2\\xb7 resets Aug 30, 4pm|claude|$RESET_NOW|UTC|rc=0 first=EVENT+usage-limit-passed+gh-2+resets=2026-08-30T16:00:00Z" \
@@ -275,7 +296,7 @@ echo "=== a walled lane does not starve the fleet ==="
 # prompt emits usage-limit for the first AND lane-asking for the second, each
 # followed by its own pane tail, and exits once. Before, the usage-limit arm
 # left the pass on the first walled lane, and with a parked lane the steady
-# state (oversee.md § 4), no other lane's question was reported until the
+# state (../workflows/oversee.md § 4), no other lane's question was reported until the
 # banner cleared.
 new_case walled_and_asking_fleet
 printf '%b\n' '⏺ Working through the queue.' "$BANNER" 'Run /usage-credits to raise it' "$COMPOSER" > "$STUB_DIR/pane-gh-1.txt"
@@ -325,6 +346,25 @@ WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run TZ=UTC
 expect="first=EVENT+lane-asking+gh-2 out~EVENT+usage-limit=false"
 assert_eq "$(watch "$expect")" "$expect" \
   "control: without the arm the column-0 row is the turn and the banner above it goes unreported" "$ERR"
+
+cat > "$TMP_ROOT/bin/grep" <<'EOF'
+#!/usr/bin/env bash
+if [[ -f "$STUB_DIR/reset-grep-fail" && "${1:-}" == "-Em1" ]]; then
+  printf '%s\n' 'E_RESET_GREP' >&2
+  exit 2
+fi
+exec /usr/bin/grep "$@"
+EOF
+chmod +x "$TMP_ROOT/bin/grep"
+new_case reset_scan_failure
+screen "banner:$BANNER"
+touch "$STUB_DIR/reset-grep-fail"
+run TZ=UTC
+assert_eq "$RC" "2" "a reset-clause search failure exits 2"
+assert_eq "$(grep -Fxc 'oversee-watch: reset-scan-failed exit=2' "$ERR")" "1" \
+  "a reset-clause search failure emits its stable reason and exit"
+assert_eq "$(grep -Fxc 'E_RESET_GREP' "$ERR")" "1" \
+  "the reset-clause failure keeps the tool detail after its header"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

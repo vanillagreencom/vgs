@@ -49,27 +49,59 @@ classify_hooks_path() { # -> 0 classified, 2 could not read the config
   return 0
 }
 
-# The three roots every hooks question is asked against, from the one place
-# that asks them: where the caller stands, where git runs a hook from, and
-# which directory git would read hooks from with nothing in the way.
+# One git directory answer, in a shape two of them can be compared in.
 #
-# Sets REPO_ABS, COMMON_DIR and HOOKS_DIR. Uses `die` from
-# install-git-hooks, which is the only caller.
-resolve_roots() {
-  gg_path REPO_ABS gg_physical "$REPO" || die "could not resolve $REPO"
-  # --git-common-dir may answer relative to the repository (git predates
-  # --path-format), so absolutize it here rather than assuming a git version.
-  gg_git_path COMMON_DIR "$REPO_ABS" rev-parse --git-common-dir || COMMON_DIR=""
-  [ -n "$COMMON_DIR" ] || die "could not resolve the common git directory of $REPO"
-  case "$COMMON_DIR" in
+# git answers `--git-dir` and `--git-common-dir` relative to the repository
+# (it predates --path-format), so both are absolutized here rather than
+# assuming a git version; and from a subdirectory it answers with traversal,
+# while the installer's messages quote such a path at somebody. Both exist,
+# so both can name themselves. One helper because the resolution has to be
+# the same for both: two answers resolved differently compare unequal for
+# the main checkout, whose two answers are one directory.
+gg_repo_git_dir() { # VAR REV-PARSE-ARG -> 0 resolved, 1 git did not answer
+  local __name="$1" __gd_raw="" __gd_res=""
+  gg_git_path __gd_raw "$REPO_ABS" rev-parse "$2" || __gd_raw=""
+  [ -n "$__gd_raw" ] || return 1
+  case "$__gd_raw" in
     /*) ;;
-    *) COMMON_DIR="$REPO_ABS/$COMMON_DIR" ;;
+    *) __gd_raw="$REPO_ABS/$__gd_raw" ;;
   esac
-  # From a subdirectory git answers with traversal, and every message below
-  # quotes this path at somebody. It exists, so it can name itself.
-  gg_path COMMON_RESOLVED gg_physical "$COMMON_DIR" \
-    && COMMON_DIR="$COMMON_RESOLVED"
+  gg_path __gd_res gg_physical "$__gd_raw" && __gd_raw="$__gd_res"
+  eval "$__name=\$__gd_raw"
+}
+
+# The roots every hooks question is asked against, from the one place that
+# asks them: where the caller stands, where git runs a hook from, which
+# directory git would read hooks from with nothing in the way, and whether
+# there is a main checkout other than the caller's own work tree.
+#
+# Sets REPO_ABS, COMMON_DIR, HOOKS_DIR, LINKED_WORKTREE and MAIN_CHECKOUT.
+# Uses `die` from install-git-hooks, which is the only caller.
+resolve_roots() {
+  local gitdir="" bare=""
+  gg_path REPO_ABS gg_physical "$REPO" || gg_fail repo-resolve "$REPO" "could not resolve $REPO"
+  gg_repo_git_dir COMMON_DIR --git-common-dir \
+    || gg_fail common-dir-resolve "$REPO" "could not resolve the common git directory of $REPO"
   HOOKS_DIR="$COMMON_DIR/hooks"
+  # A linked work tree keeps its own git directory under the common one; the
+  # main checkout's two answers name the same directory. This is git's own
+  # test for the distinction, and the only one that does not guess from a
+  # path shape.
+  gg_repo_git_dir gitdir --git-dir \
+    || gg_fail git-dir-resolve "$REPO" "could not resolve the git directory of $REPO"
+  LINKED_WORKTREE=0
+  [ "$gitdir" = "$COMMON_DIR" ] || LINKED_WORKTREE=1
+  # Whether a main checkout exists at all. A bare clone with work trees added
+  # to it — `git clone --bare` then `git worktree add`, a layout people run
+  # deliberately — has none: every work tree of it is a linked one, and the
+  # repository the shims belong to is the bare directory, which has no work
+  # tree to install from. `core.bare` is git's own record of that, so it is read
+  # rather than inferred from a path shape, and it carries no path bytes into
+  # the answer. Unset reads the same as `false`, which leaves a linked work
+  # tree with somewhere else to go — what every ordinary repository has.
+  MAIN_CHECKOUT=1
+  gg_git_path bare "$REPO_ABS" config --get core.bare || bare=""
+  [ "$bare" != "true" ] || MAIN_CHECKOUT=0
 }
 
 # The classification, and what every mode does when it cannot be made.
@@ -83,10 +115,10 @@ classify_hooks_path_or_stop() {
   classify_hooks_path || status=$?
   [ "$status" -eq 0 ] && return 0
   if [ "$MODE" = "check" ]; then
-    echo "commit-guards git hooks: could not determine whether the shims are armed — core.hooksPath could not be read in $REPO_ABS"
+    summary unknown "hooks-path-read=$REPO_ABS" "The hooks path configuration could not be read."
     exit 2
   fi
-  die "could not read core.hooksPath in $REPO_ABS"
+  gg_fail hooks-path-read "$REPO_ABS" "could not read core.hooksPath in $REPO_ABS"
 }
 
 # core.hooksPath set to the empty string switches git hooks off outright.
@@ -103,7 +135,7 @@ hooks_path_off() { # -> 0 when hooks are switched off
 
 # The stand-down text: one statement, git's own report, one sentence.
 #
-# docs/architecture/overview.md § Decisions rules it: recovery instructions present their
+# The architecture decision on recovery output rules it: instructions present their
 # parameters as data, never a pasteable command line. A composed command has
 # to be right about `--unset-all`, about a second file the winning value
 # shadows, and about `include.path`, which git reports under the INCLUDING
@@ -124,7 +156,7 @@ HOOKS_PATH_REMEDY="Clear the setting at its source, then run kendex guard instal
 # stdout, and the install lane already reports there.
 hooks_path_origins() { # -> the stand-down text, on stderr
   local line="" listed=0
-  echo "  core.hooksPath is set." >&2
+  gg_message hooks-path-set core.hooksPath "$HOOKS_PATH_REMEDY" >&2
   # git's report, said the way the summary says the value: what git wrote,
   # rendered by %q. Relaying the raw bytes would put a value carrying ESC on
   # a terminal unescaped, which is the same value the summary is careful
@@ -134,14 +166,13 @@ hooks_path_origins() { # -> the stand-down text, on stderr
   # Nothing is dropped or reordered: one line in, one line out.
   while IFS= read -r line; do
     listed=1
-    printf '  %s\n' "$(gg_shown "$line")" >&2
+    gg_message hooks-path-origin "$(gg_shown "$line")" "Git reports this scope, source, and value." >&2
   done < <(git -C "$REPO_ABS" config --show-origin --show-scope --get-all core.hooksPath 2>/dev/null)
   # git prints at least one line for a value that is set, so nothing read
   # means nothing to read. That covers the failure and the empty answer
   # together, which is right: both leave the reader without the report, and
   # neither changes the verdict.
   if [ "$listed" -eq 0 ]; then
-    echo "  Its origin could not be listed." >&2
+    gg_message hooks-path-origin-unavailable core.hooksPath "The configuration origin could not be listed." >&2
   fi
-  echo "  $HOOKS_PATH_REMEDY" >&2
 }

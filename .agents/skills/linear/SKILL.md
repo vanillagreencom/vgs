@@ -137,6 +137,16 @@ The cache is `.cache/linear` under the physical worktree root ([README.md](READM
 
 `LINEAR_API_KEY` belongs in `.env.local`; non-secret defaults in committed `kendex.settings.toml` `[env]`. A key from project files beats one inherited from the environment, and `auth-check` warns (fingerprints only) when it shadows a differing inherited key.
 
+## Shared label maintenance
+
+`LINEAR_TEAM` requires a target before writes; it does not restrict an API key or check a label's owning team. `auth-check` verifies authentication and the local target, not the key's permission mask. Inspect key permissions in Linear settings; report fingerprints only.
+
+Before changing a label definition, read its ID, team, parent and group status. An empty team means workspace scope. Read issue use across affected teams and check references in their manifests, scripts, gates and generated instructions. A team-restricted key cannot establish workspace-wide issue use.
+
+The workspace owner coordinates shared label changes with affected repository maintainers. A repository taxonomy names that owner. Keep generic labels shared and project-specific labels team-scoped. Obtain approval for the concrete affected set and the exact proposed change before any shared-label definition change, replacement or deletion. Issue-label assignment authority does not authorize changing a shared label definition.
+
+Prepare dependent repository corrections before the label change. After an authorized change, refresh each affected inventory, render instructions from their source, and run its taxonomy and repository checks. Record the label IDs, issue assignments and repository commits together. If the API cannot change scope, prepare a replacement plan with history and recovery limits before requesting migration approval.
+
 ## Issue Creation Routing
 
 Never create a tracked issue directly from an orchestration or review session. Route it through the TPM pipeline (project-management skill), which owns labels, project, priority, estimate, and relations.
@@ -161,7 +171,7 @@ Normalized issue lists, gets, bulk gets, bundles, recursive children, relation r
 
 What each option accepts: `issues --help`. Refused before any write, on the create and update paths alike: `--cycle` on a non-UUID, `--project`/`--milestone`/`--assignee` on a reference that matches nothing, and `--priority` on an out-of-range value. Available states: Backlog, Todo, In Progress, In Review, Done, Canceled (not "Cancelled"). Verify with `statuses list`.
 
-A **name** selects one project on `issues create` / `update` / `bulk-update --project`, `projects get` / `cache projects get`, `projects list-dependencies` (the live spelling only; `cache projects list-dependencies` matches on the name alone), `milestones --project`, and `initiatives add-project` / `remove-project`. There a canceled project sharing that name loses to the live one, and a name with no live match is refused, naming each match and its state; pass a UUID to reach a canceled project. Name **filters** never resolve: `issues list --project`, `cache issues list --project` and `documents list --project` match on the name alone, so their results can mix a live project with its canceled twin.
+A **name** selects one project on `issues create` / `update` / `bulk-update --project`, `projects get` / `cache projects get`, `projects list-dependencies` / `cache projects list-dependencies`, `milestones --project`, and `initiatives add-project` / `remove-project`. There a canceled project sharing that name loses to the live one, and a name with no live match is refused, naming each match and its state; pass a UUID to reach a canceled project. Name **filters** never resolve: `issues list --project`, `cache issues list --project` and `documents list --project` match on the name alone, so their results can mix a live project with its canceled twin.
 
 `--labels` REPLACES the whole issue-label set. Fetch current labels, compute the final set, validate it against `cache labels list --format=safe` (which reports `is_group` so parent/group labels can be rejected), then pass the complete set. A name that does not resolve fails the update; `--clear-labels` is the only way to empty the set.
 
