@@ -88,7 +88,8 @@
     { "package": "aqua:modem-dev/hunk", "command": "hunk" },
     { "package": "github:dlvhdr/gh-dash", "command": "gh-dash" },
     { "package": "github:joshmedeski/sesh", "command": "sesh" },
-    { "package": "npm:vercel", "command": "vercel" }
+    { "package": "npm:vercel", "command": "vercel" },
+    { "package": "daytona", "command": "daytona" }
   ],
   "envs": [
     { "id": "node", "name": "Node.js", "icon": "nerd:f0399", "color": "#5FA04E", "tools": ["node"], "settings": { "idiomatic_version_file_enable_tools": ["node"] }, "present": "~/.local/share/mise/installs/node" },
