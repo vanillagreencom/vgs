@@ -427,6 +427,12 @@ PluginComponent {
     property string devAgentList: ""
     property string devEnvList: ""
 
+    // The lists are built here rather than only from the catalog file's load
+    // signal: a FileView that has already read the file emits nothing when the
+    // plugin is loaded again, which left the Dev tools category empty for the
+    // rest of the session.
+    Component.onCompleted: root.reloadDevItems()
+
     // The helper decides which entries this machine can install; asking it is
     // what keeps a tile from disagreeing with the settings page. The catalog
     // file is watched only to know when to ask again.
