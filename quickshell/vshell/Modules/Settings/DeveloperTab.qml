@@ -351,24 +351,51 @@ Item {
                     }
                 }
 
+                // One size across the whole line, as on the line above it:
+                // colour and weight carry the difference between the label, the
+                // release and the action. A larger word would read as a
+                // heading of the two lines above rather than part of them.
                 Row {
                     visible: row.outdated
-                    spacing: Theme.spacingS
+                    spacing: Theme.spacingXS
 
                     StyledText {
-                        text: I18n.tr("Update available: %1").arg(row.modelData.latest)
+                        text: I18n.tr("Update available")
                         font.pixelSize: Theme.settingsFontSize - 1
+                        color: Theme.surfaceVariantText
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+
+                    StyledText {
+                        text: row.modelData.latest
+                        font.pixelSize: Theme.settingsFontSize - 1
+                        font.weight: Font.Medium
                         color: Theme.primary
                         anchors.verticalCenter: parent.verticalCenter
                     }
 
-                    VgsButton {
+                    Item {
+                        width: Theme.spacingXS
+                        height: 1
+                    }
+
+                    StyledText {
+                        id: updateLink
                         text: I18n.tr("Update")
-                        variant: "secondary"
-                        buttonHeight: 22
-                        horizontalPadding: Theme.spacingS
+                        font.pixelSize: Theme.settingsFontSize - 1
+                        font.weight: Font.DemiBold
+                        font.underline: updateArea.containsMouse
+                        color: Theme.primary
                         anchors.verticalCenter: parent.verticalCenter
-                        onClicked: root.runEntryAction(row.modelData, "update")
+
+                        MouseArea {
+                            id: updateArea
+                            anchors.fill: parent
+                            anchors.margins: -Theme.spacingXXS
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.runEntryAction(row.modelData, "update")
+                        }
                     }
                 }
             }
