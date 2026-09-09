@@ -8,10 +8,17 @@
 #
 # Multi-account: people run several subscriptions side by side by pointing
 # CLAUDE_CONFIG_DIR (or CODEX_HOME) at different directories, one per wrapper
-# script. Discovery checks configured profile locations. Each supported profile
-# becomes an account entry. Top-level fields describe the primary account.
+# script. Both providers are discovered the same way — any directory holding
+# that provider's own login file — plus whatever `vshell ai-usage add-dir` was
+# told to look in. Each supported profile becomes an account entry. Top-level
+# fields describe the primary account.
+#
+# Providers configured with an API key rather than a CLI login (AI Gateway) are
+# not this script's: they have nothing on disk to discover, and vshell_ai_usage.py
+# fetches them.
 #
 # Usage: vshell-ai-usage [claude|codex]
+#        vshell-ai-usage --dirs <claude|codex>   (which config directories it would read)
 #
 # Output (one line of JSON):
 #   {"ok":true,"provider":"claude","plan":"Max 20x","class":"critical",
@@ -40,6 +47,12 @@ export PATH
 # Account selection here is always explicit via --config-dir.
 unset CLAUDE_CONFIG_DIR CODEX_HOME
 
+mode="usage"
+if [[ "${1:-}" == "--dirs" ]]; then
+    mode="dirs"
+    shift
+fi
+
 provider="${1:-claude}"
 
 case "$provider" in
@@ -51,56 +64,156 @@ case "$provider" in
         ;;
 esac
 
-if ! command -v "$engine" >/dev/null 2>&1; then
+if [[ "$mode" == "usage" ]] && ! command -v "$engine" >/dev/null 2>&1; then
     jq -nc --arg p "$provider" --arg e "$engine" '{ok:false,provider:$p,error:($e+" not found in PATH")}'
     exit 0
 fi
 
+# Directories the user told VGS to look in as well, written by
+# `vshell ai-usage add-dir` for wrappers that point CLAUDE_CONFIG_DIR or
+# CODEX_HOME somewhere no naming convention can guess.
+SOURCES_FILE="$HOME/.local/state/vshell/ai-usage/sources.json"
 
-# Claude: any directory holding a .credentials.json with a claudeAiOauth block.
-# Profiles whose tokens live in the desktop keyring instead (mcpOAuth only) are
-# not pollable over this API and are left out rather than shown permanently broken.
-discover_claude() {
-    local dir
-    for dir in "$HOME/.claude" "$HOME"/.*claude*; do
-        [[ -d "$dir" ]] || continue
-        [[ -f "$dir/.credentials.json" ]] || continue
-        jq -e '.claudeAiOauth.accessToken // empty' "$dir/.credentials.json" >/dev/null 2>&1 || continue
-        printf '%s\n' "$dir"
-    done | awk '!seen[$0]++'
-}
-
-discover_codex() {
-    local dir
-    for dir in "$HOME/.codex" "$HOME"/.codex-*; do
-        [[ -d "$dir" ]] || continue
-        [[ -f "$dir/auth.json" ]] || continue
-        printf '%s\n' "$dir"
-    done | awk '!seen[$0]++'
-}
-
-# The default Claude profile is ~/.claude.json; other profiles keep their
-# identity file in the config directory. Email distinguishes accounts on the same plan.
-label_for() {
-    local dir="$1" email=""
-    if [[ "$provider" == "claude" ]]; then
-        for candidate in "$dir/.claude.json" "$HOME/.claude.json"; do
-            [[ -f "$candidate" ]] || continue
-            email=$(jq -r '.oauthAccount.emailAddress // empty' "$candidate" 2>/dev/null || true)
-            [[ -n "$email" ]] && break
-            # Only fall back to the home-root profile for the default config dir;
-            # an alt dir without its own profile must not borrow the default's identity.
-            [[ "$dir" == "$HOME/.claude" ]] || break
-        done
-        [[ -z "$email" && -f "$dir/.auth-email-cache" ]] && email=$(head -n1 "$dir/.auth-email-cache" 2>/dev/null || true)
+# Read with jq, keeping "the file does not say" apart from "jq could not run".
+# An empty answer is an ordinary outcome here — a profile with no address, a
+# store with no extra directories — but jq exits above 1 for a broken program
+# or unreadable input, and swallowing that would drop directories or blank
+# every label with nothing anywhere saying why.
+jq_read() {
+    local out status
+    out=$(jq -r "$@" 2>/dev/null)
+    status=$?
+    if (( status > 1 )); then
+        printf 'vshell-ai-usage: jq exited %d; continuing without what it was asked for\n' "$status" >&2
+        return "$status"
     fi
+    # Terminate the answer: callers that read it line by line drop a final line
+    # with no newline behind it, which silently loses the last directory. A
+    # single-value caller's command substitution strips this again.
+    printf '%s\n' "$out"
+}
+
+extra_dirs() {
+    [[ -f "$SOURCES_FILE" ]] || return 0
+    # shellcheck disable=SC2016  # $p is a jq variable bound by --arg, not a shell expansion
+    jq_read --arg p "$provider" \
+        '((.dirs[$p] // []) | .[] | select(type == "string") | select(. != ""))' \
+        -- "$SOURCES_FILE" || return 0
+}
+
+# Both providers are found the same way: a directory holding this provider's
+# own login file. Codex used to be looked for under two exact names while
+# Claude took any ~/.*claude* directory, so a second Codex account in a
+# directory whose name did not start with .codex- was simply never found.
+candidate_dirs() {
+    local xdg="${XDG_CONFIG_HOME:-$HOME/.config}"
+    case "$provider" in
+        claude) printf '%s\n' "$HOME/.claude" "$HOME"/.*claude* "$xdg/claude" "$xdg"/claude-* ;;
+        codex)  printf '%s\n' "$HOME/.codex"  "$HOME"/.*codex*  "$xdg/codex"  "$xdg"/codex-* ;;
+    esac
+}
+
+# Whether this directory holds a login the engine can actually poll. Claude
+# profiles whose tokens live in the desktop keyring instead (mcpOAuth only) are
+# not pollable over this API and are left out rather than shown permanently
+# broken; a Codex directory without an access token is the same case.
+dir_usable() {
+    local dir="$1"
+    case "$provider" in
+        claude)
+            [[ -f "$dir/.credentials.json" ]] || return 1
+            jq -e '.claudeAiOauth.accessToken // empty' -- "$dir/.credentials.json" >/dev/null 2>&1
+            ;;
+        codex)
+            [[ -f "$dir/auth.json" ]] || return 1
+            jq -e '.tokens.access_token // empty' -- "$dir/auth.json" >/dev/null 2>&1
+            ;;
+        *) return 1 ;;
+    esac
+}
+
+# Every candidate that holds a usable login, deduplicated, discovery first.
+discover() {
+    local dir
+    { candidate_dirs; extra_dirs; } | while IFS= read -r dir; do
+        [[ -n "$dir" ]] || continue
+        dir="${dir%/}"
+        [[ -d "$dir" ]] || continue
+        dir_usable "$dir" || continue
+        printf '%s\n' "$dir"
+    done | awk '!seen[$0]++'
+}
+
+# The signed-in address for a directory, so two accounts on the same plan are
+# told apart before either has been fetched. Claude keeps it in a profile file;
+# Codex keeps it in the id_token, a JWT whose payload carries it.
+jwt_field() {
+    local token="$1" field="$2" payload decoded
+    payload=$(cut -d. -f2 <<<"$token")
+    [[ -n "$payload" && "$payload" != "$token" ]] || return 0
+    payload="${payload//-/+}"
+    payload="${payload//_//}"
+    while (( ${#payload} % 4 != 0 )); do payload+="="; done
+    decoded=$(base64 -d <<<"$payload" 2>/dev/null) || return 0
+    # shellcheck disable=SC2016  # $f is a jq variable bound by --arg, not a shell expansion
+    jq_read --arg f "$field" '.[$f] // empty' <<<"$decoded" || return 0
+}
+
+label_for() {
+    local dir="$1" email="" token
+    case "$provider" in
+        claude)
+            if [[ -f "$dir/.claude.json" ]]; then
+                email=$(jq_read '.oauthAccount.emailAddress // empty' -- "$dir/.claude.json") || email=""
+            fi
+            # Only the default config dir falls back to the home-root profile. The
+            # loop this replaced skipped that guard whenever the alt directory had
+            # no profile file of its own -- exactly the case the guard is for -- so
+            # every such directory was labelled with the DEFAULT account's address.
+            if [[ -z "$email" && "$dir" == "$HOME/.claude" && -f "$HOME/.claude.json" ]]; then
+                email=$(jq_read '.oauthAccount.emailAddress // empty' -- "$HOME/.claude.json") || email=""
+            fi
+            if [[ -z "$email" && -f "$dir/.auth-email-cache" ]]; then
+                email=$(head -n1 -- "$dir/.auth-email-cache" 2>/dev/null) || email=""
+            fi
+            ;;
+        codex)
+            if [[ -f "$dir/auth.json" ]]; then
+                token=$(jq_read '.tokens.id_token // empty' -- "$dir/auth.json") || token=""
+                [[ -n "$token" ]] && email=$(jwt_field "$token" email)
+            fi
+            ;;
+    esac
     printf '%s' "$email"
 }
 
-case "$provider" in
-    claude) mapfile -t dirs < <(discover_claude) ;;
-    codex)  mapfile -t dirs < <(discover_codex) ;;
-esac
+mapfile -t dirs < <(discover)
+
+# --- Source reporting (the widget's provider setup page) ---------------------
+# Answered from the same discovery the fetch uses, so the page cannot list a
+# directory the fetch ignores, or miss one it reads.
+if [[ "$mode" == "dirs" ]]; then
+    dirs_json="[]"
+    for dir in "${dirs[@]}"; do
+        dirs_json=$(jq -c --argjson acc "$dirs_json" --arg path "$dir" --arg label "$(label_for "$dir")" \
+            '$acc + [{path:$path, label:$label, managed:"discovered", usable:true}]' <<<'null')
+    done
+    while IFS= read -r dir; do
+        [[ -n "$dir" ]] || continue
+        dir="${dir%/}"
+        usable=false
+        if [[ -d "$dir" ]] && dir_usable "$dir"; then
+            usable=true
+        fi
+        # An extra directory discovery also found is reported once, as the
+        # user's, so the row that can be removed is the one on screen.
+        dirs_json=$(jq -c --argjson acc "$dirs_json" --arg path "$dir" \
+            --arg label "$(label_for "$dir")" --argjson usable "$usable" \
+            '($acc | map(select(.path != $path))) + [{path:$path, label:$label, managed:"extra", usable:$usable}]' <<<'null')
+    done < <(extra_dirs)
+    jq -nc --arg p "$provider" --argjson dirs "$dirs_json" '{ok:true, provider:$p, dirs:$dirs}'
+    exit 0
+fi
 
 if ((${#dirs[@]} == 0)); then
     jq -nc --arg p "$provider" '{ok:false,provider:$p,error:"no signed-in accounts found"}'
@@ -164,6 +277,11 @@ for dir in "${dirs[@]}"; do
             enterprise: (((($entry.plan // "") | ascii_downcase) | startswith("enterprise"))
                          or ($entry.spend != null)),
             class: ($entry.class // "low"),
+            # Per-account figures that are not usage windows: how many
+            # usage-limit resets this account may still spend, and its credit
+            # balance. Absent for a provider that reports neither.
+            resets: ($entry.resets // null),
+            creditsBalance: ($entry.creditsBalance // null),
             session: ($entry.session // null),
             weekly: ($entry.weekly // null),
             # Normalize model labels and spend details for the same plain-text widget.

@@ -21,7 +21,9 @@ QML draws the shell and coordinates services. A service owns long-lived state; a
 - Plugin-backed properties remain bindings. Setters persist through the plugin service; dependent work responds to its change notification. See the plugin service implementations under `Modules/Plugins/`.
 - Destructive pill actions require a click origin; unspecified origins are IPC calls. `scripts/test-pill-hover-safety.js` checks the shared dispatch and protected actions.
 - Launcher selection follows pointer movement only while its hover gate is armed. `scripts/test-launcher-hover-latch.js` checks asynchronous result replacement.
-- Provider replies carry their own identity and source-scoped state is cleared before reuse. `scripts/test-ai-usage-logic.js` and `scripts/test-ai-usage-lifecycle.js` cover the usage widget.
+- Provider replies carry their own identity, and each usage fetch channel is bound to one provider for its life, so a payload is only ever filed under the identity it names. `scripts/test-ai-usage-logic.js` and `scripts/test-ai-usage-lifecycle.js` cover the usage widget.
+- The usage widget's provider catalog has one owner: `AiUsageLogic` names every provider, its icon and whether it needs a credential, and the bar slots, the filter, the popout deck and the fetch channels are all generated from it. `scripts/test-ai-usage-wiring.js` checks that no surface spells a provider out, and `scripts/test-ai-usage-sources.js` checks the catalog against the helper's.
+- AI-usage credentials are written 0600 under the state directory and reach argv nowhere; the widget hands a key to the helper on stdin. `scripts/test-ai-usage-sources.js` checks both.
 
 ## Decisions
 

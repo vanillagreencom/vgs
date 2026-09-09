@@ -24,6 +24,11 @@ Column {
     width: parent.width
     spacing: Theme.spacingM
 
+    // The popout has no PluginSettings above it to carry this, and the settings
+    // application's copy of these controls does. Without it the same three
+    // settings render in two typographies depending on which surface you opened.
+    readonly property bool settingsSurface: true
+
     function save(key, value) {
         if (root.widget.pluginService)
             root.widget.pluginService.savePluginData("mercury", key, value);

@@ -18,14 +18,14 @@ PluginSettings {
         width: parent.width
         text: "System Updates Settings"
         font.pixelSize: Theme.fontSizeLarge
-        font.weight: Font.Bold
+        font.weight: Theme.fontWeightSectionHeader
         color: Theme.surfaceText
     }
 
     StyledText {
         width: parent.width
         text: "Choose the shell commands used by the System Updates popout buttons. A button left on its default runs through the VGS backend, which watches the terminal and re-counts when it closes. A custom command runs in a floating terminal through `sh -lc`, so shell syntax and environment variables work. Use `{vshell}` for the VGS CLI path and `{home}` for your home directory."
-        font.pixelSize: Theme.fontSizeSmall
+        font.pixelSize: Theme.settingsFontSize
         color: Theme.surfaceVariantText
         wrapMode: Text.WordWrap
     }
@@ -101,7 +101,7 @@ PluginSettings {
                 StyledText {
                     text: "Examples"
                     font.pixelSize: Theme.fontSizeMedium
-                    font.weight: Font.Medium
+                    font.weight: Theme.fontWeightSectionHeader
                     color: Theme.surfaceText
                     anchors.verticalCenter: parent.verticalCenter
                 }
@@ -110,7 +110,7 @@ PluginSettings {
             StyledText {
                 width: parent.width
                 text: "Portable defaults:\n    {vshell} update run system\n    {vshell} update run aur\n    {vshell} update run tools\n    {vshell} update run all\n\nPersonal wrappers:\n    $HOME/.local/bin/sysupdate-run system\n    $HOME/.local/bin/sysupdate-run aur\n    $HOME/.local/bin/sysupdate-run all"
-                font.pixelSize: Theme.fontSizeSmall
+                font.pixelSize: Theme.settingsFontSize
                 color: Theme.surfaceVariantText
                 wrapMode: Text.WordWrap
                 lineHeight: 1.4

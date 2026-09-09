@@ -21,14 +21,14 @@ PluginSettings {
         width: parent.width
         text: I18n.tr("Mercury Settings")
         font.pixelSize: Theme.fontSizeLarge
-        font.weight: Font.Bold
+        font.weight: Theme.fontWeightSectionHeader
         color: Theme.surfaceText
     }
 
     StyledText {
         width: parent.width
         text: I18n.tr("Balances in the bar. Open the widget for accounts, activity and receipts.")
-        font.pixelSize: Theme.fontSizeSmall
+        font.pixelSize: Theme.settingsFontSize
         color: Theme.surfaceVariantText
         wrapMode: Text.WordWrap
     }

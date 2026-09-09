@@ -13,14 +13,14 @@ PluginSettings {
         width: parent.width
         text: "Remote Desktop Settings"
         font.pixelSize: Theme.fontSizeLarge
-        font.weight: Font.Bold
+        font.weight: Theme.fontWeightSectionHeader
         color: Theme.surfaceText
     }
 
     StyledText {
         width: parent.width
         text: "Start and stop the Sunshine remote-desktop host from the bar, and see at a glance when somebody is actually streaming this machine."
-        font.pixelSize: Theme.fontSizeSmall
+        font.pixelSize: Theme.settingsFontSize
         color: Theme.surfaceVariantText
         wrapMode: Text.WordWrap
     }
@@ -75,7 +75,7 @@ PluginSettings {
                 StyledText {
                     text: "Requirements"
                     font.pixelSize: Theme.fontSizeMedium
-                    font.weight: Font.Medium
+                    font.weight: Theme.fontWeightSectionHeader
                     color: Theme.surfaceText
                     anchors.verticalCenter: parent.verticalCenter
                 }
@@ -84,7 +84,7 @@ PluginSettings {
             StyledText {
                 width: parent.width
                 text: "Needs Sunshine installed with its user service present. The service is never enabled: the host starts only when you turn it on here, and stops when you turn it off, so nothing listens on an ordinary local session.\n\nOn Hyprland the virtual output the host captures is created on start and removed on stop, so no phantom monitor is left behind. Sunshine chooses its capture target at startup, so the two are done together by `vshell remote-desktop start` — starting the service by hand would leave it capturing a real monitor with nothing to say so.\n\nThe pill turns red and reads LIVE only while a client is connected. \"On\" means the host is listening and nobody is watching."
-                font.pixelSize: Theme.fontSizeSmall
+                font.pixelSize: Theme.settingsFontSize
                 color: Theme.surfaceVariantText
                 wrapMode: Text.WordWrap
                 lineHeight: 1.4

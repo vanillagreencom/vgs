@@ -429,7 +429,9 @@ Usage:
   vshell agent list|launch <id> [--inline]|install <id>|remove <id>|pick
   vshell dev-env list|install <id>|remove <id>
   vshell app uninstall <desktop-id>
-  vshell ai-usage <claude|codex>
+  vshell ai-usage <claude|codex|vercel>
+  vshell ai-usage sources <provider>|set-key <provider> [--label L] [--key-id K]|clear-key <provider> <id>
+  vshell ai-usage add-dir <provider> <path>|remove-dir <provider> <path>
   vshell mercury snapshot [--days N]|check <txId>|upload <txId> <file>|doctor|token-status|set-token|clear-token
   vshell capture screenshot|screenrecording|text [...]
   vshell screensaver launch|stop|transcode <image> <output>   (decorative ascii screensaver)
