@@ -18,7 +18,7 @@ The launcher builds its tiles from `vshell agent list` and `vshell dev-env list`
 
 - The pin *is* expressible through `mise use`: `UV_PYTHON` exported for the build, dropped again before the exec so it cannot reach the agent's own subprocesses, and a probe because `mise up` rebuilds without it. D011's revisit condition is therefore not met, and its decision stands.
 - An application shares everything with a harness except what it is. A second install route would have duplicated the stub writer's foreign-file rule, its removal path and its update counting, and the two would have drifted.
-- AUR packages for these carry D011's own objections. The Orca package on the machine this landed from was a release behind mise, and the Claude Desktop package was 22,000 build numbers behind.
+- AUR packages for these carry D011's own objections. The Orca package on the machine this landed from was a release behind mise, and its Claude Desktop package was 22,000 build numbers behind and built from a repository whose own README says the project moved.
 
 **Revisit When**: a tool VGS should offer publishes no release any mise backend can read — Cursor embeds a per-release commit hash in a download URL only its own JSON API knows, and OpenAI ships its desktop app as a `.deb` and a `.rpm`, which mise does not unpack — or an application needs system integration a `~/.local/bin` stub cannot give it, such as a desktop entry or a file-type association.
 
