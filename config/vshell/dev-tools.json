@@ -68,13 +68,17 @@
     { "id": "herdr", "name": "herdr", "icon": "nerd:f0cc6", "package": "herdr", "command": "herdr", "launch": ["herdr"] },
     { "id": "orca", "name": "Orca", "kind": "gui", "icon": "nerd:f18b4", "package": "github:stablyai/orca", "command": "orca-ide", "bin": "orca.AppImage", "launch": ["orca.AppImage"] },
     { "id": "t3code", "name": "T3 Code", "kind": "gui", "arch": ["x86_64"], "icon": "nerd:f0c8b", "color": "#E24A8B", "package": "github:pingdotgg/t3code[matching_regex=AppImage$,rename_exe=t3code]", "command": "t3code", "bin": "t3code.AppImage", "launch": ["t3code.AppImage"] },
+    { "id": "claude-desktop", "name": "Claude Desktop Extra", "kind": "gui", "icon": "nerd:f06c4", "color": "#D97757", "package": "github:patrickjaja/claude-desktop-extra[matching_regex=AppImage$,rename_exe=claude-desktop]", "command": "claude-desktop", "bin": "claude-desktop.AppImage", "launch": ["claude-desktop.AppImage"] },
     { "id": "cmux", "name": "cmux", "kind": "gui", "arch": ["x86_64"], "icon": "nerd:f059f", "color": "#4285F4", "package": "github:manaflow-ai/cmux-v2[matching_regex=linux-x64\\.zip,rename_exe=cmux]@nightly", "command": "cmux", "launch": ["cmux"] }
   ],
   "tools": [
     { "package": "gh", "command": "gh" },
     { "package": "npm:playwright", "command": "playwright" },
     { "package": "npm:@kitlangton/ghui", "command": "ghui" },
-    { "package": "aqua:modem-dev/hunk", "command": "hunk" }
+    { "package": "aqua:modem-dev/hunk", "command": "hunk" },
+    { "package": "github:dlvhdr/gh-dash", "command": "gh-dash" },
+    { "package": "github:joshmedeski/sesh", "command": "sesh" },
+    { "package": "npm:vercel", "command": "vercel" }
   ],
   "envs": [
     { "id": "node", "name": "Node.js", "icon": "nerd:f0399", "color": "#5FA04E", "tools": ["node"], "settings": { "idiomatic_version_file_enable_tools": ["node"] }, "present": "~/.local/share/mise/installs/node" },
