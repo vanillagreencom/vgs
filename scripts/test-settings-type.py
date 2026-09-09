@@ -158,6 +158,24 @@ class RolesRefused(unittest.TestCase):
         self.assertIn("states no colour", problems[0])
 
 
+class MissingSizeRefused(unittest.TestCase):
+    """A role the guard never sees is a role it never enforces."""
+
+    def test_a_styled_text_with_no_size_is_refused(self):
+        problems = check(SUB.replace("        font.pixelSize: Theme.settingsFontSize\n", ""))
+        self.assertEqual(len(problems), 1)
+        self.assertIn("states no font.pixelSize", problems[0])
+
+    def test_a_sized_neighbour_does_not_cover_for_it(self):
+        # The nastier shape: the file still declares roles, so a check that
+        # read the surface rather than the block would find a size and pass.
+        body = "\n\n".join([SUB, BODY.replace(
+            "        font.pixelSize: Theme.settingsFontSize\n", "")])
+        problems = check(body)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("states no font.pixelSize", problems[0])
+
+
 class HeadingColourRefused(unittest.TestCase):
     """The role fixes a heading's colour as well as its weight."""
 
@@ -198,6 +216,31 @@ class SmallTierClosure(unittest.TestCase):
         problems = check(row)
         self.assertEqual(len(problems), 1)
         self.assertIn("does not resolve to theme tokens", problems[0])
+
+    def test_a_property_branch_is_refused(self):
+        # The branch beside an allowed token carries whatever the property was
+        # assigned, and a check that only read the tokens present passed it.
+        row = BODY.replace("Theme.surfaceText",
+                           "root.failed ? Theme.error : root.customColor")
+        problems = check(row)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("root.customColor", problems[0])
+
+    def test_a_property_branch_in_a_nested_ternary_is_refused(self):
+        row = BODY.replace(
+            "Theme.surfaceText",
+            "a ? Theme.error : b ? Theme.surfaceText : root.customColor")
+        problems = check(row)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("root.customColor", problems[0])
+
+    def test_a_nested_ternary_of_allowed_tokens_passes(self):
+        # Both conditions name properties. Refusing them would refuse the shape
+        # a real status line is written in.
+        row = BODY.replace(
+            "Theme.surfaceText",
+            "a ? Theme.error : b ? Theme.surfaceText : Theme.surfaceVariantText")
+        self.assertEqual(check(row), [])
 
 
 class SurfaceRecognition(unittest.TestCase):

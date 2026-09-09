@@ -60,12 +60,27 @@ PIXEL_SIZE = re.compile(r"font\.pixelSize\s*:\s*([^\n]+)")
 WEIGHT = re.compile(r"font\.weight\s*:\s*([^\n]+)")
 COLOR = re.compile(r"(?<!\.)\bcolor\s*:\s*([^\n]+)")
 THEME_TOKEN = re.compile(r"Theme\.\w+")
-# A colour written as a literal resolves to no theme token at all, so a set that
-# only rejects the wrong tokens is not closed: `color: "#ff0000"` would leave it
-# with nothing to object to.
-COLOR_LITERAL = re.compile(r"[\"'#]")
+TERNARY = re.compile(r"[?:]")
+STYLED_TEXT = re.compile(r"\bStyledText\s*\{")
 SUB_TEXT_COLOR = "Theme.surfaceVariantText"
 HEADING_COLOR = "Theme.surfaceText"
+
+
+def color_branches(expr: str) -> list[str]:
+    """The parts of a colour expression that can be the colour.
+
+    `a ? b : c ? d : e` returns b, d and e. The conditions a and c name a
+    property, not a colour, so judging them would refuse every ternary a real
+    page writes. Reading only the tokens present instead let a branch that is
+    neither a token nor a literal — `root.failed ? Theme.error : root.tint` —
+    pass on the strength of its other branch.
+    """
+    parts = TERNARY.split(expr)
+    if len(parts) == 1:
+        return [expr.strip()]
+    separators = TERNARY.findall(expr)
+    return [part.strip() for index, part in enumerate(parts)
+            if (separators[index] if index < len(separators) else "") != "?"]
 
 
 def blanked(text: str) -> str:
@@ -155,6 +170,20 @@ def check_file(path: Path) -> tuple[list[str], int]:
     view = blanked(text)
     checked = 0
 
+    # A role is only enforced where a size is declared, so a StyledText that
+    # states none walks past every check below and renders at Qt's default —
+    # which is no role at all. Deleting one line must not be the way out.
+    for match in STYLED_TEXT.finditer(view):
+        start, end = enclosing_block(view, match.end())
+        if PIXEL_SIZE.search(view[start:end]):
+            continue
+        line = text.count("\n", 0, match.start()) + 1
+        problems.append(
+            f"{rel}:{line}: a StyledText in a settings surface states no font.pixelSize. It "
+            f"then renders at the Text default, which is none of the three roles, and every "
+            f"check here reads a declared size, so nothing else would report it"
+        )
+
     for match in PIXEL_SIZE.finditer(view):
         checked += 1
         line = text.count("\n", 0, match.start()) + 1
@@ -200,15 +229,18 @@ def check_file(path: Path) -> tuple[list[str], int]:
             )
         if size == SUB_SIZE:
             # A colour can be a ternary — a list row dims when it is unusable —
-            # so every theme token in the expression is judged, not just the
-            # whole string.
-            tokens = set(THEME_TOKEN.findall(color))
-            stray = sorted(tokens - SMALL_TIER_COLORS)
-            if color and (not tokens or COLOR_LITERAL.search(THEME_TOKEN.sub("", color))):
+            # so every branch it can return is judged on its own. One allowed
+            # token is not a pass for the branch beside it.
+            branches = color_branches(color) if color else []
+            unresolved = [b for b in branches if not THEME_TOKEN.fullmatch(b)]
+            stray = sorted({b for b in branches
+                            if THEME_TOKEN.fullmatch(b) and b not in SMALL_TIER_COLORS})
+            if unresolved:
                 problems.append(
                     f"{where}: text at {SUB_SIZE} is coloured {color}, which does not resolve to "
-                    f"theme tokens. A literal puts a colour outside the palette entirely, so the "
-                    f"tier's set is only closed if every colour in the expression is a token in it"
+                    f"theme tokens: {', '.join(unresolved)}. A literal or a property carries a "
+                    f"colour the palette never named, so the tier's set is only closed if every "
+                    f"branch the expression can return is a token in it"
                 )
             elif not color:
                 problems.append(
