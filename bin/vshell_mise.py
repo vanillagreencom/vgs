@@ -87,14 +87,58 @@ def mise_stubs_opted_out() -> bool:
     return (RT.state_dir() / MISE_STUBS_REMOVED).exists()
 
 
-def mise_stub_text(package: str, command: str, bin_name: str) -> str:
-    return (
-        "#!/bin/bash\n"
-        f"{MISE_STUB_MARKER}\n"
-        "export MISE_MINIMUM_RELEASE_AGE=0\n"
-        f"mise use -g --quiet {shlex.quote(package)} || exit 1\n"
-        f"exec mise x {shlex.quote(package)} -- {shlex.quote(bin_name)} \"$@\"\n"
-    )
+def mise_install_steps(package: str, requires: List[str], present: str,
+                       quiet: bool = True) -> List[List[str]]:
+    """The mise calls that install one entry, in order. `requires` are packages
+    the backend itself needs before it can build this one. A tool with a
+    `present` path is re-forced rather than merely used: `mise use` accepts an
+    install that is already there, and `mise up` rebuilds one without the
+    environment it was pinned with. The stub installs quietly behind a command
+    the owner asked for; the first-launch prompt does not, because the owner is
+    watching a download that can take minutes."""
+    flags = ["--quiet"] if quiet else []
+    steps = [["mise", "use", "-g", *flags, req] for req in requires]
+    force = ["--force"] if present else []
+    return steps + [["mise", "use", "-g", *flags, *force, package]]
+
+
+def mise_build_env(build_env: Dict[str, str]) -> Dict[str, str]:
+    """The environment an install needs, on top of the release-age opt-out."""
+    return {**MISE_RELEASE_AGE_ENV, **{k: str(v) for k, v in build_env.items()}}
+
+
+def mise_stub_text(package: str, command: str, bin_name: str,
+                   build_env: Dict[str, str] | None = None,
+                   requires: List[str] | None = None,
+                   present: str = "") -> str:
+    """The lazy launcher for one tool.
+
+    `build_env` holds variables the install needs and the tool must not inherit:
+    a pin like `UV_PYTHON` reaches every command the tool later shells out to,
+    where it would resolve the wrong interpreter for the user's own project, so
+    the exec drops it again. `requires` are mise packages the backend itself
+    needs before it can build this one. `present` is a path under the install
+    that proves the build honoured the environment: `mise use` alone accepts an
+    install that is already there, and `mise up` rebuilds without the pin, so a
+    tool that needs one is re-forced when that path is gone."""
+    build_env = build_env or {}
+    requires = requires or []
+    lines = ["#!/bin/bash", MISE_STUB_MARKER]
+    lines += [f"export {name}={shlex.quote(value)}"
+              for name, value in sorted(mise_build_env(build_env).items())]
+    install = [" ".join(shlex.quote(part) for part in step) + " || exit 1"
+               for step in mise_install_steps(package, requires, present)]
+    if present:
+        probe = f'"$(mise where {shlex.quote(package)} 2>/dev/null)"/{present}'
+        lines.append(f"if ! [ -e {probe} ]; then")
+        lines += [f"  {line}" for line in install]
+        lines.append("fi")
+    else:
+        lines += install
+    drop = "".join(f" -u {shlex.quote(name)}" for name in sorted(build_env))
+    prefix = f"env{drop} " if drop else ""
+    lines.append(f"exec {prefix}mise x {shlex.quote(package)} -- {shlex.quote(bin_name)} \"$@\"")
+    return "\n".join(lines) + "\n"
 
 
 def command_on_path_elsewhere(command: str, local_bin: Path) -> str:
@@ -117,7 +161,10 @@ def mise_stub_state(path: Path) -> str:
     return "ours" if MISE_STUB_MARKER in head else "foreign"
 
 
-def mise_install_stub(package: str, command: str, bin_name: str = "") -> Dict[str, Any]:
+def mise_install_stub(package: str, command: str, bin_name: str = "",
+                      build_env: Dict[str, str] | None = None,
+                      requires: List[str] | None = None,
+                      present: str = "") -> Dict[str, Any]:
     """Write ~/.local/bin/<command>. A file VGS did not write is never replaced:
     the owner's own wrapper for the same command wins, and the result says so."""
     bin_name = bin_name or command
@@ -134,7 +181,7 @@ def mise_install_stub(package: str, command: str, bin_name: str = "") -> Dict[st
     fd, tmp_name = tempfile.mkstemp(prefix=f".{command}.", dir=path.parent)
     tmp = Path(tmp_name)
     with os.fdopen(fd, "w") as handle:
-        handle.write(mise_stub_text(package, command, bin_name))
+        handle.write(mise_stub_text(package, command, bin_name, build_env, requires, present))
     tmp.chmod(0o755)
     tmp.replace(path)
     result["state"] = "written"
@@ -169,6 +216,9 @@ def mise_catalog_stubs() -> List[Dict[str, str]]:
             "package": str(entry["package"]),
             "command": str(entry["command"]),
             "bin": str(entry.get("bin") or entry["command"]),
+            "buildEnv": dict(entry.get("buildEnv") or {}),
+            "requires": [str(r) for r in entry.get("requires") or []],
+            "present": str(entry.get("present") or ""),
         })
     return stubs
 
@@ -182,7 +232,8 @@ def mise_refresh() -> Dict[str, Any]:
     foreign: List[str] = []
     shadowed: List[str] = []
     for stub in mise_catalog_stubs():
-        result = mise_install_stub(stub["package"], stub["command"], stub["bin"])
+        result = mise_install_stub(stub["package"], stub["command"], stub["bin"],
+                                   stub["buildEnv"], stub["requires"], stub["present"])
         state = result["state"]
         (written if state == "written" else shadowed if state == "shadowed" else foreign).append(stub["command"])
     return {"ok": True, "optedOut": False, "written": written, "foreign": foreign, "shadowed": shadowed,

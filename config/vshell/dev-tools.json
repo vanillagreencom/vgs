@@ -18,6 +18,14 @@
     "is not a coding agent and every surface says which it is. `kind: gui`",
     "launches detached with no terminal around it.",
     "",
+    "`buildEnv` holds variables the install needs and the tool must not inherit",
+    "-- Hermes pins its interpreter with `UV_PYTHON`, which would otherwise",
+    "resolve that version in the user's own projects too, so the stub drops it",
+    "again before it execs. `requires` are mise packages the backend itself",
+    "needs first. `present` is a path under the install proving the build",
+    "honoured that environment; without it `mise up` would rebuild the tool",
+    "against whatever interpreter was to hand and nothing would notice.",
+    "",
     "`arch` lists the machine architectures an entry publishes builds for.",
     "Absent means every one. VGS ships aarch64, so an entry that only builds",
     "x86_64 has to say so: without it an ARM owner gets a tile whose first",
@@ -53,6 +61,7 @@
     { "id": "dsh", "name": "DeepSeek Harness", "icon": "nerd:f06a9", "color": "#4D6BFE", "package": "npm:@deepseek-ai/dsh", "command": "dsh", "launch": ["dsh", "web"] },
     { "id": "fx", "name": "fx", "icon": "nerd:f0536", "color": "#FFFFFF", "package": "github:vercel-labs/fx", "command": "fx", "launch": ["fx"] },
     { "id": "cursor", "name": "Cursor Agent", "icon": "nerd:f01c0", "package": "cursor-agent", "command": "cursor-agent", "launch": ["cursor-agent", "--force"] },
+    { "id": "hermes", "name": "Hermes", "icon": "nerd:edf7", "package": "pipx:hermes-agent[extras=all]", "command": "hermes", "buildEnv": { "UV_PYTHON": "3.13" }, "requires": ["uv"], "present": "hermes-agent/lib/python3.13", "launch": ["hermes", "chat", "--tui", "--yolo"] },
     { "id": "muse", "name": "Muse", "icon": "nerd:f4e6", "color": "#0064E0", "package": "http:muse[url=https://api.meta.ai/muse-launcher.sh,bin=muse,version_list_url=https://api.meta.ai/muse-code/channels/muse-stable,version_json_path=.version]", "command": "muse", "launch": ["muse", "--approval-mode", "never"] }
   ],
   "apps": [
