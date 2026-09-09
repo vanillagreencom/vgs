@@ -1,7 +1,10 @@
 .pragma library
 
-// Build launcher entries from config/vshell/dev-tools.json. Group ordering
-// keeps category entries before agents, apps and environments when no query ranks them.
+// Build launcher entries from `vshell agent list` and `vshell dev-env list`.
+// Those already drop what this machine's architecture cannot install, so the
+// tiles cannot disagree with the settings page or offer an install that has no
+// asset to download. Group ordering keeps category entries before agents, apps
+// and environments when no query ranks them.
 function iconFields(spec) {
     const match = /^(nerd|brand):([0-9a-f]+)$/i.exec(spec || "");
     if (!match)
@@ -24,24 +27,16 @@ function launchableEntry(entry, tag, group, keywords) {
     }, iconFields(entry.icon));
 }
 
-// `arch` lists the machine architectures an entry publishes builds for; absent
-// means every one. The helper applies the same field before it installs, so a
-// tile that survives here is one that can actually be installed.
-function buildableHere(entry, arch) {
-    return !entry.arch || !arch || entry.arch.indexOf(arch) !== -1;
-}
-
-function itemsFromCatalog(raw, arch) {
-    const data = JSON.parse(raw || "{}");
+function itemsFromLists(agentList, envList) {
+    const agents = JSON.parse(agentList || "{}");
+    const data = JSON.parse(envList || "{}");
     const out = [];
-    for (const agent of data.agents || [])
-        if (buildableHere(agent, arch))
-            out.push(launchableEntry(agent, "Agent", 1, ["agent", "ai", "code"]));
+    for (const agent of agents.agents || [])
+        out.push(launchableEntry(agent, "Agent", 1, ["agent", "ai", "code"]));
     // Apps launch through the same command as agents, so devKind stays "agent";
     // the tag is what tells a reader which of the two they are looking at.
-    for (const app of data.apps || [])
-        if (buildableHere(app, arch))
-            out.push(launchableEntry(app, "App", 2, ["app", "dev", "tool"]));
+    for (const app of agents.apps || [])
+        out.push(launchableEntry(app, "App", 2, ["app", "dev", "tool"]));
     for (const env of data.envs || []) {
         out.push(Object.assign({
             category: "dev",

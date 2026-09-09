@@ -424,13 +424,34 @@ PluginComponent {
         resetResultListPosition();
     }
 
+    property string devAgentList: ""
+    property string devEnvList: ""
+
+    // The helper decides which entries this machine can install; asking it is
+    // what keeps a tile from disagreeing with the settings page. The catalog
+    // file is watched only to know when to ask again.
+    function reloadDevItems() {
+        Proc.runCommand("vgsmenu-dev-agents", [Paths.vshellCli, "agent", "list", "--json"], (output, exitCode) => {
+            root.devAgentList = exitCode === 0 ? output : "";
+            root.rebuildDevItems();
+        }, 0, 15000);
+        Proc.runCommand("vgsmenu-dev-envs", [Paths.vshellCli, "dev-env", "list", "--json"], (output, exitCode) => {
+            root.devEnvList = exitCode === 0 ? output : "";
+            root.rebuildDevItems();
+        }, 0, 15000);
+    }
+
     function rebuildDevItems() {
+        if (!root.devAgentList && !root.devEnvList) {
+            root.devItems = [];
+            return;
+        }
         try {
-            root.devItems = DevToolsItems.itemsFromCatalog(devToolsFile.text(), DgopService.architecture);
+            root.devItems = DevToolsItems.itemsFromLists(root.devAgentList, root.devEnvList);
             root.refreshItems();
         } catch (e) {
             root.devItems = [];
-            ToastService.showWarning("Dev tools catalog invalid", e.message || String(e));
+            ToastService.showWarning("Dev tools list unreadable", e.message || String(e));
         }
     }
 
@@ -982,20 +1003,9 @@ PluginComponent {
         blockLoading: false
         watchChanges: true
         printErrors: false
-        onLoaded: root.rebuildDevItems()
+        onLoaded: root.reloadDevItems()
         onFileChanged: devToolsFile.reload()
         onLoadFailed: root.devItems = []
-    }
-
-    // The architecture arrives from the backend, which may answer after the
-    // catalog loads. Rebuilding on both keeps a tile the machine cannot install
-    // from standing once the answer is in.
-    Connections {
-        target: DgopService
-        function onArchitectureChanged() {
-            if (devToolsFile.loaded)
-                root.rebuildDevItems();
-        }
     }
 
     FileView {

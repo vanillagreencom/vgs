@@ -46,6 +46,8 @@ def agent_list() -> Dict[str, Any]:
             "id": entry["id"],
             "name": entry["name"],
             "group": entry["group"],
+            "icon": entry.get("icon", ""),
+            "color": entry.get("color", ""),
             "command": command,
             "package": entry["package"],
             "kind": str(entry.get("kind") or "tui"),
@@ -229,7 +231,9 @@ def dev_env_list() -> Dict[str, Any]:
     envs = []
     for e in dev_env_entries():
         owner = dev_env_distro_owned(e)
-        envs.append({"id": e["id"], "name": e["name"], "installed": dev_env_present(e) or bool(owner), "distroPath": owner})
+        envs.append({"id": e["id"], "name": e["name"], "icon": e.get("icon", ""), "color": e.get("color", ""),
+                     "installer": e.get("installer", ""),
+                     "installed": dev_env_present(e) or bool(owner), "distroPath": owner})
     return {"ok": True, "mise": RT.command_exists("mise"), "envs": envs}
 
 

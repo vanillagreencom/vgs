@@ -303,7 +303,11 @@ def test_a_package_is_looked_up_under_the_id_mise_files_it_by():
     # A tool mise reports as installed must read as installed here, which is
     # what the option-carrying specs got wrong.
     original = devtools.mise_installed_versions
+    original_machine = mise.platform.machine
     devtools.mise_installed_versions = lambda: ({"github:pingdotgg/t3code": "0.0.40"}, "")
+    # T3 Code is x86-only, so the entry this case is about is absent on an ARM
+    # host. Pin the architecture rather than let the host pick the subject.
+    mise.platform.machine = lambda: "x86_64"
     try:
         t3code = next(e for e in devtools.agent_entries() if e["id"] == "t3code")
         assert devtools.agent_installed(t3code), "an installed tool must not read as absent"
@@ -311,6 +315,7 @@ def test_a_package_is_looked_up_under_the_id_mise_files_it_by():
                      "and it must launch through mise x rather than being reinstalled")
     finally:
         devtools.mise_installed_versions = original
+        mise.platform.machine = original_machine
 
 
 def test_an_owner_installed_app_launches_its_public_command():
@@ -366,7 +371,15 @@ def test_a_windowed_app_launches_without_a_terminal():
 def test_apps_get_stubs_and_their_own_list():
     """Apps are launchable like agents and stubbed like tools, and every surface
     keeps them apart from the coding agents."""
-    stubs = {s["command"]: s for s in mise.mise_catalog_stubs()}
+    # An x86-only entry is absent from the stub set on an ARM host, so this case
+    # pins the architecture rather than reading whichever one it happens to run
+    # on. The architecture filter has its own case.
+    original = mise.platform.machine
+    mise.platform.machine = lambda: "x86_64"
+    try:
+        stubs = {s["command"]: s for s in mise.mise_catalog_stubs()}
+    finally:
+        mise.platform.machine = original
     assert "herdr" in stubs, "an app must get a lazy stub: " + " ".join(sorted(stubs))
     # The vendor calls its binary orca-ide, and so does this entry: a stub at
     # ~/.local/bin/orca would hide the GNOME screen reader of that name.
@@ -385,18 +398,22 @@ def test_apps_get_stubs_and_their_own_list():
     original_state = devtools.mise_stub_state
     devtools.mise_installed_versions = lambda: ({}, "")
     devtools.mise_stub_state = lambda path: "absent"
+    mise.platform.machine = lambda: "x86_64"
     try:
         listed = devtools.agent_list()
+        catalog = mise.dev_tools_catalog()
+        expected_agents = [e["id"] for e in catalog["agents"] if mise.buildable_here(e)]
+        expected_apps = [e["id"] for e in catalog["apps"] if mise.buildable_here(e)]
     finally:
         devtools.mise_installed_versions = original_versions
         devtools.mise_stub_state = original_state
-    catalog = mise.dev_tools_catalog()
+        mise.platform.machine = original
     agent_ids = [a["id"] for a in listed["agents"]]
     app_ids = [a["id"] for a in listed["apps"]]
     # Both directions: the lists come from the catalog's own sections, so an
     # entry can neither go missing nor arrive from the wrong one.
-    assert_equal(agent_ids, [e["id"] for e in catalog["agents"]], "every agent is listed, in catalog order")
-    assert_equal(app_ids, [e["id"] for e in catalog["apps"]], "every app is listed, in catalog order")
+    assert_equal(agent_ids, expected_agents, "every agent is listed, in catalog order")
+    assert_equal(app_ids, expected_apps, "every app is listed, in catalog order")
     assert "fx" in agent_ids, "a coding agent is listed as one: " + " ".join(agent_ids)
     assert "herdr" in app_ids, "an app is listed as one: " + " ".join(app_ids)
     assert not set(agent_ids) & set(app_ids), "no entry may appear in both lists"
