@@ -7,13 +7,22 @@
     "agents: coding-agent harnesses. `package` is what mise installs, `command`",
     "the stub name in ~/.local/bin, `bin` the executable inside the package",
     "(defaults to command). `launch` is the argv the default-agent launcher runs,",
-    "the agent's own spelling of \"do not stop to ask\". `kind: server` marks a",
-    "harness with no terminal or desktop UI: it serves a page and opens the",
-    "browser, and every surface says so.",
+    "the agent's own spelling of \"do not stop to ask\".",
     "",
     "`icon` is `nerd:<hex>` (bundled Nerd Font) or `brand:<hex>` (bundled",
     "omarchy brand marks); `color` is the brand's dominant color for the",
     "launcher tile, omitted where the mark is monochrome by design.",
+    "",
+    "apps: developer applications. Same launcher, install and removal as an",
+    "agent, and the same icon and colour fields; they are apart because an app",
+    "is not a coding agent and every surface says which it is. `kind: gui`",
+    "launches detached with no terminal around it.",
+    "",
+    "A `package` may carry mise backend options in brackets: `matching_regex`",
+    "picks the release asset when the platform matcher cannot, `rename_exe`",
+    "gives it a name that does not change with the version. cmux publishes only",
+    "a `nightly` tag, so its package names it; mise then sees no new version and",
+    "the app updates itself.",
     "",
     "tools: developer CLIs that get a lazy stub but are not agents.",
     "",
@@ -36,14 +45,20 @@
     { "id": "agy", "name": "Antigravity", "icon": "nerd:f02ad", "color": "#4285F4", "package": "aqua:google-antigravity/antigravity-cli", "command": "agy", "launch": ["agy", "--dangerously-skip-permissions"] },
     { "id": "grok", "name": "Grok", "icon": "brand:e904", "color": "#FFFFFF", "package": "npm:@xai-official/grok", "command": "grok", "launch": ["grok", "--permission-mode", "bypassPermissions"] },
     { "id": "ori", "name": "Ori", "icon": "brand:e909", "color": "#6467F2", "package": "github:OpenRouterLabs/ori-releases", "command": "ori", "launch": ["ori", "code"] },
-    { "id": "dsh", "name": "DeepSeek Harness", "kind": "server", "icon": "nerd:f06a9", "color": "#4D6BFE", "package": "npm:@deepseek-ai/dsh", "command": "dsh", "launch": ["dsh", "web"] }
+    { "id": "dsh", "name": "DeepSeek Harness", "icon": "nerd:f06a9", "color": "#4D6BFE", "package": "npm:@deepseek-ai/dsh", "command": "dsh", "launch": ["dsh", "web"] },
+    { "id": "fx", "name": "fx", "icon": "nerd:f0536", "color": "#FFFFFF", "package": "github:vercel-labs/fx", "command": "fx", "launch": ["fx"] }
+  ],
+  "apps": [
+    { "id": "herdr", "name": "herdr", "icon": "nerd:f0cc6", "package": "herdr", "command": "herdr", "launch": ["herdr"] },
+    { "id": "orca", "name": "Orca", "kind": "gui", "icon": "nerd:f18b4", "package": "github:stablyai/orca", "command": "orca", "bin": "orca.AppImage", "launch": ["orca.AppImage"] },
+    { "id": "t3code", "name": "T3 Code", "kind": "gui", "icon": "nerd:f0c8b", "color": "#E24A8B", "package": "github:pingdotgg/t3code[matching_regex=AppImage$,rename_exe=t3code]", "command": "t3code", "bin": "t3code.AppImage", "launch": ["t3code.AppImage"] },
+    { "id": "cmux", "name": "cmux", "kind": "gui", "icon": "nerd:f059f", "color": "#4285F4", "package": "github:manaflow-ai/cmux-v2[matching_regex=linux-x64\\.zip,rename_exe=cmux]@nightly", "command": "cmux", "launch": ["cmux"] }
   ],
   "tools": [
     { "package": "gh", "command": "gh" },
     { "package": "npm:playwright", "command": "playwright" },
     { "package": "npm:@kitlangton/ghui", "command": "ghui" },
-    { "package": "aqua:modem-dev/hunk", "command": "hunk" },
-    { "package": "github:basecamp/hey-cli", "command": "hey" }
+    { "package": "aqua:modem-dev/hunk", "command": "hunk" }
   ],
   "envs": [
     { "id": "node", "name": "Node.js", "icon": "nerd:f0399", "color": "#5FA04E", "tools": ["node"], "settings": { "idiomatic_version_file_enable_tools": ["node"] }, "present": "~/.local/share/mise/installs/node" },

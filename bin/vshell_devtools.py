@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 import vshell_mise
-from vshell_mise import DevToolsRuntime, dev_tools_catalog, mise_stubs_opted_out, mise_env, mise_install_stub, mise_installed_versions, mise_stub_state
+from vshell_mise import DevToolsRuntime, dev_tools_catalog, launchable, mise_stubs_opted_out, mise_env, mise_install_stub, mise_installed_versions, mise_stub_state
 
 RT: DevToolsRuntime
 
@@ -30,18 +30,21 @@ def runtime() -> DevToolsRuntime:
 
 
 def agent_entries() -> List[Dict[str, Any]]:
-    return [dict(e) for e in dev_tools_catalog().get("agents") or []]
+    """Everything with a launcher, agents and apps alike, each stamped with the
+    group it came from."""
+    return launchable(dev_tools_catalog())
 
 
 def agent_list() -> Dict[str, Any]:
     versions, versions_error = mise_installed_versions()
-    agents = []
+    rows: Dict[str, List[Dict[str, Any]]] = {"agent": [], "app": []}
     for entry in agent_entries():
         command = str(entry["command"])
         stub = mise_stub_state(RT.home() / ".local" / "bin" / command)
-        agents.append({
+        rows[str(entry["group"])].append({
             "id": entry["id"],
             "name": entry["name"],
+            "group": entry["group"],
             "command": command,
             "package": entry["package"],
             "kind": str(entry.get("kind") or "tui"),
@@ -52,7 +55,7 @@ def agent_list() -> Dict[str, Any]:
             "runnable": bool(versions.get(str(entry["package"]))) or stub in {"foreign", "shadowed"},
         })
     return {"ok": True, "mise": RT.command_exists("mise"), "error": versions_error,
-            "optedOut": mise_stubs_opted_out(), "agents": agents}
+            "optedOut": mise_stubs_opted_out(), "agents": rows["agent"], "apps": rows["app"]}
 
 
 def agent_installed(entry: Dict[str, Any]) -> bool:
@@ -107,6 +110,10 @@ def agent_launch(agent_id: str, inline: bool, hold: bool = False) -> int:
             # that follows gets its own regular window.
             if RT.spawn_terminal([cli, "agent", "install", agent_id], app_id=RT.tui_app_id, wait=True, notify=True, what=f"installing {entry['name']}") != 0:
                 return 1
+        if str(entry.get("kind") or "") == "gui":
+            # A windowed application draws its own window. A terminal around it
+            # would sit empty on the bar for as long as the app ran.
+            return RT.spawn_app(agent_launch_argv(entry), notify=True, what=str(entry["name"]))
         return RT.spawn_terminal([cli, "agent", "launch", agent_id, "--inline", "--hold"], app_id="vshell-agent", detach=True, notify=True, what=f"{entry['name']}")
     if not agent_installed(entry) and not agent_install_prompt(entry):
         return hold_terminal(1, f"{entry['name']} was not installed.") if hold else 1
@@ -163,8 +170,8 @@ def cmd_agent(argv: List[str]) -> int:
         if "--json" in rest:
             print(json.dumps(data))
         else:
-            for agent in data["agents"]:
-                print(f"{agent['id']:<10} {agent['name']:<18} {agent['installed'] or ('yours' if agent['stub'] in {'foreign', 'shadowed'} else '-')}")
+            for row in data["agents"] + data["apps"]:
+                print(f"{row['id']:<10} {row['name']:<18} {row['group']:<6} {row['installed'] or ('yours' if row['stub'] in {'foreign', 'shadowed'} else '-')}")
         return 0
     if sub == "pick":
         cli = str(RT.repo_root() / "bin" / "vshell")

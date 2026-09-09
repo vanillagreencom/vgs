@@ -29,6 +29,7 @@ class DevToolsRuntime:
     load_required_json_file: Callable[[Path], Dict[str, Any]]
     eprint: Callable[..., None]
     spawn_terminal: Callable[..., int]
+    spawn_app: Callable[..., int]
     notify_user: Callable[[str, str], None]
     # App id of the floating TUI window the updater uses; one-shot scripts
     # (installs, prompts) share its styling.
@@ -122,10 +123,20 @@ def mise_install_stub(package: str, command: str, bin_name: str = "") -> Dict[st
     return result
 
 
+def launchable(catalog: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Catalog entries with a launcher: coding agents and developer apps. One
+    list so install, launch and removal have a single implementation; the
+    `group` it stamps is what tells an Agent from an App wherever they show
+    apart."""
+    return [dict(entry, group=group[:-1])
+            for group in ("agents", "apps")
+            for entry in catalog.get(group) or []]
+
+
 def mise_catalog_stubs() -> List[Dict[str, str]]:
     catalog = dev_tools_catalog()
     stubs: List[Dict[str, str]] = []
-    for entry in list(catalog.get("agents") or []) + list(catalog.get("tools") or []):
+    for entry in launchable(catalog) + list(catalog.get("tools") or []):
         stubs.append({
             "package": str(entry["package"]),
             "command": str(entry["command"]),
@@ -263,6 +274,7 @@ def mise_list() -> Dict[str, Any]:
         "optedOut": mise_stubs_opted_out(),
         "error": versions_error or outdated_error,
         "agents": [describe(e) for e in catalog.get("agents") or []],
+        "apps": [describe(e) for e in catalog.get("apps") or []],
         "tools": [describe(e) for e in catalog.get("tools") or []],
         "outdated": outdated,
     }

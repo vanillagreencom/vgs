@@ -245,6 +245,76 @@ def test_first_launch_asks_before_installing():
         devtools.mise_install_stub = original_stub
 
 
+def test_a_windowed_app_launches_without_a_terminal():
+    """A GUI app draws its own window; a terminal wrapped around it would sit
+    empty on the bar for as long as the app ran. A TUI agent still gets one."""
+    terminals = []
+    apps = []
+    original_versions = devtools.mise_installed_versions
+    original_state = devtools.mise_stub_state
+    original_terminal = mise.RT.spawn_terminal
+    original_app = mise.RT.spawn_app
+    original_chdir = devtools.os.chdir
+    devtools.mise_installed_versions = lambda: ({"github:stablyai/orca": "1.4.198", "claude": "2.2.0"}, "")
+    devtools.mise_stub_state = lambda path: "ours"
+    mise.RT.spawn_terminal = lambda argv, **kw: (terminals.append(list(argv)), 0)[1]
+    mise.RT.spawn_app = lambda argv, **kw: (apps.append(list(argv)), 0)[1]
+    devtools.os.chdir = lambda path: None
+    try:
+        assert_equal(devtools.agent_launch("orca", inline=False), 0, "the app launches")
+        assert_equal(terminals, [], "a windowed app opens no terminal")
+        assert_equal(apps, [["mise", "x", "github:stablyai/orca", "--", "orca.AppImage"]],
+                     "the app runs its package's own executable through mise x")
+        # The must-fail side: without the kind check every entry would take this
+        # path, so a TUI agent has to still reach the terminal and not spawn_app.
+        assert_equal(devtools.agent_launch("claude", inline=False), 0, "the agent launches")
+        assert_equal(len(apps), 1, "a TUI agent must not be started as a windowed app")
+        assert_equal(len(terminals), 1, "a TUI agent opens a terminal")
+    finally:
+        devtools.mise_installed_versions = original_versions
+        devtools.mise_stub_state = original_state
+        mise.RT.spawn_terminal = original_terminal
+        mise.RT.spawn_app = original_app
+        devtools.os.chdir = original_chdir
+
+
+def test_apps_get_stubs_and_their_own_list():
+    """Apps are launchable like agents and stubbed like tools, and every surface
+    keeps them apart from the coding agents."""
+    stubs = {s["command"]: s for s in mise.mise_catalog_stubs()}
+    assert "herdr" in stubs, "an app must get a lazy stub: " + " ".join(sorted(stubs))
+    assert_equal(stubs["orca"]["bin"], "orca.AppImage",
+                 "the stub execs the package's own executable, not the command name")
+    assert "gh" in stubs, "tools keep their stubs"
+    # A package carrying mise backend options holds brackets, a backslash and a
+    # `$`. Unquoted, the shell would glob the brackets and eat the rest, and the
+    # stub would install some other tool or nothing at all.
+    bracketed = mise.mise_stub_text(stubs["cmux"]["package"], "cmux", "cmux")
+    assert "'" + stubs["cmux"]["package"] + "'" in bracketed, bracketed
+    assert "[matching_regex=" in stubs["cmux"]["package"], "cmux names the asset its platform matcher cannot pick"
+
+    original_versions = devtools.mise_installed_versions
+    original_state = devtools.mise_stub_state
+    devtools.mise_installed_versions = lambda: ({}, "")
+    devtools.mise_stub_state = lambda path: "absent"
+    try:
+        listed = devtools.agent_list()
+    finally:
+        devtools.mise_installed_versions = original_versions
+        devtools.mise_stub_state = original_state
+    catalog = mise.dev_tools_catalog()
+    agent_ids = [a["id"] for a in listed["agents"]]
+    app_ids = [a["id"] for a in listed["apps"]]
+    # Both directions: the lists come from the catalog's own sections, so an
+    # entry can neither go missing nor arrive from the wrong one.
+    assert_equal(agent_ids, [e["id"] for e in catalog["agents"]], "every agent is listed, in catalog order")
+    assert_equal(app_ids, [e["id"] for e in catalog["apps"]], "every app is listed, in catalog order")
+    assert "fx" in agent_ids, "a coding agent is listed as one: " + " ".join(agent_ids)
+    assert "herdr" in app_ids, "an app is listed as one: " + " ".join(app_ids)
+    assert not set(agent_ids) & set(app_ids), "no entry may appear in both lists"
+    assert_equal(set(a["group"] for a in listed["apps"]), {"app"}, "each row names its group")
+
+
 def test_env_remove_keeps_shared_tools():
     """Removing Scala must not uninstall the Java the Java env also owns."""
     ran = []
@@ -283,16 +353,22 @@ def test_distro_owned_env_is_hands_off():
 
 
 def test_catalog_is_consistent():
-    """One catalog feeds stubs, agents and envs; ids and commands must be unique."""
+    """One catalog feeds stubs, agents, apps and envs; ids and commands must be unique."""
     catalog = mise.dev_tools_catalog()
-    for section in ("agents", "tools", "envs"):
+    for section in ("agents", "apps", "tools", "envs"):
         assert catalog.get(section), f"catalog section {section} must not be empty"
-    commands = [e["command"] for e in catalog["agents"] + catalog["tools"]]
+    launchable = mise.launchable(catalog)
+    commands = [e["command"] for e in launchable + catalog["tools"]]
     assert_equal(len(commands), len(set(commands)), "stub commands must be unique: " + " ".join(commands))
-    ids = [e["id"] for e in catalog["agents"]]
-    assert_equal(len(ids), len(set(ids)), "agent ids must be unique")
-    for agent in catalog["agents"]:
-        assert agent["launch"][0] == agent["command"], f"{agent['id']}: launch must start with its own command"
+    ids = [e["id"] for e in launchable]
+    assert_equal(len(ids), len(set(ids)), "agent and app ids must be unique across both")
+    assert_equal([e["group"] for e in launchable if e["id"] in ("claude", "herdr")], ["agent", "app"],
+                 "launchable() must stamp the group each entry came from")
+    for entry in launchable:
+        # The stub execs the package's own executable, so the launcher has to
+        # name that same file: `orca` is the command, `orca.AppImage` the binary.
+        binary = entry.get("bin") or entry["command"]
+        assert entry["launch"][0] == binary, f"{entry['id']}: launch must start with {binary}"
     env_ids = [e["id"] for e in catalog["envs"]]
     assert_equal(len(env_ids), len(set(env_ids)), "env ids must be unique")
     for env in catalog["envs"]:
@@ -316,6 +392,8 @@ def main() -> int:
     test_update_run_and_count_carry_tools()
     test_os_release_resolves_through_id_like()
     test_first_launch_asks_before_installing()
+    test_a_windowed_app_launches_without_a_terminal()
+    test_apps_get_stubs_and_their_own_list()
     test_env_remove_keeps_shared_tools()
     test_distro_owned_env_is_hands_off()
     test_catalog_is_consistent()

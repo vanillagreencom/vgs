@@ -10,6 +10,7 @@ Item {
     id: root
 
     property var agents: []
+    property var apps: []
     property var envs: []
     property bool miseAvailable: true
     property bool stubsOptedOut: false
@@ -18,7 +19,8 @@ Item {
 
     // Launchers count as installed only when at least one stub is ours; a
     // fresh machine has none and offers installation rather than removal.
-    readonly property bool launchersInstalled: !root.stubsOptedOut && root.agents.some(a => a.stub === "ours")
+    readonly property bool launchersInstalled: !root.stubsOptedOut
+        && root.agents.concat(root.apps).some(a => a.stub === "ours")
 
     function refresh() {
         root.loading = true;
@@ -33,6 +35,7 @@ Item {
             try {
                 const data = JSON.parse(output);
                 root.agents = data.agents || [];
+                root.apps = data.apps || [];
                 root.miseAvailable = data.mise !== false;
                 root.stubsOptedOut = data.optedOut === true;
                 root.loadError = data.error ? "mise: " + data.error : "";
@@ -77,6 +80,85 @@ Item {
     }
 
     Component.onCompleted: refresh()
+
+    // Agents and apps differ only in which list they come from, so one delegate
+    // draws both rows; a second copy would drift the moment either changed.
+    Component {
+        id: launchableRow
+
+        Item {
+            id: agentRow
+            required property var modelData
+            width: parent.width
+            height: 40
+
+            Rectangle {
+                anchors.fill: parent
+                radius: Theme.cornerRadius
+                color: agentHover.containsMouse ? Theme.withAlpha(Theme.surfaceText, 0.06) : "transparent"
+            }
+
+            MouseArea {
+                id: agentHover
+                anchors.fill: parent
+                hoverEnabled: true
+                acceptedButtons: Qt.NoButton
+            }
+
+            StyledText {
+                id: agentName
+                anchors.left: parent.left
+                anchors.leftMargin: Theme.spacingS
+                anchors.verticalCenter: parent.verticalCenter
+                text: agentRow.modelData.name
+                font.pixelSize: Theme.fontSizeMedium
+                color: Theme.surfaceText
+            }
+
+            StyledText {
+                anchors.left: agentName.right
+                anchors.leftMargin: Theme.spacingS
+                anchors.verticalCenter: parent.verticalCenter
+                text: agentRow.modelData.command
+                font.pixelSize: Theme.settingsFontSize
+                font.family: Theme.monoFontFamily
+                color: Theme.surfaceVariantText
+            }
+
+            Row {
+                anchors.right: parent.right
+                anchors.rightMargin: Theme.spacingXS
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: Theme.spacingS
+
+                VgsIcon {
+                    visible: agentRow.modelData.installed.length > 0 || agentRow.modelData.stub === "foreign" || agentRow.modelData.stub === "shadowed"
+                    name: "check_circle"
+                    size: Theme.iconSizeSmall
+                    color: Theme.success
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+
+                StyledText {
+                    text: root.agentStatus(agentRow.modelData)
+                    font.pixelSize: Theme.settingsFontSize - 1
+                    color: Theme.surfaceVariantText
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+
+                VgsActionButton {
+                    buttonSize: 28
+                    iconName: "play_arrow"
+                    iconSize: 18
+                    iconColor: Theme.primary
+                    tooltipText: I18n.tr("Launch")
+                    enabled: root.miseAvailable || agentRow.modelData.runnable
+                    onClicked: Quickshell.execDetached([Paths.vshellCli, "agent", "launch", agentRow.modelData.id])
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+            }
+        }
+    }
 
     VgsFlickable {
         anchors.fill: parent
@@ -141,79 +223,7 @@ Item {
 
                     Repeater {
                         model: root.agents
-
-                        delegate: Item {
-                            id: agentRow
-                            required property var modelData
-                            width: parent.width
-                            height: 40
-
-                            Rectangle {
-                                anchors.fill: parent
-                                radius: Theme.cornerRadius
-                                color: agentHover.containsMouse ? Theme.withAlpha(Theme.surfaceText, 0.06) : "transparent"
-                            }
-
-                            MouseArea {
-                                id: agentHover
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                acceptedButtons: Qt.NoButton
-                            }
-
-                            StyledText {
-                                id: agentName
-                                anchors.left: parent.left
-                                anchors.leftMargin: Theme.spacingS
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: agentRow.modelData.name
-                                font.pixelSize: Theme.fontSizeMedium
-                                color: Theme.surfaceText
-                            }
-
-                            StyledText {
-                                anchors.left: agentName.right
-                                anchors.leftMargin: Theme.spacingS
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: agentRow.modelData.command + (agentRow.modelData.kind === "server" ? "  · server, no app" : "")
-                                font.pixelSize: Theme.settingsFontSize
-                                font.family: Theme.monoFontFamily
-                                color: Theme.surfaceVariantText
-                            }
-
-                            Row {
-                                anchors.right: parent.right
-                                anchors.rightMargin: Theme.spacingXS
-                                anchors.verticalCenter: parent.verticalCenter
-                                spacing: Theme.spacingS
-
-                                VgsIcon {
-                                    visible: agentRow.modelData.installed.length > 0 || agentRow.modelData.stub === "foreign" || agentRow.modelData.stub === "shadowed"
-                                    name: "check_circle"
-                                    size: Theme.iconSizeSmall
-                                    color: Theme.success
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-
-                                StyledText {
-                                    text: root.agentStatus(agentRow.modelData)
-                                    font.pixelSize: Theme.settingsFontSize - 1
-                                    color: Theme.surfaceVariantText
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-
-                                VgsActionButton {
-                                    buttonSize: 28
-                                    iconName: "play_arrow"
-                                    iconSize: 18
-                                    iconColor: Theme.primary
-                                    tooltipText: I18n.tr("Launch")
-                                    enabled: root.miseAvailable || agentRow.modelData.runnable
-                                    onClicked: Quickshell.execDetached([Paths.vshellCli, "agent", "launch", agentRow.modelData.id])
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-                            }
-                        }
+                        delegate: launchableRow
                     }
                 }
 
@@ -240,6 +250,31 @@ Item {
                             else
                                 root.runInTerminal("developer-update", ["update", "run", "tools"]);
                         }
+                    }
+                }
+            }
+
+            SettingsCard {
+                tab: "developer"
+                tags: ["developer", "app", "herdr", "orca", "mise", "launcher"]
+                title: I18n.tr("Developer Apps")
+                iconName: "apps"
+
+                StyledText {
+                    width: parent?.width ?? 0
+                    text: I18n.tr("Applications that run coding agents rather than being one. They install on first launch, the same as an agent.")
+                    font.pixelSize: Theme.settingsFontSize
+                    color: Theme.surfaceVariantText
+                    wrapMode: Text.WordWrap
+                }
+
+                Column {
+                    width: parent?.width ?? 0
+                    spacing: 0
+
+                    Repeater {
+                        model: root.apps
+                        delegate: launchableRow
                     }
                 }
             }
