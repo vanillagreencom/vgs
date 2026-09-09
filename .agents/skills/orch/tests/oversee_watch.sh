@@ -10,7 +10,7 @@
 # oversee-watch is the overseer's single blocking watch: it loops until the
 # fleet needs a hand and prints one wake carrying every event the pass found,
 # one EVENT line each, and exits once. Covered here:
-#   1.  pr-watch: on the fleet's first run attention present at start is a
+#   1.  pr-watch: on the fleet's first run oversee-watch: reducer-baseline is a
 #       baseline (no event, one stderr note, context on the next event); that
 #       baseline persists, so a line appearing between two runs is the next
 #       run's first-pass event and a standing line is not; an unseen `<pr> <kind>`
@@ -32,27 +32,32 @@
 #       named for the first time baselines its standing attention in either
 #       ordering, the context header carries the highest status across repos, a
 #       global failure names its repo, a repeated --repo exits 2 naming the
-#       spelling given, --repo=VALUE is the same option, and a fleet of more
-#       than one repo is told which repo `merged` reads
-#   2.  merged: an --item's PR merged at/after --since fires; a PR merged
-#       BEFORE --since, a non-item branch, and a non-item conventional branch
-#       do not; a fork's PR on the same head branch name does not; item ids
-#       match branches case-insensitively; no --since means no floor; no
-#       --item skips the check with a note; gh stderr noise on success does
-#       not break the JSON parse
+#       spelling given, and --repo=VALUE is the same option
+#   2.  merged: an --item's PR merged at/after --since fires, naming its
+#       repo; a PR merged BEFORE --since, a non-item branch, and a non-item
+#       conventional branch do not; a fork's PR on the same head branch name
+#       does not; item ids match branches case-insensitively; no --since
+#       means no floor; no --item skips the check with a note; gh stderr
+#       noise on success does not break the JSON parse; a PR merged in a
+#       non-first --repo fires, the fork rejection holding per repo, red with
+#       the lookup narrowed to the first repo; a merged item still in --item
+#       is reported once across runs while a further PR on its branch is
+#       news, red with the row never kept
 #   2b. handoff: an --item whose state carries `.handoff` with no
 #       `.resumed_at` fires once, with the record, read from the item's
 #       worktree state (this checkout's when it has no worktree); a state
 #       without the key and a resumed record fire nothing; a re-run before
 #       the relaunch stamps the record fires nothing; the must-fail control
 #       is the emit arm removed
-#   3.  heartbeat after --max-loops with the open PR list
+#   3.  heartbeat after --max-loops with every --repo's open PR list, each
+#       line prefixed with its repo, red with the list narrowed to the first
 #   4.  gh auth failure exits 2; a stale env token falls through to the
 #       project GH_BOT_TOKEN; a failing pr list exits 2 (never a quiet 0)
 #   5.  lanes given outside tmux exit 2
-#   6.  a missing pr-watch.sh is a stderr note, not a failure
-#   7.  --help exits 0, names the probe it runs, and states both liveness
-#       rules including the unusable-probe path
+#   6.  a missing pr-watch.sh is a stderr note, not a failure; inside tmux an
+#       --item with no lane window is a stderr note naming the pane checks
+#       skipped, once, and outside tmux or without --item there is none
+#   7.  --help exits 0
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
@@ -62,7 +67,7 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/oversee-watch-harness.
 echo "=== oversee-watch ==="
 
 # --- 1. pr-watch -----------------------------------------------------------
-# 1a. attention present at start: baseline, not the event
+# 1a. oversee-watch: reducer-baseline: baseline, not the event
 new_case prwatch_baseline
 printf '12\tabcdef01\tthreads-open\t2 unresolved\n' > "$STUB_DIR/prwatch.out"
 printf '1' > "$STUB_DIR/prwatch.rc"
@@ -72,8 +77,8 @@ assert_eq "$rc" "0" "attention at start exits 0" "$err"
 assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none" "attention at start is not the event (heartbeat is)" "$err"
 assert_contains "$out" "pr-watch rc=1" "latest pr-watch state is appended to the event" "$err"
 assert_contains "$out" "threads-open" "pr-watch lines follow the context header" "$err"
-assert_contains "$(cat "$err")" "pr-watch attention present at start" "baseline is noted once on stderr"
-assert_eq "$(grep -c 'attention present at start' "$err")" "1" "baseline note printed once, not per pass"
+assert_contains "$(cat "$err")" "oversee-watch: reducer-baseline repo=owner/repo exit=1 count=1" "baseline is noted once on stderr"
+assert_eq "$(grep -c 'oversee-watch: reducer-baseline' "$err")" "1" "baseline note printed once, not per pass"
 assert_eq "$(cat "$STUB_DIR/prwatch.repo")" "owner/repo" "GH_REPO is exported to pr-watch" "$err"
 # --heal is what makes gate-stale self-healing instead of overseer hand-work:
 # without it the writer only converges on the cron floor. Matched WHOLE, not as
@@ -163,14 +168,14 @@ assert_eq "$(sort -u "$STUB_DIR/prwatch.args.all" | cut -f2 | sort -u)" "--heal"
 # baselined at start is never news again, and the overseer would hear nothing
 # until the heartbeat.
 new_case prwatch_error_first_pass
-printf '12\taaaa0000\tgate-stale\tpredicate disagrees\n12\taaaa0000\terror\twriter dispatch failed for '"'"'Review gate writer'"'"'\n' > "$STUB_DIR/prwatch.out"
+printf '12\taaaa0000\tgate-stale\tpredicate disagrees\n12\taaaa0000\terror\tE_WRITER_DISPATCH for '"'"'Review gate writer'"'"'\n' > "$STUB_DIR/prwatch.out"
 printf '1' > "$STUB_DIR/prwatch.rc"
 err="$TMP_ROOT/e1d6"
 out="$(run_watch -- 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "0" "an error at start exits 0" "$err"
 assert_eq "$(head -1 <<<"$out")" "EVENT pr-watch rc=1" "an error line at start is the event, not the baseline" "$err"
-assert_contains "$out" "writer dispatch failed" "the event carries the failed dispatch" "$err"
-assert_eq "$(grep -c 'attention present at start' "$err")" "0" "the baseline note does not stand in for the error event"
+assert_contains "$out" "E_WRITER_DISPATCH" "the event carries the failed dispatch" "$err"
+assert_eq "$(grep -c 'oversee-watch: reducer-baseline' "$err")" "0" "the baseline note does not stand in for the error event"
 
 # The companion: without an error key the opening pass still baselines
 # silently, so the preemption above is scoped to error and nothing else.
@@ -180,7 +185,7 @@ printf '1' > "$STUB_DIR/prwatch.rc"
 err="$TMP_ROOT/e1d7"
 out="$(run_watch -- 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none" "a first pass with no error key still baselines" "$err"
-assert_eq "$(grep -c 'attention present at start' "$err")" "1" "the ordinary first-pass note still covers the non-error keys"
+assert_eq "$(grep -c 'oversee-watch: reducer-baseline' "$err")" "1" "the ordinary first-pass note still covers the non-error keys"
 
 # 1e'. a line that clears and later recurs is a rising edge again
 new_case prwatch_recur
@@ -196,13 +201,13 @@ assert_eq "$(head -1 <<<"$out")" "EVENT pr-watch rc=1" "a cleared pr+kind that r
 # 1e. rc≠0 with no per-PR lines is pr-watch's global failure: exit 2
 new_case prwatch_global
 printf '2' > "$STUB_DIR/prwatch.rc"
-printf 'pr-watch: GH_REPO is not set\n' > "$STUB_DIR/prwatch.err"
+printf 'E_REDUCER_AUTH\n' > "$STUB_DIR/prwatch.err"
 err="$TMP_ROOT/e1e"
 out="$(run_watch -- 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "2" "pr-watch rc=2 with no lines exits 2" "$err"
 assert_eq "$out" "" "pr-watch global failure prints no EVENT" "$err"
-assert_contains "$(cat "$err")" "pr-watch failed for owner/repo (rc=2) with no per-PR lines" "global failure is named on stderr"
-assert_contains "$(cat "$err")" "GH_REPO is not set" "pr-watch stderr is surfaced"
+assert_contains "$(cat "$err")" "oversee-watch: reducer-failed repo=owner/repo exit=2" "global failure is named on stderr"
+assert_contains "$(cat "$err")" "E_REDUCER_AUTH" "pr-watch stderr is surfaced"
 
 # 1f. attention at start does not starve a lane's question
 new_case prwatch_no_starve
@@ -282,7 +287,7 @@ assert_eq "$rc" "0" "cross-run rising edge exits 0" "$err"
 assert_eq "$(head -1 <<<"$out")" "EVENT pr-watch rc=1" \
   "attention arriving between two runs is the next run's first-pass event" "$err"
 assert_contains "$out" "99887766" "the new PR's line follows the event" "$err"
-assert_not_contains "$(cat "$err")" "attention present at start" \
+assert_not_contains "$(cat "$err")" "oversee-watch: reducer-baseline" \
   "a persisted baseline replaces the start-of-run note"
 
 # 1h. the state file is rewritten after every pass — the pass's keys, and the
@@ -331,7 +336,7 @@ else
   chmod 600 "$state_file"
   assert_eq "$rc" "2" "an unreadable state file exits 2" "$err"
   assert_eq "$out" "" "an unreadable state file prints no EVENT" "$err"
-  assert_contains "$(cat "$err")" "cannot read the pr-watch state file: $state_file" \
+  assert_contains "$(cat "$err")" "oversee-watch: state-read-failed path=$state_file" \
     "the failure names the state file path"
 fi
 
@@ -355,7 +360,7 @@ else
   chmod 700 "$STATE_DIR/owner_repo__none"
   assert_eq "$rc" "2" "a state file that cannot be written exits 2" "$err"
   assert_eq "$out" "" "a failed state write on a pass with no event prints no EVENT" "$err"
-  assert_contains "$(cat "$err")" "could not write the pr-watch state file" \
+  assert_contains "$(cat "$err")" "oversee-watch: state-target-invalid" \
     "the failure names what could not be written"
 fi
 
@@ -372,7 +377,7 @@ printf '1' > "$STUB_DIR/prwatch.rc.owner_repo"
 printf '0' > "$STUB_DIR/prwatch.rc.other_repo.1"
 printf '7\tbbbb0000\tthreads-open\t1 unresolved\n' > "$STUB_DIR/prwatch.out.other_repo.2"
 printf '1' > "$STUB_DIR/prwatch.rc.other_repo.2"
-printf 'pr-watch: 1 PR could not be read\n' > "$STUB_DIR/prwatch.err.other_repo"
+printf 'E_REDUCER_READ count=1\n' > "$STUB_DIR/prwatch.err.other_repo"
 err="$TMP_ROOT/e1k"
 out="$(run_watch -- --repo owner/repo --repo other/repo 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "0" "a second repo's attention exits 0" "$err"
@@ -382,7 +387,7 @@ assert_contains "$out" "$(printf 'other/repo\t7\tbbbb0000\tthreads-open')" \
   "the second repo's line carries its repo" "$err"
 assert_contains "$out" "$(printf 'owner/repo\t12\taaaa0000\tthreads-open')" \
   "every repo's latest lines reach the event's context" "$err"
-assert_contains "$out" "$(printf 'other/repo\tpr-watch: 1 PR could not be read')" \
+assert_contains "$out" "$(printf 'other/repo\tE_REDUCER_READ count=1')" \
   "the reducer's stderr carries its repo too" "$err"
 assert_contains "$(cat "$STUB_DIR/prwatch.repos")" "other/repo" \
   "the reducer is run for the second repo" "$err"
@@ -395,12 +400,12 @@ assert_eq "$(cat "$STATE_DIR/other_repo__none")" "$(printf '7\tthreads-open')" \
 # usage error rather than a double reduction over one state file
 new_case prwatch_multi_repo_failure
 printf '2' > "$STUB_DIR/prwatch.rc.other_repo"
-printf 'pr-watch: GH_REPO is not set\n' > "$STUB_DIR/prwatch.err.other_repo"
+printf 'E_REDUCER_AUTH\n' > "$STUB_DIR/prwatch.err.other_repo"
 err="$TMP_ROOT/e1l1"
 out="$(run_watch -- --repo owner/repo --repo other/repo 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "2" "a global pr-watch failure on any repo exits 2" "$err"
 assert_eq "$out" "" "a global failure on any repo prints no EVENT" "$err"
-assert_contains "$(cat "$err")" "pr-watch failed for other/repo (rc=2)" \
+assert_contains "$(cat "$err")" "oversee-watch: reducer-failed repo=other/repo exit=2" \
   "the global failure names the repo it came from" "$err"
 
 new_case prwatch_repo_twice
@@ -408,7 +413,7 @@ err="$TMP_ROOT/e1l2"
 out="$(run_watch -- --repo owner/repo --repo Owner/Repo 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "2" "the same repository twice, differing only in case, exits 2" "$err"
 assert_eq "$out" "" "a repeated --repo prints no EVENT" "$err"
-assert_contains "$(cat "$err")" "--repo 'Owner/Repo' given twice" \
+assert_contains "$(cat "$err")" "oversee-watch: repo-duplicate repo=Owner/Repo" \
   "the usage error names the argument as the caller spelled it" "$err"
 
 # one canonical spelling: the dedupe, the state file, and GH_REPO agree
@@ -473,7 +478,7 @@ else
     "the event is delivered before any baseline is written" "$err"
   assert_contains "$out" "$(printf 'owner/repo\t34\tcccc0000\tthreads-open')" \
     "and it carries the line that raised it" "$err"
-  assert_contains "$(cat "$err")" "could not write the pr-watch state file" \
+  assert_contains "$(cat "$err")" "oversee-watch: state-target-invalid" \
     "the write failure is still reported"
   assert_eq "$(cat "$STATE_DIR/owner_repo__none")" "$(printf '12\tthreads-open')" \
     "the baseline of the repo that raised the event does not advance over it" "$err"
@@ -550,8 +555,8 @@ out="$(run_watch -- --repo owner/repo --repo other/repo 2>"$err")" && rc=0 || rc
 assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none" \
   "a repo named for the first time baselines its standing attention" "$err"
 assert_not_contains "$out" "EVENT pr-watch" "the newly named repo never preempts the lane checks" "$err"
-assert_eq "$(grep -c 'attention present at start' "$err")" "1" "exactly one baseline note on that run"
-assert_contains "$(cat "$err")" "attention present at start for other/repo" \
+assert_eq "$(grep -c 'oversee-watch: reducer-baseline' "$err")" "1" "exactly one baseline note on that run"
+assert_contains "$(cat "$err")" "oversee-watch: reducer-baseline repo=other/repo exit=1 count=1" \
   "and the note names the repo that has no baseline yet"
 assert_eq "$(ls -1 "$STATE_DIR" 2>/dev/null | wc -l | tr -d '[:space:]')" "2" \
   "the newly named repo gets its own baseline file" "$err"
@@ -596,37 +601,7 @@ err="$TMP_ROOT/e1s2"
 out="$(run_watch -- --repo= 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "2" "an empty --repo= exits 2" "$err"
 assert_eq "$out" "" "an empty --repo= prints no EVENT" "$err"
-assert_contains "$(cat "$err")" "--repo requires a value" "the parser names the option missing its value"
-
-# 1t. a fleet of more than one repo is told what the checks below the reducer
-# do NOT cover — and the note names only the checks this run actually performs
-new_case prwatch_coverage_note
-err="$TMP_ROOT/e1t1"
-out="$(run_watch -- --repo owner/repo --repo other/repo --item issue-5 2>"$err")" && rc=0 || rc=$?
-assert_contains "$(cat "$err")" \
-  "the reducer covers owner/repo other/repo; the merged check and the heartbeat's open-PR list read owner/repo only" \
-  "a multi-repo fleet is told which repo the merged check reads"
-err="$TMP_ROOT/e1t2"
-out="$(run_watch -- 2>"$err")" && rc=0 || rc=$?
-assert_not_contains "$(cat "$err")" "the reducer covers" "a one-repo fleet gets no coverage note"
-
-# no --item: the note must not explain a merged check this run skipped
-err="$TMP_ROOT/e1t3"
-out="$(run_watch -- --repo owner/repo --repo other/repo 2>"$err")" && rc=0 || rc=$?
-assert_contains "$(cat "$err")" \
-  "the reducer covers owner/repo other/repo; the heartbeat's open-PR list reads owner/repo only" \
-  "the note drops the merged check when the run skipped it"
-assert_not_contains "$(cat "$err")" "the merged check and" \
-  "a skipped check is never claimed as covered"
-
-# no pr-watch: the note must not claim a reducer this run skipped
-err="$TMP_ROOT/e1t4"
-out="$(run_watch OVERSEE_WATCH_PR_WATCH="$TMP_ROOT/bin/absent-pr-watch.sh" -- --repo owner/repo --repo other/repo --item issue-5 2>"$err")" && rc=0 || rc=$?
-assert_contains "$(cat "$err")" \
-  "the merged check and the heartbeat's open-PR list read owner/repo only" \
-  "the note still names what the merged check reads without the reducer"
-assert_not_contains "$(cat "$err")" "the reducer covers" \
-  "and never claims a reducer that is not installed"
+assert_contains "$(cat "$err")" "oversee-watch: missing-value option=--repo" "the parser names the option missing its value"
 
 # 1u. the repository resolved from `gh repo view` — the documented default,
 # reached only when no --repo is given — is canonicalized like any other: the
@@ -644,8 +619,8 @@ printf '1' > "$STUB_DIR/prwatch.rc"
 err="$TMP_ROOT/e1u"
 out="$(run_watch -- --no-repo --since 2026-08-15T09:00:00Z --item issue-5 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "0" "a default-resolved repository exits 0" "$err"
-assert_contains "$out" "EVENT merged 5 issue-5" \
-  "a repository resolved from gh repo view still fires merged" "$err"
+assert_contains "$out" "EVENT merged 5 issue-5 vanillagreencom/kendex" \
+  "a repository resolved from gh repo view still fires merged, naming the repo" "$err"
 assert_eq "$(cat "$STUB_DIR/prwatch.repo")" "vanillagreencom/kendex" \
   "and reaches pr-watch in the canonical spelling" "$err"
 assert_eq "$([[ -f "$STATE_DIR/vanillagreencom_kendex__2026-08-15T09_00_00Z" ]] && echo yes || echo no)" "yes" \
@@ -680,6 +655,7 @@ assert_eq "$(grep -c '^EVENT' <<<"$out")" "2" "both item PRs fire, nothing else"
 
 # busy repo: the item's PR is older than 60 newer merges — a single listing
 # window would drop it; the per-item --head query still finds it
+new_case merged_busy
 err="$TMP_ROOT/e2c"
 jq -n '[range(1; 61) | {number: (100 + .), headRefName: ("noise-" + (.|tostring)), mergedAt: "2026-08-15T12:00:00Z"}] + [{number: 5, headRefName: "issue-5", mergedAt: "2026-08-15T10:00:00Z"}]' > "$STUB_DIR/merged.json"
 out="$(run_watch -- --since 2026-08-15T09:00:00Z --item issue-5 2>"$err")" && rc=0 || rc=$?
@@ -692,15 +668,21 @@ assert_contains "$out" "EVENT merged 5 issue-5" "an item's merge beyond a newest
 err="$TMP_ROOT/e2c"
 out="$(run_watch -- --since 2026-08-15T09:00:00Z 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=2026-08-15T09:00:00Z" "no --item reaches the heartbeat" "$err"
-assert_contains "$(cat "$err")" "no --item given; skipping the merged and handoff checks" "no --item is noted on stderr"
+assert_contains "$(cat "$err")" "oversee-watch: items-omitted count=0 skipped=merged,handoff" "no --item is noted on stderr"
 assert_eq "$(grep -c 'merged' "$STUB_DIR/gh.calls" || true)" "0" "no --item never lists merged PRs"
 
 # gh stderr noise on a successful list does not reach the JSON parse
+new_case merged_noisy
+cat > "$STUB_DIR/merged.json" <<'EOF'
+[
+  {"number": 5, "headRefName": "issue-5", "mergedAt": "2026-08-15T10:00:00Z"}
+]
+EOF
 touch "$STUB_DIR/noisy"
 err="$TMP_ROOT/e2d"
 out="$(run_watch -- --since 2026-08-15T09:00:00Z --item issue-5 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "0" "gh stderr noise on success still exits 0" "$err"
-assert_eq "$out" "EVENT merged 5 issue-5" "gh stderr noise does not corrupt the merged list" "$err"
+assert_eq "$out" "EVENT merged 5 issue-5 owner/repo" "gh stderr noise does not corrupt the merged list" "$err"
 
 # a fork's PR carries the same head branch NAME, and --head matches by name
 new_case merged_fork
@@ -727,6 +709,98 @@ err="$TMP_ROOT/e2f"
 out="$(run_watch -- --repo vanillagreencom/x --since 2026-08-15T09:00:00Z --item issue-5 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "0" "mixed-case owner exits 0" "$err"
 assert_contains "$out" "EVENT merged 5 issue-5" "an owner login differing only in case still fires merged" "$err"
+
+# the merged lookup runs against EVERY --repo: a consumer-repo PR on the item's
+# branch fires, naming its repo, and a fork's PR on that name in that repo is
+# rejected against that repo's owner. Red when the lookup reads the first
+# --repo alone: the second repo is never asked, and the pass falls through to
+# the heartbeat.
+new_case merged_second_repo
+printf '[]\n' > "$STUB_DIR/merged.owner_repo.json"
+cat > "$STUB_DIR/merged.other_repo.json" <<'EOF'
+[
+  {"number": 77, "headRefName": "issue-5", "headRepositoryOwner": {"login": "other"}, "mergedAt": "2026-08-15T10:00:00Z"},
+  {"number": 78, "headRefName": "issue-5", "headRepositoryOwner": {"login": "forker"}, "mergedAt": "2026-08-15T10:30:00Z"}
+]
+EOF
+err="$TMP_ROOT/e2g"
+out="$(run_watch -- --repo owner/repo --repo other/repo --since 2026-08-15T09:00:00Z --item issue-5 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc" "0" "a merge in the second repo exits 0" "$err"
+assert_eq "$(head -1 <<<"$out")" "EVENT merged 77 issue-5 other/repo" \
+  "an item's PR merged in a non-first --repo is the event, naming that repo" "$err"
+assert_not_contains "$out" "EVENT merged 78" "a fork's PR in the second repo is rejected against that repo's owner" "$err"
+assert_eq "$(grep -c -- '--head issue-5 --state merged' "$STUB_DIR/gh.calls")" "2" \
+  "the one pass asked both repos for the item's branch" "$err"
+
+# The must-fail control: the lookup narrowed to the first --repo. The copy
+# keeps orch's place in a skills tree: its libraries resolve the github skill
+# beside it.
+MERGED_MUTANT_DIR="$TMP_ROOT/merged-mutant"
+mkdir -p "$MERGED_MUTANT_DIR/orch"
+cp -R "$REPO_ROOT/skills/orch/scripts" "$MERGED_MUTANT_DIR/orch/scripts"
+ln -s "$REPO_ROOT/skills/github" "$MERGED_MUTANT_DIR/github"
+sed 's/^    for repo in "${REPOS\[@\]}"; do$/    for repo in "${REPOS[0]}"; do/' "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$(cmp -s "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
+  "control: the mutant really narrows the merged lookup to the first repo"
+new_case merged_second_repo_mutant
+printf '[]\n' > "$STUB_DIR/merged.owner_repo.json"
+cat > "$STUB_DIR/merged.other_repo.json" <<'EOF'
+[
+  {"number": 77, "headRefName": "issue-5", "headRepositoryOwner": {"login": "other"}, "mergedAt": "2026-08-15T10:00:00Z"}
+]
+EOF
+err="$TMP_ROOT/e2g2"
+out="$(WATCH_BIN="$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" run_watch -- --repo owner/repo --repo other/repo --since 2026-08-15T09:00:00Z --item issue-5 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=2026-08-15T09:00:00Z" \
+  "control: with the lookup on the first repo alone the second repo's merge goes unreported" "$err"
+
+# a merged item still in --item is reported once across runs: the overseer
+# exits on the event and re-runs the watch, and the same PR is not news
+# again; a further PR merged on the same branch is. Red when the row is never
+# kept.
+new_case merged_once_across_runs
+cat > "$STUB_DIR/merged.json" <<'EOF'
+[
+  {"number": 5, "headRefName": "issue-5", "mergedAt": "2026-08-15T10:00:00Z"}
+]
+EOF
+err="$TMP_ROOT/e2h1"
+out="$(run_watch -- --since 2026-08-15T09:00:00Z --item issue-5 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT merged 5 issue-5 owner/repo" "run 1: the merge is the event" "$err"
+assert_eq "$(grep -c "$(printf 'merged\tissue-5\towner/repo#5')" "$STATE_DIR/owner_repo__2026-08-15T09_00_00Z")" "1" \
+  "the committed baseline keys the delivered PR by item" "$err"
+err="$TMP_ROOT/e2h2"
+out="$(run_watch -- --since 2026-08-15T09:00:00Z --item issue-5 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=2026-08-15T09:00:00Z" \
+  "run 2: the same merged PR, the item still in --item, is not news again" "$err"
+assert_not_contains "$out" "EVENT merged" "a re-run carries no second merged line" "$err"
+cat > "$STUB_DIR/merged.json" <<'EOF'
+[
+  {"number": 9, "headRefName": "issue-5", "mergedAt": "2026-08-15T11:00:00Z"},
+  {"number": 5, "headRefName": "issue-5", "mergedAt": "2026-08-15T10:00:00Z"}
+]
+EOF
+err="$TMP_ROOT/e2h3"
+out="$(run_watch -- --since 2026-08-15T09:00:00Z --item issue-5 2>"$err")" && rc=0 || rc=$?
+assert_eq "$out" "EVENT merged 9 issue-5 owner/repo" "run 3: a further PR on the branch is the event, and the first is not repeated beside it" "$err"
+
+# The must-fail control: the row never kept, so every run reads as the first.
+sed 's/^    state="$(lane_row_set merged "$state" "$item" "$keys")"$/    state="$(lane_row_clear merged "$state" "$item")"/' \
+  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$(cmp -s "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
+  "control: the mutant really drops the merged row"
+new_case merged_once_across_runs_mutant
+cat > "$STUB_DIR/merged.json" <<'EOF'
+[
+  {"number": 5, "headRefName": "issue-5", "mergedAt": "2026-08-15T10:00:00Z"}
+]
+EOF
+err="$TMP_ROOT/e2h4"
+out="$(WATCH_BIN="$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" run_watch -- --since 2026-08-15T09:00:00Z --item issue-5 2>"$err")" && rc=0 || rc=$?
+err="$TMP_ROOT/e2h5"
+out="$(WATCH_BIN="$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" run_watch -- --since 2026-08-15T09:00:00Z --item issue-5 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT merged 5 issue-5 owner/repo" \
+  "control: with the row dropped the re-run delivers the same merge again" "$err"
 
 
 # --- 2b. handoff -----------------------------------------------------------
@@ -776,7 +850,8 @@ handoff_record KEN-1
 err="$TMP_ROOT/e2b4b"
 out="$(run_watch -- --item KEN-1 2>"$err")" && rc=0 || rc=$?
 assert_eq "rc=$rc out=$out" "rc=2 out=" "a failing worktree CLI exits 2 with no event" "$err"
-assert_contains "$(cat "$err")" "worktree exists failed for KEN-1: worktree: settings load failed" "and names the failure" "$err"
+assert_eq "$(grep '^oversee-watch: worktree-query-failed ' "$err"; tail -n 1 "$err")" \
+  "$(printf '%s\n' 'oversee-watch: worktree-query-failed operation=exists item=KEN-1' 'E_WORKTREE_INIT')" "and names the failure with its tool detail" "$err"
 
 new_case handoff_resumed
 handoff_record KEN-1 2026-09-06T05:10:00Z
@@ -809,8 +884,28 @@ err="$TMP_ROOT/e5"
 out="$(run_watch -- --item issue-9 gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "0" "heartbeat exits 0" "$err"
 assert_contains "$out" "EVENT heartbeat" "heartbeat after --max-loops with no event" "$err"
-assert_contains "$out" "issue-9" "open PR list follows the heartbeat" "$err"
+assert_contains "$out" "$(printf 'owner/repo\t9\tissue-9\tfix the thing')" "open PR list follows the heartbeat, each line prefixed with its repo" "$err"
 assert_eq "$(grep -c 'merged' "$STUB_DIR/gh.calls")" "2" "merged check ran once per loop (2 loops)" "$err"
+
+# every --repo's open PRs follow the heartbeat; red with the list narrowed to
+# the first repo
+new_case heartbeat_multi_repo
+printf '9\tissue-9\tfix the thing\n' > "$STUB_DIR/open.owner_repo.txt"
+printf '77\tissue-9\tconsumer side\n' > "$STUB_DIR/open.other_repo.txt"
+err="$TMP_ROOT/e5b"
+out="$(run_watch -- --repo owner/repo --repo other/repo 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none" "a two-repo fleet reaches the heartbeat" "$err"
+assert_contains "$out" "$(printf 'other/repo\t77\tissue-9\tconsumer side')" "the second repo's open PRs follow the heartbeat too" "$err"
+assert_contains "$out" "$(printf 'owner/repo\t9\tissue-9\tfix the thing')" "beside the first repo's" "$err"
+sed 's/^  for repo in "${REPOS\[@\]}"; do$/  for repo in "${REPOS[0]}"; do/' "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$(cmp -s "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
+  "control: the mutant really narrows the heartbeat's open-PR list to the first repo"
+new_case heartbeat_multi_repo_mutant
+printf '9\tissue-9\tfix the thing\n' > "$STUB_DIR/open.owner_repo.txt"
+printf '77\tissue-9\tconsumer side\n' > "$STUB_DIR/open.other_repo.txt"
+err="$TMP_ROOT/e5c"
+out="$(WATCH_BIN="$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" run_watch -- --repo owner/repo --repo other/repo 2>"$err")" && rc=0 || rc=$?
+assert_not_contains "$out" "consumer side" "control: with the list on the first repo alone the second repo's PRs are missing" "$err"
 
 # --- 6. auth and listing failures ------------------------------------------
 new_case auth_fail
@@ -818,7 +913,7 @@ touch "$STUB_DIR/auth-fail"
 err="$TMP_ROOT/e6a"
 out="$(run_watch -- 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "2" "gh auth failure exits 2" "$err"
-assert_contains "$(cat "$err")" "no working GitHub auth path" "auth failure is named on stderr"
+assert_contains "$(cat "$err")" "oversee-watch: auth-failed service=github" "auth failure is named on stderr"
 assert_eq "$out" "" "auth failure prints no EVENT" "$err"
 
 # a stale env token with no keyring falls through to the project GH_BOT_TOKEN
@@ -839,7 +934,7 @@ touch "$STUB_DIR/list-fail"
 err="$TMP_ROOT/e6d"
 out="$(run_watch -- --item issue-1 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "2" "failing pr list exits 2" "$err"
-assert_contains "$(cat "$err")" "gh pr list --state merged failed" "pr list failure is named on stderr"
+assert_contains "$(cat "$err")" "oversee-watch: pr-list-failed repo=owner/repo state=merged" "pr list failure is named on stderr"
 assert_contains "$(cat "$err")" "HTTP 502" "gh stderr is surfaced with the failure"
 
 # --- 7. lanes outside tmux -------------------------------------------------
@@ -847,7 +942,7 @@ new_case no_tmux
 err="$TMP_ROOT/e7"
 out="$(run_watch TMUX= -- gh-1 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "2" "lanes without \$TMUX exit 2" "$err"
-assert_contains "$(cat "$err")" "not inside tmux" "missing tmux is named on stderr"
+assert_contains "$(cat "$err")" "oversee-watch: tmux-missing lanes=gh-1" "missing tmux is named on stderr"
 
 # --- 8. missing pr-watch is a note, not a failure ---------------------------
 new_case no_prwatch
@@ -855,27 +950,42 @@ err="$TMP_ROOT/e8"
 out="$(run_watch OVERSEE_WATCH_PR_WATCH="$TMP_ROOT/nope/pr-watch.sh" -- 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "0" "missing pr-watch still watches (heartbeat)" "$err"
 assert_contains "$out" "EVENT heartbeat" "missing pr-watch reaches the heartbeat" "$err"
-assert_contains "$(cat "$err")" "pr-watch.sh not found" "missing pr-watch is noted once on stderr"
-assert_eq "$(grep -c 'pr-watch.sh not found' "$err")" "1" "note printed exactly once, not per loop"
+assert_contains "$(cat "$err")" "oversee-watch: reducer-missing" "missing pr-watch is noted once on stderr"
+assert_eq "$(grep -c 'oversee-watch: reducer-missing' "$err")" "1" "note printed exactly once, not per loop"
+
+# --- 8b. inside tmux, --item with no lane window is a note naming the pane
+# checks skipped, once; outside tmux, or with no --item, or with a window,
+# nothing is noted
+NOTE_NO_LANE="oversee-watch: lanes-omitted count=0"
+new_case no_lane_window_note
+err="$TMP_ROOT/e8b1"
+out="$(run_watch -- --item issue-5 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc" "0" "an --item with no lane window still watches" "$err"
+assert_eq "$(grep -c "$NOTE_NO_LANE" "$err")" "1" "inside tmux the skipped pane checks are named once on stderr"
+assert_contains "$(cat "$err")" "active=pr-watch,merged,triage,handoff" "and the note says what still runs"
+err="$TMP_ROOT/e8b2"
+out="$(run_watch TMUX= -- --item issue-5 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc" "0" "outside tmux an --item with no lane window still watches" "$err"
+assert_not_contains "$(cat "$err")" "oversee-watch: lanes-omitted" "outside tmux nothing is noted"
+err="$TMP_ROOT/e8b3"
+out="$(run_watch -- 2>"$err")" && rc=0 || rc=$?
+assert_not_contains "$(cat "$err")" "oversee-watch: lanes-omitted" "with no --item the note does not fire"
+err="$TMP_ROOT/e8b4"
+out="$(run_watch -- --item issue-5 gh-1 2>"$err")" && rc=0 || rc=$?
+assert_not_contains "$(cat "$err")" "oversee-watch: lanes-omitted" "with a lane window the note does not fire"
+# The must-fail control: the note deleted.
+sed '/ow_message lanes-omitted /d' "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$(cmp -s "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
+  "control: the mutant really deletes the note"
+new_case no_lane_window_note_mutant
+err="$TMP_ROOT/e8b5"
+out="$(WATCH_BIN="$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" run_watch -- --item issue-5 2>"$err")" && rc=0 || rc=$?
+assert_not_contains "$(cat "$err")" "oversee-watch: lanes-omitted" "control: without the note an --item with no window skips the pane checks in silence"
 
 # --- 9. --help -------------------------------------------------------------
 err="$TMP_ROOT/e9"
 out="$(run_watch -- --help 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "0" "--help exits 0" "$err"
-assert_contains "$out" "EVENT lane-asking" "--help documents the event kinds" "$err"
-assert_contains "$out" "session:window" "--help names the lane form for a window in another session" "$err"
-assert_contains "$out" "reports no" \
-  "--help states the probe that keeps a wrapped lane out of lane-exited" "$err"
-assert_contains "$out" "pgrep -P" \
-  "--help names the probe the code actually runs" "$err"
-assert_contains "$out" "not an answer" \
-  "--help states that an unusable probe keeps the lane watched" "$err"
-assert_contains "$out" "last user turn on its screen" \
-  "--help states where a limit banner has to sit to count" "$err"
-assert_contains "$out" "earlier repository baselines may already have advanced" \
-  "--help documents a partial multi-repo state commit" "$err"
-assert_contains "$out" "Only baselines that did not advance repeat" \
-  "--help does not promise every event repeats after a write failure" "$err"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

@@ -5,7 +5,7 @@ What a maintainer must not break. What each check fails: [CHECKS.md](CHECKS.md);
 ## One definition each
 
 - `scripts/commit-guards` is the dispatcher; `STAGED_SCOPED_CHECKS` names the checks the commit batch hands `--staged`.
-- `scripts/lib/common.sh` holds the shared helpers, the one exit handler, `gg_content_carriers` and `gg_grep_lane`.
+- `scripts/lib/common.sh` holds the shared scan helpers, `gg_content_carriers` and `gg_grep_lane`. `scripts/lib/messages.sh` emits a stable key and value before the English explanation and owns the collection-error exit.
 - `scripts/lib/configured-paths.sh` holds a glob-list lane's list, excludes, matcher, index walk and `gg_note_skip`.
 - `scripts/lib/staged-lines.sh` is the lines a commit adds to one path, off a pinned `-U0` diff.
 - `scripts/lib/comment-text.sh` is the comment grammar per path and the `line<TAB>text` scanner; its limits are stated in CHECKS.md § comments and pinned by `tests/comments.test.sh`.
@@ -20,7 +20,7 @@ What a maintainer must not break. What each check fails: [CHECKS.md](CHECKS.md);
 - Scans read index content, so the gate judges what is committed and a sparse checkout hides nothing.
 - Content decides what is scannable; an attribute never does. Listings force text (`--text`, no `-I`), diffs pin `--no-ext-diff --no-textconv --no-color --text`, and each named blob is sniffed for a NUL in its first block.
 - `gg_content_carriers` lists the measurable carriers and `gg_grep_lane` details the hits; both force text and move together, since a file the listing names and the detail scan drops is a spurious exit 2.
-- Every skip goes through `gg_note_skip` and is counted in `GG_WALK_SKIPPED` by distinct path; each verdict line carries `N matched path(s) not measured`.
+- Every skip goes through `gg_note_skip` and is counted in `GG_WALK_SKIPPED` by distinct path. Each verdict includes that count in its stable record.
 - A check that refuses states what it refused, why, and the preferred remedy first, before any exemption path; every exclusion carries its reason; a tighten-only baseline exists only where legacy counts exist.
 - A remedy is data, never a pasteable command line.
 
@@ -38,9 +38,9 @@ The installer writes into `.git/hooks`, never `core.hooksPath`:
 - Repeat runs are no-ops and repairs: only the exact line on a line of its own is current; a cleared executable bit is restored.
 - Left alone, reported, exit 1: a symlinked or non-executable hook; a shebang naming a non-POSIX-shell interpreter, an `env` lookup, an interpreter option, or a shell outside the trusted full paths under `/bin` and `/usr/bin`. A helper file this installer did not write is never overwritten. A bare repository is refused.
 - `core.hooksPath` set to anything makes install a reported skip; removal and `--check` still run. `hooks_path_origins` prints the stand-down on stderr: git's `--show-origin --show-scope --get-all` lines verbatim through `%q`, and one sentence naming no path and no command.
-- Linked worktrees share the install; arming and `--uninstall` are repository-level and ask no other work tree or project.
+- Linked worktrees share one install, and arming is refused in one: the helper names the scripts directory of the tree that armed it, which every session in the repository would then run and which goes away with that tree. The refusal stands down where there is no main checkout to name — a bare repository with work trees added — and it stands behind the `core.hooksPath` skip, which writes nothing from anywhere. `--check` and `--uninstall` answer from any work tree, and `--check`'s re-arm remedy names the main checkout where the caller is not standing in it; all of them, and arming from the main checkout, are repository-level and ask no other work tree or project.
 - `--uninstall` drops the helper and the marked line, deletes a hook file this installer created outright, leaves every other line, and runs under `core.hooksPath` too. A line it may not edit keeps the helper and fails the removal.
-- `--check` writes nothing, not even the hooks directory. `0`: helper and both hooks pass the install predicate. `1`: a shim drifted or absent, or `core.hooksPath` set and empty. `2`: unmeasurable, or `core.hooksPath` naming a directory; the verifier reads `.git/hooks` only. Definitive drift outranks an unmeasured component. One stdout line carries every finding.
+- `--check` writes nothing, not even the hooks directory. `0`: helper and both hooks pass the install predicate. `1`: a shim drifted or absent, or `core.hooksPath` set and empty. `2`: unmeasurable, or `core.hooksPath` naming a directory; the verifier reads `.git/hooks` only. Definitive drift outranks an unmeasured component. The first stdout line carries the stable verdict and finding keys. English explanation follows. The CLI reads the `commit-guards git hooks:` prefix.
 - The helper is compared byte for byte against `helper_body`, its head against `helper_head_shape` with the per-checkout value blanked. Only `SCRIPT_DIR` may differ, and only when it round-trips through `gg_shell_quote` and names this project's scripts directory in another checkout of this repository; `project_rel` and `skill_roots` compare exactly.
 - `gg_install_file` in `scripts/lib/atomic-install.sh` replaces baselines, collated changelogs, and reflowed markdown by a rename inside the destination's directory. `common.sh` removes its staging file on exit.
 - kendex runs the installer through the `repo-effects` declaration in `SKILL.md`; every verb that drops the package runs `--uninstall` while the scripts are still on disk; `kendex guard install`, `guard uninstall` and `guard check` call it directly; `kendex check` relays `--check` only where `.git/hooks/kendex-guards` exists.
@@ -60,7 +60,7 @@ Every step runs before the verdict; any other companion failure blocks. The shim
 ## The markdown lanes
 
 - `md-blocks.awk` mode `check` prints md-format's violations, `reflow` the file in the format, `lines` the judged lines with blockquote prefix stripped, the HTML block lines apart, and each heading's text.
-- md-refs runs the `lines` stream through `md-refs.awk`, then resolves in three passes: every selected file's references, the headings of every cited file read from the index whether or not in scope, then the verdict.
+- md-refs runs the `lines` stream through `md-refs.awk`, then resolves in three passes: every selected file's references, the headings of every cited file read from the index whether or not in scope, then the verdict. Its source set joins the first pass through `md-refs.awk -v grammar=text`, fed by `comment-text.sh`; one `git grep` for the section sign over the index names the files that pass opens, so a source tree with no citation costs one search.
 - Both programs are POSIX awk (no interval expressions, no gawk builtins) under `LC_ALL=C`; `mawk` and `gawk --posix` give the same records over the suites' fixtures.
 - The reflow is the check's state machine printing instead of complaining, so a reflowed file passes md-format by construction; `tests/md-reflow.test.sh` proves it over the corpus and proves each rewrite is a fixed point.
 - The batch passes `--staged` to both markdown checks. md-format selects changed documents; md-refs checks all configured documents against the index. `COMMIT_GUARDS_MD_SCOPE=all` makes unflagged checks unconditional.
@@ -87,7 +87,7 @@ The row format, the `!` carve and the `\!` escape are stated in `SKILL.md § Con
 
 ## Probing a terminal-only code path
 
-A headless suite cannot reach a branch that exists only at a tty (`mv` prompts before replacing a write-denied destination only there). `gg_pty_run CAP SCRIPT_FILE` in `tests/lib/pty.bash` runs a bash script with fds 0, 1 and 2 on a pseudo-terminal, picking the `script` grammar from `uname`; a host whose `script` answers neither form is a red naming the spawner, not a skip. Its states are enumerated above the function and nowhere else. `tests/terminal-paths.test.sh` is the worked example; its `pty_call` is the wrapper a new case copies.
+A headless suite cannot reach a branch that exists only at a tty (`mv` prompts before replacing a write-denied destination only there). `gg_pty_run CAP SCRIPT_FILE` in `tests/lib/pty.bash` runs a bash script with fds 0, 1 and 2 on a pseudo-terminal, picking the `script` grammar from `uname`; a host whose `script` answers neither form is a red naming the spawner, not a skip. Its states are enumerated above the function and nowhere else. `tests/terminal-paths.test.sh` is the worked example; its `pty_line` runs one session body and `install_line` is the wrapper an install case copies.
 
 - Stdin is `/dev/null`, so a prompt is answered by EOF.
 - A time cap on both sides: after `CAP` seconds the caller kills the session's process group, then the spawner's; the session holds the same deadline over itself a few seconds later.

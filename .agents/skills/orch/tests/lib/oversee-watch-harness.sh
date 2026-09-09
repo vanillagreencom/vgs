@@ -88,8 +88,11 @@ CASE_REPO_ROOT="$(git -C "$TMP_ROOT/repo" rev-parse --show-toplevel)" \
   || { echo "oversee-watch harness: case repository root not found" >&2; exit 1; }
 
 # gh stub, driven by files in $STUB_DIR:
-#   merged.json   body for `pr list --state merged` (default: [])
-#   open.txt      lines for `pr list --state open` (default: empty)
+#   merged.json   body for `pr list --state merged` (default: []);
+#                 merged.<SLUG>.json answers that --repo alone, <SLUG> being
+#                 the repo with everything outside [A-Za-z0-9._-] as `_`
+#   open.txt      lines for `pr list --state open` (default: empty), with
+#                 open.<SLUG>.txt per repo the same way
 #   repoview.txt  what `repo view` reports — the repository the watch resolves
 #                 when no --repo is given (default: owner/repo)
 #   auth-fail     present → keyring `auth status` fails
@@ -124,8 +127,11 @@ case "${1:-} ${2:-}" in
       esac
       shift
     done
+    slug="$(printf '%s' "$repo" | tr -c 'A-Za-z0-9._-' '_')"
     if [[ "$state" == "merged" ]]; then
-      src="$STUB_DIR/merged.json"; [[ -f "$src" ]] || src=/dev/null
+      src="$STUB_DIR/merged.$slug.json"
+      [[ -f "$src" ]] || src="$STUB_DIR/merged.json"
+      [[ -f "$src" ]] || src=/dev/null
       # newest-created first, like gh: the fixture is in that order already;
       # --head narrows to one branch, --limit caps the page. gh always returns
       # headRepositoryOwner; a fixture that omits it is a same-repo head.
@@ -134,7 +140,8 @@ case "${1:-} ${2:-}" in
                 | (.headRepositoryOwner //= {login: $owner}) ] | .[:$limit]' "$src" 2>/dev/null || echo '[]'
       exit 0
     fi
-    [[ -f "$STUB_DIR/open.txt" ]] && cat "$STUB_DIR/open.txt"
+    if [[ -f "$STUB_DIR/open.$slug.txt" ]]; then cat "$STUB_DIR/open.$slug.txt"
+    elif [[ -f "$STUB_DIR/open.txt" ]]; then cat "$STUB_DIR/open.txt"; fi
     exit 0 ;;
 esac
 printf 'unexpected gh call: %s\n' "$*" >&2
@@ -172,7 +179,7 @@ case "${1:-}" in
     while [[ $# -gt 0 ]]; do [[ "$1" == "-t" ]] && lane="$2"; [[ "$1" == *J* && "$1" == -* ]] && join=1; shift; done
     n=0; [[ -f "$STUB_DIR/pane-$lane.calls" ]] && n="$(cat "$STUB_DIR/pane-$lane.calls")"
     n=$((n + 1)); printf '%s' "$n" > "$STUB_DIR/pane-$lane.calls"
-    [[ -f "$STUB_DIR/capture-fail-$lane" ]] && { echo "capture failed: $lane" >&2; exit 1; }
+    [[ -f "$STUB_DIR/capture-fail-$lane" ]] && { printf 'E_CAPTURE lane=%s\n' "$lane" >&2; exit 1; }
     src="$STUB_DIR/pane-$lane.$n.txt"; [[ -f "$src" ]] || src="$STUB_DIR/pane-$lane.txt"
     [[ -f "$src" ]] || { echo "can't find window: $lane" >&2; exit 1; }
     # width-<lane>.txt makes the pane narrow: the fixture holds the LOGICAL
@@ -201,7 +208,7 @@ case "${1:-}" in
     n=0; [[ -f "$STUB_DIR/cmd-$lane.calls" ]] && n="$(cat "$STUB_DIR/cmd-$lane.calls")"
     n=$((n + 1)); printf '%s' "$n" > "$STUB_DIR/cmd-$lane.calls"
     src="$STUB_DIR/cmd-$lane.$n.txt"; [[ -f "$src" ]] || src="$STUB_DIR/cmd-$lane.txt"
-    [[ -f "$src" ]] || { echo "can't find window: $lane" >&2; exit 1; }
+    [[ -f "$src" ]] || { printf 'E_COMMAND lane=%s\n' "$lane" >&2; exit 1; }
     # `#{pane_pid} #{pane_current_command}`: one read, pid first. obs-<lane>.txt
     # replaces the whole reply, so a case can hand the watch a malformed one.
     if [[ -f "$STUB_DIR/obs-$lane.txt" ]]; then cat "$STUB_DIR/obs-$lane.txt"; exit 0; fi
@@ -376,7 +383,7 @@ EOF
 cat > "$TMP_ROOT/bin/worktree-stub.sh" <<'EOF'
 #!/usr/bin/env bash
 set -uo pipefail
-[[ -f "$STUB_DIR/worktree-fail" ]] && { echo "worktree: settings load failed" >&2; exit 3; }
+[[ -f "$STUB_DIR/worktree-fail" ]] && { echo "E_WORKTREE_INIT" >&2; exit 3; }
 case "${1:-}" in
   exists) [[ -d "$STUB_DIR/wt-${2:-}" ]] && echo true || echo false ;;
   path) printf '%s/wt-%s\n' "$STUB_DIR" "${2:-}" ;;

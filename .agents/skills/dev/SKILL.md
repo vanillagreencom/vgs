@@ -54,6 +54,7 @@ Review and QA-review belong to the reviewer skill: [`../reviewer/workflows/revie
   - Call or cite the one that exists, or escalate in your return. An issue that orders a twin is escalated, not implemented.
 - Docs move with the code they describe; the `docs-writing` skill states the rule and the `doc-drift-check` hook shows the user docs that may need an update.
 - Once a pushed head has been reviewed, later rounds add commits and never amend; before any review has run on a head, the kendex-issues fix cycle may amend only to refresh a required check that cannot be rerun.
+- A push that prints `rebase-map:` lines has rewritten the shas the PR's `Fixed in <sha>` replies name: before holding, re-reply each such thread with the new sha, or post the map as one PR comment naming old and new per line; a sha the map reports as `dropped` gets a reply that the fix commit no longer exists on the branch.
 
 Code standards are [`../code-quality/SKILL.md`](../code-quality/SKILL.md): correctness, comments, over-engineering, cleanup.
 
@@ -64,7 +65,7 @@ Execute workflow sections in order; a "**Skip if**" condition is the workflow's 
 **The completion artifact is the round.** `dev-return-write` writes it after the commit; never hand-author the JSON (schema: orch [`schemas/dev-return.md`](../orch/schemas/dev-return.md)).
 
 - `--issue` is the delegation's `Artifact Key:` line, the normalized workflow-state key (`issue-N` for GitHub, `PROJ-123` for Linear), never the tracker-native `OWNER/REPO#N` or a bare number. `--round-id` is its `Round ID:` line.
-- `--kind` always matches what was delegated. `--validate` matches your commit message and return; a pass that needed a re-run is still `pass`, with the caveat in `--validate-note`. Flag constraints and value shapes: `dev-return-write --help`.
+- `--kind` always matches what was delegated. `--validate` matches your commit message and return. `--validate-note` carries the test-only validation-ceiling report when that route applies. Flag constraints and value shapes: `dev-return-write --help`.
 
 **Acceptance is that artifact plus git state, never your message.** Write the artifact, then return exactly once over the harness's agent-to-agent channel; a disk write is not a return. Send the `**Return exactly**` body once and go idle.
 
@@ -74,13 +75,13 @@ Execute workflow sections in order; a "**Skip if**" condition is the workflow's 
 
 ## Validation
 
-Deterministic gate findings are fixed here, never carried into review. Fix what is simple and related and re-run; when a failure is complex or unrelated, commit anyway and report it; after the same failure three times, stop looping. Every unresolved failure is reported three times over: in the commit message, in `--validate`, and in your return.
+The validation gate and role ownership are complete in [dev-implement.md § 5. Validate](workflows/dev-implement.md#5-validate). Run no proof, rerun, receipt, isolation step, or approval step that section does not name. That section also owns the one proposed-rule route and the per-rule control for production gate and guard changes.
 
 ### Long-Running Validation
 
 **Invariant, every harness:** the completion tail (commit → QA labels → summary → artifact → return) is never dropped, and an interrupted run is never success. Re-check its real outcome and resume the tail. How you wait is your harness's:
 
-- **Claude Code.** Background the BARE command with output redirected to a log via `run_in_background`, never piped or chained. The verdict is the exit code the harness reports when the task ends, in the completion notification and in the `[exited with code N]` line that closes the task's own output file. The log you redirected to holds command output and never an exit status. Then end your turn. **Idling after backgrounding is normal, not a stall.** The orchestrator's watchdog closes the round. Never poll.
+- **Claude Code.** Background the BARE command with output redirected to a log via `run_in_background`, never piped or chained, then wait for it with one bounded foreground poll: a for-loop over `sleep 180` with a cap, reading the `[exited with code N]` line that closes the task's own output file. Never idle for the completion notice and never depend on a background poller for it: the harness can kill your background shell on a low-memory heuristic that fires with free memory to spare, and the notice then never comes. The verdict is that exit code; the log holds command output and never an exit status. Then resume the tail.
 - **Codex.** Foreground and block.
 - **Pi.** Run it in the foreground.
 

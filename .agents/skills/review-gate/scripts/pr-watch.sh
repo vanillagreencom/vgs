@@ -8,10 +8,22 @@
 # for hours over a thread posted minutes after their last pass.
 # The authoritative contract — attention kinds, output format, exit
 # codes, env — is print_usage below: run with --help.
+# Stdout is the whole-text attention protocol consumed by orch oversee-watch:
+# PR number, head prefix, kind, and detail separated by literal tabs. The detail
+# includes the queue and submit-size annotations. Preserve these payloads.
+# Global refusals use diagnostic records on stderr, followed by explanation.
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/settings.sh
+if [ ! -r "$script_dir/lib/diagnostics.sh" ]; then
+  printf 'review-gate-error=diagnostics-load value=%q\n%s\n' "$script_dir/lib/diagnostics.sh" 'Could not load the diagnostics library.' >&2
+  exit 2
+fi
+. "$script_dir/lib/diagnostics.sh" 2>/dev/null || {
+  printf 'review-gate-error=diagnostics-load value=%q\n%s\n' "$script_dir/lib/diagnostics.sh" 'Could not load the diagnostics library.' >&2
+  exit 2
+}
 . "$script_dir/lib/settings.sh"
 
 print_usage() {
@@ -69,7 +81,16 @@ Attention kinds:
                      it
   disarmed           gate open (success) on an un-queued PR with auto-merge
                      NOT armed — mergeable, but nothing will merge it (the
-                     known eviction-disarm failure mode)
+                     known eviction-disarm failure mode). The line also
+                     carries the size orch's branch-size-check recorded for
+                     this head branch at submit (workflow state
+                     `pr.size_check`): the production lines it added, the
+                     allowance the issue stated and the ratio between them,
+                     and the head it measured. A record of any other head
+                     reads `stale`, and no record at all `unavailable`. A
+                     verdict other than pass is named, so a branch over its
+                     test allowance is not read off a passing production
+                     ratio — read only, never re-measured, refusing nothing
   awaiting-stale     no evidence and the head has sat unreviewed longer
                      than the quiet period (PR_REVIEW_WAIT_SECS, default
                      900) — time for a manual re-review trigger or the
@@ -100,6 +121,13 @@ Exit codes:
      with no per-PR lines — surface stderr, not just stdout
 
 Env (required): GH_TOKEN (or ambient gh auth), GH_REPO
+Env (optional): ORCH_STATE_DIR — where the disarmed line reads the submit
+size record from, else tmp/ under the working directory. That is the
+environment fallback orch's workflow-state honours; its --state-dir flag has
+no equivalent here, so a record written under one reads unavailable. The
+record is found by its own branch name, so one directory serving a fleet can
+match a same-named branch in another repo — the head binding then reads that
+record stale rather than as this PR's size
 
 Consumers: orch's workflows treat this as the single state reducer for
 multi-PR watching (orch's approval-wait remains the single-PR foreground
@@ -117,7 +145,7 @@ for arg in "$@"; do
 done
 
 if [ -z "${GH_REPO:-}" ]; then
-  echo "::error::pr-watch: GH_REPO is required" >&2
+  rg_message error watch-repo-missing "${GH_REPO:-}" "::error::pr-watch: GH_REPO is required" >&2
   exit 2
 fi
 
@@ -133,7 +161,7 @@ while [ $# -gt 0 ]; do
       shift
       AWAITING_AFTER="${1:-}"
       case "$AWAITING_AFTER" in
-        ''|*[!0-9]*) echo "::error::pr-watch: --awaiting-after needs a positive integer" >&2; exit 2 ;;
+        ''|*[!0-9]*) rg_message error watch-wait-invalid "$AWAITING_AFTER" "::error::pr-watch: --awaiting-after needs a positive integer" >&2; exit 2 ;;
       esac
       # Same bound as the settings path: past Bash's integer range the later
       # [ -gt ] comparisons fail silently inside their ifs. Leading zeros
@@ -142,14 +170,14 @@ while [ $# -gt 0 ]; do
       AWAITING_AFTER="$(printf '%s' "$AWAITING_AFTER" | sed 's/^0*//')"
       [ -z "$AWAITING_AFTER" ] && AWAITING_AFTER=0
       if [ "${#AWAITING_AFTER}" -gt 9 ]; then
-        echo "::error::pr-watch: --awaiting-after is out of range (max 9 digits)" >&2
+        rg_message error watch-wait-range "$AWAITING_AFTER" "::error::pr-watch: --awaiting-after is out of range (max 9 digits)" >&2
         exit 2
       fi
       ;;
-    -*) echo "::error::pr-watch: unknown flag $1" >&2; exit 2 ;;
+    -*) rg_message error watch-flag-unknown "$1" "::error::pr-watch: unknown flag $1" >&2; exit 2 ;;
     *)
       case "$1" in
-        ''|*[!0-9]*) echo "::error::pr-watch: PR arguments must be numbers (got '$1')" >&2; exit 2 ;;
+        ''|*[!0-9]*) rg_message error watch-pr-invalid "$1" "::error::pr-watch: PR arguments must be numbers (got '$1')" >&2; exit 2 ;;
       esac
       # Base-10 normalization: a zero-padded "09" is not valid JSON for the
       # --argjson binding check downstream.
@@ -161,7 +189,7 @@ done
 
 GATE_CONTEXT="$(rg_setting REVIEW_GATE_CONTEXT "Review gate")" || exit 2
 if [ -z "$GATE_CONTEXT" ]; then
-  echo "::error::pr-watch: REVIEW_GATE_CONTEXT is explicitly empty — the predicate rejects this configuration and so does the watcher (cheap mode would otherwise search for an empty context)" >&2
+  rg_message error watch-context-empty "$GATE_CONTEXT" "::error::pr-watch: REVIEW_GATE_CONTEXT is explicitly empty — the predicate rejects this configuration and so does the watcher (cheap mode would otherwise search for an empty context)" >&2
   exit 2
 fi
 THREADS_TERM="$(rg_setting REVIEW_GATE_THREADS "enforce")" || exit 2
@@ -178,14 +206,14 @@ GATE_MODE="$(rg_setting REVIEW_GATE_MODE "enforce")" || exit 2
 case "$GATE_MODE" in
   enforce|off) ;;
   *)
-    echo "::error::pr-watch: invalid REVIEW_GATE_MODE value '$GATE_MODE' (enforce|off) — refusing to reduce against unknown gate semantics" >&2
+    rg_message error watch-mode-invalid "$GATE_MODE" "::error::pr-watch: invalid REVIEW_GATE_MODE value '$GATE_MODE' (enforce|off) — refusing to reduce against unknown gate semantics" >&2
     exit 2
     ;;
 esac
 case "$THREADS_TERM" in
   enforce|off) ;;
   *)
-    echo "::error::pr-watch: invalid REVIEW_GATE_THREADS value '$THREADS_TERM' (enforce|off) — refusing to reduce against unknown enforcement semantics" >&2
+    rg_message error watch-threads-invalid "$THREADS_TERM" "::error::pr-watch: invalid REVIEW_GATE_THREADS value '$THREADS_TERM' (enforce|off) — refusing to reduce against unknown enforcement semantics" >&2
     exit 2
     ;;
 esac
@@ -200,18 +228,22 @@ if [ -z "$AWAITING_AFTER" ]; then
   # awaiting-stale alert. 9 digits (~31 years) is bound enough.
   case "$AWAITING_AFTER" in
     ''|*[!0-9]*)
-      echo "::error::pr-watch: PR_REVIEW_WAIT_SECS must be a non-negative integer, got '$AWAITING_AFTER'" >&2
+      rg_message error watch-wait-setting-invalid "$AWAITING_AFTER" "::error::pr-watch: PR_REVIEW_WAIT_SECS must be a non-negative integer, got '$AWAITING_AFTER'" >&2
       exit 2
       ;;
   esac
   AWAITING_AFTER="$(printf '%s' "$AWAITING_AFTER" | sed 's/^0*//')"
   [ -z "$AWAITING_AFTER" ] && AWAITING_AFTER=0
   if [ "${#AWAITING_AFTER}" -gt 9 ]; then
-    echo "::error::pr-watch: PR_REVIEW_WAIT_SECS is out of range (max 9 digits), got '$AWAITING_AFTER'" >&2
+    rg_message error watch-wait-setting-range "$AWAITING_AFTER" "::error::pr-watch: PR_REVIEW_WAIT_SECS is out of range (max 9 digits), got '$AWAITING_AFTER'" >&2
     exit 2
   fi
 fi
 WRITER_WORKFLOW="${PR_WATCH_WRITER_WORKFLOW:-Review gate writer}"
+# Read as the file orch's schema documents, not through orch's own
+# workflow-state CLI: orch calls this reducer, so calling back would close a
+# loop, and a PR is not the issue key that CLI addresses state by.
+SIZE_STATE_DIR="${ORCH_STATE_DIR:-tmp}"
 
 attention=0
 errored=0
@@ -220,6 +252,58 @@ healed=0
 emit() { # pr, head, kind, detail
   printf '%s\t%s\t%s\t%s\n' "$1" "$(printf %.8s "$2")" "$3" "$4"
   emitted_this_pr=1
+}
+
+# The size the reader needs BEFORE arming, read and never re-measured: an
+# oversized branch is refused at submit, and refusing it again here would be
+# one rule in two tools. The kinds block above is the output contract.
+#
+# Every failure lands on stale or unavailable — an absent state directory, a
+# head branch the PR object did not carry, an unreadable file — because this
+# annotation informs a line that already stands, and a local state file must
+# never turn a real disarmed finding into an error.
+size_note() { # branch, head -> the annotation, prefixed for the detail
+  local branch="$1" head="$2" note="" file
+  local files=()
+  if [ -n "$branch" ]; then
+    for file in "$SIZE_STATE_DIR"/workflow-state-*.json; do
+      if [ -f "$file" ]; then files+=("$file"); fi
+    done
+  fi
+  if [ "${#files[@]}" -eq 0 ]; then
+    note="size unavailable: no submit measurement is recorded for this branch"
+  else
+    note="$(jq -rs --arg branch "$branch" --arg head "$head" '
+        def pct($n; $d): (($n * 100) / $d | floor);
+        map(select(type == "object" and (.branch? // "") == $branch
+                   and ((.pr?.size_check? | type) == "object"))
+            | .pr.size_check
+            | select((.head_sha? | type) == "string"
+                     and (.production_lines? | type) == "number")) as $records
+        | ($records | map(select(.head_sha == $head)) | first) as $current
+        | if $current != null then
+            "size "
+            + (if ($current.production_allowance | type) == "number"
+               then "\($current.production_lines) of \($current.production_allowance) production lines added"
+                    + (if $current.production_allowance > 0
+                       then " (\(pct($current.production_lines; $current.production_allowance))% of the allowance)"
+                       else "" end)
+               else "\($current.production_lines) production lines added, no allowance stated"
+               end)
+            + ", measured at \($current.head_sha[0:8])"
+            + (($current.verdict? // "") as $v
+               | if ($v | type) == "string" and $v != "" and $v != "pass"
+                    and $v != "allowance_missing"
+                 then ", submit recorded \($v)" else "" end)
+          elif ($records | length) > 0 then
+            "size stale: the recorded measurement is of \($records[0].head_sha[0:8]), not this head"
+          else
+            "size unavailable: no submit measurement is recorded for this branch"
+          end' "${files[@]}" 2>/dev/null)" \
+      || note=""
+  fi
+  [ -n "$note" ] || note="size unavailable: the recorded measurement could not be read"
+  printf ' — %s' "$note"
 }
 
 heal() { # pr, head — one bounded writer dispatch ATTEMPT per invocation
@@ -293,17 +377,17 @@ if [ -n "$PR_ARGS" ]; then
   pr_numbers="$PR_ARGS"
 else
   raw_prs="$(gh api "repos/$GH_REPO/pulls?state=open&per_page=100" --paginate)" || {
-    echo "::error::pr-watch: could not list open PRs" >&2
+    rg_message error watch-list-failed "$GH_REPO" "::error::pr-watch: could not list open PRs" >&2
     exit 2
   }
   if [ -z "$raw_prs" ]; then
-    echo "::error::pr-watch: open-PR listing produced zero bytes (broken read)" >&2
+    rg_message error watch-list-empty "$GH_REPO" "::error::pr-watch: open-PR listing produced zero bytes (broken read)" >&2
     exit 2
   fi
   pr_numbers="$(jq -rs 'if (length > 0) and all(type == "array")
       then (add | map(if (.number | type) != "number" then error("row without a number") else .number end) | join(" "))
       else error("not an array page") end' <<<"$raw_prs" 2>/dev/null)" || {
-    echo "::error::pr-watch: open-PR listing pages are malformed (broken read or a row without a number)" >&2
+    rg_message error watch-list-malformed "$GH_REPO" "::error::pr-watch: open-PR listing pages are malformed (broken read or a row without a number)" >&2
     exit 2
   }
 fi
@@ -332,6 +416,10 @@ for number in $pr_numbers; do
   draft="$(jq -r '.draft | tostring' <<<"$row")"
   armed="$(jq -r 'if .auto_merge == null then "false" else "true" end' <<<"$row")"
   created_at="$(jq -r '.created_at' <<<"$row")"
+  # The head branch keys the size record below and nothing else, so it is
+  # NOT part of the well-formed check above: a row without it annotates as
+  # unavailable, the same answer a repo running no orch lane gets.
+  head_ref="$(jq -r '.head.ref // ""' <<<"$row")"
   # Closed/merged PRs need nothing (reachable via explicit PR args). The
   # REST enum is open|closed — anything else is malformed data, and a
   # malformed state must never read as "closed, skip silently".
@@ -654,13 +742,13 @@ for number in $pr_numbers; do
     # disarmed line (an approved gate over an awaiting predicate is the
     # writer's problem, reported below as the state mismatch it is).
     if [ "$verdict" = "approved" ]; then
-      emit "$number" "$head" disarmed "gate open but auto-merge is not armed and the PR is not queued — nothing will merge this (re-arm)"
+      emit "$number" "$head" disarmed "gate open but auto-merge is not armed and the PR is not queued — nothing will merge this (re-arm)$(size_note "$head_ref" "$head")"
       attention=1
     elif [ "$EVALUATE" = "0" ]; then
       # Cheap mode saw only the STATUS — which could itself be the stale
       # green evaluate mode would classify as gate-stale. Surface the state
       # but never recommend arming on unconfirmed evidence.
-      emit "$number" "$head" disarmed "gate status reads success but auto-merge is not armed and the PR is not queued — UNCONFIRMED in cheap mode: run evaluate mode (or the predicate) before re-arming"
+      emit "$number" "$head" disarmed "gate status reads success but auto-merge is not armed and the PR is not queued — UNCONFIRMED in cheap mode: run evaluate mode (or the predicate) before re-arming$(size_note "$head_ref" "$head")"
       attention=1
     fi
   fi

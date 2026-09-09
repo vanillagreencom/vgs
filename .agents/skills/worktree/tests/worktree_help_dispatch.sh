@@ -1,25 +1,15 @@
 #!/usr/bin/env bash
-# Every worktree command's --help is answered, at any argv position, and the
-# top-level help states the settings loader's real precedence. check takes no
-# target: it inspects only the main checkout, and an argument is a usage
-# error rather than a silently ignored one.
-#
-# No form sources the project's .env.local, held here across every command
-# the dispatcher routes. tools/tests/help-inert.test.sh holds the same
-# contract for the top-level forms, alongside the other CLIs that each
-# carried their own copy of it.
-#
-# The same boundary from the other side: a command that is not help does
-# reach the repository lookup, and outside a repository it refuses with a
-# diagnostic naming the cwd rather than dying at git's bare 128.
+# Help dispatch must report its topic before repository or environment lookup.
+# Rows compare message records, exit status, and whether project config ran.
 set -euo pipefail
-
 # A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which point every git
-# call in this file back at the real repository: the fixtures below would be
-# built in it, and the no-repository fixture would look like a repository.
+# call in this file back at the real repository: the fixture would be built
+# in it, and the no-repository directory would look like a repository.
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/messages.sh
+source "$TEST_DIR/lib/messages.sh"
 WORKTREE_SCRIPT="${WORKTREE_SCRIPT:-$(cd "$TEST_DIR/.." && pwd)/scripts/worktree}"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
@@ -38,156 +28,123 @@ assert_eq() {
   fi
 }
 
-assert_contains() {
-  local haystack="$1" needle="$2" name="$3"
-  if grep -qF -- "$needle" <<<"$haystack"; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        wanted substring: %s\n' "$name" "$needle"
-  fi
-}
+# --- fixtures -----------------------------------------------------------------
+# One checkout whose .env.local records being sourced, one directory outside
+# any repository (the ceiling keeps git from finding this repository above
+# it), and an empty PATH for the row that runs without git. The marker is
+# cleared before every row. Every row runs under LC_ALL=C: two rows quote
+# git's own account of a missing repository, which git translates.
 
-echo "=== worktree help dispatch runs before repository and env initialization ==="
-
-# A repo whose .env.local records that it was sourced. Any help invocation
-# that loads project config trips the marker.
 REPO="$TMP_ROOT/repo"
 mkdir -p "$REPO"
-git -C "$REPO" init -q
+git -C "$REPO" init -q -b main
 printf 'touch "%s/env-executed"\n' "$TMP_ROOT" >"$REPO/.env.local"
-
-for form in "--help" "-h" "help"; do
-  out=$(cd "$REPO" && "$WORKTREE_SCRIPT" "$form")
-  assert_eq "$?" 0 "worktree $form exits 0"
-  assert_contains "$out" "Usage: worktree <command>" "worktree $form prints the command index"
-done
-
-for cmd in restack create remove cleanup check list path exists push \
-  fix-links repair-links \
-  codex-setup codex-branch codex-cleanup claude-setup claude-cleanup; do
-  out=$(cd "$REPO" && "$WORKTREE_SCRIPT" "$cmd" --help)
-  assert_eq "$?" 0 "worktree $cmd --help exits 0"
-  [[ -n "$out" ]] || { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "worktree $cmd --help prints something"; }
-done
-
-out=$(cd "$REPO" && "$WORKTREE_SCRIPT" claude-setup --help)
-assert_contains "$out" "App-created worktree hooks" "hook commands share the app-hook help"
-
-# Help at ANY argv position, not only right after the command: enumerating
-# positions is how this class leaks.
-out=$(cd "$REPO" && "$WORKTREE_SCRIPT" remove CC-1 --help)
-assert_eq "$?" 0 "worktree remove CC-1 --help exits 0"
-assert_contains "$out" "Usage: worktree remove" "late --help prints the remove help"
-out=$(cd "$REPO" && "$WORKTREE_SCRIPT" cleanup --stale --help)
-assert_eq "$?" 0 "worktree cleanup --stale --help exits 0"
-assert_contains "$out" "Usage: worktree cleanup" "late --help prints the cleanup help"
-out=$(cd "$REPO" && "$WORKTREE_SCRIPT" push some-id -h)
-assert_eq "$?" 0 "worktree push some-id -h exits 0"
-assert_contains "$out" "Usage: worktree push" "late -h prints the push help"
-
-out=$(cd "$REPO" && "$WORKTREE_SCRIPT" list --help)
-assert_contains "$out" "Usage: worktree list" "list --help prints the list help"
-out=$(cd "$REPO" && "$WORKTREE_SCRIPT" path --help)
-assert_contains "$out" "Usage: worktree path" "path --help prints help, not an issue lookup"
-out=$(cd "$REPO" && "$WORKTREE_SCRIPT" exists -h)
-assert_contains "$out" "worktree exists" "exists -h prints help, not an issue lookup"
-
-# Every help form run inside $REPO is above this line except `check --help`,
-# which the 16-command loop already ran here — so the marker answers for all
-# of them at once.
-if [[ -e "$TMP_ROOT/env-executed" ]]; then
-  FAIL=$((FAIL + 1))
-  printf '  FAIL  %s\n' "help sourced the project .env.local"
-else
-  PASS=$((PASS + 1))
-  printf '  ok    %s\n' "no help form sourced the project .env.local"
-fi
-
-# Per-command help needs no repository at all. The top-level form is
-# tools/tests/help-inert.test.sh's; these three resolve a worktree when they
-# run, so their help is the one that could reach for a repository.
 NOREPO="$TMP_ROOT/norepo"
-mkdir -p "$NOREPO"
+mkdir -p "$NOREPO" "$TMP_ROOT/empty-bin"
 export GIT_CEILING_DIRECTORIES="$TMP_ROOT"
-norepo_status=0
-norepo_probe=$(LC_ALL=C git -C "$NOREPO" rev-parse --show-toplevel 2>&1) || norepo_status=$?
-if [[ "$norepo_status" -eq 0 ]]; then
-  FAIL=$((FAIL + 1))
-  printf '  FAIL  %s\n        got:      %s\n' \
-    "the no-repository fixture is outside a git repository" "$norepo_probe"
-elif [[ "$norepo_status" -eq 128 && "$norepo_probe" == *"not a git repository"* ]]; then
-  PASS=$((PASS + 1))
-  printf '  ok    %s\n' "the no-repository fixture is outside a git repository"
-  for cmd in list path exists; do
-    status=0
-    out=$(cd "$NOREPO" && "$WORKTREE_SCRIPT" "$cmd" --help) || status=$?
-    assert_eq "$status" 0 "worktree $cmd --help exits 0 outside a git repository"
-  done
-
-  # Past help, the repository lookup runs and has nothing to find. It refuses
-  # once, naming the cwd and the checkout to run from; `remove` is the form
-  # that gets run from the worktrees' parent, so it is held here too.
-  for cmd in "list" "remove ISSUE-GONE"; do
-    status=0
-    # shellcheck disable=SC2086
-    out=$(cd "$NOREPO" && "$WORKTREE_SCRIPT" $cmd 2>"$TMP_ROOT/norepo.err") || status=$?
-    err=$(cat "$TMP_ROOT/norepo.err")
-    assert_eq "$status" 1 "worktree $cmd exits 1 outside a git repository"
-    assert_contains "$err" "could not resolve a git repository from: $NOREPO" \
-      "worktree $cmd names the cwd it could not resolve a repository from"
-    assert_contains "$err" "Run it from a checkout of the repository you mean" \
-      "worktree $cmd names what to do instead"
-    # One refusal serves every non-help command, so its example names none: a
-    # subcommand baked in here is the wrong next step for the other callers,
-    # and `remove` deletes a worktree and a branch.
-    assert_contains "$err" "scripts/worktree <command>" \
-      "worktree $cmd offers a recovery example with no subcommand of its own"
-    assert_eq "$out" "" "worktree $cmd prints nothing on stdout outside a git repository"
-  done
-
-  # The cause is git's, not the script's guess at it. A repository with no git
-  # to read it is the case that separates the two: the cwd IS a checkout, and
-  # a message asserting otherwise sends the operator to a second one.
-  # LC_ALL=C like the probe above: the message under test is translated, so an
-  # unpinned locale reddens this on a workstation and nowhere else.
-  mkdir -p "$TMP_ROOT/empty-bin"
-  status=0
-  out=$(cd "$TEST_DIR" && LC_ALL=C PATH="$TMP_ROOT/empty-bin" "$WORKTREE_SCRIPT" list 2>"$TMP_ROOT/nogit.err") || status=$?
-  # Read the quoted line, not the whole stream: without the anchor the needle
-  # also matches the shell's own unredirected message, which is what stderr
-  # carries when the refusal quotes nothing at all.
-  said=""
-  if ! said=$(grep -F '  git said: ' "$TMP_ROOT/nogit.err"); then said=""; fi
-  assert_eq "$status" 1 "worktree list exits 1 when git is not on PATH"
-  assert_contains "$said" "git: command not found" \
-    "the refusal quotes git's own account rather than asserting a cause"
-  assert_eq "$out" "" "worktree list prints nothing on stdout when git is not on PATH"
-else
-  FAIL=$((FAIL + 1))
-  printf '  FAIL  %s\n        status:   %s\n        diagnostic: %s\n' \
-    "the no-repository fixture probe returns Git's expected result" "$norepo_status" "$norepo_probe"
+if LC_ALL=C git -C "$NOREPO" rev-parse --show-toplevel >/dev/null 2>&1; then
+  echo "FIXTURE: $NOREPO resolves a git repository" >&2
+  exit 2
 fi
 
-# The top-level help states the loader's real precedence, lowest to highest.
-out=$(cd "$NOREPO" && "$WORKTREE_SCRIPT" --help)
-assert_contains "$out" "kendex.settings.toml [env], then" "help orders the root settings file below the rest"
-assert_contains "$out" ".kendex/settings.toml" "help names the .kendex settings file"
-assert_contains "$out" "parent environment beats every project file" "help states parent env outranks project files"
+# --- rendering ------------------------------------------------------------------
+
+alias_text() {
+  message_records |
+  sed -e "s|$NOREPO|<norepo>|g" -e "s|$REPO|<repo>|g" -e "s|$TEST_DIR|<tests>|g" -e "s|$WORKTREE_SCRIPT|<worktree>|g" -e 's/: line [0-9]*: /: line <n>: /' |
+    paste -s -d ';' -
+}
+
+run() {
+  local -a argv
+  local where="$1" envspec="$2" rc=0 cwd="" out=""
+  local -a env_words=()
+  read -r -a argv <<<"$3"
+  case "$where" in
+    repo) cwd="$REPO" ;;
+    norepo) cwd="$NOREPO" ;;
+    tests) cwd="$TEST_DIR" ;;
+    *) echo "UNKNOWN-CWD: $where" >&2; exit 2 ;;
+  esac
+  case "$envspec" in
+    -) ;;
+    nogit) env_words=("PATH=$TMP_ROOT/empty-bin") ;;
+    *) echo "UNKNOWN-ENV: $envspec" >&2; exit 2 ;;
+  esac
+  rm -f "$TMP_ROOT/env-executed"
+  (cd "$cwd" && env LC_ALL=C ${env_words[@]+"${env_words[@]}"} "$WORKTREE_SCRIPT" "${argv[@]}" >"$TMP_ROOT/out" 2>"$TMP_ROOT/err") || rc=$?
+  out="$(head -1 "$TMP_ROOT/out")"
+  printf 'rc=%s out=%s err=%s env=%s' "$rc" "${out:--}" "$(alias_text <"$TMP_ROOT/err")" \
+    "$([[ -e "$TMP_ROOT/env-executed" ]] && printf sourced || printf -)"
+}
+
+# --- the expected text ----------------------------------------------------------
+
+# Expected stable records.
+err_text() {
+  case "$1" in
+    -) printf '' ;;
+    no-repo) printf 'worktree-repo-unavailable: <norepo>' ;;
+    no-git) printf 'worktree-repo-unavailable: <tests>' ;;
+    check-arg) printf 'worktree-check-arguments: 2' ;;
+    unknown-command) printf 'worktree-command-unknown: definitely-not-a-command' ;;
+    *) printf 'UNKNOWN-ERR-SPEC:%s' "$1" ;;
+  esac
+}
+
+
+# --- the rows ---------------------------------------------------------------------
+# label^cwd^env^command^rc^out^err^env-ran
+ROWS='--help prints the command index^repo^-^--help^0^worktree-help: commands^-^-
+-h prints the command index^repo^-^-h^0^worktree-help: commands^-^-
+help prints the command index^repo^-^help^0^worktree-help: commands^-^-
+restack --help^repo^-^restack --help^0^worktree-help: restack^-^-
+create --help^repo^-^create --help^0^worktree-help: create^-^-
+remove --help^repo^-^remove --help^0^worktree-help: remove^-^-
+cleanup --help^repo^-^cleanup --help^0^worktree-help: cleanup^-^-
+check --help says it inspects the main checkout^repo^-^check --help^0^worktree-help: check^-^-
+list --help^repo^-^list --help^0^worktree-help: list^-^-
+path --help prints help, not an issue lookup^repo^-^path --help^0^worktree-help: path^-^-
+exists -h prints help, not an issue lookup^repo^-^exists -h^0^worktree-help: path^-^-
+push --help^repo^-^push --help^0^worktree-help: push^-^-
+fix-links --help^repo^-^fix-links --help^0^worktree-help: fix-links^-^-
+repair-links --help points at the fix-links contract^repo^-^repair-links --help^0^worktree-help: repair-links^-^-
+the five hook commands share the app-hook help, which indexes both claude hooks^repo^-^codex-setup --help^0^worktree-help: hooks^-^-
+codex-branch --help^repo^-^codex-branch --help^0^worktree-help: hooks^-^-
+codex-cleanup --help^repo^-^codex-cleanup --help^0^worktree-help: hooks^-^-
+claude-setup --help^repo^-^claude-setup --help^0^worktree-help: hooks^-^-
+claude-cleanup --help^repo^-^claude-cleanup --help^0^worktree-help: hooks^-^-
+--help after a positional prints the remove help^repo^-^remove CC-1 --help^0^worktree-help: remove^-^-
+--help after a flag prints the cleanup help^repo^-^cleanup --stale --help^0^worktree-help: cleanup^-^-
+-h after a positional prints the push help^repo^-^push some-id -h^0^worktree-help: push^-^-
+an unknown command is refused after the config loads, with the usage index naming every command^repo^-^definitely-not-a-command^1^-^unknown-command^sourced
+list --help needs no repository^norepo^-^list --help^0^worktree-help: list^-^-
+path --help needs no repository^norepo^-^path --help^0^worktree-help: path^-^-
+exists --help needs no repository^norepo^-^exists --help^0^worktree-help: path^-^-
+the top-level help needs no repository^norepo^-^--help^0^worktree-help: commands^-^-
+list outside a repository refuses once, naming the cwd, git'"'"'s account and a recovery with no subcommand^norepo^-^list^1^-^no-repo^-
+remove outside a repository refuses the same way^norepo^-^remove ISSUE-GONE^1^-^no-repo^-
+list without git on PATH quotes git'"'"'s own account^tests^nogit^list^1^-^no-git^-
+check with an argument is a usage error^repo^-^check some-id^1^-^check-arg^sourced
+'
+
+echo "=== worktree help dispatch runs before repository and env initialization ==="
+while IFS= read -r row; do
+  [[ -n "$row" ]] || continue
+  IFS='^' read -r label where envspec command rc out err envran <<<"$row"
+  for field in "$label" "$where" "$envspec" "$command" "$rc" "$out" "$err" "$envran"; do
+    [[ -n "$field" ]] || { printf 'a row with an empty field asserts nothing: %s\n' "$row" >&2; exit 1; }
+  done
+  # A rendering aid for writing rows: prints what each row produces instead of
+  # asserting it. A run that asserted no row is refused after the loop.
+  if [[ "${WORKTREE_TABLE_PROBE:-}" == 1 ]]; then
+    printf '%s => %s\n' "$label" "$(run "$where" "$envspec" "$command")"
+    continue
+  fi
+  assert_eq "$(run "$where" "$envspec" "$command")" "rc=$rc out=$out err=$(err_text "$err") env=$envran" "$label"
+done <<<"$ROWS"
+[[ "$((PASS + FAIL))" -gt 0 ]] || { echo "no row was asserted (a probe run renders rows instead)" >&2; exit 2; }
 
 echo
-echo "=== check takes no target ==="
-
-out=$(cd "$REPO" && "$WORKTREE_SCRIPT" check --help)
-assert_contains "$out" "MAIN checkout" "check --help says it inspects the main checkout"
-
-set +e
-err=$(cd "$REPO" && "$WORKTREE_SCRIPT" check some-id 2>&1)
-code=$?
-set -e
-assert_eq "$code" 1 "check with an argument exits 1"
-assert_contains "$err" "check takes no arguments" "check names the rejection"
-
-printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
+printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

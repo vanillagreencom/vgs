@@ -840,7 +840,7 @@ BLUR_MUST_MATCH = (
     "vshell:plugins:aiUsage vshell:tooltip"
 ).split()
 # Backdrop-free tooltip hosts must stay outside the blur allowlist; see
-# design-language.md § Invariants.
+# docs/architecture/design-language.md § Invariants.
 BLUR_MUST_NOT_MATCH = (
     "vshell:blurwallpaper vshell:workspace-overview vshell:screensaver vshell:fade-to-lock "
     "vshell:launcher-context-menu vshell:notification-context-menu vshell:tray-overflow-menu "

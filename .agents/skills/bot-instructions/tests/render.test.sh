@@ -72,7 +72,7 @@ fi
 
 # `.macroscope/ignore.md` is markdown by extension only. Macroscope documents
 # it as one glob per line with `#` comments and blank lines ignored
-# (references/limits.md § Macroscope cites the page), so an HTML comment there
+# (../references/limits.md § Macroscope cites the page), so an HTML comment there
 # is a pattern matching nothing, the marker included.
 if grep -qF '<!--' "$repo/.macroscope/ignore.md"; then
   bad 'ignore.md carries no HTML comment' \
@@ -410,7 +410,10 @@ if status == 0:
     sys.exit("a marker input path outside the class was accepted")
 if "refuses" not in printed:
     sys.exit(f"refused, but not by the marker-path clause: {printed.strip()}")
-if not printed.startswith("exclusion-consistency:"):
+lines = printed.splitlines()
+if not lines or not lines[0].startswith("bot-instructions: findings="):
+    sys.exit(f"refused without the findings record first: {printed.strip()}")
+if not any(line.startswith("exclusion-consistency:") for line in lines[1:]):
     sys.exit(f"refused without naming the validator whose clause it is: {printed.strip()}")
 PROBE
   ok 'a marker input path outside the class is refused, naming its validator'

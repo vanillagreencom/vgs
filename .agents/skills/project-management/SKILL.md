@@ -67,7 +67,7 @@ Label creation rule: if a label listed here is missing from live Linear inventor
 |-------|----------|
 | `ci-infra` | CI, review gates, runners, and repo tooling — the validation suite, `.github/workflows/`, packaging automation. |
 | `test` | Testing itself: coverage, harnesses, fixtures, flakes. Pairs with `ci-infra` when the harness is CI-owned. |
-| `frontend` | UI-surface work: shell surfaces, widgets, modals, settings screens under `quickshell/vshell/`. |
+| `app` | UI-surface work: shell surfaces, widgets, modals, settings screens under `quickshell/vshell/`. |
 | `design` | Visual design language, tokens, typography, surface layout — the language in `docs/architecture/design-language.md`. |
 | `component` | Reusable widget/control work, especially primitives in `quickshell/vshell/Widgets/`. |
 | `releases` | Cutting a release, versioning, and publishing to the distribution channels — the work the vgs-release and vgs-distro-publish skills own. |
@@ -169,10 +169,11 @@ TPM analysis workflows, each returning JSON per its schema: [tpm-cycle-plan](wor
 - Run workflow sections in order. Skip only on an explicit **Skip if** condition, never on your own scope assessment.
 - `<delegation_format>` and `<output_format>` are literal templates: fill `[PLACEHOLDERS]`, drop lines whose placeholders are empty, add nothing.
 - Send a user-visible `<output_format>` report as a normal assistant message first, then invoke the question tool separately with only the question and short option labels. Never paste the report into question text or options.
-- The Linear cache holds the whole workspace: `sync` sends no team filter, and `cache issues list` neither filters by team nor returns one. Team scope per path: § Scope by Path.
+- The Linear cache holds the whole workspace: `sync` sends no team filter, and `cache issues list` returns no team through its `safe`, `compact`, `ids` or `table` formatter, so a row read through those cannot be checked against `--team X` (only `--format=raw` carries `.team.name`). Team scope per path: § Scope by Path.
 - Sync the Linear cache before a workflow's first cache read: `sync --reconcile` in a run that mutates the tracker, `sync --if-stale 15` in a read-only lookup. That sync is the freshness mechanism; a cached read itself enforces presence, so a read that comes back missing halts the workflow and reports the sync failure, never a partial result, a live-only substitute, or a retry against the unsynced cache.
 - Resolve tracker context once per run (audit-issues § 1.2) and route every preflight, fetch, and mutation through it. A GitHub-tracked run must not require Linear installation, sync, or authentication; where GitHub lacks a Linear concept, degrade in a documented note, never silently.
 - Before any issue create or label update, run the label preflight in [references/labels.md](references/labels.md) against the live inventory and project taxonomy; any § Validation failure there halts before mutation.
+- A project declares its taxonomy in one of the sources [references/labels.md](references/labels.md) names: inline in its kendex manifest under `[skill-instructions]` for this skill (`kendex.toml`, or `kendex-local.toml` in a source-catalog checkout), which renders it into § Project Instructions above, or in a project document or reference file those instructions link to. A project that declares none in any of them has no required categories to enforce.
 - In multi-issue analysis, keep verification context per issue. One issue's PR, branch, or resolved path set never scopes another's checks.
 
 ## Scope by Path

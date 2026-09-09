@@ -1,3 +1,5 @@
+# md-refs parses the verdict protocol: V<TAB>source<TAB>line<TAB>rule<TAB>value,
+# plus N<TAB>judged-count. Rule names are enums; values name the input and target.
 # md-refs.awk — what a markdown file cites, what it defines, and whether the
 # citations land. Runs over the line stream md-blocks.awk emits in `lines`
 # mode, so fenced code, indented code and front matter never reach it. POSIX
@@ -11,12 +13,20 @@
 #       L<TAB>src<TAB>line<TAB>destination<TAB>raw   a link or reference definition
 #       C<TAB>src<TAB>line<TAB>path<TAB>kind<TAB>value<TAB>raw   a code-span citation;
 #                                        kind is path, section or anchor
-#       D<TAB>src<TAB>line<TAB>id        a decision ID
+#       D<TAB>src<TAB>line<TAB>id<TAB>section   a decision ID, with the heading
+#                                        the citation names after § or empty
+#   -v mode=refs -v grammar=text -v src=PATH [-v id_prefix=D -v id_width=3]
+#       the same C and D records out of plain "line<TAB>text" records, for a
+#       caller feeding comment text or manifest strings rather than the
+#       markdown line stream. Only the `§` forms are read there — a
+#       `<path>.md § Heading` citation and a decision ID carrying one:
+#       outside markdown a link, a bare path and a bare ID are prose, and a
+#       heading with prose after it is the § rule's.
 #   -v mode=resolve -v phase=targets|verdict -v tracked=FILE
 #         [-v headings=FILE -v dec_dir=DIR -v dec_judge=0|1 -v id_prefix=D]
 #       reads the refs records; `targets` prints each tracked markdown path a
 #       heading citation needs indexed, `verdict` prints
-#       V<TAB>src<TAB>line<TAB>message per dead reference and a final
+#       V<TAB>src<TAB>line<TAB>rule<TAB>value per dead reference and a final
 #       N<TAB>count of references judged
 #
 # Loaded beside md-slug.awk, which holds the text reductions this file calls
@@ -153,8 +163,12 @@ function emit_citation(span,   path, rest, i) {
   }
 }
 
-# PREFIX then at least WIDTH digits, bounded by non-alphanumerics.
-function emit_ids(s,   i, p, q, n, before, after) {
+# PREFIX then at least WIDTH digits, bounded by non-alphanumerics. A `§`
+# right after the ID cites a section of that decision's file; the heading
+# runs to the end of the line, and the prefix rule allows prose after it.
+# In plain text only the `§` form is a citation: a bare ID there is prose,
+# and the caller's pre-filter is free to open only the files that hold a §.
+function emit_ids(s,   i, p, q, n, before, after, tail, section) {
   if (id_prefix == "") return
   p = 1
   while (1) {
@@ -166,9 +180,55 @@ function emit_ids(s,   i, p, q, n, before, after) {
     while (substr(s, q + n, 1) ~ /^[0-9]$/) n++
     before = (i > 1) ? substr(s, i - 1, 1) : ""
     after = substr(s, q + n, 1)
-    if (n >= id_width && before !~ /^[A-Za-z0-9]$/ && after !~ /^[A-Za-z0-9]$/) \
-      printf "D\t%s\t%d\t%s\n", src, line_no, substr(s, i, q + n - i)
+    if (n >= id_width && before !~ /^[A-Za-z0-9]$/ && after !~ /^[A-Za-z0-9]$/ \
+        && !(grammar == "text" && in_url(s, i))) {
+      tail = substr(s, q + n)
+      section = (index(tail, SECTION_SEP) == 1) ? rtrim(substr(tail, length(SECTION_SEP) + 1)) : ""
+      if (grammar != "text" || section != "") \
+        printf "D\t%s\t%d\t%s\t%s\n", src, line_no, substr(s, i, q + n - i), section
+    }
     p = q + (n > 0 ? n : 1)
+  }
+}
+
+# Whether the candidate starting at P sits inside a URL: the whitespace
+# delimited token it belongs to carries a scheme, or opens protocol-relative.
+# is_local() asks this of a markdown destination; outside markdown a link is
+# prose wherever in the URL the citation-shaped text falls, so both the path
+# citation and the decision ID ask it here rather than each testing the one
+# character before itself.
+function in_url(s, p,   start, stop, token) {
+  start = p
+  while (start > 1 && substr(s, start - 1, 1) !~ /[ \t]/) start--
+  stop = p
+  while (stop <= length(s) && substr(s, stop, 1) !~ /[ \t]/) stop++
+  # The WHOLE token, not the part before the candidate: a path walk back
+  # crosses the `//` of a scheme, leaving only `https:` behind it.
+  token = substr(s, start, stop - start)
+  if (index(token, "://") > 0) return 1
+  sub(/^[^\/]*/, "", token)
+  return substr(token, 1, 2) == "//"
+}
+
+# A doc-section citation in plain text: the path token before ` § `, and the
+# rest of the line as the heading the prefix rule judges. A token that is not
+# a markdown path is prose naming a section and cites nothing.
+function emit_text_citation(s,   p, i, j, path, rest) {
+  p = 1
+  while (1) {
+    i = index(substr(s, p), SECTION_SEP)
+    if (i == 0) return
+    i = p + i - 1
+    j = i
+    while (j > 1 && substr(s, j - 1, 1) ~ /^[A-Za-z0-9._\/-]$/) j--
+    path = substr(s, j, i - j)
+    rest = rtrim(substr(s, i + length(SECTION_SEP)))
+    # A bare `.md` is what the walk back leaves of a placeholder such as
+    # `<path>.md`, whose brackets end the token; it names no file.
+    if (path ~ /\.md$/ && path != ".md" && path !~ /\/\.md$/ && !in_url(s, j) \
+        && rest != "") \
+      printf "C\t%s\t%d\t%s\tprefix-section\t%s\t%s\n", src, line_no, path, rest, path SECTION_SEP rest
+    p = i + length(SECTION_SEP)
   }
 }
 
@@ -201,7 +261,7 @@ function resolve_from(base_dir, rel) {
   return (base_dir == "") ? normalize(rel) : normalize(base_dir "/" rel)
 }
 
-function load_tracked(   line, d) {
+function load_tracked(   line, d, rec, id) {
   while ((getline line < tracked) > 0) {
     tracked_set[line] = 1
     d = line
@@ -209,9 +269,14 @@ function load_tracked(   line, d) {
     if (dec_judge && dec_dir != "" && index(line, dec_dir "/") == 1) {
       d = substr(line, length(dec_dir) + 2)
       if (match(d, /^[^\/]+/)) {
-        d = substr(d, 1, RLENGTH)
-        if (index(d, id_prefix) == 1 && match(substr(d, length(id_prefix) + 1), /^[0-9]+/)) \
-          decisions[substr(d, 1, length(id_prefix) + RLENGTH)] = 1
+        rec = substr(d, 1, RLENGTH)
+        if (index(rec, id_prefix) == 1 && match(substr(rec, length(id_prefix) + 1), /^[0-9]+/)) {
+          id = substr(rec, 1, length(id_prefix) + RLENGTH)
+          decisions[id] = 1
+          # The record itself, when the ID names one markdown file rather
+          # than a directory: a § citation reads its headings from there.
+          if (rec == d && d ~ /\.md$/ && !(id in decfile)) decfile[id] = line
+        }
       }
     }
   }
@@ -251,7 +316,7 @@ function has_section_prefix(target, value,   key, prefix, name, tail, number) {
   return 0
 }
 
-function fail(msg) { if (phase == "verdict") printf "V\t%s\t%d\t%s\n", src_path, line_no, msg }
+function fail(rule, value) { if (phase == "verdict") printf "V\t%s\t%d\t%s\t%s\n", src_path, line_no, rule, value }
 
 function want_target(t) { if (phase == "targets" && !(t in wanted)) { wanted[t] = 1; print t } }
 
@@ -266,7 +331,7 @@ BEGIN {
   CONTROLS = CONTROLS sprintf("%c", 127)
   if (mode == "resolve") {
     if (phase != "targets" && phase != "verdict") {
-      printf "md-refs.awk: phase must be targets or verdict (got '%s')\n", phase > "/dev/stderr"
+      printf "md-refs: phase=%s\n  Expected targets or verdict.\n", phase > "/dev/stderr"
       exit 2
     }
     load_tracked()
@@ -275,7 +340,7 @@ BEGIN {
   } else if (mode == "index") {
     printf "F\t%s\n", src
   } else if (mode != "refs") {
-    printf "md-refs.awk: mode must be index, refs or resolve (got '%s')\n", mode > "/dev/stderr"
+    printf "md-refs: mode=%s\n  Expected index, refs or resolve.\n", mode > "/dev/stderr"
     exit 2
   }
 }
@@ -285,6 +350,18 @@ mode == "index" {
   line_no = f[2]
   if (f[1] == "H") emit_heading(f[3])
   else emit_explicit(f[3])
+  next
+}
+
+# Plain text arrives as "line<TAB>text": the text is everything after the
+# first tab, because comment text carries tabs of its own.
+mode == "refs" && grammar == "text" {
+  i = index($0, "\t")
+  if (i == 0) next
+  line_no = substr($0, 1, i - 1)
+  text = substr($0, i + 1)
+  emit_text_citation(text)
+  emit_ids(text)
   next
 }
 
@@ -322,12 +399,12 @@ mode == "resolve" {
     if (path == "") target = src_path
     else target = resolve_from(dir_of(src_path), path)
     judged++
-    if (ESCAPED) { fail(raw ": the link climbs above the repository root"); next }
-    if (!(target in tracked_set) && !(target in dirs)) { fail(raw ": no tracked file or directory at " target); next }
+    if (ESCAPED) { fail("link-escape", raw); next }
+    if (!(target in tracked_set) && !(target in dirs)) { fail("link-target", raw ":" target); next }
     if (anchor == "") next
-    if (target !~ /\.md$/) { fail(raw ": an anchor into a file that is not markdown"); next }
+    if (target !~ /\.md$/) { fail("anchor-type", raw ":" target); next }
     want_target(target)
-    if (!((target "#" anchor) in slugs)) fail(raw ": " target " has no heading or explicit anchor #" anchor)
+    if (!((target "#" anchor) in slugs)) fail("anchor-missing", raw ":" target ":" anchor)
     next
   }
   if (kind == "C") {
@@ -340,22 +417,30 @@ mode == "resolve" {
     if (ESCAPED || !(target in tracked_set)) {
       target = normalize(path)
       if (ESCAPED || !(target in tracked_set)) {
-        fail("`" raw "`: no tracked file at " path " beside " src_path " or at the repository root")
+        fail("citation-target", raw ":" path ":" src_path)
         next
       }
     }
     want_target(target)
     if (ckind == "section") {
-      if (!((target "#" tolower(value)) in texts)) fail("`" raw "`: " target " has no heading '" value "'")
+      if (!((target "#" tolower(value)) in texts)) fail("heading-missing", raw ":" target ":" value)
     } else if (ckind == "prefix-section") {
-      if (!has_section_prefix(target, value)) fail(raw ": " target " has no heading at the start of '" value "'")
-    } else if (!((target "#" value) in slugs)) fail("`" raw "`: " target " has no heading or explicit anchor #" value)
+      if (!has_section_prefix(target, value)) fail("heading-prefix", raw ":" target ":" value)
+    } else if (!((target "#" value) in slugs)) fail("anchor-missing", "`" raw "`:" target ":" value)
     next
   }
   if (kind == "D") {
     if (!dec_judge) next
     judged++
-    if (!(f[4] in decisions)) fail(f[4] ": no tracked decision file " dec_dir "/" f[4] "-*.md")
+    if (!(f[4] in decisions)) { fail("decision-missing", f[4] ":" dec_dir "/" f[4] "-*.md"); next }
+    if (f[5] == "") next
+    if (!(f[4] in decfile)) {
+      fail("decision-markdown", f[4] SECTION_SEP f[5] ":" dec_dir "/" f[4] "-*.md")
+      next
+    }
+    want_target(decfile[f[4]])
+    if (!has_section_prefix(decfile[f[4]], f[5])) \
+      fail("heading-prefix", f[4] SECTION_SEP f[5] ":" decfile[f[4]] ":" f[5])
     next
   }
 }

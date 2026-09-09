@@ -42,12 +42,26 @@ linear_cache_project_root() {
         return
     fi
 
-    local root
-    root="$(git rev-parse --show-toplevel 2>/dev/null)"
+    # The assignment sits in the condition on purpose (KEN-1193): `git
+    # rev-parse` exits 128 outside a repository, and under `set -e` a bare
+    # assignment carries that status out of the function before this refusal
+    # can print. Each branch above names its own cause, so this one does too.
+    local root=""
+    if ! root="$(git rev-parse --show-toplevel 2>/dev/null)" || [[ -z "$root" ]]; then
+        jq -cn --arg cwd "$PWD" \
+            '{error: ("Could not resolve a cache root: LINEAR_CACHE_ROOT is unset and there is no git repository at: " + $cwd)}' >&2
+        return 1
+    fi
     linear_cache_canonical_existing_dir "$root"
 }
 
-CACHE_PROJECT_ROOT="$(linear_cache_project_root)"
+# In the condition for the same reason (KEN-1193): a bare assignment carries
+# the function's refusal out here, ending the script at that status with the
+# cause on stderr but no exit of this script's own. Every branch above has
+# already said why, so this one adds nothing.
+if ! CACHE_PROJECT_ROOT="$(linear_cache_project_root)"; then
+    exit 1
+fi
 CACHE_DIR="$CACHE_PROJECT_ROOT/.cache/linear"
 
 # The three single-comment helpers below — cache_append_comment,
@@ -114,6 +128,8 @@ cache_worktree_cache_clobbered() {
 
 cache_worktree_clobber_refusal() {
     {
+        printf 'Sync-refused: worktree=%s cache=%s expected=%s\n' \
+            "$CACHE_PROJECT_ROOT" "$CACHE_PROJECT_ROOT/.cache" "$CACHE_WORKTREE_MAIN_ROOT/.cache"
         echo "Sync refused: cache dir is a worktree-local real directory (kendex#1032)."
         echo "  Worktree:       $CACHE_PROJECT_ROOT"
         echo "  Cache dir here: $CACHE_PROJECT_ROOT/.cache (real directory)"
@@ -248,12 +264,6 @@ cache_jq_file() {
     printf '%s\n' "$out"
 }
 
-cache_get_issue() {
-    local id="$1"
-    cache_jq_file "$CACHE_DIR/issues.json" "" --arg id "$id" \
-        '[.[] | select(.id == $id or .identifier == $id)] | first // empty'
-}
-
 cache_get_children_recursive() {
     local parent="$1" max_depth="${2:-3}"
     # Returns flat array with depth field. Emits both `id` and `identifier`
@@ -289,12 +299,6 @@ cache_get_children_recursive() {
             end;
         descendants($p; 0)
     '
-}
-
-cache_get_project() {
-    local id="$1"
-    cache_jq_file "$CACHE_DIR/projects.json" "" --arg id "$id" \
-        '[.[] | select(.id == $id or .name == $id)] | first // empty'
 }
 
 cache_get_comments() {
@@ -559,6 +563,7 @@ cache_refresh_issues() {
                 projectMilestone { id name }
                 cycle { id name number }
                 parent { id identifier title }
+                team { name }
                 labels { nodes { name } }
                 priority estimate url
                 createdAt updatedAt archivedAt trashed

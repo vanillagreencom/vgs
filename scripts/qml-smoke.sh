@@ -1294,7 +1294,7 @@ nested_check() {
   mkdir -p "$sandbox/home/.config" "$sandbox/home/.local/share" "$sandbox/home/.local/state" "$sandbox/home/.cache"
   # Seed sandbox state from repository files and leave plugins/ absent for the override fixture.
   # Theme state is not seeded: the smoke uses the fallback palette and cannot verify theme loading.
-  # See D008 § Scope.
+  # See D008 § Scope: theme state is out.
   # Report each preparation failure before using the resulting sandbox.
   prep_fail() {
     fail "sandbox preparation failed at: $1"

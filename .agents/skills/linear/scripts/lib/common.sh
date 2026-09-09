@@ -26,8 +26,19 @@ linear_canonical_existing_dir() {
 source "$_LIB_DIR/bash-version.sh"
 linear_require_supported_bash || exit $?
 
-PROJECT_ROOT_RAW="$(git rev-parse --show-toplevel 2>/dev/null)"
-PROJECT_ROOT="$(linear_canonical_existing_dir "$PROJECT_ROOT_RAW")"
+# Both assignments sit in the condition on purpose (KEN-1193): `git rev-parse`
+# exits 128 outside a repository and linear_canonical_existing_dir returns 1 on
+# a path that is not a directory, and under `set -e` a bare assignment carries
+# either status out before any guard below can print. Every subcommand died at
+# a bare 128 with nothing on stdout or stderr. Everything past this line — the
+# cache, the attachment store, the project settings and .env.local — is read
+# from the repository, so the resolution refuses rather than degrading.
+if ! PROJECT_ROOT_RAW="$(git rev-parse --show-toplevel 2>/dev/null)" \
+    || ! PROJECT_ROOT="$(linear_canonical_existing_dir "$PROJECT_ROOT_RAW")"; then
+    jq -cn --arg cwd "$PWD" \
+        '{error: ("Could not resolve a git repository from: " + $cwd + ". Run linear.sh from a checkout of the repository whose Linear workspace you mean.")}' >&2
+    exit 1
+fi
 unset PROJECT_ROOT_RAW
 
 # First 12 hex chars of sha256 — enough to tell two keys apart in a diagnostic
@@ -645,9 +656,8 @@ linear_guard_write_action() {
 # Linear keeps a canceled project under the name a live one reuses, and the
 # name query returns both in no fixed order, so nodes[0] handed writes the
 # canceled one at random and `issues create --project` reported success on an
-# issue nobody could find. A canceled match loses to every live one;
-# an all-canceled match set is refused, naming its UUIDs so a deliberate read
-# can pass one.
+# issue nobody could find. PROJECT_PICK_JQ (lib/formatters.sh) states the rule
+# that settles it and every other spelling of the lookup.
 resolve_project_id() {
     local project_ref="$1"
 
@@ -672,37 +682,24 @@ resolve_project_id() {
         return 1
     fi
 
-    # One pass, so the rejected list is the selection's complement rather than
-    # a second predicate that can drift from it: line 1 is the chosen id, line 2
-    # the rejected ones with the state that rejected each. A widened predicate
-    # keeps the message true without being edited.
-    local selection project_id rejected
-    selection=$(echo "$result" | jq -r '
-        (.projects.nodes // []) as $all
-        | ($all | map(select((.state // "" | ascii_downcase) != "canceled"))) as $live
-        | ($live[0].id // ""),
-          ($all - $live | map(.id + " (" + .state + ")") | join(", "))')
-    # Command substitution strips the trailing newline, so with nothing
-    # rejected — one live project, the everyday case — the second read hits EOF
-    # and returns 1. Under this file's errexit that status ends the function
-    # before it can print the id it just resolved. Every call site in the skill
-    # spells the call var=$(resolve_project_id ...), where bash does not apply
-    # errexit, so the abort shows up only in a bare call or in a command
-    # substitution under shopt -s inherit_errexit, which sync.sh sets.
-    { IFS= read -r project_id; IFS= read -r rejected; } <<<"$selection" || true
+    # PROJECT_PICK_JQ (lib/formatters.sh) is the rule; this is one of its
+    # callers. The name query cannot return an id match, so only the
+    # canceled-loses-to-live arm ever fires here, and passing $ref anyway is
+    # what keeps this spelling the same one the cache reads.
+    local project_id
+    project_id=$(echo "$result" | jq -r --arg ref "$project_ref" \
+        "$PROJECT_PICK_JQ"'(.projects.nodes // []) | (live_project_pick($ref) | .id) // ""')
 
     if [ -n "$project_id" ]; then
         echo "$project_id"
         return 0
     fi
 
-    if [ -n "$rejected" ]; then
-        jq -nc --arg name "$project_ref" --arg matches "$rejected" \
-            '{error: ("Project not found: " + $name + " (no live project has this name; matches: " + $matches + "; pass a project UUID to target one)")}' >&2
-        return 1
-    fi
-
-    jq -nc --arg message "Project not found: $project_ref" '{error: $message}' >&2
+    # Naming each rejected UUID and its state is what lets a deliberate read of
+    # a canceled project pass one; with nothing matched at all the same builder
+    # emits the plain not-found line.
+    echo "$result" | jq -c --arg ref "$project_ref" \
+        "$PROJECT_PICK_JQ"'(.projects.nodes // []) | live_project_refusal($ref; "Project not found")' >&2
     return 1
 }
 
@@ -809,29 +806,93 @@ resolve_label_id() {
     echo "$label_id"
 }
 
-# Resolve milestone name or UUID to UUID
-# Usage: resolve_milestone_id "Alpha" or resolve_milestone_id "uuid-here"
+# A milestone reference that is already a UUID, and so needs no project to
+# resolve it in. One statement of the rule: the pre-upload guard below and
+# resolve_milestone_id must agree on it, or a reference one calls a name the
+# other calls resolved. LINEAR_UUID_PATTERN is that grammar everywhere else,
+# `--cycle` included, and it accepts uppercase hex; a second, lowercase-only
+# spelling here would refuse an uppercase UUID for want of a project the
+# option's contract says it does not need.
+milestone_ref_is_uuid() {
+    [[ "$1" =~ $LINEAR_UUID_PATTERN ]]
+}
+
+# Refuse a milestone NAME that has no project to resolve it in.
+# Usage: require_milestone_project "$milestone" "$project_scope"
+#
+# The scope is any project reference the caller has: the --project argument
+# before it is resolved, or the issue's own project on the update path. Only
+# whether one exists is judged here, never which.
+#
+# Both call sites run this from their arguments BEFORE uploading --attach
+# files: a refusal after an upload strands the asset in Linear storage with no
+# issue referencing it, which is the rule issues.sh states at its label
+# pre-resolution. resolve_milestone_id runs it again on the resolved id.
+# Plain `if`, not `test && return`: a false `&&` compound is a non-zero status
+# under this file's errexit, which would end a bare call before its diagnostic.
+require_milestone_project() {
+    local milestone_ref="$1" project_scope="${2:-}"
+
+    if [ -z "$milestone_ref" ] || [ -n "$project_scope" ]; then
+        return 0
+    fi
+    if milestone_ref_is_uuid "$milestone_ref"; then
+        return 0
+    fi
+
+    jq -cn --arg ref "$milestone_ref" \
+        '{error: ("Cannot resolve milestone " + ($ref | tojson) + " without a project: the same milestone name exists in other projects. Pass --project, or pass the milestone UUID.")}' >&2
+    return 1
+}
+
+# Resolve milestone name or UUID to UUID, within one project
+# Usage: resolve_milestone_id "Alpha" "project-uuid" or resolve_milestone_id "uuid-here"
+#
+# A milestone name is unique to its project and nothing more: "Alpha" exists in
+# as many projects as reuse it, and an unscoped name query returns all of them
+# in no fixed order, so nodes[0] filed the issue under whichever project the API
+# listed first. The project the caller already resolved is the scope, and a name
+# with no project to scope it is refused rather than guessed at.
 resolve_milestone_id() {
     local milestone_ref="$1"
+    local project_id="${2:-}"
 
     # Check if it's already a UUID
-    if [[ "$milestone_ref" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+    if milestone_ref_is_uuid "$milestone_ref"; then
         echo "$milestone_ref"
         return 0
     fi
 
-    # Look up by name
-    local query='query GetMilestone($name: String!) { projectMilestones(filter: {name: {eq: $name}}) { nodes { id } } }'
-    local vars result
-    vars=$(jq -cn --arg name "$milestone_ref" '{name: $name}')
-    result=$(graphql_query "$query" "$vars")
-    local milestone_id
-    milestone_id=$(echo "$result" | jq -r '.projectMilestones.nodes[0].id // empty')
+    require_milestone_project "$milestone_ref" "$project_id" || return 1
 
-    if [ -z "$milestone_id" ]; then
+    # Look up by name within the project.
+    local query='query GetMilestone($name: String!, $projectId: ID!) { projectMilestones(filter: {name: {eq: $name}, project: {id: {eq: $projectId}}}) { nodes { id } } }'
+    local vars result
+    vars=$(jq -cn --arg name "$milestone_ref" --arg projectId "$project_id" '{name: $name, projectId: $projectId}')
+    # A FAILED query is an API failure (rate limit, outage); "Milestone not
+    # found" is only true of a lookup that succeeded and matched nothing.
+    if ! result=$(graphql_query "$query" "$vars"); then
+        jq -cn --arg ref "$milestone_ref" \
+            '{error: ("Could not resolve milestone " + ($ref | tojson) + ": Linear API request failed (see previous error)")}' >&2
+        return 1
+    fi
+
+    # The whole match set, joined: a UUID holds no comma, so a comma in the
+    # join is exactly a second match, and the same string names the candidates
+    # in the refusal.
+    local milestone_ids
+    milestone_ids=$(echo "$result" | jq -r '[(.projectMilestones.nodes // [])[].id] | join(", ")')
+
+    if [ -z "$milestone_ids" ]; then
         jq -cn --arg ref "$milestone_ref" '{error: ("Milestone not found: " + $ref)}' >&2
         return 1
     fi
 
-    echo "$milestone_id"
+    if [[ "$milestone_ids" == *,* ]]; then
+        jq -cn --arg ref "$milestone_ref" --arg matches "$milestone_ids" \
+            '{error: ("Milestone name is ambiguous within the project: " + ($ref | tojson) + " matches " + $matches + "; pass a milestone UUID to target one)")}' >&2
+        return 1
+    fi
+
+    echo "$milestone_ids"
 }
