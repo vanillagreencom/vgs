@@ -294,10 +294,20 @@ def launchable(catalog: Dict[str, Any]) -> List[Dict[str, Any]]:
             if buildable_here(entry)]
 
 
+def manageable(catalog: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Every catalog entry VGS installs, removes and reports on: the launchable
+    ones plus the `tools` CLIs, which have the same package and command but
+    nothing to launch. Install, removal and state have one implementation for
+    all three groups; only the launcher is narrower."""
+    tools = [dict(entry, group="tool", channel="", channels=[])
+             for entry in catalog.get("tools") or [] if buildable_here(entry)]
+    return launchable(catalog) + tools
+
+
 def mise_catalog_stubs() -> List[Dict[str, str]]:
     catalog = dev_tools_catalog()
     stubs: List[Dict[str, str]] = []
-    for entry in launchable(catalog) + [e for e in catalog.get("tools") or [] if buildable_here(e)]:
+    for entry in manageable(catalog):
         stubs.append({
             "package": str(entry["package"]),
             "command": str(entry["command"]),
@@ -404,22 +414,34 @@ def mise_json(args: List[str]) -> Tuple[Dict[str, Any], str]:
 
 
 def mise_installed_versions() -> Tuple[Dict[str, str], str]:
-    """Package -> installed version, active install preferred."""
+    """Package key -> installed version, active install preferred."""
+    installs, error = mise_installs()
+    return {key: str(row["version"]) for key, row in installs.items()}, error
+
+
+def mise_installs() -> Tuple[Dict[str, Dict[str, Any]], str]:
+    """Package key -> {version, declared}. `declared` is whether a mise config
+    asks for the tool: `mise outdated` reports only those, so an install nothing
+    declares is invisible to every update count and never moves again."""
     data, error = mise_json(["ls", "--json"])
-    versions: Dict[str, str] = {}
-    for name, installs in data.items():
-        if not isinstance(installs, list):
+    installs: Dict[str, Dict[str, Any]] = {}
+    for name, entries in data.items():
+        if not isinstance(entries, list):
             continue
-        chosen = ""
-        for install in installs:
+        version, declared = "", False
+        for install in entries:
             if not isinstance(install, dict) or not install.get("installed"):
                 continue
-            chosen = str(install.get("version") or "")
-            if install.get("active"):
+            active = bool(install.get("active"))
+            if not version or active:
+                version = str(install.get("version") or "")
+            if isinstance(install.get("source"), dict):
+                declared = True
+            if active:
                 break
-        if chosen:
-            versions[str(name)] = chosen
-    return versions, error
+        if version:
+            installs[str(name)] = {"version": version, "declared": declared}
+    return installs, error
 
 
 def mise_outdated() -> Tuple[List[Dict[str, str]], str]:

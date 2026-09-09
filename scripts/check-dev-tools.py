@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
+import json
 import os
 import re
 import subprocess
@@ -688,10 +689,10 @@ def test_the_settings_tab_runs_the_channel_command():
     # that only writes back to the row leaves the shell showing a stream nothing
     # installs from.
     assert "onValueChanged" in tab, "the dropdown must handle a pick"
-    assert "root.setChannel(agentRow.modelData.id," in tab, \
+    assert "root.setChannel(row.modelData.id," in tab, \
         "the pick must run the channel command for the row it came from"
-    assert "options: agentRow.modelData.channels" in tab, "the dropdown lists the row's own streams"
-    assert "currentValue: agentRow.modelData.channel" in tab, "and shows the one in force"
+    assert "options: row.modelData.channels" in tab, "the dropdown lists the row's own streams"
+    assert "currentValue: row.modelData.channel" in tab, "and shows the one in force"
     assert "vshell mise channel" in (REPO_ROOT / "bin" / "vshell").read_text(), \
         "bin/vshell must document the channel command"
 
@@ -747,6 +748,246 @@ def test_distro_owned_env_is_hands_off():
         devtools.RT.eprint = original_eprint
 
 
+def test_mise_installs_reads_declaration_and_active_version():
+    """`declared` and the version come from raw `mise ls --json`. A parser that
+    marks every install declared makes an untracked tool read as tracked and
+    removes the only prompt to fix it; one that takes the wrong row reports a
+    version the shell is not running."""
+    payload = json.dumps({
+        # Declared: a config asked for it, so `mise outdated` reports it.
+        "claude": [
+            {"version": "2.1.0", "installed": True, "active": False},
+            {"version": "2.2.0", "installed": True, "active": True,
+             "source": {"type": "mise.toml", "path": "/home/u/.config/mise/config.toml"}},
+        ],
+        # Installed, declared nowhere: no source on any row.
+        "daytona": [{"version": "0.190.0", "installed": True, "active": True}],
+        # An install that never finished is not a version to report.
+        "ghost": [{"version": "9.9.9", "installed": False, "active": True}],
+        # Nothing active: the first installed row is the one to show.
+        "sesh": [{"version": "2.29.0", "installed": True, "active": False}],
+        # A shape mise does not emit must not crash the read.
+        "junk": "not-a-list",
+    })
+    original_run = mise.RT.run
+    original_exists = mise.RT.command_exists
+    try:
+        mise.RT.command_exists = lambda name: True
+        mise.RT.run = lambda cmd, check=False, **kw: subprocess.CompletedProcess(cmd, 0, stdout=payload, stderr="")
+        installs, error = mise.mise_installs()
+        assert_equal(error, "", "valid JSON must not report an error")
+        assert_equal(installs, {
+            "claude": {"version": "2.2.0", "declared": True},
+            "daytona": {"version": "0.190.0", "declared": False},
+            "sesh": {"version": "2.29.0", "declared": False},
+        }, "declaration and active version come from the raw rows")
+        # The narrower reader is the same parse, so the two cannot disagree.
+        versions, _ = mise.mise_installed_versions()
+        assert_equal(versions, {"claude": "2.2.0", "daytona": "0.190.0", "sesh": "2.29.0"},
+                     "the version map is the same read")
+    finally:
+        mise.RT.run = original_run
+        mise.RT.command_exists = original_exists
+
+
+def test_install_origin_names_what_provides_a_command():
+    """A row's whole vocabulary comes from this. `mise outdated` reports only
+    what a config declares, so an install nothing declares never reaches an
+    update count: that case has to read differently from a tracked one, and
+    from a distribution package holding the same command."""
+    original_installs = mise.mise_installs
+    original_owner = devtools.distro_package_owning
+    original_which = mise.command_on_path_elsewhere
+    try:
+        entry = {"id": "t", "name": "T", "command": "toolcmd", "package": "npm:@scope/toolcmd"}
+
+        # Declared in a config: mise tracks it and an update moves it.
+        installs = {"npm:@scope/toolcmd": {"version": "1.2.3", "declared": True}}
+        assert_equal(devtools.install_origin(entry, installs),
+                     {"origin": "mise", "path": "", "owner": "", "version": "1.2.3"},
+                     "a declared install is tracked")
+
+        # Installed, declared nowhere: invisible to every update count.
+        installs = {"npm:@scope/toolcmd": {"version": "1.2.3", "declared": False}}
+        assert_equal(devtools.install_origin(entry, installs)["origin"], "untracked",
+                     "an install no config declares must not read as tracked")
+
+        # Not in mise: what holds the command on PATH decides the row.
+        mise.command_on_path_elsewhere = lambda command, local_bin: "/usr/bin/toolcmd"
+        devtools.distro_package_owning = lambda path: "toolcmd-bin"
+        assert_equal(devtools.install_origin(entry, {}),
+                     {"origin": "system", "path": "/usr/bin/toolcmd", "owner": "toolcmd-bin", "version": ""},
+                     "a package-owned path names the package")
+        devtools.distro_package_owning = lambda path: ""
+        assert_equal(devtools.install_origin(entry, {})["origin"], "external",
+                     "a path no package owns is the owner's own file, not a system package")
+        mise.command_on_path_elsewhere = lambda command, local_bin: ""
+        assert_equal(devtools.install_origin(entry, {})["origin"], "absent",
+                     "nothing on PATH and nothing in mise is absent")
+    finally:
+        mise.mise_installs = original_installs
+        devtools.distro_package_owning = original_owner
+        mise.command_on_path_elsewhere = original_which
+
+
+def test_row_actions_run_and_refuse():
+    """`track` and `replace` are the two actions that change a machine, and
+    `replace` removes a distribution package with elevation before it installs
+    anything. Each has to act on the right entry, refuse the state it cannot
+    handle, and stop rather than continue when a step fails."""
+    original_installs = devtools.mise_installs
+    original_owner = devtools.distro_package_owning
+    original_which = mise.command_on_path_elsewhere
+    original_ids = devtools.os_release_ids
+    original_run = devtools.subprocess.run
+    original_dev_run = devtools.dev_env_run
+    original_stub = devtools.mise_install_stub
+    original_hold = devtools.hold_terminal
+    calls = []
+    try:
+        # The real one waits on stdin to keep a one-shot terminal readable.
+        devtools.hold_terminal = lambda code, message: code
+        devtools.os_release_ids = lambda: ["arch"]
+        devtools.mise_install_stub = lambda *a, **kw: calls.append(("stub", a[1]))
+        devtools.dev_env_run = lambda argv: (calls.append(("mise", argv)), 0)[1]
+
+        # track: declares an install mise already holds.
+        devtools.mise_installs = lambda: ({"daytona": {"version": "0.190.0", "declared": False}}, "")
+        entry = next(e for e in devtools.catalog_entries() if e["id"] == "daytona")
+        assert_equal(devtools.entry_track(entry), 0, "tracking an undeclared install succeeds")
+        assert_equal(calls, [("mise", ["mise", "use", "-g", "daytona"])], "track declares the entry's package")
+
+        # track: refuses what it cannot help, and changes nothing either way.
+        calls.clear()
+        devtools.mise_installs = lambda: ({"daytona": {"version": "0.190.0", "declared": True}}, "")
+        assert_equal(devtools.entry_track(entry), 0, "an already-tracked install is not an error")
+        devtools.mise_installs = lambda: ({}, "")
+        assert_equal(devtools.entry_track(entry), 1, "an install mise does not hold is refused")
+        assert_equal(calls, [], "a refusal runs no mise command")
+
+        # replace: refuses when no distribution package owns the command.
+        mise.command_on_path_elsewhere = lambda command, local_bin: ""
+        assert_equal(devtools.entry_replace(entry), 1, "nothing to replace is refused")
+        assert_equal(calls, [], "and removes nothing")
+
+        # replace: removes the owner, then installs. Elevation is the first step
+        # and the install must not run when it fails.
+        mise.command_on_path_elsewhere = lambda command, local_bin: "/usr/bin/gh"
+        devtools.distro_package_owning = lambda path: "github-cli"
+        gh = next(e for e in devtools.catalog_entries() if e["id"] == "gh")
+
+        def failing_run(argv, **kw):
+            calls.append(("run", list(argv)))
+            return subprocess.CompletedProcess(argv, 1)
+
+        devtools.subprocess.run = failing_run
+        assert_equal(devtools.entry_replace(gh), 1, "a failed removal fails the action")
+        assert_equal(calls, [("run", ["sudo", "pacman", "-Rns", "github-cli"])],
+                     "and stops before installing anything")
+
+        calls.clear()
+
+        def ok_run(argv, **kw):
+            calls.append(("run", list(argv)))
+            return subprocess.CompletedProcess(argv, 0)
+
+        devtools.subprocess.run = ok_run
+        assert_equal(devtools.entry_replace(gh), 0, "removal then install succeeds")
+        assert_equal(calls[0], ("run", ["sudo", "pacman", "-Rns", "github-cli"]),
+                     "the distribution package goes first")
+        assert any(step[0] == "run" and step[1][:3] == ["mise", "use", "-g"] for step in calls[1:]), \
+            f"then the mise install runs: {calls}"
+        assert ("stub", "gh") in calls, f"and the launcher stub is written: {calls}"
+
+        # cmd_agent routes each verb to the entry the id names, tools included.
+        routed = []
+        for verb in ("track", "replace", "update", "remove"):
+            devtools.ENTRY_ACTIONS[verb] = (lambda v: lambda e: (routed.append((v, e["id"])), 0)[1])(verb)
+        for verb in ("track", "replace", "update", "remove"):
+            assert_equal(devtools.cmd_agent([verb, "daytona"]), 0, f"{verb} routes a tool id")
+        assert_equal(routed, [("track", "daytona"), ("replace", "daytona"),
+                              ("update", "daytona"), ("remove", "daytona")],
+                     "each verb reaches its own action with the entry it named")
+        assert_equal(devtools.cmd_agent(["track", "nosuch"]), 2, "an unknown id is a usage error")
+    finally:
+        devtools.mise_installs = original_installs
+        devtools.distro_package_owning = original_owner
+        mise.command_on_path_elsewhere = original_which
+        devtools.os_release_ids = original_ids
+        devtools.subprocess.run = original_run
+        devtools.dev_env_run = original_dev_run
+        devtools.mise_install_stub = original_stub
+        devtools.hold_terminal = original_hold
+
+
+def test_the_settings_tab_can_act_on_every_row():
+    """Each state the classifier can report needs a way out of it, or the tab
+    shows a problem the reader cannot fix."""
+    tab = (REPO_ROOT / "quickshell" / "vshell" / "Modules" / "Settings" / "DeveloperTab.qml").read_text()
+    # Every verb a row can offer has to reach the CLI. They go through one
+    # runner, so the pin is that the runner passes the verb through rather than
+    # naming a fixed one.
+    assert '"agent", verb, entry.id' in tab, "the row action must run the verb it was given"
+    for verb in ("track", "replace", "update", "remove"):
+        assert f'"verb": "{verb}"' in tab, f"a row state must be able to offer {verb}"
+    assert 'root.tools' in tab, "the tab must draw the catalog's tools section"
+    assert 'I18n.tr("Developer Tools")' in tab, "the tools card must be titled"
+    # Uninstall destroys an install; a single click must not do it. The pin is
+    # the early return, not the flag: a flag the handler never consults reads
+    # the same in the file and removes nothing.
+    assert "if (menuItem.modelData.danger && !menuItem.confirming) {" in tab, \
+        "the first click on a destructive item must arm, not act"
+    assert '"danger": true' in tab, "uninstall must be the item that arms"
+    for verb, origin in (("track", "untracked"), ("replace", "system")):
+        assert f'"{verb}"' in tab and f'"{origin}"' in tab, \
+            f"the {origin} state must offer {verb}"
+    # The count on the bulk button is derived from the rows, never typed.
+    assert "root.outdatedCount" in tab, "the update button must count the rows it would move"
+    assert "e.latest" in tab, "and count them by the release each row is waiting for"
+    # Turning auto-install off uninstalls nothing, and the copy has to say so.
+    assert "Turn off auto-install" in tab, "the bulk control must say what it does"
+    assert "Turning it off uninstalls nothing" in tab, "and must say what it does not do"
+
+
+def test_a_row_carries_the_release_it_is_waiting_for():
+    """The tab shows an update per row and counts them on one button. A row that
+    does not carry its own pending release leaves both to a second source."""
+    original_installs = devtools.mise_installs
+    original_outdated = devtools.mise_outdated
+    original_exists = devtools.RT.command_exists
+    try:
+        devtools.RT.command_exists = lambda name: True
+        devtools.mise_installs = lambda: ({"claude": {"version": "2.1.0", "declared": True},
+                                           "gh": {"version": "2.0.0", "declared": True}}, "")
+        devtools.mise_outdated = lambda: ([{"name": "claude", "id": "claude",
+                                            "current": "2.1.0", "latest": "2.2.0"}], "")
+        listed = devtools.agent_list()
+        rows = {r["id"]: r for g in ("agents", "apps", "tools") for r in listed[g]}
+        assert_equal(rows["claude"]["latest"], "2.2.0", "a row mise would move names the release")
+        assert_equal(rows["gh"]["latest"], "", "a current row names none")
+        assert_equal(rows["playwright"]["latest"], "", "nor does one that is not installed")
+    finally:
+        devtools.mise_installs = original_installs
+        devtools.mise_outdated = original_outdated
+        devtools.RT.command_exists = original_exists
+
+
+def test_catalog_entries_cover_the_tools_section():
+    """`agent launch` is narrower than the catalog on purpose; install, removal
+    and reporting are not. A tools entry missing from the wider list gets no
+    settings row and no way to be removed."""
+    catalog = mise.dev_tools_catalog()
+    ids = [e["id"] for e in mise.manageable(catalog)]
+    for tool in catalog["tools"]:
+        assert tool["id"] in ids, f"{tool['id']}: manageable() must carry the tools section"
+    launch_ids = [e["id"] for e in mise.launchable(catalog)]
+    for tool in catalog["tools"]:
+        assert tool["id"] not in launch_ids, f"{tool['id']}: a tool has nothing to launch"
+    for group, entries in (("tool", catalog["tools"]),):
+        stamped = [e["group"] for e in mise.manageable(catalog) if e["id"] in {t["id"] for t in entries}]
+        assert_equal(set(stamped), {group}, "manageable() must stamp the group each entry came from")
+
+
 def test_catalog_is_consistent():
     """One catalog feeds stubs, agents, apps and envs; ids and commands must be unique."""
     catalog = mise.dev_tools_catalog()
@@ -773,6 +1014,13 @@ def test_catalog_is_consistent():
             f"{entry['id']}: icon must be nerd:<hex> or brand:<hex>, not {entry.get('icon')!r}"
         assert TILE_COLOR.fullmatch(str(entry.get("color") or "")), \
             f"{entry['id']}: color must be #RRGGBB, not {entry.get('color')!r}"
+    # A tool reaches no tile, so it carries no icon or colour; it does carry the
+    # id and name every settings row and every action is addressed by.
+    for entry in catalog["tools"]:
+        assert entry.get("id") and entry.get("name"), f"tool {entry.get('command')!r}: needs an id and a name"
+    all_ids = [e["id"] for e in launchable + catalog["tools"]]
+    assert_equal(len(all_ids), len(set(all_ids)),
+                 "ids must be unique across agents, apps and tools: " + " ".join(all_ids))
     for entry in channelled_entries(catalog):
         options = mise.entry_channels(entry)
         assert len(options) > 1, f"{entry['id']}: a channel set with one option is a dropdown with nothing to pick"
@@ -817,6 +1065,12 @@ def main() -> int:
     test_the_settings_tab_runs_the_channel_command()
     test_env_remove_keeps_shared_tools()
     test_distro_owned_env_is_hands_off()
+    test_mise_installs_reads_declaration_and_active_version()
+    test_install_origin_names_what_provides_a_command()
+    test_row_actions_run_and_refuse()
+    test_the_settings_tab_can_act_on_every_row()
+    test_a_row_carries_the_release_it_is_waiting_for()
+    test_catalog_entries_cover_the_tools_section()
     test_catalog_is_consistent()
     test_cli_wrapper_routes_the_commands()
     print("check-dev-tools: ok")

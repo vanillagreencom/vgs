@@ -47,7 +47,9 @@
     "whose prereleases are the same product gets channels: Orca's are a",
     "different application, and cmux publishes no stable tag to choose against.",
     "",
-    "tools: developer CLIs that get a lazy stub but are not agents.",
+    "tools: developer CLIs that get a lazy stub but are not agents. They",
+    "carry an id and a name so the Developer tab can list them and act on",
+    "one, and no icon or colour because nothing launches them from a tile.",
     "",
     "envs: language environments. `tools` are mise packages installed globally;",
     "`installer` names a non-mise route the helper implements; `managedBy` names",
@@ -82,14 +84,14 @@
     { "id": "cmux", "name": "cmux", "kind": "gui", "arch": ["x86_64"], "icon": "nerd:f059f", "color": "#4285F4", "package": "github:manaflow-ai/cmux-v2[matching_regex=linux-x64\\.zip,rename_exe=cmux]@nightly", "command": "cmux", "launch": ["cmux"] }
   ],
   "tools": [
-    { "package": "gh", "command": "gh" },
-    { "package": "npm:playwright", "command": "playwright" },
-    { "package": "npm:@kitlangton/ghui", "command": "ghui" },
-    { "package": "aqua:modem-dev/hunk", "command": "hunk" },
-    { "package": "github:dlvhdr/gh-dash", "command": "gh-dash" },
-    { "package": "github:joshmedeski/sesh", "command": "sesh" },
-    { "package": "npm:vercel", "command": "vercel" },
-    { "package": "daytona", "command": "daytona" }
+    { "id": "gh", "name": "GitHub CLI", "package": "gh", "command": "gh" },
+    { "id": "playwright", "name": "Playwright", "package": "npm:playwright", "command": "playwright" },
+    { "id": "ghui", "name": "ghui", "package": "npm:@kitlangton/ghui", "command": "ghui" },
+    { "id": "hunk", "name": "hunk", "package": "aqua:modem-dev/hunk", "command": "hunk" },
+    { "id": "gh-dash", "name": "gh-dash", "package": "github:dlvhdr/gh-dash", "command": "gh-dash" },
+    { "id": "sesh", "name": "sesh", "package": "github:joshmedeski/sesh", "command": "sesh" },
+    { "id": "vercel", "name": "Vercel", "package": "npm:vercel", "command": "vercel" },
+    { "id": "daytona", "name": "Daytona", "package": "daytona", "command": "daytona" }
   ],
   "envs": [
     { "id": "node", "name": "Node.js", "icon": "nerd:f0399", "color": "#5FA04E", "tools": ["node"], "settings": { "idiomatic_version_file_enable_tools": ["node"] }, "present": "~/.local/share/mise/installs/node" },
