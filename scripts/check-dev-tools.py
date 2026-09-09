@@ -245,6 +245,57 @@ def test_first_launch_asks_before_installing():
         devtools.mise_install_stub = original_stub
 
 
+def test_a_package_is_looked_up_under_the_id_mise_files_it_by():
+    """mise drops inline backend options and the requested version from the id
+    it reports, so a spec carrying either must be reduced before every lookup."""
+    cases = [
+        ("claude", "claude"),
+        # The `@` in a scoped npm name is part of the name, never a version.
+        ("npm:@xai-official/grok", "npm:@xai-official/grok"),
+        ("github:pingdotgg/t3code[matching_regex=AppImage$,rename_exe=t3code]", "github:pingdotgg/t3code"),
+        ("github:manaflow-ai/cmux-v2[matching_regex=linux-x64.zip]@nightly", "github:manaflow-ai/cmux-v2"),
+        ("npm:@scope/name@1.2.3", "npm:@scope/name"),
+    ]
+    for package, expected in cases:
+        assert_equal(mise.package_key(package), expected, f"{package} is filed under")
+
+    # Every catalog entry has to resolve, or the entry is unreachable from the
+    # moment it lands: the guard reads the catalog rather than a second list.
+    catalog = mise.dev_tools_catalog()
+    for entry in mise.launchable(catalog) + catalog["tools"]:
+        key = mise.package_key(str(entry["package"]))
+        assert key and "[" not in key and not key.endswith("@"), f"{entry['package']} reduces to {key!r}"
+
+    # A tool mise reports as installed must read as installed here, which is
+    # what the option-carrying specs got wrong.
+    original = devtools.mise_installed_versions
+    devtools.mise_installed_versions = lambda: ({"github:pingdotgg/t3code": "0.0.40"}, "")
+    try:
+        t3code = next(e for e in devtools.agent_entries() if e["id"] == "t3code")
+        assert devtools.agent_installed(t3code), "an installed tool must not read as absent"
+        assert_equal(devtools.agent_launch_argv(t3code)[:2], ["mise", "x"],
+                     "and it must launch through mise x rather than being reinstalled")
+    finally:
+        devtools.mise_installed_versions = original
+
+
+def test_an_owner_installed_app_launches_its_public_command():
+    """`launch` names the executable inside the package. An install VGS does not
+    own has only the public command on PATH, and `orca.AppImage` is not it."""
+    original = devtools.mise_installed_versions
+    devtools.mise_installed_versions = lambda: ({}, "")
+    try:
+        orca = next(e for e in devtools.agent_entries() if e["id"] == "orca")
+        assert_equal(orca["launch"], ["orca.AppImage"], "the entry launches the package's own file")
+        assert_equal(devtools.agent_launch_argv(orca), ["orca-ide"],
+                     "but an install mise does not own answers to the public command")
+        dsh = next(e for e in devtools.agent_entries() if e["id"] == "dsh")
+        assert_equal(devtools.agent_launch_argv(dsh), ["dsh", "web"],
+                     "and the entry's own arguments survive the substitution")
+    finally:
+        devtools.mise_installed_versions = original
+
+
 def test_a_windowed_app_launches_without_a_terminal():
     """A GUI app draws its own window; a terminal wrapped around it would sit
     empty on the bar for as long as the app ran. A TUI agent still gets one."""
@@ -395,6 +446,8 @@ def main() -> int:
     test_update_run_and_count_carry_tools()
     test_os_release_resolves_through_id_like()
     test_first_launch_asks_before_installing()
+    test_a_package_is_looked_up_under_the_id_mise_files_it_by()
+    test_an_owner_installed_app_launches_its_public_command()
     test_a_windowed_app_launches_without_a_terminal()
     test_apps_get_stubs_and_their_own_list()
     test_env_remove_keeps_shared_tools()

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -53,6 +54,22 @@ MISE_STUB_MARKER = "# vshell mise stub"
 MISE_STUBS_REMOVED = "mise-stubs-removed"
 # Disable mise release cooldown so tool requests can use newly published releases.
 MISE_RELEASE_AGE_ENV = {"MISE_MINIMUM_RELEASE_AGE": "0"}
+
+
+PACKAGE_OPTIONS = re.compile(r"\[[^\]]*\]")
+
+
+def package_key(package: str) -> str:
+    """The id mise files a package under. `mise ls --json` and the global config
+    both drop inline backend options and the requested version, so a spec
+    carrying either matches nothing when it is looked up verbatim: the tool
+    reads as never installed, is offered for install on every launch, and
+    cannot be removed."""
+    stripped = PACKAGE_OPTIONS.sub("", package)
+    at = stripped.rfind("@")
+    # `npm:@scope/name` carries an `@` that belongs to the name. Only one after
+    # the last `/` separates a version.
+    return stripped[:at] if at > stripped.rfind("/") else stripped
 
 
 def dev_tools_catalog() -> Dict[str, Any]:
@@ -264,8 +281,8 @@ def mise_list() -> Dict[str, Any]:
             "package": package,
             "command": command,
             "stub": mise_stub_state(RT.home() / ".local" / "bin" / command),
-            "installed": versions.get(package, ""),
-            "latest": latest.get(package, ""),
+            "installed": versions.get(package_key(package), ""),
+            "latest": latest.get(package_key(package), ""),
         }
 
     return {

@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 import vshell_mise
-from vshell_mise import DevToolsRuntime, dev_tools_catalog, launchable, mise_stubs_opted_out, mise_env, mise_install_stub, mise_installed_versions, mise_stub_state
+from vshell_mise import DevToolsRuntime, dev_tools_catalog, launchable, mise_stubs_opted_out, mise_env, mise_install_stub, mise_installed_versions, mise_stub_state, package_key
 
 RT: DevToolsRuntime
 
@@ -41,6 +41,7 @@ def agent_list() -> Dict[str, Any]:
     for entry in agent_entries():
         command = str(entry["command"])
         stub = mise_stub_state(RT.home() / ".local" / "bin" / command)
+        key = package_key(str(entry["package"]))
         rows[str(entry["group"])].append({
             "id": entry["id"],
             "name": entry["name"],
@@ -49,10 +50,10 @@ def agent_list() -> Dict[str, Any]:
             "package": entry["package"],
             "kind": str(entry.get("kind") or "tui"),
             "stub": stub,
-            "installed": versions.get(str(entry["package"]), ""),
+            "installed": versions.get(key, ""),
             # A foreign or shadowed command is the owner's own install of the
             # same agent; it launches without mise.
-            "runnable": bool(versions.get(str(entry["package"]))) or stub in {"foreign", "shadowed"},
+            "runnable": bool(versions.get(key)) or stub in {"foreign", "shadowed"},
         })
     return {"ok": True, "mise": RT.command_exists("mise"), "error": versions_error,
             "optedOut": mise_stubs_opted_out(), "agents": rows["agent"], "apps": rows["app"]}
@@ -61,7 +62,7 @@ def agent_list() -> Dict[str, Any]:
 def agent_installed(entry: Dict[str, Any]) -> bool:
     """A mise install of the package, or the owner's own command on PATH."""
     versions, _ = mise_installed_versions()
-    if versions.get(str(entry["package"])):
+    if versions.get(package_key(str(entry["package"]))):
         return True
     return mise_stub_state(RT.home() / ".local" / "bin" / str(entry["command"])) in {"foreign", "shadowed"}
 
@@ -71,9 +72,12 @@ def agent_launch_argv(entry: Dict[str, Any]) -> List[str]:
     resolves without a stub or shim on PATH; the owner's own command otherwise."""
     launch = [str(part) for part in entry.get("launch") or [entry["command"]]]
     versions, _ = mise_installed_versions()
-    if versions.get(str(entry["package"])):
+    if versions.get(package_key(str(entry["package"]))):
         return ["mise", "x", str(entry["package"]), "--", *launch]
-    return launch
+    # `launch` names the executable inside the package, which for an AppImage is
+    # not the command anyone has on PATH. An install VGS does not own answers to
+    # the public command instead; its own arguments still apply.
+    return [str(entry["command"]), *launch[1:]]
 
 
 def agent_install_prompt(entry: Dict[str, Any]) -> bool:
@@ -141,13 +145,14 @@ def hold_terminal(code: int, message: str) -> int:
 def agent_remove(entry: Dict[str, Any]) -> int:
     """Uninstall the agent's mise package and retire its launcher stub. An
     agent the owner installed themselves stays: VGS did not put it there."""
-    package = str(entry["package"])
+    key = package_key(str(entry["package"]))
     versions, _ = mise_installed_versions()
-    if not versions.get(package):
+    if not versions.get(key):
         return hold_terminal(1, f"{entry['name']} is not installed through mise; remove it where you installed it.")
     print(f"Removing {entry['name']}...\n")
-    failures = dev_env_run(["mise", "uninstall", "--all", package]) != 0
-    failures += dev_env_run(["mise", "unuse", "-g", package]) != 0
+    # mise files the tool under the option-free id, and both commands take it.
+    failures = dev_env_run(["mise", "uninstall", "--all", key]) != 0
+    failures += dev_env_run(["mise", "unuse", "-g", key]) != 0
     stub = RT.home() / ".local" / "bin" / str(entry["command"])
     if mise_stub_state(stub) == "ours":
         try:
