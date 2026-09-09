@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import os
+import platform
+import re
 import shlex
 import shutil
 import subprocess
@@ -29,6 +31,7 @@ class DevToolsRuntime:
     load_required_json_file: Callable[[Path], Dict[str, Any]]
     eprint: Callable[..., None]
     spawn_terminal: Callable[..., int]
+    spawn_app: Callable[..., int]
     notify_user: Callable[[str, str], None]
     # App id of the floating TUI window the updater uses; one-shot scripts
     # (installs, prompts) share its styling.
@@ -52,6 +55,22 @@ MISE_STUB_MARKER = "# vshell mise stub"
 MISE_STUBS_REMOVED = "mise-stubs-removed"
 # Disable mise release cooldown so tool requests can use newly published releases.
 MISE_RELEASE_AGE_ENV = {"MISE_MINIMUM_RELEASE_AGE": "0"}
+
+
+PACKAGE_OPTIONS = re.compile(r"\[[^\]]*\]")
+
+
+def package_key(package: str) -> str:
+    """The id mise files a package under. `mise ls --json` and the global config
+    both drop inline backend options and the requested version, so a spec
+    carrying either matches nothing when it is looked up verbatim: the tool
+    reads as never installed, is offered for install on every launch, and
+    cannot be removed."""
+    stripped = PACKAGE_OPTIONS.sub("", package)
+    at = stripped.rfind("@")
+    # `npm:@scope/name` carries an `@` that belongs to the name. Only one after
+    # the last `/` separates a version.
+    return stripped[:at] if at > stripped.rfind("/") else stripped
 
 
 def dev_tools_catalog() -> Dict[str, Any]:
@@ -122,10 +141,30 @@ def mise_install_stub(package: str, command: str, bin_name: str = "") -> Dict[st
     return result
 
 
+def buildable_here(entry: Dict[str, Any]) -> bool:
+    """Whether this machine's architecture is one the entry publishes for. An
+    entry naming none builds everywhere. VGS ships aarch64, and an entry with
+    only x86_64 assets would otherwise offer an install with no asset to
+    choose."""
+    arch = entry.get("arch")
+    return not arch or platform.machine() in arch
+
+
+def launchable(catalog: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Catalog entries with a launcher: coding agents and developer apps. One
+    list so install, launch and removal have a single implementation; the
+    `group` it stamps is what tells an Agent from an App wherever they show
+    apart."""
+    return [dict(entry, group=group[:-1])
+            for group in ("agents", "apps")
+            for entry in catalog.get(group) or []
+            if buildable_here(entry)]
+
+
 def mise_catalog_stubs() -> List[Dict[str, str]]:
     catalog = dev_tools_catalog()
     stubs: List[Dict[str, str]] = []
-    for entry in list(catalog.get("agents") or []) + list(catalog.get("tools") or []):
+    for entry in launchable(catalog) + [e for e in catalog.get("tools") or [] if buildable_here(e)]:
         stubs.append({
             "package": str(entry["package"]),
             "command": str(entry["command"]),
@@ -253,8 +292,8 @@ def mise_list() -> Dict[str, Any]:
             "package": package,
             "command": command,
             "stub": mise_stub_state(RT.home() / ".local" / "bin" / command),
-            "installed": versions.get(package, ""),
-            "latest": latest.get(package, ""),
+            "installed": versions.get(package_key(package), ""),
+            "latest": latest.get(package_key(package), ""),
         }
 
     return {
@@ -262,8 +301,9 @@ def mise_list() -> Dict[str, Any]:
         "mise": RT.command_exists("mise"),
         "optedOut": mise_stubs_opted_out(),
         "error": versions_error or outdated_error,
-        "agents": [describe(e) for e in catalog.get("agents") or []],
-        "tools": [describe(e) for e in catalog.get("tools") or []],
+        "agents": [describe(e) for e in catalog.get("agents") or [] if buildable_here(e)],
+        "apps": [describe(e) for e in catalog.get("apps") or [] if buildable_here(e)],
+        "tools": [describe(e) for e in catalog.get("tools") or [] if buildable_here(e)],
         "outdated": outdated,
     }
 

@@ -245,6 +245,181 @@ def test_first_launch_asks_before_installing():
         devtools.mise_install_stub = original_stub
 
 
+def test_an_entry_without_this_machines_architecture_is_not_offered():
+    """VGS ships aarch64. An entry that publishes only x86_64 assets must not
+    reach a list on ARM: the tile would look installable and the first install
+    would find no asset to choose."""
+    catalog = mise.dev_tools_catalog()
+    declared = [e for e in catalog["agents"] + catalog["apps"] + catalog["tools"] if e.get("arch")]
+    assert declared, "the guard needs at least one entry declaring an architecture to judge"
+
+    original = mise.platform.machine
+    try:
+        mise.platform.machine = lambda: "x86_64"
+        on_x86 = {e["id"] for e in mise.launchable(catalog)}
+        stubs_x86 = {s["command"] for s in mise.mise_catalog_stubs()}
+        mise.platform.machine = lambda: "aarch64"
+        on_arm = {e["id"] for e in mise.launchable(catalog)}
+        stubs_arm = {s["command"] for s in mise.mise_catalog_stubs()}
+        listed_arm = mise.mise_list()
+    finally:
+        mise.platform.machine = original
+
+    for entry in declared:
+        if "x86_64" not in entry["arch"]:
+            continue
+        name = entry.get("id") or entry["command"]
+        assert name in on_x86 or entry["command"] in stubs_x86, f"{name} must be offered on x86_64"
+        assert name not in on_arm, f"{name} publishes no ARM build and must not be offered there"
+        assert entry["command"] not in stubs_arm, f"{name} must not get a stub on ARM"
+    arm_ids = {e["id"] for e in listed_arm["agents"] + listed_arm["apps"]}
+    assert arm_ids <= on_arm, "the settings list must not show what the launcher filtered out"
+    # An entry naming no architecture is offered everywhere, or the filter would
+    # have emptied both lists rather than trimmed them.
+    assert "claude" in on_arm and "claude" in on_x86, "an entry naming no architecture builds everywhere"
+
+
+def test_a_package_is_looked_up_under_the_id_mise_files_it_by():
+    """mise drops inline backend options and the requested version from the id
+    it reports, so a spec carrying either must be reduced before every lookup."""
+    cases = [
+        ("claude", "claude"),
+        # The `@` in a scoped npm name is part of the name, never a version.
+        ("npm:@xai-official/grok", "npm:@xai-official/grok"),
+        ("github:pingdotgg/t3code[matching_regex=AppImage$,rename_exe=t3code]", "github:pingdotgg/t3code"),
+        ("github:manaflow-ai/cmux-v2[matching_regex=linux-x64.zip]@nightly", "github:manaflow-ai/cmux-v2"),
+        ("npm:@scope/name@1.2.3", "npm:@scope/name"),
+    ]
+    for package, expected in cases:
+        assert_equal(mise.package_key(package), expected, f"{package} is filed under")
+
+    # Every catalog entry has to resolve, or the entry is unreachable from the
+    # moment it lands: the guard reads the catalog rather than a second list.
+    catalog = mise.dev_tools_catalog()
+    for entry in mise.launchable(catalog) + catalog["tools"]:
+        key = mise.package_key(str(entry["package"]))
+        assert key and "[" not in key and not key.endswith("@"), f"{entry['package']} reduces to {key!r}"
+
+    # A tool mise reports as installed must read as installed here, which is
+    # what the option-carrying specs got wrong.
+    original = devtools.mise_installed_versions
+    original_machine = mise.platform.machine
+    devtools.mise_installed_versions = lambda: ({"github:pingdotgg/t3code": "0.0.40"}, "")
+    # T3 Code is x86-only, so the entry this case is about is absent on an ARM
+    # host. Pin the architecture rather than let the host pick the subject.
+    mise.platform.machine = lambda: "x86_64"
+    try:
+        t3code = next(e for e in devtools.agent_entries() if e["id"] == "t3code")
+        assert devtools.agent_installed(t3code), "an installed tool must not read as absent"
+        assert_equal(devtools.agent_launch_argv(t3code)[:2], ["mise", "x"],
+                     "and it must launch through mise x rather than being reinstalled")
+    finally:
+        devtools.mise_installed_versions = original
+        mise.platform.machine = original_machine
+
+
+def test_an_owner_installed_app_launches_its_public_command():
+    """`launch` names the executable inside the package. An install VGS does not
+    own has only the public command on PATH, and `orca.AppImage` is not it."""
+    original = devtools.mise_installed_versions
+    devtools.mise_installed_versions = lambda: ({}, "")
+    try:
+        orca = next(e for e in devtools.agent_entries() if e["id"] == "orca")
+        assert_equal(orca["launch"], ["orca.AppImage"], "the entry launches the package's own file")
+        assert_equal(devtools.agent_launch_argv(orca), ["orca-ide"],
+                     "but an install mise does not own answers to the public command")
+        dsh = next(e for e in devtools.agent_entries() if e["id"] == "dsh")
+        assert_equal(devtools.agent_launch_argv(dsh), ["dsh", "web"],
+                     "and the entry's own arguments survive the substitution")
+    finally:
+        devtools.mise_installed_versions = original
+
+
+def test_a_windowed_app_launches_without_a_terminal():
+    """A GUI app draws its own window; a terminal wrapped around it would sit
+    empty on the bar for as long as the app ran. A TUI agent still gets one."""
+    terminals = []
+    apps = []
+    original_versions = devtools.mise_installed_versions
+    original_state = devtools.mise_stub_state
+    original_terminal = mise.RT.spawn_terminal
+    original_app = mise.RT.spawn_app
+    original_chdir = devtools.os.chdir
+    devtools.mise_installed_versions = lambda: ({"github:stablyai/orca": "1.4.198", "claude": "2.2.0"}, "")
+    devtools.mise_stub_state = lambda path: "ours"
+    mise.RT.spawn_terminal = lambda argv, **kw: (terminals.append(list(argv)), 0)[1]
+    mise.RT.spawn_app = lambda argv, **kw: (apps.append(list(argv)), 0)[1]
+    devtools.os.chdir = lambda path: None
+    try:
+        assert_equal(devtools.agent_launch("orca", inline=False), 0, "the app launches")
+        assert_equal(terminals, [], "a windowed app opens no terminal")
+        assert_equal(apps, [["mise", "x", "github:stablyai/orca", "--", "orca.AppImage"]],
+                     "the app runs its package's own executable through mise x")
+        # The must-fail side: without the kind check every entry would take this
+        # path, so a TUI agent has to still reach the terminal and not spawn_app.
+        assert_equal(devtools.agent_launch("claude", inline=False), 0, "the agent launches")
+        assert_equal(len(apps), 1, "a TUI agent must not be started as a windowed app")
+        assert_equal(len(terminals), 1, "a TUI agent opens a terminal")
+    finally:
+        devtools.mise_installed_versions = original_versions
+        devtools.mise_stub_state = original_state
+        mise.RT.spawn_terminal = original_terminal
+        mise.RT.spawn_app = original_app
+        devtools.os.chdir = original_chdir
+
+
+def test_apps_get_stubs_and_their_own_list():
+    """Apps are launchable like agents and stubbed like tools, and every surface
+    keeps them apart from the coding agents."""
+    # An x86-only entry is absent from the stub set on an ARM host, so this case
+    # pins the architecture rather than reading whichever one it happens to run
+    # on. The architecture filter has its own case.
+    original = mise.platform.machine
+    mise.platform.machine = lambda: "x86_64"
+    try:
+        stubs = {s["command"]: s for s in mise.mise_catalog_stubs()}
+    finally:
+        mise.platform.machine = original
+    assert "herdr" in stubs, "an app must get a lazy stub: " + " ".join(sorted(stubs))
+    # The vendor calls its binary orca-ide, and so does this entry: a stub at
+    # ~/.local/bin/orca would hide the GNOME screen reader of that name.
+    assert_equal(stubs["orca-ide"]["bin"], "orca.AppImage",
+                 "the stub execs the package's own executable, not the command name")
+    assert "orca" not in stubs, "the command must not claim the screen reader's name"
+    assert "gh" in stubs, "tools keep their stubs"
+    # A package carrying mise backend options holds brackets, a backslash and a
+    # `$`. Unquoted, the shell would glob the brackets and eat the rest, and the
+    # stub would install some other tool or nothing at all.
+    bracketed = mise.mise_stub_text(stubs["cmux"]["package"], "cmux", "cmux")
+    assert "'" + stubs["cmux"]["package"] + "'" in bracketed, bracketed
+    assert "[matching_regex=" in stubs["cmux"]["package"], "cmux names the asset its platform matcher cannot pick"
+
+    original_versions = devtools.mise_installed_versions
+    original_state = devtools.mise_stub_state
+    devtools.mise_installed_versions = lambda: ({}, "")
+    devtools.mise_stub_state = lambda path: "absent"
+    mise.platform.machine = lambda: "x86_64"
+    try:
+        listed = devtools.agent_list()
+        catalog = mise.dev_tools_catalog()
+        expected_agents = [e["id"] for e in catalog["agents"] if mise.buildable_here(e)]
+        expected_apps = [e["id"] for e in catalog["apps"] if mise.buildable_here(e)]
+    finally:
+        devtools.mise_installed_versions = original_versions
+        devtools.mise_stub_state = original_state
+        mise.platform.machine = original
+    agent_ids = [a["id"] for a in listed["agents"]]
+    app_ids = [a["id"] for a in listed["apps"]]
+    # Both directions: the lists come from the catalog's own sections, so an
+    # entry can neither go missing nor arrive from the wrong one.
+    assert_equal(agent_ids, expected_agents, "every agent is listed, in catalog order")
+    assert_equal(app_ids, expected_apps, "every app is listed, in catalog order")
+    assert "fx" in agent_ids, "a coding agent is listed as one: " + " ".join(agent_ids)
+    assert "herdr" in app_ids, "an app is listed as one: " + " ".join(app_ids)
+    assert not set(agent_ids) & set(app_ids), "no entry may appear in both lists"
+    assert_equal(set(a["group"] for a in listed["apps"]), {"app"}, "each row names its group")
+
+
 def test_env_remove_keeps_shared_tools():
     """Removing Scala must not uninstall the Java the Java env also owns."""
     ran = []
@@ -283,16 +458,22 @@ def test_distro_owned_env_is_hands_off():
 
 
 def test_catalog_is_consistent():
-    """One catalog feeds stubs, agents and envs; ids and commands must be unique."""
+    """One catalog feeds stubs, agents, apps and envs; ids and commands must be unique."""
     catalog = mise.dev_tools_catalog()
-    for section in ("agents", "tools", "envs"):
+    for section in ("agents", "apps", "tools", "envs"):
         assert catalog.get(section), f"catalog section {section} must not be empty"
-    commands = [e["command"] for e in catalog["agents"] + catalog["tools"]]
+    launchable = mise.launchable(catalog)
+    commands = [e["command"] for e in launchable + catalog["tools"]]
     assert_equal(len(commands), len(set(commands)), "stub commands must be unique: " + " ".join(commands))
-    ids = [e["id"] for e in catalog["agents"]]
-    assert_equal(len(ids), len(set(ids)), "agent ids must be unique")
-    for agent in catalog["agents"]:
-        assert agent["launch"][0] == agent["command"], f"{agent['id']}: launch must start with its own command"
+    ids = [e["id"] for e in launchable]
+    assert_equal(len(ids), len(set(ids)), "agent and app ids must be unique across both")
+    assert_equal([e["group"] for e in launchable if e["id"] in ("claude", "herdr")], ["agent", "app"],
+                 "launchable() must stamp the group each entry came from")
+    for entry in launchable:
+        # The stub execs the package's own executable, so the launcher has to
+        # name that same file: `orca` is the command, `orca.AppImage` the binary.
+        binary = entry.get("bin") or entry["command"]
+        assert entry["launch"][0] == binary, f"{entry['id']}: launch must start with {binary}"
     env_ids = [e["id"] for e in catalog["envs"]]
     assert_equal(len(env_ids), len(set(env_ids)), "env ids must be unique")
     for env in catalog["envs"]:
@@ -316,6 +497,11 @@ def main() -> int:
     test_update_run_and_count_carry_tools()
     test_os_release_resolves_through_id_like()
     test_first_launch_asks_before_installing()
+    test_an_entry_without_this_machines_architecture_is_not_offered()
+    test_a_package_is_looked_up_under_the_id_mise_files_it_by()
+    test_an_owner_installed_app_launches_its_public_command()
+    test_a_windowed_app_launches_without_a_terminal()
+    test_apps_get_stubs_and_their_own_list()
     test_env_remove_keeps_shared_tools()
     test_distro_owned_env_is_hands_off()
     test_catalog_is_consistent()
