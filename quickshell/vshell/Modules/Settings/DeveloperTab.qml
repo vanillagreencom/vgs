@@ -122,19 +122,37 @@ Item {
         }
     }
 
-    // A row offers at most one thing beyond launch and uninstall, so the reader
-    // is never asked to choose between two repairs at once.
-    function entryAction(entry) {
+    // What one row can be asked to do. Every row ends with the same menu
+    // button, and the menu carries only the entries that apply to it, so no row
+    // reserves a slot its neighbour fills and none leaves a gap.
+    function entryActions(entry) {
+        const items = [];
+        if (entry.group !== "tool")
+            items.push({"verb": "launch", "label": I18n.tr("Launch"), "icon": "play_arrow"});
+        if (entry.latest)
+            items.push({"verb": "update", "label": I18n.tr("Update to %1").arg(entry.latest), "icon": "upgrade"});
         if (entry.origin === "untracked")
-            return {"verb": "track", "label": I18n.tr("Track updates")};
+            items.push({"verb": "track", "label": I18n.tr("Track updates"), "icon": "sync"});
         if (entry.origin === "system")
-            return {"verb": "replace", "label": I18n.tr("Replace with mise")};
-        return null;
+            items.push({"verb": "replace", "label": I18n.tr("Replace with mise"), "icon": "swap_horiz"});
+        if (entry.origin === "mise" || entry.origin === "untracked")
+            items.push({"verb": "remove", "label": I18n.tr("Uninstall"), "icon": "delete", "danger": true});
+        return items;
     }
 
     function runEntryAction(entry, verb) {
+        if (verb === "launch") {
+            Quickshell.execDetached([Paths.vshellCli, "agent", "launch", entry.id]);
+            return;
+        }
         root.runInTerminal("developer-" + verb + "-" + entry.id, ["agent", verb, entry.id]);
     }
+
+    // Rows `mise up` would move. The bottom button says how many, so the count
+    // and the list it came from cannot disagree.
+    readonly property int outdatedCount: root.agents.concat(root.apps, root.tools)
+        .filter(e => String(e.latest || "").length > 0).length
+
 
     Component.onCompleted: refresh()
 
@@ -149,92 +167,120 @@ Item {
         Item {
             id: row
             required property var modelData
-            readonly property var action: root.entryAction(row.modelData)
-            readonly property bool launchable: row.modelData.group !== "tool"
-            // Only a tool VGS can uninstall offers to: a distribution package
-            // and the owner's own file are not VGS's to delete.
-            readonly property bool removable: row.modelData.origin === "mise"
-                || row.modelData.origin === "untracked"
+            readonly property var actions: root.entryActions(row.modelData)
             readonly property string originText: root.entryOrigin(row.modelData)
-            // Uninstall is one click away from destroying an install, so the
-            // icon asks before it acts.
-            property bool confirming: false
+            readonly property bool outdated: String(row.modelData.latest || "").length > 0
 
             width: parent.width
-            height: 52
+            // An outdated row grows a third line for the release waiting and
+            // the button that takes it; every other row stays two.
+            height: row.outdated ? 70 : 52
 
-            // The whole right-hand side is one vertically centred group with
-            // fixed icon slots, so the play and uninstall buttons sit at the
-            // same place on every row whether or not it has a dropdown.
-            Row {
-                id: actions
+            // One menu button per row, vertically centred, always present.
+            VgsActionButton {
+                id: menuButton
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
-                spacing: Theme.spacingXS
+                buttonSize: 28
+                iconName: "more_vert"
+                iconSize: 18
+                iconColor: Theme.surfaceVariantText
+                tooltipText: I18n.tr("Actions for %1").arg(row.modelData.name)
+                onClicked: rowMenu.opened ? rowMenu.close() : rowMenu.open()
 
-                Item {
-                    width: 28
-                    height: 28
-                    anchors.verticalCenter: parent.verticalCenter
+                Popup {
+                    id: rowMenu
+                    x: -width + parent.width
+                    y: parent.height + Theme.spacingXS
+                    width: 220
+                    padding: Theme.spacingXS
+                    modal: false
+                    focus: true
+                    closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
-                    VgsActionButton {
-                        anchors.centerIn: parent
-                        visible: row.launchable
-                        buttonSize: 28
-                        iconName: "play_arrow"
-                        iconSize: 18
-                        iconColor: Theme.primary
-                        tooltipText: I18n.tr("Launch")
-                        enabled: root.miseAvailable || row.modelData.runnable
-                        onClicked: Quickshell.execDetached([Paths.vshellCli, "agent", "launch", row.modelData.id])
+                    background: Rectangle {
+                        color: Theme.surfaceContainer
+                        radius: Theme.cornerRadius
+                        border.color: Theme.outlineLight
+                        border.width: 1
                     }
-                }
 
-                Item {
-                    width: 28
-                    height: 28
-                    anchors.verticalCenter: parent.verticalCenter
+                    onClosed: menuItems.armedReset()
 
-                    VgsActionButton {
-                        anchors.centerIn: parent
-                        visible: row.removable
-                        buttonSize: 28
-                        iconName: row.confirming ? "check" : "delete"
-                        iconSize: 18
-                        // Neutral until it is armed: a row of red icons reads as
-                        // a row of warnings, and none of these is one.
-                        iconColor: row.confirming ? Theme.error : Theme.surfaceVariantText
-                        tooltipText: row.confirming ? I18n.tr("Confirm: uninstall %1").arg(row.modelData.name)
-                                                    : I18n.tr("Uninstall %1").arg(row.modelData.name)
-                        onClicked: {
-                            if (!row.confirming) {
-                                row.confirming = true;
-                                confirmTimeout.restart();
-                                return;
+                    contentItem: Column {
+                        id: menuItems
+                        spacing: Theme.spacingXXS
+
+                        function armedReset() {
+                            for (let i = 0; i < menuRepeater.count; i++) {
+                                const item = menuRepeater.itemAt(i);
+                                if (item)
+                                    item.confirming = false;
                             }
-                            confirmTimeout.stop();
-                            row.confirming = false;
-                            root.runInTerminal("developer-remove-" + row.modelData.id,
-                                               ["agent", "remove", row.modelData.id]);
                         }
-                    }
 
-                    // A confirmation the reader walked away from must not stay
-                    // armed under the pointer for the next click.
-                    Timer {
-                        id: confirmTimeout
-                        interval: 4000
-                        onTriggered: row.confirming = false
+                        Repeater {
+                            id: menuRepeater
+                            model: row.actions
+
+                            delegate: Rectangle {
+                                id: menuItem
+                                required property var modelData
+                                property bool confirming: false
+                                width: parent.width
+                                height: Theme.iconSizeLarge
+                                radius: Theme.cornerRadius
+                                color: itemArea.containsMouse ? Theme.primaryHover
+                                                              : Theme.withAlpha(Theme.primaryHover, 0)
+
+                                Row {
+                                    anchors.left: parent.left
+                                    anchors.leftMargin: Theme.spacingS
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    spacing: Theme.spacingS
+
+                                    VgsIcon {
+                                        name: menuItem.confirming ? "warning" : menuItem.modelData.icon
+                                        size: Theme.iconSizeSmall
+                                        color: menuItem.modelData.danger ? Theme.error : Theme.surfaceText
+                                        anchors.verticalCenter: parent.verticalCenter
+                                    }
+
+                                    StyledText {
+                                        text: menuItem.confirming ? I18n.tr("Confirm uninstall")
+                                                                  : menuItem.modelData.label
+                                        font.pixelSize: Theme.settingsFontSize
+                                        color: menuItem.modelData.danger ? Theme.error : Theme.surfaceText
+                                        anchors.verticalCenter: parent.verticalCenter
+                                    }
+                                }
+
+                                MouseArea {
+                                    id: itemArea
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        // Uninstall destroys an install, so the
+                                        // item arms before it acts; every other
+                                        // action runs on its first click.
+                                        if (menuItem.modelData.danger && !menuItem.confirming) {
+                                            menuItem.confirming = true;
+                                            return;
+                                        }
+                                        rowMenu.close();
+                                        root.runEntryAction(row.modelData, menuItem.modelData.verb);
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
 
-            // The dropdown is 40px tall, so it sits in the centred right group
-            // rather than on the second line, where it would grow over the line
-            // above it.
             Row {
                 id: trailing
-                anchors.right: actions.left
+                anchors.right: menuButton.left
                 anchors.rightMargin: Theme.spacingS
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: Theme.spacingS
@@ -244,16 +290,6 @@ Item {
                     font.pixelSize: Theme.settingsFontSize
                     color: row.modelData.installed ? Theme.surfaceText : Theme.surfaceVariantText
                     anchors.verticalCenter: parent.verticalCenter
-                }
-
-                VgsButton {
-                    visible: row.action !== null
-                    text: row.action ? row.action.label : ""
-                    variant: "secondary"
-                    buttonHeight: 26
-                    horizontalPadding: Theme.spacingS
-                    anchors.verticalCenter: parent.verticalCenter
-                    onClicked: root.runEntryAction(row.modelData, row.action.verb)
                 }
 
                 // Only an entry the catalog gives more than one release stream
@@ -312,6 +348,27 @@ Item {
                         font.pixelSize: Theme.settingsFontSize - 1
                         color: row.modelData.origin === "untracked" || row.modelData.origin === "system"
                             ? Theme.warning : Theme.surfaceVariantText
+                    }
+                }
+
+                Row {
+                    visible: row.outdated
+                    spacing: Theme.spacingS
+
+                    StyledText {
+                        text: I18n.tr("Update available: %1").arg(row.modelData.latest)
+                        font.pixelSize: Theme.settingsFontSize - 1
+                        color: Theme.primary
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+
+                    VgsButton {
+                        text: I18n.tr("Update")
+                        variant: "secondary"
+                        buttonHeight: 22
+                        horizontalPadding: Theme.spacingS
+                        anchors.verticalCenter: parent.verticalCenter
+                        onClicked: root.runEntryAction(row.modelData, "update")
                     }
                 }
             }
@@ -476,10 +533,13 @@ Item {
                     spacing: Theme.spacingS
 
                     VgsButton {
-                        text: I18n.tr("Update dev tools")
+                        // The count is derived from the same rows the cards
+                        // draw, so the button and the list cannot disagree.
+                        text: root.outdatedCount > 0 ? I18n.tr("Update all (%1)").arg(root.outdatedCount)
+                                                     : I18n.tr("Everything is up to date")
                         iconName: "upgrade"
                         variant: "secondary"
-                        enabled: root.miseAvailable
+                        enabled: root.miseAvailable && root.outdatedCount > 0
                         onClicked: {
                             // The backend supervises the run and re-counts on exit; the
                             // direct terminal is the path without it.

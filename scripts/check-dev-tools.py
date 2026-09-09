@@ -791,25 +791,52 @@ def test_the_settings_tab_can_act_on_every_row():
     """Each state the classifier can report needs a way out of it, or the tab
     shows a problem the reader cannot fix."""
     tab = (REPO_ROOT / "quickshell" / "vshell" / "Modules" / "Settings" / "DeveloperTab.qml").read_text()
-    # Every verb the row can offer has to reach the CLI. `track` and `replace`
-    # go through one runner, so the pin is that the runner passes the verb
-    # through rather than naming a fixed one.
+    # Every verb a row can offer has to reach the CLI. They go through one
+    # runner, so the pin is that the runner passes the verb through rather than
+    # naming a fixed one.
     assert '"agent", verb, entry.id' in tab, "the row action must run the verb it was given"
-    for verb in ("track", "replace"):
+    for verb in ("track", "replace", "update", "remove"):
         assert f'"verb": "{verb}"' in tab, f"a row state must be able to offer {verb}"
     assert 'root.tools' in tab, "the tab must draw the catalog's tools section"
     assert 'I18n.tr("Developer Tools")' in tab, "the tools card must be titled"
     # Uninstall destroys an install; a single click must not do it. The pin is
     # the early return, not the flag: a flag the handler never consults reads
     # the same in the file and removes nothing.
-    assert "if (!row.confirming) {" in tab, "the first click on uninstall must arm, not act"
-    assert '"agent", "remove", row.modelData.id' in tab, "the second click runs the removal"
+    assert "if (menuItem.modelData.danger && !menuItem.confirming) {" in tab, \
+        "the first click on a destructive item must arm, not act"
+    assert '"danger": true' in tab, "uninstall must be the item that arms"
     for verb, origin in (("track", "untracked"), ("replace", "system")):
         assert f'"{verb}"' in tab and f'"{origin}"' in tab, \
             f"the {origin} state must offer {verb}"
+    # The count on the bulk button is derived from the rows, never typed.
+    assert "root.outdatedCount" in tab, "the update button must count the rows it would move"
+    assert "e.latest" in tab, "and count them by the release each row is waiting for"
     # Turning auto-install off uninstalls nothing, and the copy has to say so.
     assert "Turn off auto-install" in tab, "the bulk control must say what it does"
     assert "Turning it off uninstalls nothing" in tab, "and must say what it does not do"
+
+
+def test_a_row_carries_the_release_it_is_waiting_for():
+    """The tab shows an update per row and counts them on one button. A row that
+    does not carry its own pending release leaves both to a second source."""
+    original_installs = devtools.mise_installs
+    original_outdated = devtools.mise_outdated
+    original_exists = devtools.RT.command_exists
+    try:
+        devtools.RT.command_exists = lambda name: True
+        devtools.mise_installs = lambda: ({"claude": {"version": "2.1.0", "declared": True},
+                                           "gh": {"version": "2.0.0", "declared": True}}, "")
+        devtools.mise_outdated = lambda: ([{"name": "claude", "id": "claude",
+                                            "current": "2.1.0", "latest": "2.2.0"}], "")
+        listed = devtools.agent_list()
+        rows = {r["id"]: r for g in ("agents", "apps", "tools") for r in listed[g]}
+        assert_equal(rows["claude"]["latest"], "2.2.0", "a row mise would move names the release")
+        assert_equal(rows["gh"]["latest"], "", "a current row names none")
+        assert_equal(rows["playwright"]["latest"], "", "nor does one that is not installed")
+    finally:
+        devtools.mise_installs = original_installs
+        devtools.mise_outdated = original_outdated
+        devtools.RT.command_exists = original_exists
 
 
 def test_catalog_entries_cover_the_tools_section():
@@ -907,6 +934,7 @@ def main() -> int:
     test_distro_owned_env_is_hands_off()
     test_install_origin_names_what_provides_a_command()
     test_the_settings_tab_can_act_on_every_row()
+    test_a_row_carries_the_release_it_is_waiting_for()
     test_catalog_entries_cover_the_tools_section()
     test_catalog_is_consistent()
     test_cli_wrapper_routes_the_commands()

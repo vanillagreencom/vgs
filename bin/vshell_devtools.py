@@ -15,7 +15,7 @@ from typing import Any, Dict, List
 
 import vshell_mise
 from vshell_apps import PACKAGE_OWNER_QUERY, PACKAGE_REMOVERS, os_release_ids, owning_package
-from vshell_mise import DevToolsRuntime, dev_tools_catalog, launchable, manageable, mise_build_env, mise_install_steps, mise_installs, mise_stubs_opted_out, mise_env, mise_install_stub, mise_installed_versions, mise_stub_state, package_key
+from vshell_mise import DevToolsRuntime, dev_tools_catalog, launchable, manageable, mise_build_env, mise_install_steps, mise_installs, mise_outdated, mise_stubs_opted_out, mise_env, mise_install_stub, mise_installed_versions, mise_stub_state, package_key
 
 RT: DevToolsRuntime
 
@@ -42,13 +42,17 @@ def catalog_entries() -> List[Dict[str, Any]]:
     return manageable(dev_tools_catalog())
 
 
-def entry_row(entry: Dict[str, Any], installs: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
-    """One settings row: what the entry is, what provides it now, and what the
-    tab may offer to do about that."""
+def entry_row(entry: Dict[str, Any], installs: Dict[str, Dict[str, Any]],
+              outdated: Dict[str, str]) -> Dict[str, Any]:
+    """One settings row: what the entry is, what provides it now, whether a
+    newer release is waiting, and what the tab may offer to do about that."""
     command = str(entry["command"])
     stub = mise_stub_state(RT.home() / ".local" / "bin" / command)
     origin = install_origin(entry, installs)
     return {
+        # The release `mise up` would move this row to, or "" when it is
+        # current. An untracked install has none: mise does not check it.
+        "latest": outdated.get(package_key(str(entry["package"])), ""),
         "id": entry["id"],
         "name": entry["name"],
         "group": entry["group"],
@@ -75,10 +79,12 @@ def entry_row(entry: Dict[str, Any], installs: Dict[str, Dict[str, Any]]) -> Dic
 
 def agent_list() -> Dict[str, Any]:
     installs, error = mise_installs()
+    rows_outdated, outdated_error = mise_outdated()
+    outdated = {row["id"]: row["latest"] for row in rows_outdated}
     rows: Dict[str, List[Dict[str, Any]]] = {"agent": [], "app": [], "tool": []}
     for entry in catalog_entries():
-        rows[str(entry["group"])].append(entry_row(entry, installs))
-    return {"ok": True, "mise": RT.command_exists("mise"), "error": error,
+        rows[str(entry["group"])].append(entry_row(entry, installs, outdated))
+    return {"ok": True, "mise": RT.command_exists("mise"), "error": error or outdated_error,
             "optedOut": mise_stubs_opted_out(),
             "agents": rows["agent"], "apps": rows["app"], "tools": rows["tool"]}
 
@@ -214,6 +220,20 @@ def entry_track(entry: Dict[str, Any]) -> int:
                          if code == 0 else f"{entry['name']} could not be tracked.")
 
 
+def entry_update(entry: Dict[str, Any]) -> int:
+    """Move one entry to its newest release. `mise up` with no argument moves
+    every tool, which is the button at the bottom of the card; this is the row's
+    own, so it names the package and leaves the rest alone."""
+    key = package_key(str(entry["package"]))
+    installs, _ = mise_installs()
+    if key not in installs:
+        return hold_terminal(1, f"{entry['name']} is not installed through mise; there is nothing to update.")
+    print(f"Updating {entry['name']}...\n")
+    code = dev_env_run(["mise", "up", key])
+    return hold_terminal(code, f"{entry['name']} is up to date." if code == 0
+                         else f"{entry['name']} could not be updated.")
+
+
 def entry_replace(entry: Dict[str, Any]) -> int:
     """Remove the distribution package holding the command, then install the
     entry through mise. Two copies of one command otherwise sit on PATH and the
@@ -254,12 +274,13 @@ def entry_replace(entry: Dict[str, Any]) -> int:
 # with. Each answers one row's button in the Developer tab.
 ENTRY_ACTIONS = {"remove": lambda e: agent_remove(e),
                  "track": lambda e: entry_track(e),
+                 "update": lambda e: entry_update(e),
                  "replace": lambda e: entry_replace(e)}
 
 
 def cmd_agent(argv: List[str]) -> int:
     usage = ("Usage: vshell agent list [--json] | launch <id> [--inline] | install <id> | "
-             "remove <id> | track <id> | replace <id> | pick")
+             "remove <id> | track <id> | update <id> | replace <id> | pick")
     if not argv:
         RT.eprint(usage)
         return 2
