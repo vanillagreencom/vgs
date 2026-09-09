@@ -6,12 +6,16 @@ from __future__ import annotations
 import importlib.machinery
 import importlib.util
 import os
+import re
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+# Icon and colour spellings the launcher tile can render.
+TILE_ICON = re.compile(r"(nerd|brand):[0-9a-f]+")
+TILE_COLOR = re.compile(r"#[0-9A-Fa-f]{6}")
 sys.path.insert(0, str(REPO_ROOT / "bin"))
 
 
@@ -110,12 +114,19 @@ def test_outdated_parsing_and_update_steps():
     present = {"mise", "pacman"}
     mise.RT.command_exists = lambda name: name in present
     update.RT.command_exists = lambda name: name in present
-    payload = '{"claude": {"name": "claude", "requested": "latest", "current": "2.1.0", "latest": "2.2.0"}}'
+    # Three ids whose backend-and-owner order is not their tool-name order.
+    payload = ('{"npm:@deepseek-ai/dsh": {"name": "npm:@deepseek-ai/dsh", "current": "0.1.0", "latest": "0.1.1"},'
+               ' "github:vercel-labs/fx": {"name": "github:vercel-labs/fx", "current": "0.0.7", "latest": "0.0.8"},'
+               ' "claude": {"name": "claude", "current": "2.1.0", "latest": "2.2.0"}}')
     mise.RT.run = lambda cmd, check=False, **kw: subprocess.CompletedProcess(cmd, 0, stdout=payload, stderr="")
     try:
         rows, error = mise.mise_outdated()
         assert_equal(error, "", "valid JSON must not report an error")
-        assert_equal(rows, [{"name": "claude", "current": "2.1.0", "latest": "2.2.0"}], "outdated rows")
+        assert_equal(rows, [
+            {"name": "claude", "id": "claude", "current": "2.1.0", "latest": "2.2.0"},
+            {"name": "dsh", "id": "npm:@deepseek-ai/dsh", "current": "0.1.0", "latest": "0.1.1"},
+            {"name": "fx", "id": "github:vercel-labs/fx", "current": "0.0.7", "latest": "0.0.8"},
+        ], "rows carry the tool name and sort by it")
         mise.RT.run = lambda cmd, check=False, **kw: subprocess.CompletedProcess(cmd, 0, stdout="mise ERROR nope", stderr="")
         rows, error = mise.mise_outdated()
         assert rows == [] and "invalid JSON" in error, (rows, error)
@@ -133,6 +144,26 @@ def test_outdated_parsing_and_update_steps():
         mise.RT.command_exists = original_dev_exists
         update.RT.command_exists = original_upd_exists
         update.RT.eprint = original_eprint
+
+
+def test_a_mise_id_reduces_to_the_tool_name():
+    """mise files a package under its backend and owner for every backend but
+    the default registry. An update list showing both spellings prefixes some
+    rows and not others."""
+    for package_id, want in (
+        ("claude", "claude"),
+        ("node", "node"),
+        ("npm:@deepseek-ai/dsh", "dsh"),
+        ("aqua:google-antigravity/antigravity-cli", "antigravity-cli"),
+        ("github:can1357/oh-my-pi", "oh-my-pi"),
+        ("pipx:hermes-agent", "hermes-agent"),
+        ("http:muse", "muse"),
+        ("npm:vercel", "vercel"),
+        # Nothing follows the owner, so the id is all there is to show.
+        ("github:owner/", "github:owner/"),
+        ("npm:", "npm:"),
+    ):
+        assert_equal(mise.tool_name(package_id), want, f"tool name of {package_id}")
 
 
 def test_update_run_and_count_carry_tools():
@@ -733,6 +764,15 @@ def test_catalog_is_consistent():
         # name that same file: `orca` is the command, `orca.AppImage` the binary.
         binary = entry.get("bin") or entry["command"]
         assert entry["launch"][0] == binary, f"{entry['id']}: launch must start with {binary}"
+    # A tile with no colour falls back to the theme grey, so it reads as
+    # unbranded beside the rest and nothing else reports the omission. Read the
+    # raw sections, not launchable(): that drops what this machine cannot build,
+    # so an entry naming only the other architecture would be judged nowhere.
+    for entry in catalog["agents"] + catalog["apps"] + catalog["envs"]:
+        assert TILE_ICON.fullmatch(str(entry.get("icon") or "")), \
+            f"{entry['id']}: icon must be nerd:<hex> or brand:<hex>, not {entry.get('icon')!r}"
+        assert TILE_COLOR.fullmatch(str(entry.get("color") or "")), \
+            f"{entry['id']}: color must be #RRGGBB, not {entry.get('color')!r}"
     for entry in channelled_entries(catalog):
         options = mise.entry_channels(entry)
         assert len(options) > 1, f"{entry['id']}: a channel set with one option is a dropdown with nothing to pick"
@@ -760,6 +800,7 @@ def test_cli_wrapper_routes_the_commands():
 def main() -> int:
     test_stub_template_and_foreign_files()
     test_outdated_parsing_and_update_steps()
+    test_a_mise_id_reduces_to_the_tool_name()
     test_update_run_and_count_carry_tools()
     test_os_release_resolves_through_id_like()
     test_first_launch_asks_before_installing()
