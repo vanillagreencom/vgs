@@ -664,6 +664,20 @@ def test_the_settings_tab_runs_the_channel_command():
     assert "vshell mise channel" in (REPO_ROOT / "bin" / "vshell").read_text(), \
         "bin/vshell must document the channel command"
 
+    # A failed pick reports into a property `refresh` rewrites, so an error left
+    # in `loadError` is cleared by the re-read that follows within the second:
+    # the owner is left with a reverted dropdown and no reason for it.
+    body = tab[tab.index("function setChannel("):]
+    body = body[:body.index("\n    }") + 6]
+    assert "root.loadError" not in body, \
+        "setChannel must not report into loadError, which its own refresh clears"
+    assert "root.channelError =" in body, "setChannel must report into a property refresh keeps"
+    assert "root.channelError" not in tab[tab.index("function refresh("):tab.index("function setChannel(")], \
+        "refresh must leave the channel error alone"
+    assert "root.channelError" in tab[tab.index("readonly property string shownError"):tab.index("function refresh(")], \
+        "the error the tab shows must include the channel error"
+    assert "text: root.shownError" in tab, "the error banner must draw it"
+
 
 def test_env_remove_keeps_shared_tools():
     """Removing Scala must not uninstall the Java the Java env also owns."""

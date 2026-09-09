@@ -15,6 +15,11 @@ Item {
     property bool miseAvailable: true
     property bool stubsOptedOut: false
     property string loadError: ""
+    // A channel failure has to outlive the re-read that follows it: `refresh`
+    // rewrites `loadError` from the list it just read, so an error left there
+    // is gone within the second and the owner sees only a reverted dropdown.
+    property string channelError: ""
+    readonly property string shownError: root.channelError || root.loadError
     property bool loading: false
 
     // Launchers count as installed only when at least one stub is ours; a
@@ -73,11 +78,13 @@ Item {
     // re-read: its package, and whether the tool now reads as installed, both
     // change with the stream it points at.
     function setChannel(id, channel) {
-        Proc.runCommand("developer-channel-" + id, [Paths.vshellCli, "mise", "channel", id, channel], (output, exitCode) => {
+        root.channelError = "";
+        Proc.runCommand("developer-channel-" + id, [Paths.vshellCli, "mise", "channel", id, channel], (output, exitCode, errorText) => {
             if (!root)
                 return;
             if (exitCode !== 0)
-                root.loadError = "vshell mise channel failed (" + exitCode + ")";
+                root.channelError = (String(errorText || "").trim()
+                    || "vshell mise channel failed (" + exitCode + ")");
             root.refresh();
         }, 0, 15000);
     }
@@ -232,8 +239,8 @@ Item {
 
                 StyledText {
                     width: parent?.width ?? 0
-                    visible: root.loadError.length > 0
-                    text: root.loadError
+                    visible: root.shownError.length > 0
+                    text: root.shownError
                     font.pixelSize: Theme.settingsFontSize
                     color: Theme.error
                     wrapMode: Text.WordWrap
