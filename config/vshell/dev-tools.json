@@ -11,7 +11,9 @@
     "",
     "`icon` is `nerd:<hex>` (bundled Nerd Font) or `brand:<hex>` (bundled",
     "omarchy brand marks); `color` is the brand's dominant color for the",
-    "launcher tile, omitted where the mark is monochrome by design.",
+    "launcher tile. Every launchable entry and every env carries one: without",
+    "it the tile falls back to the theme grey and reads as unbranded beside",
+    "the rest. A mark that is monochrome takes that mark's own near-white.",
     "",
     "apps: developer applications. Same launcher, install and removal as an",
     "agent, and the same icon and colour fields; they are apart because an app",
@@ -68,13 +70,13 @@
     { "id": "ori", "name": "Ori", "icon": "brand:e909", "color": "#6467F2", "package": "github:OpenRouterLabs/ori-releases", "command": "ori", "launch": ["ori", "code"] },
     { "id": "dsh", "name": "DeepSeek Harness", "icon": "nerd:f06a9", "color": "#4D6BFE", "package": "npm:@deepseek-ai/dsh", "command": "dsh", "launch": ["dsh", "web"] },
     { "id": "fx", "name": "fx", "icon": "nerd:f0536", "color": "#FFFFFF", "package": "github:vercel-labs/fx", "command": "fx", "launch": ["fx"] },
-    { "id": "cursor", "name": "Cursor Agent", "icon": "nerd:f01c0", "package": "cursor-agent", "command": "cursor-agent", "launch": ["cursor-agent", "--force"] },
-    { "id": "hermes", "name": "Hermes", "icon": "nerd:edf7", "package": "pipx:hermes-agent[extras=all]", "command": "hermes", "buildEnv": { "UV_PYTHON": "3.13" }, "requires": ["uv"], "present": "hermes-agent/lib/python3.13", "launch": ["hermes", "chat", "--tui", "--yolo"] },
+    { "id": "cursor", "name": "Cursor Agent", "icon": "nerd:f01c0", "color": "#EDECEC", "package": "cursor-agent", "command": "cursor-agent", "launch": ["cursor-agent", "--force"] },
+    { "id": "hermes", "name": "Hermes", "icon": "nerd:edf7", "color": "#EDFF45", "package": "pipx:hermes-agent[extras=all]", "command": "hermes", "buildEnv": { "UV_PYTHON": "3.13" }, "requires": ["uv"], "present": "hermes-agent/lib/python3.13", "launch": ["hermes", "chat", "--tui", "--yolo"] },
     { "id": "muse", "name": "Muse", "icon": "nerd:f4e6", "color": "#0064E0", "package": "http:muse[url=https://api.meta.ai/muse-launcher.sh,bin=muse,version_list_url=https://api.meta.ai/muse-code/channels/muse-stable,version_json_path=.version]", "command": "muse", "launch": ["muse", "--approval-mode", "never"] }
   ],
   "apps": [
-    { "id": "herdr", "name": "herdr", "icon": "nerd:f0cc6", "package": "herdr", "command": "herdr", "channels": { "default": "stable", "options": { "stable": "", "preview": "prerelease=true" } }, "launch": ["herdr"] },
-    { "id": "orca", "name": "Orca", "kind": "gui", "icon": "nerd:f18b4", "package": "github:stablyai/orca", "command": "orca-ide", "bin": "orca.AppImage", "launch": ["orca.AppImage"] },
+    { "id": "herdr", "name": "herdr", "icon": "nerd:f0cc6", "color": "#4A9EFF", "package": "herdr", "command": "herdr", "channels": { "default": "stable", "options": { "stable": "", "preview": "prerelease=true" } }, "launch": ["herdr"] },
+    { "id": "orca", "name": "Orca", "kind": "gui", "icon": "nerd:f18b4", "color": "#FFFFFF", "package": "github:stablyai/orca", "command": "orca-ide", "bin": "orca.AppImage", "launch": ["orca.AppImage"] },
     { "id": "t3code", "name": "T3 Code", "kind": "gui", "arch": ["x86_64"], "icon": "nerd:f0c8b", "color": "#E24A8B", "package": "github:pingdotgg/t3code[matching_regex=AppImage$,rename_exe=t3code]", "command": "t3code", "bin": "t3code.AppImage", "channels": { "default": "stable", "options": { "stable": "", "nightly": "prerelease=true" } }, "launch": ["t3code.AppImage"] },
     { "id": "claude-desktop", "name": "Claude Desktop Extra", "kind": "gui", "icon": "nerd:f06c4", "color": "#D97757", "package": "github:patrickjaja/claude-desktop-extra[matching_regex=AppImage$,rename_exe=claude-desktop]", "command": "claude-desktop", "bin": "claude-desktop.AppImage", "launch": ["claude-desktop.AppImage"] },
     { "id": "cmux", "name": "cmux", "kind": "gui", "arch": ["x86_64"], "icon": "nerd:f059f", "color": "#4285F4", "package": "github:manaflow-ai/cmux-v2[matching_regex=linux-x64\\.zip,rename_exe=cmux]@nightly", "command": "cmux", "launch": ["cmux"] }

@@ -6,12 +6,16 @@ from __future__ import annotations
 import importlib.machinery
 import importlib.util
 import os
+import re
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+# Icon and colour spellings the launcher tile can render.
+TILE_ICON = re.compile(r"(nerd|brand):[0-9a-f]+")
+TILE_COLOR = re.compile(r"#[0-9A-Fa-f]{6}")
 sys.path.insert(0, str(REPO_ROOT / "bin"))
 
 
@@ -733,6 +737,13 @@ def test_catalog_is_consistent():
         # name that same file: `orca` is the command, `orca.AppImage` the binary.
         binary = entry.get("bin") or entry["command"]
         assert entry["launch"][0] == binary, f"{entry['id']}: launch must start with {binary}"
+    # A tile with no colour falls back to the theme grey, so it reads as
+    # unbranded beside the rest and nothing else reports the omission.
+    for entry in launchable + catalog["envs"]:
+        assert TILE_ICON.fullmatch(str(entry.get("icon") or "")), \
+            f"{entry['id']}: icon must be nerd:<hex> or brand:<hex>, not {entry.get('icon')!r}"
+        assert TILE_COLOR.fullmatch(str(entry.get("color") or "")), \
+            f"{entry['id']}: color must be #RRGGBB, not {entry.get('color')!r}"
     for entry in channelled_entries(catalog):
         options = mise.entry_channels(entry)
         assert len(options) > 1, f"{entry['id']}: a channel set with one option is a dropdown with nothing to pick"
