@@ -104,21 +104,21 @@ Item {
         return I18n.tr("not installed");
     }
 
-    // The second line: the command, then what provides it. One phrase, because
-    // a row that needs a paragraph is a row nobody reads.
+    // The second line says what provides the command only when that is not the
+    // ordinary answer. mise owning a tool is what every card already promises,
+    // and repeating it on every row buries the two rows that differ.
     function entryOrigin(entry) {
         switch (entry.origin) {
-        case "mise":
-            return I18n.tr("managed by mise");
         case "untracked":
-            return I18n.tr("in mise, not tracked for updates");
+            return I18n.tr("not tracked for updates");
         case "system":
             return I18n.tr("system package: %1").arg(entry.originOwner);
         case "external":
             return I18n.tr("your own install");
+        case "absent":
+            return entry.stub === "ours" ? "" : I18n.tr("no launcher yet");
         default:
-            return entry.stub === "ours" ? I18n.tr("installs the first time you run it")
-                                         : I18n.tr("no launcher yet");
+            return "";
         }
     }
 
@@ -155,6 +155,7 @@ Item {
             // and the owner's own file are not VGS's to delete.
             readonly property bool removable: row.modelData.origin === "mise"
                 || row.modelData.origin === "untracked"
+            readonly property string originText: root.entryOrigin(row.modelData)
             // Uninstall is one click away from destroying an install, so the
             // icon asks before it acts.
             property bool confirming: false
@@ -162,35 +163,19 @@ Item {
             width: parent.width
             height: 52
 
-            Rectangle {
-                anchors.fill: parent
-                anchors.topMargin: 1
-                anchors.bottomMargin: 1
-                radius: Theme.cornerRadius
-                color: rowHover.containsMouse ? Theme.withAlpha(Theme.surfaceText, 0.06) : "transparent"
-            }
-
-            MouseArea {
-                id: rowHover
-                anchors.fill: parent
-                hoverEnabled: true
-                acceptedButtons: Qt.NoButton
-            }
-
-            // Fixed-width action group, pinned to the top line. Every row
-            // reserves both slots, so a row without a launcher does not pull
-            // its neighbour's uninstall icon sideways.
+            // The whole right-hand side is one vertically centred group with
+            // fixed icon slots, so the play and uninstall buttons sit at the
+            // same place on every row whether or not it has a dropdown.
             Row {
                 id: actions
                 anchors.right: parent.right
-                anchors.rightMargin: Theme.spacingXS
-                anchors.top: parent.top
-                anchors.topMargin: Theme.spacingXS
+                anchors.verticalCenter: parent.verticalCenter
                 spacing: Theme.spacingXS
 
                 Item {
                     width: 28
                     height: 28
+                    anchors.verticalCenter: parent.verticalCenter
 
                     VgsActionButton {
                         anchors.centerIn: parent
@@ -208,6 +193,7 @@ Item {
                 Item {
                     width: 28
                     height: 28
+                    anchors.verticalCenter: parent.verticalCenter
 
                     VgsActionButton {
                         anchors.centerIn: parent
@@ -215,7 +201,9 @@ Item {
                         buttonSize: 28
                         iconName: row.confirming ? "check" : "delete"
                         iconSize: 18
-                        iconColor: Theme.error
+                        // Neutral until it is armed: a row of red icons reads as
+                        // a row of warnings, and none of these is one.
+                        iconColor: row.confirming ? Theme.error : Theme.surfaceVariantText
                         tooltipText: row.confirming ? I18n.tr("Confirm: uninstall %1").arg(row.modelData.name)
                                                     : I18n.tr("Uninstall %1").arg(row.modelData.name)
                         onClicked: {
@@ -241,77 +229,30 @@ Item {
                 }
             }
 
-            StyledText {
-                id: statusText
+            // The dropdown is 40px tall, so it sits in the centred right group
+            // rather than on the second line, where it would grow over the line
+            // above it.
+            Row {
+                id: trailing
                 anchors.right: actions.left
                 anchors.rightMargin: Theme.spacingS
-                anchors.top: parent.top
-                anchors.topMargin: Theme.spacingS + 2
-                text: root.entryStatus(row.modelData)
-                font.pixelSize: Theme.settingsFontSize
-                color: row.modelData.installed ? Theme.surfaceText : Theme.surfaceVariantText
-                elide: Text.ElideLeft
-                width: Math.min(implicitWidth, row.width * 0.45)
-                horizontalAlignment: Text.AlignRight
-            }
-
-            StyledText {
-                anchors.left: parent.left
-                anchors.leftMargin: Theme.spacingS
-                anchors.right: statusText.left
-                anchors.rightMargin: Theme.spacingS
-                anchors.top: parent.top
-                anchors.topMargin: Theme.spacingS
-                text: row.modelData.name
-                font.pixelSize: Theme.fontSizeMedium
-                color: Theme.surfaceText
-                elide: Text.ElideRight
-            }
-
-            Row {
-                id: metaLine
-                anchors.left: parent.left
-                anchors.leftMargin: Theme.spacingS
-                anchors.bottom: parent.bottom
-                anchors.bottomMargin: Theme.spacingS
-                spacing: Theme.spacingXS
-
-                StyledText {
-                    text: row.modelData.command
-                    font.pixelSize: Theme.settingsFontSize - 1
-                    font.family: Theme.monoFontFamily
-                    color: Theme.surfaceVariantText
-                }
-
-                StyledText {
-                    text: "·"
-                    font.pixelSize: Theme.settingsFontSize - 1
-                    color: Theme.surfaceVariantText
-                }
-
-                StyledText {
-                    text: root.entryOrigin(row.modelData)
-                    font.pixelSize: Theme.settingsFontSize - 1
-                    color: row.modelData.origin === "untracked" || row.modelData.origin === "system"
-                        ? Theme.warning : Theme.surfaceVariantText
-                }
-            }
-
-            // The second line's right side carries whatever this row can be
-            // asked to do, so the top line's columns never move.
-            Row {
-                anchors.right: parent.right
-                anchors.rightMargin: Theme.spacingXS
-                anchors.bottom: parent.bottom
-                anchors.bottomMargin: Theme.spacingXS - 1
+                anchors.verticalCenter: parent.verticalCenter
                 spacing: Theme.spacingS
+
+                StyledText {
+                    text: root.entryStatus(row.modelData)
+                    font.pixelSize: Theme.settingsFontSize
+                    color: row.modelData.installed ? Theme.surfaceText : Theme.surfaceVariantText
+                    anchors.verticalCenter: parent.verticalCenter
+                }
 
                 VgsButton {
                     visible: row.action !== null
                     text: row.action ? row.action.label : ""
                     variant: "secondary"
-                    buttonHeight: 24
+                    buttonHeight: 26
                     horizontalPadding: Theme.spacingS
+                    anchors.verticalCenter: parent.verticalCenter
                     onClicked: root.runEntryAction(row.modelData, row.action.verb)
                 }
 
@@ -322,12 +263,55 @@ Item {
                     dropdownWidth: 116
                     options: row.modelData.channels || []
                     currentValue: row.modelData.channel || ""
+                    anchors.verticalCenter: parent.verticalCenter
                     onValueChanged: newValue => {
                         // The dropdown announces a pick whether or not it moved;
                         // a rewrite of every stub per open is not free.
                         if (String(newValue) === row.modelData.channel)
                             return;
                         root.setChannel(row.modelData.id, String(newValue));
+                    }
+                }
+            }
+
+            Column {
+                anchors.left: parent.left
+                anchors.right: trailing.left
+                anchors.rightMargin: Theme.spacingS
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 1
+
+                StyledText {
+                    width: parent.width
+                    text: row.modelData.name
+                    font.pixelSize: Theme.fontSizeMedium
+                    color: Theme.surfaceText
+                    elide: Text.ElideRight
+                }
+
+                Row {
+                    spacing: Theme.spacingXS
+
+                    StyledText {
+                        text: row.modelData.command
+                        font.pixelSize: Theme.settingsFontSize - 1
+                        font.family: Theme.monoFontFamily
+                        color: Theme.surfaceVariantText
+                    }
+
+                    StyledText {
+                        visible: row.originText.length > 0
+                        text: "·"
+                        font.pixelSize: Theme.settingsFontSize - 1
+                        color: Theme.surfaceVariantText
+                    }
+
+                    StyledText {
+                        visible: row.originText.length > 0
+                        text: row.originText
+                        font.pixelSize: Theme.settingsFontSize - 1
+                        color: row.modelData.origin === "untracked" || row.modelData.origin === "system"
+                            ? Theme.warning : Theme.surfaceVariantText
                     }
                 }
             }
