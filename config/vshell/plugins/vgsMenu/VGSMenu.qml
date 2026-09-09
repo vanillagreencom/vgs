@@ -424,6 +424,44 @@ PluginComponent {
         resetResultListPosition();
     }
 
+    property string devAgentList: ""
+    property string devEnvList: ""
+
+    // The helper decides which entries this machine can install; asking it is
+    // what keeps a tile from disagreeing with the settings page. The catalog
+    // file is watched only to know when to ask again.
+    function reloadDevItems() {
+        Proc.runCommand("vgsmenu-dev-agents", [Paths.vshellCli, "agent", "list", "--json"], (output, exitCode) => {
+            root.devAgentList = exitCode === 0 ? output : "";
+            root.rebuildDevItems();
+        }, 0, 15000);
+        Proc.runCommand("vgsmenu-dev-envs", [Paths.vshellCli, "dev-env", "list", "--json"], (output, exitCode) => {
+            root.devEnvList = exitCode === 0 ? output : "";
+            root.rebuildDevItems();
+        }, 0, 15000);
+    }
+
+    // `visibleItems` is a snapshot the list is rebuilt from, not a binding, so
+    // every path that changes devItems has to refresh: an open launcher would
+    // otherwise keep showing tiles for entries that are no longer there.
+    function setDevItems(items) {
+        root.devItems = items;
+        root.refreshItems();
+    }
+
+    function rebuildDevItems() {
+        if (!root.devAgentList && !root.devEnvList) {
+            root.setDevItems([]);
+            return;
+        }
+        try {
+            root.setDevItems(DevToolsItems.itemsFromLists(root.devAgentList, root.devEnvList));
+        } catch (e) {
+            root.setDevItems([]);
+            ToastService.showWarning("Dev tools list unreadable", e.message || String(e));
+        }
+    }
+
     function refreshItems() {
         if (resettingState || routingPrefix)
             return;
@@ -972,17 +1010,9 @@ PluginComponent {
         blockLoading: false
         watchChanges: true
         printErrors: false
-        onLoaded: {
-            try {
-                root.devItems = DevToolsItems.itemsFromCatalog(text());
-                root.refreshItems();
-            } catch (e) {
-                root.devItems = [];
-                ToastService.showWarning("Dev tools catalog invalid", e.message || String(e));
-            }
-        }
+        onLoaded: root.reloadDevItems()
         onFileChanged: devToolsFile.reload()
-        onLoadFailed: root.devItems = []
+        onLoadFailed: root.setDevItems([])
     }
 
     FileView {

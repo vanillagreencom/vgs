@@ -7093,7 +7093,7 @@ def _devtools() -> Any:
             command_exists=command_exists, load_settings=load_settings,
             set_settings_value=set_settings_value,
             load_required_json_file=load_required_json_file, eprint=eprint,
-            spawn_terminal=spawn_terminal, notify_user=notify_user,
+            spawn_terminal=spawn_terminal, spawn_app=spawn_app, notify_user=notify_user,
             tui_app_id=TERMINAL_TUI_APP_ID))
         _DEVTOOLS = vshell_devtools
     return _DEVTOOLS
@@ -12439,6 +12439,28 @@ def spawn_terminal(
     else:
         eprint(f"No terminal found for {what}. " + detail)
     return 1
+
+
+def spawn_app(cmd: List[str], notify: bool = False, what: str = "application") -> int:
+    """Start a windowed application detached, under the app scope when one is
+    usable, with no terminal around it. A launch that fails fast is reported:
+    the caller has already returned to the shell and cannot read stderr."""
+    full = [*app_scope_prefix(), *cmd]
+    try:
+        proc = subprocess.Popen(full, start_new_session=True)
+    except OSError as exc:
+        message = f"{what} could not be started: {exc}"
+        notify_user("VGS could not start an application", message) if notify else eprint(message)
+        return 1
+    try:
+        proc.wait(timeout=TERMINAL_SETTLE_SECONDS)
+    except subprocess.TimeoutExpired:
+        return 0  # still running past the launch timeout
+    if proc.returncode == 0:
+        return 0
+    message = f"{what} exited immediately with status {proc.returncode}"
+    notify_user("VGS could not start an application", message) if notify else eprint(message)
+    return proc.returncode
 
 
 def launch_terminal(cmd: List[str]) -> int:
