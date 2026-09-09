@@ -69,6 +69,19 @@ Item {
         }, 0, 3600000);
     }
 
+    // Recording the channel also rewrites the launcher stubs, so the row has to
+    // re-read: its package, and whether the tool now reads as installed, both
+    // change with the stream it points at.
+    function setChannel(id, channel) {
+        Proc.runCommand("developer-channel-" + id, [Paths.vshellCli, "mise", "channel", id, channel], (output, exitCode) => {
+            if (!root)
+                return;
+            if (exitCode !== 0)
+                root.loadError = "vshell mise channel failed (" + exitCode + ")";
+            root.refresh();
+        }, 0, 15000);
+    }
+
     function agentStatus(agent) {
         if (agent.installed)
             return agent.installed;
@@ -130,6 +143,23 @@ Item {
                 anchors.rightMargin: Theme.spacingXS
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: Theme.spacingS
+
+                // Only an entry the catalog gives more than one release stream
+                // has anything to pick between; every other row shows nothing.
+                VgsDropdown {
+                    visible: (agentRow.modelData.channels || []).length > 1
+                    dropdownWidth: 116
+                    options: agentRow.modelData.channels || []
+                    currentValue: agentRow.modelData.channel || ""
+                    anchors.verticalCenter: parent.verticalCenter
+                    onValueChanged: newValue => {
+                        // The dropdown announces a pick whether or not it moved;
+                        // a rewrite of every stub per open is not free.
+                        if (String(newValue) === agentRow.modelData.channel)
+                            return;
+                        root.setChannel(agentRow.modelData.id, String(newValue));
+                    }
+                }
 
                 VgsIcon {
                     visible: agentRow.modelData.installed.length > 0 || agentRow.modelData.stub === "foreign" || agentRow.modelData.stub === "shadowed"
