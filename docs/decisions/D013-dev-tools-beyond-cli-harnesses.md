@@ -4,7 +4,7 @@
 
 **Date**: 2026-09-08 **Status**: Active **Research**: —
 
-**Context**: [D011](D011-mise-owns-agent-harnesses.md) put coding-agent harnesses and language toolchains in one mise catalog and rejected distribution packages for them. Two kinds of tool the desktop needs did not fit the shape it defined. Applications people run agents inside — herdr, Orca, T3 Code, cmux, Claude Desktop — are neither a harness nor a toolchain, and reached the user through AUR packages that lag upstream or through nothing at all. Hermes declares `Requires-Python >=3.11,<3.14` and pins every dependency exactly; D011 named that case as its own revisit condition, on the belief that `mise use` could not express the pin.
+**Context**: [D011](D011-mise-owns-agent-harnesses.md) put coding-agent harnesses and language toolchains in one mise catalog and rejected distribution packages for them. Two kinds of tool the desktop needs did not fit the shape it defined. Applications people run agents inside — herdr, Orca, T3 Code, cmux, Claude Desktop Extra — are neither a harness nor a toolchain, and reached the user through AUR packages that lag upstream or through nothing at all. Hermes declares `Requires-Python >=3.11,<3.14` and pins every dependency exactly; D011 named that case as its own revisit condition, on the belief that `mise use` could not express the pin.
 
 **Decision**: The same catalog carries them, through four fields rather than a second install route.
 
@@ -18,7 +18,7 @@ The launcher builds its tiles from `vshell agent list` and `vshell dev-env list`
 
 - The pin *is* expressible through `mise use`: `UV_PYTHON` exported for the build, dropped again before the exec so it cannot reach the agent's own subprocesses, and a probe because `mise up` rebuilds without it. D011's revisit condition is therefore not met, and its decision stands.
 - An application shares everything with a harness except what it is. A second install route would have duplicated the stub writer's foreign-file rule, its removal path and its update counting, and the two would have drifted.
-- AUR packages for these carry D011's own objections. The Orca package on the machine this landed from was a release behind mise, and its Claude Desktop package was 22,000 build numbers behind and built from a repository whose own README says the project moved.
+- AUR packages for these carry D011's own objections. The Orca package on the machine this landed from was a release behind mise, and its Claude Desktop Extra package was 22,000 build numbers behind and built from a repository whose own README says the project moved.
 
 **Revisit When**: a tool VGS should offer publishes no release any mise backend can read — Cursor embeds a per-release commit hash in a download URL only its own JSON API knows, and OpenAI ships its desktop app as a `.deb` and a `.rpm`, which mise does not unpack — or an application needs system integration a `~/.local/bin` stub cannot give it, such as a desktop entry or a file-type association.
 
