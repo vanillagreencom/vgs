@@ -46,7 +46,9 @@
     { "id": "grok", "name": "Grok", "icon": "brand:e904", "color": "#FFFFFF", "package": "npm:@xai-official/grok", "command": "grok", "launch": ["grok", "--permission-mode", "bypassPermissions"] },
     { "id": "ori", "name": "Ori", "icon": "brand:e909", "color": "#6467F2", "package": "github:OpenRouterLabs/ori-releases", "command": "ori", "launch": ["ori", "code"] },
     { "id": "dsh", "name": "DeepSeek Harness", "icon": "nerd:f06a9", "color": "#4D6BFE", "package": "npm:@deepseek-ai/dsh", "command": "dsh", "launch": ["dsh", "web"] },
-    { "id": "fx", "name": "fx", "icon": "nerd:f0536", "color": "#FFFFFF", "package": "github:vercel-labs/fx", "command": "fx", "launch": ["fx"] }
+    { "id": "fx", "name": "fx", "icon": "nerd:f0536", "color": "#FFFFFF", "package": "github:vercel-labs/fx", "command": "fx", "launch": ["fx"] },
+    { "id": "cursor", "name": "Cursor Agent", "icon": "nerd:f01c0", "package": "cursor-agent", "command": "cursor-agent", "launch": ["cursor-agent", "--force"] },
+    { "id": "muse", "name": "Muse", "icon": "nerd:f4e6", "color": "#0064E0", "package": "http:muse[url=https://api.meta.ai/muse-launcher.sh,bin=muse,version_list_url=https://api.meta.ai/muse-code/channels/muse-stable,version_json_path=.version]", "command": "muse", "launch": ["muse", "--approval-mode", "never"] }
   ],
   "apps": [
     { "id": "herdr", "name": "herdr", "icon": "nerd:f0cc6", "package": "herdr", "command": "herdr", "launch": ["herdr"] },
