@@ -27,4 +27,19 @@ for (const name of ["buildImmediateAllItems", "refreshItems"]) {
     assert.match(body, /if \(!itemAvailable\(item\)\)\s*continue;/, `${name} must filter capability-gated menu items`);
 }
 
+// The Dev tools category is built by asking the helper, and a FileView that has
+// already read the catalog emits nothing when the plugin loads again. Without a
+// trigger that does not depend on that signal the category stays empty for the
+// whole session, which is what a plugin reload produced.
+assert.match(
+    menu,
+    /Component\.onCompleted:\s*root\.reloadDevItems\(\)/,
+    "the menu must build its dev items on load, not only when the catalog file signals"
+);
+assert.match(
+    menu,
+    /function reloadDevItems\(\)[\s\S]*?"agent", "list", "--json"[\s\S]*?"dev-env", "list", "--json"/,
+    "reloadDevItems must ask the helper for both lists"
+);
+
 console.log("VGS menu capability checks passed");
