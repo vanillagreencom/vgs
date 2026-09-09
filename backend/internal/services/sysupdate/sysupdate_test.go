@@ -120,18 +120,19 @@ func TestTerminalArgv(t *testing.T) {
 }
 
 func TestParseMiseOutdated(t *testing.T) {
-	packages, err := parseMiseOutdated([]byte(`{"npm:@deepseek-ai/dsh": {"name": "npm:@deepseek-ai/dsh", "requested": "latest", "current": "0.1.0", "latest": "0.1.1"}, "claude": {"name": "claude", "requested": "latest", "current": "2.1.0", "latest": "2.2.0"}}`))
+	// Three ids whose backend-and-owner order is not their tool-name order.
+	packages, err := parseMiseOutdated([]byte(`{"npm:@deepseek-ai/dsh": {"name": "npm:@deepseek-ai/dsh", "requested": "latest", "current": "0.1.0", "latest": "0.1.1"}, "github:vercel-labs/fx": {"name": "github:vercel-labs/fx", "requested": "latest", "current": "0.0.7", "latest": "0.0.8"}, "herdr": {"name": "herdr", "requested": "latest", "current": "0.9.0", "latest": "0.9.1"}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(packages) != 2 {
-		t.Fatalf("len(packages) = %d, want 2", len(packages))
+	if len(packages) != 3 {
+		t.Fatalf("len(packages) = %d, want 3", len(packages))
 	}
-	if packages[0].Name != "claude" || packages[0].Repo != "tools" || packages[0].Backend != "mise" || packages[0].FromVersion != "2.1.0" || packages[0].ToVersion != "2.2.0" {
+	if packages[0].Name != "dsh" || packages[0].Repo != "tools" || packages[0].Backend != "mise" || packages[0].FromVersion != "0.1.0" || packages[0].ToVersion != "0.1.1" {
 		t.Fatalf("unexpected package: %#v", packages[0])
 	}
-	if packages[1].Name != "npm:@deepseek-ai/dsh" {
-		t.Fatalf("packages must be sorted by name: %#v", packages)
+	if names := []string{packages[0].Name, packages[1].Name, packages[2].Name}; names[1] != "fx" || names[2] != "herdr" {
+		t.Fatalf("packages must be sorted by tool name, got %v", names)
 	}
 	if up, err := parseMiseOutdated([]byte("{}\n")); err != nil || len(up) != 0 {
 		t.Fatalf("up to date = (%#v, %v), want empty", up, err)
@@ -141,6 +142,32 @@ func TestParseMiseOutdated(t *testing.T) {
 	}
 	if _, err := parseMiseOutdated([]byte("  \n")); err == nil {
 		t.Fatal("empty output must be an error: up to date prints {}")
+	}
+}
+
+// The update list names a tool the way every other surface does. mise files a
+// package under its backend and owner for every backend but the default
+// registry, so the raw ids carry a prefix on some rows and not others.
+func TestMiseToolName(t *testing.T) {
+	cases := []struct{ id, want string }{
+		{"claude", "claude"},
+		{"node", "node"},
+		{"npm:@deepseek-ai/dsh", "dsh"},
+		{"npm:@xai-official/grok", "grok"},
+		{"aqua:google-antigravity/antigravity-cli", "antigravity-cli"},
+		{"github:can1357/oh-my-pi", "oh-my-pi"},
+		{"github:vercel-labs/fx", "fx"},
+		{"pipx:hermes-agent", "hermes-agent"},
+		{"http:muse", "muse"},
+		{"npm:vercel", "vercel"},
+		// Nothing follows the owner, so the id is all there is to show.
+		{"github:owner/", "github:owner/"},
+		{"npm:", "npm:"},
+	}
+	for _, tc := range cases {
+		if got := miseToolName(tc.id); got != tc.want {
+			t.Errorf("miseToolName(%q) = %q, want %q", tc.id, got, tc.want)
+		}
 	}
 }
 

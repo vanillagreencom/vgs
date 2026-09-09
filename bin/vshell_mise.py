@@ -82,6 +82,22 @@ def package_key(package: str) -> str:
     return stripped[:version_cut(stripped)]
 
 
+def tool_name(package_id: str) -> str:
+    """The tool's own name inside a mise id. mise files a package under its
+    backend and owner (`npm:@deepseek-ai/dsh`, `aqua:google-antigravity/
+    antigravity-cli`) for every backend but the default registry, which files it
+    bare (`claude`). An update list showing both spellings puts a prefix on some
+    rows and not others, for no difference the reader can act on."""
+    name = package_id
+    if "/" in name:
+        name = name.rsplit("/", 1)[1]
+    elif ":" in name:
+        name = name.split(":", 1)[1]
+    # A backend and owner with nothing after them is not a name; the id itself
+    # is the only thing left to show.
+    return name or package_id
+
+
 def package_with_options(package: str, options: str) -> str:
     """`package` with `options` added to its mise backend option list, keeping
     any options it already carries and staying ahead of a requested version:
@@ -407,18 +423,22 @@ def mise_installed_versions() -> Tuple[Dict[str, str], str]:
 
 
 def mise_outdated() -> Tuple[List[Dict[str, str]], str]:
-    """Tools `mise up` would move: [{name, current, latest}]."""
+    """Tools `mise up` would move: [{name, id, current, latest}], `name` the
+    tool as the reader knows it and `id` the spec mise files it under."""
     data, error = mise_json(["outdated", "--json"])
     rows: List[Dict[str, str]] = []
     for name, info in data.items():
         if not isinstance(info, dict):
             continue
         rows.append({
-            "name": str(info.get("name") or name),
+            "name": tool_name(str(info.get("name") or name)),
+            "id": str(name),
             "current": str(info.get("current") or ""),
             "latest": str(info.get("latest") or ""),
         })
-    rows.sort(key=lambda row: row["name"])
+    # The reader sees tool names, so the list is ordered by them; the mise id
+    # breaks a tie, since two backends can publish the same tool name.
+    rows.sort(key=lambda row: (row["name"], row["id"]))
     return rows, error
 
 
