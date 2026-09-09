@@ -441,16 +441,23 @@ PluginComponent {
         }, 0, 15000);
     }
 
+    // `visibleItems` is a snapshot the list is rebuilt from, not a binding, so
+    // every path that changes devItems has to refresh: an open launcher would
+    // otherwise keep showing tiles for entries that are no longer there.
+    function setDevItems(items) {
+        root.devItems = items;
+        root.refreshItems();
+    }
+
     function rebuildDevItems() {
         if (!root.devAgentList && !root.devEnvList) {
-            root.devItems = [];
+            root.setDevItems([]);
             return;
         }
         try {
-            root.devItems = DevToolsItems.itemsFromLists(root.devAgentList, root.devEnvList);
-            root.refreshItems();
+            root.setDevItems(DevToolsItems.itemsFromLists(root.devAgentList, root.devEnvList));
         } catch (e) {
-            root.devItems = [];
+            root.setDevItems([]);
             ToastService.showWarning("Dev tools list unreadable", e.message || String(e));
         }
     }
@@ -1005,7 +1012,7 @@ PluginComponent {
         printErrors: false
         onLoaded: root.reloadDevItems()
         onFileChanged: devToolsFile.reload()
-        onLoadFailed: root.devItems = []
+        onLoadFailed: root.setDevItems([])
     }
 
     FileView {
