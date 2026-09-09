@@ -66,6 +66,7 @@ Column {
         // standing as a verdict on this one.
         root.entries = [];
         root.dirs = [];
+        root.sourcesUnavailable = false;
         root.status = "";
         root.statusFailed = false;
         if (root.active)
@@ -168,10 +169,18 @@ Column {
     // through one timer: `started` is not ordered against `runningChanged`, so
     // a process that did run can announce itself after the stop.
     property bool _stallOwned: false
+    property bool _stallBackground: false
+    // A background read that never started. It must not hijack the page with a
+    // failure nobody asked for, which is why it is not _stallOwned — but it
+    // cannot leave an empty list standing as "no directories found" either.
+    // That sentence blames the user's machine for a helper that never ran.
+    property bool sourcesUnavailable: false
 
     function launchStalled(owned) {
         if (owned)
             root._stallOwned = true;
+        else
+            root._stallBackground = true;
         stallTimer.restart();
     }
 
@@ -180,6 +189,11 @@ Column {
         interval: 1000
         repeat: false
         onTriggered: {
+            if (root._stallBackground) {
+                root._stallBackground = false;
+                if (!statusProc.sawProcess && !statusProc.running)
+                    root.sourcesUnavailable = true;
+            }
             if (!root._stallOwned)
                 return;
             if (keyProc.sawProcess || keyProc.running || actionProc.sawProcess || actionProc.running)
@@ -241,6 +255,8 @@ Column {
         // rendered as this one's accounts.
         if (payload.provider && payload.provider !== root.provider)
             return;
+        // A read that answered is proof the helper runs, whatever it found.
+        root.sourcesUnavailable = false;
         root.entries = payload.accounts || [];
         root.dirs = payload.dirs || [];
         // A read that could not answer has to say so. Rendering its empty lists
@@ -587,7 +603,9 @@ Column {
             StyledText {
                 width: parent.width
                 visible: root.dirs.length === 0
-                text: "No signed-in directories found."
+                text: root.sourcesUnavailable
+                    ? "Could not run the vshell helper to read this provider's sources."
+                    : "No signed-in directories found."
                 font.pixelSize: Theme.settingsFontSize
                 color: Theme.surfaceVariantText
             }

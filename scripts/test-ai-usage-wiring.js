@@ -764,6 +764,18 @@ test("the setup page answers for the provider it is showing, and outlives no sec
         "the stall path clears the pending key: nothing else does, and the process it was " +
         "waiting on never ran");
 
+    // A background read that never starts produces no reply at all, so the reply path cannot
+    // report it. Without this the page keeps empty lists and renders "No signed-in directories
+    // found" — a verdict on the user's machine for a helper that never ran.
+    assert.ok(/root\._stallBackground = true/.test(setup),
+        "a background launch that stalls is tracked, not dropped: launchStalled(false) left " +
+        "_stallOwned false, so the timer it restarted returned immediately and said nothing");
+    assert.ok(/root\.sourcesUnavailable = true/.test(setup) &&
+              /text: root\.sourcesUnavailable/.test(setup),
+        "and the empty state says the helper could not be run instead of reporting no directories");
+    assert.ok(/root\.sourcesUnavailable = false/.test(setup),
+        "a read that answered clears it, whatever it found");
+
     assert.ok(/readonly property bool settingsSurface: true/.test(setup),
         "and the page declares the settings marker, since the popout embeds it outside " +
         "PluginSettings and its fields would otherwise render in bar typography there");

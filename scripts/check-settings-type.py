@@ -60,7 +60,12 @@ PIXEL_SIZE = re.compile(r"font\.pixelSize\s*:\s*([^\n]+)")
 WEIGHT = re.compile(r"font\.weight\s*:\s*([^\n]+)")
 COLOR = re.compile(r"(?<!\.)\bcolor\s*:\s*([^\n]+)")
 THEME_TOKEN = re.compile(r"Theme\.\w+")
+# A colour written as a literal resolves to no theme token at all, so a set that
+# only rejects the wrong tokens is not closed: `color: "#ff0000"` would leave it
+# with nothing to object to.
+COLOR_LITERAL = re.compile(r"[\"'#]")
 SUB_TEXT_COLOR = "Theme.surfaceVariantText"
+HEADING_COLOR = "Theme.surfaceText"
 
 
 def blanked(text: str) -> str:
@@ -172,6 +177,13 @@ def check_file(path: Path) -> tuple[list[str], int]:
         color_match = COLOR.search(view[start:end])
         color = block[color_match.start(1):color_match.end(1)].strip() if color_match else ""
 
+        if size in (TITLE_SIZE, BODY_SIZE) and color != HEADING_COLOR:
+            problems.append(
+                f"{where}: a heading at {size} must take color {HEADING_COLOR}, not "
+                f"{color or 'the inherited colour'}. The role fixes the colour as well as the "
+                f"weight, and a heading recoloured to a state or variant token leaves its role "
+                f"while still reading as a heading"
+            )
         if size == TITLE_SIZE and weight != SECTION_WEIGHT:
             problems.append(
                 f"{where}: a page title at {TITLE_SIZE} must take {SECTION_WEIGHT}, not "
@@ -192,7 +204,13 @@ def check_file(path: Path) -> tuple[list[str], int]:
             # whole string.
             tokens = set(THEME_TOKEN.findall(color))
             stray = sorted(tokens - SMALL_TIER_COLORS)
-            if not color:
+            if color and (not tokens or COLOR_LITERAL.search(THEME_TOKEN.sub("", color))):
+                problems.append(
+                    f"{where}: text at {SUB_SIZE} is coloured {color}, which does not resolve to "
+                    f"theme tokens. A literal puts a colour outside the palette entirely, so the "
+                    f"tier's set is only closed if every colour in the expression is a token in it"
+                )
+            elif not color:
                 problems.append(
                     f"{where}: text at {SUB_SIZE} states no colour. This tier carries both sub "
                     f"text and body, and colour is the only thing separating them, so it cannot "

@@ -158,6 +158,48 @@ class RolesRefused(unittest.TestCase):
         self.assertIn("states no colour", problems[0])
 
 
+class HeadingColourRefused(unittest.TestCase):
+    """The role fixes a heading's colour as well as its weight."""
+
+    def test_a_title_recoloured_is_refused(self):
+        problems = check(TITLE.replace("Theme.surfaceText", "Theme.error"))
+        self.assertEqual(len(problems), 1)
+        self.assertIn("must take color Theme.surfaceText", problems[0])
+
+    def test_a_header_recoloured_to_the_sub_text_colour_is_refused(self):
+        # The nastiest of the three: it still reads as a heading, at the heading
+        # weight, while having quietly left its role.
+        problems = check(HEADER.replace("Theme.surfaceText", "Theme.surfaceVariantText"))
+        self.assertEqual(len(problems), 1)
+        self.assertIn("must take color Theme.surfaceText", problems[0])
+
+    def test_a_heading_with_no_colour_is_refused(self):
+        problems = check(HEADER.replace("        color: Theme.surfaceText\n", ""))
+        self.assertEqual(len(problems), 1)
+        self.assertIn("the inherited colour", problems[0])
+
+
+class SmallTierClosure(unittest.TestCase):
+    """A set that only rejects wrong tokens is not closed."""
+
+    def test_a_hex_literal_is_refused(self):
+        problems = check(SUB.replace("Theme.surfaceVariantText", '"#ff0000"'))
+        self.assertEqual(len(problems), 1)
+        self.assertIn("does not resolve to theme tokens", problems[0])
+
+    def test_a_named_colour_literal_is_refused(self):
+        problems = check(SUB.replace("Theme.surfaceVariantText", '"red"'))
+        self.assertEqual(len(problems), 1)
+        self.assertIn("does not resolve to theme tokens", problems[0])
+
+    def test_a_literal_hidden_in_a_ternary_is_refused(self):
+        row = BODY.replace("Theme.surfaceText",
+                           'modelData.usable ? Theme.surfaceText : "#888888"')
+        problems = check(row)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("does not resolve to theme tokens", problems[0])
+
+
 class SurfaceRecognition(unittest.TestCase):
     def test_a_file_without_the_marker_is_not_a_surface(self):
         self.assertEqual(check(HEADER.replace("Theme.fontSizeMedium", "Theme.fontSizeSmall"),
