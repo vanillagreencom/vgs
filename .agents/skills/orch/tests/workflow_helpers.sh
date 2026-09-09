@@ -135,7 +135,11 @@ assert_eq "$("$GC" issue-from-branch "$issue_repo")" "issue-369" "git-context ke
 iso_ts="$("$GC" timestamp iso)"
 assert_eq "$([[ "$iso_ts" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] && echo ok)" "ok" \
   "git-context timestamp iso prints an RFC-3339 UTC instant"
-assert_eq "$("$GC" timestamp bogus 2>/dev/null; echo $?)" "2" "git-context rejects an unknown timestamp format"
+timestamp_rc=0
+"$GC" timestamp bogus >/dev/null 2>"$TMP_ROOT/timestamp.err" || timestamp_rc=$?
+assert_eq "$timestamp_rc" "2" "git-context rejects an unknown timestamp format"
+assert_eq "$(sed -n '1p' "$TMP_ROOT/timestamp.err")" "git-context: timestamp-format format=bogus" \
+  "git-context identifies the rejected format"
 
 echo
 echo "=== ordering contracts ==="
@@ -175,6 +179,32 @@ assert_file_contains "$sync_base" 'refs/remotes/origin/$BASE_BRANCH:refs/heads/$
   "sync-base keeps the by-name ref update for an unowned base branch"
 assert_file_contains "$merge_workflow" '| Base sync |' \
   "merge-pr never omits the Base sync row, so a stale base cannot pass unreported"
+
+# The lane's terminal condition is the removal, so § 5 reads [WORKTREE_PATH]
+# back before § 6 writes the summary. The anchor is that read, not the
+# `worktree remove` call: the call has always been § 5's last step, so a
+# document with no read of the path satisfies the ordering while leaving the
+# lane free to report done at its prompt with its worktree standing. What the
+# summary's worktree line then says is not pinned; § 6's own prose carries it.
+removal_precedes_summary() { # doc
+  local removal summary
+  removal="$(grep -n -m1 -F 'ls -d -- "[WORKTREE_PATH]"' "$1" | cut -d: -f1)"
+  summary="$(grep -n -m1 -F '## 6. Present Results' "$1" | cut -d: -f1)"
+  [[ -n "$removal" && -n "$summary" && "$removal" -lt "$summary" ]]
+}
+if removal_precedes_summary "$merge_workflow"; then
+  pass "merge-pr reads the worktree path back before § 6 writes the summary"
+else
+  fail "merge-pr must read [WORKTREE_PATH] back before § 6 writes the summary"
+fi
+# The must-fail control: a copy the summary heading is reachable first in.
+summary_first="$TMP_ROOT/merge-pr-summary-first.md"
+{ printf '## 6. Present Results\n'; cat "$merge_workflow"; } >"$summary_first"
+if removal_precedes_summary "$summary_first"; then
+  fail "must-fail: a summary heading above that read has to fail the ordering check"
+else
+  pass "must-fail: a summary heading above that read fails the ordering check"
+fi
 
 # A push that rebases rewrites every stored fix SHA. Without reconciliation the
 # PR body cites commits that does not exist; worktree-push owns that remap.
@@ -242,8 +272,8 @@ echo "=== frozen cross-skill contracts ==="
 # are owned elsewhere, so a signature change here silently breaks every review.
 reviewer_skill="$REPO_ROOT/skills/reviewer/SKILL.md"
 if [[ -f "$reviewer_skill" ]]; then
-  assert_file_contains "$reviewer_skill" '.agents/skills/orch/scripts/review-artifact-check [WORKTREE_PATH] [AGENT] 0' \
-    "reviewer skill calls the frozen review-artifact-check positional contract"
+  assert_file_contains "$reviewer_skill" '.agents/skills/orch/scripts/review-artifact-check --file [ARTIFACT_PATH]' \
+    "reviewer skill self-validates through the frozen review-artifact-check --file contract"
 else
   # Skipping on absence would retire the only check on this frozen signature the
   # moment the file is renamed or moved — exactly when it needs asserting.

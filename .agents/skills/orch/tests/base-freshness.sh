@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Behavioral tests for base-freshness — the start-worktree.md § 1 review-cycle
+# Behavioral tests for base-freshness — the ../workflows/start-worktree.md § 1 review-cycle
 # gate. A reused worktree can sit many commits behind origin, and a review
 # cycle with no fetch on that path evaluates a stale base. The helper must
 # FETCH origin (a
@@ -138,7 +138,8 @@ code=$?
 set -e
 err="$(cat "$TMP_ROOT/err")"
 assert_eq "$code" "1" "fetch failure exits 1"
-assert_contains "$err" "base freshness cannot be verified" "fetch failure names the unverified-freshness condition"
+assert_eq "$(sed -n '1p' "$TMP_ROOT/err")" "base-freshness: fetch-failed ref=origin/main" "fetch failure starts with the stable condition"
+assert_contains "$err" "$TMP_ROOT/missing.git" "fetch failure keeps the tool detail after the header"
 
 # No origin remote at all is equally unverifiable.
 git -C "$WT" remote remove origin
@@ -148,7 +149,7 @@ code=$?
 set -e
 err="$(cat "$TMP_ROOT/err")"
 assert_eq "$code" "1" "missing origin remote exits 1"
-assert_contains "$err" "no 'origin' remote" "missing origin remote is named in the error"
+assert_contains "$err" "base-freshness: missing-remote path=$WT remote=origin" "missing origin remote is named in the error"
 
 # Workflow wiring: the start-worktree § 1 gate runs the helper before § 2
 # delegation and routes stale bases through the supported reuse rebase.

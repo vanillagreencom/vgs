@@ -268,8 +268,48 @@ readonly SCRIPT_DIR FOREGROUND_CAP_IN_CALLER_ENV FOREGROUND_CAP_WAS_IN_CALLER_EN
   CURRENT_MODEL_IS_SESSION_SCOPED CURRENT_MODEL_IN_CALLER_ENV
 readonly -a ORIGINAL_ARGS
 # Resolved only after help is answered: help must not require a git
-# checkout around the installed script.
-PROJECT_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)"
+# checkout around the installed script. The assignment sits in the condition
+# (KEN-1193): outside a repository `git rev-parse` exits 128 and under `set -e`
+# a bare assignment carries that status out, ending the run before anything
+# below it.
+#
+# Only ONE failure means there is nothing to load. An install outside a
+# repository has no project configuration, and kendex_load_project_env already
+# treats an empty root as exactly that. Every other nonzero status — git's
+# dubious-ownership refusal on a checkout owned by another uid, which is the
+# normal shape of a mounted workspace, or no git on PATH — comes from a
+# checkout that DOES carry kendex.settings.toml and .env.local. Degrading
+# there would run the review on built-in defaults with the project's own
+# model and command settings silently ignored, so it refuses instead and
+# quotes git's own account rather than guessing at the cause. LC_ALL=C
+# because the message being read is translated.
+if ! PROJECT_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)"; then
+  _git_diag="$(LC_ALL=C git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>&1 >/dev/null)" || :
+  # The parenthetical is what separates "there is no repository above me" from
+  # "there is one and it is broken". Git names the parents it searched two ways
+  # — the parent directories, or the parents up to a mount point when discovery
+  # stops at a filesystem boundary — and both are the absence. A `.git` that
+  # points nowhere gets the same three words WITHOUT a parenthetical
+  # (`not a git repository: (null)`), and that is a repository git could not
+  # read, from a checkout that does carry settings, so it refuses. Any message
+  # this does not recognise refuses too. hooks/block-worktree-refresh.sh splits
+  # the same diagnostic the same way.
+  #
+  # The limit of reading the message: an EMPTY or malformed `.git` DIRECTORY
+  # draws the parenthetical too, so it lands here as an absence. Separating
+  # that from a true absence takes an ancestor walk for a `.git` entry, which
+  # the hook above owns; this does not carry a second copy of it. Git itself
+  # reports no repository in that state, so no root could be resolved anyway.
+  case "$_git_diag" in
+    *"not a git repository (or any"*) PROJECT_ROOT="" ;;
+    *)
+      echo "second-opinion: could not resolve a repository at $SCRIPT_DIR" >&2
+      echo "  git said: ${_git_diag#fatal: }" >&2
+      exit 1
+      ;;
+  esac
+  unset _git_diag
+fi
 # Source project config/secrets. .env.local overrides public settings; the
 # caller's own environment (set or set-but-empty) outranks every project file —
 # kendex_load_project_env snapshots and re-asserts it.
@@ -1209,12 +1249,13 @@ ARTIFACT_PATH=""
 #
 # Order is load-bearing: repeated slashes collapse FIRST, or `.//x` strips its
 # leading `./` into the absolute-looking `/x`. Purely lexical — a `..` that
-# survives is still the vet's to refuse.
+# survives is still the vet's to refuse. The replacement is a bare `/`: Bash
+# 3.2 keeps the backslash of an escaped `\/` there, and wrote `.\/tmp`.
 normalize_relative_home() {
   local rel="$1"
-  while [[ "$rel" == *//* ]]; do rel="${rel//\/\//\/}"; done
+  while [[ "$rel" == *//* ]]; do rel="${rel//\/\///}"; done
   while [[ "$rel" == ./* ]]; do rel="${rel#./}"; done
-  while [[ "$rel" == */./* ]]; do rel="${rel//\/.\//\/}"; done
+  while [[ "$rel" == */./* ]]; do rel="${rel//\/.\///}"; done
   while [[ "$rel" == */. ]]; do rel="${rel%/.}"; done
   while [[ "$rel" == */ ]]; do rel="${rel%/}"; done
   if [[ "$rel" == "." ]]; then rel=""; fi
@@ -1391,7 +1432,7 @@ artifact_file() {
     # way to report — losing both the record AND its documented 4/5 exit class.
     # A record is a diagnostic: leaving ARTIFACT_PATH empty lets the caller say
     # so inline and keep the classification.
-    ARTIFACT_PATH=$(mktemp 2>/dev/null) || ARTIFACT_PATH=""
+    ARTIFACT_PATH=$(so_tmpfile 2>/dev/null) || ARTIFACT_PATH=""
     if [[ -n "$ARTIFACT_PATH" ]]; then
       echo "→ record kept in system temp instead: $ARTIFACT_PATH" >&2
     else
@@ -1494,7 +1535,7 @@ derive_review_scope() {
   REVIEW_BRANCH=$(git -C "$cwd" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 
   local git_err diff_files
-  git_err=$(mktemp)
+  git_err=$(so_tmpfile)
   # shellcheck disable=SC2086
   # core.quotePath=false keeps non-ASCII path bytes literal — the default
   # C-quoting ("services/\303\251/…") would break the nested-AGENTS ancestor
@@ -1741,7 +1782,7 @@ if $MULTI_LANE; then
   # this tool owns. And the parent holds each lane's review in memory from the
   # moment that lane is reaped, so nothing it still needs is on disk after the
   # reap either.
-  LANE_TMP_DIR=$(mktemp -d)
+  LANE_TMP_DIR=$(so_tmpdir)
   LANE_TMP_FILES=()
   LANE_PIDS=()
   # On any exit — including INT/TERM — kill still-running lane children before
@@ -1822,7 +1863,7 @@ if $MULTI_LANE; then
       # Placement can never decide whether the review happens, so a lane with no
       # home falls back to a temp file — named on stderr above, so an operator
       # knows that lane traded the home's durability for a temp one.
-      [[ -n "$lane_out" ]] || lane_out=$(mktemp)
+      [[ -n "$lane_out" ]] || lane_out=$(so_tmpfile)
       LANE_TMP_FILES+=("$lane_out")
     fi
     lane_err="$LANE_TMP_DIR/lane-${lane}.stderr"
@@ -2175,14 +2216,14 @@ if [[ -z "$PROMPT" ]]; then
 fi
 
 # Write prompt to temp file — use printf to avoid echo interpreting leading dashes
-PROMPT_TMP=$(mktemp)
+PROMPT_TMP=$(so_tmpfile)
 # Guarded for the same reason as cleanup_lanes: an EXIT trap whose last command
 # fails REPLACES the run's exit status, so a temp directory that turned
 # read-only under the run would rewrite a documented 4/5 into rm's status.
 trap 'rm -f -- "$PROMPT_TMP" || true' EXIT
 printf '%s\n' "$PROMPT" > "$PROMPT_TMP"
 
-STDERR_TMP=$(mktemp)
+STDERR_TMP=$(so_tmpfile)
 # RETRY_PROMPT_TMP is created only when extraction fails and a retry runs; keep
 # it in the cleanup trap. Sidecar files written by preserve_raw_response and
 # preserve_raw_and_fail are deliberately NOT tracked here — they are the durable
@@ -2322,15 +2363,19 @@ extract_json() {
 
   # Extract from first ```json ... ``` code fence (stop at first closing fence)
   local fenced
-  fenced=$(printf '%s' "$input" | sed -n '/^```json/{n; :a; /^```$/q; p; n; ba}')
-  if [[ -n "$fenced" ]] && printf '%s' "$fenced" | jq -e . >/dev/null 2>&1; then
+  # One expression per command: BSD sed reads a label to the end of its
+  # expression, so the one-line form never closes its brace there. A
+  # here-string, not a pipe: sed quits at the closing fence, and a writer
+  # still filling the pipe would take SIGPIPE and fail the condition.
+  if fenced=$(sed -n -e '/^```json/{' -e 'n' -e ':a' -e '/^```$/q' -e 'p' -e 'n' -e 'ba' -e '}' <<<"$input") \
+    && [[ -n "$fenced" ]] && printf '%s' "$fenced" | jq -e . >/dev/null 2>&1; then
     printf '%s' "$fenced" | jq .
     return 0
   fi
 
   # Extract from first ``` ... ``` fence (no language tag)
-  fenced=$(printf '%s' "$input" | sed -n '/^```$/{n; :a; /^```$/q; p; n; ba}')
-  if [[ -n "$fenced" ]] && printf '%s' "$fenced" | jq -e . >/dev/null 2>&1; then
+  if fenced=$(sed -n -e '/^```$/{' -e 'n' -e ':a' -e '/^```$/q' -e 'p' -e 'n' -e 'ba' -e '}' <<<"$input") \
+    && [[ -n "$fenced" ]] && printf '%s' "$fenced" | jq -e . >/dev/null 2>&1; then
     printf '%s' "$fenced" | jq .
     return 0
   fi
@@ -2564,7 +2609,7 @@ if [[ "$MODE" == "review" || "$MODE" == "audit" ]]; then
     # Persist the raw first response now, before the retry outcome is known —
     # a successful reformat must not erase the original.
     preserve_raw_response "$RESULT"
-    RETRY_PROMPT_TMP=$(mktemp)
+    RETRY_PROMPT_TMP=$(so_tmpfile)
     if [[ -n "$RETRY_PROBLEM" ]]; then
       build_retry_prompt "$RESULT" "$RETRY_PROBLEM" > "$RETRY_PROMPT_TMP"
     else

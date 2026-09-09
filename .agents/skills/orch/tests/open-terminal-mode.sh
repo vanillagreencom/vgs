@@ -162,7 +162,7 @@ run() {
   TMUX_LOG_TEXT="$(cat "$tmux_log")"
 }
 
-WARNING="Warning: --ghostty overrides tmux auto-detection"
+WARNING='open-terminal: mode-override option=--ghostty detected=tmux'
 
 # One row per (where, flag) pair: the launcher it must reach and whether the
 # override warning is due. `refused` is --tmux outside tmux, which open_tmux
@@ -199,12 +199,12 @@ check_mode_rows() {
         ;;
       refused)
         assert_eq "$RC" "1" "$desc -> the item fails"
-        assert_contains "$ERR" "Error: not inside tmux" "$desc -> named as not inside tmux"
+        assert_contains "$ERR" "open-terminal: tmux-missing item=CC-1" "$desc -> named as not inside tmux"
         assert_eq "$TERM_LOG_TEXT" "" "$desc -> no GUI terminal opens in its place"
         ;;
     esac
     if [[ "$warn" == "warn" ]]; then
-      assert_contains "$ERR" "$WARNING" "$desc -> warns that the flag overrides auto-detection"
+      assert_eq "${ERR%%$'\n'*}" "$WARNING" "$desc -> warns that the flag overrides auto-detection"
     else
       assert_not_contains "$ERR" "$WARNING" "$desc -> no override warning"
     fi
@@ -277,6 +277,46 @@ while IFS='|' read -r arm path terminal argv tok; do
   assert_contains "$TERM_LOG_TEXT" "env TMUX=stub,1,0 TMUX_PANE=%7" \
     "control: and the $arm arm's terminal really does inherit TMUX and TMUX_PANE"
 done <<<"$ARM_ROWS"
+RUN_PATH=""
+RUN_TERMINAL="term"
+
+echo "=== the GUI launch happens on a host with no setsid ==="
+
+# open_gui detaches the window so it outlives this script. setsid is util-linux
+# and stock macOS has none, and the launch line sends its own stderr to
+# /dev/null — so a `setsid: command not found` was swallowed there, nothing
+# opened, and open-terminal still printed "Opened terminal". nohup is the arm
+# every platform has. The probe PATH is the real one minus setsid rather than a
+# list of the tools open_gui uses, so it stays true as open_gui changes.
+NO_SETSID_PATH="$TMP_ROOT/path-without-setsid"
+mkdir -p "$NO_SETSID_PATH"
+(
+  IFS=:
+  for d in $PATH; do
+    [[ -d "$d" ]] || continue
+    ln -s "$d"/* "$NO_SETSID_PATH"/ 2>/dev/null || true
+  done
+)
+rm -f -- "$NO_SETSID_PATH/setsid"
+# Without this the case passes vacuously through the setsid branch.
+if PATH="$NO_SETSID_PATH" command -v setsid >/dev/null 2>&1; then
+  bad "the probe PATH resolves no setsid" "setsid is still reachable"
+else
+  ok "the probe PATH resolves no setsid"
+fi
+
+RUN_PATH="$BIN:$NO_SETSID_PATH"
+run "nosetsid" "$REPO/scripts/open-terminal" out CC-1
+assert_eq "$RC" "0" "no setsid: the GUI launch is reported as successful"
+assert_contains "$TERM_LOG_TEXT" "term -e bash -lc" "no setsid: a GUI terminal really opens"
+
+# The control: with the nohup arm deleted the same run opens nothing, so the
+# assertion above is about the arm and not about a launch that would happen
+# either way.
+mutate "nosetsid" 's#^    nohup "${launcher\[@\]}" </dev/null >/dev/null 2>&1 &$#    setsid "${launcher[@]}" </dev/null >/dev/null 2>\&1 \&#'
+RUN_PATH="$BIN:$NO_SETSID_PATH"
+run "mut-nosetsid" "$MUTANT_OT" out CC-1
+assert_eq "$TERM_LOG_TEXT" "" "control: without the nohup arm no GUI terminal opens on a setsid-less host"
 RUN_PATH=""
 RUN_TERMINAL="term"
 

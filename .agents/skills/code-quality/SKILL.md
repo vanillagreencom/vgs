@@ -1,6 +1,6 @@
 ---
 name: code-quality
-description: "Load before writing or modifying code."
+description: "Load for any coding or development task in any repository: writing, changing, fixing, refactoring, or testing code or scripts in any language."
 summary: "Code-authoring standards for dev agents: correctness over convenience, no fail-open branches, comment rules, over-engineering limits, prove-your-guards, test shape."
 license: MIT
 user-invocable: true
@@ -42,7 +42,7 @@ A loud failure beats a silent wrong answer. Handle every error, check invariants
 
 ## Prove Your Guards
 
-A new or modified check, guard, assertion, or test ships with a must-fail control: plant the defect it catches (a red-first run or a temporary mutation) and see it go red before its green counts. A guard that pattern-matches source text also gets controls for shapes that satisfy the match without the property: comments, string and template-literal interiors, nested occurrences, alternate quoting, a braceless statement, a dead branch, a discarded result, and a textually earlier but unrelated conditional. The control that counts keeps the matched text and removes the behavior; one that deletes the code under test only proves the assertion runs. Reject assertions loose enough to match a skip note, fixtures that never reach the guarded bound, and harness code that keeps alive what the implementation should.
+A new or modified production gate or guard ships with one must-fail control per rule it enforces. Plant one defect that the rule catches and see it go red before its green counts. This per-rule control is inside the validation gate. Every other changed check, assertion, or test follows § Tests: one control per changed surface. The control that counts keeps the matched text and removes the behavior; one that deletes the code under test only proves the assertion runs. Reject assertions loose enough to match a skip note, fixtures that never reach the guarded bound, and harness code that keeps alive what the implementation should.
 
 - **A scripted text substitution asserts its match, or it is not an edit.** Assert the pattern's occurrence count and that the file changed, or use an edit tool that errors on no match. Neither assertion holds on a symlink, which `sed -i` replaces with a new file while its target stands: resolve the path first, or refuse a symlink.
 - **A floor alone is not a control.** Derive the expected set from the artifact under test (the flag's own regex, the function's own body), never from a second list in a test file. Floor it, with a message naming the extractor as broken rather than the subject as sparse. Under-inclusion needs the floor plus a required member; over-inclusion needs a forbidden member. State which direction stays open.
@@ -55,10 +55,12 @@ A new or modified check, guard, assertion, or test ships with a must-fail contro
 
 ## Tests
 
-- One control per behaviour surface, a public function, command, rule or contract, plus its inverse: the must-fail control § Prove Your Guards demands.
+- One must-fail control per changed behavioral surface with a test is the whole mutation requirement. A workflow sentence has no test and adds no control. Do not run mutant batteries beyond the one control. The control plants one defect that turns the surface's test red; use the existing `HOOK_UNDER_TEST` and mutant-hook patterns as the shape. Each surface also tests its inverse.
 - N planted defects means N asserted rows. A fixture that plants several defects under one verdict passes while any one of them is caught, and is never allowed.
 - Shaped input (positions, settings keys, tamper classes) is one table-driven case: one loop, one assertion per row, the row list visible in the file.
-- Assert the code, the enum or the exit status. Pin a human-readable message only inside a contract a consumer parses.
+- Every hook or script refusal and notice starts with a stable first line: a short key and the relevant path, count, exit code or other value. Put the English explanation on following lines. Keep message text in one place per hook or script.
+- Assert codes, enums and exit status. For refusals and notices, assert the key, value and exit status, never an English sentence. When a downstream consumer parses a text protocol, state that contract in the script header and pin the whole protocol. Change the message mechanism and its tests in the same package PR.
+- A row pins the clause only its own guard emits: an expectation a neighbouring gate or the production helper on both sides can also produce is not a pin, a value read as a truthiness bit is not a pin, and a fold keeps every assertion of its former cases.
 - No test of the test harness: a pin on a manifest script string or a runner configuration proves nothing about behaviour.
 - A shared fixture is a neutral world (a seeded repository, a fake SDK). A fixture that carries a planted defect is private to its case.
 - One file per surface, beside the code, named for the surface.
@@ -68,7 +70,7 @@ A new or modified check, guard, assertion, or test ships with a must-fail contro
 
 - **Rust**: make illegal states unrepresentable; exhaustive matches (no `_ =>` over enums you own); enums over strings/sentinels/booleans-with-meaning. A test that hands a temporary path to code that may resolve symlinks binds its canonical root at creation and passes that binding, never the raw path; platform-only test APIs carry a `cfg` and, when the property is portable, a portable twin.
 - **Bash**: check the result of every effectful substitution, in test position too; `--` before path arguments sourced from configuration, argv, or the environment (not paths the script built itself, e.g. `mktemp -d`); no `[A-Za-z]`-class assumptions under arbitrary locales. The `set -euo pipefail` preamble, an unchecked or untrapped `mktemp` and a declaration masking a status are preflight's `fail-open`, `mktemp-trap` and `masked-returns` lanes.
-- In any `pipefail` script, never leave a pipeline unguarded when an early-closing `head` or `grep -q` can stop reading while its producer still writes: the 141 SIGPIPE status aborts the run where `errexit` fires, and in condition position, where it does not, reads as a plain false that drops the result with no error. A must-fail control for one writes its input from the shell, never `cat` reading a file, which pushes several hundred KB before it blocks and passes a buffer-sized fixture either way.
+- In any `pipefail` script, never pipe a shell writer into an early-closing reader — `head`, `grep -q`, `grep -m N` — which stops reading while its producer still writes: the 141 SIGPIPE status aborts the run where `errexit` fires, and in condition position, where it does not, reads as a plain false that drops the result with no error. Capture whole and window in-shell, or give the reader a here-string. An added line of that shape is preflight's `early-close-pipe` lane. A must-fail control for one writes its input from the shell, never `cat` reading a file, which pushes several hundred KB before it blocks and passes a buffer-sized fixture either way.
 - Measure a commit header with commit-guards' locale-stable `gg_chars`, never raw `awk length` or `wc -c`.
 - **TypeScript/JS**: distinguish missing from present-but-falsy (`""`, `0`) at every guard; no `any` at module boundaries. A store selector returns a stable reference: never mint an array, object or Set inside one (a fresh value re-renders forever and blanks the page).
 
