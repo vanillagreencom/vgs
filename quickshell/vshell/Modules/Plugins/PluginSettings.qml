@@ -10,6 +10,13 @@ Item {
 
     required property string pluginId
     property var pluginService: null
+
+    // Every control below a settings page renders in settings typography.
+    // Theme.isSettingsItem walks up for this marker, so setting it here is what
+    // puts EVERY plugin's page on the same description size and row spacing as
+    // the settings application's own pages, rather than each plugin remembering
+    // to pass settingsContext to each control it happens to use.
+    readonly property bool settingsSurface: true
     default property list<QtObject> content
 
     signal settingChanged

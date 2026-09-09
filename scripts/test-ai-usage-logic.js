@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 
-// Test the PROVIDER DECISION region of AiUsageLogic.qml: payload provider identity, relaunch
-// decisions, failure attribution, headline and provider-slot views, and the ordering of
-// per-provider results shared by both fetch channels. Source wiring assertions live in
-// test-ai-usage-wiring.js.
+// Test the PROVIDER DECISION region of AiUsageLogic.qml: the provider catalog, the provider
+// filter, payload identity, relaunch decisions, failure attribution, the account-card deck the
+// popout renders, the provider slots the bar renders, and the ordering of per-provider results
+// shared by every fetch channel. Source wiring assertions live in test-ai-usage-wiring.js.
 
 "use strict";
 
@@ -24,19 +24,33 @@ const { evaluateMarked, regionOf, guardChild } = require("./lib/qml-region.js");
 guardChild();
 
 const {
-    normalizeProvider, providerIcon, payloadProvider, payloadIsFor, shouldRelaunch,
-    decodePayload, acceptOutcome, stderrReason, headOf, failureWins, newerSuccess, newerAccepted,
-    pillSlot, pillSlots, popoutView, accountCount
+    providerOrder, normalizeProvider, providerIcon, providerName, providerNeedsCredential,
+    providerAsset,
+    selectedProviders, filterIsAll, filterHas, toggleFilter, filterLabel,
+    filterOrder, canonicalFilter, moveProvider, canMoveProvider, polledAccountCount,
+    iconModes, barIconMode, widgetIcon,
+    payloadProvider, payloadIsFor, shouldRelaunch, decodePayload, acceptOutcome, stderrReason,
+    cardKey, isCardHidden, toggleHiddenCard, providerCards, allCards,
+    headOf, slotShown, pillSlot, pillSlots, deckView, accountCount, accountFooter,
+    failureWins, newerSuccess, newerAccepted
 } = evaluateMarked(logicSource, "PROVIDER DECISION", [
-    "normalizeProvider", "providerIcon", "payloadProvider", "payloadIsFor", "shouldRelaunch",
-    "decodePayload", "acceptOutcome", "stderrReason", "headOf", "failureWins", "newerSuccess",
-    "newerAccepted", "pillSlot", "pillSlots", "popoutView", "accountCount"
+    "providerOrder", "normalizeProvider", "providerIcon", "providerName", "providerNeedsCredential",
+    "providerAsset",
+    "selectedProviders", "filterIsAll", "filterHas", "toggleFilter", "filterLabel",
+    "filterOrder", "canonicalFilter", "moveProvider", "canMoveProvider", "polledAccountCount",
+    "iconModes", "barIconMode", "widgetIcon",
+    "payloadProvider", "payloadIsFor", "shouldRelaunch", "decodePayload", "acceptOutcome",
+    "stderrReason", "cardKey", "isCardHidden", "toggleHiddenCard", "providerCards", "allCards",
+    "headOf", "slotShown", "pillSlot", "pillSlots", "deckView", "accountCount", "accountFooter",
+    "failureWins", "newerSuccess", "newerAccepted"
 ], "AiUsageLogic.qml");
 
 const region = regionOf(logicSource, "PROVIDER DECISION", "AiUsageLogic.qml");
 
 const acct = (id, over) => Object.assign(
     { id: id, ok: true, plan: "Max 20x", weekly: { pct: 20 } }, over);
+const payloadOf = (provider, accounts, over) => Object.assign(
+    { ok: true, provider: provider, accounts: accounts }, over);
 
 // Keep the decision region independent of Qt and widget state so these inputs fully define its behavior.
 test("the PROVIDER DECISION region stays plain JavaScript", () => {
@@ -48,11 +62,207 @@ test("the PROVIDER DECISION region stays plain JavaScript", () => {
     }
 });
 
-// File by the payload's provider stamp; a launch tag can be stale after a selection change.
+// ---- The provider catalog ---------------------------------------------------
+
+test("every provider in the order has its own name and icon, and nothing else is a provider", () => {
+    const order = providerOrder();
+
+    // Derive the expected set from a DIFFERENT statement of the same catalog in the same file:
+    // the switch arms that give each provider its icon and its name. A provider listed in the
+    // order with no arm of its own silently takes the default icon and the default name, which is
+    // another provider's. Both directions are closed below; neither stays open.
+    const armed = new Set(Array.from(region.matchAll(/case "([a-z]+)":/g), m => m[1]));
+    assert.ok(armed.size >= order.length,
+        `the arm extractor found ${armed.size} provider(s) for ${order.length} in the order — read ` +
+        "that as the EXTRACTOR being broken, not the catalog being sparse");
+    for (const p of order) {
+        assert.ok(armed.has(p),
+            `${p} is in the order but no switch arm names it: it falls through to the default, ` +
+            "which hands it another provider's icon and another provider's name");
+    }
+    for (const p of armed) {
+        assert.ok(order.indexOf(p) !== -1,
+            `${p} has switch arms but is not in the order: nothing fetches it, nothing gives it a ` +
+            "slot, and normalizeProvider rejects every payload naming it");
+    }
+    assert.equal(order.indexOf("gemini"), -1,
+        "and a provider nobody added is not in the catalog — this row fails if the order is ever " +
+        "widened to whatever the arms happen to mention");
+
+    const icons = order.map(providerIcon);
+    const names = order.map(providerName);
+    assert.equal(new Set(icons).size, order.length,
+        `two providers sharing an icon makes a slot's position the only thing identifying it: ${icons}`);
+    assert.equal(new Set(names).size, order.length, `two providers sharing a name: ${names}`);
+    for (const p of order) {
+        assert.equal(normalizeProvider(p), p, `${p} is in the order, so it must normalise to itself`);
+        assert.ok(providerIcon(p) !== "" && providerName(p) !== "", `${p} needs both an icon and a name`);
+    }
+});
+
+test("every provider's mark is its own, and a provider without one still has a symbol", () => {
+    const order = providerOrder();
+    const assets = order.map(providerAsset).filter(a => a !== "");
+    assert.equal(new Set(assets).size, assets.length,
+        `two providers sharing a mark makes position the only thing identifying a slot: ${assets}`);
+    for (const p of order) {
+        const asset = providerAsset(p);
+        assert.ok(asset === "" || /^[a-z0-9-]+\.svg$/.test(asset),
+            `${p}: a mark is a file beside the plugin, named plainly — got ${JSON.stringify(asset)}`);
+        // Not merely non-empty: the switch has a default, and a provider that lost its own arm
+        // would fall through to it wearing whatever that default is.
+        assert.notEqual(providerIcon(p), providerIcon("gemini"),
+            `${p} has no symbol of its own and falls through to the unknown-provider default: it ` +
+            "would wear another provider's glyph, or the placeholder, on the bar");
+        assert.notEqual(providerName(p), providerName("gemini"),
+            `${p} falls through to the unknown-provider name`);
+    }
+    assert.equal(providerAsset("gemini"), "", "a provider nobody added has no mark");
+});
+
+test("normalizeProvider keeps a known provider and turns an unknown one into nothing", () => {
+    assert.equal(normalizeProvider("codex"), "codex");
+    assert.equal(normalizeProvider("gemini"), "",
+        "an unknown provider normalises to nothing, never to a default");
+    assert.equal(normalizeProvider(undefined), "", "and neither does a missing one");
+});
+
+test("a provider that needs a credential is one no local login can discover", () => {
+    assert.equal(providerNeedsCredential("vercel"), true,
+        "AI Gateway has no CLI login on disk, so it cannot be found — only configured");
+    assert.equal(providerNeedsCredential("claude"), false, "Claude is found by its login");
+    assert.equal(providerNeedsCredential("codex"), false, "and so is Codex");
+});
+
+// ---- The provider filter ----------------------------------------------------
+
+test("an empty, junk or complete filter all mean every provider", () => {
+    const order = providerOrder();
+    for (const [filter, why] of [
+        [[], "a fresh install stores nothing and gets everything"],
+        [undefined, "and so does a settings file written before the filter existed"],
+        [["gemini"], "a filter naming only providers that do not exist selects nothing, which is all"],
+        [order.slice(), "and naming every provider is the same as naming none"]
+    ]) {
+        assert.deepEqual(selectedProviders(filter), order, why);
+        assert.equal(filterIsAll(filter), true, why);
+    }
+});
+
+test("a filter is an arrangement: the stored order is the order the surfaces walk", () => {
+    const [first, second] = providerOrder();
+    assert.deepEqual(selectedProviders([second, first]), [second, first],
+        "the stored order IS the arrangement — it is what the bar slots and the popout sections " +
+        "are ordered by, so re-sorting it here would discard the only copy of the user's choice");
+    assert.deepEqual(selectedProviders([]), providerOrder(),
+        "and an empty filter is the catalog's own order, so a shell that never opened the list " +
+        "still gets a fixed arrangement rather than one built out of click order");
+    assert.deepEqual(selectedProviders([first, first]), [first], "a repeated provider is one provider");
+    assert.deepEqual(selectedProviders([first, "gemini"]), [first], "an unknown id is not a provider");
+    assert.equal(filterIsAll([first]), false, "one of three is not all");
+    assert.equal(filterIsAll([...providerOrder()].reverse()), true,
+        "and every provider is all however they are arranged: order is not selection");
+    assert.equal(filterHas([first], first), true);
+    assert.equal(filterHas([first], second), false);
+});
+
+test("the list every filter surface renders puts the selected first and the rest behind them", () => {
+    const [first, second, third] = providerOrder();
+    assert.deepEqual(filterOrder([]), providerOrder(), "all selected is the catalog's own order");
+    assert.deepEqual(filterOrder([third]), [third, first, second],
+        "a selected provider leads, and the unselected keep catalog order behind it so a row does " +
+        "not jump position as its neighbours are switched on and off");
+    assert.deepEqual(filterOrder([third, first]), [third, first, second],
+        "the selected group keeps ITS arrangement, not the catalog's");
+    assert.deepEqual(filterOrder([]).slice().sort(), providerOrder().slice().sort(),
+        "and every provider is listed exactly once, or one would be unreachable");
+});
+
+test("[] is the one spelling of every provider in catalog order", () => {
+    const order = providerOrder();
+    assert.deepEqual(canonicalFilter(order), [],
+        "a full selection in catalog order collapses, so a fresh install, the All row and " +
+        "checking the last provider back on all store the same value and a provider added to " +
+        "the catalog later appears without a migration");
+    assert.deepEqual(canonicalFilter([...order].reverse()), [...order].reverse(),
+        "a full selection in a DIFFERENT order is written out, or arranging every provider " +
+        "would silently snap back to the catalog's order");
+    assert.deepEqual(canonicalFilter([order[0], order[0]]), [order[0]], "written once");
+    assert.deepEqual(canonicalFilter(["gemini"]), [], "an unknown id contributes nothing");
+    assert.deepEqual(canonicalFilter(null), [], "and no list is the empty one");
+});
+
+test("providers move only within the selection, and moving inside 'all' writes the order out", () => {
+    const order = providerOrder();
+    const [first, second, third] = order;
+    assert.deepEqual(moveProvider([], second, -1), [second, first, third],
+        "moving inside 'all' writes the arrangement out, because [] carries no order to edit");
+    assert.deepEqual(moveProvider([], first, 1), [second, first, third], "and down is the same swap");
+    assert.deepEqual(moveProvider([], first, -1), [],
+        "the first provider cannot move up: the arrangement is unchanged, so it stays collapsed");
+    assert.deepEqual(moveProvider([], third, 1), [], "nor the last one down");
+    assert.deepEqual(moveProvider([third, first], "gemini", -1), [third, first],
+        "an unknown id moves nothing");
+    assert.deepEqual(moveProvider([third, first], second, -1), [third, first],
+        "and neither does a provider that is not selected: a position among slots it does not " +
+        "take is not a position");
+
+    assert.equal(canMoveProvider([], first, -1), false, "the head has nowhere up");
+    assert.equal(canMoveProvider([], first, 1), true);
+    assert.equal(canMoveProvider([], third, 1), false, "the tail has nowhere down");
+    assert.equal(canMoveProvider([third], first, -1), false,
+        "and an unselected provider can move neither way, so its arrows say so before they are used");
+    assert.equal(canMoveProvider([third], first, 1), false);
+});
+
+test("the bar icon mode resolves the stored value, or the switch it replaced", () => {
+    assert.deepEqual(iconModes(), ["none", "one", "provider"],
+        "the three modes are the catalog's, so neither settings surface writes its own list");
+    for (const mode of iconModes())
+        assert.equal(barIconMode(mode, undefined), mode, `${mode} is kept as stored`);
+    assert.equal(barIconMode(undefined, undefined), "provider",
+        "a fresh install marks every slot: that is what tells two numbers apart");
+    assert.equal(barIconMode(undefined, false), "none",
+        "a shell that switched the old barIcons off keeps a bar with no marks on it");
+    assert.equal(barIconMode(undefined, true), "provider", "and one that left it on keeps its marks");
+    assert.equal(barIconMode("", false), "none", "an empty stored mode is not a mode");
+    assert.equal(barIconMode("both", false), "none", "and neither is one this catalog does not offer");
+    assert.equal(providerOrder().map(providerIcon).indexOf(widgetIcon()), -1,
+        "the widget's own mark is no provider's: an icon standing in for several providers " +
+        "cannot be any one of them without lying about the rest");
+});
+
+test("toggling clears back to all rather than to an empty bar", () => {
+    const order = providerOrder();
+    const [first, second, third] = order;
+    // Unchecking from "all" leaves the rest.
+    assert.deepEqual(toggleFilter([], first), [second, third],
+        "unchecking one provider while all are selected leaves the others");
+    assert.deepEqual(toggleFilter([first], second), [first, second], "checking a second adds it");
+    assert.deepEqual(toggleFilter([first], first), [],
+        "unchecking the LAST provider means all, not nothing — an empty bar hides every row that " +
+        "could bring a provider back, so there would be no way out of it");
+    assert.deepEqual(toggleFilter([first, second], third), [],
+        "and checking the last missing provider is the same value 'all' is stored as");
+    assert.deepEqual(toggleFilter([first], "gemini"), [first],
+        "an unknown provider changes nothing");
+});
+
+test("the filter trigger names what is on the bar", () => {
+    const [first, second] = providerOrder();
+    assert.equal(filterLabel([]), "All providers", "the default says so in one phrase");
+    assert.equal(filterLabel([first]), providerName(first), "one provider is named");
+    assert.equal(filterLabel([second, first]), providerName(second) + ", " + providerName(first),
+        "and several are listed in the arranged order, matching the slots on the bar");
+});
+
+// ---- Payload identity -------------------------------------------------------
+
 test("payloadProvider reads the stamp and names nothing for an unstamped, unknown or non-payload value", () => {
     for (const [payload, expected, why] of [
         [{ ok: true, provider: "codex" }, "codex", "a stamped success names its provider"],
         [{ ok: false, provider: "claude" }, "claude", "a stamped failure names its provider"],
+        [{ ok: true, provider: "vercel" }, "vercel", "including a provider added later"],
         [{ ok: true }, "", "an unstamped payload names no provider — guessing one is what caused the mix-up"],
         [null, "", "no payload names no provider"],
         [{ provider: "gemini" }, "", "an unknown provider is not normalised into a known one"],
@@ -65,9 +275,11 @@ test("payloadProvider reads the stamp and names nothing for an unstamped, unknow
 test("payloadIsFor accepts only a payload stamped for the launched provider", () => {
     for (const [tag, payload, expected, why] of [
         ["codex", { ok: true, provider: "codex" }, true, "a matching payload is this fetch's answer"],
-        ["codex", { ok: true, provider: "claude" }, false, "the Claude payload of a still-running old process must not be filed under Codex"],
+        ["codex", { ok: true, provider: "claude" }, false,
+            "the Claude payload of a still-running old process must not be filed under Codex"],
         ["codex", { ok: true }, false, "an unstamped payload cannot be attributed, so it is not accepted"],
-        ["", { ok: true, provider: "claude" }, false, "no launch tag means no fetch is in flight; nothing may be accepted against it"],
+        ["", { ok: true, provider: "claude" }, false,
+            "no launch tag means no fetch is in flight; nothing may be accepted against it"],
         ["claude", null, false, "unparseable output is not a payload"],
         ["claude", { ok: false, provider: "claude", error: "no signed-in accounts found" }, true,
             "a stamped failure is a real answer for that provider, and must not cause endless retries"]
@@ -76,28 +288,25 @@ test("payloadIsFor accepts only a payload stamped for the launched provider", ()
     }
 });
 
-// Switching away and back can leave matching launch and selection names without an accepted result.
-// The relaunch rule must account for acceptance as well as provider names. Named channel fields keep
-// same-typed provider strings from silently exchanging positions.
 const MAX = 3;
 const fetchState = (over) => Object.assign(
     { inFlight: "claude", loaded: "", want: "claude", retries: 0, accepted: true }, over);
 
-test("shouldRelaunch replaces a fetch that left the selection unserved, within the retry budget", () => {
+test("shouldRelaunch replaces a fetch that left its provider unserved, within the retry budget", () => {
     for (const [state, budget, expected, why] of [
         [fetchState({ loaded: "" }), MAX, true,
-            "claude -> codex -> claude: nothing is loaded, so the fetch must be replaced even though the " +
-            "selection ended up back where it started"],
+            "a channel holding nothing for the provider it fetches must fetch again"],
         [fetchState({ loaded: "claude" }), MAX, false,
-            "the selected provider's data is on screen and this fetch delivered it; refetching would be a poll loop"],
+            "this channel's provider is on screen and this fetch delivered it; refetching would be a poll loop"],
         [fetchState({ loaded: "claude", accepted: false }), MAX, true,
             "a poll that produced no payload is retried even when the channel already holds that provider — " +
             "otherwise one empty or crashed poll drops the widget to its error state for a whole poll interval"],
-        [fetchState({ loaded: "claude", want: "codex" }), MAX, true, "the popout holds Claude while Codex is selected — the exact mix-up state"],
-        [fetchState({ inFlight: "", loaded: "", accepted: false }), MAX, false, "an exit with no launch tag started no process, so it replaces nothing"],
+        [fetchState({ inFlight: "", loaded: "", accepted: false }), MAX, false,
+            "an exit with no launch tag started no process, so it replaces nothing"],
         [fetchState({ loaded: "claude", accepted: false, retries: MAX }), MAX, false,
-            "a helper delivering nothing still gives up; only a satisfying payload or a switch restores the budget"],
-        [fetchState({ accepted: false, retries: MAX - 1 }), MAX, true, "the budget is spent only when it is actually exhausted"],
+            "a helper delivering nothing still gives up; only a satisfying payload restores the budget"],
+        [fetchState({ accepted: false, retries: MAX - 1 }), MAX, true,
+            "the budget is spent only when it is actually exhausted"],
         [fetchState({ accepted: false }), 0, false, "a zero budget relaunches nothing"],
         [null, MAX, false, "no channel, nothing to relaunch"]
     ]) {
@@ -127,22 +336,24 @@ test("decodePayload accepts only parseable output stamped for the launched provi
         ["codex", "", { data: null, issue: "parse error" }, "a fetch that printed nothing is not a payload"],
         ["codex", '{"ok":true,"provider":"claude"}', { data: null, issue: "provider mismatch" },
             "a payload naming another provider is not this fetch's answer, and says so"],
-        ["codex", '{"ok":false}', { data: null, issue: "provider mismatch" }, "an unstamped payload cannot be attributed either"]
+        ["codex", '{"ok":false}', { data: null, issue: "provider mismatch" },
+            "an unstamped payload cannot be attributed either"]
     ]) {
         assert.deepEqual(decodePayload(tag, text), expected, why);
     }
 });
 
-// An in-flight result can belong in its provider slot while the selected view still needs a fresh fetch.
 test("acceptOutcome files an identified payload in its slot and satisfies only the channel that wanted it", () => {
     for (const [got, want, expected, why] of [
         ["codex", "codex", { file: true, satisfies: true }, "a payload for what this channel wants is filed and satisfies it"],
-        ["claude", "codex", { file: true, satisfies: false }, "a late payload still updates ITS provider's pill slot but does not satisfy the channel that fetched it"],
+        ["claude", "codex", { file: true, satisfies: false },
+            "a payload naming another provider still updates ITS provider's slot but does not satisfy the channel that fetched it"],
         ["", "claude", { file: false, satisfies: false }, "an unidentifiable payload is filed nowhere and satisfies nothing"]
     ]) {
         assert.deepEqual(acceptOutcome(got, want), expected, why);
     }
 });
+
 // stdout completion and process exit can arrive in either order. Preserve the launch tag until
 // the payload is decoded so a valid late stream is not rejected as a mismatch.
 test("a payload for the launched provider is accepted in either stream-exit order, and a stuck stream settles on grace", () => {
@@ -171,7 +382,6 @@ test("a payload for the launched provider is accepted in either stream-exit orde
             settle();
         };
         const step = {
-
             stream: () => {
                 ch.outDone = true;
                 const got = decodePayload(ch.inFlight, txt === undefined ? MINE : txt);
@@ -222,371 +432,419 @@ test("a payload for the launched provider is accepted in either stream-exit orde
     }
 });
 
-const claudePayload = {
-    ok: true,
-    provider: "claude",
-    accounts: [{ id: "a", ok: true, session: { pct: 10 }, weekly: { pct: 40 } }]
-};
-const codexPayload = {
-    ok: true,
-    provider: "codex",
-    accounts: [{ id: "b", ok: true, session: { pct: 70 }, weekly: { pct: 90 } }]
-};
-const twoAccounts = {
-    ok: true,
-    provider: "claude",
-    accounts: [{ id: "a", ok: true, weekly: { pct: 40 } }, { id: "b", ok: true, weekly: { pct: 80 } }]
-};
+// ---- Cards ------------------------------------------------------------------
 
-test("headOf reads the tightest lane over the visible accounts, falling back to the aggregate only when none were reported", () => {
-    for (const [payload, mode, hidden, expected, why] of [
-        [claudePayload, "pool", [], { pct: 40 }, "the head is the account's tightest lane"],
-        [codexPayload, "pool", [], { pct: 90 }, "the head is the account's tightest lane"],
-        [{ ok: false, provider: "claude", weekly: { pct: 40 }, aggregate: { pct: 40 } }, "pool", [], null,
+test("account ids are qualified by provider, because two providers can both report 'default'", () => {
+    assert.notEqual(cardKey("claude", "default"), cardKey("codex", "default"),
+        "an unqualified id would hide one provider's account when the user hid the other's");
+    const claudeCard = providerCards("claude", payloadOf("claude", [acct("default")]))[0];
+    const codexCard = providerCards("codex", payloadOf("codex", [acct("default")]))[0];
+    assert.equal(isCardHidden(claudeCard, [claudeCard.key]), true, "a card is hidden by its own key");
+    assert.equal(isCardHidden(codexCard, [claudeCard.key]), false,
+        "and hiding one provider's account leaves the other provider's alone");
+});
+
+test("a hidden list written before providers were qualified still hides what it named", () => {
+    const card = providerCards("claude", payloadOf("claude", [acct("work")]))[0];
+    assert.equal(isCardHidden(card, ["work"]), true,
+        "an upgrade must not silently unhide accounts the user had already hidden");
+    assert.deepEqual(toggleHiddenCard(["work"], card), [],
+        "and unhiding one drops the legacy entry rather than leaving it to hide it again");
+    assert.deepEqual(toggleHiddenCard([], card), [card.key],
+        "a new entry is always written provider-qualified");
+    assert.deepEqual(toggleHiddenCard([card.key], card), [], "and toggles back off");
+    assert.deepEqual(toggleHiddenCard(["other:x"], card), ["other:x", card.key],
+        "without disturbing anyone else's");
+});
+
+test("every account is a card, including the one a payload describes at its top level", () => {
+    const flat = providerCards("claude", { ok: true, provider: "claude", plan: "Pro", session: { pct: 5 } });
+    assert.equal(flat.length, 1,
+        "a payload that reports no accounts still describes one, and it renders as a card like " +
+        "every other — a second layout for it is what made an account change shape when a " +
+        "sibling appeared");
+    assert.equal(flat[0].plan, "Pro", "whose plan is the payload's own");
+    assert.equal(flat[0].ok, true);
+    assert.equal(flat[0].provider, "claude", "and which is stamped with the provider it came from");
+
+    const listed = providerCards("codex", payloadOf("codex", [acct("a"), acct("b")]));
+    assert.equal(listed.length, 2, "a payload that reports accounts renders one card each");
+    assert.deepEqual(listed.map(c => c.providerIcon), [providerIcon("codex"), providerIcon("codex")],
+        "each carrying its provider's icon, so a card is legible out of its section");
+    assert.deepEqual(providerCards("claude", null), [], "and no payload describes no accounts");
+});
+
+test("a payload carrying only an aggregate still produces a card with a number on it", () => {
+    const cards = providerCards("vercel", { ok: true, provider: "vercel", aggregate: { pct: 77 } });
+    assert.equal(cards.length, 1);
+    assert.deepEqual(cards[0].models, [{ label: "Usage", pct: 77, reset: "", resetAt: 0 }],
+        "or the account would render as an empty card while the bar showed 77%");
+});
+
+test("cards are ordered, spend-billed accounts last, and allCards keeps hidden ones", () => {
+    const data = payloadOf("claude", [
+        acct("z", { label: "zoe@example.com" }),
+        acct("e", { label: "ent@example.com", plan: "Enterprise", spend: { pct: 4 } }),
+        acct("a", { label: "abe@example.com" })
+    ]);
+    const cards = providerCards("claude", data);
+    assert.deepEqual(cards.map(c => c.label),
+        ["abe@example.com", "zoe@example.com", "ent@example.com"],
+        "seats billed on a spend pool sort after the subscription seats, then alphabetically");
+
+    const state = { providerData: { claude: data }, filter: ["claude"], hidden: [cardKey("claude", "a")] };
+    assert.equal(allCards(state).length, 3,
+        "the visibility list keeps hidden accounts, or there would be no row to unhide one from");
+    assert.equal(deckView(state).sections[0].cards.length, 2, "while the deck drops them");
+});
+
+// ---- Headlines and slots ----------------------------------------------------
+
+const claudePayload = payloadOf("claude", [acct("a", { session: { pct: 10 }, weekly: { pct: 40 } })]);
+const codexPayload = payloadOf("codex", [acct("b", { session: { pct: 70 }, weekly: { pct: 90 } })]);
+const twoAccounts = payloadOf("claude", [acct("a", { weekly: { pct: 40 } }), acct("b", { weekly: { pct: 80 } })]);
+const hide = (provider, ...ids) => ids.map(id => cardKey(provider, id));
+
+test("headOf reads the tightest lane over the visible accounts of one provider", () => {
+    for (const [provider, payload, mode, hidden, expected, why] of [
+        ["claude", claudePayload, "pool", [], { pct: 40 }, "the head is the account's tightest lane"],
+        ["codex", codexPayload, "pool", [], { pct: 90 }, "the head is the account's tightest lane"],
+        ["claude", { ok: false, provider: "claude", weekly: { pct: 40 }, aggregate: { pct: 40 } }, "pool", [], null,
             "a failed payload has no head, whatever lanes it carries — a number on the pill beside the error mark"],
-        [null, "pool", [], null, "no payload has no head"],
-        [twoAccounts, "pool", [], { pct: 60 }, "the pool head averages the visible accounts"],
-        [twoAccounts, "pool", ["b"], { pct: 40 }, "a head counts only the accounts the user still shows"],
-        [twoAccounts, "worst", [], { pct: 80 }, "worst takes the highest"],
-        [twoAccounts, "best", [], { pct: 40 }, "best takes the lowest"],
-        [Object.assign({ aggregate: { pct: 77 } }, twoAccounts), "pool", ["a", "b"], null,
+        ["claude", null, "pool", [], null, "no payload has no head"],
+        ["claude", twoAccounts, "pool", [], { pct: 60 }, "the pool head averages the visible accounts"],
+        ["claude", twoAccounts, "pool", hide("claude", "b"), { pct: 40 },
+            "a head counts only the accounts the user still shows"],
+        ["claude", twoAccounts, "worst", [], { pct: 80 }, "worst takes the highest"],
+        ["claude", twoAccounts, "best", [], { pct: 40 }, "best takes the lowest"],
+        ["claude", Object.assign({ aggregate: { pct: 77 } }, twoAccounts), "pool", hide("claude", "a", "b"), null,
             "with every reported account hidden the pill must show its placeholder, not the payload's aggregate — " +
-            "that number is computed over exactly the accounts the user excluded, beside a popout header reading 0 accounts"],
-        [{ ok: true, provider: "claude", accounts: [], aggregate: { pct: 77 } }, "pool", [], { pct: 77 },
+            "that number is computed over exactly the accounts the user excluded"],
+        ["claude", { ok: true, provider: "claude", accounts: [], aggregate: { pct: 77 } }, "pool", [], { pct: 77 },
             "a payload that reported no accounts at all still falls back to its aggregate"],
-        [{ ok: true, provider: "claude", session: { pct: 12 }, weekly: { pct: 64 }, aggregate: { pct: 12 } }, "pool", [], { pct: 64 },
-            "the older single-account shape reads its tightest lane, not its 5h window — the same rule an account's headline follows"],
-        [{ ok: true, provider: "claude" }, "pool", [], null, "a payload with no accounts and no lanes has no number to show"],
-        [{ ok: true, provider: "claude", accounts: [], session: { pct: 0 } }, "pool", [], { pct: 0 }, "0% is a number, not a missing head"]
+        ["claude", { ok: true, provider: "claude", session: { pct: 12 }, weekly: { pct: 64 }, aggregate: { pct: 12 } },
+            "pool", [], { pct: 64 },
+            "the older single-account shape reads its tightest lane, not its 5h window"],
+        ["claude", { ok: true, provider: "claude" }, "pool", [], null, "a payload with no lanes has no number to show"],
+        ["claude", { ok: true, provider: "claude", accounts: [], session: { pct: 0 } }, "pool", [], { pct: 0 },
+            "0% is a number, not a missing head"]
     ]) {
-        assert.deepEqual(headOf(payload, mode, hidden), expected, why);
+        assert.deepEqual(headOf(provider, payload, mode, hidden), expected, why);
     }
 });
 
-// The bar and popout must derive headlines from the same visible-account decision.
 test("a slot with every account hidden renders the placeholder, not the error glyph", () => {
     const hiddenAll = Object.assign({ aggregate: { pct: 60 } }, twoAccounts);
-    assert.equal(headOf(hiddenAll, "pool", ["a", "b"]), null, "no headline when all are hidden");
-    const slot = pillSlot("claude", headOf(hiddenAll, "pool", ["a", "b"]), hiddenAll, [], "claude");
+    const hidden = hide("claude", "a", "b");
+    assert.equal(headOf("claude", hiddenAll, "pool", hidden), null, "no headline when all are hidden");
+    const slot = pillSlot("claude", headOf("claude", hiddenAll, "pool", hidden), hiddenAll, [], hidden);
     assert.equal(slot.error, false,
         "hiding every account is not a failure: nothing broke, there is nothing to show");
     assert.equal(slot.text, "—", "so the slot renders its placeholder, not the error glyph");
     assert.equal(slot.pct, null, "and carries no percentage for anything else to render");
 });
 
-// Top-level plan and status can describe a hidden account. Derive popout state from visible accounts.
-
-test("popoutView keeps the card path when filtering leaves one visible account of two", () => {
-    // A multi-account payload still uses cards when filtering leaves one visible account.
-    const data = {
-        ok: true, provider: "claude", plan: "Hidden Plan",
-        accounts: [acct("a", { plan: "Hidden Plan" }), acct("b", { plan: "Visible Plan" })]
-    };
-    const view = popoutView(data, ["a"]);
-    assert.equal(view.cards, true, "a payload that reported two accounts keeps the card path");
-    assert.equal(view.account, null, "so no single account speaks for the popout");
-    assert.equal(view.plan, "", "and no plan line is taken from the payload's hidden first account");
-    assert.equal(view.shownCount, 1);
-    assert.equal(view.hiddenCount, 1);
+test("a provider that needs a key it does not have has no bar slot at all", () => {
+    assert.equal(slotShown("vercel", null), false,
+        "before anything is known, a provider that must be configured says nothing on the bar — " +
+        "a permanent error mark for something never set up is not a fault report, it is noise");
+    assert.equal(slotShown("vercel", { ok: false, configured: false, provider: "vercel" }), false,
+        "and it stays quiet once the backend confirms there is no key");
+    assert.equal(slotShown("vercel", { ok: true, configured: true, provider: "vercel" }), true,
+        "a configured one takes its slot");
+    assert.equal(slotShown("vercel", { ok: false, provider: "vercel", error: "the key was refused" }), true,
+        "and a configured provider that FAILED keeps its slot, because that is a real fault");
+    assert.equal(slotShown("claude", null), true,
+        "a provider found from a local login is always on the bar; there is nothing to configure");
 });
 
-test("a hidden healthy account cannot make a failed visible account appear healthy", () => {
-    // A hidden healthy account cannot make a failed visible account appear healthy.
-    const data = {
-        ok: true, provider: "claude",
-        accounts: [acct("a"), acct("b", { ok: false, error: "session expired" })]
-    };
-    const view = popoutView(data, ["a"]);
-    assert.equal(view.cards, true, "two reported accounts still render their own cards");
-    const single = popoutView({ ok: true, provider: "claude", accounts: [acct("b", { ok: false, error: "session expired" })] }, []);
-    assert.equal(single.ok, false, "a single visible account that is unavailable is not 'ok'");
-    assert.equal(single.error, "session expired", "and says why, in its own words");
-    assert.equal(single.account.id, "b", "the account on screen is the one the popout speaks for");
+const slotState = (over) => Object.assign({
+    providerData: {}, filter: [], hidden: [], mode: "pool", fetching: []
+}, over);
+
+test("pillSlots gives every selected provider a fixed-order slot with its own icon", () => {
+    const slots = pillSlots(slotState({
+        providerData: { claude: claudePayload, codex: codexPayload,
+                        vercel: { ok: true, provider: "vercel", configured: true,
+                                  accounts: [acct("team", { weekly: null, spend: { pct: 12 } })] } }
+    }));
+    assert.deepEqual(slots.map(s => s.provider), providerOrder(), "slot order is the catalog's");
+    assert.deepEqual(slots.map(s => s.text), ["40%", "90%", "12%"]);
+    assert.deepEqual(slots.map(s => s.icon), providerOrder().map(providerIcon),
+        "each slot carries its own provider's icon, so position cannot be misread");
+    assert.deepEqual(slots.map(s => s.setup), [false, false, false]);
 });
 
-test("every reported account hidden is its own state, not a failure", () => {
-    const data = { ok: true, provider: "claude", accounts: [acct("a"), acct("b")] };
-    const view = popoutView(data, ["a", "b"]);
-    assert.equal(view.allHidden, true, "every reported account hidden is its own state");
-    assert.equal(view.ok, true, "hiding accounts is not a failure");
-    assert.equal(view.error, "", "so there is nothing to report");
-    assert.equal(view.totalCount, 2, "and the header can say how many are hidden");
-});
-
-test("no live visible account means no percentage headline", () => {
-    // If every visible account fails, the header must omit a percentage.
-    const data = {
-        ok: true, provider: "claude",
-        accounts: [acct("a", { ok: false, error: "x" }), acct("b", { ok: false, error: "y" })]
-    };
-    const view = popoutView(data, []);
-    assert.equal(view.liveCount, 0, "no live account is on screen");
-    assert.equal(headOf(data, "pool", []), null, "so there is no headline to print beside them");
-});
-
-test("accountCount uses singular grammar for one and plural otherwise", () => {
-    // Filtered account counts need singular grammar when one remains.
-    const data = { ok: true, provider: "claude", accounts: [acct("a"), acct("b"), acct("c")] };
-    const view = popoutView(data, ["b", "c"]);
-    assert.equal(view.cards, true, "the card path follows what the payload reported");
-    assert.equal(view.liveCount, 1, "with one account left on screen");
-    assert.equal(accountCount(view.liveCount), "1 account", "which the header says in the singular");
-    assert.equal(accountCount(view.hiddenCount), "2 accounts", "and two in the plural");
-    assert.equal(accountCount(0), "0 accounts", "zero is plural");
-    assert.equal(accountCount(popoutView(data, ["a", "b", "c"]).totalCount), "3 accounts",
-        "and the all-hidden line counts the same way, from the same helper");
-});
-
-test("a payload without an accounts array is the flat shape", () => {
-    // Without an accounts array, payload fields describe the account directly.
-    const view = popoutView({ ok: true, provider: "claude", plan: "Pro", session: { pct: 5 } }, []);
-    assert.equal(view.flat, true, "no accounts reported is the flat shape");
-    assert.equal(view.plan, "Pro", "whose plan is the payload's own");
-    assert.equal(view.ok, true);
-    assert.equal(view.cards, false);
-});
-
-test("no payload yet is nothing known, not a failure", () => {
-    assert.equal(popoutView(null, []).error, "",
-        "no payload yet is nothing known, not a failure with a cause");
-});
-
-test("an outstanding initial fetch is pending, not failed, and a payload on screen stays shown", () => {
-    // An outstanding initial fetch is a loading state, not an unavailable-provider error.
-    const fetching = popoutView(null, [], true);
-    assert.equal(fetching.pending, true, "no payload and a fetch running is pending, not failed");
-    assert.equal(fetching.error, "", "and has nothing to report");
-    assert.equal(fetching.ok, false, "there is still nothing to render");
-    assert.equal(popoutView(null, [], false).pending, false,
-        "no payload and no fetch running is not pending: whatever settled it owns the reason");
-    assert.equal(popoutView({ ok: true, provider: "claude", accounts: [acct("a")] }, [], true).pending,
-        false, "a payload already on screen is shown while the next fetch runs, not hidden");
-    assert.equal(popoutView({ ok: false, provider: "claude", error: "nope" }, [], true).pending,
-        false, "and a failed payload is a failure even while the retry runs");
-});
-test("a failed payload reports its own reason", () => {
-    assert.equal(popoutView({ ok: false, provider: "claude", error: "no signed-in accounts found" }, []).error,
-        "no signed-in accounts found", "a failed payload reports its own reason");
-});
-
-// Provider slots must stay fixed when a headline is missing; position identifies the provider.
-
-function slotsFor(state) {
-    return pillSlots(Object.assign({
-        selected: "claude",
-        claudeHead: null, claudeData: null,
-        codexHead: null, codexData: null,
-        fetching: []
-    }, state));
-}
-
-test("pillSlots gives both providers a fixed-order slot with their own icon and the selected mark", () => {
-    const slots = slotsFor({
-        claudeHead: { pct: 40 }, claudeData: claudePayload,
-        codexHead: { pct: 90 }, codexData: codexPayload
-    });
-    assert.equal(slots.length, 2, "both providers always get a slot");
-    assert.deepEqual(slots.map(s => s.provider), ["claude", "codex"], "slot order is fixed");
-    assert.deepEqual(slots.map(s => s.text), ["40%", "90%"]);
+test("the filter decides which providers get a slot, and the arrangement decides where", () => {
+    const data = { claude: claudePayload, codex: codexPayload };
+    const [first, second] = providerOrder();
     assert.deepEqual(
-        slots.map(s => s.icon),
-        [providerIcon("claude"), providerIcon("codex")],
-        "each slot carries its own provider's icon, so position cannot be misread"
-    );
-    assert.notEqual(providerIcon("claude"), providerIcon("codex"), "the two icons must be distinguishable");
-    assert.deepEqual(slots.map(s => s.selected), [true, false], "the selected provider is marked, not assumed");
+        pillSlots(slotState({ providerData: data, filter: [second] })).map(s => s.provider),
+        [second], "a filter of one provider puts one slot on the bar");
+    assert.deepEqual(
+        pillSlots(slotState({ providerData: data, filter: [second, first] })).map(s => s.provider),
+        [second, first], "and several sit where the arrangement put them");
+    assert.deepEqual(
+        pillSlots(slotState({ providerData: data, filter: [] })).map(s => s.provider),
+        [first, second], "while an unarranged filter is the catalog's order");
+    assert.deepEqual(
+        deckView(slotState({ providerData: data, filter: [second, first] })).sections.map(x => x.provider),
+        [second, first],
+        "and the popout's sections follow the SAME arrangement, or a slot and its section would " +
+        "disagree about where a provider sits");
 });
 
-test("a provider without a number keeps its slot and never shows the other provider's number", () => {
-
-    const slots = slotsFor({
-        claudeHead: { pct: 40 }, claudeData: claudePayload,
-        codexData: { ok: false, provider: "codex", error: "no signed-in accounts found" }
-    });
+test("a provider without a number keeps its slot and never shows another provider's number", () => {
+    const slots = pillSlots(slotState({
+        filter: ["claude", "codex"],
+        providerData: { claude: claudePayload,
+                        codex: { ok: false, provider: "codex", error: "no signed-in accounts found" } }
+    }));
     assert.equal(slots.length, 2, "a provider without a number keeps its slot");
     assert.equal(slots[0].text, "40%", "the surviving number stays in ITS provider's slot");
-    assert.equal(slots[0].pct, 40);
     assert.equal(slots[1].error, true, "a provider that answered unusably says so");
     assert.equal(slots[1].pct, null, "an error slot carries no percentage to colour");
     assert.notEqual(slots[1].text, "40%", "the other provider's number never appears in this slot");
 });
 
-test("a first fetch in flight reads as waiting in both slots", () => {
-    const slots = slotsFor({ fetching: ["claude", "codex"] });
-    assert.deepEqual(slots.map(s => s.text), ["…", "…"], "a first fetch in flight reads as waiting");
-    assert.deepEqual(slots.map(s => s.error), [false, false], "waiting is not an error");
+test("fetch state reads as waiting, and an in-flight refresh does not blank a known number", () => {
+    const waiting = pillSlots(slotState({ filter: ["claude", "codex"], fetching: ["claude", "codex"] }));
+    assert.deepEqual(waiting.map(s => s.text), ["…", "…"], "a first fetch in flight reads as waiting");
+    assert.deepEqual(waiting.map(s => s.error), [false, false], "waiting is not an error");
+
+    const partial = pillSlots(slotState({ filter: ["claude", "codex"], fetching: ["claude"] }));
+    assert.equal(partial[1].text, "—",
+        "a provider with no data and no fetch renders a placeholder, never an empty slot");
+
+    const refreshing = pillSlots(slotState({
+        filter: ["claude"], providerData: { claude: claudePayload }, fetching: ["claude"]
+    }));
+    assert.equal(refreshing[0].text, "40%", "an in-flight refresh does not blank a known number");
 });
 
-test("a provider with no data and no fetch renders a placeholder, never an empty slot", () => {
-    const slots = slotsFor({ fetching: ["claude"] });
-    assert.equal(slots[0].text, "…", "the provider being fetched is waiting");
-    assert.equal(
-        slots[1].text,
-        "—",
-        "a provider with no data and no fetch renders a placeholder, never an empty slot"
-    );
+test("a bar with nothing to show still offers the way to set a provider up", () => {
+    const slots = pillSlots(slotState({ filter: ["vercel"] }));
+    assert.equal(slots.length, 1,
+        "an empty pill draws nothing at all, and the popout that offers the key is opened by " +
+        "clicking the pill — so there has to be something to click");
+    assert.equal(slots[0].setup, true, "which says it is an invitation, not a reading");
+    assert.equal(slots[0].pct, null, "and carries no number");
+    assert.equal(slots[0].error, false, "nor a fault");
 });
 
-test("an in-flight refresh does not blank a known number", () => {
-    // Keep stale data visible during refetch to avoid a blank pill on each poll.
-    const slots = slotsFor({
-        claudeHead: { pct: 40 }, claudeData: claudePayload, fetching: ["claude"]
-    });
-    assert.equal(slots[0].text, "40%", "an in-flight refresh does not blank a known number");
+test("a slot reads from whichever end the bar counts from, and severity from consumption", () => {
+    for (const [pct, value, expected] of [
+        [40, "used", "40%"], [40, "left", "60%"],
+        [0, "used", "0%"], [0, "left", "100%"],
+        [100, "used", "100%"], [100, "left", "0%"],
+        [40, undefined, "40%"], [40, "junk", "40%"]
+    ]) {
+        const slot = pillSlot("claude", { pct: pct }, claudePayload, [], [], { value: value });
+        assert.equal(slot.text, expected,
+            `${pct}% as ${JSON.stringify(value)} reads ${expected}; anything but "left" counts used`);
+        assert.equal(slot.pct, pct,
+            "and `pct` stays CONSUMPTION whatever the reading says: severity is a property of how " +
+            "full a limit is, so turning the reading around must not turn a full limit green");
+    }
 });
 
-test("switching the selection does not reorder the slots", () => {
-    const slots = slotsFor({ selected: "codex" });
-    assert.deepEqual(
-        slots.map(s => s.provider),
-        ["claude", "codex"],
-        "switching the selection must not reorder the slots"
-    );
-    assert.deepEqual(slots.map(s => s.selected), [false, true]);
+test("the account footer says what is not a usage window, and zero resets is an answer", () => {
+    const card = providerCards("codex", payloadOf("codex", [
+        acct("a", { resets: 0, creditsBalance: "0" })]))[0];
+    assert.equal(accountFooter(card), "0 resets available",
+        "zero is the answer to 'can I reset this window', and leaving it out reads as the widget " +
+        "not knowing rather than as the account having none");
+    assert.equal(accountFooter(providerCards("codex", payloadOf("codex", [
+        acct("a", { resets: 1 })]))[0]), "1 reset available", "one is singular");
+    assert.equal(accountFooter(providerCards("codex", payloadOf("codex", [
+        acct("a", { resets: 3, creditsBalance: "12.50" })]))[0]),
+        "3 resets available · 12.50 credits", "and both figures share the one line");
+    assert.equal(accountFooter(providerCards("claude", payloadOf("claude", [acct("a")]))[0]), "",
+        "a provider that reports neither figure prints no line at all");
+    assert.equal(accountFooter(null), "", "and no card prints nothing");
 });
 
-test("normalizeProvider keeps a known provider and turns an unknown one into nothing", () => {
-    assert.equal(normalizeProvider("codex"), "codex");
-    assert.equal(normalizeProvider("gemini"), "", "an unknown provider normalises to nothing, never to a default");
+// ---- The deck ---------------------------------------------------------------
+
+const deckState = (over) => Object.assign({
+    providerData: {}, filter: [], hidden: [], mode: "pool", fetching: []
+}, over);
+
+test("the deck holds one section per selected provider, each with its own cards", () => {
+    const view = deckView(deckState({
+        filter: ["claude", "codex"],
+        providerData: { claude: twoAccounts, codex: codexPayload }
+    }));
+    assert.deepEqual(view.sections.map(s => s.provider), ["claude", "codex"]);
+    assert.deepEqual(view.sections.map(s => s.cards.length), [2, 1]);
+    assert.equal(view.grouped, true, "two providers on screen need their headers to tell them apart");
+    assert.equal(view.totalCount, 3);
+    assert.equal(view.liveCount, 3);
+    assert.equal(view.ok, true);
+    assert.equal(view.error, "");
+    assert.equal(view.headline, Math.round((40 + 80 + 90) / 3),
+        "the header's percentage averages every visible account across every selected provider");
+
+    const one = deckView(deckState({ filter: ["claude"], providerData: { claude: twoAccounts } }));
+    assert.equal(one.grouped, false, "one provider needs no section header; the title already names it");
 });
 
-// A channel failure must not overwrite a newer payload from another channel for the same provider.
+test("hidden accounts leave the deck and the headline together", () => {
+    const view = deckView(deckState({
+        filter: ["claude"], providerData: { claude: twoAccounts }, hidden: hide("claude", "b")
+    }));
+    assert.equal(view.shownCount, 1);
+    assert.equal(view.hiddenCount, 1);
+    assert.equal(view.headline, 40,
+        "the number on screen must be computed over exactly the accounts on screen");
+    assert.equal(accountCount(view.shownCount), "1 account", "which the header says in the singular");
+    assert.equal(accountCount(view.hiddenCount), "1 account");
+    assert.equal(accountCount(0), "0 accounts", "zero is plural");
+});
+
+test("every reported account hidden is its own state, not a failure", () => {
+    const view = deckView(deckState({
+        filter: ["claude"], providerData: { claude: twoAccounts }, hidden: hide("claude", "a", "b")
+    }));
+    assert.equal(view.allHidden, true, "every reported account hidden is its own state");
+    assert.equal(view.error, "", "so there is nothing to report");
+    assert.equal(view.totalCount, 2, "and the header can say how many are hidden");
+    assert.equal(view.headline, null, "with no percentage over accounts nobody can see");
+});
+
+test("no payload yet is pending, not failed, and one provider's answer does not end another's wait", () => {
+    const nothing = deckView(deckState({ filter: ["claude", "codex"] }));
+    assert.equal(nothing.pending, true, "nothing filed anywhere is a first load, not a fault");
+    assert.equal(nothing.error, "", "and has nothing to report");
+    assert.equal(nothing.ok, false, "there is still nothing to render");
+
+    const half = deckView(deckState({
+        filter: ["claude", "codex"], providerData: { claude: claudePayload }, fetching: ["codex"]
+    }));
+    assert.equal(half.pending, false, "a payload already on screen is shown while the rest arrive");
+    assert.equal(half.sections[0].pending, false, "the provider that answered is not waiting");
+    assert.equal(half.sections[1].pending, true, "and the one that has not still is");
+    assert.equal(half.ok, true, "with the answer that did land on screen");
+});
+
+test("a failed provider reports its own reason on its own section", () => {
+    const view = deckView(deckState({
+        filter: ["claude", "codex"],
+        providerData: { claude: claudePayload,
+                        codex: { ok: false, provider: "codex", error: "no signed-in accounts found" } }
+    }));
+    assert.equal(view.sections[0].error, "", "a provider that is fine reports nothing");
+    assert.equal(view.sections[1].error, "no signed-in accounts found",
+        "and the one that failed says why, beside its own name rather than over the whole widget");
+    assert.equal(view.ok, true, "one provider failing does not make the widget unusable");
+    assert.equal(view.error, "",
+        "and the header prints no combined cause while there are still accounts to look at");
+
+    const alone = deckView(deckState({
+        filter: ["codex"],
+        providerData: { codex: { ok: false, provider: "codex", error: "no signed-in accounts found" } }
+    }));
+    assert.equal(alone.ok, false, "with nothing else on screen it IS the state of the widget");
+    assert.ok(alone.error.includes("no signed-in accounts found"), "so the header carries the cause");
+    assert.ok(alone.error.includes(providerName("codex")), "attributed to the provider that gave it");
+});
+
+test("a provider waiting for a key is offered setup, never reported as broken", () => {
+    const unconfigured = { ok: false, configured: false, provider: "vercel",
+                           error: "No AI Gateway API key yet." };
+    const view = deckView(deckState({ filter: ["vercel"], providerData: { vercel: unconfigured } }));
+    assert.equal(view.sections[0].configured, false);
+    assert.deepEqual(view.sections[0].cards, [],
+        "the 'no key' answer is not an account, and rendering it as a broken card reports a fault " +
+        "for something the user simply has not set up");
+    assert.equal(view.sections[0].error, "", "which is why it is not an error either");
+    assert.equal(view.sections[0].setupHint, "No AI Gateway API key yet.",
+        "the backend's own sentence is what the setup prompt says");
+    assert.equal(view.needsSetup, true, "and the popout can offer the way in");
+    assert.equal(view.pending, false, "an answered provider is not still loading");
+
+    const mixed = deckView(deckState({
+        filter: ["claude", "vercel"],
+        providerData: { claude: claudePayload, vercel: unconfigured }
+    }));
+    assert.equal(mixed.needsSetup, false,
+        "one provider needing a key while another works is not a widget that needs setting up");
+    assert.equal(mixed.ok, true);
+});
+
+test("a hidden healthy account cannot make a failed visible account appear healthy", () => {
+    const data = payloadOf("claude", [
+        acct("healthy", { weekly: { pct: 20 } }),
+        acct("broken", { ok: false, error: "session expired" })
+    ]);
+    const hidden = hide("claude", "healthy");
+    const slot = pillSlot("claude", headOf("claude", data, "pool", hidden), data, [], hidden);
+    assert.equal(slot.error, true,
+        "every account the user can SEE has failed, so the provider answered and the answer is " +
+        "not usable — the error mark, not the placeholder");
+    assert.equal(slot.text, "!");
+
+    const view = deckView(deckState({ filter: ["claude"], providerData: { claude: data }, hidden: hidden }));
+    assert.equal(view.headline, null, "no headline to print beside the counts");
+    assert.equal(view.liveCount, 0, "no live account on screen");
+    assert.equal(view.shownCount - view.liveCount, 1, "the visible one is counted unavailable");
+    assert.equal(view.hiddenCount, 1, "and the hidden one is counted hidden");
+    assert.equal(view.sections[0].cards[0].error, "session expired",
+        "with its own words on its own card");
+});
+
+// ---- Result ordering --------------------------------------------------------
 
 test("a channel failure does not overwrite a newer payload from another channel for the same provider", () => {
-    // Use filing stamps as ordering evidence, matching the widget's storeHeadline and launch operations.
     const store = { data: {}, filedAt: {}, seq: 0 };
     const file = (provider, payload) => {
         store.seq += 1;
         store.data[provider] = payload;
         store.filedAt[provider] = store.seq;
     };
-    const launch = () => store.seq;
     const failTo = (provider, launchSeq) => {
         if (failureWins(store.data[provider], store.filedAt[provider], launchSeq))
             file(provider, { ok: false, provider: provider, error: "usage unavailable" });
     };
     const slotFor = provider => pillSlot(
-        provider, headOf(store.data[provider], "pool", []), store.data[provider], [], provider);
+        provider, headOf(provider, store.data[provider], "pool", []), store.data[provider], [], []);
 
-    const good = { ok: true, provider: "claude", accounts: [acct("a", { weekly: { pct: 42 } })] };
-
-    const bLaunch = launch();
+    const good = payloadOf("claude", [acct("a", { weekly: { pct: 42 } })]);
+    const launchSeq = store.seq;
     file("claude", good);
-    failTo("claude", bLaunch);
+    failTo("claude", launchSeq);
 
     assert.equal(store.data.claude, good,
-        "the good payload the other channel just filed must survive a different channel's " +
-        "failure for the same provider");
+        "the good payload the retry just filed must survive the preceding attempt's failure");
     assert.equal(slotFor("claude").text, "42%",
         "so the pill still shows its number rather than the unavailable mark");
     assert.equal(slotFor("claude").error, false, "and reports no error for a provider that is fine");
 });
 
-test("the popout error path applies the same ordering check as the pill", () => {
-    // The popout error path needs the same ordering check as the pill or it can label fresh numbers as failed.
-    const store = { data: {}, filedAt: {}, seq: 0 };
-    const popout = { current: null, fetchError: "", loading: true };
-    const file = (provider, payload) => {
-        store.seq += 1;
-        store.data[provider] = payload;
-        store.filedAt[provider] = store.seq;
-    };
-
-    const giveUp = (want, launchSeq, why) => {
-        const authoritative = failureWins(store.data[want], store.filedAt[want], launchSeq);
-        if (authoritative)
-            file(want, { ok: false, provider: want, error: why });
-        popout.loading = false;
-        if (authoritative)
-            popout.fetchError = why;
-    };
-    const ok = () => popout.fetchError === "" && !!popout.current && popout.current.ok === true;
-
-    const good = { ok: true, provider: "claude", accounts: [acct("a", { weekly: { pct: 42 } })] };
-    const launchSeq = store.seq;
-    file("claude", good);
-    popout.current = good;
-    giveUp("claude", launchSeq, "usage unavailable");
-
-    assert.equal(popout.fetchError, "",
-        "an unauthoritative failure must not claim an error for the selected provider — " +
-        "fetchError outranks the payload in both derived properties");
-    assert.equal(ok(), true, "so the popout still reports the numbers that landed");
-    assert.equal(store.data.claude, good, "and the headline it declined to clobber is intact");
-    assert.equal(popout.loading, false, "loading still ends: this fetch settled");
-});
-
 test("without a newer filing, an exhausted fetch replaces the preceding payload with its failure", () => {
-    // Without a newer filing, an exhausted fetch must replace the preceding payload with its failure.
     const store = { data: {}, filedAt: {}, seq: 0 };
     const file = (provider, payload) => {
         store.seq += 1;
         store.data[provider] = payload;
         store.filedAt[provider] = store.seq;
     };
-    const stale = { ok: true, provider: "codex", accounts: [acct("b", { weekly: { pct: 7 } })] };
+    const stale = payloadOf("codex", [acct("b", { weekly: { pct: 7 } })]);
     file("codex", stale);
     const launchSeq = store.seq;
     assert.equal(failureWins(store.data.codex, store.filedAt.codex, launchSeq), true,
         "a payload that predates this fetch is exactly what its failure replaces");
-
-    const popout = { fetchError: "" };
-    if (failureWins(store.data.codex, store.filedAt.codex, launchSeq))
-        popout.fetchError = "helper exited 7";
-    assert.equal(popout.fetchError, "helper exited 7",
-        "an authoritative failure still reaches the popout, or the widget sits on numbers no " +
-        "fetch stands behind");
     assert.equal(failureWins(undefined, undefined, 0), true, "nothing filed, nothing to protect");
     assert.equal(failureWins({ ok: false, provider: "codex" }, 9, 0), true,
         "and one failure may always replace another");
+
+    file("codex", { ok: false, provider: "codex", error: "helper exited 7" });
+    const view = deckView(deckState({ filter: ["codex"], providerData: store.data }));
+    assert.ok(view.error.includes("helper exited 7"),
+        "an authoritative failure still reaches the popout, or the widget sits on numbers no " +
+        "fetch stands behind");
 });
 
-// After a provider switch, either channel can file the selected provider's payload.
-// Promotion must not depend on which channel fetched it.
-
-test("a payload filed for the selected provider promotes whichever channel fetched it", () => {
-    const store = { data: {}, filedAt: {}, seq: 0 };
-    const popout = { current: null, currentFiledAt: 0, fetchError: "", loading: true };
-    const file = (provider, payload) => {
-        store.seq += 1;
-        store.data[provider] = payload;
-        store.filedAt[provider] = store.seq;
-    };
-
-    const promote = selected => {
-        if (!newerSuccess(store.data[selected], store.filedAt[selected], popout.currentFiledAt))
-            return;
-        popout.current = store.data[selected];
-        popout.currentFiledAt = store.filedAt[selected];
-        popout.fetchError = "";
-        popout.loading = false;
-    };
-    const giveUp = (want, launchSeq, why) => {
-        if (!failureWins(store.data[want], store.filedAt[want], launchSeq))
-            return;
-        file(want, { ok: false, provider: want, error: why });
-        popout.fetchError = why;
-    };
-
-    const selected = "codex";
-    const launchSeq = store.seq;
-    const good = { ok: true, provider: "codex", accounts: [acct("c", { weekly: { pct: 31 } })] };
-
-    file(selected, good);
-    promote(selected);
-    giveUp(selected, launchSeq, "usage unavailable");
-
-    assert.equal(popout.current, good,
-        "a payload filed for the selected provider must reach the popout whichever channel " +
-        "fetched it — gating on the primary left it empty while the pill had the numbers");
-    assert.equal(popout.fetchError, "",
-        "and the primary's unauthoritative failure still reports nothing");
-    assert.equal(popout.loading, false, "the popout is no longer waiting");
-    assert.equal(store.data[selected], good, "the headline was not clobbered either");
-});
-
-// An older stored payload must not replace the current popout view.
-test("newerSuccess promotes only a success filed after the one on screen", () => {
+test("newerSuccess and newerAccepted order results the same way, and only one accepts a failure", () => {
     const shown = { ok: true, provider: "claude" };
     for (const [payload, filedAt, currentAt, expected, why] of [
         [shown, 4, 4, false, "same stamp is not newer"],
@@ -597,97 +855,30 @@ test("newerSuccess promotes only a success filed after the one on screen", () =>
     ]) {
         assert.equal(newerSuccess(payload, filedAt, currentAt), expected, why);
     }
+    assert.equal(newerAccepted({ ok: false, provider: "claude", error: "no accounts" }, 5, 4), true,
+        "an ok:false payload is still an answer, and the popout has a path that renders it");
+    assert.equal(newerAccepted({ ok: false, provider: "claude" }, 3, 4), false,
+        "the ordering rule is unchanged: an older failure does not displace a newer payload");
+    assert.equal(newerAccepted(null, 9, 0), false, "nothing filed promotes nothing");
 });
 
-// Per-provider data survives selection changes. Preserve the switch stamp as a barrier
-// so pre-switch data cannot replace the loading state.
+test("the poll floor counts every account a refresh visits, not the selected ones", () => {
+    const [first, second, third] = providerOrder();
+    const data = {};
+    data[first] = { ok: true, provider: first, accounts: [{ id: "a" }, { id: "b" }] };
+    data[second] = { ok: true, provider: second, accounts: [{ id: "c" }] };
+    data[third] = { ok: false, provider: third, error: "no key" };
 
-test("a payload filed before a provider switch does not promote past the switch barrier", () => {
-    const store = { data: {}, filedAt: {}, seq: 0 };
-    const file = (provider, payload) => {
-        store.seq += 1;
-        store.data[provider] = payload;
-        store.filedAt[provider] = store.seq;
-    };
-    const popout = { current: null, currentFiledAt: 0, loading: true };
-    const promote = selected => {
-        if (!newerAccepted(store.data[selected], store.filedAt[selected], popout.currentFiledAt))
-            return;
-        popout.current = store.data[selected];
-        popout.currentFiledAt = store.filedAt[selected];
-        popout.loading = false;
-    };
+    assert.equal(polledAccountCount(data), 3,
+        "the widget builds a fetch channel per CATALOG provider and refresh() launches all of " +
+        "them, so the interval has to cover every account they will visit — scaling by the " +
+        "selected subset spent the whole catalog's work against a fraction of its budget");
+    assert.equal(polledAccountCount({}), 0, "nothing filed yet is no accounts");
+    assert.equal(polledAccountCount(null), 0, "and no payload map is not a throw");
 
-    const switchTo = () => {
-        popout.current = null;
-        popout.currentFiledAt = store.seq;
-        popout.loading = true;
-    };
-
-    const beforeSwitch = { ok: true, provider: "codex", accounts: [acct("c", { weekly: { pct: 9 } })] };
-    file("codex", beforeSwitch);
-    switchTo();
-    promote("codex");
-
-    assert.equal(popout.current, null,
-        "a payload filed BEFORE the switch must not promote: that is the stale-data-after-switch " +
-        "symptom this issue exists to fix");
-    assert.equal(popout.loading, true, "and the popout keeps looking like it is loading");
-
-    const afterSwitch = { ok: true, provider: "codex", accounts: [acct("c", { weekly: { pct: 55 } })] };
-    file("codex", afterSwitch);
-    promote("codex");
-    assert.equal(popout.current, afterSwitch, "a payload filed after the switch does promote");
-    assert.equal(popout.loading, false, "and the popout stops waiting");
-});
-
-// An ok:false payload still answers the fetch and must reach the view.
-
-// An ok:false payload still answers the fetch and must reach the view.
-test("newerAccepted promotes any newer answer, failures included, and never an older or missing one", () => {
-    for (const [payload, filedAt, currentAt, expected, why] of [
-        [{ ok: false, provider: "claude", error: "no signed-in accounts found" }, 5, 4, true,
-            "an ok:false payload is stored: it is an answer, and the popout has an error path"],
-        [{ ok: false, provider: "claude" }, 3, 4, false, "the ordering rule is unchanged: an older failure does not displace a newer payload"],
-        [null, 9, 0, false, "nothing filed promotes nothing"]
-    ]) {
-        assert.equal(newerAccepted(payload, filedAt, currentAt), expected, why);
-    }
-    assert.equal(newerSuccess({ ok: false, provider: "claude" }, 5, 4), false,
-        "but a failure is not a SUCCESS, so it still cannot block a failure write");
-});
-
-// Top-level success can come from a hidden account. Judge health from visible accounts.
-
-test("health is judged from visible accounts on the pill and the popout alike", () => {
-    const data = {
-        ok: true,
-        provider: "claude",
-        accounts: [
-            acct("healthy", { weekly: { pct: 20 } }),
-            acct("broken", { ok: false, error: "session expired" })
-        ]
-    };
-    const hidden = ["healthy"];
-    const slot = pillSlot("claude", headOf(data, "pool", hidden), data, [], "claude", hidden);
-    assert.equal(slot.error, true,
-        "every account the user can SEE has failed, so the provider answered and the answer is " +
-        "not usable — the error mark, not the placeholder");
-    assert.equal(slot.text, "!");
-
-    const allHidden = pillSlot("claude", headOf(data, "pool", ["healthy", "broken"]), data, [],
-        "claude", ["healthy", "broken"]);
-    assert.equal(allHidden.error, false, "hiding everything is not a failure");
-    assert.equal(allHidden.text, "—", "it is nothing to show");
-    const visible = pillSlot("claude", headOf(data, "pool", []), data, [], "claude", []);
-    assert.equal(visible.text, "20%", "and a visible healthy account is still a number");
-
-    // The popout must agree with the pill when all visible accounts fail: no percentage headline,
-    // an unavailable account count, and each visible account's error.
-    const view = popoutView(data, hidden, false);
-    assert.equal(headOf(data, "pool", hidden), null, "no headline to print beside the counts");
-    assert.equal(view.liveCount, 0, "no live account on screen");
-    assert.equal(view.shownCount - view.liveCount, 1, "the visible one is counted unavailable");
-    assert.equal(view.hiddenCount, 1, "and the hidden one is counted hidden");
-    assert.equal(view.cards, true, "the card path renders, so its own error text is on screen");
+    const stray = Object.assign({}, data);
+    stray.gemini = { ok: true, provider: "gemini", accounts: [{ id: "x" }, { id: "y" }] };
+    assert.equal(polledAccountCount(stray), 3,
+        "a payload filed under an id the catalog does not name is visited by no channel, so it " +
+        "does not lengthen the interval either");
 });

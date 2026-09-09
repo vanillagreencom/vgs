@@ -13,14 +13,14 @@ PluginSettings {
         width: parent.width
         text: I18n.tr("Passwordless Sudo Settings", "Plugin settings page title")
         font.pixelSize: Theme.fontSizeLarge
-        font.weight: Font.Bold
+        font.weight: Theme.fontWeightSectionHeader
         color: Theme.surfaceText
     }
 
     StyledText {
         width: parent.width
         text: I18n.tr("Granting passwordless sudo installs a permanent NOPASSWD rule for your user, with no expiry. Revoking is never confirmed — it only ever removes privilege.", "Plugin settings description")
-        font.pixelSize: Theme.fontSizeSmall
+        font.pixelSize: Theme.settingsFontSize
         color: Theme.surfaceVariantText
         wrapMode: Text.WordWrap
     }
@@ -45,6 +45,7 @@ PluginSettings {
             VgsToggle {
                 width: parent.width
                 horizontalPadding: 0
+                rowHoverHighlight: false
                 text: I18n.tr("Confirm before granting", "Setting: show the sudo grant confirmation modal")
                 description: I18n.tr("Ask for confirmation in a dialog before installing the passwordless sudo rule", "Setting description")
                 checked: !SettingsData.sudoToggleSkipGrantConfirm

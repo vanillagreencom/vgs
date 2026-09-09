@@ -13,14 +13,14 @@ PluginSettings {
         width: parent.width
         text: "Tailscale Settings"
         font.pixelSize: Theme.fontSizeLarge
-        font.weight: Font.Bold
+        font.weight: Theme.fontWeightSectionHeader
         color: Theme.surfaceText
     }
 
     StyledText {
         width: parent.width
         text: "Show Tailscale mesh-VPN state in the bar. Click the pill to connect/disconnect, pick an exit node, and browse tailnet devices."
-        font.pixelSize: Theme.fontSizeSmall
+        font.pixelSize: Theme.settingsFontSize
         color: Theme.surfaceVariantText
         wrapMode: Text.WordWrap
     }
@@ -77,7 +77,7 @@ PluginSettings {
                 StyledText {
                     text: "Requirements"
                     font.pixelSize: Theme.fontSizeMedium
-                    font.weight: Font.Medium
+                    font.weight: Theme.fontWeightSectionHeader
                     color: Theme.surfaceText
                     anchors.verticalCenter: parent.verticalCenter
                 }
@@ -86,7 +86,7 @@ PluginSettings {
             StyledText {
                 width: parent.width
                 text: "Needs the `tailscale` CLI with tailscaled running. Read-only status works as your user. Connect/disconnect, exit-node and route toggles require the Tailscale operator to be your user — run once:\n\n    sudo tailscale set --operator=$USER\n\nConnecting while logged out opens the Tailscale login page in your browser."
-                font.pixelSize: Theme.fontSizeSmall
+                font.pixelSize: Theme.settingsFontSize
                 color: Theme.surfaceVariantText
                 wrapMode: Text.WordWrap
                 lineHeight: 1.4

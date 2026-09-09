@@ -1232,6 +1232,17 @@ if [[ "$EMIT_JSON" == "true" ]]; then
         ]' <<< "$usage" 2>/dev/null)
     [[ -n "$_cx_models" ]] || _cx_models="[]"
     _cx_email=$(jq -r '.email // empty' <<< "$usage" 2>/dev/null)
+    # Two figures the widget shows per account that no format placeholder can
+    # carry: how many usage-limit resets this account may still spend, and what
+    # its credit balance is. Both are per account, which is why they travel with
+    # the account payload rather than with the bar text.
+    # `//` treats false as absent, so booleans are read by type, not by default.
+    _cx_extra=$(jq -c '
+        {resets: ((.rate_limit_reset_credits.available_count | numbers) // null),
+         creditsBalance: (if (.credits.balance | type) == "string" then .credits.balance
+                          elif (.credits.balance | type) == "number" then (.credits.balance | tostring)
+                          else null end)}' <<< "$usage" 2>/dev/null)
+    [[ -n "$_cx_extra" ]] || _cx_extra="{}"
     if [[ "$has_session" != "true" && "$has_weekly" != "true" && "$_cx_models" == "[]" ]]; then
         jq -nc --arg config_dir "$CONFIG_DIR" \
             '{ok:false, error:"no usage quota reported for this account", configDir:$config_dir}'
@@ -1244,7 +1255,9 @@ if [[ "$EMIT_JSON" == "true" ]]; then
         --argjson has_weekly "$has_weekly" --argjson weekly_pct "$weekly_pct" --arg weekly_reset "$w_cd_val" \
         --argjson session_reset_at "$s_epoch" --argjson weekly_reset_at "$w_epoch" \
         --argjson models "$_cx_models" \
+        --argjson extra "$_cx_extra" \
         '{ok:true, plan:$plan, class:$class, email:$email, configDir:$config_dir,
+          resets: $extra.resets, creditsBalance: $extra.creditsBalance,
           session: (if $has_session then {pct:$session_pct, reset:$session_reset, resetAt:$session_reset_at} else null end),
           weekly:  (if $has_weekly  then {pct:$weekly_pct,  reset:$weekly_reset,  resetAt:$weekly_reset_at}  else null end),
           models: $models}'

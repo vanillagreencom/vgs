@@ -6,23 +6,242 @@ import QtQuick
 QtObject {
     // BEGIN PROVIDER DECISION
 
-    // Provider order drives pill slots and tabs. Adding a provider also requires
-    // a fetch channel and changes to otherProvider and the pairwise decisions.
+    // Provider order drives pill slots, filter rows and the card deck. Adding a
+    // provider means adding it here, giving it a name and an icon, saying
+    // whether it needs a credential, and teaching the backend to answer for it.
+    // Nothing else in the widget names a provider.
     function providerOrder() {
-        return ["claude", "codex"];
+        return ["claude", "codex", "vercel"];
     }
 
     function normalizeProvider(p) {
-        return p === "codex" ? "codex" : (p === "claude" ? "claude" : "");
+        return providerOrder().indexOf(p) !== -1 ? p : "";
     }
 
     function providerIcon(p) {
-        return normalizeProvider(p) === "codex" ? "terminal" : "smart_toy";
+        switch (normalizeProvider(p)) {
+        case "codex":
+            return "terminal";
+        case "vercel":
+            return "change_history";
+        case "claude":
+            return "smart_toy";
+        default:
+            // Reached only for an id normalizeProvider rejected. Returning
+            // Claude's glyph here labelled an UNKNOWN provider as Claude, and
+            // hid a provider that had lost its own arm behind a default that
+            // happened to look right.
+            return "help";
+        }
     }
 
+    // The short name: a bar slot, a section header and a filter row all have
+    // room for one word, and that word is the vendor.
     function providerName(p) {
-        return normalizeProvider(p) === "codex" ? "Codex" : "Claude";
+        switch (normalizeProvider(p)) {
+        case "codex":
+            return "Codex";
+        case "vercel":
+            return "Vercel";
+        case "claude":
+            return "Claude";
+        default:
+            return "Unknown";
+        }
     }
+
+    // The full product name, for the surfaces with room for it: a setup page
+    // header, and prose. Same name where the vendor ships one product.
+    function providerFullName(p) {
+        switch (normalizeProvider(p)) {
+        case "vercel":
+            return "Vercel AI Gateway";
+        default:
+            return providerName(p);
+        }
+    }
+
+    // The provider's own mark, as a file beside this one, or "" for a provider
+    // whose mark VGS does not ship. Codex is OpenAI's mark, not its own.
+    function providerAsset(p) {
+        switch (normalizeProvider(p)) {
+        case "codex":
+            return "openai.svg";
+        case "vercel":
+            return "vercel.svg";
+        case "claude":
+            return "claude.svg";
+        default:
+            return "";
+        }
+    }
+
+    // Whether accounts for this provider can be discovered from a local login.
+    // A provider that cannot needs a key before it has anything to report, so
+    // it stays off the bar until one is stored rather than showing a permanent
+    // fault the user never asked for.
+    function providerNeedsCredential(p) {
+        return normalizeProvider(p) === "vercel";
+    }
+
+    // Where a user gets the credential this provider wants. Shown on the setup
+    // page beside the field, so the answer is where the question is asked.
+    function providerCredentialHint(p) {
+        switch (normalizeProvider(p)) {
+        case "vercel":
+            return "From the Vercel dashboard: AI Gateway \u2192 API keys.";
+        case "codex":
+            return "Sign in with 'codex login', or add a directory a CODEX_HOME wrapper points at.";
+        case "claude":
+            return "Sign in with the 'claude' CLI, or add a directory a CLAUDE_CONFIG_DIR wrapper points at.";
+        default:
+            return "";
+        }
+    }
+
+    // ---- Bar icons -----------------------------------------------------------
+    // What the bar draws in front of its numbers. "provider" marks every slot,
+    // which is what tells two numbers apart; "one" marks the WIDGET once, for a
+    // bar that is already crowded and where the popout can say which is which;
+    // "none" is numbers alone.
+    function iconModes() {
+        return ["none", "one", "provider"];
+    }
+
+    // The stored mode, or what the switch this replaced was left on. `legacy` is
+    // the old boolean barIcons: only a stored false was ever an instruction, so
+    // it becomes "none" and everything else takes the per-slot default.
+    function barIconMode(stored, legacy) {
+        const want = String(stored === undefined || stored === null ? "" : stored);
+        if (iconModes().indexOf(want) !== -1)
+            return want;
+        return legacy === false ? "none" : "provider";
+    }
+
+    // The mark for the whole widget, used by the "one" mode. It is the plugin's
+    // own glyph — the same one plugin.json declares — and never a provider's:
+    // an icon standing in for several providers cannot be any one of them
+    // without lying about the rest.
+    function widgetIcon() {
+        return "data_usage";
+    }
+
+    // ---- Provider filter -----------------------------------------------------
+    // The filter is a list of provider ids. Empty means every provider, so a
+    // fresh install and "All" are the same stored value and neither has to be
+    // migrated when a provider is added.
+
+    function selectedProviders(filter) {
+        const order = providerOrder();
+        const want = [];
+        const raw = filter || [];
+        for (let i = 0; i < raw.length; i++) {
+            const p = normalizeProvider(raw[i]);
+            if (p !== "" && want.indexOf(p) === -1)
+                want.push(p);
+        }
+        if (want.length === 0)
+            return order.slice();
+        // Return in the order STORED, which is the order the user arranged. An
+        // empty filter is the catalog's own order, so a shell that never opened
+        // the list still gets a fixed arrangement rather than click order.
+        return want;
+    }
+
+    // Every provider, in the order the surfaces walk them: the selected ones
+    // first, as arranged, then the rest in catalog order. The filter list
+    // renders this, so an unselected provider keeps a stable place to be found
+    // in rather than jumping position as its neighbours are turned on and off.
+    function filterOrder(filter) {
+        const picked = selectedProviders(filter);
+        return picked.concat(providerOrder().filter(p => picked.indexOf(p) === -1));
+    }
+
+    // The one spelling of "every provider, catalog order". A fresh install, the
+    // All row, and unchecking the last remaining provider all store [], so a
+    // provider added to the catalog later appears without a migration. A full
+    // selection in a DIFFERENT order is written out instead, or arranging every
+    // provider would silently snap back to the catalog's order.
+    function canonicalFilter(list) {
+        const order = providerOrder();
+        const next = [];
+        const raw = list || [];
+        for (let i = 0; i < raw.length; i++) {
+            const q = normalizeProvider(raw[i]);
+            if (q !== "" && next.indexOf(q) === -1)
+                next.push(q);
+        }
+        if (next.length !== order.length)
+            return next;
+        for (let j = 0; j < order.length; j++) {
+            if (next[j] !== order[j])
+                return next;
+        }
+        return [];
+    }
+
+    function filterIsAll(filter) {
+        return selectedProviders(filter).length === providerOrder().length;
+    }
+
+    function filterHas(filter, p) {
+        return selectedProviders(filter).indexOf(normalizeProvider(p)) !== -1;
+    }
+
+    // Toggle one provider. A provider turned on joins the END of the arrangement
+    // rather than at its catalog index, because the stored list is an order the
+    // user built and inserting into the middle of it moves slots they placed.
+    // Unchecking the LAST one lands on the empty value, which is why an empty
+    // selection means all: an empty bar would hide every row that could bring a
+    // provider back.
+    function toggleFilter(filter, p) {
+        const which = normalizeProvider(p);
+        const current = selectedProviders(filter);
+        if (which === "")
+            return canonicalFilter(current);
+        const next = current.indexOf(which) === -1
+            ? current.concat([which])
+            : current.filter(q => q !== which);
+        return canonicalFilter(next);
+    }
+
+    // Move one selected provider by `delta` places. Only selected providers can
+    // move: the unselected tail of the list is not on the bar, so a position in
+    // it means nothing. Arranging inside "all" writes the order out, because []
+    // carries no order to edit.
+    function moveProvider(filter, p, delta) {
+        const which = normalizeProvider(p);
+        const list = selectedProviders(filter).slice();
+        const at = list.indexOf(which);
+        const to = at + (delta || 0);
+        if (at === -1 || to < 0 || to >= list.length)
+            return canonicalFilter(list);
+        list.splice(at, 1);
+        list.splice(to, 0, which);
+        return canonicalFilter(list);
+    }
+
+    // Whether a provider has anywhere to move, so a button that would do
+    // nothing is not offered. Both are false for an unselected provider.
+    function canMoveProvider(filter, p, delta) {
+        const list = selectedProviders(filter);
+        const at = list.indexOf(normalizeProvider(p));
+        const to = at + (delta || 0);
+        return at !== -1 && to >= 0 && to < list.length;
+    }
+
+    // A label for the filter trigger: what is on the bar, in as few words as fit.
+    function filterLabel(filter) {
+        if (filterIsAll(filter))
+            return "All providers";
+        const picked = selectedProviders(filter);
+        const names = [];
+        for (let i = 0; i < picked.length; i++)
+            names.push(providerName(picked[i]));
+        return names.join(", ");
+    }
+
+    // ---- Payload identity ----------------------------------------------------
 
     // Read identity from the payload. A launch tag cannot establish its provider.
     function payloadProvider(data) {
@@ -32,14 +251,15 @@ QtObject {
     }
 
     // Accept only payloads whose identity matches the launched provider.
-    // The channel selection can change while its process still runs.
+    // A channel fetches one provider for its whole life, but a payload that
+    // names another one is still someone else's answer and is never filed here.
     function payloadIsFor(launchedFor, data) {
         const want = normalizeProvider(launchedFor);
         return want !== "" && payloadProvider(data) === want;
     }
 
     // Retry when the channel lacks its requested provider or received no payload.
-    // Only a satisfying payload or a provider switch restores the retry budget.
+    // Only a satisfying payload restores the retry budget.
     // Read channel fields by name to avoid swapping same-typed arguments.
     function shouldRelaunch(fetch, maxRetries) {
         const f = fetch || {};
@@ -58,7 +278,7 @@ QtObject {
             return "";
         const last = lines[lines.length - 1];
         const max = limit || 200;
-        return last.length > max ? last.slice(0, max - 1) + "\u2026" : last;
+        return last.length > max ? last.slice(0, max - 1) + "…" : last;
     }
 
     // What a fetch produced: the payload, or why there is none. The reason travels
@@ -77,9 +297,7 @@ QtObject {
     }
 
     // What an accepted payload means for the channel that fetched it: whether its
-    // provider's pill slot takes it, and whether it is what this channel waited
-    // for. One arriving after the user switched away is still FILED — its slot is
-    // current — but satisfies nothing: the channel still owes a fetch.
+    // provider's slot takes it, and whether it is what this channel waited for.
     function acceptOutcome(payloadProviderName, want) {
         const p = normalizeProvider(payloadProviderName);
         return { file: p !== "", satisfies: p !== "" && p === normalizeProvider(want) };
@@ -100,14 +318,7 @@ QtObject {
         return inFlight !== "" && !sawProcess;
     }
 
-    // Return whether a process still owes settlement. Running launches can stop
-    // or exit; a process that ran owes its exit until exitDone. Other tagged
-    // states rely on timers that a provider switch stops.
-    function settleIsComing(fetch) {
-        const f = fetch || {};
-        return f.inFlight !== "" && (!!f.running || (!!f.sawProcess && !f.exitDone));
-    }
-
+    // ---- Accounts and cards --------------------------------------------------
 
     // The tightest window an account has — what actually blocks it.
     function accountPeak(a) {
@@ -153,15 +364,124 @@ QtObject {
         return ordered;
     }
 
-    function shownIn(list, hidden) {
-        const hide = hidden || [];
-        return orderedAccounts(list).filter(a => a && hide.indexOf(a.id) === -1);
+    // Account ids are unique per provider, not across providers: two providers
+    // can both report an account called "default". Visibility is therefore
+    // keyed by provider AND id.
+    function cardKey(provider, id) {
+        return normalizeProvider(provider) + ":" + String(id === undefined || id === null ? "" : id);
     }
 
-    // Headline over whichever accounts are visible, in the chosen mode.
-    function headlineOf(list, mode, hidden) {
-        const peaks = shownIn(list, hidden).filter(a => a.ok).map(accountPeak);
-        if (peaks.length === 0)
+    // A hidden list written before providers were qualified holds bare ids.
+    // Match those too, so upgrading does not silently unhide accounts.
+    function isCardHidden(card, hidden) {
+        if (!card)
+            return false;
+        const hide = hidden || [];
+        return hide.indexOf(card.key) !== -1 || hide.indexOf(card.id) !== -1;
+    }
+
+    // Add or remove one card from the hidden list, always writing the
+    // provider-qualified key and dropping any legacy bare id for the same card.
+    function toggleHiddenCard(hidden, card) {
+        const hide = (hidden || []).slice();
+        if (!card)
+            return hide;
+        const at = hide.indexOf(card.key);
+        const legacy = hide.indexOf(card.id);
+        if (at === -1 && legacy === -1) {
+            hide.push(card.key);
+            return hide;
+        }
+        return hide.filter(h => h !== card.key && h !== card.id);
+    }
+
+    // One card per account, stamped with the provider it came from. Every
+    // surface renders cards, so a provider that reports one account, five, or
+    // none at all looks the same and carries the same controls.
+    function cardOf(provider, account) {
+        const p = normalizeProvider(provider);
+        const a = account || {};
+        return {
+            key: cardKey(p, a.id),
+            provider: p,
+            providerName: providerName(p),
+            providerIcon: providerIcon(p),
+            id: String(a.id === undefined || a.id === null ? "" : a.id),
+            label: String(a.label || a.id || providerName(p)),
+            plan: String(a.plan || ""),
+            ok: a.ok === true,
+            error: String(a.error || ""),
+            enterprise: isEnterpriseAccount(a),
+            session: a.session || null,
+            weekly: a.weekly || null,
+            models: a.models || [],
+            spend: a.spend || null,
+            // Not usage windows, so they are not meters: an allowance of
+            // usage-limit resets, and a credit balance. Absent unless the
+            // provider reports them, and zero is a real answer for both.
+            resets: a.resets === undefined || a.resets === null ? null : a.resets,
+            creditsBalance: a.creditsBalance === undefined || a.creditsBalance === null
+                ? null : String(a.creditsBalance)
+        };
+    }
+
+    // The line under a card's meters, or "" when the provider reported neither
+    // figure. Zero resets is worth saying: it is the answer to "can I reset
+    // this window", and leaving it out reads as the widget not knowing.
+    function accountFooter(card) {
+        if (!card)
+            return "";
+        const parts = [];
+        if (card.resets !== null && card.resets !== undefined)
+            parts.push(card.resets === 1 ? "1 reset available" : card.resets + " resets available");
+        const balance = String(card.creditsBalance === null || card.creditsBalance === undefined
+                               ? "" : card.creditsBalance).trim();
+        if (balance !== "" && balance !== "0")
+            parts.push(balance + " credits");
+        return parts.join(" · ");
+    }
+
+    // A payload that reports no accounts still describes one: its own top-level
+    // lanes. Synthesising a card for it is what lets every provider render the
+    // same way instead of the older shape needing a second layout.
+    function flatCard(provider, data) {
+        const d = data || {};
+        const models = [];
+        if (d.third)
+            models.push(d.third);
+        // A payload with nothing but an aggregate still has a number to show.
+        if (!d.session && !d.weekly && !d.third && !d.spend
+            && d.aggregate && d.aggregate.pct !== undefined && d.aggregate.pct !== null)
+            models.push({ label: "Usage", pct: d.aggregate.pct, reset: "", resetAt: 0 });
+        return cardOf(provider, {
+            id: "", label: d.label || providerName(provider), plan: d.plan || "",
+            ok: d.ok === true, error: d.error || "",
+            session: d.session, weekly: d.weekly, models: models, spend: d.spend
+        });
+    }
+
+    // Every card a provider's payload describes, in display order.
+    function providerCards(provider, data) {
+        if (!data)
+            return [];
+        const accounts = data.accounts || [];
+        if (accounts.length === 0)
+            return [flatCard(provider, data)];
+        const ordered = orderedAccounts(accounts);
+        const out = [];
+        for (let i = 0; i < ordered.length; i++)
+            out.push(cardOf(provider, ordered[i]));
+        return out;
+    }
+
+    function shownCards(cards, hidden) {
+        return (cards || []).filter(c => !isCardHidden(c, hidden));
+    }
+
+    // ---- Headlines -----------------------------------------------------------
+
+    function aggregatePeaks(peaks, mode) {
+        if (!peaks || peaks.length === 0)
             return null;
         if (mode === "best")
             return Math.min.apply(null, peaks);
@@ -172,73 +492,254 @@ QtObject {
         return Math.round(sum / peaks.length);
     }
 
-    // Derive the displayed headline, or null when no visible usable value exists.
-    function headOf(data, mode, hidden) {
-        if (!data || data.ok !== true)
-            return null;
-        const local = headlineOf(data.accounts, mode, hidden);
-        if (local !== null)
-            return { pct: local };
-        // A payload that reported accounts has no headline only because the user
-        // hid them all; its aggregate would put a number computed over exactly
-        // those hidden accounts on the bar.
-        if ((data.accounts || []).length > 0)
-            return null;
-        // Payloads without accounts can carry rate-limit lanes directly.
-        const lanes = [data.session, data.weekly, data.third];
-        let peak = null;
-        for (let i = 0; i < lanes.length; i++) {
-            if (lanes[i] && lanes[i].pct !== undefined && lanes[i].pct !== null)
-                peak = Math.max(peak === null ? 0 : peak, lanes[i].pct);
-        }
-        if (peak !== null)
-            return { pct: peak };
-        const agg = data.aggregate;
-        if (agg && agg.pct !== undefined && agg.pct !== null)
-            return { pct: agg.pct };
-        return null;
+    // Whether this account reported any quota at all. An account with no lanes
+    // is not an account at 0%: averaging a zero in for it drags the bar number
+    // down by a window that does not exist, and a provider whose only account
+    // reports nothing would read as completely unused rather than as unknown.
+    function cardHasLanes(card) {
+        if (!card)
+            return false;
+        return !!card.session || !!card.weekly || !!card.spend || (card.models || []).length > 0;
     }
 
-    // Build the popout from visible accounts. Top-level plan and health can
-    // describe a hidden account. cards/account/flat select the layout; allHidden
-    // means the user hid every reported account. pending is an initial fetch,
-    // not a failure. ok and error describe the visible result.
-    function popoutView(data, hidden, loading) {
-        const accounts = (data && data.accounts) || [];
-        const shown = shownIn(accounts, hidden);
-        const cards = accounts.length > 1;
-        const account = !cards && shown.length === 1 ? shown[0] : null;
-        const payloadOk = !!data && data.ok === true;
-        const view = {
-            cards: cards,
-            account: account,
-            flat: accounts.length === 0,
-            allHidden: accounts.length > 0 && shown.length === 0,
-            totalCount: accounts.length,
-            shownCount: shown.length,
-            liveCount: shown.filter(a => a && a.ok).length,
-            hiddenCount: accounts.length - shown.length,
-            pending: !data && loading === true,
-            ok: payloadOk && (account === null || account.ok === true),
-            error: "",
-            // Only the single-account and flat views print a plan line; each card
-            // carries its own, and the payload's is the first LIVE account's.
-            plan: account ? (account.plan || "")
-                : (cards || !payloadOk ? "" : (data.plan || ""))
+    function livePeaks(cards, hidden) {
+        return shownCards(cards, hidden).filter(c => c.ok && cardHasLanes(c)).map(accountPeak);
+    }
+
+    // The number for one provider's slot, or null when it has none to give.
+    function headOf(provider, data, mode, hidden) {
+        if (!data || data.ok !== true)
+            return null;
+        const pct = aggregatePeaks(livePeaks(providerCards(provider, data), hidden), mode);
+        return pct === null ? null : { pct: pct };
+    }
+
+    // ---- Provider health and visibility --------------------------------------
+
+    // A provider answers with configured:false when it needs a credential it
+    // does not have. Absent means configured, so providers that never need one
+    // do not have to say so.
+    function providerConfigured(data) {
+        return !data || data.configured !== false;
+    }
+
+    // Whether this provider gets a bar slot at all. One that needs a key and
+    // has not proved it holds one says nothing on the bar; the popout is where
+    // it asks to be set up.
+    function slotShown(provider, data) {
+        if (!providerNeedsCredential(provider))
+            return true;
+        return !!data && providerConfigured(data);
+    }
+
+    // Classify health over visible cards. Return none before an answer, error
+    // for unusable data, hidden when every reported account is hidden, or ok.
+    function payloadHealth(provider, data, hidden) {
+        if (!data)
+            return "none";
+        if (data.ok !== true)
+            return "error";
+        const cards = providerCards(provider, data);
+        const shown = shownCards(cards, hidden);
+        if (shown.length === 0)
+            return "hidden";
+        return shown.filter(c => c.ok).length > 0 ? "ok" : "error";
+    }
+
+    // What a slot's number READS as. `pct` stays consumption whatever this
+    // answers, because severity is a property of how full a limit is, not of
+    // which end the user prefers to count from: 90% used and 10% left are the
+    // same red.
+    function slotReading(pct, display) {
+        const value = (display || {}).value === "left" ? 100 - pct : pct;
+        return value + "%";
+    }
+
+    // Build a stable provider slot. Keep its icon and position when no number
+    // is available; text indicates errors, fetching, or absence.
+    function pillSlot(provider, head, data, fetching, hidden, display) {
+        const slot = {
+            provider: provider,
+            icon: providerIcon(provider),
+            setup: false,
+            pct: null,
+            text: "—",
+            error: false
         };
-        // No payload yet is not a failure with a cause; it is nothing known.
-        if (data && !payloadOk)
-            view.error = data.error || "usage unavailable";
-        else if (account && account.ok !== true)
-            view.error = account.error || "usage unavailable";
-        return view;
+        if (head && head.pct !== null && head.pct !== undefined) {
+            slot.pct = head.pct;
+            slot.text = slotReading(head.pct, display);
+        } else if (payloadHealth(provider, data, hidden) === "error") {
+            // Hidden successes cannot make failed visible accounts healthy.
+            // Hiding every account is not an error.
+            slot.text = "!";
+            slot.error = true;
+        } else if ((fetching || []).indexOf(provider) !== -1) {
+            slot.text = "…";
+        }
+        return slot;
+    }
+
+    // A slot for the case where every selected provider still wants a key.
+    // Without it the pill would render nothing at all and the popout that
+    // offers the key would be unreachable.
+    function setupSlot(provider) {
+        return {
+            provider: provider,
+            icon: "key",
+            setup: true,
+            pct: null,
+            text: "",
+            error: false
+        };
+    }
+
+    // `state`: { providerData: {claude, codex, vercel}, filter, hidden, mode,
+    //            fetching: [provider, ...] }
+    function pillSlots(state) {
+        const s = state || {};
+        const data = s.providerData || {};
+        const picked = selectedProviders(s.filter);
+        const out = [];
+        for (let i = 0; i < picked.length; i++) {
+            const p = picked[i];
+            if (!slotShown(p, data[p]))
+                continue;
+            out.push(pillSlot(p, headOf(p, data[p], s.mode, s.hidden), data[p], s.fetching,
+                              s.hidden, s.display));
+        }
+        if (out.length === 0 && picked.length > 0)
+            out.push(setupSlot(picked[0]));
+        return out;
+    }
+
+    // ---- The popout deck -----------------------------------------------------
+
+    // Every selected provider as a section, each holding its visible cards.
+    // Sections keep providers apart on screen and carry the per-provider cause
+    // when one of them cannot answer.
+    function deckSections(state) {
+        const s = state || {};
+        const data = s.providerData || {};
+        const picked = selectedProviders(s.filter);
+        const out = [];
+        for (let i = 0; i < picked.length; i++) {
+            const p = picked[i];
+            const d = data[p];
+            const ready = providerConfigured(d);
+            // A provider still waiting for its key has no accounts to fail at.
+            // Rendering its "no API key" answer as a broken account card would
+            // report a fault for something the user has not set up yet.
+            const cards = ready ? providerCards(p, d) : [];
+            const shown = shownCards(cards, s.hidden);
+            out.push({
+                provider: p,
+                name: providerName(p),
+                icon: providerIcon(p),
+                configured: ready,
+                needsCredential: providerNeedsCredential(p),
+                setupHint: ready ? "" : String((d && d.error) || "Not set up yet."),
+                // Nothing filed for this provider yet: a fetch settles into
+                // either a payload or a failure, so no payload means no answer.
+                pending: !d,
+                fetching: (s.fetching || []).indexOf(p) !== -1,
+                error: ready && d && d.ok !== true ? String(d.error || "usage unavailable") : "",
+                cards: shown,
+                total: cards.length,
+                shown: shown.length,
+                live: shown.filter(c => c.ok).length,
+                hidden: cards.length - shown.length
+            });
+        }
+        return out;
+    }
+
+    // The whole popout in one object: the sections to draw, the counts the
+    // header prints, and whether there is anything to draw at all.
+    function deckView(state) {
+        const s = state || {};
+        const sections = deckSections(s);
+        let total = 0, shown = 0, live = 0, pending = 0, configured = 0;
+        const peaks = [];
+        const causes = [];
+        for (let i = 0; i < sections.length; i++) {
+            const sec = sections[i];
+            total += sec.total;
+            shown += sec.shown;
+            live += sec.live;
+            if (sec.pending)
+                pending += 1;
+            if (sec.configured)
+                configured += 1;
+            if (sec.error !== "")
+                causes.push(sec.name + ": " + sec.error);
+            const sectionPeaks = livePeaks(sec.cards, s.hidden);
+            for (let j = 0; j < sectionPeaks.length; j++)
+                peaks.push(sectionPeaks[j]);
+        }
+        const headline = aggregatePeaks(peaks, s.mode);
+        return {
+            sections: sections,
+            // Section headers are noise when only one provider is on screen.
+            grouped: sections.length > 1,
+            totalCount: total,
+            shownCount: shown,
+            liveCount: live,
+            hiddenCount: total - shown,
+            // Nothing has answered yet. That is not a failure with a cause.
+            pending: pending === sections.length && sections.length > 0,
+            allHidden: total > 0 && shown === 0,
+            // Every selected provider is waiting for a key. The popout offers one.
+            needsSetup: sections.length > 0 && configured === 0,
+            // Whether anything USABLE is on screen. A provider that failed still
+            // draws its own card carrying its own cause, so the deck renders
+            // either way; this is what the header reports, and the header has
+            // nothing to summarise when no account answered.
+            ok: live > 0,
+            headline: headline,
+            // The cause is what stands in for the summary. While one provider
+            // still has accounts to look at, its failing neighbour says so on
+            // its own section rather than over the whole widget.
+            error: live > 0 ? "" : causes.join(" · ")
+        };
+    }
+
+    // Every card of every selected provider, hidden ones included. The
+    // visibility list is built from this: an account that has been hidden is
+    // still in it, or there would be no way to bring it back.
+    function allCards(state) {
+        const s = state || {};
+        const data = s.providerData || {};
+        const picked = selectedProviders(s.filter);
+        let out = [];
+        for (let i = 0; i < picked.length; i++)
+            out = out.concat(providerCards(picked[i], data[picked[i]]));
+        return out;
     }
 
     // Format the account count with singular or plural wording.
+    // Every account a refresh will visit. That is every provider's, not the
+    // selected ones': the widget builds a fetch channel per CATALOG provider and
+    // refresh() launches all of them, so scaling the interval by the selected
+    // subset spends the whole catalog's work against a fraction of its budget.
+    function polledAccountCount(providerData) {
+        const data = providerData || {};
+        const order = providerOrder();
+        let n = 0;
+        for (let i = 0; i < order.length; i++) {
+            const filed = data[order[i]];
+            const accounts = filed && filed.accounts;
+            n += accounts && accounts.length ? accounts.length : 0;
+        }
+        return n;
+    }
+
     function accountCount(n) {
         const count = Number(n) || 0;
         return count === 1 ? "1 account" : count + " accounts";
     }
+
+    // ---- Result ordering -----------------------------------------------------
 
     // Compare filing sequence with the caller stamp. Provider error payloads
     // are accepted answers too; ok affects display, not ordering.
@@ -254,67 +755,6 @@ QtObject {
     // Return whether a failure may replace the current provider result.
     function failureWins(current, filedAt, launchSeq) {
         return !newerSuccess(current, filedAt, launchSeq);
-    }
-
-
-    // Classify health over visible accounts; top-level ok can describe a hidden
-    // success. Return none before an answer, error for unusable data, hidden
-    // when all reported accounts are hidden, or ok for usable data.
-    function payloadHealth(data, hidden) {
-        if (!data)
-            return "none";
-        if (data.ok !== true)
-            return "error";
-        const accounts = data.accounts || [];
-        if (accounts.length === 0)
-            return "ok";
-        const shown = shownIn(accounts, hidden);
-        if (shown.length === 0)
-            return "hidden";
-        return shown.filter(a => a && a.ok).length > 0 ? "ok" : "error";
-    }
-
-    // Build a stable provider slot. Keep its icon and position when no number
-    // is available; text indicates errors, fetching, or absence.
-    function pillSlot(provider, head, data, fetching, selected, hidden) {
-        const slot = {
-            provider: provider,
-            icon: providerIcon(provider),
-            selected: normalizeProvider(selected) === provider,
-            pct: null,
-            text: "—",
-            error: false
-        };
-        if (head && head.pct !== null && head.pct !== undefined) {
-            slot.pct = head.pct;
-            slot.text = head.pct + "%";
-        } else if (payloadHealth(data, hidden) === "error") {
-            // Hidden successes cannot make failed visible accounts healthy.
-            // Hiding every account is not an error.
-            slot.text = "!";
-            slot.error = true;
-        } else if ((fetching || []).indexOf(provider) !== -1) {
-            slot.text = "…";
-        }
-        return slot;
-    }
-
-    // `state`: { selected, claudeHead, claudeData, codexHead, codexData,
-    //            fetching: [provider, ...] }
-    function pillSlots(state) {
-        const s = state || {};
-        const order = providerOrder();
-        const out = [];
-        for (let i = 0; i < order.length; i++) {
-            const p = order[i];
-            out.push(pillSlot(p,
-                              p === "codex" ? s.codexHead : s.claudeHead,
-                              p === "codex" ? s.codexData : s.claudeData,
-                              s.fetching,
-                              s.selected,
-                              s.hidden));
-        }
-        return out;
     }
 
     // END PROVIDER DECISION

@@ -1,0 +1,642 @@
+import QtQuick
+import QtQuick.Layouts
+import Quickshell.Io
+import qs.Common
+import qs.Services
+import qs.Widgets
+
+// Where one provider's accounts come from, and the only place this plugin
+// changes that. Two kinds of source, because providers differ:
+//
+//   * a config directory holding a CLI login (Claude, Codex). Discovery finds
+//     the usual ones; an extra directory is for a wrapper that points
+//     CLAUDE_CONFIG_DIR or CODEX_HOME somewhere discovery cannot guess.
+//   * an API key (AI Gateway), which has no local login to find at all.
+//
+// A KEY NEVER GOES THROUGH savePluginData(). That writes
+// ~/.config/vshell/plugin_settings.json, which operators routinely symlink
+// into a dotfiles repository. The typed key goes to the helper on STDIN --
+// never on a command line, where every process could read it out of /proc --
+// and the helper writes it 0600 under ~/.local/state. Nothing here can print a
+// key back: the only key-adjacent text it renders is which SOURCE is in use.
+Column {
+    id: root
+
+    property string provider: ""
+    // In the popout this page lives in a Row of three and is built whether or
+    // not it is shown; reading the helper for a page nobody opened is a process
+    // per poll. The settings application shows every provider at once and sets
+    // this true for each.
+    property bool active: false
+
+    // Raised after a source changes, so the embedding surface can stamp the
+    // change and every bar instance refetches instead of waiting out a poll.
+    signal sourcesChanged
+
+    spacing: Theme.spacingM
+
+    // The provider catalog, owned rather than handed in: this page is embedded
+    // by two surfaces and only one of them is a widget with a catalog to lend.
+    AiUsageLogic {
+        id: catalog
+    }
+
+    readonly property bool takesKey: catalog.providerNeedsCredential(root.provider)
+    readonly property string hint: catalog.providerCredentialHint(root.provider)
+
+    // What the helper last reported. Never a key value.
+    property var entries: []
+    property var dirs: []
+    property string status: ""
+    property bool statusFailed: false
+    property bool busy: false
+
+    onActiveChanged: {
+        if (root.active)
+            root.readSources();
+    }
+    // Embedded by the popout as well as by PluginSettings, so it declares the
+    // marker itself: without it the same fields render in settings typography in
+    // the settings application and in bar typography in the popout.
+    readonly property bool settingsSurface: true
+
+    onProviderChanged: {
+        // The page is reused for whichever provider was asked for. Anything on
+        // screen describes the previous one and is dropped rather than left
+        // standing as a verdict on this one.
+        root.entries = [];
+        root.dirs = [];
+        root.sourcesUnavailable = false;
+        root.status = "";
+        root.statusFailed = false;
+        if (root.active)
+            root.readSources();
+    }
+
+    // A read asked for while one is running is PARKED, not dropped: every
+    // action raises one, and discarding it leaves the page describing the
+    // sources from before the change it just made.
+    property bool _statusPending: false
+
+    function readSources() {
+        if (root.provider === "")
+            return;
+        if (statusProc.running) {
+            root._statusPending = true;
+            return;
+        }
+        root._statusPending = false;
+        statusProc.running = true;
+    }
+
+    function drainStatus() {
+        if (statusProc.running || !root._statusPending)
+            return;
+        root._statusPending = false;
+        statusProc.running = true;
+    }
+
+    // BEGIN REPLY DECISION
+    // What one helper reply means, decided without touching this page's state
+    // so scripts/test-ai-usage-setup.js can execute it. `owned` says whether
+    // the reply belongs to something the user asked for; the background read
+    // does not own `busy`, because clearing it there let a reply landing
+    // mid-save unlock the buttons under an operation still in flight.
+
+    function decodeReply(text) {
+        const body = String(text === undefined || text === null ? "" : text).trim();
+        if (body.length === 0)
+            return null;
+        try {
+            const parsed = JSON.parse(body);
+            // A bare number or string parses but answers nothing. Only an
+            // object can carry ok, error or a source list.
+            return parsed && typeof parsed === "object" ? parsed : null;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    // `release` frees the buttons, `announce` is the line to show or "" for
+    // none, and `deliver` says the payload may be applied.
+    function replyDecision(text, owned) {
+        const payload = decodeReply(text);
+        if (!payload)
+            return { payload: null, release: !!owned, deliver: false,
+                     failed: !!owned, announce: owned ? "No answer from the vshell helper." : "" };
+        return { payload: payload, release: !!owned, deliver: true, failed: false, announce: "" };
+    }
+
+    // What an action's own reply says on the one status line. A refusal must
+    // never be announced as a change: the page would report a key removed
+    // while the helper went on reading it.
+    function actionOutcome(payload, success) {
+        if (!payload || payload.ok !== true) {
+            const why = String((payload && payload.error) || "Could not apply the change.");
+            const detail = payload && payload.detail ? " — " + payload.detail : "";
+            return { applied: false, failed: true, announce: why + detail };
+        }
+        return { applied: true, failed: false, announce: success };
+    }
+
+    // END REPLY DECISION
+
+    function applyReply(text, owned, onOk) {
+        const decision = root.replyDecision(text, owned);
+        if (decision.release) {
+            root.busy = false;
+            root._stallOwned = false;
+        }
+        if (decision.announce !== "") {
+            root.statusFailed = decision.failed;
+            root.status = decision.announce;
+        }
+        if (decision.deliver)
+            onOk(decision.payload);
+    }
+
+    // Apply one action's reply through the shared outcome rule.
+    function applyAction(payload, success, onApplied) {
+        const outcome = root.actionOutcome(payload, success);
+        root.statusFailed = outcome.failed;
+        root.status = outcome.announce;
+        if (outcome.applied)
+            onApplied();
+    }
+
+    // Qt reports nothing when the executable cannot be run at all, so every
+    // channel needs this guard or the page sits on "Saving…" forever. Deferred
+    // through one timer: `started` is not ordered against `runningChanged`, so
+    // a process that did run can announce itself after the stop.
+    property bool _stallOwned: false
+    property bool _stallBackground: false
+    // A background read that never started. It must not hijack the page with a
+    // failure nobody asked for, which is why it is not _stallOwned — but it
+    // cannot leave an empty list standing as "no directories found" either.
+    // That sentence blames the user's machine for a helper that never ran.
+    property bool sourcesUnavailable: false
+
+    function launchStalled(owned) {
+        if (owned)
+            root._stallOwned = true;
+        else
+            root._stallBackground = true;
+        stallTimer.restart();
+    }
+
+    Timer {
+        id: stallTimer
+        interval: 1000
+        repeat: false
+        onTriggered: {
+            if (root._stallBackground) {
+                root._stallBackground = false;
+                if (!statusProc.sawProcess && !statusProc.running)
+                    root.sourcesUnavailable = true;
+            }
+            if (!root._stallOwned)
+                return;
+            if (keyProc.sawProcess || keyProc.running || actionProc.sawProcess || actionProc.running)
+                return;
+            root._stallOwned = false;
+            root.busy = false;
+            // The key is written to stdin by onStarted, which never ran. Nothing
+            // else clears it, so without this the secret stays resident in a
+            // long-lived QML object for the rest of the session.
+            keyProc.pendingKey = "";
+            root.statusFailed = true;
+            root.status = "Could not run the vshell helper.";
+        }
+    }
+
+    function storeKey(label, key, keyId) {
+        const trimmed = String(key || "").trim();
+        if (trimmed.length === 0 || root.busy)
+            return;
+        root.busy = true;
+        root.statusFailed = false;
+        root.status = "Saving…";
+        keyProc.pendingArgs = ["ai-usage", "set-key", root.provider,
+                               "--label", String(label || "").trim(),
+                               "--key-id", String(keyId || "").trim()];
+        keyProc.pendingKey = trimmed;
+        keyProc.running = true;
+    }
+
+    // Every non-secret change takes the same channel, so two of them cannot
+    // run at once and report each other's outcome on the one status line.
+    function runAction(args, pendingStatus) {
+        if (root.busy)
+            return;
+        root.busy = true;
+        root.statusFailed = false;
+        root.status = pendingStatus;
+        actionProc.pendingArgs = args;
+        actionProc.running = true;
+    }
+
+    function removeEntry(id) {
+        root.runAction(["ai-usage", "clear-key", root.provider, id], "Removing…");
+    }
+    function addDir(path) {
+        const trimmed = String(path || "").trim();
+        if (trimmed.length === 0)
+            return;
+        root.runAction(["ai-usage", "add-dir", root.provider, trimmed], "Adding…");
+    }
+    function removeDir(path) {
+        root.runAction(["ai-usage", "remove-dir", root.provider, path], "Removing…");
+    }
+
+    function applySources(payload) {
+        // The page is reused, and switching provider parks a new read while the
+        // running one finishes. A reply names the provider it answered for, so
+        // an answer about the provider that WAS on screen is dropped rather than
+        // rendered as this one's accounts.
+        if (payload.provider && payload.provider !== root.provider)
+            return;
+        // A read that answered is proof the helper runs, whatever it found.
+        root.sourcesUnavailable = false;
+        root.entries = payload.accounts || [];
+        root.dirs = payload.dirs || [];
+        // A read that could not answer has to say so. Rendering its empty lists
+        // as "no signed-in directories found" blames the user's machine for a
+        // backend that is missing or refused to run.
+        if (payload.ok !== true) {
+            root.statusFailed = true;
+            root.status = String(payload.error || "Could not read this provider's sources.");
+        }
+    }
+
+    Process {
+        id: statusProc
+        command: [Paths.vshellCli, "ai-usage", "sources", root.provider]
+        running: false
+
+        property bool sawProcess: false
+        onStarted: statusProc.sawProcess = true
+        onRunningChanged: {
+            if (!running && !statusProc.sawProcess)
+                root.launchStalled(false);
+            if (!running) {
+                statusProc.sawProcess = false;
+                Qt.callLater(root.drainStatus);
+            }
+        }
+        stdout: StdioCollector {
+            id: statusOut
+            onStreamFinished: root.applyReply(statusOut.text || "", false, payload => root.applySources(payload))
+        }
+        stderr: StdioCollector {}
+    }
+
+    Process {
+        id: keyProc
+        property var pendingArgs: []
+        // Held only between the click and the write, then cleared. The helper
+        // reads one line, so the newline is what ends the transfer.
+        property string pendingKey: ""
+        property bool sawProcess: false
+
+        command: [Paths.vshellCli].concat(keyProc.pendingArgs)
+        stdinEnabled: true
+        running: false
+
+        onStarted: {
+            keyProc.sawProcess = true;
+            keyProc.write(keyProc.pendingKey + "\n");
+            keyProc.pendingKey = "";
+        }
+        onRunningChanged: {
+            if (!running && !keyProc.sawProcess)
+                root.launchStalled(true);
+            if (!running)
+                keyProc.sawProcess = false;
+        }
+        stdout: StdioCollector {
+            id: keyOut
+            onStreamFinished: root.applyReply(keyOut.text || "", true, payload => {
+                root.applyAction(payload, "Saved.", () => {
+                    keyField.text = "";
+                    labelField.text = "";
+                    keyIdField.text = "";
+                    root.readSources();
+                    root.sourcesChanged();
+                });
+            })
+        }
+        stderr: StdioCollector {}
+    }
+
+    Process {
+        id: actionProc
+        property var pendingArgs: []
+        property bool sawProcess: false
+
+        command: [Paths.vshellCli].concat(actionProc.pendingArgs)
+        running: false
+
+        onStarted: actionProc.sawProcess = true
+        onRunningChanged: {
+            if (!running && !actionProc.sawProcess)
+                root.launchStalled(true);
+            if (!running)
+                actionProc.sawProcess = false;
+        }
+        stdout: StdioCollector {
+            id: actionOut
+            onStreamFinished: root.applyReply(actionOut.text || "", true, payload => {
+                root.applyAction(payload, "Updated.", () => {
+                    dirField.text = "";
+                    root.readSources();
+                    root.sourcesChanged();
+                });
+            })
+        }
+        stderr: StdioCollector {}
+    }
+
+    // ---- Where accounts come from -------------------------------------------
+
+    StyledRect {
+        width: parent.width
+        height: introColumn.implicitHeight + Theme.spacingM * 2
+        radius: Theme.cornerRadius
+        color: Theme.surfaceContainerHigh
+
+        Column {
+            id: introColumn
+            anchors.fill: parent
+            anchors.margins: Theme.spacingM
+            spacing: Theme.spacingXS
+
+            Row {
+                spacing: Theme.spacingS
+
+                AiUsageProviderIcon {
+                    host: catalog
+                    provider: root.provider
+                    size: Theme.iconSize
+                    color: Theme.primary
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+
+                StyledText {
+                    text: catalog.providerFullName(root.provider)
+                    font.pixelSize: Theme.fontSizeMedium
+                    font.weight: Theme.fontWeightSectionHeader
+                    color: Theme.surfaceText
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+            }
+
+            StyledText {
+                width: parent.width
+                text: root.hint
+                wrapMode: Text.WordWrap
+                font.pixelSize: Theme.settingsFontSize
+                color: Theme.surfaceVariantText
+            }
+        }
+    }
+
+    // ---- Stored keys ---------------------------------------------------------
+
+    StyledRect {
+        width: parent.width
+        visible: root.takesKey
+        height: visible ? keyColumn.implicitHeight + Theme.spacingM * 2 : 0
+        radius: Theme.cornerRadius
+        color: Theme.surfaceContainerHigh
+
+        Column {
+            id: keyColumn
+            anchors.fill: parent
+            anchors.margins: Theme.spacingM
+            spacing: Theme.spacingS
+
+            StyledText {
+                width: parent.width
+                text: "API keys"
+                font.pixelSize: Theme.fontSizeMedium
+                font.weight: Theme.fontWeightSectionHeader
+                color: Theme.surfaceText
+            }
+
+            // The one thing a user cannot see for themselves: the key is not
+            // going into the settings file the rest of this plugin writes to.
+            StyledText {
+                width: parent.width
+                text: "Kept in a private 0600 file, not in your VGS settings. Add one key per team or budget; each becomes its own account card."
+                wrapMode: Text.WordWrap
+                font.pixelSize: Theme.settingsFontSize
+                color: Theme.surfaceVariantText
+            }
+
+            Repeater {
+                model: root.entries
+
+                Item {
+                    required property var modelData
+
+                    width: keyColumn.width
+                    height: 28
+
+                    VgsIcon {
+                        id: keyIcon
+                        anchors.left: parent.left
+                        anchors.verticalCenter: parent.verticalCenter
+                        name: "key"
+                        size: Theme.iconSizeSmall
+                        color: Theme.surfaceVariantText
+                    }
+
+                    StyledText {
+                        anchors.left: keyIcon.right
+                        anchors.leftMargin: Theme.spacingXS
+                        anchors.right: entrySource.left
+                        anchors.rightMargin: Theme.spacingS
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: modelData.label || modelData.id
+                        elide: Text.ElideMiddle
+                        font.pixelSize: Theme.settingsFontSize
+                        color: Theme.surfaceText
+                    }
+
+                    StyledText {
+                        id: entrySource
+                        anchors.right: entryRemove.left
+                        anchors.rightMargin: Theme.spacingXS
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: modelData.source === "env" ? "from environment" : ""
+                        font.pixelSize: Theme.settingsFontSize
+                        color: Theme.surfaceVariantText
+                    }
+
+                    VgsActionButton {
+                        id: entryRemove
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        // A key provisioned outside VGS is not this plugin's to
+                        // delete: removing it here would report a removal the
+                        // helper would go on ignoring.
+                        visible: modelData.source === "stored"
+                        enabled: !root.busy
+                        iconName: "delete"
+                        iconSize: Theme.iconSizeSmall
+                        buttonSize: 26
+                        iconColor: Theme.error
+                        tooltipText: "Remove this key"
+                        onClicked: root.removeEntry(modelData.id)
+                    }
+                }
+            }
+
+            VgsTextField {
+                id: labelField
+                width: parent.width
+                placeholderText: "Name (optional) — shown on the card"
+            }
+
+            VgsTextField {
+                id: keyField
+                width: parent.width
+                placeholderText: "API key"
+                echoMode: TextInput.Password
+                showPasswordToggle: true
+                onAccepted: root.storeKey(labelField.text, keyField.text, keyIdField.text)
+            }
+
+            VgsTextField {
+                id: keyIdField
+                width: parent.width
+                placeholderText: "Key ID (optional) — enables budget tracking"
+            }
+
+            VgsButton {
+                text: "Save key"
+                enabled: keyField.text.trim().length > 0 && !root.busy
+                onClicked: root.storeKey(labelField.text, keyField.text, keyIdField.text)
+            }
+        }
+    }
+
+    // ---- Config directories --------------------------------------------------
+
+    StyledRect {
+        width: parent.width
+        visible: !root.takesKey
+        height: visible ? dirColumn.implicitHeight + Theme.spacingM * 2 : 0
+        radius: Theme.cornerRadius
+        color: Theme.surfaceContainerHigh
+
+        Column {
+            id: dirColumn
+            anchors.fill: parent
+            anchors.margins: Theme.spacingM
+            spacing: Theme.spacingS
+
+            StyledText {
+                width: parent.width
+                text: "Config directories"
+                font.pixelSize: Theme.fontSizeMedium
+                font.weight: Theme.fontWeightSectionHeader
+                color: Theme.surfaceText
+            }
+
+            StyledText {
+                width: parent.width
+                text: "Each directory holding its own login becomes one account. Add one for a wrapper that points somewhere discovery cannot guess."
+                wrapMode: Text.WordWrap
+                font.pixelSize: Theme.settingsFontSize
+                color: Theme.surfaceVariantText
+            }
+
+            Repeater {
+                model: root.dirs
+
+                Item {
+                    required property var modelData
+
+                    width: dirColumn.width
+                    height: 28
+
+                    VgsIcon {
+                        id: dirIcon
+                        anchors.left: parent.left
+                        anchors.verticalCenter: parent.verticalCenter
+                        // A directory discovery found and one the user added
+                        // behave the same; only one of them can be removed here.
+                        name: modelData.managed === "extra" ? "folder_special" : "folder"
+                        size: Theme.iconSizeSmall
+                        color: modelData.usable ? Theme.surfaceVariantText : Theme.error
+                    }
+
+                    StyledText {
+                        anchors.left: dirIcon.right
+                        anchors.leftMargin: Theme.spacingXS
+                        anchors.right: dirRemove.visible ? dirRemove.left : parent.right
+                        anchors.rightMargin: Theme.spacingS
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: modelData.label ? (modelData.label + " — " + modelData.path) : modelData.path
+                        elide: Text.ElideMiddle
+                        font.pixelSize: Theme.settingsFontSize
+                        color: modelData.usable ? Theme.surfaceText : Theme.surfaceVariantText
+                    }
+
+                    VgsActionButton {
+                        id: dirRemove
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        visible: modelData.managed === "extra"
+                        enabled: !root.busy
+                        iconName: "delete"
+                        iconSize: Theme.iconSizeSmall
+                        buttonSize: 26
+                        iconColor: Theme.error
+                        tooltipText: "Stop looking in this directory"
+                        onClicked: root.removeDir(modelData.path)
+                    }
+                }
+            }
+
+            StyledText {
+                width: parent.width
+                visible: root.dirs.length === 0
+                text: root.sourcesUnavailable
+                    ? "Could not run the vshell helper to read this provider's sources."
+                    : "No signed-in directories found."
+                font.pixelSize: Theme.settingsFontSize
+                color: Theme.surfaceVariantText
+            }
+
+            RowLayout {
+                width: parent.width
+                spacing: Theme.spacingS
+
+                VgsTextField {
+                    id: dirField
+                    Layout.fillWidth: true
+                    placeholderText: "~/.claude-work"
+                    onAccepted: root.addDir(dirField.text)
+                }
+
+                VgsButton {
+                    text: "Add"
+                    enabled: dirField.text.trim().length > 0 && !root.busy
+                    onClicked: root.addDir(dirField.text)
+                }
+            }
+        }
+    }
+
+    // One status line for every action on this page.
+    StyledText {
+        width: parent.width
+        visible: root.status !== ""
+        text: root.status
+        wrapMode: Text.WordWrap
+        font.pixelSize: Theme.settingsFontSize
+        color: root.statusFailed ? Theme.error : Theme.success
+    }
+}

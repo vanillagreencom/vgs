@@ -13,14 +13,14 @@ PluginSettings {
         width: parent.width
         text: I18n.tr("Cloud Sync Settings", "Plugin settings page title")
         font.pixelSize: Theme.fontSizeLarge
-        font.weight: Font.Bold
+        font.weight: Theme.fontWeightSectionHeader
         color: Theme.surfaceText
     }
 
     StyledText {
         width: parent.width
         text: I18n.tr("Show cloud sync state in the bar. Click the pill for live transfers, storage and quick controls; open the Cloud Sync app to manage accounts and folders.", "Plugin settings description")
-        font.pixelSize: Theme.fontSizeSmall
+        font.pixelSize: Theme.settingsFontSize
         color: Theme.surfaceVariantText
         wrapMode: Text.WordWrap
     }
@@ -100,7 +100,7 @@ PluginSettings {
                 StyledText {
                     text: I18n.tr("Requirements", "Settings section header")
                     font.pixelSize: Theme.fontSizeMedium
-                    font.weight: Font.Medium
+                    font.weight: Theme.fontWeightSectionHeader
                     color: Theme.surfaceText
                     anchors.verticalCenter: parent.verticalCenter
                 }
@@ -109,7 +109,7 @@ PluginSettings {
             StyledText {
                 width: parent.width
                 text: I18n.tr("Needs the `rclone` command. Streaming folders on demand also needs `fuse3`. The widget hides itself when rclone is not installed.", "Cloud sync dependency explanation")
-                font.pixelSize: Theme.fontSizeSmall
+                font.pixelSize: Theme.settingsFontSize
                 color: Theme.surfaceVariantText
                 wrapMode: Text.WordWrap
                 lineHeight: 1.4
@@ -119,8 +119,8 @@ PluginSettings {
                 visible: CloudSyncService.rcloneVersion.length > 0
                 width: parent.width
                 text: I18n.tr("Detected rclone", "Label before the detected rclone version") + ": " + CloudSyncService.rcloneVersion
-                font.pixelSize: Theme.fontSizeSmall
-                color: Theme.surfaceTextMedium
+                font.pixelSize: Theme.settingsFontSize
+                color: Theme.surfaceVariantText
             }
         }
     }
