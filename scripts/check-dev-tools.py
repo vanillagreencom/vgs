@@ -335,6 +335,40 @@ def test_an_owner_installed_app_launches_its_public_command():
         devtools.mise_installed_versions = original
 
 
+def test_an_interpreter_pin_reaches_the_build_and_no_further():
+    """Hermes pins its interpreter for its own build. Exported past the install
+    it would resolve that version in the owner's projects too, and `mise up`
+    rebuilds without it, so the pin needs a probe as well as an export."""
+    hermes = next(e for e in devtools.agent_entries() if e["id"] == "hermes")
+    stub = mise.mise_stub_text(str(hermes["package"]), "hermes", "hermes",
+                               dict(hermes["buildEnv"]), list(hermes["requires"]),
+                               str(hermes["present"]))
+    assert "export UV_PYTHON=3.13" in stub, stub
+    assert "exec env -u UV_PYTHON mise x" in stub, \
+        "the pin must not reach the agent or anything it shells out to: " + stub
+    assert "mise use -g --quiet uv || exit 1" in stub, \
+        "mise's pipx backend shells out to uv, which is not on every machine: " + stub
+    assert "--force" in stub and "hermes-agent/lib/python3.13" in stub, \
+        "a rebuild without the pin has to be noticed and redone: " + stub
+    assert stub.index("uv || exit 1") < stub.index("--force"), \
+        "uv has to be there before the build that needs it"
+
+    # An entry with no pin keeps the plain stub: no probe, no force, no env -u.
+    plain = mise.mise_stub_text("claude", "claude", "claude")
+    assert "mise use -g --quiet claude || exit 1" in plain, plain
+    for absent in ("--force", "mise where", "env -u"):
+        assert absent not in plain, f"an entry with no build environment must not carry {absent}: {plain}"
+
+    # The prompt installs the same way, loudly, because the owner is watching.
+    steps = mise.mise_install_steps(str(hermes["package"]), list(hermes["requires"]),
+                                    str(hermes["present"]), quiet=False)
+    assert_equal(steps[0], ["mise", "use", "-g", "uv"], "the prompt installs the requirement first")
+    assert_equal(steps[-1], ["mise", "use", "-g", "--force", str(hermes["package"])],
+                 "and forces the pinned build")
+    assert_equal(mise.mise_build_env(dict(hermes["buildEnv"]))["UV_PYTHON"], "3.13",
+                 "with the same environment the stub exports")
+
+
 def test_a_windowed_app_launches_without_a_terminal():
     """A GUI app draws its own window; a terminal wrapped around it would sit
     empty on the bar for as long as the app ran. A TUI agent still gets one."""
@@ -500,6 +534,7 @@ def main() -> int:
     test_an_entry_without_this_machines_architecture_is_not_offered()
     test_a_package_is_looked_up_under_the_id_mise_files_it_by()
     test_an_owner_installed_app_launches_its_public_command()
+    test_an_interpreter_pin_reaches_the_build_and_no_further()
     test_a_windowed_app_launches_without_a_terminal()
     test_apps_get_stubs_and_their_own_list()
     test_env_remove_keeps_shared_tools()

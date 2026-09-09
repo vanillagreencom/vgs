@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 import vshell_mise
-from vshell_mise import DevToolsRuntime, dev_tools_catalog, launchable, mise_stubs_opted_out, mise_env, mise_install_stub, mise_installed_versions, mise_stub_state, package_key
+from vshell_mise import DevToolsRuntime, dev_tools_catalog, launchable, mise_build_env, mise_install_steps, mise_stubs_opted_out, mise_env, mise_install_stub, mise_installed_versions, mise_stub_state, package_key
 
 RT: DevToolsRuntime
 
@@ -94,8 +94,18 @@ def agent_install_prompt(entry: Dict[str, Any]) -> bool:
     if answer not in ("", "y", "yes"):
         return False
     command = str(entry["command"])
-    mise_install_stub(str(entry["package"]), command, str(entry.get("bin") or command))
-    return subprocess.run(["mise", "use", "-g", str(entry["package"])], check=False, env=mise_env(), cwd=str(RT.home())).returncode == 0
+    package = str(entry["package"])
+    build_env = dict(entry.get("buildEnv") or {})
+    requires = [str(r) for r in entry.get("requires") or []]
+    present = str(entry.get("present") or "")
+    mise_install_stub(package, command, str(entry.get("bin") or command), build_env, requires, present)
+    # The same steps the stub would run, so a tool installed from the prompt and
+    # one installed on first launch are built the same way.
+    env = {**mise_env(), **mise_build_env(build_env)}
+    for step in mise_install_steps(package, requires, present, quiet=False):
+        if subprocess.run(step, check=False, env=env, cwd=str(RT.home())).returncode != 0:
+            return False
+    return True
 
 
 def agent_launch(agent_id: str, inline: bool, hold: bool = False) -> int:
