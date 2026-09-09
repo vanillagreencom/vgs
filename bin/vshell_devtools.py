@@ -14,7 +14,8 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 import vshell_mise
-from vshell_mise import DevToolsRuntime, dev_tools_catalog, launchable, mise_build_env, mise_install_steps, mise_stubs_opted_out, mise_env, mise_install_stub, mise_installed_versions, mise_stub_state, package_key
+from vshell_apps import PACKAGE_OWNER_QUERY, PACKAGE_REMOVERS, os_release_ids, owning_package
+from vshell_mise import DevToolsRuntime, dev_tools_catalog, launchable, manageable, mise_build_env, mise_install_steps, mise_installs, mise_stubs_opted_out, mise_env, mise_install_stub, mise_installed_versions, mise_stub_state, package_key
 
 RT: DevToolsRuntime
 
@@ -35,34 +36,51 @@ def agent_entries() -> List[Dict[str, Any]]:
     return launchable(dev_tools_catalog())
 
 
+def catalog_entries() -> List[Dict[str, Any]]:
+    """Every entry VGS installs, removes and reports on, agents, apps and tools
+    alike. `agent launch` is the only caller narrower than this."""
+    return manageable(dev_tools_catalog())
+
+
+def entry_row(entry: Dict[str, Any], installs: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+    """One settings row: what the entry is, what provides it now, and what the
+    tab may offer to do about that."""
+    command = str(entry["command"])
+    stub = mise_stub_state(RT.home() / ".local" / "bin" / command)
+    origin = install_origin(entry, installs)
+    return {
+        "id": entry["id"],
+        "name": entry["name"],
+        "group": entry["group"],
+        "icon": entry.get("icon", ""),
+        "color": entry.get("color", ""),
+        "command": command,
+        "package": entry["package"],
+        "kind": str(entry.get("kind") or "tui"),
+        # The release streams this entry offers, and the one in force. Two
+        # or more is what puts a channel dropdown on its settings row.
+        "channels": [str(c) for c in entry.get("channels") or []],
+        "channel": str(entry.get("channel") or ""),
+        "stub": stub,
+        # What provides the command, where, and the distribution package that
+        # holds it when one does.
+        "origin": origin["origin"],
+        "originPath": origin["path"],
+        "originOwner": origin["owner"],
+        "installed": origin["version"],
+        # A command VGS did not install still runs; it just runs without mise.
+        "runnable": origin["origin"] != ORIGIN_ABSENT,
+    }
+
+
 def agent_list() -> Dict[str, Any]:
-    versions, versions_error = mise_installed_versions()
-    rows: Dict[str, List[Dict[str, Any]]] = {"agent": [], "app": []}
-    for entry in agent_entries():
-        command = str(entry["command"])
-        stub = mise_stub_state(RT.home() / ".local" / "bin" / command)
-        key = package_key(str(entry["package"]))
-        rows[str(entry["group"])].append({
-            "id": entry["id"],
-            "name": entry["name"],
-            "group": entry["group"],
-            "icon": entry.get("icon", ""),
-            "color": entry.get("color", ""),
-            "command": command,
-            "package": entry["package"],
-            "kind": str(entry.get("kind") or "tui"),
-            # The release streams this entry offers, and the one in force. Two
-            # or more is what puts a channel dropdown on its settings row.
-            "channels": [str(c) for c in entry.get("channels") or []],
-            "channel": str(entry.get("channel") or ""),
-            "stub": stub,
-            "installed": versions.get(key, ""),
-            # A foreign or shadowed command is the owner's own install of the
-            # same agent; it launches without mise.
-            "runnable": bool(versions.get(key)) or stub in {"foreign", "shadowed"},
-        })
-    return {"ok": True, "mise": RT.command_exists("mise"), "error": versions_error,
-            "optedOut": mise_stubs_opted_out(), "agents": rows["agent"], "apps": rows["app"]}
+    installs, error = mise_installs()
+    rows: Dict[str, List[Dict[str, Any]]] = {"agent": [], "app": [], "tool": []}
+    for entry in catalog_entries():
+        rows[str(entry["group"])].append(entry_row(entry, installs))
+    return {"ok": True, "mise": RT.command_exists("mise"), "error": error,
+            "optedOut": mise_stubs_opted_out(),
+            "agents": rows["agent"], "apps": rows["app"], "tools": rows["tool"]}
 
 
 def agent_installed(entry: Dict[str, Any]) -> bool:
@@ -180,8 +198,68 @@ def agent_remove(entry: Dict[str, Any]) -> int:
                          f"{entry['name']} could not be fully removed." if failures else f"{entry['name']} removed.")
 
 
+def entry_track(entry: Dict[str, Any]) -> int:
+    """Declare an existing mise install in the global config. `mise outdated`
+    reports only what a config asks for, so an install nothing declares never
+    reaches an update count and never moves again."""
+    installs, _ = mise_installs()
+    install = installs.get(package_key(str(entry["package"])))
+    if not install:
+        return hold_terminal(1, f"{entry['name']} is not installed through mise; there is nothing to track.")
+    if install["declared"]:
+        return hold_terminal(0, f"{entry['name']} is already tracked for updates.")
+    print(f"Tracking {entry['name']} for updates...\n")
+    code = dev_env_run(["mise", "use", "-g", str(entry["package"])])
+    return hold_terminal(code, f"{entry['name']} is now tracked for updates."
+                         if code == 0 else f"{entry['name']} could not be tracked.")
+
+
+def entry_replace(entry: Dict[str, Any]) -> int:
+    """Remove the distribution package holding the command, then install the
+    entry through mise. Two copies of one command otherwise sit on PATH and the
+    distribution's wins wherever its directory comes first, so an update through
+    mise moves a binary nothing runs."""
+    installs, _ = mise_installs()
+    origin = install_origin(entry, installs)
+    if origin["origin"] != ORIGIN_SYSTEM:
+        return hold_terminal(1, f"No distribution package owns {entry['command']}; nothing to replace.")
+    owner, path = origin["owner"], origin["path"]
+    print(f"{owner} owns {path}.")
+    print(f"Removing it, then installing {entry['name']} through mise.\n")
+    for distro in os_release_ids():
+        remover = PACKAGE_REMOVERS.get(distro)
+        if not remover:
+            continue
+        if subprocess.run([*remover, owner], check=False).returncode != 0:
+            return hold_terminal(1, f"{owner} was not removed; {entry['name']} was left alone.")
+        break
+    else:
+        return hold_terminal(1, "No supported package manager for this distribution ("
+                             + (" ".join(os_release_ids()) or "unreadable /etc/os-release") + ").")
+    env = {**mise_env(), **mise_build_env(dict(entry.get("buildEnv") or {}))}
+    for step in mise_install_steps(str(entry["package"]),
+                                   [str(r) for r in entry.get("requires") or []],
+                                   str(entry.get("present") or ""), quiet=False):
+        if subprocess.run(step, check=False, env=env, cwd=str(RT.home())).returncode != 0:
+            return hold_terminal(1, f"{owner} was removed but {entry['name']} did not install.")
+    mise_install_stub(str(entry["package"]), str(entry["command"]),
+                      str(entry.get("bin") or entry["command"]),
+                      dict(entry.get("buildEnv") or {}),
+                      [str(r) for r in entry.get("requires") or []],
+                      str(entry.get("present") or ""))
+    return hold_terminal(0, f"{entry['name']} now comes from mise.")
+
+
+# Actions that take any catalog entry, keyed by the verb the CLI spells them
+# with. Each answers one row's button in the Developer tab.
+ENTRY_ACTIONS = {"remove": lambda e: agent_remove(e),
+                 "track": lambda e: entry_track(e),
+                 "replace": lambda e: entry_replace(e)}
+
+
 def cmd_agent(argv: List[str]) -> int:
-    usage = "Usage: vshell agent list [--json] | launch <id> [--inline] | install <id> | remove <id> | pick"
+    usage = ("Usage: vshell agent list [--json] | launch <id> [--inline] | install <id> | "
+             "remove <id> | track <id> | replace <id> | pick")
     if not argv:
         RT.eprint(usage)
         return 2
@@ -191,8 +269,8 @@ def cmd_agent(argv: List[str]) -> int:
         if "--json" in rest:
             print(json.dumps(data))
         else:
-            for row in data["agents"] + data["apps"]:
-                print(f"{row['id']:<10} {row['name']:<18} {row['group']:<6} {row['installed'] or ('yours' if row['stub'] in {'foreign', 'shadowed'} else '-')}")
+            for row in data["agents"] + data["apps"] + data["tools"]:
+                print(f"{row['id']:<12} {row['name']:<20} {row['group']:<6} {row['origin']:<10} {row['installed'] or '-'}")
         return 0
     if sub == "pick":
         cli = str(RT.repo_root() / "bin" / "vshell")
@@ -206,12 +284,14 @@ def cmd_agent(argv: List[str]) -> int:
         if agent_installed(entry):
             return 0
         return 0 if agent_install_prompt(entry) else hold_terminal(1, f"{entry['name']} was not installed.")
-    if sub == "remove":
-        entry = next((e for e in agent_entries() if e["id"] == (rest[0] if rest else "")), None)
+    # remove, track and replace act on any catalog entry, tools included; only
+    # launching is narrower than the whole catalog.
+    if sub in ENTRY_ACTIONS:
+        entry = next((e for e in catalog_entries() if e["id"] == (rest[0] if rest else "")), None)
         if entry is None:
             RT.eprint(usage)
             return 2
-        return agent_remove(entry)
+        return ENTRY_ACTIONS[sub](entry)
     if sub == "launch":
         ids = [a for a in rest if not a.startswith("--")]
         if len(ids) != 1:
@@ -251,19 +331,45 @@ def dev_env_list() -> Dict[str, Any]:
     return {"ok": True, "mise": RT.command_exists("mise"), "envs": envs}
 
 
-def os_release_ids(path: Path = Path("/etc/os-release")) -> List[str]:
-    """ID followed by each ID_LIKE token, so cachyos resolves to arch and
-    ubuntu to debian. Empty when the file is unreadable."""
-    values: Dict[str, str] = {}
-    try:
-        for line in path.read_text().splitlines():
-            key, sep, value = line.partition("=")
-            if sep:
-                values[key.strip()] = value.strip().strip('"')
-    except OSError:
-        return []
-    ids = [values.get("ID", "")] + values.get("ID_LIKE", "").split()
-    return [i for i in ids if i]
+# What provides a catalog entry's command, in the order a row reports it.
+#   mise      mise installed it and a config declares it: updates track it
+#   untracked mise installed it, no config declares it: `mise outdated` skips it
+#   system    a distribution package owns the binary on PATH
+#   external  something else on PATH provides it (an own wrapper, another manager)
+#   absent    nothing provides it
+ORIGIN_MISE = "mise"
+ORIGIN_UNTRACKED = "untracked"
+ORIGIN_SYSTEM = "system"
+ORIGIN_EXTERNAL = "external"
+ORIGIN_ABSENT = "absent"
+
+
+def distro_package_owning(path: Path) -> str:
+    """The distribution package that owns `path`, or "". Asked of the package
+    manager rather than guessed from the prefix: a file under /usr/bin may
+    still belong to nobody. vshell_apps owns the per-distribution query, so a
+    distribution added there is answered here too."""
+    for distro in os_release_ids():
+        if distro in PACKAGE_OWNER_QUERY:
+            return owning_package(path, distro) or ""
+    return ""
+
+
+def install_origin(entry: Dict[str, Any], installs: Dict[str, Dict[str, Any]]) -> Dict[str, str]:
+    """What provides one entry's command, and where. A mise install wins over a
+    file on PATH: it is the one VGS can update and remove. `owner` names the
+    distribution package holding the path, which is the duplicate an install
+    through mise would create."""
+    install = installs.get(package_key(str(entry["package"])))
+    if install:
+        return {"origin": ORIGIN_MISE if install["declared"] else ORIGIN_UNTRACKED,
+                "path": "", "owner": "", "version": str(install["version"])}
+    path = vshell_mise.command_on_path_elsewhere(str(entry["command"]), RT.home() / ".local" / "bin")
+    if not path:
+        return {"origin": ORIGIN_ABSENT, "path": "", "owner": "", "version": ""}
+    owner = distro_package_owning(Path(path))
+    return {"origin": ORIGIN_SYSTEM if owner else ORIGIN_EXTERNAL,
+            "path": path, "owner": owner, "version": ""}
 
 
 PACKAGE_INSTALLERS = {

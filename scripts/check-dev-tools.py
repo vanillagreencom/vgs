@@ -688,10 +688,10 @@ def test_the_settings_tab_runs_the_channel_command():
     # that only writes back to the row leaves the shell showing a stream nothing
     # installs from.
     assert "onValueChanged" in tab, "the dropdown must handle a pick"
-    assert "root.setChannel(agentRow.modelData.id," in tab, \
+    assert "root.setChannel(row.modelData.id," in tab, \
         "the pick must run the channel command for the row it came from"
-    assert "options: agentRow.modelData.channels" in tab, "the dropdown lists the row's own streams"
-    assert "currentValue: agentRow.modelData.channel" in tab, "and shows the one in force"
+    assert "options: row.modelData.channels" in tab, "the dropdown lists the row's own streams"
+    assert "currentValue: row.modelData.channel" in tab, "and shows the one in force"
     assert "vshell mise channel" in (REPO_ROOT / "bin" / "vshell").read_text(), \
         "bin/vshell must document the channel command"
 
@@ -747,6 +747,87 @@ def test_distro_owned_env_is_hands_off():
         devtools.RT.eprint = original_eprint
 
 
+def test_install_origin_names_what_provides_a_command():
+    """A row's whole vocabulary comes from this. `mise outdated` reports only
+    what a config declares, so an install nothing declares never reaches an
+    update count: that case has to read differently from a tracked one, and
+    from a distribution package holding the same command."""
+    original_installs = mise.mise_installs
+    original_owner = devtools.distro_package_owning
+    original_which = mise.command_on_path_elsewhere
+    try:
+        entry = {"id": "t", "name": "T", "command": "toolcmd", "package": "npm:@scope/toolcmd"}
+
+        # Declared in a config: mise tracks it and an update moves it.
+        installs = {"npm:@scope/toolcmd": {"version": "1.2.3", "declared": True}}
+        assert_equal(devtools.install_origin(entry, installs),
+                     {"origin": "mise", "path": "", "owner": "", "version": "1.2.3"},
+                     "a declared install is tracked")
+
+        # Installed, declared nowhere: invisible to every update count.
+        installs = {"npm:@scope/toolcmd": {"version": "1.2.3", "declared": False}}
+        assert_equal(devtools.install_origin(entry, installs)["origin"], "untracked",
+                     "an install no config declares must not read as tracked")
+
+        # Not in mise: what holds the command on PATH decides the row.
+        mise.command_on_path_elsewhere = lambda command, local_bin: "/usr/bin/toolcmd"
+        devtools.distro_package_owning = lambda path: "toolcmd-bin"
+        assert_equal(devtools.install_origin(entry, {}),
+                     {"origin": "system", "path": "/usr/bin/toolcmd", "owner": "toolcmd-bin", "version": ""},
+                     "a package-owned path names the package")
+        devtools.distro_package_owning = lambda path: ""
+        assert_equal(devtools.install_origin(entry, {})["origin"], "external",
+                     "a path no package owns is the owner's own file, not a system package")
+        mise.command_on_path_elsewhere = lambda command, local_bin: ""
+        assert_equal(devtools.install_origin(entry, {})["origin"], "absent",
+                     "nothing on PATH and nothing in mise is absent")
+    finally:
+        mise.mise_installs = original_installs
+        devtools.distro_package_owning = original_owner
+        mise.command_on_path_elsewhere = original_which
+
+
+def test_the_settings_tab_can_act_on_every_row():
+    """Each state the classifier can report needs a way out of it, or the tab
+    shows a problem the reader cannot fix."""
+    tab = (REPO_ROOT / "quickshell" / "vshell" / "Modules" / "Settings" / "DeveloperTab.qml").read_text()
+    # Every verb the row can offer has to reach the CLI. `track` and `replace`
+    # go through one runner, so the pin is that the runner passes the verb
+    # through rather than naming a fixed one.
+    assert '"agent", verb, entry.id' in tab, "the row action must run the verb it was given"
+    for verb in ("track", "replace"):
+        assert f'"verb": "{verb}"' in tab, f"a row state must be able to offer {verb}"
+    assert 'root.tools' in tab, "the tab must draw the catalog's tools section"
+    assert 'I18n.tr("Developer Tools")' in tab, "the tools card must be titled"
+    # Uninstall destroys an install; a single click must not do it. The pin is
+    # the early return, not the flag: a flag the handler never consults reads
+    # the same in the file and removes nothing.
+    assert "if (!row.confirming) {" in tab, "the first click on uninstall must arm, not act"
+    assert '"agent", "remove", row.modelData.id' in tab, "the second click runs the removal"
+    for verb, origin in (("track", "untracked"), ("replace", "system")):
+        assert f'"{verb}"' in tab and f'"{origin}"' in tab, \
+            f"the {origin} state must offer {verb}"
+    # Turning auto-install off uninstalls nothing, and the copy has to say so.
+    assert "Turn off auto-install" in tab, "the bulk control must say what it does"
+    assert "Turning it off uninstalls nothing" in tab, "and must say what it does not do"
+
+
+def test_catalog_entries_cover_the_tools_section():
+    """`agent launch` is narrower than the catalog on purpose; install, removal
+    and reporting are not. A tools entry missing from the wider list gets no
+    settings row and no way to be removed."""
+    catalog = mise.dev_tools_catalog()
+    ids = [e["id"] for e in mise.manageable(catalog)]
+    for tool in catalog["tools"]:
+        assert tool["id"] in ids, f"{tool['id']}: manageable() must carry the tools section"
+    launch_ids = [e["id"] for e in mise.launchable(catalog)]
+    for tool in catalog["tools"]:
+        assert tool["id"] not in launch_ids, f"{tool['id']}: a tool has nothing to launch"
+    for group, entries in (("tool", catalog["tools"]),):
+        stamped = [e["group"] for e in mise.manageable(catalog) if e["id"] in {t["id"] for t in entries}]
+        assert_equal(set(stamped), {group}, "manageable() must stamp the group each entry came from")
+
+
 def test_catalog_is_consistent():
     """One catalog feeds stubs, agents, apps and envs; ids and commands must be unique."""
     catalog = mise.dev_tools_catalog()
@@ -773,6 +854,13 @@ def test_catalog_is_consistent():
             f"{entry['id']}: icon must be nerd:<hex> or brand:<hex>, not {entry.get('icon')!r}"
         assert TILE_COLOR.fullmatch(str(entry.get("color") or "")), \
             f"{entry['id']}: color must be #RRGGBB, not {entry.get('color')!r}"
+    # A tool reaches no tile, so it carries no icon or colour; it does carry the
+    # id and name every settings row and every action is addressed by.
+    for entry in catalog["tools"]:
+        assert entry.get("id") and entry.get("name"), f"tool {entry.get('command')!r}: needs an id and a name"
+    all_ids = [e["id"] for e in launchable + catalog["tools"]]
+    assert_equal(len(all_ids), len(set(all_ids)),
+                 "ids must be unique across agents, apps and tools: " + " ".join(all_ids))
     for entry in channelled_entries(catalog):
         options = mise.entry_channels(entry)
         assert len(options) > 1, f"{entry['id']}: a channel set with one option is a dropdown with nothing to pick"
@@ -817,6 +905,9 @@ def main() -> int:
     test_the_settings_tab_runs_the_channel_command()
     test_env_remove_keeps_shared_tools()
     test_distro_owned_env_is_hands_off()
+    test_install_origin_names_what_provides_a_command()
+    test_the_settings_tab_can_act_on_every_row()
+    test_catalog_entries_cover_the_tools_section()
     test_catalog_is_consistent()
     test_cli_wrapper_routes_the_commands()
     print("check-dev-tools: ok")
