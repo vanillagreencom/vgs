@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import re
 import shlex
 import shutil
@@ -140,6 +141,15 @@ def mise_install_stub(package: str, command: str, bin_name: str = "") -> Dict[st
     return result
 
 
+def buildable_here(entry: Dict[str, Any]) -> bool:
+    """Whether this machine's architecture is one the entry publishes for. An
+    entry naming none builds everywhere. VGS ships aarch64, and an entry with
+    only x86_64 assets would otherwise offer an install with no asset to
+    choose."""
+    arch = entry.get("arch")
+    return not arch or platform.machine() in arch
+
+
 def launchable(catalog: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Catalog entries with a launcher: coding agents and developer apps. One
     list so install, launch and removal have a single implementation; the
@@ -147,13 +157,14 @@ def launchable(catalog: Dict[str, Any]) -> List[Dict[str, Any]]:
     apart."""
     return [dict(entry, group=group[:-1])
             for group in ("agents", "apps")
-            for entry in catalog.get(group) or []]
+            for entry in catalog.get(group) or []
+            if buildable_here(entry)]
 
 
 def mise_catalog_stubs() -> List[Dict[str, str]]:
     catalog = dev_tools_catalog()
     stubs: List[Dict[str, str]] = []
-    for entry in launchable(catalog) + list(catalog.get("tools") or []):
+    for entry in launchable(catalog) + [e for e in catalog.get("tools") or [] if buildable_here(e)]:
         stubs.append({
             "package": str(entry["package"]),
             "command": str(entry["command"]),
@@ -290,9 +301,9 @@ def mise_list() -> Dict[str, Any]:
         "mise": RT.command_exists("mise"),
         "optedOut": mise_stubs_opted_out(),
         "error": versions_error or outdated_error,
-        "agents": [describe(e) for e in catalog.get("agents") or []],
-        "apps": [describe(e) for e in catalog.get("apps") or []],
-        "tools": [describe(e) for e in catalog.get("tools") or []],
+        "agents": [describe(e) for e in catalog.get("agents") or [] if buildable_here(e)],
+        "apps": [describe(e) for e in catalog.get("apps") or [] if buildable_here(e)],
+        "tools": [describe(e) for e in catalog.get("tools") or [] if buildable_here(e)],
         "outdated": outdated,
     }
 

@@ -18,6 +18,11 @@
     "is not a coding agent and every surface says which it is. `kind: gui`",
     "launches detached with no terminal around it.",
     "",
+    "`arch` lists the machine architectures an entry publishes builds for.",
+    "Absent means every one. VGS ships aarch64, so an entry that only builds",
+    "x86_64 has to say so: without it an ARM owner gets a tile whose first",
+    "install has no asset to choose.",
+    "",
     "A `package` may carry mise backend options in brackets: `matching_regex`",
     "picks the release asset when the platform matcher cannot, `rename_exe`",
     "gives it a name that does not change with the version. cmux publishes only",
@@ -53,8 +58,8 @@
   "apps": [
     { "id": "herdr", "name": "herdr", "icon": "nerd:f0cc6", "package": "herdr", "command": "herdr", "launch": ["herdr"] },
     { "id": "orca", "name": "Orca", "kind": "gui", "icon": "nerd:f18b4", "package": "github:stablyai/orca", "command": "orca-ide", "bin": "orca.AppImage", "launch": ["orca.AppImage"] },
-    { "id": "t3code", "name": "T3 Code", "kind": "gui", "icon": "nerd:f0c8b", "color": "#E24A8B", "package": "github:pingdotgg/t3code[matching_regex=AppImage$,rename_exe=t3code]", "command": "t3code", "bin": "t3code.AppImage", "launch": ["t3code.AppImage"] },
-    { "id": "cmux", "name": "cmux", "kind": "gui", "icon": "nerd:f059f", "color": "#4285F4", "package": "github:manaflow-ai/cmux-v2[matching_regex=linux-x64\\.zip,rename_exe=cmux]@nightly", "command": "cmux", "launch": ["cmux"] }
+    { "id": "t3code", "name": "T3 Code", "kind": "gui", "arch": ["x86_64"], "icon": "nerd:f0c8b", "color": "#E24A8B", "package": "github:pingdotgg/t3code[matching_regex=AppImage$,rename_exe=t3code]", "command": "t3code", "bin": "t3code.AppImage", "launch": ["t3code.AppImage"] },
+    { "id": "cmux", "name": "cmux", "kind": "gui", "arch": ["x86_64"], "icon": "nerd:f059f", "color": "#4285F4", "package": "github:manaflow-ai/cmux-v2[matching_regex=linux-x64\\.zip,rename_exe=cmux]@nightly", "command": "cmux", "launch": ["cmux"] }
   ],
   "tools": [
     { "package": "gh", "command": "gh" },

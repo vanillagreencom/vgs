@@ -245,6 +245,40 @@ def test_first_launch_asks_before_installing():
         devtools.mise_install_stub = original_stub
 
 
+def test_an_entry_without_this_machines_architecture_is_not_offered():
+    """VGS ships aarch64. An entry that publishes only x86_64 assets must not
+    reach a list on ARM: the tile would look installable and the first install
+    would find no asset to choose."""
+    catalog = mise.dev_tools_catalog()
+    declared = [e for e in catalog["agents"] + catalog["apps"] + catalog["tools"] if e.get("arch")]
+    assert declared, "the guard needs at least one entry declaring an architecture to judge"
+
+    original = mise.platform.machine
+    try:
+        mise.platform.machine = lambda: "x86_64"
+        on_x86 = {e["id"] for e in mise.launchable(catalog)}
+        stubs_x86 = {s["command"] for s in mise.mise_catalog_stubs()}
+        mise.platform.machine = lambda: "aarch64"
+        on_arm = {e["id"] for e in mise.launchable(catalog)}
+        stubs_arm = {s["command"] for s in mise.mise_catalog_stubs()}
+        listed_arm = mise.mise_list()
+    finally:
+        mise.platform.machine = original
+
+    for entry in declared:
+        if "x86_64" not in entry["arch"]:
+            continue
+        name = entry.get("id") or entry["command"]
+        assert name in on_x86 or entry["command"] in stubs_x86, f"{name} must be offered on x86_64"
+        assert name not in on_arm, f"{name} publishes no ARM build and must not be offered there"
+        assert entry["command"] not in stubs_arm, f"{name} must not get a stub on ARM"
+    arm_ids = {e["id"] for e in listed_arm["agents"] + listed_arm["apps"]}
+    assert arm_ids <= on_arm, "the settings list must not show what the launcher filtered out"
+    # An entry naming no architecture is offered everywhere, or the filter would
+    # have emptied both lists rather than trimmed them.
+    assert "claude" in on_arm and "claude" in on_x86, "an entry naming no architecture builds everywhere"
+
+
 def test_a_package_is_looked_up_under_the_id_mise_files_it_by():
     """mise drops inline backend options and the requested version from the id
     it reports, so a spec carrying either must be reduced before every lookup."""
@@ -446,6 +480,7 @@ def main() -> int:
     test_update_run_and_count_carry_tools()
     test_os_release_resolves_through_id_like()
     test_first_launch_asks_before_installing()
+    test_an_entry_without_this_machines_architecture_is_not_offered()
     test_a_package_is_looked_up_under_the_id_mise_files_it_by()
     test_an_owner_installed_app_launches_its_public_command()
     test_a_windowed_app_launches_without_a_terminal()

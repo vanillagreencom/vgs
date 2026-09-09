@@ -24,15 +24,24 @@ function launchableEntry(entry, tag, group, keywords) {
     }, iconFields(entry.icon));
 }
 
-function itemsFromCatalog(raw) {
+// `arch` lists the machine architectures an entry publishes builds for; absent
+// means every one. The helper applies the same field before it installs, so a
+// tile that survives here is one that can actually be installed.
+function buildableHere(entry, arch) {
+    return !entry.arch || !arch || entry.arch.indexOf(arch) !== -1;
+}
+
+function itemsFromCatalog(raw, arch) {
     const data = JSON.parse(raw || "{}");
     const out = [];
     for (const agent of data.agents || [])
-        out.push(launchableEntry(agent, "Agent", 1, ["agent", "ai", "code"]));
+        if (buildableHere(agent, arch))
+            out.push(launchableEntry(agent, "Agent", 1, ["agent", "ai", "code"]));
     // Apps launch through the same command as agents, so devKind stays "agent";
     // the tag is what tells a reader which of the two they are looking at.
     for (const app of data.apps || [])
-        out.push(launchableEntry(app, "App", 2, ["app", "dev", "tool"]));
+        if (buildableHere(app, arch))
+            out.push(launchableEntry(app, "App", 2, ["app", "dev", "tool"]));
     for (const env of data.envs || []) {
         out.push(Object.assign({
             category: "dev",

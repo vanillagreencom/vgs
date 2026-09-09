@@ -424,6 +424,16 @@ PluginComponent {
         resetResultListPosition();
     }
 
+    function rebuildDevItems() {
+        try {
+            root.devItems = DevToolsItems.itemsFromCatalog(devToolsFile.text(), DgopService.architecture);
+            root.refreshItems();
+        } catch (e) {
+            root.devItems = [];
+            ToastService.showWarning("Dev tools catalog invalid", e.message || String(e));
+        }
+    }
+
     function refreshItems() {
         if (resettingState || routingPrefix)
             return;
@@ -972,17 +982,20 @@ PluginComponent {
         blockLoading: false
         watchChanges: true
         printErrors: false
-        onLoaded: {
-            try {
-                root.devItems = DevToolsItems.itemsFromCatalog(text());
-                root.refreshItems();
-            } catch (e) {
-                root.devItems = [];
-                ToastService.showWarning("Dev tools catalog invalid", e.message || String(e));
-            }
-        }
+        onLoaded: root.rebuildDevItems()
         onFileChanged: devToolsFile.reload()
         onLoadFailed: root.devItems = []
+    }
+
+    // The architecture arrives from the backend, which may answer after the
+    // catalog loads. Rebuilding on both keeps a tile the machine cannot install
+    // from standing once the answer is in.
+    Connections {
+        target: DgopService
+        function onArchitectureChanged() {
+            if (devToolsFile.loaded)
+                root.rebuildDevItems();
+        }
     }
 
     FileView {
