@@ -13,9 +13,22 @@ import shlex
 import subprocess
 import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
-from vshell_devtools import os_release_ids
+def os_release_ids(path: Path = Path("/etc/os-release")) -> List[str]:
+    """ID followed by each ID_LIKE token, so cachyos resolves to arch and
+    ubuntu to debian. Empty when the file is unreadable."""
+    values: Dict[str, str] = {}
+    try:
+        for line in path.read_text().splitlines():
+            key, sep, value = line.partition("=")
+            if sep:
+                values[key.strip()] = value.strip().strip('"')
+    except OSError:
+        return []
+    ids = [values.get("ID", "")] + values.get("ID_LIKE", "").split()
+    return [i for i in ids if i]
+
 
 # Package-owner queries and removal commands by distribution family.
 PACKAGE_OWNER_QUERY = {
