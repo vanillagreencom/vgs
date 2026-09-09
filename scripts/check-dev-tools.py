@@ -738,8 +738,10 @@ def test_catalog_is_consistent():
         binary = entry.get("bin") or entry["command"]
         assert entry["launch"][0] == binary, f"{entry['id']}: launch must start with {binary}"
     # A tile with no colour falls back to the theme grey, so it reads as
-    # unbranded beside the rest and nothing else reports the omission.
-    for entry in launchable + catalog["envs"]:
+    # unbranded beside the rest and nothing else reports the omission. Read the
+    # raw sections, not launchable(): that drops what this machine cannot build,
+    # so an entry naming only the other architecture would be judged nowhere.
+    for entry in catalog["agents"] + catalog["apps"] + catalog["envs"]:
         assert TILE_ICON.fullmatch(str(entry.get("icon") or "")), \
             f"{entry['id']}: icon must be nerd:<hex> or brand:<hex>, not {entry.get('icon')!r}"
         assert TILE_COLOR.fullmatch(str(entry.get("color") or "")), \
