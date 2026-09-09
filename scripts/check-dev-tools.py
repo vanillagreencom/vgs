@@ -283,8 +283,11 @@ def test_apps_get_stubs_and_their_own_list():
     keeps them apart from the coding agents."""
     stubs = {s["command"]: s for s in mise.mise_catalog_stubs()}
     assert "herdr" in stubs, "an app must get a lazy stub: " + " ".join(sorted(stubs))
-    assert_equal(stubs["orca"]["bin"], "orca.AppImage",
+    # The vendor calls its binary orca-ide, and so does this entry: a stub at
+    # ~/.local/bin/orca would hide the GNOME screen reader of that name.
+    assert_equal(stubs["orca-ide"]["bin"], "orca.AppImage",
                  "the stub execs the package's own executable, not the command name")
+    assert "orca" not in stubs, "the command must not claim the screen reader's name"
     assert "gh" in stubs, "tools keep their stubs"
     # A package carrying mise backend options holds brackets, a backslash and a
     # `$`. Unquoted, the shell would glob the brackets and eat the rest, and the
