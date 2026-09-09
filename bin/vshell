@@ -426,6 +426,7 @@ Usage:
   vshell remote-desktop status|start|stop|toggle|ui [--json]   (Sunshine host + its virtual output)
   vshell update count|run <system|aur|flatpak|tools|all>
   vshell mise install <package> [command [bin]]|refresh|remove-stubs|opt-in|list --json|outdated --json|up
+  vshell mise channel <id> <channel>   (which release stream a dev tool installs from)
   vshell agent list|launch <id> [--inline]|install <id>|remove <id>|pick
   vshell dev-env list|install <id>|remove <id>
   vshell app uninstall <desktop-id>

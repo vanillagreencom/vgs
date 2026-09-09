@@ -785,6 +785,10 @@ Singleton {
     // Absent key = default from app detection (helper decides).
     property var themeApps: ({})
 
+    // Release stream per dev-tools catalog entry, keyed by entry id. Written by
+    // `vshell mise channel`; absent key = the entry's own default.
+    property var devToolChannels: ({})
+
     property bool showDock: false
     property bool dockAutoHide: false
     property bool dockSmartAutoHide: false

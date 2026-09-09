@@ -454,6 +454,231 @@ def test_apps_get_stubs_and_their_own_list():
     assert_equal(set(a["group"] for a in listed["apps"]), {"app"}, "each row names its group")
 
 
+def channelled_entries(catalog):
+    """Catalog entries offering a choice of release stream. Read from the
+    catalog itself so a new one is judged the moment it lands."""
+    return [e for group in ("agents", "apps") for e in catalog[group] if e.get("channels")]
+
+
+def test_a_channel_picks_the_release_stream_a_tool_installs_from():
+    """A channel adds backend options to the entry's own package, inside the
+    bracket list mise reads and nowhere else. Outside it, mise installs some
+    other tool or none; and the id it files the tool under must not move, or the
+    tool reads as never installed and cannot be removed."""
+    catalog = mise.dev_tools_catalog()
+    declared = channelled_entries(catalog)
+    assert declared, "the guard needs at least one entry declaring channels to judge"
+    ids = {e["id"] for e in declared}
+    assert "herdr" in ids, "herdr publishes a preview stream and must offer it: " + " ".join(sorted(ids))
+
+    original_machine = mise.platform.machine
+    original_settings = mise.RT.load_settings
+    try:
+        for machine in ("x86_64", "aarch64"):
+            mise.platform.machine = lambda m=machine: m
+            for entry in declared:
+                if not mise.buildable_here(entry):
+                    continue
+                base = str(entry["package"])
+                for channel, options in mise.entry_channels(entry).items():
+                    mise.RT.load_settings = lambda e=entry, c=channel: {"devToolChannels": {e["id"]: c}}
+                    row = next(r for r in mise.launchable(catalog) if r["id"] == entry["id"])
+                    where = f"{entry['id']} on {machine} at {channel}"
+                    assert_equal(row["channel"], channel, f"{where} installs from")
+                    assert_equal(mise.package_key(row["package"]), mise.package_key(base),
+                                 f"{where} must stay filed under the same mise id")
+                    if not options:
+                        assert_equal(row["package"], base, f"{where} adds no options, so the package is unchanged")
+                        continue
+                    assert row["package"] != base, f"{where} must change the package: {row['package']}"
+                    bracket = mise.PACKAGE_OPTIONS.search(row["package"])
+                    assert bracket and options in bracket.group(0), \
+                        f"{where} must put {options} in the backend option list: {row['package']}"
+                    stub = next(s for s in mise.mise_catalog_stubs() if s["command"] == entry["command"])
+                    assert_equal(stub["package"], row["package"], f"{where} is what the stub installs")
+                    # Quoted whole: the spec holds brackets, a `$` and a comma,
+                    # which a bare shell word would glob away.
+                    assert "'" + row["package"] + "'" in mise.mise_stub_text(stub["package"], stub["command"], stub["bin"]), \
+                        f"{where} must reach the stub quoted"
+            # The other direction: an entry the catalog gives no channels keeps
+            # its package verbatim and offers nothing to pick.
+            mise.RT.load_settings = lambda: {}
+            plain = next(r for r in mise.launchable(catalog) if not r["channels"])
+            raw = next(e for group in ("agents", "apps") for e in catalog[group] if e["id"] == plain["id"])
+            assert_equal(plain["package"], str(raw["package"]), f"{plain['id']} publishes one stream and keeps its package")
+            assert_equal(plain["channel"], "", f"{plain['id']} has no channel to be in")
+    finally:
+        mise.platform.machine = original_machine
+        mise.RT.load_settings = original_settings
+
+
+def test_a_settings_row_carries_the_streams_it_can_offer():
+    """The Developer tab draws a dropdown from the row alone. Without the ids
+    and the current one, a tool with two streams renders as if it had one."""
+    original_versions = devtools.mise_installed_versions
+    original_state = devtools.mise_stub_state
+    original_settings = mise.RT.load_settings
+    original_machine = mise.platform.machine
+    devtools.mise_installed_versions = lambda: ({}, "")
+    devtools.mise_stub_state = lambda path: "absent"
+    mise.platform.machine = lambda: "x86_64"
+    mise.RT.load_settings = lambda: {"devToolChannels": {"t3code": "nightly"}}
+    try:
+        listed = devtools.agent_list()
+        rows = {r["id"]: r for r in listed["agents"] + listed["apps"]}
+        catalog = mise.dev_tools_catalog()
+        for entry in channelled_entries(catalog):
+            if not mise.buildable_here(entry):
+                continue
+            expected = list(mise.entry_channels(entry))
+            assert_equal(rows[entry["id"]]["channels"], expected, f"{entry['id']} offers")
+            assert len(expected) > 1, f"{entry['id']}: a single channel is a dropdown with nothing to pick"
+        assert_equal(rows["t3code"]["channel"], "nightly", "the row names the stream in force")
+        assert "prerelease=true" in rows["t3code"]["package"], rows["t3code"]["package"]
+        # And a row with one stream says so, rather than carrying a stale list.
+        assert_equal(rows["claude"]["channels"], [], "an entry with one stream offers no choice")
+        assert_equal(rows["claude"]["channel"], "", "and names no channel")
+    finally:
+        devtools.mise_installed_versions = original_versions
+        devtools.mise_stub_state = original_state
+        mise.RT.load_settings = original_settings
+        mise.platform.machine = original_machine
+
+
+def test_a_channel_the_catalog_dropped_falls_back_to_the_default():
+    """settings.json outlives a catalog edit. A pick the catalog no longer
+    offers must not reach mise, which would install from a stream that is gone
+    or, for an option mise cannot parse, refuse the install outright."""
+    catalog = mise.dev_tools_catalog()
+    entry = next(e for e in channelled_entries(catalog) if e["id"] == "herdr")
+    default = str(entry["channels"]["default"])
+    other = next(c for c in mise.entry_channels(entry) if c != default)
+    cases = [
+        ({}, default, "no pick at all"),
+        ({"devToolChannels": {"herdr": other}}, other, "a pick the catalog offers"),
+        ({"devToolChannels": {"herdr": "retired"}}, default, "a pick the catalog dropped"),
+        ({"devToolChannels": {"herdr": ""}}, default, "an empty pick"),
+        ({"devToolChannels": "nightly"}, default, "a setting of the wrong shape"),
+        ({"devToolChannels": {"orca": other}}, default, "a pick belonging to another entry"),
+    ]
+    original = mise.RT.load_settings
+    try:
+        for settings, expected, what in cases:
+            mise.RT.load_settings = lambda s=settings: s
+            assert_equal(mise.entry_channel(entry, mise.dev_tool_channels()), expected, f"{what} resolves to")
+    finally:
+        mise.RT.load_settings = original
+
+    # A catalog whose default names no option is a defect in the shipped file,
+    # and it fails loudly rather than installing from whichever stream is first.
+    broken = {"id": "broken", "package": "x", "channels": {"default": "gone", "options": {"stable": ""}}}
+    try:
+        mise.entry_channel(broken, {})
+    except ValueError as exc:
+        assert "gone" in str(exc), exc
+    else:
+        raise AssertionError("a default naming no option must be reported")
+
+
+def test_setting_a_channel_records_it_and_rewrites_the_stub():
+    """The setting alone changes nothing: the stub carries the package spec, so
+    a recorded channel that never reaches ~/.local/bin still installs the old
+    stream on the next launch."""
+    catalog = mise.dev_tools_catalog()
+    entry = next(e for e in channelled_entries(catalog) if e["id"] == "herdr")
+    default = str(entry["channels"]["default"])
+    other = next(c for c in mise.entry_channels(entry) if c != default)
+    options = mise.entry_channels(entry)[other]
+
+    with tempfile.TemporaryDirectory() as tmp:
+        stored = {}
+        original_home = mise.RT.home
+        original_state = mise.RT.state_dir
+        original_settings = mise.RT.load_settings
+        original_set = mise.RT.set_settings_value
+        original_eprint = mise.RT.eprint
+        original_path = os.environ.get("PATH", "")
+        mise.RT.home = lambda: Path(tmp)
+        mise.RT.state_dir = lambda: Path(tmp) / ".local" / "state" / "vshell"
+        mise.RT.load_settings = lambda: dict(stored)
+        mise.RT.set_settings_value = lambda key, value: stored.__setitem__(key, value) or dict(stored)
+        mise.RT.eprint = lambda *a: None
+        os.environ["PATH"] = str(Path(tmp) / ".local" / "bin")
+        stub = Path(tmp) / ".local" / "bin" / str(entry["command"])
+        try:
+            # Seed the stubs at the default, so what follows is judged on the
+            # rewrite rather than on the file appearing for the first time.
+            mise.mise_refresh()
+            assert options not in stub.read_text(), "the seeded stub starts on the default stream"
+
+            result = mise.mise_set_channel("herdr", other)
+            assert result["ok"], result
+            assert_equal(stored["devToolChannels"], {"herdr": other}, "the pick is recorded under")
+            assert_equal(result["channel"], other, "and reported back as")
+            assert options in stub.read_text(), \
+                f"the rewritten stub must install from {other}: " + stub.read_text()
+
+            # And back again, so the change is not one-way.
+            assert mise.mise_set_channel("herdr", default)["ok"]
+            assert_equal(stored["devToolChannels"], {"herdr": default}, "the second pick replaces the first")
+            assert options not in stub.read_text(), \
+                f"the stub must return to {default}: " + stub.read_text()
+
+            # Refusals: each leaves the recorded pick and the stub alone.
+            before = stub.read_text()
+            for entry_id, channel, why in [
+                ("herdr", "retired", "a channel the entry does not offer"),
+                ("claude", default, "an entry with one release stream"),
+                ("nosuch", default, "an entry the catalog does not carry"),
+            ]:
+                refused = mise.mise_set_channel(entry_id, channel)
+                assert not refused["ok"], f"{why} must be refused: {refused}"
+                assert refused["error"], f"{why} must say why: {refused}"
+                assert_equal(stored["devToolChannels"], {"herdr": default}, f"{why} must record nothing")
+                assert_equal(stub.read_text(), before, f"{why} must not rewrite the stub")
+                assert_equal(mise.cmd_mise(["channel", entry_id, channel, "--json"]), 1, f"{why} exits non-zero")
+            assert_equal(mise.cmd_mise(["channel", "herdr"]), 2, "a missing argument is a usage error")
+            assert_equal(mise.cmd_mise(["channel", "herdr", default, "extra"]), 2, "so is a surplus one")
+        finally:
+            mise.RT.home = original_home
+            mise.RT.state_dir = original_state
+            mise.RT.load_settings = original_settings
+            mise.RT.set_settings_value = original_set
+            mise.RT.eprint = original_eprint
+            os.environ["PATH"] = original_path
+
+
+def test_the_settings_tab_runs_the_channel_command():
+    """The dropdown is the only way a channel gets picked. A tab that draws it
+    without running the command leaves every pick silently undone."""
+    tab = (REPO_ROOT / "quickshell" / "vshell" / "Modules" / "Settings" / "DeveloperTab.qml").read_text()
+    assert '"mise", "channel"' in tab, "the Developer tab must run vshell mise channel"
+    # The command has to be reached from the pick, not merely defined: a handler
+    # that only writes back to the row leaves the shell showing a stream nothing
+    # installs from.
+    assert "onValueChanged" in tab, "the dropdown must handle a pick"
+    assert "root.setChannel(agentRow.modelData.id," in tab, \
+        "the pick must run the channel command for the row it came from"
+    assert "options: agentRow.modelData.channels" in tab, "the dropdown lists the row's own streams"
+    assert "currentValue: agentRow.modelData.channel" in tab, "and shows the one in force"
+    assert "vshell mise channel" in (REPO_ROOT / "bin" / "vshell").read_text(), \
+        "bin/vshell must document the channel command"
+
+    # A failed pick reports into a property `refresh` rewrites, so an error left
+    # in `loadError` is cleared by the re-read that follows within the second:
+    # the owner is left with a reverted dropdown and no reason for it.
+    body = tab[tab.index("function setChannel("):]
+    body = body[:body.index("\n    }") + 6]
+    assert "root.loadError" not in body, \
+        "setChannel must not report into loadError, which its own refresh clears"
+    assert "root.channelError =" in body, "setChannel must report into a property refresh keeps"
+    assert "root.channelError" not in tab[tab.index("function refresh("):tab.index("function setChannel(")], \
+        "refresh must leave the channel error alone"
+    assert "root.channelError" in tab[tab.index("readonly property string shownError"):tab.index("function refresh(")], \
+        "the error the tab shows must include the channel error"
+    assert "text: root.shownError" in tab, "the error banner must draw it"
+
+
 def test_env_remove_keeps_shared_tools():
     """Removing Scala must not uninstall the Java the Java env also owns."""
     ran = []
@@ -508,6 +733,13 @@ def test_catalog_is_consistent():
         # name that same file: `orca` is the command, `orca.AppImage` the binary.
         binary = entry.get("bin") or entry["command"]
         assert entry["launch"][0] == binary, f"{entry['id']}: launch must start with {binary}"
+    for entry in channelled_entries(catalog):
+        options = mise.entry_channels(entry)
+        assert len(options) > 1, f"{entry['id']}: a channel set with one option is a dropdown with nothing to pick"
+        default = str(entry["channels"].get("default") or "")
+        assert default in options, f"{entry['id']}: channels.default {default!r} names none of " + " ".join(options)
+        assert_equal([c for c, o in options.items() if not o], [default],
+                     f"{entry['id']}: the unmodified package is the default stream and only that")
     env_ids = [e["id"] for e in catalog["envs"]]
     assert_equal(len(env_ids), len(set(env_ids)), "env ids must be unique")
     for env in catalog["envs"]:
@@ -537,6 +769,11 @@ def main() -> int:
     test_an_interpreter_pin_reaches_the_build_and_no_further()
     test_a_windowed_app_launches_without_a_terminal()
     test_apps_get_stubs_and_their_own_list()
+    test_a_channel_picks_the_release_stream_a_tool_installs_from()
+    test_a_settings_row_carries_the_streams_it_can_offer()
+    test_a_channel_the_catalog_dropped_falls_back_to_the_default()
+    test_setting_a_channel_records_it_and_rewrites_the_stub()
+    test_the_settings_tab_runs_the_channel_command()
     test_env_remove_keeps_shared_tools()
     test_distro_owned_env_is_hands_off()
     test_catalog_is_consistent()

@@ -409,6 +409,10 @@ var SPEC = {
     // themes/targets/*/config.json). Absent key = default from app detection.
     themeApps: { def: {} },
 
+    // Which release stream a dev-tools catalog entry installs from, keyed by
+    // entry id (see config/vshell/dev-tools.json). Absent key = its default.
+    devToolChannels: { def: {} },
+
     showDock: { def: false },
     dockAutoHide: { def: false },
     dockSmartAutoHide: { def: false },
