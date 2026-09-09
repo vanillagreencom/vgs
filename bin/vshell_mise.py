@@ -59,6 +59,18 @@ MISE_RELEASE_AGE_ENV = {"MISE_MINIMUM_RELEASE_AGE": "0"}
 
 PACKAGE_OPTIONS = re.compile(r"\[[^\]]*\]")
 
+# Settings key holding the release stream chosen per catalog entry: entry id ->
+# channel id. Absent or unknown means the entry's own default.
+DEV_TOOL_CHANNELS_SETTING = "devToolChannels"
+
+
+def version_cut(spec: str) -> int:
+    """Where a mise spec's requested version begins, or its length when it names
+    none. `npm:@scope/name` carries an `@` that belongs to the name; only one
+    after the last `/` separates a version."""
+    at = spec.rfind("@")
+    return at if at > spec.rfind("/") else len(spec)
+
 
 def package_key(package: str) -> str:
     """The id mise files a package under. `mise ls --json` and the global config
@@ -67,10 +79,57 @@ def package_key(package: str) -> str:
     reads as never installed, is offered for install on every launch, and
     cannot be removed."""
     stripped = PACKAGE_OPTIONS.sub("", package)
-    at = stripped.rfind("@")
-    # `npm:@scope/name` carries an `@` that belongs to the name. Only one after
-    # the last `/` separates a version.
-    return stripped[:at] if at > stripped.rfind("/") else stripped
+    return stripped[:version_cut(stripped)]
+
+
+def package_with_options(package: str, options: str) -> str:
+    """`package` with `options` added to its mise backend option list, keeping
+    any options it already carries and staying ahead of a requested version:
+    mise reads `name[opts]@version` and nothing else."""
+    if not options:
+        return package
+    bracket = PACKAGE_OPTIONS.search(package)
+    if bracket:
+        return package[:bracket.end() - 1] + "," + options + package[bracket.end() - 1:]
+    cut = version_cut(package)
+    return package[:cut] + "[" + options + "]" + package[cut:]
+
+
+def entry_channels(entry: Dict[str, Any]) -> Dict[str, str]:
+    """Channel id -> the backend options that select that release stream, in the
+    order the catalog lists them. An entry publishing one stream returns none,
+    and nothing downstream offers a choice."""
+    options = (entry.get("channels") or {}).get("options")
+    return {str(k): str(v) for k, v in options.items()} if isinstance(options, dict) else {}
+
+
+def entry_channel(entry: Dict[str, Any], chosen: Dict[str, str]) -> str:
+    """The channel one entry installs from: the owner's pick while the catalog
+    still offers it, the entry's default otherwise. A pick the catalog has since
+    dropped must not install from a stream that no longer exists."""
+    channels = entry_channels(entry)
+    if not channels:
+        return ""
+    pick = chosen.get(str(entry.get("id") or ""), "")
+    if pick in channels:
+        return pick
+    default = str((entry.get("channels") or {}).get("default") or "")
+    if default not in channels:
+        raise ValueError(f"{entry.get('id')}: channels.default {default!r} names none of "
+                         + " ".join(sorted(channels)))
+    return default
+
+
+def entry_package(entry: Dict[str, Any], chosen: Dict[str, str]) -> str:
+    """The mise spec that installs one entry from the channel in force."""
+    return package_with_options(str(entry["package"]),
+                                entry_channels(entry).get(entry_channel(entry, chosen), ""))
+
+
+def dev_tool_channels() -> Dict[str, str]:
+    """The owner's channel picks, entry id -> channel id."""
+    chosen = RT.load_settings().get(DEV_TOOL_CHANNELS_SETTING)
+    return {str(k): str(v) for k, v in chosen.items()} if isinstance(chosen, dict) else {}
 
 
 def dev_tools_catalog() -> Dict[str, Any]:
@@ -201,8 +260,19 @@ def launchable(catalog: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Catalog entries with a launcher: coding agents and developer apps. One
     list so install, launch and removal have a single implementation; the
     `group` it stamps is what tells an Agent from an App wherever they show
-    apart."""
-    return [dict(entry, group=group[:-1])
+    apart.
+
+    Each entry leaves here resolved for this machine: `package` is the spec the
+    channel in force installs, `channel` names that channel and `channels` the
+    ids on offer, replacing the catalog's own object. Resolving once here is
+    what keeps a stub, a launch and a removal from disagreeing about which
+    release stream a tool came from."""
+    chosen = dev_tool_channels()
+    return [dict(entry,
+                 group=group[:-1],
+                 package=entry_package(entry, chosen),
+                 channel=entry_channel(entry, chosen),
+                 channels=list(entry_channels(entry)))
             for group in ("agents", "apps")
             for entry in catalog.get(group) or []
             if buildable_here(entry)]
@@ -256,6 +326,29 @@ def mise_retire_stubs() -> List[str]:
             path.unlink(missing_ok=True)
             retired.append(path.name)
     return retired
+
+
+def mise_set_channel(entry_id: str, channel: str) -> Dict[str, Any]:
+    """Record which release stream one entry installs from, then rewrite the
+    stubs. A stub carries the package spec its channel selects, so recording the
+    setting alone would leave the next launch installing from the old stream."""
+    entries = launchable(dev_tools_catalog())
+    entry = next((e for e in entries if e.get("id") == entry_id), None)
+    if entry is None:
+        return {"ok": False,
+                "error": f"unknown dev tool {entry_id!r}; one of: " + " ".join(str(e["id"]) for e in entries)}
+    offered = [str(c) for c in entry["channels"]]
+    if not offered:
+        return {"ok": False, "error": f"{entry_id} publishes one release stream; there is no channel to choose"}
+    if channel not in offered:
+        return {"ok": False, "error": f"{entry_id} has no channel {channel!r}; one of: " + " ".join(offered)}
+    RT.set_settings_value(DEV_TOOL_CHANNELS_SETTING, {**dev_tool_channels(), entry_id: channel})
+    refresh = mise_refresh()
+    # Re-read rather than predict: the stub just written is what the next launch
+    # runs, and it was built from the setting this call has now changed.
+    updated = next(e for e in launchable(dev_tools_catalog()) if e.get("id") == entry_id)
+    return {"ok": True, "id": entry_id, "channel": str(updated["channel"]),
+            "package": str(updated["package"]), "optedOut": bool(refresh["optedOut"])}
 
 
 def mise_remove_stubs() -> Dict[str, Any]:
@@ -335,6 +428,8 @@ def mise_list() -> Dict[str, Any]:
     outdated, outdated_error = mise_outdated()
     latest = {row["name"]: row["latest"] for row in outdated}
 
+    entries = launchable(catalog)
+
     def describe(entry: Dict[str, Any]) -> Dict[str, Any]:
         package = str(entry["package"])
         command = str(entry["command"])
@@ -352,15 +447,15 @@ def mise_list() -> Dict[str, Any]:
         "mise": RT.command_exists("mise"),
         "optedOut": mise_stubs_opted_out(),
         "error": versions_error or outdated_error,
-        "agents": [describe(e) for e in catalog.get("agents") or [] if buildable_here(e)],
-        "apps": [describe(e) for e in catalog.get("apps") or [] if buildable_here(e)],
+        "agents": [describe(e) for e in entries if e["group"] == "agent"],
+        "apps": [describe(e) for e in entries if e["group"] == "app"],
         "tools": [describe(e) for e in catalog.get("tools") or [] if buildable_here(e)],
         "outdated": outdated,
     }
 
 
 def cmd_mise(argv: List[str]) -> int:
-    usage = "Usage: vshell mise install <package> [command [bin]] | refresh [--json] | remove-stubs [--json] | opt-in [--json] | list --json | outdated --json | up"
+    usage = "Usage: vshell mise install <package> [command [bin]] | channel <id> <channel> [--json] | refresh [--json] | remove-stubs [--json] | opt-in [--json] | list --json | outdated --json | up"
     if not argv:
         RT.eprint(usage)
         return 2
@@ -374,6 +469,20 @@ def cmd_mise(argv: List[str]) -> int:
         result = mise_install_stub(args[0], args[1] if len(args) > 1 else args[0], args[2] if len(args) > 2 else "")
         print(json.dumps(result) if want_json else (result.get("error") or f"wrote {result['path']}"))
         return 1 if result.get("error") else 0
+    if sub == "channel":
+        args = [a for a in rest if not a.startswith("--")]
+        if len(args) != 2:
+            RT.eprint(usage)
+            return 2
+        result = mise_set_channel(args[0], args[1])
+        if want_json:
+            print(json.dumps(result))
+        elif result["ok"]:
+            print(f"{result['id']} installs from {result['channel']}: {result['package']}"
+                  + (" (launcher stubs are opted out)" if result["optedOut"] else ""))
+        else:
+            RT.eprint(result["error"])
+        return 0 if result["ok"] else 1
     if sub == "refresh":
         result = mise_refresh()
         if want_json:

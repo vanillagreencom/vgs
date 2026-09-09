@@ -51,6 +51,10 @@ def agent_list() -> Dict[str, Any]:
             "command": command,
             "package": entry["package"],
             "kind": str(entry.get("kind") or "tui"),
+            # The release streams this entry offers, and the one in force. Two
+            # or more is what puts a channel dropdown on its settings row.
+            "channels": [str(c) for c in entry.get("channels") or []],
+            "channel": str(entry.get("channel") or ""),
             "stub": stub,
             "installed": versions.get(key, ""),
             # A foreign or shadowed command is the owner's own install of the

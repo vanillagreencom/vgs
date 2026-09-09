@@ -749,5 +749,6 @@
   "barInsetPaddingShared": -1,
   "barInsetPaddingSyncAll": false,
   "configVersion": 25,
-  "themeApps": {}
+  "themeApps": {},
+  "devToolChannels": {}
 }

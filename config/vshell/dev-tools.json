@@ -37,6 +37,14 @@
     "a `nightly` tag, so its package names it; mise then sees no new version and",
     "the app updates itself.",
     "",
+    "`channels` lets the owner pick which release stream an entry installs from.",
+    "`options` maps a channel id to the backend options that select it, merged",
+    "into the entry's own bracket list; an empty string is the package",
+    "unchanged. `default` names the stream used until the owner chooses, and",
+    "`vshell mise channel <id> <channel>` records the choice. Only an entry",
+    "whose prereleases are the same product gets channels: Orca's are a",
+    "different application, and cmux publishes no stable tag to choose against.",
+    "",
     "tools: developer CLIs that get a lazy stub but are not agents.",
     "",
     "envs: language environments. `tools` are mise packages installed globally;",
@@ -65,9 +73,9 @@
     { "id": "muse", "name": "Muse", "icon": "nerd:f4e6", "color": "#0064E0", "package": "http:muse[url=https://api.meta.ai/muse-launcher.sh,bin=muse,version_list_url=https://api.meta.ai/muse-code/channels/muse-stable,version_json_path=.version]", "command": "muse", "launch": ["muse", "--approval-mode", "never"] }
   ],
   "apps": [
-    { "id": "herdr", "name": "herdr", "icon": "nerd:f0cc6", "package": "herdr", "command": "herdr", "launch": ["herdr"] },
+    { "id": "herdr", "name": "herdr", "icon": "nerd:f0cc6", "package": "herdr", "command": "herdr", "channels": { "default": "stable", "options": { "stable": "", "preview": "prerelease=true" } }, "launch": ["herdr"] },
     { "id": "orca", "name": "Orca", "kind": "gui", "icon": "nerd:f18b4", "package": "github:stablyai/orca", "command": "orca-ide", "bin": "orca.AppImage", "launch": ["orca.AppImage"] },
-    { "id": "t3code", "name": "T3 Code", "kind": "gui", "arch": ["x86_64"], "icon": "nerd:f0c8b", "color": "#E24A8B", "package": "github:pingdotgg/t3code[matching_regex=AppImage$,rename_exe=t3code]", "command": "t3code", "bin": "t3code.AppImage", "launch": ["t3code.AppImage"] },
+    { "id": "t3code", "name": "T3 Code", "kind": "gui", "arch": ["x86_64"], "icon": "nerd:f0c8b", "color": "#E24A8B", "package": "github:pingdotgg/t3code[matching_regex=AppImage$,rename_exe=t3code]", "command": "t3code", "bin": "t3code.AppImage", "channels": { "default": "stable", "options": { "stable": "", "nightly": "prerelease=true" } }, "launch": ["t3code.AppImage"] },
     { "id": "claude-desktop", "name": "Claude Desktop Extra", "kind": "gui", "icon": "nerd:f06c4", "color": "#D97757", "package": "github:patrickjaja/claude-desktop-extra[matching_regex=AppImage$,rename_exe=claude-desktop]", "command": "claude-desktop", "bin": "claude-desktop.AppImage", "launch": ["claude-desktop.AppImage"] },
     { "id": "cmux", "name": "cmux", "kind": "gui", "arch": ["x86_64"], "icon": "nerd:f059f", "color": "#4285F4", "package": "github:manaflow-ai/cmux-v2[matching_regex=linux-x64\\.zip,rename_exe=cmux]@nightly", "command": "cmux", "launch": ["cmux"] }
   ],

@@ -15,6 +15,11 @@ Item {
     property bool miseAvailable: true
     property bool stubsOptedOut: false
     property string loadError: ""
+    // A channel failure has to outlive the re-read that follows it: `refresh`
+    // rewrites `loadError` from the list it just read, so an error left there
+    // is gone within the second and the owner sees only a reverted dropdown.
+    property string channelError: ""
+    readonly property string shownError: root.channelError || root.loadError
     property bool loading: false
 
     // Launchers count as installed only when at least one stub is ours; a
@@ -67,6 +72,21 @@ Item {
             if (root)
                 root.refresh();
         }, 0, 3600000);
+    }
+
+    // Recording the channel also rewrites the launcher stubs, so the row has to
+    // re-read: its package, and whether the tool now reads as installed, both
+    // change with the stream it points at.
+    function setChannel(id, channel) {
+        root.channelError = "";
+        Proc.runCommand("developer-channel-" + id, [Paths.vshellCli, "mise", "channel", id, channel], (output, exitCode, errorText) => {
+            if (!root)
+                return;
+            if (exitCode !== 0)
+                root.channelError = (String(errorText || "").trim()
+                    || "vshell mise channel failed (" + exitCode + ")");
+            root.refresh();
+        }, 0, 15000);
     }
 
     function agentStatus(agent) {
@@ -130,6 +150,23 @@ Item {
                 anchors.rightMargin: Theme.spacingXS
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: Theme.spacingS
+
+                // Only an entry the catalog gives more than one release stream
+                // has anything to pick between; every other row shows nothing.
+                VgsDropdown {
+                    visible: (agentRow.modelData.channels || []).length > 1
+                    dropdownWidth: 116
+                    options: agentRow.modelData.channels || []
+                    currentValue: agentRow.modelData.channel || ""
+                    anchors.verticalCenter: parent.verticalCenter
+                    onValueChanged: newValue => {
+                        // The dropdown announces a pick whether or not it moved;
+                        // a rewrite of every stub per open is not free.
+                        if (String(newValue) === agentRow.modelData.channel)
+                            return;
+                        root.setChannel(agentRow.modelData.id, String(newValue));
+                    }
+                }
 
                 VgsIcon {
                     visible: agentRow.modelData.installed.length > 0 || agentRow.modelData.stub === "foreign" || agentRow.modelData.stub === "shadowed"
@@ -202,8 +239,8 @@ Item {
 
                 StyledText {
                     width: parent?.width ?? 0
-                    visible: root.loadError.length > 0
-                    text: root.loadError
+                    visible: root.shownError.length > 0
+                    text: root.shownError
                     font.pixelSize: Theme.settingsFontSize
                     color: Theme.error
                     wrapMode: Text.WordWrap
