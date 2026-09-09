@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
+import json
 import os
 import re
 import subprocess
@@ -747,6 +748,48 @@ def test_distro_owned_env_is_hands_off():
         devtools.RT.eprint = original_eprint
 
 
+def test_mise_installs_reads_declaration_and_active_version():
+    """`declared` and the version come from raw `mise ls --json`. A parser that
+    marks every install declared makes an untracked tool read as tracked and
+    removes the only prompt to fix it; one that takes the wrong row reports a
+    version the shell is not running."""
+    payload = json.dumps({
+        # Declared: a config asked for it, so `mise outdated` reports it.
+        "claude": [
+            {"version": "2.1.0", "installed": True, "active": False},
+            {"version": "2.2.0", "installed": True, "active": True,
+             "source": {"type": "mise.toml", "path": "/home/u/.config/mise/config.toml"}},
+        ],
+        # Installed, declared nowhere: no source on any row.
+        "daytona": [{"version": "0.190.0", "installed": True, "active": True}],
+        # An install that never finished is not a version to report.
+        "ghost": [{"version": "9.9.9", "installed": False, "active": True}],
+        # Nothing active: the first installed row is the one to show.
+        "sesh": [{"version": "2.29.0", "installed": True, "active": False}],
+        # A shape mise does not emit must not crash the read.
+        "junk": "not-a-list",
+    })
+    original_run = mise.RT.run
+    original_exists = mise.RT.command_exists
+    try:
+        mise.RT.command_exists = lambda name: True
+        mise.RT.run = lambda cmd, check=False, **kw: subprocess.CompletedProcess(cmd, 0, stdout=payload, stderr="")
+        installs, error = mise.mise_installs()
+        assert_equal(error, "", "valid JSON must not report an error")
+        assert_equal(installs, {
+            "claude": {"version": "2.2.0", "declared": True},
+            "daytona": {"version": "0.190.0", "declared": False},
+            "sesh": {"version": "2.29.0", "declared": False},
+        }, "declaration and active version come from the raw rows")
+        # The narrower reader is the same parse, so the two cannot disagree.
+        versions, _ = mise.mise_installed_versions()
+        assert_equal(versions, {"claude": "2.2.0", "daytona": "0.190.0", "sesh": "2.29.0"},
+                     "the version map is the same read")
+    finally:
+        mise.RT.run = original_run
+        mise.RT.command_exists = original_exists
+
+
 def test_install_origin_names_what_provides_a_command():
     """A row's whole vocabulary comes from this. `mise outdated` reports only
     what a config declares, so an install nothing declares never reaches an
@@ -785,6 +828,96 @@ def test_install_origin_names_what_provides_a_command():
         mise.mise_installs = original_installs
         devtools.distro_package_owning = original_owner
         mise.command_on_path_elsewhere = original_which
+
+
+def test_row_actions_run_and_refuse():
+    """`track` and `replace` are the two actions that change a machine, and
+    `replace` removes a distribution package with elevation before it installs
+    anything. Each has to act on the right entry, refuse the state it cannot
+    handle, and stop rather than continue when a step fails."""
+    original_installs = devtools.mise_installs
+    original_owner = devtools.distro_package_owning
+    original_which = mise.command_on_path_elsewhere
+    original_ids = devtools.os_release_ids
+    original_run = devtools.subprocess.run
+    original_dev_run = devtools.dev_env_run
+    original_stub = devtools.mise_install_stub
+    original_hold = devtools.hold_terminal
+    calls = []
+    try:
+        # The real one waits on stdin to keep a one-shot terminal readable.
+        devtools.hold_terminal = lambda code, message: code
+        devtools.os_release_ids = lambda: ["arch"]
+        devtools.mise_install_stub = lambda *a, **kw: calls.append(("stub", a[1]))
+        devtools.dev_env_run = lambda argv: (calls.append(("mise", argv)), 0)[1]
+
+        # track: declares an install mise already holds.
+        devtools.mise_installs = lambda: ({"daytona": {"version": "0.190.0", "declared": False}}, "")
+        entry = next(e for e in devtools.catalog_entries() if e["id"] == "daytona")
+        assert_equal(devtools.entry_track(entry), 0, "tracking an undeclared install succeeds")
+        assert_equal(calls, [("mise", ["mise", "use", "-g", "daytona"])], "track declares the entry's package")
+
+        # track: refuses what it cannot help, and changes nothing either way.
+        calls.clear()
+        devtools.mise_installs = lambda: ({"daytona": {"version": "0.190.0", "declared": True}}, "")
+        assert_equal(devtools.entry_track(entry), 0, "an already-tracked install is not an error")
+        devtools.mise_installs = lambda: ({}, "")
+        assert_equal(devtools.entry_track(entry), 1, "an install mise does not hold is refused")
+        assert_equal(calls, [], "a refusal runs no mise command")
+
+        # replace: refuses when no distribution package owns the command.
+        mise.command_on_path_elsewhere = lambda command, local_bin: ""
+        assert_equal(devtools.entry_replace(entry), 1, "nothing to replace is refused")
+        assert_equal(calls, [], "and removes nothing")
+
+        # replace: removes the owner, then installs. Elevation is the first step
+        # and the install must not run when it fails.
+        mise.command_on_path_elsewhere = lambda command, local_bin: "/usr/bin/gh"
+        devtools.distro_package_owning = lambda path: "github-cli"
+        gh = next(e for e in devtools.catalog_entries() if e["id"] == "gh")
+
+        def failing_run(argv, **kw):
+            calls.append(("run", list(argv)))
+            return subprocess.CompletedProcess(argv, 1)
+
+        devtools.subprocess.run = failing_run
+        assert_equal(devtools.entry_replace(gh), 1, "a failed removal fails the action")
+        assert_equal(calls, [("run", ["sudo", "pacman", "-Rns", "github-cli"])],
+                     "and stops before installing anything")
+
+        calls.clear()
+
+        def ok_run(argv, **kw):
+            calls.append(("run", list(argv)))
+            return subprocess.CompletedProcess(argv, 0)
+
+        devtools.subprocess.run = ok_run
+        assert_equal(devtools.entry_replace(gh), 0, "removal then install succeeds")
+        assert_equal(calls[0], ("run", ["sudo", "pacman", "-Rns", "github-cli"]),
+                     "the distribution package goes first")
+        assert any(step[0] == "run" and step[1][:3] == ["mise", "use", "-g"] for step in calls[1:]), \
+            f"then the mise install runs: {calls}"
+        assert ("stub", "gh") in calls, f"and the launcher stub is written: {calls}"
+
+        # cmd_agent routes each verb to the entry the id names, tools included.
+        routed = []
+        for verb in ("track", "replace", "update", "remove"):
+            devtools.ENTRY_ACTIONS[verb] = (lambda v: lambda e: (routed.append((v, e["id"])), 0)[1])(verb)
+        for verb in ("track", "replace", "update", "remove"):
+            assert_equal(devtools.cmd_agent([verb, "daytona"]), 0, f"{verb} routes a tool id")
+        assert_equal(routed, [("track", "daytona"), ("replace", "daytona"),
+                              ("update", "daytona"), ("remove", "daytona")],
+                     "each verb reaches its own action with the entry it named")
+        assert_equal(devtools.cmd_agent(["track", "nosuch"]), 2, "an unknown id is a usage error")
+    finally:
+        devtools.mise_installs = original_installs
+        devtools.distro_package_owning = original_owner
+        mise.command_on_path_elsewhere = original_which
+        devtools.os_release_ids = original_ids
+        devtools.subprocess.run = original_run
+        devtools.dev_env_run = original_dev_run
+        devtools.mise_install_stub = original_stub
+        devtools.hold_terminal = original_hold
 
 
 def test_the_settings_tab_can_act_on_every_row():
@@ -932,7 +1065,9 @@ def main() -> int:
     test_the_settings_tab_runs_the_channel_command()
     test_env_remove_keeps_shared_tools()
     test_distro_owned_env_is_hands_off()
+    test_mise_installs_reads_declaration_and_active_version()
     test_install_origin_names_what_provides_a_command()
+    test_row_actions_run_and_refuse()
     test_the_settings_tab_can_act_on_every_row()
     test_a_row_carries_the_release_it_is_waiting_for()
     test_catalog_entries_cover_the_tools_section()

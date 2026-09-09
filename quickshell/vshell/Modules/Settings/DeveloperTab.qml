@@ -255,6 +255,15 @@ Item {
                                     }
                                 }
 
+                                // An armed confirmation the reader walked away
+                                // from must not still be armed when they come
+                                // back to a menu that stayed open.
+                                Timer {
+                                    id: armedTimeout
+                                    interval: 4000
+                                    onTriggered: menuItem.confirming = false
+                                }
+
                                 MouseArea {
                                     id: itemArea
                                     anchors.fill: parent
@@ -266,8 +275,10 @@ Item {
                                         // action runs on its first click.
                                         if (menuItem.modelData.danger && !menuItem.confirming) {
                                             menuItem.confirming = true;
+                                            armedTimeout.restart();
                                             return;
                                         }
+                                        armedTimeout.stop();
                                         rowMenu.close();
                                         root.runEntryAction(row.modelData, menuItem.modelData.verb);
                                     }
