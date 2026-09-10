@@ -1565,7 +1565,7 @@ def _catalog_check_assets(name: str, raw: Any) -> Dict[str, Any]:
 def _catalog_unpack(name: str, archive: Path, staging: Path) -> Tuple[int, List[str]]:
     """Unpack a verified theme archive into the staging directory.
 
-    Returns the bytes written and the relative paths written, in archive order.
+    Returns the bytes written and the relative paths written, sorted.
     The path list is the reference point for telling an untouched download from
     an edited one later; nothing else records what the archive carried.
 
@@ -7753,6 +7753,7 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
                     "builtin": b.get("builtin", False),
                     "preview": str(preview) if preview.exists() else shipped_preview,
                     "modified": bool(b.get("modified")),
+                    "catalogPristine": bool(b.get("catalogPristine")),
                     "adjustments": normalize_adjustments(b.get("adjustments")),
                     "appOverrides": b.get("appOverrides") or {},
                     "timestamp": b.get("timestamp", 0),

@@ -51,7 +51,11 @@ Item {
     ]
 
     readonly property var currentEntry: VGSThemeService.currentBlueprint
-    readonly property bool isModifiedBuiltin: currentEntry.builtin === true && currentEntry.modified === true
+    // A catalog download lands in the user directory too, so modified alone
+    // is true for one nobody has touched. The badge and the revert control
+    // both mean "the user changed this", and revert refuses a download.
+    readonly property bool userModified: currentEntry.modified === true && currentEntry.catalogPristine !== true
+    readonly property bool isModifiedBuiltin: currentEntry.builtin === true && userModified
     property bool revertConfirmPending: false
     property bool syncingSliders: false
 
@@ -210,7 +214,7 @@ Item {
                             }
 
                             Rectangle {
-                                visible: root.currentEntry.modified === true
+                                visible: root.userModified
                                 anchors.verticalCenter: parent.verticalCenter
                                 width: modifiedBadge.implicitWidth + Theme.spacingS * 2
                                 height: 18

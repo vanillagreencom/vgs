@@ -37,6 +37,10 @@ Item {
     ]
 
     readonly property var currentEntry: VGSThemeService.currentBlueprint
+    // A catalog download lands in the user directory too, so modified alone
+    // is true for one nobody has touched. The badge and the revert control
+    // both mean "the user changed this", and revert refuses a download.
+    readonly property bool userModified: currentEntry.modified === true && currentEntry.catalogPristine !== true
 
     function optionLabel(options, value, fallback) {
         for (let i = 0; i < options.length; i++) {
@@ -204,7 +208,7 @@ Item {
 
                             Rectangle {
                                 id: modifiedBadge
-                                visible: root.currentEntry.modified === true
+                                visible: root.userModified
                                 width: visible ? modifiedBadgeText.implicitWidth + Theme.spacingS * 2 : 0
                                 height: 18
                                 radius: 9
@@ -307,7 +311,7 @@ Item {
                     VgsButton {
                         variant: "secondary"
                         iconName: "restart_alt"
-                        visible: root.currentEntry.modified === true && root.currentEntry.builtin === true
+                        visible: root.userModified && root.currentEntry.builtin === true
                         text: root.revertConfirmPending ? I18n.tr("Confirm Revert?") : I18n.tr("Revert to Default")
                         enabled: !VGSThemeService.busy
                         onClicked: {

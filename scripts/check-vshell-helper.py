@@ -3067,14 +3067,22 @@ def _write_catalog(builtin: Path, archives: Path, name: str, blob: bytes,
     }))
 
 
-def _theme_list_previews() -> dict:
-    """The preview path theme list --json reports, per theme name."""
+def _theme_list_entries() -> dict:
+    """What theme list --json prints, per theme name.
+
+    The settings tabs read this and nothing else, so a field the helper computes
+    and the entry dict omits does not exist as far as the interface is concerned.
+    """
     buffer = io.StringIO()
     with contextlib.redirect_stdout(buffer):
         status = helper.cmd_theme(["list", "--json"])
     assert_equal(status, 0, "theme list --json exit status")
-    return {entry["name"]: entry["preview"]
-            for entry in json.loads(buffer.getvalue())["blueprints"]}
+    return {entry["name"]: entry for entry in json.loads(buffer.getvalue())["blueprints"]}
+
+
+def _theme_list_previews() -> dict:
+    """The preview path theme list --json reports, per theme name."""
+    return {name: entry["preview"] for name, entry in _theme_list_entries().items()}
 
 
 def test_theme_catalog_offers_a_builtin_theme_with_no_imagery():
@@ -3151,14 +3159,23 @@ def test_theme_catalog_offers_a_builtin_theme_with_no_imagery():
 
             # An edit inside the download is a user edit: the file set the
             # marker recorded is the only thing that tells them apart.
-            assert_equal(_theme_list_previews().get("demo"), str(dest / "preview.png"),
+            listed = _theme_list_entries()["demo"]
+            assert_equal(listed["preview"], str(dest / "preview.png"),
                          "an untouched download keeps the screenshot it shipped with")
+            # The settings tabs hide the modified badge and the Revert control on
+            # modified && !catalogPristine. Without the flag in this dict they
+            # offer a revert that the CLI refuses every time it is pressed.
+            assert_equal((listed.get("modified"), listed.get("catalogPristine")), (True, True),
+                         "theme list reports both flags for an untouched download")
 
             (dest / "app-colors.toml").write_text('[btop]\nfg = "#ffffff"\n')
             edited = helper.load_theme_package("demo")
             assert_equal((edited["modified"], edited["catalogPristine"]), (True, False),
                          "a file added beside the downloaded set is a user edit")
-            assert_equal(_theme_list_previews().get("demo"), "",
+            overlaid = _theme_list_entries()["demo"]
+            assert_equal((overlaid.get("modified"), overlaid.get("catalogPristine")), (True, False),
+                         "theme list reports the edit, so the badge and revert appear")
+            assert_equal(overlaid["preview"], "",
                          "an edited download reports no screenshot, so the generator renders one")
             (dest / "app-colors.toml").unlink()
 
@@ -3170,6 +3187,31 @@ def test_theme_catalog_offers_a_builtin_theme_with_no_imagery():
             assert_equal((restyled["modified"], restyled["catalogPristine"]), (True, False),
                          "restyle adjustments written into the download are a user edit")
             (dest / "theme.json").write_bytes(package["theme.json"])
+
+            # Hiding a wallpaper rewrites the same file and changes what the
+            # theme looks like, so the shipped screenshot stops describing it.
+            meta = json.loads((dest / "theme.json").read_text())
+            meta["hiddenBackgrounds"] = ["1-demo.jpg"]
+            (dest / "theme.json").write_text(json.dumps(meta) + "\n")
+            hidden = helper.load_theme_package("demo")
+            assert_equal((hidden["modified"], hidden["catalogPristine"]), (True, False),
+                         "a hidden background written into the download is a user edit")
+            (dest / "theme.json").write_bytes(package["theme.json"])
+
+            # The files key is new in this range, so every theme the released
+            # helper downloaded carries a marker without it. Those cannot be
+            # told from an edited copy, and answering "edited" costs one preview
+            # render and loses nothing, where answering "untouched" would keep a
+            # screenshot that may no longer describe the theme.
+            marker_path = dest / helper.CATALOG_MARKER
+            marker = json.loads(marker_path.read_text())
+            recorded = marker.pop("files")
+            marker_path.write_text(json.dumps(marker, indent=2) + "\n")
+            legacy = helper.load_theme_package("demo")
+            assert_equal((legacy["modified"], legacy["catalogPristine"]), (True, False),
+                         "a marker with no file list cannot claim the download is untouched")
+            marker["files"] = recorded
+            marker_path.write_text(json.dumps(marker, indent=2) + "\n")
 
             # The bundled themes keep their imagery in the tree, and those stay
             # refused: nothing should re-download what the package already has.
