@@ -1,7 +1,7 @@
 %global debug_package %{nil}
 
 Name:           vgs-shell
-Version:        0.4.0
+Version:        0.5.0
 Release:        1%{?dist}
 Summary:        VanillaGreen desktop shell for Hyprland and Niri
 AutoReqProv:     no
@@ -169,6 +169,27 @@ EOF
 /usr/lib/systemd/user/vshell.service
 
 %changelog
+* Thu Sep 10 2026 Brad <brad@vanillagreen> - 0.5.0-1
+- Themes download on demand from the theme browser, and the package ships only
+  bauhaus and rose of dune
+- Each downloaded theme arrives as one checksum-verified archive, with its
+  screenshot shown before you install it
+- The vgs-shell-assets subpackage is retired. The vendored icon themes it
+  carried now ship in vgs-shell itself
+- Rose of dune is readable in Claude Code's light ANSI theme
+- Display settings manage Hyprland outputs natively, with a preview you confirm
+  or revert
+- A developer tools catalog installs coding agents, language toolchains and
+  developer apps through mise, and the launcher has an entry for each
+- The AI usage widget shows every provider's accounts, with bar icon modes and
+  slots you can arrange
+- A Mercury bank widget shows balances in the bar, with accounts and recent
+  activity behind it
+- Launcher All search leaves files to the Files category and drops weak matches
+- System updates show an up-to-date state instead of buttons with nothing to do
+- A dead USB4 or i2c device can no longer freeze the desktop through the
+  brightness poll
+
 * Tue Aug 25 2026 Brad <brad@vanillagreen> - 0.4.0-1
 - Full-screen wallpaper and theme switchers, replacing the cramped popups
 - The wallpaper switcher can target one monitor or all of them, with the scope

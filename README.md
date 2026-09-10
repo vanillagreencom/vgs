@@ -34,7 +34,7 @@ Native packages are the recommended method. They install VGS system-wide and pro
 | Gentoo | VanillaGreen overlay | [`packaging/README.md` § Channels](packaging/README.md#channels) |
 | Void | maintainer recipe, no packaged Quickshell 0.3.0 | [`packaging/`](packaging/) |
 | NixOS, Home Manager | flake | [`flake.nix`](flake.nix) |
-| Other systemd distributions | release bundle | `curl -fsSL https://raw.githubusercontent.com/vanillagreencom/vgs/v0.4.0/install.sh \| bash` |
+| Other systemd distributions | release bundle | `curl -fsSL https://raw.githubusercontent.com/vanillagreencom/vgs/v0.5.0/install.sh \| bash` |
 
 On Arch, `vgs-shell` ships the `bauhaus` and `roseofdune` themes and the vendored icon themes. Every other theme downloads on demand from its own release archive, with a screenshot shown before you install it.
 
