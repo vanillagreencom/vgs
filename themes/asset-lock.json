@@ -600,7 +600,7 @@
       "sha256": "7b5644ac751f6cd181441fc760120d74aad6b05c9db85ae70526b0ed607ec803",
       "definitions": "2ae3ef999c73ebfa3d1d0ac695c15397e441f351643d8df075b1f42ff9ec925f",
       "preview": "19bce71e3abf8d79d73e83f0693f0a31f23e5de5c5193526432fb97b600e3b14",
-      "published": false
+      "published": true
     },
     "saga": {
       "release": "themes-v1",

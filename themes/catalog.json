@@ -7,7 +7,7 @@
     "baseUrl": "https://github.com/vanillagreencom/vgs/releases/download"
   },
   "count": 79,
-  "totalSize": 1051767072,
+  "totalSize": 1051765797,
   "themes": [
     {
       "name": "akane",
@@ -4153,13 +4153,8 @@
       "background": "#f5e6d3",
       "foreground": "#35302a",
       "accent": "#9e4f5b",
-      "size": 17331858,
+      "size": 17330583,
       "files": [
-        {
-          "path": "apps/alacritty.toml",
-          "size": 496,
-          "sha256": "99a8535f306a489c13f5e629823d504f3732a89244c9e3fdada8950880a8b2ee"
-        },
         {
           "path": "apps/btop.theme",
           "size": 1498,
@@ -4171,24 +4166,9 @@
           "sha256": "0996fb963b4b51048b6a1ea94f8a3761713970a75d9553d52ea11dcf524dd83a"
         },
         {
-          "path": "apps/foot.ini",
-          "size": 886,
-          "sha256": "8de09877217a3a130e25b2750696362ab76bd877db4fd186ded7e0ae10e7677c"
-        },
-        {
-          "path": "apps/ghostty.conf",
-          "size": 453,
-          "sha256": "e541afb4b0ecaf79f95e9e8166e29d38a5723041d443ba2d70623a0c347dd389"
-        },
-        {
           "path": "apps/icons.theme",
           "size": 13,
           "sha256": "328fd2519268a09cbcb45b3e8393f6abcc1739b9816bdc87bd4761d9d240f026"
-        },
-        {
-          "path": "apps/kitty.conf",
-          "size": 716,
-          "sha256": "ca6a44dce96940e2da0b1f57691b7226d0e58e2a6dc6345da8329eead4e4651e"
         },
         {
           "path": "apps/neovim.lua",
@@ -4199,11 +4179,6 @@
           "path": "apps/vscode-theme.json",
           "size": 44672,
           "sha256": "50c98fa268035a32dfc43497734549d6e0cfa0dc076775a5db620dc952481b44"
-        },
-        {
-          "path": "apps/wezterm.lua",
-          "size": 892,
-          "sha256": "fe5aea0af72de2f9e7b167fa06bb9ea709799faaf96a41407faa0447378a2d34"
         },
         {
           "path": "colors.toml",
@@ -4217,11 +4192,11 @@
         }
       ],
       "assets": {
-        "release": "themes-v2",
-        "archive": "vgs-theme-roseofdune-r2.tar.gz",
-        "rev": 2,
-        "size": 17331858,
-        "sha256": "7b5644ac751f6cd181441fc760120d74aad6b05c9db85ae70526b0ed607ec803"
+        "release": "themes-v1",
+        "archive": "vgs-theme-roseofdune-r1.tar.gz",
+        "rev": 1,
+        "size": 17330583,
+        "sha256": "89fac000fb2b24d40219168344022252106ed5817093b7e2bc8807879b1884cd"
       }
     },
     {
