@@ -259,6 +259,7 @@ jobs:
           scripts/check-keybinds-display.py
           scripts/check-dev-tools.py
           scripts/check-brightness.py
+          scripts/test-rewrite-theme-history.sh
           python3 -m py_compile bin/vshell-helper
           python3 -m py_compile scripts/publish-theme-assets.py
           bash -n bin/vshell

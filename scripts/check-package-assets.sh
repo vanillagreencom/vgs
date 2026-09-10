@@ -42,6 +42,18 @@ test -s "$core/usr/lib/vshell/themes/catalog.json"
 test -s "$core/usr/lib/vshell/themes/thumbnails/tokyo-night.jpg"
 test -s "$core/usr/lib/vshell/themes/thumbnails/bauhaus.jpg"
 
+# The installer's refusal to run under the retired variable is what keeps a
+# stale recipe from silently installing a different tree. It enumerates nothing
+# and every channel passes through it, so it is the whole retirement gate.
+bundle_status=0
+DESTDIR="$tmp/retired" VGS_THEME_BUNDLE=extras VGS_BACKEND_BINARY=/bin/true \
+  "$root/packaging/install-system.sh" >/dev/null 2>"$tmp/retired.err" || bundle_status=$?
+if [[ "$bundle_status" -eq 0 ]]; then
+  echo "packaging/install-system.sh accepted VGS_THEME_BUNDLE, so a recipe still passing it installs a tree nobody checks" >&2
+  exit 1
+fi
+grep -q 'VGS_THEME_BUNDLE is retired' "$tmp/retired.err"
+
 # Fedora's %files must enumerate what the install writes. rpmbuild fails on an
 # unpackaged file, so a file the install adds and the list does not name breaks
 # the Fedora build outright.
@@ -59,24 +71,29 @@ test "$unclaimed" -eq 0
 # The single install writes /usr/lib/vshell/config/vshell/icons, the tree the
 # retired vgs-shell-assets owned. A channel that ships those paths without
 # declaring the obsolescence aborts an upgrade on conflicting files for anyone
-# still holding the old package. Each recipe is checked in its own channel's
-# spelling; Arch needs both, because pacman honours replaces only for
-# repository packages and an AUR install goes through conflicts.
+# still holding the old package. Each row is one recipe, the field its channel
+# spells the relation in, the package it names, and the pattern that finds it.
+# The package has its own column so a row and its message cannot disagree, and
+# a second retired package costs one row per channel rather than a new regex.
+# Arch needs both fields, because pacman honours replaces only for repository
+# packages and an AUR install goes through conflicts. vgs-shell-assets-git
+# needs no row: it declared provides=('vgs-shell-assets'), which is what pacman
+# matches conflicts through.
 unowned=0
-while IFS='|' read -r recipe field pattern; do
+while IFS='|' read -r recipe field package pattern; do
   if ! grep -qE "$pattern" "$root/$recipe"; then
-    echo "$recipe: nothing declares the retirement of vgs-shell-assets in $field, so an upgrade over it aborts on /usr/lib/vshell/config/vshell/icons" >&2
+    echo "$recipe: nothing declares the retirement of $package in $field, so an upgrade over it aborts on /usr/lib/vshell/config/vshell/icons" >&2
     unowned=1
   fi
 done <<'RECIPES'
-packaging/arch/PKGBUILD|replaces|^replaces=\(.*'vgs-shell-assets'
-packaging/arch/PKGBUILD|conflicts|^conflicts=\(.*'vgs-shell-assets'
-packaging/arch/vgs-shell-git/PKGBUILD|replaces|^replaces=\(.*'vgs-shell-assets'
-packaging/arch/vgs-shell-git/PKGBUILD|conflicts|^conflicts=\(.*'vgs-shell-assets'
-packaging/debian/control|Replaces|^Replaces:.*[ ,]?vgs-shell-assets
-packaging/debian/control|Breaks|^Breaks:.*[ ,]?vgs-shell-assets
-packaging/fedora/vgs-shell.spec|Obsoletes|^Obsoletes:[[:space:]]+vgs-shell-assets
-packaging/void/template|replaces|^replaces=".*vgs-shell-assets
+packaging/arch/PKGBUILD|replaces|vgs-shell-assets|^replaces=\(.*'vgs-shell-assets'
+packaging/arch/PKGBUILD|conflicts|vgs-shell-assets|^conflicts=\(.*'vgs-shell-assets'
+packaging/arch/vgs-shell-git/PKGBUILD|replaces|vgs-shell-assets|^replaces=\(.*'vgs-shell-assets'
+packaging/arch/vgs-shell-git/PKGBUILD|conflicts|vgs-shell-assets|^conflicts=\(.*'vgs-shell-assets'
+packaging/debian/control|Replaces|vgs-shell-assets|^Replaces:.*[ ,]?vgs-shell-assets
+packaging/debian/control|Breaks|vgs-shell-assets|^Breaks:.*[ ,]?vgs-shell-assets
+packaging/fedora/vgs-shell.spec|Obsoletes|vgs-shell-assets|^Obsoletes:[[:space:]]+vgs-shell-assets
+packaging/void/template|replaces|vgs-shell-assets|^replaces=".*vgs-shell-assets
 RECIPES
 test "$unowned" -eq 0
 

@@ -1232,14 +1232,13 @@ def load_theme_package(name: str) -> Dict[str, Any] | None:
     bp["backgrounds"] = [str(p) for _rel, p in backgrounds]
     bp["packagedPreview"] = str(files["preview.png"]) if "preview.png" in files else ""
     bp["adjustments"] = adjustments
-    # A user directory beside a built-in one normally means the user edited the
-    # theme. A catalog download lands there too, for a built-in theme whose
-    # imagery ships in its release archive, and that is the shipped theme
-    # rather than an edit of it: calling it modified would blank its shipped
-    # screenshot and send it to the preview generator on every list.
-    bp["modified"] = (builtin_dir.is_dir() and user_dir.is_dir()
-                      and not catalog_owns(name)
-                      and any(p.is_file() for p in user_dir.rglob("*")))
+    # "Did the user change this package": what the modified badge and the revert
+    # control read. A catalog download lands in the same user directory, so it
+    # answers true here too, and catalogPristine says which kind it is: without
+    # that second flag an untouched download loses its shipped screenshot and
+    # goes to the preview generator on the first open after a cold cache.
+    bp["modified"] = builtin_dir.is_dir() and user_dir.is_dir() and any(p.is_file() for p in user_dir.rglob("*"))
+    bp["catalogPristine"] = catalog_pristine(name)
     bp["appOverrides"] = {app: len(roles) for app, roles in _parse_app_overrides_text(
         files["app-colors.toml"].read_text(errors="ignore") if "app-colors.toml" in files else "").items()}
     stamps = [meta_path.stat().st_mtime]
@@ -1470,6 +1469,42 @@ def theme_dir_has_wallpapers(package: Path) -> bool:
     return any(entry.is_file() for entry in (package / "backgrounds").glob("*"))
 
 
+def catalog_pristine(name: str) -> bool:
+    """Whether the user directory is a catalog download the user has not touched.
+
+    A downloaded theme for a built-in one lands in the user directory, where a
+    user overlay also lives, so `modified` alone cannot say which it is. That
+    matters twice over: a stale answer either hides the modified badge and the
+    revert control, or blanks a shipped screenshot that is still accurate.
+
+    The marker's file list is the reference point, because the marker itself
+    survives any edit. A file beside the downloaded set — `app-colors.toml`, a
+    duplicated wallpaper — is a user edit, and so are the restyle adjustments
+    and hidden backgrounds the shell writes into the package's `theme.json`.
+    An edit made in place to any other downloaded file is not detected: nothing
+    on disk records what those files held.
+    """
+    if not catalog_owns(name):
+        return False
+    recorded = catalog_marker(name).get("files")
+    if not isinstance(recorded, list) or not recorded:
+        return False
+    root = user_themes_dir() / name
+    present = sorted(path.relative_to(root).as_posix()
+                     for path in root.rglob("*")
+                     if path.is_file() and path.name != CATALOG_MARKER)
+    if present != sorted(str(entry) for entry in recorded):
+        return False
+    try:
+        meta = json.loads((root / "theme.json").read_text())
+    except Exception:
+        return False
+    if not isinstance(meta, dict):
+        return False
+    return adjustments_all_zero(normalize_adjustments(meta.get("adjustments"))) \
+        and not meta.get("hiddenBackgrounds")
+
+
 def catalog_entries() -> List[Dict[str, Any]]:
     catalog = load_theme_catalog()
     installed = set(theme_package_names())
@@ -1527,14 +1562,19 @@ def _catalog_check_assets(name: str, raw: Any) -> Dict[str, Any]:
             "rev": int(assets.get("rev") or 0)}
 
 
-def _catalog_unpack(name: str, archive: Path, staging: Path) -> int:
-    """Unpack a verified theme archive, member by member, into the staging directory.
+def _catalog_unpack(name: str, archive: Path, staging: Path) -> Tuple[int, List[str]]:
+    """Unpack a verified theme archive into the staging directory.
+
+    Returns the bytes written and the relative paths written, in archive order.
+    The path list is the reference point for telling an untouched download from
+    an edited one later; nothing else records what the archive carried.
 
     Every member name goes through the same path rule the manifest uses, and only
     regular files are written: a link or a device node in the archive is refused
     rather than followed.
     """
     written = 0
+    unpacked: List[str] = []
     with tarfile.open(archive, mode="r:gz") as tar:
         for member in tar.getmembers():
             rel = _catalog_check_relpath(member.name)
@@ -1548,7 +1588,8 @@ def _catalog_unpack(name: str, archive: Path, staging: Path) -> int:
             with target.open("wb") as handle:
                 shutil.copyfileobj(source, handle)
             written += target.stat().st_size
-    return written
+            unpacked.append(rel)
+    return written, sorted(unpacked)
 
 
 def catalog_download_theme(entry: Dict[str, Any], base_urls: List[str], allow_local: bool,
@@ -1582,7 +1623,7 @@ def catalog_download_theme(entry: Dict[str, Any], base_urls: List[str], allow_lo
         rel = f"{assets['release']}/{assets['archive']}"
         _catalog_fetch_verified(f"{name} ({rel})", rel, assets["size"], assets["sha256"],
                                 base_urls, allow_local, archive)
-        written = _catalog_unpack(name, archive, staging)
+        written, unpacked = _catalog_unpack(name, archive, staging)
         if not (staging / "theme.json").is_file():
             raise ValueError(f"{name}: {assets['archive']} has no theme.json")
         (staging / CATALOG_MARKER).write_text(json.dumps({
@@ -1593,6 +1634,9 @@ def catalog_download_theme(entry: Dict[str, Any], base_urls: List[str], allow_lo
             "rev": assets["rev"],
             "sha256": assets["sha256"],
             "bytes": written,
+            # What the archive carried, so a later read can tell this directory
+            # apart from the same directory after the user has edited it.
+            "files": unpacked,
             "installedAt": int(time.time()),
         }, indent=2) + "\n")
         # Rename the installed theme aside before publishing its replacement.
@@ -7681,14 +7725,16 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
                 # theme with definitions and no imagery reports no screenshot,
                 # and generateMissingPreviews() renders the whole set through a
                 # nested compositor on the first open after a cold preview
-                # cache. Both stop being truthful once
-                # the user restyles or overlays the theme, so in that case drop
-                # back to "missing" and let the generator run.
+                # cache. Both stop being truthful once the user restyles or
+                # overlays the theme, so in that case drop back to "missing" and
+                # let the generator run. An untouched catalog download is the
+                # shipped theme rather than an edit of it, so its screenshot
+                # still describes what the user sees.
                 shipped_preview = theme_shipped_preview(
                     str(b.get("name") or ""), b.get("packagedPreview", ""))
-                if shipped_preview and not preview.exists() and (
-                    b.get("modified") or not adjustments_all_zero(normalize_adjustments(b.get("adjustments")))
-                ):
+                edited = (b.get("modified") and not b.get("catalogPristine")) or \
+                    not adjustments_all_zero(normalize_adjustments(b.get("adjustments")))
+                if shipped_preview and not preview.exists() and edited:
                     shipped_preview = ""
                 entries.append({
                     "name": b.get("name"),
@@ -7919,7 +7965,19 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
             if args.json:
                 print(json.dumps({"reverted": False, "name": bp.get("name"), "applied": False, "error": "not a built-in theme"}, indent=2))
             return 1
-        user_dir = user_themes_dir() / Path(str(bp.get("path"))).name
+        package = Path(str(bp.get("path"))).name
+        # For a downloaded theme the user directory IS the download, so dropping
+        # it discards imagery this command cannot fetch back. Removing a
+        # download is `theme catalog remove`, which says so before it deletes.
+        if catalog_owns(package):
+            message = (f"{bp.get('name')} is a downloaded theme, not a user overlay; "
+                       f"use `vshell theme catalog remove {args.name}` instead")
+            eprint(message)
+            if args.json:
+                print(json.dumps({"reverted": False, "name": bp.get("name"), "applied": False,
+                                  "error": "downloaded theme"}, indent=2))
+            return 1
+        user_dir = user_themes_dir() / package
         if user_dir.is_dir():
             shutil.rmtree(user_dir, ignore_errors=True)
         applied = False

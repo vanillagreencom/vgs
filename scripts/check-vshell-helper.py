@@ -3067,6 +3067,16 @@ def _write_catalog(builtin: Path, archives: Path, name: str, blob: bytes,
     }))
 
 
+def _theme_list_previews() -> dict:
+    """The preview path theme list --json reports, per theme name."""
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        status = helper.cmd_theme(["list", "--json"])
+    assert_equal(status, 0, "theme list --json exit status")
+    return {entry["name"]: entry["preview"]
+            for entry in json.loads(buffer.getvalue())["blueprints"]}
+
+
 def test_theme_catalog_offers_a_builtin_theme_with_no_imagery():
     """A built-in theme whose wallpapers ship in its release archive is downloadable.
 
@@ -3116,10 +3126,13 @@ def test_theme_catalog_offers_a_builtin_theme_with_no_imagery():
 
             blueprint = helper.load_theme_package("demo")
             assert_equal(len(blueprint["backgrounds"]), 1, "the theme now has a wallpaper")
-            # The download is the shipped theme, not an edit of it: calling it
-            # modified would blank its screenshot and re-render it every list.
-            assert_equal(blueprint["modified"], False,
-                         "a catalog download beside a built-in directory is not a user edit")
+            # Two questions, two flags. The download landed in the directory a
+            # user overlay uses, so it IS a change to the package the badge and
+            # the revert control read; what it is not is an edit the user made,
+            # which is what decides whether the shipped screenshot still
+            # describes the theme.
+            assert_equal((blueprint["modified"], blueprint["catalogPristine"]), (True, True),
+                         "an untouched download is a change to the package, not a user edit")
 
             after = [e for e in helper.catalog_entries() if e["name"] == "demo"][0]
             assert_equal((after["installed"], after["downloaded"]), (True, True),
@@ -3127,6 +3140,36 @@ def test_theme_catalog_offers_a_builtin_theme_with_no_imagery():
 
             again = helper.catalog_download_theme(entry, base_urls, allow_local)
             assert_equal(again["status"], "skipped", "an installed theme is not re-downloaded")
+
+            # Revert deletes the user directory, which for a downloaded theme is
+            # the download. It must refuse rather than throw away imagery it
+            # cannot fetch back, and name the command that owns that removal.
+            reverted = helper.cmd_theme(["revert", "demo"])
+            assert_equal(reverted, 1, "revert refuses a downloaded theme")
+            assert_equal((dest / "backgrounds" / "1-demo.jpg").is_file(), True,
+                         "the refused revert leaves the downloaded wallpapers on disk")
+
+            # An edit inside the download is a user edit: the file set the
+            # marker recorded is the only thing that tells them apart.
+            assert_equal(_theme_list_previews().get("demo"), str(dest / "preview.png"),
+                         "an untouched download keeps the screenshot it shipped with")
+
+            (dest / "app-colors.toml").write_text('[btop]\nfg = "#ffffff"\n')
+            edited = helper.load_theme_package("demo")
+            assert_equal((edited["modified"], edited["catalogPristine"]), (True, False),
+                         "a file added beside the downloaded set is a user edit")
+            assert_equal(_theme_list_previews().get("demo"), "",
+                         "an edited download reports no screenshot, so the generator renders one")
+            (dest / "app-colors.toml").unlink()
+
+            # So is a restyle, which rewrites a file the download carried.
+            meta = json.loads((dest / "theme.json").read_text())
+            meta["adjustments"] = helper.normalize_adjustments({"brightness": 17})
+            (dest / "theme.json").write_text(json.dumps(meta) + "\n")
+            restyled = helper.load_theme_package("demo")
+            assert_equal((restyled["modified"], restyled["catalogPristine"]), (True, False),
+                         "restyle adjustments written into the download are a user edit")
+            (dest / "theme.json").write_bytes(package["theme.json"])
 
             # The bundled themes keep their imagery in the tree, and those stay
             # refused: nothing should re-download what the package already has.
