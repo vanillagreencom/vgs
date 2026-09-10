@@ -1,7 +1,7 @@
 // Package execbound bounds one-shot external commands and classifies their exit
 // errors. Callers use the returned error so deadline and output-recovery
 // precedence stays in one place. Each command leads a process group of its own,
-// and cancelling a running one signals that whole group, so a tool that fans out
+// and cancelling a running one kills that whole group, so a tool that fans out
 // leaves no descendant behind. WaitDelay cannot bound a child stuck in
 // uninterruptible sleep.
 package execbound
@@ -33,7 +33,7 @@ type Result struct {
 	Out []byte
 	// Salvaged reports a clean child exit whose pipe reads ended at WaitDelay. Out
 	// contains the bytes read and may include writes from descendants. The run logs
-	// a warning because nothing cancelled the command: the group signal never fires
+	// a warning because nothing cancelled the command: the group kill never fires
 	// on this path, so those descendants stay alive.
 	Salvaged bool
 }
@@ -71,23 +71,29 @@ func CommandWithDelay(ctx context.Context, delay time.Duration, name string, arg
 	}
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.WaitDelay = delay
-	// A group of its own, so cancelling reaches the whole fan-out. mise runs one
+	// A group of its own, so cancelling kills the whole fan-out. mise runs one
 	// `npm view` per npm-backed tool, and the cancel exec.CommandContext installs
 	// by default signals the direct child alone.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error { return terminateGroup(cmd, delay) }
+	cmd.Cancel = func() error { return terminateGroup(cmd) }
 	return &Cmd{ctx: ctx, cmd: cmd, log: slog.Default()}
 }
 
-// terminateGroup ends the process group the child leads: SIGTERM to the group at
-// once, then SIGKILL after delay, the same bound os/exec puts on the child
-// itself. Linux keeps a group id reserved while any member of the group lives,
-// so the escalation reaches this run's descendants or no process at all.
+// terminateGroup kills the process group the child leads. Linux keeps a group id
+// reserved while any member of the group lives, so the signal reaches this run's
+// descendants or no process at all.
+//
+// SIGKILL with no graceful stage before it: every command this package runs is a
+// read-only query with nothing to flush or unlock, so a SIGTERM stage buys
+// nothing, and the second signal it needs would have to outlive the cancel. It
+// cannot. A shutdown cancels the command in flight and returns at once, so a
+// timer holding the escalation dies with the daemon and the descendant that
+// ignores SIGTERM survives — the case this bound exists to cover.
 //
 // A child already reaped, or one that does not lead its own group because
 // something replaced SysProcAttr, is signalled alone: the negative id would
 // otherwise name the daemon's own process group.
-func terminateGroup(cmd *exec.Cmd, delay time.Duration) error {
+func terminateGroup(cmd *exec.Cmd) error {
 	proc := cmd.Process
 	if proc == nil {
 		return os.ErrProcessDone
@@ -96,13 +102,12 @@ func terminateGroup(cmd *exec.Cmd, delay time.Duration) error {
 	if err != nil || pgid != proc.Pid {
 		return proc.Kill()
 	}
-	if err := syscall.Kill(-pgid, syscall.SIGTERM); err != nil {
+	if err := syscall.Kill(-pgid, syscall.SIGKILL); err != nil {
 		if errors.Is(err, syscall.ESRCH) {
 			return os.ErrProcessDone
 		}
-		return fmt.Errorf("terminate process group %d: %w", pgid, err)
+		return fmt.Errorf("kill process group %d: %w", pgid, err)
 	}
-	time.AfterFunc(delay, func() { _ = syscall.Kill(-pgid, syscall.SIGKILL) })
 	return nil
 }
 

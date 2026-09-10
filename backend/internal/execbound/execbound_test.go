@@ -116,8 +116,8 @@ func TestOutputClassifiesTheDeadlineKillAsTimeout(t *testing.T) {
 }
 
 // A spawner stands in for a tool that fans out: it starts a grandchild that
-// ignores SIGTERM and records its pid, then waits. Only the SIGKILL the group
-// receives after WaitDelay can end that grandchild.
+// records its pid and waits. The grandchild ignores SIGTERM, so nothing short of
+// the group's SIGKILL can end it and the assertion below cannot pass by accident.
 const spawnerScript = `#!/bin/sh
 sh -c 'trap "" TERM; echo $$ > "$1"; exec sleep 300' spawner "$1" &
 exec sleep 300
@@ -144,7 +144,8 @@ func TestCancelEndsTheDescendantGroup(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	// A short delay keeps the SIGKILL escalation inside maxBoundedElapsed.
+	// A short delay bounds the pipe read the grandchild holds open when the group
+	// kill is missing, so a failing run reports rather than waits.
 	cmd := CommandWithDelay(ctx, 300*time.Millisecond, script, pidPath)
 	done := make(chan error, 1)
 	go func() {
