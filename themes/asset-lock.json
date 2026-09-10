@@ -593,12 +593,12 @@
       "published": true
     },
     "roseofdune": {
-      "release": "themes-v1",
-      "archive": "vgs-theme-roseofdune-r1.tar.gz",
-      "rev": 1,
-      "size": 17330583,
-      "sha256": "89fac000fb2b24d40219168344022252106ed5817093b7e2bc8807879b1884cd",
-      "definitions": "29486bbe328c47d9526ce3b95b2ff115927b3602ac2e7fe142eabfc480b32155",
+      "release": "themes-v2",
+      "archive": "vgs-theme-roseofdune-r2.tar.gz",
+      "rev": 2,
+      "size": 17331858,
+      "sha256": "7b5644ac751f6cd181441fc760120d74aad6b05c9db85ae70526b0ed607ec803",
+      "definitions": "2ae3ef999c73ebfa3d1d0ac695c15397e441f351643d8df075b1f42ff9ec925f",
       "preview": "19bce71e3abf8d79d73e83f0693f0a31f23e5de5c5193526432fb97b600e3b14",
       "published": true
     },

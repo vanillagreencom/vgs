@@ -1257,6 +1257,22 @@ def test_shell_only_theme_preview():
     with_temp_home(run)
 
 
+def test_lint_checks_color0_in_light_mode_only():
+    """ANSI black is body text in a light terminal and unused in a dark one."""
+    def warns(mode: str, bg: str, fg: str, color0: str) -> bool:
+        colors = {f"color{i}": fg for i in range(16)}
+        colors.update({"background": bg, "foreground": fg, "color0": color0, "mode": mode})
+        bp = helper.palette_from_colors_map(colors, name="lint-probe", source="curated")
+        return any(w["role"].startswith("color0") for w in helper.lint_blueprint(bp))
+
+    for label, mode, bg, fg, color0, expected in (
+        ("light, color0 equal to the background", "light", "#f5e6d3", "#35302a", "#f5e6d3", True),
+        ("light, a dark color0", "light", "#f5e6d3", "#35302a", "#35302a", False),
+        ("dark, color0 equal to the background", "dark", "#1a1b26", "#c0caf5", "#1a1b26", False),
+    ):
+        assert_equal(warns(mode, bg, fg, color0), expected, f"lint color0 warning, {label}")
+
+
 def test_hyprland_preview_native_lua():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -6527,6 +6543,20 @@ def test_tmux_theme_reaches_the_running_server():
                      "a plain file in the socket directory is not a socket")
 
 
+def test_tmux_copy_mode_matches_take_theme_roles():
+    """tmux's own match styles paint black on cyan and magenta, which a light
+    theme cannot read, so the template sets both from theme roles."""
+    roles = {"selection_background": "#c68d95", "selection_foreground": "#35302a",
+             "secondary": "#713a56", "onSecondary": "#f5e6d3"}
+    rendered = helper.render_target_template("tmux-vgs", "vgs-theme.conf", roles).splitlines()
+    for option, style in (
+        ("copy-mode-match-style", "bg=#c68d95,fg=#35302a"),
+        ("copy-mode-current-match-style", "bg=#713a56,fg=#f5e6d3"),
+    ):
+        lines = [line for line in rendered if line.startswith(f"set -g {option} ")]
+        assert_equal(lines, [f'set -g {option} "{style}"'], f"tmux {option}")
+
+
 def test_display_output_controls():
     """Exercise real rendering and preview recovery without touching the seat."""
     mode = {"width": 6016, "height": 3384, "refresh_rate": 60000}
@@ -6755,6 +6785,7 @@ def main():
                  "Chromium policy refresh must serialize with theme applies")
     test_system_font_normalization()
     test_tmux_theme_reaches_the_running_server()
+    test_tmux_copy_mode_matches_take_theme_roles()
     test_perceptual_theme_adjustments()
     test_curated_app_role_passthrough()
     test_restyle_integer_sweeps()
@@ -6771,6 +6802,7 @@ def main():
     test_vshell_blur_cli_contract()
     test_generated_theme_consumer_wiring()
     test_shell_only_theme_preview()
+    test_lint_checks_color0_in_light_mode_only()
     test_hyprland_preview_native_lua()
     test_greeter_primary_monitor_validation()
     test_greeter_runtime_helper_dependencies()
