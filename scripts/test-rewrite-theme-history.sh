@@ -77,6 +77,10 @@ expect() {
   esac
 }
 
+# says TEXT HAYSTACK -- for check, so an output assertion reads like the others.
+says() { case "$2" in *"$1"*) return 0 ;; *) return 1 ;; esac; }
+lacks() { ! says "$@"; }
+
 # check LABEL COMMAND [ARG...] -- the command's own status is the verdict.
 check() {
   local label="$1"
@@ -153,14 +157,8 @@ else
   gpg_status=0
   gpg_output="$( (cd "$clone" && bash "$script") 2>&1 )" || gpg_status=$?
   check "a failure after the rewrite exits non-zero" test "$gpg_status" -ne 0
-  expect_clause="FAILED AFTER THE REWRITE BEGAN"
-  case "$gpg_output" in
-    *"$expect_clause"*) check "a failure after the rewrite names the state it leaves" true ;;
-    *)
-      check "a failure after the rewrite names the state it leaves" false
-      printf '%s\n' "$gpg_output" >&2
-      ;;
-  esac
+  check "a failure after the rewrite names the state it leaves" \
+    says "FAILED AFTER THE REWRITE BEGAN" "$gpg_output"
   if ! kept="$(printf '%s\n' "$gpg_output" | sed -n 's/^    \(\/.*\)$/\1/p')"; then
     echo "FAIL cannot read the staging path out of the failure banner" >&2
     failures=$((failures + 1))
@@ -176,22 +174,12 @@ else
   happy_status=0
   happy_output="$( (cd "$clone" && bash "$script") 2>&1 )" || happy_status=$?
   check "a clean clone rewrites without error" test "$happy_status" -eq 0
-  case "$happy_output" in
-    *"git push --force origin main"*) check "the push procedure is printed" true ;;
-    *)
-      check "the push procedure is printed" false
-      printf '%s\n' "$happy_output" >&2
-      ;;
-  esac
+  check "the push procedure is printed" \
+    says "git push --force origin main" "$happy_output"
   # git clone leaves a small object count loose, so the before figure needs the
   # same packing the after figure does or it reports nothing for a real clone.
-  case "$happy_output" in
-    *"size-pack before: 0 bytes"*)
-      check "the before figure counts the clone it measured" false
-      printf '%s\n' "$happy_output" >&2
-      ;;
-    *) check "the before figure counts the clone it measured" true ;;
-  esac
+  check "the before figure counts the clone it measured" \
+    lacks "size-pack before: 0 bytes" "$happy_output"
   check "the bundled wallpapers are restored" \
     test -f "$clone/themes/bauhaus/backgrounds/1-bauhaus.jpg"
   # The size the banner prints counts packed objects only, so the re-add commit
