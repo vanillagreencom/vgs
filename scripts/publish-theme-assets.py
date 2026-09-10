@@ -176,38 +176,38 @@ def package_members(name: str, assets: Path) -> List[Tuple[str, Path]]:
     return sorted(members.items())
 
 
-def definitions_pin(digests: Dict[str, str]) -> str:
+def definitions_pin(packed: Dict[str, bytes]) -> str:
     """The digest scripts/gen-theme-catalog.py recomputes from the tree.
 
-    Takes the digests build_archive captured while packing, never a fresh read
-    of the tree. Recording it binds the published archive to the exact
-    definition files it packed, so a later edit to one of them cannot pass
-    generation unnoticed — and a read of its own would reopen that same hole for
-    an edit made while the run was uploading.
+    Derived from the bytes build_archive packed, never from a fresh read of the
+    tree. Recording it binds the published archive to the exact definition files
+    it carries, so a later edit to one of them cannot pass generation unnoticed
+    — and a read of its own would reopen that same hole for an edit made while
+    the run was uploading.
     """
     gen = generator()
     return gen.definitions_digest([
-        {"path": rel, "sha256": digest} for rel, digest in sorted(digests.items())
-        if not gen.is_imagery(rel)])
+        {"path": rel, "sha256": hashlib.sha256(data).hexdigest()}
+        for rel, data in sorted(packed.items()) if not gen.is_imagery(rel)])
 
 
-def build_archive(members: List[Tuple[str, Path]]) -> Tuple[bytes, Dict[str, str]]:
-    """Pack the members into a byte-reproducible gzipped tar, and say what it packed.
+def build_archive(members: List[Tuple[str, Path]]) -> Tuple[bytes, Dict[str, bytes]]:
+    """Pack the members into a byte-reproducible gzipped tar, and return what it packed.
 
-    Returns the archive bytes and the sha256 of each member as packed. Every
-    file is read exactly once, and everything the lock records about this
-    archive comes from that read: a second read to compute a digest would record
-    a file edited since, describing content the release does not carry.
+    Every member is read exactly once, and the returned bytes are that read.
+    Everything about this archive is a function of them: the definition digest,
+    the screenshot digest, and the browser thumbnail. No consumer takes a path,
+    so none can describe or display content the release does not carry.
 
     Identical content must produce identical bytes: the archive's own sha256 is
     what tells the publisher whether a theme's imagery changed at all.
     """
-    digests: Dict[str, str] = {}
+    packed_members: Dict[str, bytes] = {}
     raw = io.BytesIO()
     with tarfile.open(fileobj=raw, mode="w", format=tarfile.PAX_FORMAT) as tar:
         for rel, path in members:
             data = path.read_bytes()
-            digests[rel] = hashlib.sha256(data).hexdigest()
+            packed_members[rel] = data
             info = tarfile.TarInfo(rel)
             info.size = len(data)
             info.mtime = 0
@@ -219,7 +219,7 @@ def build_archive(members: List[Tuple[str, Path]]) -> Tuple[bytes, Dict[str, str
     packed = io.BytesIO()
     with gzip.GzipFile(fileobj=packed, mode="wb", compresslevel=9, mtime=0) as zipped:
         zipped.write(raw.getvalue())
-    return packed.getvalue(), digests
+    return packed.getvalue(), packed_members
 
 
 def require_pillow() -> Any:
@@ -245,10 +245,11 @@ def thumbnail_needs_rebuild(preview_digest: str, recorded: str, thumbnail: Path)
     return not thumbnail.is_file() or recorded != preview_digest
 
 
-def write_thumbnail(preview: Path, dest: Path) -> None:
+def write_thumbnail(preview: bytes, dest: Path) -> None:
+    """Derive the browser thumbnail from the screenshot bytes the archive carries."""
     Image = require_pillow()
 
-    with Image.open(preview) as image:
+    with Image.open(io.BytesIO(preview)) as image:
         image = image.convert("RGB")
         height = max(1, round(image.height * THUMBNAIL_WIDTH / image.width))
         resized = image.resize((THUMBNAIL_WIDTH, height), Image.LANCZOS)
@@ -364,17 +365,15 @@ def publish(args: argparse.Namespace) -> int:
             # One read per file. Everything recorded below describes these bytes
             # and not the tree as it stands afterwards, so an edit made while the
             # run uploads cannot be pinned as published.
-            blob, member_digests = build_archive(members)
+            blob, packed_members = build_archive(members)
             digest = hashlib.sha256(blob).hexdigest()
-            preview_digest = member_digests.get("preview.png", "")
+            preview = packed_members.get("preview.png")
+            preview_digest = hashlib.sha256(preview).hexdigest() if preview is not None else ""
 
-            # The thumbnail is derived from the preview alone and is rebuilt
-            # whenever the preview's content differs from the one it came from,
-            # or the file is gone. Tying it to the archive digest would leave a
-            # deleted thumbnail unrecoverable while two gates require one. A
-            # preview replaced between the pack and this call gives a thumbnail
-            # newer than the lock's digest, which the next run rebuilds.
-            preview = assets / "preview.png"
+            # The thumbnail is derived from the screenshot the archive carries,
+            # and is rebuilt whenever that content differs from the one it came
+            # from, or the file is gone. Tying it to the archive digest would
+            # leave a deleted thumbnail unrecoverable while two gates require one.
             thumbnail = THUMBNAIL_DIR / f"{name}.jpg"
             if thumbnail_needs_rebuild(preview_digest, str(previous.get("preview") or ""), thumbnail):
                 write_thumbnail(preview, thumbnail)
@@ -410,7 +409,7 @@ def publish(args: argparse.Namespace) -> int:
                 "rev": rev,
                 "size": len(blob),
                 "sha256": digest,
-                "definitions": definitions_pin(member_digests),
+                "definitions": definitions_pin(packed_members),
                 "preview": preview_digest,
                 "published": bool(args.upload),
             }

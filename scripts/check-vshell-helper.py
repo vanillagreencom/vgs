@@ -3302,25 +3302,24 @@ def test_theme_asset_publisher():
                 return f"read {self.reads}\n".encode()
 
         changing = _ChangingSource()
-        once, once_digests = publisher.build_archive([("theme.json", changing)])
+        once, once_members = publisher.build_archive([("theme.json", changing)])
         assert_equal(changing.reads, 1, "build_archive reads each member exactly once")
         with tarfile.open(fileobj=io.BytesIO(once), mode="r:gz") as tar:
-            assert_equal(once_digests["theme.json"],
-                         hashlib.sha256(tar.extractfile("theme.json").read()).hexdigest(),
-                         "the reported digest is of the bytes that were packed")
+            assert_equal(once_members["theme.json"], tar.extractfile("theme.json").read(),
+                         "the returned bytes are the bytes that were packed")
 
-        first, member_digests = publisher.build_archive(members)
+        first, packed_members = publisher.build_archive(members)
         assert_equal(publisher.build_archive(members)[0], first,
                      "the same content must pack to the same archive bytes")
         with tarfile.open(fileobj=io.BytesIO(first), mode="r:gz") as tar:
             packed = tar.getmembers()
-            # The reported digests describe the bytes that were packed, from the
-            # same read. Anything the lock records from a second read could
-            # describe a file edited since the archive was built.
-            assert_equal(member_digests,
-                         {member.name: hashlib.sha256(tar.extractfile(member).read()).hexdigest()
-                          for member in packed},
-                         "build_archive reports the digest of every member it packed")
+            # The returned bytes are the archive's own, from the same read.
+            # Everything derived from them — the definition digest, the
+            # screenshot digest, the thumbnail — therefore describes what the
+            # release carries and not the tree as it stands afterwards.
+            assert_equal(packed_members,
+                         {member.name: tar.extractfile(member).read() for member in packed},
+                         "build_archive returns the bytes of every member it packed")
         assert_equal(sorted(m.name for m in packed),
                      ["backgrounds/1-demo.jpg", "preview.png", "theme.json"],
                      "archive members are theme-package paths with no added prefix")
@@ -3352,7 +3351,8 @@ def test_theme_asset_publisher():
         # An mtime-preserving copy can put different pixels under an older
         # timestamp, and a timestamp rule paints the wrong theme's screenshot.
         thumbnail = root / "demo.jpg"
-        publisher.write_thumbnail(REPO_ROOT / "themes" / "bauhaus" / "preview.png", thumbnail)
+        publisher.write_thumbnail((REPO_ROOT / "themes" / "bauhaus" / "preview.png").read_bytes(),
+                                  thumbnail)
         current = generator.sha256_of(REPO_ROOT / "themes" / "bauhaus" / "preview.png")
         replaced = generator.sha256_of(REPO_ROOT / "themes" / "tokyo-night" / "preview.png")
         os.utime(thumbnail, (0, 0))
@@ -3685,6 +3685,10 @@ def test_theme_asset_publish_records_what_is_on_the_release():
             # the bytes from before that edit, and a lock naming the edited tree
             # would pass --check while every install got the older definitions.
             (themes / "demo" / "colors.toml").write_text('background = "#303030"\n')
+            # The screenshot differs from the recorded one before the pack, so
+            # this run rebuilds the thumbnail and the replacement below lands in
+            # the middle of that decision.
+            Image.new("RGB", (1920, 1080), (40, 120, 200)).save(assets / "preview.png")
             working_build = publisher.build_archive
 
             def editing_build(members):
@@ -3718,6 +3722,22 @@ def test_theme_asset_publish_records_what_is_on_the_release():
                          "the lock records the screenshot the published archive carries")
             assert_equal(raced["preview"] == real.sha256_of(assets / "preview.png"), False,
                          "the lock does not record a screenshot replaced after the archive was packed")
+
+            # The browser paints this file, so it has to show the screenshot the
+            # install delivers. Deriving it from the published bytes is what
+            # makes that true; no gate compares thumbnail pixels.
+            with tarfile.open(fileobj=io.BytesIO(shipped[raced["archive"]]), mode="r:gz") as tar:
+                published_screenshot = tar.extractfile("preview.png").read()
+            from_published = tmp / "from-published.jpg"
+            from_replacement = tmp / "from-replacement.jpg"
+            publisher.write_thumbnail(published_screenshot, from_published)
+            publisher.write_thumbnail((assets / "preview.png").read_bytes(), from_replacement)
+            assert_equal((publisher.THUMBNAIL_DIR / "demo.jpg").read_bytes(),
+                         from_published.read_bytes(),
+                         "the thumbnail is derived from the screenshot the archive carries")
+            assert_equal((publisher.THUMBNAIL_DIR / "demo.jpg").read_bytes()
+                         == from_replacement.read_bytes(), False,
+                         "the thumbnail is not derived from a screenshot replaced after the pack")
 
             # A theme dropped from the tree loses its pin and its thumbnail.
             shutil.rmtree(themes / "demo")
