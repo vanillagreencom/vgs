@@ -81,8 +81,15 @@ test "$unclaimed" -eq 0
 # matches conflicts through.
 unowned=0
 while IFS='|' read -r recipe field package pattern; do
-  if ! grep -qE "$pattern" "$root/$recipe"; then
+  if ! declared="$(grep -E "$pattern" "$root/$recipe")"; then
     echo "$recipe: nothing declares the retirement of $package in $field, so an upgrade over it aborts on /usr/lib/vshell/config/vshell/icons" >&2
+    unowned=1
+    continue
+  fi
+  # A renamed or mistyped package must not satisfy the row, so each pattern
+  # needs a right-hand boundary. The near miss is the recipe's own line.
+  if grep -qE "$pattern" <<<"${declared//"$package"/"$package-old"}"; then
+    echo "$recipe: the $field pattern also matches $package-old, so a mistyped package would pass" >&2
     unowned=1
   fi
 done <<'RECIPES'
@@ -90,10 +97,10 @@ packaging/arch/PKGBUILD|replaces|vgs-shell-assets|^replaces=\(.*'vgs-shell-asset
 packaging/arch/PKGBUILD|conflicts|vgs-shell-assets|^conflicts=\(.*'vgs-shell-assets'
 packaging/arch/vgs-shell-git/PKGBUILD|replaces|vgs-shell-assets|^replaces=\(.*'vgs-shell-assets'
 packaging/arch/vgs-shell-git/PKGBUILD|conflicts|vgs-shell-assets|^conflicts=\(.*'vgs-shell-assets'
-packaging/debian/control|Replaces|vgs-shell-assets|^Replaces:.*[ ,]?vgs-shell-assets
-packaging/debian/control|Breaks|vgs-shell-assets|^Breaks:.*[ ,]?vgs-shell-assets
-packaging/fedora/vgs-shell.spec|Obsoletes|vgs-shell-assets|^Obsoletes:[[:space:]]+vgs-shell-assets
-packaging/void/template|replaces|vgs-shell-assets|^replaces=".*vgs-shell-assets
+packaging/debian/control|Replaces|vgs-shell-assets|^Replaces:(.*[[:space:],])?vgs-shell-assets([[:space:],(]|$)
+packaging/debian/control|Breaks|vgs-shell-assets|^Breaks:(.*[[:space:],])?vgs-shell-assets([[:space:],(]|$)
+packaging/fedora/vgs-shell.spec|Obsoletes|vgs-shell-assets|^Obsoletes:[[:space:]]+vgs-shell-assets([[:space:]<>=]|$)
+packaging/void/template|replaces|vgs-shell-assets|^replaces="(.*[[:space:]])?vgs-shell-assets([<>=[:space:]]|")
 RECIPES
 test "$unowned" -eq 0
 
