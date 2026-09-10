@@ -1273,6 +1273,75 @@ def test_lint_checks_color0_in_light_mode_only():
         assert_equal(warns(mode, bg, fg, color0), expected, f"lint color0 warning, {label}")
 
 
+def test_theme_list_falls_back_to_the_shipped_thumbnail():
+    """A theme with definitions and no preview.png reports its 480 px thumbnail.
+
+    Only the bundled themes keep a full-size screenshot in the tree; the rest
+    ship their imagery in a release archive (D015). Without this fallback every
+    such theme reports no screenshot, and VGSThemeService.generateMissingPreviews()
+    renders the whole set through a nested compositor on the first open after a
+    cold preview cache.
+    """
+    # name -> (has its own preview.png, extra theme.json fields, user overlay)
+    packages = {
+        "withshot": (True, {}, False),
+        "noshot": (False, {}, False),
+        "nothumb": (False, {}, False),
+        "restyled": (False, {"adjustments": {"brightness": 17}}, False),
+        "overlaid": (False, {}, True),
+    }
+
+    def scenario(temp_home: Path):
+        builtin = temp_home / "builtin"
+        thumbnails = builtin / "thumbnails"
+        thumbnails.mkdir(parents=True)
+        for name, (packaged, extra, overlaid) in packages.items():
+            package = builtin / name
+            package.mkdir()
+            meta = {"name": name, "mode": "dark", "source": "curated"}
+            meta.update(extra)
+            (package / "theme.json").write_text(json.dumps(meta) + "\n")
+            (package / "colors.toml").write_text(
+                'background = "#101010"\nforeground = "#eeeeee"\n')
+            if packaged:
+                (package / "preview.png").write_bytes(b"\x89PNG\r\n\x1a\n screenshot\n")
+            if name != "nothumb":
+                (thumbnails / f"{name}.jpg").write_bytes(b"\xff\xd8\xff thumbnail\n")
+            if overlaid:
+                overlay = helper.user_themes_dir() / name
+                overlay.mkdir(parents=True)
+                (overlay / "app-colors.toml").write_text("[btop]\nfg = \"#ffffff\"\n")
+
+        original_builtin = helper.builtin_themes_dir
+        helper.builtin_themes_dir = lambda: builtin
+        try:
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer):
+                status = helper.cmd_theme(["list", "--json"])
+            assert_equal(status, 0, "theme list --json exit status")
+            listed = {entry["name"]: entry["preview"]
+                      for entry in json.loads(buffer.getvalue())["blueprints"]}
+        finally:
+            helper.builtin_themes_dir = original_builtin
+
+        # A packaged screenshot wins; a theme without one falls back to the
+        # thumbnail beside it; a theme with neither reports none, which is what
+        # leaves the generator its own case. A restyled or overlaid theme no
+        # longer looks like either shipped screenshot, so it reports none too
+        # and the generator renders what the user is actually running.
+        for name, expected in (
+            ("withshot", str(builtin / "withshot" / "preview.png")),
+            ("noshot", str(thumbnails / "noshot.jpg")),
+            ("nothumb", ""),
+            ("restyled", ""),
+            ("overlaid", ""),
+        ):
+            assert_equal(listed.get(name), expected,
+                         f"theme list preview for {name}")
+
+    with_temp_home(scenario)
+
+
 def test_hyprland_preview_native_lua():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -2998,6 +3067,235 @@ def _write_catalog(builtin: Path, archives: Path, name: str, blob: bytes,
     }))
 
 
+def _theme_list_entries() -> dict:
+    """What theme list --json prints, per theme name.
+
+    The settings tabs read this and nothing else, so a field the helper computes
+    and the entry dict omits does not exist as far as the interface is concerned.
+    """
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        status = helper.cmd_theme(["list", "--json"])
+    assert_equal(status, 0, "theme list --json exit status")
+    return {entry["name"]: entry for entry in json.loads(buffer.getvalue())["blueprints"]}
+
+
+def test_theme_catalog_offers_a_builtin_theme_with_no_imagery():
+    """A built-in theme whose wallpapers ship in its release archive is downloadable.
+
+    In a source checkout every catalogued theme has a built-in theme.json while
+    only the bundled ones keep their imagery (D015). Refusing on theme.json
+    alone left those themes with no wallpaper and no way to obtain one.
+    """
+    package = {
+        "theme.json": b'{"name":"demo","mode":"dark","source":"curated"}\n',
+        "colors.toml": b'background = "#101010"\nforeground = "#eeeeee"\n',
+        "apps/btop.theme": b'theme[main_bg]="#101010"\n',
+        "backgrounds/1-demo.jpg": b"\xff\xd8\xff\xe0 demo wallpaper bytes\n",
+        "preview.png": b"\x89PNG\r\n\x1a\n demo screenshot bytes\n",
+    }
+
+    def scenario(tmp: Path):
+        builtin = tmp / "builtin"
+        (builtin / "demo").mkdir(parents=True)
+        # Definitions in the tree, imagery in the release archive.
+        (builtin / "demo" / "theme.json").write_bytes(package["theme.json"])
+        (builtin / "demo" / "colors.toml").write_bytes(package["colors.toml"])
+        (builtin / "thumbnails").mkdir()
+        thumbnail = builtin / "thumbnails" / "demo.jpg"
+        thumbnail.write_bytes(b"\xff\xd8\xff thumbnail bytes\n")
+        archives = tmp / "releases"
+        _write_catalog(builtin, archives, "demo", _theme_archive(package))
+
+        original_builtin = helper.builtin_themes_dir
+        helper.builtin_themes_dir = lambda: builtin
+        os.environ["VGS_THEME_CATALOG_BASE_URL"] = "file://" + str(archives)
+        try:
+            catalog = helper.load_theme_catalog()
+            base_urls, allow_local = helper.theme_catalog_base_urls(catalog)
+            entry = helper.catalog_theme_entry(catalog, "demo")
+
+            offered = [e for e in helper.catalog_entries() if e["name"] == "demo"][0]
+            assert_equal((offered["builtin"], offered["installed"], offered["preview"]),
+                         (True, False, str(thumbnail)),
+                         "a built-in theme with no wallpapers is offered, painted from its thumbnail")
+
+            result = helper.catalog_download_theme(entry, base_urls, allow_local)
+            assert_equal(result["status"], "installed",
+                         "a built-in theme with no wallpapers downloads")
+            dest = helper.user_themes_dir() / "demo"
+            assert_equal((dest / "backgrounds" / "1-demo.jpg").read_bytes(),
+                         package["backgrounds/1-demo.jpg"],
+                         "the downloaded wallpaper lands beside the built-in definitions")
+
+            blueprint = helper.load_theme_package("demo")
+            assert_equal(len(blueprint["backgrounds"]), 1, "the theme now has a wallpaper")
+            # Two questions, two flags. The download landed in the directory a
+            # user overlay uses, so it IS a change to the package the badge and
+            # the revert control read; what it is not is an edit the user made,
+            # which is what decides whether the shipped screenshot still
+            # describes the theme.
+            assert_equal((blueprint["modified"], blueprint["catalogPristine"]), (True, True),
+                         "an untouched download is a change to the package, not a user edit")
+
+            after = [e for e in helper.catalog_entries() if e["name"] == "demo"][0]
+            assert_equal((after["installed"], after["downloaded"]), (True, True),
+                         "the downloaded theme reports installed")
+
+            again = helper.catalog_download_theme(entry, base_urls, allow_local)
+            assert_equal(again["status"], "skipped", "an installed theme is not re-downloaded")
+
+            # Revert deletes the user directory, which for a downloaded theme is
+            # the download. It must refuse rather than throw away imagery it
+            # cannot fetch back, and name the command that owns that removal.
+            reverted = helper.cmd_theme(["revert", "demo"])
+            assert_equal(reverted, 1, "revert refuses a downloaded theme")
+            assert_equal((dest / "backgrounds" / "1-demo.jpg").is_file(), True,
+                         "the refused revert leaves the downloaded wallpapers on disk")
+
+            # An edit inside the download is a user edit: the file set the
+            # marker recorded is the only thing that tells them apart.
+            listed = _theme_list_entries()["demo"]
+            assert_equal(listed["preview"], str(dest / "preview.png"),
+                         "an untouched download keeps the screenshot it shipped with")
+            # The settings tabs hide the modified badge and the Revert control on
+            # modified && !catalogPristine. Without the flag in this dict they
+            # offer a revert that the CLI refuses every time it is pressed.
+            assert_equal((listed.get("modified"), listed.get("catalogPristine")), (True, True),
+                         "theme list reports both flags for an untouched download")
+            # Revert refuses on catalog ownership alone, so the control follows
+            # that fact rather than what the pristine flag can infer.
+            assert_equal(listed.get("catalogOwned"), True,
+                         "theme list reports a download as catalog-owned")
+
+            (dest / "app-colors.toml").write_text('[btop]\nfg = "#ffffff"\n')
+            edited = helper.load_theme_package("demo")
+            assert_equal((edited["modified"], edited["catalogPristine"]), (True, False),
+                         "a file added beside the downloaded set is a user edit")
+            overlaid = _theme_list_entries()["demo"]
+            assert_equal((overlaid.get("modified"), overlaid.get("catalogPristine")), (True, False),
+                         "theme list reports the edit, so the badge appears")
+            # An edited download is still a download: the badge is right and the
+            # revert control is not, because the command refuses it either way.
+            assert_equal(overlaid.get("catalogOwned"), True,
+                         "an edited download stays catalog-owned, so revert stays hidden")
+            assert_equal(helper.cmd_theme(["revert", "demo"]), 1,
+                         "revert refuses an edited download too")
+            assert_equal(overlaid["preview"], "",
+                         "an edited download reports no screenshot, so the generator renders one")
+            (dest / "app-colors.toml").unlink()
+
+            # So is a restyle, which rewrites a file the download carried.
+            meta = json.loads((dest / "theme.json").read_text())
+            meta["adjustments"] = helper.normalize_adjustments({"brightness": 17})
+            (dest / "theme.json").write_text(json.dumps(meta) + "\n")
+            restyled = helper.load_theme_package("demo")
+            assert_equal((restyled["modified"], restyled["catalogPristine"]), (True, False),
+                         "restyle adjustments written into the download are a user edit")
+            (dest / "theme.json").write_bytes(package["theme.json"])
+
+            # Hiding a wallpaper rewrites the same file and changes what the
+            # theme looks like, so the shipped screenshot stops describing it.
+            meta = json.loads((dest / "theme.json").read_text())
+            meta["hiddenBackgrounds"] = ["1-demo.jpg"]
+            (dest / "theme.json").write_text(json.dumps(meta) + "\n")
+            hidden = helper.load_theme_package("demo")
+            assert_equal((hidden["modified"], hidden["catalogPristine"]), (True, False),
+                         "a hidden background written into the download is a user edit")
+            (dest / "theme.json").write_bytes(package["theme.json"])
+
+            # The files key is new in this range, so every theme the released
+            # helper downloaded carries a marker without it. Those cannot be
+            # told from an edited copy, and answering "edited" costs one preview
+            # render and loses nothing, where answering "untouched" would keep a
+            # screenshot that may no longer describe the theme.
+            marker_path = dest / helper.CATALOG_MARKER
+            marker = json.loads(marker_path.read_text())
+            recorded = marker.pop("files")
+            marker_path.write_text(json.dumps(marker, indent=2) + "\n")
+            legacy = helper.load_theme_package("demo")
+            assert_equal((legacy["modified"], legacy["catalogPristine"]), (True, False),
+                         "a marker with no file list cannot claim the download is untouched")
+            legacy_entry = _theme_list_entries()["demo"]
+            assert_equal(legacy_entry.get("catalogOwned"), True,
+                         "a theme downloaded before the file list existed is still catalog-owned")
+            assert_equal(helper.cmd_theme(["revert", "demo"]), 1,
+                         "revert refuses a legacy download, so its control stays hidden too")
+            marker["files"] = recorded
+            marker_path.write_text(json.dumps(marker, indent=2) + "\n")
+
+            # The two writers that rewrite a file the archive itself carried.
+            # Neither adds a path, so the file-set comparison cannot see them:
+            # each drops the marker's list instead. Without that the settings
+            # tabs call an edited theme untouched and hide the way back.
+            for label, edit in (
+                ("a persisted colour edit", lambda: helper.persist_color_edits(
+                    ["background=#ff0000"], "demo")),
+                ("a curated app recolour", lambda: assert_equal(helper.cmd_theme([
+                    "app-curated-recolor", "btop", "--theme", "demo",
+                    "--set", "#101010=#00ff00", "--json"]), 0,
+                    "app-curated-recolor exit status")),
+            ):
+                shutil.rmtree(dest)
+                helper.catalog_download_theme(entry, base_urls, allow_local)
+                assert_equal(_theme_list_entries()["demo"]["catalogPristine"], True,
+                             f"the download is untouched before {label}")
+                with contextlib.redirect_stdout(io.StringIO()):
+                    edit()
+                written = _theme_list_entries()["demo"]
+                assert_equal((written.get("modified"), written.get("catalogPristine")),
+                             (True, False),
+                             f"{label} leaves the download reading as edited")
+
+            # Mark first, then write. Interrupt each writer's own file and the
+            # theme must still read as edited: the other order leaves the file
+            # changed and the theme claiming nobody touched it, silently.
+            original_write = helper.write_file
+            for label, doomed, edit in (
+                ("colour edit", "colors.toml", lambda: helper.persist_color_edits(
+                    ["background=#00ff00"], "demo")),
+                ("app recolour", "btop.theme", lambda: helper.cmd_theme([
+                    "app-curated-recolor", "btop", "--theme", "demo",
+                    "--set", "#101010=#0000ff", "--json"])),
+            ):
+                shutil.rmtree(dest)
+                helper.catalog_download_theme(entry, base_urls, allow_local)
+
+                def refuse(path, content, name=doomed):
+                    if Path(path).name == name:
+                        raise OSError(f"interrupted before {name} landed")
+                    return original_write(path, content)
+
+                helper.write_file = refuse
+                try:
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        edit()
+                except OSError:
+                    pass
+                else:
+                    raise AssertionError(f"the interrupted {label} must not report success")
+                finally:
+                    helper.write_file = original_write
+                assert_equal(_theme_list_entries()["demo"].get("catalogPristine"), False,
+                             f"an interrupted {label} still leaves the download reading as edited")
+
+            # The bundled themes keep their imagery in the tree, and those stay
+            # refused: nothing should re-download what the package already has.
+            (builtin / "demo" / "backgrounds").mkdir()
+            (builtin / "demo" / "backgrounds" / "1-demo.jpg").write_bytes(
+                package["backgrounds/1-demo.jpg"])
+            shutil.rmtree(dest)
+            bundled = helper.catalog_download_theme(entry, base_urls, allow_local)
+            assert_equal((bundled["status"], bundled["reason"]),
+                         ("skipped", "already installed as a built-in theme"),
+                         "a built-in theme that carries its own wallpapers stays refused")
+        finally:
+            helper.builtin_themes_dir = original_builtin
+            os.environ.pop("VGS_THEME_CATALOG_BASE_URL", None)
+
+    with_temp_home(scenario)
+
+
 def test_theme_catalog_download_verifies_its_archive():
     """A catalog download must land the published archive verbatim, and refuse anything else."""
     package = {
@@ -3370,7 +3668,7 @@ def test_theme_asset_publisher():
         publisher.write_thumbnail((REPO_ROOT / "themes" / "bauhaus" / "preview.png").read_bytes(),
                                   thumbnail)
         current = generator.sha256_of(REPO_ROOT / "themes" / "bauhaus" / "preview.png")
-        replaced = generator.sha256_of(REPO_ROOT / "themes" / "tokyo-night" / "preview.png")
+        replaced = generator.sha256_of(REPO_ROOT / "themes" / "roseofdune" / "preview.png")
         os.utime(thumbnail, (0, 0))
         for label, digest, recorded, present, expected in (
             ("missing thumbnail", current, current, False, True),
@@ -6803,6 +7101,7 @@ def main():
     test_generated_theme_consumer_wiring()
     test_shell_only_theme_preview()
     test_lint_checks_color0_in_light_mode_only()
+    test_theme_list_falls_back_to_the_shipped_thumbnail()
     test_hyprland_preview_native_lua()
     test_greeter_primary_monitor_validation()
     test_greeter_runtime_helper_dependencies()
@@ -6843,6 +7142,7 @@ def main():
     test_missing_terminal_reaches_the_user()
     test_terminal_wait_blocks_until_the_terminal_exits()
     test_preferred_terminal_is_tried_first()
+    test_theme_catalog_offers_a_builtin_theme_with_no_imagery()
     test_theme_catalog_download_verifies_its_archive()
     test_theme_asset_publisher()
     test_theme_asset_publish_records_what_is_on_the_release()

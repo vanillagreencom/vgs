@@ -27,8 +27,6 @@ PACKAGES = {
         "packaging/arch/vgs-shell-git",
         ("PKGBUILD", ".SRCINFO", "vgs-shell-git.install"),
     ),
-    # A separate pkgbase keeps makepkg from fetching extras for a base install.
-    "vgs-shell-assets": ("packaging/arch/vgs-shell-assets", ("PKGBUILD", ".SRCINFO")),
 }
 
 # pkgbase fields compared between PKGBUILD and .SRCINFO. Anything makepkg would

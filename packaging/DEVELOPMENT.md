@@ -10,11 +10,15 @@ Default UI commands require hard dependencies. Optional features must report mis
 
 Fedora uses `Suggests` to avoid installing optional compositors and login managers by default. Void has no weak-dependency list; `INSTALL.msg` and `vshell deps status` identify optional tools. Terminal choice belongs to the helper's existing resolver.
 
-## Bundles and catalog
+## Themes and catalog
 
-`install-system.sh` accepts `VGS_THEME_BUNDLE=core|extras|all`. Each package recipe declares its bundle. `scripts/check-package-assets.sh` and `scripts/check-release.sh` check package and archive contents.
+`install-system.sh` installs one theme set, the same on every channel: the `bauhaus` and `roseofdune` themes with their imagery, the `targets` templates, the download catalog, one thumbnail per catalogued theme, and the vendored icon themes. `scripts/check-package-assets.sh` and `scripts/check-release.sh` check package and archive contents.
 
-The core archive includes the download catalog and one thumbnail per catalogued theme. The extras archive includes optional themes and icons. `scripts/gen-theme-catalog.py` owns catalog generation and release-pin checks; `scripts/publish-theme-assets.py` owns the per-theme imagery archives and `themes/asset-lock.json`.
+`scripts/gen-theme-catalog.py` owns catalog generation and release-pin checks; `scripts/publish-theme-assets.py` owns the per-theme imagery archives and `themes/asset-lock.json`.
+
+### Publishing theme imagery
+
+The repository holds no imagery for the other 77 themes, so `publish-theme-assets.py` reads an asset working directory **outside** the checkout, laid out as `<name>/{backgrounds/,preview.png}`. Point `--asset-root` or `VGS_THEME_ASSET_ROOT` at it; the default is `../vgs-theme-assets`. `scripts/publish-theme-assets.py --pull` rebuilds that directory from the published `themes-vN` releases, which is what keeps the releases the copy of record rather than one maintainer's disk. Run `--pull` before editing imagery on a machine that has never published.
 
 ## Signing
 
@@ -77,8 +81,9 @@ scripts/check-aur-sync.py --remote || bad=1
 for c in fedora-43-x86_64 fedora-43-aarch64 fedora-44-x86_64 fedora-44-aarch64; do
   u="https://download.copr.fedorainfracloud.org/results/vanillagreen/vgs-shell/$c"
   pri=$(curl -sL "$u/repodata/repomd.xml" | grep -oE 'repodata/[a-f0-9]+-primary\.xml\.[a-z]+' | head -1)
-  # Bound to the vgs-shell package: a bare version grep matches any entry, so a
-  # current vgs-shell-assets would vouch for a missing or stale base package.
+  # Bound to the vgs-shell package: a bare version grep matches any entry in the
+  # repository, so another package at this version would vouch for a missing or
+  # stale vgs-shell.
   curl -sL "$u/$pri" | { zstd -dc 2>/dev/null || zcat; } | python3 -c '
 import sys, xml.etree.ElementTree as ET
 ns = {"c": "http://linux.duke.edu/metadata/common"}

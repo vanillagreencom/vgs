@@ -20,13 +20,11 @@ bundle="$stage/$name"
 mkdir -p "$bundle/bin" "$out"
 
 cp -a "$root/quickshell" "$root/config" "$root/systemd" "$root/third_party" "$bundle/"
-# Vendored icons ship in the extras bundle.
-rm -rf -- "${bundle:?}/config/vshell/icons"
-# The core theme set must match install-system.sh's core bundle.
+# The theme set must match install-system.sh.
 mkdir -p "$bundle/themes"
 cp -a "$root/themes/bauhaus" "$root/themes/roseofdune" "$root/themes/targets" "$bundle/themes/"
 cp "$root/themes/catalog.json" "$root/themes"/*.md "$bundle/themes/"
-# The browser paints every uninstalled theme from these, so they ship with the core archive.
+# The browser paints every uninstalled theme from these, so they ship with the release bundle.
 cp -a "$root/themes/thumbnails" "$bundle/themes/"
 mkdir -p "$bundle/packaging"
 cp "$root/packaging/install-system.sh" "$bundle/packaging/"
