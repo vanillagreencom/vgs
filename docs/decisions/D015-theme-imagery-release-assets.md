@@ -76,6 +76,8 @@ A downloaded archive streams into `~/.cache/vshell/theme-assets/<sha256>.tar.gz`
 
 `main` and every `v*` tag are force-pushed with rewritten commit SHAs. Uploaded release assets survive, because they attach to the release object and not to the commit.
 
+The rewrite is executed separately, once, against a fresh clone, after the deletion has merged. It is not part of the deletion's own change: issue #270 carries the tooling and the procedure.
+
 **What breaks**: every existing clone and open branch; GitHub's auto-generated "Source code" tarballs for old tags; `raw.githubusercontent.com/vanillagreencom/vgs/v0.4.0/themes/...`, which is the download base URL a shipped v0.4.0 install reads, so that install stops downloading themes; and `pkgver()` in `packaging/arch/vgs-shell-git/PKGBUILD:94`, which counts commits with `git rev-list --count HEAD`. The upstream SHAs in `docs/ATTRIBUTION.md:10,14,16` name other repositories and are unaffected.
 
 ### 7. `vgs-shell-assets` is retired; `VGS_THEME_BUNDLE` disappears
