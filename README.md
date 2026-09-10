@@ -58,15 +58,15 @@ Then see which optional features your system can run:
 vshell deps status
 ```
 
-Each feature group that reports `missing` names the commands it needs. The native packages list those tools as optional dependencies, so your package manager can show them too.
+Each feature group that reports `missing` names the commands it needs. The Arch, Debian, Ubuntu, Fedora, openSUSE and Gentoo packages also declare those tools as optional dependencies, so your package manager can show them. The Void recipe cannot: xbps has no weak-dependency mechanism, so `vshell deps status` is the only list there.
 
-The release bundle supports x86-64 and ARM64, starts the user service itself unless you pass `install.sh --no-start`, and includes the full wallpaper and icon set. It checks `~/.local/bin/vshell`, `~/.config/quickshell/vshell` and `~/.config/systemd/user/vshell.service` before it writes. If another tool manages one of them, such as GNU Stow, chezmoi or yadm, it stops without changing anything; `install.sh --force` replaces externally managed symlinks. It never replaces a plain file or directory at those paths.
+The release bundle supports x86-64 and ARM64 and starts the user service itself unless you pass `install.sh --no-start`. It carries the `coppernight` theme, a preview of every other bundled theme, and no vendored icon themes; the rest ships in the separate assets archive. It checks `~/.local/bin/vshell`, `~/.config/quickshell/vshell` and `~/.config/systemd/user/vshell.service` before it writes. If another tool manages one of them, such as GNU Stow, chezmoi or yadm, it stops without changing anything, and `install.sh --force` replaces those externally managed symlinks. It refuses a plain file or directory at the two symlink paths, and it does overwrite a regular file at the service path, which is the file VGS owns.
 
 Checksum-verified bundles and source archives are published on [GitHub Releases](https://github.com/vanillagreencom/vgs/releases).
 
 ## Features
 
-- A bar you build from widgets placed left, centre and right, each usable more than once: workspaces, focused window, running applications, clock, weather, media, clipboard, CPU, memory, disk and temperature monitors, network speed, system tray, privacy indicator, control centre, notifications, battery, VPN, Tailscale, AI usage, system updates, capture, idle inhibitor, keyboard layout, caps lock, colour picker, notepad, sudo toggle and power menu.
+- A bar you build from widgets placed left, centre and right, each usable more than once. They cover workspaces and windows, the clock and weather, media and clipboard, system monitors, the system tray, connectivity, power, capture state and quick toggles. The settings window lists every widget it can place.
 - A clock and a system monitor that sit on the desktop itself.
 - The VGS menu: one searchable command menu with categories, fuzzy search, optional file search, and entries and web applications you add yourself. It is also the application launcher.
 - A theme engine that writes matching themes for terminals, editors, browsers, GTK, Qt, KDE colours and icon themes. `vshell theme apps` lists the targets and their state, and each one can be switched off.
@@ -81,7 +81,7 @@ Checksum-verified bundles and source archives are published on [GitHub Releases]
 - Tailscale and Bluetooth status and controls, and a themed greeter with optional auto-login.
 - An optional glass material for popouts and menus: translucent tinted surfaces over a blurred backdrop.
 
-`themes/catalog.json` lists the bundled themes, including Catppuccin, Gruvbox, Nord, Dracula, Rosé Pine, Tokyo Night, Kanagawa, Everforest, Ayu, Monokai and Matte Black, plus VGS originals. Every bundled theme ships a committed preview.
+`themes/catalog.json` lists the bundled themes: ports of the widely used palettes plus VGS originals. Every bundled theme ships a committed preview.
 
 ### Compositor support
 
@@ -97,13 +97,13 @@ Checksum-verified bundles and source archives are published on [GitHub Releases]
 - The QML shell asks the `vshell` CLI for anything privileged or generated. `bin/vshell-helper` does the heavy theme generation and template rendering.
 - Applying a theme writes a colour file for each enabled target application and reloads the ones that support it.
 - `vshell ipc call <target> <function>` drives the shell from a keybind or a script. `vshell ipc call vshell-menu open` opens the menu.
-- On Niri, VGS generates its own KDL fragments under `~/.config/niri/vgs/`. On Hyprland, VGS reads your configuration and does not write it.
+- VGS writes compositor configuration only into its own subdirectory: KDL fragments under `~/.config/niri/vgs/`, and layout and output files under `~/.config/hypr/vgs/`. It adds an include line to your top-level Hyprland config so those files load, and changes nothing else in it.
 
 ## Settings
 
 - `~/.config/vshell` holds your settings, your own themes, and plugin overrides. Keep it a real directory.
 - `~/.config/vshell/keybind-labels.json` names keys the compositor reports only as a raw keycode, which is what a remapper such as `input-remapper` or a QMK layer produces. Key it by the code or the resolved key: `{ "F13": "Right Alt" }`.
-- The settings window covers everything else, and `vshell --help` lists the equivalent commands.
+- The settings window covers everything else. `vshell --help` lists the commands that scripts and keybinds can call; not every setting has one.
 
 ```bash
 vshell theme list
