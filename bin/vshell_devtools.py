@@ -15,7 +15,7 @@ from typing import Any, Dict, List
 
 import vshell_mise
 from vshell_apps import PACKAGE_OWNER_QUERY, PACKAGE_REMOVERS, os_release_ids, owning_package
-from vshell_mise import DevToolsRuntime, dev_tools_catalog, launchable, manageable, mise_build_env, mise_install_steps, mise_installs, mise_outdated, mise_stubs_opted_out, mise_env, mise_install_stub, mise_installed_versions, mise_stub_state, package_key
+from vshell_mise import DevToolsRuntime, dev_tools_catalog, launchable, manageable, mise_build_env, mise_install_steps, mise_installs, mise_outdated, mise_stubs_opted_out, mise_env, mise_install_stub, mise_stub_state, package_key
 
 RT: DevToolsRuntime
 
@@ -91,19 +91,31 @@ def agent_list() -> Dict[str, Any]:
 
 def agent_installed(entry: Dict[str, Any]) -> bool:
     """A mise install of the package, or the owner's own command on PATH."""
-    versions, _ = mise_installed_versions()
-    if versions.get(package_key(str(entry["package"]))):
+    installs, _ = mise_installs()
+    if installs.get(package_key(str(entry["package"]))):
         return True
     return mise_stub_state(RT.home() / ".local" / "bin" / str(entry["command"])) in {"foreign", "shadowed"}
 
 
 def agent_launch_argv(entry: Dict[str, Any]) -> List[str]:
     """The agent's launch argv, run through `mise x` when mise owns it so it
-    resolves without a stub or shim on PATH; the owner's own command otherwise."""
+    resolves without a stub or shim on PATH; the owner's own command otherwise.
+
+    An entry with an `exec` path is installed with mise `bin_path=` so that its
+    package directory never joins PATH, and `mise x` resolves nothing for it;
+    the file under the install root is the only way in."""
     launch = [str(part) for part in entry.get("launch") or [entry["command"]]]
-    versions, _ = mise_installed_versions()
-    if versions.get(package_key(str(entry["package"]))):
-        return ["mise", "x", str(entry["package"]), "--", *launch]
+    installs, _ = mise_installs()
+    install = installs.get(package_key(str(entry["package"])))
+    if install:
+        exec_path = str(entry.get("exec") or "")
+        if not exec_path:
+            return ["mise", "x", str(entry["package"]), "--", *launch]
+        root = str(install.get("path") or "")
+        if not root:
+            raise ValueError(f"{entry['id']}: mise reported an install with no path, "
+                             f"so {exec_path} cannot be located")
+        return [str(Path(root) / exec_path), *launch[1:]]
     # `launch` names the executable inside the package, which for an AppImage is
     # not the command anyone has on PATH. An install VGS does not own answers to
     # the public command instead; its own arguments still apply.
@@ -126,7 +138,8 @@ def agent_install_prompt(entry: Dict[str, Any]) -> bool:
     build_env = dict(entry.get("buildEnv") or {})
     requires = [str(r) for r in entry.get("requires") or []]
     present = str(entry.get("present") or "")
-    mise_install_stub(package, command, str(entry.get("bin") or command), build_env, requires, present)
+    mise_install_stub(package, command, str(entry.get("bin") or command), build_env, requires, present,
+                      str(entry.get("exec") or ""))
     # The same steps the stub would run, so a tool installed from the prompt and
     # one installed on first launch are built the same way.
     env = {**mise_env(), **mise_build_env(build_env)}
@@ -186,8 +199,8 @@ def agent_remove(entry: Dict[str, Any]) -> int:
     """Uninstall the agent's mise package and retire its launcher stub. An
     agent the owner installed themselves stays: VGS did not put it there."""
     key = package_key(str(entry["package"]))
-    versions, _ = mise_installed_versions()
-    if not versions.get(key):
+    installs, _ = mise_installs()
+    if not installs.get(key):
         return hold_terminal(1, f"{entry['name']} is not installed through mise; remove it where you installed it.")
     print(f"Removing {entry['name']}...\n")
     # mise files the tool under the option-free id, and both commands take it.
