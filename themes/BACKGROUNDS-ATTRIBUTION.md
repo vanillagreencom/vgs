@@ -1,6 +1,6 @@
 # Background attribution
 
-Provenance for every wallpaper shipped in `themes/<name>/backgrounds/`. File- name suffixes encode origin: `-wh-<id>` = Wallhaven, `-rpd-` = Rosé Pine dark upstream, `-bauhaus-` = Bauhaus upstream, `-aurora`/`-nightfall` = VGS- generated. Everything else is imported from Omarchy.
+Provenance for every wallpaper VGS ships. Only the bundled `bauhaus` and `roseofdune` themes carry theirs in `themes/<name>/backgrounds/`; every other theme ships its wallpapers in the release archive `themes/catalog.json` pins for it. File- name suffixes encode origin: `-wh-<id>` = Wallhaven, `-rpd-` = Rosé Pine dark upstream, `-bauhaus-` = Bauhaus upstream, `-aurora`/`-nightfall` = VGS- generated. Everything else is imported from Omarchy.
 
 ## Omarchy — [basecamp/omarchy](https://github.com/basecamp/omarchy) (MIT, © 37signals)
 

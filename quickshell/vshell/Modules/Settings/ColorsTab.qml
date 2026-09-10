@@ -51,7 +51,14 @@ Item {
     ]
 
     readonly property var currentEntry: VGSThemeService.currentBlueprint
-    readonly property bool isModifiedBuiltin: currentEntry.builtin === true && currentEntry.modified === true
+    // A catalog download lands in the user directory too, so modified alone
+    // is true for one nobody has touched. The badge and the revert control
+    // both mean "the user changed this", and revert refuses a download.
+    readonly property bool userModified: currentEntry.modified === true && currentEntry.catalogPristine !== true
+    // Revert drops a built-in theme's user overlay, and refuses a catalog
+    // download outright whatever the pristine flag can infer about it. The
+    // control follows what the command enforces, not what the flag guesses.
+    readonly property bool revertable: currentEntry.modified === true && currentEntry.builtin === true && currentEntry.catalogOwned !== true
     property bool revertConfirmPending: false
     property bool syncingSliders: false
 
@@ -210,7 +217,7 @@ Item {
                             }
 
                             Rectangle {
-                                visible: root.currentEntry.modified === true
+                                visible: root.userModified
                                 anchors.verticalCenter: parent.verticalCenter
                                 width: modifiedBadge.implicitWidth + Theme.spacingS * 2
                                 height: 18
@@ -256,7 +263,7 @@ Item {
                         spacing: Theme.spacingXS
 
                         VgsButton {
-                            visible: root.isModifiedBuiltin
+                            visible: root.revertable
                             variant: "secondary"
                             iconName: "restart_alt"
                             text: root.revertConfirmPending ? I18n.tr("Confirm Revert?") : I18n.tr("Revert to Default")

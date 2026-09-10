@@ -19,7 +19,7 @@ on:
     inputs:
       packages:
         type: string
-        default: vgs-shell vgs-shell-assets vgs-shell-git
+        default: vgs-shell vgs-shell-git
   schedule:
     - cron: "17 6 * * 1"
   workflow_dispatch:
@@ -27,7 +27,7 @@ on:
       packages:
         description: Packages to publish, space separated
         type: string
-        default: vgs-shell vgs-shell-assets vgs-shell-git
+        default: vgs-shell vgs-shell-git
       dry_run:
         description: Show what would be pushed without pushing it
         type: boolean
@@ -95,16 +95,16 @@ jobs:
           AUR_COMMIT_EMAIL: ${{ vars.AUR_COMMIT_EMAIL }}
           DRY_RUN: ${{ inputs.dry_run }}
           # A push has no input values and uses the complete package set.
-          PACKAGES: ${{ inputs.packages || 'vgs-shell vgs-shell-assets vgs-shell-git' }}
+          PACKAGES: ${{ inputs.packages || 'vgs-shell vgs-shell-git' }}
         run: |
           set -euo pipefail
           # Use an argv array to prevent glob expansion and reject unknown package names.
           read -ra selected <<< "$PACKAGES"
           for package in "${selected[@]}"; do
             case "$package" in
-              vgs-shell|vgs-shell-assets|vgs-shell-git) ;;
+              vgs-shell|vgs-shell-git) ;;
               *)
-                echo "::error::unknown package '$package'; expected vgs-shell, vgs-shell-assets and/or vgs-shell-git"
+                echo "::error::unknown package '$package'; expected vgs-shell and/or vgs-shell-git"
                 exit 1
                 ;;
             esac

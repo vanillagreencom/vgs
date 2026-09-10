@@ -31,24 +31,8 @@ jobs:
           name: vgs-${{ matrix.arch }}
           path: dist/*.tar.gz
 
-  # Assets are architecture-independent, so build a shared archive.
-  assets:
-    permissions:
-      contents: read
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-        with:
-          persist-credentials: false
-      - run: test "v$(cat VERSION)" = "$GITHUB_REF_NAME"
-      - run: scripts/build-assets.sh "$(cat VERSION)" dist
-      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
-        with:
-          name: vgs-assets
-          path: dist/*.tar.gz
-
   publish:
-    needs: [bundle, assets]
+    needs: bundle
     runs-on: ubuntu-latest
     permissions:
       contents: write
