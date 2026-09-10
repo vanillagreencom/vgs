@@ -176,40 +176,50 @@ def package_members(name: str, assets: Path) -> List[Tuple[str, Path]]:
     return sorted(members.items())
 
 
-def definitions_pin(members: List[Tuple[str, Path]]) -> str:
+def definitions_pin(digests: Dict[str, str]) -> str:
     """The digest scripts/gen-theme-catalog.py recomputes from the tree.
 
-    Recording it binds the published archive to the exact definition files it
-    packed, so a later edit to one of them cannot pass generation unnoticed.
+    Takes the digests build_archive captured while packing, never a fresh read
+    of the tree. Recording it binds the published archive to the exact
+    definition files it packed, so a later edit to one of them cannot pass
+    generation unnoticed — and a read of its own would reopen that same hole for
+    an edit made while the run was uploading.
     """
     gen = generator()
     return gen.definitions_digest([
-        {"path": rel, "sha256": gen.sha256_of(path)}
-        for rel, path in members if not gen.is_imagery(rel)])
+        {"path": rel, "sha256": digest} for rel, digest in sorted(digests.items())
+        if not gen.is_imagery(rel)])
 
 
-def build_archive(members: List[Tuple[str, Path]]) -> bytes:
-    """Pack the members into a byte-reproducible gzipped tar.
+def build_archive(members: List[Tuple[str, Path]]) -> Tuple[bytes, Dict[str, str]]:
+    """Pack the members into a byte-reproducible gzipped tar, and say what it packed.
+
+    Returns the archive bytes and the sha256 of each member as packed. Every
+    file is read exactly once, and everything the lock records about this
+    archive comes from that read: a second read to compute a digest would record
+    a file edited since, describing content the release does not carry.
 
     Identical content must produce identical bytes: the archive's own sha256 is
     what tells the publisher whether a theme's imagery changed at all.
     """
+    digests: Dict[str, str] = {}
     raw = io.BytesIO()
     with tarfile.open(fileobj=raw, mode="w", format=tarfile.PAX_FORMAT) as tar:
         for rel, path in members:
+            data = path.read_bytes()
+            digests[rel] = hashlib.sha256(data).hexdigest()
             info = tarfile.TarInfo(rel)
-            info.size = path.stat().st_size
+            info.size = len(data)
             info.mtime = 0
             info.mode = 0o644
             info.type = tarfile.REGTYPE
             info.uid = info.gid = 0
             info.uname = info.gname = ""
-            with path.open("rb") as handle:
-                tar.addfile(info, handle)
+            tar.addfile(info, io.BytesIO(data))
     packed = io.BytesIO()
     with gzip.GzipFile(fileobj=packed, mode="wb", compresslevel=9, mtime=0) as zipped:
         zipped.write(raw.getvalue())
-    return packed.getvalue()
+    return packed.getvalue(), digests
 
 
 def require_pillow() -> Any:
@@ -350,21 +360,27 @@ def publish(args: argparse.Namespace) -> int:
             if not assets.is_dir():
                 raise SystemExit(f"{name}: no imagery under {assets}; run --pull first")
             previous = lock["themes"].get(name) or {}
+            members = package_members(name, assets)
+            # One read per file. Everything recorded below describes these bytes
+            # and not the tree as it stands afterwards, so an edit made while the
+            # run uploads cannot be pinned as published.
+            blob, member_digests = build_archive(members)
+            digest = hashlib.sha256(blob).hexdigest()
+            preview_digest = member_digests.get("preview.png", "")
+
             # The thumbnail is derived from the preview alone and is rebuilt
             # whenever the preview's content differs from the one it came from,
             # or the file is gone. Tying it to the archive digest would leave a
-            # deleted thumbnail unrecoverable while two gates require one.
+            # deleted thumbnail unrecoverable while two gates require one. A
+            # preview replaced between the pack and this call gives a thumbnail
+            # newer than the lock's digest, which the next run rebuilds.
             preview = assets / "preview.png"
             thumbnail = THUMBNAIL_DIR / f"{name}.jpg"
-            preview_digest = generator().sha256_of(preview) if preview.is_file() else ""
             if thumbnail_needs_rebuild(preview_digest, str(previous.get("preview") or ""), thumbnail):
                 write_thumbnail(preview, thumbnail)
             elif not preview_digest and thumbnail.exists():
                 thumbnail.unlink()
 
-            members = package_members(name, assets)
-            blob = build_archive(members)
-            digest = hashlib.sha256(blob).hexdigest()
             # Only a theme whose archive is both unchanged AND already on a
             # release is skipped. A dry run records the pin without publication,
             # so a later real run still uploads it.
@@ -394,7 +410,7 @@ def publish(args: argparse.Namespace) -> int:
                 "rev": rev,
                 "size": len(blob),
                 "sha256": digest,
-                "definitions": definitions_pin(members),
+                "definitions": definitions_pin(member_digests),
                 "preview": preview_digest,
                 "published": bool(args.upload),
             }

@@ -2961,7 +2961,7 @@ def _theme_archive(files: dict[str, bytes]) -> bytes:
             path = Path(tmp) / f"member-{index}"
             path.write_bytes(blob)
             members.append((rel, path))
-        return publisher.build_archive(members)
+        return publisher.build_archive(members)[0]
 
 
 def _write_catalog(builtin: Path, archives: Path, name: str, blob: bytes,
@@ -3287,11 +3287,40 @@ def test_theme_asset_publisher():
         # Byte-reproducibility is what makes the unchanged-content skip work. Lose
         # it and every publish uploads a fresh revision of all 79 themes into a
         # release D015 says is never deleted.
-        first = publisher.build_archive(members)
-        assert_equal(publisher.build_archive(members), first,
+        class _ChangingSource:
+            """A member source whose bytes differ on every read.
+
+            A second read of an unchanged file is invisible, so proving that
+            build_archive reads each member once needs a source that says so.
+            """
+
+            def __init__(self):
+                self.reads = 0
+
+            def read_bytes(self):
+                self.reads += 1
+                return f"read {self.reads}\n".encode()
+
+        changing = _ChangingSource()
+        once, once_digests = publisher.build_archive([("theme.json", changing)])
+        assert_equal(changing.reads, 1, "build_archive reads each member exactly once")
+        with tarfile.open(fileobj=io.BytesIO(once), mode="r:gz") as tar:
+            assert_equal(once_digests["theme.json"],
+                         hashlib.sha256(tar.extractfile("theme.json").read()).hexdigest(),
+                         "the reported digest is of the bytes that were packed")
+
+        first, member_digests = publisher.build_archive(members)
+        assert_equal(publisher.build_archive(members)[0], first,
                      "the same content must pack to the same archive bytes")
         with tarfile.open(fileobj=io.BytesIO(first), mode="r:gz") as tar:
             packed = tar.getmembers()
+            # The reported digests describe the bytes that were packed, from the
+            # same read. Anything the lock records from a second read could
+            # describe a file edited since the archive was built.
+            assert_equal(member_digests,
+                         {member.name: hashlib.sha256(tar.extractfile(member).read()).hexdigest()
+                          for member in packed},
+                         "build_archive reports the digest of every member it packed")
         assert_equal(sorted(m.name for m in packed),
                      ["backgrounds/1-demo.jpg", "preview.png", "theme.json"],
                      "archive members are theme-package paths with no added prefix")
@@ -3531,6 +3560,7 @@ def test_theme_asset_publish_records_what_is_on_the_release():
         release = _Release()
 
         repos: set[str] = set()
+        shipped: dict[str, bytes] = {}
 
         def fake_gh(*args):
             if "--repo" in args:
@@ -3538,7 +3568,9 @@ def test_theme_asset_publish_records_what_is_on_the_release():
             if args[:2] == ("release", "create"):
                 release.assets.setdefault(args[2], [])
             if args[:2] == ("release", "upload"):
-                release.assets[args[2]].append(Path(args[3]).name)
+                staged = Path(args[3])
+                shipped[staged.name] = staged.read_bytes()
+                release.assets[args[2]].append(staged.name)
             return subprocess.CompletedProcess(args, 0, "", "")
 
         saved = (publisher.THEMES_DIR, publisher.LOCK_PATH, publisher.THUMBNAIL_DIR,
@@ -3646,6 +3678,46 @@ def test_theme_asset_publish_records_what_is_on_the_release():
                          "no release number is stranded by the failure")
             assert_equal("publishing" in json.loads(publisher.LOCK_PATH.read_text()), False,
                          "a run that finishes its batch clears the in-progress release")
+
+            # Everything the lock records about an archive comes from the one
+            # read that packed it. A definition edited while the run is
+            # uploading must not be recorded as published: the release carries
+            # the bytes from before that edit, and a lock naming the edited tree
+            # would pass --check while every install got the older definitions.
+            (themes / "demo" / "colors.toml").write_text('background = "#303030"\n')
+            working_build = publisher.build_archive
+
+            def editing_build(members):
+                result = working_build(members)
+                # The edits land the moment the archive is packed, which is the
+                # window every later read of the tree falls into.
+                (themes / "demo" / "colors.toml").write_text('background = "#404040"\n')
+                Image.new("RGB", (1920, 1080), (200, 40, 40)).save(assets / "preview.png")
+                return result
+
+            publisher.build_archive = editing_build
+            try:
+                raced = run(True)["demo"]
+            finally:
+                publisher.build_archive = working_build
+
+            with tarfile.open(fileobj=io.BytesIO(shipped[raced["archive"]]), mode="r:gz") as tar:
+                published_definitions = [
+                    {"path": member.name,
+                     "sha256": hashlib.sha256(tar.extractfile(member).read()).hexdigest()}
+                    for member in tar.getmembers() if not real.is_imagery(member.name)]
+            assert_equal(raced["definitions"], real.definitions_digest(published_definitions),
+                         "the lock records the definitions the published archive carries")
+            edited_tree = [{"path": rel, "sha256": real.sha256_of(themes / "demo" / rel)}
+                           for rel in real.catalog_relpaths(helper, themes / "demo")]
+            assert_equal(raced["definitions"] == real.definitions_digest(edited_tree), False,
+                         "the lock does not record a definition edited after the archive was packed")
+            with tarfile.open(fileobj=io.BytesIO(shipped[raced["archive"]]), mode="r:gz") as tar:
+                published_preview = hashlib.sha256(tar.extractfile("preview.png").read()).hexdigest()
+            assert_equal(raced["preview"], published_preview,
+                         "the lock records the screenshot the published archive carries")
+            assert_equal(raced["preview"] == real.sha256_of(assets / "preview.png"), False,
+                         "the lock does not record a screenshot replaced after the archive was packed")
 
             # A theme dropped from the tree loses its pin and its thumbnail.
             shutil.rmtree(themes / "demo")
