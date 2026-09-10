@@ -2,9 +2,9 @@
 
 VGS is a desktop shell for the Hyprland and Niri compositors, built on Quickshell 0.3.0. It provides the bar, launcher, control centre, dock, notifications, lock screen and greeter, and a theme engine that recolours the shell and the applications you already run. Hyprland is the reference compositor; Niri is supported with native equivalents for its scrolling layout.
 
-<video src="https://raw.githubusercontent.com/vanillagreencom/vgs/main/docs/media/vgs-demo.mp4" poster="https://raw.githubusercontent.com/vanillagreencom/vgs/main/docs/media/vgs-demo-poster.jpg" controls muted playsinline width="100%"></video>
+[![VGS demo](docs/media/vgs-demo-poster.jpg)](docs/media/vgs-demo.mp4)
 
-[Watch the demo](docs/media/vgs-demo.mp4): tiling and the scrolling layout, the theme browser and wallpapers, per-application theming, the control centre and network panel, notifications, power modes, AI usage, and the VGS menu.
+[Watch the demo](docs/media/vgs-demo.mp4) (83 seconds): tiling and the scrolling layout, the theme browser and wallpapers, per-application theming, the control centre and network panel, notifications, power modes, AI usage, and the VGS menu.
 
 ## Requirements
 
