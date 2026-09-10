@@ -33,4 +33,4 @@ The helper owns parsing, generation and privileged operations. `bin/vshell` disp
 
 ## Decisions
 
-[D006](../decisions/D006-scratchpad-window-identity.md), [D011](../decisions/D011-mise-owns-agent-harnesses.md).
+[D006](../decisions/D006-scratchpad-window-identity.md), [D011](../decisions/D011-mise-owns-agent-harnesses.md), [D014](../decisions/D014-command-provenance-and-duplicates.md).
