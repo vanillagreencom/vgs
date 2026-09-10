@@ -5315,8 +5315,12 @@ def persist_color_edits(edits: List[str], name: str) -> Dict[str, Any]:
     base.update(edit_map)
     pkg_dir_name = Path(str(target.get("path"))).name
     overlay = user_themes_dir() / pkg_dir_name / "colors.toml"
-    write_file(overlay, colors_toml_from_map(base))
+    # Mark before the write. An interruption between the two leaves the file
+    # rewritten and the marker still listing it, so the theme reads as untouched
+    # and nothing says otherwise. Marking for a write that then fails costs one
+    # preview render on the next open.
     catalog_mark_edited(pkg_dir_name)
+    write_file(overlay, colors_toml_from_map(base))
     refreshed = load_theme_package(pkg_dir_name) or target
     result = apply_theme_obj(refreshed)
     result["persisted"] = str(overlay)
@@ -8181,8 +8185,9 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
 
         text = re.sub(r'#[0-9a-fA-F]{6}(?![0-9a-fA-F])', _recolor, text)
         overlay.parent.mkdir(parents=True, exist_ok=True)
-        write_file(overlay, text)
+        # Mark before the write, for the reason persist_color_edits gives.
         catalog_mark_edited(pkg_dir_name)
+        write_file(overlay, text)
         applied = None
         refreshed = load_theme_package(pkg_dir_name) or bp
         if str(refreshed.get("name")) == str(current_theme().get("name")):

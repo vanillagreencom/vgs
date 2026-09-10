@@ -3247,6 +3247,38 @@ def test_theme_catalog_offers_a_builtin_theme_with_no_imagery():
                              (True, False),
                              f"{label} leaves the download reading as edited")
 
+            # Mark first, then write. Interrupt each writer's own file and the
+            # theme must still read as edited: the other order leaves the file
+            # changed and the theme claiming nobody touched it, silently.
+            original_write = helper.write_file
+            for label, doomed, edit in (
+                ("colour edit", "colors.toml", lambda: helper.persist_color_edits(
+                    ["background=#00ff00"], "demo")),
+                ("app recolour", "btop.theme", lambda: helper.cmd_theme([
+                    "app-curated-recolor", "btop", "--theme", "demo",
+                    "--set", "#101010=#0000ff", "--json"])),
+            ):
+                shutil.rmtree(dest)
+                helper.catalog_download_theme(entry, base_urls, allow_local)
+
+                def refuse(path, content, name=doomed):
+                    if Path(path).name == name:
+                        raise OSError(f"interrupted before {name} landed")
+                    return original_write(path, content)
+
+                helper.write_file = refuse
+                try:
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        edit()
+                except OSError:
+                    pass
+                else:
+                    raise AssertionError(f"the interrupted {label} must not report success")
+                finally:
+                    helper.write_file = original_write
+                assert_equal(_theme_list_entries()["demo"].get("catalogPristine"), False,
+                             f"an interrupted {label} still leaves the download reading as edited")
+
             # The bundled themes keep their imagery in the tree, and those stay
             # refused: nothing should re-download what the package already has.
             (builtin / "demo" / "backgrounds").mkdir()
