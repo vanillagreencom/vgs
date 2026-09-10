@@ -7,7 +7,8 @@
 # Run this ONCE, on main, in a fresh clone, after the deletion has merged.
 # It rewrites every commit and tag, so main and every v* tag must then be
 # force-pushed and every existing clone and open branch is invalidated.
-# It does not push. It prints the push commands and the new size-pack.
+# It does not push. It prints the new size-pack, and the push commands unless
+# the remote still carries a branch besides the one being rewritten.
 #
 # --force: pass git-filter-repo --force, and proceed when this clone has been
 #          rewritten before. Both refusals are safeguards; override them only
@@ -38,10 +39,13 @@ done
 # staging copy is the only imagery left and the operator has to be told so.
 keep=""
 rewritten=0
+completed=0
 
 on_exit() {
   local status=$?
-  if [[ "$rewritten" -eq 1 && "$status" -ne 0 ]]; then
+  # A refusal after a clean rewrite exits non-zero too. Only an unfinished one
+  # leaves the clone in the state this banner describes.
+  if [[ "$rewritten" -eq 1 && "$completed" -eq 0 && "$status" -ne 0 ]]; then
     cat >&2 <<EOF
 
 rewrite-theme-history: FAILED AFTER THE REWRITE (exit $status).
@@ -129,20 +133,17 @@ for theme in "${BUNDLED[@]}"; do
   staged+=("themes/$theme/backgrounds" "themes/$theme/preview.png")
 done
 
-# A fresh clone fetches every branch, so a branch still carrying the imagery
-# keeps it in the pack however thoroughly main is rewritten. Read the remote
-# now: filter-repo removes it.
-imagery_paths_on() {
-  git -C "$root" ls-tree -r --name-only "$1" -- themes |
-    awk '/^themes\/[^\/]+\/backgrounds\// || /^themes\/[^\/]+\/preview\.png$/ {n++} END {print n+0}'
-}
-stale_report=()
+# git clone fetches every branch, so any branch left on the remote keeps its own
+# history in a fresh clone however thoroughly $PUBLISH_BRANCH is rewritten:
+# publishing then invalidates every existing clone without shrinking a new one.
+# Read the remote now, because filter-repo removes it.
+stale_branches=()
 while IFS= read -r ref; do
   # refname:short renders refs/remotes/origin/HEAD as plain "origin", so strip
   # the full ref instead: the symbolic HEAD is not a branch to rewrite.
   name="${ref#refs/remotes/origin/}"
-  case "$name" in "$PUBLISH_BRANCH"|HEAD|"$ref") continue ;; esac
-  stale_report+=("$name $(imagery_paths_on "$ref")")
+  case "$name" in "$PUBLISH_BRANCH"|"$branch"|HEAD|"$ref") continue ;; esac
+  stale_branches+=("$name")
 done < <(git -C "$root" for-each-ref --format='%(refname)' 'refs/remotes/origin/**')
 
 # filter-repo removes the imagery from history, including the current commit, so
@@ -189,6 +190,7 @@ The imagery of every other theme now ships as a release archive (D015). This
 commit restores the wallpapers and screenshot of the two themes the packages
 install, as new content with no prior revisions behind it."
 
+completed=1
 after="$(git -C "$root" count-objects -vH | sed -n 's/^size-pack: //p')"
 cat <<EOF
 
@@ -197,16 +199,19 @@ rewrite-theme-history: done, nothing pushed.
   size-pack after:  $after
 EOF
 
-if [[ ${#stale_report[@]} -gt 0 ]]; then
-  cat <<EOF
+if [[ ${#stale_branches[@]} -gt 0 ]]; then
+  cat >&2 <<EOF
 
-${#stale_report[@]} remote branch(es) besides $PUBLISH_BRANCH still carry their own
-history. git clone fetches every branch, so a fresh clone stays large until each
-one is deleted on the remote, or rewritten the same way and force-pushed.
-Imagery paths each one holds:
-
+rewrite-theme-history: the rewrite and the re-add commit are done, but the push
+procedure is withheld: the remote carries ${#stale_branches[@]} branch(es) besides $PUBLISH_BRANCH.
 EOF
-  printf '  %s\n' "${stale_report[@]}"
+  printf '  %s\n' "${stale_branches[@]}" >&2
+  cat >&2 <<EOF
+Delete each on the remote, or rewrite it the same way and force-push it, then
+run this script again in a fresh clone. Pushing now would invalidate every
+existing clone while a new one still fetches the imagery through those branches.
+EOF
+  exit 1
 fi
 
 # filter-repo drops the remote, so the operator sets it again before pushing.
