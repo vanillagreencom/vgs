@@ -97,19 +97,13 @@ Checksum-verified bundles and source archives are published on [GitHub Releases]
 - The QML shell asks the `vshell` CLI for anything privileged or generated. `bin/vshell-helper` does the heavy theme generation and template rendering.
 - Applying a theme writes a colour file for each enabled target application and reloads the ones that support it.
 - `vshell ipc call <target> <function>` drives the shell from a keybind or a script. `vshell ipc call vshell-menu open` opens the menu.
-- VGS writes compositor configuration only into its own subdirectory: KDL fragments under `~/.config/niri/vgs/`, and layout and output files under `~/.config/hypr/vgs/`. It adds an include line to your top-level Hyprland config so those files load, and changes nothing else in it.
+- VGS writes its generated compositor configuration into its own subdirectory: KDL fragments under `~/.config/niri/vgs/`, and layout and output files under `~/.config/hypr/vgs/`. It adds an include line to your top-level config on either compositor so those files load, backs that file up first on Niri, and changes nothing else in it.
 
 ## Settings
 
 - `~/.config/vshell` holds your settings, your own themes, and plugin overrides. Keep it a real directory.
 - `~/.config/vshell/keybind-labels.json` names keys the compositor reports only as a raw keycode, which is what a remapper such as `input-remapper` or a QMK layer produces. Key it by the code or the resolved key: `{ "F13": "Right Alt" }`.
 - The settings window covers everything else. `vshell --help` lists the commands that scripts and keybinds can call; not every setting has one.
-
-```bash
-vshell theme list
-vshell theme apply tokyo-night
-vshell theme extract-wallpaper ~/Pictures/wall.jpg --mode auto --apply
-```
 
 ---
 
