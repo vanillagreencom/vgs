@@ -1,7 +1,9 @@
-// Package execbound bounds pipe reads for one-shot external commands and
-// classifies their exit errors. Callers use the returned error so deadline and
-// output-recovery precedence stays in one place. WaitDelay cannot bound a child
-// stuck in uninterruptible sleep.
+// Package execbound bounds one-shot external commands and classifies their exit
+// errors. Callers use the returned error so deadline and output-recovery
+// precedence stays in one place. Each command leads a process group of its own,
+// and cancelling a running one signals that whole group, so a tool that fans out
+// leaves no descendant behind. WaitDelay cannot bound a child stuck in
+// uninterruptible sleep.
 package execbound
 
 import (
@@ -9,8 +11,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"time"
 )
 
@@ -29,7 +33,8 @@ type Result struct {
 	Out []byte
 	// Salvaged reports a clean child exit whose pipe reads ended at WaitDelay. Out
 	// contains the bytes read and may include writes from descendants. The run logs
-	// a warning because those descendants can remain alive.
+	// a warning because nothing cancelled the command: the group signal never fires
+	// on this path, so those descendants stay alive.
 	Salvaged bool
 }
 
@@ -66,11 +71,44 @@ func CommandWithDelay(ctx context.Context, delay time.Duration, name string, arg
 	}
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.WaitDelay = delay
+	// A group of its own, so cancelling reaches the whole fan-out. mise runs one
+	// `npm view` per npm-backed tool, and the cancel exec.CommandContext installs
+	// by default signals the direct child alone.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return terminateGroup(cmd, delay) }
 	return &Cmd{ctx: ctx, cmd: cmd, log: slog.Default()}
 }
 
-// Exec exposes the underlying command for pre-start configuration such as
-// SysProcAttr or Env. Do not run it directly: the classification lives here.
+// terminateGroup ends the process group the child leads: SIGTERM to the group at
+// once, then SIGKILL after delay, the same bound os/exec puts on the child
+// itself. Linux keeps a group id reserved while any member of the group lives,
+// so the escalation reaches this run's descendants or no process at all.
+//
+// A child already reaped, or one that does not lead its own group because
+// something replaced SysProcAttr, is signalled alone: the negative id would
+// otherwise name the daemon's own process group.
+func terminateGroup(cmd *exec.Cmd, delay time.Duration) error {
+	proc := cmd.Process
+	if proc == nil {
+		return os.ErrProcessDone
+	}
+	pgid, err := syscall.Getpgid(proc.Pid)
+	if err != nil || pgid != proc.Pid {
+		return proc.Kill()
+	}
+	if err := syscall.Kill(-pgid, syscall.SIGTERM); err != nil {
+		if errors.Is(err, syscall.ESRCH) {
+			return os.ErrProcessDone
+		}
+		return fmt.Errorf("terminate process group %d: %w", pgid, err)
+	}
+	time.AfterFunc(delay, func() { _ = syscall.Kill(-pgid, syscall.SIGKILL) })
+	return nil
+}
+
+// Exec exposes the underlying command for pre-start configuration such as Env or
+// Dir. Do not run it directly: the classification lives here. SysProcAttr and
+// Cancel belong to this package; replacing either drops the group bound.
 func (c *Cmd) Exec() *exec.Cmd { return c.cmd }
 
 // Output runs the command and returns the bytes read, including partial output

@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -56,9 +58,9 @@ func TestWaitDelayResolution(t *testing.T) {
 func durationPtr(d time.Duration) *time.Duration { return &d }
 
 // pipeHolder starts a descendant that retains stdout after its parent exits.
-// Without WaitDelay, reads wait for the descendant. Cleanup kills the process
-// group; the sleep must outlive the test to prevent reuse of the group ID before
-// cleanup.
+// Without WaitDelay, reads wait for the descendant. The command already leads
+// its own group; cleanup kills that group, and the sleep must outlive the test
+// to prevent reuse of the group ID before cleanup.
 func pipeHolder(t *testing.T, ctx context.Context, delay time.Duration, tail string) *Cmd {
 	t.Helper()
 	dir := t.TempDir()
@@ -67,7 +69,6 @@ func pipeHolder(t *testing.T, ctx context.Context, delay time.Duration, tail str
 		t.Fatal(err)
 	}
 	cmd := CommandWithDelay(ctx, delay, path)
-	cmd.Exec().SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	t.Cleanup(func() {
 		if proc := cmd.Exec().Process; proc != nil {
 			_ = syscall.Kill(-proc.Pid, syscall.SIGKILL)
@@ -111,6 +112,113 @@ func TestOutputClassifiesTheDeadlineKillAsTimeout(t *testing.T) {
 	}
 	if res.Salvaged {
 		t.Fatal("Salvaged = true for a killed child")
+	}
+}
+
+// A spawner stands in for a tool that fans out: it starts a grandchild that
+// ignores SIGTERM and records its pid, then waits. Only the SIGKILL the group
+// receives after WaitDelay can end that grandchild.
+const spawnerScript = `#!/bin/sh
+sh -c 'trap "" TERM; echo $$ > "$1"; exec sleep 300' spawner "$1" &
+exec sleep 300
+`
+
+// Cancelling a running command ends its whole process group. mise leaves one
+// `npm view` per npm-backed tool running when only the direct child is
+// signalled; those reparent to the user's init and stay until the process table
+// is full.
+func TestCancelEndsTheDescendantGroup(t *testing.T) {
+	dir := t.TempDir()
+	pidPath := filepath.Join(dir, "grandchild.pid")
+	script := filepath.Join(dir, "spawner")
+	if err := os.WriteFile(script, []byte(spawnerScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Reads the pid back rather than closing over one, so a failure before the
+	// pid is known still cleans up what the run started.
+	t.Cleanup(func() {
+		if pid, err := recordedPID(pidPath); err == nil {
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+		}
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// A short delay keeps the SIGKILL escalation inside maxBoundedElapsed.
+	cmd := CommandWithDelay(ctx, 300*time.Millisecond, script, pidPath)
+	done := make(chan error, 1)
+	go func() {
+		_, err := cmd.Output()
+		done <- err
+	}()
+
+	pid := awaitPID(t, pidPath)
+	cancel()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("err = %v, want context.Canceled", err)
+		}
+	case <-time.After(maxBoundedElapsed):
+		t.Fatalf("the run did not return within %v of the cancel", maxBoundedElapsed)
+	}
+
+	if err := awaitGone(pid, maxBoundedElapsed); err != nil {
+		t.Fatalf("grandchild %d: %v", pid, err)
+	}
+}
+
+// recordedPID reads the pid the spawner wrote, erroring until the file holds a
+// complete line.
+func recordedPID(path string) (int, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	return strconv.Atoi(strings.TrimSpace(string(data)))
+}
+
+func awaitPID(t *testing.T, path string) int {
+	t.Helper()
+	deadline := time.Now().Add(maxBoundedElapsed)
+	for {
+		pid, err := recordedPID(path)
+		if err == nil {
+			return pid
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no grandchild pid at %s within %v: %v", path, maxBoundedElapsed, err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// awaitGone waits for pid to stop running, reading /proc rather than signalling
+// so a pid the kernel has recycled cannot pass for the process this test
+// started. A killed grandchild reparents to the user's init and is reaped
+// there, so it is a zombie for a moment before its entry disappears; a zombie
+// holds nothing open and counts as gone.
+func awaitGone(pid int, limit time.Duration) error {
+	deadline := time.Now().Add(limit)
+	for {
+		data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+		if err != nil {
+			return nil
+		}
+		// The comm field is parenthesised and may itself contain spaces and
+		// brackets, so the state character is the one two bytes past the last ')'.
+		paren := bytes.LastIndexByte(data, ')')
+		if paren < 0 || paren+2 >= len(data) {
+			return fmt.Errorf("/proc/%d/stat carries no state field: %q", pid, data)
+		}
+		if data[paren+2] == 'Z' {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("still running in state %q %v after the cancel", data[paren+2], limit)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
