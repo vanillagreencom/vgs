@@ -198,9 +198,11 @@ def mise_stub_text(package: str, command: str, bin_name: str,
     tool that needs one is re-forced when that path is gone.
 
     `exec_path` names a file under the install root to run directly, for a
-    package installed with mise `bin_path=` so that its directory never joins
-    PATH. `mise x` resolves nothing for such a package, so the absolute path is
-    the only way in."""
+    package installed with mise `bin_path=`. That option moves the exported
+    directory to the install root, so the package's own directory never joins
+    PATH. `mise x` then finds no executable of that name inside the package and
+    falls through to the ambient PATH, where this stub itself answers, so the
+    absolute path is the only way in."""
     build_env = build_env or {}
     requires = requires or []
     lines = ["#!/bin/bash", MISE_STUB_MARKER]
@@ -218,7 +220,12 @@ def mise_stub_text(package: str, command: str, bin_name: str,
     drop = "".join(f" -u {shlex.quote(name)}" for name in sorted(build_env))
     prefix = f"env{drop} " if drop else ""
     if exec_path:
+        # `mise where` can exit 0 with nothing to say. Without this the exec
+        # would run /<exec_path> from the filesystem root, naming neither the
+        # tool nor the cause; the Python launcher refuses the same state.
+        no_root = shlex.quote(f"{command}: mise reported no install root for {package}")
         lines.append(f"root=$(mise where {shlex.quote(package)}) || exit 1")
+        lines.append(f'[ -n "$root" ] || {{ echo {no_root} >&2; exit 1; }}')
         lines.append(f'exec {prefix}"$root"/{shlex.quote(exec_path)} "$@"')
     else:
         lines.append(f"exec {prefix}mise x {shlex.quote(package)} -- {shlex.quote(bin_name)} \"$@\"")
@@ -247,14 +254,16 @@ def command_on_path_elsewhere(command: str, *skip: Path, skip_mise_shims: bool =
 
 
 def entry_commands(entry: Dict[str, Any]) -> set:
-    """The executable names one catalog entry's install owns: the stub's command
-    and the file inside the package that stub runs. Every other executable the
-    same install exports belongs to some other project, and mise's bin path sits
-    ahead of the distribution's, so letting one through replaces a system
-    command for every process the session starts."""
+    """The executable names one catalog entry's install owns: the stub's
+    command, the file inside the package that stub runs, and the executable its
+    launcher names. Every other executable the same install exports belongs to
+    some other project, and mise's bin path sits ahead of the distribution's, so
+    letting one through replaces a system command for every process the session
+    starts."""
     exec_path = str(entry.get("exec") or "")
     inside = Path(exec_path).name if exec_path else str(entry.get("bin") or entry["command"])
-    return {str(entry["command"]), inside}
+    launch = [str(part) for part in entry.get("launch") or []]
+    return {str(entry["command"]), inside, *launch[:1]}
 
 
 def mise_stub_state(path: Path) -> str:
@@ -268,6 +277,19 @@ def mise_stub_state(path: Path) -> str:
     except OSError:
         return "foreign"
     return "ours" if MISE_STUB_MARKER in head else "foreign"
+
+
+def stub_fields(entry: Dict[str, Any]) -> Dict[str, Any]:
+    """The stub arguments one catalog entry carries, as `mise_install_stub`
+    takes them. Every writer of a stub derives them here, so a field the
+    template gains reaches the refresh, the install prompt and the replace
+    action together instead of two of the three."""
+    return {"package": str(entry["package"]), "command": str(entry["command"]),
+            "bin_name": str(entry.get("bin") or entry["command"]),
+            "build_env": dict(entry.get("buildEnv") or {}),
+            "requires": [str(r) for r in entry.get("requires") or []],
+            "present": str(entry.get("present") or ""),
+            "exec_path": str(entry.get("exec") or "")}
 
 
 def mise_install_stub(package: str, command: str, bin_name: str = "",
@@ -338,20 +360,8 @@ def manageable(catalog: Dict[str, Any]) -> List[Dict[str, Any]]:
     return launchable(catalog) + tools
 
 
-def mise_catalog_stubs() -> List[Dict[str, str]]:
-    catalog = dev_tools_catalog()
-    stubs: List[Dict[str, str]] = []
-    for entry in manageable(catalog):
-        stubs.append({
-            "package": str(entry["package"]),
-            "command": str(entry["command"]),
-            "bin": str(entry.get("bin") or entry["command"]),
-            "buildEnv": dict(entry.get("buildEnv") or {}),
-            "requires": [str(r) for r in entry.get("requires") or []],
-            "present": str(entry.get("present") or ""),
-            "exec": str(entry.get("exec") or ""),
-        })
-    return stubs
+def mise_catalog_stubs() -> List[Dict[str, Any]]:
+    return [stub_fields(entry) for entry in manageable(dev_tools_catalog())]
 
 
 EXPORT_SHADOW_KEY = "mise-export-shadow"
@@ -368,19 +378,31 @@ def mise_export_conflicts() -> Tuple[List[Dict[str, str]], str]:
     for every process the session starts, and nothing on the machine says why.
     An entry either declares the extra command or keeps its install off PATH
     with mise `bin_path=` and an `exec` path. mise is asked which executables an
-    install exports; VGS does not scan the directory itself."""
+    install exports; VGS does not scan the directory itself. The set asked about
+    is `manageable()`: the agents, apps and tools this machine can build. An
+    `envs` row names distribution packages and other rows, has no package of its
+    own, and so exports nothing to ask about.
+
+    An entry mise cannot answer for is recorded and the walk continues: one
+    unreadable install must not decide, by its place in the catalog, which
+    conflicts the owner is told about."""
     # No mise means no mise bin path and so nothing to shadow. That is an
     # answer, not a failure to report on every refresh.
     if not RT.command_exists("mise"):
         return [], ""
+    installs, error = mise_installs()
+    errors = [error] if error else []
     conflicts: List[Dict[str, str]] = []
     for entry in manageable(dev_tools_catalog()):
         package = str(entry["package"])
-        exports, error = mise_json(["bin-paths", "--json", package_key(package)])
+        # An install that does not exist puts no directory on PATH, and asking
+        # mise about each of them is the whole cost of this check.
+        if package_key(package) not in installs:
+            continue
+        exports, error = mise_json_list(["bin-paths", "--json", package_key(package)])
         if error:
-            return [], error
-        if not isinstance(exports, list):
-            return [], f"mise bin-paths printed {type(exports).__name__}, not a list of executables"
+            errors.append(f"{entry['id']}: {error}")
+            continue
         owned = entry_commands(entry)
         for export in exports:
             name = str(export.get("name") or "") if isinstance(export, dict) else ""
@@ -391,40 +413,74 @@ def mise_export_conflicts() -> Tuple[List[Dict[str, str]], str]:
             if elsewhere:
                 conflicts.append({"id": str(entry["id"]), "package": package,
                                   "command": name, "path": elsewhere})
-    return conflicts, ""
+    return conflicts, "; ".join(errors)
 
 
-def report_export_conflicts() -> Dict[str, Any]:
-    """Run the export check and say so on stderr, so the owner sees it in the
-    update terminal where the shadowing first bites. Returns the two keys every
-    caller of `mise_refresh` carries."""
+def mise_export_check() -> Dict[str, Any]:
+    """Whether every catalog install exports only what its entry owns, as the
+    lines to show and an outcome the caller acts on.
+
+    Both a conflict and a check that could not run are failures. A package
+    answering to a system command is the defect this exists to catch, and one
+    that ran and found nothing is the only clean state; a check mise could not
+    answer must never read as a clean machine."""
     conflicts, error = mise_export_conflicts()
-    if error:
-        RT.eprint(f"{EXPORT_CHECK_FAILED_KEY}: {error}")
-    for conflict in conflicts:
-        RT.eprint(f"{EXPORT_SHADOW_KEY}: {conflict['id']} exports {conflict['command']}, "
-                  f"which also answers at {conflict['path']}")
-    return {"exports": conflicts, "exportsError": error}
+    lines = [f"{EXPORT_CHECK_FAILED_KEY}: {error}"] if error else []
+    lines += [f"{EXPORT_SHADOW_KEY}: {c['id']} exports {c['command']}, which also answers at {c['path']}"
+              for c in conflicts]
+    return {"ok": not lines, "error": "\n".join(lines), "exports": conflicts, "exportsError": error}
+
+
+def mise_declare_options() -> Dict[str, Any]:
+    """Re-declare every installed catalog entry whose package spec carries
+    backend options, so an option the catalog changed reaches a machine that
+    installed the row before it.
+
+    mise copies a spec's options into the global config when the tool is first
+    used and never revisits them: `mise up` moves the version and leaves the
+    options alone. The Cursor Agent row was recorded with `bin_path =
+    "dist-package"`, and until it is re-declared that install keeps exporting
+    the package directory, with `node` and `rg` ahead of /usr/bin. An entry
+    whose spec carries no option records nothing that can drift, and one mise
+    has not installed is left alone: its stub declares it on first run."""
+    if not RT.command_exists("mise"):
+        return {"ok": True, "error": "", "declared": []}
+    installs, error = mise_installs()
+    errors = [error] if error else []
+    declared: List[str] = []
+    for entry in manageable(dev_tools_catalog()):
+        package = str(entry["package"])
+        if not PACKAGE_OPTIONS.search(package) or package_key(package) not in installs:
+            continue
+        env = {**mise_env(), **mise_build_env(dict(entry.get("buildEnv") or {}))}
+        # The install is already there and no path is forced, so this rewrites
+        # the config entry and downloads nothing.
+        for step in mise_install_steps(package, [], ""):
+            try:
+                proc = RT.run(step, env=env, cwd=str(RT.home()), timeout=300)
+            except (OSError, subprocess.SubprocessError) as exc:
+                errors.append(f"{entry['id']}: {exc}")
+                continue
+            if proc.returncode != 0:
+                errors.append(f"{entry['id']}: " + ((proc.stderr or "").strip() or f"mise use exited {proc.returncode}"))
+                continue
+            declared.append(str(entry["id"]))
+    return {"ok": not errors, "error": "; ".join(errors), "declared": declared}
 
 
 def mise_refresh() -> Dict[str, Any]:
     """Rewrite every catalog stub from the current template. Idempotent; a
-    machine whose owner removed the stubs stays that way. The export check runs
-    either way: an install shadows a system command through mise's own bin path,
-    which no stub decision touches."""
-    exports = report_export_conflicts()
+    machine whose owner removed the stubs stays that way."""
     if mise_stubs_opted_out():
-        return {"ok": True, "optedOut": True, "written": [], "foreign": [], **exports}
+        return {"ok": True, "error": "", "optedOut": True, "written": [], "foreign": []}
     written: List[str] = []
     foreign: List[str] = []
     shadowed: List[str] = []
     for stub in mise_catalog_stubs():
-        result = mise_install_stub(stub["package"], stub["command"], stub["bin"],
-                                   stub["buildEnv"], stub["requires"], stub["present"], stub["exec"])
-        state = result["state"]
+        state = mise_install_stub(**stub)["state"]
         (written if state == "written" else shadowed if state == "shadowed" else foreign).append(stub["command"])
-    return {"ok": True, "optedOut": False, "written": written, "foreign": foreign, "shadowed": shadowed,
-            "retired": mise_retire_stubs(), **exports}
+    return {"ok": True, "error": "", "optedOut": False, "written": written, "foreign": foreign,
+            "shadowed": shadowed, "retired": mise_retire_stubs()}
 
 
 def mise_retire_stubs() -> List[str]:
@@ -487,8 +543,8 @@ def mise_remove_stubs() -> Dict[str, Any]:
 
 def mise_json(args: List[str]) -> Tuple[Any, str]:
     """Run a mise subcommand that prints JSON. (data, error). mise prints an
-    object for `ls` and `outdated` and an array for `bin-paths`, so the caller
-    checks the shape it asked for."""
+    object for `ls` and `outdated` and an array for `bin-paths`; callers take
+    `mise_json_object` or `mise_json_list` and state that shape once."""
     if not RT.command_exists("mise"):
         return {}, "mise not found"
     # From $HOME, so only the global config is in scope: mise's bare
@@ -508,6 +564,35 @@ def mise_json(args: List[str]) -> Tuple[Any, str]:
     return data, ""
 
 
+def mise_json_object(args: List[str]) -> Tuple[Dict[str, Any], str]:
+    """`mise_json` for a subcommand that prints an object."""
+    data, error = mise_json(args)
+    if isinstance(data, dict):
+        return data, error
+    return {}, error or f"mise {args[0]} printed {type(data).__name__}, not an object"
+
+
+def mise_json_list(args: List[str]) -> Tuple[List[Any], str]:
+    """`mise_json` for a subcommand that prints a list."""
+    data, error = mise_json(args)
+    if isinstance(data, list):
+        return data, error
+    return [], error or f"mise {args[0]} printed {type(data).__name__}, not a list"
+
+
+def mise_where(package: str) -> str:
+    """The install root mise resolves for `package`, or "". The stub asks mise
+    the same question, so the tile and the terminal run one install even where
+    several versions are installed and none is active."""
+    if not RT.command_exists("mise"):
+        return ""
+    try:
+        proc = RT.run(["mise", "where", package], env=mise_env(), cwd=str(RT.home()), timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return (proc.stdout or "").strip() if proc.returncode == 0 else ""
+
+
 def mise_installed_versions() -> Tuple[Dict[str, str], str]:
     """Package key -> installed version, active install preferred."""
     installs, error = mise_installs()
@@ -515,38 +600,36 @@ def mise_installed_versions() -> Tuple[Dict[str, str], str]:
 
 
 def mise_installs() -> Tuple[Dict[str, Dict[str, Any]], str]:
-    """Package key -> {version, declared, path}. `declared` is whether a mise
-    config asks for the tool: `mise outdated` reports only those, so an install
-    nothing declares is invisible to every update count and never moves again.
-    `path` is the install root, which a package kept off PATH is run from."""
-    data, error = mise_json(["ls", "--json"])
+    """Package key -> {version, declared}. `declared` is whether a mise config
+    asks for the tool: `mise outdated` reports only those, so an install nothing
+    declares is invisible to every update count and never moves again."""
+    data, error = mise_json_object(["ls", "--json"])
     installs: Dict[str, Dict[str, Any]] = {}
-    for name, entries in (data if isinstance(data, dict) else {}).items():
+    for name, entries in data.items():
         if not isinstance(entries, list):
             continue
-        version, declared, path = "", False, ""
+        version, declared = "", False
         for install in entries:
             if not isinstance(install, dict) or not install.get("installed"):
                 continue
             active = bool(install.get("active"))
             if not version or active:
                 version = str(install.get("version") or "")
-                path = str(install.get("install_path") or "")
             if isinstance(install.get("source"), dict):
                 declared = True
             if active:
                 break
         if version:
-            installs[str(name)] = {"version": version, "declared": declared, "path": path}
+            installs[str(name)] = {"version": version, "declared": declared}
     return installs, error
 
 
 def mise_outdated() -> Tuple[List[Dict[str, str]], str]:
     """Tools `mise up` would move: [{name, id, current, latest}], `name` the
     tool as the reader knows it and `id` the spec mise files it under."""
-    data, error = mise_json(["outdated", "--json"])
+    data, error = mise_json_object(["outdated", "--json"])
     rows: List[Dict[str, str]] = []
-    for name, info in (data if isinstance(data, dict) else {}).items():
+    for name, info in data.items():
         if not isinstance(info, dict):
             continue
         rows.append({
@@ -623,17 +706,22 @@ def cmd_mise(argv: List[str]) -> int:
             RT.eprint(result["error"])
         return 0 if result["ok"] else 1
     if sub == "refresh":
-        result = mise_refresh()
+        # Two verbs, one command: rewriting the stubs settles nothing about what
+        # an install exports, and the owner running a refresh is who acts on it.
+        result = {**mise_refresh(), **mise_export_check()}
         if want_json:
             print(json.dumps(result))
-        elif result["optedOut"]:
-            print(f"mise stubs are opted out; delete {RT.state_dir() / MISE_STUBS_REMOVED} to opt back in")
         else:
-            print(f"wrote {len(result['written'])} stubs"
-                  + (", kept foreign: " + " ".join(result["foreign"]) if result["foreign"] else "")
-                  + (", already installed elsewhere: " + " ".join(result["shadowed"]) if result["shadowed"] else "")
-                  + (", retired: " + " ".join(result["retired"]) if result["retired"] else ""))
-        return 0
+            if result["optedOut"]:
+                print(f"mise stubs are opted out; delete {RT.state_dir() / MISE_STUBS_REMOVED} to opt back in")
+            else:
+                print(f"wrote {len(result['written'])} stubs"
+                      + (", kept foreign: " + " ".join(result["foreign"]) if result["foreign"] else "")
+                      + (", already installed elsewhere: " + " ".join(result["shadowed"]) if result["shadowed"] else "")
+                      + (", retired: " + " ".join(result["retired"]) if result["retired"] else ""))
+            if result["error"]:
+                print(result["error"])
+        return 0 if result["ok"] else 1
     if sub == "opt-in":
         marker = RT.state_dir() / MISE_STUBS_REMOVED
         if marker.exists():

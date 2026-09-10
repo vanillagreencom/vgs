@@ -111,8 +111,12 @@ def update_steps(mode: str) -> List[Dict[str, Any]]:
         if RT.command_exists("mise"):
             # Stubs are rewritten after every tools update so a template change
             # reaches machines that already have them, without a migration.
+            # `mise up` moves versions and leaves a spec's backend options as
+            # they were recorded, so the options are re-declared first and the
+            # export check then reads the state the two of them left.
             steps.append({"title": "Updating mise tools (agents, toolchains)", "argv": ["mise", "up"],
-                          "env": mise.mise_env(), "cwd": str(RT.home()), "after": [mise.mise_refresh]})
+                          "env": mise.mise_env(), "cwd": str(RT.home()),
+                          "after": [mise.mise_declare_options, mise.mise_refresh, mise.mise_export_check]})
         elif not everything:
             RT.eprint("mise not found")
     return steps
@@ -141,11 +145,18 @@ def cmd_update(argv: List[str]) -> int:
         for step in steps:
             print(f":: {step['title']}")
             failures += 0 if subprocess.run(step["argv"], check=False, env=step.get("env"), cwd=step.get("cwd")).returncode == 0 else 1
+            # An `after` hook returns {ok, error}. A hook that reports a problem
+            # fails the run: a guard whose outcome the runner drops prints its
+            # finding above a "Done" line and exits 0.
             for after in step.get("after") or ():
                 try:
-                    after()
+                    result = after()
                 except OSError as exc:
                     RT.eprint(f"{step['title']}: follow-up failed: {exc}")
+                    failures += 1
+                    continue
+                if not result["ok"]:
+                    RT.eprint(result["error"])
                     failures += 1
         try:
             input(("Failed — press Enter to close…" if failures else "Done — press Enter to close…"))

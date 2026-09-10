@@ -15,7 +15,7 @@ from typing import Any, Dict, List
 
 import vshell_mise
 from vshell_apps import PACKAGE_OWNER_QUERY, PACKAGE_REMOVERS, os_release_ids, owning_package
-from vshell_mise import DevToolsRuntime, dev_tools_catalog, launchable, manageable, mise_build_env, mise_install_steps, mise_installs, mise_outdated, mise_stubs_opted_out, mise_env, mise_install_stub, mise_stub_state, package_key
+from vshell_mise import DevToolsRuntime, dev_tools_catalog, launchable, manageable, mise_build_env, mise_install_steps, mise_installs, mise_outdated, mise_stubs_opted_out, mise_env, mise_export_check, mise_install_stub, mise_stub_state, mise_where, package_key, stub_fields
 
 RT: DevToolsRuntime
 
@@ -101,9 +101,11 @@ def agent_launch_argv(entry: Dict[str, Any]) -> List[str]:
     """The agent's launch argv, run through `mise x` when mise owns it so it
     resolves without a stub or shim on PATH; the owner's own command otherwise.
 
-    An entry with an `exec` path is installed with mise `bin_path=` so that its
-    package directory never joins PATH, and `mise x` resolves nothing for it;
-    the file under the install root is the only way in."""
+    An entry with an `exec` path is installed with mise `bin_path=`, which moves
+    the exported directory to the install root so the package's own directory
+    never joins PATH; `mise x` then falls through to the ambient PATH, where the
+    stub itself answers. The file under the install root is the only way in, and
+    `mise where` names that root here and in the stub alike."""
     launch = [str(part) for part in entry.get("launch") or [entry["command"]]]
     installs, _ = mise_installs()
     install = installs.get(package_key(str(entry["package"])))
@@ -111,10 +113,10 @@ def agent_launch_argv(entry: Dict[str, Any]) -> List[str]:
         exec_path = str(entry.get("exec") or "")
         if not exec_path:
             return ["mise", "x", str(entry["package"]), "--", *launch]
-        root = str(install.get("path") or "")
+        root = mise_where(str(entry["package"]))
         if not root:
-            raise ValueError(f"{entry['id']}: mise reported an install with no path, "
-                             f"so {exec_path} cannot be located")
+            raise ValueError(f"{entry['name']}: mise reported no install root for "
+                             f"{entry['package']}, so {exec_path} cannot be located")
         return [str(Path(root) / exec_path), *launch[1:]]
     # `launch` names the executable inside the package, which for an AppImage is
     # not the command anyone has on PATH. An install VGS does not own answers to
@@ -133,19 +135,22 @@ def agent_install_prompt(entry: Dict[str, Any]) -> bool:
         answer = "n"
     if answer not in ("", "y", "yes"):
         return False
-    command = str(entry["command"])
     package = str(entry["package"])
     build_env = dict(entry.get("buildEnv") or {})
     requires = [str(r) for r in entry.get("requires") or []]
     present = str(entry.get("present") or "")
-    mise_install_stub(package, command, str(entry.get("bin") or command), build_env, requires, present,
-                      str(entry.get("exec") or ""))
+    mise_install_stub(**stub_fields(entry))
     # The same steps the stub would run, so a tool installed from the prompt and
     # one installed on first launch are built the same way.
     env = {**mise_env(), **mise_build_env(build_env)}
     for step in mise_install_steps(package, requires, present, quiet=False):
         if subprocess.run(step, check=False, env=env, cwd=str(RT.home())).returncode != 0:
             return False
+    # Shadowing starts at the install, not at the next update, and the owner is
+    # at this terminal watching it happen.
+    exports = mise_export_check()
+    if exports["error"]:
+        print(exports["error"])
     return True
 
 
@@ -275,11 +280,7 @@ def entry_replace(entry: Dict[str, Any]) -> int:
                                    str(entry.get("present") or ""), quiet=False):
         if subprocess.run(step, check=False, env=env, cwd=str(RT.home())).returncode != 0:
             return hold_terminal(1, f"{owner} was removed but {entry['name']} did not install.")
-    mise_install_stub(str(entry["package"]), str(entry["command"]),
-                      str(entry.get("bin") or entry["command"]),
-                      dict(entry.get("buildEnv") or {}),
-                      [str(r) for r in entry.get("requires") or []],
-                      str(entry.get("present") or ""))
+    mise_install_stub(**stub_fields(entry))
     return hold_terminal(0, f"{entry['name']} now comes from mise.")
 
 
@@ -331,7 +332,12 @@ def cmd_agent(argv: List[str]) -> int:
         if len(ids) != 1:
             RT.eprint(usage)
             return 2
-        return agent_launch(ids[0], inline="--inline" in rest, hold="--hold" in rest)
+        # A launch that cannot be built is a refusal the owner reads, not a
+        # traceback in a window that closes.
+        try:
+            return agent_launch(ids[0], inline="--inline" in rest, hold="--hold" in rest)
+        except ValueError as exc:
+            return hold_terminal(1, str(exc))
     RT.eprint(usage)
     return 2
 
