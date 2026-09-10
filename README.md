@@ -36,7 +36,7 @@ Native packages are the recommended method. They install VGS system-wide and pro
 | NixOS, Home Manager | flake | [`flake.nix`](flake.nix) |
 | Other systemd distributions | release bundle | `curl -fsSL https://raw.githubusercontent.com/vanillagreencom/vgs/v0.4.0/install.sh \| bash` |
 
-On Arch, `vgs-shell` ships the `coppernight` theme only. Add `vgs-shell-assets` for the other bundled themes, their wallpapers, and the vendored icon themes.
+On Arch, `vgs-shell` ships the `bauhaus` and `roseofdune` themes only. Every other theme downloads on demand from its own release archive, with a screenshot shown before you install it. Add `vgs-shell-assets` for the pre-installed theme set and the vendored icon themes.
 
 For Home Manager, add the flake input and import the module:
 
@@ -67,7 +67,7 @@ vshell deps status
 
 Each feature group that reports `missing` names the commands it needs. The Arch, Debian, Ubuntu, Fedora, openSUSE and Gentoo packages also declare those tools as optional dependencies, so your package manager can show them. The Void recipe cannot: xbps has no weak-dependency mechanism, so `vshell deps status` is the only list there.
 
-The release bundle supports x86-64 and ARM64 and starts the user service itself unless you pass `install.sh --no-start`. It carries the `coppernight` theme, a preview of every other bundled theme, and no vendored icon themes; the rest ships in the separate assets archive. It checks `~/.local/bin/vshell`, `~/.config/quickshell/vshell` and `~/.config/systemd/user/vshell.service` before it writes. If another tool manages one of them, such as GNU Stow, chezmoi or yadm, it stops without changing anything, and `install.sh --force` replaces those externally managed symlinks. It refuses a plain file or directory at the two symlink paths, and it does overwrite a regular file at the service path, which is the file VGS owns.
+The release bundle supports x86-64 and ARM64 and starts the user service itself unless you pass `install.sh --no-start`. It carries the `bauhaus` and `roseofdune` themes, a 480-pixel screenshot of every other theme in the catalog, and no vendored icon themes; the rest ships in the separate assets archive. It checks `~/.local/bin/vshell`, `~/.config/quickshell/vshell` and `~/.config/systemd/user/vshell.service` before it writes. If another tool manages one of them, such as GNU Stow, chezmoi or yadm, it stops without changing anything, and `install.sh --force` replaces those externally managed symlinks. It refuses a plain file or directory at the two symlink paths, and it does overwrite a regular file at the service path, which is the file VGS owns.
 
 Checksum-verified bundles and source archives are published on [GitHub Releases](https://github.com/vanillagreencom/vgs/releases).
 
@@ -88,7 +88,7 @@ Checksum-verified bundles and source archives are published on [GitHub Releases]
 - Tailscale and Bluetooth status and controls, and a themed greeter with optional auto-login.
 - An optional glass material for popouts and menus: translucent tinted surfaces over a blurred backdrop.
 
-`themes/catalog.json` lists the bundled themes: ports of the widely used palettes plus VGS originals. Every bundled theme ships a committed preview.
+`themes/catalog.json` lists every theme VGS offers: ports of the widely used palettes plus VGS originals. Each carries a 480-pixel screenshot that ships with the package, so the theme browser fills in with no network call, and installing one fetches its wallpapers on demand.
 
 ### Compositor support
 

@@ -166,7 +166,7 @@ Singleton {
     property alias barCenterWidgetsModel: centerWidgetsModel
     property alias barRightWidgetsModel: rightWidgetsModel
 
-    property string currentThemeName: "coppernight"
+    property string currentThemeName: "bauhaus"
     property string currentThemeCategory: "vgs"
     property var favoriteThemes: []
     property string matugenScheme: "scheme-tonal-spot"

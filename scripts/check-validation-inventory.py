@@ -41,7 +41,8 @@ NOT_A_SUITE_CHECK = {
     "check-vshell-niri.py": "the Niri half of the helper suite; invoked by scripts/check-vshell-helper.py",
     "publish-aur.sh": "release tooling: pushes packaging/arch to the AUR, driven by the release path",
     "publish-gentoo.sh": "release tooling: pushes packaging/gentoo to the overlay, driven by the release path",
-    "gen-theme-catalog.py": "theme-catalog generator; its --check mode is invoked by scripts/check-package-assets.sh and its --check-release-pin by scripts/check-release.sh",
+    "gen-theme-catalog.py": "theme-catalog generator; its --check mode is invoked by scripts/check-package-assets.sh, its --check-assets-published by the ci.yml step 'Theme asset publication', and its --check-release-pin by scripts/check-release.sh",
+    "publish-theme-assets.py": "release tooling: builds and uploads the per-theme imagery archives and writes themes/asset-lock.json, driven by the release path",
 }
 
 # Checks the suite runs but CI cannot, with the reason CI cannot run them.

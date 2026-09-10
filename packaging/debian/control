@@ -75,5 +75,5 @@ Package: vgs-shell-assets
 Architecture: all
 Depends: vgs-shell (>= ${source:Version}), ${misc:Depends}
 Description: Optional VGS themes, wallpapers, and bundled icon themes
- The vgs-shell package ships the coppernight default theme only. This package
+ The vgs-shell package ships the bauhaus and roseofdune themes only. This package
  adds every other bundled theme, its wallpapers, and the vendored icon themes.

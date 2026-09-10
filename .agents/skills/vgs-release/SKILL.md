@@ -13,7 +13,7 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 
 # VGS release
 
-1. Set `VERSION` and matching runtime and package versions. Update the theme catalog release pin with `scripts/gen-theme-catalog.py --ref vX.Y.Z --write`.
+1. Set `VERSION` and matching runtime and package versions. Publish any changed theme imagery and refresh the pin with `scripts/publish-theme-assets.py`, then set the catalog's release ref with `scripts/gen-theme-catalog.py --ref vX.Y.Z --write`.
 2. Run `scripts/check-release.sh` and the scoped validation from the root `AGENTS.md`.
 3. Merge the release preparation pull request, then create and push the signed tag: `git tag -s vX.Y.Z -m "vX.Y.Z"`. Read `packaging/DEVELOPMENT.md` for signing setup and the unsigned-tag exception.
 4. Verify the release contains both Linux bundles, the source archive and `SHA256SUMS`. Test `install.sh --version vX.Y.Z --no-start` in a clean temporary HOME.

@@ -17,26 +17,6 @@ case "$theme_bundle" in
     ;;
 esac
 
-# Install catalog previews so uninstalled themes are visible before download.
-install_catalog_previews() {
-  # Release bundles carry prebuilt previews without the source theme trees.
-  # Source checkouts derive those previews from their themes below.
-  if [[ -d "$root/themes/catalog-previews" ]]; then
-    cp -a "$root/themes/catalog-previews" "$lib/themes/"
-    return
-  fi
-  install -d "$lib/themes/catalog-previews"
-  shopt -s nullglob
-  local theme name
-  for theme in "$root"/themes/*; do
-    [[ -f "$theme/theme.json" ]] || continue
-    name="${theme##*/}"
-    [[ -f "$lib/themes/$name/preview.png" ]] && continue
-    [[ -f "$theme/preview.png" ]] || continue
-    install -Dm644 "$theme/preview.png" "$lib/themes/catalog-previews/$name.png"
-  done
-}
-
 install_themes() {
   case "$theme_bundle" in
     all)
@@ -44,14 +24,16 @@ install_themes() {
       ;;
     core)
       install -d "$lib/themes"
-      cp -a "$root/themes/coppernight" "$root/themes/targets" "$lib/themes/"
+      cp -a "$root/themes/bauhaus" "$root/themes/roseofdune" "$root/themes/targets" "$lib/themes/"
       install -Dm644 "$root/themes/BACKGROUNDS-ATTRIBUTION.md" "$lib/themes/BACKGROUNDS-ATTRIBUTION.md"
       install -Dm644 "$root/themes/THEMES-ATTRIBUTION.md" "$lib/themes/THEMES-ATTRIBUTION.md"
-      # Catalog checksums govern verification of downloaded theme files.
+      # The catalog's archive checksums govern verification of downloaded themes.
+      # themes/asset-lock.json is publish-time input for the catalog generator and
+      # is deliberately not installed; the runtime reads the catalog alone.
       install -Dm644 "$root/themes/catalog.json" "$lib/themes/catalog.json"
-      # Ship previews with the core package so the download browser can show
-      # themes whose palettes and wallpapers are not installed.
-      install_catalog_previews
+      # Ship the 480 px thumbnails so the download browser can paint every
+      # uninstalled theme on first open, with no network call.
+      cp -a "$root/themes/thumbnails" "$lib/themes/"
       ;;
     extras)
       install -d "$lib/themes"
@@ -59,7 +41,7 @@ install_themes() {
       local theme
       for theme in "$root"/themes/*; do
         [[ -f "$theme/theme.json" ]] || continue
-        [[ "${theme##*/}" == "coppernight" ]] && continue
+        case "${theme##*/}" in bauhaus|roseofdune) continue ;; esac
         cp -a "$theme" "$lib/themes/"
       done
       ;;

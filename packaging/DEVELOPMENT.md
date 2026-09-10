@@ -14,7 +14,7 @@ Fedora uses `Suggests` to avoid installing optional compositors and login manage
 
 `install-system.sh` accepts `VGS_THEME_BUNDLE=core|extras|all`. Each package recipe declares its bundle. `scripts/check-package-assets.sh` and `scripts/check-release.sh` check package and archive contents.
 
-The core archive includes the download catalog and catalog previews. The extras archive includes optional themes and icons. `scripts/gen-theme-catalog.py` owns catalog generation and release-pin checks.
+The core archive includes the download catalog and one thumbnail per catalogued theme. The extras archive includes optional themes and icons. `scripts/gen-theme-catalog.py` owns catalog generation and release-pin checks; `scripts/publish-theme-assets.py` owns the per-theme imagery archives and `themes/asset-lock.json`.
 
 ## Signing
 

@@ -260,7 +260,15 @@ jobs:
           scripts/check-dev-tools.py
           scripts/check-brightness.py
           python3 -m py_compile bin/vshell-helper
+          python3 -m py_compile scripts/publish-theme-assets.py
           bash -n bin/vshell
+
+      # A catalogued archive that was never uploaded makes every install of that
+      # theme a 404, and only GitHub can answer whether the asset is there.
+      - name: Theme asset publication
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: scripts/gen-theme-catalog.py --check-assets-published
 
       - name: Backend capability inventory
         run: |
