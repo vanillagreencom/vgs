@@ -1279,29 +1279,38 @@ def test_theme_list_falls_back_to_the_shipped_thumbnail():
     Only the bundled themes keep a full-size screenshot in the tree; the rest
     ship their imagery in a release archive (D015). Without this fallback every
     such theme reports no screenshot, and VGSThemeService.generateMissingPreviews()
-    renders the whole set through a nested compositor on every run.
+    renders the whole set through a nested compositor on the first open after a
+    cold preview cache.
     """
+    # name -> (has its own preview.png, extra theme.json fields, user overlay)
     packages = {
-        "withshot": True,
-        "noshot": False,
-        "nothumb": False,
+        "withshot": (True, {}, False),
+        "noshot": (False, {}, False),
+        "nothumb": (False, {}, False),
+        "restyled": (False, {"adjustments": {"brightness": 17}}, False),
+        "overlaid": (False, {}, True),
     }
 
     def scenario(temp_home: Path):
         builtin = temp_home / "builtin"
         thumbnails = builtin / "thumbnails"
         thumbnails.mkdir(parents=True)
-        for name, packaged in packages.items():
+        for name, (packaged, extra, overlaid) in packages.items():
             package = builtin / name
             package.mkdir()
-            (package / "theme.json").write_text(
-                json.dumps({"name": name, "mode": "dark", "source": "curated"}) + "\n")
+            meta = {"name": name, "mode": "dark", "source": "curated"}
+            meta.update(extra)
+            (package / "theme.json").write_text(json.dumps(meta) + "\n")
             (package / "colors.toml").write_text(
                 'background = "#101010"\nforeground = "#eeeeee"\n')
             if packaged:
                 (package / "preview.png").write_bytes(b"\x89PNG\r\n\x1a\n screenshot\n")
             if name != "nothumb":
                 (thumbnails / f"{name}.jpg").write_bytes(b"\xff\xd8\xff thumbnail\n")
+            if overlaid:
+                overlay = helper.user_themes_dir() / name
+                overlay.mkdir(parents=True)
+                (overlay / "app-colors.toml").write_text("[btop]\nfg = \"#ffffff\"\n")
 
         original_builtin = helper.builtin_themes_dir
         helper.builtin_themes_dir = lambda: builtin
@@ -1317,11 +1326,15 @@ def test_theme_list_falls_back_to_the_shipped_thumbnail():
 
         # A packaged screenshot wins; a theme without one falls back to the
         # thumbnail beside it; a theme with neither reports none, which is what
-        # leaves the generator its own case.
+        # leaves the generator its own case. A restyled or overlaid theme no
+        # longer looks like either shipped screenshot, so it reports none too
+        # and the generator renders what the user is actually running.
         for name, expected in (
             ("withshot", str(builtin / "withshot" / "preview.png")),
             ("noshot", str(thumbnails / "noshot.jpg")),
             ("nothumb", ""),
+            ("restyled", ""),
+            ("overlaid", ""),
         ):
             assert_equal(listed.get(name), expected,
                          f"theme list preview for {name}")
@@ -3052,6 +3065,84 @@ def _write_catalog(builtin: Path, archives: Path, name: str, blob: bytes,
                        "size": len(blob), "sha256": hashlib.sha256(blob).hexdigest()},
         }],
     }))
+
+
+def test_theme_catalog_offers_a_builtin_theme_with_no_imagery():
+    """A built-in theme whose wallpapers ship in its release archive is downloadable.
+
+    In a source checkout every catalogued theme has a built-in theme.json while
+    only the bundled ones keep their imagery (D015). Refusing on theme.json
+    alone left those themes with no wallpaper and no way to obtain one.
+    """
+    package = {
+        "theme.json": b'{"name":"demo","mode":"dark","source":"curated"}\n',
+        "colors.toml": b'background = "#101010"\nforeground = "#eeeeee"\n',
+        "backgrounds/1-demo.jpg": b"\xff\xd8\xff\xe0 demo wallpaper bytes\n",
+        "preview.png": b"\x89PNG\r\n\x1a\n demo screenshot bytes\n",
+    }
+
+    def scenario(tmp: Path):
+        builtin = tmp / "builtin"
+        (builtin / "demo").mkdir(parents=True)
+        # Definitions in the tree, imagery in the release archive.
+        (builtin / "demo" / "theme.json").write_bytes(package["theme.json"])
+        (builtin / "demo" / "colors.toml").write_bytes(package["colors.toml"])
+        (builtin / "thumbnails").mkdir()
+        thumbnail = builtin / "thumbnails" / "demo.jpg"
+        thumbnail.write_bytes(b"\xff\xd8\xff thumbnail bytes\n")
+        archives = tmp / "releases"
+        _write_catalog(builtin, archives, "demo", _theme_archive(package))
+
+        original_builtin = helper.builtin_themes_dir
+        helper.builtin_themes_dir = lambda: builtin
+        os.environ["VGS_THEME_CATALOG_BASE_URL"] = "file://" + str(archives)
+        try:
+            catalog = helper.load_theme_catalog()
+            base_urls, allow_local = helper.theme_catalog_base_urls(catalog)
+            entry = helper.catalog_theme_entry(catalog, "demo")
+
+            offered = [e for e in helper.catalog_entries() if e["name"] == "demo"][0]
+            assert_equal((offered["builtin"], offered["installed"], offered["preview"]),
+                         (True, False, str(thumbnail)),
+                         "a built-in theme with no wallpapers is offered, painted from its thumbnail")
+
+            result = helper.catalog_download_theme(entry, base_urls, allow_local)
+            assert_equal(result["status"], "installed",
+                         "a built-in theme with no wallpapers downloads")
+            dest = helper.user_themes_dir() / "demo"
+            assert_equal((dest / "backgrounds" / "1-demo.jpg").read_bytes(),
+                         package["backgrounds/1-demo.jpg"],
+                         "the downloaded wallpaper lands beside the built-in definitions")
+
+            blueprint = helper.load_theme_package("demo")
+            assert_equal(len(blueprint["backgrounds"]), 1, "the theme now has a wallpaper")
+            # The download is the shipped theme, not an edit of it: calling it
+            # modified would blank its screenshot and re-render it every list.
+            assert_equal(blueprint["modified"], False,
+                         "a catalog download beside a built-in directory is not a user edit")
+
+            after = [e for e in helper.catalog_entries() if e["name"] == "demo"][0]
+            assert_equal((after["installed"], after["downloaded"]), (True, True),
+                         "the downloaded theme reports installed")
+
+            again = helper.catalog_download_theme(entry, base_urls, allow_local)
+            assert_equal(again["status"], "skipped", "an installed theme is not re-downloaded")
+
+            # The bundled themes keep their imagery in the tree, and those stay
+            # refused: nothing should re-download what the package already has.
+            (builtin / "demo" / "backgrounds").mkdir()
+            (builtin / "demo" / "backgrounds" / "1-demo.jpg").write_bytes(
+                package["backgrounds/1-demo.jpg"])
+            shutil.rmtree(dest)
+            bundled = helper.catalog_download_theme(entry, base_urls, allow_local)
+            assert_equal((bundled["status"], bundled["reason"]),
+                         ("skipped", "already installed as a built-in theme"),
+                         "a built-in theme that carries its own wallpapers stays refused")
+        finally:
+            helper.builtin_themes_dir = original_builtin
+            os.environ.pop("VGS_THEME_CATALOG_BASE_URL", None)
+
+    with_temp_home(scenario)
 
 
 def test_theme_catalog_download_verifies_its_archive():
@@ -6900,6 +6991,7 @@ def main():
     test_missing_terminal_reaches_the_user()
     test_terminal_wait_blocks_until_the_terminal_exits()
     test_preferred_terminal_is_tried_first()
+    test_theme_catalog_offers_a_builtin_theme_with_no_imagery()
     test_theme_catalog_download_verifies_its_archive()
     test_theme_asset_publisher()
     test_theme_asset_publish_records_what_is_on_the_release()

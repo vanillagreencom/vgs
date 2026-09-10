@@ -56,6 +56,30 @@ while IFS= read -r -d '' installed; do
 done < <(find "$core/usr/lib/vshell/themes" -mindepth 1 -maxdepth 1 -type f -print0)
 test "$unclaimed" -eq 0
 
+# The single install writes /usr/lib/vshell/config/vshell/icons, the tree the
+# retired vgs-shell-assets owned. A channel that ships those paths without
+# declaring the obsolescence aborts an upgrade on conflicting files for anyone
+# still holding the old package. Each recipe is checked in its own channel's
+# spelling; Arch needs both, because pacman honours replaces only for
+# repository packages and an AUR install goes through conflicts.
+unowned=0
+while IFS='|' read -r recipe field pattern; do
+  if ! grep -qE "$pattern" "$root/$recipe"; then
+    echo "$recipe: nothing declares the retirement of vgs-shell-assets in $field, so an upgrade over it aborts on /usr/lib/vshell/config/vshell/icons" >&2
+    unowned=1
+  fi
+done <<'RECIPES'
+packaging/arch/PKGBUILD|replaces|^replaces=\(.*'vgs-shell-assets'
+packaging/arch/PKGBUILD|conflicts|^conflicts=\(.*'vgs-shell-assets'
+packaging/arch/vgs-shell-git/PKGBUILD|replaces|^replaces=\(.*'vgs-shell-assets'
+packaging/arch/vgs-shell-git/PKGBUILD|conflicts|^conflicts=\(.*'vgs-shell-assets'
+packaging/debian/control|Replaces|^Replaces:.*[ ,]?vgs-shell-assets
+packaging/debian/control|Breaks|^Breaks:.*[ ,]?vgs-shell-assets
+packaging/fedora/vgs-shell.spec|Obsoletes|^Obsoletes:[[:space:]]+vgs-shell-assets
+packaging/void/template|replaces|^replaces=".*vgs-shell-assets
+RECIPES
+test "$unowned" -eq 0
+
 # Catalog checksums must match theme contents or downloads fail verification.
 "$root/scripts/gen-theme-catalog.py" --check
 

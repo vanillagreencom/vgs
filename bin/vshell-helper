@@ -1232,7 +1232,14 @@ def load_theme_package(name: str) -> Dict[str, Any] | None:
     bp["backgrounds"] = [str(p) for _rel, p in backgrounds]
     bp["packagedPreview"] = str(files["preview.png"]) if "preview.png" in files else ""
     bp["adjustments"] = adjustments
-    bp["modified"] = builtin_dir.is_dir() and user_dir.is_dir() and any(p.is_file() for p in user_dir.rglob("*"))
+    # A user directory beside a built-in one normally means the user edited the
+    # theme. A catalog download lands there too, for a built-in theme whose
+    # imagery ships in its release archive, and that is the shipped theme
+    # rather than an edit of it: calling it modified would blank its shipped
+    # screenshot and send it to the preview generator on every list.
+    bp["modified"] = (builtin_dir.is_dir() and user_dir.is_dir()
+                      and not catalog_owns(name)
+                      and any(p.is_file() for p in user_dir.rglob("*")))
     bp["appOverrides"] = {app: len(roles) for app, roles in _parse_app_overrides_text(
         files["app-colors.toml"].read_text(errors="ignore") if "app-colors.toml" in files else "").items()}
     stamps = [meta_path.stat().st_mtime]
@@ -1441,17 +1448,26 @@ def catalog_owns(name: str) -> bool:
     return str(marker.get("name") or "") == name and str(marker.get("path") or "") == str(dest)
 
 
-def catalog_preview_path(name: str) -> str:
-    """Screenshot for a catalog entry: the installed package's, else the shipped thumbnail.
+def theme_shipped_preview(name: str, packaged: str = "") -> str:
+    """A theme's screenshot without rendering one: its own, else the shipped thumbnail.
 
-    The thumbnail is the 480 px JPEG the browser paints at, so an uninstalled
-    theme has a screenshot on first paint with no network call.
+    The one answer to "what can be painted for this theme with no work": the
+    package's full-size preview.png when it has one, and otherwise the 480 px
+    JPEG that ships for every catalogued theme. Both the catalog browser and
+    `theme list --json` ask this question, and a second spelling of it would let
+    one of them paint a screenshot the other says does not exist.
     """
-    files = compose_theme_files(name)
-    packaged = files.get("preview.png")
-    if packaged and packaged.is_file():
-        return str(packaged)
-    return theme_thumbnail_path(name)
+    return packaged or theme_thumbnail_path(name)
+
+
+def theme_dir_has_wallpapers(package: Path) -> bool:
+    """Whether a theme directory on disk holds wallpapers.
+
+    A theme whose imagery ships in its release archive (D015) keeps its
+    definitions in the repository and has no `backgrounds/` until it is
+    downloaded, so a `theme.json` on disk does not make the theme usable.
+    """
+    return any(entry.is_file() for entry in (package / "backgrounds").glob("*"))
 
 
 def catalog_entries() -> List[Dict[str, Any]]:
@@ -1465,6 +1481,9 @@ def catalog_entries() -> List[Dict[str, Any]]:
         if not name:
             continue
         marker = catalog_marker(name) if catalog_owns(name) else {}
+        packaged = compose_theme_files(name).get("preview.png")
+        usable = name in installed and (theme_dir_has_wallpapers(builtin_themes_dir() / name)
+                                        or theme_dir_has_wallpapers(user_themes_dir() / name))
         entries.append({
             "name": name,
             "mode": raw.get("mode", "dark"),
@@ -1475,11 +1494,15 @@ def catalog_entries() -> List[Dict[str, Any]]:
             "foreground": raw.get("foreground", ""),
             "accent": raw.get("accent", ""),
             "size": int(raw.get("size") or 0),
-            "installed": name in installed,
+            # A theme with definitions and no wallpapers cannot be applied, so
+            # reporting it as installed would leave the browser offering nothing
+            # for the one theme the user cannot use.
+            "installed": usable,
             "builtin": (builtin_themes_dir() / name / "theme.json").is_file(),
             "downloaded": bool(marker),
             "downloadedRef": str(marker.get("ref") or ""),
-            "preview": catalog_preview_path(name),
+            "preview": theme_shipped_preview(
+                name, str(packaged) if packaged and packaged.is_file() else ""),
         })
     entries.sort(key=lambda e: e["name"])
     return entries
@@ -1535,7 +1558,12 @@ def catalog_download_theme(entry: Dict[str, Any], base_urls: List[str], allow_lo
     can proceed during downloads. The directory swap holds the lock."""
     name = _catalog_check_name(str(entry.get("name") or ""))
     dest = user_themes_dir() / name
-    if (builtin_themes_dir() / name / "theme.json").is_file():
+    # A built-in theme keeps its definitions in the repository while its imagery
+    # ships in a release archive (D015), so theme.json alone is no reason to
+    # refuse: refuse only a built-in copy that already carries its wallpapers.
+    # Without this a source checkout can never obtain the imagery it does not
+    # hold, and every such theme paints the backdrop gradient for good.
+    if theme_dir_has_wallpapers(builtin_themes_dir() / name):
         return {"name": name, "status": "skipped", "reason": "already installed as a built-in theme"}
     if dest.exists():
         if not force:
@@ -7652,10 +7680,12 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
                 # without regenerating anything. Without the thumbnail arm every
                 # theme with definitions and no imagery reports no screenshot,
                 # and generateMissingPreviews() renders the whole set through a
-                # nested compositor on every run. Both stop being truthful once
+                # nested compositor on the first open after a cold preview
+                # cache. Both stop being truthful once
                 # the user restyles or overlays the theme, so in that case drop
                 # back to "missing" and let the generator run.
-                shipped_preview = b.get("packagedPreview", "") or theme_thumbnail_path(str(b.get("name") or ""))
+                shipped_preview = theme_shipped_preview(
+                    str(b.get("name") or ""), b.get("packagedPreview", ""))
                 if shipped_preview and not preview.exists() and (
                     b.get("modified") or not adjustments_all_zero(normalize_adjustments(b.get("adjustments")))
                 ):

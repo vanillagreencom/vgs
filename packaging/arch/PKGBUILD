@@ -90,10 +90,15 @@ install='vgs-shell.install'
 # Another notification daemon can acquire org.freedesktop.Notifications
 # before VGS. Declare the conflict so VGS can receive session notifications.
 provides=('notification-daemon')
-conflicts=('notification-daemon' 'mako' 'swaync')
+# vgs-shell owns /usr/lib/vshell/config/vshell/icons now that the retired
+# vgs-shell-assets no longer ships them. pacman honours replaces only for
+# repository packages, so an AUR install needs conflicts as well to be
+# offered the removal instead of aborting on the icon files.
+replaces=('vgs-shell-assets')
+conflicts=('notification-daemon' 'mako' 'swaync' 'vgs-shell-assets')
 
 package() {
   cd "vgs-$pkgver-linux-$CARCH"
   sed -i 's|^#!/bin/env bash$|#!/usr/bin/env bash|' config/vshell/nvim/colorschemes/tokyonight.nvim/scripts/{build,docs}
-  DESTDIR="$pkgdir" VGS_THEME_BUNDLE=core VGS_BACKEND_BINARY="$PWD/bin/vshell-backend" packaging/install-system.sh
+  DESTDIR="$pkgdir" VGS_BACKEND_BINARY="$PWD/bin/vshell-backend" packaging/install-system.sh
 }

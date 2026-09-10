@@ -6,6 +6,13 @@ dest="${DESTDIR:-}"
 prefix="${PREFIX:-/usr}"
 lib="$dest$prefix/lib/vshell"
 
+# One theme set, so there is nothing left to select. A recipe still passing the
+# retired variable expects a different tree than this installs.
+if [[ -n "${VGS_THEME_BUNDLE:-}" ]]; then
+  echo "install-system.sh: VGS_THEME_BUNDLE is retired; this installs the one theme set. Drop it from the caller." >&2
+  exit 2
+fi
+
 install -d "$lib" "$dest$prefix/bin" "$dest$prefix/lib/systemd/user"
 cp -a "$root/quickshell" "$root/config" "$root/third_party" "$lib/"
 install -d "$lib/themes"

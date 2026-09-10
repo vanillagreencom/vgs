@@ -53,7 +53,7 @@ Each lock entry also carries `definitions`, one digest over the `(path, sha256)`
 
 **First paint offline**: every catalog tile paints its thumbnail from local disk with no network call, because the core package carries them. A catalog entry with no thumbnail keeps the existing swatch treatment — `ThemeCatalogBrowser.qml:315` fills the frame with `cell.modelData.background`, `:330` labels it "No screenshot", and `:394` renders eight colour chips from the catalog's own palette.
 
-`themes/catalog-previews/` is deleted along with both sites that derived it (`scripts/build-release.sh`, `install_catalog_previews()` in `packaging/install-system.sh`). `thumbnails` replaces `catalog-previews` in `RESERVED_THEME_SUBDIRS`, and `catalog_preview_path()`'s shipped branch reads the thumbnail instead.
+`themes/catalog-previews/` is deleted along with both sites that derived it (`scripts/build-release.sh`, `install_catalog_previews()` in `packaging/install-system.sh`). `thumbnails` replaces `catalog-previews` in `RESERVED_THEME_SUBDIRS`, and the shipped branch of the browser's screenshot lookup reads the thumbnail instead (`theme_shipped_preview()` since the imagery left the tree).
 
 ### 4. Archives cache in `~/.cache/vshell/theme-assets/`; installed themes stay in the config directory
 
@@ -85,6 +85,7 @@ A downloaded archive streams into `~/.cache/vshell/theme-assets/<sha256>.tar.gz`
 | File | Becomes |
 |---|---|
 | `packaging/arch/vgs-shell-assets/` | Deleted. The AUR package is also removed at aur.archlinux.org, which is a manual step. |
+| `packaging/arch/PKGBUILD` | The stable recipe drops `VGS_THEME_BUNDLE=core` and declares `replaces` and `conflicts` on `vgs-shell-assets`: the single install now writes the icons that package owned, and pacman honours `replaces` only for repository packages, so an AUR install needs both. |
 | `packaging/arch/vgs-shell-git/PKGBUILD` | One package again: the `pkgname` array, `package_vgs-shell-assets-git()` (`:114-122`) and its `provides`/`conflicts` go. |
 | `packaging/debian/control`, `rules` | The `Package: vgs-shell-assets` stanza and the second `install-system.sh` line (`rules:17`) go. |
 | `packaging/fedora/vgs-shell.spec` | The `%package assets` block, `%files assets` (`:177-183`) and the second install line (`:145`) go. |

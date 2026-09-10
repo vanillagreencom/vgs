@@ -62,7 +62,7 @@ python3 -c 'import json, sys; print("\n".join(sorted(t["name"] for t in json.loa
   "$root/themes/catalog.json" | sort > "$tmp/thumbnails.want"
 # Any failed comparison must stop the check, including errors while reading either file.
 if ! thumbnail_diff="$(diff "$tmp/thumbnails.want" "$tmp/thumbnails.have")"; then
-  echo "check-release: the core bundle's theme thumbnails do not match the catalogued themes:" >&2
+  echo "check-release: the release bundle's theme thumbnails do not match the catalogued themes:" >&2
   printf '%s\n' "$thumbnail_diff" >&2
   exit 1
 fi
@@ -73,4 +73,15 @@ runtime_dir="$tmp/runtime"
 mkdir -p "$runtime_dir"
 XDG_RUNTIME_DIR="$runtime_dir" VGS_BACKEND_SOCKET='' "$bundle/bin/vshell-backend" methods --json \
   | python3 -c 'import json,sys; expected=sys.argv[1]; actual=json.load(sys.stdin)["cliVersion"]; raise SystemExit(0 if actual == expected else f"backend cliVersion {actual!r} != {expected!r}")' "$version"
+# The tarball ships packaging/install-system.sh and then carries the theme
+# directories that installer copies. build-release.sh spells that set a second
+# time, so drift publishes a tarball whose own installer dies at cp. Void
+# installs exactly this way, so run it.
+DESTDIR="$tmp/tarball-install" VGS_BACKEND_BINARY="$bundle/bin/vshell-backend" \
+  "$bundle/packaging/install-system.sh"
+test -f "$tmp/tarball-install/usr/lib/vshell/themes/bauhaus/theme.json"
+test -f "$tmp/tarball-install/usr/lib/vshell/themes/roseofdune/theme.json"
+test -d "$tmp/tarball-install/usr/lib/vshell/themes/targets"
+test -s "$tmp/tarball-install/usr/lib/vshell/themes/thumbnails/bauhaus.jpg"
+test -d "$tmp/tarball-install/usr/lib/vshell/config/vshell/icons"
 echo "release checks passed for $version"
