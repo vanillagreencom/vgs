@@ -1917,6 +1917,12 @@ def lint_blueprint(bp: Dict[str, Any]) -> List[Dict[str, Any]]:
     check("accent", accent, bg, 3.0)
     check("cursor", clean_hex(ext.get("cursor") or accent, accent), bg, 3.0)
     check("selection_foreground", selection_fg, selection_bg, 4.5, "selection_background")
+    # color0 is ANSI black. A dark theme conventionally sets it to its own
+    # background, and nothing draws text in it there; a light terminal draws
+    # body text in it, so a light theme needs it dark. Same threshold as the
+    # generated-palette rule for this slot.
+    if mode == "light":
+        check(f"color0 ({ANSI_NAMES[0]})", colors[0], bg, 7.0)
     for i in range(1, 16):
         check(f"color{i} ({ANSI_NAMES[i]})", colors[i], bg, 3.0)
     return warnings
