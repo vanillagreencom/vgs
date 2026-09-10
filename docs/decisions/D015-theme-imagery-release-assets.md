@@ -16,7 +16,7 @@ The download machinery for uninstalled themes already exists and ships. `catalog
 
 ### 1. The store is a numbered theme-asset release, one archive per theme
 
-Theme imagery publishes to GitHub Releases on `vanillagreencom/vgs` under tags `themes-v1`, `themes-v2`, and so on. One asset per theme, named `vgs-theme-<name>-r<rev>.tar.gz`, holding that theme's complete package: `theme.json`, `colors.toml`, `apps/*`, `backgrounds/` and `preview.png`. `<rev>` is a per-theme integer that increases only when that archive's content changes.
+Theme imagery publishes to GitHub Releases on `vanillagreencom/vgs` under tags `themes-v1`, `themes-v2`, and so on. One asset per theme, named `vgs-theme-<name>-r<rev>.tar.gz`, holding that theme's complete package: `theme.json`, `colors.toml`, `apps/*`, `backgrounds/` and `preview.png`. `<rev>` is a per-theme integer that increases only when that archive's content changes, and it increases to the first revision the release does not already carry, which is not always by one.
 
 **The archive carries the definitions too, not the imagery alone.** Installing a theme is then one request against one checksum, with no second fetch from a git ref: `raw.githubusercontent.com` leaves the download path entirely, which is what makes the history rewrite in §6 safe for downloads. The cost is that editing a theme's colours republishes that theme's archive; `scripts/gen-theme-catalog.py --check` fails until it does, so the two cannot drift apart silently.
 
@@ -31,7 +31,7 @@ Theme imagery and the shell version are therefore independent in both directions
 `scripts/gen-theme-catalog.py` keeps ownership of the file. It reads:
 
 - **The repository tree**, for everything the definitions carry: `name`, `mode`, `pair`, `source`, the 16 colours, `background`, `foreground`, `accent`, and a `files[]` entry with size and sha256 for each *definition* file that remains in the tree (`theme.json`, `colors.toml`, `apps/*`). 517 of the current 1005 file entries are definition files and survive unchanged.
-- **`themes/asset-lock.json`**, a checked-in file written only by the publish script, holding per theme `{release, archive, rev, size, sha256, files}`.
+- **`themes/asset-lock.json`**, a checked-in file written only by the publish script, holding per theme `{release, archive, rev, size, sha256, definitions, preview, published}`. `definitions` is the digest below; `preview` is the sha256 of the screenshot the theme's thumbnail was derived from; `published` records whether the archive reached the release. Generation refuses an entry with no `definitions`, and the CI gate reports one without `published` as never published.
 
 The 488 imagery entries in `files[]` collapse into one `assets` object per theme carrying one checksum for one archive. `source` becomes `{type: "github-release", repo, ref, baseUrl}`, where `baseUrl` is the release download root and a theme's archive resolves as `<baseUrl>/<release>/<archive>`. `source.refs` and `source.baseUrls` are gone; `source.ref` stays because `--check-release-pin` names the shell release the catalog ships with. The entry's `size` becomes the archive's compressed size, which is what a download actually transfers.
 

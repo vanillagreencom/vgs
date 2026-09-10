@@ -33,7 +33,6 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 THEMES_DIR = REPO_ROOT / "themes"
 LOCK_PATH = THEMES_DIR / "asset-lock.json"
 THUMBNAIL_DIR = THEMES_DIR / "thumbnails"
-REPO_SLUG = "vanillagreencom/vgs"
 RELEASE_TAG_RE = re.compile(r"^themes-v(\d+)$")
 LOCK_VERSION = 1
 # The browser paints catalog tiles at 480 px (ThemeCatalogBrowser.qml), so the
@@ -92,7 +91,7 @@ def theme_names() -> List[str]:
 
 def load_lock() -> Dict[str, Any]:
     if not LOCK_PATH.is_file():
-        return {"version": LOCK_VERSION, "repo": REPO_SLUG, "themes": {}}
+        return {"version": LOCK_VERSION, "repo": generator().REPO_SLUG, "themes": {}}
     data = json.loads(LOCK_PATH.read_text())
     if not isinstance(data, dict) or not isinstance(data.get("themes"), dict):
         raise SystemExit(f"{LOCK_PATH} is not a theme asset lock")
@@ -102,7 +101,7 @@ def load_lock() -> Dict[str, Any]:
 def render_lock(lock: Dict[str, Any]) -> str:
     ordered = {
         "version": LOCK_VERSION,
-        "repo": REPO_SLUG,
+        "repo": generator().REPO_SLUG,
         "themes": {name: lock["themes"][name] for name in sorted(lock["themes"])},
     }
     return json.dumps(ordered, indent=2) + "\n"
@@ -252,7 +251,7 @@ def ensure_release(tag: str) -> None:
     """
     if generator().gh_release(tag) is not None:
         return
-    created = gh("release", "create", tag, "--repo", REPO_SLUG, "--title", tag,
+    created = gh("release", "create", tag, "--repo", generator().REPO_SLUG, "--title", tag,
                  "--notes", "Theme imagery archives. Assets are never replaced or deleted.")
     if created.returncode != 0:
         raise SystemExit(f"could not create release {tag}: {created.stderr.strip()}")
@@ -261,7 +260,7 @@ def ensure_release(tag: str) -> None:
 def published_asset_digest(tag: str, name: str) -> str:
     """The sha256 of an asset already on the release."""
     with tempfile.TemporaryDirectory() as scratch:
-        fetched = gh("release", "download", tag, "--repo", REPO_SLUG,
+        fetched = gh("release", "download", tag, "--repo", generator().REPO_SLUG,
                      "--pattern", name, "--dir", scratch, "--clobber")
         if fetched.returncode != 0:
             raise SystemExit(f"could not read the published {tag}/{name}: {fetched.stderr.strip()}")
@@ -293,7 +292,7 @@ def publish_archive(tag: str, theme: str, rev: int, blob: bytes, digest: str,
     path = stage / archive
     path.write_bytes(blob)
     try:
-        uploaded = gh("release", "upload", tag, str(path), "--repo", REPO_SLUG)
+        uploaded = gh("release", "upload", tag, str(path), "--repo", generator().REPO_SLUG)
     finally:
         path.unlink()
     if uploaded.returncode != 0:
@@ -331,12 +330,8 @@ def publish(args: argparse.Namespace) -> int:
             thumbnail.unlink()
 
     published = 0
+    created = False
     stage = Path(tempfile.mkdtemp(prefix="vgs-theme-assets-"))
-    # One release lookup for the whole run: the per-upload lookup inside
-    # publish_archive must stay, because it has to see the release as the
-    # previous iteration left it.
-    if args.upload:
-        ensure_release(tag)
     try:
         for name in names:
             assets = root / name
@@ -368,6 +363,14 @@ def publish(args: argparse.Namespace) -> int:
                 rev += 1
             archive = archive_name(name, rev)
             if args.upload:
+                # The release is created by the first archive that actually
+                # uploads, and looked up once for the run rather than once per
+                # theme. Creating it above the loop would open an empty release,
+                # and a git tag on the default branch that every clone fetches,
+                # on a rerun with nothing to publish.
+                if not created:
+                    ensure_release(tag)
+                    created = True
                 archive, rev = publish_archive(tag, name, rev, blob, digest, stage)
                 print(f"  published {tag}/{archive}")
             # Record what is published as each theme finishes, not as a batch:

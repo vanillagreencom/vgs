@@ -3339,6 +3339,8 @@ def test_theme_asset_publisher():
         uploads = []
 
         class _Release:
+            REPO_SLUG = "vanillagreencom/vgs"
+
             def __init__(self, assets):
                 self.assets = assets
 
@@ -3486,17 +3488,26 @@ def test_theme_asset_publish_records_what_is_on_the_release():
         assets = tmp / "assets" / "demo"
         (assets / "backgrounds").mkdir(parents=True)
         (assets / "backgrounds" / "1-demo.jpg").write_bytes(b"wallpaper\n")
+        # A real screenshot, so the thumbnail path runs and its bookkeeping is
+        # assertable rather than merely described.
+        from PIL import Image
 
-        uploaded: list[str] = []
+        Image.new("RGB", (1920, 1080), (16, 16, 16)).save(assets / "preview.png")
 
         class _Release:
+            """Release store keyed by tag, so a release created empty is visible."""
+
             def __init__(self):
-                self.exists = False
+                self.assets: dict[str, list[str]] = {}
                 self.lookups = 0
 
-            def gh_release(self, _tag):
+            REPO_SLUG = "vanillagreencom/vgs"
+
+            def gh_release(self, tag):
                 self.lookups += 1
-                return {"assets": [{"name": n} for n in uploaded]} if self.exists else None
+                if tag not in self.assets:
+                    return None
+                return {"assets": [{"name": n} for n in self.assets[tag]]}
 
             def is_imagery(self, rel):
                 return real.is_imagery(rel)
@@ -3513,11 +3524,15 @@ def test_theme_asset_publish_records_what_is_on_the_release():
         real = _load_script("gen_theme_catalog_publish_probe", "gen-theme-catalog.py")
         release = _Release()
 
+        repos: set[str] = set()
+
         def fake_gh(*args):
+            if "--repo" in args:
+                repos.add(args[args.index("--repo") + 1])
             if args[:2] == ("release", "create"):
-                release.exists = True
+                release.assets.setdefault(args[2], [])
             if args[:2] == ("release", "upload"):
-                uploaded.append(Path(args[3]).name)
+                release.assets[args[2]].append(Path(args[3]).name)
             return subprocess.CompletedProcess(args, 0, "", "")
 
         saved = (publisher.THEMES_DIR, publisher.LOCK_PATH, publisher.THUMBNAIL_DIR,
@@ -3539,7 +3554,11 @@ def test_theme_asset_publish_records_what_is_on_the_release():
             assert_equal((dry["published"], dry["rev"], dry["archive"], dry["release"]),
                          (False, 1, "vgs-theme-demo-r1.tar.gz", "themes-v1"),
                          "a dry run pins revision 1 as unpublished")
-            assert_equal(uploaded, [], "a dry run uploads nothing")
+            assert_equal(release.assets, {}, "a dry run creates no release and uploads nothing")
+            assert_equal((publisher.THUMBNAIL_DIR / "demo.jpg").is_file(), True,
+                         "the thumbnail is derived from the preview")
+            assert_equal(dry["preview"], real.sha256_of(assets / "preview.png"),
+                         "the lock records the preview the thumbnail came from")
 
             # The real run must still upload it. A skip that looked only at the
             # archive digest would leave the catalog naming an archive nobody
@@ -3556,7 +3575,7 @@ def test_theme_asset_publish_records_what_is_on_the_release():
             assert_equal((wet["published"], wet["rev"], wet["archive"]),
                          (True, 1, "vgs-theme-demo-r1.tar.gz"),
                          "the real run publishes the same revision the dry run pinned")
-            assert_equal(sorted(uploaded),
+            assert_equal(sorted(release.assets["themes-v1"]),
                          ["vgs-theme-demo-r1.tar.gz", "vgs-theme-extra-r1.tar.gz"],
                          "both archives reach the release")
             # One release lookup for the run plus one per upload. Putting the
@@ -3564,12 +3583,20 @@ def test_theme_asset_publish_records_what_is_on_the_release():
             # which is 78 extra calls and about 37 seconds over 79 themes.
             assert_equal(release.lookups, 3,
                          "a publish looks the release up once, plus once per upload")
+            # One repository. A second constant here would upload to one place
+            # while the catalog's baseUrl named another, and every install 404s.
+            assert_equal(sorted(repos), [release.REPO_SLUG],
+                         "uploads go to the repository the catalog downloads from")
 
             # Unchanged published content is skipped: a rerun must not orphan a
             # fresh revision on a release nothing is ever deleted from.
+            # A rerun with nothing to publish must not create a release, which
+            # on the real service is also a git tag every clone then fetches.
+            release.lookups = 0
             again = run(True)["demo"]
-            assert_equal((again["rev"], len(uploaded)), (1, 2),
-                         "unchanged published content uploads nothing and keeps its revision")
+            assert_equal((again["rev"], sorted(release.assets)), (1, ["themes-v1"]),
+                         "unchanged published content uploads nothing and creates no release")
+            assert_equal(release.lookups, 0, "a run that publishes nothing asks GitHub nothing")
 
             # Changed content bumps by exactly one.
             (assets / "backgrounds" / "1-demo.jpg").write_bytes(b"different wallpaper\n")
@@ -3577,12 +3604,15 @@ def test_theme_asset_publish_records_what_is_on_the_release():
             assert_equal((changed["rev"], changed["archive"], changed["release"]),
                          (2, "vgs-theme-demo-r2.tar.gz", "themes-v2"),
                          "changed content bumps the revision by one into the next release")
-            assert_equal(len(uploaded), 3, "changed content uploads once")
+            assert_equal(release.assets["themes-v2"], ["vgs-theme-demo-r2.tar.gz"],
+                         "the new release carries only the archive that changed")
 
             # A theme dropped from the tree loses its pin and its thumbnail.
             shutil.rmtree(themes / "demo")
             assert_equal(sorted(run(True)), ["extra"],
                          "a theme no longer in the tree is dropped from the lock")
+            assert_equal((publisher.THUMBNAIL_DIR / "demo.jpg").exists(), False,
+                         "a removed theme leaves no thumbnail behind")
         finally:
             (publisher.THEMES_DIR, publisher.LOCK_PATH, publisher.THUMBNAIL_DIR,
              publisher.GENERATOR, publisher.gh, publisher.regenerate_catalog) = saved
