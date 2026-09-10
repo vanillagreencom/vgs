@@ -108,9 +108,29 @@ def render_lock(lock: Dict[str, Any]) -> str:
     return json.dumps(ordered, indent=2) + "\n"
 
 
+def archive_name(theme: str, rev: int) -> str:
+    return f"vgs-theme-{theme}-r{rev}.tar.gz"
+
+
 def next_release_tag(lock: Dict[str, Any]) -> str:
+    """The release this publish uploads into.
+
+    An unpublished pin already names the release it is destined for, so a resumed
+    run continues into that one rather than opening a new release and stranding
+    the assets the interrupted run already uploaded. Only a published entry
+    consumes a release number.
+    """
+    pending = sorted({str(entry.get("release") or "") for entry in lock["themes"].values()
+                      if not entry.get("published") and entry.get("release")})
+    if len(pending) == 1:
+        return pending[0]
+    if pending:
+        raise SystemExit(f"{LOCK_PATH} pins unpublished archives across several releases "
+                         f"({', '.join(pending)}); one publish uploads into one release")
     highest = 0
     for entry in lock["themes"].values():
+        if not entry.get("published"):
+            continue
         match = RELEASE_TAG_RE.match(str(entry.get("release") or ""))
         if match:
             highest = max(highest, int(match.group(1)))
@@ -195,8 +215,18 @@ def require_pillow() -> Any:
     return Image
 
 
-def thumbnail_is_current(preview: Path, dest: Path) -> bool:
-    return dest.is_file() and dest.stat().st_mtime_ns >= preview.stat().st_mtime_ns
+def thumbnail_needs_rebuild(preview_digest: str, recorded: str, thumbnail: Path) -> bool:
+    """Whether the 480 px thumbnail has to be derived again.
+
+    Bound to the preview's content, never to its timestamp. An mtime-preserving
+    copy into the asset root — `tar -x`, `cp -p`, `rsync -a`, a restored backup —
+    can put different pixels there under an older timestamp, and a timestamp rule
+    then paints the previous theme's screenshot until someone deletes the file by
+    hand. A missing thumbnail always rebuilds, which is how a lost one is recovered.
+    """
+    if not preview_digest:
+        return False
+    return not thumbnail.is_file() or recorded != preview_digest
 
 
 def write_thumbnail(preview: Path, dest: Path) -> None:
@@ -238,29 +268,42 @@ def published_asset_digest(tag: str, name: str) -> str:
         return hashlib.sha256((Path(scratch) / name).read_bytes()).hexdigest()
 
 
-def upload_asset(tag: str, path: Path, digest: str) -> None:
-    """Upload one archive, accepting one already present at these exact bytes.
+def publish_archive(tag: str, theme: str, rev: int, blob: bytes, digest: str,
+                    stage: Path) -> Tuple[str, int]:
+    """Put `blob` on the release and return the asset name and revision it landed under.
 
     A published asset is never replaced: a checksum a shipped catalog pins has to
-    stay fetchable. An interrupted run that already uploaded this archive is a
-    resume rather than a collision, so the bytes decide which of the two it is.
+    stay fetchable. A name already on the release at the identical sha256 is an
+    interrupted run resuming, so nothing is uploaded. A name there with different
+    bytes takes the first revision the release does not carry, which is where the
+    next free revision comes from — the lock alone cannot supply one, so deriving
+    it from the lock leaves a rerun refusing the same name forever.
     """
     release = generator().gh_release(tag)
     if release is None:
-        raise SystemExit(f"{tag} does not exist, so {path.name} cannot be uploaded to it")
-    if path.name in {str(asset.get("name") or "") for asset in (release.get("assets") or [])}:
-        if published_asset_digest(tag, path.name) == digest:
-            print(f"  {path.name} is already published at these bytes")
-            return
-        raise SystemExit(f"{tag} already carries {path.name} with different bytes; a published "
-                         f"asset is never replaced, so publish it as a new revision instead")
-    uploaded = gh("release", "upload", tag, str(path), "--repo", REPO_SLUG)
+        raise SystemExit(f"{tag} does not exist, so {theme} cannot be uploaded to it")
+    existing = {str(asset.get("name") or "") for asset in (release.get("assets") or [])}
+    if archive_name(theme, rev) in existing:
+        if published_asset_digest(tag, archive_name(theme, rev)) == digest:
+            print(f"  {archive_name(theme, rev)} is already published at these bytes")
+            return archive_name(theme, rev), rev
+        while archive_name(theme, rev) in existing:
+            rev += 1
+    archive = archive_name(theme, rev)
+    path = stage / archive
+    path.write_bytes(blob)
+    try:
+        uploaded = gh("release", "upload", tag, str(path), "--repo", REPO_SLUG)
+    finally:
+        path.unlink()
     if uploaded.returncode != 0:
-        raise SystemExit(f"could not upload {path.name} to {tag}: {uploaded.stderr.strip()}")
+        raise SystemExit(f"could not upload {archive} to {tag}: {uploaded.stderr.strip()}")
+    return archive, rev
 
 
 def asset_url(entry: Dict[str, Any]) -> str:
-    return f"https://github.com/{REPO_SLUG}/releases/download/{entry['release']}/{entry['archive']}"
+    """Where a published archive is fetched from, off the generator's own base URL."""
+    return f"{generator().RELEASE_BASE_URL}/{entry['release']}/{entry['archive']}"
 
 
 def regenerate_catalog() -> None:
@@ -289,53 +332,55 @@ def publish(args: argparse.Namespace) -> int:
 
     published = 0
     stage = Path(tempfile.mkdtemp(prefix="vgs-theme-assets-"))
+    # One release lookup for the whole run: the per-upload lookup inside
+    # publish_archive must stay, because it has to see the release as the
+    # previous iteration left it.
+    if args.upload:
+        ensure_release(tag)
     try:
         for name in names:
             assets = root / name
             if not assets.is_dir():
                 raise SystemExit(f"{name}: no imagery under {assets}; run --pull first")
-            # The thumbnail is derived from the preview alone, so it is rebuilt
-            # whenever it is missing or older than that preview. Tying it to the
-            # archive digest would leave a deleted thumbnail unrecoverable while
-            # two gates require one.
+            previous = lock["themes"].get(name) or {}
+            # The thumbnail is derived from the preview alone and is rebuilt
+            # whenever the preview's content differs from the one it came from,
+            # or the file is gone. Tying it to the archive digest would leave a
+            # deleted thumbnail unrecoverable while two gates require one.
             preview = assets / "preview.png"
             thumbnail = THUMBNAIL_DIR / f"{name}.jpg"
-            if preview.is_file():
-                if not thumbnail_is_current(preview, thumbnail):
-                    write_thumbnail(preview, thumbnail)
-            elif thumbnail.exists():
+            preview_digest = generator().sha256_of(preview) if preview.is_file() else ""
+            if thumbnail_needs_rebuild(preview_digest, str(previous.get("preview") or ""), thumbnail):
+                write_thumbnail(preview, thumbnail)
+            elif not preview_digest and thumbnail.exists():
                 thumbnail.unlink()
 
             members = package_members(name, assets)
             blob = build_archive(members)
             digest = hashlib.sha256(blob).hexdigest()
-            previous = lock["themes"].get(name) or {}
             # Only a theme whose archive is both unchanged AND already on a
             # release is skipped. A dry run records the pin without publication,
             # so a later real run still uploads it.
             if previous.get("published") and previous.get("sha256") == digest:
                 continue
             rev = int(previous.get("rev") or 0)
-            if previous.get("sha256") != digest:
+            if rev == 0 or previous.get("sha256") != digest:
                 rev += 1
-            archive = f"vgs-theme-{name}-r{max(rev, 1)}.tar.gz"
-            path = stage / archive
-            path.write_bytes(blob)
+            archive = archive_name(name, rev)
             if args.upload:
-                ensure_release(tag)
-                upload_asset(tag, path, digest)
+                archive, rev = publish_archive(tag, name, rev, blob, digest, stage)
                 print(f"  published {tag}/{archive}")
-            path.unlink()
             # Record what is published as each theme finishes, not as a batch:
             # an upload that fails at archive k leaves a lock describing exactly
             # the k-1 that are on the release, and the rerun resumes from there.
             lock["themes"][name] = {
-                "release": tag if args.upload else str(previous.get("release") or tag),
+                "release": tag,
                 "archive": archive,
-                "rev": max(rev, 1),
+                "rev": rev,
                 "size": len(blob),
                 "sha256": digest,
                 "definitions": definitions_pin(members),
+                "preview": preview_digest,
                 "published": bool(args.upload),
             }
             LOCK_PATH.write_text(render_lock(lock))

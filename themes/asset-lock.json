@@ -9,6 +9,7 @@
       "size": 41993828,
       "sha256": "91d7a2ffbf237847e9192d911e3cbbf37c6080f85049e88d1e63b7e42f0bee22",
       "definitions": "7c2bf9a4478fdcf15de0ac0fd015448726b54920b325d62fd28dafdf5bfa2ec1",
+      "preview": "fad44cf67f568889386842264ba3506da3ca8aa6140488796d786141084b7f49",
       "published": false
     },
     "amberbyte": {
@@ -18,6 +19,7 @@
       "size": 4303185,
       "sha256": "38f6a4e16ba8e52ea6304d0f8434b6b8516c8e2eb1ad9c30655374d09c365b19",
       "definitions": "7bf0368d186dcd7074eec3d89150e1c857d282d2052f82ab6a6b3bac51563224",
+      "preview": "d505ccfe57f506ebfd975fb8f90ae6343b473b9abeba56ca08f213aa0e70a93f",
       "published": false
     },
     "arc-blueberry": {
@@ -27,6 +29,7 @@
       "size": 10892605,
       "sha256": "a612249bbf2ba1332b971118f785b76b2969e02ae805a0de699e616313e40d05",
       "definitions": "50c9afdbc5e61773d525cdd49c4754b08c399f46233a279b03153a6387d9cce0",
+      "preview": "6357c8022c1fc7d3c03d613785107306517e425c694f17a92e296760fc592b31",
       "published": false
     },
     "arc-raiders": {
@@ -36,6 +39,7 @@
       "size": 5117405,
       "sha256": "d20ed1dd2d59451c2814eb3f04692ee92fe5b39261cf0b09f7b519661402fdcb",
       "definitions": "34cc88dd19c74baa38b68990d3c4ff2784d0d9285839643f1808acfae020abdb",
+      "preview": "60b9aa8edabdcb8399e246009db886073731d914ab8234eae517f720e4eb8e2c",
       "published": false
     },
     "archwave": {
@@ -45,6 +49,7 @@
       "size": 10615920,
       "sha256": "2362a30c2aed344b3e3f411816cacb6ff902a30c4d1908b3f8e61dca08afa0ac",
       "definitions": "155e3bfcb659bf7244928d5547f374360e635c824f2b4a12ea7cac7bf1bf0a80",
+      "preview": "5b1c31a2a9a243bf25a955b930d6ee8ffb35504e9cfdaf14168c77ab77905edb",
       "published": false
     },
     "artzen": {
@@ -54,6 +59,7 @@
       "size": 16884790,
       "sha256": "34a8b0908cc558ee856d1213566be57647c5956742f06d7621eb47fdab6a0372",
       "definitions": "088570c545e8ddf8f7016ffc48a89da5e2fc917d3fd5e4cfbb38401af2da2298",
+      "preview": "5dfcb6765718addd24b118455435ff706b0f2bbe3879c81fa582af0ea4637012",
       "published": false
     },
     "ayu": {
@@ -63,6 +69,7 @@
       "size": 6443809,
       "sha256": "b4d2511bf1af83201a2e5e54780e12bfecfab0a8c7a7e5275a030985c91ea980",
       "definitions": "39e6c404c928dc4c55163a0df034e888898afe5295251fcdabe2befb51fb3a89",
+      "preview": "545add502a4429096e2ab85dda063f5038311be5ec8fcb3960fca824a763873a",
       "published": false
     },
     "bauhaus": {
@@ -72,6 +79,7 @@
       "size": 9967658,
       "sha256": "e13cf484d7ebc19b91f6fd48f2e2ac649bb3adbea74ebadb797c1afafefdb9c4",
       "definitions": "6f3f424ef25e442b7345f5e34657ca4167157c67a70ec21f7d908811a29f7d0e",
+      "preview": "57f310311ddfc2323396f553ae34d0ae5be9bbee6f671826c2ee6d8a32614bf1",
       "published": false
     },
     "biscuit-de-mar": {
@@ -81,6 +89,7 @@
       "size": 21782615,
       "sha256": "d5ceaa74d603f0c0c650c5b75c81bbe67bb0b8dc95e16a24def27a36d4d6ea5f",
       "definitions": "a18753d348dc5256745b0c65e04efafc1cf51a536d1444535144e581c8d20baa",
+      "preview": "d2cfe365e284e516aa91bb4622a7b10fee73c4d313d95282aca2e75d9a05267d",
       "published": false
     },
     "brutalism": {
@@ -90,6 +99,7 @@
       "size": 13813527,
       "sha256": "7dd7d937161ad25115d685ca7217fbf9efae7238803d08416bf4d3937f2f0622",
       "definitions": "c3a0722ad6c8ed87b294a05a6a866b98d29fff7f3981dcc57b4b8eb37ca3f7cf",
+      "preview": "9d057e928a40b604a99bf070f194e31969ac352176c30e96ca7952d0b0912d22",
       "published": false
     },
     "catppuccin": {
@@ -99,6 +109,7 @@
       "size": 12830181,
       "sha256": "4d2e6a2c3dea2a702c3b07b26da16f5fa11f4e7bf133da2065e72952bb77582c",
       "definitions": "b35541146a6a2166f4d63c02868fce8c8fa7b0cf92f38c5a41e9ed4cd447b015",
+      "preview": "5cbe6006df95918ba9d052ef61ec6376b16b11856dd4cb844d9d86c0842cd202",
       "published": false
     },
     "catppuccin-frappe": {
@@ -108,6 +119,7 @@
       "size": 15148524,
       "sha256": "46c8227d8e0db804346f8bb5f86984c82ad4e30de1dd2fb106d378788d253196",
       "definitions": "e1f02dd1422044aca6e27eedb26b9320baa10fa7c534acf2c2be0e2cf27905ad",
+      "preview": "3555107d5a78ffb1f49bdb8bbe3f7607c15392e45a9baf395903c07a3e928aa1",
       "published": false
     },
     "catppuccin-latte": {
@@ -117,6 +129,7 @@
       "size": 2658158,
       "sha256": "e5bf7e8f631c3d8fccb315ceefd4c5ecf8928d4585cc05c9eb76d0817eefd9fa",
       "definitions": "47e6946a24122e51343c8aeabddc893880854d9ee47e6dd98ebf04996c8499b9",
+      "preview": "d81081a44b381e0145e3d2729bff966b77f5c5ed5fba13a47abf4ae88d2526ed",
       "published": false
     },
     "catppuccin-macchiato": {
@@ -126,6 +139,7 @@
       "size": 19915699,
       "sha256": "ed605c7bee63b601d8fdc9d626f6bd0f286f4776add6e19832a0981b133f1e2e",
       "definitions": "20f6336c51c9a07b7e9f247a2540eed4f4e4415b66fc234b44a3bdc0b3606d1a",
+      "preview": "6e57f4c0156fa44f79ae791e55260e43146cacc75cef1f3b567f1c1b4bc8b625",
       "published": false
     },
     "coppernight": {
@@ -135,6 +149,7 @@
       "size": 19015247,
       "sha256": "e0066f29f550dfa898fc24ffad1deee41ca2b5dc41c3ac1ed3dda4994e265046",
       "definitions": "e174c39069ee7050016d812515981a63f21fd3217ab6f309a238d64557094a9d",
+      "preview": "47009c0872c76c57f051ba37b34910213eaffa043052d3c555891ae7a1528c0a",
       "published": false
     },
     "cpunk": {
@@ -144,6 +159,7 @@
       "size": 25775050,
       "sha256": "4980bfb3e32829171c70b143a8364ed99902029040d38068640d7343963338a6",
       "definitions": "4c26699a24a3aa954d09d5dd6427865a8e9c29b5ff0c3402273eae8043f6f73a",
+      "preview": "a5802860bd8ae76c02d787153e9d45d2b7437d412de30d73725f9b99e5fe6ba1",
       "published": false
     },
     "delorean": {
@@ -153,6 +169,7 @@
       "size": 14611253,
       "sha256": "84000ea3ee514b934d53549bec3160c785de27e3455659ba515d4d4c7e28a04c",
       "definitions": "8e1607748000350c6da121826890fe67f44522194bbf1bed741601e891d039bc",
+      "preview": "5c37dd346568ca7f0a3769199a9f84d4adf7dba6c5d76a551d860a3faecf65a6",
       "published": false
     },
     "dracula": {
@@ -162,6 +179,7 @@
       "size": 12597028,
       "sha256": "f7bd5619e94a433571aa9242fb50eed7c8cfa320cbb51e86774290c69ce113b7",
       "definitions": "eb826129cab04bdb415e8eb6746de317d294bbfbd8c20838d986edcbef4e5d6b",
+      "preview": "a03bc1b0292628c2c8ee3a0cc2fea6fb3224afbb0b5522d66016c183d6b8a797",
       "published": false
     },
     "eldritch": {
@@ -171,6 +189,7 @@
       "size": 12932094,
       "sha256": "0298a0be36927372d9abb4cdca404c7a38a10a0f3a738eb65b700b68f96fa792",
       "definitions": "86753189c6ad0c2ab6655a5e9304a6fe3e3e56990d36b18661b0e9db68f0fb45",
+      "preview": "299f09e631416a07e5fd6f8a7a70e02c23dcc09789b9f4ea83c5500b7c6742c3",
       "published": false
     },
     "ember-n-ash": {
@@ -180,6 +199,7 @@
       "size": 16717845,
       "sha256": "445decf3ffab378eea84709556d3997d9722ce8b2d6ca25d79f1da03738ef73f",
       "definitions": "69f71872f7ef76da343235463fe51148beca7356fcf19361a91fd9d80f5268eb",
+      "preview": "1ad821a49d19e2c0721e8a6b39a35189960cc8d6b9c245c0405c4ce08b296e52",
       "published": false
     },
     "ethereal": {
@@ -189,6 +209,7 @@
       "size": 4890671,
       "sha256": "48eeeb35ef69a56f3f4adeb5d92f7ad979f398dba0ed3793ab36e752fbc75f88",
       "definitions": "3a730ef4a81897658a8e7bdd3060e0e8e4b427dac6495abb443ec88964144342",
+      "preview": "1868a80de422c2ae0d72e15a40d0eb65fe8c8df412e6619ce32cbd92e1c91f06",
       "published": false
     },
     "event-horizon": {
@@ -198,6 +219,7 @@
       "size": 18628470,
       "sha256": "7454eb4a1bab617cacdd7af45ccc1928e8f7598d4bfcc0b4f6269d4ba0e5d3a0",
       "definitions": "60285ecaacd49ef402854ae3d97f5048266105bb897d1ecb11f84e0d016c14ca",
+      "preview": "bedb6460299e0b61d2113bb68684ff2c47dcf93746633f2241d75921923902bc",
       "published": false
     },
     "everforest": {
@@ -207,6 +229,7 @@
       "size": 951458,
       "sha256": "86c4f6a006a34fed3444d6c046519a10d2d9a911b6cc4ac7b2190d923da72a86",
       "definitions": "a235fe1aedfc37017bf4eeed720919a17bb5f8da27d56f9cb0f63a130f1cac1d",
+      "preview": "a9c4a2eb053e2c0813ef6bb4eeaa1ba635886512df9e3b7df01067e3ef1bd691",
       "published": false
     },
     "fireside": {
@@ -216,6 +239,7 @@
       "size": 3129453,
       "sha256": "701b18044631dc67edb398f0cd29bdc452f345f8dfe5001edda9a9bdb1814680",
       "definitions": "50ea32c7ae57c073bbda566f8de1edc3ab3a2b64d746b7463159adf2545d774c",
+      "preview": "f79eb9508a24d8cc21019a05be654bba3b2a33007643cf755be3dd2a35daa4e3",
       "published": false
     },
     "flexoki-light": {
@@ -225,6 +249,7 @@
       "size": 1872217,
       "sha256": "a21359961f63af807200250b796232a4f1785812fb213c9c6209a11f254e45a2",
       "definitions": "1d8531f84270f48a089c0ae10ba94a561aed20e557665740eed2be0161d8bb2d",
+      "preview": "98801cd1d401f8a4c9150ed951655bd1dca04b735631dd3686b76c078b5eb503",
       "published": false
     },
     "frankenstein": {
@@ -234,6 +259,7 @@
       "size": 12165453,
       "sha256": "5ed96f4197049d7c67114dbcbe2d07420e5479625adeceb6f9ea69485a912193",
       "definitions": "710679b3e7e2c6229af956292dfded0545289d4bb61d049ec992b38dbda3899d",
+      "preview": "b1d139f45fdbffe51900b435cdb205e78f6cc007f0408ad5026d86891e003c4c",
       "published": false
     },
     "ghost-pastel": {
@@ -243,6 +269,7 @@
       "size": 4537009,
       "sha256": "2cf9fedaebbd0bb7834596d204b8b146583dc2616b9547bd36045bca71e881c5",
       "definitions": "a8fe983bf48b4e6358515028fa563c58b8f867bd8786fbfe4c39212648ff6425",
+      "preview": "9d647c7f289d60361822e8cdf25919389f93ccfba27100a07d5066484f148f96",
       "published": false
     },
     "greek-noir": {
@@ -252,6 +279,7 @@
       "size": 2321462,
       "sha256": "43c635296842c42db3b307241901796ba7bb89f23ccf1e15709820a639a6532b",
       "definitions": "0ca3cebf8884bb0ce5e14f3b3711886775a118ec221526949846772e08769fa3",
+      "preview": "f0c5990fe2f201d789871ee6411b1b457a47c2fe420ae9bbea04a5b6ae7c905f",
       "published": false
     },
     "gruvbox": {
@@ -261,6 +289,7 @@
       "size": 27237784,
       "sha256": "5ee5f2a140c708c66866265d47840356371fbc79ad0aa5a27e4b9095986a2b2b",
       "definitions": "6793946def6348a623509dbf257902a3dbf8cc3770dc5eaab524f07a656541af",
+      "preview": "217db269a40dbbf7444de523138ef22b87fd3d21dc82470dc534ac5f24b779bc",
       "published": false
     },
     "gruvy-glass": {
@@ -270,6 +299,7 @@
       "size": 49555851,
       "sha256": "91f0fe16a9cbc3ee0c0173d66c14c47e0251db52c09660fd03db7a6b87cafc84",
       "definitions": "2fcba69a01553d902fc28cf7681d7cfa81325e14fe364b7d3c09c808c56926d5",
+      "preview": "16e2155e9345b8c856b9ee2cd157f291f41d3f28b178e65c32068ff0af543401",
       "published": false
     },
     "hackerman": {
@@ -279,6 +309,7 @@
       "size": 7549408,
       "sha256": "ca4085b51b6e8b28c944532fc75799fd300751f57dbca0ad91c582f18435dc06",
       "definitions": "68bb88ab228955d00cf8ead171e0a214a31b679026b994234f424fe7d19a58dd",
+      "preview": "e04eee32bc86bcdd9a838dd12e32a14fbe5d66212ad12331c65e2e89fc864ec1",
       "published": false
     },
     "harbordark": {
@@ -288,6 +319,7 @@
       "size": 8121411,
       "sha256": "0594b508e40443be99e120fc613bc1f47ca8f9f24187b3bab8c5f2edee88f87b",
       "definitions": "e0c06db165c88b6b784848b3e569ba41349fb8e95ee7b11cf844c869823372b0",
+      "preview": "3543576386574bc4fff6d9408d4a64e6c160d8eba3d3d85066e9afe8b9f38f7f",
       "published": false
     },
     "inkypinky": {
@@ -297,6 +329,7 @@
       "size": 8108654,
       "sha256": "52316b00144d261fc4096770add1efb7c69c6a1fed661effb8a6fc9487b1dca8",
       "definitions": "0b36533b653e027b861f57f57ec87d1d6bbd119c9efe20aa108a512e8f387368",
+      "preview": "dfaddf3cd12c8a17e2dc785af187a1191c2dbb56e2ec76465f1ff735124530ca",
       "published": false
     },
     "kanagawa": {
@@ -306,6 +339,7 @@
       "size": 4643548,
       "sha256": "65c220fc8ea391df43ebd01b6ff9e1909eee229d5e17982a2b3f58b5faebf56d",
       "definitions": "50c801268b7a601a99f99bdb722c85ce5febaf9847ff2e2b9045fe9ab228f742",
+      "preview": "b90d80b9de0e1d9caf0d9953352da7da6bb31911a7f4d004e6355e536237d4cf",
       "published": false
     },
     "kanagawa-dragon": {
@@ -315,6 +349,7 @@
       "size": 9442070,
       "sha256": "bf831e421376c017c8912e0fdb0aae148a753f27ff93ac70c52de18d4c70212d",
       "definitions": "990a63c4f2fffe9a1300ce5656ef437e62274f096b2e8aa88922567cb8deac76",
+      "preview": "c46876368ab8b72fe5ef206c9642ff1e148678a18c811435ab8c3babe5cda15b",
       "published": false
     },
     "kurayami": {
@@ -324,6 +359,7 @@
       "size": 7417218,
       "sha256": "59b9487cae73d1ef3a97ec6253f188273e3f55c6bd97eb0bba6760ecead8babf",
       "definitions": "09312e4708e68365733d5c2a0ce01e9d5f13f5eabaceace3064e49e7968f5505",
+      "preview": "2521e0e68fd422fbe9201c760fa13ede1b3b45e4f2e1c2e6a1e4c23d32ac7872",
       "published": false
     },
     "last-horizon": {
@@ -333,6 +369,7 @@
       "size": 6613432,
       "sha256": "d1fc3e8edc9e68ae09a7c8307baacf6a260c4a53ec64dd4c891bea4b622993aa",
       "definitions": "3e0c0374792ad069cc647453345991de332d0cc11e33882db43b0f92528c0989",
+      "preview": "8b3764d345b55172d9e410723c92bb8c19b77f813ccc8316ff61ab6aa4f4a971",
       "published": false
     },
     "lowlight": {
@@ -342,6 +379,7 @@
       "size": 3519170,
       "sha256": "b9d4e310fd53af4b3a4aefd7a4557e81edbd7cb8d6101e1a50b2f848a8549598",
       "definitions": "30ce8fd4de526c4ba015361037ebfe0d74f031bb10b95d71c3729f01fbd426d5",
+      "preview": "12b0941a0d02fea289197bdaec8438bac08372a5dca2549a74ffbdf4c759510d",
       "published": false
     },
     "lumon": {
@@ -351,6 +389,7 @@
       "size": 2132492,
       "sha256": "3e7cfba3fa4187bc2e6090091a935fc66d7b8e3398b38fea8804d45cc220f5f0",
       "definitions": "2c9f3293da8b5b8fe9473051aaa189b9cd2cde3b61da9547815d8c9f847ad193",
+      "preview": "5a2e232d428d33141cf3ceb82af84cf1eae134d9627f0081980d896132dc83ec",
       "published": false
     },
     "lunar": {
@@ -360,6 +399,7 @@
       "size": 7206723,
       "sha256": "1aa6aaed041d89658e6e072d4ed1a5e999cdfa4eb6589857ec999246ff517d0b",
       "definitions": "d1aaf07ba9b720478b4bbd0f19d2bea41f28f690a036d7019dd77fb8efc298ff",
+      "preview": "e00b69147bf8d62fbf2919029a6f9fd39d82b41c16b1ef6bf59f4a09df971e86",
       "published": false
     },
     "matte-black": {
@@ -369,6 +409,7 @@
       "size": 7836976,
       "sha256": "4187a67b595e06d36799afa7772462174ada384b60252086c8f34692ee1e5305",
       "definitions": "71d470c5ae19e98be3197e7c4248923be5e816e8a9135a1f1999553daae50cd0",
+      "preview": "01b861aa4a63780f65629279c52cd713b49a0859cc26674d0259e6b49aab3c0b",
       "published": false
     },
     "mechanoonna": {
@@ -378,6 +419,7 @@
       "size": 7507376,
       "sha256": "9723cf02d852b9cb7f145393e75fcdab9aa80136cc19d5bf485426ad4a0bc756",
       "definitions": "389495464ea375d4023b12d07c6b838d4594be9624cb4c56de6e5d15e16da661",
+      "preview": "37ce4f10b3d935fe58fe7de7a4482d1c873e51e8fb2a8b5c58511dbe8154d280",
       "published": false
     },
     "miasma": {
@@ -387,6 +429,7 @@
       "size": 13035292,
       "sha256": "75b13b750594550f1667ebed4dea169bf1dfc8dce950d16d4aa22d7da181b0b1",
       "definitions": "760c27d9b0b681aba264f272529df8d1d6646155c3d1925e45691f0452b8cddf",
+      "preview": "cdfa747aaec7784a60e07ffd8855810b991eb040ca35bb93ccd0b6ac78a9c6eb",
       "published": false
     },
     "monokai": {
@@ -396,6 +439,7 @@
       "size": 4523201,
       "sha256": "fd8b285fca27ee4137edcbafe6f57b7f9b3cdd9454b456068f7e75fe8aac8916",
       "definitions": "3a11f22f1ad7cb118fa9e2fd5b85385e176d453714f9751f50fd5f82fdb55def",
+      "preview": "f0e1468e9e511c2c53ccaec55c7ea8ab51beccab2a6e2f691476efd4b7e0a847",
       "published": false
     },
     "moon-orbit": {
@@ -405,6 +449,7 @@
       "size": 27139725,
       "sha256": "38bcc2a1c147e97a1cf8b2d05c601eec385aa85c843271c4154706ad825e6431",
       "definitions": "57d902205f12205c258a0aaa4d0e553d4ef6b3617a8623afa8816287510252e4",
+      "preview": "8d942cd212847188d4e3cb61ddcff1091c56bce9152be74a8ce7fe7e0515191a",
       "published": false
     },
     "nagai-twilight": {
@@ -414,6 +459,7 @@
       "size": 12418602,
       "sha256": "5a20cfdbdc176f8f6b3b73453555a4f0cda3682b0434977fdbcb6bfb49d94cfc",
       "definitions": "ce3fc9d0d8f2869216cfdebd1e7083c7e3fbe670e7b6e2ee805b815c33af251f",
+      "preview": "2c4b416e6c877eb22487abdb6249cd229d8b9ee5178d1345802ee418e37e285a",
       "published": false
     },
     "nebulite": {
@@ -423,6 +469,7 @@
       "size": 8740877,
       "sha256": "179fc541799a408e528177a225e2d1137b0510284970998804b1b1f41df33a06",
       "definitions": "aa14370f85dabd22b47dd6dc4a4d7ca9d6bf9aa7158ae09beffb8680ecfffead",
+      "preview": "40ecff93711902dc368da9ea150f48c40f866267b9a195f3b2bd5a3ab4c3a42d",
       "published": false
     },
     "noctalia": {
@@ -432,6 +479,7 @@
       "size": 23900904,
       "sha256": "67862afbd2a1f298d4d94bb5b01907cd7a36fe7ab6b58e4c0e2f7bbcf5e5691f",
       "definitions": "1c46f8fe2be95cf3278ad95b665b9ee0b52960ac57e705321d1dc850c5bd38e0",
+      "preview": "424fd6aaf77fceb097909b96fd332dae90c40eb760d0bbe6bc2cf0891c281c55",
       "published": false
     },
     "nord": {
@@ -441,6 +489,7 @@
       "size": 11844888,
       "sha256": "a2fb823caed06e33d69c0bc2cae0a32da8ad5a03d7a89f913f63c316fb54688b",
       "definitions": "950679c4a520e14b18eabaca8bbbdb7e622931cbea3809871f1c6639e0eac7a1",
+      "preview": "ca827fa13c4399e63d65cd1a73bf22d54e90700fe6dd9b6bbc98e5c5a2e1acd9",
       "published": false
     },
     "osaka-jade": {
@@ -450,6 +499,7 @@
       "size": 8662888,
       "sha256": "3ba5751f9e6484ed9f5d689408ad6fde7f96d627647841a97c2f0109f74ef0a6",
       "definitions": "3ef8103ee56969f0cd6b9c77f69b111ef19d5bc1043a9e7e417e29686f4adc43",
+      "preview": "36586f29806799d0a0e69af4f9136086061a8b2d5e345848022a0bbd7f17a880",
       "published": false
     },
     "oxford": {
@@ -459,6 +509,7 @@
       "size": 12228602,
       "sha256": "f215f900f6bd67a4d5629821c2292a23dec17898d2425531c5f8f9d761017790",
       "definitions": "f79aa06cdf23b8579bc451f0fc906bf0a94259e6c2c94393b388e1d2e25cdcf2",
+      "preview": "7601abb5a3b7d115b7d7e28f20bd298ee2fb732106f2321734d2ffc5a6996c01",
       "published": false
     },
     "pmndrs": {
@@ -468,6 +519,7 @@
       "size": 6780631,
       "sha256": "fb8fd1a7c576d48490a89a0fcb7630f055dec9080f7ae0373ca7ee7ec745295c",
       "definitions": "f49b042b7eb4a9f384b5d1eb187f72a602d4642d4a0d2480772462fa91603f8e",
+      "preview": "e7fe37a44788490adc7928315ac7c11aa9baddcf32ac874943cde41694a7a239",
       "published": false
     },
     "reddcs": {
@@ -477,6 +529,7 @@
       "size": 24703766,
       "sha256": "7377f0b4612f802b446ac5e9eb86be01db308aa3f6e1ba41e4ce34764459a53b",
       "definitions": "7da0b60f98f252e634b646e69906580d037b2bc24e6bfaf6981c4aa6a3161808",
+      "preview": "645e9b5e198fdf2d98f5a7266103a9ea55e967e8f37578320875572695527e55",
       "published": false
     },
     "retro-82": {
@@ -486,6 +539,7 @@
       "size": 41121538,
       "sha256": "a4f69d0ec0a31d8d0901202d5df359ed6f965b3e86a5dec8cb8952a9990f00a6",
       "definitions": "fe089d3ece19692cef21bb56cf8954ca7b213abe81549d3042dac0dc8354ac36",
+      "preview": "0a0369d178f15b4d622589a17f5f2410fc4f5ab9f295bdb8ba7208b8820582d5",
       "published": false
     },
     "reverie": {
@@ -495,6 +549,7 @@
       "size": 4448597,
       "sha256": "a5965bd5b46acae6fe1988b770b31ae8e4c7e2e513aebcf8f250e0a7dc2e24a1",
       "definitions": "a0a13115f2c4ad63bfc776a4c786be01a836ffe5991aa6dadfe457a25c961a77",
+      "preview": "5ee1f1a832ce9fe66885b1cf4b31762910953de306a7c9abf0fbeb884842bacc",
       "published": false
     },
     "ristretto": {
@@ -504,6 +559,7 @@
       "size": 6330503,
       "sha256": "28de716cbd83e2a8aea1f24a54266dfbedc73a7dac2bf6776e539b3a0ade4395",
       "definitions": "379fbe1e19305e16ca623d19e4c146b6c7f1d3c4840dca58107f10ffa6151df0",
+      "preview": "64edd6c56cd844282c2b24321c6ea0dd4b38b9a961eef18d6b7353b81be5fe56",
       "published": false
     },
     "rose-pine": {
@@ -513,6 +569,7 @@
       "size": 12646460,
       "sha256": "ce6c0761ab026625f5b5aed747704d10facc8b4cee9c07a09d82ec38b6635aa2",
       "definitions": "0fede0656b889f88f5076c5f269aa0b19b5b9052df3e2790841bba8fcdece9b2",
+      "preview": "7249327358872e98a73963a182f508c0b38dd4a7bae1a1aa20b38cca671d612d",
       "published": false
     },
     "rose-pine-main": {
@@ -522,6 +579,7 @@
       "size": 16000408,
       "sha256": "f37bdcf5af0dc81240503270cce89276fd6e727e15af412fa952f84669c19fd7",
       "definitions": "8fa9e3bc3997aca009408227a7ef51c028cad84030afc171aa3b5441ecead423",
+      "preview": "2a39c70e9aeef99407ce832f72b3a023b8d324f5ea639840e2a0fc0160fec3b5",
       "published": false
     },
     "rose-pine-moon": {
@@ -531,6 +589,7 @@
       "size": 21435802,
       "sha256": "33fb8a4371e5fb4f1a5b5fcf6ff6604c6f7c808695cc7c7677b74406dd96af07",
       "definitions": "a70c6aaba5f08b33ca7605f00547ea85ad680297cefa8dba41586c8eea5cdefb",
+      "preview": "11f672160f237116b9e48ae79bd0f9a12cc4913903b71153775e185841241713",
       "published": false
     },
     "roseofdune": {
@@ -540,6 +599,7 @@
       "size": 17330583,
       "sha256": "89fac000fb2b24d40219168344022252106ed5817093b7e2bc8807879b1884cd",
       "definitions": "29486bbe328c47d9526ce3b95b2ff115927b3602ac2e7fe142eabfc480b32155",
+      "preview": "19bce71e3abf8d79d73e83f0693f0a31f23e5de5c5193526432fb97b600e3b14",
       "published": false
     },
     "saga": {
@@ -549,6 +609,7 @@
       "size": 13675487,
       "sha256": "f65ed3eac3af0a6f4dea08b319ea970af5513f07ad1deaa105d5ebf2a5053f7d",
       "definitions": "069f1a40c8cd0f1fa0843410f2a9076fc6fd8d75b4a030415b52474b90eaf503",
+      "preview": "0d8c9f4f316f801d1ceb25a54f3999e3d29b409ab1c8bdb5b9bac5a94c161d40",
       "published": false
     },
     "sapphire": {
@@ -558,6 +619,7 @@
       "size": 13606648,
       "sha256": "dcd9774ca364c8dee67119a8b033547c73dd7dd485f382e894beb93ddff3d1d2",
       "definitions": "dc60aa6cf9e1dbebe5196b04eaf19179afb8e2d7db086cd39f1ddedcb7e8f0e7",
+      "preview": "6a3b2c09211564f1e72e50b8c8241557a5ae8e02987e7826b42b6e88498c88e1",
       "published": false
     },
     "snow": {
@@ -567,6 +629,7 @@
       "size": 5960110,
       "sha256": "eeb5cf9e00aae2bcd4502e6e3e80443e74088cb8add137c0e5871c1fb69ac990",
       "definitions": "caff2788a6c80244bd8f3912d4200158731f1aa3b2a3cd955310ff3108cdfe14",
+      "preview": "3d82317149d03a2a294e147d8bd0de2f9a3c9f4532620e958757fbcce28f3ee2",
       "published": false
     },
     "soho": {
@@ -576,6 +639,7 @@
       "size": 9439541,
       "sha256": "4a6dfd739c3346e95e09573dfee5a85eb955c5b902f0dfd42158c751169e7413",
       "definitions": "705c3443cc115a23890b80480dddbda68ba1227c1bd6c32237f71bd72201d6b3",
+      "preview": "862f008dfee0b02743db88791b312b4f4486e2a5be8f4515cc78ad3d5cf13a29",
       "published": false
     },
     "solitude": {
@@ -585,6 +649,7 @@
       "size": 43462505,
       "sha256": "623c6dddc82477643a649d98c72732f2a63d8827bb9c18d3c3ed1024528804c7",
       "definitions": "fbf551e05ec1033ba51ba848236a2100e9beb785379c6b8a91e6f5c60aa09799",
+      "preview": "4720484f74b29eb1c9acf07d7e7981061c1461330b97b681fcc0ddce5fa54cce",
       "published": false
     },
     "synthwave84": {
@@ -594,6 +659,7 @@
       "size": 19459010,
       "sha256": "aa13fef468729c6f58757865c31062dc168c2de13347fddfc66c3362ae1cbc59",
       "definitions": "a06b799c25101644660ed4fc016e705694792c9ea2feead2ffc83bff5d8e61b6",
+      "preview": "1960f30c7dad14db9fd8ae08151dd868539068a6c6242c795c0c58c34bca801e",
       "published": false
     },
     "thegreek": {
@@ -603,6 +669,7 @@
       "size": 3973318,
       "sha256": "beed9df40d1dbb7dd5b4eea6a501172ead3330878eb94bcf9aa297ddb565830b",
       "definitions": "2037f734819e8fb58bf29b8644134a9c4f65dec1704c8a274f2f5e0cd7442455",
+      "preview": "1a09da2ebc91c388f96a2e756a464f308ece1265f7e6017cafa9b04c07a5ca58",
       "published": false
     },
     "tokyo-night": {
@@ -612,6 +679,7 @@
       "size": 15410705,
       "sha256": "586ae8082208fbc94a33aea6c49880313879165ca46c8fc80e684a9c77539fa6",
       "definitions": "169555f967b5842ff3f07ba3b78a4291d174ba9988f451c139efe302cf93de60",
+      "preview": "97759afcbb1df17781885159c4ca68ff3c76f92263c91caaa30b77b2393e8bc6",
       "published": false
     },
     "tokyo-night-moon": {
@@ -621,6 +689,7 @@
       "size": 26064350,
       "sha256": "9fe475391d954c3cc95c4b5c3f4c80df197b2cf04253160678643fe6ffed2156",
       "definitions": "2d6d71d403f62770c2566aa7f3b9bb74e47653a14054bd49df7b50ff2354e5de",
+      "preview": "d53d16cc32dbd7378caee90ccb3dac0941b02d0d977daba4dd27624aecf6068c",
       "published": false
     },
     "tokyo-night-storm": {
@@ -630,6 +699,7 @@
       "size": 21497076,
       "sha256": "ebe3783d77cee4d8f59e9bdb231d1044086052719395b16ee448e8ffc4747ac7",
       "definitions": "a618f4927f8cf4f92126050487c646103090fb1bf45b597508ac8bee5b760d0a",
+      "preview": "70185b479fb530dd37405795cde0f45dc980d6a2f1e841a6c038e17fd70d4c1b",
       "published": false
     },
     "tycho": {
@@ -639,6 +709,7 @@
       "size": 1184224,
       "sha256": "8afde59d15b538373f5f29b0cedb2f5b54b142bf8c36d17b3cc3b5194420aa11",
       "definitions": "da08feae0eeb497b598a7b277ec6222e05f4b7c78b5ea89aedab9070009c5d00",
+      "preview": "95fbf6b2737a0023f080662bbead4b5c2781547a3bd544cf7680dabc5a14a2f3",
       "published": false
     },
     "untitled": {
@@ -648,6 +719,7 @@
       "size": 52077778,
       "sha256": "69e36d060ffecaf43e967e1b1c75d14ef7ae51d1e710d8d28cac05f6b3686440",
       "definitions": "e4b3a9a1fc725a9ad134a7e4a02e5c1342b22733498214730399302a7fe79f1d",
+      "preview": "d75791b874c19653da5b438a4aa554a05976cf57cab9b8c034b1abf9782df3e1",
       "published": false
     },
     "vantablack": {
@@ -657,6 +729,7 @@
       "size": 3189429,
       "sha256": "8e2992b2cea63c69535bb513a59f504bbec10d688029b8e59c9bf5334ab4f68a",
       "definitions": "ccbb0280edf82688b533db3d9f7b91e4ffc25ce0d603e747083ded3e777aea66",
+      "preview": "1048153df161adcc6b2a575abd45b8ad5649eae3d1863e97ea86852b0e5bf85a",
       "published": false
     },
     "vengeance": {
@@ -666,6 +739,7 @@
       "size": 7326788,
       "sha256": "b86827f0bd28df5e19aa293821e6fae02cdf1388f88fb9a96e624f23404c882b",
       "definitions": "4be1f5ea63588b6fbb3445cac300d26a408d129aa0af0f502946edb2b051ca97",
+      "preview": "d1eed8356ad6cac397efb39ab3d7a27e494a415333891060a340d0315c78cfdf",
       "published": false
     },
     "vice-city": {
@@ -675,6 +749,7 @@
       "size": 6516379,
       "sha256": "499dec0ba45785671aacb2b657e41637afa104175b4b08f47043bd0ca1818b7c",
       "definitions": "ffc5daa28bce71100ef2ffb251d738f9044d2c1c7af46c3bf8eba1f117d5700d",
+      "preview": "7cfa9b823832bd54db06d5656de558d8e41b0e2cde8cdd68c7056e53f2f99cfa",
       "published": false
     },
     "void": {
@@ -684,6 +759,7 @@
       "size": 7518925,
       "sha256": "4e37ca5ceb98e289118c3154df0b4ba9c697af5d7930b5deeb1875dc65eb7d46",
       "definitions": "12aa0b5bea185b6034824366f3a2a3c6887333430568e392a53dc9f5015bc512",
+      "preview": "352660e129cbf2a25252d67ed11664971e299e01762e57a84fb2da64f009c427",
       "published": false
     },
     "vurple": {
@@ -693,6 +769,7 @@
       "size": 6694057,
       "sha256": "c30bb1f06c28418c648875abcbbac845e9f944ec0342f290bab7184d103a5714",
       "definitions": "8dbf12acf4cb93426fc9fbab4eebf2acf01fd1a6c3c011cb2dc3c78ed43d146a",
+      "preview": "24964f588807bdb2046e3ef35cf4455b76c0896ef4340ee4db0016ffcb5a1936",
       "published": false
     },
     "white": {
@@ -702,6 +779,7 @@
       "size": 2870896,
       "sha256": "18edebcd51115ee804bab8921b2710e8dc467840f30e9ac2aebb04cee14979f4",
       "definitions": "a5e36334ce5e4d40f17dae2dcb67b198b91bd6a733334c5cf42341415ef3e040",
+      "preview": "7b3bac8b1646fdda6dfc8e34bda1114114d65a4885e6881f18278524bf0e2d96",
       "published": false
     },
     "x-1632": {
@@ -711,6 +789,7 @@
       "size": 19140577,
       "sha256": "e984e1215268e380965e6df6bccf0a67152b82a0cc41624d49b490dc4bc8056e",
       "definitions": "d0c131dc115e5292857871e4e68d1088bd21c69196deede544ce71c74054269d",
+      "preview": "42124d33c49aadecf8f5c41b377528dbc2d572007951186a56fc4f6806e4b353",
       "published": false
     }
   }

@@ -49,7 +49,7 @@ Each lock entry also carries `definitions`, one digest over the `(path, sha256)`
 
 `ThemeCatalogBrowser.qml:322` already requests `sourceSize.width: 480`, so the thumbnail is the exact resolution the browser paints, and today's 1920×1080 `preview.png` was being downscaled at paint time anyway.
 
-**First paint offline**: every catalog tile paints its thumbnail from local disk with no network call, because the core package carries them. A catalog entry with no thumbnail keeps the existing swatch treatment — `ThemeCatalogBrowser.qml:315` fills the frame with `cell.modelData.background`, `:328` labels it "No screenshot", and `:394` renders eight colour chips from the catalog's own palette.
+**First paint offline**: every catalog tile paints its thumbnail from local disk with no network call, because the core package carries them. A catalog entry with no thumbnail keeps the existing swatch treatment — `ThemeCatalogBrowser.qml:315` fills the frame with `cell.modelData.background`, `:330` labels it "No screenshot", and `:394` renders eight colour chips from the catalog's own palette.
 
 `themes/catalog-previews/` is deleted along with both sites that derived it (`scripts/build-release.sh`, `install_catalog_previews()` in `packaging/install-system.sh`). `thumbnails` replaces `catalog-previews` in `RESERVED_THEME_SUBDIRS`, and `catalog_preview_path()`'s shipped branch reads the thumbnail instead.
 

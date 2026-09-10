@@ -128,7 +128,6 @@ def asset_entry(lock: Dict[str, Any], name: str) -> Dict[str, Any]:
         "rev": int(entry["rev"]),
         "size": int(entry["size"]),
         "sha256": str(entry["sha256"]),
-        "url": f"{RELEASE_BASE_URL}/{entry['release']}/{entry['archive']}",
     }
 
 
