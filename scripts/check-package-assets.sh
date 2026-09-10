@@ -51,26 +51,29 @@ PY
 
 DESTDIR="$core" VGS_THEME_BUNDLE=core VGS_BACKEND_BINARY=/bin/true \
   "$root/packaging/install-system.sh"
-test -f "$core/usr/lib/vshell/themes/coppernight/theme.json"
+test -f "$core/usr/lib/vshell/themes/bauhaus/theme.json"
+test -f "$core/usr/lib/vshell/themes/roseofdune/theme.json"
 test -d "$core/usr/lib/vshell/themes/targets"
 test ! -e "$core/usr/lib/vshell/themes/tokyo-night"
 test ! -e "$core/usr/lib/vshell/config/vshell/icons"
 test -x "$core/usr/lib/vshell/bin/vshell-backend"
 # The screensaver needs packaged art because it cannot regenerate data into /usr.
 test -s "$core/usr/lib/vshell/config/vshell/branding/screensaver.txt"
-# Core installs need catalog previews for themes available to download.
+# Core installs need a thumbnail for every catalogued theme, installed or not,
+# so the download browser paints them without a network call.
 test -s "$core/usr/lib/vshell/themes/catalog.json"
-test -s "$core/usr/lib/vshell/themes/catalog-previews/tokyo-night.png"
-test ! -e "$core/usr/lib/vshell/themes/catalog-previews/coppernight.png"
+test -s "$core/usr/lib/vshell/themes/thumbnails/tokyo-night.jpg"
+test -s "$core/usr/lib/vshell/themes/thumbnails/bauhaus.jpg"
 # The all bundle carries themes/ directly. This check avoids copying that full tree.
 test -f "$root/themes/catalog.json"
 
 DESTDIR="$extras" VGS_THEME_BUNDLE=extras "$root/packaging/install-system.sh"
 test -f "$extras/usr/lib/vshell/themes/tokyo-night/theme.json"
-test ! -e "$extras/usr/lib/vshell/themes/coppernight"
+test ! -e "$extras/usr/lib/vshell/themes/bauhaus"
+test ! -e "$extras/usr/lib/vshell/themes/roseofdune"
 test -d "$extras/usr/lib/vshell/config/vshell/icons"
 test ! -e "$extras/usr/lib/vshell/bin/vshell"
-test ! -e "$extras/usr/lib/vshell/themes/catalog-previews"
+test ! -e "$extras/usr/lib/vshell/themes/thumbnails"
 
 # Catalog checksums must match theme contents or downloads fail verification.
 "$root/scripts/gen-theme-catalog.py" --check

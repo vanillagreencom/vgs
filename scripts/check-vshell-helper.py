@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import contextlib
 import ast
+import gzip
+import hashlib
 import importlib.machinery
 import importlib.util
 import io
@@ -18,6 +20,7 @@ import socket
 import struct
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 from unittest.mock import patch
@@ -426,10 +429,10 @@ def test_fastfetch_portable_seed_and_logo_fallback():
             raise AssertionError("failed Fastfetch conversion must remove its temporary file")
         logo.unlink()
         guaranteed = helper.apply_fastfetch_logo_hook({"wallpaper": str(wallpaper)})
-        shipped_cat = REPO_ROOT / "themes" / "coppernight" / "backgrounds" / "4-cats-anime.jpg"
+        shipped_logo = REPO_ROOT / "config" / "vshell" / "branding" / "fastfetch-logo.jpg"
         assert_equal(guaranteed.get("fallbackWallpaper"), True,
                      "failed first Fastfetch conversion uses the shipped fallback")
-        assert_equal(logo.read_bytes(), shipped_cat.read_bytes(),
+        assert_equal(logo.read_bytes(), shipped_logo.read_bytes(),
                      "new Fastfetch config always has a decodable fallback logo")
 
     try:
@@ -1233,9 +1236,9 @@ def test_generated_theme_consumer_wiring():
 
 def test_shell_only_theme_preview():
     def run(temp_home: Path):
-        blueprint = helper.load_theme_package("coppernight")
+        blueprint = helper.load_theme_package(helper.DEFAULT_THEME_NAME)
         if not blueprint:
-            raise AssertionError("Coppernight package missing")
+            raise AssertionError(f"{helper.DEFAULT_THEME_NAME} package missing")
         blueprint["adjustments"] = helper.normalize_adjustments({"brightness": 17})
         result = helper.apply_theme_obj(
             blueprint,
@@ -1370,6 +1373,49 @@ def test_greeter_runtime_helper_dependencies():
                 "cached greeter helper must load with its copied Python modules:\n"
                 f"{result.stderr}"
             )
+
+
+def test_greeter_sync_survives_a_missing_wallpaper():
+    """A configured greeter wallpaper that is not there must not stop the sync.
+
+    The greeter is the path between a powered machine and a logged-in session, so
+    a missing image removes the override and records the reason instead of raising.
+    """
+    def scenario(tmp: Path):
+        cache = tmp / "greeter-cache"
+        target = cache / "users" / "tester"
+        target.mkdir(parents=True)
+        override = target / "greeter_wallpaper_override"
+        override.write_bytes(b"stale override")
+        present = tmp / "present.jpg"
+        present.write_bytes(b"wallpaper bytes")
+
+        original_load = helper.load_settings
+        original_theme = helper.current_theme_json
+        original_session = helper.current_session_json
+        helper.current_theme_json = lambda: {"name": "bauhaus"}
+        helper.current_session_json = lambda theme: {"name": "bauhaus"}
+        try:
+            helper.load_settings = lambda: {"greeterWallpaperPath": str(tmp / "gone.jpg")}
+            helper.sync_profile_cache_unprivileged(cache, "tester")
+            manifest = json.loads((target / "sync-manifest.json").read_text())
+            assert_equal(manifest.get("greeterWallpaperMissing"), str(tmp / "gone.jpg"),
+                         "a missing greeter wallpaper is named in the sync manifest")
+            assert_equal(override.exists(), False,
+                         "a missing greeter wallpaper removes the stale override")
+
+            helper.load_settings = lambda: {"greeterWallpaperPath": str(present)}
+            helper.sync_profile_cache_unprivileged(cache, "tester")
+            manifest = json.loads((target / "sync-manifest.json").read_text())
+            assert_equal("greeterWallpaperMissing" in manifest, False,
+                         "a present wallpaper records no missing-wallpaper reason")
+            assert_equal(override.read_bytes(), b"wallpaper bytes", "the override carries the configured image")
+        finally:
+            helper.load_settings = original_load
+            helper.current_theme_json = original_theme
+            helper.current_session_json = original_session
+
+    with_temp_home(scenario)
 
 
 def test_launcher_search_unicode_ranges_and_preview():
@@ -2847,48 +2893,93 @@ def test_notification_daemon_label_handles_scope_units():
                  "a daemon under a .service unit must still be named")
 
 
-def test_theme_catalog_download_verifies_every_file():
-    """A catalog download must land verbatim, and must refuse anything it cannot verify."""
-    import hashlib
+def _theme_archive(files: dict[str, bytes]) -> bytes:
+    """A reproducible theme archive, the shape scripts/publish-theme-assets.py publishes."""
+    raw = io.BytesIO()
+    with tarfile.open(fileobj=raw, mode="w", format=tarfile.PAX_FORMAT) as tar:
+        for rel, blob in sorted(files.items()):
+            info = tarfile.TarInfo(rel)
+            info.size = len(blob)
+            info.mtime = 0
+            info.mode = 0o644
+            tar.addfile(info, io.BytesIO(blob))
+    packed = io.BytesIO()
+    with gzip.GzipFile(fileobj=packed, mode="wb", compresslevel=1, mtime=0) as zipped:
+        zipped.write(raw.getvalue())
+    return packed.getvalue()
+
+
+def _write_catalog(builtin: Path, archives: Path, name: str, blob: bytes,
+                   release: str = "themes-v1", rev: int = 1) -> None:
+    archive = f"vgs-theme-{name}-r{rev}.tar.gz"
+    (archives / release).mkdir(parents=True, exist_ok=True)
+    (archives / release / archive).write_bytes(blob)
+    (builtin / "catalog.json").write_text(json.dumps({
+        "version": 2,
+        "source": {"type": "github-release", "ref": "vTest",
+                   "baseUrl": "https://example.invalid/releases/download"},
+        "themes": [{
+            "name": name, "mode": "dark", "size": len(blob),
+            "files": [{"path": "theme.json", "size": 1, "sha256": "0" * 64}],
+            "assets": {"release": release, "archive": archive, "rev": rev,
+                       "size": len(blob), "sha256": hashlib.sha256(blob).hexdigest()},
+        }],
+    }))
+
+
+def test_theme_catalog_download_verifies_its_archive():
+    """A catalog download must land the published archive verbatim, and refuse anything else."""
+    package = {
+        "theme.json": b'{"name":"demo","mode":"dark","source":"curated"}\n',
+        "colors.toml": b'background = "#101010"\nforeground = "#eeeeee"\n',
+        "apps/btop.theme": b"theme\n",
+        "backgrounds/1-demo.jpg": b"\xff\xd8\xff\xe0 demo wallpaper bytes\n",
+        "preview.png": b"\x89PNG\r\n\x1a\n demo screenshot bytes\n",
+    }
 
     def scenario(tmp: Path):
-        source = tmp / "source" / "demo"
-        (source / "apps").mkdir(parents=True)
-        (source / "theme.json").write_text('{"name":"demo","mode":"dark","source":"curated"}\n')
-        (source / "colors.toml").write_text('background = "#101010"\nforeground = "#eeeeee"\n')
-        (source / "apps" / "btop.theme").write_text("theme\n")
-        files = []
-        for rel in ("theme.json", "colors.toml", "apps/btop.theme"):
-            blob = (source / rel).read_bytes()
-            files.append({"path": rel, "size": len(blob), "sha256": hashlib.sha256(blob).hexdigest()})
-
         builtin = tmp / "builtin"
         builtin.mkdir()
-        (builtin / "catalog.json").write_text(json.dumps({
-            "version": 1,
-            "source": {"ref": "vTest", "baseUrl": "https://example.invalid/themes"},
-            "themes": [{"name": "demo", "mode": "dark", "files": files,
-                        "size": sum(f["size"] for f in files)}],
-        }))
+        archives = tmp / "releases"
+        blob = _theme_archive(package)
+        _write_catalog(builtin, archives, "demo", blob)
 
         original_builtin = helper.builtin_themes_dir
         helper.builtin_themes_dir = lambda: builtin
-        os.environ["VGS_THEME_CATALOG_BASE_URL"] = "file://" + str(tmp / "source")
+        os.environ["VGS_THEME_CATALOG_BASE_URL"] = "file://" + str(archives)
         try:
             catalog = helper.load_theme_catalog()
             base_urls, allow_local = helper.theme_catalog_base_urls(catalog)
             entry = helper.catalog_theme_entry(catalog, "demo")
+            cache = helper.theme_asset_cache_dir()
+
+            # An uninstalled theme paints from the shipped thumbnail, with no
+            # network call and nothing downloaded yet.
+            thumbnail = builtin / "thumbnails" / "demo.jpg"
+            thumbnail.parent.mkdir(parents=True)
+            thumbnail.write_bytes(b"\xff\xd8\xff thumbnail bytes\n")
+            before = [e for e in helper.catalog_entries() if e["name"] == "demo"][0]
+            assert_equal((before["installed"], before["preview"]), (False, str(thumbnail)),
+                         "an uninstalled theme paints from its shipped thumbnail")
 
             result = helper.catalog_download_theme(entry, base_urls, allow_local)
             assert_equal(result["status"], "installed", "catalog download status")
             dest = helper.user_themes_dir() / "demo"
-            for rel in ("theme.json", "colors.toml", "apps/btop.theme"):
-                assert_equal((dest / rel).read_bytes(), (source / rel).read_bytes(),
+            for rel, blob_bytes in package.items():
+                assert_equal((dest / rel).read_bytes(), blob_bytes,
                              f"downloaded {rel} must be byte-identical")
-            assert_equal(helper.catalog_marker("demo").get("ref"), "vTest", "download marker records the ref")
+            marker = helper.catalog_marker("demo")
+            assert_equal((marker.get("ref"), marker.get("release"), marker.get("rev")),
+                         ("vTest", "themes-v1", 1), "download marker records the ref and the release")
+            # The cache holds in-flight downloads only: a finished install leaves
+            # no archive behind, so the disk cost is exactly the theme tree.
+            assert_equal(sorted(p.name for p in cache.glob("*")), [],
+                         "a successful install deletes its cached archive")
 
             listed = [e for e in helper.catalog_entries() if e["name"] == "demo"][0]
             assert_equal((listed["installed"], listed["downloaded"]), (True, True), "catalog list state")
+            assert_equal(listed["preview"], str(dest / "preview.png"),
+                         "an installed theme paints from its own screenshot, not the thumbnail")
 
             again = helper.catalog_download_theme(entry, base_urls, allow_local)
             assert_equal(again["status"], "skipped", "an installed theme is not re-downloaded")
@@ -2896,7 +2987,7 @@ def test_theme_catalog_download_verifies_every_file():
             # A force re-download must never destroy the installed copy before
             # its replacement is in place: a failure mid-way leaves it intact.
             tampered_force = json.loads(json.dumps(entry))
-            tampered_force["files"][1]["sha256"] = "1" * 64
+            tampered_force["assets"]["sha256"] = "1" * 64
             try:
                 helper.catalog_download_theme(tampered_force, base_urls, allow_local, force=True)
                 raise AssertionError("a tampered force re-download must fail")
@@ -2906,6 +2997,8 @@ def test_theme_catalog_download_verifies_every_file():
                          "a failed force re-download must leave the installed theme in place")
             assert_equal(sorted(p.name for p in helper.user_themes_dir().glob(".catalog-*")), [],
                          "a failed force re-download leaves no staging or replaced dirs")
+            assert_equal(sorted(p.name for p in cache.glob("*")), [],
+                         "a failed download leaves no cached archive")
 
             # Reading the current theme for the safety check must not apply the
             # default theme: current_theme() writes files and runs hooks when
@@ -2957,7 +3050,7 @@ def test_theme_catalog_download_verifies_every_file():
                 helper.catalog_download_theme(entry, base_urls, allow_local)
             finally:
                 helper._catalog_fetch_verified = original_fetch
-            assert_equal(lock_free_during_transfer, [True, True, True],
+            assert_equal(lock_free_during_transfer, [True],
                          "the theme mutation lock must stay free while a download transfers")
             helper.catalog_remove_theme("demo")
 
@@ -2989,18 +3082,16 @@ def test_theme_catalog_download_verifies_every_file():
             assert_equal((helper.user_themes_dir() / "mine").exists(), True, "local theme survives a refused remove")
 
             # Several locations are tried in order and only checksum-matching
-            # bytes are accepted, so a stale first location cannot serve wrong
-            # content and cannot stop a good location from working either.
-            stale = tmp / "stale" / "demo"
-            stale.mkdir(parents=True)
-            (stale / "theme.json").write_text('{"name":"demo","mode":"light"}\n')
-            (stale / "colors.toml").write_text("background = \"#ffffff\"\n")
-            (stale / "apps").mkdir()
-            (stale / "apps" / "btop.theme").write_text("stale\n")
-            stale_url = "file://" + str(tmp / "stale")
+            # bytes are accepted, so a stale first location cannot serve a
+            # different archive and cannot stop a good location from working.
+            stale = tmp / "stale"
+            (stale / "themes-v1").mkdir(parents=True)
+            (stale / "themes-v1" / "vgs-theme-demo-r1.tar.gz").write_bytes(
+                _theme_archive({"theme.json": b'{"name":"demo","mode":"light"}\n'}))
+            stale_url = "file://" + str(stale)
             result = helper.catalog_download_theme(entry, [stale_url, base_urls[0]], allow_local)
             assert_equal(result["status"], "installed", "a stale first location must fall through")
-            assert_equal((dest / "theme.json").read_bytes(), (source / "theme.json").read_bytes(),
+            assert_equal((dest / "theme.json").read_bytes(), package["theme.json"],
                          "the accepted bytes are the catalogued ones, never the stale location's")
             helper.catalog_remove_theme("demo")
             try:
@@ -3009,8 +3100,10 @@ def test_theme_catalog_download_verifies_every_file():
             except ValueError as exc:
                 assert_equal("no source served" in str(exc), True, "failure names the exhausted locations")
 
+            # An archive whose bytes do not match the catalogued checksum is
+            # never unpacked, so a replaced release asset cannot install itself.
             tampered = json.loads(json.dumps(entry))
-            tampered["files"][0]["sha256"] = "0" * 64
+            tampered["assets"]["sha256"] = "0" * 64
             try:
                 helper.catalog_download_theme(tampered, base_urls, allow_local)
                 raise AssertionError("checksum mismatch must fail the download")
@@ -3019,6 +3112,63 @@ def test_theme_catalog_download_verifies_every_file():
             assert_equal(dest.exists(), False, "a failed download leaves no theme dir")
             assert_equal(list(helper.user_themes_dir().glob(".catalog-*")), [],
                          "a failed download leaves no staging dir")
+
+            # A catalog entry whose archive pin is unusable is refused before any
+            # of it becomes a URL or a path, so no request is ever made for it.
+            for label, patch in (
+                ("release", {"release": "../../etc"}),
+                ("release", {"release": "latest"}),
+                ("archive", {"archive": "../../etc/passwd"}),
+                ("archive", {"archive": "demo.tar.gz"}),
+                ("checksum", {"sha256": "nothex"}),
+                ("size", {"size": 0}),
+                ("size", {"size": helper.CATALOG_MAX_FILE_BYTES + 1}),
+            ):
+                broken = json.loads(json.dumps(entry))
+                broken["assets"].update(patch)
+                try:
+                    helper._catalog_check_assets("demo", broken["assets"])
+                    raise AssertionError(f"an unusable {label} pin must be refused: {patch}")
+                except ValueError:
+                    pass
+                try:
+                    helper.catalog_download_theme(broken, base_urls, allow_local)
+                    raise AssertionError(f"an unusable {label} pin must fail the download: {patch}")
+                except ValueError:
+                    pass
+
+            # Archive members go through the manifest path rule, so a member
+            # outside the package shape cannot escape the staging directory, and
+            # a member that is not a regular file is never followed.
+            for label, member in (("escaping path", "../../evil"), ("dotfile", ".ssh/id_rsa"),
+                                  ("nested", "backgrounds/season/img.png")):
+                hostile = _theme_archive({"theme.json": package["theme.json"], member: b"x"})
+                _write_catalog(builtin, archives, "demo", hostile, rev=2)
+                hostile_entry = helper.catalog_theme_entry(helper.load_theme_catalog(), "demo")
+                try:
+                    helper.catalog_download_theme(hostile_entry, base_urls, allow_local)
+                    raise AssertionError(f"an archive member with an {label} must be refused")
+                except ValueError:
+                    pass
+                assert_equal(dest.exists(), False, f"a refused {label} member leaves no theme dir")
+
+            linked = io.BytesIO()
+            with tarfile.open(fileobj=linked, mode="w:gz") as tar:
+                info = tarfile.TarInfo("theme.json")
+                info.size = len(package["theme.json"])
+                tar.addfile(info, io.BytesIO(package["theme.json"]))
+                link = tarfile.TarInfo("colors.toml")
+                link.type = tarfile.SYMTYPE
+                link.linkname = "/etc/passwd"
+                tar.addfile(link)
+            _write_catalog(builtin, archives, "demo", linked.getvalue(), rev=3)
+            link_entry = helper.catalog_theme_entry(helper.load_theme_catalog(), "demo")
+            try:
+                helper.catalog_download_theme(link_entry, base_urls, allow_local)
+                raise AssertionError("a symlink member must be refused")
+            except ValueError:
+                pass
+            assert_equal(dest.exists(), False, "a refused symlink member leaves no theme dir")
 
             for bad in ("../evil", "/etc/passwd", "apps/../../evil", ".ssh/id_rsa", "notes.txt",
                         "apps/.hidden", "backgrounds/.env", "apps/../theme.json", "apps/", "apps//x",
@@ -3043,15 +3193,27 @@ def test_theme_catalog_download_verifies_every_file():
 
 
 def test_theme_catalog_manifest_matches_the_repo():
-    """The committed catalog must describe the themes actually in the tree."""
+    """The committed catalog must describe the themes in the tree and a pinned archive for each."""
     catalog = json.loads((REPO_ROOT / "themes" / "catalog.json").read_text())
+    lock = json.loads((REPO_ROOT / "themes" / "asset-lock.json").read_text())["themes"]
     names = sorted(e["name"] for e in catalog["themes"])
     on_disk = sorted(p.parent.name for p in (REPO_ROOT / "themes").glob("*/theme.json"))
     assert_equal(names, on_disk, "catalog themes must match themes/ on disk")
+    assert_equal(sorted(lock), on_disk, "the asset lock must pin every theme in themes/ and no other")
     assert_equal(catalog["source"]["baseUrl"].startswith("https://"), True, "catalog must download over https")
     for theme in catalog["themes"]:
         for spec in theme["files"]:
             helper._catalog_check_relpath(spec["path"])
+        # Every entry must survive the download path's own validator, so no
+        # committed entry can be one the shell refuses at install time.
+        assets = helper._catalog_check_assets(theme["name"], theme["assets"])
+        assert_equal(assets["sha256"], lock[theme["name"]]["sha256"],
+                     f"{theme['name']}: the catalog and the asset lock must pin the same archive")
+        assert_equal(theme["size"], assets["size"],
+                     f"{theme['name']}: the advertised size must be the archive's download size")
+        # The browser paints an uninstalled theme from its shipped thumbnail.
+        assert_equal((REPO_ROOT / "themes" / "thumbnails" / f"{theme['name']}.jpg").is_file(), True,
+                     f"{theme['name']}: no shipped thumbnail")
 
 
 def test_theme_catalog_generator_rejects_uninstallable_packages():
@@ -3067,18 +3229,23 @@ def test_theme_catalog_generator_rejects_uninstallable_packages():
 
     with tempfile.TemporaryDirectory() as tmp:
         theme_dir = Path(tmp) / "deep"
-        (theme_dir / "backgrounds" / "season").mkdir(parents=True)
+        (theme_dir / "apps" / "nested").mkdir(parents=True)
         (theme_dir / "theme.json").write_text("{}\n")
-        (theme_dir / "backgrounds" / "season" / "img.png").write_bytes(b"x")
+        (theme_dir / "apps" / "nested" / "btop.theme").write_text("x\n")
         try:
             generator.catalog_relpaths(helper, theme_dir)
-            raise AssertionError("a nested backgrounds/ path must fail catalog generation")
+            raise AssertionError("a nested apps/ path must fail catalog generation")
         except SystemExit:
             pass
-        shutil.rmtree(theme_dir / "backgrounds" / "season")
+        shutil.rmtree(theme_dir / "apps" / "nested")
         (theme_dir / "NOTES.md").write_text("scratch\n")
+        # Imagery is published in the release archive, so the manifest lists
+        # definition files only and a wallpaper never reaches it.
+        (theme_dir / "backgrounds").mkdir()
+        (theme_dir / "backgrounds" / "1-bg.jpg").write_bytes(b"x")
+        (theme_dir / "preview.png").write_bytes(b"x")
         assert_equal(generator.catalog_relpaths(helper, theme_dir), ["theme.json"],
-                     "stray files are skipped without failing generation")
+                     "stray files are skipped and imagery is left to the release archive")
 
 
 # Sunshine selects its capture target at startup. Create and verify the virtual
@@ -5957,6 +6124,7 @@ def main():
     test_hyprland_preview_native_lua()
     test_greeter_primary_monitor_validation()
     test_greeter_runtime_helper_dependencies()
+    test_greeter_sync_survives_a_missing_wallpaper()
     test_launcher_search_unicode_ranges_and_preview()
     test_launcher_folder_opener_agreement()
     test_launcher_zoxide_results()
@@ -5993,7 +6161,7 @@ def main():
     test_missing_terminal_reaches_the_user()
     test_terminal_wait_blocks_until_the_terminal_exits()
     test_preferred_terminal_is_tried_first()
-    test_theme_catalog_download_verifies_every_file()
+    test_theme_catalog_download_verifies_its_archive()
     test_theme_catalog_manifest_matches_the_repo()
     test_theme_catalog_generator_rejects_uninstallable_packages()
     test_remote_desktop_reports_streaming_separately_from_listening()

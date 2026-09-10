@@ -1,0 +1,638 @@
+{
+  "version": 1,
+  "repo": "vanillagreencom/vgs",
+  "themes": {
+    "akane": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-akane-r1.tar.gz",
+      "rev": 1,
+      "size": 41993828,
+      "sha256": "91d7a2ffbf237847e9192d911e3cbbf37c6080f85049e88d1e63b7e42f0bee22",
+      "files": 16
+    },
+    "amberbyte": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-amberbyte-r1.tar.gz",
+      "rev": 1,
+      "size": 4303185,
+      "sha256": "38f6a4e16ba8e52ea6304d0f8434b6b8516c8e2eb1ad9c30655374d09c365b19",
+      "files": 12
+    },
+    "arc-blueberry": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-arc-blueberry-r1.tar.gz",
+      "rev": 1,
+      "size": 10892605,
+      "sha256": "a612249bbf2ba1332b971118f785b76b2969e02ae805a0de699e616313e40d05",
+      "files": 12
+    },
+    "arc-raiders": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-arc-raiders-r1.tar.gz",
+      "rev": 1,
+      "size": 5117405,
+      "sha256": "d20ed1dd2d59451c2814eb3f04692ee92fe5b39261cf0b09f7b519661402fdcb",
+      "files": 12
+    },
+    "archwave": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-archwave-r1.tar.gz",
+      "rev": 1,
+      "size": 10615920,
+      "sha256": "2362a30c2aed344b3e3f411816cacb6ff902a30c4d1908b3f8e61dca08afa0ac",
+      "files": 12
+    },
+    "artzen": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-artzen-r1.tar.gz",
+      "rev": 1,
+      "size": 16884790,
+      "sha256": "34a8b0908cc558ee856d1213566be57647c5956742f06d7621eb47fdab6a0372",
+      "files": 12
+    },
+    "ayu": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-ayu-r1.tar.gz",
+      "rev": 1,
+      "size": 6443809,
+      "sha256": "b4d2511bf1af83201a2e5e54780e12bfecfab0a8c7a7e5275a030985c91ea980",
+      "files": 11
+    },
+    "bauhaus": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-bauhaus-r1.tar.gz",
+      "rev": 1,
+      "size": 9967658,
+      "sha256": "e13cf484d7ebc19b91f6fd48f2e2ac649bb3adbea74ebadb797c1afafefdb9c4",
+      "files": 14
+    },
+    "biscuit-de-mar": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-biscuit-de-mar-r1.tar.gz",
+      "rev": 1,
+      "size": 21782615,
+      "sha256": "d5ceaa74d603f0c0c650c5b75c81bbe67bb0b8dc95e16a24def27a36d4d6ea5f",
+      "files": 17
+    },
+    "brutalism": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-brutalism-r1.tar.gz",
+      "rev": 1,
+      "size": 13813527,
+      "sha256": "7dd7d937161ad25115d685ca7217fbf9efae7238803d08416bf4d3937f2f0622",
+      "files": 13
+    },
+    "catppuccin": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-catppuccin-r1.tar.gz",
+      "rev": 1,
+      "size": 12830181,
+      "sha256": "4d2e6a2c3dea2a702c3b07b26da16f5fa11f4e7bf133da2065e72952bb77582c",
+      "files": 10
+    },
+    "catppuccin-frappe": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-catppuccin-frappe-r1.tar.gz",
+      "rev": 1,
+      "size": 15148524,
+      "sha256": "46c8227d8e0db804346f8bb5f86984c82ad4e30de1dd2fb106d378788d253196",
+      "files": 12
+    },
+    "catppuccin-latte": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-catppuccin-latte-r1.tar.gz",
+      "rev": 1,
+      "size": 2658158,
+      "sha256": "e5bf7e8f631c3d8fccb315ceefd4c5ecf8928d4585cc05c9eb76d0817eefd9fa",
+      "files": 8
+    },
+    "catppuccin-macchiato": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-catppuccin-macchiato-r1.tar.gz",
+      "rev": 1,
+      "size": 19915699,
+      "sha256": "ed605c7bee63b601d8fdc9d626f6bd0f286f4776add6e19832a0981b133f1e2e",
+      "files": 13
+    },
+    "coppernight": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-coppernight-r1.tar.gz",
+      "rev": 1,
+      "size": 19015247,
+      "sha256": "e0066f29f550dfa898fc24ffad1deee41ca2b5dc41c3ac1ed3dda4994e265046",
+      "files": 13
+    },
+    "cpunk": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-cpunk-r1.tar.gz",
+      "rev": 1,
+      "size": 25775050,
+      "sha256": "4980bfb3e32829171c70b143a8364ed99902029040d38068640d7343963338a6",
+      "files": 12
+    },
+    "delorean": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-delorean-r1.tar.gz",
+      "rev": 1,
+      "size": 14611253,
+      "sha256": "84000ea3ee514b934d53549bec3160c785de27e3455659ba515d4d4c7e28a04c",
+      "files": 14
+    },
+    "dracula": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-dracula-r1.tar.gz",
+      "rev": 1,
+      "size": 12597028,
+      "sha256": "f7bd5619e94a433571aa9242fb50eed7c8cfa320cbb51e86774290c69ce113b7",
+      "files": 11
+    },
+    "eldritch": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-eldritch-r1.tar.gz",
+      "rev": 1,
+      "size": 12932094,
+      "sha256": "0298a0be36927372d9abb4cdca404c7a38a10a0f3a738eb65b700b68f96fa792",
+      "files": 13
+    },
+    "ember-n-ash": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-ember-n-ash-r1.tar.gz",
+      "rev": 1,
+      "size": 16717845,
+      "sha256": "445decf3ffab378eea84709556d3997d9722ce8b2d6ca25d79f1da03738ef73f",
+      "files": 12
+    },
+    "ethereal": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-ethereal-r1.tar.gz",
+      "rev": 1,
+      "size": 4890671,
+      "sha256": "48eeeb35ef69a56f3f4adeb5d92f7ad979f398dba0ed3793ab36e752fbc75f88",
+      "files": 9
+    },
+    "event-horizon": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-event-horizon-r1.tar.gz",
+      "rev": 1,
+      "size": 18628470,
+      "sha256": "7454eb4a1bab617cacdd7af45ccc1928e8f7598d4bfcc0b4f6269d4ba0e5d3a0",
+      "files": 18
+    },
+    "everforest": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-everforest-r1.tar.gz",
+      "rev": 1,
+      "size": 951458,
+      "sha256": "86c4f6a006a34fed3444d6c046519a10d2d9a911b6cc4ac7b2190d923da72a86",
+      "files": 8
+    },
+    "fireside": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-fireside-r1.tar.gz",
+      "rev": 1,
+      "size": 3129453,
+      "sha256": "701b18044631dc67edb398f0cd29bdc452f345f8dfe5001edda9a9bdb1814680",
+      "files": 10
+    },
+    "flexoki-light": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-flexoki-light-r1.tar.gz",
+      "rev": 1,
+      "size": 1872217,
+      "sha256": "a21359961f63af807200250b796232a4f1785812fb213c9c6209a11f254e45a2",
+      "files": 10
+    },
+    "frankenstein": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-frankenstein-r1.tar.gz",
+      "rev": 1,
+      "size": 12165453,
+      "sha256": "5ed96f4197049d7c67114dbcbe2d07420e5479625adeceb6f9ea69485a912193",
+      "files": 12
+    },
+    "ghost-pastel": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-ghost-pastel-r1.tar.gz",
+      "rev": 1,
+      "size": 4537009,
+      "sha256": "2cf9fedaebbd0bb7834596d204b8b146583dc2616b9547bd36045bca71e881c5",
+      "files": 11
+    },
+    "greek-noir": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-greek-noir-r1.tar.gz",
+      "rev": 1,
+      "size": 2321462,
+      "sha256": "43c635296842c42db3b307241901796ba7bb89f23ccf1e15709820a639a6532b",
+      "files": 12
+    },
+    "gruvbox": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-gruvbox-r1.tar.gz",
+      "rev": 1,
+      "size": 27237784,
+      "sha256": "5ee5f2a140c708c66866265d47840356371fbc79ad0aa5a27e4b9095986a2b2b",
+      "files": 12
+    },
+    "gruvy-glass": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-gruvy-glass-r1.tar.gz",
+      "rev": 1,
+      "size": 49555851,
+      "sha256": "91f0fe16a9cbc3ee0c0173d66c14c47e0251db52c09660fd03db7a6b87cafc84",
+      "files": 45
+    },
+    "hackerman": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-hackerman-r1.tar.gz",
+      "rev": 1,
+      "size": 7549408,
+      "sha256": "ca4085b51b6e8b28c944532fc75799fd300751f57dbca0ad91c582f18435dc06",
+      "files": 9
+    },
+    "harbordark": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-harbordark-r1.tar.gz",
+      "rev": 1,
+      "size": 8121411,
+      "sha256": "0594b508e40443be99e120fc613bc1f47ca8f9f24187b3bab8c5f2edee88f87b",
+      "files": 12
+    },
+    "inkypinky": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-inkypinky-r1.tar.gz",
+      "rev": 1,
+      "size": 8108654,
+      "sha256": "52316b00144d261fc4096770add1efb7c69c6a1fed661effb8a6fc9487b1dca8",
+      "files": 14
+    },
+    "kanagawa": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-kanagawa-r1.tar.gz",
+      "rev": 1,
+      "size": 4643548,
+      "sha256": "65c220fc8ea391df43ebd01b6ff9e1909eee229d5e17982a2b3f58b5faebf56d",
+      "files": 8
+    },
+    "kanagawa-dragon": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-kanagawa-dragon-r1.tar.gz",
+      "rev": 1,
+      "size": 9442070,
+      "sha256": "bf831e421376c017c8912e0fdb0aae148a753f27ff93ac70c52de18d4c70212d",
+      "files": 12
+    },
+    "kurayami": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-kurayami-r1.tar.gz",
+      "rev": 1,
+      "size": 7417218,
+      "sha256": "59b9487cae73d1ef3a97ec6253f188273e3f55c6bd97eb0bba6760ecead8babf",
+      "files": 12
+    },
+    "last-horizon": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-last-horizon-r1.tar.gz",
+      "rev": 1,
+      "size": 6613432,
+      "sha256": "d1fc3e8edc9e68ae09a7c8307baacf6a260c4a53ec64dd4c891bea4b622993aa",
+      "files": 12
+    },
+    "lowlight": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-lowlight-r1.tar.gz",
+      "rev": 1,
+      "size": 3519170,
+      "sha256": "b9d4e310fd53af4b3a4aefd7a4557e81edbd7cb8d6101e1a50b2f848a8549598",
+      "files": 11
+    },
+    "lumon": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-lumon-r1.tar.gz",
+      "rev": 1,
+      "size": 2132492,
+      "sha256": "3e7cfba3fa4187bc2e6090091a935fc66d7b8e3398b38fea8804d45cc220f5f0",
+      "files": 10
+    },
+    "lunar": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-lunar-r1.tar.gz",
+      "rev": 1,
+      "size": 7206723,
+      "sha256": "1aa6aaed041d89658e6e072d4ed1a5e999cdfa4eb6589857ec999246ff517d0b",
+      "files": 12
+    },
+    "matte-black": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-matte-black-r1.tar.gz",
+      "rev": 1,
+      "size": 7836976,
+      "sha256": "4187a67b595e06d36799afa7772462174ada384b60252086c8f34692ee1e5305",
+      "files": 10
+    },
+    "mechanoonna": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-mechanoonna-r1.tar.gz",
+      "rev": 1,
+      "size": 7507376,
+      "sha256": "9723cf02d852b9cb7f145393e75fcdab9aa80136cc19d5bf485426ad4a0bc756",
+      "files": 11
+    },
+    "miasma": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-miasma-r1.tar.gz",
+      "rev": 1,
+      "size": 13035292,
+      "sha256": "75b13b750594550f1667ebed4dea169bf1dfc8dce950d16d4aa22d7da181b0b1",
+      "files": 17
+    },
+    "monokai": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-monokai-r1.tar.gz",
+      "rev": 1,
+      "size": 4523201,
+      "sha256": "fd8b285fca27ee4137edcbafe6f57b7f9b3cdd9454b456068f7e75fe8aac8916",
+      "files": 12
+    },
+    "moon-orbit": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-moon-orbit-r1.tar.gz",
+      "rev": 1,
+      "size": 27139725,
+      "sha256": "38bcc2a1c147e97a1cf8b2d05c601eec385aa85c843271c4154706ad825e6431",
+      "files": 13
+    },
+    "nagai-twilight": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-nagai-twilight-r1.tar.gz",
+      "rev": 1,
+      "size": 12418602,
+      "sha256": "5a20cfdbdc176f8f6b3b73453555a4f0cda3682b0434977fdbcb6bfb49d94cfc",
+      "files": 12
+    },
+    "nebulite": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-nebulite-r1.tar.gz",
+      "rev": 1,
+      "size": 8740877,
+      "sha256": "179fc541799a408e528177a225e2d1137b0510284970998804b1b1f41df33a06",
+      "files": 15
+    },
+    "noctalia": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-noctalia-r1.tar.gz",
+      "rev": 1,
+      "size": 23900904,
+      "sha256": "67862afbd2a1f298d4d94bb5b01907cd7a36fe7ab6b58e4c0e2f7bbcf5e5691f",
+      "files": 12
+    },
+    "nord": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-nord-r1.tar.gz",
+      "rev": 1,
+      "size": 11844888,
+      "sha256": "a2fb823caed06e33d69c0bc2cae0a32da8ad5a03d7a89f913f63c316fb54688b",
+      "files": 10
+    },
+    "osaka-jade": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-osaka-jade-r1.tar.gz",
+      "rev": 1,
+      "size": 8662888,
+      "sha256": "3ba5751f9e6484ed9f5d689408ad6fde7f96d627647841a97c2f0109f74ef0a6",
+      "files": 10
+    },
+    "oxford": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-oxford-r1.tar.gz",
+      "rev": 1,
+      "size": 12228602,
+      "sha256": "f215f900f6bd67a4d5629821c2292a23dec17898d2425531c5f8f9d761017790",
+      "files": 13
+    },
+    "pmndrs": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-pmndrs-r1.tar.gz",
+      "rev": 1,
+      "size": 6780631,
+      "sha256": "fb8fd1a7c576d48490a89a0fcb7630f055dec9080f7ae0373ca7ee7ec745295c",
+      "files": 10
+    },
+    "reddcs": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-reddcs-r1.tar.gz",
+      "rev": 1,
+      "size": 24703766,
+      "sha256": "7377f0b4612f802b446ac5e9eb86be01db308aa3f6e1ba41e4ce34764459a53b",
+      "files": 21
+    },
+    "retro-82": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-retro-82-r1.tar.gz",
+      "rev": 1,
+      "size": 41121538,
+      "sha256": "a4f69d0ec0a31d8d0901202d5df359ed6f965b3e86a5dec8cb8952a9990f00a6",
+      "files": 22
+    },
+    "reverie": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-reverie-r1.tar.gz",
+      "rev": 1,
+      "size": 4448597,
+      "sha256": "a5965bd5b46acae6fe1988b770b31ae8e4c7e2e513aebcf8f250e0a7dc2e24a1",
+      "files": 11
+    },
+    "ristretto": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-ristretto-r1.tar.gz",
+      "rev": 1,
+      "size": 6330503,
+      "sha256": "28de716cbd83e2a8aea1f24a54266dfbedc73a7dac2bf6776e539b3a0ade4395",
+      "files": 11
+    },
+    "rose-pine": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-rose-pine-r1.tar.gz",
+      "rev": 1,
+      "size": 12646460,
+      "sha256": "ce6c0761ab026625f5b5aed747704d10facc8b4cee9c07a09d82ec38b6635aa2",
+      "files": 11
+    },
+    "rose-pine-main": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-rose-pine-main-r1.tar.gz",
+      "rev": 1,
+      "size": 16000408,
+      "sha256": "f37bdcf5af0dc81240503270cce89276fd6e727e15af412fa952f84669c19fd7",
+      "files": 10
+    },
+    "rose-pine-moon": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-rose-pine-moon-r1.tar.gz",
+      "rev": 1,
+      "size": 21435802,
+      "sha256": "33fb8a4371e5fb4f1a5b5fcf6ff6604c6f7c808695cc7c7677b74406dd96af07",
+      "files": 11
+    },
+    "roseofdune": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-roseofdune-r1.tar.gz",
+      "rev": 1,
+      "size": 17330583,
+      "sha256": "89fac000fb2b24d40219168344022252106ed5817093b7e2bc8807879b1884cd",
+      "files": 14
+    },
+    "saga": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-saga-r1.tar.gz",
+      "rev": 1,
+      "size": 13675487,
+      "sha256": "f65ed3eac3af0a6f4dea08b319ea970af5513f07ad1deaa105d5ebf2a5053f7d",
+      "files": 13
+    },
+    "sapphire": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-sapphire-r1.tar.gz",
+      "rev": 1,
+      "size": 13606648,
+      "sha256": "dcd9774ca364c8dee67119a8b033547c73dd7dd485f382e894beb93ddff3d1d2",
+      "files": 13
+    },
+    "snow": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-snow-r1.tar.gz",
+      "rev": 1,
+      "size": 5960110,
+      "sha256": "eeb5cf9e00aae2bcd4502e6e3e80443e74088cb8add137c0e5871c1fb69ac990",
+      "files": 12
+    },
+    "soho": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-soho-r1.tar.gz",
+      "rev": 1,
+      "size": 9439541,
+      "sha256": "4a6dfd739c3346e95e09573dfee5a85eb955c5b902f0dfd42158c751169e7413",
+      "files": 11
+    },
+    "solitude": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-solitude-r1.tar.gz",
+      "rev": 1,
+      "size": 43462505,
+      "sha256": "623c6dddc82477643a649d98c72732f2a63d8827bb9c18d3c3ed1024528804c7",
+      "files": 13
+    },
+    "synthwave84": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-synthwave84-r1.tar.gz",
+      "rev": 1,
+      "size": 19459010,
+      "sha256": "aa13fef468729c6f58757865c31062dc168c2de13347fddfc66c3362ae1cbc59",
+      "files": 11
+    },
+    "thegreek": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-thegreek-r1.tar.gz",
+      "rev": 1,
+      "size": 3973318,
+      "sha256": "beed9df40d1dbb7dd5b4eea6a501172ead3330878eb94bcf9aa297ddb565830b",
+      "files": 14
+    },
+    "tokyo-night": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-tokyo-night-r1.tar.gz",
+      "rev": 1,
+      "size": 15410705,
+      "sha256": "586ae8082208fbc94a33aea6c49880313879165ca46c8fc80e684a9c77539fa6",
+      "files": 13
+    },
+    "tokyo-night-moon": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-tokyo-night-moon-r1.tar.gz",
+      "rev": 1,
+      "size": 26064350,
+      "sha256": "9fe475391d954c3cc95c4b5c3f4c80df197b2cf04253160678643fe6ffed2156",
+      "files": 17
+    },
+    "tokyo-night-storm": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-tokyo-night-storm-r1.tar.gz",
+      "rev": 1,
+      "size": 21497076,
+      "sha256": "ebe3783d77cee4d8f59e9bdb231d1044086052719395b16ee448e8ffc4747ac7",
+      "files": 16
+    },
+    "tycho": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-tycho-r1.tar.gz",
+      "rev": 1,
+      "size": 1184224,
+      "sha256": "8afde59d15b538373f5f29b0cedb2f5b54b142bf8c36d17b3cc3b5194420aa11",
+      "files": 11
+    },
+    "untitled": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-untitled-r1.tar.gz",
+      "rev": 1,
+      "size": 52077778,
+      "sha256": "69e36d060ffecaf43e967e1b1c75d14ef7ae51d1e710d8d28cac05f6b3686440",
+      "files": 16
+    },
+    "vantablack": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-vantablack-r1.tar.gz",
+      "rev": 1,
+      "size": 3189429,
+      "sha256": "8e2992b2cea63c69535bb513a59f504bbec10d688029b8e59c9bf5334ab4f68a",
+      "files": 11
+    },
+    "vengeance": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-vengeance-r1.tar.gz",
+      "rev": 1,
+      "size": 7326788,
+      "sha256": "b86827f0bd28df5e19aa293821e6fae02cdf1388f88fb9a96e624f23404c882b",
+      "files": 13
+    },
+    "vice-city": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-vice-city-r1.tar.gz",
+      "rev": 1,
+      "size": 6516379,
+      "sha256": "499dec0ba45785671aacb2b657e41637afa104175b4b08f47043bd0ca1818b7c",
+      "files": 11
+    },
+    "void": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-void-r1.tar.gz",
+      "rev": 1,
+      "size": 7518925,
+      "sha256": "4e37ca5ceb98e289118c3154df0b4ba9c697af5d7930b5deeb1875dc65eb7d46",
+      "files": 12
+    },
+    "vurple": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-vurple-r1.tar.gz",
+      "rev": 1,
+      "size": 6694057,
+      "sha256": "c30bb1f06c28418c648875abcbbac845e9f944ec0342f290bab7184d103a5714",
+      "files": 12
+    },
+    "white": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-white-r1.tar.gz",
+      "rev": 1,
+      "size": 2870896,
+      "sha256": "18edebcd51115ee804bab8921b2710e8dc467840f30e9ac2aebb04cee14979f4",
+      "files": 10
+    },
+    "x-1632": {
+      "release": "themes-v1",
+      "archive": "vgs-theme-x-1632-r1.tar.gz",
+      "rev": 1,
+      "size": 19140577,
+      "sha256": "e984e1215268e380965e6df6bccf0a67152b82a0cc41624d49b490dc4bc8056e",
+      "files": 12
+    }
+  }
+}

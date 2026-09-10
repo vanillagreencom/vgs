@@ -128,7 +128,7 @@ Summary:        Optional VGS themes, wallpapers, and bundled icon themes
 Requires:       %{name} = %{version}-%{release}
 
 %description    assets
-The vgs-shell package ships the coppernight default theme only. This package
+The vgs-shell package ships the bauhaus and roseofdune themes only. This package
 adds every other bundled theme, its wallpapers, and the vendored icon themes.
 
 %prep
@@ -168,8 +168,10 @@ EOF
 /usr/lib/vshell/LICENSE
 /usr/lib/vshell/VERSION
 %dir /usr/lib/vshell/themes
-/usr/lib/vshell/themes/coppernight/
+/usr/lib/vshell/themes/bauhaus/
+/usr/lib/vshell/themes/roseofdune/
 /usr/lib/vshell/themes/targets/
+/usr/lib/vshell/themes/thumbnails/
 /usr/lib/vshell/themes/BACKGROUNDS-ATTRIBUTION.md
 /usr/lib/vshell/themes/THEMES-ATTRIBUTION.md
 /usr/lib/systemd/user/vshell.service
@@ -177,8 +179,10 @@ EOF
 %files assets
 /usr/lib/vshell/config/vshell/icons/
 /usr/lib/vshell/themes/*
-%exclude /usr/lib/vshell/themes/coppernight
+%exclude /usr/lib/vshell/themes/bauhaus
+%exclude /usr/lib/vshell/themes/roseofdune
 %exclude /usr/lib/vshell/themes/targets
+%exclude /usr/lib/vshell/themes/thumbnails
 %exclude /usr/lib/vshell/themes/BACKGROUNDS-ATTRIBUTION.md
 %exclude /usr/lib/vshell/themes/THEMES-ATTRIBUTION.md
 
