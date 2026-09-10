@@ -211,6 +211,17 @@ EOF
   exit 1
 fi
 
+# The size a fresh clone would transfer. count-objects' size-pack counts packed
+# objects only, and objects sit loose on both sides of the run: git clone leaves
+# small object counts unpacked (transfer.unpackLimit), and the re-add commit is
+# loose until something packs it. Reading size-pack without packing first
+# reports a few KiB for a clone holding tens of megabytes, and that one number
+# is the only evidence the operator has that this run did what it was for.
+packed_size() {
+  git -C "$root" gc --quiet --prune=now || return 1
+  git -C "$root" count-objects -vH | sed -n 's/^size-pack: //p'
+}
+
 # filter-repo removes the imagery from history, including the current commit, so
 # the bundled themes' files must survive outside the repository across the run.
 keep="$(mktemp -d)"
@@ -220,7 +231,12 @@ for theme in "${BUNDLED[@]}"; do
   cp -a -- "$root/themes/$theme/preview.png" "$keep/$theme/preview.png"
 done
 
-before="$(git -C "$root" count-objects -vH | sed -n 's/^size-pack: //p')"
+# Before the destructive step, so a repository too broken to measure refuses
+# here rather than after its history is gone.
+if ! before="$(packed_size)"; then
+  echo "rewrite-theme-history: cannot pack this clone to measure it (git gc failed), so the before and after this run reports would both be wrong. Fix the repository and run again." >&2
+  exit 1
+fi
 
 filter_args=()
 for glob in "${IMAGERY_GLOBS[@]}"; do
@@ -256,7 +272,12 @@ commit restores the wallpapers and screenshot of the two themes the packages
 install, as new content with no prior revisions behind it."
 
 completed=1
-after="$(git -C "$root" count-objects -vH | sed -n 's/^size-pack: //p')"
+# A failed measurement here costs the number, not the run: the rewrite and the
+# re-add commit are already done, and withholding the push procedure over a gc
+# would help nobody.
+if ! after="$(packed_size)"; then
+  after="NOT MEASURED: git gc failed, so the re-add commit is still loose and size-pack would understate this clone. Run 'git gc --prune=now' and 'git count-objects -vH' by hand."
+fi
 # filter-repo drops the remote, so the operator sets it again before pushing.
 cat <<EOF
 

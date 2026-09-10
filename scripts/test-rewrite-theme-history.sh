@@ -173,10 +173,36 @@ else
     echo "FAIL cannot build the happy-path fixture" >&2
     exit 1
   fi
-  expect "a clean clone rewrites and prints the push procedure" "$clone" 0 \
-    "git push --force origin main"
+  happy_status=0
+  happy_output="$( (cd "$clone" && bash "$script") 2>&1 )" || happy_status=$?
+  check "a clean clone rewrites without error" test "$happy_status" -eq 0
+  case "$happy_output" in
+    *"git push --force origin main"*) check "the push procedure is printed" true ;;
+    *)
+      check "the push procedure is printed" false
+      printf '%s\n' "$happy_output" >&2
+      ;;
+  esac
+  # git clone leaves a small object count loose, so the before figure needs the
+  # same packing the after figure does or it reports nothing for a real clone.
+  case "$happy_output" in
+    *"size-pack before: 0 bytes"*)
+      check "the before figure counts the clone it measured" false
+      printf '%s\n' "$happy_output" >&2
+      ;;
+    *) check "the before figure counts the clone it measured" true ;;
+  esac
   check "the bundled wallpapers are restored" \
     test -f "$clone/themes/bauhaus/backgrounds/1-bauhaus.jpg"
+  # The size the banner prints counts packed objects only, so the re-add commit
+  # has to be packed by the time it is read. Loose objects left behind are the
+  # difference between the reported figure and what the clone weighs.
+  if ! loose="$(git -C "$clone" count-objects -v | sed -n 's/^count: //p')"; then
+    echo "FAIL cannot count the clone's loose objects" >&2
+    failures=$((failures + 1))
+    loose=-1
+  fi
+  check "the reported size counts the re-add commit" test "$loose" -eq 0
   check "the restore does not nest the wallpapers" \
     test '!' -e "$clone/themes/bauhaus/backgrounds/backgrounds"
   # Nothing but the bundled themes keeps imagery anywhere in history.
