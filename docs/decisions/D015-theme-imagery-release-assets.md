@@ -24,6 +24,8 @@ A publish uploads only the archives whose content moved, and the first archive t
 
 **The lock records publication, not intent.** Each theme's entry is written and the file saved the moment that theme's own upload returns, so an upload that fails at archive 40 of 79 leaves a lock describing exactly the 39 that are on the release, and the rerun continues from there. `--no-upload` writes the entry with `"published": false`, so a dry run can never leave a permanent pin to a release nobody created.
 
+Because each entry is recorded as its own upload returns, a run that uploaded some themes and then failed leaves no unpublished pin naming the release it was filling. The lock's top-level `publishing` field is that name: it is written before the first upload and cleared when the batch finishes, so the rerun continues into that release instead of opening the next number and stranding a partly filled one.
+
 Theme imagery and the shell version are therefore independent in both directions: replacing a wallpaper publishes a theme-asset release and touches no shell version, and cutting a shell release republishes nothing.
 
 ### 2. `themes/catalog.json` stays generated, from two inputs
@@ -31,7 +33,7 @@ Theme imagery and the shell version are therefore independent in both directions
 `scripts/gen-theme-catalog.py` keeps ownership of the file. It reads:
 
 - **The repository tree**, for everything the definitions carry: `name`, `mode`, `pair`, `source`, the 16 colours, `background`, `foreground`, `accent`, and a `files[]` entry with size and sha256 for each *definition* file that remains in the tree (`theme.json`, `colors.toml`, `apps/*`). 517 of the current 1005 file entries are definition files and survive unchanged.
-- **`themes/asset-lock.json`**, a checked-in file written only by the publish script, holding per theme `{release, archive, rev, size, sha256, definitions, preview, published}`. `definitions` is the digest below; `preview` is the sha256 of the screenshot the theme's thumbnail was derived from; `published` records whether the archive reached the release. Generation refuses an entry with no `definitions`, and the CI gate reports one without `published` as never published.
+- **`themes/asset-lock.json`**, a checked-in file written only by the publish script, holding a top-level `publishing` while a run is in flight, and per theme `{release, archive, rev, size, sha256, definitions, preview, published}`. `definitions` is the digest below; `preview` is the sha256 of the screenshot the theme's thumbnail was derived from; `published` records whether the archive reached the release. Generation refuses an entry with no `definitions`, and the CI gate reports one without `published` as never published.
 
 The 488 imagery entries in `files[]` collapse into one `assets` object per theme carrying one checksum for one archive. `source` becomes `{type: "github-release", repo, ref, baseUrl}`, where `baseUrl` is the release download root and a theme's archive resolves as `<baseUrl>/<release>/<archive>`. `source.refs` and `source.baseUrls` are gone; `source.ref` stays because `--check-release-pin` names the shell release the catalog ships with. The entry's `size` becomes the archive's compressed size, which is what a download actually transfers.
 

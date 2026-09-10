@@ -99,11 +99,10 @@ def load_lock() -> Dict[str, Any]:
 
 
 def render_lock(lock: Dict[str, Any]) -> str:
-    ordered = {
-        "version": LOCK_VERSION,
-        "repo": generator().REPO_SLUG,
-        "themes": {name: lock["themes"][name] for name in sorted(lock["themes"])},
-    }
+    ordered: Dict[str, Any] = {"version": LOCK_VERSION, "repo": generator().REPO_SLUG}
+    if lock.get("publishing"):
+        ordered["publishing"] = str(lock["publishing"])
+    ordered["themes"] = {name: lock["themes"][name] for name in sorted(lock["themes"])}
     return json.dumps(ordered, indent=2) + "\n"
 
 
@@ -116,8 +115,9 @@ def next_release_tag(lock: Dict[str, Any]) -> str:
 
     An unpublished pin already names the release it is destined for, so a resumed
     run continues into that one rather than opening a new release and stranding
-    the assets the interrupted run already uploaded. Only a published entry
-    consumes a release number.
+    the assets the interrupted run already uploaded. Failing that, the lock's
+    `publishing` field names the release an interrupted run was filling. Only a
+    published entry consumes a release number.
     """
     pending = sorted({str(entry.get("release") or "") for entry in lock["themes"].values()
                       if not entry.get("published") and entry.get("release")})
@@ -126,6 +126,13 @@ def next_release_tag(lock: Dict[str, Any]) -> str:
     if pending:
         raise SystemExit(f"{LOCK_PATH} pins unpublished archives across several releases "
                          f"({', '.join(pending)}); one publish uploads into one release")
+    # An incremental run records each theme as its own upload returns, so a run
+    # that uploaded some themes and then failed leaves no unpublished pin to
+    # name its release. `publishing` is that name, written before the first
+    # upload and cleared when the batch finishes.
+    in_progress = str(lock.get("publishing") or "")
+    if RELEASE_TAG_RE.match(in_progress):
+        return in_progress
     highest = 0
     for entry in lock["themes"].values():
         if not entry.get("published"):
@@ -331,6 +338,11 @@ def publish(args: argparse.Namespace) -> int:
 
     published = 0
     created = False
+    # Record the release this run is filling before anything is uploaded, so a
+    # rerun after a failed upload continues into it instead of opening the next
+    # number and leaving a partly filled release behind.
+    lock["publishing"] = tag
+    LOCK_PATH.write_text(render_lock(lock))
     stage = Path(tempfile.mkdtemp(prefix="vgs-theme-assets-"))
     try:
         for name in names:
@@ -388,6 +400,7 @@ def publish(args: argparse.Namespace) -> int:
             }
             LOCK_PATH.write_text(render_lock(lock))
             published += 1
+        lock.pop("publishing", None)
     finally:
         shutil.rmtree(stage, ignore_errors=True)
         LOCK_PATH.write_text(render_lock(lock))

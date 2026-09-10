@@ -172,6 +172,7 @@ EOF
 /usr/lib/vshell/themes/roseofdune/
 /usr/lib/vshell/themes/targets/
 /usr/lib/vshell/themes/thumbnails/
+/usr/lib/vshell/themes/catalog.json
 /usr/lib/vshell/themes/BACKGROUNDS-ATTRIBUTION.md
 /usr/lib/vshell/themes/THEMES-ATTRIBUTION.md
 /usr/lib/systemd/user/vshell.service
@@ -183,6 +184,7 @@ EOF
 %exclude /usr/lib/vshell/themes/roseofdune
 %exclude /usr/lib/vshell/themes/targets
 %exclude /usr/lib/vshell/themes/thumbnails
+%exclude /usr/lib/vshell/themes/catalog.json
 %exclude /usr/lib/vshell/themes/BACKGROUNDS-ATTRIBUTION.md
 %exclude /usr/lib/vshell/themes/THEMES-ATTRIBUTION.md
 

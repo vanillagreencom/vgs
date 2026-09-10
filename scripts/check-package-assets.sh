@@ -67,6 +67,25 @@ test -s "$core/usr/lib/vshell/themes/thumbnails/bauhaus.jpg"
 # The all bundle carries themes/ directly. This check avoids copying that full tree.
 test -f "$root/themes/catalog.json"
 
+# Fedora's base %files enumerates what the core install writes, while %files assets
+# claims themes/* and excludes those same names. A file the core install adds and
+# the base list does not name is packaged into the assets subpackage instead, so a
+# core-only install silently loses it.
+spec="$root/packaging/fedora/vgs-shell.spec"
+unclaimed=0
+while IFS= read -r -d '' installed; do
+  name="$(basename -- "$installed")"
+  if ! grep -qxF "/usr/lib/vshell/themes/$name" "$spec"; then
+    echo "packaging/fedora/vgs-shell.spec: the core install writes themes/$name but the base %files does not name it, so vgs-shell-assets takes it" >&2
+    unclaimed=1
+  fi
+  if ! grep -qxF "%exclude /usr/lib/vshell/themes/$name" "$spec"; then
+    echo "packaging/fedora/vgs-shell.spec: themes/$name is in the base %files but %files assets does not exclude it" >&2
+    unclaimed=1
+  fi
+done < <(find "$core/usr/lib/vshell/themes" -mindepth 1 -maxdepth 1 -type f -print0)
+test "$unclaimed" -eq 0
+
 DESTDIR="$extras" VGS_THEME_BUNDLE=extras "$root/packaging/install-system.sh"
 test -f "$extras/usr/lib/vshell/themes/tokyo-night/theme.json"
 test ! -e "$extras/usr/lib/vshell/themes/bauhaus"

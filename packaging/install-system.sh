@@ -28,6 +28,8 @@ install_themes() {
       install -Dm644 "$root/themes/BACKGROUNDS-ATTRIBUTION.md" "$lib/themes/BACKGROUNDS-ATTRIBUTION.md"
       install -Dm644 "$root/themes/THEMES-ATTRIBUTION.md" "$lib/themes/THEMES-ATTRIBUTION.md"
       # The catalog's archive checksums govern verification of downloaded themes.
+      # themes/asset-lock.json is publish-time input for the catalog generator and
+      # is deliberately not installed; the runtime reads the catalog alone.
       install -Dm644 "$root/themes/catalog.json" "$lib/themes/catalog.json"
       # Ship the 480 px thumbnails so the download browser can paint every
       # uninstalled theme on first open, with no network call.

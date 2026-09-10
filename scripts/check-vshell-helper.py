@@ -2950,9 +2950,15 @@ def _theme_archive(files: dict[str, bytes]) -> bytes:
     publisher = _load_script("publish_theme_assets_fixture", "publish-theme-assets.py")
     with tempfile.TemporaryDirectory() as tmp:
         members = []
-        for rel, blob in sorted(files.items()):
-            path = Path(tmp) / rel
-            path.parent.mkdir(parents=True, exist_ok=True)
+        # build_archive reads the source path for bytes and size only, so the
+        # member name never has to be the name on disk. Keeping them apart is
+        # what lets a hostile member name reach the downloader exactly as
+        # written: writing to `Path(tmp) / "../../evil"` instead makes the
+        # fixture's own path depend on how deep the temp directory sits, which
+        # raises PermissionError where it is shallow and writes outside the
+        # test's directory where it is not.
+        for index, (rel, blob) in enumerate(sorted(files.items())):
+            path = Path(tmp) / f"member-{index}"
             path.write_bytes(blob)
             members.append((rel, path))
         return publisher.build_archive(members)
@@ -3607,6 +3613,40 @@ def test_theme_asset_publish_records_what_is_on_the_release():
             assert_equal(release.assets["themes-v2"], ["vgs-theme-demo-r2.tar.gz"],
                          "the new release carries only the archive that changed")
 
+            # An incremental run records each theme as its own upload returns, so
+            # a failure leaves no unpublished pin naming the release it was
+            # filling. The lock records that release itself, and the rerun
+            # continues into it instead of opening the next number and leaving a
+            # partly filled release behind.
+            (assets / "backgrounds" / "1-demo.jpg").write_bytes(b"third wallpaper\n")
+            working_gh = publisher.gh
+
+            def failing_gh(*args):
+                if args[:2] == ("release", "upload"):
+                    return subprocess.CompletedProcess(args, 1, "", "the network went away")
+                return working_gh(*args)
+
+            publisher.gh = failing_gh
+            try:
+                run(True)
+                raise AssertionError("a failed upload must stop the publish")
+            except SystemExit:
+                pass
+            finally:
+                publisher.gh = working_gh
+            stranded = json.loads(publisher.LOCK_PATH.read_text())
+            assert_equal(stranded.get("publishing"), "themes-v3",
+                         "a failed upload leaves the release it was filling recorded")
+            assert_equal(publisher.next_release_tag(stranded), "themes-v3",
+                         "the rerun continues into that release rather than opening the next")
+            recovered = run(True)["demo"]
+            assert_equal((recovered["rev"], recovered["release"]), (3, "themes-v3"),
+                         "the rerun publishes into the release the failed run opened")
+            assert_equal(sorted(release.assets), ["themes-v1", "themes-v2", "themes-v3"],
+                         "no release number is stranded by the failure")
+            assert_equal("publishing" in json.loads(publisher.LOCK_PATH.read_text()), False,
+                         "a run that finishes its batch clears the in-progress release")
+
             # A theme dropped from the tree loses its pin and its thumbnail.
             shutil.rmtree(themes / "demo")
             assert_equal(sorted(run(True)), ["extra"],
@@ -3618,6 +3658,35 @@ def test_theme_asset_publish_records_what_is_on_the_release():
              publisher.GENERATOR, publisher.gh, publisher.regenerate_catalog) = saved
 
     with_temp_home(scenario)
+
+
+def test_theme_asset_release_selection():
+    """Which release a publish fills, from the three inputs in order."""
+    publisher = _load_script("publish_theme_assets_tag_test", "publish-theme-assets.py")
+    for label, lock, expected in (
+        ("an unpublished pin, which names its own destination",
+         {"themes": {"a": {"release": "themes-v4", "published": False}}}, "themes-v4"),
+        ("an interrupted run's own record",
+         {"publishing": "themes-v7", "themes": {"a": {"release": "themes-v1", "published": True}}},
+         "themes-v7"),
+        ("an unpublished pin outranking a stale record",
+         {"publishing": "themes-v7", "themes": {"a": {"release": "themes-v4", "published": False}}},
+         "themes-v4"),
+        ("a junk record, which never becomes a tag",
+         {"publishing": "../evil", "themes": {"a": {"release": "themes-v1", "published": True}}},
+         "themes-v2"),
+        ("only published pins", {"themes": {"a": {"release": "themes-v1", "published": True}}},
+         "themes-v2"),
+        ("an empty lock", {"themes": {}}, "themes-v1"),
+    ):
+        assert_equal(publisher.next_release_tag(lock), expected, f"release chosen from {label}")
+    try:
+        publisher.next_release_tag({"themes": {
+            "a": {"release": "themes-v1", "published": False},
+            "b": {"release": "themes-v2", "published": False}}})
+        raise AssertionError("unpublished pins across several releases must be refused")
+    except SystemExit:
+        pass
 
 
 def test_theme_asset_publication_gate():
@@ -6653,6 +6722,7 @@ def main():
     test_theme_catalog_download_verifies_its_archive()
     test_theme_asset_publisher()
     test_theme_asset_publish_records_what_is_on_the_release()
+    test_theme_asset_release_selection()
     test_theme_asset_publication_gate()
     test_theme_catalog_refuses_definitions_the_archive_does_not_carry()
     test_theme_catalog_manifest_matches_the_repo()
