@@ -1238,6 +1238,7 @@ def load_theme_package(name: str) -> Dict[str, Any] | None:
     # that second flag an untouched download loses its shipped screenshot and
     # goes to the preview generator on the first open after a cold cache.
     bp["modified"] = builtin_dir.is_dir() and user_dir.is_dir() and any(p.is_file() for p in user_dir.rglob("*"))
+    bp["catalogOwned"] = catalog_owns(name)
     bp["catalogPristine"] = catalog_pristine(name)
     bp["appOverrides"] = {app: len(roles) for app, roles in _parse_app_overrides_text(
         files["app-colors.toml"].read_text(errors="ignore") if "app-colors.toml" in files else "").items()}
@@ -1467,6 +1468,25 @@ def theme_dir_has_wallpapers(package: Path) -> bool:
     downloaded, so a `theme.json` on disk does not make the theme usable.
     """
     return any(entry.is_file() for entry in (package / "backgrounds").glob("*"))
+
+
+def catalog_mark_edited(name: str) -> None:
+    """Record that the user has rewritten a file the download itself carried.
+
+    catalog_pristine compares the directory against the file list the marker
+    records, which cannot see an edit to a file the archive already supplied:
+    `colors.toml` and `apps/*` are both in that list. A writer that rewrites one
+    drops the list, so the directory stops reading as untouched from then on and
+    the modified badge and the revert control come back. A marker with no list
+    is the same answer a theme downloaded before the list existed already gets.
+    """
+    if not catalog_owns(name):
+        return
+    marker = catalog_marker(name)
+    if "files" not in marker:
+        return
+    marker.pop("files")
+    write_file(user_themes_dir() / name / CATALOG_MARKER, json.dumps(marker, indent=2) + "\n")
 
 
 def catalog_pristine(name: str) -> bool:
@@ -5296,6 +5316,7 @@ def persist_color_edits(edits: List[str], name: str) -> Dict[str, Any]:
     pkg_dir_name = Path(str(target.get("path"))).name
     overlay = user_themes_dir() / pkg_dir_name / "colors.toml"
     write_file(overlay, colors_toml_from_map(base))
+    catalog_mark_edited(pkg_dir_name)
     refreshed = load_theme_package(pkg_dir_name) or target
     result = apply_theme_obj(refreshed)
     result["persisted"] = str(overlay)
@@ -7753,6 +7774,7 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
                     "builtin": b.get("builtin", False),
                     "preview": str(preview) if preview.exists() else shipped_preview,
                     "modified": bool(b.get("modified")),
+                    "catalogOwned": bool(b.get("catalogOwned")),
                     "catalogPristine": bool(b.get("catalogPristine")),
                     "adjustments": normalize_adjustments(b.get("adjustments")),
                     "appOverrides": b.get("appOverrides") or {},
@@ -8160,6 +8182,7 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
         text = re.sub(r'#[0-9a-fA-F]{6}(?![0-9a-fA-F])', _recolor, text)
         overlay.parent.mkdir(parents=True, exist_ok=True)
         write_file(overlay, text)
+        catalog_mark_edited(pkg_dir_name)
         applied = None
         refreshed = load_theme_package(pkg_dir_name) or bp
         if str(refreshed.get("name")) == str(current_theme().get("name")):

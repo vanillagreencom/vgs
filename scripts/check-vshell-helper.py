@@ -3080,11 +3080,6 @@ def _theme_list_entries() -> dict:
     return {entry["name"]: entry for entry in json.loads(buffer.getvalue())["blueprints"]}
 
 
-def _theme_list_previews() -> dict:
-    """The preview path theme list --json reports, per theme name."""
-    return {name: entry["preview"] for name, entry in _theme_list_entries().items()}
-
-
 def test_theme_catalog_offers_a_builtin_theme_with_no_imagery():
     """A built-in theme whose wallpapers ship in its release archive is downloadable.
 
@@ -3095,6 +3090,7 @@ def test_theme_catalog_offers_a_builtin_theme_with_no_imagery():
     package = {
         "theme.json": b'{"name":"demo","mode":"dark","source":"curated"}\n',
         "colors.toml": b'background = "#101010"\nforeground = "#eeeeee"\n',
+        "apps/btop.theme": b'theme[main_bg]="#101010"\n',
         "backgrounds/1-demo.jpg": b"\xff\xd8\xff\xe0 demo wallpaper bytes\n",
         "preview.png": b"\x89PNG\r\n\x1a\n demo screenshot bytes\n",
     }
@@ -3167,6 +3163,10 @@ def test_theme_catalog_offers_a_builtin_theme_with_no_imagery():
             # offer a revert that the CLI refuses every time it is pressed.
             assert_equal((listed.get("modified"), listed.get("catalogPristine")), (True, True),
                          "theme list reports both flags for an untouched download")
+            # Revert refuses on catalog ownership alone, so the control follows
+            # that fact rather than what the pristine flag can infer.
+            assert_equal(listed.get("catalogOwned"), True,
+                         "theme list reports a download as catalog-owned")
 
             (dest / "app-colors.toml").write_text('[btop]\nfg = "#ffffff"\n')
             edited = helper.load_theme_package("demo")
@@ -3174,7 +3174,13 @@ def test_theme_catalog_offers_a_builtin_theme_with_no_imagery():
                          "a file added beside the downloaded set is a user edit")
             overlaid = _theme_list_entries()["demo"]
             assert_equal((overlaid.get("modified"), overlaid.get("catalogPristine")), (True, False),
-                         "theme list reports the edit, so the badge and revert appear")
+                         "theme list reports the edit, so the badge appears")
+            # An edited download is still a download: the badge is right and the
+            # revert control is not, because the command refuses it either way.
+            assert_equal(overlaid.get("catalogOwned"), True,
+                         "an edited download stays catalog-owned, so revert stays hidden")
+            assert_equal(helper.cmd_theme(["revert", "demo"]), 1,
+                         "revert refuses an edited download too")
             assert_equal(overlaid["preview"], "",
                          "an edited download reports no screenshot, so the generator renders one")
             (dest / "app-colors.toml").unlink()
@@ -3210,8 +3216,36 @@ def test_theme_catalog_offers_a_builtin_theme_with_no_imagery():
             legacy = helper.load_theme_package("demo")
             assert_equal((legacy["modified"], legacy["catalogPristine"]), (True, False),
                          "a marker with no file list cannot claim the download is untouched")
+            legacy_entry = _theme_list_entries()["demo"]
+            assert_equal(legacy_entry.get("catalogOwned"), True,
+                         "a theme downloaded before the file list existed is still catalog-owned")
+            assert_equal(helper.cmd_theme(["revert", "demo"]), 1,
+                         "revert refuses a legacy download, so its control stays hidden too")
             marker["files"] = recorded
             marker_path.write_text(json.dumps(marker, indent=2) + "\n")
+
+            # The two writers that rewrite a file the archive itself carried.
+            # Neither adds a path, so the file-set comparison cannot see them:
+            # each drops the marker's list instead. Without that the settings
+            # tabs call an edited theme untouched and hide the way back.
+            for label, edit in (
+                ("a persisted colour edit", lambda: helper.persist_color_edits(
+                    ["background=#ff0000"], "demo")),
+                ("a curated app recolour", lambda: assert_equal(helper.cmd_theme([
+                    "app-curated-recolor", "btop", "--theme", "demo",
+                    "--set", "#101010=#00ff00", "--json"]), 0,
+                    "app-curated-recolor exit status")),
+            ):
+                shutil.rmtree(dest)
+                helper.catalog_download_theme(entry, base_urls, allow_local)
+                assert_equal(_theme_list_entries()["demo"]["catalogPristine"], True,
+                             f"the download is untouched before {label}")
+                with contextlib.redirect_stdout(io.StringIO()):
+                    edit()
+                written = _theme_list_entries()["demo"]
+                assert_equal((written.get("modified"), written.get("catalogPristine")),
+                             (True, False),
+                             f"{label} leaves the download reading as edited")
 
             # The bundled themes keep their imagery in the tree, and those stay
             # refused: nothing should re-download what the package already has.

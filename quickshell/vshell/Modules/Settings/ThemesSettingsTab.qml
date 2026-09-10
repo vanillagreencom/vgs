@@ -41,6 +41,10 @@ Item {
     // is true for one nobody has touched. The badge and the revert control
     // both mean "the user changed this", and revert refuses a download.
     readonly property bool userModified: currentEntry.modified === true && currentEntry.catalogPristine !== true
+    // Revert drops a built-in theme's user overlay, and refuses a catalog
+    // download outright whatever the pristine flag can infer about it. The
+    // control follows what the command enforces, not what the flag guesses.
+    readonly property bool revertable: currentEntry.modified === true && currentEntry.builtin === true && currentEntry.catalogOwned !== true
 
     function optionLabel(options, value, fallback) {
         for (let i = 0; i < options.length; i++) {
@@ -311,7 +315,7 @@ Item {
                     VgsButton {
                         variant: "secondary"
                         iconName: "restart_alt"
-                        visible: root.userModified && root.currentEntry.builtin === true
+                        visible: root.revertable
                         text: root.revertConfirmPending ? I18n.tr("Confirm Revert?") : I18n.tr("Revert to Default")
                         enabled: !VGSThemeService.busy
                         onClicked: {
