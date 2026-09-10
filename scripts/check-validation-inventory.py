@@ -36,9 +36,9 @@ SCRIPTS = REPO_ROOT / "scripts"
 NOT_A_SUITE_CHECK = {
     "validate": "the suite runner itself: it invokes the checks below rather than being one",
     "build-release.sh": "release tooling, driven by .github/workflows/release.yml",
-    "build-assets.sh": "release tooling: builds the extras bundle, driven by .github/workflows/release.yml",
     "check-release.sh": "release preflight, driven by the release path and packaging/README.md",
     "check-vshell-niri.py": "the Niri half of the helper suite; invoked by scripts/check-vshell-helper.py",
+    "rewrite-theme-history.sh": "one-time history rewrite: drops the theme imagery D015 moved to release archives, run by hand once",
     "publish-aur.sh": "release tooling: pushes packaging/arch to the AUR, driven by the release path",
     "publish-gentoo.sh": "release tooling: pushes packaging/gentoo to the overlay, driven by the release path",
     "gen-theme-catalog.py": "theme-catalog generator; its --check mode is invoked by scripts/check-package-assets.sh, its --check-assets-published by the ci.yml step 'Theme asset publication', and its --check-release-pin by scripts/check-release.sh",

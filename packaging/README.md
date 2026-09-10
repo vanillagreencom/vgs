@@ -12,9 +12,9 @@ systemctl --user enable --now vshell.service
 
 The source installer starts the service unless given `--no-start`. Home Manager controls activation through its module.
 
-## Theme bundles
+## Themes
 
-The base package includes the default theme and the theme download catalog. The optional assets package supplies the bundled themes, wallpapers and icons. Gentoo selects extra themes through its USE flag; the Nix package uses the combined theme bundle.
+Every channel installs one theme set: the `bauhaus` and `roseofdune` themes, the download catalog, a thumbnail per catalogued theme, and the vendored icon themes. Every other theme downloads on demand from its own release archive.
 
 ## Channels
 
@@ -24,12 +24,6 @@ Use both listed repositories for openSUSE, both PPAs for Ubuntu, and GURU with t
 
 ```bash
 yay -S vgs-shell
-```
-
-### Arch optional themes and icons
-
-```bash
-yay -S vgs-shell-assets
 ```
 
 ### Fedora
@@ -85,7 +79,7 @@ sudo emaint sync -a
 sudo emerge --ask gui-apps/vgs-shell
 ```
 
-For Arch development builds, pair `vgs-shell-git` with `vgs-shell-assets-git`. Debian and Fedora also provide an optional `vgs-shell-assets` package.
+Arch development builds use `vgs-shell-git`.
 
 ### Nix
 

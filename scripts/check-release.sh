@@ -5,8 +5,6 @@ root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 version="$(cat "$root/VERSION")"
 
 grep -q "pkgver=$version" "$root/packaging/arch/PKGBUILD"
-# The assets recipe must reference the release being published.
-grep -q "pkgver=$version" "$root/packaging/arch/vgs-shell-assets/PKGBUILD"
 grep -q "Version:        $version" "$root/packaging/fedora/vgs-shell.spec"
 grep -q "vgs-shell ($version-1)" "$root/packaging/debian/changelog"
 grep -q "version=$version" "$root/packaging/void/template"
@@ -40,25 +38,21 @@ test -f "$root/packaging/arch/vgs-shell-git/vgs-shell-git.install"
 "$root/scripts/gen-package-metadata.py"
 # AUR clients read .SRCINFO, so it must agree with PKGBUILD.
 "$root/scripts/check-aur-sync.py"
-bash -n "$root/install.sh" "$root/uninstall.sh" "$root/scripts/build-release.sh" "$root/scripts/build-assets.sh" "$root/packaging/install-system.sh" "$root/scripts/check-package-assets.sh"
+bash -n "$root/install.sh" "$root/uninstall.sh" "$root/scripts/build-release.sh" "$root/packaging/install-system.sh" "$root/scripts/check-package-assets.sh"
 bash "$root/scripts/check-package-assets.sh"
 git diff --check
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 "$root/scripts/build-release.sh" "$version" "$(uname -m)" "$tmp" >/dev/null
-# Build the extras archive to verify that its installer and theme data are present.
-"$root/scripts/build-assets.sh" "$version" "$tmp" >/dev/null
-tar -tzf "$tmp/vgs-$version-assets.tar.gz" > "$tmp/assets.list"
-grep -q "/packaging/install-system.sh$" "$tmp/assets.list"
-grep -q "/config/vshell/icons/" "$tmp/assets.list"
-# Core must omit assets assigned to the extras archive.
 archive="$tmp/vgs-$version-linux-$(uname -m).tar.gz"
 tar -tzf "$archive" > "$tmp/archive.list"
 grep -q "/bin/vshell-backend$" "$tmp/archive.list"
 grep -q "/quickshell/vshell/shell.qml$" "$tmp/archive.list"
-if grep -q "/config/vshell/icons/" "$tmp/archive.list"; then
-  echo "check-release: the core bundle carries config/vshell/icons, which belongs to the extras bundle" >&2
+grep -q "/packaging/install-system.sh$" "$tmp/archive.list"
+# The retired assets archive was the only carrier of the vendored icon themes.
+if ! grep -q "/config/vshell/icons/" "$tmp/archive.list"; then
+  echo "check-release: the release bundle carries no config/vshell/icons, so a tarball install has no vendored icon themes" >&2
   exit 1
 fi
 # Compare the thumbnail set with the catalogued themes. A nonempty archive can

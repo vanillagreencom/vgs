@@ -3370,7 +3370,7 @@ def test_theme_asset_publisher():
         publisher.write_thumbnail((REPO_ROOT / "themes" / "bauhaus" / "preview.png").read_bytes(),
                                   thumbnail)
         current = generator.sha256_of(REPO_ROOT / "themes" / "bauhaus" / "preview.png")
-        replaced = generator.sha256_of(REPO_ROOT / "themes" / "tokyo-night" / "preview.png")
+        replaced = generator.sha256_of(REPO_ROOT / "themes" / "roseofdune" / "preview.png")
         os.utime(thumbnail, (0, 0))
         for label, digest, recorded, present, expected in (
             ("missing thumbnail", current, current, False, True),

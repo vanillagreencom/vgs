@@ -8,6 +8,7 @@ pkgbase = vgs-shell-git
 	license = MIT
 	makedepends = git
 	makedepends = go
+	install = vgs-shell-git.install
 	depends = quickshell
 	depends = jq
 	depends = python
@@ -80,10 +81,3 @@ pkgbase = vgs-shell-git
 	sha256sums = SKIP
 
 pkgname = vgs-shell-git
-	install = vgs-shell-git.install
-
-pkgname = vgs-shell-assets-git
-	pkgdesc = Optional VGS themes, wallpapers, and bundled icon themes (git)
-	depends = vgs-shell-git=0.1.0.r0.g0000000-4
-	provides = vgs-shell-assets
-	conflicts = vgs-shell-assets
