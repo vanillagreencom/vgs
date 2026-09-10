@@ -10064,13 +10064,16 @@ def _hyprland_layout_payload(settings: Dict[str, Any]) -> Tuple[str, Dict[str, A
         lines.append("  general = {")
         lines.extend(_lua_table(general, "    "))
         lines.append("  },")
-    # Groupbar tabs round at half the window radius: softened so grouped tabs
-    # start to round, but visibly less than the windows. Tracks the radius
-    # slider (regenerated on cornerRadius).
-    groupbar_radius = radius // 2
+    # Group tabs take the window radius. Hyprland rounds a tab from two options,
+    # one per part it draws: the indicator strip from group:groupbar:rounding and
+    # the filled tab behind the title from group:groupbar:gradient_rounding. A
+    # tabbed setup can show either part, so both carry the radius. Whether the
+    # rounding reaches every tab or only the ends of the bar is round_only_edges,
+    # a look the user's own config owns.
     lines.append("  group = {")
     lines.append("    groupbar = {")
-    lines.append(f"      rounding = {groupbar_radius},")
+    lines.append(f"      rounding = {radius},")
+    lines.append(f"      gradient_rounding = {radius},")
     lines.append("    },")
     lines.append("  },")
     lines.append("  decoration = {")
@@ -10082,7 +10085,7 @@ def _hyprland_layout_payload(settings: Dict[str, Any]) -> Tuple[str, Dict[str, A
     meta = {
         "manageHyprlandShape": True,
         "radius": radius,
-        "groupbarRadius": groupbar_radius,
+        "groupbarRadius": radius,
         "border": border,
         "gaps": {k: general[k] for k in ("gaps_in", "gaps_out") if k in general},
         "resizeOnBorder": resize_on_border,

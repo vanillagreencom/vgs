@@ -789,6 +789,22 @@ def test_system_font_size_targets():
         with_temp_home(run_case)
 
 
+# The generated groupbar table, read as fields, so an assertion cannot be satisfied
+# by the identical decoration.rounding line elsewhere in the same script.
+GROUPBAR_TABLE = re.compile(r"^  group = \{\n    groupbar = \{\n(.*?)^    \},\n^  \},$", re.M | re.S)
+
+
+def _lua_groupbar_fields(script):
+    match = GROUPBAR_TABLE.search(script)
+    if match is None:
+        raise AssertionError("layout script should contain a group.groupbar table")
+    fields = {}
+    for line in match.group(1).splitlines():
+        key, _, value = line.strip().rstrip(",").partition(" = ")
+        fields[key] = int(value)
+    return fields
+
+
 def test_hyprland_layout_payload():
     script, meta = helper._hyprland_layout_payload({
         "cornerRadius": 99,
@@ -825,6 +841,16 @@ def test_hyprland_layout_payload():
     })
     assert_equal(meta["radius"], 12, "the shell radius with no override present")
     assert_equal(meta["resizeOnBorder"], True, "legacy resize_on_border false should be upgraded")
+
+    # Hyprland rounds a group tab from two options: the indicator strip from
+    # rounding and the filled tab behind the title from gradient_rounding. A tabbed
+    # setup shows either one, so both carry the container radius and neither is
+    # softened. Rows span the slider's range plus a value above it.
+    for corner_radius, expected in ((0, 0), (8, 8), (20, 20), (99, 20)):
+        script, meta = helper._hyprland_layout_payload({"cornerRadius": corner_radius})
+        assert_equal(_lua_groupbar_fields(script), {"rounding": expected, "gradient_rounding": expected},
+                     f"groupbar rounding at cornerRadius {corner_radius}")
+        assert_equal(meta["groupbarRadius"], meta["radius"], f"groupbar meta radius at cornerRadius {corner_radius}")
 
 
 # Test regex membership and matches, not substring presence in generated Lua.

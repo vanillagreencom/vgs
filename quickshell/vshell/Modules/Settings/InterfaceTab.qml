@@ -91,9 +91,9 @@ Item {
 
                 SettingsSliderRow {
                     settingKey: "cornerRadius"
-                    tags: ["surface", "shape", "radius", "rounding", "corner", "container", "quickshell", "hyprland", "niri", "compositor", "window"]
+                    tags: ["surface", "shape", "radius", "rounding", "corner", "container", "quickshell", "hyprland", "niri", "compositor", "window", "group", "tab"]
                     text: I18n.tr("Container Radius")
-                    description: I18n.tr("Corners of VGS surfaces and app windows.")
+                    description: I18n.tr("Corners of VGS surfaces, app windows, and group tabs.")
                     value: SettingsData.effectiveContainerRadius
                     minimum: 0
                     maximum: 20
