@@ -35,6 +35,19 @@ ASSET_SUBPATHS = ("backgrounds", "preview.png")
 # Use the installer path validator so generated entries have accepted paths.
 
 
+def is_imagery(rel: str) -> bool:
+    """Whether a theme-package path is imagery the release archive carries.
+
+    The one owner of the imagery-versus-definition split; scripts/publish-theme-assets.py
+    imports it rather than restating the rule.
+    """
+    return rel.split("/", 1)[0] in ASSET_SUBPATHS
+
+
+class GhUnavailable(RuntimeError):
+    """gh could not answer, which is not the same as a release that is not there."""
+
+
 def load_helper() -> Any:
     loader = importlib.machinery.SourceFileLoader("vshell_helper_catalog", str(REPO_ROOT / "bin" / "vshell-helper"))
     spec = importlib.util.spec_from_loader(loader.name, loader)
@@ -59,7 +72,7 @@ def catalog_relpaths(helper: Any, theme_dir: Path) -> List[str]:
         if not path.is_file():
             continue
         rel = path.relative_to(theme_dir).as_posix()
-        if rel.split("/")[0] in ASSET_SUBPATHS or rel in ASSET_SUBPATHS:
+        if is_imagery(rel):
             continue
         try:
             rels.append(helper._catalog_check_relpath(rel))
@@ -77,6 +90,19 @@ def sha256_of(path: Path) -> str:
     return digest.hexdigest()
 
 
+def definitions_digest(files: List[Dict[str, Any]]) -> str:
+    """One digest over the definition manifest an archive was built from.
+
+    The publisher records this for the files it packed; the generator recomputes
+    it from the tree. They disagree exactly when a committed definition file has
+    changed since the archive was published, which is the drift a per-file
+    checksum in the catalog would otherwise advertise and nothing would verify.
+    """
+    payload = "".join(f"{spec['path']}\0{spec['sha256']}\n"
+                      for spec in sorted(files, key=lambda spec: spec["path"]))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def load_lock() -> Dict[str, Any]:
     if not LOCK_PATH.is_file():
         raise SystemExit(f"{LOCK_PATH} is missing; run scripts/publish-theme-assets.py")
@@ -92,7 +118,8 @@ def asset_entry(lock: Dict[str, Any], name: str) -> Dict[str, Any]:
     if not isinstance(entry, dict):
         raise SystemExit(f"{name}: no entry in {LOCK_PATH}; publish its imagery first "
                          f"(scripts/publish-theme-assets.py)")
-    missing = [key for key in ("release", "archive", "rev", "size", "sha256") if not entry.get(key)]
+    missing = [key for key in ("release", "archive", "rev", "size", "sha256", "definitions")
+               if not entry.get(key)]
     if missing:
         raise SystemExit(f"{name}: {LOCK_PATH} entry is missing {', '.join(missing)}")
     return {
@@ -126,6 +153,14 @@ def theme_entry(helper: Any, theme_dir: Path, lock: Dict[str, Any]) -> Dict[str,
         path = theme_dir / rel
         files.append({"path": rel, "size": path.stat().st_size, "sha256": sha256_of(path)})
     assets = asset_entry(lock, name)
+    # The archive carries these same definition files. A catalog that advertises
+    # one set while pinning an archive built from another silently installs the
+    # old definitions, so generation refuses rather than emitting it.
+    pinned = str((lock.get(name) or {}).get("definitions") or "")
+    if definitions_digest(files) != pinned:
+        raise SystemExit(
+            f"{name}: the committed theme definitions differ from the ones in "
+            f"{assets['archive']}; republish that theme with scripts/publish-theme-assets.py")
 
     return {
         "name": name,
@@ -168,15 +203,60 @@ def git(*args: str) -> subprocess.CompletedProcess[str]:
                           capture_output=True, text=True, check=False)
 
 
-def unpublished_tags(tags: List[str]) -> List[str]:
-    """Tags among `tags` that have no published GitHub release."""
-    missing = []
-    for tag in tags:
-        listed = subprocess.run(["gh", "release", "view", tag, "--repo", REPO_SLUG, "--json", "tagName"],
-                                capture_output=True, text=True, check=False)
-        if listed.returncode != 0:
-            missing.append(tag)
-    return missing
+def gh_release(tag: str) -> Dict[str, Any] | None:
+    """A release and its assets, or None when GitHub answers that it is not there.
+
+    Any other failure raises. `gh` exits 1 with a not-found message for a release
+    that does not exist and 4 when it is unauthenticated; reading every nonzero
+    exit as absence tells a maintainer who has not run `gh auth login` to publish
+    releases that are already there.
+    """
+    listed = subprocess.run(
+        ["gh", "release", "view", tag, "--repo", REPO_SLUG, "--json", "tagName,assets"],
+        capture_output=True, text=True, check=False)
+    if listed.returncode == 0:
+        return json.loads(listed.stdout)
+    stderr = listed.stderr.strip()
+    if listed.returncode == 1 and "not found" in stderr.lower():
+        return None
+    raise GhUnavailable(
+        f"gh release view {tag} exited {listed.returncode} and could not say whether the "
+        f"release exists: {stderr or '(no stderr)'}")
+
+
+def check_assets_published(catalog: Dict[str, Any]) -> int:
+    """Check that every catalogued archive is an asset of a release that exists.
+
+    A tag alone proves nothing: a dry run or an interrupted upload leaves a pin
+    whose archive was never uploaded, and every install of that theme is a 404.
+    """
+    lock = load_lock()
+    problems: List[str] = []
+    assets_by_tag: Dict[str, set[str] | None] = {}
+    for theme in catalog.get("themes") or []:
+        name = str(theme.get("name") or "")
+        pin = theme.get("assets") or {}
+        tag, archive = str(pin.get("release") or ""), str(pin.get("archive") or "")
+        if not (lock.get(name) or {}).get("published"):
+            problems.append(f"{name}: {tag}/{archive} is pinned but was never published")
+            continue
+        if tag not in assets_by_tag:
+            release = gh_release(tag)
+            assets_by_tag[tag] = None if release is None else {
+                str(asset.get("name") or "") for asset in (release.get("assets") or [])}
+        published = assets_by_tag[tag]
+        if published is None:
+            problems.append(f"{name}: release {tag} does not exist")
+        elif archive not in published:
+            problems.append(f"{name}: release {tag} carries no asset named {archive}")
+    if problems:
+        print("themes/catalog.json pins theme archives that a user cannot download:", file=sys.stderr)
+        for problem in problems:
+            print(f"  {problem}", file=sys.stderr)
+        print("Publish them with scripts/publish-theme-assets.py.", file=sys.stderr)
+        return 1
+    print(f"every catalogued theme archive is published ({len(assets_by_tag)} release(s))")
+    return 0
 
 
 def check_release_pin(catalog: Dict[str, Any], version: str) -> int:
@@ -195,17 +275,10 @@ def check_release_pin(catalog: Dict[str, Any], version: str) -> int:
         print("themes/ has uncommitted changes; the release tag would not serve the catalogued "
               f"content:\n{dirty}", file=sys.stderr)
         return 1
-    if shutil.which("gh") is None:
-        print("gh is required to confirm that the catalogued theme-asset releases exist", file=sys.stderr)
-        return 1
-    tags = sorted({str((t.get("assets") or {}).get("release") or "") for t in catalog.get("themes") or []})
-    missing = unpublished_tags([tag for tag in tags if tag])
-    if missing:
-        print(f"themes/catalog.json names theme-asset releases that do not exist: {', '.join(missing)}; "
-              f"publish them with scripts/publish-theme-assets.py", file=sys.stderr)
-        return 1
-    print(f"theme catalog pinned to v{version} and committed; "
-          f"{len(tags)} theme-asset release(s) published")
+    status = check_assets_published(catalog)
+    if status != 0:
+        return status
+    print(f"theme catalog pinned to v{version} and committed")
     return 0
 
 
@@ -220,14 +293,27 @@ def main(argv: List[str]) -> int:
     parser.add_argument("--check", action="store_true", help="fail if themes/catalog.json is stale")
     parser.add_argument("--ref", default="", help="release tag this catalog ships with (default: v<VERSION>)")
     parser.add_argument("--check-release-pin", metavar="VERSION", default="",
-                        help="release gate: ref must be vVERSION, themes/ committed, asset releases published")
+                        help="release gate: ref must be vVERSION, themes/ committed, asset archives published")
+    parser.add_argument("--check-assets-published", action="store_true",
+                        help="fail if any catalogued archive is not an asset of a release that exists")
     args = parser.parse_args(argv)
 
-    if args.check_release_pin:
+    if args.check_release_pin or args.check_assets_published:
         if not CATALOG_PATH.is_file():
             print(f"{CATALOG_PATH} is missing", file=sys.stderr)
             return 1
-        return check_release_pin(json.loads(CATALOG_PATH.read_text()), args.check_release_pin)
+        if shutil.which("gh") is None:
+            print("gh is required to confirm that the catalogued theme archives are published",
+                  file=sys.stderr)
+            return 1
+        catalog = json.loads(CATALOG_PATH.read_text())
+        try:
+            if args.check_assets_published:
+                return check_assets_published(catalog)
+            return check_release_pin(catalog, args.check_release_pin)
+        except GhUnavailable as exc:
+            print(f"the theme-asset releases could not be confirmed: {exc}", file=sys.stderr)
+            return 1
 
     ref = args.ref or default_ref()
     # A regenerated catalog keeps the committed ref unless --ref says otherwise:

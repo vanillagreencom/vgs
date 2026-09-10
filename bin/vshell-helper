@@ -1264,6 +1264,9 @@ CATALOG_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 CATALOG_RELEASE_RE = re.compile(r"^themes-v[0-9]+$")
 CATALOG_ARCHIVE_RE = re.compile(r"^vgs-theme-[A-Za-z0-9][A-Za-z0-9._-]*-r[0-9]+\.tar\.gz$")
 CATALOG_MAX_FILE_BYTES = 128 * 1024 * 1024
+# A theme archive streams through this buffer, so the peak cost of an install is
+# one chunk rather than the whole archive.
+CATALOG_CHUNK_BYTES = 1024 * 1024
 CATALOG_TIMEOUT = 60
 CATALOG_MARKER = ".vgs-catalog.json"
 
@@ -1343,37 +1346,60 @@ def _catalog_check_relpath(rel: str) -> str:
     return rel
 
 
-def _catalog_fetch(url: str, allow_local: bool, max_bytes: int = CATALOG_MAX_FILE_BYTES) -> bytes:
+def _catalog_check_scheme(url: str, allow_local: bool) -> None:
+    """HTTPS is the only scheme a download accepts; `file:` is for the test override."""
     scheme = urllib.parse.urlsplit(url).scheme
     if scheme != "https" and not (scheme == "file" and allow_local):
         raise ValueError(f"refusing to download from {scheme or 'relative'} URL")
+
+
+def _catalog_fetch_to_file(url: str, dest: Path, allow_local: bool, size: int, digest: str) -> None:
+    """Stream one catalogued file into `dest`, hashing the bytes as they are written.
+
+    The digest covers what lands on disk, so the file the unpack step reads back
+    is the file that was verified, and the archive is never held whole in memory.
+    The catalogued size is the read cap: a location that keeps sending past it is
+    cut off there instead of at the far larger per-file ceiling.
+    """
+    _catalog_check_scheme(url, allow_local)
     request = urllib.request.Request(url, headers={"User-Agent": "vshell-theme-catalog"})
-    with urllib.request.urlopen(request, timeout=CATALOG_TIMEOUT) as response:  # noqa: S310 - scheme checked above
-        data = response.read(max_bytes + 1)
-    if len(data) > max_bytes:
-        raise ValueError(f"download exceeds {max_bytes} bytes: {url}")
-    return data
+    running = hashlib.sha256()
+    written = 0
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with urllib.request.urlopen(request, timeout=CATALOG_TIMEOUT) as response:  # noqa: S310 - scheme checked above
+            with dest.open("wb") as handle:
+                while True:
+                    chunk = response.read(min(CATALOG_CHUNK_BYTES, size - written + 1))
+                    if not chunk:
+                        break
+                    written += len(chunk)
+                    if written > size:
+                        raise ValueError(f"download exceeds the catalogued {size} bytes")
+                    running.update(chunk)
+                    handle.write(chunk)
+        if written != size:
+            raise ValueError(f"expected {size} bytes, got {written}")
+        if running.hexdigest() != digest:
+            raise ValueError("checksum mismatch")
+    except Exception:
+        with contextlib.suppress(OSError):
+            dest.unlink()
+        raise
 
 
 def _catalog_fetch_verified(label: str, rel: str, size: int, digest: str,
-                            base_urls: List[str], allow_local: bool) -> bytes:
-    """Fetch `rel` from the first base URL whose bytes match the catalogued size and sha256."""
+                            base_urls: List[str], allow_local: bool, dest: Path) -> None:
+    """Fetch `rel` into `dest` from the first base URL whose bytes match the catalogued size and sha256."""
     quoted = "/".join(urllib.parse.quote(part) for part in rel.split("/"))
     problems: List[str] = []
     for base in base_urls:
         url = f"{base}/{quoted}"
         try:
-            data = _catalog_fetch(url, allow_local, max_bytes=max(size, 1) + 1024)
+            _catalog_fetch_to_file(url, dest, allow_local, size, digest)
+            return
         except Exception as exc:
             problems.append(f"{base}: {exc}")
-            continue
-        if len(data) != size:
-            problems.append(f"{base}: expected {size} bytes, got {len(data)}")
-            continue
-        if hashlib.sha256(data).hexdigest() != digest:
-            problems.append(f"{base}: checksum mismatch")
-            continue
-        return data
     raise ValueError(f"{label}: no source served the catalogued file (" + "; ".join(problems) + ")")
 
 
@@ -1515,10 +1541,8 @@ def catalog_download_theme(entry: Dict[str, Any], base_urls: List[str], allow_lo
     staging = Path(tempfile.mkdtemp(prefix=f".catalog-{name}-", dir=str(user_themes_dir())))
     try:
         rel = f"{assets['release']}/{assets['archive']}"
-        data = _catalog_fetch_verified(f"{name} ({rel})", rel, assets["size"], assets["sha256"],
-                                       base_urls, allow_local)
-        archive.parent.mkdir(parents=True, exist_ok=True)
-        archive.write_bytes(data)
+        _catalog_fetch_verified(f"{name} ({rel})", rel, assets["size"], assets["sha256"],
+                                base_urls, allow_local, archive)
         written = _catalog_unpack(name, archive, staging)
         if not (staging / "theme.json").is_file():
             raise ValueError(f"{name}: {assets['archive']} has no theme.json")
@@ -12744,6 +12768,35 @@ def copy_if_readable(src: Path, dst: Path, gid: int, mode: int = 0o660) -> bool:
         return False
 
 
+def publish_greeter_wallpaper(wallpaper: str, override: Path,
+                              publish: Callable[[Path], None]) -> str:
+    """Put the configured greeter wallpaper in place, or say why it is not there.
+
+    Returns the configured path when it is missing, empty otherwise. A missing
+    image removes the override and leaves the greeter its built-in background:
+    a greeter that refuses to sync over one is a lock-out. The reason is printed
+    as well as recorded, because the settings tab folds stderr into its toast and
+    the manifest key alone reaches nobody.
+
+    Both sync paths, privileged and unprivileged, share this one decision.
+    """
+    if not wallpaper:
+        if override.exists():
+            override.unlink()
+        return ""
+    src = Path(os.path.expanduser(wallpaper))
+    if not src.is_absolute():
+        src = Path.cwd() / src
+    if src.is_file():
+        publish(src)
+        return ""
+    if override.exists():
+        override.unlink()
+    eprint(f"configured greeter wallpaper not found: {src}; "
+           f"the greeter falls back to its built-in background")
+    return str(src)
+
+
 def greeter_sync_manifest(username: str, missing_wallpaper: str) -> Dict[str, Any]:
     """The greeter cache manifest, naming a configured wallpaper that was not there.
 
@@ -12832,19 +12885,8 @@ def sync_profile_cache(cache_dir_path: Path, username: str, settings: Dict[str, 
     write_json_file(target / "session.json", session, gid)
     wallpaper = str(settings.get("greeterWallpaperPath") or "").strip()
     override = target / "greeter_wallpaper_override"
-    missing_wallpaper = ""
-    if wallpaper:
-        src = Path(os.path.expanduser(wallpaper))
-        if not src.is_absolute():
-            src = Path.cwd() / src
-        if src.is_file():
-            copy_wallpaper_override(src, override, gid)
-        else:
-            missing_wallpaper = str(src)
-            if override.exists():
-                override.unlink()
-    elif override.exists():
-        override.unlink()
+    missing_wallpaper = publish_greeter_wallpaper(
+        wallpaper, override, lambda src: copy_wallpaper_override(src, override, gid))
 
     user_home = user_home_dir(username)
     icon_candidates = [
@@ -12870,18 +12912,11 @@ def sync_profile_cache_unprivileged(cache_dir_path: Path, username: str) -> None
         os.chmod(path, 0o660)
     wallpaper = str(settings.get("greeterWallpaperPath") or "").strip()
     override = target / "greeter_wallpaper_override"
-    missing_wallpaper = ""
-    if wallpaper:
-        src = Path(os.path.expanduser(wallpaper))
-        if src.is_file():
-            shutil.copy2(src, override)
-            os.chmod(override, 0o660)
-        else:
-            missing_wallpaper = str(src)
-            if override.exists():
-                override.unlink()
-    elif override.exists():
-        override.unlink()
+    def publish(src: Path) -> None:
+        shutil.copy2(src, override)
+        os.chmod(override, 0o660)
+
+    missing_wallpaper = publish_greeter_wallpaper(wallpaper, override, publish)
     (target / "sync-manifest.json").write_text(
         json.dumps(greeter_sync_manifest(username, missing_wallpaper), indent=2) + "\n")
     os.chmod(target / "sync-manifest.json", 0o660)

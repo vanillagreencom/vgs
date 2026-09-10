@@ -40,9 +40,28 @@ LOCK_VERSION = 1
 # thumbnail is the exact resolution it needs and never a downscale at paint time.
 THUMBNAIL_WIDTH = 480
 THUMBNAIL_QUALITY = 82
-# Imagery lives here; the definition files come from the repository tree.
-ASSET_SUBPATHS = ("backgrounds", "preview.png")
 DOWNLOAD_TIMEOUT = 300
+
+# scripts/gen-theme-catalog.py owns the imagery-versus-definition split, the
+# definition digest and the gh release reader; this script calls them.
+GENERATOR = None
+
+
+def generator() -> Any:
+    global GENERATOR
+    if GENERATOR is None:
+        GENERATOR = load_module("gen_theme_catalog_publish", REPO_ROOT / "scripts" / "gen-theme-catalog.py")
+    return GENERATOR
+
+
+def helper() -> Any:
+    global HELPER
+    if HELPER is None:
+        HELPER = load_module("vshell_helper_publish", REPO_ROOT / "bin" / "vshell-helper")
+    return HELPER
+
+
+HELPER = None
 
 
 def eprint(message: str) -> None:
@@ -98,7 +117,7 @@ def next_release_tag(lock: Dict[str, Any]) -> str:
     return f"themes-v{highest + 1}"
 
 
-def imagery_relpaths(helper: Any, assets: Path) -> List[str]:
+def imagery_relpaths(assets: Path) -> List[str]:
     """The imagery a theme's archive carries, per the installer's path rule.
 
     Mirrors the generator's rule for definition files: a stray note beside the
@@ -111,23 +130,36 @@ def imagery_relpaths(helper: Any, assets: Path) -> List[str]:
         if not path.is_file():
             continue
         rel = path.relative_to(assets).as_posix()
-        if rel.split("/")[0] not in ASSET_SUBPATHS and rel not in ASSET_SUBPATHS:
+        if not generator().is_imagery(rel):
             continue
         try:
-            rels.append(helper._catalog_check_relpath(rel))
+            rels.append(helper()._catalog_check_relpath(rel))
         except ValueError as exc:
             raise SystemExit(f"{assets.name}: {exc}") from exc
     return rels
 
 
-def package_members(helper: Any, generator: Any, name: str, assets: Path) -> List[Tuple[str, Path]]:
+def package_members(name: str, assets: Path) -> List[Tuple[str, Path]]:
     """Every file the archive carries: the tree's definitions plus the working directory's imagery."""
     theme_dir = THEMES_DIR / name
-    members: Dict[str, Path] = {rel: theme_dir / rel for rel in generator.catalog_relpaths(helper, theme_dir)}
-    members.update({rel: assets / rel for rel in imagery_relpaths(helper, assets)})
+    members: Dict[str, Path] = {
+        rel: theme_dir / rel for rel in generator().catalog_relpaths(helper(), theme_dir)}
+    members.update({rel: assets / rel for rel in imagery_relpaths(assets)})
     if "theme.json" not in members:
         raise SystemExit(f"{name}: no theme.json to publish")
     return sorted(members.items())
+
+
+def definitions_pin(members: List[Tuple[str, Path]]) -> str:
+    """The digest scripts/gen-theme-catalog.py recomputes from the tree.
+
+    Recording it binds the published archive to the exact definition files it
+    packed, so a later edit to one of them cannot pass generation unnoticed.
+    """
+    gen = generator()
+    return gen.definitions_digest([
+        {"path": rel, "sha256": gen.sha256_of(path)}
+        for rel, path in members if not gen.is_imagery(rel)])
 
 
 def build_archive(members: List[Tuple[str, Path]]) -> bytes:
@@ -154,8 +186,21 @@ def build_archive(members: List[Tuple[str, Path]]) -> bytes:
     return packed.getvalue()
 
 
+def require_pillow() -> Any:
+    """Fail before the theme loop rather than partway through a publish."""
+    try:
+        from PIL import Image
+    except ImportError as exc:
+        raise SystemExit(f"Pillow is required to derive the theme thumbnails: {exc}") from exc
+    return Image
+
+
+def thumbnail_is_current(preview: Path, dest: Path) -> bool:
+    return dest.is_file() and dest.stat().st_mtime_ns >= preview.stat().st_mtime_ns
+
+
 def write_thumbnail(preview: Path, dest: Path) -> None:
-    from PIL import Image
+    Image = require_pillow()
 
     with Image.open(preview) as image:
         image = image.convert("RGB")
@@ -169,12 +214,13 @@ def gh(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(["gh", *args], capture_output=True, text=True, check=False)
 
 
-def release_exists(tag: str) -> bool:
-    return gh("release", "view", tag, "--repo", REPO_SLUG, "--json", "tagName").returncode == 0
-
-
 def ensure_release(tag: str) -> None:
-    if release_exists(tag):
+    """Create the release only when GitHub says it is not there.
+
+    `gh_release` raises when it could not ask at all, so a failed query never
+    turns into an attempt to create a release that already exists.
+    """
+    if generator().gh_release(tag) is not None:
         return
     created = gh("release", "create", tag, "--repo", REPO_SLUG, "--title", tag,
                  "--notes", "Theme imagery archives. Assets are never replaced or deleted.")
@@ -182,14 +228,32 @@ def ensure_release(tag: str) -> None:
         raise SystemExit(f"could not create release {tag}: {created.stderr.strip()}")
 
 
-def upload_asset(tag: str, path: Path) -> None:
-    """Upload one archive. An existing asset is never replaced: a pinned checksum must stay fetchable."""
-    listed = gh("release", "view", tag, "--repo", REPO_SLUG, "--json", "assets")
-    if listed.returncode != 0:
-        raise SystemExit(f"could not read release {tag}: {listed.stderr.strip()}")
-    names = {a.get("name") for a in (json.loads(listed.stdout).get("assets") or [])}
-    if path.name in names:
-        raise SystemExit(f"{tag} already carries {path.name}; a published asset is never replaced")
+def published_asset_digest(tag: str, name: str) -> str:
+    """The sha256 of an asset already on the release."""
+    with tempfile.TemporaryDirectory() as scratch:
+        fetched = gh("release", "download", tag, "--repo", REPO_SLUG,
+                     "--pattern", name, "--dir", scratch, "--clobber")
+        if fetched.returncode != 0:
+            raise SystemExit(f"could not read the published {tag}/{name}: {fetched.stderr.strip()}")
+        return hashlib.sha256((Path(scratch) / name).read_bytes()).hexdigest()
+
+
+def upload_asset(tag: str, path: Path, digest: str) -> None:
+    """Upload one archive, accepting one already present at these exact bytes.
+
+    A published asset is never replaced: a checksum a shipped catalog pins has to
+    stay fetchable. An interrupted run that already uploaded this archive is a
+    resume rather than a collision, so the bytes decide which of the two it is.
+    """
+    release = generator().gh_release(tag)
+    if release is None:
+        raise SystemExit(f"{tag} does not exist, so {path.name} cannot be uploaded to it")
+    if path.name in {str(asset.get("name") or "") for asset in (release.get("assets") or [])}:
+        if published_asset_digest(tag, path.name) == digest:
+            print(f"  {path.name} is already published at these bytes")
+            return
+        raise SystemExit(f"{tag} already carries {path.name} with different bytes; a published "
+                         f"asset is never replaced, so publish it as a new revision instead")
     uploaded = gh("release", "upload", tag, str(path), "--repo", REPO_SLUG)
     if uploaded.returncode != 0:
         raise SystemExit(f"could not upload {path.name} to {tag}: {uploaded.stderr.strip()}")
@@ -208,67 +272,82 @@ def regenerate_catalog() -> None:
 
 
 def publish(args: argparse.Namespace) -> int:
-    helper = load_module("vshell_helper_publish", REPO_ROOT / "bin" / "vshell-helper")
-    generator = load_module("gen_theme_catalog_publish", REPO_ROOT / "scripts" / "gen-theme-catalog.py")
     root = asset_root(args.asset_root)
     if not root.is_dir():
         raise SystemExit(f"asset working directory not found: {root} "
                          f"(set VGS_THEME_ASSET_ROOT or pass --asset-root)")
+    require_pillow()
     lock = load_lock()
     tag = next_release_tag(lock)
-    staged: List[Tuple[str, Path, Dict[str, Any]]] = []
-    stage = Path(tempfile.mkdtemp(prefix="vgs-theme-assets-"))
-    try:
-        for name in theme_names():
-            assets = root / name
-            if not assets.is_dir():
-                raise SystemExit(f"{name}: no imagery under {assets}; run --pull first")
-            members = package_members(helper, generator, name, assets)
-            blob = build_archive(members)
-            digest = hashlib.sha256(blob).hexdigest()
-            previous = lock["themes"].get(name) or {}
-            if previous.get("sha256") == digest and previous.get("release"):
-                continue
-            rev = int(previous.get("rev") or 0) + 1
-            archive = f"vgs-theme-{name}-r{rev}.tar.gz"
-            path = stage / archive
-            path.write_bytes(blob)
-            staged.append((name, path, {
-                "release": tag,
-                "archive": archive,
-                "rev": rev,
-                "size": len(blob),
-                "sha256": digest,
-                "files": len(members),
-            }))
-            preview = assets / "preview.png"
-            if preview.is_file():
-                write_thumbnail(preview, THUMBNAIL_DIR / f"{name}.jpg")
-            elif (THUMBNAIL_DIR / f"{name}.jpg").exists():
-                (THUMBNAIL_DIR / f"{name}.jpg").unlink()
+    names = theme_names()
 
-        if not staged:
-            print("theme assets: every theme is already published at its current content")
-        else:
-            print(f"theme assets: {len(staged)} archive(s) to publish as {tag}")
-            if args.upload:
-                ensure_release(tag)
-                for _name, path, _entry in staged:
-                    upload_asset(tag, path)
-                    print(f"  uploaded {path.name}")
-            else:
-                eprint("theme assets: --no-upload given; the lock names archives that are not published yet")
-            for name, _path, entry in staged:
-                lock["themes"][name] = entry
-    finally:
-        shutil.rmtree(stage, ignore_errors=True)
-
-    for stale in sorted(set(lock["themes"]) - set(theme_names())):
+    for stale in sorted(set(lock["themes"]) - set(names)):
         del lock["themes"][stale]
         thumbnail = THUMBNAIL_DIR / f"{stale}.jpg"
         if thumbnail.exists():
             thumbnail.unlink()
-    LOCK_PATH.write_text(render_lock(lock))
+
+    published = 0
+    stage = Path(tempfile.mkdtemp(prefix="vgs-theme-assets-"))
+    try:
+        for name in names:
+            assets = root / name
+            if not assets.is_dir():
+                raise SystemExit(f"{name}: no imagery under {assets}; run --pull first")
+            # The thumbnail is derived from the preview alone, so it is rebuilt
+            # whenever it is missing or older than that preview. Tying it to the
+            # archive digest would leave a deleted thumbnail unrecoverable while
+            # two gates require one.
+            preview = assets / "preview.png"
+            thumbnail = THUMBNAIL_DIR / f"{name}.jpg"
+            if preview.is_file():
+                if not thumbnail_is_current(preview, thumbnail):
+                    write_thumbnail(preview, thumbnail)
+            elif thumbnail.exists():
+                thumbnail.unlink()
+
+            members = package_members(name, assets)
+            blob = build_archive(members)
+            digest = hashlib.sha256(blob).hexdigest()
+            previous = lock["themes"].get(name) or {}
+            # Only a theme whose archive is both unchanged AND already on a
+            # release is skipped. A dry run records the pin without publication,
+            # so a later real run still uploads it.
+            if previous.get("published") and previous.get("sha256") == digest:
+                continue
+            rev = int(previous.get("rev") or 0)
+            if previous.get("sha256") != digest:
+                rev += 1
+            archive = f"vgs-theme-{name}-r{max(rev, 1)}.tar.gz"
+            path = stage / archive
+            path.write_bytes(blob)
+            if args.upload:
+                ensure_release(tag)
+                upload_asset(tag, path, digest)
+                print(f"  published {tag}/{archive}")
+            path.unlink()
+            # Record what is published as each theme finishes, not as a batch:
+            # an upload that fails at archive k leaves a lock describing exactly
+            # the k-1 that are on the release, and the rerun resumes from there.
+            lock["themes"][name] = {
+                "release": tag if args.upload else str(previous.get("release") or tag),
+                "archive": archive,
+                "rev": max(rev, 1),
+                "size": len(blob),
+                "sha256": digest,
+                "definitions": definitions_pin(members),
+                "published": bool(args.upload),
+            }
+            LOCK_PATH.write_text(render_lock(lock))
+            published += 1
+    finally:
+        shutil.rmtree(stage, ignore_errors=True)
+        LOCK_PATH.write_text(render_lock(lock))
+
+    if not published:
+        print("theme assets: every theme is already published at its current content")
+    elif not args.upload:
+        eprint(f"theme assets: --no-upload given; {published} archive(s) are pinned but not published")
     print(f"wrote {LOCK_PATH} ({len(lock['themes'])} themes)")
     regenerate_catalog()
     return 0
@@ -282,28 +361,45 @@ def pull(args: argparse.Namespace) -> int:
         raise SystemExit(f"{LOCK_PATH} names no themes; nothing to pull")
     root.mkdir(parents=True, exist_ok=True)
     for name, entry in sorted(lock["themes"].items()):
+        if not entry.get("published"):
+            raise SystemExit(f"{name}: {entry.get('release')}/{entry.get('archive')} was never "
+                             f"published, so there is nothing to pull")
         url = asset_url(entry)
         request = urllib.request.Request(url, headers={"User-Agent": "vgs-theme-assets"})
         with urllib.request.urlopen(request, timeout=DOWNLOAD_TIMEOUT) as response:  # noqa: S310 - https literal above
             blob = response.read()
-        if len(blob) != int(entry["size"]) or hashlib.sha256(blob).hexdigest() != entry["sha256"]:
-            raise SystemExit(f"{name}: {url} does not match the lock's size and checksum")
-        dest = root / name
-        shutil.rmtree(dest, ignore_errors=True)
-        dest.mkdir(parents=True)
-        with tarfile.open(fileobj=io.BytesIO(blob), mode="r:gz") as tar:
-            for member in tar.getmembers():
-                top = member.name.split("/")[0]
-                if not member.isfile() or (top not in ASSET_SUBPATHS and member.name not in ASSET_SUBPATHS):
-                    continue
-                target = dest / member.name
-                target.parent.mkdir(parents=True, exist_ok=True)
-                extracted = tar.extractfile(member)
-                if extracted is None:
-                    raise SystemExit(f"{name}: {member.name} is not readable in {entry['archive']}")
-                target.write_bytes(extracted.read())
+        extract_imagery(name, entry, blob, root / name)
         print(f"pulled {name} from {entry['release']}")
     return 0
+
+
+def extract_imagery(name: str, entry: Dict[str, Any], blob: bytes, dest: Path) -> None:
+    """Verify one published archive and lay its imagery out under `dest`.
+
+    Every member name goes through the installer's own path rule, so what the
+    working directory holds is exactly what a download would accept.
+    """
+    if len(blob) != int(entry["size"]) or hashlib.sha256(blob).hexdigest() != entry["sha256"]:
+        raise SystemExit(f"{name}: {entry['archive']} does not match the lock's size and checksum")
+    check_relpath = helper()._catalog_check_relpath
+    shutil.rmtree(dest, ignore_errors=True)
+    dest.mkdir(parents=True)
+    with tarfile.open(fileobj=io.BytesIO(blob), mode="r:gz") as tar:
+        for member in tar.getmembers():
+            try:
+                rel = check_relpath(member.name)
+            except ValueError as exc:
+                raise SystemExit(f"{name}: {entry['archive']} carries {exc}") from exc
+            if not generator().is_imagery(rel):
+                continue
+            if not member.isfile():
+                raise SystemExit(f"{name}: {rel} is not a regular file in {entry['archive']}")
+            extracted = tar.extractfile(member)
+            if extracted is None:
+                raise SystemExit(f"{name}: {rel} is not readable in {entry['archive']}")
+            target = dest / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(extracted.read())
 
 
 def main(argv: List[str]) -> int:

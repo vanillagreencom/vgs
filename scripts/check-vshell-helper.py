@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import contextlib
 import ast
-import gzip
 import hashlib
 import importlib.machinery
 import importlib.util
@@ -1393,9 +1392,29 @@ def test_greeter_sync_survives_a_missing_wallpaper():
         original_load = helper.load_settings
         original_theme = helper.current_theme_json
         original_session = helper.current_session_json
+        original_eprint = helper.eprint
+        said = []
+        helper.eprint = said.append
         helper.current_theme_json = lambda: {"name": "bauhaus"}
         helper.current_session_json = lambda theme: {"name": "bauhaus"}
         try:
+            # Both sync paths share this one decision, so testing it once covers
+            # the privileged copy, which needs root and cannot run here.
+            published = []
+            assert_equal(helper.publish_greeter_wallpaper(str(present), override, published.append),
+                         "", "a present wallpaper reports nothing missing")
+            assert_equal(published, [present], "a present wallpaper is published")
+            assert_equal(helper.publish_greeter_wallpaper(str(tmp / "gone.jpg"), override,
+                                                          published.append),
+                         str(tmp / "gone.jpg"), "a missing wallpaper is named to the caller")
+            assert_equal(len(published), 1, "a missing wallpaper is never published")
+            assert_equal(any(str(tmp / "gone.jpg") in line and "built-in background" in line
+                             for line in said), True,
+                         "the reason is printed, not only recorded in the manifest")
+            assert_equal(helper.publish_greeter_wallpaper("", override, published.append),
+                         "", "no configured wallpaper is not a missing one")
+            override.write_bytes(b"stale override")
+
             helper.load_settings = lambda: {"greeterWallpaperPath": str(tmp / "gone.jpg")}
             helper.sync_profile_cache_unprivileged(cache, "tester")
             manifest = json.loads((target / "sync-manifest.json").read_text())
@@ -1414,6 +1433,7 @@ def test_greeter_sync_survives_a_missing_wallpaper():
             helper.load_settings = original_load
             helper.current_theme_json = original_theme
             helper.current_session_json = original_session
+            helper.eprint = original_eprint
 
     with_temp_home(scenario)
 
@@ -2893,20 +2913,34 @@ def test_notification_daemon_label_handles_scope_units():
                  "a daemon under a .service unit must still be named")
 
 
+def _load_script(module_name: str, filename: str):
+    """Load one of scripts/ as a module. Their names are not importable identifiers."""
+    import importlib.machinery
+    import importlib.util
+
+    loader = importlib.machinery.SourceFileLoader(module_name, str(REPO_ROOT / "scripts" / filename))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
 def _theme_archive(files: dict[str, bytes]) -> bytes:
-    """A reproducible theme archive, the shape scripts/publish-theme-assets.py publishes."""
-    raw = io.BytesIO()
-    with tarfile.open(fileobj=raw, mode="w", format=tarfile.PAX_FORMAT) as tar:
+    """The publisher's own archive bytes.
+
+    The download fixture is built by scripts/publish-theme-assets.py itself, so a
+    change to what it packs — a member name the downloader refuses, a prefix, a
+    layout — reddens the download test rather than shipping unnoticed.
+    """
+    publisher = _load_script("publish_theme_assets_fixture", "publish-theme-assets.py")
+    with tempfile.TemporaryDirectory() as tmp:
+        members = []
         for rel, blob in sorted(files.items()):
-            info = tarfile.TarInfo(rel)
-            info.size = len(blob)
-            info.mtime = 0
-            info.mode = 0o644
-            tar.addfile(info, io.BytesIO(blob))
-    packed = io.BytesIO()
-    with gzip.GzipFile(fileobj=packed, mode="wb", compresslevel=1, mtime=0) as zipped:
-        zipped.write(raw.getvalue())
-    return packed.getvalue()
+            path = Path(tmp) / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(blob)
+            members.append((rel, path))
+        return publisher.build_archive(members)
 
 
 def _write_catalog(builtin: Path, archives: Path, name: str, blob: bytes,
@@ -3100,6 +3134,20 @@ def test_theme_catalog_download_verifies_its_archive():
             except ValueError as exc:
                 assert_equal("no source served" in str(exc), True, "failure names the exhausted locations")
 
+            # The catalogued size is the read cap, so a location that keeps
+            # sending is cut off there instead of at the far larger per-file
+            # ceiling. Without it the peak buffer is whatever the server sends.
+            overlong = json.loads(json.dumps(entry))
+            overlong["assets"]["size"] = len(blob) - 16
+            try:
+                helper.catalog_download_theme(overlong, base_urls, allow_local)
+                raise AssertionError("an archive longer than its catalogued size must be refused")
+            except ValueError as exc:
+                assert_equal("exceeds the catalogued" in str(exc), True,
+                             "the refusal names the catalogued size as the cap")
+            assert_equal(sorted(p.name for p in cache.glob("*")), [],
+                         "an over-long download leaves nothing in the cache")
+
             # An archive whose bytes do not match the catalogued checksum is
             # never unpacked, so a replaced release asset cannot install itself.
             tampered = json.loads(json.dumps(entry))
@@ -3181,15 +3229,226 @@ def test_theme_catalog_download_verifies_its_archive():
 
             # https is the only scheme accepted without the test-only override.
             try:
-                helper._catalog_fetch("file:///etc/passwd", False)
+                helper._catalog_check_scheme("file:///etc/passwd", False)
                 raise AssertionError("non-https downloads must be refused")
             except ValueError:
                 pass
+            try:
+                helper._catalog_fetch_to_file("file:///etc/passwd", cache / "leak.tar.gz",
+                                              False, 1, "0" * 64)
+                raise AssertionError("a non-https fetch must never write a file")
+            except ValueError:
+                pass
+            assert_equal((cache / "leak.tar.gz").exists(), False,
+                         "a refused fetch leaves nothing on disk")
         finally:
             helper.builtin_themes_dir = original_builtin
             os.environ.pop("VGS_THEME_CATALOG_BASE_URL", None)
 
     with_temp_home(scenario)
+
+
+def test_theme_asset_publisher():
+    """The publisher's archive shape, path rule, upload refusal and pull verification."""
+    publisher = _load_script("publish_theme_assets_test", "publish-theme-assets.py")
+    generator = _load_script("gen_theme_catalog_publisher_test", "gen-theme-catalog.py")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        source = root / "demo"
+        (source / "backgrounds").mkdir(parents=True)
+        (source / "theme.json").write_text('{"name":"demo","mode":"dark"}\n')
+        (source / "backgrounds" / "1-demo.jpg").write_bytes(b"wallpaper\n")
+        (source / "preview.png").write_bytes(b"screenshot\n")
+        members = [(rel, source / rel) for rel in
+                   ("theme.json", "backgrounds/1-demo.jpg", "preview.png")]
+
+        # Byte-reproducibility is what makes the unchanged-content skip work. Lose
+        # it and every publish uploads a fresh revision of all 79 themes into a
+        # release D015 says is never deleted.
+        first = publisher.build_archive(members)
+        assert_equal(publisher.build_archive(members), first,
+                     "the same content must pack to the same archive bytes")
+        with tarfile.open(fileobj=io.BytesIO(first), mode="r:gz") as tar:
+            packed = tar.getmembers()
+        assert_equal(sorted(m.name for m in packed),
+                     ["backgrounds/1-demo.jpg", "preview.png", "theme.json"],
+                     "archive members are theme-package paths with no added prefix")
+        for member in packed:
+            # A member the downloader refuses fails every install of that theme
+            # only after the whole archive has come down.
+            helper._catalog_check_relpath(member.name)
+            assert_equal(member.isfile(), True, f"{member.name} must be a regular file")
+
+        # The imagery rule is the installer's own, so what the publisher packs is
+        # what catalog_download_theme accepts.
+        (source / "NOTES.md").write_text("scratch\n")
+        assert_equal(publisher.imagery_relpaths(source),
+                     ["backgrounds/1-demo.jpg", "preview.png"],
+                     "a stray note beside the wallpapers is skipped")
+        for label, rel in (("nested", "backgrounds/season/img.png"), ("dotfile", "backgrounds/.env")):
+            bad = source / rel
+            bad.parent.mkdir(parents=True, exist_ok=True)
+            bad.write_bytes(b"x")
+            try:
+                publisher.imagery_relpaths(source)
+                raise AssertionError(f"a {label} imagery path must fail the build")
+            except SystemExit:
+                pass
+            bad.unlink()
+
+        # A theme whose preview is newer than its thumbnail is rebuilt; that is
+        # what lets a deleted thumbnail be recovered without touching the imagery.
+        thumbnail = root / "demo.jpg"
+        assert_equal(publisher.thumbnail_is_current(source / "preview.png", thumbnail), False,
+                     "a missing thumbnail is never current")
+        publisher.write_thumbnail(REPO_ROOT / "themes" / "bauhaus" / "preview.png", thumbnail)
+        assert_equal(publisher.thumbnail_is_current(source / "preview.png", thumbnail), True,
+                     "a thumbnail newer than its preview is current")
+
+        # A published asset is never replaced, but an interrupted run that
+        # already uploaded these exact bytes is a resume, not a collision.
+        digest = hashlib.sha256(first).hexdigest()
+        staged = root / "vgs-theme-demo-r1.tar.gz"
+        staged.write_bytes(first)
+        uploads = []
+
+        class _Release:
+            def __init__(self, assets):
+                self.assets = assets
+
+            def gh_release(self, _tag):
+                return None if self.assets is None else {"assets": [{"name": n} for n in self.assets]}
+
+            def is_imagery(self, rel):
+                return generator.is_imagery(rel)
+
+        original_generator, original_gh, original_digest = (
+            publisher.GENERATOR, publisher.gh, publisher.published_asset_digest)
+        try:
+            publisher.gh = lambda *args: uploads.append(args) or subprocess.CompletedProcess(args, 0, "", "")
+            publisher.GENERATOR = _Release(["vgs-theme-demo-r1.tar.gz"])
+            publisher.published_asset_digest = lambda _tag, _name: digest
+            publisher.upload_asset("themes-v1", staged, digest)
+            assert_equal(uploads, [], "an asset already published at these bytes is not re-uploaded")
+            publisher.published_asset_digest = lambda _tag, _name: "0" * 64
+            try:
+                publisher.upload_asset("themes-v1", staged, digest)
+                raise AssertionError("a name already published with other bytes must be refused")
+            except SystemExit:
+                pass
+            assert_equal(uploads, [], "a refused upload sends nothing")
+            publisher.GENERATOR = _Release([])
+            publisher.upload_asset("themes-v1", staged, digest)
+            assert_equal([args[:2] for args in uploads], [("release", "upload")],
+                         "an absent asset is uploaded")
+            publisher.GENERATOR = _Release(None)
+            try:
+                publisher.upload_asset("themes-v1", staged, digest)
+                raise AssertionError("uploading to a release that does not exist must fail")
+            except SystemExit:
+                pass
+
+            # pull must refuse bytes the lock does not describe, and must apply the
+            # installer's path rule rather than a weaker copy of it.
+            entry = {"release": "themes-v1", "archive": "vgs-theme-demo-r1.tar.gz",
+                     "size": len(first), "sha256": digest, "published": True}
+            dest = root / "pulled"
+            publisher.extract_imagery("demo", entry, first, dest)
+            assert_equal(sorted(p.relative_to(dest).as_posix() for p in dest.rglob("*") if p.is_file()),
+                         ["backgrounds/1-demo.jpg", "preview.png"],
+                         "pull lays out the imagery and leaves the definitions alone")
+            try:
+                publisher.extract_imagery("demo", dict(entry, sha256="0" * 64), first, dest)
+                raise AssertionError("a pulled archive whose checksum misses the lock must fail")
+            except SystemExit:
+                pass
+            escaping = _theme_archive({"theme.json": b"{}\n", "backgrounds/1-demo.jpg": b"x"})
+            with tarfile.open(fileobj=io.BytesIO(escaping), mode="r:gz"):
+                pass
+            hostile = io.BytesIO()
+            with tarfile.open(fileobj=hostile, mode="w:gz") as tar:
+                info = tarfile.TarInfo("backgrounds/../../escaped.jpg")
+                info.size = 1
+                tar.addfile(info, io.BytesIO(b"x"))
+            blob = hostile.getvalue()
+            try:
+                publisher.extract_imagery("demo", dict(
+                    entry, size=len(blob), sha256=hashlib.sha256(blob).hexdigest()), blob, dest)
+                raise AssertionError("a pulled member outside the package shape must fail")
+            except SystemExit:
+                pass
+            assert_equal((root / "escaped.jpg").exists(), False,
+                         "a refused member never lands outside the asset root")
+        finally:
+            publisher.GENERATOR, publisher.gh, publisher.published_asset_digest = (
+                original_generator, original_gh, original_digest)
+
+    # "could not ask" must never read as "not published": gh exits 1 for a
+    # missing release and 4 when it is unauthenticated.
+    original_run = generator.subprocess.run
+    try:
+        for label, code, stderr, expect in (
+            ("present", 0, "", "release"),
+            ("missing", 1, "release not found", None),
+            ("unauthenticated", 4, "gh auth login required", "raise"),
+            ("rate limited", 1, "API rate limit exceeded", "raise"),
+        ):
+            generator.subprocess.run = (lambda *a, code=code, stderr=stderr, **k:
+                                        subprocess.CompletedProcess(a, code, '{"assets":[]}', stderr))
+            if expect == "raise":
+                try:
+                    generator.gh_release("themes-v1")
+                    raise AssertionError(f"an {label} gh must not answer for the release")
+                except generator.GhUnavailable:
+                    pass
+            elif expect is None:
+                assert_equal(generator.gh_release("themes-v1"), None,
+                             f"a {label} release reads as absent")
+            else:
+                assert_equal(generator.gh_release("themes-v1"), {"assets": []},
+                             f"a {label} release reads as present")
+    finally:
+        generator.subprocess.run = original_run
+
+
+def test_theme_catalog_refuses_definitions_the_archive_does_not_carry():
+    """A committed definition file edited after publication must fail generation."""
+    generator = _load_script("gen_theme_catalog_drift_test", "gen-theme-catalog.py")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        themes = Path(tmp) / "themes"
+        (themes / "demo" / "apps").mkdir(parents=True)
+        (themes / "demo" / "theme.json").write_text('{"name":"demo","mode":"dark"}\n')
+        (themes / "demo" / "colors.toml").write_text('background = "#101010"\n')
+        (themes / "demo" / "apps" / "btop.theme").write_text("theme\n")
+        files = [{"path": rel, "sha256": generator.sha256_of(themes / "demo" / rel)}
+                 for rel in ("theme.json", "colors.toml", "apps/btop.theme")]
+        (themes / "asset-lock.json").write_text(json.dumps({"version": 1, "themes": {"demo": {
+            "release": "themes-v1", "archive": "vgs-theme-demo-r1.tar.gz", "rev": 1,
+            "size": 1, "sha256": "a" * 64,
+            "definitions": generator.definitions_digest(files), "published": True}}}))
+
+        original = (generator.THEMES_DIR, generator.CATALOG_PATH, generator.LOCK_PATH)
+        generator.THEMES_DIR = themes
+        generator.CATALOG_PATH = themes / "catalog.json"
+        generator.LOCK_PATH = themes / "asset-lock.json"
+        try:
+            assert_equal(generator.main(["--write"]), 0, "a catalog matching its lock is written")
+            assert_equal(generator.main(["--check"]), 0, "the written catalog is up to date")
+            # The archive carries these definitions. Editing one in the tree and
+            # regenerating would otherwise advertise a colors.toml the pinned
+            # archive does not have, and the install path verifies the archive only.
+            (themes / "demo" / "colors.toml").write_text('background = "#202020"\n')
+            for mode in ("--check", "--write"):
+                try:
+                    generator.main([mode])
+                    raise AssertionError(f"{mode} must refuse definitions the archive does not carry")
+                except SystemExit as exc:
+                    assert_equal("publish-theme-assets.py" in str(exc), True,
+                                 f"{mode} must name the publisher as the remedy")
+        finally:
+            generator.THEMES_DIR, generator.CATALOG_PATH, generator.LOCK_PATH = original
 
 
 def test_theme_catalog_manifest_matches_the_repo():
@@ -3218,14 +3477,7 @@ def test_theme_catalog_manifest_matches_the_repo():
 
 def test_theme_catalog_generator_rejects_uninstallable_packages():
     """A package the installer could not fetch must fail generation, not ship."""
-    import importlib.machinery
-    import importlib.util
-
-    loader = importlib.machinery.SourceFileLoader(
-        "gen_theme_catalog_test_module", str(REPO_ROOT / "scripts" / "gen-theme-catalog.py"))
-    spec = importlib.util.spec_from_loader(loader.name, loader)
-    generator = importlib.util.module_from_spec(spec)
-    loader.exec_module(generator)
+    generator = _load_script("gen_theme_catalog_test_module", "gen-theme-catalog.py")
 
     with tempfile.TemporaryDirectory() as tmp:
         theme_dir = Path(tmp) / "deep"
@@ -6162,6 +6414,8 @@ def main():
     test_terminal_wait_blocks_until_the_terminal_exits()
     test_preferred_terminal_is_tried_first()
     test_theme_catalog_download_verifies_its_archive()
+    test_theme_asset_publisher()
+    test_theme_catalog_refuses_definitions_the_archive_does_not_carry()
     test_theme_catalog_manifest_matches_the_repo()
     test_theme_catalog_generator_rejects_uninstallable_packages()
     test_remote_desktop_reports_streaming_separately_from_listening()
