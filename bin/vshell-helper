@@ -1279,6 +1279,18 @@ def theme_thumbnails_dir() -> Path:
     return builtin_themes_dir() / "thumbnails"
 
 
+def theme_thumbnail_path(name: str) -> str:
+    """The shipped 480 px screenshot for a theme, or "" when none ships.
+
+    Only the bundled themes keep a full-size preview.png in the tree; every
+    other theme's imagery lives in its release archive (D015). The thumbnail is
+    what a checkout, and an install that has not downloaded the theme, can show
+    without rendering anything.
+    """
+    shipped = theme_thumbnails_dir() / f"{name}.jpg"
+    return str(shipped) if shipped.is_file() else ""
+
+
 def theme_asset_cache_dir() -> Path:
     """Where a theme archive is verified before it is unpacked.
 
@@ -1439,8 +1451,7 @@ def catalog_preview_path(name: str) -> str:
     packaged = files.get("preview.png")
     if packaged and packaged.is_file():
         return str(packaged)
-    shipped = theme_thumbnails_dir() / f"{name}.jpg"
-    return str(shipped) if shipped.is_file() else ""
+    return theme_thumbnail_path(name)
 
 
 def catalog_entries() -> List[Dict[str, Any]]:
@@ -7635,15 +7646,20 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
                 pal = b.get("palette", {})
                 ext = pal.get("extendedColors") or {}
                 preview = blueprint_preview_path(b)
-                packaged_preview = b.get("packagedPreview", "")
-                # A committed preview.png is what makes a fresh install show
-                # thumbnails without regenerating anything. It stops being
-                # truthful once the user restyles or overlays the theme, so in
-                # that case drop back to "missing" and let the generator run.
-                if packaged_preview and not preview.exists() and (
+                # A committed preview.png, or the 480 px thumbnail that ships
+                # beside a theme whose imagery lives in its release archive, is
+                # what makes a fresh install or checkout show screenshots
+                # without regenerating anything. Without the thumbnail arm every
+                # theme with definitions and no imagery reports no screenshot,
+                # and generateMissingPreviews() renders the whole set through a
+                # nested compositor on every run. Both stop being truthful once
+                # the user restyles or overlays the theme, so in that case drop
+                # back to "missing" and let the generator run.
+                shipped_preview = b.get("packagedPreview", "") or theme_thumbnail_path(str(b.get("name") or ""))
+                if shipped_preview and not preview.exists() and (
                     b.get("modified") or not adjustments_all_zero(normalize_adjustments(b.get("adjustments")))
                 ):
-                    packaged_preview = ""
+                    shipped_preview = ""
                 entries.append({
                     "name": b.get("name"),
                     "source": blueprint_source(b),
@@ -7659,7 +7675,7 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
                     "mode": blueprint_mode(b),
                     "pair": b.get("pair", ""),
                     "builtin": b.get("builtin", False),
-                    "preview": str(preview) if preview.exists() else packaged_preview,
+                    "preview": str(preview) if preview.exists() else shipped_preview,
                     "modified": bool(b.get("modified")),
                     "adjustments": normalize_adjustments(b.get("adjustments")),
                     "appOverrides": b.get("appOverrides") or {},

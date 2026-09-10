@@ -1273,6 +1273,62 @@ def test_lint_checks_color0_in_light_mode_only():
         assert_equal(warns(mode, bg, fg, color0), expected, f"lint color0 warning, {label}")
 
 
+def test_theme_list_falls_back_to_the_shipped_thumbnail():
+    """A theme with definitions and no preview.png reports its 480 px thumbnail.
+
+    Only the bundled themes keep a full-size screenshot in the tree; the rest
+    ship their imagery in a release archive (D015). Without this fallback every
+    such theme reports no screenshot, and VGSThemeService.generateMissingPreviews()
+    renders the whole set through a nested compositor on every run.
+    """
+    packages = {
+        "withshot": True,
+        "noshot": False,
+        "nothumb": False,
+    }
+
+    def scenario(temp_home: Path):
+        builtin = temp_home / "builtin"
+        thumbnails = builtin / "thumbnails"
+        thumbnails.mkdir(parents=True)
+        for name, packaged in packages.items():
+            package = builtin / name
+            package.mkdir()
+            (package / "theme.json").write_text(
+                json.dumps({"name": name, "mode": "dark", "source": "curated"}) + "\n")
+            (package / "colors.toml").write_text(
+                'background = "#101010"\nforeground = "#eeeeee"\n')
+            if packaged:
+                (package / "preview.png").write_bytes(b"\x89PNG\r\n\x1a\n screenshot\n")
+            if name != "nothumb":
+                (thumbnails / f"{name}.jpg").write_bytes(b"\xff\xd8\xff thumbnail\n")
+
+        original_builtin = helper.builtin_themes_dir
+        helper.builtin_themes_dir = lambda: builtin
+        try:
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer):
+                status = helper.cmd_theme(["list", "--json"])
+            assert_equal(status, 0, "theme list --json exit status")
+            listed = {entry["name"]: entry["preview"]
+                      for entry in json.loads(buffer.getvalue())["blueprints"]}
+        finally:
+            helper.builtin_themes_dir = original_builtin
+
+        # A packaged screenshot wins; a theme without one falls back to the
+        # thumbnail beside it; a theme with neither reports none, which is what
+        # leaves the generator its own case.
+        for name, expected in (
+            ("withshot", str(builtin / "withshot" / "preview.png")),
+            ("noshot", str(thumbnails / "noshot.jpg")),
+            ("nothumb", ""),
+        ):
+            assert_equal(listed.get(name), expected,
+                         f"theme list preview for {name}")
+
+    with_temp_home(scenario)
+
+
 def test_hyprland_preview_native_lua():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -6803,6 +6859,7 @@ def main():
     test_generated_theme_consumer_wiring()
     test_shell_only_theme_preview()
     test_lint_checks_color0_in_light_mode_only()
+    test_theme_list_falls_back_to_the_shipped_thumbnail()
     test_hyprland_preview_native_lua()
     test_greeter_primary_monitor_validation()
     test_greeter_runtime_helper_dependencies()
