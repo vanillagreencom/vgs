@@ -4133,7 +4133,7 @@
       "pair": "",
       "source": "curated",
       "colors": [
-        "#35302a",
+        "#f5e6d3",
         "#a02b16",
         "#9e4f5b",
         "#644535",
@@ -4141,7 +4141,7 @@
         "#78292e",
         "#713a56",
         "#a94a34",
-        "#80623a",
+        "#c8ac86",
         "#a02b16",
         "#9e4f5b",
         "#694c45",
@@ -4208,7 +4208,7 @@
         {
           "path": "colors.toml",
           "size": 461,
-          "sha256": "664924cf28988cd385f913d982b4dfd9abce530eeb51ded677c9e8c3cafb009e"
+          "sha256": "e0c1655d89a5bf56439efd312dbc62255b1e907f97948e581c9200881916aac3"
         },
         {
           "path": "theme.json",
@@ -4221,7 +4221,7 @@
         "archive": "vgs-theme-roseofdune-r2.tar.gz",
         "rev": 2,
         "size": 17331858,
-        "sha256": "c918c76121dfe60f40b2df2d4409f102fbc56873f8390d3a7afa908aa1262233"
+        "sha256": "7b5644ac751f6cd181441fc760120d74aad6b05c9db85ae70526b0ed607ec803"
       }
     },
     {
