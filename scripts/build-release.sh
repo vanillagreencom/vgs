@@ -24,19 +24,10 @@ cp -a "$root/quickshell" "$root/config" "$root/systemd" "$root/third_party" "$bu
 rm -rf -- "${bundle:?}/config/vshell/icons"
 # The core theme set must match install-system.sh's core bundle.
 mkdir -p "$bundle/themes"
-cp -a "$root/themes/coppernight" "$root/themes/targets" "$bundle/themes/"
+cp -a "$root/themes/bauhaus" "$root/themes/roseofdune" "$root/themes/targets" "$bundle/themes/"
 cp "$root/themes/catalog.json" "$root/themes"/*.md "$bundle/themes/"
-# The core archive omits the theme trees that the installer uses to derive previews.
-# Include previews so the download browser can display those themes.
-mkdir -p "$bundle/themes/catalog-previews"
-# Keep name reserved for the archive name.
-for theme in "$root"/themes/*/; do
-  theme_name="$(basename "$theme")"
-  [[ -f "$theme/theme.json" ]] || continue
-  [[ "$theme_name" == "coppernight" ]] && continue
-  [[ -f "$theme/preview.png" ]] || continue
-  install -Dm644 "$theme/preview.png" "$bundle/themes/catalog-previews/$theme_name.png"
-done
+# The browser paints every uninstalled theme from these, so they ship with the core archive.
+cp -a "$root/themes/thumbnails" "$bundle/themes/"
 mkdir -p "$bundle/packaging"
 cp "$root/packaging/install-system.sh" "$bundle/packaging/"
 cp -a "$root/bin/." "$bundle/bin/"

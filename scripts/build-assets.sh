@@ -18,7 +18,7 @@ shopt -s nullglob
 for theme in "$root"/themes/*/; do
   name_theme="$(basename "$theme")"
   [[ -f "$theme/theme.json" ]] || continue
-  [[ "$name_theme" == "coppernight" ]] && continue
+  case "$name_theme" in bauhaus|roseofdune) continue ;; esac
   cp -a "$theme" "$bundle/themes/"
 done
 
@@ -32,7 +32,7 @@ staged="$(find "$bundle/themes" -mindepth 1 -maxdepth 1 -type d | wc -l)"
 eligible=0
 for theme in "$root"/themes/*/; do
   [[ -f "$theme/theme.json" ]] || continue
-  [[ "$(basename "$theme")" == "coppernight" ]] && continue
+  case "$(basename "$theme")" in bauhaus|roseofdune) continue ;; esac
   eligible=$((eligible + 1))
 done
 if [[ "$staged" -ne "$eligible" ]]; then

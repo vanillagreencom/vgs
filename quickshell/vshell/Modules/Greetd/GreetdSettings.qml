@@ -31,7 +31,7 @@ Singleton {
         setConfigBaseDir(root._greeterCacheDir);
     }
 
-    property string currentThemeName: "coppernight"
+    property string currentThemeName: "bauhaus"
     property bool settingsLoaded: false
     property string matugenScheme: "scheme-tonal-spot"
     property bool use24HourClock: true
@@ -107,7 +107,7 @@ Singleton {
             const envRememberLastSession = GreetdEnv.readBoolOverride(Quickshell.env, ["VSHELL_GREET_REMEMBER_LAST_SESSION", "VSHELL_SAVE_SESSION"], undefined);
             const envRememberLastUser = GreetdEnv.readBoolOverride(Quickshell.env, ["VSHELL_GREET_REMEMBER_LAST_USER", "VSHELL_SAVE_USERNAME"], undefined);
 
-            currentThemeName = settings.currentThemeName !== undefined ? settings.currentThemeName : "coppernight";
+            currentThemeName = settings.currentThemeName !== undefined ? settings.currentThemeName : "bauhaus";
             matugenScheme = settings.matugenScheme !== undefined ? settings.matugenScheme : "scheme-tonal-spot";
             use24HourClock = settings.use24HourClock !== undefined ? settings.use24HourClock : true;
             showSeconds = settings.showSeconds !== undefined ? settings.showSeconds : false;

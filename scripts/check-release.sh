@@ -33,7 +33,8 @@ grep -q "install='vgs-shell-git.install'" "$root/packaging/arch/vgs-shell-git/PK
 grep -q '^	install = vgs-shell-git.install$' "$root/packaging/arch/vgs-shell-git/.SRCINFO"
 test -f "$root/packaging/arch/vgs-shell-git/vgs-shell-git.install"
 
-# Catalog URLs must resolve to committed theme contents under this release tag.
+# Every catalogued theme must name a theme-asset release that exists, and the
+# definitions the catalog describes must be committed under this release tag.
 "$root/scripts/gen-theme-catalog.py" --check-release-pin "$version"
 
 "$root/scripts/gen-package-metadata.py"
@@ -60,19 +61,15 @@ if grep -q "/config/vshell/icons/" "$tmp/archive.list"; then
   echo "check-release: the core bundle carries config/vshell/icons, which belongs to the extras bundle" >&2
   exit 1
 fi
-# Compare the preview set with all eligible themes. A nonempty archive can still omit previews.
-sed -n 's|.*/themes/catalog-previews/\(.*\)\.png$|\1|p' "$tmp/archive.list" | sort > "$tmp/previews.have"
-for theme in "$root"/themes/*/; do
-  name="$(basename "$theme")"
-  [[ -f "$theme/theme.json" ]] || continue
-  [[ "$name" == "coppernight" ]] && continue
-  [[ -f "$theme/preview.png" ]] || continue
-  echo "$name"
-done | sort > "$tmp/previews.want"
+# Compare the thumbnail set with the catalogued themes. A nonempty archive can
+# still omit thumbnails, which leaves the download browser blank for those themes.
+sed -n 's|.*/themes/thumbnails/\(.*\)\.jpg$|\1|p' "$tmp/archive.list" | sort > "$tmp/thumbnails.have"
+python3 -c 'import json, sys; print("\n".join(sorted(t["name"] for t in json.load(open(sys.argv[1]))["themes"])))' \
+  "$root/themes/catalog.json" | sort > "$tmp/thumbnails.want"
 # Any failed comparison must stop the check, including errors while reading either file.
-if ! preview_diff="$(diff "$tmp/previews.want" "$tmp/previews.have")"; then
-  echo "check-release: the core bundle's catalog previews do not match the themes that have one:" >&2
-  printf '%s\n' "$preview_diff" >&2
+if ! thumbnail_diff="$(diff "$tmp/thumbnails.want" "$tmp/thumbnails.have")"; then
+  echo "check-release: the core bundle's theme thumbnails do not match the catalogued themes:" >&2
+  printf '%s\n' "$thumbnail_diff" >&2
   exit 1
 fi
 tar -xzf "$archive" -C "$tmp"

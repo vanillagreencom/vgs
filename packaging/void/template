@@ -51,7 +51,7 @@ vgs-shell-assets_package() {
 			theme="${theme%/}"
 			theme="${theme##*/}"
 			case "$theme" in
-				coppernight|targets) continue ;;
+				bauhaus|roseofdune|targets|thumbnails) continue ;;
 			esac
 			vmove "usr/lib/vshell/themes/${theme}"
 		done

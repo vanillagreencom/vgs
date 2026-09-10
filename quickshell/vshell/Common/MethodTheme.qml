@@ -42,7 +42,7 @@ Singleton {
 
     property var methodThemeJson: ({})
     property bool colorsFileLoadFailed: false
-    property string currentTheme: "coppernight"
+    property string currentTheme: "bauhaus"
     property string currentThemeCategory: "vgs"
     property bool isLightMode: (methodThemeJson.mode || "dark") === "light"
     readonly property string dynamic: "vgs"
@@ -164,7 +164,7 @@ Singleton {
         "successContainer": _color("successContainer")
     })
 
-    readonly property string currentThemeName: currentThemeData.name || "coppernight"
+    readonly property string currentThemeName: currentThemeData.name || "bauhaus"
 
     Component.onCompleted: {
         Quickshell.execDetached(["mkdir", "-p", homeDir + "/.config/vshell"]);
@@ -1017,7 +1017,7 @@ Singleton {
     }
 
     function switchTheme(themeName, savePrefs, enableTransition) {
-        const target = themeName || currentTheme || methodThemeJson.name || "coppernight";
+        const target = themeName || currentTheme || methodThemeJson.name || "bauhaus";
         currentTheme = target;
         currentThemeCategory = "vgs";
         return _runThemeHelper("apply-" + target, ["theme", "apply", target], "Apply " + target);
@@ -1032,11 +1032,11 @@ Singleton {
     }
 
     function forceGenerateSystemThemes() {
-        return _runThemeHelper("regenerate", ["theme", "apply", currentTheme || methodThemeJson.name || "coppernight"], "Regenerate app themes");
+        return _runThemeHelper("regenerate", ["theme", "apply", currentTheme || methodThemeJson.name || "bauhaus"], "Regenerate app themes");
     }
 
     function generateSystemThemesFromCurrentTheme() {
-        return _runThemeHelper("regenerate", ["theme", "apply", currentTheme || methodThemeJson.name || "coppernight"], "Regenerate app themes");
+        return _runThemeHelper("regenerate", ["theme", "apply", currentTheme || methodThemeJson.name || "bauhaus"], "Regenerate app themes");
     }
 
     function getAvailableThemes() {

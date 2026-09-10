@@ -6,3 +6,4 @@ bin/vshell-helper	single-file Python helper and theme engine; over the ceiling b
 scripts/check-vshell-helper.py	the helper suite mirrors bin/vshell-helper, itself excluded; over the ceiling before the guard existed
 themes/catalog.json	generated theme download catalog, rewritten whole by scripts/gen-theme-catalog.py; over the ceiling before the guard existed and bounded by the theme set, not by edits
 docs/media/vgs-demo.webp	animated demo frames for the README; GitHub renders no video element for a repo-hosted file, so the demo ships as one image
+themes/asset-lock.json	generated theme-asset pin, rewritten whole by scripts/publish-theme-assets.py; bounded by the theme set, not by edits
