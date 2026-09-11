@@ -17,7 +17,7 @@ The backend provides live system integration over a same-user local socket. Its 
 - The socket rejects other users and requires a runtime directory. See `backend/internal/server/` and its tests.
 - D-Bus access is limited to the registered subscription routes. The inventory and `backend/internal/services/dbusbridge/` define the permitted scope.
 - Daemon supervision has bounded restarts and preserves the listener while restarting. See `backend/internal/runner/` and its tests.
-- One-shot commands use `backend/internal/execbound`; long-lived processes require an explicit lifecycle owner. `scripts/check-execbound-adoption.py` checks raw command builders against its lifecycle exceptions. Each bounded command leads a process group of its own, and cancelling one kills that whole group, so a tool that fans out leaves no descendant behind. The kill runs on the watcher goroutine `os/exec` owns, so a service that cancels a bounded command during shutdown waits for that command to return before its `Close` does.
+- One-shot commands use `backend/internal/execbound`; long-lived processes require an explicit lifecycle owner. `scripts/check-execbound-adoption.py` checks raw command builders against its lifecycle exceptions. A command whose tool starts children of its own asks for `KillGroup`, which gives it a process group of its own so cancelling it kills the whole fan-out; a command that changes system state keeps the default cancel, which ends the tool alone. The kill runs on the watcher goroutine `os/exec` owns, so a service that cancels a bounded command during shutdown waits for that command to return before its `Close` does.
 
 ## Decisions
 

@@ -21,15 +21,16 @@ import (
 
 const refreshTimeout = 2 * time.Minute
 
-// closeGrace bounds how long Close waits for a cancelled refresh to unwind.
+// closeGrace bounds how long Close waits for cancelled refreshes to unwind.
 // Cancelling only closes the context: os/exec calls Cmd.Cancel from its own
 // watcher goroutine, and Wait does not return until that call has finished, so
 // waiting for the collectors to return is what puts the process-group kill
 // before the daemon's exit. Twice execbound's WaitDelay covers the one command
 // still reading, whose pipe read ends at that delay, plus the collectors after
-// it, which fail fast on the dead context. When the grace expires the daemon
-// exits with the refresh still unwinding and logs that it did: a collector stuck
-// in an uninterruptible wait must not hold logout open.
+// it, which fail fast on the dead context; refreshes unwind side by side, so a
+// second one does not extend the bound. When the grace expires the daemon exits
+// with a refresh still unwinding and logs that it did: a collector stuck in an
+// uninterruptible wait must not hold logout open.
 const closeGrace = 2 * execbound.DefaultWaitDelay
 
 type Manager struct {
@@ -46,10 +47,12 @@ type Manager struct {
 	mu            sync.Mutex
 	state         State
 	refreshCancel context.CancelFunc
-	// refreshDone is closed when a refresh's collectors return, which is after
-	// every bounded command it ran has finished cancelling. Nil until the first
-	// refresh; closed means no refresh is collecting.
-	refreshDone   chan struct{}
+	// refreshes counts refreshes whose collectors have not returned, which Close
+	// waits out. It is a count and not one channel because handleCancel returns
+	// the manager to idle before the cancelled collector unwinds, so a second
+	// refresh can be collecting while the first still is. Added to under mu, and
+	// only while closed is false, so no add can begin after Close starts waiting.
+	refreshes     sync.WaitGroup
 	acquireCount  int
 	scheduleTimer *time.Timer
 	closed        bool
@@ -151,16 +154,21 @@ func (m *Manager) Close() {
 	m.mu.Lock()
 	m.closed = true
 	m.stopScheduleLocked()
-	done := m.refreshDone
 	if m.refreshCancel != nil {
 		m.refreshCancel()
 	}
 	m.mu.Unlock()
-	if done == nil {
-		return
-	}
+
+	// closed is set, so refresh adds nothing more and this wait sees a count that
+	// only falls. The goroutine outlives an expired grace by as long as the
+	// collectors themselves do, then ends.
+	quiet := make(chan struct{})
+	go func() {
+		m.refreshes.Wait()
+		close(quiet)
+	}()
 	select {
-	case <-done:
+	case <-quiet:
 	case <-time.After(closeGrace):
 		log := m.log
 		if log == nil {
@@ -200,8 +208,7 @@ func (m *Manager) refresh(force bool) (any, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), refreshTimeout)
 	m.refreshCancel = cancel
-	done := make(chan struct{})
-	m.refreshDone = done
+	m.refreshes.Add(1)
 	m.opGen++
 	gen := m.opGen
 	started := time.Now().Unix()
@@ -215,9 +222,9 @@ func (m *Manager) refresh(force bool) (any, error) {
 	m.srv.Broadcast("sysupdate", state)
 
 	packages, logs, err := m.collectUpdates(ctx)
-	// Every bounded command has returned, so each one's Cancel has run and its
-	// process group is dead. Close waits on this before letting the daemon exit.
-	close(done)
+	// Every bounded command has returned, so each one's Cancel has run and the
+	// mise fan-out is dead. Close waits this out before letting the daemon exit.
+	m.refreshes.Done()
 
 	m.mu.Lock()
 	cancel()
@@ -459,9 +466,7 @@ func (m *Manager) collectUpdates(ctx context.Context) ([]Package, []string, erro
 		}
 	}
 	if m.mise != "" {
-		// Release-age cooldown off, the same way `vshell update run tools`
-		// runs `mise up`, so the count matches what the upgrade would install.
-		out, err := commandOutputEnv(ctx, m.log, false, []string{"MISE_MINIMUM_RELEASE_AGE=0"}, m.mise, "outdated", "--json")
+		out, err := m.miseOutput(ctx, "outdated", "--json")
 		if err != nil {
 			logs = append(logs, "mise check unavailable: "+err.Error())
 		} else {
@@ -630,21 +635,32 @@ func (m *Manager) stopScheduleLocked() {
 }
 
 func commandOutput(ctx context.Context, log *slog.Logger, allowNoUpdatesExit bool, name string, args ...string) ([]byte, error) {
-	return commandOutputEnv(ctx, log, allowNoUpdatesExit, nil, name, args...)
+	return reportOutput(execbound.Command(ctx, name, args...).WithLogger(log), allowNoUpdatesExit)
 }
 
-// commandOutputEnv is commandOutput with extra environment entries appended
-// to the daemon's own.
-func commandOutputEnv(ctx context.Context, log *slog.Logger, allowNoUpdatesExit bool, env []string, name string, args ...string) ([]byte, error) {
-	c := execbound.Command(ctx, name, args...).WithLogger(log)
-	if len(env) > 0 {
-		c.Exec().Env = append(os.Environ(), env...)
-		// Global scope only: mise's bare commands also read a .mise.toml in
-		// the working directory, and the daemon's cwd is whatever started it.
-		if home, err := os.UserHomeDir(); err == nil {
-			c.Exec().Dir = home
-		}
+// miseOutput runs the tool collector. It is the one command here whose tool
+// starts children of its own — one `npm view` per npm-backed tool — so it takes
+// execbound's process-group bound: a cancelled or timed-out check must not leave
+// that fan-out running. The other collectors query their own package database
+// and keep the default cancel.
+func (m *Manager) miseOutput(ctx context.Context, args ...string) ([]byte, error) {
+	c := execbound.Command(ctx, m.mise, args...).KillGroup().WithLogger(m.log)
+	// Release-age cooldown off, the same way `vshell update run tools` runs
+	// `mise up`, so the count matches what the upgrade would install.
+	c.Exec().Env = append(os.Environ(), "MISE_MINIMUM_RELEASE_AGE=0")
+	// Global scope only: mise's bare commands also read a .mise.toml in the
+	// working directory, and the daemon's cwd is whatever started it.
+	if home, err := os.UserHomeDir(); err == nil {
+		c.Exec().Dir = home
 	}
+	return reportOutput(c, false)
+}
+
+// reportOutput turns a bounded run into the bytes a collector parses. A tool's
+// own stderr replaces the exit error, which carries no code when the run was
+// signalled; allowNoUpdatesExit accepts checkupdates' exit 2 for "nothing to
+// update", which is not a failure.
+func reportOutput(c *execbound.Cmd, allowNoUpdatesExit bool) ([]byte, error) {
 	res, err := c.Output()
 	out := res.Out
 	if err != nil {

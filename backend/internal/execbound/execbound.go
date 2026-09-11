@@ -1,9 +1,9 @@
 // Package execbound bounds one-shot external commands and classifies their exit
 // errors. Callers use the returned error so deadline and output-recovery
-// precedence stays in one place. Each command leads a process group of its own,
-// and cancelling a running one kills that whole group, so a tool that fans out
-// leaves no descendant behind. WaitDelay cannot bound a child stuck in
-// uninterruptible sleep.
+// precedence stays in one place. Cancelling a command signals the direct child;
+// a caller whose tool starts children of its own asks for KillGroup, which gives
+// the command a process group of its own and kills that whole group. WaitDelay
+// cannot bound a child stuck in uninterruptible sleep.
 package execbound
 
 import (
@@ -33,8 +33,8 @@ type Result struct {
 	Out []byte
 	// Salvaged reports a clean child exit whose pipe reads ended at WaitDelay. Out
 	// contains the bytes read and may include writes from descendants. The run logs
-	// a warning because nothing cancelled the command: the group kill never fires
-	// on this path, so those descendants stay alive.
+	// a warning because those descendants stay alive: the command was not
+	// cancelled, so no group kill fires even when the caller asked for one.
 	Salvaged bool
 }
 
@@ -71,24 +71,36 @@ func CommandWithDelay(ctx context.Context, delay time.Duration, name string, arg
 	}
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.WaitDelay = delay
-	// A group of its own, so cancelling kills the whole fan-out. mise runs one
-	// `npm view` per npm-backed tool, and the cancel exec.CommandContext installs
-	// by default signals the direct child alone.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error { return terminateGroup(cmd) }
 	return &Cmd{ctx: ctx, cmd: cmd, log: slog.Default()}
+}
+
+// KillGroup gives the command a process group of its own and kills that whole
+// group when the context ends, in place of the cancel exec.CommandContext
+// installs, which signals the direct child alone. Call it before the command
+// runs.
+//
+// Ask for it when the tool starts children of its own: mise runs one `npm view`
+// per npm-backed tool, and a cancelled check left every one of them running,
+// reparented to the user's init, until the process table was full. A command
+// that changes system state does not ask for it — gsettings set, xdg-mime
+// default, nmcli and the CUPS operations can hand work to a helper process, and
+// a group kill would cut that helper down along with the tool.
+func (c *Cmd) KillGroup() *Cmd {
+	c.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	c.cmd.Cancel = func() error { return terminateGroup(c.cmd) }
+	return c
 }
 
 // terminateGroup kills the process group the child leads. Linux keeps a group id
 // reserved while any member of the group lives, so the signal reaches this run's
 // descendants or no process at all.
 //
-// SIGKILL with no graceful stage before it: every command this package runs is a
-// read-only query with nothing to flush or unlock, so a SIGTERM stage buys
-// nothing, and the second signal it needs would have to outlive the cancel. It
-// cannot. A shutdown cancels the command in flight and returns at once, so a
-// timer holding the escalation dies with the daemon and the descendant that
-// ignores SIGTERM survives — the case this bound exists to cover.
+// SIGKILL with no graceful stage before it. A caller opts into this bound for a
+// tool that fans out to read-only queries, where a SIGTERM stage buys nothing
+// and the second signal it needs would have to outlive the cancel. It cannot: a
+// shutdown cancels the command in flight and returns, so a timer holding the
+// escalation dies with the daemon and the descendant that ignores SIGTERM
+// survives, which is the case this bound exists to cover.
 //
 // A child already reaped, or one that does not lead its own group because
 // something replaced SysProcAttr, is signalled alone: the negative id would
@@ -112,8 +124,9 @@ func terminateGroup(cmd *exec.Cmd) error {
 }
 
 // Exec exposes the underlying command for pre-start configuration such as Env or
-// Dir. Do not run it directly: the classification lives here. SysProcAttr and
-// Cancel belong to this package; replacing either drops the group bound.
+// Dir. Do not run it directly: the classification lives here. After KillGroup,
+// SysProcAttr and Cancel belong to this package; replacing either drops the
+// group bound.
 func (c *Cmd) Exec() *exec.Cmd { return c.cmd }
 
 // Output runs the command and returns the bytes read, including partial output

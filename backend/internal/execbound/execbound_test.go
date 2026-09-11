@@ -116,57 +116,85 @@ func TestOutputClassifiesTheDeadlineKillAsTimeout(t *testing.T) {
 }
 
 // A spawner stands in for a tool that fans out: it starts a grandchild that
-// records its pid and waits. The grandchild ignores SIGTERM, so nothing short of
-// the group's SIGKILL can end it and the assertion below cannot pass by accident.
+// records its pid and waits. The grandchild ignores SIGTERM, so under KillGroup
+// nothing but the group's SIGKILL can end it, and under the default cancel it
+// outlives the child that started it.
 const spawnerScript = `#!/bin/sh
 sh -c 'trap "" TERM; echo $$ > "$1"; exec sleep 300' spawner "$1" &
 exec sleep 300
 `
 
-// Cancelling a running command ends its whole process group. mise leaves one
-// `npm view` per npm-backed tool running when only the direct child is
-// signalled; those reparent to the user's init and stay until the process table
-// is full.
-func TestCancelEndsTheDescendantGroup(t *testing.T) {
-	dir := t.TempDir()
-	pidPath := filepath.Join(dir, "grandchild.pid")
-	script := filepath.Join(dir, "spawner")
-	if err := os.WriteFile(script, []byte(spawnerScript), 0o755); err != nil {
-		t.Fatal(err)
+// The group kill is opt-in. A command that asks for KillGroup loses its whole
+// fan-out on a cancel: mise leaves one `npm view` per npm-backed tool running
+// otherwise, and those reparent to the user's init and stay until the process
+// table is full. A command that does not ask keeps os/exec's child-only cancel,
+// so a tool that changes system state is not cut down together with a helper it
+// handed work to.
+func TestCancelEndsTheDescendantGroupOnlyWhenAsked(t *testing.T) {
+	cases := []struct {
+		name      string
+		killGroup bool
+		gone      bool
+	}{
+		{"KillGroup ends the whole fan-out", true, true},
+		{"the default cancel leaves the descendant running", false, false},
 	}
-	// Reads the pid back rather than closing over one, so a failure before the
-	// pid is known still cleans up what the run started.
-	t.Cleanup(func() {
-		if pid, err := recordedPID(pidPath); err == nil {
-			_ = syscall.Kill(pid, syscall.SIGKILL)
-		}
-	})
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			pidPath := filepath.Join(dir, "grandchild.pid")
+			script := filepath.Join(dir, "spawner")
+			if err := os.WriteFile(script, []byte(spawnerScript), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			// Reads the pid back rather than closing over one, so a failure before
+			// the pid is known still cleans up what the run started.
+			t.Cleanup(func() {
+				if pid, err := recordedPID(pidPath); err == nil {
+					_ = syscall.Kill(pid, syscall.SIGKILL)
+				}
+			})
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	// A short delay bounds the pipe read the grandchild holds open when the group
-	// kill is missing, so a failing run reports rather than waits.
-	cmd := CommandWithDelay(ctx, 300*time.Millisecond, script, pidPath)
-	done := make(chan error, 1)
-	go func() {
-		_, err := cmd.Output()
-		done <- err
-	}()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			// A short delay bounds the pipe read a surviving grandchild holds open,
+			// so the row that expects one reports rather than waits.
+			cmd := CommandWithDelay(ctx, 300*time.Millisecond, script, pidPath)
+			if tc.killGroup {
+				cmd = cmd.KillGroup()
+			}
+			done := make(chan error, 1)
+			go func() {
+				_, err := cmd.Output()
+				done <- err
+			}()
 
-	pid := awaitPID(t, pidPath)
-	cancel()
+			pid := awaitPID(t, pidPath)
+			cancel()
 
-	select {
-	case err := <-done:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("err = %v, want context.Canceled", err)
-		}
-	case <-time.After(maxBoundedElapsed):
-		t.Fatalf("the run did not return within %v of the cancel", maxBoundedElapsed)
-	}
+			select {
+			case err := <-done:
+				if !errors.Is(err, context.Canceled) {
+					t.Fatalf("err = %v, want context.Canceled", err)
+				}
+			case <-time.After(maxBoundedElapsed):
+				t.Fatalf("the run did not return within %v of the cancel", maxBoundedElapsed)
+			}
 
-	if err := awaitGone(pid, maxBoundedElapsed); err != nil {
-		t.Fatalf("grandchild %d: %v", pid, err)
+			if tc.gone {
+				if err := awaitGone(pid, maxBoundedElapsed); err != nil {
+					t.Fatalf("grandchild %d: %v", pid, err)
+				}
+				return
+			}
+			running, err := procRunning(pid)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !running {
+				t.Fatalf("grandchild %d died without KillGroup, so the option is not what ends it", pid)
+			}
+		})
 	}
 }
 
@@ -195,29 +223,37 @@ func awaitPID(t *testing.T, path string) int {
 	}
 }
 
-// awaitGone waits for pid to stop running, reading /proc rather than signalling
-// so a pid the kernel has recycled cannot pass for the process this test
-// started. A killed grandchild reparents to the user's init and is reaped
+// procRunning reports whether pid is a live process, read from /proc rather than
+// signalled so a pid the kernel has recycled cannot pass for the process this
+// test started. A killed grandchild reparents to the user's init and is reaped
 // there, so it is a zombie for a moment before its entry disappears; a zombie
-// holds nothing open and counts as gone.
+// holds nothing open and is not running.
+func procRunning(pid int) (bool, error) {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return false, nil
+	}
+	// The comm field is parenthesised and may itself contain spaces and
+	// brackets, so the state character is the one two bytes past the last ')'.
+	paren := bytes.LastIndexByte(data, ')')
+	if paren < 0 || paren+2 >= len(data) {
+		return false, fmt.Errorf("/proc/%d/stat carries no state field: %q", pid, data)
+	}
+	return data[paren+2] != 'Z', nil
+}
+
 func awaitGone(pid int, limit time.Duration) error {
 	deadline := time.Now().Add(limit)
 	for {
-		data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+		running, err := procRunning(pid)
 		if err != nil {
-			return nil
+			return err
 		}
-		// The comm field is parenthesised and may itself contain spaces and
-		// brackets, so the state character is the one two bytes past the last ')'.
-		paren := bytes.LastIndexByte(data, ')')
-		if paren < 0 || paren+2 >= len(data) {
-			return fmt.Errorf("/proc/%d/stat carries no state field: %q", pid, data)
-		}
-		if data[paren+2] == 'Z' {
+		if !running {
 			return nil
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("still running in state %q %v after the cancel", data[paren+2], limit)
+			return fmt.Errorf("still running %v after the cancel", limit)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

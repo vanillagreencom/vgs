@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -12,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"vshell/backend/internal/execbound"
 	"vshell/backend/internal/server"
 )
 
@@ -289,59 +289,68 @@ func TestScheduledRefreshStopsOnReleaseAndClose(t *testing.T) {
 	}
 }
 
-// Close must not return while a cancelled refresh is still unwinding.
-// Cancelling only closes the context: os/exec calls Cmd.Cancel from its own
+// Close waits out every refresh still unwinding, not only the newest. Cancelling
+// a refresh only closes its context: os/exec calls Cmd.Cancel from its own
 // watcher goroutine, so a Close that returned at refreshCancel() would let the
-// daemon exit before the process-group kill ran, and mise's npm children would
-// outlive it.
-func TestCloseWaitsForTheCancelledRefresh(t *testing.T) {
-	cmd, pidPath := pipeHoldingUpdateCommand(t)
+// daemon exit before the collector's commands were signalled at all. And
+// handleCancel returns the manager to idle before the cancelled collector has
+// returned, so a second refresh can start and finish while the first is still
+// unwinding; tracking one refresh let Close wait on the finished second and
+// return with the first one's commands alive.
+func TestCloseWaitsForEveryRefreshStillUnwinding(t *testing.T) {
+	cmd, pidPath := slowThenFastUpdateCommand(t)
 	m := &Manager{srv: server.New(0, nil), checkupdates: cmd}
 	m.state = State{Phase: "idle", Backends: m.backends(), RecentLog: []string{}}
 
 	go func() { _, _ = m.refresh(true) }()
-	// A recorded holder pid proves the collector's command is running, so the
-	// cancel below has an unwind to wait for rather than a command that never
-	// started.
 	waitFor(t, func() bool { return readFile(t, pidPath) != "" })
 
-	m.mu.Lock()
-	done := m.refreshDone
-	m.mu.Unlock()
-	if done == nil {
-		t.Fatal("no refresh in flight; the test cannot observe the wait")
+	// Taken before the cancel, so the WaitDelay the collector unwinds over starts
+	// at or after it and the assertion below needs no tolerance.
+	cancelled := time.Now()
+	if _, err := m.handleCancel(nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// The second call to the fake exits at once, so this refresh completes while
+	// the first is still unwinding and becomes the newest one Close could see.
+	if _, err := m.refresh(true); err != nil {
+		t.Fatal(err)
+	}
+	if state := m.snapshot().(State); state.LastCheckUnix == 0 {
+		t.Fatal("the second refresh did not complete, so it is not the newer one Close must look past")
 	}
 
 	start := time.Now()
 	m.Close()
 	elapsed := time.Since(start)
 
-	select {
-	case <-done:
-	default:
-		t.Fatalf("Close returned after %v with the refresh still cancelling", elapsed)
+	if unwound := time.Since(cancelled); unwound < execbound.DefaultWaitDelay {
+		t.Fatalf("Close returned %v after the cancel, inside the first refresh's %v unwind",
+			unwound, execbound.DefaultWaitDelay)
 	}
 	if elapsed > closeGrace {
 		t.Fatalf("Close took %v, want no more than the %v grace", elapsed, closeGrace)
 	}
 }
 
-// pipeHoldingUpdateCommand is a checkupdates that leaves a descendant holding
-// its stdout from outside the process group: setsid puts the holder in a session
-// of its own, so the group kill cannot reach it and the collector's pipe read
-// runs to execbound's WaitDelay. That makes the wait Close performs measurable
-// in seconds rather than a race between goroutines. Nothing else ends the
-// holder, so cleanup kills it by the pid it recorded.
-func pipeHoldingUpdateCommand(t *testing.T) (string, string) {
+// slowThenFastUpdateCommand is a checkupdates whose first call leaves a
+// descendant holding its stdout and then waits, so cancelling that call unwinds
+// over execbound's WaitDelay instead of instantly. Every later call exits at
+// once, so a refresh started after the first can finish while the first still
+// unwinds. checkupdates does not ask for the process-group bound, so nothing
+// signals the holder: cleanup kills it by the pid it recorded.
+func slowThenFastUpdateCommand(t *testing.T) (string, string) {
 	t.Helper()
-	if _, err := exec.LookPath("setsid"); err != nil {
-		t.Fatalf("setsid is required to detach the pipe holder: %v", err)
-	}
 	dir := t.TempDir()
 	pidPath := filepath.Join(dir, "holder.pid")
+	firstPath := filepath.Join(dir, "first-call")
 	path := filepath.Join(dir, "checkupdates")
 	body := "#!/bin/sh\n" +
-		"setsid sh -c 'echo $$ > \"$1\"; exec sleep 30' holder '" + pidPath + "' &\n" +
+		"if [ -f '" + firstPath + "' ]; then exit 0; fi\n" +
+		": > '" + firstPath + "'\n" +
+		"sleep 30 &\n" +
+		"echo $! > '" + pidPath + "'\n" +
 		"exec sleep 30\n"
 	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
