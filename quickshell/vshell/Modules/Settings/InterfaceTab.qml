@@ -93,9 +93,7 @@ Item {
                     settingKey: "cornerRadius"
                     tags: ["surface", "shape", "radius", "rounding", "corner", "container", "quickshell", "hyprland", "niri", "compositor", "window", "group", "tab"]
                     text: I18n.tr("Container Radius")
-                    description: CompositorService.isHyprland
-                        ? I18n.tr("Corners of VGS surfaces, app windows, and group tabs.")
-                        : I18n.tr("Corners of VGS surfaces and app windows.")
+                    description: CompositorService.isHyprland ? I18n.tr("Corners of VGS surfaces, app windows, and group tabs.") : I18n.tr("Corners of VGS surfaces and app windows.")
                     value: SettingsData.effectiveContainerRadius
                     minimum: 0
                     maximum: 20

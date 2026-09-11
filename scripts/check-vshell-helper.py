@@ -696,10 +696,10 @@ def test_system_font_family_targets():
             pass
         else:
             raise AssertionError("Font names must not inject GTK settings")
-    generated, _ = helper._hyprland_layout_payload(settings, 1)
+    generated, _ = helper._hyprland_layout_payload(settings)
     assert 'font_family = "Example Sans"' in generated
     settings["hyprlandFontFamily"] = 'Custom "Font"'
-    generated, _ = helper._hyprland_layout_payload(settings, 1)
+    generated, _ = helper._hyprland_layout_payload(settings)
     assert 'font_family = "Custom \\"Font\\""' in generated
     with patch.object(helper, "apply_system_fonts", return_value={"success": False, "partial": True}), contextlib.redirect_stdout(io.StringIO()):
         assert helper.cmd_fonts(["apply", "--json"]) == 1
@@ -789,8 +789,7 @@ def test_system_font_size_targets():
         with_temp_home(run_case)
 
 
-# The generated groupbar and decoration tables, read as fields, so an assertion on
-# one table cannot be satisfied by the identical rounding line in the other.
+# Generated tables read as fields, so one table cannot satisfy the other's rounding assertion.
 GROUPBAR_TABLE = re.compile(r"^  group = \{\n    groupbar = \{\n(.*?)^    \},\n^  \},$", re.M | re.S)
 DECORATION_TABLE = re.compile(r"^  decoration = \{\n(.*?)^  \},$", re.M | re.S)
 
@@ -814,7 +813,7 @@ def test_hyprland_layout_payload():
         "hyprlandLayoutGapsOutOverride": 8,
         "hyprlandResizeOnBorder": False,
         "configVersion": 15,
-    }, 1)
+    })
     assert_equal(meta["radius"], 20, "layout radius clamp")
     assert_equal(meta["border"], 10, "layout border clamp")
     assert_equal(meta["gaps"], {"gaps_in": 6, "gaps_out": 8}, "layout gaps")
@@ -830,7 +829,7 @@ def test_hyprland_layout_payload():
         "surfaceBorderWidth": 2,
         "hyprlandLayoutRadiusOverride": 4,
         "hyprlandLayoutBorderSize": 7,
-    }, 1)
+    })
     assert_equal(meta["manageHyprlandShape"], True, "the compositor shape is always managed")
     assert_equal(meta["radius"], 11, "the shell radius reaches the compositor")
     assert_equal(meta["border"], 2, "the shell border reaches the compositor")
@@ -839,49 +838,30 @@ def test_hyprland_layout_payload():
         "cornerRadius": 12,
         "hyprlandResizeOnBorder": False,
         "configVersion": 14,
-    }, 1)
+    })
     assert_equal(meta["radius"], 12, "the shell radius with no override present")
     assert_equal(meta["resizeOnBorder"], True, "legacy resize_on_border false should be upgraded")
 
-    # Hyprland rounds a group tab from two options: the indicator strip from
-    # rounding and the filled tab behind the title from gradient_rounding. A tabbed
-    # setup shows either one, so both carry the container radius times the monitor
-    # scale, as a whole number bounded to Hyprland's 0 to 20. Window rounding stays
-    # unscaled, because Hyprland scales it itself. Rows span the slider's range and
-    # a value above it at scale 1, scale 2 up to and past the bound, and a
-    # fractional scale.
-    for corner_radius, scale, window, tabs in (
-        (0, 1, 0, 0), (8, 1, 8, 8), (20, 1, 20, 20), (99, 1, 20, 20),
-        (0, 2, 0, 0), (8, 2, 8, 16), (15, 2, 15, 20),
-        (7, 1.25, 7, 9),
-    ):
+    # Both tab options carry the radius times the monitor scale, whole and bounded
+    # to 0 to 20; window rounding stays unscaled. Rows: scale 1 across the slider
+    # and above it, scale 2 up to and past the bound, and a fractional scale.
+    for corner_radius, scale, window, tabs in ((0, 1, 0, 0), (8, 1, 8, 8), (20, 1, 20, 20), (99, 1, 20, 20),
+                                               (0, 2, 0, 0), (8, 2, 8, 16), (15, 2, 15, 20), (7, 1.25, 7, 9)):
         script, meta = helper._hyprland_layout_payload({"cornerRadius": corner_radius}, scale)
-        assert_equal(
-            (_lua_table_fields(GROUPBAR_TABLE, script), _lua_table_fields(DECORATION_TABLE, script),
-             meta["groupbarRadius"], meta["groupbarScale"]),
-            ({"rounding": tabs, "gradient_rounding": tabs}, {"rounding": window}, tabs, scale),
-            f"rounding at cornerRadius {corner_radius}, scale {scale}")
+        assert_equal((_lua_table_fields(GROUPBAR_TABLE, script), _lua_table_fields(DECORATION_TABLE, script), meta["groupbarRadius"]),
+                     ({"rounding": tabs, "gradient_rounding": tabs}, {"rounding": window}, tabs), f"rounding at cornerRadius {corner_radius}, scale {scale}")
 
 
 def test_hyprland_layout_apply_reads_the_highest_monitor_scale():
-    # Hyprland takes one tab radius for every monitor, so apply scales it by the
-    # highest scale hyprctl reports, placed neither first nor last here. With no
-    # session to ask, the scale is 1.
-    rows = (
-        ([{"name": "DP-5", "scale": 1.0}, {"name": "DP-1", "scale": 2.0}, {"name": "VGSPREVIEW", "scale": 1.0}], 2.0, 16),
-        (None, 1.0, 8),
-    )
-
+    # The highest scale, neither first nor last here, sets the tabs; no session reads as scale 1.
     def run_case(home):
-        for monitors, scale, tabs in rows:
+        for monitors, tabs in (([{"scale": 1.0}, {"scale": 2.0}, {"scale": 1.0}], 16), (None, 8)):
             with patch.object(helper, "load_settings", return_value={"cornerRadius": 8}), \
                     patch.object(helper, "_hyprctl_json", return_value=monitors) as ipc, \
                     patch.object(helper.shutil, "which", return_value=None):
-                result = helper.apply_hyprland_layout()
-            written = _lua_table_fields(GROUPBAR_TABLE, helper.hyprland_layout_path().read_text())
-            assert_equal((ipc.call_args.args, result["layout"]["groupbarScale"], written),
-                         (("monitors",), scale, {"rounding": tabs, "gradient_rounding": tabs}),
-                         f"apply with monitors {monitors!r}")
+                helper.apply_hyprland_layout()
+            assert_equal((ipc.call_args.args, _lua_table_fields(GROUPBAR_TABLE, helper.hyprland_layout_path().read_text())),
+                         (("monitors",), {"rounding": tabs, "gradient_rounding": tabs}), f"apply with monitors {monitors!r}")
     with_temp_home(run_case)
 
 
