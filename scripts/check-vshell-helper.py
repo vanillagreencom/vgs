@@ -1429,6 +1429,89 @@ def test_hyprland_preview_native_lua():
                 )
 
 
+def test_preview_stage_retires_its_window_rule():
+    """The staging window rule matches every nested Hyprland window, so it must not outlive the stage."""
+    register = ["hyprctl", "eval", helper.PREVIEW_STAGE_ON_LUA]
+    retire = ["hyprctl", "eval", helper.PREVIEW_STAGE_OFF_LUA]
+    remove = ["hyprctl", "output", "remove", helper.PREVIEW_OUTPUT]
+
+    # label; exit status of `hyprctl output create headless`; whether the preview stages.
+    # The rule is registered before the output is created, so a refused output still retires it.
+    for label, create_status, staged_expected in (
+        ("a compositor that accepts every request", 0, True),
+        ("a compositor that refuses the headless output", 1, False),
+    ):
+        calls = []
+
+        def fake_run(argv, **_kwargs):
+            calls.append(list(argv))
+            stdout = "ok"
+            if argv[1:] == ["cursorpos"]:
+                stdout = "0, 0"
+            elif argv[1:] == ["monitors", "-j"]:
+                # A reserved bar strip, so the stage does not wait out preview_stage_reserved.
+                stdout = json.dumps([{"name": helper.PREVIEW_OUTPUT, "reserved": [0, 32, 0, 0]}])
+            elif argv[-1] == "-j":
+                stdout = "{}" if argv[1] == "getoption" else "[]"
+            status = create_status if argv[1:3] == ["output", "create"] else 0
+            return subprocess.CompletedProcess(argv, status, stdout, "")
+
+        with patch.object(helper, "run", fake_run), \
+             patch.object(helper.shutil, "which", lambda name: "/usr/bin/hyprctl" if name == "hyprctl" else None), \
+             patch.dict(os.environ, {"HYPRLAND_INSTANCE_SIGNATURE": "check-vshell-helper"}):
+            with helper.preview_stage() as (staged, _reassert):
+                assert_equal(staged, staged_expected, f"{label}: stages the preview")
+                assert_equal(register in calls, True, f"{label}: the stage registers its window rule")
+                # A capture needs the rule for as long as its nested session is mapped.
+                assert_equal(retire in calls, False, f"{label}: the window rule must stay enabled while the stage is up")
+        teardown = calls[calls.index(register):]
+        assert_equal(retire in teardown, True, f"{label}: the teardown must retire its window rule")
+        if staged_expected:
+            assert_equal(remove in teardown, True, f"{label}: the teardown must remove the staging output")
+
+
+# A fake `hl` whose window_rule counts registrations and live rules. Its arguments are the
+# ON and OFF staging Lua, then the steps to run; each step prints the counts it leaves.
+PREVIEW_STAGE_LUA_DRIVER = r"""
+local registered, live = 0, 0
+hl = { workspace_rule = function() end }
+function hl.window_rule()
+  registered, live = registered + 1, live + 1
+  local rule = { enabled = true }
+  function rule:set_enabled(on)
+    if self.enabled ~= on then live = live + (on and 1 or -1) end
+    self.enabled = on
+  end
+  return rule
+end
+local compile = loadstring or load
+local stage = { on = assert(compile(arg[1])), off = assert(compile(arg[2])) }
+for i = 3, #arg do
+  stage[arg[i]]()
+  print(arg[i] .. " " .. registered .. " " .. live)
+end
+"""
+
+
+def test_preview_stage_lua_keeps_one_live_rule():
+    """A stage holds one live window rule, its teardown leaves none, and the next stage registers afresh."""
+    lua = shutil.which("lua")
+    if lua is None:
+        raise AssertionError("lua not installed: the preview staging Lua cannot run, so no check sees it retire its window rule")
+    # A stage and its reassert, a teardown and a repeated one, then the next stage and its
+    # teardown; each row is the step and the registrations and live rules it leaves.
+    steps = (("on", 1, 1), ("on", 1, 1), ("off", 1, 0), ("off", 1, 0), ("on", 2, 1), ("off", 2, 0))
+    result = subprocess.run(
+        [lua, "-", helper.PREVIEW_STAGE_ON_LUA, helper.PREVIEW_STAGE_OFF_LUA, *(step for step, _, _ in steps)],
+        input=PREVIEW_STAGE_LUA_DRIVER, text=True, capture_output=True, timeout=10,
+    )
+    assert_equal(result.returncode, 0, f"the staging Lua under {lua}: {result.stderr.strip()}")
+    rows = result.stdout.splitlines()
+    assert_equal(len(rows), len(steps), "one printed row per driven step")
+    for index, ((step, registered, live), row) in enumerate(zip(steps, rows), 1):
+        assert_equal(row, f"{step} {registered} {live}", f"step {index} ({step}): registrations and live rules")
+
+
 def test_greeter_primary_monitor_validation():
     with tempfile.TemporaryDirectory() as tmp:
         cache = Path(tmp)
@@ -5227,8 +5310,7 @@ def test_scratchpad_generated_lua_parses():
     is a config that fails to load at compositor start, so parse what we wrote."""
     luac = shutil.which("luac")
     if not luac:
-        print("  (skipped: luac not installed; generated Lua was not parse-checked)")
-        return
+        raise AssertionError("luac not installed: the generated scratchpad Lua cannot be parse-checked")
 
     def parses(source: str) -> bool:
         with tempfile.NamedTemporaryFile("w", suffix=".lua", delete=False) as handle:
@@ -7144,6 +7226,8 @@ def main():
     test_lint_checks_color0_in_light_mode_only()
     test_theme_list_falls_back_to_the_shipped_thumbnail()
     test_hyprland_preview_native_lua()
+    test_preview_stage_retires_its_window_rule()
+    test_preview_stage_lua_keeps_one_live_rule()
     test_greeter_primary_monitor_validation()
     test_greeter_runtime_helper_dependencies()
     test_greeter_sync_survives_a_missing_wallpaper()
