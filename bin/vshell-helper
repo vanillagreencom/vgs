@@ -13458,7 +13458,7 @@ def _lua_number(value: float) -> str:
 
 
 def _sane_monitor_scale(value: Any) -> float | None:
-    """Validate a scale before it is rendered into the greeter's Lua config.
+    """Validate a monitor scale for the greeter's Lua config and the layout.lua tab radius.
 
     `nan`/`inf` would reach the config as bare `nan`/`inf` literals and a zero or
     negative scale is not a mode Hyprland can bring up — either way the greeter
