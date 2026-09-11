@@ -401,7 +401,9 @@ def mise_json(args: List[str]) -> Tuple[Dict[str, Any], str]:
     # From $HOME, so only the global config is in scope: mise's bare
     # commands otherwise fold in whatever .mise.toml the caller's cwd has.
     try:
-        proc = RT.run(["mise", *args], env=mise_env(), cwd=str(RT.home()), timeout=120)
+        # kill_group: mise runs one `npm view` per npm-backed tool, and those
+        # outlive a timeout unless the whole group is signalled.
+        proc = RT.run(["mise", *args], env=mise_env(), cwd=str(RT.home()), timeout=120, kill_group=True)
     except (OSError, subprocess.SubprocessError) as exc:
         return {}, f"mise {args[0]} failed: {exc}"
     if proc.returncode != 0:
