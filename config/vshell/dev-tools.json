@@ -91,6 +91,7 @@
     { "id": "gh-dash", "name": "gh-dash", "package": "github:dlvhdr/gh-dash", "command": "gh-dash" },
     { "id": "sesh", "name": "sesh", "package": "github:joshmedeski/sesh", "command": "sesh" },
     { "id": "vercel", "name": "Vercel", "package": "npm:vercel", "command": "vercel" },
+    { "id": "t3", "name": "T3 Code CLI", "package": "npm:t3", "command": "t3" },
     { "id": "daytona", "name": "Daytona", "package": "daytona", "command": "daytona" }
   ],
   "envs": [
