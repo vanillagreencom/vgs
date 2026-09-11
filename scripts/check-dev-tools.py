@@ -111,27 +111,30 @@ def test_stub_template_and_foreign_files():
             os.environ["PATH"] = original_path
 
 
-# A stand-in mise: `x` puts the install on PATH when it exists and execs the
-# command by name, as mise does; `install` restores the executable from $FIX.
+# A stand-in mise: `x` puts the install on PATH and execs the command by name,
+# as mise does, so an empty install falls through to the stub; only the exact
+# forced reinstall of the package restores the executable from $FIX.
 FAKE_MISE = """#!/bin/sh
-echo "$1" >> "$LOG"
-case "$1" in
-  install) [ -z "$FIX" ] || { mkdir -p "$INSTALL" && cp "$FIX" "$INSTALL/fake"; } ;;
-  x) shift 3; [ -d "$INSTALL" ] && PATH="$INSTALL:$PATH"; exec "$@" ;;
+echo "$*" >> "$LOG"
+case "$*" in
+  "install --force npm:fake --quiet") [ -z "$FIX" ] || cp "$FIX" "$INSTALL/fake" ;;
+  x\\ *) shift 3; case ":$PATH:" in *":$INSTALL:"*) ;; *) PATH="$INSTALL:$PATH" ;; esac; exec "$@" ;;
 esac
 """
 
 
 def test_a_stub_over_an_install_with_no_executable_never_runs_itself():
-    """`mise x` over an install holding no executable finds the stub on PATH.
-    The stub forces one reinstall and then runs the tool, or names the repair;
-    a tool that starts its own command through the stub still runs."""
+    """`mise x` over an install directory holding no executable finds the stub
+    on PATH. The stub forces one reinstall and then runs the tool, or names the
+    repair; a tool that starts its own command through the stub still runs."""
     missing = "fake: npm:fake installed no fake executable; repair: mise install --force npm:fake\n"
+    use, run, repair = "use -g --quiet npm:fake\n", "x npm:fake -- fake --x\n", "install --force npm:fake --quiet\n"
     # row, install holds the executable, the reinstall restores it, args, exit, stdout, stderr, mise calls
-    rows = (("healthy", True, False, ["--x"], 0, "ran --x\n", "", "use\nx\n"),
-            ("respawn", True, False, ["--spawn"], 0, "ran --spawn\nran --x\n", "", "use\nx\nuse\nx\n"),
-            ("repaired", False, True, ["--x"], 0, "ran --x\n", "", "use\nx\ninstall\nx\n"),
-            ("broken", False, False, ["--x"], 1, "", missing, "use\nx\ninstall\nx\n"))
+    rows = (("healthy", True, False, ["--x"], 0, "ran --x\n", "", use + run),
+            ("respawn", True, False, ["--spawn"], 0, "ran --spawn\nran --x\n", "",
+             use + "x npm:fake -- fake --spawn\n" + use + run),
+            ("repaired", False, True, ["--x"], 0, "ran --x\n", "", use + run + repair + run),
+            ("broken", False, False, ["--x"], 1, "", missing, use + run + repair + run))
     for row, held, fixes, args, code, stdout, stderr, calls in rows:
         with tempfile.TemporaryDirectory() as tmp:
             stubs, install, log, real = (Path(tmp) / name for name in ("bin", "install", "log", "real"))
@@ -143,8 +146,8 @@ def test_a_stub_over_an_install_with_no_executable_never_runs_itself():
             real.write_text(f'#!/bin/sh\necho "ran $*"\n[ "$1" != --spawn ] || echo "$({stub} --x)"\n')
             for path in (stub, stubs / "mise", real):
                 path.chmod(0o755)
+            install.mkdir()
             if held:
-                install.mkdir()
                 (install / "fake").symlink_to(real)
             env = {"PATH": f"{stubs}:/usr/bin:/bin", "LOG": str(log), "INSTALL": str(install), "FIX": str(real) if fixes else ""}
             try:
