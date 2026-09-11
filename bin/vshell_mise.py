@@ -211,21 +211,29 @@ def mise_stub_text(package: str, command: str, bin_name: str,
                for step in mise_install_steps(package, requires, present)]
     if present:
         probe = f'"$(mise where {shlex.quote(package)} 2>/dev/null)"/{present}'
-        lines.append(f"if ! [ -e {probe} ]; then")
-        lines += [f"  {line}" for line in install]
-        lines.append("fi")
-    else:
-        lines += install
+        install = [f"if ! [ -e {probe} ]; then", *(f"  {line}" for line in install), "fi"]
     drop = "".join(f" -u {shlex.quote(name)}" for name in sorted(build_env))
     prefix = f"env{drop} " if drop else ""
     if exec_path:
         # `mise where` can exit 0 with nothing to say; an exec of /<exec_path>
         # from the filesystem root would name neither the tool nor the cause.
         no_root = shlex.quote(f"{command}: mise reported no install root for {package}")
+        lines += install
         lines.append(f"root=$(mise where {shlex.quote(package)}) || exit 1")
         lines.append(f'[ -n "$root" ] || {{ echo {no_root} >&2; exit 1; }}')
         lines.append(f'exec {prefix}"$root"/{shlex.quote(exec_path)} "$@"')
     else:
+        # An install holding no `bin_name` sends `mise x` through PATH to this
+        # stub, in the same process. Keying the guard to that process lets a
+        # tool still start its own command through the stub as a new one.
+        guard = f'"$$"{shlex.quote(":" + command)}'
+        repair = f"mise install --force {shlex.quote(package)}"
+        missing = shlex.quote(f"{command}: {package} installed no {bin_name} executable; repair: {repair}")
+        lines += ['case "${VSHELL_MISE_STUB-}" in',
+                  f"  {guard}:forced) echo {missing} >&2; exit 1 ;;",
+                  f"  {guard}) export VSHELL_MISE_STUB={guard}:forced; {repair} --quiet || exit 1 ;;",
+                  f"  *) export VSHELL_MISE_STUB={guard}", *(f"    {line}" for line in install), "    ;;",
+                  "esac"]
         lines.append(f"exec {prefix}mise x {shlex.quote(package)} -- {shlex.quote(bin_name)} \"$@\"")
     return "\n".join(lines) + "\n"
 
