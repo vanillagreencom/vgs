@@ -65,3 +65,21 @@ jobs:
             exit 1
           fi
           scripts/publish-ppa.sh "${args[@]}"
+
+      # Launchpad keeps a superseded source and its binaries published until
+      # someone deletes them, which is how the retired vgs-shell-assets stayed
+      # installable after 0.5.0 replaced it.
+      - name: Delete the PPA publications this release supersedes
+        if: ${{ inputs.dry_run != true }}
+        env:
+          LP_CREDENTIALS: ${{ secrets.LP_CREDENTIALS }}
+        run: |
+          set -euo pipefail
+          if [ -z "$LP_CREDENTIALS" ]; then
+            echo "::error::LP_CREDENTIALS is not set, so superseded packages stay published. Add the secret, or run scripts/prune-ppa.py by hand and say so in the release notes."
+            exit 1
+          fi
+          install -m 600 /dev/null "$RUNNER_TEMP/lp-credentials"
+          printf '%s' "$LP_CREDENTIALS" >"$RUNNER_TEMP/lp-credentials"
+          python3 -m pip install --user --break-system-packages launchpadlib
+          LP_CREDENTIALS_FILE="$RUNNER_TEMP/lp-credentials" scripts/prune-ppa.py
