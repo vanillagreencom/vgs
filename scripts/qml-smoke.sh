@@ -1127,10 +1127,10 @@ override_state_settles() {
 # Samples run from the window edge inward — edge, border, interior — plus two outside it:
 # the pixel a compositor border occupies, and one past the widest border VGS can ask for.
 # A client border must sit inside the edge (3); on the edge it floods a resize (1). With the
-# compositor drawing the border the client paints one flat surface out to its own edge, so
-# the near outside pixel has to differ from the far one as well as from the edge (0) —
-# against the edge alone any wallpaper, gap or neighbouring window passes. Anything else is
-# no border at all (2).
+# compositor drawing the border, a row that crosses no content background is one flat
+# surface out to the client's own edge, so the near outside pixel has to differ from the far
+# one as well as from the edge (0) — against the edge alone any wallpaper, gap or
+# neighbouring window passes. Anything else is no border at all (2).
 window_border_is_inset() {
   local edge="$1" border="$2" interior="$3" near="${4:-}" far="${5:-}"
   if [[ "$border" != "$interior" ]]; then
@@ -1147,8 +1147,9 @@ pixel_error_log=""
 
 # Read one pixel of the sandbox output as lowercase hex. grim writes binary PPM, whose
 # header is four whitespace-separated ASCII fields ahead of the RGB bytes.
-# The deadline is not optional: a nested compositor that stops answering would otherwise
-# block the border check with no verdict — the outer run timeout bounds only qs, and the
+# The deadline is not optional: grim waits for the nested output's next frame, which never
+# comes while the live session is not showing the host window, and would otherwise block
+# the border check with no verdict — the outer run timeout bounds only qs, and the
 # compositor's process group survives until cleanup.
 sandbox_pixel() {
   local sink="${pixel_error_log:-/dev/null}"
@@ -1181,16 +1182,23 @@ print(data[i + 1:i + 4].hex())
 ' 2>>"$sink"
 }
 
-# Sample the Settings window's left edge in the sandbox. Samples that cannot be obtained
-# are not evidence about where the border sits, so they leave the border NOT MEASURED
-# rather than failed: the nested output only renders while its host window is presented,
-# which no unattended run can arrange without driving the live session. A frame that IS
-# obtained is judged in full.
+# Sample the Settings window's right edge in the sandbox. The verdict needs a row that
+# crosses no content background, and under compositor chrome VgsSurfaceChrome holds content
+# one pixel off the window edge. The sidebar holds the left side and paints its own colour
+# from that pixel in, so there the outermost pixel is the window surface and the next one is
+# the sidebar whatever the border does. The content pane holds the right side and leaves the
+# surface showing: its reading-pane tint needs the glass effect, which the seeded defaults
+# leave off, and the sandbox's built-in English lays the window out left to right.
+# Samples that cannot be obtained are not evidence about where the border sits, so they
+# leave the border NOT MEASURED rather than failed: the nested output renders only when its
+# host window gets a frame callback, which the live session sends only while a monitor shows
+# that window, and no unattended run can arrange that without driving the live session. A
+# frame that IS obtained is judged in full.
 # The sandbox always runs the Lua config manager, so the compositor is what draws the VGS
 # window border here. A client-drawn border is a real finding — the window rule did not
 # reach this window — and is failed rather than accepted as the other valid arm.
 settings_border_check() {
-  local clients geometry="" x y far_x edge border interior near far verdict=0
+  local clients monitors geometry="" x y monitor output_end far_x edge border interior near far verdict=0
   # The far sample has to clear the border rather than land in it. Border Thickness clamps
   # at 10, matching cmd_blur's --window-border choices, so 13 pixels out is past the widest
   # border VGS can ask the compositor for whatever the current setting is.
@@ -1200,7 +1208,7 @@ settings_border_check() {
   for _ in $(seq 1 20); do
     clients="$("${sandbox_env[@]}" HYPRLAND_INSTANCE_SIGNATURE="$nested_signature" hyprctl -i 0 clients -j 2>/dev/null)" || clients=""
     geometry="$(jq -er '.[] | select(.title == "Settings" and .mapped) |
-      "\(.at[0]) \(.at[1] + (.size[1] / 2 | floor))"' <<<"${clients:-[]}" 2>/dev/null)" && break
+      "\(.at[0] + .size[0] - 1) \(.at[1] + (.size[1] / 2 | floor)) \(.monitor)"' <<<"${clients:-[]}" 2>/dev/null)" && break
     geometry=""
     sleep 0.5
   done
@@ -1208,16 +1216,23 @@ settings_border_check() {
     fail "the Settings window did not map in the sandbox within 10s"
     return 1
   fi
-  read -r x y <<<"$geometry"
-  far_x=$((x - far_offset))
-  if [[ "$far_x" -lt 0 ]]; then
-    unmeasured "the window border: the Settings window maps ${x}px from the output edge, too close to sample past its border"
+  read -r x y monitor <<<"$geometry"
+  far_x=$((x + far_offset))
+  # The sandbox's monitor rule sets scale 1 and no transform, so the mode width is the
+  # output's width in the layout coordinates grim samples.
+  if ! monitors="$(sandbox_monitors)" ||
+    ! output_end="$(jq -er --argjson id "$monitor" '.[] | select(.id == $id) | .x + .width' <<<"$monitors" 2>/dev/null)"; then
+    unmeasured "the window border: no geometry for output $monitor, which the Settings window maps on"
+    return "$skip_status"
+  fi
+  if [[ "$far_x" -ge "$output_end" ]]; then
+    unmeasured "the window border: the Settings window's right edge maps $((output_end - x - 1))px from the output edge, too close to sample past its border"
     return "$skip_status"
   fi
   if ! edge="$(sandbox_pixel "$x" "$y")" ||
-    ! border="$(sandbox_pixel "$((x + 1))" "$y")" ||
-    ! interior="$(sandbox_pixel "$((x + 4))" "$y")" ||
-    ! near="$(sandbox_pixel "$((x - 1))" "$y")" ||
+    ! border="$(sandbox_pixel "$((x - 1))" "$y")" ||
+    ! interior="$(sandbox_pixel "$((x - 4))" "$y")" ||
+    ! near="$(sandbox_pixel "$((x + 1))" "$y")" ||
     ! far="$(sandbox_pixel "$far_x" "$y")"; then
     # One line per record: the summary lists them, and grim's own report spans two.
     unmeasured "the window border: no frame from the sandbox output at ${x},${y}: $(tail -c 400 -- "${pixel_error_log:-/dev/null}" 2>/dev/null | tr '\n' ' ')"
