@@ -4298,17 +4298,18 @@ PREVIEW_OUTPUT = "VGSPREVIEW"
 # workspace sits on a real monitor that is not showing it, and a nested session
 # parked there never renders, because its frames wait on callbacks its unshown host
 # window never gets. PREVIEW_STAGE_OFF_LUA retires the rule when the stage ends.
+PREVIEW_WINDOW_RULE_HANDLE = "_VGS_PREVIEW_WINDOW_RULE"
 PREVIEW_STAGE_ON_LUA = (
     'if not _VGS_PREVIEW_STAGE then _VGS_PREVIEW_STAGE = true '
     'hl.workspace_rule({ workspace = "name:vgspreview", monitor = "' + PREVIEW_OUTPUT + '", default = true }) end '
-    'if _VGS_PREVIEW_WINDOW_RULE == nil then '
-    '_VGS_PREVIEW_WINDOW_RULE = hl.window_rule({ match = { class = "^(aquamarine)$" }, '
+    f'if {PREVIEW_WINDOW_RULE_HANDLE} == nil then '
+    f'{PREVIEW_WINDOW_RULE_HANDLE} = hl.window_rule({{ match = {{ class = "^(aquamarine)$" }}, '
     'workspace = "name:vgspreview silent", fullscreen_state = 2, '
     'no_initial_focus = true, no_focus = true }) end'
 )
 PREVIEW_STAGE_OFF_LUA = (
-    'if _VGS_PREVIEW_WINDOW_RULE ~= nil then '
-    '_VGS_PREVIEW_WINDOW_RULE:set_enabled(false) _VGS_PREVIEW_WINDOW_RULE = nil end'
+    f'if {PREVIEW_WINDOW_RULE_HANDLE} ~= nil then '
+    f'{PREVIEW_WINDOW_RULE_HANDLE}:set_enabled(false) {PREVIEW_WINDOW_RULE_HANDLE} = nil end'
 )
 PREVIEW_WINDOW_RULE_LEGACY = f"monitor {PREVIEW_OUTPUT}, class:^(aquamarine)$"
 PREVIEW_WINDOW_RULE_LEGACY_NOFOCUS = "nofocus, class:^(aquamarine)$"
@@ -4897,7 +4898,7 @@ def preview_dispatch(lua_call: str, legacy: List[str]) -> None:
     # Lua and classic Hyprland command errors can appear on stdout with exit 0,
     # so inspect the response text as well as the exit code.
     res = run(["hyprctl", "eval", f"hl.dispatch({lua_call})"])
-    if res.returncode != 0 or "error" in (res.stdout or "").lower():
+    if not _hyprctl_eval_ok(res):
         run(["hyprctl", "dispatch", *legacy])
 
 
@@ -5055,46 +5056,6 @@ def preview_stage():
 
     legacy_rule = False
     lua_rule = False
-    if shutil.which("hyprctl") and os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
-        pos = cursor_pos()
-        prev_mon = focused_monitor()
-        run(["hyprctl", "output", "remove", PREVIEW_OUTPUT])
-        restore_cursor(pos)
-        pos = cursor_pos()
-        # Rules go in BEFORE the output exists: the workspace rule's `default`
-        # flag decides which workspace the new output activates, and silent
-        # window placement only keeps the nested session rendering (and thus
-        # alive) when its target workspace is the staging output's active one.
-        hook = run(["hyprctl", "eval", PREVIEW_STAGE_ON_LUA])
-        rules_ok = lua_rule = hook.returncode == 0 and "error" not in (hook.stdout or "").lower()
-        if not rules_ok:
-            # Pre-Lua Hyprland: fall back to a runtime rule; teardown then
-            # needs a config reload to clear it.
-            rule = run(["hyprctl", "keyword", "windowrulev2", PREVIEW_WINDOW_RULE_LEGACY])
-            run(["hyprctl", "keyword", "windowrulev2", PREVIEW_WINDOW_RULE_LEGACY_NOFOCUS])
-            rules_ok = legacy_rule = rule.returncode == 0 and "error" not in (rule.stdout or "").lower()
-        if rules_ok and run(["hyprctl", "output", "create", "headless", PREVIEW_OUTPUT]).returncode == 0:
-            # The output inherits the user's default scale; force scale 1 so the
-            # nested session sees the full logical resolution.
-            def set_mode(w: int, h: int) -> None:
-                mode = run(["hyprctl", "eval", f'hl.monitor({{ output = "{PREVIEW_OUTPUT}", mode = "{w}x{h}@60", position = "auto", scale = 1 }})'])
-                if mode.returncode != 0 or "error" in (mode.stdout or "").lower():
-                    run(["hyprctl", "keyword", "monitor", f"{PREVIEW_OUTPUT},{w}x{h}@60,auto,1"])
-
-            # Grow the output by whatever the parent spends on window chrome so
-            # the staged capture window is exactly PREVIEW_SIZE. Gaps, borders
-            # and a bar's exclusive zone are all user config, and previews are
-            # committed to the repo — they cannot vary with them.
-            width, height = PREVIEW_SIZE
-            chrome_w, chrome_h = preview_stage_chrome()
-            set_mode(width + chrome_w, height + chrome_h)
-            res_w, res_h = preview_stage_reserved()
-            if res_w or res_h:
-                set_mode(width + chrome_w + res_w, height + chrome_h + res_h)
-            staged = True
-            preview_guard_focus()
-            restore_cursor(pos)
-            enforce_monitor(prev_mon)
 
     def reassert() -> None:
         if staged and not legacy_rule:
@@ -5104,29 +5065,77 @@ def preview_stage():
             # Repair it before captures and during the capture pump.
             preview_guard_focus()
 
+    # The shell stops a preview with SIGTERM (its Proc timeout, vshell.service going
+    # down), whose default action ends Python without running the finally below, so
+    # the rule and the staging output would outlive the stage. Raise it as SystemExit
+    # for as long as the stage holds them.
+    previous_sigterm = signal.signal(signal.SIGTERM, lambda signum, _frame: sys.exit(128 + signum))
     try:
-        yield staged, reassert
-    finally:
-        # The rule is retired whether or not the output came up: registered
-        # without one, it parks nested windows on a workspace no monitor shows.
-        if lua_rule:
-            retired = run(["hyprctl", "eval", PREVIEW_STAGE_OFF_LUA])
-            if retired.returncode != 0 or "error" in (retired.stdout or "").lower():
-                reply = (retired.stdout or retired.stderr or "").strip() or "no reply"
-                eprint(f"preview staging rule left enabled (hyprctl exit {retired.returncode}): {reply}")
-        if staged:
-            if legacy_rule:
-                run(["hyprctl", "reload"])
+        if shutil.which("hyprctl") and os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
             pos = cursor_pos()
-            # Honor where the user is focused NOW (not at stage time); if the
-            # invisible output somehow holds focus, fall back to the monitor
-            # under the cursor.
-            end_mon = focused_monitor()
-            if end_mon == PREVIEW_OUTPUT:
-                end_mon = preview_focus_target(preview_hyprctl_json("monitors"))
+            prev_mon = focused_monitor()
             run(["hyprctl", "output", "remove", PREVIEW_OUTPUT])
             restore_cursor(pos)
-            enforce_monitor(end_mon)
+            pos = cursor_pos()
+            # Rules go in BEFORE the output exists: the workspace rule's `default`
+            # flag decides which workspace the new output activates, and silent
+            # window placement only keeps the nested session rendering (and thus
+            # alive) when its target workspace is the staging output's active one.
+            hook = run(["hyprctl", "eval", PREVIEW_STAGE_ON_LUA])
+            rules_ok = lua_rule = _hyprctl_eval_ok(hook)
+            if not rules_ok:
+                # Pre-Lua Hyprland: fall back to a runtime rule; teardown then
+                # needs a config reload to clear it.
+                rule = run(["hyprctl", "keyword", "windowrulev2", PREVIEW_WINDOW_RULE_LEGACY])
+                run(["hyprctl", "keyword", "windowrulev2", PREVIEW_WINDOW_RULE_LEGACY_NOFOCUS])
+                rules_ok = legacy_rule = _hyprctl_eval_ok(rule)
+            if rules_ok and run(["hyprctl", "output", "create", "headless", PREVIEW_OUTPUT]).returncode == 0:
+                staged = True
+                # The output inherits the user's default scale; force scale 1 so the
+                # nested session sees the full logical resolution.
+                def set_mode(w: int, h: int) -> None:
+                    mode = run(["hyprctl", "eval", f'hl.monitor({{ output = "{PREVIEW_OUTPUT}", mode = "{w}x{h}@60", position = "auto", scale = 1 }})'])
+                    if not _hyprctl_eval_ok(mode):
+                        run(["hyprctl", "keyword", "monitor", f"{PREVIEW_OUTPUT},{w}x{h}@60,auto,1"])
+
+                # Grow the output by whatever the parent spends on window chrome so
+                # the staged capture window is exactly PREVIEW_SIZE. Gaps, borders
+                # and a bar's exclusive zone are all user config, and previews are
+                # committed to the repo — they cannot vary with them.
+                width, height = PREVIEW_SIZE
+                chrome_w, chrome_h = preview_stage_chrome()
+                set_mode(width + chrome_w, height + chrome_h)
+                res_w, res_h = preview_stage_reserved()
+                if res_w or res_h:
+                    set_mode(width + chrome_w + res_w, height + chrome_h + res_h)
+                preview_guard_focus()
+                restore_cursor(pos)
+                enforce_monitor(prev_mon)
+        yield staged, reassert
+    finally:
+        try:
+            # The rule is retired whether or not the output came up: registered
+            # without one, it parks nested windows on a workspace no monitor shows.
+            if lua_rule:
+                retired = run(["hyprctl", "eval", PREVIEW_STAGE_OFF_LUA])
+                if not _hyprctl_eval_ok(retired):
+                    reply = (retired.stdout or retired.stderr or "").strip() or "no reply"
+                    eprint(f"preview staging rule left enabled (hyprctl exit {retired.returncode}): {reply}")
+            if staged:
+                if legacy_rule:
+                    run(["hyprctl", "reload"])
+                pos = cursor_pos()
+                # Honor where the user is focused NOW (not at stage time); if the
+                # invisible output somehow holds focus, fall back to the monitor
+                # under the cursor.
+                end_mon = focused_monitor()
+                if end_mon == PREVIEW_OUTPUT:
+                    end_mon = preview_focus_target(preview_hyprctl_json("monitors"))
+                run(["hyprctl", "output", "remove", PREVIEW_OUTPUT])
+                restore_cursor(pos)
+                enforce_monitor(end_mon)
+        finally:
+            signal.signal(signal.SIGTERM, previous_sigterm)
 
 
 def cmd_theme_preview(args: argparse.Namespace) -> int:
@@ -12090,7 +12099,8 @@ def _hyprctl_eval_ok(proc: subprocess.CompletedProcess[str]) -> bool:
     manager" on stdout and still exits 0, so a return code alone reports rules as applied
     that never ran, and every caller then believes the compositor owns decoration it does
     not draw. The Lua config manager answers exactly "ok", and prefixes a failed chunk
-    with "error:".
+    with "error:". A classic `hyprctl keyword` also answers "ok" when it applies, and a
+    Lua session refuses one with exit 0 and "keyword can't work with non-legacy parsers".
     """
     return proc.returncode == 0 and (proc.stdout or "").strip() == "ok"
 

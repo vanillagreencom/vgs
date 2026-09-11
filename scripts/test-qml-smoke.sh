@@ -1,11 +1,8 @@
 #!/usr/bin/env bash
-# Exercise the extracted smoke helpers without starting a nested compositor.
-# Surfaces: the remedy the unavailability notice prints, the layer state the sandbox
-# measures, the geometry reply the assertion accepts, the window edge samples the border
-# check reads, the requests that keep the hidden host window rendering, and the scope the
-# failure verdict lands in.
+# Exercise the extracted smoke helpers without starting a nested compositor. CASES at the
+# end is the list of what the suite covers.
 # The notice helper writes advice and nothing else, so its wording is the only channel
-# a caller can read; the others assert status, measured geometry and sampled colour.
+# a caller can read; the other cases assert what their helper returns or sends.
 set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -292,18 +289,19 @@ edge_samples() {
 
 # label; edge; border; interior; near; far; expected status. Samples run from the window edge
 # inward; near is the pixel just past the edge, where a compositor border lands, and far is
-# past the widest border VGS can ask for. Status 0 is a compositor border, 1 a client border
-# on the outermost pixel, 2 no border at all and 3 an inset client border.
+# that pixel again once the compositor has recoloured the border. Status 0 is a compositor
+# border, 1 a client border on the outermost pixel, 2 no border at all and 3 an inset client
+# border.
 EDGES='an inset client border is the client arm, not the compositor one;1c1c28;fab387;1c1c28;0000ff;0000ff;3
 a border on the outermost pixel floods a resize;fab387;fab387;1c1c28;0000ff;0000ff;1
 a translucent edge still differs from the border;2a2b3f;fab387;1c1c28;0000ff;0000ff;3
 no border drawn at all;1c1c28;1c1c28;1c1c28;1c1c28;1c1c28;2
 a border colour equal to the interior is not a border;fab387;1c1c28;1c1c28;0000ff;00ff00;2
-a uniform background outside an opaque edge is not a border;1c1c28;1c1c28;1c1c28;00ff00;00ff00;2
-a compositor border between the edge and the background passes;1c1c28;1c1c28;1c1c28;fab387;00ff00;0
+a pixel past the edge that keeps its colour is not a border;1c1c28;1c1c28;1c1c28;00ff00;00ff00;2
+a pixel past the edge that follows the border colour passes;1c1c28;1c1c28;1c1c28;fab387;00ff00;0
 a compositor border does not excuse an edge that differs from the interior;fab387;1c1c28;1c1c28;fab387;00ff00;2
 no outside samples keep the client-border contract;1c1c28;1c1c28;1c1c28;;;2
-a near sample with nothing beyond it cannot stand in for a border;1c1c28;1c1c28;1c1c28;fab387;;2'
+a near sample with no recoloured reading cannot stand in for a border;1c1c28;1c1c28;1c1c28;fab387;;2'
 
 case_window_border_samples() {
   local label edge border interior near far want_rc out rows=0
@@ -315,19 +313,24 @@ case_window_border_samples() {
       fail "window border samples" "$label: expected rc=$want_rc, got: $out"
   done <<<"$EDGES"
   [[ $rows -eq 10 ]] || fail "window border samples" "expected 10 table rows, drove $rows"
-  ok "only a border that differs from both the edge and the background beyond it passes"
+  ok "only a pixel past the edge that differs from the edge and follows the border colour passes"
 }
 
-# Drive keep_host_rendering against a stub live-session hyprctl that lists the sandbox's
-# window and logs each request it is asked to dispatch, answering with the given reply.
+# Drive keep_host_rendering against a stub live-session hyprctl that logs every call. Its
+# window list names the sandbox's window (listed), omits it (absent) or fails the way a
+# stale session socket does (failing); dispatch answers with the given reply. An empty
+# signature is a live session that is not Hyprland.
 host_render() {
-  local reply="$1" stub="$tmp/hostbin"
+  local signature="$1" clients="$2" reply="$3" stub="$tmp/hostbin"
   mkdir -p "$stub"
   cat >"$stub/hyprctl" <<'EOF'
 #!/usr/bin/env bash
-case "$1" in
-  clients) printf '[{"pid": 4242, "class": "aquamarine"}]\n' ;;
-  dispatch) printf '%s\n' "$2" >>"$HOST_LOG"; printf '%s' "$HOST_REPLY" ;;
+printf '%s\n' "$*" >>"$HOST_LOG"
+case "$1:$HOST_CLIENTS" in
+  clients:listed) printf '[{"pid": 4242, "class": "aquamarine"}]\n' ;;
+  clients:absent) printf '[]\n' ;;
+  clients:failing) printf "Couldn't connect to /run/user/1000/hypr/stale/.socket.sock. (4)\n"; exit 4 ;;
+  dispatch:*) printf '%s' "$HOST_REPLY" ;;
   *) exit 2 ;;
 esac
 EOF
@@ -335,12 +338,15 @@ EOF
   : >"$tmp/host.log"
   (
     set +e
+    # shellcheck source=scripts/lib/session-snapshot.sh
+    . "$repo_root/scripts/lib/session-snapshot.sh"
     # shellcheck source=/dev/null
     . "$tmp/keep_host_rendering.sh"
     # shellcheck disable=SC2317,SC2329  # called by the sliced function, not from here
     note() { printf 'NOTE: %s\n' "$*"; }
     # Bash exports a function call's prefix assignments to what the function runs.
-    PATH="$stub:$PATH" HOST_LOG="$tmp/host.log" HOST_REPLY="$reply" keep_host_rendering 4242
+    PATH="$stub:$PATH" HYPRLAND_INSTANCE_SIGNATURE="$signature" HOST_LOG="$tmp/host.log" \
+      HOST_CLIENTS="$clients" HOST_REPLY="$reply" keep_host_rendering 4242
     printf 'rc=%s\n' "$?"
   ) 2>&1
 }
@@ -348,28 +354,41 @@ EOF
 HOST_PROP='hl.dsp.window.set_prop({ prop = "render_unfocused", value = "1", window = "pid:4242" })'
 HOST_TAG='hl.dsp.window.tag({ tag = "vshell-smoke", window = "pid:4242" })'
 
-# label; live-session reply; expected status; requests dispatched, in order, joined by |.
-# Hyprland enrols a window with its render-unfocused timer only when a later change such as
-# the tag re-evaluates its rules, so the prop has to go first; a refused prop sends no tag.
-HOST_RENDERS="an accepted prop is followed by the tag that enrols it;ok;0;$HOST_PROP|$HOST_TAG
-a refused prop stops the requests and is reported;error: no such prop;1;$HOST_PROP"
+# label; signature; window list; dispatch reply; expected status; calls in order joined by |,
+# or "polled" for more than one window query and nothing else; a value the notice must
+# carry, or - for no notice. Hyprland enrols a window with its render-unfocused timer only
+# when a later change such as the tag re-evaluates its rules, so the prop has to go first.
+HOST_RENDERS="an accepted prop is followed by the tag that enrols it;stub;listed;ok;0;clients -j|dispatch $HOST_PROP|dispatch $HOST_TAG;-
+a refused prop stops the requests and is reported;stub;listed;error: no such prop;1;clients -j|dispatch $HOST_PROP;'error: no such prop'
+a failed window query stops at once with hyprctl's reply;stub;failing;ok;1;clients -j;(exit 4): Couldn't connect to /run/user/1000/hypr/stale/.socket.sock. (4)
+a live session that is not Hyprland is never queried;;listed;ok;1;;HYPRLAND_INSTANCE_SIGNATURE
+a window that never lists is reported absent;stub;absent;ok;1;polled;pid 4242"
 
 case_host_render_requests() {
-  local label reply want_rc want_log out log rows=0
-  while IFS=';' read -r label reply want_rc want_log; do
+  local label signature clients reply want_rc want_calls want_note out calls rows=0
+  while IFS=';' read -r label signature clients reply want_rc want_calls want_note; do
     [[ -n "$label" ]] || continue
     rows=$((rows + 1))
-    out="$(host_render "$reply")"
-    log="$(paste -sd '|' "$tmp/host.log")"
+    out="$(host_render "$signature" "$clients" "$reply")"
+    calls="$(paste -sd '|' "$tmp/host.log")"
     [[ "$out" == *"rc=$want_rc"* ]] ||
       fail "host render requests" "$label: expected rc=$want_rc, got: $out"
-    [[ "$log" == "$want_log" ]] ||
-      fail "host render requests" "$label: expected requests '$want_log', got '$log'"
-    [[ "$want_rc" -eq 0 || "$out" == *"NOTE: "*"'$reply'"* ]] ||
-      fail "host render requests" "$label: the notice must carry the live session's reply, got: $out"
+    if [[ "$want_calls" == polled ]]; then
+      [[ "$calls" == "clients -j|clients -j"* && "$calls" != *dispatch* ]] ||
+        fail "host render requests" "$label: expected repeated window queries and no dispatch, got '$calls'"
+    else
+      [[ "$calls" == "$want_calls" ]] ||
+        fail "host render requests" "$label: expected calls '$want_calls', got '$calls'"
+    fi
+    if [[ "$want_note" == - ]]; then
+      [[ "$out" != *"NOTE: "* ]] || fail "host render requests" "$label: expected no notice, got: $out"
+    else
+      [[ "$out" == *"NOTE: "*"$want_note"* ]] ||
+        fail "host render requests" "$label: the notice must carry '$want_note', got: $out"
+    fi
   done <<<"$HOST_RENDERS"
-  [[ $rows -eq 2 ]] || fail "host render requests" "expected 2 table rows, drove $rows"
-  ok "the sandbox's own window gets render_unfocused, then the tag that enrols it"
+  [[ $rows -eq 5 ]] || fail "host render requests" "expected 5 table rows, drove $rows"
+  ok "the sandbox's own window gets render_unfocused, then the tag that enrols it; a refusal names its cause"
 }
 
 # The run's verdict lives in a global 'status'. A check with its own local 'status' must not

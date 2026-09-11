@@ -1125,13 +1125,14 @@ override_state_settles() {
 # Decide whether a window keeps its themed border off its own outermost pixel. A compositor
 # expanding a stale buffer over the area an interactive resize has already exposed repeats
 # that pixel across it, so an accent border sitting there floods the window mid-drag.
-# Samples run from the window edge inward — edge, border, interior — plus two outside it:
-# the pixel a compositor border occupies, and one past the widest border VGS can ask for.
+# Samples run from the window edge inward — edge, border, interior — plus the pixel just
+# outside it, where a compositor border lands, read twice: near as the compositor draws it
+# and far once the compositor has recoloured that window's border.
 # A client border must sit inside the edge (3); on the edge it floods a resize (1). With the
 # compositor drawing the border, a row that crosses no content background is one flat
-# surface out to the client's own edge, so the near outside pixel has to differ from the far
-# one as well as from the edge (0) — against the edge alone any wallpaper, gap or
-# neighbouring window passes. Anything else is no border at all (2).
+# surface out to the client's own edge, and the near pixel has to follow the border's colour
+# (near differs from far) as well as differ from the edge (0): a wallpaper, a shadow or a
+# neighbouring window keeps its colour. Anything else is no border at all (2).
 window_border_is_inset() {
   local edge="$1" border="$2" interior="$3" near="${4:-}" far="${5:-}"
   if [[ "$border" != "$interior" ]]; then
@@ -1156,16 +1157,29 @@ pixel_error_log=""
 # the tag comes second. A refusal is a notice, not a verdict: a window a monitor shows still
 # renders, and a sample that gets no frame is NOT MEASURED.
 keep_host_rendering() {
-  local pid="$1" request reply listed=false
+  local pid="$1" clients rc request reply listed=false
+  local gap="the sandbox renders only while the live session shows its window"
+  if ! vgs_hyprland_session; then
+    note "$gap: the live session is not a Hyprland session hyprctl can reach (no HYPRLAND_INSTANCE_SIGNATURE, or no hyprctl)"
+    return 1
+  fi
+  # The window maps shortly after the compositor's socket appears, so an answered list
+  # without it is a wait; a list hyprctl could not give is its own cause.
   for _ in $(seq 1 50); do
-    if hyprctl clients -j 2>/dev/null | jq -e --argjson pid "$pid" 'any(.[]; .pid == $pid)' >/dev/null 2>&1; then
+    rc=0
+    clients="$(hyprctl clients -j 2>&1)" || rc=$?
+    if [[ "$rc" -ne 0 ]]; then
+      note "$gap: hyprctl could not list the live session's windows (exit $rc): ${clients//$'\n'/ }"
+      return 1
+    fi
+    if jq -e --argjson pid "$pid" 'any(.[]; .pid == $pid)' <<<"$clients" >/dev/null 2>&1; then
       listed=true
       break
     fi
     sleep 0.1
   done
   if [[ "$listed" != true ]]; then
-    note "the sandbox renders only while the live session shows its window: no live-session window has pid $pid"
+    note "$gap: no live-session window has pid $pid"
     return 1
   fi
   for request in \
@@ -1173,7 +1187,7 @@ keep_host_rendering() {
     "hl.dsp.window.tag({ tag = \"vshell-smoke\", window = \"pid:$pid\" })"; do
     reply="$(hyprctl dispatch "$request" 2>&1)" || reply="hyprctl exit $?: $reply"
     if [[ "$reply" != ok ]]; then
-      note "the sandbox renders only while the live session shows its window: the live session answered '$reply' to $request"
+      note "$gap: the live session answered '$reply' to $request"
       return 1
     fi
   done
@@ -1216,6 +1230,22 @@ print(data[i + 1:i + 4].hex())
 ' 2>>"$sink"
 }
 
+# Recolour one sandbox window's compositor border, by address, so the pixel it occupies can
+# be read in a colour nothing else past the window edge has. A refusal lands where
+# sandbox_pixel parks grim's stderr, so the record that follows names the compositor's
+# reply. The colour lives on that window and ends when it closes.
+sandbox_recolour_border() {
+  local address="$1" prop request reply
+  for prop in active_border_color inactive_border_color; do
+    request="hl.dsp.window.set_prop({ prop = \"$prop\", value = \"rgb(ff00ff)\", window = \"address:$address\" })"
+    reply="$("${sandbox_env[@]}" HYPRLAND_INSTANCE_SIGNATURE="$nested_signature" hyprctl -i 0 dispatch "$request" 2>&1)" || reply="hyprctl exit $?: $reply"
+    if [[ "$reply" != ok ]]; then
+      [[ -z "$pixel_error_log" ]] || printf 'recolouring the border of %s: %s' "$address" "$reply" >"$pixel_error_log"
+      return 1
+    fi
+  done
+}
+
 # Sample the Settings window's right edge in the sandbox. The verdict needs a row that
 # crosses no content background, and under compositor chrome VgsSurfaceChrome holds content
 # one pixel off the window edge. The sidebar holds the left side and paints its own colour
@@ -1227,21 +1257,21 @@ print(data[i + 1:i + 4].hex())
 # leave the border NOT MEASURED rather than failed: the nested output renders only on its
 # host window's frame callbacks, which keep_host_rendering asks for but a live session can
 # refuse. A frame that IS obtained is judged in full.
+# A drawn border is the one thing past the edge that follows the border colour. A wallpaper
+# differs from itself a pixel or two on and the drop shadow darkens whatever it lies over, so
+# a sample further out cannot stand in for what the border covers; the near pixel is read
+# again with the border recoloured instead.
 # The sandbox always runs the Lua config manager, so the compositor is what draws the VGS
 # window border here. A client-drawn border is a real finding — the window rule did not
 # reach this window — and is failed rather than accepted as the other valid arm.
 settings_border_check() {
-  local clients monitors geometry="" x y monitor output_end far_x edge border interior near far verdict=0
-  # The far sample has to clear the border rather than land in it. Border Thickness clamps
-  # at 10, matching cmd_blur's --window-border choices, so 13 pixels out is past the widest
-  # border VGS can ask the compositor for whatever the current setting is.
-  local far_offset=13
+  local clients geometry="" x y address edge border interior near far verdict=0
   # The Settings window maps asynchronously. Poll for it so a slow map reads as a wait,
   # not as a verdict about the border.
   for _ in $(seq 1 20); do
     clients="$("${sandbox_env[@]}" HYPRLAND_INSTANCE_SIGNATURE="$nested_signature" hyprctl -i 0 clients -j 2>/dev/null)" || clients=""
     geometry="$(jq -er '.[] | select(.title == "Settings" and .mapped) |
-      "\(.at[0] + .size[0] - 1) \(.at[1] + (.size[1] / 2 | floor)) \(.monitor)"' <<<"${clients:-[]}" 2>/dev/null)" && break
+      "\(.at[0] + .size[0] - 1) \(.at[1] + (.size[1] / 2 | floor)) \(.address)"' <<<"${clients:-[]}" 2>/dev/null)" && break
     geometry=""
     sleep 0.5
   done
@@ -1249,26 +1279,15 @@ settings_border_check() {
     fail "the Settings window did not map in the sandbox within 10s"
     return 1
   fi
-  read -r x y monitor <<<"$geometry"
-  far_x=$((x + far_offset))
-  # The sandbox's monitor rule sets scale 1 and no transform, so the mode width is the
-  # output's width in the layout coordinates grim samples.
-  if ! monitors="$(sandbox_monitors)" ||
-    ! output_end="$(jq -er --argjson id "$monitor" '.[] | select(.id == $id) | .x + .width' <<<"$monitors" 2>/dev/null)"; then
-    unmeasured "the window border: no geometry for output $monitor, which the Settings window maps on"
-    return "$skip_status"
-  fi
-  if [[ "$far_x" -ge "$output_end" ]]; then
-    unmeasured "the window border: the Settings window's right edge maps $((output_end - x - 1))px from the output edge, too close to sample past its border"
-    return "$skip_status"
-  fi
+  read -r x y address <<<"$geometry"
   if ! edge="$(sandbox_pixel "$x" "$y")" ||
     ! border="$(sandbox_pixel "$((x - 1))" "$y")" ||
     ! interior="$(sandbox_pixel "$((x - 4))" "$y")" ||
     ! near="$(sandbox_pixel "$((x + 1))" "$y")" ||
-    ! far="$(sandbox_pixel "$far_x" "$y")"; then
+    ! sandbox_recolour_border "$address" ||
+    ! far="$(sandbox_pixel "$((x + 1))" "$y")"; then
     # One line per record: the summary lists them, and grim's own report spans two.
-    unmeasured "the window border: no frame from the sandbox output at ${x},${y}: $(tail -c 400 -- "${pixel_error_log:-/dev/null}" 2>/dev/null | tr '\n' ' ')"
+    unmeasured "the window border: could not read the sandbox output at ${x},${y}: $(tail -c 400 -- "${pixel_error_log:-/dev/null}" 2>/dev/null | tr '\n' ' ')"
     return "$skip_status"
   fi
   window_border_is_inset "$edge" "$border" "$interior" "$near" "$far" || verdict=$?
@@ -1453,7 +1472,10 @@ EOF
     nested_unavailable "nested compositor did not come up"
     return
   fi
-  keep_host_rendering "$compositor_pgid" || true
+  local host_rendered=false
+  if keep_host_rendering "$compositor_pgid"; then
+    host_rendered=true
+  fi
 
   note "running the shell inside the sandbox (timeout ${nested_timeout}s)"
   local nested_signature="" nested_control
@@ -1566,17 +1588,25 @@ EOF
     else
       # Settings loads its selected tab asynchronously. The log scan below checks its components.
       sleep 2
-      settings_border_check || true
       if [[ -n "${VSHELL_SMOKE_ARTIFACT_DIR:-}" ]]; then
-        local capture_focus
-        capture_focus="$(hyprctl activewindow -j | jq -er '.address | select(test("^0x[0-9a-f]+$"))')" || { fail "could not save focus for display capture"; return; }
-        hyprctl dispatch "hl.dsp.focus({ window = \"pid:$compositor_pgid\" })" >/dev/null || { fail "could not show the sandbox for display capture"; return; }
-        sleep 5
+        # The capture needs a frame from the sandbox. Once keep_host_rendering has the live
+        # session rendering its window while hidden, the frame comes without the user's
+        # focus; only a session that refused it gets the window focused and focus handed back.
+        local capture_focus=""
+        if [[ "$host_rendered" != true ]]; then
+          capture_focus="$(hyprctl activewindow -j | jq -er '.address | select(test("^0x[0-9a-f]+$"))')" || { fail "could not save focus for display capture"; return; }
+          hyprctl dispatch "hl.dsp.focus({ window = \"pid:$compositor_pgid\" })" >/dev/null || { fail "could not show the sandbox for display capture"; return; }
+          sleep 5
+        fi
         if ! mkdir -p -- "$VSHELL_SMOKE_ARTIFACT_DIR" || ! "${sandbox_env[@]}" WAYLAND_DISPLAY="$nested_socket" timeout 5 grim "$VSHELL_SMOKE_ARTIFACT_DIR/displays.png"; then
           fail "could not capture the Displays settings page"
         fi
-        hyprctl dispatch "hl.dsp.focus({ window = \"address:$capture_focus\" })" >/dev/null || fail "could not restore focus after display capture"
+        if [[ -n "$capture_focus" ]]; then
+          hyprctl dispatch "hl.dsp.focus({ window = \"address:$capture_focus\" })" >/dev/null || fail "could not restore focus after display capture"
+        fi
       fi
+      # After the capture: the border check recolours the Settings window's border.
+      settings_border_check || true
       display_reply="$(sandbox_ipc outputs current)" ||
         display_reply="the outputs IPC call failed"
       if ! jq -e 'type == "array" and length > 0' <<<"$display_reply" >/dev/null; then
