@@ -31,6 +31,16 @@ const refreshTimeout = 2 * time.Minute
 // second one does not extend the bound. When the grace expires the daemon exits
 // with a refresh still unwinding and logs that it did: a collector stuck in an
 // uninterruptible wait must not hold logout open.
+//
+// Under the supervisor this ceiling is not the one that binds. superviseBackend
+// in internal/runner gives the whole backend three seconds from SIGTERM to
+// SIGKILL, and sysupdate closes third, after evdev and after cloudsync waits on
+// its probes and unmounts remotes, so the process can be killed before this
+// grace expires and the warning below is best-effort. The ceiling stays at the
+// unwind it is derived from rather than being fitted under that window: the
+// closers ahead of it are not measured, `vshell backend serve` run on its own
+// has no such window, and a shorter value would abandon an unwind about to
+// finish.
 const closeGrace = 2 * execbound.DefaultWaitDelay
 
 type Manager struct {
@@ -638,11 +648,15 @@ func commandOutput(ctx context.Context, log *slog.Logger, allowNoUpdatesExit boo
 	return reportOutput(execbound.Command(ctx, name, args...).WithLogger(log), allowNoUpdatesExit)
 }
 
-// miseOutput runs the tool collector. It is the one command here whose tool
-// starts children of its own — one `npm view` per npm-backed tool — so it takes
-// execbound's process-group bound: a cancelled or timed-out check must not leave
-// that fan-out running. The other collectors query their own package database
-// and keep the default cancel.
+// miseOutput runs the tool collector. mise is the collector whose fan-out is
+// unbounded: one `npm view` per npm-backed tool, each a network call that can
+// hang, so a cancelled or timed-out check left all of them running. That is why
+// this command takes execbound's process-group bound.
+//
+// The other collectors fork too — checkupdates runs `fakeroot -- pacman -Sy`
+// against its own database, alongside pacman-conf and pacman -Qu — and keep the
+// default cancel deliberately: a group kill there would cut a package database
+// write in half.
 func (m *Manager) miseOutput(ctx context.Context, args ...string) ([]byte, error) {
 	c := execbound.Command(ctx, m.mise, args...).KillGroup().WithLogger(m.log)
 	// Release-age cooldown off, the same way `vshell update run tools` runs

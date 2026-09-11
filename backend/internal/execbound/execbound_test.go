@@ -58,23 +58,59 @@ func TestWaitDelayResolution(t *testing.T) {
 func durationPtr(d time.Duration) *time.Duration { return &d }
 
 // pipeHolder starts a descendant that retains stdout after its parent exits.
-// Without WaitDelay, reads wait for the descendant. The command already leads
-// its own group; cleanup kills that group, and the sleep must outlive the test
-// to prevent reuse of the group ID before cleanup.
+// Without WaitDelay, reads wait for the descendant, and the sleep must outlive
+// the test for that wait to be real.
 func pipeHolder(t *testing.T, ctx context.Context, delay time.Duration, tail string) *Cmd {
 	t.Helper()
 	dir := t.TempDir()
+	pidPath := filepath.Join(dir, "fixture.pids")
 	path := filepath.Join(dir, "pipe-holder")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\nsleep 60 &\n"+tail), 0o755); err != nil {
+	body := fmt.Sprintf("#!/bin/sh\necho $$ > '%s'\nsleep 60 &\necho $! >> '%s'\n%s", pidPath, pidPath, tail)
+	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	cmd := CommandWithDelay(ctx, delay, path)
+	reapFixture(t, pidPath)
+	return CommandWithDelay(ctx, delay, path)
+}
+
+// fixturePIDs reads what a fixture script recorded: its own pid first, then each
+// descendant. A missing file means the script never ran, so nothing started.
+func fixturePIDs(path string) ([]int, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	fields := strings.Fields(string(data))
+	pids := make([]int, 0, len(fields))
+	for _, field := range fields {
+		pid, err := strconv.Atoi(field)
+		if err != nil {
+			return nil, fmt.Errorf("%s holds %q, not a pid: %w", path, field, err)
+		}
+		pids = append(pids, pid)
+	}
+	return pids, nil
+}
+
+// reapFixture ends every process the fixture recorded. Register it before the
+// command runs: it reads the file at cleanup time, so a case that fails partway
+// still ends whatever had started by then.
+//
+// It ends them by pid and never by process group. The group is the property
+// under test, so a cleanup that signalled one would depend on the behaviour its
+// own case exercises, and on a case that does not ask for KillGroup the negative
+// id names no group at all and reaches nothing.
+func reapFixture(t *testing.T, path string) {
+	t.Helper()
 	t.Cleanup(func() {
-		if proc := cmd.Exec().Process; proc != nil {
-			_ = syscall.Kill(-proc.Pid, syscall.SIGKILL)
+		pids, err := fixturePIDs(path)
+		if err != nil {
+			return
+		}
+		for _, pid := range pids {
+			_ = syscall.Kill(pid, syscall.SIGKILL)
 		}
 	})
-	return cmd
 }
 
 func TestCommandReturnsAfterDeadlineKill(t *testing.T) {
@@ -115,12 +151,15 @@ func TestOutputClassifiesTheDeadlineKillAsTimeout(t *testing.T) {
 	}
 }
 
-// A spawner stands in for a tool that fans out: it starts a grandchild that
-// records its pid and waits. The grandchild ignores SIGTERM, so under KillGroup
-// nothing but the group's SIGKILL can end it, and under the default cancel it
-// outlives the child that started it.
+// A spawner stands in for a tool that fans out: it starts a grandchild and
+// waits. The grandchild ignores SIGTERM, which survives its exec, so under
+// KillGroup nothing but the group's SIGKILL can end it, and under the default
+// cancel it outlives the child that started it. Both pids are recorded in the
+// order reapFixture expects.
 const spawnerScript = `#!/bin/sh
-sh -c 'trap "" TERM; echo $$ > "$1"; exec sleep 300' spawner "$1" &
+echo $$ > "$1"
+sh -c 'trap "" TERM; exec sleep 300' &
+echo $! >> "$1"
 exec sleep 300
 `
 
@@ -147,13 +186,7 @@ func TestCancelEndsTheDescendantGroupOnlyWhenAsked(t *testing.T) {
 			if err := os.WriteFile(script, []byte(spawnerScript), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			// Reads the pid back rather than closing over one, so a failure before
-			// the pid is known still cleans up what the run started.
-			t.Cleanup(func() {
-				if pid, err := recordedPID(pidPath); err == nil {
-					_ = syscall.Kill(pid, syscall.SIGKILL)
-				}
-			})
+			reapFixture(t, pidPath)
 
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -169,7 +202,8 @@ func TestCancelEndsTheDescendantGroupOnlyWhenAsked(t *testing.T) {
 				done <- err
 			}()
 
-			pid := awaitPID(t, pidPath)
+			// The grandchild is the second pid: the spawner records itself first.
+			pid := awaitFixturePIDs(t, pidPath, 2)[1]
 			cancel()
 
 			select {
@@ -198,26 +232,18 @@ func TestCancelEndsTheDescendantGroupOnlyWhenAsked(t *testing.T) {
 	}
 }
 
-// recordedPID reads the pid the spawner wrote, erroring until the file holds a
-// complete line.
-func recordedPID(path string) (int, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return 0, err
-	}
-	return strconv.Atoi(strings.TrimSpace(string(data)))
-}
-
-func awaitPID(t *testing.T, path string) int {
+// awaitFixturePIDs waits until the fixture has recorded want pids, so a case
+// acts on a process that is running rather than one still being started.
+func awaitFixturePIDs(t *testing.T, path string, want int) []int {
 	t.Helper()
 	deadline := time.Now().Add(maxBoundedElapsed)
 	for {
-		pid, err := recordedPID(path)
-		if err == nil {
-			return pid
+		pids, err := fixturePIDs(path)
+		if err == nil && len(pids) >= want {
+			return pids
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("no grandchild pid at %s within %v: %v", path, maxBoundedElapsed, err)
+			t.Fatalf("%s held %d of %d fixture pids within %v: %v", path, len(pids), want, maxBoundedElapsed, err)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

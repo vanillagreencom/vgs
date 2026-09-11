@@ -303,7 +303,9 @@ func TestCloseWaitsForEveryRefreshStillUnwinding(t *testing.T) {
 	m.state = State{Phase: "idle", Backends: m.backends(), RecentLog: []string{}}
 
 	go func() { _, _ = m.refresh(true) }()
-	waitFor(t, func() bool { return readFile(t, pidPath) != "" })
+	// Both pids recorded means the collector's command is running and its holder
+	// is up, so the cancel below has a real unwind to wait for.
+	waitFor(t, func() bool { return len(strings.Fields(readFile(t, pidPath))) == 2 })
 
 	// Taken before the cancel, so the WaitDelay the collector unwinds over starts
 	// at or after it and the assertion below needs no tolerance.
@@ -338,26 +340,33 @@ func TestCloseWaitsForEveryRefreshStillUnwinding(t *testing.T) {
 // descendant holding its stdout and then waits, so cancelling that call unwinds
 // over execbound's WaitDelay instead of instantly. Every later call exits at
 // once, so a refresh started after the first can finish while the first still
-// unwinds. checkupdates does not ask for the process-group bound, so nothing
-// signals the holder: cleanup kills it by the pid it recorded.
+// unwinds.
+//
+// The script records its own pid and then the holder's, and cleanup ends both by
+// pid. checkupdates does not ask for the process-group bound, so nothing else
+// reaches the holder, and a test that fails before its cancel leaves the child
+// running too.
 func slowThenFastUpdateCommand(t *testing.T) (string, string) {
 	t.Helper()
 	dir := t.TempDir()
-	pidPath := filepath.Join(dir, "holder.pid")
+	pidPath := filepath.Join(dir, "fixture.pids")
 	firstPath := filepath.Join(dir, "first-call")
 	path := filepath.Join(dir, "checkupdates")
 	body := "#!/bin/sh\n" +
 		"if [ -f '" + firstPath + "' ]; then exit 0; fi\n" +
 		": > '" + firstPath + "'\n" +
+		"echo $$ > '" + pidPath + "'\n" +
 		"sleep 30 &\n" +
-		"echo $! > '" + pidPath + "'\n" +
+		"echo $! >> '" + pidPath + "'\n" +
 		"exec sleep 30\n"
 	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		if pid, err := strconv.Atoi(strings.TrimSpace(readFile(t, pidPath))); err == nil {
-			_ = syscall.Kill(pid, syscall.SIGKILL)
+		for _, field := range strings.Fields(readFile(t, pidPath)) {
+			if pid, err := strconv.Atoi(field); err == nil {
+				_ = syscall.Kill(pid, syscall.SIGKILL)
+			}
 		}
 	})
 	return path, pidPath

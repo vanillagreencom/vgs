@@ -29,10 +29,14 @@ RUN_TIMEOUT = 0.5
 LIMIT = 5.0
 
 # Stands in for a tool that fans out: a grandchild that outlives its parent and
-# inherits the pipe the caller reads.
+# inherits the pipe the caller reads. The script records its own pid and then the
+# grandchild's, so reap_recorded can end both by pid whichever way a case went.
+# It never signals a process group: the group is the property under test, and
+# without kill_group there is no group of the run's own to signal.
 SPAWNER = """#!/bin/sh
+echo $$ > "$1"
 sleep 300 &
-echo $! > "$1"
+echo $! >> "$1"
 exec sleep 300
 """
 
@@ -49,11 +53,29 @@ helper = load_helper()
 
 
 def fixture(tmp: Path) -> tuple[Path, Path]:
-    """The spawner script and the file it records its grandchild's pid in."""
+    """The spawner script and the file it records its pids in."""
     spawner = tmp / "spawner"
     spawner.write_text(SPAWNER)
     spawner.chmod(0o755)
-    return spawner, tmp / "grandchild.pid"
+    return spawner, tmp / "fixture.pids"
+
+
+def read_pids(path: Path) -> list[int]:
+    """What the fixture recorded: its own pid first, then each descendant. A
+    missing file means the script never ran, so nothing started."""
+    try:
+        return [int(field) for field in path.read_text().split()]
+    except (OSError, ValueError):
+        return []
+
+
+def reap_recorded(path: Path) -> None:
+    """End every process the fixture recorded, whichever way the assertion went."""
+    for pid in read_pids(path):
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
 
 
 def running(pid: int) -> bool:
@@ -83,23 +105,16 @@ def await_gone(pid: int) -> bool:
     return True
 
 
-def await_pid(path: Path) -> int:
+def await_grandchild(path: Path) -> int:
+    """The grandchild's pid, once the spawner has recorded both of its own."""
     deadline = time.monotonic() + LIMIT
     while True:
-        try:
-            return int(path.read_text().strip())
-        except (OSError, ValueError) as exc:
-            if time.monotonic() >= deadline:
-                raise AssertionError(f"the spawner recorded no pid in {path} within {LIMIT}s: {exc}") from exc
-            time.sleep(0.01)
-
-
-def reap(pid: int) -> None:
-    """Leave nothing behind, whichever way the assertion went."""
-    try:
-        os.kill(pid, signal.SIGKILL)
-    except OSError:
-        pass
+        pids = read_pids(path)
+        if len(pids) >= 2:
+            return pids[1]
+        if time.monotonic() >= deadline:
+            raise AssertionError(f"{path} held {len(pids)} of 2 fixture pids within {LIMIT}s")
+        time.sleep(0.01)
 
 
 def time_out(spawner: Path, pid_file: Path, **kwargs) -> None:
@@ -115,12 +130,14 @@ def test_a_timeout_ends_the_whole_process_group():
     """The grandchild `mise outdated` stands for does not survive the timeout."""
     with tempfile.TemporaryDirectory() as tmp:
         spawner, pid_file = fixture(Path(tmp))
-        time_out(spawner, pid_file, kill_group=True)
-        grandchild = await_pid(pid_file)
+        # The reap covers the whole body: a case that raises before its assertion
+        # has still started processes only this file names.
         try:
+            time_out(spawner, pid_file, kill_group=True)
+            grandchild = await_grandchild(pid_file)
             assert await_gone(grandchild), f"grandchild {grandchild} outlived the timeout by more than {LIMIT}s"
         finally:
-            reap(grandchild)
+            reap_recorded(pid_file)
 
 
 def test_without_the_flag_the_grandchild_outlives_the_timeout():
@@ -128,12 +145,12 @@ def test_without_the_flag_the_grandchild_outlives_the_timeout():
     child, and the fan-out that child started keeps running."""
     with tempfile.TemporaryDirectory() as tmp:
         spawner, pid_file = fixture(Path(tmp))
-        time_out(spawner, pid_file)
-        grandchild = await_pid(pid_file)
         try:
+            time_out(spawner, pid_file)
+            grandchild = await_grandchild(pid_file)
             assert running(grandchild), f"grandchild {grandchild} died without a group kill"
         finally:
-            reap(grandchild)
+            reap_recorded(pid_file)
 
 
 def test_a_bounded_run_that_finishes_reports_what_subprocess_run_reports():
