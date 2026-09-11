@@ -45,6 +45,7 @@ docs      | scripts/test-owned-skills-e2e.py
 packaging | scripts/gen-package-metadata.py
 packaging | scripts/check-package-assets.sh
 packaging | scripts/check-aur-sync.py
+packaging | scripts/check-prune-ppa.py
 -         | scripts/check-command-declarations.py
 -         | node --check scripts/check-settings-migration.js
 -         | scripts/check-settings-migration.js
