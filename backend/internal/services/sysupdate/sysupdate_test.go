@@ -7,9 +7,11 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
+	"vshell/backend/internal/execbound"
 	"vshell/backend/internal/server"
 )
 
@@ -285,6 +287,89 @@ func TestScheduledRefreshStopsOnReleaseAndClose(t *testing.T) {
 	if calls := readFile(t, logPath); calls != "" {
 		t.Fatalf("scheduled refresh ran after close:\n%s", calls)
 	}
+}
+
+// Close waits out every refresh still unwinding, not only the newest. Cancelling
+// a refresh only closes its context: os/exec calls Cmd.Cancel from its own
+// watcher goroutine, so a Close that returned at refreshCancel() would let the
+// daemon exit before the collector's commands were signalled at all. And
+// handleCancel returns the manager to idle before the cancelled collector has
+// returned, so a second refresh can start and finish while the first is still
+// unwinding; tracking one refresh let Close wait on the finished second and
+// return with the first one's commands alive.
+func TestCloseWaitsForEveryRefreshStillUnwinding(t *testing.T) {
+	cmd, pidPath := slowThenFastUpdateCommand(t)
+	m := &Manager{srv: server.New(0, nil), checkupdates: cmd}
+	m.state = State{Phase: "idle", Backends: m.backends(), RecentLog: []string{}}
+
+	go func() { _, _ = m.refresh(true) }()
+	// Both pids recorded means the collector's command is running and its holder
+	// is up, so the cancel below has a real unwind to wait for.
+	waitFor(t, func() bool { return len(strings.Fields(readFile(t, pidPath))) == 2 })
+
+	// Taken before the cancel, so the WaitDelay the collector unwinds over starts
+	// at or after it and the assertion below needs no tolerance.
+	cancelled := time.Now()
+	if _, err := m.handleCancel(nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// The second call to the fake exits at once, so this refresh completes while
+	// the first is still unwinding and becomes the newest one Close could see.
+	if _, err := m.refresh(true); err != nil {
+		t.Fatal(err)
+	}
+	if state := m.snapshot().(State); state.LastCheckUnix == 0 {
+		t.Fatal("the second refresh did not complete, so it is not the newer one Close must look past")
+	}
+
+	start := time.Now()
+	m.Close()
+	elapsed := time.Since(start)
+
+	if unwound := time.Since(cancelled); unwound < execbound.DefaultWaitDelay {
+		t.Fatalf("Close returned %v after the cancel, inside the first refresh's %v unwind",
+			unwound, execbound.DefaultWaitDelay)
+	}
+	if elapsed > closeGrace {
+		t.Fatalf("Close took %v, want no more than the %v grace", elapsed, closeGrace)
+	}
+}
+
+// slowThenFastUpdateCommand is a checkupdates whose first call leaves a
+// descendant holding its stdout and then waits, so cancelling that call unwinds
+// over execbound's WaitDelay instead of instantly. Every later call exits at
+// once, so a refresh started after the first can finish while the first still
+// unwinds.
+//
+// The script records its own pid and then the holder's, and cleanup ends both by
+// pid. checkupdates does not ask for the process-group bound, so nothing else
+// reaches the holder, and a test that fails before its cancel leaves the child
+// running too.
+func slowThenFastUpdateCommand(t *testing.T) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	pidPath := filepath.Join(dir, "fixture.pids")
+	firstPath := filepath.Join(dir, "first-call")
+	path := filepath.Join(dir, "checkupdates")
+	body := "#!/bin/sh\n" +
+		"if [ -f '" + firstPath + "' ]; then exit 0; fi\n" +
+		": > '" + firstPath + "'\n" +
+		"echo $$ > '" + pidPath + "'\n" +
+		"sleep 30 &\n" +
+		"echo $! >> '" + pidPath + "'\n" +
+		"exec sleep 30\n"
+	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		for _, field := range strings.Fields(readFile(t, pidPath)) {
+			if pid, err := strconv.Atoi(field); err == nil {
+				_ = syscall.Kill(pid, syscall.SIGKILL)
+			}
+		}
+	})
+	return path, pidPath
 }
 
 func TestUpgradePrelaunchFailureSetsStateError(t *testing.T) {

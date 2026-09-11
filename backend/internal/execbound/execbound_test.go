@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -56,24 +58,59 @@ func TestWaitDelayResolution(t *testing.T) {
 func durationPtr(d time.Duration) *time.Duration { return &d }
 
 // pipeHolder starts a descendant that retains stdout after its parent exits.
-// Without WaitDelay, reads wait for the descendant. Cleanup kills the process
-// group; the sleep must outlive the test to prevent reuse of the group ID before
-// cleanup.
+// Without WaitDelay, reads wait for the descendant, and the sleep must outlive
+// the test for that wait to be real.
 func pipeHolder(t *testing.T, ctx context.Context, delay time.Duration, tail string) *Cmd {
 	t.Helper()
 	dir := t.TempDir()
+	pidPath := filepath.Join(dir, "fixture.pids")
 	path := filepath.Join(dir, "pipe-holder")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\nsleep 60 &\n"+tail), 0o755); err != nil {
+	body := fmt.Sprintf("#!/bin/sh\necho $$ > '%s'\nsleep 60 &\necho $! >> '%s'\n%s", pidPath, pidPath, tail)
+	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	cmd := CommandWithDelay(ctx, delay, path)
-	cmd.Exec().SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	reapFixture(t, pidPath)
+	return CommandWithDelay(ctx, delay, path)
+}
+
+// fixturePIDs reads what a fixture script recorded: its own pid first, then each
+// descendant. A missing file means the script never ran, so nothing started.
+func fixturePIDs(path string) ([]int, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	fields := strings.Fields(string(data))
+	pids := make([]int, 0, len(fields))
+	for _, field := range fields {
+		pid, err := strconv.Atoi(field)
+		if err != nil {
+			return nil, fmt.Errorf("%s holds %q, not a pid: %w", path, field, err)
+		}
+		pids = append(pids, pid)
+	}
+	return pids, nil
+}
+
+// reapFixture ends every process the fixture recorded. Register it before the
+// command runs: it reads the file at cleanup time, so a case that fails partway
+// still ends whatever had started by then.
+//
+// It ends them by pid and never by process group. The group is the property
+// under test, so a cleanup that signalled one would depend on the behaviour its
+// own case exercises, and on a case that does not ask for KillGroup the negative
+// id names no group at all and reaches nothing.
+func reapFixture(t *testing.T, path string) {
+	t.Helper()
 	t.Cleanup(func() {
-		if proc := cmd.Exec().Process; proc != nil {
-			_ = syscall.Kill(-proc.Pid, syscall.SIGKILL)
+		pids, err := fixturePIDs(path)
+		if err != nil {
+			return
+		}
+		for _, pid := range pids {
+			_ = syscall.Kill(pid, syscall.SIGKILL)
 		}
 	})
-	return cmd
 }
 
 func TestCommandReturnsAfterDeadlineKill(t *testing.T) {
@@ -111,6 +148,140 @@ func TestOutputClassifiesTheDeadlineKillAsTimeout(t *testing.T) {
 	}
 	if res.Salvaged {
 		t.Fatal("Salvaged = true for a killed child")
+	}
+}
+
+// A spawner stands in for a tool that fans out: it starts a grandchild and
+// waits. The grandchild ignores SIGTERM, which survives its exec, so under
+// KillGroup nothing but the group's SIGKILL can end it, and under the default
+// cancel it outlives the child that started it. Both pids are recorded in the
+// order reapFixture expects.
+const spawnerScript = `#!/bin/sh
+echo $$ > "$1"
+sh -c 'trap "" TERM; exec sleep 300' &
+echo $! >> "$1"
+exec sleep 300
+`
+
+// The group kill is opt-in. A command that asks for KillGroup loses its whole
+// fan-out on a cancel: mise leaves one `npm view` per npm-backed tool running
+// otherwise, and those reparent to the user's init and stay until the process
+// table is full. A command that does not ask keeps os/exec's child-only cancel,
+// so a tool that changes system state is not cut down together with a helper it
+// handed work to.
+func TestCancelEndsTheDescendantGroupOnlyWhenAsked(t *testing.T) {
+	cases := []struct {
+		name      string
+		killGroup bool
+		gone      bool
+	}{
+		{"KillGroup ends the whole fan-out", true, true},
+		{"the default cancel leaves the descendant running", false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			pidPath := filepath.Join(dir, "grandchild.pid")
+			script := filepath.Join(dir, "spawner")
+			if err := os.WriteFile(script, []byte(spawnerScript), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			reapFixture(t, pidPath)
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			// A short delay bounds the pipe read a surviving grandchild holds open,
+			// so the row that expects one reports rather than waits.
+			cmd := CommandWithDelay(ctx, 300*time.Millisecond, script, pidPath)
+			if tc.killGroup {
+				cmd = cmd.KillGroup()
+			}
+			done := make(chan error, 1)
+			go func() {
+				_, err := cmd.Output()
+				done <- err
+			}()
+
+			// The grandchild is the second pid: the spawner records itself first.
+			pid := awaitFixturePIDs(t, pidPath, 2)[1]
+			cancel()
+
+			select {
+			case err := <-done:
+				if !errors.Is(err, context.Canceled) {
+					t.Fatalf("err = %v, want context.Canceled", err)
+				}
+			case <-time.After(maxBoundedElapsed):
+				t.Fatalf("the run did not return within %v of the cancel", maxBoundedElapsed)
+			}
+
+			if tc.gone {
+				if err := awaitGone(pid, maxBoundedElapsed); err != nil {
+					t.Fatalf("grandchild %d: %v", pid, err)
+				}
+				return
+			}
+			running, err := procRunning(pid)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !running {
+				t.Fatalf("grandchild %d died without KillGroup, so the option is not what ends it", pid)
+			}
+		})
+	}
+}
+
+// awaitFixturePIDs waits until the fixture has recorded want pids, so a case
+// acts on a process that is running rather than one still being started.
+func awaitFixturePIDs(t *testing.T, path string, want int) []int {
+	t.Helper()
+	deadline := time.Now().Add(maxBoundedElapsed)
+	for {
+		pids, err := fixturePIDs(path)
+		if err == nil && len(pids) >= want {
+			return pids
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s held %d of %d fixture pids within %v: %v", path, len(pids), want, maxBoundedElapsed, err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// procRunning reports whether pid is a live process, read from /proc rather than
+// signalled so a pid the kernel has recycled cannot pass for the process this
+// test started. A killed grandchild reparents to the user's init and is reaped
+// there, so it is a zombie for a moment before its entry disappears; a zombie
+// holds nothing open and is not running.
+func procRunning(pid int) (bool, error) {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return false, nil
+	}
+	// The comm field is parenthesised and may itself contain spaces and
+	// brackets, so the state character is the one two bytes past the last ')'.
+	paren := bytes.LastIndexByte(data, ')')
+	if paren < 0 || paren+2 >= len(data) {
+		return false, fmt.Errorf("/proc/%d/stat carries no state field: %q", pid, data)
+	}
+	return data[paren+2] != 'Z', nil
+}
+
+func awaitGone(pid int, limit time.Duration) error {
+	deadline := time.Now().Add(limit)
+	for {
+		running, err := procRunning(pid)
+		if err != nil {
+			return err
+		}
+		if !running {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("still running %v after the cancel", limit)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

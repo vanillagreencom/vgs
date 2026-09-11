@@ -1,7 +1,9 @@
-// Package execbound bounds pipe reads for one-shot external commands and
-// classifies their exit errors. Callers use the returned error so deadline and
-// output-recovery precedence stays in one place. WaitDelay cannot bound a child
-// stuck in uninterruptible sleep.
+// Package execbound bounds one-shot external commands and classifies their exit
+// errors. Callers use the returned error so deadline and output-recovery
+// precedence stays in one place. Cancelling a command signals the direct child;
+// a caller whose tool starts children of its own asks for KillGroup, which gives
+// the command a process group of its own and kills that whole group. WaitDelay
+// cannot bound a child stuck in uninterruptible sleep.
 package execbound
 
 import (
@@ -9,8 +11,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"time"
 )
 
@@ -29,7 +33,8 @@ type Result struct {
 	Out []byte
 	// Salvaged reports a clean child exit whose pipe reads ended at WaitDelay. Out
 	// contains the bytes read and may include writes from descendants. The run logs
-	// a warning because those descendants can remain alive.
+	// a warning because those descendants stay alive: the command was not
+	// cancelled, so no group kill fires even when the caller asked for one.
 	Salvaged bool
 }
 
@@ -69,8 +74,59 @@ func CommandWithDelay(ctx context.Context, delay time.Duration, name string, arg
 	return &Cmd{ctx: ctx, cmd: cmd, log: slog.Default()}
 }
 
-// Exec exposes the underlying command for pre-start configuration such as
-// SysProcAttr or Env. Do not run it directly: the classification lives here.
+// KillGroup gives the command a process group of its own and kills that whole
+// group when the context ends, in place of the cancel exec.CommandContext
+// installs, which signals the direct child alone. Call it before the command
+// runs.
+//
+// Ask for it when the tool starts children of its own: mise runs one `npm view`
+// per npm-backed tool, and a cancelled check left every one of them running,
+// reparented to the user's init, until the process table was full. A command
+// that changes system state does not ask for it — gsettings set, xdg-mime
+// default, nmcli and the CUPS operations can hand work to a helper process, and
+// a group kill would cut that helper down along with the tool.
+func (c *Cmd) KillGroup() *Cmd {
+	c.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	c.cmd.Cancel = func() error { return terminateGroup(c.cmd) }
+	return c
+}
+
+// terminateGroup kills the process group the child leads. Linux keeps a group id
+// reserved while any member of the group lives, so the signal reaches this run's
+// descendants or no process at all.
+//
+// SIGKILL with no graceful stage before it. A caller opts into this bound for a
+// tool that fans out to read-only queries, where a SIGTERM stage buys nothing
+// and the second signal it needs would have to outlive the cancel. It cannot: a
+// shutdown cancels the command in flight and returns, so a timer holding the
+// escalation dies with the daemon and the descendant that ignores SIGTERM
+// survives, which is the case this bound exists to cover.
+//
+// A child already reaped, or one that does not lead its own group because
+// something replaced SysProcAttr, is signalled alone: the negative id would
+// otherwise name the daemon's own process group.
+func terminateGroup(cmd *exec.Cmd) error {
+	proc := cmd.Process
+	if proc == nil {
+		return os.ErrProcessDone
+	}
+	pgid, err := syscall.Getpgid(proc.Pid)
+	if err != nil || pgid != proc.Pid {
+		return proc.Kill()
+	}
+	if err := syscall.Kill(-pgid, syscall.SIGKILL); err != nil {
+		if errors.Is(err, syscall.ESRCH) {
+			return os.ErrProcessDone
+		}
+		return fmt.Errorf("kill process group %d: %w", pgid, err)
+	}
+	return nil
+}
+
+// Exec exposes the underlying command for pre-start configuration such as Env or
+// Dir. Do not run it directly: the classification lives here. After KillGroup,
+// SysProcAttr and Cancel belong to this package; replacing either drops the
+// group bound.
 func (c *Cmd) Exec() *exec.Cmd { return c.cmd }
 
 // Output runs the command and returns the bytes read, including partial output
