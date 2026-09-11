@@ -12,7 +12,7 @@
 # unlocks it. When PPA_SIGNING_PRIVATE_KEY holds an armored secret key, it is imported
 # into a throwaway GNUPGHOME; otherwise the key must be in the caller's keyring.
 # A version Launchpad already lists as Pending or Published is not uploaded again.
-# PPA_ACCEPT_TIMEOUT bounds the wait for Launchpad to list the upload (seconds, default 1200).
+# PPA_ACCEPT_TIMEOUT bounds the wait for Launchpad to list the upload (seconds, default 2700).
 set -euo pipefail
 
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -42,7 +42,8 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-accept_timeout="${PPA_ACCEPT_TIMEOUT:-1200}"
+# Launchpad can take a quarter of an hour to list an accepted upload.
+accept_timeout="${PPA_ACCEPT_TIMEOUT:-2700}"
 [[ "$accept_timeout" =~ ^[1-9][0-9]*$ ]] || fail "usage: PPA_ACCEPT_TIMEOUT=$accept_timeout" "It must be a positive number of seconds." 2
 
 version="$(cat "$root/VERSION")" || fail "version-unreadable=$root/VERSION"
@@ -61,8 +62,11 @@ fi
 # PPA, so it is never taken as "absent".
 launchpad_state() {
   local reply
-  # A stalled request must end, or the acceptance wait below never reaches its deadline.
-  reply="$(curl -fsS --retry 3 --connect-timeout 10 --max-time 30 "$ppa_api?ws.op=getPublishedSources&source_name=vgs-shell&exact_match=true&version=$package_version")" || return 1
+  # Launchpad's exact match finds nothing for a raw "~" in the version, and curl's
+  # URL encoding leaves "~" as it is, so the query spells it %7E. A stalled request
+  # must end, or the acceptance wait below never reaches its deadline.
+  reply="$(curl -fsS --retry 3 --connect-timeout 10 --max-time 30 \
+    "$ppa_api?ws.op=getPublishedSources&source_name=vgs-shell&exact_match=true&version=${package_version//\~/%7E}")" || return 1
   jq -er '[.entries[].status] |
     if length == 0 then "absent"
     elif any(. == "Published" or . == "Pending") then "listed"
