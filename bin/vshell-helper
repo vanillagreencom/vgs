@@ -10068,8 +10068,15 @@ def _hyprland_layout_payload(settings: Dict[str, Any]) -> Tuple[str, Dict[str, A
     # one per part it draws: the indicator strip from group:groupbar:rounding and
     # the filled tab behind the title from group:groupbar:gradient_rounding. A
     # tabbed setup can show either part, so both carry the radius. Whether the
-    # rounding reaches every tab or only the ends of the bar is round_only_edges,
-    # a look the user's own config owns.
+    # rounding reaches every tab or only the ends of the bar is also one option
+    # per part: group:groupbar:round_only_edges for the strip and
+    # group:groupbar:gradient_round_only_edges for the filled tab. The user's own
+    # config owns both, along with gradients and the part heights. Hyprland caps
+    # neither radius and VGS does not clamp it to a part's height, so tabs keep
+    # the window radius; the generated notes below name the limit instead.
+    lines.append("  -- gradient_rounding changes the filled tab only where your Hyprland config turns group:groupbar:gradients on.")
+    lines.append("  -- A radius above half a part's height, times the monitor scale, tapers its rounded ends to a point.")
+    lines.append("  -- The filled tab is group:groupbar:height tall and the strip group:groupbar:indicator_height; both are yours to set.")
     lines.append("  group = {")
     lines.append("    groupbar = {")
     lines.append(f"      rounding = {radius},")
