@@ -47,6 +47,11 @@ osc checkout home:vanillagreen vgs-shell -o /tmp/obs
 ( cd /tmp/obs                                 # subshell: this cd must not leak
   # update _service (version + source sha256), vgs-shell.spec, and the .dsc +
   # debian.tar.xz built from packaging/debian/
+  # vgs-shell.spec there is an openSUSE variant, not a copy of
+  # packaging/fedora/vgs-shell.spec: it takes Source0 from the orig tarball
+  # _service downloads, uses openSUSE package names, and carries no %{?dist}.
+  # Bump its version and changelog; replacing it with the Fedora spec fails
+  # the build on a missing source file.
   osc commit -m "Update to vX.Y.Z" )
 osc results home:vanillagreen vgs-shell
 
