@@ -254,14 +254,46 @@ jobs:
           scripts/test-validation-inventory.sh
           # test-validation-readers.sh runs in its own final step; see that step.
 
+      # The helper checks run `Hyprland --verify-config` on the generated preview
+      # and greeter Lua, so they fail without Hyprland. The runner's Ubuntu LTS
+      # packages no Hyprland recent enough to have the Lua config manager;
+      # nixpkgs at this pinned revision carries one in its binary cache. --max-jobs 0 refuses a local build, so
+      # a revision the cache lacks fails here in seconds rather than compiling
+      # Hyprland until the job times out. The helper step runs on every diff,
+      # so this install is not gated on the harness-only classification. Only
+      # the helper suite gets Hyprland on its PATH; every other command keeps
+      # the runner's own PATH.
+      - name: Install Hyprland (pinned nixpkgs)
+        id: hyprland
+        env:
+          NIX_VERSION: 2.35.2
+          NIX_INSTALL_SHA256: 9adda97297d9e8ab360df95c729eabff4f4f93d6db091953c3a68f29e3fb130c
+          NIXPKGS_REV: 8ce4ef6cb6f871616146b9fe26d2a5ae594e94fe
+        run: |
+          set -euo pipefail
+          sudo install -d -m 0755 -o "$(id -u)" -g "$(id -g)" /nix
+          curl -fsSL -o "$RUNNER_TEMP/nix-install" "https://releases.nixos.org/nix/nix-${NIX_VERSION}/install"
+          # The installer pins the SHA-256 of the Nix tarball it fetches.
+          echo "${NIX_INSTALL_SHA256}  $RUNNER_TEMP/nix-install" | sha256sum -c -
+          sh "$RUNNER_TEMP/nix-install" --no-daemon --no-channel-add --no-modify-profile --yes
+          # The archive URL, not a github: reference, which resolves through the
+          # rate-limited GitHub API.
+          hyprland="$("$HOME/.nix-profile/bin/nix" --extra-experimental-features 'nix-command flakes' \
+            build --max-jobs 0 --no-link --print-out-paths \
+            "https://github.com/NixOS/nixpkgs/archive/${NIXPKGS_REV}.tar.gz#hyprland^out")"
+          echo "bin=$hyprland/bin" >>"$GITHUB_OUTPUT"
+
       # The helper checks run the preview staging Lua and parse generated Lua, so
       # they fail without lua and luac. lua5.4 installs both under those names.
       - name: Helper and CLI checks
+        env:
+          HYPRLAND_BIN: ${{ steps.hyprland.outputs.bin }}
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends lua5.4
           python3 -m pip install --user --break-system-packages Pillow
-          scripts/check-vshell-helper.py
+          : "${HYPRLAND_BIN:?the Hyprland install step set no bin output}"
+          PATH="$HYPRLAND_BIN:$PATH" scripts/check-vshell-helper.py
           scripts/check-keybinds-display.py
           scripts/check-dev-tools.py
           scripts/test-bounded-run.py
