@@ -102,8 +102,9 @@ curl -s https://download.opensuse.org/repositories/home:/vanillagreen/Debian_13/
 
 # Ubuntu — the published BINARIES, per architecture. A source can be accepted
 # and published while a build fails, and then nobody can install it.
+N=${PPA_REVISION:-1}                          # the --revision the upload used
 for a in amd64 arm64; do
-  curl -s "https://api.launchpad.net/1.0/~vanillagreen/+archive/ubuntu/vgs-shell?ws.op=getPublishedBinaries&binary_name=vgs-shell&version=$V-1~ubuntu26.04.1&status=Published" \
+  curl -s "https://api.launchpad.net/1.0/~vanillagreen/+archive/ubuntu/vgs-shell?ws.op=getPublishedBinaries&binary_name=vgs-shell&version=$V-1~ubuntu26.04.$N&status=Published" \
     | grep -q "/$a" && echo "PPA $a ok" || { echo "PPA $a NOT $V"; bad=1; }
 done
 

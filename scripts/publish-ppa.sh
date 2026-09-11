@@ -68,13 +68,16 @@ launchpad_state() {
     else "retired" end' <<<"$reply"
 }
 
-state="$(launchpad_state)" || fail "launchpad-unreadable=$ppa_api" "Could not read the PPA's source publications."
-case "$state" in
-  listed) echo "publish-ppa: vgs-shell $package_version is already in the PPA; nothing to upload."; exit 0 ;;
-  retired) fail "version-retired=$package_version" "Launchpad has seen this version before and refuses it again; rerun with --revision $((revision + 1))." ;;
-  absent) ;;
-  *) fail "launchpad-state=$state" "The PPA query returned a state this script does not handle." ;;
-esac
+# Only an upload collides with a version Launchpad has seen; a dry run always builds.
+if [[ "$dry_run" -eq 0 ]]; then
+  state="$(launchpad_state)" || fail "launchpad-unreadable=$ppa_api" "Could not read the PPA's source publications."
+  case "$state" in
+    listed) echo "publish-ppa: vgs-shell $package_version is already in the PPA; nothing to upload."; exit 0 ;;
+    retired) fail "version-retired=$package_version" "Launchpad has seen this version before and refuses it again; rerun with --revision $((revision + 1))." ;;
+    absent) ;;
+    *) fail "launchpad-state=$state" "The PPA query returned a state this script does not handle." ;;
+  esac
+fi
 
 work="$(mktemp -d)"
 trap 'rm -rf -- "$work"' EXIT
