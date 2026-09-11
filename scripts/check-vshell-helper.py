@@ -1435,16 +1435,21 @@ def test_preview_stage_retires_its_window_rule():
     retire = ["hyprctl", "eval", helper.PREVIEW_STAGE_OFF_LUA]
     remove = ["hyprctl", "output", "remove", helper.PREVIEW_OUTPUT]
 
-    # label; exit status of `hyprctl output create headless`; whether the preview stages.
+    # label; exit status of `hyprctl output create headless`; the hyprctl subcommand a
+    # stop signal interrupts, or None; whether the preview stages its output.
     # The rule is registered before the output is created, so a refused output still retires it.
-    for label, create_status, staged_expected in (
-        ("a compositor that accepts every request", 0, True),
-        ("a compositor that refuses the headless output", 1, False),
+    for label, create_status, stop_at, staged_expected in (
+        ("a compositor that accepts every request", 0, None, True),
+        ("a compositor that refuses the headless output", 1, None, False),
+        # The output exists by then but is not yet sized, so the stage is not handed over.
+        ("a stop signal while the stage sizes its output", 0, "getoption", True),
     ):
         calls = []
 
         def fake_run(argv, **_kwargs):
             calls.append(list(argv))
+            if argv[1] == stop_at:
+                raise SystemExit(128 + signal.SIGTERM)
             stdout = "ok"
             if argv[1:] == ["cursorpos"]:
                 stdout = "0, 0"
@@ -1459,15 +1464,115 @@ def test_preview_stage_retires_its_window_rule():
         with patch.object(helper, "run", fake_run), \
              patch.object(helper.shutil, "which", lambda name: "/usr/bin/hyprctl" if name == "hyprctl" else None), \
              patch.dict(os.environ, {"HYPRLAND_INSTANCE_SIGNATURE": "check-vshell-helper"}):
-            with helper.preview_stage() as (staged, _reassert):
-                assert_equal(staged, staged_expected, f"{label}: stages the preview")
-                assert_equal(register in calls, True, f"{label}: the stage registers its window rule")
-                # A capture needs the rule for as long as its nested session is mapped.
-                assert_equal(retire in calls, False, f"{label}: the window rule must stay enabled while the stage is up")
+            stopped = False
+            try:
+                with helper.preview_stage() as (staged, _reassert):
+                    assert_equal(staged, staged_expected, f"{label}: stages the preview")
+                    assert_equal(register in calls, True, f"{label}: the stage registers its window rule")
+                    # A capture needs the rule for as long as its nested session is mapped.
+                    assert_equal(retire in calls, False, f"{label}: the window rule must stay enabled while the stage is up")
+            except SystemExit:
+                stopped = True
+        assert_equal(stopped, stop_at is not None, f"{label}: the stage ends early only on a stop signal")
         teardown = calls[calls.index(register):]
         assert_equal(retire in teardown, True, f"{label}: the teardown must retire its window rule")
         if staged_expected:
             assert_equal(remove in teardown, True, f"{label}: the teardown must remove the staging output")
+
+
+# A parent compositor for `theme preview`: logs each argv as a JSON line and answers the
+# staging requests. Its one monitor is the staging output with a bar strip reserved, so
+# the stage does not wait out preview_stage_reserved.
+PREVIEW_STOP_HYPRCTL = """
+import json, os, sys
+args = sys.argv[1:]
+with open(os.environ["PREVIEW_HYPRCTL_LOG"], "a") as log:
+    log.write(json.dumps(args) + "\\n")
+if args[:1] == ["eval"]:
+    print("ok")
+elif args == ["cursorpos"]:
+    print("0, 0")
+elif args == ["monitors", "-j"]:
+    print(json.dumps([{"name": os.environ["PREVIEW_OUTPUT"], "reserved": [0, 32, 0, 0]}]))
+elif args[-1:] == ["-j"]:
+    print("{}" if args[0] == "getoption" else "[]")
+"""
+
+
+def test_theme_preview_stop_signal_tears_down_its_capture():
+    """SIGTERM during a capture, the shell's request timeout and a vshell.service stop,
+    ends the nested Hyprland, retires the staging rule and removes the staging output."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        stubs = root / "bin"
+        stubs.mkdir()
+        hyprctl_log = root / "hyprctl.log"
+        nested_pid = root / "nested.pid"
+        preview_tmp = root / "tmp"
+        preview_tmp.mkdir()
+        (stubs / "hyprctl").write_text(f"#!{sys.executable}\n{PREVIEW_STOP_HYPRCTL}")
+        # The nested session records its pid once it is up, then runs until it is stopped.
+        (stubs / "Hyprland").write_text(
+            '#!/bin/sh\necho $$ > "$PREVIEW_NESTED_PID.new"\nmv "$PREVIEW_NESTED_PID.new" "$PREVIEW_NESTED_PID"\nexec sleep 300\n')
+        for tool in ("ghostty", "nvim", "grim"):
+            (stubs / tool).write_text("#!/bin/sh\nexit 0\n")
+        for stub in stubs.iterdir():
+            stub.chmod(0o755)
+        home = root / "home"
+        # A current theme on disk, so resolving the preview wallpaper never applies one.
+        (home / ".config" / "vshell").mkdir(parents=True)
+        (home / ".config" / "vshell" / "theme.json").write_text(json.dumps({"name": "bauhaus", "wallpaper": ""}))
+
+        env = os.environ.copy()
+        env.pop("VGS_PREVIEW_KEEP", None)
+        env.update({
+            "PATH": f"{stubs}{os.pathsep}{env.get('PATH', '')}",
+            "HOME": str(home),
+            "XDG_CONFIG_HOME": str(home / ".config"),
+            "TMPDIR": str(preview_tmp),
+            # No real session answers this, should a real hyprctl ever run.
+            "HYPRLAND_INSTANCE_SIGNATURE": "check-vshell-helper",
+            "PREVIEW_HYPRCTL_LOG": str(hyprctl_log),
+            "PREVIEW_NESTED_PID": str(nested_pid),
+            "PREVIEW_OUTPUT": helper.PREVIEW_OUTPUT,
+        })
+        preview = subprocess.Popen(
+            [sys.executable, str(HELPER_PATH), "theme", "preview", "bauhaus", "--force", "--json"],
+            env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        pid = None
+        try:
+            deadline = time.monotonic() + 60
+            while pid is None and preview.poll() is None and time.monotonic() < deadline:
+                if nested_pid.exists():
+                    pid = int(nested_pid.read_text())
+                else:
+                    time.sleep(0.1)
+            if pid is None:
+                preview.kill()
+                _out, err = preview.communicate()
+                raise AssertionError(f"the preview never started its nested Hyprland (exit {preview.returncode}): {err.strip()}")
+            preview.send_signal(signal.SIGTERM)
+            _out, err = preview.communicate(timeout=30)
+            nested_alive = helper._pid_alive(pid)
+        finally:
+            if preview.poll() is None:
+                preview.kill()
+                preview.wait()
+            if pid is not None:
+                with contextlib.suppress(ProcessLookupError):
+                    os.kill(pid, signal.SIGKILL)
+
+        assert_equal(preview.returncode, 128 + signal.SIGTERM, f"a stopped preview exits through its teardown: {err.strip()}")
+        assert_equal(nested_alive, False, "the nested Hyprland must not outlive the preview")
+        assert_equal(sorted(p.name for p in preview_tmp.iterdir()), [], "the preview removes its temp directory")
+        calls = [json.loads(line) for line in hyprctl_log.read_text().splitlines()]
+        register = ["eval", helper.PREVIEW_STAGE_ON_LUA]
+        assert_equal(register in calls, True, "the preview registers its staging rule")
+        # Every capture reasserts the rule, so the teardown follows the last registration.
+        teardown = calls[len(calls) - 1 - calls[::-1].index(register):]
+        assert_equal(["eval", helper.PREVIEW_STAGE_OFF_LUA] in teardown, True, "a stopped preview retires its staging rule")
+        assert_equal(["output", "remove", helper.PREVIEW_OUTPUT] in teardown, True, "a stopped preview removes its staging output")
 
 
 # A fake `hl` whose window_rule counts registrations and live rules. Its arguments are the
@@ -7227,6 +7332,7 @@ def main():
     test_theme_list_falls_back_to_the_shipped_thumbnail()
     test_hyprland_preview_native_lua()
     test_preview_stage_retires_its_window_rule()
+    test_theme_preview_stop_signal_tears_down_its_capture()
     test_preview_stage_lua_keeps_one_live_rule()
     test_greeter_primary_monitor_validation()
     test_greeter_runtime_helper_dependencies()

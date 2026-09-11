@@ -4985,18 +4985,22 @@ def capture_theme_preview(bp: Dict[str, Any], out_path: Path, canvas: Tuple[int,
         pump_shot = tmp / "pump.png"
         with log_path.open("w") as log:
             proc = subprocess.Popen(["Hyprland", "--config", str(config)], env=env, stdout=log, stderr=log, cwd=tmp)
-            deadline = time.time() + 60
-            while time.time() < deadline and proc.poll() is None and not done.exists():
-                # Capture the headless output to keep nested render callbacks flowing.
-                run(["grim", "-o", PREVIEW_OUTPUT, str(pump_shot)])
-                preview_guard_focus()
-                time.sleep(0.8)
-            if proc.poll() is None:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
+            try:
+                deadline = time.time() + 60
+                while time.time() < deadline and proc.poll() is None and not done.exists():
+                    # Capture the headless output to keep nested render callbacks flowing.
+                    run(["grim", "-o", PREVIEW_OUTPUT, str(pump_shot)])
+                    preview_guard_focus()
+                    time.sleep(0.8)
+            finally:
+                # On every exit, a stop signal's included, the nested session goes
+                # before the temp directory holding its config and log is removed.
+                if proc.poll() is None:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
         if not shot.exists():
             tail = "\n".join(log_path.read_text().splitlines()[-6:]) if log_path.exists() else ""
             return {"success": False, "error": f"preview session produced no screenshot ({tail or 'no log'})"}
@@ -5053,46 +5057,6 @@ def preview_stage():
 
     legacy_rule = False
     lua_rule = False
-    if shutil.which("hyprctl") and os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
-        pos = cursor_pos()
-        prev_mon = focused_monitor()
-        run(["hyprctl", "output", "remove", PREVIEW_OUTPUT])
-        restore_cursor(pos)
-        pos = cursor_pos()
-        # Rules go in BEFORE the output exists: the workspace rule's `default`
-        # flag decides which workspace the new output activates, and silent
-        # window placement only keeps the nested session rendering (and thus
-        # alive) when its target workspace is the staging output's active one.
-        hook = run(["hyprctl", "eval", PREVIEW_STAGE_ON_LUA])
-        rules_ok = lua_rule = _hyprctl_eval_ok(hook)
-        if not rules_ok:
-            # Pre-Lua Hyprland: fall back to a runtime rule; teardown then
-            # needs a config reload to clear it.
-            rule = run(["hyprctl", "keyword", "windowrulev2", PREVIEW_WINDOW_RULE_LEGACY])
-            run(["hyprctl", "keyword", "windowrulev2", PREVIEW_WINDOW_RULE_LEGACY_NOFOCUS])
-            rules_ok = legacy_rule = rule.returncode == 0 and "error" not in (rule.stdout or "").lower()
-        if rules_ok and run(["hyprctl", "output", "create", "headless", PREVIEW_OUTPUT]).returncode == 0:
-            # The output inherits the user's default scale; force scale 1 so the
-            # nested session sees the full logical resolution.
-            def set_mode(w: int, h: int) -> None:
-                mode = run(["hyprctl", "eval", f'hl.monitor({{ output = "{PREVIEW_OUTPUT}", mode = "{w}x{h}@60", position = "auto", scale = 1 }})'])
-                if mode.returncode != 0 or "error" in (mode.stdout or "").lower():
-                    run(["hyprctl", "keyword", "monitor", f"{PREVIEW_OUTPUT},{w}x{h}@60,auto,1"])
-
-            # Grow the output by whatever the parent spends on window chrome so
-            # the staged capture window is exactly PREVIEW_SIZE. Gaps, borders
-            # and a bar's exclusive zone are all user config, and previews are
-            # committed to the repo — they cannot vary with them.
-            width, height = PREVIEW_SIZE
-            chrome_w, chrome_h = preview_stage_chrome()
-            set_mode(width + chrome_w, height + chrome_h)
-            res_w, res_h = preview_stage_reserved()
-            if res_w or res_h:
-                set_mode(width + chrome_w + res_w, height + chrome_h + res_h)
-            staged = True
-            preview_guard_focus()
-            restore_cursor(pos)
-            enforce_monitor(prev_mon)
 
     def reassert() -> None:
         if staged and not legacy_rule:
@@ -5102,7 +5066,50 @@ def preview_stage():
             # Repair it before captures and during the capture pump.
             preview_guard_focus()
 
+    # Staging runs inside the try, so a stop signal mid-stage still retires what it
+    # registered and removes an output it created.
     try:
+        if shutil.which("hyprctl") and os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+            pos = cursor_pos()
+            prev_mon = focused_monitor()
+            run(["hyprctl", "output", "remove", PREVIEW_OUTPUT])
+            restore_cursor(pos)
+            pos = cursor_pos()
+            # Rules go in BEFORE the output exists: the workspace rule's `default`
+            # flag decides which workspace the new output activates, and silent
+            # window placement only keeps the nested session rendering (and thus
+            # alive) when its target workspace is the staging output's active one.
+            hook = run(["hyprctl", "eval", PREVIEW_STAGE_ON_LUA])
+            rules_ok = lua_rule = _hyprctl_eval_ok(hook)
+            if not rules_ok:
+                # Pre-Lua Hyprland: fall back to a runtime rule; teardown then
+                # needs a config reload to clear it.
+                rule = run(["hyprctl", "keyword", "windowrulev2", PREVIEW_WINDOW_RULE_LEGACY])
+                run(["hyprctl", "keyword", "windowrulev2", PREVIEW_WINDOW_RULE_LEGACY_NOFOCUS])
+                rules_ok = legacy_rule = rule.returncode == 0 and "error" not in (rule.stdout or "").lower()
+            if rules_ok and run(["hyprctl", "output", "create", "headless", PREVIEW_OUTPUT]).returncode == 0:
+                staged = True
+                # The output inherits the user's default scale; force scale 1 so the
+                # nested session sees the full logical resolution.
+                def set_mode(w: int, h: int) -> None:
+                    mode = run(["hyprctl", "eval", f'hl.monitor({{ output = "{PREVIEW_OUTPUT}", mode = "{w}x{h}@60", position = "auto", scale = 1 }})'])
+                    if mode.returncode != 0 or "error" in (mode.stdout or "").lower():
+                        run(["hyprctl", "keyword", "monitor", f"{PREVIEW_OUTPUT},{w}x{h}@60,auto,1"])
+
+                # Grow the output by whatever the parent spends on window chrome so
+                # the staged capture window is exactly PREVIEW_SIZE. Gaps, borders
+                # and a bar's exclusive zone are all user config, and previews are
+                # committed to the repo — they cannot vary with them.
+                width, height = PREVIEW_SIZE
+                chrome_w, chrome_h = preview_stage_chrome()
+                set_mode(width + chrome_w, height + chrome_h)
+                res_w, res_h = preview_stage_reserved()
+                if res_w or res_h:
+                    set_mode(width + chrome_w + res_w, height + chrome_h + res_h)
+                preview_guard_focus()
+                restore_cursor(pos)
+                enforce_monitor(prev_mon)
+
         yield staged, reassert
     finally:
         # Whether or not the output came up: the rule alone parks nested windows unseen.
@@ -5126,7 +5133,16 @@ def preview_stage():
             enforce_monitor(end_mon)
 
 
+def _exit_on_sigterm(signum: int, _frame: Any) -> None:
+    raise SystemExit(128 + signum)
+
+
 def cmd_theme_preview(args: argparse.Namespace) -> int:
+    # The shell stops a preview with SIGTERM when its request times out, and a
+    # vshell.service stop sends the same. The default action ends the process without
+    # unwinding, leaving the staging rule to park every later nested Hyprland window on
+    # a workspace no monitor shows; as an exit, it runs every teardown on the way out.
+    signal.signal(signal.SIGTERM, _exit_on_sigterm)
     with preview_lock() as locked:
         if not locked:
             msg = "another preview generation is already running"
