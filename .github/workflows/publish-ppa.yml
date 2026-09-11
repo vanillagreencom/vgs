@@ -35,7 +35,8 @@ jobs:
     permissions:
       contents: read
     runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
-    timeout-minutes: 40
+    # Covers the script's 45-minute default wait for Launchpad to list the upload.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
