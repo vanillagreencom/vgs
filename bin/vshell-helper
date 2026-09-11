@@ -4291,13 +4291,25 @@ PREVIEW_OUTPUT = "VGSPREVIEW"
 # Silent workspace placement avoids activating the staging monitor at map time.
 # The workspace rule binds that workspace to the staging output.
 # Runtime rules are cleared by config reloads. Reassert them before captures;
-# the _VGS_PREVIEW_STAGE flag avoids duplicate registration within a Lua session.
+# the _VGS_PREVIEW_STAGE flag and the window rule's handle avoid duplicate
+# registration within a Lua session.
+# The window rule matches every nested Hyprland window, not only a preview's, so
+# it must not outlive the stage. Once the staging output is gone the silent
+# workspace sits on a real monitor that is not showing it, and a nested session
+# parked there never renders, because its frames wait on callbacks its unshown host
+# window never gets; `qml-smoke.sh --nested` then samples no frame from its sandbox.
+# PREVIEW_STAGE_OFF_LUA retires the rule when the stage ends.
 PREVIEW_STAGE_ON_LUA = (
     'if not _VGS_PREVIEW_STAGE then _VGS_PREVIEW_STAGE = true '
-    'hl.workspace_rule({ workspace = "name:vgspreview", monitor = "' + PREVIEW_OUTPUT + '", default = true }) '
-    'hl.window_rule({ match = { class = "^(aquamarine)$" }, '
+    'hl.workspace_rule({ workspace = "name:vgspreview", monitor = "' + PREVIEW_OUTPUT + '", default = true }) end '
+    'if _VGS_PREVIEW_WINDOW_RULE == nil then '
+    '_VGS_PREVIEW_WINDOW_RULE = hl.window_rule({ match = { class = "^(aquamarine)$" }, '
     'workspace = "name:vgspreview silent", fullscreen_state = 2, '
     'no_initial_focus = true, no_focus = true }) end'
+)
+PREVIEW_STAGE_OFF_LUA = (
+    'if _VGS_PREVIEW_WINDOW_RULE ~= nil then '
+    '_VGS_PREVIEW_WINDOW_RULE:set_enabled(false) _VGS_PREVIEW_WINDOW_RULE = nil end'
 )
 PREVIEW_WINDOW_RULE_LEGACY = f"monitor {PREVIEW_OUTPUT}, class:^(aquamarine)$"
 PREVIEW_WINDOW_RULE_LEGACY_NOFOCUS = "nofocus, class:^(aquamarine)$"
@@ -5043,6 +5055,7 @@ def preview_stage():
             preview_dispatch(f'hl.dsp.focus({{ monitor = "{name}" }})', ["focusmonitor", name])
 
     legacy_rule = False
+    lua_rule = False
     if shutil.which("hyprctl") and os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
         pos = cursor_pos()
         prev_mon = focused_monitor()
@@ -5054,7 +5067,7 @@ def preview_stage():
         # window placement only keeps the nested session rendering (and thus
         # alive) when its target workspace is the staging output's active one.
         hook = run(["hyprctl", "eval", PREVIEW_STAGE_ON_LUA])
-        rules_ok = hook.returncode == 0 and "error" not in (hook.stdout or "").lower()
+        rules_ok = lua_rule = hook.returncode == 0 and "error" not in (hook.stdout or "").lower()
         if not rules_ok:
             # Pre-Lua Hyprland: fall back to a runtime rule; teardown then
             # needs a config reload to clear it.
@@ -5095,6 +5108,13 @@ def preview_stage():
     try:
         yield staged, reassert
     finally:
+        # The rule is retired whether or not the output came up: registered
+        # without one, it parks nested windows on a workspace no monitor shows.
+        if lua_rule:
+            retired = run(["hyprctl", "eval", PREVIEW_STAGE_OFF_LUA])
+            if retired.returncode != 0 or "error" in (retired.stdout or "").lower():
+                reply = (retired.stdout or retired.stderr or "").strip() or "no reply"
+                eprint(f"preview staging rule left enabled (hyprctl exit {retired.returncode}): {reply}")
         if staged:
             if legacy_rule:
                 run(["hyprctl", "reload"])

@@ -1429,6 +1429,57 @@ def test_hyprland_preview_native_lua():
                 )
 
 
+def test_preview_stage_retires_its_window_rule():
+    """The staging window rule matches every nested Hyprland window, not only a preview's.
+
+    Left enabled after the stage, it parks the next nested session on a workspace no
+    monitor shows, and that session renders no frame for anything to capture.
+    """
+    calls = []
+
+    class _Reply:
+        def __init__(self, stdout="ok"):
+            self.returncode = 0
+            self.stdout = stdout
+            self.stderr = ""
+
+    # A compositor that accepts every request. The staging output reports a bar's
+    # reserved strip so the stage does not wait out preview_stage_reserved's deadline.
+    def fake_run(argv, **kwargs):
+        calls.append(list(argv))
+        if argv[1:] == ["cursorpos"]:
+            return _Reply("0, 0")
+        if argv[1:] == ["monitors", "-j"]:
+            return _Reply(json.dumps([{"name": helper.PREVIEW_OUTPUT, "reserved": [0, 32, 0, 0]}]))
+        if argv[-1] == "-j":
+            return _Reply("{}" if argv[1] == "getoption" else "[]")
+        return _Reply()
+
+    retire = ["hyprctl", "eval", helper.PREVIEW_STAGE_OFF_LUA]
+    saved_run, saved_which = helper.run, helper.shutil.which
+    saved_signature = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")
+    helper.run = fake_run
+    helper.shutil.which = lambda name: "/usr/bin/hyprctl" if name == "hyprctl" else None
+    os.environ["HYPRLAND_INSTANCE_SIGNATURE"] = "check-vshell-helper"
+    try:
+        with helper.preview_stage() as (staged, _reassert):
+            assert_equal(staged, True, "a compositor that accepts every request stages the preview")
+            assert_equal(["hyprctl", "eval", helper.PREVIEW_STAGE_ON_LUA] in calls, True,
+                         "the stage registers its window rule")
+            # A capture needs the rule for as long as its nested session is mapped.
+            assert_equal(retire in calls, False, "the window rule must stay enabled while the stage is up")
+    finally:
+        helper.run, helper.shutil.which = saved_run, saved_which
+        _restore_env("HYPRLAND_INSTANCE_SIGNATURE", saved_signature)
+    assert_equal(retire in calls, True, "the stage's teardown must retire its window rule")
+    # The retirement has to reach the rule the stage stored, not a name of its own.
+    stored = re.search(r"(\w+) = hl\.window_rule\(", helper.PREVIEW_STAGE_ON_LUA)
+    if stored is None:
+        raise AssertionError("could not find the window rule handle in PREVIEW_STAGE_ON_LUA; the extractor is broken")
+    assert_equal(f"{stored.group(1)}:set_enabled(false)" in helper.PREVIEW_STAGE_OFF_LUA, True,
+                 f"PREVIEW_STAGE_OFF_LUA must disable the handle {stored.group(1)} that the stage stores")
+
+
 def test_greeter_primary_monitor_validation():
     with tempfile.TemporaryDirectory() as tmp:
         cache = Path(tmp)
@@ -7144,6 +7195,7 @@ def main():
     test_lint_checks_color0_in_light_mode_only()
     test_theme_list_falls_back_to_the_shipped_thumbnail()
     test_hyprland_preview_native_lua()
+    test_preview_stage_retires_its_window_rule()
     test_greeter_primary_monitor_validation()
     test_greeter_runtime_helper_dependencies()
     test_greeter_sync_survives_a_missing_wallpaper()
