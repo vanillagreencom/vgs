@@ -88,13 +88,13 @@ def test_stub_template_and_foreign_files():
                 shadowed = mise.mise_install_stub("gh", "gh")
                 assert_equal(shadowed["state"], "shadowed", "a command on PATH outside ~/.local/bin must not get a stub")
                 assert not (Path(tmp) / ".local" / "bin" / "gh").exists(), "shadowed stub must not be written"
-                refreshed = mise.mise_refresh()
+                refreshed = mise.mise_refresh([])
                 assert "gh" in refreshed["shadowed"], refreshed
             finally:
                 os.environ["PATH"] = str(Path(tmp) / ".local" / "bin")
             stale = Path(tmp) / ".local" / "bin" / "retired-tool"
             stale.write_text(mise.mise_stub_text("npm:retired", "retired-tool", "retired-tool"))
-            refreshed = mise.mise_refresh()
+            refreshed = mise.mise_refresh([])
             assert "retired-tool" in refreshed["retired"] and not stale.exists(), "a VGS stub for a command the catalog dropped is retired"
             assert "claude" in refreshed["foreign"], refreshed
             assert "codex" in refreshed["written"], refreshed
@@ -102,7 +102,7 @@ def test_stub_template_and_foreign_files():
             assert "codex" in removed["removed"] and "claude" in removed["kept"], removed
             assert foreign.exists(), "remove-stubs must keep foreign files"
             assert mise.mise_stubs_opted_out(), "remove-stubs must record the opt-out"
-            assert_equal(mise.mise_refresh()["optedOut"], True, "refresh must respect the opt-out")
+            assert_equal(mise.mise_refresh([])["optedOut"], True, "refresh must respect the opt-out")
             assert not (Path(tmp) / ".local" / "bin" / "codex").exists(), "an opted-out refresh must write nothing"
         finally:
             mise.RT.home = original_home
@@ -649,7 +649,7 @@ def test_setting_a_channel_records_it_and_rewrites_the_stub():
         try:
             # Seed the stubs at the default, so what follows is judged on the
             # rewrite rather than on the file appearing for the first time.
-            mise.mise_refresh()
+            mise.mise_refresh([])
             assert options not in stub.read_text(), "the seeded stub starts on the default stream"
 
             result = mise.mise_set_channel("herdr", other)
@@ -880,13 +880,13 @@ def test_row_actions_run_and_refuse():
         assert_equal(calls, [], "a refusal runs no mise command")
 
         # replace: refuses when no distribution package owns the command.
-        mise.command_on_path_elsewhere = lambda command, local_bin: ""
+        mise.command_on_path_elsewhere = lambda command, local_bin, *_: ""
         assert_equal(devtools.entry_replace(entry), 1, "nothing to replace is refused")
         assert_equal(calls, [], "and removes nothing")
 
         # replace: removes the owner, then installs. Elevation is the first step
         # and the install must not run when it fails.
-        mise.command_on_path_elsewhere = lambda command, local_bin: "/usr/bin/gh"
+        mise.command_on_path_elsewhere = lambda command, local_bin, *_: "/usr/bin/gh"
         devtools.distro_package_owning = lambda path: "github-cli"
         gh = next(e for e in devtools.catalog_entries() if e["id"] == "gh")
 
@@ -926,6 +926,11 @@ def test_row_actions_run_and_refuse():
             assert_equal((act(cursor), calls), (1, []), f"{label} refuses and runs nothing")
             assert said[-1].startswith("mise-launcher-not-ours: cursor ") and said[-1].endswith(
                 "run: mise use -g 'cursor-agent[bin_path=]'"), said[-1]
+        # Only the owner's own file refuses, and only for an entry with `exec`.
+        for row, state in ((cursor, "shadowed"), (entry, "foreign")):
+            mise.mise_stub_state = lambda path, state=state: state
+            devtools.mise_installs = lambda: ({mise.package_key(str(row["package"])): {"version": "1", "declared": False}}, "")
+            assert_equal(devtools.entry_track(row), 0, f"{row['id']} behind a {state} launcher is tracked")
 
         # cmd_agent routes each verb to the entry the id names, tools included.
         routed = []
@@ -1175,20 +1180,21 @@ def test_every_launcher_is_settled_before_its_option_is_recorded():
     current, auto-install on or off, and the option is recorded only behind
     the stub the refresh has just written."""
     # In `tools`, so the spec `exec` gives an entry is pinned outside the
-    # launchable groups too.
-    catalog = {"agents": [], "apps": [], "tools": [
+    # launchable groups too. The plain entry offers a channel to pick.
+    catalog = {"agents": [{"id": "plain", "name": "Plain", "command": "plaincmd", "package": "plainpkg",
+                           "channels": {"default": "a", "options": {"a": "", "b": ""}}}], "apps": [], "tools": [
         {"id": "cursor", "name": "Cursor", "command": "cursor-agent", "package": "cursor-agent",
-         "exec": "dist-package/cursor-agent"},
-        {"id": "plain", "name": "Plain", "command": "plaincmd", "package": "plainpkg"}]}
-    installed = {"cursor-agent": [{"version": "1", "installed": True, "active": True, "source": {}}]}
-    # The spec whose old option mise still holds, and so still exports `node`.
+         "exec": "dist-package/cursor-agent"}]}
+    installed = {p: [{"version": "1", "installed": True, "active": True, "source": {}}] for p in ("cursor-agent", "plainpkg")}
+    # The spec whose old option mise still holds, and so still exports its
+    # package directory, `cursor-agent` and `node` with it.
     recorded, refused, ran = {"cursor-agent"}, set(), []
 
     def fake_run(cmd, check=False, **kw):
         assert kw["kill_group"], f"a mise call that outlives its timeout: {cmd}"
         if cmd[1] == "bin-paths":
-            node = [{"name": "node", "path": "/i/cursor-agent/dist-package/node"}] if cmd[-1] in recorded else []
-            return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(node), stderr="")
+            names = ("cursor-agent", "node") if cmd[-1] in recorded else ()
+            return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps([{"name": n, "path": str(package / n)} for n in names]), stderr="")
         ran.append(cmd[1:])
         if refused & {cmd[1], cmd[-1]}:
             return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="mise ERROR nope")
@@ -1199,10 +1205,16 @@ def test_every_launcher_is_settled_before_its_option_is_recorded():
         home = Path(tmp)
         bin_dir, distro, marker = home / ".local" / "bin", home / "usr-bin", home / "state" / mise.MISE_STUBS_REMOVED
         launcher, plain = bin_dir / "cursor-agent", bin_dir / "plaincmd"
-        for path in (distro / "node", marker, launcher):
+        # A mise-activated PATH: the old export and a shim answer to
+        # `cursor-agent` as the install itself; `other` gets a copy that is not.
+        package, shims, other = home / "dist-package", home / "shims", home / "other"
+        for path in (distro / "node", distro / "mise", package / "cursor-agent", package / "node", home / "spare", marker, launcher):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("#!/bin/sh\n")
-        (distro / "node").chmod(0o755)
+            path.chmod(0o755)
+        shims.mkdir()
+        other.mkdir()
+        (shims / "cursor-agent").symlink_to(distro / "mise")
 
         def state(path, entry_id):
             found = mise.mise_stub_state(path)
@@ -1218,34 +1230,44 @@ def test_every_launcher_is_settled_before_its_option_is_recorded():
         ls, use = ["ls", "--json"], ["use", "-g", "--quiet", "cursor-agent[bin_path=]"]
         with mock.patch.multiple(mise, dev_tools_catalog=lambda: catalog), \
                 mock.patch.multiple(mise.RT, run=fake_run, command_exists=lambda name: True, load_settings=dict,
-                                    eprint=lambda *a: None, home=lambda: home, state_dir=lambda: home / "state"), \
-                mock.patch.dict(os.environ, {"PATH": f"{bin_dir}{os.pathsep}{distro}"}):
-            # Auto-install is off throughout. Each row: what changes and the
-            # command run, then its exit, every mise call but `bin-paths`, the
-            # keys it reports, the launchers it keeps as the only way in, and
-            # each stub afterwards.
+                                    set_settings_value=lambda key, value: {}, eprint=lambda *a: None,
+                                    home=lambda: home, state_dir=lambda: home / "state"), \
+                mock.patch.dict(os.environ, {"PATH": os.pathsep.join(map(str, (bin_dir, other, package, shims, distro)))}):
+            # Auto-install is off but from the opt-in to remove-stubs. Each row:
+            # what changes and the command run, then its exit, every mise call
+            # but `bin-paths`, the keys it reports, the launchers it keeps as the
+            # only way in, and each stub afterwards.
             for label, prepare, command, want in (
                     ("main's stubs", main_stubs, "refresh", (0, [ls, use], [], None, "current", "current")),
                     ("the owner's own launcher", lambda: (launcher.write_text("#!/bin/sh\n"), recorded.add("cursor-agent")),
                      "refresh", (1, [ls], ["mise-export-shadow", "mise-launcher-not-ours"], None, "foreign", "current")),
                     ("once the owner follows its advice", recorded.clear,
                      "refresh", (0, [ls], [], None, "foreign", "current")),
-                    ("an install with no launcher", lambda: (launcher.unlink(), recorded.add("cursor-agent")),
+                    ("an install with no launcher, answering only as itself", lambda: (launcher.unlink(), recorded.add("cursor-agent")),
                      "refresh", (0, [ls, use], [], None, "current", "current")),
                     ("mise refuses the option", lambda: refused.add(use[-1]),
                      "refresh", (1, [ls, use], ["mise-declare-failed"], None, "current", "current")),
+                    ("and the auto-install toggle", lambda: None,
+                     "opt-in", (1, [ls, use], ["mise-declare-failed"], None, "current", "current")),
+                    ("and a channel pick", lambda: None,
+                     "channel plain b", (1, [ls, use], ["mise-declare-failed"], None, "current", "current")),
                     ("turning auto-install off", refused.clear,
                      "remove-stubs", (0, [ls, use], [], ["cursor-agent"], "current", "absent")),
                     ("with mise unable to say what is installed", lambda: refused.add("ls"),
-                     "remove-stubs", (1, [ls], ["mise ERROR nope"], ["cursor-agent"], "current", "absent"))):
+                     "remove-stubs", (1, [ls], ["mise ERROR nope"], ["cursor-agent"], "current", "absent")),
+                    ("another copy ahead of the install", lambda: (refused.clear(), launcher.unlink(), recorded.add("cursor-agent"),
+                                                                    (home / "spare").rename(other / "cursor-agent")),
+                     "refresh", (1, [ls], ["mise-export-shadow", "mise-launcher-held"], None, "shadowed", "absent"))):
                 prepare()
                 ran.clear()
                 with contextlib.redirect_stdout(io.StringIO()) as out:
-                    code = mise.cmd_mise([command, "--json"])
+                    code = mise.cmd_mise([*command.split(), "--json"])
                 result = json.loads(out.getvalue())
                 keys = [line.partition(":")[0] for line in result["error"].splitlines() if not line.startswith(" ")]
                 assert_equal((code, ran, keys, result.get("routes"), state(launcher, "cursor"), state(plain, "plain")),
                              want, label)
+                assert_equal((result["ok"], "cursor-agent" in result.get("removed", [])), (code == 0, False), label)
+            assert f"mise-launcher-held: cursor {other / 'cursor-agent'}\n" in result["error"], result["error"]
 
 
 def test_catalog_entries_cover_the_tools_section():
