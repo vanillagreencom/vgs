@@ -224,6 +224,7 @@ jobs:
           scripts/test-remote-desktop-state.js
           scripts/test-idle-reload-snapshot.js
           scripts/test-idle-lock-request.js
+          scripts/test-proc-timeout.js
           scripts/test-sudo-toggle-confirm.js
           scripts/test-pill-hover-safety.js
           scripts/test-launcher-hover-latch.js

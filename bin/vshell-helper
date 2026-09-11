@@ -5118,9 +5118,9 @@ def preview_stage():
             if not _hyprctl_eval_ok(retired):
                 reply = (retired.stdout or retired.stderr or "").strip() or "no reply"
                 eprint(f"preview staging rule left enabled (hyprctl exit {retired.returncode}): {reply}")
+        if legacy_rule:
+            run(["hyprctl", "reload"])
         if staged:
-            if legacy_rule:
-                run(["hyprctl", "reload"])
             pos = cursor_pos()
             # Honor where the user is focused NOW (not at stage time); if the
             # invisible output somehow holds focus, fall back to the monitor
@@ -5138,10 +5138,11 @@ def _exit_on_sigterm(signum: int, _frame: Any) -> None:
 
 
 def cmd_theme_preview(args: argparse.Namespace) -> int:
-    # The shell stops a preview with SIGTERM when its request times out, and a
-    # vshell.service stop sends the same. The default action ends the process without
-    # unwinding, leaving the staging rule to park every later nested Hyprland window on
-    # a workspace no monitor shows; as an exit, it runs every teardown on the way out.
+    # The shell stops a preview with SIGTERM when its request times out, and holds off
+    # SIGKILL for Proc.terminateGraceMs; a vshell.service stop sends SIGTERM too. The
+    # default action ends the process without unwinding, leaving the staging rule to park
+    # every later nested Hyprland window on a workspace no monitor shows; as an exit, it
+    # runs every teardown on the way out.
     signal.signal(signal.SIGTERM, _exit_on_sigterm)
     with preview_lock() as locked:
         if not locked:

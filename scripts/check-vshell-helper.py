@@ -1433,16 +1433,20 @@ def test_preview_stage_retires_its_window_rule():
     """The staging window rule matches every nested Hyprland window, so it must not outlive the stage."""
     register = ["hyprctl", "eval", helper.PREVIEW_STAGE_ON_LUA]
     retire = ["hyprctl", "eval", helper.PREVIEW_STAGE_OFF_LUA]
+    # A pre-Lua session takes a keyword rule, which only a config reload clears.
+    reload = ["hyprctl", "reload"]
     remove = ["hyprctl", "output", "remove", helper.PREVIEW_OUTPUT]
 
-    # label; exit status of `hyprctl output create headless`; the hyprctl subcommand a
-    # stop signal interrupts, or None; whether the preview stages its output.
+    # label; whether `hyprctl eval` runs Lua; exit status of `hyprctl output create
+    # headless`; the hyprctl subcommand a stop signal interrupts, or None; whether the
+    # preview stages its output; the request that retires the rule.
     # The rule is registered before the output is created, so a refused output still retires it.
-    for label, create_status, stop_at, staged_expected in (
-        ("a compositor that accepts every request", 0, None, True),
-        ("a compositor that refuses the headless output", 1, None, False),
+    for label, lua, create_status, stop_at, staged_expected, retirement in (
+        ("a compositor that accepts every request", True, 0, None, True, retire),
+        ("a compositor that refuses the headless output", True, 1, None, False, retire),
+        ("a pre-Lua compositor that refuses the headless output", False, 1, None, False, reload),
         # The output exists by then but is not yet sized, so the stage is not handed over.
-        ("a stop signal while the stage sizes its output", 0, "getoption", True),
+        ("a stop signal while the stage sizes its output", True, 0, "getoption", True, retire),
     ):
         calls = []
 
@@ -1451,7 +1455,9 @@ def test_preview_stage_retires_its_window_rule():
             if argv[1] == stop_at:
                 raise SystemExit(128 + signal.SIGTERM)
             stdout = "ok"
-            if argv[1:] == ["cursorpos"]:
+            if argv[1] == "eval" and not lua:
+                stdout = "eval is only supported with the lua config manager"
+            elif argv[1:] == ["cursorpos"]:
                 stdout = "0, 0"
             elif argv[1:] == ["monitors", "-j"]:
                 # A reserved bar strip, so the stage does not wait out preview_stage_reserved.
@@ -1470,12 +1476,12 @@ def test_preview_stage_retires_its_window_rule():
                     assert_equal(staged, staged_expected, f"{label}: stages the preview")
                     assert_equal(register in calls, True, f"{label}: the stage registers its window rule")
                     # A capture needs the rule for as long as its nested session is mapped.
-                    assert_equal(retire in calls, False, f"{label}: the window rule must stay enabled while the stage is up")
+                    assert_equal(retirement in calls, False, f"{label}: the window rule must stay enabled while the stage is up")
             except SystemExit:
                 stopped = True
         assert_equal(stopped, stop_at is not None, f"{label}: the stage ends early only on a stop signal")
         teardown = calls[calls.index(register):]
-        assert_equal(retire in teardown, True, f"{label}: the teardown must retire its window rule")
+        assert_equal(retirement in teardown, True, f"{label}: the teardown must retire its window rule")
         if staged_expected:
             assert_equal(remove in teardown, True, f"{label}: the teardown must remove the staging output")
 
