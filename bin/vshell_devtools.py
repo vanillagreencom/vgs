@@ -100,8 +100,7 @@ def agent_installed(entry: Dict[str, Any]) -> bool:
 def agent_launch_argv(entry: Dict[str, Any]) -> List[str]:
     """The agent's launch argv, run through `mise x` when mise owns it so it
     resolves without a stub or shim on PATH; the owner's own command otherwise.
-    An entry kept off PATH runs its `exec` file under the root `mise where`
-    names, the question its stub asks (D016)."""
+    An entry with `exec` runs that file under the root `mise where` names (D016)."""
     launch = [str(part) for part in entry.get("launch") or [entry["command"]]]
     versions, _ = mise_installed_versions()
     if versions.get(package_key(str(entry["package"]))):
@@ -134,14 +133,15 @@ def agent_install_prompt(entry: Dict[str, Any]) -> bool:
 
 
 def entry_install(entry: Dict[str, Any]) -> bool:
-    """Install one catalog entry through mise and write its launcher stub; True
-    when every install step succeeded. The first-launch prompt and the Replace
-    with mise action both install here and keep only their own wording. The
-    stub goes first, so a download that fails leaves it to retry on first run;
-    what the install exports is checked at the next refresh or tools update
-    (D016)."""
+    """Install one catalog entry through mise, its stub first so a failed
+    download retries on first run; True when every step succeeded. An entry
+    `launcher_advice` holds back is refused with that advice (D016)."""
     fields = stub_fields(entry)
     mise_install_stub(**fields)
+    advice = vshell_mise.launcher_advice(entry)
+    if advice:
+        print(advice)
+        return False
     # The same steps the stub would run, so a tool installed from the prompt and
     # one installed on first launch are built the same way.
     env = {**mise_env(), **mise_build_env(fields["build_env"])}
@@ -222,13 +222,17 @@ def agent_remove(entry: Dict[str, Any]) -> int:
 def entry_track(entry: Dict[str, Any]) -> int:
     """Declare an existing mise install in the global config. `mise outdated`
     reports only what a config asks for, so an install nothing declares never
-    reaches an update count and never moves again."""
+    reaches an update count and never moves again. An entry `launcher_advice`
+    holds back is refused with that advice (D016)."""
     installs, _ = mise_installs()
     install = installs.get(package_key(str(entry["package"])))
     if not install:
         return hold_terminal(1, f"{entry['name']} is not installed through mise; there is nothing to track.")
     if install["declared"]:
         return hold_terminal(0, f"{entry['name']} is already tracked for updates.")
+    advice = vshell_mise.launcher_advice(entry)
+    if advice:
+        return hold_terminal(1, advice)
     print(f"Tracking {entry['name']} for updates...\n")
     code = dev_env_run(["mise", "use", "-g", str(entry["package"])])
     return hold_terminal(code, f"{entry['name']} is now tracked for updates."
