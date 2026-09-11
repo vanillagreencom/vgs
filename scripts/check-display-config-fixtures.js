@@ -177,6 +177,12 @@ assert.throws(() => assert.equal(missingRequests, 1), assert.AssertionError);
 const readiness = new Function('root', extractBlock(serviceSource, 'function onIsHyprlandChanged()'));
 readiness({ requestOutputs: () => requests++ });
 assert.equal(requests, 2, 'late compositor detection must request recovery');
+const rawEvent = new Function('event', 'outputRefreshTimer', 'root', extractBlock(serviceSource, 'function onRawEvent(event)'));
+for (const name of ['monitoradded', 'monitorremoved', 'configreloaded', 'activewindow']) {
+  const calls = [];
+  rawEvent({ name }, { restart: () => calls.push('outputs') }, { generateLayoutConfig: () => calls.push('layout') });
+  assert.deepEqual(calls, name === 'activewindow' ? [] : ['outputs', 'layout'], name + ' must refresh the outputs and the layout scale');
+}
 
 function bindStateFunctions(context, names, source = stateSource) {
   for (const name of names) {

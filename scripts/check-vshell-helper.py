@@ -798,11 +798,7 @@ def _lua_table_fields(table, script):
     match = table.search(script)
     if match is None:
         raise AssertionError(f"layout script should contain the table {table.pattern!r}")
-    fields = {}
-    for line in match.group(1).splitlines():
-        key, _, value = line.strip().rstrip(",").partition(" = ")
-        fields[key] = int(value)
-    return fields
+    return {key: int(value) for key, _, value in (line.strip().rstrip(",").partition(" = ") for line in match.group(1).splitlines())}
 
 
 def test_hyprland_layout_payload():
@@ -853,15 +849,21 @@ def test_hyprland_layout_payload():
 
 
 def test_hyprland_layout_apply_reads_the_highest_monitor_scale():
-    # The highest scale, neither first nor last here, sets the tabs; no session reads as scale 1.
+    # Rows run in order on one file. The highest scale, neither first nor last here, sets
+    # the tabs, and no session reads as scale 1. Only a changed file is written and reloaded.
+    two = [{"scale": 1.0}, {"scale": 2.0}, {"scale": 1.0}]
     def run_case(home):
-        for monitors, tabs in (([{"scale": 1.0}, {"scale": 2.0}, {"scale": 1.0}], 16), (None, 8)):
+        for monitors, tabs, changed in ((two, 16, True), (two, 16, False), ([{"scale": 1.0}], 8, True), (None, 8, False)):
             with patch.object(helper, "load_settings", return_value={"cornerRadius": 8}), \
                     patch.object(helper, "_hyprctl_json", return_value=monitors) as ipc, \
-                    patch.object(helper.shutil, "which", return_value=None):
-                helper.apply_hyprland_layout()
-            assert_equal((ipc.call_args.args, _lua_table_fields(GROUPBAR_TABLE, helper.hyprland_layout_path().read_text())),
-                         (("monitors",), {"rounding": tabs, "gradient_rounding": tabs}), f"apply with monitors {monitors!r}")
+                    patch.object(helper, "write_file", wraps=helper.write_file) as write, \
+                    patch.object(helper, "run", return_value=subprocess.CompletedProcess([], 0, "", "")) as run, \
+                    patch.object(helper.shutil, "which", return_value="hyprctl"), patch.dict(os.environ, {"HYPRLAND_INSTANCE_SIGNATURE": "fixture"}):
+                result = helper.apply_hyprland_layout()
+            assert_equal((ipc.call_args.args, _lua_table_fields(GROUPBAR_TABLE, helper.hyprland_layout_path().read_text()),
+                          result["changed"], write.call_count, [c.args for c in run.call_args_list]),
+                         (("monitors",), {"rounding": tabs, "gradient_rounding": tabs}, changed, int(changed), [(["hyprctl", "reload"],)] * changed),
+                         f"apply with monitors {monitors!r}")
     with_temp_home(run_case)
 
 

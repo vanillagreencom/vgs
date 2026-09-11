@@ -10108,10 +10108,13 @@ def apply_hyprland_layout() -> Dict[str, Any]:
     scale = max(filter(None, (_sane_monitor_scale(m.get("scale")) for m in _hyprctl_json("monitors") or [])), default=1.0)
     content, meta = _hyprland_layout_payload(settings, scale)
     path = hyprland_layout_path()
-    write_file(path, content)
+    # Reloads regenerate this file too, so leaving it and Hyprland alone when nothing changed ends that loop.
+    changed = _read_text(path) != content.strip()
+    if changed:
+        write_file(path, content)
 
     reload_result: Dict[str, Any] = {"attempted": False}
-    if shutil.which("hyprctl") and os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+    if changed and shutil.which("hyprctl") and os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
         proc = run(["hyprctl", "reload"])
         reload_result = {
             "attempted": True,
@@ -10122,6 +10125,7 @@ def apply_hyprland_layout() -> Dict[str, Any]:
     return {
         "ok": not reload_result.get("attempted") or bool(reload_result.get("ok")),
         "path": str(path),
+        "changed": changed,
         "layout": meta,
         "reload": reload_result,
     }
