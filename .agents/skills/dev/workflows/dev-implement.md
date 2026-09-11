@@ -157,7 +157,7 @@ Follow [dev SKILL.md § Reflect](../SKILL.md#reflect). Complete every repository
 The validation gate is this complete list:
 
 - The affected suite passes. It consists of installed preflight and doc-limits gates, the delegation's required verification commands in their § 2.4 normalized form, and Visual QA under the current workflow's rule below.
-- One must-fail control per changed behavioral surface with a test turns that surface's test red once. A workflow sentence has no test and adds no control. A production gate or guard change keeps the per-rule control that [code-quality § Prove Your Guards](../../code-quality/SKILL.md#prove-your-guards) requires inside this item.
+- One must-fail control per changed behavioral surface with a test turns that surface's test red once, or carries the statement [code-quality § Tests](../../code-quality/SKILL.md#tests) takes in its place where no production edit reddens the test. A workflow sentence has no test and adds no control. A production gate or guard change keeps the per-rule control that [code-quality § Prove Your Guards](../../code-quality/SKILL.md#prove-your-guards) requires inside this item.
 - The command that `.agents/skills/orch/scripts/orch-env DEV_VALIDATE_CMD ""` prints passes once against the round's final worktree contents. An empty value is a validation failure named `DEV_VALIDATE_CMD`, with the note `DEV_VALIDATE_CMD is empty; set it in kendex.settings.toml [env] to the project's full test, lint and typecheck command`. Run nothing in its place.
 - After the dev agent returns its local result, the orchestrator gets green CI and a passing review gate. The dev agent does not claim or reproduce these downstream results.
 
@@ -201,7 +201,7 @@ git -C [WORKTREE_PATH] commit -m "[PREFIX]([ISSUE_ID]): [DESCRIPTION]"
 git -C [WORKTREE_PATH] log -1 --oneline
 ```
 
-Use the CURRENT sub-issue ID when bundled, not the parent's. Never stage lock files the project gitignores — stage specific files by name. Append `[validate: FAILING_CHECK]` when validation failures remain.
+Use the CURRENT sub-issue ID when bundled, not the parent's. Never stage lock files the project gitignores — stage specific files by name. When validation failures remain, add `[validate: FAILING_CHECK]` to the body as a second `-m`, never to the header.
 
 ---
 
