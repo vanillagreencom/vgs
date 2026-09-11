@@ -100,6 +100,7 @@ def test_stub_template_and_foreign_files():
             assert "codex" in refreshed["written"], refreshed
             removed = mise.mise_remove_stubs()
             assert "codex" in removed["removed"] and "claude" in removed["kept"], removed
+            assert "cursor-agent" in removed["removed"], f"an exec entry mise does not hold keeps no launcher: {removed}"
             assert foreign.exists(), "remove-stubs must keep foreign files"
             assert mise.mise_stubs_opted_out(), "remove-stubs must record the opt-out"
             assert_equal(mise.mise_refresh([])["optedOut"], True, "refresh must respect the opt-out")
@@ -1257,7 +1258,8 @@ def test_every_launcher_is_settled_before_its_option_is_recorded():
                      "remove-stubs", (1, [ls], ["mise ERROR nope"], ["cursor-agent"], "current", "absent")),
                     ("another copy ahead of the install", lambda: (refused.clear(), launcher.unlink(), recorded.add("cursor-agent"),
                                                                     (home / "spare").rename(other / "cursor-agent")),
-                     "refresh", (1, [ls], ["mise-export-shadow", "mise-launcher-held"], None, "shadowed", "absent"))):
+                     "refresh", (held := (1, [ls], ["mise-export-shadow", "mise-launcher-held"], None, "shadowed", "absent"))),
+                    ("a copy behind it", lambda: (other / "cursor-agent").rename(distro / "cursor-agent"), "refresh", held)):
                 prepare()
                 ran.clear()
                 with contextlib.redirect_stdout(io.StringIO()) as out:
@@ -1267,7 +1269,7 @@ def test_every_launcher_is_settled_before_its_option_is_recorded():
                 assert_equal((code, ran, keys, result.get("routes"), state(launcher, "cursor"), state(plain, "plain")),
                              want, label)
                 assert_equal((result["ok"], "cursor-agent" in result.get("removed", [])), (code == 0, False), label)
-            assert f"mise-launcher-held: cursor {other / 'cursor-agent'}\n" in result["error"], result["error"]
+            assert f"mise-launcher-held: cursor {distro / 'cursor-agent'}\n" in result["error"], result["error"]
 
 
 def test_catalog_entries_cover_the_tools_section():

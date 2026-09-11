@@ -447,11 +447,11 @@ def mise_settle(entry: Dict[str, Any], installed: bool) -> Tuple[str, str]:
     of the re-declaration (D016). A stub VGS wrote is rewritten from the current
     template, auto-install on or off, and a missing one is written while it is
     on. An installed entry with an `exec` path runs from a shell only through
-    its launcher, so that one is written whatever the setting, unless another
-    copy of the command answers, which it would hide; the install's own files
-    and its shims are no other copy. Only behind a launcher just written is the
-    entry's spec re-declared: mise records a spec's options once, so an option
-    the catalog changed reaches an earlier install no other way."""
+    its launcher, so a missing one is written whatever the setting, unless
+    another copy of the command answers, which it would hide; the install's own
+    files and its shims are no other copy. Only behind a launcher just written
+    is the entry's spec re-declared: mise records a spec's options once, so an
+    option the catalog changed reaches an earlier install no other way."""
     stub = stub_fields(entry)
     route = installed and bool(stub["exec_path"])
     if mise_stubs_opted_out() and not route and mise_stub_state(RT.home() / ".local" / "bin" / stub["command"]) != "ours":
