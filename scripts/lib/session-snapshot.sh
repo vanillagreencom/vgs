@@ -21,12 +21,18 @@ for entry in sorted(report.get("instances", []), key=lambda item: item["pid"]):
     print(entry["pid"], entry["configPath"])'
 }
 
+# Status 0 when the live session is a Hyprland session hyprctl can address, and 2 when it
+# is not one: no HYPRLAND_INSTANCE_SIGNATURE names it, or there is no hyprctl to reach it.
+vgs_hyprland_session() {
+  [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]] || return 2
+  command -v hyprctl >/dev/null 2>&1 || return 2
+}
+
 # Print monitor and namespace per Hyprland layer surface, retaining duplicates.
 # Niri has no equivalent layer listing; its safety check uses process instances only.
 vgs_snapshot_layers() {
   local layers
-  [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]] || return 2
-  command -v hyprctl >/dev/null 2>&1 || return 2
+  vgs_hyprland_session || return 2
   layers="$(hyprctl layers -j 2>/dev/null)" || return 1
   [[ -n "$layers" ]] || return 1
   printf '%s' "$layers" | python3 -c 'import json,sys

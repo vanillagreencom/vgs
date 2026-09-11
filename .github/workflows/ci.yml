@@ -252,8 +252,12 @@ jobs:
           scripts/test-validation-inventory.sh
           # test-validation-readers.sh runs in its own final step; see that step.
 
+      # The helper checks run the preview staging Lua and parse generated Lua, so
+      # they fail without lua and luac. lua5.4 installs both under those names.
       - name: Helper and CLI checks
         run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends lua5.4
           python3 -m pip install --user --break-system-packages Pillow
           scripts/check-vshell-helper.py
           scripts/check-keybinds-display.py
