@@ -316,10 +316,8 @@ case_window_border_samples() {
   ok "only a pixel past the edge that differs from the edge and follows the border colour passes"
 }
 
-# Drive keep_host_rendering against a stub live-session hyprctl that logs every call. Its
-# window list names the sandbox's window (listed), omits it (absent) or fails the way a
-# stale session socket does (failing); dispatch answers with the given reply. An empty
-# signature is a live session that is not Hyprland.
+# Drive keep_host_rendering against a stub live-session hyprctl that logs every call: its
+# window list is listed, absent or failing, and an empty signature is not Hyprland.
 host_render() {
   local signature="$1" clients="$2" reply="$3" stub="$tmp/hostbin"
   mkdir -p "$stub"
@@ -355,9 +353,7 @@ HOST_PROP='hl.dsp.window.set_prop({ prop = "render_unfocused", value = "1", wind
 HOST_TAG='hl.dsp.window.tag({ tag = "vshell-smoke", window = "pid:4242" })'
 
 # label; signature; window list; dispatch reply; expected status; calls in order joined by |,
-# or "polled" for more than one window query and nothing else; a value the notice must
-# carry, or - for no notice. Hyprland enrols a window with its render-unfocused timer only
-# when a later change such as the tag re-evaluates its rules, so the prop has to go first.
+# or "polled" for repeated window queries only; a value the notice must carry, or - for none.
 HOST_RENDERS="an accepted prop is followed by the tag that enrols it;stub;listed;ok;0;clients -j|dispatch $HOST_PROP|dispatch $HOST_TAG;-
 a refused prop stops the requests and is reported;stub;listed;error: no such prop;1;clients -j|dispatch $HOST_PROP;'error: no such prop'
 a failed window query stops at once with hyprctl's reply;stub;failing;ok;1;clients -j;(exit 4): Couldn't connect to /run/user/1000/hypr/stale/.socket.sock. (4)

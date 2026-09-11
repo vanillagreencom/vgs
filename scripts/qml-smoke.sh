@@ -1126,13 +1126,13 @@ override_state_settles() {
 # expanding a stale buffer over the area an interactive resize has already exposed repeats
 # that pixel across it, so an accent border sitting there floods the window mid-drag.
 # Samples run from the window edge inward — edge, border, interior — plus the pixel just
-# outside it, where a compositor border lands, read twice: near as the compositor draws it
-# and far once the compositor has recoloured that window's border.
+# outside it, where a compositor border lands, read as drawn (near) and again once the
+# compositor has recoloured that border (far).
 # A client border must sit inside the edge (3); on the edge it floods a resize (1). With the
-# compositor drawing the border, a row that crosses no content background is one flat
-# surface out to the client's own edge, and the near pixel has to follow the border's colour
-# (near differs from far) as well as differ from the edge (0): a wallpaper, a shadow or a
-# neighbouring window keeps its colour. Anything else is no border at all (2).
+# compositor drawing the border a row clear of content is one flat surface to its edge, so
+# the near outside pixel has to differ from the far one as well as from the edge (0) —
+# against the edge alone any wallpaper, gap or neighbouring window passes. Anything else is
+# no border at all (2).
 window_border_is_inset() {
   local edge="$1" border="$2" interior="$3" near="${4:-}" far="${5:-}"
   if [[ "$border" != "$interior" ]]; then
@@ -1147,15 +1147,10 @@ window_border_is_inset() {
 # rather than only the coordinates that could not be read.
 pixel_error_log=""
 
-# The nested output renders only on the frame callbacks its host window gets, and the live
-# session sends those only while a monitor shows that window. A scratchpad rule, a workspace
-# switch or an inactive group tab hides it and leaves grim no frame to sample, so ask the
-# live session to keep rendering this run's window while it is hidden. The prop and the tag
-# live on that one window, selected by the compositor's PID, and end with it: the live
-# session keeps no rule. Hyprland enrols a window with its render-unfocused timer only when
-# it re-evaluates that window's rules, which set_prop does not do and a tag change does, so
-# the tag comes second. A refusal is a notice, not a verdict: a window a monitor shows still
-# renders, and a sample that gets no frame is NOT MEASURED.
+# Ask the live session to keep rendering this run's host window while no monitor shows it:
+# the nested output renders only on that window's frame callbacks. Both requests live on that
+# one window and end with it. The tag comes second: only a rule re-evaluation, which set_prop
+# skips, enrols the window with Hyprland's render-unfocused timer.
 keep_host_rendering() {
   local pid="$1" clients rc request reply listed=false
   local gap="the sandbox renders only while the live session shows its window"
@@ -1163,8 +1158,7 @@ keep_host_rendering() {
     note "$gap: the live session is not a Hyprland session hyprctl can reach (no HYPRLAND_INSTANCE_SIGNATURE, or no hyprctl)"
     return 1
   fi
-  # The window maps shortly after the compositor's socket appears, so an answered list
-  # without it is a wait; a list hyprctl could not give is its own cause.
+  # The window maps after the compositor's socket appears: an answered list without it is a wait.
   for _ in $(seq 1 50); do
     rc=0
     clients="$(hyprctl clients -j 2>&1)" || rc=$?
@@ -1195,10 +1189,9 @@ keep_host_rendering() {
 
 # Read one pixel of the sandbox output as lowercase hex. grim writes binary PPM, whose
 # header is four whitespace-separated ASCII fields ahead of the RGB bytes.
-# The deadline is not optional: grim waits for the nested output's next frame, which never
-# comes while the host window gets no frame callbacks (see keep_host_rendering), and would
-# otherwise block the border check with no verdict — the outer run timeout bounds only qs,
-# and the compositor's process group survives until cleanup.
+# The deadline is not optional: a nested compositor that stops answering would otherwise
+# block the border check with no verdict — the outer run timeout bounds only qs, and the
+# compositor's process group survives until cleanup.
 sandbox_pixel() {
   local sink="${pixel_error_log:-/dev/null}"
   # Name the sample the log belongs to: the caller takes several and reports the window's
@@ -1230,10 +1223,8 @@ print(data[i + 1:i + 4].hex())
 ' 2>>"$sink"
 }
 
-# Recolour one sandbox window's compositor border, by address, so the pixel it occupies can
-# be read in a colour nothing else past the window edge has. A refusal lands where
-# sandbox_pixel parks grim's stderr, so the record that follows names the compositor's
-# reply. The colour lives on that window and ends when it closes.
+# Recolour one sandbox window's compositor border to a colour nothing else past its edge has.
+# A refusal goes where sandbox_pixel logs grim's errors, so the NOT MEASURED record names it.
 sandbox_recolour_border() {
   local address="$1" prop request reply
   for prop in active_border_color inactive_border_color; do
@@ -1246,21 +1237,16 @@ sandbox_recolour_border() {
   done
 }
 
-# Sample the Settings window's right edge in the sandbox. The verdict needs a row that
-# crosses no content background, and under compositor chrome VgsSurfaceChrome holds content
-# one pixel off the window edge. The sidebar holds the left side and paints its own colour
-# from that pixel in, so there the outermost pixel is the window surface and the next one is
-# the sidebar whatever the border does. The content pane holds the right side and leaves the
-# surface showing: its reading-pane tint needs the glass effect, which the seeded defaults
-# leave off, and the sandbox's built-in English lays the window out left to right.
-# Samples that cannot be obtained are not evidence about where the border sits, so they
-# leave the border NOT MEASURED rather than failed: the nested output renders only on its
-# host window's frame callbacks, which keep_host_rendering asks for but a live session can
-# refuse. A frame that IS obtained is judged in full.
-# A drawn border is the one thing past the edge that follows the border colour. A wallpaper
-# differs from itself a pixel or two on and the drop shadow darkens whatever it lies over, so
-# a sample further out cannot stand in for what the border covers; the near pixel is read
-# again with the border recoloured instead.
+# Sample the Settings window's right edge in the sandbox. Samples that cannot be obtained
+# are not evidence about where the border sits, so they leave the border NOT MEASURED
+# rather than failed: the nested output only renders while its host window is presented,
+# which keep_host_rendering asks for and a live session can refuse. A frame that IS
+# obtained is judged in full.
+# The row must cross no content background. The sidebar paints from the pixel inside the
+# left edge; on the right the content pane leaves the window surface showing, as the seeded
+# defaults leave off the glass its tint needs and the sandbox lays out left to right.
+# Only a drawn border follows the border colour, not a wallpaper or the drop shadow past the
+# edge, so the near pixel is read again with the border recoloured.
 # The sandbox always runs the Lua config manager, so the compositor is what draws the VGS
 # window border here. A client-drawn border is a real finding — the window rule did not
 # reach this window — and is failed rather than accepted as the other valid arm.
@@ -1472,10 +1458,7 @@ EOF
     nested_unavailable "nested compositor did not come up"
     return
   fi
-  local host_rendered=false
-  if keep_host_rendering "$compositor_pgid"; then
-    host_rendered=true
-  fi
+  keep_host_rendering "$compositor_pgid" || true
 
   note "running the shell inside the sandbox (timeout ${nested_timeout}s)"
   local nested_signature="" nested_control
@@ -1589,23 +1572,16 @@ EOF
       # Settings loads its selected tab asynchronously. The log scan below checks its components.
       sleep 2
       if [[ -n "${VSHELL_SMOKE_ARTIFACT_DIR:-}" ]]; then
-        # The capture needs a frame from the sandbox. Once keep_host_rendering has the live
-        # session rendering its window while hidden, the frame comes without the user's
-        # focus; only a session that refused it gets the window focused and focus handed back.
-        local capture_focus=""
-        if [[ "$host_rendered" != true ]]; then
-          capture_focus="$(hyprctl activewindow -j | jq -er '.address | select(test("^0x[0-9a-f]+$"))')" || { fail "could not save focus for display capture"; return; }
-          hyprctl dispatch "hl.dsp.focus({ window = \"pid:$compositor_pgid\" })" >/dev/null || { fail "could not show the sandbox for display capture"; return; }
-          sleep 5
-        fi
+        local capture_focus
+        capture_focus="$(hyprctl activewindow -j | jq -er '.address | select(test("^0x[0-9a-f]+$"))')" || { fail "could not save focus for display capture"; return; }
+        hyprctl dispatch "hl.dsp.focus({ window = \"pid:$compositor_pgid\" })" >/dev/null || { fail "could not show the sandbox for display capture"; return; }
+        sleep 5
         if ! mkdir -p -- "$VSHELL_SMOKE_ARTIFACT_DIR" || ! "${sandbox_env[@]}" WAYLAND_DISPLAY="$nested_socket" timeout 5 grim "$VSHELL_SMOKE_ARTIFACT_DIR/displays.png"; then
           fail "could not capture the Displays settings page"
         fi
-        if [[ -n "$capture_focus" ]]; then
-          hyprctl dispatch "hl.dsp.focus({ window = \"address:$capture_focus\" })" >/dev/null || fail "could not restore focus after display capture"
-        fi
+        hyprctl dispatch "hl.dsp.focus({ window = \"address:$capture_focus\" })" >/dev/null || fail "could not restore focus after display capture"
       fi
-      # After the capture: the border check recolours the Settings window's border.
+      # After the capture, which would otherwise show the recoloured border.
       settings_border_check || true
       display_reply="$(sandbox_ipc outputs current)" ||
         display_reply="the outputs IPC call failed"

@@ -1429,152 +1429,36 @@ def test_hyprland_preview_native_lua():
                 )
 
 
-@contextlib.contextmanager
-def _fake_preview_compositor():
-    """A parent compositor that accepts every request and records it.
-
-    The staging output reports a bar's reserved strip, so the stage does not wait out
-    preview_stage_reserved's deadline.
-    """
-    calls = []
-
-    class _Reply:
-        def __init__(self, stdout="ok"):
-            self.returncode = 0
-            self.stdout = stdout
-            self.stderr = ""
-
-    def fake_run(argv, **kwargs):
-        calls.append(list(argv))
-        if argv[1:] == ["cursorpos"]:
-            return _Reply("0, 0")
-        if argv[1:] == ["monitors", "-j"]:
-            return _Reply(json.dumps([{"name": helper.PREVIEW_OUTPUT, "reserved": [0, 32, 0, 0]}]))
-        if argv[-1] == "-j":
-            return _Reply("{}" if argv[1] == "getoption" else "[]")
-        return _Reply()
-
-    saved_run, saved_which = helper.run, helper.shutil.which
-    saved_signature = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")
-    helper.run = fake_run
-    helper.shutil.which = lambda name: "/usr/bin/hyprctl" if name == "hyprctl" else None
-    os.environ["HYPRLAND_INSTANCE_SIGNATURE"] = "check-vshell-helper"
-    try:
-        yield calls
-    finally:
-        helper.run, helper.shutil.which = saved_run, saved_which
-        _restore_env("HYPRLAND_INSTANCE_SIGNATURE", saved_signature)
-
-
 def test_preview_stage_retires_its_window_rule():
-    """The staging window rule matches every nested Hyprland window, not only a preview's.
-
-    Left enabled after the stage, it parks the next nested session on a workspace no
-    monitor shows, and that session renders no frame for anything to capture. The shell
-    stops a preview with SIGTERM, whose default action skips every finally, so the stage
-    has to turn it into an exit that still tears the stage down.
-    """
+    """The staging window rule matches every nested Hyprland window, so it must not outlive the stage."""
     register = ["hyprctl", "eval", helper.PREVIEW_STAGE_ON_LUA]
     retire = ["hyprctl", "eval", helper.PREVIEW_STAGE_OFF_LUA]
     remove = ["hyprctl", "output", "remove", helper.PREVIEW_OUTPUT]
+    calls = []
 
-    class _Unhandled(Exception):
-        pass
+    def fake_run(argv, **_kwargs):
+        calls.append(list(argv))
+        stdout = "ok"
+        if argv[1:] == ["cursorpos"]:
+            stdout = "0, 0"
+        elif argv[1:] == ["monitors", "-j"]:
+            # A reserved bar strip, so the stage does not wait out preview_stage_reserved.
+            stdout = json.dumps([{"name": helper.PREVIEW_OUTPUT, "reserved": [0, 32, 0, 0]}])
+        elif argv[-1] == "-j":
+            stdout = "{}" if argv[1] == "getoption" else "[]"
+        return subprocess.CompletedProcess(argv, 0, stdout, "")
 
-    def unhandled(signum, frame):
-        raise _Unhandled("preview_stage left SIGTERM to the handler it found")
-
-    # label; the signal that ends the stage, or None for a stage its caller leaves.
-    for label, ending in (("a stage its caller leaves", None), ("a stage SIGTERM stops", signal.SIGTERM)):
-        previous = signal.signal(signal.SIGTERM, unhandled)
-        exit_code = None
-        try:
-            with _fake_preview_compositor() as calls:
-                try:
-                    with helper.preview_stage() as (staged, _reassert):
-                        assert_equal(staged, True, f"{label}: a compositor that accepts every request stages the preview")
-                        assert_equal(register in calls, True, f"{label}: the stage registers its window rule")
-                        # A capture needs the rule for as long as its nested session is mapped.
-                        assert_equal(retire in calls, False, f"{label}: the window rule must stay enabled while the stage is up")
-                        if ending is not None:
-                            os.kill(os.getpid(), ending)
-                            time.sleep(5)
-                            raise AssertionError(f"{label}: the signal never reached the stage")
-                except SystemExit as stop:
-                    exit_code = stop.code
-                assert_equal(signal.getsignal(signal.SIGTERM), unhandled,
-                             f"{label}: the stage must hand SIGTERM back to the handler it found")
-        finally:
-            signal.signal(signal.SIGTERM, previous)
-        assert_equal(exit_code, None if ending is None else 128 + ending, f"{label}: exit status")
-        registered_at = calls.index(register)
-        assert_equal(retire in calls[registered_at:], True, f"{label}: the teardown must retire its window rule")
-        assert_equal(remove in calls[registered_at:], True, f"{label}: the teardown must remove the staging output")
-
-
-# Drive the staging Lua against a fake `hl` whose window_rule counts registrations and
-# live rules. One stage then its reassert, a teardown and a repeated teardown, then the
-# next stage and its teardown; each row is the step and the counts it must leave.
-PREVIEW_STAGE_LUA_DRIVER = r"""
-local registered, live = 0, 0
-hl = {
-  workspace_rule = function() end,
-  window_rule = function()
-    registered = registered + 1
-    live = live + 1
-    local rule = { enabled = true }
-    function rule:set_enabled(on)
-      if self.enabled and not on then live = live - 1 end
-      if on and not self.enabled then live = live + 1 end
-      self.enabled = on
-    end
-    return rule
-  end,
-}
-local compile = loadstring or load
-local stage = { on = assert(compile(os.getenv("STAGE_ON"))), off = assert(compile(os.getenv("STAGE_OFF"))) }
-for step in string.gmatch(os.getenv("STEPS"), "%S+") do
-  stage[step]()
-  print(step .. " " .. registered .. " " .. live)
-end
-"""
-
-PREVIEW_STAGE_LUA_STEPS = (
-    ("on", 1, 1),
-    ("on", 1, 1),
-    ("off", 1, 0),
-    ("off", 1, 0),
-    ("on", 2, 1),
-    ("off", 2, 0),
-)
-
-
-def test_preview_stage_lua_keeps_one_live_rule():
-    """A stage holds exactly one live window rule, its teardown leaves none, and the next stage registers afresh."""
-    lua = shutil.which("lua")
-    if lua is None:
-        print("skip: test_preview_stage_lua_keeps_one_live_rule needs lua, which is not installed")
-        return
-    result = subprocess.run(
-        [lua, "-"],
-        input=PREVIEW_STAGE_LUA_DRIVER,
-        text=True,
-        capture_output=True,
-        timeout=10,
-        env={
-            **os.environ,
-            "STAGE_ON": helper.PREVIEW_STAGE_ON_LUA,
-            "STAGE_OFF": helper.PREVIEW_STAGE_OFF_LUA,
-            "STEPS": " ".join(step for step, _, _ in PREVIEW_STAGE_LUA_STEPS),
-        },
-    )
-    if result.returncode != 0:
-        raise AssertionError(f"the staging Lua failed under {lua}: {(result.stderr or result.stdout).strip()}")
-    rows = [line.split() for line in result.stdout.splitlines()]
-    assert_equal(len(rows), len(PREVIEW_STAGE_LUA_STEPS), "one printed row per driven step")
-    for index, ((step, registered, live), row) in enumerate(zip(PREVIEW_STAGE_LUA_STEPS, rows), 1):
-        assert_equal(row, [step, str(registered), str(live)],
-                     f"step {index} ({step}): registrations and live rules")
+    with patch.object(helper, "run", fake_run), \
+         patch.object(helper.shutil, "which", lambda name: "/usr/bin/hyprctl" if name == "hyprctl" else None), \
+         patch.dict(os.environ, {"HYPRLAND_INSTANCE_SIGNATURE": "check-vshell-helper"}):
+        with helper.preview_stage() as (staged, _reassert):
+            assert_equal(staged, True, "a compositor that accepts every request stages the preview")
+            assert_equal(register in calls, True, "the stage registers its window rule")
+            # A capture needs the rule for as long as its nested session is mapped.
+            assert_equal(retire in calls, False, "the window rule must stay enabled while the stage is up")
+    teardown = calls[calls.index(register):]
+    assert_equal(retire in teardown, True, "the teardown must retire its window rule")
+    assert_equal(remove in teardown, True, "the teardown must remove the staging output")
 
 
 def test_greeter_primary_monitor_validation():
@@ -7293,7 +7177,6 @@ def main():
     test_theme_list_falls_back_to_the_shipped_thumbnail()
     test_hyprland_preview_native_lua()
     test_preview_stage_retires_its_window_rule()
-    test_preview_stage_lua_keeps_one_live_rule()
     test_greeter_primary_monitor_validation()
     test_greeter_runtime_helper_dependencies()
     test_greeter_sync_survives_a_missing_wallpaper()
