@@ -1414,19 +1414,30 @@ def test_hyprland_preview_native_lua():
         for legacy in ("exec-once =", "misc {", "monitor="):
             if legacy in rendered:
                 raise AssertionError(f"Hyprland preview config retained legacy syntax {legacy!r}")
-        if shutil.which("Hyprland"):
-            verified = subprocess.run(
-                ["Hyprland", "--verify-config", "--config", str(config)],
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                timeout=10,
-            )
-            if verified.returncode != 0:
-                raise AssertionError(
-                    "Hyprland rejected generated preview Lua: "
-                    + (verified.stderr or verified.stdout).strip()
-                )
+        verify_hyprland_config(config, "preview")
+
+
+def verify_hyprland_config(config: Path, what: str) -> None:
+    """Hyprland's own Lua config manager must accept a generated config."""
+    hyprland = shutil.which("Hyprland")
+    if hyprland is None:
+        raise AssertionError(f"Hyprland not installed: the generated {what} Lua cannot be verified")
+    # --verify-config aborts without a runtime directory. A private one keeps
+    # the check off the live session's and makes it independent of the runner.
+    with tempfile.TemporaryDirectory() as runtime:
+        verified = subprocess.run(
+            [hyprland, "--verify-config", "--config", str(config)],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=10,
+            env={**os.environ, "XDG_RUNTIME_DIR": runtime},
+        )
+    if verified.returncode != 0:
+        raise AssertionError(
+            f"Hyprland rejected generated {what} Lua: "
+            + (verified.stderr or verified.stdout).strip()
+        )
 
 
 def test_preview_stage_retires_its_window_rule():
@@ -1535,21 +1546,9 @@ def test_greeter_primary_monitor_validation():
         for legacy in ("exec-once =", "misc {", "env = "):
             if legacy in rendered:
                 raise AssertionError(f"Hyprland greeter config retained legacy syntax {legacy!r}")
-        if shutil.which("Hyprland"):
-            config = cache / "greeter.lua"
-            config.write_text(rendered)
-            verified = subprocess.run(
-                ["Hyprland", "--verify-config", "--config", str(config)],
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                timeout=10,
-            )
-            if verified.returncode != 0:
-                raise AssertionError(
-                    "Hyprland rejected generated greeter Lua: "
-                    + (verified.stderr or verified.stdout).strip()
-                )
+        config = cache / "greeter.lua"
+        config.write_text(rendered)
+        verify_hyprland_config(config, "greeter")
 
         (cache / "settings.json").write_text(json.dumps({
             "greeterPrimaryMonitor": "DP-1\nexec-once = unsafe",
