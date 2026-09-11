@@ -1772,12 +1772,7 @@ def _catalog_clear_stale() -> None:
 
 
 def current_theme_name() -> str:
-    """The applied theme's name, read-only.
-
-    `current_theme()` applies the default theme (writing files, running
-    hooks) when no theme state exists yet, which a read for a safety check must
-    never trigger.
-    """
+    """The applied theme's name, or "" when no theme is applied yet."""
     theme_file = cfg_dir() / "theme.json"
     if not theme_file.is_file():
         return ""
@@ -2414,8 +2409,9 @@ def _sandboxed_home() -> bool:
 
     The nested smoke sandbox runs a full shell on a temporary home carrying its own default
     theme. Its theme hooks reach running apps through /proc and through runtime paths that
-    name the real uid, so without this they restyle the login session's terminals, editors
-    and monitors from a test's palette.
+    name the real uid, and desktop settings through the session bus, so without this they
+    restyle the login session's terminals, editors, monitors and GTK apps from a test's
+    palette.
 
     Identity, not containment: that sandbox builds its home with a mktemp that honours
     $TMPDIR, so a sandbox home sits wherever $TMPDIR points, the login home included. A
@@ -3324,6 +3320,10 @@ def ensure_bundled_icon_themes() -> List[str]:
 
 
 def apply_icon_theme_hook(roles: Dict[str, str]) -> Dict[str, Any]:
+    # The gsettings write below lands in the login user's dconf database over the
+    # session bus, whatever $HOME says.
+    if _sandboxed_home():
+        return {"hook": "icon-theme", "ok": True, "skipped": True, "reason": SANDBOX_REFUSAL}
     ensure_bundled_icon_themes()
     pointer = generated_dir() / "icons.theme"
     if not pointer.exists():
@@ -3543,6 +3543,10 @@ def _quit_windowless_nautilus() -> Dict[str, Any]:
 
 
 def apply_gtk_settings_hook(roles: Dict[str, str]) -> Dict[str, Any]:
+    # gsettings writes travel over the session bus to the login user's dconf
+    # database whatever $HOME says, and Nautilus answers on the same bus.
+    if _sandboxed_home():
+        return {"hook": "gtk-settings", "ok": True, "skipped": True, "reason": SANDBOX_REFUSAL}
     mode = (roles.get("theme_type") or "dark").lower()
     color_scheme = "prefer-light" if mode == "light" else "prefer-dark"
     gtk_theme = "adw-gtk3" if mode == "light" else "adw-gtk3-dark"
@@ -5230,13 +5234,22 @@ def cmd_theme_preview_capture(args: argparse.Namespace) -> int:
     return 0
 
 
+def default_theme_blueprint() -> Dict[str, Any]:
+    return find_theme(DEFAULT_THEME_NAME) or {"name": DEFAULT_THEME_NAME, "palette": {"colors": DEFAULT_COLORS, "mode": "dark", "extendedColors": {}}}
+
+
 def current_theme() -> Dict[str, Any]:
+    """The applied theme's shell state, read-only.
+
+    With no theme.json yet this answers with the shell state an apply of the default
+    theme would write, and writes nothing. Applying that theme is `theme init`, an
+    explicit step: its hooks write session-wide settings that a process on a throwaway
+    HOME still reaches.
+    """
     theme_file = cfg_dir() / "theme.json"
     if theme_file.exists():
         return json.loads(theme_file.read_text())
-    bp = find_theme(DEFAULT_THEME_NAME) or {"name": DEFAULT_THEME_NAME, "palette": {"colors": DEFAULT_COLORS, "mode": "dark", "extendedColors": {}}}
-    apply_theme_obj(bp)
-    return json.loads(theme_file.read_text())
+    return json.loads(render_target_template("vgs-shell", "vgs-theme.json", target_roles(default_theme_blueprint())))
 
 
 def blueprint_from_theme_json(theme: Dict[str, Any], name: str | None = None, mode: str | None = None, wallpaper: str | None = None) -> Dict[str, Any]:
@@ -7591,6 +7604,7 @@ def cmd_capture(argv: List[str]) -> int:
 
 
 _THEME_MUTATING_COMMANDS = {
+    "init",
     "apply",
     "apply-blueprint",
     "apply-colors",
@@ -7806,6 +7820,8 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
     p_cat_remove.add_argument("--json", action="store_true")
     p_icons = sub.add_parser("icons", help="list installed icon themes and the current theme's icon set")
     p_icons.add_argument("--json", action="store_true")
+    p_init = sub.add_parser("init", help="apply the default theme when no theme is applied yet")
+    p_init.add_argument("--json", action="store_true")
     p_recolor = sub.add_parser("app-curated-recolor", help="recolor a curated app file (replace all uses of a hex)")
     p_recolor.add_argument("app")
     p_recolor.add_argument("--set", dest="edits", action="append", default=[], metavar="OLDHEX=NEWHEX")
@@ -7813,6 +7829,16 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
     p_recolor.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
+    if args.cmd == "init":
+        applied = not (cfg_dir() / "theme.json").exists()
+        if applied:
+            apply_theme_obj(default_theme_blueprint())
+        name = str(current_theme().get("name") or "")
+        if args.json:
+            print(json.dumps({"applied": applied, "name": name}, indent=2))
+        else:
+            print(name)
+        return 0
     if args.cmd == "current":
         data = current_theme()
         if args.json:

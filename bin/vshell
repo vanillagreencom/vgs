@@ -405,7 +405,7 @@ Usage:
   vshell instances list [--json]
   vshell instances guard --pid <pid> [--shell-id <id>]
   vshell restart|status|logs
-  vshell theme current|list|apply|import-colors|extract-wallpaper|set-wallpaper
+  vshell theme init|current|list|apply|import-colors|extract-wallpaper|set-wallpaper
   vshell theme apply-colors [--set role=#hex ...] [--persist] [--name <theme>]
   vshell theme restyle [--brightness/--vibrancy/--contrast/--hue/--temperature N|--reset]
   vshell theme revert <name>

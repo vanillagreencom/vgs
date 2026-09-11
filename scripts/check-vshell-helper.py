@@ -23,6 +23,7 @@ import sys
 import tarfile
 import tempfile
 import time
+import traceback
 from unittest.mock import patch
 from pathlib import Path
 
@@ -44,6 +45,31 @@ helper = load_helper()
 
 # Record HOME so main() can identify a leaked temporary home before the Niri subprocess.
 _HOME_AT_IMPORT = os.environ.get("HOME")
+
+# gsettings writes this process refused, as (test, argv). A temporary HOME does not
+# isolate them: they travel over the session bus to the dconf service, which writes the
+# login user's database. A child process the suite starts is not covered.
+_GSETTINGS_WRITES = []
+_GSETTINGS_WRITE_VERBS = {"set", "reset", "reset-recursively"}
+
+
+class _RefuseGsettingsWrites(subprocess.Popen):
+    def __init__(self, args, *rest, **kwargs):
+        if isinstance(args, str):
+            argv = args.split()
+        elif isinstance(args, (bytes, os.PathLike)):
+            argv = [os.fsdecode(args)]
+        else:
+            argv = [os.fsdecode(arg) for arg in args]
+        if len(argv) > 1 and Path(argv[0]).name == "gsettings" and argv[1] in _GSETTINGS_WRITE_VERBS:
+            test = next((frame.name for frame in reversed(traceback.extract_stack())
+                         if frame.name.startswith("test_")), "(outside a test)")
+            _GSETTINGS_WRITES.append((test, argv))
+            raise PermissionError(f"gsettings-write-refused: {test}")
+        super().__init__(args, *rest, **kwargs)
+
+
+subprocess.Popen = _RefuseGsettingsWrites
 
 
 def assert_equal(actual, expected, message):
@@ -1072,11 +1098,13 @@ def test_theme_hooks_stay_out_of_the_login_session():
                 # than only where it scans: ghostty falls through to a session-bus reload
                 # with no pid to signal, hypr-reload picks the newest live compositor
                 # instance, and shell-reload finds the running shell through the real
-                # uid's runtime directory. None of the three passes through a scan.
+                # uid's runtime directory. gtk-settings and icon-theme write the login
+                # user's dconf database over the session bus. None passes through a scan.
                 trip = AssertionError("a sandboxed hook must not run a command")
                 with patch.object(helper, "_run_hook_cmd", side_effect=trip), \
                         patch.object(helper.subprocess, "run", side_effect=trip):
-                    for hook in ("ghostty-reload", "hypr-reload", "shell-reload", "tmux-source", "nvim-reload"):
+                    for hook in ("ghostty-reload", "hypr-reload", "shell-reload", "tmux-source", "nvim-reload",
+                                 "gtk-settings", "icon-theme"):
                         skipped = helper.run_hook(hook, {"background": "#123456"})
                         assert_equal(skipped.get("skipped"), True, f"{hook} reports a skip under a sandbox HOME")
                         assert_equal(skipped.get("reason"), helper.SANDBOX_REFUSAL,
@@ -1089,6 +1117,30 @@ def test_theme_hooks_stay_out_of_the_login_session():
             with patch.object(helper.Path, method, side_effect=lambda *a, **k: iter([])) as scan:
                 call()
             assert_equal(scan.called, True, f"{label} is reached from the login user's own home")
+        # Both settings hooks reach gsettings from the login user's own home. The theme
+        # directory lookups are stubbed so the icon hook gets as far as its write.
+        written = []
+
+        def record(hook, command, **_kwargs):
+            written.append(tuple(command[:4]))
+            return {"hook": hook, "ok": True}
+
+        real_is_dir = helper.Path.is_dir
+        with tempfile.TemporaryDirectory() as generated:
+            (Path(generated) / "icons.theme").write_text("vgs-probe-icons\n")
+            with patch.object(helper, "_run_hook_cmd", side_effect=record), \
+                    patch.object(helper.shutil, "which", return_value="/usr/bin/gsettings"), \
+                    patch.object(helper, "_quit_windowless_nautilus", return_value={"ok": True}), \
+                    patch.object(helper, "ensure_bundled_icon_themes", return_value=[]), \
+                    patch.object(helper, "generated_dir", return_value=Path(generated)), \
+                    patch.object(helper, "load_settings", return_value={}), \
+                    patch.object(helper.Path, "is_dir", lambda self: self.name == "vgs-probe-icons" or real_is_dir(self)), \
+                    patch.object(helper.time, "sleep"):
+                for hook in ("gtk-settings", "icon-theme"):
+                    helper.run_hook(hook, {"theme_type": "dark"})
+        interface = ("gsettings", "set", "org.gnome.desktop.interface")
+        assert_equal(written, [interface + ("gtk-theme",), interface + ("color-scheme",), interface + ("icon-theme",)],
+                     "the settings hooks write gsettings from the login user's own home")
 
 
 def test_vshell_blur_cli_contract():
@@ -1295,6 +1347,59 @@ def test_shell_only_theme_preview():
             raise AssertionError("preview must not regenerate app targets")
 
     with_temp_home(run)
+
+
+def test_current_theme_reads_without_applying():
+    """With no theme.json, reading the current theme answers the default and applies nothing.
+
+    Applying runs hooks whose gsettings writes reach the login user's desktop over the
+    session bus even from a temporary HOME, so a read that applied would restyle the live
+    desktop from a test.
+    """
+    def scenario(temp_home: Path):
+        with patch.object(helper, "run_hook", side_effect=AssertionError("a read ran a theme hook")):
+            data = helper.current_theme()
+        assert_equal(data.get("name"), helper.DEFAULT_THEME_NAME, "no theme state reads as the default theme")
+        template = json.loads((helper.targets_dir() / "vgs-shell" / "vgs-theme.json").read_text())
+        assert_equal(sorted(data.get("colors", {})), sorted(template["colors"]),
+                     "the no-state read carries every colour role an apply writes")
+        assert_equal(sorted(p.relative_to(temp_home).as_posix() for p in temp_home.rglob("*") if not p.is_dir()), [],
+                     "a read writes no file under HOME")
+        state = temp_home / ".config" / "vshell" / "theme.json"
+        state.parent.mkdir(parents=True, exist_ok=True)
+        state.write_text('{"name": "applied", "mode": "light"}\n')
+        assert_equal(helper.current_theme(), {"name": "applied", "mode": "light"},
+                     "an applied theme reads back as written")
+
+    with_temp_home(scenario)
+
+
+def test_theme_init_applies_only_without_state():
+    """`theme init` applies the default theme when no theme.json exists, and nothing otherwise."""
+    def init():
+        hooks = []
+        buffer = io.StringIO()
+        with patch.object(helper, "run_hook", side_effect=lambda hook, roles: hooks.append(hook) or {"hook": hook, "ok": True}), \
+                contextlib.redirect_stdout(buffer):
+            status = helper.cmd_theme(["init", "--json"])
+        assert_equal(status, 0, "theme init exit status")
+        return json.loads(buffer.getvalue()), hooks
+
+    def scenario(temp_home: Path):
+        state = temp_home / ".config" / "vshell" / "theme.json"
+        result, hooks = init()
+        assert_equal(result, {"applied": True, "name": helper.DEFAULT_THEME_NAME}, "first run applies the default theme")
+        assert_equal(json.loads(state.read_text()).get("name"), helper.DEFAULT_THEME_NAME,
+                     "first run writes the default theme's state")
+        assert_equal("shell-reload" in hooks, True, "the first-run apply runs the theme hooks")
+        applied = '{"name": "applied", "mode": "light"}\n'
+        state.write_text(applied)
+        result, hooks = init()
+        assert_equal(result, {"applied": False, "name": "applied"}, "an applied theme is left in place")
+        assert_equal(state.read_text(), applied, "theme init never rewrites an applied theme")
+        assert_equal(hooks, [], "theme init runs no hook when a theme is applied")
+
+    with_temp_home(scenario)
 
 
 def test_lint_checks_color0_in_light_mode_only():
@@ -7314,6 +7419,8 @@ def main():
                      f"`theme {' '.join(catalog_argv)}` must not hold the theme lock for its whole run")
     assert_equal(helper._theme_command_mutates(["chromium-policy"]), True,
                  "Chromium policy refresh must serialize with theme applies")
+    assert_equal(helper._theme_command_mutates(["init"]), True,
+                 "the first-run apply must serialize with theme applies")
     test_system_font_normalization()
     test_tmux_theme_reaches_the_running_server()
     test_tmux_copy_mode_matches_take_theme_roles()
@@ -7334,6 +7441,8 @@ def main():
     test_vshell_blur_cli_contract()
     test_generated_theme_consumer_wiring()
     test_shell_only_theme_preview()
+    test_current_theme_reads_without_applying()
+    test_theme_init_applies_only_without_state()
     test_lint_checks_color0_in_light_mode_only()
     test_theme_list_falls_back_to_the_shipped_thumbnail()
     test_hyprland_preview_native_lua()
@@ -7458,6 +7567,11 @@ def main():
     test_scratchpad_visibility_distinguishes_hidden_from_unknown()
     test_scratchpad_hide_refuses_when_visibility_is_unknown()
     test_scratchpad_matching_windows_reports_pattern_breadth()
+    if _GSETTINGS_WRITES:
+        raise AssertionError(
+            f"gsettings-write-reached: {len(_GSETTINGS_WRITES)}\n"
+            + "\n".join(f"{test}: {' '.join(argv)}" for test, argv in _GSETTINGS_WRITES)
+        )
     subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts" / "check-vshell-niri.py")],
         check=True,
