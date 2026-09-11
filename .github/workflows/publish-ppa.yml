@@ -1,0 +1,66 @@
+name: publish-ppa
+
+# Launchpad builds the Ubuntu packages from a signed source upload of the
+# release archive, so this runs only after the release is published.
+
+on:
+  # Called by release.yml once the tag's source archive is published.
+  workflow_call:
+    inputs:
+      revision:
+        type: string
+        default: "1"
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: Ubuntu revision N in X.Y.Z-1~ubuntu26.04.N; raise it to re-upload a release
+        type: string
+        default: "1"
+      dry_run:
+        description: Build the source package without signing or uploading it
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  # Two uploads of one version race for the same Launchpad name.
+  group: publish-ppa
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    # Reads this repo and the release archive; writes only to Launchpad.
+    permissions:
+      contents: read
+    runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Install the source-package tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends devscripts dpkg-dev dput
+
+      - name: Publish the source package to the PPA
+        env:
+          PPA_SIGNING_KEY_ID: ${{ vars.PPA_SIGNING_KEY_ID }}
+          PPA_SIGNING_PRIVATE_KEY: ${{ secrets.PPA_SIGNING_PRIVATE_KEY }}
+          PPA_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.PPA_SIGNING_PRIVATE_KEY_PASSWORD }}
+          REVISION: ${{ inputs.revision || '1' }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          args=(--revision "$REVISION")
+          if [ "${DRY_RUN:-false}" = "true" ]; then
+            args+=(--dry-run)
+          elif [ -z "$PPA_SIGNING_PRIVATE_KEY" ]; then
+            # Without the imported key, signing would fall back to a runner keyring that has none.
+            echo "::error::PPA_SIGNING_PRIVATE_KEY is not set, so nothing can be signed. Add the secret, or publish by hand with scripts/publish-ppa.sh and say so in the release notes."
+            exit 1
+          fi
+          scripts/publish-ppa.sh "${args[@]}"
