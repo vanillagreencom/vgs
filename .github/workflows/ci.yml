@@ -253,9 +253,9 @@ jobs:
           # test-validation-readers.sh runs in its own final step; see that step.
 
       # The helper checks run `Hyprland --verify-config` on the generated preview
-      # and greeter Lua, so they fail without Hyprland. Ubuntu packages no
-      # Hyprland recent enough to have the Lua config manager; nixpkgs at this
-      # pinned revision carries one in its binary cache. --max-jobs 0 refuses a local build, so
+      # and greeter Lua, so they fail without Hyprland. The runner's Ubuntu LTS
+      # packages no Hyprland recent enough to have the Lua config manager;
+      # nixpkgs at this pinned revision carries one in its binary cache. --max-jobs 0 refuses a local build, so
       # a revision the cache lacks fails here in seconds rather than compiling
       # Hyprland until the job times out. The helper step runs on every diff,
       # so this install is not gated on the harness-only classification. Only
@@ -290,7 +290,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends lua5.4
           python3 -m pip install --user --break-system-packages Pillow
-          PATH="${HYPRLAND_BIN:?the Hyprland install step set no bin output}:$PATH" scripts/check-vshell-helper.py
+          : "${HYPRLAND_BIN:?the Hyprland install step set no bin output}"
+          PATH="$HYPRLAND_BIN:$PATH" scripts/check-vshell-helper.py
           scripts/check-keybinds-display.py
           scripts/check-dev-tools.py
           scripts/test-bounded-run.py
