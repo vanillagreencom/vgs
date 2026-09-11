@@ -789,6 +789,18 @@ def test_system_font_size_targets():
         with_temp_home(run_case)
 
 
+# Generated tables read as fields, so one table cannot satisfy the other's rounding assertion.
+GROUPBAR_TABLE = re.compile(r"^  group = \{\n    groupbar = \{\n(.*?)^    \},\n^  \},$", re.M | re.S)
+DECORATION_TABLE = re.compile(r"^  decoration = \{\n(.*?)^  \},$", re.M | re.S)
+
+
+def _lua_table_fields(table, script):
+    match = table.search(script)
+    if match is None:
+        raise AssertionError(f"layout script should contain the table {table.pattern!r}")
+    return {key: int(value) for key, _, value in (line.strip().rstrip(",").partition(" = ") for line in match.group(1).splitlines())}
+
+
 def test_hyprland_layout_payload():
     script, meta = helper._hyprland_layout_payload({
         "cornerRadius": 99,
@@ -825,6 +837,34 @@ def test_hyprland_layout_payload():
     })
     assert_equal(meta["radius"], 12, "the shell radius with no override present")
     assert_equal(meta["resizeOnBorder"], True, "legacy resize_on_border false should be upgraded")
+
+    # Both tab options carry the radius times the monitor scale, whole and bounded
+    # to 0 to 20; window rounding stays unscaled. Rows: scale 1 across the slider
+    # and above it, scale 2 up to and past the bound, and a fractional scale.
+    for corner_radius, scale, window, tabs in ((0, 1, 0, 0), (8, 1, 8, 8), (20, 1, 20, 20), (99, 1, 20, 20),
+                                               (0, 2, 0, 0), (8, 2, 8, 16), (15, 2, 15, 20), (7, 1.25, 7, 9)):
+        script, meta = helper._hyprland_layout_payload({"cornerRadius": corner_radius}, scale)
+        assert_equal((_lua_table_fields(GROUPBAR_TABLE, script), _lua_table_fields(DECORATION_TABLE, script), meta["groupbarRadius"]),
+                     ({"rounding": tabs, "gradient_rounding": tabs}, {"rounding": window}, tabs), f"rounding at cornerRadius {corner_radius}, scale {scale}")
+
+
+def test_hyprland_layout_apply_reads_the_highest_monitor_scale():
+    # Rows run in order on one file. The highest scale, neither first nor last here, sets the tabs;
+    # no session, after a scale-2 row, rewrites at scale 1; an unchanged file is not written or reloaded.
+    two = [{"scale": 1.0}, {"scale": 2.0}, {"scale": 1.0}]
+    def run_case(home):
+        for monitors, tabs, changed in ((two, 16, True), (two, 16, False), (None, 8, True), ([{"scale": 1.0}], 8, False)):
+            with patch.object(helper, "load_settings", return_value={"cornerRadius": 8}), \
+                    patch.object(helper, "_hyprctl_json", return_value=monitors) as ipc, \
+                    patch.object(helper, "write_file", wraps=helper.write_file) as write, \
+                    patch.object(helper, "run", return_value=subprocess.CompletedProcess([], 0, "", "")) as run, \
+                    patch.object(helper.shutil, "which", return_value="hyprctl"), patch.dict(os.environ, {"HYPRLAND_INSTANCE_SIGNATURE": "fixture"}):
+                result = helper.apply_hyprland_layout()
+            assert_equal((ipc.call_args.args, _lua_table_fields(GROUPBAR_TABLE, helper.hyprland_layout_path().read_text()),
+                          result["changed"], write.call_count, [c.args for c in run.call_args_list]),
+                         (("monitors",), {"rounding": tabs, "gradient_rounding": tabs}, changed, int(changed), [(["hyprctl", "reload"],)] * changed),
+                         f"apply with monitors {monitors!r}")
+    with_temp_home(run_case)
 
 
 # Test regex membership and matches, not substring presence in generated Lua.
@@ -7094,6 +7134,7 @@ def main():
     test_gtk_settings_merge_and_reset()
     test_apply_system_fonts_temp_home()
     test_hyprland_layout_payload()
+    test_hyprland_layout_apply_reads_the_highest_monitor_scale()
     test_hyprland_blur_script()
     test_chromium_policy_refuses_a_sandbox_home()
     test_theme_hooks_stay_out_of_the_login_session()

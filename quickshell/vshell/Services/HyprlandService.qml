@@ -90,8 +90,11 @@ Singleton {
     Connections {
         target: Hyprland
         function onRawEvent(event) {
-            if (["monitoradded", "monitorremoved", "configreloaded"].includes(event.name))
+            // layout.lua reads the monitor scales; the helper leaves an unchanged file unreloaded.
+            if (["monitoradded", "monitorremoved", "configreloaded"].includes(event.name)) {
                 outputRefreshTimer.restart();
+                root.generateLayoutConfig();
+            }
         }
     }
 

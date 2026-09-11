@@ -10025,7 +10025,7 @@ def _lua_table(fields: Dict[str, Any], indent: str = "    ") -> List[str]:
     return lines
 
 
-def _hyprland_layout_payload(settings: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+def _hyprland_layout_payload(settings: Dict[str, Any], scale: float = 1) -> Tuple[str, Dict[str, Any]]:
     shell_radius = _coerce_int(settings.get("cornerRadius", 15), 15, 0, 20)
     shell_border = _coerce_int(settings.get("surfaceBorderWidth", 1), 1, 0, 10)
     # One radius and one border thickness govern VGS surfaces and app windows together.
@@ -10064,13 +10064,21 @@ def _hyprland_layout_payload(settings: Dict[str, Any]) -> Tuple[str, Dict[str, A
         lines.append("  general = {")
         lines.extend(_lua_table(general, "    "))
         lines.append("  },")
-    # Groupbar tabs round at half the window radius: softened so grouped tabs
-    # start to round, but visibly less than the windows. Tracks the radius
-    # slider (regenerated on cornerRadius).
-    groupbar_radius = radius // 2
+    # Hyprland rounds a group tab's indicator strip from rounding and its filled
+    # tab from gradient_rounding, so both carry the value; round_only_edges,
+    # gradient_round_only_edges, gradients and the part heights stay with the
+    # user's config. Hyprland scales window rounding per monitor but not tab
+    # rounding, and takes one tab value for all monitors, so the value is the
+    # radius times the highest scale, bounded to the 0 to 20 Hyprland accepts.
+    groupbar_radius = _coerce_int(radius * scale, radius, 0, 20)
+    lines.append(f"  -- Tabs take the window radius times the highest monitor scale ({_lua_number(scale)}), up to 20: Hyprland scales window corners, not tabs.")
+    lines.append("  -- gradient_rounding changes the filled tab only where your Hyprland config turns group:groupbar:gradients on.")
+    lines.append("  -- A tab radius above half a part's height times a monitor's scale tapers its rounded ends to a point there.")
+    lines.append("  -- The filled tab is group:groupbar:height tall and the strip group:groupbar:indicator_height; both are yours to set.")
     lines.append("  group = {")
     lines.append("    groupbar = {")
     lines.append(f"      rounding = {groupbar_radius},")
+    lines.append(f"      gradient_rounding = {groupbar_radius},")
     lines.append("    },")
     lines.append("  },")
     lines.append("  decoration = {")
@@ -10096,12 +10104,17 @@ def hyprland_layout_path() -> Path:
 
 def apply_hyprland_layout() -> Dict[str, Any]:
     settings = load_settings()
-    content, meta = _hyprland_layout_payload(settings)
+    # The highest monitor scale sets the tab radius; with no session to ask, it is 1.
+    scale = max(filter(None, (_sane_monitor_scale(m.get("scale")) for m in _hyprctl_json("monitors") or [])), default=1.0)
+    content, meta = _hyprland_layout_payload(settings, scale)
     path = hyprland_layout_path()
-    write_file(path, content)
+    # Reloads regenerate this file too, so leaving it and Hyprland alone when nothing changed ends that loop.
+    changed = _read_text(path) != content.strip()
+    if changed:
+        write_file(path, content)
 
     reload_result: Dict[str, Any] = {"attempted": False}
-    if shutil.which("hyprctl") and os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+    if changed and shutil.which("hyprctl") and os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
         proc = run(["hyprctl", "reload"])
         reload_result = {
             "attempted": True,
@@ -10112,6 +10125,7 @@ def apply_hyprland_layout() -> Dict[str, Any]:
     return {
         "ok": not reload_result.get("attempted") or bool(reload_result.get("ok")),
         "path": str(path),
+        "changed": changed,
         "layout": meta,
         "reload": reload_result,
     }
@@ -13444,7 +13458,7 @@ def _lua_number(value: float) -> str:
 
 
 def _sane_monitor_scale(value: Any) -> float | None:
-    """Validate a scale before it is rendered into the greeter's Lua config.
+    """Validate a monitor scale for the greeter's Lua config and the layout.lua tab radius.
 
     `nan`/`inf` would reach the config as bare `nan`/`inf` literals and a zero or
     negative scale is not a mode Hyprland can bring up — either way the greeter
