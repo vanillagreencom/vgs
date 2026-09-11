@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Exercise the extracted smoke helpers without starting a nested compositor.
-# Six surfaces: the remedy the unavailability notice prints, the layer state the sandbox
+# Surfaces: the remedy the unavailability notice prints, the layer state the sandbox
 # measures, the geometry reply the assertion accepts, the window edge samples the border
-# check reads, and the scope the failure verdict lands in.
+# check reads, the requests that keep the hidden host window rendering, and the scope the
+# failure verdict lands in.
 # The notice helper writes advice and nothing else, so its wording is the only channel
 # a caller can read; the others assert status, measured geometry and sampled colour.
 set -euo pipefail
@@ -41,6 +42,7 @@ slice sandbox_layer_state
 slice assert_popout_geometry
 slice window_border_is_inset
 slice sandbox_ipc
+slice keep_host_rendering
 
 # Cut a one-line helper definition out of the smoke script. Same contract as slice: a helper
 # that no longer has this shape is a broken fixture, not a failed case.
@@ -316,6 +318,60 @@ case_window_border_samples() {
   ok "only a border that differs from both the edge and the background beyond it passes"
 }
 
+# Drive keep_host_rendering against a stub live-session hyprctl that lists the sandbox's
+# window and logs each request it is asked to dispatch, answering with the given reply.
+host_render() {
+  local reply="$1" stub="$tmp/hostbin"
+  mkdir -p "$stub"
+  cat >"$stub/hyprctl" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+  clients) printf '[{"pid": 4242, "class": "aquamarine"}]\n' ;;
+  dispatch) printf '%s\n' "$2" >>"$HOST_LOG"; printf '%s' "$HOST_REPLY" ;;
+  *) exit 2 ;;
+esac
+EOF
+  chmod +x "$stub/hyprctl"
+  : >"$tmp/host.log"
+  (
+    set +e
+    # shellcheck source=/dev/null
+    . "$tmp/keep_host_rendering.sh"
+    # shellcheck disable=SC2317,SC2329  # called by the sliced function, not from here
+    note() { printf 'NOTE: %s\n' "$*"; }
+    # Bash exports a function call's prefix assignments to what the function runs.
+    PATH="$stub:$PATH" HOST_LOG="$tmp/host.log" HOST_REPLY="$reply" keep_host_rendering 4242
+    printf 'rc=%s\n' "$?"
+  ) 2>&1
+}
+
+HOST_PROP='hl.dsp.window.set_prop({ prop = "render_unfocused", value = "1", window = "pid:4242" })'
+HOST_TAG='hl.dsp.window.tag({ tag = "vshell-smoke", window = "pid:4242" })'
+
+# label; live-session reply; expected status; requests dispatched, in order, joined by |.
+# Hyprland enrols a window with its render-unfocused timer only when a later change such as
+# the tag re-evaluates its rules, so the prop has to go first; a refused prop sends no tag.
+HOST_RENDERS="an accepted prop is followed by the tag that enrols it;ok;0;$HOST_PROP|$HOST_TAG
+a refused prop stops the requests and is reported;error: no such prop;1;$HOST_PROP"
+
+case_host_render_requests() {
+  local label reply want_rc want_log out log rows=0
+  while IFS=';' read -r label reply want_rc want_log; do
+    [[ -n "$label" ]] || continue
+    rows=$((rows + 1))
+    out="$(host_render "$reply")"
+    log="$(paste -sd '|' "$tmp/host.log")"
+    [[ "$out" == *"rc=$want_rc"* ]] ||
+      fail "host render requests" "$label: expected rc=$want_rc, got: $out"
+    [[ "$log" == "$want_log" ]] ||
+      fail "host render requests" "$label: expected requests '$want_log', got '$log'"
+    [[ "$want_rc" -eq 0 || "$out" == *"NOTE: "*"'$reply'"* ]] ||
+      fail "host render requests" "$label: the notice must carry the live session's reply, got: $out"
+  done <<<"$HOST_RENDERS"
+  [[ $rows -eq 2 ]] || fail "host render requests" "expected 2 table rows, drove $rows"
+  ok "the sandbox's own window gets render_unfocused, then the tag that enrols it"
+}
+
 # The run's verdict lives in a global 'status'. A check with its own local 'status' must not
 # be able to swallow a FAIL: the shipped fail() has to reach the global from inside one.
 case_fail_pierces_local_status() {
@@ -439,6 +495,7 @@ CASES=(
   case_layer_states
   case_geometry_replies
   case_window_border_samples
+  case_host_render_requests
   case_fail_pierces_local_status
   case_unmeasured_is_its_own_channel
 )

@@ -21,6 +21,7 @@
 # wtype enables Escape-key dismissal checks.
 # VSHELL_SMOKE_ARTIFACT_DIR saves a Displays screenshot.
 # Live-session snapshots check process instances and excess layer surfaces; cleanup targets only process groups this run created.
+# The live session is asked to keep rendering this run's own host window while it is hidden.
 # Never launches into the live session and never runs pkill quickshell; other Quickshell apps on the seat are legitimate.
 set -euo pipefail
 
@@ -1145,12 +1146,45 @@ window_border_is_inset() {
 # rather than only the coordinates that could not be read.
 pixel_error_log=""
 
+# The nested output renders only on the frame callbacks its host window gets, and the live
+# session sends those only while a monitor shows that window. A scratchpad rule, a workspace
+# switch or an inactive group tab hides it and leaves grim no frame to sample, so ask the
+# live session to keep rendering this run's window while it is hidden. The prop and the tag
+# live on that one window, selected by the compositor's PID, and end with it: the live
+# session keeps no rule. Hyprland enrols a window with its render-unfocused timer only when
+# it re-evaluates that window's rules, which set_prop does not do and a tag change does, so
+# the tag comes second. A refusal is a notice, not a verdict: a window a monitor shows still
+# renders, and a sample that gets no frame is NOT MEASURED.
+keep_host_rendering() {
+  local pid="$1" request reply listed=false
+  for _ in $(seq 1 50); do
+    if hyprctl clients -j 2>/dev/null | jq -e --argjson pid "$pid" 'any(.[]; .pid == $pid)' >/dev/null 2>&1; then
+      listed=true
+      break
+    fi
+    sleep 0.1
+  done
+  if [[ "$listed" != true ]]; then
+    note "the sandbox renders only while the live session shows its window: no live-session window has pid $pid"
+    return 1
+  fi
+  for request in \
+    "hl.dsp.window.set_prop({ prop = \"render_unfocused\", value = \"1\", window = \"pid:$pid\" })" \
+    "hl.dsp.window.tag({ tag = \"vshell-smoke\", window = \"pid:$pid\" })"; do
+    reply="$(hyprctl dispatch "$request" 2>&1)" || reply="hyprctl exit $?: $reply"
+    if [[ "$reply" != ok ]]; then
+      note "the sandbox renders only while the live session shows its window: the live session answered '$reply' to $request"
+      return 1
+    fi
+  done
+}
+
 # Read one pixel of the sandbox output as lowercase hex. grim writes binary PPM, whose
 # header is four whitespace-separated ASCII fields ahead of the RGB bytes.
 # The deadline is not optional: grim waits for the nested output's next frame, which never
-# comes while the live session is not showing the host window, and would otherwise block
-# the border check with no verdict — the outer run timeout bounds only qs, and the
-# compositor's process group survives until cleanup.
+# comes while the host window gets no frame callbacks (see keep_host_rendering), and would
+# otherwise block the border check with no verdict — the outer run timeout bounds only qs,
+# and the compositor's process group survives until cleanup.
 sandbox_pixel() {
   local sink="${pixel_error_log:-/dev/null}"
   # Name the sample the log belongs to: the caller takes several and reports the window's
@@ -1190,10 +1224,9 @@ print(data[i + 1:i + 4].hex())
 # surface showing: its reading-pane tint needs the glass effect, which the seeded defaults
 # leave off, and the sandbox's built-in English lays the window out left to right.
 # Samples that cannot be obtained are not evidence about where the border sits, so they
-# leave the border NOT MEASURED rather than failed: the nested output renders only when its
-# host window gets a frame callback, which the live session sends only while a monitor shows
-# that window, and no unattended run can arrange that without driving the live session. A
-# frame that IS obtained is judged in full.
+# leave the border NOT MEASURED rather than failed: the nested output renders only on its
+# host window's frame callbacks, which keep_host_rendering asks for but a live session can
+# refuse. A frame that IS obtained is judged in full.
 # The sandbox always runs the Lua config manager, so the compositor is what draws the VGS
 # window border here. A client-drawn border is a real finding — the window rule did not
 # reach this window — and is failed rather than accepted as the other valid arm.
@@ -1420,6 +1453,7 @@ EOF
     nested_unavailable "nested compositor did not come up"
     return
   fi
+  keep_host_rendering "$compositor_pgid" || true
 
   note "running the shell inside the sandbox (timeout ${nested_timeout}s)"
   local nested_signature="" nested_control

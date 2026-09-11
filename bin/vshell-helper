@@ -4297,8 +4297,7 @@ PREVIEW_OUTPUT = "VGSPREVIEW"
 # it must not outlive the stage. Once the staging output is gone the silent
 # workspace sits on a real monitor that is not showing it, and a nested session
 # parked there never renders, because its frames wait on callbacks its unshown host
-# window never gets; `qml-smoke.sh --nested` then samples no frame from its sandbox.
-# PREVIEW_STAGE_OFF_LUA retires the rule when the stage ends.
+# window never gets. PREVIEW_STAGE_OFF_LUA retires the rule when the stage ends.
 PREVIEW_STAGE_ON_LUA = (
     'if not _VGS_PREVIEW_STAGE then _VGS_PREVIEW_STAGE = true '
     'hl.workspace_rule({ workspace = "name:vgspreview", monitor = "' + PREVIEW_OUTPUT + '", default = true }) end '
