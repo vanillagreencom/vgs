@@ -20,7 +20,7 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # The lanes are the subject here, so the chain's step lines are kept beside
 # the package's verdict lines; each lane's own report is still its suite's.
-KEEP="${KEEP/::error::/::error::doc-limits: (unknown argument|unrecognized option|invalid option)}"
+KEEP="${KEEP/::error::/::error::doc-limits: unknown argument}"
 KEEP="${KEEP%)}|pre-commit: )"
 ROOTS=".agents/skills .claude/skills .cursor/skills .gemini/skills .github/skills .opencode/skills skills"
 DL="pre-commit: step=doc-limits"
@@ -169,11 +169,11 @@ fx_shebang_only_commit() { installed_over shebang-only-commit '#!/bin/sh'; stage
 fx_shebang_nl_uninstall() { installed_over shebang-nl-uninstall '#!/bin/sh\n'; }
 fx_mode_kept() { over mode-kept '#!/bin/sh\necho mine\n' 0700; }
 run_rows \
-  "uninstall restores a hook with no final newline byte for byte|fx_noeol_uninstall||uninstall||rc=0 $REMOVED_BOTH|helper=absent pre-commit=$X:#!/bin/sh~echo mine<noeol> commit-msg=absent hooksPath=<unset>" \
-  "a hook that is only a newline-less shebang takes the delegate on its own line|fx_shebang_only||install||rc=0 $ARMED|helper=$OURS pre-commit=$X:#!/bin/sh~@PRE@ commit-msg=$SHIM_MSG hooksPath=<unset>" \
+  "uninstall restores a hook with no final newline byte for byte|fx_noeol_uninstall||uninstall||rc=0 $REMOVED_ALL|helper=absent pre-commit=$X:#!/bin/sh~echo mine<noeol> commit-msg=absent pre-push=absent hooksPath=<unset>" \
+  "a hook that is only a newline-less shebang takes the delegate on its own line|fx_shebang_only||install||rc=0 $ARMED|helper=$OURS pre-commit=$X:#!/bin/sh~@PRE@ commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
   "control: that hook runs the chain|fx_shebang_only_commit|$ONE|commit|feat: add a|rc=0 $CLEAN;${MSG_OK}feat: add a|" \
-  "a consumer's shebang-only hook is restored, not deleted, while the hook we created goes|fx_shebang_nl_uninstall||uninstall||rc=0 $REMOVED_BOTH|helper=absent pre-commit=$X:#!/bin/sh commit-msg=absent hooksPath=<unset>" \
-  "a rewritten hook keeps its own mode and content|fx_mode_kept||install||rc=0 $ARMED|helper=$OURS pre-commit=rwx------:#!/bin/sh~@PRE@~echo mine commit-msg=$SHIM_MSG hooksPath=<unset>"
+  "a consumer's shebang-only hook is restored, not deleted, while the hook we created goes|fx_shebang_nl_uninstall||uninstall||rc=0 $REMOVED_ALL|helper=absent pre-commit=$X:#!/bin/sh commit-msg=absent pre-push=absent hooksPath=<unset>" \
+  "a rewritten hook keeps its own mode and content|fx_mode_kept||install||rc=0 $ARMED|helper=$OURS pre-commit=rwx------:#!/bin/sh~@PRE@~echo mine commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>"
 
 echo "=== usage ==="
 fx_nope() { R="$TMP/nope"; }
@@ -211,7 +211,7 @@ run_rows \
   "a dangling preflight install blocks, never skips|fx_pf_dangling|$ONE|commit|feat: add d|rc=1 $DL;pre-commit: lane-missing=<repo>/.agents/skills/preflight/scripts/preflight|" \
   "a preflight that dies at run time is a step that did not complete, and blocks|fx_pf_dies|$ONE|commit|feat: add d|rc=1 $DL;$PF_RAN;pre-commit: step-incomplete=preflight:2;$PF_LANES_TAIL;$ERRORS|"
 
-echo "=== a repo-local doc-limits replacement is a stated skip only when its parser rejects --staged ==="
+echo "=== a repo-local doc-limits replacement is judged like the skill, and blocks when it does not complete ==="
 # new_repo links doc-limits to the real skill; a fork fixture replaces the
 # link with a directory of its own so nothing writes through it.
 fork() { # NAME BODY — a consumer's own doc-limits in place of the skill
@@ -223,26 +223,11 @@ fork() { # NAME BODY — a consumer's own doc-limits in place of the skill
   stage ok.txt 'hello\n'
 }
 REJECTS='#!/usr/bin/env bash\ncase "${1:-}" in\n  --staged) echo "::error::doc-limits: unknown argument '"'"'--staged'"'"' (see --help)" >&2; exit 2 ;;\nesac\nexit 0\n'
-ECHOED='#!/usr/bin/env bash\necho "::error::doc-limits: DOC_LIMITS_CLASSES has an invalid byte limit; a run would say doc-limits: unknown argument '"'"'--staged'"'"' (see --help)" >&2\nexit 2\n'
 VERDICT='#!/usr/bin/env bash\necho "doc-limits: FAIL ok.txt over its ceiling"\nexit 1\n'
 fx_fork_rejects() { fork fork-rejects "$REJECTS"; }
-# The other four spellings of the grammar, one parser each, without the
-# annotation prefix.
-spelling() { fork "$1" '#!/usr/bin/env bash\ncase "${1:-}" in\n  --staged) echo "'"$2"'" >&2; exit 2 ;;\nesac\nexit 0\n'; } # NAME LINE
-fx_fork_unrecognized_quoted() { spelling fork-unrecognized-quoted "doc-limits: unrecognized option '"'"'--staged'"'"'"; }
-fx_fork_unrecognized_colon() { spelling fork-unrecognized-colon "doc-limits: unrecognized option: --staged"; }
-fx_fork_invalid_colon() { spelling fork-invalid-colon "doc-limits: invalid option: --staged"; }
-fx_fork_invalid_dashes() { spelling fork-invalid-dashes "doc-limits: invalid option -- staged"; }
-fx_fork_echoed() { fork fork-echoed "$ECHOED"; }
 fx_fork_verdict() { fork fork-verdict "$VERDICT"; }
-FORK_SKIP="pre-commit: staged-unsupported=<repo>/.agents/skills/doc-limits/scripts/doc-limits"
 run_rows \
-  "a fork whose parser rejects --staged is skipped and the commit proceeds|fx_fork_rejects|$ONE|commit|feat: add ok|rc=0 $DL;::error::doc-limits: unknown argument '--staged' (see --help);$FORK_SKIP;$(skip preflight '<repo>' "$SCRIPTS");$PF_LANES_TAIL;$CHAIN_OK;${MSG_OK}feat: add ok|" \
-  "a parser saying unrecognized option '--staged' is the same skip|fx_fork_unrecognized_quoted|$ONE|commit|feat: add ok|rc=0 $DL;$FORK_SKIP;$(skip preflight '<repo>' "$SCRIPTS");$PF_LANES_TAIL;$CHAIN_OK;${MSG_OK}feat: add ok|" \
-  "a parser saying unrecognized option: --staged is the same skip|fx_fork_unrecognized_colon|$ONE|commit|feat: add ok|rc=0 $DL;$FORK_SKIP;$(skip preflight '<repo>' "$SCRIPTS");$PF_LANES_TAIL;$CHAIN_OK;${MSG_OK}feat: add ok|" \
-  "a parser saying invalid option: --staged is the same skip|fx_fork_invalid_colon|$ONE|commit|feat: add ok|rc=0 $DL;$FORK_SKIP;$(skip preflight '<repo>' "$SCRIPTS");$PF_LANES_TAIL;$CHAIN_OK;${MSG_OK}feat: add ok|" \
-  "a parser saying invalid option -- staged is the same skip|fx_fork_invalid_dashes|$ONE|commit|feat: add ok|rc=0 $DL;$FORK_SKIP;$(skip preflight '<repo>' "$SCRIPTS");$PF_LANES_TAIL;$CHAIN_OK;${MSG_OK}feat: add ok|" \
-  "must-fail: the whole rejection phrase inside a config diagnostic is not a rejection, and the step did not complete|fx_fork_echoed|$ONE|commit|feat: add ok|rc=1 $DL;pre-commit: step-incomplete=doc-limits:2;$(skip preflight '<repo>' "$SCRIPTS");$PF_LANES_TAIL;$ERRORS|" \
+  "a fork that refuses --staged is a step that did not complete, and blocks|fx_fork_rejects|$ONE|commit|feat: add ok|rc=1 $DL;::error::doc-limits: unknown argument '--staged' (see --help);pre-commit: step-incomplete=doc-limits:2;$(skip preflight '<repo>' "$SCRIPTS");$PF_LANES_TAIL;$ERRORS|" \
   "a fork's own verdict blocks like the skill's|fx_fork_verdict|$ONE|commit|feat: add ok|rc=1 $DL;$(skip preflight '<repo>' "$SCRIPTS");$PF_LANES_TAIL;$BLOCKED|"
 
 echo "=== a project name survives every byte it may hold ==="
@@ -276,7 +261,7 @@ run_rows \
   "a project named with every awkward class arms|fx_nasty_install||install||rc=0 $ARMED|" \
   "and --check recognises the helper it wrote|fx_nasty_check||check||rc=0 commit-guards git hooks: armed=<repo>/.git/hooks|" \
   "and the helper rediscovers the package under that project name, whose chain blocks|fx_nasty_commit|$ONE|commit|feat: add b|rc=1 $NASTY_LANES;$BLOCKED|" \
-  "and the project can disarm again|fx_nasty_uninstall||uninstall||rc=0 $REMOVED_BOTH|helper=absent pre-commit=absent commit-msg=absent hooksPath=<unset>"
+  "and the project can disarm again|fx_nasty_uninstall||uninstall||rc=0 $REMOVED_ALL|helper=absent pre-commit=absent commit-msg=absent pre-push=absent hooksPath=<unset>"
 
 assert_eq "every seeded fixture landed its seed commit" "" "$SEEDS_FAILED"
 
