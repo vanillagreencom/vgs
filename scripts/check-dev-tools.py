@@ -111,6 +111,52 @@ def test_stub_template_and_foreign_files():
             os.environ["PATH"] = original_path
 
 
+# A stand-in mise: `x` puts the install on PATH and execs the command by name,
+# as mise does, so an empty install falls through to the stub; only the exact
+# forced reinstall of the package restores the executable from $FIX.
+FAKE_MISE = """#!/bin/sh
+echo "$*" >> "$LOG"
+case "$*" in
+  "install --force npm:fake --quiet") [ -z "$FIX" ] || cp "$FIX" "$INSTALL/fake" ;;
+  x\\ *) shift 3; case ":$PATH:" in *":$INSTALL:"*) ;; *) PATH="$INSTALL:$PATH" ;; esac; exec "$@" ;;
+esac
+"""
+
+
+def test_a_stub_over_an_install_with_no_executable_never_runs_itself():
+    """`mise x` over an install directory holding no executable finds the stub
+    on PATH. The stub forces one reinstall and then runs the tool, or names the
+    repair; a tool that starts its own command through the stub still runs."""
+    missing = "fake: npm:fake installed no fake executable; repair: mise install --force npm:fake\n"
+    use, run, repair = "use -g --quiet npm:fake\n", "x npm:fake -- fake --x\n", "install --force npm:fake --quiet\n"
+    # row, install holds the executable, the reinstall restores it, args, exit, stdout, stderr, mise calls
+    rows = (("healthy", True, False, ["--x"], 0, "ran --x\n", "", use + run),
+            ("respawn", True, False, ["--spawn"], 0, "ran --spawn\nran --x\n", "",
+             use + "x npm:fake -- fake --spawn\n" + use + run),
+            ("repaired", False, True, ["--x"], 0, "ran --x\n", "", use + run + repair + run),
+            ("broken", False, False, ["--x"], 1, "", missing, use + run + repair + run))
+    for row, held, fixes, args, code, stdout, stderr, calls in rows:
+        with tempfile.TemporaryDirectory() as tmp:
+            stubs, install, log, real = (Path(tmp) / name for name in ("bin", "install", "log", "real"))
+            stubs.mkdir()
+            stub = stubs / "fake"
+            stub.write_text(mise.mise_stub_text("npm:fake", "fake", "fake"))
+            (stubs / "mise").write_text(FAKE_MISE)
+            # The substitution starts the stub as a new process, as a tool spawning itself does.
+            real.write_text(f'#!/bin/sh\necho "ran $*"\n[ "$1" != --spawn ] || echo "$({stub} --x)"\n')
+            for path in (stub, stubs / "mise", real):
+                path.chmod(0o755)
+            install.mkdir()
+            if held:
+                (install / "fake").symlink_to(real)
+            env = {"PATH": f"{stubs}:/usr/bin:/bin", "LOG": str(log), "INSTALL": str(install), "FIX": str(real) if fixes else ""}
+            try:
+                proc = subprocess.run([str(stubs / "fake"), *args], env=env, capture_output=True, text=True, timeout=10)
+            except subprocess.TimeoutExpired:
+                raise AssertionError(f"{row}: the stub ran itself until the timeout") from None
+            assert_equal((proc.returncode, proc.stdout, proc.stderr, log.read_text()), (code, stdout, stderr, calls), row)
+
+
 def test_outdated_parsing_and_update_steps():
     """`mise outdated --json` rows become tools rows; a missing updater is a loud miss."""
     original_run = mise.RT.run
@@ -391,15 +437,16 @@ def test_an_interpreter_pin_reaches_the_build_and_no_further():
         "the pin must not reach the agent or anything it shells out to: " + stub
     assert "mise use -g --quiet uv || exit 1" in stub, \
         "mise's pipx backend shells out to uv, which is not on every machine: " + stub
-    assert "--force" in stub and "hermes-agent/lib/python3.13" in stub, \
+    forced = "mise use -g --quiet --force"
+    assert forced in stub and "hermes-agent/lib/python3.13" in stub, \
         "a rebuild without the pin has to be noticed and redone: " + stub
-    assert stub.index("uv || exit 1") < stub.index("--force"), \
+    assert stub.index("uv || exit 1") < stub.index(forced), \
         "uv has to be there before the build that needs it"
 
-    # An entry with no pin keeps the plain stub: no probe, no force, no env -u.
+    # An entry with no pin keeps the plain stub: no probe, no forced build, no env -u.
     plain = mise.mise_stub_text("claude", "claude", "claude")
     assert "mise use -g --quiet claude || exit 1" in plain, plain
-    for absent in ("--force", "mise where", "env -u"):
+    for absent in (forced, "mise where", "env -u"):
         assert absent not in plain, f"an entry with no build environment must not carry {absent}: {plain}"
 
     # The prompt installs the same way, loudly, because the owner is watching.
@@ -1348,6 +1395,7 @@ def test_cli_wrapper_routes_the_commands():
 
 def main() -> int:
     test_stub_template_and_foreign_files()
+    test_a_stub_over_an_install_with_no_executable_never_runs_itself()
     test_outdated_parsing_and_update_steps()
     test_a_mise_id_reduces_to_the_tool_name()
     test_update_run_and_count_carry_tools()
