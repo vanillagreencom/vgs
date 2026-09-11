@@ -61,7 +61,8 @@ fi
 # PPA, so it is never taken as "absent".
 launchpad_state() {
   local reply
-  reply="$(curl -fsS --retry 3 "$ppa_api?ws.op=getPublishedSources&source_name=vgs-shell&exact_match=true&version=$package_version")" || return 1
+  # A stalled request must end, or the acceptance wait below never reaches its deadline.
+  reply="$(curl -fsS --retry 3 --connect-timeout 10 --max-time 30 "$ppa_api?ws.op=getPublishedSources&source_name=vgs-shell&exact_match=true&version=$package_version")" || return 1
   jq -er '[.entries[].status] |
     if length == 0 then "absent"
     elif any(. == "Published" or . == "Pending") then "listed"
@@ -84,8 +85,8 @@ trap 'rm -rf -- "$work"' EXIT
 
 archive="vgs-$version-source.tar.gz"
 release_url="https://github.com/vanillagreencom/vgs/releases/download/v$version"
-curl -fsSL --retry 3 -o "$work/$archive" "$release_url/$archive" || fail "download-failed=$release_url/$archive"
-curl -fsSL --retry 3 -o "$work/SHA256SUMS" "$release_url/SHA256SUMS" || fail "download-failed=$release_url/SHA256SUMS"
+curl -fsSL --retry 3 --connect-timeout 10 --max-time 300 -o "$work/$archive" "$release_url/$archive" || fail "download-failed=$release_url/$archive"
+curl -fsSL --retry 3 --connect-timeout 10 --max-time 60 -o "$work/SHA256SUMS" "$release_url/SHA256SUMS" || fail "download-failed=$release_url/SHA256SUMS"
 checksum="$(awk -v name="$archive" '$2 == name' "$work/SHA256SUMS")" || fail "checksum-unreadable=$work/SHA256SUMS"
 [[ -n "$checksum" ]] || fail "checksum-missing=$archive" "The release SHA256SUMS has no line for the source archive."
 (cd "$work" && sha256sum --quiet -c - <<<"$checksum") || fail "checksum-mismatch=$archive"
