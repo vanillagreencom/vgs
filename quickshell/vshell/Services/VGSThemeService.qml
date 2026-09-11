@@ -1032,5 +1032,9 @@ Singleton {
         });
     }
 
-    Component.onCompleted: refresh()
+    // Reading the current theme never applies one, so a first run with no
+    // theme.json needs this explicit step before the reads.
+    Component.onCompleted: _run("vgs-theme-init", ["theme", "init", "--json"], function() {
+        refresh();
+    }, 120000, true)
 }
