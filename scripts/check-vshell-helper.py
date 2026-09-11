@@ -849,11 +849,11 @@ def test_hyprland_layout_payload():
 
 
 def test_hyprland_layout_apply_reads_the_highest_monitor_scale():
-    # Rows run in order on one file. The highest scale, neither first nor last here, sets
-    # the tabs, and no session reads as scale 1. Only a changed file is written and reloaded.
+    # Rows run in order on one file. The highest scale, neither first nor last here, sets the tabs;
+    # no session, after a scale-2 row, rewrites at scale 1; an unchanged file is not written or reloaded.
     two = [{"scale": 1.0}, {"scale": 2.0}, {"scale": 1.0}]
     def run_case(home):
-        for monitors, tabs, changed in ((two, 16, True), (two, 16, False), ([{"scale": 1.0}], 8, True), (None, 8, False)):
+        for monitors, tabs, changed in ((two, 16, True), (two, 16, False), (None, 8, True), ([{"scale": 1.0}], 8, False)):
             with patch.object(helper, "load_settings", return_value={"cornerRadius": 8}), \
                     patch.object(helper, "_hyprctl_json", return_value=monitors) as ipc, \
                     patch.object(helper, "write_file", wraps=helper.write_file) as write, \
