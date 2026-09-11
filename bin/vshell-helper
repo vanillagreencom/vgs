@@ -10025,7 +10025,9 @@ def _lua_table(fields: Dict[str, Any], indent: str = "    ") -> List[str]:
     return lines
 
 
-def _hyprland_layout_payload(settings: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+def _hyprland_layout_payload(settings: Dict[str, Any], scale: float) -> Tuple[str, Dict[str, Any]]:
+    """Render layout.lua from settings and the highest monitor scale, which
+    only the group tab radius reads."""
     shell_radius = _coerce_int(settings.get("cornerRadius", 15), 15, 0, 20)
     shell_border = _coerce_int(settings.get("surfaceBorderWidth", 1), 1, 0, 10)
     # One radius and one border thickness govern VGS surfaces and app windows together.
@@ -10064,23 +10066,31 @@ def _hyprland_layout_payload(settings: Dict[str, Any]) -> Tuple[str, Dict[str, A
         lines.append("  general = {")
         lines.extend(_lua_table(general, "    "))
         lines.append("  },")
-    # Group tabs take the window radius. Hyprland rounds a tab from two options,
+    # Group tabs follow the window radius. Hyprland rounds a tab from two options,
     # one per part it draws: the indicator strip from group:groupbar:rounding and
     # the filled tab behind the title from group:groupbar:gradient_rounding. A
-    # tabbed setup can show either part, so both carry the radius. Whether the
+    # tabbed setup can show either part, so both carry the same value. Whether the
     # rounding reaches every tab or only the ends of the bar is also one option
     # per part: group:groupbar:round_only_edges for the strip and
     # group:groupbar:gradient_round_only_edges for the filled tab. The user's own
-    # config owns both, along with gradients and the part heights. Hyprland caps
-    # neither radius and VGS does not clamp it to a part's height, so tabs keep
-    # the window radius; the generated notes below name the limit instead.
+    # config owns both, along with gradients and the part heights.
+    # Hyprland multiplies window rounding by the monitor scale but not tab
+    # rounding, and takes one tab value for every monitor, so the tab value is
+    # the window radius times the highest scale: tabs match windows on that
+    # monitor. Hyprland rejects a value outside 0 to 20 with a config error and
+    # leaves the option at its default, so the product is bounded there; past
+    # the bound, tabs are less round than the windows. The generated notes name
+    # the scale and the height limit for the reader of layout.lua.
+    groupbar_radius = _coerce_int(radius * scale, radius, 0, 20)
+    lines.append(f"  -- Tabs take the window radius times the highest monitor scale ({_lua_number(scale)}), up to Hyprland's limit of 20.")
+    lines.append("  -- Hyprland scales window corners by each monitor's scale but draws tab corners in pixels, one value for all monitors.")
     lines.append("  -- gradient_rounding changes the filled tab only where your Hyprland config turns group:groupbar:gradients on.")
-    lines.append("  -- A radius above half a part's height, times the monitor scale, tapers its rounded ends to a point.")
+    lines.append("  -- A tab radius above half a part's height times a monitor's scale tapers its rounded ends to a point there.")
     lines.append("  -- The filled tab is group:groupbar:height tall and the strip group:groupbar:indicator_height; both are yours to set.")
     lines.append("  group = {")
     lines.append("    groupbar = {")
-    lines.append(f"      rounding = {radius},")
-    lines.append(f"      gradient_rounding = {radius},")
+    lines.append(f"      rounding = {groupbar_radius},")
+    lines.append(f"      gradient_rounding = {groupbar_radius},")
     lines.append("    },")
     lines.append("  },")
     lines.append("  decoration = {")
@@ -10092,7 +10102,8 @@ def _hyprland_layout_payload(settings: Dict[str, Any]) -> Tuple[str, Dict[str, A
     meta = {
         "manageHyprlandShape": True,
         "radius": radius,
-        "groupbarRadius": radius,
+        "groupbarRadius": groupbar_radius,
+        "groupbarScale": scale,
         "border": border,
         "gaps": {k: general[k] for k in ("gaps_in", "gaps_out") if k in general},
         "resizeOnBorder": resize_on_border,
@@ -10106,7 +10117,11 @@ def hyprland_layout_path() -> Path:
 
 def apply_hyprland_layout() -> Dict[str, Any]:
     settings = load_settings()
-    content, meta = _hyprland_layout_payload(settings)
+    # The group tab radius follows the highest scale among the monitors Hyprland
+    # reports. With no session to ask, scale 1 keeps it at the window radius.
+    monitors = _hyprctl_json("monitors") or []
+    scale = max(filter(None, (_sane_monitor_scale(m.get("scale")) for m in monitors)), default=1.0)
+    content, meta = _hyprland_layout_payload(settings, scale)
     path = hyprland_layout_path()
     write_file(path, content)
 
@@ -13454,7 +13469,7 @@ def _lua_number(value: float) -> str:
 
 
 def _sane_monitor_scale(value: Any) -> float | None:
-    """Validate a scale before it is rendered into the greeter's Lua config.
+    """Validate a monitor scale before generated Lua config uses it.
 
     `nan`/`inf` would reach the config as bare `nan`/`inf` literals and a zero or
     negative scale is not a mode Hyprland can bring up — either way the greeter
