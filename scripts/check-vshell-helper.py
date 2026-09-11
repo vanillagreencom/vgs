@@ -1360,6 +1360,9 @@ def test_current_theme_reads_without_applying():
         with patch.object(helper, "run_hook", side_effect=AssertionError("a read ran a theme hook")):
             data = helper.current_theme()
         assert_equal(data.get("name"), helper.DEFAULT_THEME_NAME, "no theme state reads as the default theme")
+        template = json.loads((helper.targets_dir() / "vgs-shell" / "vgs-theme.json").read_text())
+        assert_equal(sorted(data.get("colors", {})), sorted(template["colors"]),
+                     "the no-state read carries every colour role an apply writes")
         assert_equal(sorted(p.relative_to(temp_home).as_posix() for p in temp_home.rglob("*") if not p.is_dir()), [],
                      "a read writes no file under HOME")
         state = temp_home / ".config" / "vshell" / "theme.json"
@@ -7305,6 +7308,8 @@ def main():
                      f"`theme {' '.join(catalog_argv)}` must not hold the theme lock for its whole run")
     assert_equal(helper._theme_command_mutates(["chromium-policy"]), True,
                  "Chromium policy refresh must serialize with theme applies")
+    assert_equal(helper._theme_command_mutates(["init"]), True,
+                 "the first-run apply must serialize with theme applies")
     test_system_font_normalization()
     test_tmux_theme_reaches_the_running_server()
     test_tmux_copy_mode_matches_take_theme_roles()

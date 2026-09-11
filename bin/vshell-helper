@@ -5224,14 +5224,15 @@ def default_theme_blueprint() -> Dict[str, Any]:
 def current_theme() -> Dict[str, Any]:
     """The applied theme's shell state, read-only.
 
-    With no theme.json yet this answers with the default theme's data and writes
-    nothing. Applying that theme is `theme init`, an explicit step: its hooks write
-    session-wide settings that a process on a throwaway HOME still reaches.
+    With no theme.json yet this answers with the shell state an apply of the default
+    theme would write, and writes nothing. Applying that theme is `theme init`, an
+    explicit step: its hooks write session-wide settings that a process on a throwaway
+    HOME still reaches.
     """
     theme_file = cfg_dir() / "theme.json"
     if theme_file.exists():
         return json.loads(theme_file.read_text())
-    return theme_json_from_blueprint(default_theme_blueprint())
+    return json.loads(render_target_template("vgs-shell", "vgs-theme.json", target_roles(default_theme_blueprint())))
 
 
 def blueprint_from_theme_json(theme: Dict[str, Any], name: str | None = None, mode: str | None = None, wallpaper: str | None = None) -> Dict[str, Any]:
