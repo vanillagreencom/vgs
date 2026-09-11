@@ -20,6 +20,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 # Icon and colour spellings the launcher tile can render.
 TILE_ICON = re.compile(r"(nerd|brand):[0-9a-f]+")
 TILE_COLOR = re.compile(r"#[0-9A-Fa-f]{6}")
+# The step that settles the launchers after `mise up`, run as a new process.
+REFRESH = [str(REPO_ROOT / "bin" / "vshell"), "mise", "refresh"]
 sys.path.insert(0, str(REPO_ROOT / "bin"))
 
 
@@ -144,10 +146,10 @@ def test_outdated_parsing_and_update_steps():
 
         steps = update.update_steps("all")
         titles = [step["title"] for step in steps]
-        assert any("repo" in t for t in titles) and titles[-1].startswith("Updating mise tools"), titles
-        assert steps[-1]["env"]["MISE_MINIMUM_RELEASE_AGE"] == "0", "mise up must skip the release cooldown"
-        assert mise.mise_sync in steps[-1]["after"], "stubs, options and exports must be settled after a tools update"
-        assert_equal([s["argv"] for s in update.update_steps("tools")], [["mise", "up"]], "tools mode runs mise up only")
+        assert any("repo" in t for t in titles) and titles[-2].startswith("Updating mise tools"), titles
+        assert steps[-2]["env"]["MISE_MINIMUM_RELEASE_AGE"] == "0", "mise up must skip the release cooldown"
+        assert_equal([s["argv"] for s in update.update_steps("tools")], [["mise", "up"], REFRESH],
+                     "tools mode runs mise up, then the refresh of the release on disk")
         present.discard("mise")
         assert_equal(update.update_steps("tools"), [], "an absent updater yields no step")
     finally:
@@ -183,30 +185,17 @@ def test_update_run_and_count_carry_tools():
     original_run = update.subprocess.run
     original_input = update.input if hasattr(update, "input") else None
     original_exists = mise.RT.command_exists
-    original_sync = mise.mise_sync
-    original_eprint = update.RT.eprint
     original_mise_run = mise.RT.run
     mise.RT.command_exists = lambda name: name in {"mise", "pacman", "checkupdates"}
-    refreshed = []
-    said = []
-    mise.mise_sync = lambda: (refreshed.append(True), {"ok": True, "error": ""})[1]
-    update.RT.eprint = lambda *a: said.append(" ".join(str(x) for x in a))
-    update.subprocess.run = lambda argv, check=False, env=None, cwd=None, **kw: (calls.append((list(argv), (env or {}).get("MISE_MINIMUM_RELEASE_AGE"), cwd)), subprocess.CompletedProcess(argv, 0))[1]
+    failing = []
+    update.subprocess.run = lambda argv, check=False, env=None, cwd=None, **kw: (calls.append((list(argv), (env or {}).get("MISE_MINIMUM_RELEASE_AGE"), cwd)), subprocess.CompletedProcess(argv, int(argv in failing)))[1]
     update.input = lambda *a: ""
     try:
         assert_equal(update.cmd_update(["run", "tools"]), 0, "tools run must succeed")
-        assert_equal(calls, [(["mise", "up"], "0", str(mise.RT.home()))], "tools mode runs mise up from $HOME with the cooldown off")
-        assert_equal(len(refreshed), 1, "stubs are refreshed after the tools step")
-        # A finding printed above a "Done" line and exit 0 is what a supervisor reads.
-        mise.mise_sync = lambda: {"ok": False, "error": "mise-export-shadow: open exports node"}
-        assert_equal(update.cmd_update(["run", "tools"]), 1, "a follow-up that reports a problem fails the run")
-        assert said and said[-1].startswith("mise-export-shadow: open"), said
-        calls.clear()
-        refreshed.clear()
-        def boom():
-            raise OSError("disk full")
-        mise.mise_sync = boom
-        assert_equal(update.cmd_update(["run", "tools"]), 1, "a failing after-hook is a failed run, not a traceback")
+        assert_equal(calls, [(["mise", "up"], "0", str(mise.RT.home())), (REFRESH, None, None)],
+                     "tools mode runs mise up from $HOME with the cooldown off, then the refresh")
+        failing.append(REFRESH)
+        assert_equal(update.cmd_update(["run", "tools"]), 1, "a refresh that fails fails the run")
 
         payload = '{"claude": {"name": "claude", "requested": "latest", "current": "2.1.0", "latest": "2.2.0"}}'
         mise.RT.run = lambda cmd, check=False, **kw: subprocess.CompletedProcess(cmd, 0, stdout=payload, stderr="")
@@ -231,8 +220,6 @@ def test_update_run_and_count_carry_tools():
         else:
             update.input = original_input
         mise.RT.command_exists = original_exists
-        mise.mise_sync = original_sync
-        update.RT.eprint = original_eprint
         mise.RT.run = original_mise_run
 
 
@@ -267,12 +254,14 @@ def test_first_launch_asks_before_installing():
     original_exists = mise.RT.command_exists
     original_run = devtools.subprocess.run
     original_stub = devtools.mise_install_stub
+    original_settle = mise.mise_settle
     ran = []
     devtools.mise_installed_versions = lambda: ({}, "")
     devtools.mise_stub_state = lambda path: "absent"
     mise.RT.command_exists = lambda name: name == "mise"
     devtools.subprocess.run = lambda argv, **kw: (ran.append(list(argv)), subprocess.CompletedProcess(argv, 0))[1]
     devtools.mise_install_stub = lambda **kw: {"state": "written"}
+    mise.mise_settle = lambda entry, installed: (ran.append(["settle", entry["id"], installed]), ("written", ""))[1]
     try:
         assert_equal(devtools.agent_installed(claude), False, "nothing installed")
         assert_equal(devtools.agent_launch_argv(claude)[0], "claude", "an owner-installed command runs bare")
@@ -285,7 +274,8 @@ def test_first_launch_asks_before_installing():
         assert_equal(ran, [], "no mise call after a refusal")
         devtools.input = lambda prompt: ""
         assert_equal(devtools.agent_install_prompt(claude), True, "Enter accepts the default yes")
-        assert_equal(ran, [["mise", "use", "-g", "claude"]], "install goes through mise use -g")
+        assert_equal(ran, [["mise", "use", "-g", "claude"], ["settle", "claude", True]],
+                     "install goes through mise use -g, then settles the entry")
     finally:
         del devtools.input
         devtools.mise_installed_versions = original_versions
@@ -293,6 +283,7 @@ def test_first_launch_asks_before_installing():
         mise.RT.command_exists = original_exists
         devtools.subprocess.run = original_run
         devtools.mise_install_stub = original_stub
+        mise.mise_settle = original_settle
 
 
 def test_an_entry_without_this_machines_architecture_is_not_offered():
@@ -862,6 +853,7 @@ def test_row_actions_run_and_refuse():
     original_stub = devtools.mise_install_stub
     original_hold = devtools.hold_terminal
     original_state = mise.mise_stub_state
+    original_settle = mise.mise_settle
     calls = []
     said = []
     try:
@@ -870,12 +862,14 @@ def test_row_actions_run_and_refuse():
         devtools.os_release_ids = lambda: ["arch"]
         devtools.mise_install_stub = lambda **kw: calls.append(("stub", kw["command"]))
         devtools.dev_env_run = lambda argv: (calls.append(("mise", argv)), 0)[1]
+        mise.mise_settle = lambda entry, installed: (calls.append(("settle", entry["command"])), ("written", ""))[1]
 
-        # track: declares an install mise already holds.
+        # track: declares an install mise already holds, then settles it.
         devtools.mise_installs = lambda: ({"daytona": {"version": "0.190.0", "declared": False}}, "")
         entry = next(e for e in devtools.catalog_entries() if e["id"] == "daytona")
         assert_equal(devtools.entry_track(entry), 0, "tracking an undeclared install succeeds")
-        assert_equal(calls, [("mise", ["mise", "use", "-g", "daytona"])], "track declares the entry's package")
+        assert_equal(calls, [("mise", ["mise", "use", "-g", "daytona"]), ("settle", "daytona")],
+                     "track declares the entry's package, then settles the entry")
 
         # track: refuses what it cannot help, and changes nothing either way.
         calls.clear()
@@ -918,20 +912,20 @@ def test_row_actions_run_and_refuse():
         assert any(step[0] == "run" and step[1][:3] == ["mise", "use", "-g"] for step in calls[1:]), \
             f"then the mise install runs: {calls}"
         assert ("stub", "gh") in calls, f"and the launcher stub is written: {calls}"
+        assert_equal(calls[-1], ("settle", "gh"), "and the install ends by settling the entry")
 
-        calls.clear()
-        # Track and the install record the Cursor row's options, which take its
-        # package off PATH: behind a launcher VGS does not own, neither runs mise.
+        # Track and Replace record the Cursor row's options, which take its
+        # package off PATH. Behind the owner's own launcher, each refuses before
+        # any mise command, and Replace before it removes anything.
         cursor = next(e for e in devtools.catalog_entries() if e["id"] == "cursor")
-        devtools.mise_installs = lambda: ({"cursor-agent": {"version": "1", "declared": False}}, "")
         mise.mise_stub_state = lambda path: "foreign"
-        printed = io.StringIO()
-        with contextlib.redirect_stdout(printed):
-            assert_equal((devtools.entry_track(cursor), devtools.entry_install(cursor)), (1, False), "both refuse")
-        assert_equal(calls, [("stub", "cursor-agent")], "and neither runs a mise command")
-        for advice in (said[-1], printed.getvalue().strip()):
-            assert advice.startswith("mise-launcher-not-ours: cursor foreign ") and advice.endswith(
-                "run: mise use -g 'cursor-agent[bin_path=]'"), advice
+        for label, installs, act in (("Track", {"cursor-agent": {"version": "1", "declared": False}}, devtools.entry_track),
+                                     ("Replace with mise", {}, devtools.entry_replace)):
+            calls.clear()
+            devtools.mise_installs = lambda: (installs, "")
+            assert_equal((act(cursor), calls), (1, []), f"{label} refuses and runs nothing")
+            assert said[-1].startswith("mise-launcher-not-ours: cursor ") and said[-1].endswith(
+                "run: mise use -g 'cursor-agent[bin_path=]'"), said[-1]
 
         # cmd_agent routes each verb to the entry the id names, tools included.
         routed = []
@@ -953,6 +947,7 @@ def test_row_actions_run_and_refuse():
         devtools.mise_install_stub = original_stub
         devtools.hold_terminal = original_hold
         mise.mise_stub_state = original_state
+        mise.mise_settle = original_settle
 
 
 def test_the_settings_tab_can_act_on_every_row():
@@ -1008,147 +1003,90 @@ def test_a_row_carries_the_release_it_is_waiting_for():
 
 
 def test_a_package_kept_off_path_runs_by_absolute_path():
-    """The tile runs the file under the root `mise where` names, as the stub
-    does; mise ends its answer with a newline, and a refusal names its reason."""
+    """The tile runs the file `exec` names under the root `mise where` names, as
+    the stub does. A launch mise names no root for is a refusal the owner
+    reads, not an exec from / or a traceback in a window that closes."""
     cursor = next(e for e in devtools.agent_entries() if e["id"] == "cursor")
-    original = devtools.mise_installed_versions
-    original_run = mise.RT.run
-    original_exists = mise.RT.command_exists
-    asked = []
+    asked, held, reply = [], [], [(0, "/i/cursor-agent/1\n", "")]
 
-    def where(code, stdout, stderr):
-        return lambda cmd, check=False, **kw: (asked.append((list(cmd), kw["cwd"], kw["kill_group"])),
-                                               subprocess.CompletedProcess(cmd, code, stdout=stdout, stderr=stderr))[1]
+    def fake_run(cmd, check=False, **kw):
+        asked.append((list(cmd), kw["cwd"], kw["kill_group"]))
+        return subprocess.CompletedProcess(cmd, reply[0][0], stdout=reply[0][1], stderr=reply[0][2])
 
-    try:
-        devtools.mise_installed_versions = lambda: ({"cursor-agent": "2026.09.08-6caf4ff"}, "")
-        mise.RT.command_exists = lambda name: True
-        mise.RT.run = where(0, "/i/cursor-agent/1\n", "")
+    with mock.patch.multiple(devtools, mise_installed_versions=lambda: ({"cursor-agent": "1"}, ""),
+                             hold_terminal=lambda code, message: (held.append(message), code)[1]), \
+            mock.patch.multiple(mise.RT, run=fake_run, command_exists=lambda name: True), \
+            mock.patch.multiple(devtools.os, chdir=lambda path: None, execvpe=lambda *a: 0):
         assert_equal(devtools.agent_launch_argv(cursor), ["/i/cursor-agent/1/dist-package/cursor-agent", "--force"],
                      "the launcher runs the file under the install root, keeping the entry's own arguments")
         assert_equal(asked, [(["mise", "where", "cursor-agent[bin_path=]"], str(mise.RT.home()), True)],
-                     "the launcher asks mise the stub's question from $HOME, and a timeout ends its whole group")
-        # "No install root" is mise exiting 0 with nothing to say; when mise
-        # fails, its own error is the reason.
+                     "it asks mise the stub's question from $HOME, and a timeout ends its whole group")
+        # mise exiting 0 with nothing to say, and mise failing, whose own error is the reason.
         for code, stderr, cause in ((0, "", "mise reported no install root for cursor-agent[bin_path=]"),
-                                    (1, "mise ERROR cursor-agent@1 is not installed", "mise ERROR cursor-agent@1 is not installed")):
-            mise.RT.run = where(code, "", stderr)
-            try:
-                devtools.agent_launch_argv(cursor)
-                raise AssertionError("an install with no root must be refused, not exec'd from /")
-            except ValueError as exc:
-                assert str(exc).endswith(": " + cause), exc
-    finally:
-        devtools.mise_installed_versions = original
-        mise.RT.run = original_run
-        mise.RT.command_exists = original_exists
+                                    (1, "mise ERROR not installed", "mise ERROR not installed")):
+            reply[0] = (code, "", stderr)
+            assert_equal(devtools.cmd_agent(["launch", "cursor", "--inline", "--hold"]), 1, cause)
+            assert held[-1].endswith(": " + cause), held
 
 
-def test_the_refreshed_stub_and_the_launch_refusal_reach_the_owner():
-    """A stub is what a terminal runs. The refresh and both install actions
-    write one file, which runs the exec file under the root mise names and
-    refuses when mise names none; a launch that cannot be built is a message."""
+def test_an_exec_stub_runs_the_file_under_the_install_root():
+    """A stub is what a terminal runs. It runs the `exec` file under the root a
+    stand-in mise names, and refuses when mise names none rather than exec
+    /dist-package/... from the filesystem root."""
+    cursor = next(e for e in devtools.catalog_entries() if e["id"] == "cursor")
     with tempfile.TemporaryDirectory() as tmp:
-        original_home = mise.RT.home
-        original_state = mise.RT.state_dir
-        original_path = os.environ.get("PATH", "")
-        original_run = devtools.subprocess.run
-        mise.RT.home = lambda: Path(tmp)
-        mise.RT.state_dir = lambda: Path(tmp) / ".local" / "state" / "vshell"
-        os.environ["PATH"] = str(Path(tmp) / ".local" / "bin")
-        try:
-            refreshed = mise.mise_refresh()
-            assert refreshed["ok"] and "cursor-agent" in refreshed["written"], refreshed
-            stub = Path(tmp) / ".local" / "bin" / "cursor-agent"
-            written = stub.read_text()
-
-            # The first-launch prompt and the Replace action each write the stub
-            # the refresh writes, then run its install step.
-            cursor = next(e for e in devtools.catalog_entries() if e["id"] == "cursor")
-            use = ["mise", "use", "-g", "cursor-agent[bin_path=]"]
-            ran = []
-            devtools.subprocess.run = lambda argv, **kw: (ran.append(list(argv)), subprocess.CompletedProcess(argv, 0))[1]
-            system = {"origin": "system", "owner": "cursor-cli", "path": "/usr/bin/cursor-agent"}
-            with mock.patch.multiple(devtools, create=True, input=lambda prompt: "", os_release_ids=lambda: ["arch"],
-                                     hold_terminal=lambda code, message: code, mise_installs=lambda: ({}, ""),
-                                     install_origin=lambda entry, installs: system), \
-                    mock.patch.object(mise.RT, "command_exists", lambda name: name == "mise"):
-                for label, install, want in (("the first-launch prompt", devtools.agent_install_prompt, (True, [use])),
-                                             ("Replace with mise", devtools.entry_replace, (0, [["sudo", "pacman", "-Rns", "cursor-cli"], use]))):
-                    stub.unlink()
-                    ran.clear()
-                    assert_equal((install(cursor), ran), want, f"{label} installs")
-                    assert_equal(stub.read_text(), written, f"{label} writes the stub the refresh writes")
-            devtools.subprocess.run = original_run
-
-            # A stand-in mise names $ROOT as the install root. The stub runs the
-            # exec file under it, and refuses when it names nothing rather than
-            # exec /dist-package/... from the filesystem root.
-            fake = Path(tmp) / "fake"
-            (fake / "dist-package").mkdir(parents=True)
-            (fake / "mise").write_text('#!/bin/sh\n[ "$1" = where ] && printf "%s" "$ROOT"\nexit 0\n')
-            (fake / "dist-package" / "cursor-agent").write_text('#!/bin/sh\necho "ran $*"\n')
-            for path in (fake / "mise", fake / "dist-package" / "cursor-agent"):
-                path.chmod(0o755)
-            for root, code, first in ((str(fake), 0, "ran --x"), ("", 1, "cursor-agent: mise reported no install root")):
-                proc = subprocess.run([str(stub), "--x"], env={"PATH": str(fake), "ROOT": root},
-                                      capture_output=True, text=True, timeout=30)
-                assert_equal(proc.returncode, code, f"root {root!r}: {proc.stderr}")
-                assert (proc.stdout + proc.stderr).startswith(first), proc
-
-            # `vshell mise refresh` exits on the outcome of everything it ran.
-            shadow = {"ok": False, "exports": [], "error": "mise-export-shadow: cursor exports node"}
-            with mock.patch.object(mise.RT, "command_exists", lambda name: False), \
-                    mock.patch.object(mise, "mise_export_check", lambda entries, error="": shadow), \
-                    contextlib.redirect_stderr(io.StringIO()) as said, contextlib.redirect_stdout(io.StringIO()):
-                code = mise.cmd_mise(["refresh"])
-            assert_equal(code, 1, "a refresh that found a shadowed command exits non-zero")
-            assert said.getvalue().startswith("mise-export-shadow: cursor"), said.getvalue()
-        finally:
-            devtools.subprocess.run = original_run
-            mise.RT.home = original_home
-            mise.RT.state_dir = original_state
-            os.environ["PATH"] = original_path
-
-    held = []
-    with mock.patch.multiple(devtools, hold_terminal=lambda code, message: (held.append((code, message)), code)[1],
-                             mise_installed_versions=lambda: ({"cursor-agent": "1"}, ""),
-                             mise_where=lambda package: ("", "")), mock.patch.object(devtools.os, "chdir", lambda path: None):
-        assert_equal(devtools.cmd_agent(["launch", "cursor", "--inline", "--hold"]), 1,
-                     "a launch that cannot be built exits 1")
-    assert_equal([code for code, _ in held], [1], held)
-    assert "no install root" in held[-1][1], held
+        fake = Path(tmp)
+        (fake / "dist-package").mkdir()
+        (fake / "cursor-agent").write_text(mise.mise_stub_text(**mise.stub_fields(cursor)))
+        (fake / "mise").write_text('#!/bin/sh\n[ "$1" = where ] && printf "%s" "$ROOT"\nexit 0\n')
+        (fake / "dist-package" / "cursor-agent").write_text('#!/bin/sh\necho "ran $*"\n')
+        for path in (fake / "cursor-agent", fake / "mise", fake / "dist-package" / "cursor-agent"):
+            path.chmod(0o755)
+        for root, code, first in ((str(fake), 0, "ran --x"), ("", 1, "cursor-agent: mise reported no install root")):
+            proc = subprocess.run([str(fake / "cursor-agent"), "--x"], env={"PATH": str(fake), "ROOT": root},
+                                  capture_output=True, text=True, timeout=30)
+            assert_equal(proc.returncode, code, f"root {root!r}: {proc.stderr}")
+            assert (proc.stdout + proc.stderr).startswith(first), proc
+    # A release that cannot run `exec` reads this catalog while `vshell update run
+    # all` upgrades VGS under it, and writes each stub from the raw row. Its
+    # `mise x` must name a spec that leaves the package on PATH, or the stub
+    # finds only itself there (D016).
+    for raw in (e for group in ("agents", "apps", "tools") for e in mise.dev_tools_catalog()[group] if e.get("exec")):
+        old = mise.mise_stub_text(raw["package"], raw["command"], raw.get("bin") or raw["command"])
+        run = next(line for line in old.splitlines() if " mise x " in line)
+        assert "[" not in run, f"{raw['id']}: a release without `exec` writes {run}"
 
 
 EXPORT_CASES = (
-    # id, package, exec, launch, the executables mise reports for the install
-    # (`link->target` links inside the package, None is an install mise cannot
-    # answer for), the undeclared ones that must be reported, and where the
-    # install is. The unanswerable one comes first, so the conflict an entry
-    # after it finds has to survive its error.
-    ("broken", "brokenpkg", "", [], None, [], "on PATH"),
-    ("open", "openpkg", "", [], ["node", "opencmd"], ["node"], "on PATH"),
+    # id, exec, launch, the executables mise reports for the install (`a->b` a
+    # link inside the package, None an install mise cannot answer for), the
+    # undeclared ones that must be reported, and whether its directory is on
+    # PATH (None: not installed). The unanswerable one comes first, so a
+    # conflict after it has to survive its error.
+    ("broken", "", [], None, [], True),
+    ("open", "", [], ["node", "opencmd"], ["node"], True),
     # Declared, so owned, though /usr-bin answers to it as well.
-    ("own", "ownpkg", "", [], ["owncmd"], [], "on PATH"),
+    ("own", "", [], ["owncmd"], [], True),
     # Undeclared, but nothing else on PATH answers to it, so it shadows nothing.
-    ("solo", "solopkg", "", [], ["solocmd", "unique-helper"], [], "on PATH"),
-    # Undeclared, and only mise's shim for this same install answers elsewhere.
-    ("shimmed", "shimmedpkg", "", [], ["shimmedcmd", "extra-helper"], [], "on PATH"),
-    # The file `exec` names is owned under the package's name for it.
-    ("closed", "closedpkg[bin_path=]", "dist/closed-real", [], ["closed-real"], [], "on PATH"),
-    # The executable the launcher names is owned too, and answers in /usr-bin.
-    ("named", "namedpkg", "", ["named-real", "--flag"], ["named-real"], [], "on PATH"),
+    ("solo", "", [], ["solocmd", "unique-helper"], [], True),
+    # Undeclared, and only mise's shims for this same install answer elsewhere.
+    ("shimmed", "", [], ["shimmedcmd", "extra-helper"], [], True),
+    # The file `exec` names and the executable the launch argv names are owned.
+    ("closed", "dist/closed-real", [], ["closed-real"], [], True),
+    ("named", "", ["named-real", "--flag"], ["named-real"], [], True),
     # Reported through mise's `latest` link to the directory PATH carries.
-    ("linked", "linkedpkg", "", [], ["linked-helper"], [], "on PATH"),
+    ("linked", "", [], ["linked-helper"], [], True),
     # The declared command's link target is undeclared, and replaces /usr-bin's.
-    ("alias", "aliaspkg", "", [], ["aliascmd->alias-real", "alias-real"], ["alias-real"], "on PATH"),
-    # A link to the declared file, whose only other copy answers ahead of the
-    # package, like an owner's wrapper: neither is a copy the package replaces.
-    ("ahead", "aheadpkg", "", [], ["aheadcmd", "ahead-real->aheadcmd"], [], "on PATH"),
-    # Installed with its directory off this PATH: every other copy counts.
-    ("hidden", "hiddenpkg", "", [], ["hiddencmd", "stray"], ["stray"], "off PATH"),
+    ("alias", "", [], ["aliascmd->alias-real", "alias-real"], ["alias-real"], True),
+    # A link to the declared file whose only other copy answers ahead of the
+    # package, from a directory PATH lists again behind it: a shell finds the
+    # first place, so it is no copy the package replaces.
+    ("ahead", "", [], ["aheadcmd", "ahead-real->aheadcmd"], [], True),
+    # Off PATH, as under the shell service's PATH: every other copy counts but
+    # the one in ~/.local/bin, which answers ahead of any install.
+    ("hidden", "", [], ["hiddencmd", "stray", "wrapped"], ["stray"], False),
     # Not installed, so it puts no directory on PATH and is never asked about.
-    ("absent", "absentpkg", "", [], ["node"], [], "not installed"),
+    ("absent", "", [], ["node"], [], None),
 )
 
 
@@ -1157,25 +1095,23 @@ def test_an_install_may_not_export_a_command_the_entry_does_not_own():
     the Cursor Agent package shipped `node` 24.5.0 over the system's 26.8.1."""
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        distro, ahead = root / "usr-bin", root / "local-bin"
-        for path in [distro / n for n in ("node", "owncmd", "closed-real", "named-real", "alias-real", "stray")] + [ahead / "ahead-real"]:
-            path.parent.mkdir(exist_ok=True)
+        distro, ahead, stubs, shims = root / "usr-bin", root / "own-bin", root / ".local" / "bin", root / "shims"
+        # /usr-bin holds mise itself, as /usr/bin does on the machine this was
+        # filed from, and its `node` links out of every PATH directory, as
+        # /usr/bin/npm does there: neither makes a /usr-bin copy the install's.
+        for path in [distro / n for n in ("mise", "owncmd", "closed-real", "named-real", "alias-real", "stray")] \
+                + [ahead / "ahead-real", stubs / "wrapped", root / "node-real"]:
+            path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("#!/bin/sh\nexit 0\n")
             path.chmod(0o755)
-        # mise's own shim directory: one symlink to the mise binary per exported
-        # executable, ahead of the distribution on PATH. `node` is shimmed too,
-        # so passing the shims over must not lose the real /usr-bin conflict.
-        mise_bin = root / "mise-bin"
-        mise_bin.mkdir()
-        (mise_bin / "mise").write_text("#!/bin/sh\nexit 0\n")
-        (mise_bin / "mise").chmod(0o755)
-        shims = root / "shims"
+        (distro / "node").symlink_to(root / "node-real")
+        # One link to the mise binary per exported executable, `node` included,
+        # so passing the shims over must not lose the /usr-bin conflict.
         shims.mkdir()
         for name in ("node", "extra-helper", "shimmedcmd"):
-            (shims / name).symlink_to(mise_bin / "mise")
-        exports = {}
-        installed = {}
-        for entry_id, package, _exec, _launch, names, _bad, where in EXPORT_CASES:
+            (shims / name).symlink_to(distro / "mise")
+        exports, installed = {}, {}
+        for entry_id, _exec, _launch, names, _bad, on_path in EXPORT_CASES:
             bin_dir = root / f"mise-{entry_id}"
             bin_dir.mkdir()
             for name, _, target in (name.partition("->") for name in names or []):
@@ -1184,192 +1120,132 @@ def test_an_install_may_not_export_a_command_the_entry_does_not_own():
                 else:
                     (bin_dir / name).write_text("#!/bin/sh\nexit 0\n")
                     (bin_dir / name).chmod(0o755)
-            reported = root / f"mise-{entry_id}-latest"
+            reported = root / "latest" if entry_id == "linked" else bin_dir
             if entry_id == "linked":
                 reported.symlink_to(bin_dir)
-            else:
-                reported = bin_dir
-            key = mise.package_key(package)
-            exports[key] = None if names is None else [
-                {"name": name.partition("->")[0], "path": str(reported / name.partition("->")[0])} for name in names]
-            if where != "not installed":
-                installed[key] = [{"version": "1.0", "installed": True, "active": True,
-                                   "source": {"type": "mise.toml"}}]
-        catalog = {"agents": [{"id": i, "name": i, "command": f"{i}cmd", "package": p,
-                               **({"exec": e} if e else {}), **({"launch": list(l)} if l else {})}
-                              for i, p, e, l, _n, _b, _where in EXPORT_CASES],
-                   "apps": [], "tools": []}
+            exports[f"{entry_id}pkg"] = None if names is None else [
+                {"name": n.partition("->")[0], "path": str(reported / n.partition("->")[0])} for n in names]
+            if on_path is not None:
+                installed[f"{entry_id}pkg"] = [{"version": "1", "installed": True, "active": True, "source": {}}]
+        catalog = {"agents": [{"id": i, "name": i, "command": f"{i}cmd", "package": f"{i}pkg",
+                               **({"exec": e} if e else {}), **({"launch": l} if l else {})}
+                              for i, e, l, *_ in EXPORT_CASES], "apps": [], "tools": []}
+        # The owner's shells: ~/.local/bin first, then every mise bin path ahead
+        # of the distribution's, and both personal directories again at the end.
+        path = [stubs, ahead] + [root / f"mise-{row[0]}" for row in EXPORT_CASES if row[-1]] + [shims, distro, ahead, stubs]
+        asked = []
 
-        original_catalog = mise.dev_tools_catalog
-        original_run = mise.RT.run
-        original_exists = mise.RT.command_exists
-        original_settings = mise.RT.load_settings
-        original_path = os.environ.get("PATH", "")
-        try:
-            mise.dev_tools_catalog = lambda: catalog
-            mise.RT.command_exists = lambda name: True
-            mise.RT.load_settings = lambda: {}
-            # The owner's own directory first, then every mise bin path ahead of
-            # the distribution's, the way mise activation orders them.
-            os.environ["PATH"] = os.pathsep.join(
-                [str(ahead)] + [str(root / f"mise-{row[0]}") for row in EXPORT_CASES if row[-1] == "on PATH"]
-                + [str(shims), str(mise_bin), str(distro)])
-            asked = []
+        def fake_run(cmd, check=False, **kw):
+            asked.append(cmd[-1])
+            answer = installed if cmd[1] == "ls" else exports[cmd[-1]]
+            return subprocess.CompletedProcess(cmd, int(answer is None), stdout=json.dumps(answer), stderr=f"mise ERROR {cmd[-1]}")
 
-            def fake_run(cmd, check=False, **kw):
-                asked.append(list(cmd))
-                if cmd[1] == "ls":
-                    return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(installed), stderr="")
-                if exports[cmd[-1]] is None:
-                    return subprocess.CompletedProcess(cmd, 1, stdout="", stderr=f"mise ERROR {cmd[-1]}")
-                return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(exports[cmd[-1]]), stderr="")
-
-            mise.RT.run = fake_run
-            entries, _ = mise.installed_entries()
-            conflicts, error = mise.mise_export_conflicts(entries)
-            assert_equal(error, "broken: mise ERROR brokenpkg", "an install mise cannot answer for is named")
-            for entry_id, package, _exec, _launch, _names, bad, _where in EXPORT_CASES:
-                assert_equal([c["command"] for c in conflicts if c["id"] == entry_id], bad,
-                             f"{entry_id}: only an undeclared export that replaces another copy is a conflict")
-            assert "absentpkg" not in [c[-1] for c in asked], \
-                f"an install mise does not hold puts nothing on PATH and is not asked about: {asked}"
-
-            checked = mise.mise_export_check(entries)
-            assert_equal(checked["ok"], False, "a package answering to a system command is not a passing state")
-            assert_equal(checked["error"].splitlines(), ["mise-export-check-failed: broken: mise ERROR brokenpkg"] + [
-                f"mise-export-shadow: {i} exports {n}, which also answers at {distro / n}"
-                for i, n in (("open", "node"), ("alias", "alias-real"), ("hidden", "stray"))],
-                "the error and the conflicts found after it are all in the outcome, each naming the copy it replaces")
-            assert_equal(checked["exports"], conflicts, "and the conflicts themselves")
-
-            # A mise that cannot answer at all is never read as "no conflicts".
-            mise.RT.run = lambda cmd, check=False, **kw: subprocess.CompletedProcess(cmd, 1, stdout="", stderr="mise ERROR nope")
+        with mock.patch.multiple(mise, dev_tools_catalog=lambda: catalog), \
+                mock.patch.multiple(mise.RT, run=fake_run, command_exists=lambda name: True, load_settings=dict,
+                                    home=lambda: root), \
+                mock.patch.dict(os.environ, {"PATH": os.pathsep.join(map(str, path))}):
             checked = mise.mise_export_check(*mise.installed_entries())
-            assert_equal(checked["ok"], False, "a check that could not run must not pass")
-            assert_equal(checked["error"], "mise-export-check-failed: mise ERROR nope",
-                         "and says why, rather than reading as a clean machine")
-            mise.RT.run = lambda cmd, check=False, **kw: subprocess.CompletedProcess(
-                cmd, 0, stdout=json.dumps(installed) if cmd[1] == "ls" else '{"not": "a list"}', stderr="")
-            conflicts, error = mise.mise_export_conflicts(mise.installed_entries()[0])
-            assert conflicts == [] and "not a list" in error, (conflicts, error)
+            for entry_id, _exec, _launch, _names, bad, _on_path in EXPORT_CASES:
+                assert_equal([c["command"] for c in checked["exports"] if c["id"] == entry_id], bad,
+                             f"{entry_id}: only an undeclared export that replaces another copy is a conflict")
+            assert_equal(checked["error"].splitlines()[:2], [
+                "mise-export-check-failed: broken: mise ERROR brokenpkg",
+                f"mise-export-shadow: open exports node, which also answers at {distro / 'node'}"],
+                "an install mise cannot answer for is named, and a conflict names the copy it replaces")
+            assert "absentpkg" not in asked and not checked["ok"], (asked, checked)
+            # A mise that cannot answer, or answers in a shape it never prints for
+            # this, is never read as "no conflicts"; no mise at all is.
+            object_run = lambda cmd, check=False, **kw: subprocess.CompletedProcess(
+                cmd, 0, stdout=json.dumps(installed) if cmd[1] == "ls" else "{}", stderr="")
+            for label, run, exists, want in (
+                    ("mise fails", lambda cmd, check=False, **kw: subprocess.CompletedProcess(cmd, 1, stdout="", stderr="mise ERROR nope"),
+                     True, (False, "mise-export-check-failed: mise ERROR nope")),
+                    ("bin-paths prints an object", object_run, True,
+                     (False, "mise-export-check-failed: broken: mise bin-paths printed dict, not a list")),
+                    ("no mise", fake_run, False, (True, ""))):
+                mise.RT.run, mise.RT.command_exists = run, lambda name: exists
+                result = mise.mise_export_check(*mise.installed_entries())
+                assert_equal((result["ok"], result["error"].split("; ")[0]), want, label)
 
-            # No mise means no mise bin path, which is an answer and not a miss.
-            mise.RT.command_exists = lambda name: False
-            assert_equal(mise.mise_export_check(*mise.installed_entries())["ok"], True,
-                         "a machine without mise has nothing to shadow")
-        finally:
-            mise.dev_tools_catalog = original_catalog
-            mise.RT.run = original_run
-            mise.RT.command_exists = original_exists
-            mise.RT.load_settings = original_settings
-            os.environ["PATH"] = original_path
 
-
-def test_an_option_the_catalog_changed_reaches_an_earlier_install():
+def test_every_launcher_is_settled_before_its_option_is_recorded():
     """mise records a spec's options once, so an earlier Cursor Agent install
-    keeps `bin_path = "dist-package"`, and its `node` ahead of /usr/bin, until
-    the option is re-declared, which only a launcher VGS owns may follow."""
-    catalog = {"agents": [
-        {"id": "cursor", "name": "Cursor Agent", "command": "cursor-agent",
-         "package": "cursor-agent[bin_path=]", "exec": "dist-package/cursor-agent"},
-        # Options that mise refuses to re-declare until the last rows.
-        {"id": "busy", "name": "Busy", "command": "busycmd", "package": "busypkg[extras=all]"},
-        # No option to drift, so nothing to rewrite.
-        {"id": "plain", "name": "Plain", "command": "plaincmd", "package": "plainpkg"},
-        # Options, but mise does not hold it: declaring it here would download a
-        # tool the owner never asked for. Its stub declares it on first run.
-        {"id": "gone", "name": "Gone", "command": "gonecmd", "package": "gonepkg[extras=all]"},
-    ], "apps": [], "tools": []}
-    installed = {key: [{"version": "1.0", "installed": True, "active": True, "source": {"type": "mise.toml"}}]
-                 for key in ("cursor-agent", "busypkg", "plainpkg")}
+    keeps its package, and `node`, on PATH until the refresh re-declares it.
+    After that only the launcher runs `cursor-agent`: every launcher is kept
+    current, auto-install on or off, and the option is recorded only behind
+    the stub the refresh has just written."""
+    # In `tools`, so the spec `exec` gives an entry is pinned outside the
+    # launchable groups too.
+    catalog = {"agents": [], "apps": [], "tools": [
+        {"id": "cursor", "name": "Cursor", "command": "cursor-agent", "package": "cursor-agent",
+         "exec": "dist-package/cursor-agent"},
+        {"id": "plain", "name": "Plain", "command": "plaincmd", "package": "plainpkg"}]}
+    installed = {"cursor-agent": [{"version": "1", "installed": True, "active": True, "source": {}}]}
     # The spec whose old option mise still holds, and so still exports `node`.
-    recorded = {"cursor-agent"}
-    refused = {"busypkg[extras=all]"}
-    ran = []
-    groups = set()
+    recorded, refused, ran = {"cursor-agent"}, set(), []
 
     def fake_run(cmd, check=False, **kw):
-        groups.add(kw.get("kill_group"))
-        if cmd[1] in ("ls", "bin-paths"):
+        assert kw["kill_group"], f"a mise call that outlives its timeout: {cmd}"
+        if cmd[1] == "bin-paths":
             node = [{"name": "node", "path": "/i/cursor-agent/dist-package/node"}] if cmd[-1] in recorded else []
-            return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(installed if cmd[1] == "ls" else node), stderr="")
-        ran.append(list(cmd))
-        if cmd[-1] in refused:
-            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="mise ERROR busy")
+            return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(node), stderr="")
+        ran.append(cmd[1:])
+        if refused & {cmd[1], cmd[-1]}:
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="mise ERROR nope")
         recorded.discard(mise.package_key(cmd[-1]))
-        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(installed), stderr="")
 
     with tempfile.TemporaryDirectory() as tmp:
-        distro = Path(tmp) / "usr-bin"
-        distro.mkdir()
-        (distro / "node").write_text("#!/bin/sh\nexit 0\n")
+        home = Path(tmp)
+        bin_dir, distro, marker = home / ".local" / "bin", home / "usr-bin", home / "state" / mise.MISE_STUBS_REMOVED
+        launcher, plain = bin_dir / "cursor-agent", bin_dir / "plaincmd"
+        for path in (distro / "node", marker, launcher):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("#!/bin/sh\n")
         (distro / "node").chmod(0o755)
-        launcher = Path(tmp) / ".local" / "bin" / "cursor-agent"
-        marker = Path(tmp) / "state" / mise.MISE_STUBS_REMOVED
-        original_home = mise.RT.home
-        original_state = mise.RT.state_dir
-        original_run = mise.RT.run
-        original_exists = mise.RT.command_exists
-        original_settings = mise.RT.load_settings
-        original_catalog = mise.dev_tools_catalog
-        original_path = os.environ.get("PATH", "")
-        try:
-            mise.RT.home = lambda: Path(tmp)
-            mise.RT.state_dir = lambda: Path(tmp) / "state"
-            mise.RT.run = fake_run
-            mise.RT.command_exists = lambda name: True
-            mise.RT.load_settings = lambda: {}
-            mise.dev_tools_catalog = lambda: catalog
-            os.environ["PATH"] = os.pathsep.join([str(launcher.parent), str(distro)])
-            cursor, busy = (["mise", "use", "-g", "--quiet", spec] for spec in ("cursor-agent[bin_path=]", "busypkg[extras=all]"))
-            use = "mise use -g 'cursor-agent[bin_path=]'"
-            held = ["busy", "mise-export-shadow", "mise-launcher-not-ours"]
-            # What decides it, what mise was asked to re-declare, the keys of the
-            # lines the run reports, the advice's cause and the command it ends
-            # on, whether it passes, and what the launcher is afterwards.
-            for label, prepare, want_ran, want_keys, want_step, want_ok, want_state in (
-                ("the owner's own launcher",
-                 lambda: (launcher.parent.mkdir(parents=True), launcher.write_text("#!/bin/sh\n")),
-                 [busy], held, ("foreign", use), False, "foreign"),
-                ("auto-install off", lambda: (launcher.unlink(), mise.mise_remove_stubs()),
-                 [busy], held, ("opted-out", "vshell mise opt-in"), False, "absent"),
-                ("the command answering elsewhere, as through the old export",
-                 lambda: (marker.unlink(), (distro / "cursor-agent").write_text("#!/bin/sh\n"), (distro / "cursor-agent").chmod(0o755)),
-                 [busy], held, ("shadowed", use), False, "shadowed"),
-                # The export check, which runs last, is clean from here on.
-                ("VGS writes the launcher", (distro / "cursor-agent").unlink, [cursor, busy], ["busy"], (), False, "ours"),
-                ("and mise accepts every declaration", refused.clear, [cursor, busy], [], (), True, "ours"),
-                ("auto-install off keeps the only way in",
-                 lambda: assert_equal(mise.mise_remove_stubs()["routes"], ["cursor-agent"], "remove-stubs names what it keeps"),
-                 [cursor, busy], [], (), True, "ours"),
-            ):
+
+        def state(path, entry_id):
+            found = mise.mise_stub_state(path)
+            if found != "ours":
+                return found
+            entry = next(e for e in mise.manageable(catalog) if e["id"] == entry_id)
+            return "current" if path.read_text() == mise.mise_stub_text(**mise.stub_fields(entry)) else "stale"
+
+        # What main wrote: its Cursor stub runs `mise x` on the plain spec, and
+        # the other stub is one this release never writes.
+        main_stubs = lambda: (launcher.write_text(mise.mise_stub_text("cursor-agent", "cursor-agent", "cursor-agent")),
+                              plain.write_text(f"#!/bin/bash\n{mise.MISE_STUB_MARKER}\nexec mise x plainpkg -- plaincmd\n"))
+        ls, use = ["ls", "--json"], ["use", "-g", "--quiet", "cursor-agent[bin_path=]"]
+        with mock.patch.multiple(mise, dev_tools_catalog=lambda: catalog), \
+                mock.patch.multiple(mise.RT, run=fake_run, command_exists=lambda name: True, load_settings=dict,
+                                    eprint=lambda *a: None, home=lambda: home, state_dir=lambda: home / "state"), \
+                mock.patch.dict(os.environ, {"PATH": f"{bin_dir}{os.pathsep}{distro}"}):
+            # Auto-install is off throughout. Each row: what changes and the
+            # command run, then its exit, every mise call but `bin-paths`, the
+            # keys it reports, the launchers it keeps as the only way in, and
+            # each stub afterwards.
+            for label, prepare, command, want in (
+                    ("main's stubs", main_stubs, "refresh", (0, [ls, use], [], None, "current", "current")),
+                    ("the owner's own launcher", lambda: (launcher.write_text("#!/bin/sh\n"), recorded.add("cursor-agent")),
+                     "refresh", (1, [ls], ["mise-export-shadow", "mise-launcher-not-ours"], None, "foreign", "current")),
+                    ("once the owner follows its advice", recorded.clear,
+                     "refresh", (0, [ls], [], None, "foreign", "current")),
+                    ("an install with no launcher", lambda: (launcher.unlink(), recorded.add("cursor-agent")),
+                     "refresh", (0, [ls, use], [], None, "current", "current")),
+                    ("mise refuses the option", lambda: refused.add(use[-1]),
+                     "refresh", (1, [ls, use], ["mise-declare-failed"], None, "current", "current")),
+                    ("turning auto-install off", refused.clear,
+                     "remove-stubs", (0, [ls, use], [], ["cursor-agent"], "current", "absent")),
+                    ("with mise unable to say what is installed", lambda: refused.add("ls"),
+                     "remove-stubs", (1, [ls], ["mise ERROR nope"], ["cursor-agent"], "current", "absent"))):
                 prepare()
                 ran.clear()
-                result = mise.mise_sync()
-                keys = [line.split(":")[0] for line in result["error"].splitlines() if not line.startswith(" ")]
-                advice = result["error"].partition(mise.LAUNCHER_NOT_OURS_KEY + ": cursor ")[2]
-                step = (advice.split(" ", 1)[0], advice.rpartition("run: ")[2]) if advice else ()
-                assert_equal((ran, keys, step, result["ok"], mise.mise_stub_state(launcher)),
-                             (want_ran, want_keys, want_step, want_ok, want_state), label)
-            assert_equal(groups, {True}, "every mise call the sync makes ends its whole group on a timeout")
-            # An install mise cannot vouch for keeps its launcher, and the run says so and fails.
-            mise.RT.run = lambda cmd, check=False, **kw: subprocess.CompletedProcess(cmd, 1, stdout="", stderr="mise ERROR nope")
-            with contextlib.redirect_stdout(io.StringIO()) as out, contextlib.redirect_stderr(io.StringIO()):
-                code = mise.cmd_mise(["remove-stubs"])
-            assert_equal((code, "cursor-agent" in out.getvalue(), mise.mise_stub_state(launcher)), (1, True, "ours"),
-                         "remove-stubs when mise cannot say what is installed")
-            assert_equal(mise.mise_sync()["error"], "mise-export-check-failed: mise ERROR nope",
-                         "a sync reads the installs once and reports a failed read once, under the check's key")
-            mise.RT.command_exists = lambda name: False
-            assert_equal(mise.mise_sync()["ok"], True, "no mise means nothing recorded to drift and nothing to shadow")
-        finally:
-            mise.RT.home = original_home
-            mise.RT.state_dir = original_state
-            mise.RT.run = original_run
-            mise.RT.command_exists = original_exists
-            mise.RT.load_settings = original_settings
-            mise.dev_tools_catalog = original_catalog
-            os.environ["PATH"] = original_path
+                with contextlib.redirect_stdout(io.StringIO()) as out:
+                    code = mise.cmd_mise([command, "--json"])
+                result = json.loads(out.getvalue())
+                keys = [line.partition(":")[0] for line in result["error"].splitlines() if not line.startswith(" ")]
+                assert_equal((code, ran, keys, result.get("routes"), state(launcher, "cursor"), state(plain, "plain")),
+                             want, label)
 
 
 def test_catalog_entries_cover_the_tools_section():
@@ -1386,13 +1262,6 @@ def test_catalog_entries_cover_the_tools_section():
     for group, entries in (("tool", catalog["tools"]),):
         stamped = [e["group"] for e in mise.manageable(catalog) if e["id"] in {t["id"] for t in entries}]
         assert_equal(set(stamped), {group}, "manageable() must stamp the group each entry came from")
-
-
-def package_options(spec: str) -> dict:
-    """The backend options one mise spec carries: `name[a=1,b=]` -> {a: 1, b: }."""
-    bracket = mise.PACKAGE_OPTIONS.search(spec)
-    inside = bracket.group(0)[1:-1] if bracket else ""
-    return dict(part.split("=", 1) for part in inside.split(",") if "=" in part)
 
 
 def test_catalog_is_consistent():
@@ -1435,28 +1304,6 @@ def test_catalog_is_consistent():
         assert default in options, f"{entry['id']}: channels.default {default!r} names none of " + " ".join(options)
         assert_equal([c for c, o in options.items() if not o], [default],
                      f"{entry['id']}: the unmodified package is the default stream and only that")
-    # `exec` and an empty mise `bin_path=` are one decision (D016); `bin_path=sub`
-    # narrows the export and still publishes it. Judged on the raw sections and
-    # every stream, so no channel or architecture goes unjudged.
-    def off_path(spec):
-        return package_options(spec).get("bin_path", "unset") == ""
-
-    for spec, want in (("cursor-agent[bin_path=]", True),
-                       ("somepkg[bin_path=tools]", False),
-                       ("pipx:hermes-agent[extras=all]", False),
-                       ("plainpkg", False)):
-        assert_equal(off_path(spec), want, f"{spec}: only an empty bin_path keeps an install off PATH")
-    for entry in catalog["agents"] + catalog["apps"] + catalog["tools"]:
-        specs = [mise.package_with_options(str(entry["package"]), options)
-                 for options in mise.entry_channels(entry).values()] or [str(entry["package"])]
-        for spec in specs:
-            assert bool(entry.get("exec")) == off_path(spec), \
-                f"{entry['id']}: an exec path and an empty mise bin_path= go together in {spec}, not one without the other"
-        # The stub and the launcher run the file `exec` names: the launch argv's.
-        if entry.get("exec"):
-            named = [str(part) for part in entry.get("launch") or [entry["command"]]][0]
-            assert_equal(Path(str(entry["exec"])).name, named,
-                         f"{entry['id']}: the exec path must name the executable the launch argv does")
     env_ids = [e["id"] for e in catalog["envs"]]
     assert_equal(len(env_ids), len(set(env_ids)), "env ids must be unique")
     for env in catalog["envs"]:
@@ -1500,9 +1347,9 @@ def main() -> int:
     test_the_settings_tab_can_act_on_every_row()
     test_a_row_carries_the_release_it_is_waiting_for()
     test_a_package_kept_off_path_runs_by_absolute_path()
-    test_the_refreshed_stub_and_the_launch_refusal_reach_the_owner()
+    test_an_exec_stub_runs_the_file_under_the_install_root()
     test_an_install_may_not_export_a_command_the_entry_does_not_own()
-    test_an_option_the_catalog_changed_reaches_an_earlier_install()
+    test_every_launcher_is_settled_before_its_option_is_recorded()
     test_catalog_entries_cover_the_tools_section()
     test_catalog_is_consistent()
     test_cli_wrapper_routes_the_commands()

@@ -109,11 +109,13 @@ def update_steps(mode: str) -> List[Dict[str, Any]]:
             RT.eprint("flatpak not found")
     if mode == "tools" or everything:
         if RT.command_exists("mise"):
-            # Stubs are rewritten after every tools update so a template change
-            # reaches machines that already have them, without a migration;
-            # `mise_sync` also re-declares options and checks exports (D016).
             steps.append({"title": "Updating mise tools (agents, toolchains)", "argv": ["mise", "up"],
-                          "env": mise.mise_env(), "cwd": str(RT.home()), "after": [mise.mise_sync]})
+                          "env": mise.mise_env(), "cwd": str(RT.home())})
+            # Stubs are rewritten after every tools update so a template change
+            # reaches machines that already have them, without a migration. A new
+            # process, so the code that writes them comes from the release whose
+            # catalog it reads: `all` may have just upgraded VGS itself (D016).
+            steps.append({"title": "Refreshing mise launchers", "argv": [str(RT.repo_root() / "bin" / "vshell"), "mise", "refresh"]})
         elif not everything:
             RT.eprint("mise not found")
     return steps
@@ -142,12 +144,6 @@ def cmd_update(argv: List[str]) -> int:
         for step in steps:
             print(f":: {step['title']}")
             failures += 0 if subprocess.run(step["argv"], check=False, env=step.get("env"), cwd=step.get("cwd")).returncode == 0 else 1
-            for after in step.get("after") or ():
-                try:
-                    failures += mise.outcome_status(after())
-                except OSError as exc:
-                    RT.eprint(f"{step['title']}: follow-up failed: {exc}")
-                    failures += 1
         try:
             input(("Failed — press Enter to close…" if failures else "Done — press Enter to close…"))
         except EOFError:

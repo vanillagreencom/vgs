@@ -134,21 +134,20 @@ def agent_install_prompt(entry: Dict[str, Any]) -> bool:
 
 def entry_install(entry: Dict[str, Any]) -> bool:
     """Install one catalog entry through mise, its stub first so a failed
-    download retries on first run; True when every step succeeded. An entry
-    `launcher_advice` holds back is refused with that advice (D016)."""
+    download retries on first run, then settle it (D016); True when every
+    step succeeded."""
     fields = stub_fields(entry)
     mise_install_stub(**fields)
-    advice = vshell_mise.launcher_advice(entry)
-    if advice:
-        print(advice)
-        return False
     # The same steps the stub would run, so a tool installed from the prompt and
     # one installed on first launch are built the same way.
     env = {**mise_env(), **mise_build_env(fields["build_env"])}
     for step in mise_install_steps(fields["package"], fields["requires"], fields["present"], quiet=False):
         if subprocess.run(step, check=False, env=env, cwd=str(RT.home())).returncode != 0:
             return False
-    return True
+    error = vshell_mise.mise_settle(entry, installed=True)[1]
+    if error:
+        print(error)
+    return not error
 
 
 def agent_launch(agent_id: str, inline: bool, hold: bool = False) -> int:
@@ -222,21 +221,23 @@ def agent_remove(entry: Dict[str, Any]) -> int:
 def entry_track(entry: Dict[str, Any]) -> int:
     """Declare an existing mise install in the global config. `mise outdated`
     reports only what a config asks for, so an install nothing declares never
-    reaches an update count and never moves again. An entry `launcher_advice`
-    holds back is refused with that advice (D016)."""
+    reaches an update count and never moves again. The declaration records the
+    entry's options, so it is refused behind the owner's own launcher, and ends
+    by settling the entry (D016)."""
     installs, _ = mise_installs()
     install = installs.get(package_key(str(entry["package"])))
     if not install:
         return hold_terminal(1, f"{entry['name']} is not installed through mise; there is nothing to track.")
     if install["declared"]:
         return hold_terminal(0, f"{entry['name']} is already tracked for updates.")
-    advice = vshell_mise.launcher_advice(entry)
-    if advice:
-        return hold_terminal(1, advice)
+    refusal = vshell_mise.launcher_refusal(entry)
+    if refusal:
+        return hold_terminal(1, refusal)
     print(f"Tracking {entry['name']} for updates...\n")
     code = dev_env_run(["mise", "use", "-g", str(entry["package"])])
-    return hold_terminal(code, f"{entry['name']} is now tracked for updates."
-                         if code == 0 else f"{entry['name']} could not be tracked.")
+    error = vshell_mise.mise_settle(entry, installed=True)[1] if code == 0 else ""
+    return hold_terminal(1 if error else code, error or (f"{entry['name']} is now tracked for updates."
+                         if code == 0 else f"{entry['name']} could not be tracked."))
 
 
 def entry_update(entry: Dict[str, Any]) -> int:
@@ -262,6 +263,11 @@ def entry_replace(entry: Dict[str, Any]) -> int:
     origin = install_origin(entry, installs)
     if origin["origin"] != ORIGIN_SYSTEM:
         return hold_terminal(1, f"No distribution package owns {entry['command']}; nothing to replace.")
+    # The install records the entry's options, which the owner's own launcher
+    # refuses, and no removal changes that file (D016).
+    refusal = vshell_mise.launcher_refusal(entry)
+    if refusal:
+        return hold_terminal(1, refusal)
     owner, path = origin["owner"], origin["path"]
     print(f"{owner} owns {path}.")
     print(f"Removing it, then installing {entry['name']} through mise.\n")
