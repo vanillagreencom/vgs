@@ -65,3 +65,11 @@ jobs:
       contents: read
     uses: ./.github/workflows/publish-aur.yml
     secrets: inherit
+
+  # Launchpad builds from the published source archive, so this also waits for publication.
+  ppa:
+    needs: publish
+    permissions:
+      contents: read
+    uses: ./.github/workflows/publish-ppa.yml
+    secrets: inherit
