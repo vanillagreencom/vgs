@@ -30,9 +30,11 @@ AUR and Gentoo are separate publishing repositories. Changes here reach users th
 
 The AUR publisher defers missing release assets or mismatched published checksums. Other network and authentication failures fail the publish. It needs `AUR_SSH_PRIVATE_KEY` and `AUR_SSH_KNOWN_HOSTS`; verify the stored host-key fingerprint against Arch's published fingerprint. The Gentoo publisher requires overlay commit rights.
 
+`scripts/publish-ppa.sh` builds the Ubuntu source package from the release archive, signs it, uploads it, and waits until Launchpad lists it. `release.yml` runs it through `publish-ppa.yml`. It needs `PPA_SIGNING_KEY_ID` and `PPA_SIGNING_PRIVATE_KEY_PASSWORD`, and `PPA_SIGNING_PRIVATE_KEY` where the key is not in the keyring. The Ubuntu signing key is separate from the release tag key.
+
 ## Manual channel commands
 
-Replace version placeholders before use. Keep build work in a temporary directory outside the source checkout. The OBS and Ubuntu commands prepare publication artifacts, not installation checks.
+Replace version placeholders before use. Keep build work in a temporary directory outside the source checkout. The OBS commands prepare publication artifacts, not installation checks.
 
 ```bash
 # Gentoo overlay
@@ -55,21 +57,11 @@ osc checkout home:vanillagreen vgs-shell -o /tmp/obs
   osc commit -m "Update to vX.Y.Z" )
 osc results home:vanillagreen vgs-shell
 
-# Ubuntu PPA — debian/ must sit at the source root, and the signing key has a
-# passphrase, so a person runs debsign.
-R=$(git rev-parse --show-toplevel)              # before any cd
-curl -fsSLO https://github.com/vanillagreencom/vgs/releases/download/vX.Y.Z/vgs-X.Y.Z-source.tar.gz
-cp vgs-X.Y.Z-source.tar.gz vgs-shell_X.Y.Z.orig.tar.gz
-tar -xzf vgs-X.Y.Z-source.tar.gz && cd vgs-X.Y.Z
-cp -a "$R/packaging/debian" debian
-sed -i '1s/.*/vgs-shell (X.Y.Z-1~ubuntu26.04.1) resolute; urgency=medium/' debian/changelog
-dpkg-buildpackage -S -us -uc -d -nc           # -nc: dh clean needs debhelper
-debsign -k <KEYID> ../vgs-shell_*_source.changes
-dput vgs-ppa ../vgs-shell_*_source.changes    # host config in ~/.dput.cf
+# Ubuntu PPA (release.yml runs this; by hand only when that job failed)
+scripts/publish-ppa.sh                        # needs the PPA signing variables above
+scripts/publish-ppa.sh --dry-run              # builds the source package only
+scripts/publish-ppa.sh --revision 2           # re-uploads a release Launchpad has seen
 ```
-
-
-Configure `vgs-ppa` in `~/.dput.cf` with `fqdn = ppa.launchpad.net` and `incoming = ~vanillagreen/ubuntu/vgs-shell/`. Check dput's output as well as its status; an unknown host can report success. Ubuntu signing uses the package signing key, separate from the release tag key.
 
 ## Artifact verification
 
