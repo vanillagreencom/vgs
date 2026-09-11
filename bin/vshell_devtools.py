@@ -15,7 +15,7 @@ from typing import Any, Dict, List
 
 import vshell_mise
 from vshell_apps import PACKAGE_OWNER_QUERY, PACKAGE_REMOVERS, os_release_ids, owning_package
-from vshell_mise import DevToolsRuntime, dev_tools_catalog, launchable, manageable, mise_build_env, mise_install_steps, mise_installs, mise_outdated, mise_stubs_opted_out, mise_env, mise_install_stub, mise_installed_versions, mise_stub_state, package_key
+from vshell_mise import DevToolsRuntime, dev_tools_catalog, launchable, manageable, mise_build_env, mise_install_steps, mise_installs, mise_outdated, mise_stubs_opted_out, mise_env, mise_install_stub, mise_installed_versions, mise_stub_state, mise_where, package_key, stub_fields
 
 RT: DevToolsRuntime
 
@@ -99,11 +99,19 @@ def agent_installed(entry: Dict[str, Any]) -> bool:
 
 def agent_launch_argv(entry: Dict[str, Any]) -> List[str]:
     """The agent's launch argv, run through `mise x` when mise owns it so it
-    resolves without a stub or shim on PATH; the owner's own command otherwise."""
+    resolves without a stub or shim on PATH; the owner's own command otherwise.
+    An entry with `exec` runs that file under the root `mise where` names (D016)."""
     launch = [str(part) for part in entry.get("launch") or [entry["command"]]]
     versions, _ = mise_installed_versions()
     if versions.get(package_key(str(entry["package"]))):
-        return ["mise", "x", str(entry["package"]), "--", *launch]
+        exec_path = str(entry.get("exec") or "")
+        if not exec_path:
+            return ["mise", "x", str(entry["package"]), "--", *launch]
+        root, error = mise_where(str(entry["package"]))
+        if not root:
+            raise ValueError(f"{entry['name']}: {exec_path} cannot be located: "
+                             + (error or f"mise reported no install root for {entry['package']}"))
+        return [str(Path(root) / exec_path), *launch[1:]]
     # `launch` names the executable inside the package, which for an AppImage is
     # not the command anyone has on PATH. An install VGS does not own answers to
     # the public command instead; its own arguments still apply.
@@ -121,19 +129,25 @@ def agent_install_prompt(entry: Dict[str, Any]) -> bool:
         answer = "n"
     if answer not in ("", "y", "yes"):
         return False
-    command = str(entry["command"])
-    package = str(entry["package"])
-    build_env = dict(entry.get("buildEnv") or {})
-    requires = [str(r) for r in entry.get("requires") or []]
-    present = str(entry.get("present") or "")
-    mise_install_stub(package, command, str(entry.get("bin") or command), build_env, requires, present)
+    return entry_install(entry)
+
+
+def entry_install(entry: Dict[str, Any]) -> bool:
+    """Install one catalog entry through mise, its stub first so a failed
+    download retries on first run, then settle it (D016); True when every
+    step succeeded."""
+    fields = stub_fields(entry)
+    mise_install_stub(**fields)
     # The same steps the stub would run, so a tool installed from the prompt and
     # one installed on first launch are built the same way.
-    env = {**mise_env(), **mise_build_env(build_env)}
-    for step in mise_install_steps(package, requires, present, quiet=False):
+    env = {**mise_env(), **mise_build_env(fields["build_env"])}
+    for step in mise_install_steps(fields["package"], fields["requires"], fields["present"], quiet=False):
         if subprocess.run(step, check=False, env=env, cwd=str(RT.home())).returncode != 0:
             return False
-    return True
+    error = vshell_mise.mise_settle(entry, installed=True)[1]
+    if error:
+        print(error)
+    return not error
 
 
 def agent_launch(agent_id: str, inline: bool, hold: bool = False) -> int:
@@ -207,17 +221,23 @@ def agent_remove(entry: Dict[str, Any]) -> int:
 def entry_track(entry: Dict[str, Any]) -> int:
     """Declare an existing mise install in the global config. `mise outdated`
     reports only what a config asks for, so an install nothing declares never
-    reaches an update count and never moves again."""
+    reaches an update count and never moves again. The declaration records the
+    entry's options, so it is refused behind the owner's own launcher, and ends
+    by settling the entry (D016)."""
     installs, _ = mise_installs()
     install = installs.get(package_key(str(entry["package"])))
     if not install:
         return hold_terminal(1, f"{entry['name']} is not installed through mise; there is nothing to track.")
     if install["declared"]:
         return hold_terminal(0, f"{entry['name']} is already tracked for updates.")
+    refusal = vshell_mise.launcher_refusal(entry)
+    if refusal:
+        return hold_terminal(1, refusal)
     print(f"Tracking {entry['name']} for updates...\n")
     code = dev_env_run(["mise", "use", "-g", str(entry["package"])])
-    return hold_terminal(code, f"{entry['name']} is now tracked for updates."
-                         if code == 0 else f"{entry['name']} could not be tracked.")
+    error = vshell_mise.mise_settle(entry, installed=True)[1] if code == 0 else ""
+    return hold_terminal(1 if error else code, error or (f"{entry['name']} is now tracked for updates."
+                         if code == 0 else f"{entry['name']} could not be tracked."))
 
 
 def entry_update(entry: Dict[str, Any]) -> int:
@@ -243,6 +263,11 @@ def entry_replace(entry: Dict[str, Any]) -> int:
     origin = install_origin(entry, installs)
     if origin["origin"] != ORIGIN_SYSTEM:
         return hold_terminal(1, f"No distribution package owns {entry['command']}; nothing to replace.")
+    # The install records the entry's options, which the owner's own launcher
+    # refuses, and no removal changes that file (D016).
+    refusal = vshell_mise.launcher_refusal(entry)
+    if refusal:
+        return hold_terminal(1, refusal)
     owner, path = origin["owner"], origin["path"]
     print(f"{owner} owns {path}.")
     print(f"Removing it, then installing {entry['name']} through mise.\n")
@@ -256,17 +281,8 @@ def entry_replace(entry: Dict[str, Any]) -> int:
     else:
         return hold_terminal(1, "No supported package manager for this distribution ("
                              + (" ".join(os_release_ids()) or "unreadable /etc/os-release") + ").")
-    env = {**mise_env(), **mise_build_env(dict(entry.get("buildEnv") or {}))}
-    for step in mise_install_steps(str(entry["package"]),
-                                   [str(r) for r in entry.get("requires") or []],
-                                   str(entry.get("present") or ""), quiet=False):
-        if subprocess.run(step, check=False, env=env, cwd=str(RT.home())).returncode != 0:
-            return hold_terminal(1, f"{owner} was removed but {entry['name']} did not install.")
-    mise_install_stub(str(entry["package"]), str(entry["command"]),
-                      str(entry.get("bin") or entry["command"]),
-                      dict(entry.get("buildEnv") or {}),
-                      [str(r) for r in entry.get("requires") or []],
-                      str(entry.get("present") or ""))
+    if not entry_install(entry):
+        return hold_terminal(1, f"{owner} was removed but {entry['name']} did not install.")
     return hold_terminal(0, f"{entry['name']} now comes from mise.")
 
 
@@ -318,7 +334,12 @@ def cmd_agent(argv: List[str]) -> int:
         if len(ids) != 1:
             RT.eprint(usage)
             return 2
-        return agent_launch(ids[0], inline="--inline" in rest, hold="--hold" in rest)
+        # A launch that cannot be built is a refusal the owner reads, not a
+        # traceback in a window that closes.
+        try:
+            return agent_launch(ids[0], inline="--inline" in rest, hold="--hold" in rest)
+        except ValueError as exc:
+            return hold_terminal(1, str(exc))
     RT.eprint(usage)
     return 2
 
