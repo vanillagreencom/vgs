@@ -320,6 +320,7 @@ def test_a_package_is_looked_up_under_the_id_mise_files_it_by():
         ("npm:@xai-official/grok", "npm:@xai-official/grok"),
         ("github:pingdotgg/t3code[matching_regex=AppImage$,rename_exe=t3code]", "github:pingdotgg/t3code"),
         ("github:manaflow-ai/cmux-v2[matching_regex=linux-x64.zip]@nightly", "github:manaflow-ai/cmux-v2"),
+        ("npm:t3[npm_args=--legacy-peer-deps]", "npm:t3"),
         ("npm:@scope/name@1.2.3", "npm:@scope/name"),
     ]
     for package, expected in cases:
