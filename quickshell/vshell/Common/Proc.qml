@@ -13,6 +13,11 @@ Singleton {
     readonly property int noTimeout: -1
     property int defaultDebounceMs: 50
     property int defaultTimeoutMs: 10000
+    // How long a timed-out command has, after its SIGTERM, to exit before its Process
+    // is destroyed, which SIGKILLs it. Theme preview needs this time for its teardown:
+    // it waits up to 5 s for its nested Hyprland to exit, then removes the staging rule
+    // and output from the live compositor.
+    readonly property int terminateGraceMs: 10000
     property var _procDebouncers: ({})
 
     function runCommand(id, command, callback, debounceMs, timeoutMs) {
@@ -66,8 +71,10 @@ Singleton {
         let outSeen = false;
         let errSeen = false;
         let timedOut = false;
+        let processExited = false;
 
         let completed = false;
+        let released = false;
 
         function collectStreams() {
             if (!outSeen) {
@@ -90,6 +97,11 @@ Singleton {
 
         timeoutTimer.interval = launchedTimeoutMs;
         timeoutTimer.triggered.connect(function () {
+            if (timedOut) {
+                // The grace after SIGTERM ran out.
+                release();
+                return;
+            }
             if (!exitSeen) {
                 timedOut = true;
                 proc.running = false;
@@ -127,10 +139,28 @@ Singleton {
 
         proc.exited.connect(function (code) {
             timeoutTimer.stop();
+            processExited = true;
+            if (completed) {
+                // A timed-out command that honoured its SIGTERM within the grace.
+                release();
+                return;
+            }
             exitSeen = true;
             exitCodeValue = code;
             maybeComplete();
         });
+
+        function release() {
+            if (released)
+                return;
+            released = true;
+            try {
+                proc.destroy();
+            } catch (_) {}
+            try {
+                timeoutTimer.destroy();
+            } catch (_) {}
+        }
 
         function maybeComplete() {
             if (completed || !exitSeen || !outSeen || !errSeen)
@@ -149,12 +179,15 @@ Singleton {
                     log.warn("runCommand callback error for command:", launchedCommand, "Error:", e);
                 }
             }
-            try {
-                proc.destroy();
-            } catch (_) {}
-            try {
-                timeoutTimer.destroy();
-            } catch (_) {}
+            if (timedOut && !processExited) {
+                // Destroying a Process SIGKILLs a child still running, which would cut
+                // short the teardown its SIGTERM just started. The child's exit or the
+                // grace's end releases it instead.
+                timeoutTimer.interval = terminateGraceMs;
+                timeoutTimer.start();
+            } else {
+                release();
+            }
 
             if (isRandomId || launchedIsRandomId) {
                 Qt.callLater(function () {
