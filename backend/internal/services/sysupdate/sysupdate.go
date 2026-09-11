@@ -21,6 +21,17 @@ import (
 
 const refreshTimeout = 2 * time.Minute
 
+// closeGrace bounds how long Close waits for a cancelled refresh to unwind.
+// Cancelling only closes the context: os/exec calls Cmd.Cancel from its own
+// watcher goroutine, and Wait does not return until that call has finished, so
+// waiting for the collectors to return is what puts the process-group kill
+// before the daemon's exit. Twice execbound's WaitDelay covers the one command
+// still reading, whose pipe read ends at that delay, plus the collectors after
+// it, which fail fast on the dead context. When the grace expires the daemon
+// exits with the refresh still unwinding and logs that it did: a collector stuck
+// in an uninterruptible wait must not hold logout open.
+const closeGrace = 2 * execbound.DefaultWaitDelay
+
 type Manager struct {
 	srv *server.Server
 	log *slog.Logger
@@ -35,6 +46,10 @@ type Manager struct {
 	mu            sync.Mutex
 	state         State
 	refreshCancel context.CancelFunc
+	// refreshDone is closed when a refresh's collectors return, which is after
+	// every bounded command it ran has finished cancelling. Nil until the first
+	// refresh; closed means no refresh is collecting.
+	refreshDone   chan struct{}
 	acquireCount  int
 	scheduleTimer *time.Timer
 	closed        bool
@@ -136,10 +151,24 @@ func (m *Manager) Close() {
 	m.mu.Lock()
 	m.closed = true
 	m.stopScheduleLocked()
+	done := m.refreshDone
 	if m.refreshCancel != nil {
 		m.refreshCancel()
 	}
 	m.mu.Unlock()
+	if done == nil {
+		return
+	}
+	select {
+	case <-done:
+	case <-time.After(closeGrace):
+		log := m.log
+		if log == nil {
+			log = slog.Default()
+		}
+		log.Warn("update check did not finish cancelling within the shutdown grace; its commands may outlive the daemon",
+			"grace", closeGrace)
+	}
 }
 
 func (m *Manager) handleGetState(json.RawMessage) (any, error) {
@@ -171,6 +200,8 @@ func (m *Manager) refresh(force bool) (any, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), refreshTimeout)
 	m.refreshCancel = cancel
+	done := make(chan struct{})
+	m.refreshDone = done
 	m.opGen++
 	gen := m.opGen
 	started := time.Now().Unix()
@@ -184,6 +215,9 @@ func (m *Manager) refresh(force bool) (any, error) {
 	m.srv.Broadcast("sysupdate", state)
 
 	packages, logs, err := m.collectUpdates(ctx)
+	// Every bounded command has returned, so each one's Cancel has run and its
+	// process group is dead. Close waits on this before letting the daemon exit.
+	close(done)
 
 	m.mu.Lock()
 	cancel()

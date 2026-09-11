@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -285,6 +287,71 @@ func TestScheduledRefreshStopsOnReleaseAndClose(t *testing.T) {
 	if calls := readFile(t, logPath); calls != "" {
 		t.Fatalf("scheduled refresh ran after close:\n%s", calls)
 	}
+}
+
+// Close must not return while a cancelled refresh is still unwinding.
+// Cancelling only closes the context: os/exec calls Cmd.Cancel from its own
+// watcher goroutine, so a Close that returned at refreshCancel() would let the
+// daemon exit before the process-group kill ran, and mise's npm children would
+// outlive it.
+func TestCloseWaitsForTheCancelledRefresh(t *testing.T) {
+	cmd, pidPath := pipeHoldingUpdateCommand(t)
+	m := &Manager{srv: server.New(0, nil), checkupdates: cmd}
+	m.state = State{Phase: "idle", Backends: m.backends(), RecentLog: []string{}}
+
+	go func() { _, _ = m.refresh(true) }()
+	// A recorded holder pid proves the collector's command is running, so the
+	// cancel below has an unwind to wait for rather than a command that never
+	// started.
+	waitFor(t, func() bool { return readFile(t, pidPath) != "" })
+
+	m.mu.Lock()
+	done := m.refreshDone
+	m.mu.Unlock()
+	if done == nil {
+		t.Fatal("no refresh in flight; the test cannot observe the wait")
+	}
+
+	start := time.Now()
+	m.Close()
+	elapsed := time.Since(start)
+
+	select {
+	case <-done:
+	default:
+		t.Fatalf("Close returned after %v with the refresh still cancelling", elapsed)
+	}
+	if elapsed > closeGrace {
+		t.Fatalf("Close took %v, want no more than the %v grace", elapsed, closeGrace)
+	}
+}
+
+// pipeHoldingUpdateCommand is a checkupdates that leaves a descendant holding
+// its stdout from outside the process group: setsid puts the holder in a session
+// of its own, so the group kill cannot reach it and the collector's pipe read
+// runs to execbound's WaitDelay. That makes the wait Close performs measurable
+// in seconds rather than a race between goroutines. Nothing else ends the
+// holder, so cleanup kills it by the pid it recorded.
+func pipeHoldingUpdateCommand(t *testing.T) (string, string) {
+	t.Helper()
+	if _, err := exec.LookPath("setsid"); err != nil {
+		t.Fatalf("setsid is required to detach the pipe holder: %v", err)
+	}
+	dir := t.TempDir()
+	pidPath := filepath.Join(dir, "holder.pid")
+	path := filepath.Join(dir, "checkupdates")
+	body := "#!/bin/sh\n" +
+		"setsid sh -c 'echo $$ > \"$1\"; exec sleep 30' holder '" + pidPath + "' &\n" +
+		"exec sleep 30\n"
+	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if pid, err := strconv.Atoi(strings.TrimSpace(readFile(t, pidPath))); err == nil {
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+		}
+	})
+	return path, pidPath
 }
 
 func TestUpgradePrelaunchFailureSetsStateError(t *testing.T) {
