@@ -1,0 +1,205 @@
+{
+  "$schema": "https://opencode.ai/theme.json",
+  "theme": {
+    "primary": {
+      "dark": "{dark_accent}",
+      "light": "{light_accent}"
+    },
+    "secondary": {
+      "dark": "{dark_secondary}",
+      "light": "{light_secondary}"
+    },
+    "accent": {
+      "dark": "{dark_tertiary}",
+      "light": "{light_tertiary}"
+    },
+    "error": {
+      "dark": "{dark_error}",
+      "light": "{light_error}"
+    },
+    "warning": {
+      "dark": "{dark_warning}",
+      "light": "{light_warning}"
+    },
+    "success": {
+      "dark": "{dark_success}",
+      "light": "{light_success}"
+    },
+    "info": {
+      "dark": "{dark_info}",
+      "light": "{light_info}"
+    },
+    "text": {
+      "dark": "{dark_foreground}",
+      "light": "{light_foreground}"
+    },
+    "textMuted": {
+      "dark": "{dark_muted}",
+      "light": "{light_muted}"
+    },
+    "background": {
+      "dark": "{dark_background}",
+      "light": "{light_background}"
+    },
+    "backgroundPanel": {
+      "dark": "{dark_surfaceContainerLow}",
+      "light": "{light_surfaceContainerLow}"
+    },
+    "backgroundElement": {
+      "dark": "{dark_surfaceContainerHigh}",
+      "light": "{light_surfaceContainerHigh}"
+    },
+    "border": {
+      "dark": "{dark_outline}",
+      "light": "{light_outline}"
+    },
+    "borderActive": {
+      "dark": "{dark_accent}",
+      "light": "{light_accent}"
+    },
+    "borderSubtle": {
+      "dark": "{dark_outlineVariant}",
+      "light": "{light_outlineVariant}"
+    },
+    "diffAdded": {
+      "dark": "{dark_success}",
+      "light": "{light_success}"
+    },
+    "diffRemoved": {
+      "dark": "{dark_error}",
+      "light": "{light_error}"
+    },
+    "diffContext": {
+      "dark": "{dark_muted}",
+      "light": "{light_muted}"
+    },
+    "diffHunkHeader": {
+      "dark": "{dark_info}",
+      "light": "{light_info}"
+    },
+    "diffHighlightAdded": {
+      "dark": "{dark_bright_green}",
+      "light": "{light_bright_green}"
+    },
+    "diffHighlightRemoved": {
+      "dark": "{dark_bright_red}",
+      "light": "{light_bright_red}"
+    },
+    "diffAddedBg": {
+      "dark": "{dark_successContainer}",
+      "light": "{light_successContainer}"
+    },
+    "diffRemovedBg": {
+      "dark": "{dark_errorContainer}",
+      "light": "{light_errorContainer}"
+    },
+    "diffContextBg": {
+      "dark": "{dark_surfaceContainerLow}",
+      "light": "{light_surfaceContainerLow}"
+    },
+    "diffLineNumber": {
+      "dark": "{dark_dim}",
+      "light": "{light_dim}"
+    },
+    "diffAddedLineNumberBg": {
+      "dark": "{dark_successContainer}",
+      "light": "{light_successContainer}"
+    },
+    "diffRemovedLineNumberBg": {
+      "dark": "{dark_errorContainer}",
+      "light": "{light_errorContainer}"
+    },
+    "markdownText": {
+      "dark": "{dark_foreground}",
+      "light": "{light_foreground}"
+    },
+    "markdownHeading": {
+      "dark": "{dark_tertiary}",
+      "light": "{light_tertiary}"
+    },
+    "markdownLink": {
+      "dark": "{dark_accent}",
+      "light": "{light_accent}"
+    },
+    "markdownLinkText": {
+      "dark": "{dark_info}",
+      "light": "{light_info}"
+    },
+    "markdownCode": {
+      "dark": "{dark_green}",
+      "light": "{light_green}"
+    },
+    "markdownBlockQuote": {
+      "dark": "{dark_warning}",
+      "light": "{light_warning}"
+    },
+    "markdownEmph": {
+      "dark": "{dark_warning}",
+      "light": "{light_warning}"
+    },
+    "markdownStrong": {
+      "dark": "{dark_blue}",
+      "light": "{light_blue}"
+    },
+    "markdownHorizontalRule": {
+      "dark": "{dark_outlineVariant}",
+      "light": "{light_outlineVariant}"
+    },
+    "markdownListItem": {
+      "dark": "{dark_accent}",
+      "light": "{light_accent}"
+    },
+    "markdownListEnumeration": {
+      "dark": "{dark_secondary}",
+      "light": "{light_secondary}"
+    },
+    "markdownImage": {
+      "dark": "{dark_accent}",
+      "light": "{light_accent}"
+    },
+    "markdownImageText": {
+      "dark": "{dark_secondary}",
+      "light": "{light_secondary}"
+    },
+    "markdownCodeBlock": {
+      "dark": "{dark_foreground}",
+      "light": "{light_foreground}"
+    },
+    "syntaxComment": {
+      "dark": "{dark_dim}",
+      "light": "{light_dim}"
+    },
+    "syntaxKeyword": {
+      "dark": "{dark_magenta}",
+      "light": "{light_magenta}"
+    },
+    "syntaxFunction": {
+      "dark": "{dark_blue}",
+      "light": "{light_blue}"
+    },
+    "syntaxVariable": {
+      "dark": "{dark_foreground}",
+      "light": "{light_foreground}"
+    },
+    "syntaxString": {
+      "dark": "{dark_green}",
+      "light": "{light_green}"
+    },
+    "syntaxNumber": {
+      "dark": "{dark_yellow}",
+      "light": "{light_yellow}"
+    },
+    "syntaxType": {
+      "dark": "{dark_cyan}",
+      "light": "{light_cyan}"
+    },
+    "syntaxOperator": {
+      "dark": "{dark_bright_white}",
+      "light": "{light_bright_white}"
+    },
+    "syntaxPunctuation": {
+      "dark": "{dark_muted}",
+      "light": "{light_muted}"
+    }
+  }
+}
