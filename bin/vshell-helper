@@ -77,6 +77,9 @@ CAMEL = {
     "bright_cyan": "brightCyan",
     "bright_white": "brightWhite",
 }
+# VS Code's workbench keys for the sixteen ANSI slots, in slot order. Derived
+# from the slot names so the two spellings cannot drift apart.
+VSCODE_ANSI_KEYS = ["terminal.ansi" + name.title().replace("_", "") for name in ANSI_NAMES]
 # Syntax roles and the palette role each derives from. Rendered into
 # themes/targets/codex-vgs/vgs.tmTheme, which paints code and diffs in Codex.
 SYNTAX_ROLE_BASES = {
@@ -1252,6 +1255,14 @@ def paired_blueprint(base: Dict[str, Any], target_mode: str,
 # installed (see the download catalog below); it is not a theme package.
 RESERVED_THEME_SUBDIRS = {"blueprints", "targets", "wallpapers", "thumbnails"}
 
+# Terminal-only ANSI slots. A slot carries two meanings at once: `colors.toml`
+# feeds the shell's derived roles and pi's interface as well as the terminal, so
+# a slot whose conventional terminal meaning needs a different colour than the
+# rest of VGS reads cannot be fixed there without moving a role. This file holds
+# that terminal value alone: only the targets that paint an actual terminal read
+# it, and `target_roles` and every app template outside a terminal ignore it.
+TERMINAL_COLORS_FILE = "terminal-colors.toml"
+
 
 def theme_package_names() -> List[str]:
     names = set()
@@ -1332,9 +1343,17 @@ def load_theme_package(name: str) -> Dict[str, Any] | None:
     bp["catalogPristine"] = catalog_pristine(name)
     bp["appOverrides"] = {app: len(roles) for app, roles in _parse_app_overrides_text(
         files["app-colors.toml"].read_text(errors="ignore") if "app-colors.toml" in files else "").items()}
+    bp["terminalColors"] = {}
+    if TERMINAL_COLORS_FILE in files:
+        try:
+            bp["terminalColors"] = terminal_slot_overrides(parse_colors_toml(files[TERMINAL_COLORS_FILE]))
+        except Exception as exc:
+            eprint(f"theme package {name}: {exc}")
     stamps = [meta_path.stat().st_mtime]
     if "colors.toml" in files:
         stamps.append(files["colors.toml"].stat().st_mtime)
+    if TERMINAL_COLORS_FILE in files:
+        stamps.append(files[TERMINAL_COLORS_FILE].stat().st_mtime)
     bp["timestamp"] = int(max(stamps) * 1000)
     return bp
 
@@ -1355,7 +1374,7 @@ def resolve_theme_package(name: str) -> Dict[str, Any] | None:
 # before unpacking. HTTPS is required except for the test base-URL override.
 # Downloaded files are theme data.
 
-CATALOG_ALLOWED_TOP_LEVEL = {"theme.json", "colors.toml", "preview.png"}
+CATALOG_ALLOWED_TOP_LEVEL = {"theme.json", "colors.toml", TERMINAL_COLORS_FILE, "preview.png"}
 CATALOG_ALLOWED_DIRS = ("apps/", "backgrounds/")
 CATALOG_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 CATALOG_RELEASE_RE = re.compile(r"^themes-v[0-9]+$")
@@ -2009,6 +2028,7 @@ def rendered_apps_for(bp: Dict[str, Any]) -> Dict[str, str]:
     (vscode.json, icons.theme, hyprland.conf) are hand-written only.
     """
     roles = target_roles(bp)
+    roles.update(terminal_palette_roles(bp, roles))
     theme_apps = theme_apps_settings()
     out: Dict[str, str] = {}
     for cfg_path in sorted(targets_dir().glob("*/config.json")):
@@ -2313,6 +2333,35 @@ def target_roles(bp: Dict[str, Any]) -> Dict[str, str]:
     return roles
 
 
+def terminal_slot_overrides(data: Dict[str, str]) -> Dict[str, str]:
+    """The `colorN` entries of a parsed terminal-colors.toml, and nothing else.
+
+    Every other key is dropped rather than carried: a background, a foreground or
+    a role name here would silently claim a reach this file does not have, since
+    only the sixteen ANSI slots differ between the terminal and the rest of VGS.
+    """
+    return {f"color{index}": clean_hex(data[f"color{index}"])
+            for index in range(16) if f"color{index}" in data}
+
+
+def terminal_palette_roles(bp: Dict[str, Any], roles: Dict[str, str]) -> Dict[str, str]:
+    """The sixteen ANSI slots as a terminal paints them, under `terminal_` names.
+
+    A template that writes an actual terminal palette reads these; every other
+    placeholder in the same template keeps the theme's own slot. Without an
+    override a slot is the palette's own value, so a theme that ships no
+    terminal-colors.toml renders exactly what it rendered before.
+    """
+    overrides = bp.get("terminalColors") or {}
+    out: Dict[str, str] = {}
+    for index, name in enumerate(ANSI_NAMES):
+        key = f"color{index}"
+        value = clean_hex(overrides.get(key) or roles.get(key) or DEFAULT_COLORS[index])
+        out[f"terminal_{key}"] = value
+        out[f"terminal_{name}"] = value
+    return out
+
+
 def app_target_roles(bp: Dict[str, Any], shell_roles: Dict[str, str] | None = None) -> Dict[str, str]:
     """Keep curated base/ANSI colors byte-faithful for external app targets.
 
@@ -2321,37 +2370,37 @@ def app_target_roles(bp: Dict[str, Any], shell_roles: Dict[str, str] | None = No
     Derived semantic/surface roles still come from the shell map.
     """
     roles = dict(shell_roles or target_roles(bp))
-    if blueprint_source(bp) != "curated":
-        return roles
-    pal = bp.get("palette", {})
-    colors = [
-        clean_hex(color, DEFAULT_COLORS[index] if index < len(DEFAULT_COLORS) else "#000000")
-        for index, color in enumerate(pal.get("colors", []))
-    ]
-    while len(colors) < 16:
-        colors.append(DEFAULT_COLORS[len(colors)])
-    ext = pal.get("extendedColors") or {}
-    raw = {
-        "background": clean_hex(ext.get("background") or colors[0], colors[0]),
-        "foreground": clean_hex(ext.get("foreground") or colors[7], colors[7]),
-        "accent": clean_hex(ext.get("accent") or colors[4], colors[4]),
-        "cursor": clean_hex(ext.get("cursor") or ext.get("accent") or colors[4], colors[4]),
-        "selection_background": clean_hex(
-            ext.get("selection_background") or ext.get("selectionBackground") or colors[4],
-            colors[4],
-        ),
-        "selection_foreground": clean_hex(
-            ext.get("selection_foreground") or ext.get("selectionForeground") or colors[15],
-            colors[15],
-        ),
-    }
-    for index, color in enumerate(colors[:16]):
-        raw[f"color{index}"] = color
-        raw[ANSI_NAMES[index]] = color
-    roles.update(raw)
-    for snake, camel in CAMEL.items():
-        if snake in raw:
-            roles[camel] = raw[snake]
+    if blueprint_source(bp) == "curated":
+        pal = bp.get("palette", {})
+        colors = [
+            clean_hex(color, DEFAULT_COLORS[index] if index < len(DEFAULT_COLORS) else "#000000")
+            for index, color in enumerate(pal.get("colors", []))
+        ]
+        while len(colors) < 16:
+            colors.append(DEFAULT_COLORS[len(colors)])
+        ext = pal.get("extendedColors") or {}
+        raw = {
+            "background": clean_hex(ext.get("background") or colors[0], colors[0]),
+            "foreground": clean_hex(ext.get("foreground") or colors[7], colors[7]),
+            "accent": clean_hex(ext.get("accent") or colors[4], colors[4]),
+            "cursor": clean_hex(ext.get("cursor") or ext.get("accent") or colors[4], colors[4]),
+            "selection_background": clean_hex(
+                ext.get("selection_background") or ext.get("selectionBackground") or colors[4],
+                colors[4],
+            ),
+            "selection_foreground": clean_hex(
+                ext.get("selection_foreground") or ext.get("selectionForeground") or colors[15],
+                colors[15],
+            ),
+        }
+        for index, color in enumerate(colors[:16]):
+            raw[f"color{index}"] = color
+            raw[ANSI_NAMES[index]] = color
+        roles.update(raw)
+        for snake, camel in CAMEL.items():
+            if snake in raw:
+                roles[camel] = raw[snake]
+    roles.update(terminal_palette_roles(bp, roles))
     return roles
 
 
@@ -3518,7 +3567,10 @@ def _all_bundled_vscode_themes() -> List[Tuple[str, str, str, str]]:
             with contextlib.suppress(Exception):
                 mode = (json.loads((tdir / "theme.json").read_text()).get("mode") or "dark").lower()
             bp = bp_by_key.get(tdir.name.lower())
-            roles = target_roles(bp) if bp else {"accent": "#808080", "theme_type": mode}
+            roles = {"accent": "#808080", "theme_type": mode}
+            if bp:
+                roles = target_roles(bp)
+                roles.update(terminal_palette_roles(bp, roles))
             content = augment_vscode_colors(content, roles)
             ui = "vs" if mode == "light" else "vs-dark"
             out[_vgs_theme_slug(label)] = (_vgs_theme_slug(label), label, ui, content)
@@ -5007,6 +5059,15 @@ def augment_vscode_colors(text: str, roles: Dict[str, str]) -> str:
     colors.setdefault("tab.inactiveModifiedBorder", modified + "66")
     colors.setdefault("tab.unfocusedActiveModifiedBorder", modified + "99")
     colors.setdefault("tab.unfocusedInactiveModifiedBorder", modified + "66")
+
+    # VS Code's integrated terminal is a terminal, so it takes the theme's
+    # terminal slots rather than the curated theme's own guess at them: a program
+    # printing ANSI there reads what it reads in ghostty or kitty. A blueprint
+    # that did not load supplies no slots, and the curated values stand.
+    for index, key in enumerate(VSCODE_ANSI_KEYS):
+        slot = roles.get(f"terminal_color{index}")
+        if slot:
+            colors[key] = slot
 
     data["colors"] = colors
     return json.dumps(data, indent=2) + "\n"

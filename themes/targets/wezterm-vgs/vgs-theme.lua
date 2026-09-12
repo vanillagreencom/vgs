@@ -11,8 +11,8 @@ return {
     selection_bg = "{selection_background}",
     scrollbar_thumb = "{outline}",
     split = "{outlineVariant}",
-    ansi = { "{color0}", "{color1}", "{color2}", "{color3}", "{color4}", "{color5}", "{color6}", "{color7}" },
-    brights = { "{color8}", "{color9}", "{color10}", "{color11}", "{color12}", "{color13}", "{color14}", "{color15}" },
+    ansi = { "{terminal_color0}", "{terminal_color1}", "{terminal_color2}", "{terminal_color3}", "{terminal_color4}", "{terminal_color5}", "{terminal_color6}", "{terminal_color7}" },
+    brights = { "{terminal_color8}", "{terminal_color9}", "{terminal_color10}", "{terminal_color11}", "{terminal_color12}", "{terminal_color13}", "{terminal_color14}", "{terminal_color15}" },
     tab_bar = {
       background = "{statusBg}",
       active_tab = { bg_color = "{accent}", fg_color = "{onPrimary}" },

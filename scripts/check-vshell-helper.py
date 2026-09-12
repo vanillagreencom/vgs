@@ -8364,6 +8364,172 @@ def test_codex_theme_selection_changes_only_the_tui_theme_key():
     with_temp_home(run)
 
 
+def terminal_slot_templates():
+    """Every target template that writes an actual terminal palette, with the
+    terminal slots it reads. Derived from the templates, so a target that starts
+    or stops painting a terminal moves this set without a second list to update."""
+    found = {}
+    for cfg_path in sorted(helper.targets_dir().glob("*/config.json")):
+        cfg = json.loads(cfg_path.read_text())
+        if not cfg.get("template"):
+            continue
+        text = (cfg_path.parent / cfg["template"]).read_text()
+        slots = {match.group(1) for match in helper.TEMPLATE_RE.finditer(text)
+                 if match.group(1).startswith("terminal_")}
+        if slots:
+            found[cfg_path.parent.name] = (cfg["template"], slots)
+    return found
+
+
+def test_terminal_slot_overrides_reach_terminals_only():
+    """A terminal-only slot is what a terminal paints and nothing else reads.
+
+    `colors.toml` feeds the shell's derived roles and pi's interface as well as
+    the terminal, so a slot whose conventional terminal meaning needs another
+    colour cannot be fixed there. terminal-colors.toml carries that value for the
+    terminal alone: the shell role map and the pi render must not move at all.
+    """
+    targets = terminal_slot_templates()
+    for required in ("ghostty-vgs", "alacritty-vgs", "kitty-vgs", "foot-vgs",
+                     "wezterm-vgs", "vscode-vgs", "zed-vgs"):
+        if required not in targets:
+            raise AssertionError(
+                f"{required} reads no terminal slot; the extractor or the template is broken")
+
+    palette = "\n".join(f'color{index} = "#0000{index:02d}"' for index in range(16))
+    override = "#ff0011"
+
+    def scenario(temp_home: Path):
+        builtin = temp_home / "builtin"
+        for name, terminal in (("plain", ""), ("overridden", f'color0 = "{override}"\n')):
+            package = builtin / name
+            package.mkdir(parents=True)
+            # One declared name for both packages: the rendered files carry it, and
+            # the comparison below is of colour, not of which directory it came from.
+            (package / "theme.json").write_text(
+                json.dumps({"name": "fixture", "mode": "dark", "source": "curated"}) + "\n")
+            (package / "colors.toml").write_text(
+                f'background = "#101010"\nforeground = "#eeeeee"\n{palette}\n')
+            if terminal:
+                (package / helper.TERMINAL_COLORS_FILE).write_text(terminal)
+
+        original_builtin = helper.builtin_themes_dir
+        helper.builtin_themes_dir = lambda: builtin
+        try:
+            rendered = {}
+            for name in ("plain", "overridden"):
+                blueprint = helper.load_theme_package(name)
+                if not blueprint:
+                    raise AssertionError(f"fixture theme {name} did not load")
+                shell_roles = helper.target_roles(blueprint)
+                app_roles = helper.app_target_roles(blueprint, shell_roles)
+                leaked = sorted(role for role in shell_roles if role.startswith("terminal_"))
+                assert_equal(leaked, [], f"{name}: the shell role map carries no terminal slot")
+                assert_equal(shell_roles["color0"], "#000000",
+                             f"{name}: the shell keeps the palette's own slot 0")
+                assert_equal(app_roles["color0"], "#000000",
+                             f"{name}: app targets keep the palette's own slot 0")
+                rendered[name] = {
+                    target: helper.render_target_template(target, template, app_roles)
+                    for target, (template, _slots) in targets.items()}
+                rendered[name]["pi-vgs"] = helper.render_target_template(
+                    "pi-vgs", "vgs-theme.json", app_roles)
+                rendered[name]["vgs-shell"] = helper.render_target_template(
+                    "vgs-shell", "vgs-theme.json", shell_roles)
+                assert_equal(
+                    app_roles["terminal_color0"],
+                    override if name == "overridden" else "#000000",
+                    f"{name}: slot 0 as a terminal paints it")
+
+            # foot takes its colours without the leading "#", so a target counts
+            # as carrying the override in either spelling.
+            spellings = (override, helper.strip_hash(override))
+            for target in targets:
+                if any(form in rendered["plain"][target] for form in spellings):
+                    raise AssertionError(f"{target} rendered the override without the file")
+                if not any(form in rendered["overridden"][target] for form in spellings):
+                    raise AssertionError(f"{target} ignored the terminal-only slot")
+            for target in ("pi-vgs", "vgs-shell"):
+                assert_equal(rendered["overridden"][target], rendered["plain"][target],
+                             f"{target} must render byte-identically with and without the file")
+        finally:
+            helper.builtin_themes_dir = original_builtin
+
+    with_temp_home(scenario)
+
+    # Must-fail control for the reader's one rule: only the sixteen ANSI slots
+    # travel. A background or a role name here would claim a reach this file does
+    # not have, since every other value the terminal paints comes from colors.toml.
+    kept = helper.terminal_slot_overrides({
+        "color0": "#123456", "color15": "#654321",
+        "background": "#000000", "foreground": "#ffffff",
+        "accent": "#ff0000", "color16": "#ff00ff", "selection_background": "#00ff00",
+    })
+    assert_equal(kept, {"color0": "#123456", "color15": "#654321"},
+                 "terminal-colors.toml carries ANSI slots and nothing else")
+
+
+def test_curated_vscode_theme_takes_the_terminal_palette():
+    """VS Code's integrated terminal is a terminal, so a curated VS Code theme's
+    own guess at the ANSI slots must not survive: Claude Code and every other
+    program printing ANSI there has to read what it reads in ghostty or kitty."""
+    names = sorted(d.name for d in helper.builtin_themes_dir().iterdir()
+                   if (d / "apps" / "vscode-theme.json").is_file())
+    if len(names) < 2:
+        raise AssertionError("the bundled set must hold more than one curated VS Code theme")
+    for name in names:
+        blueprint = helper.load_theme_package(name)
+        if not blueprint:
+            raise AssertionError(f"bundled theme {name} did not load")
+        roles = helper.app_target_roles(blueprint, helper.target_roles(blueprint))
+        source = (helper.builtin_themes_dir() / name / "apps" / "vscode-theme.json").read_text()
+        colors = json.loads(helper.augment_vscode_colors(source, roles))["colors"]
+        for index, key in enumerate(helper.VSCODE_ANSI_KEYS):
+            assert_equal(colors.get(key), roles[f"terminal_color{index}"],
+                         f"{name} VS Code {key}")
+
+    # Must-fail control: a blueprint that did not load supplies no slot, and the
+    # curated theme's own value stands rather than a default painted over it.
+    stub = {"accent": "#808080", "theme_type": "light"}
+    original = json.loads(helper._strip_jsonc(
+        (helper.builtin_themes_dir() / names[0] / "apps" / "vscode-theme.json").read_text()))
+    untouched = json.loads(helper.augment_vscode_colors(
+        (helper.builtin_themes_dir() / names[0] / "apps" / "vscode-theme.json").read_text(), stub))
+    for key in helper.VSCODE_ANSI_KEYS:
+        assert_equal(untouched["colors"].get(key), original["colors"].get(key),
+                     f"no terminal slot means no change to {key}")
+
+
+def test_light_themes_read_in_a_terminal():
+    """Claude Code's light-ANSI mode draws body text in slot 0, muted text in
+    slot 8, and the bands under body text in slots 7 and 15. A light theme that
+    uses those slots as a mood palette prints body text at 1.10:1 to 1.82:1."""
+    # (theme, body text on the background, muted text, body text on each band)
+    rows = [
+        ("catppuccin-latte", 4.5, 3.0, 4.5),
+        ("flexoki-light", 4.5, 3.0, 4.5),
+        ("rose-pine", 4.5, 3.0, 4.5),
+        ("white", 4.5, 3.0, 4.5),
+    ]
+    for name, body_min, muted_min, band_min in rows:
+        blueprint = helper.load_theme_package(name)
+        if not blueprint:
+            raise AssertionError(f"bundled theme {name} did not load")
+        roles = helper.app_target_roles(blueprint, helper.target_roles(blueprint))
+        assert_equal(roles["theme_type"], "light", f"{name} is a light theme")
+        background = roles["background"]
+        body = roles["terminal_color0"]
+        measured = [
+            ("body text", helper.contrast_ratio(body, background), body_min),
+            ("muted text", helper.contrast_ratio(roles["terminal_color8"], background), muted_min),
+            ("the band on slot 7", helper.contrast_ratio(body, roles["terminal_color7"]), band_min),
+            ("the band on slot 15", helper.contrast_ratio(body, roles["terminal_color15"]), band_min),
+        ]
+        for label, ratio, minimum in measured:
+            if ratio < minimum:
+                raise AssertionError(f"{name}: {label} reads at {ratio:.2f}:1, under {minimum}:1")
+
+
 def main():
     test_system_font_family_targets()
     test_system_font_size_targets()
@@ -8404,6 +8570,9 @@ def main():
     test_agent_cli_theme_selection_waits_for_the_opencode_migration()
     test_agent_cli_theme_selection_acts_only_on_a_rendered_theme()
     test_agent_cli_theme_selection_refuses_a_config_shape_it_cannot_edit()
+    test_terminal_slot_overrides_reach_terminals_only()
+    test_curated_vscode_theme_takes_the_terminal_palette()
+    test_light_themes_read_in_a_terminal()
     test_restyle_integer_sweeps()
     test_fastfetch_portable_seed_and_logo_fallback()
     test_compositor_dependency_selection()

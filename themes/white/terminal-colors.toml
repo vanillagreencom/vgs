@@ -1,0 +1,8 @@
+# Terminal-only ANSI slots: what a terminal paints, where the palette's own
+# slot carries a different meaning for the shell's derived roles and pi.
+
+# selection fill under body text.
+color6 = "#757575"
+
+# band under body text.
+color15 = "#757575"

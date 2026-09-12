@@ -1,0 +1,5 @@
+# Terminal-only ANSI slots: what a terminal paints, where the palette's own
+# slot carries a different meaning for the shell's derived roles and pi.
+
+# band under body text; the palette's own slot 15 is a text tone the shell and pi read.
+color15 = "#c1c2cb"
