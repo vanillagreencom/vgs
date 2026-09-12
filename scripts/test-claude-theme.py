@@ -316,11 +316,11 @@ class UnreachableDiffBands(unittest.TestCase):
     shortfall never run, and deleting either report leaves the suite green.
     """
 
-    def overrides(self) -> tuple:
+    def overrides(self, mode: str = "dark") -> tuple:
         # A mid-tone grey carries neither a readable band above it nor a visible
         # one below: body text on it tops out far under the diff ratio.
         grey = {f"color{index}": "#808080" for index in range(16)}
-        grey.update(background="#808080", foreground="#8a8a8a", mode="dark")
+        grey.update(background="#808080", foreground="#8a8a8a", mode=mode)
         blueprint = helper.palette_from_colors_map(grey, name="flat-grey", wallpaper="",
                                                    source="curated")
         return helper.claude_theme_overrides(helper.target_roles(blueprint))
@@ -339,6 +339,17 @@ class UnreachableDiffBands(unittest.TestCase):
         values, _missed = self.overrides()
         self.assertEqual([token for token in DIFF_BANDS
                           if values[token] == values["background"]], [])
+
+    def test_the_band_it_writes_is_the_closest_of_the_sides_it_tried(self):
+        """The two sides of this background are not equally bad, and in light mode
+        the first one tried is the worse: taking it writes a dimmed band carrying
+        body text at 4.09:1 where scoring the sides gives 6.92:1. The floor below
+        separates them; what stays open is a pick better than either side."""
+        values, missed = self.overrides("light")
+        self.assertNotEqual([line for line in missed if line.startswith("diff band")], [])
+        self.assertEqual([(token, round(ratio(values["text"], values[token]), 2))
+                          for token in DIMMED_BANDS
+                          if ratio(values["text"], values[token]) < 6.0], [])
 
     def test_the_band_it_reports_is_the_band_it_wrote(self):
         """A report naming a candidate the caller did not get sends an author after
@@ -479,18 +490,40 @@ class HookBehaviour(unittest.TestCase):
                 self.assertIn(named, message)
                 self.assertIn("catppuccin claude-dark.json", message)
 
+    def test_a_curated_value_claude_code_could_read_leaves_in_one_form(self):
+        """Claude Code reads a bare or upper-case hex, so refusing them would be
+        pedantic; writing them would leave the file in three spellings of one
+        colour. clean_hex is the single form every other source already arrives in."""
+        for label, body in (("no leading hash", '{"overrides": {"text": "abcdef"}}'),
+                            ("upper case", '{"overrides": {"text": "#ABCDEF"}}'),
+                            ("upper case, no hash", '{"overrides": {"text": "ABCDEF"}}')):
+            with self.subTest(label):
+                rendered, _missed = helper.claude_theme_file(self.curated(body), "dark")
+                self.assertEqual(rendered["overrides"]["text"], "#abcdef")
+
+    def test_every_value_in_a_rendered_file_is_in_the_canonical_form(self):
+        """One spelling per colour across the whole file, whatever wrote it."""
+        rendered, _missed = helper.claude_theme_file(
+            self.curated('{"overrides": {"text": "ABCDEF"}}'), "dark")
+        self.assertEqual([value for value in rendered["overrides"].values()
+                          if value != helper.clean_hex(value)], [])
+
     def test_a_broken_curated_file_fails_the_hook_instead_of_the_apply(self):
         """An uncaught shape mistake kills the apply at the fourth of 32 targets,
         so twelve later hooks never run and the live desktop keeps the old theme."""
         (self.home / ".claude").mkdir()
         for label, body in (("invalid JSON", "{not json"),
                             ("array document", "[]"),
-                            ("string overrides", '{"overrides": "claude"}')):
+                            ("string overrides", '{"overrides": "claude"}'),
+                            ("a value Claude Code cannot read", '{"overrides": {"text": 5}}')):
             with self.subTest(label):
                 self.blueprint = self.curated(body)
                 result = self.run_hook()
-                self.assertEqual((result["ok"], "vgs-dark.json" in result.get("error", "")),
-                                 (False, True))
+                # Every cause names the theme and the file, so a theme author
+                # reading the error knows which package to open.
+                self.assertEqual((result["ok"], "vgs-dark.json" in result.get("error", ""),
+                                  "catppuccin claude-dark.json" in result.get("error", "")),
+                                 (False, True, True))
 
     def test_a_broken_counterpart_mode_still_writes_and_selects_the_applied_one(self):
         """The applied mode is what the user is looking at; withholding it leaves
@@ -590,6 +623,21 @@ class TargetWiring(unittest.TestCase):
         self.assertEqual(
             (result["partial"], [line for line in result["warnings"] if "diff" in line] != [],
              (home / ".claude" / "themes" / "vgs-light.json").is_file()),
+            (True, True, True))
+
+    def test_an_apply_carries_both_a_failed_mode_and_a_degraded_one(self):
+        """Each mode is its own unit of work, so one can fail while the other is
+        degraded. Reading the warning only on a passing hook tells the user the
+        light file is malformed and not that the dark theme it just selected paints
+        added and removed rows in one colour."""
+        broken = Path(tempfile.mkdtemp()) / "claude-light.json"
+        broken.write_text("[]")
+        blueprint = restyled(helper.find_theme("akane"), {"contrast": -100})
+        result, _home = self.apply(dict(blueprint, apps={"claude-light.json": str(broken)}))
+        self.assertEqual(
+            (result["partial"],
+             [line for line in result["warnings"] if "claude-light.json" in line] != [],
+             [line for line in result["warnings"] if "diff rule(s) below target" in line] != []),
             (True, True, True))
 
     def test_the_target_runs_the_hook_and_is_detected_by_the_claude_directory(self):

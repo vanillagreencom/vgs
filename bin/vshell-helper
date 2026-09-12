@@ -4650,7 +4650,10 @@ def claude_theme_file(bp: Dict[str, Any], mode: str) -> Tuple[Dict[str, Any], Li
         # Claude Code ignores a key it does not carry and reports nothing, so a
         # shape mistake in a theme package has to be named here or it reads as a
         # successful apply that painted none of the curated colours.
-        document = load_required_json_file(Path(curated_path))
+        try:
+            document = load_required_json_file(Path(curated_path))
+        except RuntimeError as exc:
+            raise ValueError(f"{where}: {exc}") from exc
         if not isinstance(document, dict):
             raise ValueError(f"{where}: expected an object, found {type(document).__name__}")
         unexpected = sorted(set(document) - {"overrides"})
@@ -4663,14 +4666,17 @@ def claude_theme_file(bp: Dict[str, Any], mode: str) -> Tuple[Dict[str, Any], Li
         if unknown:
             raise ValueError(f"{where}: tokens Claude Code does not carry: {', '.join(unknown)}")
         overrides.update(curated)
-    # One predicate over the merged map, after every source has contributed: a
-    # value Claude Code cannot read is dropped as silently as a key it does not
-    # carry. VGS writes hex, so a curated file using one of Claude Code's other
-    # value forms is refused by name rather than painted.
-    malformed = sorted(token for token, value in overrides.items()
-                       if not isinstance(value, str) or not HEX_RE.match(value))
-    if malformed:
-        raise ValueError(f"{where}: values that are not hex colours: {', '.join(malformed)}")
+    # One rule over the merged map, after every source has contributed. Every
+    # value leaves in the single form clean_hex produces, so a hand-written theme
+    # package cannot put a bare or upper-case hex in the file, and a value it
+    # cannot read at all is refused by name. Claude Code drops a value it cannot
+    # use as silently as a key it does not carry, and paints its base colour.
+    # VGS writes hex, so its other value forms are refused rather than painted.
+    unreadable = sorted(token for token, value in overrides.items()
+                        if not isinstance(value, str) or not clean_hex(value, ""))
+    if unreadable:
+        raise ValueError(f"{where}: values that are not hex colours: {', '.join(unreadable)}")
+    overrides = {token: clean_hex(value) for token, value in overrides.items()}
     return {"name": f"vgs-{mode}", "base": mode, "overrides": overrides}, shortfalls
 
 
@@ -5120,13 +5126,14 @@ def _apply_theme_obj_unlocked(bp: Dict[str, Any], only_app: str | None = None,
     hook_results = [run_hook(hook, roles, bp) for hook in hook_specs] if run_hooks else []
     warnings = []
     for result in hook_results:
+        # A hook can degrade one unit of work and fail another, so a warning is
+        # read before the verdict rather than inside the passing branch. The apply
+        # contract carries both to the user and turns the apply partial; nothing
+        # downstream reads a hook's own fields.
+        if result.get("warning"):
+            warnings.append(f"{result.get('hook')}: {result['warning']}")
+            eprint(f"hook {result.get('hook')}: {result['warning']}")
         if result.get("ok"):
-            # A hook that did its work can still have degraded it. The apply
-            # contract carries that to the user and turns the apply partial;
-            # nothing downstream reads a hook's own fields.
-            if result.get("warning"):
-                warnings.append(f"{result.get('hook')}: {result['warning']}")
-                eprint(f"hook {result.get('hook')}: {result['warning']}")
             continue
         msg = result.get("error") or result.get("stderr") or result.get("stdout") or "failed"
         warnings.append(f"{result.get('hook')}: {msg}")
