@@ -9,15 +9,16 @@ Launchpad keeps a superseded source and its binaries published until someone
 deletes them, so a retired binary such as vgs-shell-assets stays installable
 long after the package that carried it is gone.
 
-Deleting waits until this release's own binaries are published, because the
-upload is listed long before Launchpad builds it, and the packages this script
-deletes are the only installable ones until then. A publication newer than
-VERSION stops the run: the checkout, not the archive, is then the stale one.
+Deleting waits until this release has a published binary for every
+architecture the channel installs on, because the upload is listed long before
+Launchpad finishes building it, and until then the packages this script deletes
+are the only installable ones. A publication newer than VERSION stops the run:
+the checkout, not the archive, is then the stale one.
 
 LP_CREDENTIALS_FILE names the Launchpad OAuth credentials, and defaults to
 ~/.local/share/kendex-signing/launchpad-credentials. Create it once with
 launchpadlib's login_with, which asks for authorization in a browser.
-PPA_PRUNE_TIMEOUT bounds the wait for this release's binaries (seconds, default 2700).
+PPA_PRUNE_TIMEOUT bounds the wait for those binaries (seconds, default 2700).
 """
 
 import argparse
@@ -30,6 +31,8 @@ import time
 OWNER = "vanillagreen"
 ARCHIVE = "vgs-shell"
 DELETABLE = ("Published", "Pending", "Superseded")
+# The architectures packaging/DEVELOPMENT.md verifies after every release.
+REQUIRED_ARCHITECTURES = frozenset({"amd64", "arm64"})
 
 
 def version_older(candidate: str, boundary: str) -> bool:
@@ -54,22 +57,25 @@ def classify(sources, keep_prefix, older=version_older):
     return stale, ahead
 
 
-def published_binaries(archive, keep_prefix):
-    return [
-        binary
+def published_architectures(archive, keep_prefix):
+    """The architectures this release already has a published binary for."""
+    return {
+        binary.distro_arch_series_link.rstrip("/").rsplit("/", 1)[-1]
         for binary in archive.getPublishedBinaries(status="Published")
-        if binary.binary_package_version.startswith(keep_prefix)
-    ]
+        if binary.binary_package_name == ARCHIVE
+        and binary.binary_package_version.startswith(keep_prefix)
+    }
 
 
-def wait_for_binaries(archive, keep_prefix, timeout, sleep=time.sleep, clock=time.monotonic):
-    """True once this release has a published binary, False at the deadline."""
+def wait_for_release(archive, keep_prefix, timeout, sleep=time.sleep, clock=time.monotonic):
+    """The architectures still missing at the deadline; empty once every one is published."""
     deadline = clock() + timeout
     while True:
-        if published_binaries(archive, keep_prefix):
-            return True
+        missing = REQUIRED_ARCHITECTURES - published_architectures(archive, keep_prefix)
+        if not missing:
+            return frozenset()
         if clock() >= deadline:
-            return False
+            return frozenset(missing)
         sleep(30)
 
 
@@ -84,10 +90,12 @@ def prune(archive, version, dry_run=False, timeout=2700, older=version_older, sl
     if not stale:
         print(f"prune-ppa: the PPA publishes nothing older than {version}")
         return 0
-    if not dry_run and not wait_for_binaries(archive, keep_prefix, timeout, sleep=sleep, clock=clock):
-        print(f"prune-ppa: no-published-binaries={version} timeout={timeout}s", file=sys.stderr)
-        print("Deleting now would leave the PPA with no installable version.", file=sys.stderr)
-        return 1
+    if not dry_run:
+        missing = wait_for_release(archive, keep_prefix, timeout, sleep=sleep, clock=clock)
+        if missing:
+            print(f"prune-ppa: unpublished-architectures={','.join(sorted(missing))} timeout={timeout}s", file=sys.stderr)
+            print(f"Deleting now would leave {version} uninstallable there.", file=sys.stderr)
+            return 1
     for source in stale:
         verb = "would delete" if dry_run else "deleting"
         print(f"prune-ppa: {verb} {source.source_package_name} {source.source_package_version} ({source.status})")

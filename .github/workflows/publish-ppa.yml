@@ -35,8 +35,8 @@ jobs:
     permissions:
       contents: read
     runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
-    # Covers the script's 45-minute default wait for Launchpad to list the upload.
-    timeout-minutes: 60
+    # Covers both waits below (30 min for the listing, 45 for the binaries) plus the build.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -49,6 +49,7 @@ jobs:
 
       - name: Publish the source package to the PPA
         env:
+          PPA_ACCEPT_TIMEOUT: "1800"
           PPA_SIGNING_KEY_ID: ${{ vars.PPA_SIGNING_KEY_ID }}
           PPA_SIGNING_PRIVATE_KEY: ${{ secrets.PPA_SIGNING_PRIVATE_KEY }}
           PPA_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.PPA_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -73,6 +74,7 @@ jobs:
         if: ${{ inputs.dry_run != true }}
         env:
           LP_CREDENTIALS: ${{ secrets.LP_CREDENTIALS }}
+          PPA_PRUNE_TIMEOUT: "2700"
         run: |
           set -euo pipefail
           if [ -z "$LP_CREDENTIALS" ]; then

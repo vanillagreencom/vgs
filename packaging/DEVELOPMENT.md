@@ -32,7 +32,7 @@ The AUR publisher defers missing release assets or mismatched published checksum
 
 `scripts/publish-ppa.sh` builds the Ubuntu source package from the release archive, signs it, uploads it, and waits until Launchpad lists it. `release.yml` runs it through `publish-ppa.yml`. It needs `PPA_SIGNING_KEY_ID` and `PPA_SIGNING_PRIVATE_KEY_PASSWORD`, and `PPA_SIGNING_PRIVATE_KEY` where the key is not in the keyring. The Ubuntu signing key is separate from the release tag key.
 
-`scripts/prune-ppa.py` then deletes every PPA publication older than `VERSION`, because Launchpad keeps a superseded source and its binaries installable until someone deletes them. It needs `launchpadlib` and the OAuth credentials `LP_CREDENTIALS_FILE` names, which `launchpadlib`'s `login_with` writes once after a browser authorization; CI takes them from the `LP_CREDENTIALS` secret.
+`scripts/prune-ppa.py` then deletes every PPA publication older than `VERSION`, because Launchpad keeps a superseded source and its binaries installable until someone deletes them. It deletes nothing until this release has a published binary for amd64 and arm64, so the channel keeps an installable version throughout. It needs `launchpadlib` and the OAuth credentials `LP_CREDENTIALS_FILE` names, which `launchpadlib`'s `login_with` writes once after a browser authorization; CI takes them from the `LP_CREDENTIALS` secret.
 
 ## Manual channel commands
 

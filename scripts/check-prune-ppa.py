@@ -15,6 +15,7 @@ SPEC = importlib.util.spec_from_file_location("prune_ppa", ROOT / "scripts" / "p
 prune_ppa = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(prune_ppa)
 
+CURRENT = "0.5.0-1~ubuntu26.04.1"
 failures = []
 
 
@@ -35,8 +36,12 @@ class FakeSource:
 
 
 class FakeBinary:
-    def __init__(self, version):
+    def __init__(self, version, architecture, name="vgs-shell"):
         self.binary_package_version = version
+        self.binary_package_name = name
+        self.distro_arch_series_link = (
+            f"https://api.launchpad.net/devel/ubuntu/resolute/{architecture}"
+        )
 
 
 class FakeArchive:
@@ -53,21 +58,31 @@ class FakeArchive:
         return self._binaries
 
 
+def both_architectures(version=CURRENT):
+    return [FakeBinary(version, "amd64"), FakeBinary(version, "arm64")]
+
+
 def deleted(sources):
     return sorted(s.source_package_version for s in sources if s.deletions)
+
+
+def run(sources, binaries, **kwargs):
+    archive = FakeArchive(sources, binaries)
+    code = prune_ppa.prune(archive, "0.5.0", sleep=lambda _seconds: None, **kwargs)
+    return archive, code
 
 
 # label; publication versions with statuses; expected exit code; expected deletions.
 CASES = (
     (
         "an older release and its retired binaries go",
-        [("0.5.0-1~ubuntu26.04.1", "Published"), ("0.4.0-1~ubuntu26.04.1", "Superseded")],
+        [(CURRENT, "Published"), ("0.4.0-1~ubuntu26.04.1", "Superseded")],
         0,
         ["0.4.0-1~ubuntu26.04.1"],
     ),
     (
         "this release stays, whatever its Ubuntu revision",
-        [("0.5.0-1~ubuntu26.04.1", "Superseded"), ("0.5.0-1~ubuntu26.04.2", "Published")],
+        [(CURRENT, "Superseded"), ("0.5.0-1~ubuntu26.04.2", "Published")],
         0,
         [],
     ),
@@ -79,7 +94,7 @@ CASES = (
     ),
     (
         "a deleted publication is left alone",
-        [("0.5.0-1~ubuntu26.04.1", "Published"), ("0.4.0-1~ubuntu26.04.1", "Deleted")],
+        [(CURRENT, "Published"), ("0.4.0-1~ubuntu26.04.1", "Deleted")],
         0,
         [],
     ),
@@ -89,26 +104,37 @@ CASES = (
 def case_selector():
     for label, rows, want_code, want_deleted in CASES:
         sources = [FakeSource(version, status) for version, status in rows]
-        archive = FakeArchive(sources, binaries=[FakeBinary("0.5.0-1~ubuntu26.04.1")])
-        code = prune_ppa.prune(archive, "0.5.0", sleep=lambda _seconds: None)
+        _archive, code = run(sources, both_architectures())
         check(f"{label}: exit", code, want_code)
         check(f"{label}: deleted", deleted(sources), want_deleted)
 
 
-def case_waits_for_this_release_binaries():
-    sources = [FakeSource("0.5.0-1~ubuntu26.04.1"), FakeSource("0.4.0-1~ubuntu26.04.1", "Superseded")]
-    archive = FakeArchive(sources, binaries=[])
-    ticks = iter([0.0, 10.0, 3000.0])
-    code = prune_ppa.prune(archive, "0.5.0", timeout=2700, sleep=lambda _s: None, clock=lambda: next(ticks))
-    check("no published binaries: exit", code, 1)
-    check("no published binaries: deleted", deleted(sources), [])
+def stale_pair():
+    return [FakeSource(CURRENT), FakeSource("0.4.0-1~ubuntu26.04.1", "Superseded")]
 
-    sources = [FakeSource("0.5.0-1~ubuntu26.04.1"), FakeSource("0.4.0-1~ubuntu26.04.1", "Superseded")]
+
+def case_every_architecture_must_publish_first():
+    # label; the binaries published for this release; expected exit; expected deletions.
+    for label, binaries, want_code, want_deleted in (
+        ("no architecture published", [], 1, []),
+        ("only amd64 published", [FakeBinary(CURRENT, "amd64")], 1, []),
+        ("another package's binary does not count", [FakeBinary(CURRENT, "arm64", "vgs-shell-assets")], 1, []),
+        ("both architectures published", both_architectures(), 0, ["0.4.0-1~ubuntu26.04.1"]),
+    ):
+        sources = stale_pair()
+        ticks = iter([0.0, 10.0, 3000.0])
+        _archive, code = run(sources, binaries, timeout=2700, clock=lambda: next(ticks))
+        check(f"{label}: exit", code, want_code)
+        check(f"{label}: deleted", deleted(sources), want_deleted)
+
+
+def case_binaries_landing_during_the_wait():
+    sources = stale_pair()
     late = FakeArchive(sources, binaries=[])
 
     def publish_on_second_query(status=None):
         late.binary_queries += 1
-        return [FakeBinary("0.5.0-1~ubuntu26.04.1")] if late.binary_queries > 1 else []
+        return both_architectures() if late.binary_queries > 1 else [FakeBinary(CURRENT, "amd64")]
 
     late.getPublishedBinaries = publish_on_second_query
     ticks = iter([0.0, 10.0, 20.0, 30.0])
@@ -118,32 +144,33 @@ def case_waits_for_this_release_binaries():
 
 
 def case_dry_run_deletes_nothing():
-    sources = [FakeSource("0.5.0-1~ubuntu26.04.1"), FakeSource("0.4.0-1~ubuntu26.04.1", "Superseded")]
-    archive = FakeArchive(sources, binaries=[])
-    code = prune_ppa.prune(archive, "0.5.0", dry_run=True, sleep=lambda _s: None)
+    sources = stale_pair()
+    archive, code = run(sources, [], dry_run=True)
     check("dry run: exit", code, 0)
     check("dry run: deleted", deleted(sources), [])
     check("dry run: waits for no binaries", archive.binary_queries, 0)
 
 
-def case_version_comparison_is_debian_s():
+def case_version_comparison_is_debians():
     check("0.10.0 is newer than 0.9.0", prune_ppa.version_older("0.10.0-1~ubuntu26.04.1", "0.9.0-1~"), False)
     check("0.9.0 is older than 0.10.0", prune_ppa.version_older("0.9.0-1~ubuntu26.04.1", "0.10.0-1~"), True)
 
 
 def main() -> int:
-    for case in (
+    cases = (
         case_selector,
-        case_waits_for_this_release_binaries,
+        case_every_architecture_must_publish_first,
+        case_binaries_landing_during_the_wait,
         case_dry_run_deletes_nothing,
-        case_version_comparison_is_debian_s,
-    ):
+        case_version_comparison_is_debians,
+    )
+    for case in cases:
         case()
     if failures:
         for failure in failures:
             print(f"check-prune-ppa: FAIL: {failure}", file=sys.stderr)
         return 1
-    print(f"check-prune-ppa: ok ({len(CASES) + 5} checks)")
+    print(f"check-prune-ppa: ok ({len(CASES) + 11} checks)")
     return 0
 
 
