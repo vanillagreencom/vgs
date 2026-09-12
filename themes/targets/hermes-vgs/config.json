@@ -1,0 +1,14 @@
+{
+  "app": "hermes",
+  "template": "vgs.yaml",
+  "destination": "~/.hermes/skins/vgs.yaml",
+  "detect": {
+    "commands": [
+      "hermes"
+    ],
+    "paths": [
+      "~/.hermes"
+    ]
+  },
+  "hook": "hermes-skin-select"
+}

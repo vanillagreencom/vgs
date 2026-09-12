@@ -18,6 +18,7 @@ import signal
 import re
 import shutil
 import socket
+import stat
 import struct
 import subprocess
 import sys
@@ -241,6 +242,729 @@ def test_curated_app_role_passthrough():
         values = {item["role"]: item["value"] for item in view["roles"]}
         assert_equal(values["selection_foreground"], extended["selection_foreground"],
                      f"{app} app role selection foreground")
+
+
+# The colour keys each agent CLI documents for its own theme file. A rendered
+# target that misses one leaves that CLI painting it from its built-in default,
+# and an extra key is a validation error for omp and opencode.
+OPENCODE_THEME_KEYS = {
+    "primary", "secondary", "accent", "error", "warning", "success", "info",
+    "text", "textMuted", "background", "backgroundPanel", "backgroundElement",
+    "border", "borderActive", "borderSubtle",
+    "diffAdded", "diffRemoved", "diffContext", "diffHunkHeader",
+    "diffHighlightAdded", "diffHighlightRemoved", "diffAddedBg", "diffRemovedBg",
+    "diffContextBg", "diffLineNumber", "diffAddedLineNumberBg", "diffRemovedLineNumberBg",
+    "markdownText", "markdownHeading", "markdownLink", "markdownLinkText",
+    "markdownCode", "markdownBlockQuote", "markdownEmph", "markdownStrong",
+    "markdownHorizontalRule", "markdownListItem", "markdownListEnumeration",
+    "markdownImage", "markdownImageText", "markdownCodeBlock",
+    "syntaxComment", "syntaxKeyword", "syntaxFunction", "syntaxVariable",
+    "syntaxString", "syntaxNumber", "syntaxType", "syntaxOperator", "syntaxPunctuation",
+}
+
+OMP_REQUIRED_COLORS = {
+    "accent", "border", "borderAccent", "borderMuted", "success", "error", "warning",
+    "muted", "dim", "text", "thinkingText",
+    "selectedBg", "userMessageBg", "customMessageBg", "toolPendingBg", "toolSuccessBg",
+    "toolErrorBg", "statusLineBg",
+    "userMessageText", "customMessageText", "customMessageLabel", "toolTitle", "toolOutput",
+    "mdHeading", "mdLink", "mdLinkUrl", "mdCode", "mdCodeBlock", "mdCodeBlockBorder",
+    "mdQuote", "mdQuoteBorder", "mdHr", "mdListBullet",
+    "toolDiffAdded", "toolDiffRemoved", "toolDiffContext",
+    "syntaxComment", "syntaxKeyword", "syntaxFunction", "syntaxVariable", "syntaxString",
+    "syntaxNumber", "syntaxType", "syntaxOperator", "syntaxPunctuation",
+    "thinkingOff", "thinkingMinimal", "thinkingLow", "thinkingMedium", "thinkingHigh",
+    "thinkingXhigh", "bashMode", "pythonMode",
+    "statusLineSep", "statusLineModel", "statusLinePath", "statusLineGitClean",
+    "statusLineGitDirty", "statusLineContext", "statusLineSpend", "statusLineStaged",
+    "statusLineDirty", "statusLineUntracked", "statusLineOutput", "statusLineCost",
+    "statusLineSubagents",
+}
+# Falls back to thinkingXhigh when absent, so omp accepts it either way.
+OMP_OPTIONAL_COLORS = {"thinkingMax"}
+
+HERMES_SKIN_COLORS = {
+    "banner_border", "banner_title", "banner_accent", "banner_dim", "banner_text",
+    "ui_accent", "ui_label", "ui_ok", "ui_error", "ui_warn",
+    "prompt", "input_rule", "response_border",
+    "status_bar_bg", "status_bar_text", "status_bar_strong", "status_bar_dim",
+    "status_bar_good", "status_bar_warn", "status_bar_bad", "status_bar_critical",
+    "session_label", "session_border", "voice_status_bg", "selection_bg",
+    "completion_menu_bg", "completion_menu_current_bg",
+    "completion_menu_meta_bg", "completion_menu_meta_current_bg",
+}
+
+# Gemini CLI reads these through createCustomTheme; ui.gradient is a colour list.
+GEMINI_THEME_SECTIONS = {
+    "background": {"primary", "diff"},
+    "text": {"primary", "secondary", "link", "accent", "response"},
+    "border": {"default", "focused"},
+    "status": {"success", "warning", "error"},
+    "ui": {"comment", "symbol", "gradient"},
+}
+
+AGENT_CLI_TARGETS = ("opencode-vgs", "omp-vgs", "hermes-vgs", "gemini-vgs")
+
+
+def _agent_cli_config(target):
+    return json.loads((helper.targets_dir() / target / "config.json").read_text())
+
+
+def run_selection_hook(name, roles=None):
+    """Run a theme-selection hook, refusing to do so against the real HOME.
+
+    These hooks write the user's own agent-CLI settings files, gated only on a
+    rendered theme file existing — the state of any machine that has applied a
+    VGS theme. Every call goes through here so a test can only ever reach a
+    temporary home.
+    """
+    if os.environ.get("HOME") == _HOME_AT_IMPORT:
+        raise AssertionError(
+            f"{name} would write the real HOME; run selection hooks inside with_temp_home")
+    return helper.run_hook(name, roles or {})
+
+
+def _render_agent_cli_target(target, blueprint, mode_maps):
+    """Every (destination, text) pair the target writes for this blueprint."""
+    config = _agent_cli_config(target)
+    template = (helper.targets_dir() / target / config["template"]).read_text()
+    roles = helper.app_target_roles(blueprint)
+    passes = helper.target_render_passes(
+        config, roles, helper.expand_dest(config["destination"]), lambda: mode_maps, {}
+    )
+    return [(dest, helper.render_template(template, pass_roles)) for pass_roles, dest in passes]
+
+
+def _assert_hex(value, message):
+    if not isinstance(value, str) or not re.fullmatch(r"#[0-9a-f]{6}", value):
+        raise AssertionError(f"{message}: expected an #rrggbb colour, got {value!r}")
+
+
+_HERMES_SKIN_LINE = re.compile(r'^  ([a-z_]+): "(#[0-9a-f]{6})"$')
+
+
+def _parse_hermes_skin(text, label):
+    """The skin's scalars and colours, refusing any line the format does not
+    document. VGS ships no YAML dependency, so the check reads the block it
+    writes rather than adding one for the suite alone."""
+    scalars, colours, in_colours = {}, {}, False
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        if line == "colors:":
+            in_colours = True
+            continue
+        entry = _HERMES_SKIN_LINE.match(line)
+        if in_colours and entry:
+            colours[entry.group(1)] = entry.group(2)
+            continue
+        top = re.fullmatch(r"([a-z_]+): (.+)", line)
+        if top and not in_colours:
+            scalars[top.group(1)] = top.group(2)
+            continue
+        raise AssertionError(f"{label}: hermes skin line is not a documented entry: {line!r}")
+    return scalars, colours
+
+
+class _WriteWatchingHandle:
+    """Forwards to a real file handle, calling `on_write` before the first write
+    so a test can observe the temporary file at the instant content reaches it."""
+
+    def __init__(self, handle, on_write):
+        self._handle = handle
+        self._on_write = on_write
+
+    def __enter__(self):
+        self._handle.__enter__()
+        return self
+
+    def __exit__(self, *exception):
+        return self._handle.__exit__(*exception)
+
+    def write(self, data):
+        self._on_write()
+        return self._handle.write(data)
+
+
+def _observe_temp_file_modes(home, write_file_call):
+    """Every (name, mode) of a .tmp. file in `home` at the instant content first
+    reaches it, plus whatever write_file_call raises."""
+    observed = []
+    real_fdopen = os.fdopen
+
+    def watching_fdopen(fd, *args, **kwargs):
+        def record():
+            for path in sorted(home.iterdir()):
+                if ".tmp." in path.name:
+                    observed.append((path.name, stat.S_IMODE(path.stat().st_mode)))
+
+        return _WriteWatchingHandle(real_fdopen(fd, *args, **kwargs), record)
+
+    with patch("os.fdopen", watching_fdopen):
+        write_file_call()
+    return observed
+
+
+def test_write_file_gives_the_temporary_file_the_requested_mode_before_writing():
+    """The temporary file carries the requested mode at the instant content
+    first reaches it, under a umask that would otherwise narrow it.
+
+    os.open's mode argument alone caps the temporary file, so content never
+    lands at a wider mode than asked. What the fchmod adds is fidelity: without
+    it a user's 0644 config comes back 0600 on a umask 0o077 machine, and the
+    file the destination is replaced from never carried the mode requested.
+    """
+    def check(home):
+        target = home / "config.yaml"
+        target.write_text("theme: old\n")
+        os.chmod(target, 0o644)
+        saved_umask = os.umask(0o077)
+        try:
+            observed = _observe_temp_file_modes(
+                home, lambda: helper.write_file(target, "theme: vgs\n", 0o644))
+        finally:
+            os.umask(saved_umask)
+        if not observed:
+            raise AssertionError("the write never passed through a temporary file")
+        for name, mode in observed:
+            assert_equal(mode, 0o644, f"{name} did not carry the requested mode at its first write")
+        assert_equal(stat.S_IMODE(target.stat().st_mode), 0o644, "the destination mode")
+
+    with_temp_home(check)
+
+
+def test_write_file_leaves_no_temporary_behind_when_the_write_fails():
+    """A write that fails part way must not leave a temporary beside the user's
+    config holding partial content at the target's mode, which nothing removes."""
+    def check(home):
+        target = home / "config.yaml"
+        target.write_text("theme: old\n")
+        real_fdopen = os.fdopen
+
+        def failing_fdopen(fd, *args, **kwargs):
+            def fail():
+                raise OSError(28, "No space left on device")
+
+            return _WriteWatchingHandle(real_fdopen(fd, *args, **kwargs), fail)
+
+        with patch("os.fdopen", failing_fdopen):
+            try:
+                helper.write_file(target, "theme: vgs\n", 0o600)
+            except OSError as error:
+                assert_equal(error.errno, 28, "the failure reaches the caller")
+            else:
+                raise AssertionError("a failed write reported success")
+        strays = sorted(path.name for path in home.iterdir() if ".tmp." in path.name)
+        assert_equal(strays, [], "a failed write left a temporary file behind")
+        assert_equal(target.read_text(), "theme: old\n", "the destination is untouched")
+
+    with_temp_home(check)
+
+
+def test_selection_hooks_refuse_a_home_the_test_did_not_create():
+    """The guard every selection-hook call in this file goes through.
+
+    A selection hook is gated only on a rendered theme file existing, which is
+    the state of any machine that has applied a VGS theme, so one running
+    outside a temporary home rewrites the contributor's own CLI settings.
+    """
+    global _HOME_AT_IMPORT
+    saved_marker, saved_home = _HOME_AT_IMPORT, os.environ.get("HOME")
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            # Both the marker and HOME point at a throwaway directory, so a
+            # guard that has stopped working still reaches nothing of the user's.
+            _HOME_AT_IMPORT = tmp
+            os.environ["HOME"] = tmp
+            try:
+                run_selection_hook("hermes-skin-select")
+            except AssertionError:
+                return
+            raise AssertionError("a selection hook ran against a home the test did not create")
+        finally:
+            _HOME_AT_IMPORT = saved_marker
+            _restore_env("HOME", saved_home)
+
+
+def test_agent_cli_themes_render_for_every_bundled_theme():
+    """Each agent CLI target renders a file its CLI's documented format accepts,
+    at the path that CLI reads.
+
+    A CLI validates the whole file, so one unresolved token or one missing key
+    drops the user back to that CLI's built-in theme after a VGS theme apply; a
+    file at the wrong path is never read at all.
+    """
+    home = Path(os.path.expanduser("~"))
+    expected_paths = {
+        "opencode-vgs": [home / ".config/opencode/themes/vgs.json"],
+        "omp-vgs": [home / ".omp/agent/themes/vgs-dark.json",
+                    home / ".omp/agent/themes/vgs-light.json"],
+        "hermes-vgs": [home / ".hermes/skins/vgs.yaml"],
+        "gemini-vgs": [home / ".gemini/themes/vgs.json"],
+    }
+    names = helper.theme_package_names()
+    if len(names) < 2:
+        raise AssertionError("no bundled themes to render the agent CLI targets from")
+    for name in names:
+        blueprint = helper.load_theme_package(name)
+        if not blueprint:
+            raise AssertionError(f"bundled theme {name} does not load")
+        mode_maps = helper.mode_variant_role_maps(blueprint)
+        rendered = {
+            target: _render_agent_cli_target(target, blueprint, mode_maps)
+            for target in AGENT_CLI_TARGETS
+        }
+        for target, files in rendered.items():
+            assert_equal([dest for dest, _text in files], expected_paths[target],
+                         f"{name} {target} destinations")
+            for dest, text in files:
+                leftover = sorted({m.group(0) for m in helper.TEMPLATE_RE.finditer(text)})
+                if leftover:
+                    raise AssertionError(f"{name} {target} left {leftover} unresolved in {dest}")
+
+        (_dest, opencode_text), = rendered["opencode-vgs"]
+        opencode = json.loads(opencode_text)
+        assert_equal(set(opencode["theme"]), OPENCODE_THEME_KEYS, f"{name} opencode theme keys")
+        for key, value in opencode["theme"].items():
+            assert_equal(set(value), {"dark", "light"}, f"{name} opencode {key} variants")
+            for mode, colour in value.items():
+                _assert_hex(colour, f"{name} opencode {key}.{mode}")
+
+        omp_files = {Path(dest).name: json.loads(text) for dest, text in rendered["omp-vgs"]}
+        for mode in ("dark", "light"):
+            doc = omp_files[f"vgs-{mode}.json"]
+            assert_equal(doc["name"], f"vgs-{mode}", f"{name} omp {mode} theme name")
+            assert_equal(set(doc["colors"]), OMP_REQUIRED_COLORS | OMP_OPTIONAL_COLORS,
+                         f"{name} omp {mode} colour tokens")
+            for token, value in doc["colors"].items():
+                resolved = doc["vars"].get(value, value)
+                _assert_hex(resolved, f"{name} omp {mode} {token}")
+        dark_text = omp_files["vgs-dark.json"]["vars"][omp_files["vgs-dark.json"]["colors"]["text"]]
+        light_text = omp_files["vgs-light.json"]["vars"][omp_files["vgs-light.json"]["colors"]["text"]]
+        if dark_text == light_text:
+            raise AssertionError(f"{name}: the omp light file repeats the dark file's text colour")
+
+        (_dest, hermes_text), = rendered["hermes-vgs"]
+        scalars, colours = _parse_hermes_skin(hermes_text, name)
+        assert_equal(scalars.get("name"), "vgs", f"{name} hermes skin name")
+        assert_equal(set(colours), HERMES_SKIN_COLORS, f"{name} hermes skin colours")
+        for key, value in colours.items():
+            _assert_hex(value, f"{name} hermes {key}")
+
+        (_dest, gemini_text), = rendered["gemini-vgs"]
+        gemini = json.loads(gemini_text)
+        assert_equal(gemini["type"], "custom", f"{name} gemini theme type")
+        for section, keys in GEMINI_THEME_SECTIONS.items():
+            assert_equal(set(gemini[section]), keys, f"{name} gemini {section} keys")
+        for section in ("text", "border", "status"):
+            for key, value in gemini[section].items():
+                _assert_hex(value, f"{name} gemini {section}.{key}")
+        _assert_hex(gemini["background"]["primary"], f"{name} gemini background.primary")
+        for key, value in gemini["background"]["diff"].items():
+            _assert_hex(value, f"{name} gemini background.diff.{key}")
+        _assert_hex(gemini["ui"]["comment"], f"{name} gemini ui.comment")
+        _assert_hex(gemini["ui"]["symbol"], f"{name} gemini ui.symbol")
+        if not gemini["ui"]["gradient"]:
+            raise AssertionError(f"{name} gemini ui.gradient is empty")
+        for index, colour in enumerate(gemini["ui"]["gradient"]):
+            _assert_hex(colour, f"{name} gemini ui.gradient[{index}]")
+
+
+def test_agent_cli_theme_targets_reach_the_apply_path():
+    """A real apply writes each target's files at its configured destination and
+    runs a hook the helper recognises.
+
+    A typo in a target's hook name returns ok with reason 'unknown hook', so the
+    apply reports success while nothing selects the theme.
+    """
+    def check(home):
+        # Before any theme file is rendered, so each hook skips and writes
+        # nothing; a name the helper cannot dispatch reads differently.
+        for target in AGENT_CLI_TARGETS:
+            hook = _agent_cli_config(target)["hook"]
+            if run_selection_hook(hook).get("reason") == "unknown hook":
+                raise AssertionError(f"{target} names a hook the helper does not dispatch: {hook}")
+
+        (home / ".omp").mkdir(parents=True, exist_ok=True)
+        blueprint = helper.load_theme_package("tokyo-night")
+        applied = helper.apply_theme_obj(blueprint, only_target="omp-vgs")
+        written = sorted(Path(path) for path in applied["rendered"])
+        assert_equal(written, [home / ".omp/agent/themes/vgs-dark.json",
+                               home / ".omp/agent/themes/vgs-light.json"],
+                     "the omp target's applied destinations")
+        for path in written:
+            json.loads(path.read_text())
+        assert_equal((home / ".omp/agent/config.yml").read_text(),
+                     "theme:\n  dark: vgs-dark\n  light: vgs-light\n",
+                     "the omp config the apply's hook wrote")
+
+    with_temp_home(check)
+
+
+def test_agent_cli_theme_modes_destination_must_name_the_mode():
+    """A modes target whose destination does not vary by mode is refused.
+
+    Left unrefused every mode writes the same file, the last one winning, and
+    the apply reports every mode rendered.
+    """
+    config = {"modes": ["dark", "light"], "destination": "~/.omp/agent/themes/vgs.json"}
+    blueprint = helper.load_theme_package("tokyo-night")
+    mode_maps = helper.mode_variant_role_maps(blueprint)
+    try:
+        helper.target_render_passes(config, {}, Path("/unused"), lambda: mode_maps, {})
+    except ValueError as error:
+        if "does not name the mode" not in str(error):
+            raise AssertionError(f"the refusal does not say why: {error}")
+    else:
+        raise AssertionError("a modes destination that does not vary by mode was accepted")
+
+
+def test_agent_cli_theme_counterpart_prefers_the_paired_theme():
+    """The second mode comes from the theme's pair when one exists.
+
+    Without this a curated light counterpart is ignored and the other file is a
+    machine transform of the applied palette, so the two modes stop matching the
+    pair the theme author shipped.
+    """
+    paired = None
+    for name in helper.theme_package_names():
+        blueprint = helper.load_theme_package(name)
+        other = "light" if helper.blueprint_mode(blueprint) == "dark" else "dark"
+        if helper.paired_blueprint(blueprint, other):
+            paired = (blueprint, other)
+            break
+    if not paired:
+        raise AssertionError("no bundled theme declares or names a counterpart to check")
+    blueprint, other = paired
+    pair = helper.paired_blueprint(blueprint, other)
+    assert_equal(helper.mode_variant_blueprint(blueprint, other).get("name"), pair.get("name"),
+                 "counterpart theme name")
+    assert_equal(helper.mode_variant_blueprint(blueprint, helper.blueprint_mode(blueprint)),
+                 blueprint, "the applied mode reads the applied theme itself")
+
+    # A theme with no counterpart still renders both modes, from a transform.
+    lonely = helper.load_theme_package("vantablack")
+    if helper.paired_blueprint(lonely, "light"):
+        raise AssertionError("the no-pair fixture gained a pair; pick another theme")
+    assert_equal(helper.blueprint_mode(helper.mode_variant_blueprint(lonely, "light")), "light",
+                 "transformed counterpart mode")
+
+
+def test_agent_cli_theme_role_overrides_reach_both_modes():
+    """The App Theming editor lists opencode's plain role names, and an override
+    on one reaches the dark and the light half of its single theme file.
+
+    Without this the editor offers opencode nothing to edit, and an override the
+    user does set never reaches the file opencode reads.
+    """
+    blueprint = helper.load_theme_package("tokyo-night")
+    view = helper.app_role_view("opencode", blueprint)
+    roles = {item["role"] for item in view["roles"]}
+    for role in ("accent", "background", "foreground"):
+        if role not in roles:
+            raise AssertionError(f"the opencode role editor omits {role}: {sorted(roles)}")
+    if any(role.startswith(("dark_", "light_")) for role in roles):
+        raise AssertionError(f"the editor exposes mode-prefixed tokens: {sorted(roles)}")
+
+    config = _agent_cli_config("opencode-vgs")
+    template = (helper.targets_dir() / "opencode-vgs" / config["template"]).read_text()
+    overrides = {"accent": "#0f0f0f"}
+    mode_maps = helper.mode_variant_role_maps(blueprint)
+    base = {**helper.app_target_roles(blueprint), **overrides}
+    (pass_roles, _dest), = helper.target_render_passes(
+        config, base, helper.expand_dest(config["destination"]), lambda: mode_maps, overrides
+    )
+    theme = json.loads(helper.render_template(template, pass_roles))["theme"]
+    assert_equal(theme["primary"], {"dark": "#0f0f0f", "light": "#0f0f0f"},
+                 "an accent override reaches both opencode variants")
+
+
+def _write_agent_cli_theme_files(home):
+    """The rendered theme files each selection hook requires before it acts, at
+    the destinations the targets themselves declare."""
+    for target in AGENT_CLI_TARGETS:
+        config = _agent_cli_config(target)
+        for mode in config.get("modes") or ["dark"]:
+            destination = helper.render_template(config["destination"], {"theme_type": mode})
+            path = Path(destination.replace("~", str(home), 1))
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("{}\n")
+
+
+def _agent_cli_selections():
+    """Each target's hook, read from its config.json, with the settings file
+    that hook edits. The omp path is the one omp_config_path picks when neither
+    config.yml nor config.yaml exists yet."""
+    return (
+        (_agent_cli_config("opencode-vgs")["hook"], ".config/opencode/tui.json"),
+        (_agent_cli_config("gemini-vgs")["hook"], ".gemini/settings.json"),
+        (_agent_cli_config("hermes-vgs")["hook"], ".hermes/config.yaml"),
+        (_agent_cli_config("omp-vgs")["hook"], ".omp/agent/config.yml"),
+    )
+
+
+def test_agent_cli_theme_selection_writes_only_the_theme_key():
+    """Each hook points its CLI at the VGS theme and leaves the rest of the
+    user's settings file alone, writing nothing when the key already matches."""
+    def check(home):
+        _write_agent_cli_theme_files(home)
+        (home / ".gemini").mkdir(parents=True, exist_ok=True)
+        (home / ".gemini" / "settings.json").write_text(json.dumps(
+            {"ui": {"hideBanner": True}, "model": "gemini-3-pro"}, indent=2) + "\n")
+        (home / ".hermes").mkdir(parents=True, exist_ok=True)
+        (home / ".hermes" / "config.yaml").write_text(
+            "# hermes\nmodel: hermes-4\ndisplay:\n  skin: default\n  markdown: true\n")
+        (home / ".omp" / "agent").mkdir(parents=True, exist_ok=True)
+        (home / ".omp" / "agent" / "config.yml").write_text("theme:\n  dark: titanium\n")
+
+        for hook, relative in _agent_cli_selections():
+            result = run_selection_hook(hook, {"theme_type": "dark"})
+            assert_equal(result.get("ok"), True, f"{hook} result")
+            assert_equal(result.get("changed"), True, f"{hook} first run writes")
+            assert_equal(run_selection_hook(hook, {"theme_type": "dark"}).get("changed"), False,
+                         f"{hook} rewrites an already-selected theme")
+            if not (home / relative).exists():
+                raise AssertionError(f"{hook} wrote no {relative}")
+
+        assert_equal(json.loads((home / ".config/opencode/tui.json").read_text()),
+                     {"theme": "vgs"}, "opencode tui.json")
+        gemini = json.loads((home / ".gemini/settings.json").read_text())
+        assert_equal(gemini["ui"]["theme"], str(home / ".gemini/themes/vgs.json"),
+                     "gemini ui.theme path")
+        assert_equal(gemini["ui"]["hideBanner"], True, "gemini keeps its other ui settings")
+        assert_equal(gemini["model"], "gemini-3-pro", "gemini keeps its other settings")
+        assert_equal((home / ".hermes/config.yaml").read_text(),
+                     "# hermes\nmodel: hermes-4\ndisplay:\n  skin: vgs\n  markdown: true\n",
+                     "the hermes edit changes only display.skin")
+        assert_equal((home / ".omp/agent/config.yml").read_text(),
+                     "theme:\n  dark: vgs-dark\n  light: vgs-light\n",
+                     "the omp edit sets both theme keys")
+
+    with_temp_home(check)
+
+
+def test_agent_cli_theme_selection_reads_the_users_own_spelling_of_the_value():
+    """A value the user wrote as `vgs # pinned` or `"vgs"` is already selected.
+
+    Read literally, every theme apply rewrites their config and reports a
+    change, churning a file that holds provider credentials.
+    """
+    def check(home):
+        _write_agent_cli_theme_files(home)
+        config = home / ".hermes" / "config.yaml"
+        config.parent.mkdir(parents=True, exist_ok=True)
+        for spelling in ('vgs # pinned', '"vgs"', "'vgs'"):
+            original = f"display:\n  skin: {spelling}\n  markdown: true\n"
+            config.write_text(original)
+            assert_equal(run_selection_hook("hermes-skin-select").get("changed"), False,
+                         f"skin: {spelling} is already the VGS skin")
+            assert_equal(config.read_text(), original, f"skin: {spelling} is left byte for byte")
+
+    with_temp_home(check)
+
+
+def test_agent_cli_theme_selection_adds_an_absent_block_without_reflowing_the_file():
+    """A config VGS has never themed carries no display: or theme: block. Adding
+    one must keep every other line, blank lines included, byte for byte."""
+    original = "# hermes\n\nmodel: hermes-4\n\ntools:\n  web: true\n"
+
+    def check(home):
+        _write_agent_cli_theme_files(home)
+        config = home / ".hermes" / "config.yaml"
+        config.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text(original)
+        assert_equal(run_selection_hook("hermes-skin-select").get("changed"), True,
+                     "the first run adds the display block")
+        assert_equal(config.read_text(), original + "display:\n  skin: vgs\n",
+                     "the appended block keeps the file's own blank lines")
+        assert_equal(run_selection_hook("hermes-skin-select").get("changed"), False,
+                     "a second run rewrites nothing")
+
+    with_temp_home(check)
+
+
+def test_agent_cli_theme_selection_ignores_a_deeper_key_of_the_same_name():
+    """Only an entry at the block's own indent is the theme key.
+
+    Matching any indentation rewrites an unrelated nested setting, never sets
+    the real one, and still reports success.
+    """
+    def check(home):
+        _write_agent_cli_theme_files(home)
+        config = home / ".hermes" / "config.yaml"
+        config.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text("display:\n  panes:\n    skin: fancy\n  markdown: true\n")
+        assert_equal(run_selection_hook("hermes-skin-select").get("ok"), True, "hook result")
+        assert_equal(config.read_text(),
+                     "display:\n  panes:\n    skin: fancy\n  markdown: true\n  skin: vgs\n",
+                     "the nested skin is untouched and display.skin is added")
+
+    with_temp_home(check)
+
+
+def test_agent_cli_theme_selection_keeps_the_settings_file_permissions():
+    """Hermes and oh-my-pi keep provider credentials in the file the theme key
+    lives in, and set it to 0600. A theme apply must not widen that, and a file
+    VGS creates itself must not start at the umask."""
+    def check(home):
+        _write_agent_cli_theme_files(home)
+        (home / ".hermes").mkdir(parents=True, exist_ok=True)
+        secret = home / ".hermes" / "config.yaml"
+        secret.write_text("api_key: sk-test\ndisplay:\n  skin: default\n")
+        os.chmod(secret, 0o600)
+        assert_equal(run_selection_hook("hermes-skin-select").get("changed"), True, "hermes write")
+        assert_equal(stat.S_IMODE(secret.stat().st_mode), 0o600,
+                     "the hermes config keeps its owner-only mode")
+
+        created = home / ".omp" / "agent" / "config.yml"
+        assert_equal(run_selection_hook("omp-theme-select").get("changed"), True, "omp write")
+        assert_equal(stat.S_IMODE(created.stat().st_mode), helper.CREATED_CONFIG_MODE,
+                     "a config VGS creates starts owner-only")
+
+    with_temp_home(check)
+
+
+def test_agent_cli_theme_selection_edits_the_omp_config_that_omp_reads():
+    """oh-my-pi loads the first of config.yml and config.yaml that exists.
+
+    Creating config.yml beside an existing config.yaml would hide the user's
+    whole omp configuration behind a file holding only a theme block.
+    """
+    def check(home):
+        _write_agent_cli_theme_files(home)
+        agent = home / ".omp" / "agent"
+        agent.mkdir(parents=True, exist_ok=True)
+        (agent / "config.yaml").write_text("model: sonnet\n")
+        assert_equal(run_selection_hook("omp-theme-select").get("path"),
+                     str(agent / "config.yaml"), "the hook edits the config omp reads")
+        if (agent / "config.yml").exists():
+            raise AssertionError("the hook created config.yml and hid the user's config.yaml")
+        assert_equal((agent / "config.yaml").read_text(),
+                     "model: sonnet\ntheme:\n  dark: vgs-dark\n  light: vgs-light\n",
+                     "the theme block joins the existing config")
+
+    with_temp_home(check)
+
+
+def test_agent_cli_theme_selection_waits_for_the_opencode_migration():
+    """opencode moves theme and keybinds out of opencode.json into tui.json once,
+    and skips that migration when tui.json already exists.
+
+    Creating tui.json first would cancel it and strand the user's keybinds.
+    """
+    def check(home):
+        _write_agent_cli_theme_files(home)
+        config = home / ".config" / "opencode" / "opencode.json"
+        config.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text(json.dumps({"keybinds": {"leader": "ctrl+x"}}) + "\n")
+        result = run_selection_hook("opencode-theme-select")
+        assert_equal(result.get("skipped"), True, "the hook waits for the migration")
+        if (home / ".config/opencode/tui.json").exists():
+            raise AssertionError("the hook created tui.json and cancelled opencode's migration")
+
+        # A config the probe cannot read is pending too: creating tui.json beside
+        # it cancels the migration once the user repairs the JSON.
+        config.write_text('{"keybinds": {"leader": ')
+        result = run_selection_hook("opencode-theme-select")
+        assert_equal(result.get("skipped"), True, "an unreadable config is not a clear signal")
+        if str(config) not in str(result.get("reason") or ""):
+            raise AssertionError(f"the skip does not name the file: {result.get('reason')!r}")
+        if (home / ".config/opencode/tui.json").exists():
+            raise AssertionError("the hook created tui.json from a config it could not read")
+
+        # Each of opencode's other two migration triggers, alone.
+        for pending in ({"theme": "tokyonight"}, {"tui": {"scroll_speed": 3}}):
+            config.write_text(json.dumps(pending) + "\n")
+            assert_equal(run_selection_hook("opencode-theme-select").get("skipped"), True,
+                         f"{sorted(pending)} is a key opencode has yet to migrate")
+            if (home / ".config/opencode/tui.json").exists():
+                raise AssertionError(
+                    f"the hook created tui.json with {sorted(pending)} still to migrate")
+
+        # opencode migrates a tui object only for these three settings, so a tui
+        # holding anything else leaves nothing pending and the theme is selected.
+        config.write_text(json.dumps({"tui": {"foo": 1}}) + "\n")
+        assert_equal(run_selection_hook("opencode-theme-select").get("changed"), True,
+                     "a tui object opencode would not migrate must not block selection")
+        assert_equal(json.loads((home / ".config/opencode/tui.json").read_text()),
+                     {"theme": "vgs"}, "opencode tui.json")
+        (home / ".config/opencode/tui.json").unlink()
+
+        # Once opencode has migrated, the next apply selects the theme.
+        (home / ".config/opencode/tui.json").write_text('{"keybinds": {"leader": "ctrl+x"}}\n')
+        assert_equal(run_selection_hook("opencode-theme-select").get("changed"), True,
+                     "the hook selects the theme once tui.json exists")
+        assert_equal(json.loads((home / ".config/opencode/tui.json").read_text()),
+                     {"keybinds": {"leader": "ctrl+x"}, "theme": "vgs"},
+                     "the migrated keybinds survive")
+
+    with_temp_home(check)
+
+
+def test_agent_cli_theme_selection_acts_only_on_a_rendered_theme():
+    """With no theme file rendered — the CLI's target toggled off — each hook
+    skips instead of naming a theme its CLI cannot load, and creates nothing."""
+    def check(home):
+        for hook, relative in _agent_cli_selections():
+            result = run_selection_hook(hook, {"theme_type": "dark"})
+            assert_equal(result.get("ok"), True, f"{hook} result")
+            assert_equal(result.get("skipped"), True, f"{hook} skips without a rendered theme")
+            if (home / relative).exists():
+                raise AssertionError(f"{hook} created {relative} with no theme to select")
+
+    with_temp_home(check)
+
+
+def test_agent_cli_theme_selection_refuses_a_config_shape_it_cannot_edit():
+    """A flow-style or scalar value where the theme block belongs is reported,
+    not overwritten: the writers must never rewrite a user's config into a shape
+    their CLI does not expect."""
+    def check(home):
+        _write_agent_cli_theme_files(home)
+        config = home / ".omp" / "agent" / "config.yml"
+        config.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text("theme: titanium\n")
+        result = run_selection_hook("omp-theme-select", {"theme_type": "dark"})
+        assert_equal(result.get("ok"), False, "omp refuses a flat theme scalar")
+        assert_equal(config.read_text(), "theme: titanium\n", "the refused config is unchanged")
+        if "theme" not in str(result.get("error") or ""):
+            raise AssertionError(f"the refusal does not name the key: {result.get('error')!r}")
+
+        settings = home / ".gemini" / "settings.json"
+        settings.parent.mkdir(parents=True, exist_ok=True)
+        settings.write_text('{"ui": "compact"}\n')
+        result = run_selection_hook("gemini-theme-select", {"theme_type": "dark"})
+        assert_equal(result.get("ok"), False, "gemini refuses a non-object ui section")
+        assert_equal(settings.read_text(), '{"ui": "compact"}\n', "the refused settings are unchanged")
+        if "ui" not in str(result.get("error") or ""):
+            raise AssertionError(f"the refusal does not name the section: {result.get('error')!r}")
+
+    with_temp_home(check)
+
+
+def test_claude_theme_hook_selects_without_creating_or_widening():
+    """The Claude Code hook now shares the JSON writer. It must still leave an
+    absent settings file absent, keep the file's other keys and its mode, and
+    write nothing on a second apply of the same mode."""
+    def check(home):
+        result = run_selection_hook("claude-theme", {"theme_type": "dark"})
+        assert_equal(result.get("skipped"), True, "no settings file means no selection")
+        if (home / ".claude" / "settings.json").exists():
+            raise AssertionError("the hook created ~/.claude/settings.json")
+
+        settings = home / ".claude" / "settings.json"
+        settings.parent.mkdir(parents=True, exist_ok=True)
+        settings.write_text(json.dumps({"theme": "dark-ansi", "model": "opus"}, indent=2) + "\n")
+        os.chmod(settings, 0o600)
+        assert_equal(run_selection_hook("claude-theme", {"theme_type": "light"}).get("changed"), True,
+                     "a mode change selects the matching preset")
+        assert_equal(json.loads(settings.read_text()),
+                     {"theme": "light-ansi", "model": "opus"}, "the other settings survive")
+        assert_equal(stat.S_IMODE(settings.stat().st_mode), 0o600, "the settings mode is kept")
+        assert_equal(run_selection_hook("claude-theme", {"theme_type": "light"}).get("changed"), False,
+                     "a second apply of the same mode rewrites nothing")
+
+    with_temp_home(check)
 
 
 def test_restyle_integer_sweeps():
@@ -7616,6 +8340,24 @@ def main():
     test_curated_app_role_passthrough()
     test_codex_theme_paints_every_bundled_theme_readably()
     test_codex_theme_selection_changes_only_the_tui_theme_key()
+    test_write_file_gives_the_temporary_file_the_requested_mode_before_writing()
+    test_write_file_leaves_no_temporary_behind_when_the_write_fails()
+    test_selection_hooks_refuse_a_home_the_test_did_not_create()
+    test_agent_cli_themes_render_for_every_bundled_theme()
+    test_agent_cli_theme_targets_reach_the_apply_path()
+    test_agent_cli_theme_modes_destination_must_name_the_mode()
+    test_agent_cli_theme_role_overrides_reach_both_modes()
+    test_agent_cli_theme_counterpart_prefers_the_paired_theme()
+    test_agent_cli_theme_selection_writes_only_the_theme_key()
+    test_agent_cli_theme_selection_reads_the_users_own_spelling_of_the_value()
+    test_agent_cli_theme_selection_adds_an_absent_block_without_reflowing_the_file()
+    test_agent_cli_theme_selection_ignores_a_deeper_key_of_the_same_name()
+    test_agent_cli_theme_selection_keeps_the_settings_file_permissions()
+    test_agent_cli_theme_selection_edits_the_omp_config_that_omp_reads()
+    test_agent_cli_theme_selection_waits_for_the_opencode_migration()
+    test_agent_cli_theme_selection_acts_only_on_a_rendered_theme()
+    test_agent_cli_theme_selection_refuses_a_config_shape_it_cannot_edit()
+    test_claude_theme_hook_selects_without_creating_or_widening()
     test_restyle_integer_sweeps()
     test_fastfetch_portable_seed_and_logo_fallback()
     test_compositor_dependency_selection()
