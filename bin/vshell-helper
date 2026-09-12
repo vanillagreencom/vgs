@@ -1205,7 +1205,8 @@ def blueprint_mode(bp: Dict[str, Any]) -> str:
     return mode if mode in {"dark", "light"} else "dark"
 
 
-def paired_blueprint(base: Dict[str, Any], target_mode: str) -> Dict[str, Any] | None:
+def paired_blueprint(base: Dict[str, Any], target_mode: str,
+                     themes: List[Dict[str, Any]] | None = None) -> Dict[str, Any] | None:
     """Resolve the counterpart blueprint of `base` in `target_mode`.
 
     Explicit `pair` metadata wins; otherwise try common name-suffix conventions.
@@ -2431,6 +2432,9 @@ CLAUDE_DIFF_WORD_SEPARATION = 1.5
 # is read by the screenful and takes the enhanced ratio, not the 4.5:1 floor the
 # other bands carry.
 CLAUDE_DIFF_TEXT_CONTRAST = 7.0
+# A word fill moved onto the gamut's own end has nowhere left to move, so a
+# maxed-out ANSI slot is held this far short of pure black and pure white.
+CLAUDE_WORD_LIGHTNESS_MARGIN = 0.04
 # Body text carries the product of the two diff-band rules with room over it. A
 # dimmed band lies between the background and the text, so text on it reads at
 # roughly the text's own ratio divided by the band's separation: below the
@@ -2439,15 +2443,20 @@ CLAUDE_DIFF_TEXT_CONTRAST = 7.0
 CLAUDE_TEXT_CONTRAST = 9.5
 
 
-def claude_theme_overrides(roles: Dict[str, str]) -> Dict[str, str]:
-    """Claude Code's colour tokens for one VGS theme.
+def claude_theme_overrides(roles: Dict[str, str]) -> Tuple[Dict[str, str], List[str]]:
+    """Claude Code's colour tokens for one VGS theme, and the rules they missed.
 
     Claude Code's ANSI presets read the terminal's sixteen slots with fixed
     meanings that most VGS palettes do not keep, so a custom theme sets every
     token directly and readability stops depending on those meanings. Text
     tokens reach 4.5:1 on the background and bands carry body text at 4.5:1;
     the diff bands take the rules above.
+
+    A restyled palette can put a diff rule out of reach. The closest value the
+    palette allows is used and named in the returned shortfalls: refusing would
+    leave Claude Code on the colours of the theme the user just left.
     """
+    shortfalls: List[str] = []
     bg = roles["background"]
     mode = (roles.get("theme_type") or "dark").lower()
     prefer_text = "#000000" if mode == "light" else "#ffffff"
@@ -2511,12 +2520,10 @@ def claude_theme_overrides(roles: Dict[str, str]) -> Dict[str, str]:
         that tint, pulled back where body text on it would drop below the diff
         ratio.
         """
+        best: Tuple[float, str, str] = (0.0, bg, bg)
         for endpoint in diff_endpoints(color, hue_degrees):
             dimmed_tint = toward_background(endpoint, CLAUDE_DIFF_DIMMED_SEPARATION)
             dimmed = blend(bg, endpoint, dimmed_tint)
-            if (contrast_ratio(dimmed, bg) < CLAUDE_DIFF_DIMMED_SEPARATION
-                    or contrast_ratio(text, dimmed) < CLAUDE_DIFF_TEXT_CONTRAST):
-                continue
             low, high = dimmed_tint, min(1.0, dimmed_tint * 2.0)
             for _ in range(18):
                 fraction = (low + high) / 2.0
@@ -2524,15 +2531,38 @@ def claude_theme_overrides(roles: Dict[str, str]) -> Dict[str, str]:
                     low = fraction
                 else:
                     high = fraction
-            return blend(bg, endpoint, low), dimmed
-        # Neither side of this background carries a readable, visible band. Report
-        # the theme instead of writing a /diff panel that cannot be read.
-        raise ValueError(f"no diff band for {color} on background {bg}")
+            strong = blend(bg, endpoint, low)
+            if (contrast_ratio(dimmed, bg) >= CLAUDE_DIFF_DIMMED_SEPARATION
+                    and contrast_ratio(text, dimmed) >= CLAUDE_DIFF_TEXT_CONTRAST):
+                return strong, dimmed
+            # Judge a side that misses by how visible its band is against the
+            # panel: a band body text cannot sit on is the worse failure, so a
+            # dimmed fill that text already fails scores nothing.
+            score = (contrast_ratio(dimmed, bg)
+                     if contrast_ratio(text, dimmed) >= CLAUDE_DIFF_TEXT_CONTRAST else 0.0)
+            best = max(best, (score, strong, dimmed))
+        _score, strong, dimmed = best
+        shortfalls.append(
+            f"diff band {color}: {contrast_ratio(dimmed, bg):.2f}:1 off the background, "
+            f"body text {contrast_ratio(text, dimmed):.2f}:1 on it")
+        return strong, dimmed
 
     def diff_word(color: str, band_color: str) -> str:
-        """A changed word's fill, held off the band it is drawn inside."""
-        _lightness, relative, _chroma, hue_degrees = _relative_oklch(band_color)
-        for endpoint in (color, _map_oklch_lightness(color, 1.0 - toward_text, hue_degrees, relative)):
+        """A changed word's fill, held off the band it is drawn inside.
+
+        The slot itself comes first, then the band's hue at each end of the gamut:
+        which end can differ from the band depends on where the band landed, and a
+        slot already at pure white has no side of its own left to move to. The
+        ends stop short of pure black and white for the same reason.
+        """
+        band_lightness, relative, _chroma, hue_degrees = _relative_oklch(band_color)
+        margin = CLAUDE_WORD_LIGHTNESS_MARGIN
+        # Away from the background first: a word stronger than the line it sits in
+        # is the conventional look.
+        ends = ((margin, 1.0 - margin) if band_lightness < color_to_oklab(bg)[0]
+                else (1.0 - margin, margin))
+        for endpoint in (color, *(_map_oklch_lightness(color, end, hue_degrees, relative)
+                                  for end in ends)):
             low, high = 0.0, 1.0
             for _ in range(18):
                 fraction = (low + high) / 2.0
@@ -2544,16 +2574,35 @@ def claude_theme_overrides(roles: Dict[str, str]) -> Dict[str, str]:
             if (contrast_ratio(candidate, band_color) >= CLAUDE_DIFF_WORD_SEPARATION
                     and contrast_ratio(text, candidate) >= 4.5):
                 return candidate
-        raise ValueError(f"no diff word fill for {color} on band {band_color}")
+        shortfalls.append(
+            f"diff word {color} on band {band_color}: "
+            f"{contrast_ratio(candidate, band_color):.2f}:1 off the band, "
+            f"body text {contrast_ratio(text, candidate):.2f}:1 on it")
+        return candidate
+
+    def collision(added_fill: str, removed_fill: str) -> Tuple[float, float]:
+        """How far apart the two bands read, in OKLCH hue and in lightness."""
+        added_lightness, _ar, _ac, added_hue = _relative_oklch(added_fill)
+        removed_lightness, _rr, _rc, removed_hue = _relative_oklch(removed_fill)
+        return _hue_distance(added_hue, removed_hue), abs(added_lightness - removed_lightness)
+
+    def apart(added_fill: str, removed_fill: str) -> bool:
+        hue_gap, lightness_gap = collision(added_fill, removed_fill)
+        return (hue_gap >= CLAUDE_DIFF_HUE_SEPARATION
+                or lightness_gap >= CLAUDE_DIFF_LIGHTNESS_SEPARATION)
 
     added, added_dimmed = diff_fills(roles["green"])
     removed, removed_dimmed = diff_fills(roles["red"])
-    added_lightness, _ar, _ac, added_hue = _relative_oklch(added)
-    removed_lightness, _rr, _rc, removed_hue = _relative_oklch(removed)
-    if (_hue_distance(added_hue, removed_hue) < CLAUDE_DIFF_HUE_SEPARATION
-            and abs(added_lightness - removed_lightness) < CLAUDE_DIFF_LIGHTNESS_SEPARATION):
+    if not apart(added, removed):
         added, added_dimmed = diff_fills(roles["green"], CLAUDE_DIFF_GREEN_HUE)
         removed, removed_dimmed = diff_fills(roles["red"], CLAUDE_DIFF_RED_HUE)
+    if not apart(added, removed):
+        # A band is a weak tint, so a strongly hued background pulls both of them
+        # onto its own hue and no anchor can part them. Naming it beats refusing.
+        hue_gap, lightness_gap = collision(added, removed)
+        shortfalls.append(
+            f"diff bands {added} and {removed}: {hue_gap:.1f} degrees and "
+            f"{lightness_gap:.3f} lightness apart")
     added_word = diff_word(roles["bright_green"], added)
     removed_word = diff_word(roles["bright_red"], removed)
 
@@ -2638,7 +2687,7 @@ def claude_theme_overrides(roles: Dict[str, str]) -> Dict[str, str]:
         "rainbow_blue_shimmer": on_background(roles["bright_cyan"]),
         "rainbow_indigo_shimmer": bright_blue,
         "rainbow_violet_shimmer": bright_magenta,
-    }
+    }, shortfalls
 
 
 def render_template(text: str, roles: Dict[str, str]) -> str:
@@ -4578,24 +4627,41 @@ def apply_codex_theme_hook() -> Dict[str, Any]:
     if not codex_home.is_dir():
         return {"hook": "codex-theme", "ok": True, "skipped": True, "reason": "~/.codex not found"}
     return {"hook": "codex-theme", **set_codex_tui_theme(codex_home / "config.toml")}
-def claude_theme_file(bp: Dict[str, Any], mode: str) -> Dict[str, Any]:
-    """One Claude Code theme file for `bp` rendered in `mode`.
+def claude_theme_file(bp: Dict[str, Any], mode: str) -> Tuple[Dict[str, Any], List[str]]:
+    """One Claude Code theme file for `bp` rendered in `mode`, and its shortfalls.
 
-    The theme package may carry `apps/claude-<mode>.json`, whose `overrides` are
-    merged over the computed ones so a curated file states only what differs.
+    Per-app overrides merge into the roles first, so an override a user sets for
+    the claude app reaches the file and then passes the same readability
+    enforcement as the palette's own colours. The theme package may carry
+    `apps/claude-<mode>.json`, whose `overrides` are merged over the computed
+    ones so a curated file states only what differs.
     """
-    overrides = claude_theme_overrides(target_roles(bp))
+    roles = {**target_roles(bp), **bp_app_overrides(bp).get("claude", {})}
+    overrides, shortfalls = claude_theme_overrides(roles)
     curated_path = (bp.get("apps") or {}).get(f"claude-{mode}.json")
     if curated_path:
-        curated = load_required_json_file(Path(curated_path))
-        unknown = sorted(set(curated.get("overrides") or {}) - set(overrides))
+        # Claude Code ignores a key it does not carry and reports nothing, so a
+        # shape mistake in a theme package has to be named here or it reads as a
+        # successful apply that painted none of the curated colours.
+        where = f"{bp.get('name') or mode} claude-{mode}.json"
+        document = load_required_json_file(Path(curated_path))
+        if not isinstance(document, dict):
+            raise ValueError(f"{where}: expected an object, found {type(document).__name__}")
+        unexpected = sorted(set(document) - {"overrides"})
+        if unexpected:
+            raise ValueError(f"{where}: keys outside overrides: {', '.join(unexpected)}")
+        curated = document.get("overrides") or {}
+        if not isinstance(curated, dict):
+            raise ValueError(f"{where}: overrides must be an object, found {type(curated).__name__}")
+        unknown = sorted(set(curated) - set(overrides))
         if unknown:
-            raise ValueError(f"claude-{mode}.json: tokens Claude Code does not carry: {', '.join(unknown)}")
-        overrides.update(curated.get("overrides") or {})
-    return {"name": f"vgs-{mode}", "base": mode, "overrides": overrides}
+            raise ValueError(f"{where}: tokens Claude Code does not carry: {', '.join(unknown)}")
+        overrides.update(curated)
+    return {"name": f"vgs-{mode}", "base": mode, "overrides": overrides}, shortfalls
 
 
-def claude_mode_blueprint(bp: Dict[str, Any], mode: str) -> Dict[str, Any]:
+def claude_mode_blueprint(bp: Dict[str, Any], mode: str,
+                          themes: List[Dict[str, Any]] | None = None) -> Dict[str, Any]:
     """The blueprint that renders `bp`'s Claude Code theme for `mode`.
 
     A theme covers its own mode. Its counterpart comes from the pair it declares
@@ -4604,10 +4670,16 @@ def claude_mode_blueprint(bp: Dict[str, Any], mode: str) -> Dict[str, Any]:
     """
     if blueprint_mode(bp) == mode:
         return bp
-    paired = paired_blueprint(bp, mode)
+    paired = paired_blueprint(bp, mode, themes)
     if paired:
         return paired
-    return blueprint_mode_variant(bp, mode, str(bp.get("palette", {}).get("wallpaper") or ""))
+    variant = blueprint_mode_variant(bp, mode, str(bp.get("palette", {}).get("wallpaper") or ""))
+    # The transform rebuilds the palette alone, so the package identity that
+    # locates its curated files has to be carried across or they are dropped.
+    for key in ("apps", "package", "path"):
+        if bp.get(key):
+            variant[key] = bp[key]
+    return variant
 
 
 def select_claude_theme(settings_path: Path, theme: str) -> bool:
@@ -4615,7 +4687,8 @@ def select_claude_theme(settings_path: Path, theme: str) -> bool:
 
     The file is written through a symlink rather than over it: three account
     directories can link their settings.json to this one file, and replacing the
-    link would cut them loose.
+    link would cut them loose. A file VGS creates here is owner-only, because the
+    user may later add an API key or a key helper to it.
     """
     data = load_required_json_file(settings_path) if settings_path.exists() else {}
     if data.get("theme") == theme:
@@ -4623,7 +4696,8 @@ def select_claude_theme(settings_path: Path, theme: str) -> bool:
     data["theme"] = theme
     resolved = settings_path.resolve()
     tmp = resolved.with_name(f"{resolved.name}.tmp.{os.getpid()}.{time.time_ns()}")
-    tmp.write_text(json.dumps(data, indent=2) + "\n")
+    with open(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as handle:
+        handle.write(json.dumps(data, indent=2) + "\n")
     if resolved.exists():
         os.chmod(tmp, resolved.stat().st_mode & 0o777)
     tmp.replace(resolved)
@@ -4634,25 +4708,49 @@ def apply_claude_theme_hook(roles: Dict[str, str], bp: Dict[str, Any]) -> Dict[s
     """Write both Claude Code themes and select the applied theme's mode.
 
     Claude Code watches its themes folder and repaints a running session, so a
-    switch within one mode needs no settings write and no restart.
+    switch within one mode needs no settings write and no restart. Each mode is
+    rendered, written and accounted for on its own: a theme package whose
+    counterpart mode is broken must not withhold the mode the user applied.
     """
     claude_dir = home() / ".claude"
     if not claude_dir.is_dir():
         return {"hook": "claude-theme", "ok": True, "skipped": True, "reason": "~/.claude not found"}
     mode = (roles.get("theme_type") or "dark").lower()
+    themes = list_themes()
+    standing: Dict[str, str] = {}
+    shortfalls: List[str] = []
+    errors: List[str] = []
+    unchanged: List[str] = []
+    for file_mode in ("dark", "light"):
+        destination = claude_dir / "themes" / f"vgs-{file_mode}.json"
+        try:
+            content, missed = claude_theme_file(claude_mode_blueprint(bp, file_mode, themes), file_mode)
+            text = json.dumps(content, indent=2) + "\n"
+            # Every open session reloads a theme file that changes, so bytes that
+            # already match are left alone rather than rewritten identically.
+            if destination.is_file() and destination.read_text() == text:
+                unchanged.append(str(destination))
+            else:
+                write_file(destination, text)
+            standing[file_mode] = str(destination)
+            shortfalls.extend(f"vgs-{file_mode}.json: {line}" for line in missed)
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError, UnicodeError) as exc:
+            errors.append(f"vgs-{file_mode}.json: {exc}")
     theme = f"custom:vgs-{mode}"
-    try:
-        written = []
-        for file_mode in ("dark", "light"):
-            content = claude_theme_file(claude_mode_blueprint(bp, file_mode), file_mode)
-            destination = claude_dir / "themes" / f"vgs-{file_mode}.json"
-            write_file(destination, json.dumps(content, indent=2) + "\n")
-            written.append(str(destination))
-        changed = select_claude_theme(claude_dir / "settings.json", theme)
-        return {"hook": "claude-theme", "ok": True, "theme": theme,
-                "themes": written, "unchanged": not changed}
-    except (OSError, RuntimeError, ValueError, UnicodeError) as exc:
-        return {"hook": "claude-theme", "ok": False, "error": str(exc)}
+    result: Dict[str, Any] = {
+        "hook": "claude-theme", "ok": not errors, "theme": theme,
+        "themes": sorted(standing.values()), "unchangedThemes": sorted(unchanged),
+    }
+    if mode in standing:
+        result["unchanged"] = not select_claude_theme(claude_dir / "settings.json", theme)
+    if shortfalls:
+        # One line per apply, not one per token: a restyled palette misses several
+        # at once and the user needs to know the theme is compromised, not a list.
+        result["shortfall"] = f"{len(shortfalls)} diff rule(s) below target: " + "; ".join(shortfalls)
+        eprint(f"hook claude-theme: {result['shortfall']}")
+    if errors:
+        result["error"] = "; ".join(errors)
+    return result
 
 
 def detect_target(cfg: Dict[str, Any]) -> bool:
