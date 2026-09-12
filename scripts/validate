@@ -83,6 +83,7 @@ helper    | scripts/check-keybinds-display.py
 helper    | scripts/check-dev-tools.py
 helper    | scripts/test-bounded-run.py
 helper    | scripts/check-brightness.py
+helper    | scripts/test-claude-theme.py
 go        | scripts/check-backend-inventory.py
 go        | scripts/check-backend-inventory-tests.py
 go        | scripts/check-execbound-adoption.py

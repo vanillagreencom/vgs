@@ -2408,6 +2408,237 @@ def target_render_passes(cfg: Dict[str, Any], roles: Dict[str, str], dest: Path,
     if len({str(dest) for _roles, dest in passes}) != len(passes):
         raise ValueError(f"modes target destination does not name the mode: {cfg['destination']}")
     return passes
+# The OKLCH hues of pure sRGB green and red. A theme whose ANSI green and red
+# share a hue gets its two diff bands anchored here, so a screenful of /diff
+# still separates an added file from a deleted one without the +/- glyphs.
+CLAUDE_DIFF_GREEN_HUE = 142.5
+CLAUDE_DIFF_RED_HUE = 29.23
+# The distance at which the added and removed bands read as two colours. Either
+# one satisfies the rule; below both, the palette gives diffs no colour of their
+# own and the anchors above replace its hues.
+CLAUDE_DIFF_HUE_SEPARATION = 20.0
+CLAUDE_DIFF_LIGHTNESS_SEPARATION = 0.08
+# A hue carries no colour at zero chroma, so an anchored band on a greyscale
+# palette needs one. Relative chroma, so the value holds across lightnesses.
+CLAUDE_DIFF_ANCHOR_CHROMA = 0.35
+# A dimmed band covers the context rows around a change. Below this against the
+# background it merges into the panel and the changed file loses its boundary.
+CLAUDE_DIFF_DIMMED_SEPARATION = 1.3
+# A changed word sits on its own changed line, so it is held apart from the band
+# under it rather than from the background.
+CLAUDE_DIFF_WORD_SEPARATION = 1.5
+# The /diff panel fills whole rows for a whole file, so body text on a diff band
+# is read by the screenful and takes the enhanced ratio, not the 4.5:1 floor the
+# other bands carry.
+CLAUDE_DIFF_TEXT_CONTRAST = 7.0
+# Body text carries the product of the two diff-band rules with room over it. A
+# dimmed band lies between the background and the text, so text on it reads at
+# roughly the text's own ratio divided by the band's separation: below the
+# product, no band is both readable and visible. Eight-bit output quantises a
+# band's separation upward off the floor, and the margin absorbs that step.
+CLAUDE_TEXT_CONTRAST = 9.5
+
+
+def claude_theme_overrides(roles: Dict[str, str]) -> Dict[str, str]:
+    """Claude Code's colour tokens for one VGS theme.
+
+    Claude Code's ANSI presets read the terminal's sixteen slots with fixed
+    meanings that most VGS palettes do not keep, so a custom theme sets every
+    token directly and readability stops depending on those meanings. Text
+    tokens reach 4.5:1 on the background and bands carry body text at 4.5:1;
+    the diff bands take the rules above.
+    """
+    bg = roles["background"]
+    mode = (roles.get("theme_type") or "dark").lower()
+    prefer_text = "#000000" if mode == "light" else "#ffffff"
+    text = _oklab_contrast_adjust(roles["foreground"], bg, CLAUDE_TEXT_CONTRAST, prefer_text)
+    toward_text = 1.0 if color_to_oklab(text)[0] > color_to_oklab(bg)[0] else 0.0
+
+    def on_background(color: str, minimum: float = 4.5) -> str:
+        return _oklab_contrast_adjust(color, bg, minimum, prefer_text)
+
+    def band(color: str, minimum: float = 4.5) -> str:
+        """Keep as much of a fill's own colour as body text on it allows."""
+        if contrast_ratio(text, color) >= minimum:
+            return color
+        low, high = 0.0, 1.0
+        for _ in range(18):
+            fraction = (low + high) / 2.0
+            if contrast_ratio(text, blend(bg, color, fraction)) >= minimum:
+                low = fraction
+            else:
+                high = fraction
+        return blend(bg, color, low)
+
+    def toward_background(endpoint: str, separation: float) -> float:
+        """The smallest tint of `endpoint` that reads `separation`:1 off the background."""
+        low, high = 0.0, 1.0
+        for _ in range(18):
+            fraction = (low + high) / 2.0
+            if contrast_ratio(blend(bg, endpoint, fraction), bg) >= separation:
+                high = fraction
+            else:
+                low = fraction
+        return high
+
+    def diff_endpoints(color: str, hue_degrees: float | None) -> Tuple[str, str]:
+        """The two directions a diff fill of `color` can take from the background.
+
+        A fill on the text's side of the background is the conventional look.
+        Where the background sits too close to the text to carry one, the fill
+        goes to the other side, where body text on it only gains contrast.
+        """
+        lightness, relative, _chroma, own_hue = _relative_oklch(color)
+        if hue_degrees is None:
+            hue_degrees = own_hue
+        else:
+            # An anchored hue replaces a palette that gives diffs no colour of
+            # their own, and a hue carries none at zero chroma.
+            relative = max(relative, CLAUDE_DIFF_ANCHOR_CHROMA)
+            color = _map_oklch_lightness(color, lightness, hue_degrees, relative)
+        # The endpoint carries a dimmed band's step twice over, so the strong
+        # band has somewhere to go on a palette whose slot is close to the
+        # background already.
+        toward = _oklab_contrast_adjust(
+            color, bg, CLAUDE_DIFF_DIMMED_SEPARATION ** 2, prefer_text
+        )
+        return toward, _map_oklch_lightness(color, 1.0 - toward_text, hue_degrees, relative)
+
+    def diff_fills(color: str, hue_degrees: float | None = None) -> Tuple[str, str]:
+        """The strong and dimmed row fills for one diff colour.
+
+        The dimmed fill sits at the separation floor and the strong fill at twice
+        that tint, pulled back where body text on it would drop below the diff
+        ratio.
+        """
+        for endpoint in diff_endpoints(color, hue_degrees):
+            dimmed_tint = toward_background(endpoint, CLAUDE_DIFF_DIMMED_SEPARATION)
+            dimmed = blend(bg, endpoint, dimmed_tint)
+            if (contrast_ratio(dimmed, bg) < CLAUDE_DIFF_DIMMED_SEPARATION
+                    or contrast_ratio(text, dimmed) < CLAUDE_DIFF_TEXT_CONTRAST):
+                continue
+            low, high = dimmed_tint, min(1.0, dimmed_tint * 2.0)
+            for _ in range(18):
+                fraction = (low + high) / 2.0
+                if contrast_ratio(text, blend(bg, endpoint, fraction)) >= CLAUDE_DIFF_TEXT_CONTRAST:
+                    low = fraction
+                else:
+                    high = fraction
+            return blend(bg, endpoint, low), dimmed
+        # Neither side of this background carries a readable, visible band. Report
+        # the theme instead of writing a /diff panel that cannot be read.
+        raise ValueError(f"no diff band for {color} on background {bg}")
+
+    def diff_word(color: str, band_color: str) -> str:
+        """A changed word's fill, held off the band it is drawn inside."""
+        _lightness, relative, _chroma, hue_degrees = _relative_oklch(band_color)
+        for endpoint in (color, _map_oklch_lightness(color, 1.0 - toward_text, hue_degrees, relative)):
+            low, high = 0.0, 1.0
+            for _ in range(18):
+                fraction = (low + high) / 2.0
+                if contrast_ratio(blend(band_color, endpoint, fraction), band_color) >= CLAUDE_DIFF_WORD_SEPARATION:
+                    high = fraction
+                else:
+                    low = fraction
+            candidate = blend(band_color, endpoint, high)
+            if (contrast_ratio(candidate, band_color) >= CLAUDE_DIFF_WORD_SEPARATION
+                    and contrast_ratio(text, candidate) >= 4.5):
+                return candidate
+        raise ValueError(f"no diff word fill for {color} on band {band_color}")
+
+    added, added_dimmed = diff_fills(roles["green"])
+    removed, removed_dimmed = diff_fills(roles["red"])
+    added_lightness, _ar, _ac, added_hue = _relative_oklch(added)
+    removed_lightness, _rr, _rc, removed_hue = _relative_oklch(removed)
+    if (_hue_distance(added_hue, removed_hue) < CLAUDE_DIFF_HUE_SEPARATION
+            and abs(added_lightness - removed_lightness) < CLAUDE_DIFF_LIGHTNESS_SEPARATION):
+        added, added_dimmed = diff_fills(roles["green"], CLAUDE_DIFF_GREEN_HUE)
+        removed, removed_dimmed = diff_fills(roles["red"], CLAUDE_DIFF_RED_HUE)
+    added_word = diff_word(roles["bright_green"], added)
+    removed_word = diff_word(roles["bright_red"], removed)
+
+    accent = roles["accent"]
+    bright_black = roles["bright_black"]
+    inactive = bright_black if contrast_ratio(bright_black, bg) >= 4.5 else roles["muted"]
+    magenta = on_background(roles["magenta"])
+    bright_magenta = on_background(roles["bright_magenta"])
+    blue = on_background(roles["blue"])
+    bright_blue = on_background(roles["bright_blue"])
+    orange = on_background(blend(roles["red"], roles["yellow"], 0.5))
+    return {
+        "text": text,
+        "inverseText": bg,
+        "subtle": on_background(roles["outline"]),
+        "inactive": on_background(inactive),
+        "inactiveShimmer": blend(inactive, text, 0.5),
+        "claude": accent,
+        "claudeShimmer": blend(accent, text, 1.0 / 3.0),
+        "clawd_body": accent,
+        "clawd_background": bg,
+        "briefLabelClaude": accent,
+        "rate_limit_fill": accent,
+        "rate_limit_empty": roles["surfaceContainerHighest"],
+        "permission": blue,
+        "briefLabelYou": blue,
+        "professionalBlue": blue,
+        "permissionShimmer": bright_blue,
+        "ide": bright_blue,
+        "claudeBlue_FOR_SYSTEM_SPINNER": blue,
+        "claudeBlueShimmer_FOR_SYSTEM_SPINNER": bright_blue,
+        "suggestion": on_background(roles["bright_cyan"]),
+        "planMode": on_background(roles["cyan"]),
+        "autoAccept": magenta,
+        "autoAcceptShimmer": bright_magenta,
+        "skill": magenta,
+        "merged": magenta,
+        "remember": magenta,
+        "bashBorder": bright_magenta,
+        "effortUltra": bright_magenta,
+        "promptBorder": on_background(roles["outline"]),
+        "promptBorderShimmer": on_background(roles["outlineVariant"]),
+        "success": on_background(roles["green"]),
+        "error": on_background(roles["red"]),
+        "warning": on_background(roles["yellow"]),
+        "warningShimmer": on_background(roles["bright_yellow"]),
+        "fastMode": on_background(roles["bright_red"]),
+        "fastModeShimmer": on_background(roles["bright_yellow"]),
+        "chromeYellow": on_background(roles["yellow"]),
+        "diffAdded": added,
+        "diffRemoved": removed,
+        "diffAddedDimmed": added_dimmed,
+        "diffRemovedDimmed": removed_dimmed,
+        "diffAddedWord": added_word,
+        "diffRemovedWord": removed_word,
+        "userMessageBackground": band(roles["surfaceContainer"]),
+        "userMessageBackgroundHover": band(roles["surfaceContainerHigh"]),
+        "composerSidebarBackground": band(roles["surfaceContainerLow"]),
+        "bashMessageBackgroundColor": band(roles["bright_magenta"]),
+        "memoryBackgroundColor": band(roles["secondaryContainer"]),
+        "selectionBg": _oklab_contrast_adjust(roles["selection_background"], text, 3.0, bg),
+        "background": bg,
+        "red_FOR_SUBAGENTS_ONLY": on_background(roles["red"], 3.0),
+        "blue_FOR_SUBAGENTS_ONLY": on_background(roles["blue"], 3.0),
+        "green_FOR_SUBAGENTS_ONLY": on_background(roles["green"], 3.0),
+        "yellow_FOR_SUBAGENTS_ONLY": on_background(roles["yellow"], 3.0),
+        "purple_FOR_SUBAGENTS_ONLY": on_background(roles["magenta"], 3.0),
+        "orange_FOR_SUBAGENTS_ONLY": on_background(blend(roles["red"], roles["yellow"], 0.5), 3.0),
+        "pink_FOR_SUBAGENTS_ONLY": on_background(roles["bright_magenta"], 3.0),
+        "cyan_FOR_SUBAGENTS_ONLY": on_background(roles["cyan"], 3.0),
+        "rainbow_red": on_background(roles["red"]),
+        "rainbow_orange": orange,
+        "rainbow_yellow": on_background(roles["yellow"]),
+        "rainbow_green": on_background(roles["green"]),
+        "rainbow_blue": on_background(roles["cyan"]),
+        "rainbow_indigo": blue,
+        "rainbow_violet": magenta,
+        "rainbow_red_shimmer": on_background(roles["bright_red"]),
+        "rainbow_orange_shimmer": on_background(blend(roles["bright_red"], roles["bright_yellow"], 0.5)),
+        "rainbow_yellow_shimmer": on_background(roles["bright_yellow"]),
+        "rainbow_green_shimmer": on_background(roles["bright_green"]),
+        "rainbow_blue_shimmer": on_background(roles["bright_cyan"]),
+        "rainbow_indigo_shimmer": bright_blue,
+        "rainbow_violet_shimmer": bright_magenta,
+    }
 
 
 def render_template(text: str, roles: Dict[str, str]) -> str:
@@ -2861,7 +3092,7 @@ def ensure_qtct_theme_config(version: int) -> Dict[str, Any]:
     return {"hook": f"{app}-config", "ok": True, "changed": changed, "config": str(config)}
 
 
-def run_hook(hook: Any, roles: Dict[str, str]) -> Dict[str, Any]:
+def run_hook(hook: Any, roles: Dict[str, str], bp: Dict[str, Any]) -> Dict[str, Any]:
     if isinstance(hook, dict):
         name = str(hook.get("name") or hook.get("type") or "hook")
         return {"hook": name, "ok": True, "skipped": True, "reason": "object hooks are not enabled by default"}
@@ -2960,7 +3191,7 @@ def run_hook(hook: Any, roles: Dict[str, str]) -> Dict[str, Any]:
     if hook == "gtk-settings":
         return apply_gtk_settings_hook(roles)
     if hook == "claude-theme":
-        return apply_claude_theme_hook(roles)
+        return apply_claude_theme_hook(roles, bp)
     if hook == "codex-theme":
         return apply_codex_theme_hook()
     if hook == "opencode-theme-select":
@@ -4174,13 +4405,6 @@ def _yaml_block_set(lines: List[str], parent: str, key: str,
     return lines[:tail] + [f"{indent}{key}: {value}"] + lines[tail:], "", True
 
 
-def apply_claude_theme_hook(roles: Dict[str, str]) -> Dict[str, Any]:
-    mode = (roles.get("theme_type") or "dark").lower()
-    claude_theme = "light-ansi" if mode == "light" else "dark-ansi"
-    result = set_json_config_key(home() / ".claude" / "settings.json", ("theme",), claude_theme)
-    return {"hook": "claude-theme", "theme": claude_theme, **result}
-
-
 # Agent CLIs that read a custom theme from a file VGS renders, then need their
 # own settings file pointed at it. Each selection runs after that file is on
 # disk, so a hook never names a theme the CLI cannot load.
@@ -4354,6 +4578,81 @@ def apply_codex_theme_hook() -> Dict[str, Any]:
     if not codex_home.is_dir():
         return {"hook": "codex-theme", "ok": True, "skipped": True, "reason": "~/.codex not found"}
     return {"hook": "codex-theme", **set_codex_tui_theme(codex_home / "config.toml")}
+def claude_theme_file(bp: Dict[str, Any], mode: str) -> Dict[str, Any]:
+    """One Claude Code theme file for `bp` rendered in `mode`.
+
+    The theme package may carry `apps/claude-<mode>.json`, whose `overrides` are
+    merged over the computed ones so a curated file states only what differs.
+    """
+    overrides = claude_theme_overrides(target_roles(bp))
+    curated_path = (bp.get("apps") or {}).get(f"claude-{mode}.json")
+    if curated_path:
+        curated = load_required_json_file(Path(curated_path))
+        unknown = sorted(set(curated.get("overrides") or {}) - set(overrides))
+        if unknown:
+            raise ValueError(f"claude-{mode}.json: tokens Claude Code does not carry: {', '.join(unknown)}")
+        overrides.update(curated.get("overrides") or {})
+    return {"name": f"vgs-{mode}", "base": mode, "overrides": overrides}
+
+
+def claude_mode_blueprint(bp: Dict[str, Any], mode: str) -> Dict[str, Any]:
+    """The blueprint that renders `bp`'s Claude Code theme for `mode`.
+
+    A theme covers its own mode. Its counterpart comes from the pair it declares
+    and, with none, from the mode transform, so both files always exist and a
+    mode flip has a theme to select.
+    """
+    if blueprint_mode(bp) == mode:
+        return bp
+    paired = paired_blueprint(bp, mode)
+    if paired:
+        return paired
+    return blueprint_mode_variant(bp, mode, str(bp.get("palette", {}).get("wallpaper") or ""))
+
+
+def select_claude_theme(settings_path: Path, theme: str) -> bool:
+    """Point Claude Code's `theme` setting at `theme`. True when it changed.
+
+    The file is written through a symlink rather than over it: three account
+    directories can link their settings.json to this one file, and replacing the
+    link would cut them loose.
+    """
+    data = load_required_json_file(settings_path) if settings_path.exists() else {}
+    if data.get("theme") == theme:
+        return False
+    data["theme"] = theme
+    resolved = settings_path.resolve()
+    tmp = resolved.with_name(f"{resolved.name}.tmp.{os.getpid()}.{time.time_ns()}")
+    tmp.write_text(json.dumps(data, indent=2) + "\n")
+    if resolved.exists():
+        os.chmod(tmp, resolved.stat().st_mode & 0o777)
+    tmp.replace(resolved)
+    return True
+
+
+def apply_claude_theme_hook(roles: Dict[str, str], bp: Dict[str, Any]) -> Dict[str, Any]:
+    """Write both Claude Code themes and select the applied theme's mode.
+
+    Claude Code watches its themes folder and repaints a running session, so a
+    switch within one mode needs no settings write and no restart.
+    """
+    claude_dir = home() / ".claude"
+    if not claude_dir.is_dir():
+        return {"hook": "claude-theme", "ok": True, "skipped": True, "reason": "~/.claude not found"}
+    mode = (roles.get("theme_type") or "dark").lower()
+    theme = f"custom:vgs-{mode}"
+    try:
+        written = []
+        for file_mode in ("dark", "light"):
+            content = claude_theme_file(claude_mode_blueprint(bp, file_mode), file_mode)
+            destination = claude_dir / "themes" / f"vgs-{file_mode}.json"
+            write_file(destination, json.dumps(content, indent=2) + "\n")
+            written.append(str(destination))
+        changed = select_claude_theme(claude_dir / "settings.json", theme)
+        return {"hook": "claude-theme", "ok": True, "theme": theme,
+                "themes": written, "unchanged": not changed}
+    except (OSError, RuntimeError, ValueError, UnicodeError) as exc:
+        return {"hook": "claude-theme", "ok": False, "error": str(exc)}
 
 
 def detect_target(cfg: Dict[str, Any]) -> bool:
@@ -4694,7 +4993,7 @@ def _apply_theme_obj_unlocked(bp: Dict[str, Any], only_app: str | None = None,
                 hook_specs.extend(hook_value)
             else:
                 hook_specs.append(hook_value)
-    hook_results = [run_hook(hook, roles) for hook in hook_specs] if run_hooks else []
+    hook_results = [run_hook(hook, roles, bp) for hook in hook_specs] if run_hooks else []
     warnings = []
     for result in hook_results:
         if result.get("ok"):

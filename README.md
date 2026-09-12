@@ -78,7 +78,7 @@ Checksum-verified bundles and source archives are published on [GitHub Releases]
 - The VGS menu: one searchable command menu with categories, fuzzy search, optional file search, and entries and web applications you add yourself. It is also the application launcher.
 - A theme engine that writes matching themes for terminals, editors, browsers, GTK, Qt, KDE colours and icon themes. `vshell theme apps` lists the targets and their state, and each one can be switched off.
 - Palette extraction from any wallpaper, per-role colour editing, whole-theme restyling by brightness, vibrancy, contrast, hue and temperature, and a light theme paired with a dark one so they swap together.
-- Claude Code follows the light or dark mode of the theme you apply, without a restart.
+- Claude Code gets a light and a dark theme written from the theme you apply, covering its own colours for body text, diffs, message bands and accents, and the applied theme's mode is selected without a restart.
 - Screenshots and screen recording by region, window or display, with a delay timer, an editor handoff, and text extraction from the screen.
 - Idle handling: lock after idle, fade to black while locked without powering monitors off, separate monitor-off and suspend timers on AC and battery, a video screensaver on the lock screen, an ASCII screensaver on the desktop, and an inhibitor that suppresses the chain.
 - Display management: arrangement, resolution, refresh rate, scale, rotation, saved profiles and gamma. Brightness works per display for laptop panels, external monitors over DDC/CI, and the Apple Pro Display XDR and Studio Display over USB.

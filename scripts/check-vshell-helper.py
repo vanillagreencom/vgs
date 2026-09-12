@@ -1830,7 +1830,7 @@ def test_theme_hooks_stay_out_of_the_login_session():
                         patch.object(helper.subprocess, "run", side_effect=trip):
                     for hook in ("ghostty-reload", "hypr-reload", "shell-reload", "tmux-source", "nvim-reload",
                                  "gtk-settings", "icon-theme"):
-                        skipped = helper.run_hook(hook, {"background": "#123456"})
+                        skipped = helper.run_hook(hook, {"background": "#123456"}, {})
                         assert_equal(skipped.get("skipped"), True, f"{hook} reports a skip under a sandbox HOME")
                         assert_equal(skipped.get("reason"), helper.SANDBOX_REFUSAL,
                                      f"{hook} names the refusal rather than an absent app")
@@ -1862,7 +1862,7 @@ def test_theme_hooks_stay_out_of_the_login_session():
                     patch.object(helper.Path, "is_dir", lambda self: self.name == "vgs-probe-icons" or real_is_dir(self)), \
                     patch.object(helper.time, "sleep"):
                 for hook in ("gtk-settings", "icon-theme"):
-                    helper.run_hook(hook, {"theme_type": "dark"})
+                    helper.run_hook(hook, {"theme_type": "dark"}, {})
         interface = ("gsettings", "set", "org.gnome.desktop.interface")
         assert_equal(written, [interface + ("gtk-theme",), interface + ("color-scheme",), interface + ("icon-theme",)],
                      "the settings hooks write gsettings from the login user's own home")
@@ -2043,7 +2043,7 @@ def test_generated_theme_consumer_wiring():
         def fail_foot_hook():
             raise OSError("read-only test config")
         helper.ensure_foot_theme_config = fail_foot_hook
-        failed = helper.run_hook("foot-config", {})
+        failed = helper.run_hook("foot-config", {}, {})
         assert_equal(failed["ok"], False, "consumer hook failure result")
         if "read-only test config" not in failed.get("error", ""):
             raise AssertionError("consumer hook failure must remain observable")
@@ -2104,7 +2104,7 @@ def test_theme_init_applies_only_without_state():
     def init():
         hooks = []
         buffer = io.StringIO()
-        with patch.object(helper, "run_hook", side_effect=lambda hook, roles: hooks.append(hook) or {"hook": hook, "ok": True}), \
+        with patch.object(helper, "run_hook", side_effect=lambda hook, roles, bp: hooks.append(hook) or {"hook": hook, "ok": True}), \
                 contextlib.redirect_stdout(buffer):
             status = helper.cmd_theme(["init", "--json"])
         assert_equal(status, 0, "theme init exit status")
