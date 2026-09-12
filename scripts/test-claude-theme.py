@@ -309,6 +309,47 @@ class ModeCounterparts(unittest.TestCase):
         self.assertEqual(missing, [])
 
 
+class UnreachableDiffBands(unittest.TestCase):
+    """A background no band can sit on, which no bundled palette reaches.
+
+    Without a case here the diff-band and diff-word branches that report a
+    shortfall never run, and deleting either report leaves the suite green.
+    """
+
+    def overrides(self) -> tuple:
+        # A mid-tone grey carries neither a readable band above it nor a visible
+        # one below: body text on it tops out far under the diff ratio.
+        grey = {f"color{index}": "#808080" for index in range(16)}
+        grey.update(background="#808080", foreground="#8a8a8a", mode="dark")
+        blueprint = helper.palette_from_colors_map(grey, name="flat-grey", wallpaper="",
+                                                   source="curated")
+        return helper.claude_theme_overrides(helper.target_roles(blueprint))
+
+    def test_a_background_no_band_can_sit_on_reports_the_band_it_wrote(self):
+        """Every line names both ratios, so the report says which rule was missed
+        rather than only that something was."""
+        _values, missed = self.overrides()
+        bands = [line for line in missed if line.startswith("diff band")]
+        self.assertNotEqual(bands, [])
+        self.assertEqual([line for line in bands if ":1 off the background" not in line
+                          or ":1 on it" not in line], [])
+
+    def test_a_band_it_cannot_place_is_never_the_background_itself(self):
+        """Returning the background would hide the changed rows completely."""
+        values, _missed = self.overrides()
+        self.assertEqual([token for token in DIFF_BANDS
+                          if values[token] == values["background"]], [])
+
+    def test_the_band_it_reports_is_the_band_it_wrote(self):
+        """A report naming a candidate the caller did not get sends an author after
+        the wrong colour."""
+        values, missed = self.overrides()
+        reported = {line.split(": ", 1)[1].split(":1 off", 1)[0]
+                    for line in missed if line.startswith("diff band")}
+        self.assertEqual(reported, {f"{ratio(values[token], values['background']):.2f}"
+                                    for token in DIMMED_BANDS})
+
+
 class ThemeSelection(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp())
@@ -342,7 +383,7 @@ class ThemeSelection(unittest.TestCase):
     def test_a_settings_file_vgs_creates_is_owner_only(self):
         """The user may add an API key or a key helper to it afterwards, and the
         next apply would copy a world-readable mode forward."""
-        os.umask(0o022)
+        self.addCleanup(os.umask, os.umask(0o022))
         helper.select_claude_theme(self.settings, "custom:vgs-dark")
         self.assertEqual(self.settings.stat().st_mode & 0o777, 0o600)
 
@@ -426,6 +467,10 @@ class HookBehaviour(unittest.TestCase):
             ("array document", '["text"]', "list"),
             ("empty array document", '[]', "list"),
             ("string overrides", '{"overrides": "claude"}', "str"),
+            ("number value", '{"overrides": {"text": 5}}', "text"),
+            ("null value", '{"overrides": {"text": null}}', "text"),
+            ("prose value", '{"overrides": {"text": "not-a-colour"}}', "text"),
+            ("an ansi value VGS does not write", '{"overrides": {"text": "ansi:red"}}', "text"),
         ):
             with self.subTest(label):
                 with self.assertRaises(ValueError) as raised:
@@ -466,6 +511,30 @@ class HookBehaviour(unittest.TestCase):
              (themes / "vgs-dark.json").is_file(), (themes / "vgs-light.json").is_file()),
             (False, True, "custom:vgs-dark", True, False))
 
+    def test_an_unreadable_settings_file_is_contained_with_both_themes_written(self):
+        """The selection reads settings.json, and an exception there once unwound the
+        whole apply: seventeen later hooks were skipped and theme-current.json was
+        never written, so the compositor and GTK kept the old theme."""
+        (self.home / ".claude").mkdir()
+        (self.home / ".claude" / "settings.json").write_text('{"theme": "dark-ansi",}')
+        result = self.run_hook()
+        themes = self.home / ".claude" / "themes"
+        self.assertEqual(
+            (result["ok"], result["error"].startswith("settings.json: "),
+             (themes / "vgs-dark.json").is_file(), (themes / "vgs-light.json").is_file()),
+            (False, True, True, True))
+
+    def test_a_theme_file_vgs_cannot_read_back_is_overwritten_not_refused(self):
+        """The skip-identical comparison is an optimisation. Failing it withheld the
+        write and the selection, leaving Claude Code on the theme it had."""
+        (self.home / ".claude").mkdir()
+        stale = self.home / ".claude" / "themes" / "vgs-dark.json"
+        stale.parent.mkdir(parents=True)
+        stale.write_bytes(b"\xff\xfe not utf-8")
+        result = self.run_hook()
+        self.assertEqual((result["ok"], json.loads(stale.read_text())["name"]),
+                         (True, "vgs-dark"))
+
     def test_a_theme_file_whose_bytes_already_match_is_not_rewritten(self):
         """write_file replaces unconditionally and Claude Code reloads what changes,
         so an identical rewrite repaints every open session for nothing."""
@@ -484,31 +553,44 @@ class HookBehaviour(unittest.TestCase):
         self.roles = helper.target_roles(self.blueprint)
         result = self.run_hook()
         self.assertEqual(
-            (result["ok"], "diff" in result.get("shortfall", ""),
+            (result["ok"], "diff" in result.get("warning", ""),
              (self.home / ".claude" / "themes" / "vgs-light.json").is_file()),
             (True, True, True))
 
 
 class TargetWiring(unittest.TestCase):
-    def test_an_apply_reaches_the_hook_from_a_target_with_no_template(self):
-        """The hook moved onto a target with no template and no destination, so the
-        apply loop has to collect a hook from a hook-only target or nothing is
-        written on any apply."""
+    def apply(self, blueprint: dict) -> tuple:
+        """One apply of `blueprint` against a fresh HOME holding ~/.claude."""
         home = Path(tempfile.mkdtemp())
         (home / ".claude").mkdir()
         original = helper.home
         helper.home = lambda: home
         try:
-            result = helper._apply_theme_obj_unlocked(
-                helper.find_theme("catppuccin"), only_app="claude")
+            return helper._apply_theme_obj_unlocked(blueprint, only_app="claude"), home
         finally:
             helper.home = original
+
+    def test_an_apply_reaches_the_hook_from_a_target_with_no_template(self):
+        """The hook moved onto a target with no template and no destination, so the
+        apply loop has to collect a hook from a hook-only target or nothing is
+        written on any apply."""
+        result, home = self.apply(helper.find_theme("catppuccin"))
         themes = home / ".claude" / "themes"
         self.assertEqual(
             (result["warnings"], (themes / "vgs-dark.json").is_file(),
              (themes / "vgs-light.json").is_file(),
              json.loads((home / ".claude" / "settings.json").read_text())["theme"]),
             ([], True, True, "custom:vgs-dark"))
+
+    def test_a_degraded_theme_reaches_the_apply_result_as_a_warning(self):
+        """The settings UI builds its message from the apply result's warnings and
+        reads stderr only on a non-zero exit, so a shortfall the hook keeps to
+        itself shows as a clean success over a /diff panel painted in one colour."""
+        result, home = self.apply(restyled(helper.find_theme("pmndrs"), {"brightness": -25}))
+        self.assertEqual(
+            (result["partial"], [line for line in result["warnings"] if "diff" in line] != [],
+             (home / ".claude" / "themes" / "vgs-light.json").is_file()),
+            (True, True, True))
 
     def test_the_target_runs_the_hook_and_is_detected_by_the_claude_directory(self):
         config = json.loads((REPO / "themes" / "targets" / "claude-vgs" / "config.json").read_text())
