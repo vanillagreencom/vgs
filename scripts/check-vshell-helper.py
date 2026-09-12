@@ -7421,7 +7421,7 @@ def test_codex_theme_paints_every_bundled_theme_readably():
     names = sorted(d.name for d in helper.builtin_themes_dir().iterdir()
                    if (d / "theme.json").is_file())
     if len(names) < 2:
-        raise AssertionError("the bundled theme set must reach both polarities")
+        raise AssertionError("the bundled theme set must hold more than one theme")
     scopes_seen = set()
     for name in names:
         blueprint = helper.load_theme_package(name)
@@ -7544,10 +7544,12 @@ def test_codex_theme_selection_changes_only_the_tui_theme_key():
         # config.toml carries [mcp_servers.*] env values and [model_providers]
         # http_headers, which hold API keys, so the hook must not widen a
         # private file to whatever the process umask yields.
+        # 0o640 is a mode no umask produces on a fresh file, so dropping the
+        # mode handling fails this row whatever the caller's umask is.
         config.write_text('[tui]\ntheme = "ansi"\n')
-        os.chmod(config, 0o600)
+        os.chmod(config, 0o640)
         assert_equal(helper.run_hook("codex-theme", {})["ok"], True, "a private config is themed")
-        assert_equal(oct(config.stat().st_mode & 0o777), oct(0o600), "the file keeps its own mode")
+        assert_equal(oct(config.stat().st_mode & 0o777), oct(0o640), "the file keeps its own mode")
 
         # A missing config.toml is written, since Codex reads its theme from no
         # other file.
@@ -7566,7 +7568,7 @@ def test_codex_theme_selection_changes_only_the_tui_theme_key():
         assert_equal(dotfiles.read_text(), '[tui]\ntheme = "vgs"\n', "the link target took the theme")
 
         # An unwritable config is a warning the apply carries, not an exception
-        # that strands the sixteen hooks ordered after this one.
+        # that strands the twenty hooks ordered after this one.
         dotfiles.write_text('[tui]\ntheme = "ansi"\n')
         os.chmod(dotfiles.parent, 0o500)
         try:

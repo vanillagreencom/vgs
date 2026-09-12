@@ -2366,8 +2366,8 @@ def render_template(text: str, roles: Dict[str, str]) -> str:
 
 
 def write_file(path: Path, content: str, mode: int | None = None) -> None:
-    """Replace `path` atomically. `mode` sets the permissions before the rename,
-    so a file that held secrets is never briefly readable under the umask."""
+    """Replace `path` atomically. With `mode`, the replaced file carries those
+    permissions instead of the ones the process umask yields."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}.{time.time_ns()}")
     tmp.write_text(content)
