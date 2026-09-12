@@ -2428,15 +2428,29 @@ def render_template(text: str, roles: Dict[str, str]) -> str:
 
 
 def write_file(path: Path, content: str, mode: int | None = None) -> None:
-    """Replace `path` atomically. `mode` is applied to the temporary file before
-    the rename, so the destination is never briefly readable at the umask mode —
-    which matters for a config another app keeps at 0600 for its API keys."""
+    """Replace `path` atomically. With `mode`, the temporary file carries it
+    before any content is written, so no copy of the content exists at a wider
+    mode at any point — which matters for a config another app keeps at 0600
+    for its API keys. Without one the temporary file takes the process umask,
+    as every caller that does not name a mode has always had."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}.{time.time_ns()}")
-    tmp.write_text(content)
-    if mode is not None:
-        os.chmod(tmp, mode)
-    tmp.replace(path)
+    try:
+        # O_EXCL because a name this process built from its own pid and a
+        # nanosecond clock should never already exist; if it does, something
+        # else owns that file and this write must not land in it.
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode if mode is not None else 0o666)
+        with os.fdopen(fd, "w") as handle:
+            if mode is not None:
+                # os.open's mode is masked by the umask, and the file is still
+                # empty here, so this is the last point before any content lands.
+                os.fchmod(fd, mode)
+            handle.write(content)
+        tmp.replace(path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            tmp.unlink()
+        raise
 
 
 def _niri() -> Any:
@@ -4169,22 +4183,34 @@ def apply_claude_theme_hook(roles: Dict[str, str]) -> Dict[str, Any]:
 # own settings file pointed at it. Each selection runs after that file is on
 # disk, so a hook never names a theme the CLI cannot load.
 # opencode moves theme, keybinds and tui out of opencode.json into tui.json once,
-# and skips that migration entirely when tui.json already exists.
-OPENCODE_MIGRATED_KEYS = ("theme", "keybinds", "tui")
+# and skips that migration entirely when tui.json already exists. Its migration
+# fires on a string `theme`, an object `keybinds`, or a `tui` object carrying one
+# of these three settings; a `tui` holding anything else moves nothing.
+OPENCODE_MIGRATED_TUI_KEYS = ("scroll_speed", "scroll_acceleration", "diff_style")
 
 
 def _opencode_migration_pending() -> str:
-    """The opencode config still holding keys opencode has yet to move, or ""."""
+    """Why opencode's tui.json migration must run first, or "".
+
+    A config this cannot read counts as pending: creating tui.json beside it
+    cancels the migration for good, so an unreadable file must not read the
+    same as one with nothing left to move.
+    """
     for name in ("opencode.json", "opencode.jsonc"):
         path = expand_dest(f"~/.config/opencode/{name}")
         if not path.exists():
             continue
         try:
             data = json.loads(_strip_jsonc(path.read_text()))
-        except (OSError, ValueError, UnicodeError):
+        except (OSError, ValueError, UnicodeError) as exc:
+            return f"{path} is unreadable ({exc}), so whether opencode has keys to migrate is unknown"
+        if not isinstance(data, dict):
             continue
-        if isinstance(data, dict) and any(key in data for key in OPENCODE_MIGRATED_KEYS):
-            return str(path)
+        tui = data.get("tui")
+        if (isinstance(data.get("theme"), str)
+                or isinstance(data.get("keybinds"), dict)
+                or (isinstance(tui, dict) and any(key in tui for key in OPENCODE_MIGRATED_TUI_KEYS))):
+            return f"opencode has yet to migrate {path} into tui.json"
     return ""
 
 
@@ -4198,8 +4224,7 @@ def select_opencode_theme_hook() -> Dict[str, Any]:
         # Creating tui.json here would cancel that migration and strand the
         # user's keybinds. Their next opencode start moves them; the apply after
         # that selects the theme.
-        return {"hook": hook, "ok": True, "skipped": True,
-                "reason": f"opencode has yet to migrate {pending} into tui.json"}
+        return {"hook": hook, "ok": True, "skipped": True, "reason": pending}
     return {"hook": hook, **set_json_config_key(tui, ("theme",), "vgs", create=True)}
 
 

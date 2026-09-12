@@ -310,6 +310,20 @@ def _agent_cli_config(target):
     return json.loads((helper.targets_dir() / target / "config.json").read_text())
 
 
+def run_selection_hook(name, roles=None):
+    """Run a theme-selection hook, refusing to do so against the real HOME.
+
+    These hooks write the user's own agent-CLI settings files, gated only on a
+    rendered theme file existing — the state of any machine that has applied a
+    VGS theme. Every call goes through here so a test can only ever reach a
+    temporary home.
+    """
+    if os.environ.get("HOME") == _HOME_AT_IMPORT:
+        raise AssertionError(
+            f"{name} would write the real HOME; run selection hooks inside with_temp_home")
+    return helper.run_hook(name, roles or {})
+
+
 def _render_agent_cli_target(target, blueprint, mode_maps):
     """Every (destination, text) pair the target writes for this blueprint."""
     config = _agent_cli_config(target)
@@ -350,6 +364,85 @@ def _parse_hermes_skin(text, label):
             continue
         raise AssertionError(f"{label}: hermes skin line is not a documented entry: {line!r}")
     return scalars, colours
+
+
+class _WriteWatchingHandle:
+    """Forwards to a real file handle, calling `on_write` before the first write
+    so a test can observe the temporary file at the instant content reaches it."""
+
+    def __init__(self, handle, on_write):
+        self._handle = handle
+        self._on_write = on_write
+
+    def __enter__(self):
+        self._handle.__enter__()
+        return self
+
+    def __exit__(self, *exception):
+        return self._handle.__exit__(*exception)
+
+    def write(self, data):
+        self._on_write()
+        return self._handle.write(data)
+
+
+def test_write_file_never_puts_content_on_disk_at_a_wider_mode():
+    """write_file's temporary file carries the target mode before any content
+    reaches it, not after the write.
+
+    Hermes keeps provider api_key values in a 0644-umask machine's 0600 config.
+    A temp file chmod'ed only after the write holds a world-readable copy of
+    those credentials for the length of the write.
+    """
+    def check(home):
+        target = home / "secret.yaml"
+        target.write_text("api_key: sk-test\n")
+        os.chmod(target, 0o600)
+        observed = []
+        real_fdopen = os.fdopen
+
+        def watching_fdopen(fd, *args, **kwargs):
+            def record():
+                for path in sorted(home.iterdir()):
+                    if ".tmp." in path.name:
+                        observed.append((path.name, stat.S_IMODE(path.stat().st_mode)))
+
+            return _WriteWatchingHandle(real_fdopen(fd, *args, **kwargs), record)
+
+        with patch("os.fdopen", watching_fdopen):
+            helper.write_file(target, "api_key: sk-test\ntheme: vgs\n", 0o600)
+        if not observed:
+            raise AssertionError("the write never passed through a temporary file")
+        for name, mode in observed:
+            assert_equal(mode, 0o600, f"{name} held content at a wider mode")
+        assert_equal(stat.S_IMODE(target.stat().st_mode), 0o600, "the destination mode")
+
+    with_temp_home(check)
+
+
+def test_selection_hooks_refuse_a_home_the_test_did_not_create():
+    """The guard every selection-hook call in this file goes through.
+
+    A selection hook is gated only on a rendered theme file existing, which is
+    the state of any machine that has applied a VGS theme, so one running
+    outside a temporary home rewrites the contributor's own CLI settings.
+    """
+    global _HOME_AT_IMPORT
+    saved_marker, saved_home = _HOME_AT_IMPORT, os.environ.get("HOME")
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            # Both the marker and HOME point at a throwaway directory, so a
+            # guard that has stopped working still reaches nothing of the user's.
+            _HOME_AT_IMPORT = tmp
+            os.environ["HOME"] = tmp
+            try:
+                run_selection_hook("hermes-skin-select")
+            except AssertionError:
+                return
+            raise AssertionError("a selection hook ran against a home the test did not create")
+        finally:
+            _HOME_AT_IMPORT = saved_marker
+            _restore_env("HOME", saved_home)
 
 
 def test_agent_cli_themes_render_for_every_bundled_theme():
@@ -443,13 +536,14 @@ def test_agent_cli_theme_targets_reach_the_apply_path():
     A typo in a target's hook name returns ok with reason 'unknown hook', so the
     apply reports success while nothing selects the theme.
     """
-    for target in AGENT_CLI_TARGETS:
-        hook = _agent_cli_config(target)["hook"]
-        result = helper.run_hook(hook, {"theme_type": "dark"})
-        if result.get("reason") == "unknown hook":
-            raise AssertionError(f"{target} names a hook the helper does not dispatch: {hook}")
-
     def check(home):
+        # Before any theme file is rendered, so each hook skips and writes
+        # nothing; a name the helper cannot dispatch reads differently.
+        for target in AGENT_CLI_TARGETS:
+            hook = _agent_cli_config(target)["hook"]
+            if run_selection_hook(hook).get("reason") == "unknown hook":
+                raise AssertionError(f"{target} names a hook the helper does not dispatch: {hook}")
+
         (home / ".omp").mkdir(parents=True, exist_ok=True)
         blueprint = helper.load_theme_package("tokyo-night")
         applied = helper.apply_theme_obj(blueprint, only_target="omp-vgs")
@@ -557,7 +651,9 @@ def _write_agent_cli_theme_files(home):
 
 
 def _agent_cli_selections():
-    """(hook, settings file) per target, read from the target's own config."""
+    """Each target's hook, read from its config.json, with the settings file
+    that hook edits. The omp path is the one omp_config_path picks when neither
+    config.yml nor config.yaml exists yet."""
     return (
         (_agent_cli_config("opencode-vgs")["hook"], ".config/opencode/tui.json"),
         (_agent_cli_config("gemini-vgs")["hook"], ".gemini/settings.json"),
@@ -581,10 +677,10 @@ def test_agent_cli_theme_selection_writes_only_the_theme_key():
         (home / ".omp" / "agent" / "config.yml").write_text("theme:\n  dark: titanium\n")
 
         for hook, relative in _agent_cli_selections():
-            result = helper.run_hook(hook, {"theme_type": "dark"})
+            result = run_selection_hook(hook, {"theme_type": "dark"})
             assert_equal(result.get("ok"), True, f"{hook} result")
             assert_equal(result.get("changed"), True, f"{hook} first run writes")
-            assert_equal(helper.run_hook(hook, {"theme_type": "dark"}).get("changed"), False,
+            assert_equal(run_selection_hook(hook, {"theme_type": "dark"}).get("changed"), False,
                          f"{hook} rewrites an already-selected theme")
             if not (home / relative).exists():
                 raise AssertionError(f"{hook} wrote no {relative}")
@@ -606,6 +702,26 @@ def test_agent_cli_theme_selection_writes_only_the_theme_key():
     with_temp_home(check)
 
 
+def test_agent_cli_theme_selection_reads_the_users_own_spelling_of_the_value():
+    """A value the user wrote as `vgs # pinned` or `"vgs"` is already selected.
+
+    Read literally, every theme apply rewrites their config and reports a
+    change, churning a file that holds provider credentials.
+    """
+    def check(home):
+        _write_agent_cli_theme_files(home)
+        config = home / ".hermes" / "config.yaml"
+        config.parent.mkdir(parents=True, exist_ok=True)
+        for spelling in ('vgs # pinned', '"vgs"', "'vgs'"):
+            original = f"display:\n  skin: {spelling}\n  markdown: true\n"
+            config.write_text(original)
+            assert_equal(run_selection_hook("hermes-skin-select").get("changed"), False,
+                         f"skin: {spelling} is already the VGS skin")
+            assert_equal(config.read_text(), original, f"skin: {spelling} is left byte for byte")
+
+    with_temp_home(check)
+
+
 def test_agent_cli_theme_selection_adds_an_absent_block_without_reflowing_the_file():
     """A config VGS has never themed carries no display: or theme: block. Adding
     one must keep every other line, blank lines included, byte for byte."""
@@ -616,11 +732,11 @@ def test_agent_cli_theme_selection_adds_an_absent_block_without_reflowing_the_fi
         config = home / ".hermes" / "config.yaml"
         config.parent.mkdir(parents=True, exist_ok=True)
         config.write_text(original)
-        assert_equal(helper.run_hook("hermes-skin-select", {}).get("changed"), True,
+        assert_equal(run_selection_hook("hermes-skin-select").get("changed"), True,
                      "the first run adds the display block")
         assert_equal(config.read_text(), original + "display:\n  skin: vgs\n",
                      "the appended block keeps the file's own blank lines")
-        assert_equal(helper.run_hook("hermes-skin-select", {}).get("changed"), False,
+        assert_equal(run_selection_hook("hermes-skin-select").get("changed"), False,
                      "a second run rewrites nothing")
 
     with_temp_home(check)
@@ -637,7 +753,7 @@ def test_agent_cli_theme_selection_ignores_a_deeper_key_of_the_same_name():
         config = home / ".hermes" / "config.yaml"
         config.parent.mkdir(parents=True, exist_ok=True)
         config.write_text("display:\n  panes:\n    skin: fancy\n  markdown: true\n")
-        assert_equal(helper.run_hook("hermes-skin-select", {}).get("ok"), True, "hook result")
+        assert_equal(run_selection_hook("hermes-skin-select").get("ok"), True, "hook result")
         assert_equal(config.read_text(),
                      "display:\n  panes:\n    skin: fancy\n  markdown: true\n  skin: vgs\n",
                      "the nested skin is untouched and display.skin is added")
@@ -655,12 +771,12 @@ def test_agent_cli_theme_selection_keeps_the_settings_file_permissions():
         secret = home / ".hermes" / "config.yaml"
         secret.write_text("api_key: sk-test\ndisplay:\n  skin: default\n")
         os.chmod(secret, 0o600)
-        assert_equal(helper.run_hook("hermes-skin-select", {}).get("changed"), True, "hermes write")
+        assert_equal(run_selection_hook("hermes-skin-select").get("changed"), True, "hermes write")
         assert_equal(stat.S_IMODE(secret.stat().st_mode), 0o600,
                      "the hermes config keeps its owner-only mode")
 
         created = home / ".omp" / "agent" / "config.yml"
-        assert_equal(helper.run_hook("omp-theme-select", {}).get("changed"), True, "omp write")
+        assert_equal(run_selection_hook("omp-theme-select").get("changed"), True, "omp write")
         assert_equal(stat.S_IMODE(created.stat().st_mode), helper.CREATED_CONFIG_MODE,
                      "a config VGS creates starts owner-only")
 
@@ -678,7 +794,7 @@ def test_agent_cli_theme_selection_edits_the_omp_config_that_omp_reads():
         agent = home / ".omp" / "agent"
         agent.mkdir(parents=True, exist_ok=True)
         (agent / "config.yaml").write_text("model: sonnet\n")
-        assert_equal(helper.run_hook("omp-theme-select", {}).get("path"),
+        assert_equal(run_selection_hook("omp-theme-select").get("path"),
                      str(agent / "config.yaml"), "the hook edits the config omp reads")
         if (agent / "config.yml").exists():
             raise AssertionError("the hook created config.yml and hid the user's config.yaml")
@@ -700,14 +816,33 @@ def test_agent_cli_theme_selection_waits_for_the_opencode_migration():
         config = home / ".config" / "opencode" / "opencode.json"
         config.parent.mkdir(parents=True, exist_ok=True)
         config.write_text(json.dumps({"keybinds": {"leader": "ctrl+x"}}) + "\n")
-        result = helper.run_hook("opencode-theme-select", {})
+        result = run_selection_hook("opencode-theme-select")
         assert_equal(result.get("skipped"), True, "the hook waits for the migration")
         if (home / ".config/opencode/tui.json").exists():
             raise AssertionError("the hook created tui.json and cancelled opencode's migration")
 
+        # A config the probe cannot read is pending too: creating tui.json beside
+        # it cancels the migration once the user repairs the JSON.
+        config.write_text('{"keybinds": {"leader": ')
+        result = run_selection_hook("opencode-theme-select")
+        assert_equal(result.get("skipped"), True, "an unreadable config is not a clear signal")
+        if str(config) not in str(result.get("reason") or ""):
+            raise AssertionError(f"the skip does not name the file: {result.get('reason')!r}")
+        if (home / ".config/opencode/tui.json").exists():
+            raise AssertionError("the hook created tui.json from a config it could not read")
+
+        # opencode migrates a tui object only for these three settings, so a tui
+        # holding anything else leaves nothing pending and the theme is selected.
+        config.write_text(json.dumps({"tui": {"foo": 1}}) + "\n")
+        assert_equal(run_selection_hook("opencode-theme-select").get("changed"), True,
+                     "a tui object opencode would not migrate must not block selection")
+        assert_equal(json.loads((home / ".config/opencode/tui.json").read_text()),
+                     {"theme": "vgs"}, "opencode tui.json")
+        (home / ".config/opencode/tui.json").unlink()
+
         # Once opencode has migrated, the next apply selects the theme.
         (home / ".config/opencode/tui.json").write_text('{"keybinds": {"leader": "ctrl+x"}}\n')
-        assert_equal(helper.run_hook("opencode-theme-select", {}).get("changed"), True,
+        assert_equal(run_selection_hook("opencode-theme-select").get("changed"), True,
                      "the hook selects the theme once tui.json exists")
         assert_equal(json.loads((home / ".config/opencode/tui.json").read_text()),
                      {"keybinds": {"leader": "ctrl+x"}, "theme": "vgs"},
@@ -721,7 +856,7 @@ def test_agent_cli_theme_selection_acts_only_on_a_rendered_theme():
     skips instead of naming a theme its CLI cannot load, and creates nothing."""
     def check(home):
         for hook, relative in _agent_cli_selections():
-            result = helper.run_hook(hook, {"theme_type": "dark"})
+            result = run_selection_hook(hook, {"theme_type": "dark"})
             assert_equal(result.get("ok"), True, f"{hook} result")
             assert_equal(result.get("skipped"), True, f"{hook} skips without a rendered theme")
             if (home / relative).exists():
@@ -739,7 +874,7 @@ def test_agent_cli_theme_selection_refuses_a_config_shape_it_cannot_edit():
         config = home / ".omp" / "agent" / "config.yml"
         config.parent.mkdir(parents=True, exist_ok=True)
         config.write_text("theme: titanium\n")
-        result = helper.run_hook("omp-theme-select", {"theme_type": "dark"})
+        result = run_selection_hook("omp-theme-select", {"theme_type": "dark"})
         assert_equal(result.get("ok"), False, "omp refuses a flat theme scalar")
         assert_equal(config.read_text(), "theme: titanium\n", "the refused config is unchanged")
         if "theme" not in str(result.get("error") or ""):
@@ -748,7 +883,7 @@ def test_agent_cli_theme_selection_refuses_a_config_shape_it_cannot_edit():
         settings = home / ".gemini" / "settings.json"
         settings.parent.mkdir(parents=True, exist_ok=True)
         settings.write_text('{"ui": "compact"}\n')
-        result = helper.run_hook("gemini-theme-select", {"theme_type": "dark"})
+        result = run_selection_hook("gemini-theme-select", {"theme_type": "dark"})
         assert_equal(result.get("ok"), False, "gemini refuses a non-object ui section")
         assert_equal(settings.read_text(), '{"ui": "compact"}\n', "the refused settings are unchanged")
         if "ui" not in str(result.get("error") or ""):
@@ -762,7 +897,7 @@ def test_claude_theme_hook_selects_without_creating_or_widening():
     absent settings file absent, keep the file's other keys and its mode, and
     write nothing on a second apply of the same mode."""
     def check(home):
-        result = helper.run_hook("claude-theme", {"theme_type": "dark"})
+        result = run_selection_hook("claude-theme", {"theme_type": "dark"})
         assert_equal(result.get("skipped"), True, "no settings file means no selection")
         if (home / ".claude" / "settings.json").exists():
             raise AssertionError("the hook created ~/.claude/settings.json")
@@ -771,12 +906,12 @@ def test_claude_theme_hook_selects_without_creating_or_widening():
         settings.parent.mkdir(parents=True, exist_ok=True)
         settings.write_text(json.dumps({"theme": "dark-ansi", "model": "opus"}, indent=2) + "\n")
         os.chmod(settings, 0o600)
-        assert_equal(helper.run_hook("claude-theme", {"theme_type": "light"}).get("changed"), True,
+        assert_equal(run_selection_hook("claude-theme", {"theme_type": "light"}).get("changed"), True,
                      "a mode change selects the matching preset")
         assert_equal(json.loads(settings.read_text()),
                      {"theme": "light-ansi", "model": "opus"}, "the other settings survive")
         assert_equal(stat.S_IMODE(settings.stat().st_mode), 0o600, "the settings mode is kept")
-        assert_equal(helper.run_hook("claude-theme", {"theme_type": "light"}).get("changed"), False,
+        assert_equal(run_selection_hook("claude-theme", {"theme_type": "light"}).get("changed"), False,
                      "a second apply of the same mode rewrites nothing")
 
     with_temp_home(check)
@@ -8155,12 +8290,15 @@ def main():
     test_curated_app_role_passthrough()
     test_codex_theme_paints_every_bundled_theme_readably()
     test_codex_theme_selection_changes_only_the_tui_theme_key()
+    test_write_file_never_puts_content_on_disk_at_a_wider_mode()
+    test_selection_hooks_refuse_a_home_the_test_did_not_create()
     test_agent_cli_themes_render_for_every_bundled_theme()
     test_agent_cli_theme_targets_reach_the_apply_path()
     test_agent_cli_theme_modes_destination_must_name_the_mode()
     test_agent_cli_theme_role_overrides_reach_both_modes()
     test_agent_cli_theme_counterpart_prefers_the_paired_theme()
     test_agent_cli_theme_selection_writes_only_the_theme_key()
+    test_agent_cli_theme_selection_reads_the_users_own_spelling_of_the_value()
     test_agent_cli_theme_selection_adds_an_absent_block_without_reflowing_the_file()
     test_agent_cli_theme_selection_ignores_a_deeper_key_of_the_same_name()
     test_agent_cli_theme_selection_keeps_the_settings_file_permissions()
