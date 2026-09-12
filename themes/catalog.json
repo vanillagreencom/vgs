@@ -7,7 +7,7 @@
     "baseUrl": "https://github.com/vanillagreencom/vgs/releases/download"
   },
   "count": 79,
-  "totalSize": 1051767072,
+  "totalSize": 1051767765,
   "themes": [
     {
       "name": "akane",
@@ -864,15 +864,15 @@
       "pair": "catppuccin",
       "source": "curated",
       "colors": [
-        "#bcc0cc",
+        "#4c4f69",
         "#d20f39",
         "#40a02b",
         "#df8e1d",
         "#1e66f5",
         "#ea76cb",
         "#179299",
-        "#5c5f77",
-        "#acb0be",
+        "#c1c2cb",
+        "#666d88",
         "#d20f39",
         "#40a02b",
         "#df8e1d",
@@ -884,7 +884,7 @@
       "background": "#eff1f5",
       "foreground": "#4c4f69",
       "accent": "#1e66f5",
-      "size": 2658158,
+      "size": 2658369,
       "files": [
         {
           "path": "apps/btop.theme",
@@ -909,7 +909,12 @@
         {
           "path": "colors.toml",
           "size": 461,
-          "sha256": "30b184bfab2630fe6f9a34aa4760e53794c196bad7ab984a8040c39d9a90833e"
+          "sha256": "8ff48e8bac8b4409237cdd1707da7092946183e6baa18470562251f84d688eed"
+        },
+        {
+          "path": "terminal-colors.toml",
+          "size": 258,
+          "sha256": "4f0d0b8294c15092e7779e605495a24b4168aa52fb82ce7cd37fd9c18726450e"
         },
         {
           "path": "theme.json",
@@ -918,11 +923,11 @@
         }
       ],
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-catppuccin-latte-r1.tar.gz",
-        "rev": 1,
-        "size": 2658158,
-        "sha256": "e5bf7e8f631c3d8fccb315ceefd4c5ecf8928d4585cc05c9eb76d0817eefd9fa"
+        "release": "themes-v3",
+        "archive": "vgs-theme-catppuccin-latte-r2.tar.gz",
+        "rev": 2,
+        "size": 2658369,
+        "sha256": "2ad6c7dfc2ab977ba54e3583fab77e1a4e9afdfeb38cda0c078347f5a3c07343"
       }
     },
     {
@@ -1693,7 +1698,7 @@
       "pair": "",
       "source": "curated",
       "colors": [
-        "#dad8ce",
+        "#100f0f",
         "#d14d41",
         "#879a39",
         "#d0a215",
@@ -1713,7 +1718,7 @@
       "background": "#fffcf0",
       "foreground": "#100f0f",
       "accent": "#205ea6",
-      "size": 1872217,
+      "size": 1872209,
       "files": [
         {
           "path": "apps/btop.theme",
@@ -1743,7 +1748,7 @@
         {
           "path": "colors.toml",
           "size": 461,
-          "sha256": "af71fedc5e62b84a97e6d88bb8584917601286b22f2dfb25439ee4d86518d363"
+          "sha256": "b03f3c8e5d5c585b9fb1fc12dd6eddced0479be5c0908ab9a9c1259d34608cc4"
         },
         {
           "path": "theme.json",
@@ -1752,11 +1757,11 @@
         }
       ],
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-flexoki-light-r1.tar.gz",
-        "rev": 1,
-        "size": 1872217,
-        "sha256": "a21359961f63af807200250b796232a4f1785812fb213c9c6209a11f254e45a2"
+        "release": "themes-v3",
+        "archive": "vgs-theme-flexoki-light-r2.tar.gz",
+        "rev": 2,
+        "size": 1872209,
+        "sha256": "dedad7d1bb47d5e76d22df217e3c4fbf4fc0ae7d40f10a1c966c9f9fdb4eb94a"
       }
     },
     {
@@ -3927,15 +3932,15 @@
       "pair": "",
       "source": "curated",
       "colors": [
-        "#f2e9e1",
+        "#534f74",
         "#b4637a",
         "#286983",
         "#ea9d34",
         "#56949f",
         "#907aa9",
         "#d7827e",
-        "#575279",
-        "#9893a5",
+        "#cccad9",
+        "#746d85",
         "#b4637a",
         "#286983",
         "#ea9d34",
@@ -3947,7 +3952,7 @@
       "background": "#faf4ed",
       "foreground": "#575279",
       "accent": "#56949f",
-      "size": 12646460,
+      "size": 12646714,
       "files": [
         {
           "path": "apps/btop.theme",
@@ -3977,7 +3982,12 @@
         {
           "path": "colors.toml",
           "size": 461,
-          "sha256": "dcebf5ff66e2503d9ab7d818f7de923c704898539e9c3659ba4223bbffe35dba"
+          "sha256": "54dde1b13da76e479a44284cae05a83b439c95ab264ed505d54ed8b7f223f9c8"
+        },
+        {
+          "path": "terminal-colors.toml",
+          "size": 258,
+          "sha256": "3a7d95b0c50729fd1d90a86b138d820aaefa0f1a0289783e9c8c333418694f97"
         },
         {
           "path": "theme.json",
@@ -3986,11 +3996,11 @@
         }
       ],
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-rose-pine-r1.tar.gz",
-        "rev": 1,
-        "size": 12646460,
-        "sha256": "ce6c0761ab026625f5b5aed747704d10facc8b4cee9c07a09d82ec38b6635aa2"
+        "release": "themes-v3",
+        "archive": "vgs-theme-rose-pine-r2.tar.gz",
+        "rev": 2,
+        "size": 12646714,
+        "sha256": "641a77af1a0a72e715878e874f62e2c7e10fab19d46a4075129e0e5020acfc10"
       }
     },
     {
@@ -5419,15 +5429,15 @@
       "pair": "",
       "source": "curated",
       "colors": [
-        "#c0c0c0",
+        "#000000",
         "#2a2a2a",
         "#3a3a3a",
         "#4a4a4a",
         "#1a1a1a",
         "#2e2e2e",
         "#3e3e3e",
-        "#000000",
-        "#c0c0c0",
+        "#757575",
+        "#767676",
         "#2a2a2a",
         "#3a3a3a",
         "#4a4a4a",
@@ -5439,7 +5449,7 @@
       "background": "#ffffff",
       "foreground": "#000000",
       "accent": "#6e6e6e",
-      "size": 2870896,
+      "size": 2871132,
       "files": [
         {
           "path": "apps/btop.theme",
@@ -5464,7 +5474,12 @@
         {
           "path": "colors.toml",
           "size": 519,
-          "sha256": "491e12e27bbfd5096c650684c77c7e0f12d1c6d48ba251867c055e247a8f7113"
+          "sha256": "73fa4213b456ff7899227c86b2b92c7ab056de277d57b2f4238e75c089400c49"
+        },
+        {
+          "path": "terminal-colors.toml",
+          "size": 248,
+          "sha256": "dd1e8dfb1c1bb7057d5f5b9f0315cfb869b24f683efc5b225df9a0d8d2f920a2"
         },
         {
           "path": "theme.json",
@@ -5473,11 +5488,11 @@
         }
       ],
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-white-r1.tar.gz",
-        "rev": 1,
-        "size": 2870896,
-        "sha256": "18edebcd51115ee804bab8921b2710e8dc467840f30e9ac2aebb04cee14979f4"
+        "release": "themes-v3",
+        "archive": "vgs-theme-white-r2.tar.gz",
+        "rev": 2,
+        "size": 2871132,
+        "sha256": "d842f105db707cd2d212edd033da6b6a307aab9f59441db033490c26357b9505"
       }
     },
     {
