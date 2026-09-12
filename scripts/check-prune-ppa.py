@@ -36,9 +36,10 @@ class FakeSource:
 
 
 class FakeBinary:
-    def __init__(self, version, architecture, name="vgs-shell"):
+    def __init__(self, version, architecture, name="vgs-shell", status="Published"):
         self.binary_package_version = version
         self.binary_package_name = name
+        self.status = status
         self.distro_arch_series_link = (
             f"https://api.launchpad.net/devel/ubuntu/resolute/{architecture}"
         )
@@ -54,12 +55,19 @@ class FakeArchive:
         return self._sources
 
     def getPublishedBinaries(self, status=None):  # noqa: N802 - Launchpad's own name
+        # Launchpad honours the status filter, so a caller that drops it sees
+        # the unbuilt and retired binaries this archive also publishes.
         self.binary_queries += 1
-        return self._binaries
+        return [b for b in self._binaries if status is None or b.status == status]
 
 
-def both_architectures(version=CURRENT):
-    return [FakeBinary(version, "amd64"), FakeBinary(version, "arm64")]
+def both_architectures(version=CURRENT, **kwargs):
+    return [FakeBinary(version, "amd64", **kwargs), FakeBinary(version, "arm64", **kwargs)]
+
+
+# Every wait case carries these too, because a real PPA still publishes the
+# previous release while this one builds.
+OLDER = both_architectures("0.4.0-1~ubuntu26.04.1")
 
 
 def deleted(sources):
@@ -114,16 +122,19 @@ def stale_pair():
 
 
 def case_every_architecture_must_publish_first():
-    # label; the binaries published for this release; expected exit; expected deletions.
+    # Each row also publishes OLDER, so only this release's own published
+    # binaries can satisfy the wait.
+    # label; binaries beyond OLDER; expected exit code; expected deletions.
     for label, binaries, want_code, want_deleted in (
         ("no architecture published", [], 1, []),
         ("only amd64 published", [FakeBinary(CURRENT, "amd64")], 1, []),
-        ("another package's binary does not count", [FakeBinary(CURRENT, "arm64", "vgs-shell-assets")], 1, []),
+        ("another package's binaries do not count", both_architectures(name="vgs-shell-assets"), 1, []),
+        ("binaries still building do not count", both_architectures(status="Pending"), 1, []),
         ("both architectures published", both_architectures(), 0, ["0.4.0-1~ubuntu26.04.1"]),
     ):
         sources = stale_pair()
         ticks = iter([0.0, 10.0, 3000.0])
-        _archive, code = run(sources, binaries, timeout=2700, clock=lambda: next(ticks))
+        _archive, code = run(sources, OLDER + binaries, timeout=2700, clock=lambda: next(ticks))
         check(f"{label}: exit", code, want_code)
         check(f"{label}: deleted", deleted(sources), want_deleted)
 
@@ -134,7 +145,8 @@ def case_binaries_landing_during_the_wait():
 
     def publish_on_second_query(status=None):
         late.binary_queries += 1
-        return both_architectures() if late.binary_queries > 1 else [FakeBinary(CURRENT, "amd64")]
+        landed = both_architectures() if late.binary_queries > 1 else [FakeBinary(CURRENT, "amd64")]
+        return [b for b in OLDER + landed if status is None or b.status == status]
 
     late.getPublishedBinaries = publish_on_second_query
     ticks = iter([0.0, 10.0, 20.0, 30.0])
@@ -170,7 +182,7 @@ def main() -> int:
         for failure in failures:
             print(f"check-prune-ppa: FAIL: {failure}", file=sys.stderr)
         return 1
-    print(f"check-prune-ppa: ok ({len(CASES) + 11} checks)")
+    print(f"check-prune-ppa: ok ({len(CASES) + 13} checks)")
     return 0
 
 
