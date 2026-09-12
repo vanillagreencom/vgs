@@ -1174,11 +1174,14 @@ def list_themes() -> List[Dict[str, Any]]:
     return sorted(by_name.values(), key=lambda b: (b.get("timestamp", 0), b.get("name", "")), reverse=True)
 
 
-def find_theme(name: str) -> Dict[str, Any] | None:
+def find_theme(name: str, themes: List[Dict[str, Any]] | None = None) -> Dict[str, Any] | None:
+    """Resolve a theme by name. `themes` reuses a list_themes() result: that call
+    reads every blueprint and package from disk, so a caller trying several
+    candidate names loads once instead of once per candidate."""
     lname = name.strip().lower()
     if not lname:
         return None
-    themes = list_themes()
+    themes = list_themes() if themes is None else themes
     for bp in themes:
         if bp.get("name", "").lower() == lname or Path(bp.get("path", "")).stem.lower() == lname:
             return bp
@@ -1221,12 +1224,15 @@ def paired_blueprint(base: Dict[str, Any], target_mode: str) -> Dict[str, Any] |
             candidates.append(lname[: -len(old)] + new)
     candidates.append(f"{lname}-{target_mode}")
     seen = set()
+    themes: List[Dict[str, Any]] | None = None
     for candidate in candidates:
         key = candidate.lower()
         if not key or key == lname or key in seen:
             continue
         seen.add(key)
-        bp = find_theme(candidate)
+        if themes is None:
+            themes = list_themes()
+        bp = find_theme(candidate, themes)
         if bp and blueprint_mode(bp) == target_mode:
             return bp
     return None
@@ -2396,6 +2402,11 @@ def target_render_passes(cfg: Dict[str, Any], roles: Dict[str, str], dest: Path,
     for mode in modes:
         mode_roles = {**roles, **mode_maps()[str(mode)], **overrides}
         passes.append((mode_roles, expand_dest(render_template(str(cfg["destination"]), mode_roles))))
+    # A `modes` destination that does not vary by mode would write one file with
+    # the last mode's colours and report every mode rendered. Refuse it here so a
+    # target configuration that forgets `{theme_type}` fails where it is written.
+    if len({str(dest) for _roles, dest in passes}) != len(passes):
+        raise ValueError(f"modes target destination does not name the mode: {cfg['destination']}")
     return passes
 
 
@@ -2417,8 +2428,9 @@ def render_template(text: str, roles: Dict[str, str]) -> str:
 
 
 def write_file(path: Path, content: str, mode: int | None = None) -> None:
-    """Replace `path` atomically. With `mode`, the replaced file carries those
-    permissions instead of the ones the process umask yields."""
+    """Replace `path` atomically. `mode` is applied to the temporary file before
+    the rename, so the destination is never briefly readable at the umask mode —
+    which matters for a config another app keeps at 0600 for its API keys."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}.{time.time_ns()}")
     tmp.write_text(content)
@@ -4006,15 +4018,22 @@ def apply_system_fonts(reset: bool = False, size_only: bool = False) -> Dict[str
     }
 
 
+# The mode VGS gives a settings file it creates for another app. Hermes and
+# oh-my-pi keep provider credentials beside the theme key in these files, so a
+# file VGS brings into existence starts owner-only rather than at the umask.
+CREATED_CONFIG_MODE = 0o600
+
+
 def set_json_config_key(path: Path, keys: Tuple[str, ...], value: Any,
                         create: bool = False) -> Dict[str, Any]:
     """Write one key into another app's own settings file, and only when it differs.
 
     `keys` walks to the key: ("ui", "theme") sets a nested one. With `create`
     false an absent file stays absent, for an app whose settings file VGS has
-    no reason to bring into existence. The file's own permissions are kept.
+    no reason to bring into existence. An existing file keeps its own
+    permissions; a created one starts at CREATED_CONFIG_MODE.
     """
-    mode = 0o644
+    mode = CREATED_CONFIG_MODE
     data: Dict[str, Any] = {}
     if path.exists():
         try:
@@ -4039,8 +4058,7 @@ def set_json_config_key(path: Path, keys: Tuple[str, ...], value: Any,
         return {"ok": True, "path": str(path), "changed": False}
     node[keys[-1]] = value
     try:
-        write_file(path, json.dumps(data, indent=2) + "\n")
-        os.chmod(path, mode)
+        write_file(path, json.dumps(data, indent=2) + "\n", mode)
     except OSError as exc:
         return {"ok": False, "error": f"cannot write {path}: {exc}"}
     return {"ok": True, "path": str(path), "changed": True}
@@ -4058,15 +4076,22 @@ def set_yaml_config_key(path: Path, parent: str, values: Dict[str, str]) -> Dict
     VGS depends on no YAML library, and the agent CLIs that select a theme this
     way keep a hand-edited config, so the edit is textual: it reads the block
     the keys live in and refuses a shape it cannot read rather than rewriting
-    the user's file.
+    the user's file. The file is created when absent, because selecting a theme
+    is the only way these CLIs read one. An existing file keeps its own
+    permissions; a created one starts at CREATED_CONFIG_MODE, because these
+    configs hold provider credentials.
     """
     for key, value in values.items():
         if not _YAML_PLAIN_SCALAR_RE.match(value):
             return {"ok": False, "error": f"{parent}.{key}: {value!r} is not a plain YAML scalar"}
-    try:
-        text = path.read_text() if path.exists() else ""
-    except (OSError, UnicodeError) as exc:
-        return {"ok": False, "error": f"unreadable {path}: {exc}"}
+    mode = CREATED_CONFIG_MODE
+    text = ""
+    if path.exists():
+        try:
+            text = path.read_text()
+            mode = path.stat().st_mode & 0o777
+        except (OSError, UnicodeError) as exc:
+            return {"ok": False, "error": f"unreadable {path}: {exc}"}
     lines = text.splitlines()
     changed = False
     for key, value in values.items():
@@ -4077,10 +4102,14 @@ def set_yaml_config_key(path: Path, parent: str, values: Dict[str, str]) -> Dict
     if not changed:
         return {"ok": True, "path": str(path), "changed": False}
     try:
-        write_file(path, "\n".join(lines) + "\n")
+        write_file(path, "\n".join(lines) + "\n", mode)
     except OSError as exc:
         return {"ok": False, "error": f"cannot write {path}: {exc}"}
     return {"ok": True, "path": str(path), "changed": True}
+
+
+def _yaml_indent(line: str) -> str:
+    return line[: len(line) - len(line.lstrip(" "))]
 
 
 def _yaml_block_set(lines: List[str], parent: str, key: str,
@@ -4088,29 +4117,33 @@ def _yaml_block_set(lines: List[str], parent: str, key: str,
     """One `parent:` block edit for set_yaml_config_key.
 
     Returns the lines, an error naming the shape it refused, and whether the
-    value changed.
+    value changed. Only entries at the block's own child indent are candidates,
+    so a same-named key in a nested block is never the one rewritten.
     """
     head = re.compile(rf"^{re.escape(parent)}:\s*(?:#.*)?$")
     start = next((i for i, line in enumerate(lines) if head.match(line)), -1)
     if start < 0:
         if any(re.match(rf"^{re.escape(parent)}\s*:", line) for line in lines):
             return lines, f"{parent} is not a block mapping", False
-        block = [f"{parent}:", f"  {key}: {value}"]
-        body = [line for line in lines if line.strip()]
-        return body + block, "", True
+        # Keep the file's own blank lines; drop only the trailing ones, so the
+        # appended block does not float away from the content above it.
+        tail = len(lines)
+        while tail > 0 and not lines[tail - 1].strip():
+            tail -= 1
+        return lines[:tail] + [f"{parent}:", f"  {key}: {value}"] + lines[tail:], "", True
     end = len(lines)
     indent = ""
     for i in range(start + 1, len(lines)):
         stripped = lines[i].strip()
         if not stripped or stripped.startswith("#"):
             continue
-        lead = lines[i][: len(lines[i]) - len(lines[i].lstrip(" "))]
+        lead = _yaml_indent(lines[i])
         if not lead:
             end = i
             break
         indent = indent or lead
     indent = indent or "  "
-    entry = re.compile(rf"^\s+{re.escape(key)}\s*:\s*(.*)$")
+    entry = re.compile(rf"^{re.escape(indent)}{re.escape(key)}\s*:\s*(.*)$")
     for i in range(start + 1, end):
         match = entry.match(lines[i])
         if not match:
@@ -4118,8 +4151,7 @@ def _yaml_block_set(lines: List[str], parent: str, key: str,
         current = match.group(1).split("#", 1)[0].strip().strip("\"'")
         if current == value:
             return lines, "", False
-        lead = lines[i][: len(lines[i]) - len(lines[i].lstrip(" "))]
-        return lines[:i] + [f"{lead}{key}: {value}"] + lines[i + 1:], "", True
+        return lines[:i] + [f"{indent}{key}: {value}"] + lines[i + 1:], "", True
     tail = end
     while tail > start + 1 and not lines[tail - 1].strip():
         tail -= 1
@@ -4136,12 +4168,39 @@ def apply_claude_theme_hook(roles: Dict[str, str]) -> Dict[str, Any]:
 # Agent CLIs that read a custom theme from a file VGS renders, then need their
 # own settings file pointed at it. Each selection runs after that file is on
 # disk, so a hook never names a theme the CLI cannot load.
+# opencode moves theme, keybinds and tui out of opencode.json into tui.json once,
+# and skips that migration entirely when tui.json already exists.
+OPENCODE_MIGRATED_KEYS = ("theme", "keybinds", "tui")
+
+
+def _opencode_migration_pending() -> str:
+    """The opencode config still holding keys opencode has yet to move, or ""."""
+    for name in ("opencode.json", "opencode.jsonc"):
+        path = expand_dest(f"~/.config/opencode/{name}")
+        if not path.exists():
+            continue
+        try:
+            data = json.loads(_strip_jsonc(path.read_text()))
+        except (OSError, ValueError, UnicodeError):
+            continue
+        if isinstance(data, dict) and any(key in data for key in OPENCODE_MIGRATED_KEYS):
+            return str(path)
+    return ""
+
+
 def select_opencode_theme_hook() -> Dict[str, Any]:
     hook = "opencode-theme-select"
     if not expand_dest("~/.config/opencode/themes/vgs.json").exists():
         return {"hook": hook, "ok": True, "skipped": True, "reason": "no opencode theme rendered"}
-    return {"hook": hook, **set_json_config_key(
-        expand_dest("~/.config/opencode/tui.json"), ("theme",), "vgs", create=True)}
+    tui = expand_dest("~/.config/opencode/tui.json")
+    pending = "" if tui.exists() else _opencode_migration_pending()
+    if pending:
+        # Creating tui.json here would cancel that migration and strand the
+        # user's keybinds. Their next opencode start moves them; the apply after
+        # that selects the theme.
+        return {"hook": hook, "ok": True, "skipped": True,
+                "reason": f"opencode has yet to migrate {pending} into tui.json"}
+    return {"hook": hook, **set_json_config_key(tui, ("theme",), "vgs", create=True)}
 
 
 def select_gemini_theme_hook() -> Dict[str, Any]:
@@ -4163,6 +4222,19 @@ def select_hermes_skin_hook() -> Dict[str, Any]:
         expand_dest("~/.hermes/config.yaml"), "display", {"skin": "vgs"})}
 
 
+# oh-my-pi loads the first of these that exists and ignores the rest, so writing
+# the second one would hide a user's whole configuration behind a theme block.
+OMP_CONFIG_NAMES = ("config.yml", "config.yaml")
+
+
+def omp_config_path() -> Path:
+    agent = expand_dest("~/.omp/agent")
+    for name in OMP_CONFIG_NAMES:
+        if (agent / name).exists():
+            return agent / name
+    return agent / OMP_CONFIG_NAMES[0]
+
+
 def select_omp_theme_hook() -> Dict[str, Any]:
     hook = "omp-theme-select"
     themes = expand_dest("~/.omp/agent/themes")
@@ -4171,7 +4243,7 @@ def select_omp_theme_hook() -> Dict[str, Any]:
         return {"hook": hook, "ok": True, "skipped": True,
                 "reason": f"no omp theme rendered for {', '.join(absent)}"}
     return {"hook": hook, **set_yaml_config_key(
-        expand_dest("~/.omp/agent/config.yml"), "theme",
+        omp_config_path(), "theme",
         {mode: f"vgs-{mode}" for mode in THEME_MODES})}
 
 
