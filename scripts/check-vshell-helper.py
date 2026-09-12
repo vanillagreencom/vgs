@@ -12,6 +12,7 @@ import io
 import json
 import math
 import os
+import plistlib
 import pwd
 import signal
 import re
@@ -7406,6 +7407,194 @@ def test_display_output_controls():
             assert fragment.read_text() == rendered and not transaction.exists()
 
 
+def test_codex_theme_paints_every_bundled_theme_readably():
+    """Codex drops a theme's backgrounds and paints syntax on the terminal's own,
+    so every scope in the rendered .tmTheme must read against that background."""
+    # WCAG AA for body text, pinned here so relaxing the production constant
+    # reddens this test instead of lowering what it asks for.
+    minimum = 4.5
+    assert_equal(helper.SYNTAX_MIN_CONTRAST, minimum, "the syntax lift targets WCAG AA")
+    template = (helper.targets_dir() / "codex-vgs" / "vgs.tmTheme").read_text()
+    template_roles = {match.group(1) for match in helper.TEMPLATE_RE.finditer(template)}
+    assert_equal(sorted(template_roles), sorted(helper.SYNTAX_ROLE_BASES),
+                 "the Codex template consumes exactly the derived syntax roles")
+    names = sorted(d.name for d in helper.builtin_themes_dir().iterdir()
+                   if (d / "theme.json").is_file())
+    if len(names) < 2:
+        raise AssertionError("the bundled theme set must hold more than one theme")
+    scopes_seen = set()
+    for name in names:
+        blueprint = helper.load_theme_package(name)
+        if not blueprint:
+            raise AssertionError(f"bundled theme {name} did not load")
+        roles = helper.app_target_roles(blueprint, helper.target_roles(blueprint))
+        rendered = helper.render_target_template("codex-vgs", "vgs.tmTheme", roles)
+        if helper.TEMPLATE_RE.search(rendered):
+            raise AssertionError(f"{name} left an unresolved role token in the Codex theme")
+        entries = plistlib.loads(rendered.encode())["settings"]
+        background = roles["background"]
+        for entry in entries:
+            scope = entry.get("scope", "")
+            foreground = entry["settings"]["foreground"]
+            if not helper.HEX_RE.match(foreground):
+                raise AssertionError(f"{name} {scope or 'global'} foreground is not a hex color")
+            ratio = helper.contrast_ratio(foreground, background)
+            if ratio < minimum:
+                raise AssertionError(
+                    f"{name} scope {scope or 'global'} reads at {ratio:.2f}:1 on {background}"
+                )
+            scopes_seen.add(scope)
+    if "" not in scopes_seen:
+        raise AssertionError("the theme needs a global settings entry for unscoped text")
+    for scope in ("markup.inserted, diff.inserted", "markup.deleted, diff.deleted",
+                  "markup.heading, entity.name.section", "markup.underline.link"):
+        if scope not in scopes_seen:
+            raise AssertionError(f"Codex reads {scope}, which the theme does not set")
+
+
+def test_codex_theme_selection_changes_only_the_tui_theme_key():
+    """config.toml holds the user's whole Codex setup, so the hook rewrites the
+    one key and refuses a file it cannot edit without damaging the rest."""
+    kept = (
+        'model = "gpt-5.3-codex"\n'
+        "\n"
+        '[projects."/home/method/dev/vgs"]\n'
+        "trust_level = \"trusted\"\n"
+        "\n"
+    )
+    # (label, config before, ok, config after, the clause a refusal must name)
+    rows = [
+        (
+            "an existing theme value is replaced in place",
+            kept + '[tui]\nstatus_line = ["model"]\ntheme = "ansi"\nnotifications = true\n',
+            True,
+            kept + '[tui]\nstatus_line = ["model"]\ntheme = "vgs"\nnotifications = true\n',
+            "",
+        ),
+        (
+            "a [tui] table without the key takes it as its first line",
+            kept + '[tui]\nnotifications = true\n',
+            True,
+            kept + '[tui]\ntheme = "vgs"\nnotifications = true\n',
+            "",
+        ),
+        (
+            "a config with no [tui] table gains one at the end",
+            kept.rstrip("\n") + "\n",
+            True,
+            kept.rstrip("\n") + '\n\n[tui]\ntheme = "vgs"\n',
+            "",
+        ),
+        (
+            "an empty config becomes the table alone",
+            "",
+            True,
+            '[tui]\ntheme = "vgs"\n',
+            "",
+        ),
+        (
+            "an inline tui table would declare [tui] twice",
+            'tui = { theme = "ansi" }\n\n' + kept,
+            False,
+            'tui = { theme = "ansi" }\n\n' + kept,
+            "codex theme edit would break the config",
+        ),
+        (
+            "a dotted tui.theme key would declare [tui] twice",
+            'tui.theme = "ansi"\n\n' + kept,
+            False,
+            'tui.theme = "ansi"\n\n' + kept,
+            "codex theme edit would break the config",
+        ),
+        (
+            "a theme line inside a multi-line value is not the key",
+            kept + '[tui]\nnotes = """\nthe old setting was\ntheme = "ansi"\n"""\n',
+            False,
+            kept + '[tui]\nnotes = """\nthe old setting was\ntheme = "ansi"\n"""\n',
+            "in a form VGS cannot rewrite",
+        ),
+        (
+            "a config Codex itself cannot parse is left alone",
+            kept + "[tui\ntheme = ansi\n",
+            False,
+            kept + "[tui\ntheme = ansi\n",
+            "codex config is not valid TOML",
+        ),
+    ]
+
+    def run(temp_home):
+        codex = temp_home / ".codex"
+        codex.mkdir()
+        config = codex / "config.toml"
+        for label, initial, expect_ok, expect_text, expect_error in rows:
+            config.write_text(initial)
+            result = helper.run_hook("codex-theme", {})
+            assert_equal(result["ok"], expect_ok, label)
+            assert_equal(config.read_text(), expect_text, f"file contents: {label}")
+            if expect_ok:
+                assert_equal(result["theme"], "vgs", f"selected theme: {label}")
+                assert_equal(helper.run_hook("codex-theme", {}).get("unchanged"), True,
+                             f"second apply is a no-op: {label}")
+            elif expect_error not in result["error"]:
+                raise AssertionError(
+                    f"refusal must name its own cause: {label}: expected "
+                    f"{expect_error!r} in {result['error']!r}"
+                )
+
+        # config.toml carries [mcp_servers.*] env values and [model_providers]
+        # http_headers, which hold API keys, so the hook must not widen a
+        # private file to whatever the process umask yields.
+        # 0o640 is a mode no umask produces on a fresh file, so dropping the
+        # mode handling fails this row whatever the caller's umask is.
+        config.write_text('[tui]\ntheme = "ansi"\n')
+        os.chmod(config, 0o640)
+        assert_equal(helper.run_hook("codex-theme", {})["ok"], True, "a private config is themed")
+        assert_equal(oct(config.stat().st_mode & 0o777), oct(0o640), "the file keeps its own mode")
+
+        # A missing config.toml is written, since Codex reads its theme from no
+        # other file.
+        config.unlink()
+        assert_equal(helper.run_hook("codex-theme", {})["ok"], True, "a missing config is created")
+        assert_equal(config.read_text(), '[tui]\ntheme = "vgs"\n', "created config holds the table alone")
+
+        # config.toml is commonly a symlink into a dotfiles checkout.
+        dotfiles = temp_home / "dotfiles" / "config.toml"
+        dotfiles.parent.mkdir()
+        dotfiles.write_text('[tui]\ntheme = "ansi"\n')
+        config.unlink()
+        config.symlink_to(dotfiles)
+        assert_equal(helper.run_hook("codex-theme", {})["ok"], True, "a symlinked config is followed")
+        assert_equal(config.is_symlink(), True, "the symlink survives the write")
+        assert_equal(dotfiles.read_text(), '[tui]\ntheme = "vgs"\n', "the link target took the theme")
+
+        # An unwritable config is a warning the apply carries, not an exception
+        # that strands the twenty hooks ordered after this one.
+        dotfiles.write_text('[tui]\ntheme = "ansi"\n')
+        os.chmod(dotfiles.parent, 0o500)
+        try:
+            refused = helper.run_hook("codex-theme", {})
+        finally:
+            os.chmod(dotfiles.parent, 0o700)
+        assert_equal(refused["ok"], False, "an unwritable config fails as a hook result")
+        if "codex config write failed" not in refused["error"]:
+            raise AssertionError(f"the write failure must name itself: {refused['error']!r}")
+        assert_equal(dotfiles.read_text(), '[tui]\ntheme = "ansi"\n', "the refused write changed nothing")
+
+        # A config that is not UTF-8 is read through the same guard.
+        config.unlink()
+        config.write_bytes(b'[tui]\ntheme = "\xff\xfe"\n')
+        unreadable = helper.run_hook("codex-theme", {})
+        assert_equal(unreadable["ok"], False, "a non-UTF-8 config fails as a hook result")
+        if "codex config unreadable" not in unreadable["error"]:
+            raise AssertionError(f"the read failure must name itself: {unreadable['error']!r}")
+
+        shutil.rmtree(codex)
+        skipped = helper.run_hook("codex-theme", {})
+        assert_equal(skipped["skipped"], True, "no ~/.codex means no Codex to theme")
+
+    with_temp_home(run)
+
+
 def main():
     test_system_font_family_targets()
     test_system_font_size_targets()
@@ -7425,6 +7614,8 @@ def main():
     test_tmux_copy_mode_matches_take_theme_roles()
     test_perceptual_theme_adjustments()
     test_curated_app_role_passthrough()
+    test_codex_theme_paints_every_bundled_theme_readably()
+    test_codex_theme_selection_changes_only_the_tui_theme_key()
     test_restyle_integer_sweeps()
     test_fastfetch_portable_seed_and_logo_fallback()
     test_compositor_dependency_selection()
