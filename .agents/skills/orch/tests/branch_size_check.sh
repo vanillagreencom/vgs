@@ -57,6 +57,10 @@ git -C "$WT" config commit.gpgsign false
 # Rename detection off in the fixture: the check passes --find-renames itself,
 # and a control run under a runner that already enables it proves nothing.
 git -C "$WT" config diff.renames false
+# Path quoting left at git's default in the fixture: the measurement passes
+# core.quotePath=false itself, and the control that strips it must see the
+# quoting, which a runner whose global config already turns it off would hide.
+git -C "$WT" config core.quotePath true
 # On the base branch, so a move of them on the branch is a rename in the
 # comparison the check makes, and a rewrite of them has deletions to ignore.
 mkdir -p "$WT/src" "$WT/tests"
@@ -292,6 +296,25 @@ capture escaped_json run_check \
   env ORCH_SIZE_TEST_PATHS='scripts/probe-a.sh scripts/star-\*.py' "$CHECK_BIN" --json
 assert_eq "$(jq -r '.production_lines, .test_lines' <<<"$escaped_json" | paste -sd, -)" "83,52" \
   "a backslash arrives as itself, so a glob carrying one names a path with a backslash and moves none of these"
+
+# --- A non-ASCII test path is classified by its rule, not by git's quoting ---
+# git wraps a path holding a non-ASCII byte in double quotes and escapes the
+# byte unless core.quotePath is off. The leading quote moves the path's first
+# segment away from `tests`, so the built-in test rule stops naming it.
+mk 9 'tests/prüf.py'
+commit_files non-ascii-test-path
+capture non_ascii_json run_check "$CHECK_BIN" --json
+assert_eq "$(jq -r '.production_lines, .test_lines' <<<"$non_ascii_json" | paste -sd, -)" "85,59" \
+  "a test path holding a non-ASCII character counts as a test path"
+
+QUOTE_SCRIPTS="$(copy_scripts quotepath-mutant)"
+QUOTE_LIB="$QUOTE_SCRIPTS/lib/branch-growth.sh"
+assert_eq "$(grep -Fc -e '-c core.quotePath=false' "$QUOTE_LIB")" "1" \
+  "quoting control finds exactly one live setting"
+sed -i.bak 's/ -c core\.quotePath=false//' "$QUOTE_LIB"
+capture quote_mutant_json run_check "$QUOTE_SCRIPTS/branch-size-check" --json
+assert_eq "$(jq -r '.production_lines, .test_lines' <<<"$quote_mutant_json" | paste -sd, -)" "94,50" \
+  "must-fail control: without that setting the quoted path scores as production"
 
 printf '\npass: %d  fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
