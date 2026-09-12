@@ -67,6 +67,12 @@ jobs:
           fi
           scripts/publish-ppa.sh "${args[@]}"
 
+      # Its own step, because pip runs a dependency's own build code, and
+      # nothing should run that while the Launchpad token is readable.
+      - name: Install the Launchpad client
+        if: ${{ inputs.dry_run != true }}
+        run: python3 -m pip install --user --break-system-packages launchpadlib
+
       # Launchpad keeps a superseded source and its binaries published until
       # someone deletes them, which is how the retired vgs-shell-assets stayed
       # installable after 0.5.0 replaced it.
@@ -83,5 +89,4 @@ jobs:
           fi
           install -m 600 /dev/null "$RUNNER_TEMP/lp-credentials"
           printf '%s' "$LP_CREDENTIALS" >"$RUNNER_TEMP/lp-credentials"
-          python3 -m pip install --user --break-system-packages launchpadlib
           LP_CREDENTIALS_FILE="$RUNNER_TEMP/lp-credentials" scripts/prune-ppa.py
