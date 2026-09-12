@@ -77,6 +77,25 @@ CAMEL = {
     "bright_cyan": "brightCyan",
     "bright_white": "brightWhite",
 }
+# Syntax roles and the palette role each derives from. Rendered into
+# themes/targets/codex-vgs/vgs.tmTheme, which paints code and diffs in Codex.
+SYNTAX_ROLE_BASES = {
+    "syntaxComment": "dim",
+    "syntaxKeyword": "magenta",
+    "syntaxFunction": "blue",
+    "syntaxVariable": "foreground",
+    "syntaxString": "green",
+    "syntaxNumber": "yellow",
+    "syntaxType": "cyan",
+    "syntaxOperator": "bright_white",
+    "syntaxPunctuation": "muted",
+    "syntaxInserted": "success",
+    "syntaxDeleted": "error",
+    "syntaxHeading": "accent",
+    "syntaxLink": "info",
+}
+# Body text on the background the highlighter paints over, at WCAG AA.
+SYNTAX_MIN_CONTRAST = 4.5
 # The theme a fresh install starts on. It is one of the two themes every
 # package bundles, so the first paint never depends on a downloaded theme.
 DEFAULT_THEME_NAME = "bauhaus"
@@ -2275,6 +2294,13 @@ def target_roles(bp: Dict[str, Any]) -> Dict[str, str]:
     roles["groupbarLockedFg"] = roles["groupbarActiveFg"]
     if not curated:
         stabilize_ansi_role_pairs(roles, bg, mode)
+    # Syntax roles for code highlighters that paint on the terminal's own
+    # background and drop a theme's backgrounds (Codex). A curated palette hands
+    # its ANSI colors to app targets verbatim, and several curated themes put a
+    # keyword or string color under 4.5:1 there, so each syntax role carries the
+    # hue-preserving lift instead. The ANSI roles themselves stay untouched.
+    for role, base in SYNTAX_ROLE_BASES.items():
+        roles[role] = _oklab_contrast_adjust(roles[base], bg, SYNTAX_MIN_CONTRAST, prefer_text)
     for snake, camel in CAMEL.items():
         roles[camel] = roles[snake]
     return roles
@@ -2852,6 +2878,8 @@ def run_hook(hook: Any, roles: Dict[str, str]) -> Dict[str, Any]:
         return apply_gtk_settings_hook(roles)
     if hook == "claude-theme":
         return apply_claude_theme_hook(roles)
+    if hook == "codex-theme":
+        return apply_codex_theme_hook()
     if hook == "kitty-reload":
         return signal_reload_hook("kitty-reload", "kitty", signal.SIGUSR1)
     if hook == "btop-reload":
@@ -3933,6 +3961,80 @@ def apply_claude_theme_hook(roles: Dict[str, str]) -> Dict[str, Any]:
         return {"hook": "claude-theme", "ok": True, "theme": claude_theme}
     except Exception as exc:
         return {"hook": "claude-theme", "ok": False, "error": str(exc)}
+
+
+# The theme name Codex reads from its [tui] table, and the basename of the
+# rendered themes/targets/codex-vgs destination it resolves that name against.
+CODEX_THEME_NAME = "vgs"
+_CODEX_TUI_HEADER_RE = re.compile(r"^[ \t]*\[tui\][ \t]*$", re.M)
+_CODEX_TABLE_HEADER_RE = re.compile(r"^[ \t]*\[", re.M)
+_CODEX_THEME_KEY_RE = re.compile(r"^[ \t]*theme[ \t]*=.*$", re.M)
+
+
+def _codex_config_with_theme(text: str, value: str) -> str:
+    """`text` with `theme` set inside its [tui] table, every other byte kept.
+
+    config.toml carries the user's whole Codex setup — model, approvals, one
+    table per project — so this rewrites the one line rather than re-emitting a
+    parsed document, which would drop their comments and key order.
+    """
+    line = f'theme = "{value}"'
+    header = _CODEX_TUI_HEADER_RE.search(text)
+    if not header:
+        prefix = text.rstrip("\n") + "\n\n" if text.strip() else ""
+        return f"{prefix}[tui]\n{line}\n"
+    body_start = header.end()
+    following = _CODEX_TABLE_HEADER_RE.search(text, body_start)
+    body_end = following.start() if following else len(text)
+    body = text[body_start:body_end]
+    key = _CODEX_THEME_KEY_RE.search(body)
+    # body opens with the newline that ends the [tui] header line, so an
+    # inserted key lands on the table's first line.
+    new_body = body[:key.start()] + line + body[key.end():] if key else f"\n{line}{body}"
+    return text[:body_start] + new_body + text[body_end:]
+
+
+def set_codex_tui_theme(config: Path, value: str = CODEX_THEME_NAME) -> Dict[str, Any]:
+    """Select `value` as Codex's TUI theme in `config`, changing no other key.
+
+    Installing ~/.codex/themes/vgs.tmTheme does not select it: Codex keeps
+    whatever `[tui] theme` it had, so the file is ignored until this sets it.
+    """
+    try:
+        text = config.read_text() if config.exists() else ""
+    except OSError as exc:
+        return {"ok": False, "error": f"codex config unreadable: {exc}"}
+    try:
+        before = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        # Codex cannot read this file either. Rewriting it would either keep it
+        # broken or silently discard the user's settings.
+        return {"ok": False, "error": f"codex config is not valid TOML: {exc}"}
+    tui = before.get("tui") if isinstance(before.get("tui"), dict) else {}
+    if tui.get("theme") == value:
+        return {"ok": True, "theme": value, "unchanged": True, "config": str(config)}
+    new_text = _codex_config_with_theme(text, value)
+    expected = {**before, "tui": {**tui, "theme": value}}
+    try:
+        after = tomllib.loads(new_text)
+    except tomllib.TOMLDecodeError as exc:
+        return {"ok": False, "error": f"codex theme edit would break the config: {exc}"}
+    if after != expected:
+        # The key is spelled in a form this editor does not rewrite (a dotted
+        # `tui.theme`, or an inline `tui = { ... }` table). Writing anyway would
+        # leave two spellings of one key behind.
+        return {"ok": False, "error": "codex config sets [tui] theme in a form VGS cannot rewrite"}
+    # config.toml is commonly a symlink into a dotfiles checkout, and the atomic
+    # replace below would swap the link itself for a regular file.
+    write_file(config.resolve() if config.is_symlink() else config, new_text)
+    return {"ok": True, "theme": value, "config": str(config)}
+
+
+def apply_codex_theme_hook() -> Dict[str, Any]:
+    codex_home = home() / ".codex"
+    if not codex_home.is_dir():
+        return {"hook": "codex-theme", "ok": True, "skipped": True, "reason": "~/.codex not found"}
+    return {"hook": "codex-theme", **set_codex_tui_theme(codex_home / "config.toml")}
 
 
 def detect_target(cfg: Dict[str, Any]) -> bool:
