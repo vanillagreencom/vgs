@@ -35,8 +35,8 @@ jobs:
     permissions:
       contents: read
     runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
-    # Covers the script's 45-minute default wait for Launchpad to list the upload.
-    timeout-minutes: 60
+    # Covers both waits below (30 min for the listing, 45 for the binaries) plus the build.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -49,6 +49,7 @@ jobs:
 
       - name: Publish the source package to the PPA
         env:
+          PPA_ACCEPT_TIMEOUT: "1800"
           PPA_SIGNING_KEY_ID: ${{ vars.PPA_SIGNING_KEY_ID }}
           PPA_SIGNING_PRIVATE_KEY: ${{ secrets.PPA_SIGNING_PRIVATE_KEY }}
           PPA_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.PPA_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -65,3 +66,27 @@ jobs:
             exit 1
           fi
           scripts/publish-ppa.sh "${args[@]}"
+
+      # Its own step, because pip runs a dependency's own build code, and
+      # nothing should run that while the Launchpad token is readable.
+      - name: Install the Launchpad client
+        if: ${{ inputs.dry_run != true }}
+        run: python3 -m pip install --user --break-system-packages launchpadlib
+
+      # Launchpad keeps a superseded source and its binaries published until
+      # someone deletes them, which is how the retired vgs-shell-assets stayed
+      # installable after 0.5.0 replaced it.
+      - name: Delete the PPA publications this release supersedes
+        if: ${{ inputs.dry_run != true }}
+        env:
+          LP_CREDENTIALS: ${{ secrets.LP_CREDENTIALS }}
+          PPA_PRUNE_TIMEOUT: "2700"
+        run: |
+          set -euo pipefail
+          if [ -z "$LP_CREDENTIALS" ]; then
+            echo "::error::LP_CREDENTIALS is not set, so superseded packages stay published. Add the secret, or run scripts/prune-ppa.py by hand and say so in the release notes."
+            exit 1
+          fi
+          install -m 600 /dev/null "$RUNNER_TEMP/lp-credentials"
+          printf '%s' "$LP_CREDENTIALS" >"$RUNNER_TEMP/lp-credentials"
+          LP_CREDENTIALS_FILE="$RUNNER_TEMP/lp-credentials" scripts/prune-ppa.py
