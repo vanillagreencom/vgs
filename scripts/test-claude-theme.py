@@ -94,6 +94,11 @@ DIMMED_BAND_SEPARATION = 1.3
 WORD_BAND_SEPARATION = 1.5
 DIFF_HUE_SEPARATION = 20.0
 DIFF_LIGHTNESS_SEPARATION = 0.08
+# The best body-text ratio a dimmed band can reach on a flat mid-grey background
+# in light mode, where no band meets the diff rule at all. Below the diff ratio by
+# construction, and well above what picking the wrong side of that background
+# gives, so it separates the two.
+CLOSEST_DIMMED_BAND = 6.5
 # One row per contrast rule: the tokens it governs, the token they are measured
 # against, the ratio, and whether it holds on every case or only on the cases the
 # helper reports no shortfall for. A palette can put a diff rule out of reach and
@@ -343,13 +348,15 @@ class UnreachableDiffBands(unittest.TestCase):
     def test_the_band_it_writes_is_the_closest_of_the_sides_it_tried(self):
         """The two sides of this background are not equally bad, and in light mode
         the first one tried is the worse: taking it writes a dimmed band carrying
-        body text at 4.09:1 where scoring the sides gives 6.92:1. The floor below
-        separates them; what stays open is a pick better than either side."""
+        body text at 4.09:1 where scoring the sides gives 6.92:1. The floor is the
+        closest this palette allows, so it reddens at the take-first value and
+        holds for any pick of the closer side; what stays open is a pick better
+        than either side."""
         values, missed = self.overrides("light")
         self.assertNotEqual([line for line in missed if line.startswith("diff band")], [])
         self.assertEqual([(token, round(ratio(values["text"], values[token]), 2))
                           for token in DIMMED_BANDS
-                          if ratio(values["text"], values[token]) < 6.0], [])
+                          if ratio(values["text"], values[token]) < CLOSEST_DIMMED_BAND], [])
 
     def test_the_band_it_reports_is_the_band_it_wrote(self):
         """A report naming a candidate the caller did not get sends an author after
