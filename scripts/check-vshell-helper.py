@@ -386,36 +386,77 @@ class _WriteWatchingHandle:
         return self._handle.write(data)
 
 
-def test_write_file_never_puts_content_on_disk_at_a_wider_mode():
-    """write_file's temporary file carries the target mode before any content
-    reaches it, not after the write.
+def _observe_temp_file_modes(home, write_file_call):
+    """Every (name, mode) of a .tmp. file in `home` at the instant content first
+    reaches it, plus whatever write_file_call raises."""
+    observed = []
+    real_fdopen = os.fdopen
 
-    Hermes keeps provider api_key values in a 0644-umask machine's 0600 config.
-    A temp file chmod'ed only after the write holds a world-readable copy of
-    those credentials for the length of the write.
+    def watching_fdopen(fd, *args, **kwargs):
+        def record():
+            for path in sorted(home.iterdir()):
+                if ".tmp." in path.name:
+                    observed.append((path.name, stat.S_IMODE(path.stat().st_mode)))
+
+        return _WriteWatchingHandle(real_fdopen(fd, *args, **kwargs), record)
+
+    with patch("os.fdopen", watching_fdopen):
+        write_file_call()
+    return observed
+
+
+def test_write_file_gives_the_temporary_file_the_requested_mode_before_writing():
+    """The temporary file carries the requested mode at the instant content
+    first reaches it, under a umask that would otherwise narrow it.
+
+    os.open's mode argument alone caps the temporary file, so content never
+    lands at a wider mode than asked. What the fchmod adds is fidelity: without
+    it a user's 0644 config comes back 0600 on a umask 0o077 machine, and the
+    file the destination is replaced from never carried the mode requested.
     """
     def check(home):
-        target = home / "secret.yaml"
-        target.write_text("api_key: sk-test\n")
-        os.chmod(target, 0o600)
-        observed = []
-        real_fdopen = os.fdopen
-
-        def watching_fdopen(fd, *args, **kwargs):
-            def record():
-                for path in sorted(home.iterdir()):
-                    if ".tmp." in path.name:
-                        observed.append((path.name, stat.S_IMODE(path.stat().st_mode)))
-
-            return _WriteWatchingHandle(real_fdopen(fd, *args, **kwargs), record)
-
-        with patch("os.fdopen", watching_fdopen):
-            helper.write_file(target, "api_key: sk-test\ntheme: vgs\n", 0o600)
+        target = home / "config.yaml"
+        target.write_text("theme: old\n")
+        os.chmod(target, 0o644)
+        saved_umask = os.umask(0o077)
+        try:
+            observed = _observe_temp_file_modes(
+                home, lambda: helper.write_file(target, "theme: vgs\n", 0o644))
+        finally:
+            os.umask(saved_umask)
         if not observed:
             raise AssertionError("the write never passed through a temporary file")
         for name, mode in observed:
-            assert_equal(mode, 0o600, f"{name} held content at a wider mode")
-        assert_equal(stat.S_IMODE(target.stat().st_mode), 0o600, "the destination mode")
+            assert_equal(mode, 0o644, f"{name} did not carry the requested mode at its first write")
+        assert_equal(stat.S_IMODE(target.stat().st_mode), 0o644, "the destination mode")
+
+    with_temp_home(check)
+
+
+def test_write_file_leaves_no_temporary_behind_when_the_write_fails():
+    """A write that fails part way must not leave a temporary beside the user's
+    config holding partial content at the target's mode, which nothing removes."""
+    def check(home):
+        target = home / "config.yaml"
+        target.write_text("theme: old\n")
+        real_fdopen = os.fdopen
+
+        def failing_fdopen(fd, *args, **kwargs):
+            def fail():
+                raise OSError(28, "No space left on device")
+
+            return _WriteWatchingHandle(real_fdopen(fd, *args, **kwargs), fail)
+
+        with patch("os.fdopen", failing_fdopen):
+            try:
+                helper.write_file(target, "theme: vgs\n", 0o600)
+            except OSError as error:
+                assert_equal(error.errno, 28, "the failure reaches the caller")
+            else:
+                raise AssertionError("a failed write reported success")
+        strays = sorted(path.name for path in home.iterdir() if ".tmp." in path.name)
+        assert_equal(strays, [], "a failed write left a temporary file behind")
+        assert_equal(target.read_text(), "theme: old\n", "the destination is untouched")
 
     with_temp_home(check)
 
@@ -830,6 +871,15 @@ def test_agent_cli_theme_selection_waits_for_the_opencode_migration():
             raise AssertionError(f"the skip does not name the file: {result.get('reason')!r}")
         if (home / ".config/opencode/tui.json").exists():
             raise AssertionError("the hook created tui.json from a config it could not read")
+
+        # Each of opencode's other two migration triggers, alone.
+        for pending in ({"theme": "tokyonight"}, {"tui": {"scroll_speed": 3}}):
+            config.write_text(json.dumps(pending) + "\n")
+            assert_equal(run_selection_hook("opencode-theme-select").get("skipped"), True,
+                         f"{sorted(pending)} is a key opencode has yet to migrate")
+            if (home / ".config/opencode/tui.json").exists():
+                raise AssertionError(
+                    f"the hook created tui.json with {sorted(pending)} still to migrate")
 
         # opencode migrates a tui object only for these three settings, so a tui
         # holding anything else leaves nothing pending and the theme is selected.
@@ -8290,7 +8340,8 @@ def main():
     test_curated_app_role_passthrough()
     test_codex_theme_paints_every_bundled_theme_readably()
     test_codex_theme_selection_changes_only_the_tui_theme_key()
-    test_write_file_never_puts_content_on_disk_at_a_wider_mode()
+    test_write_file_gives_the_temporary_file_the_requested_mode_before_writing()
+    test_write_file_leaves_no_temporary_behind_when_the_write_fails()
     test_selection_hooks_refuse_a_home_the_test_did_not_create()
     test_agent_cli_themes_render_for_every_bundled_theme()
     test_agent_cli_theme_targets_reach_the_apply_path()

@@ -2428,11 +2428,12 @@ def render_template(text: str, roles: Dict[str, str]) -> str:
 
 
 def write_file(path: Path, content: str, mode: int | None = None) -> None:
-    """Replace `path` atomically. With `mode`, the temporary file carries it
-    before any content is written, so no copy of the content exists at a wider
-    mode at any point — which matters for a config another app keeps at 0600
-    for its API keys. Without one the temporary file takes the process umask,
-    as every caller that does not name a mode has always had."""
+    """Replace `path` atomically. With `mode`, the temporary file is created at
+    that mode, so no copy of the content ever exists at a wider one — which
+    matters for a config another app keeps at 0600 for its API keys — and is
+    chmod'ed to it while still empty, so a narrow umask cannot leave a user's
+    0644 config at 0600. Without a mode the temporary file takes the process
+    umask, as every caller that does not name one has always had."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}.{time.time_ns()}")
     try:
@@ -2442,8 +2443,9 @@ def write_file(path: Path, content: str, mode: int | None = None) -> None:
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode if mode is not None else 0o666)
         with os.fdopen(fd, "w") as handle:
             if mode is not None:
-                # os.open's mode is masked by the umask, and the file is still
-                # empty here, so this is the last point before any content lands.
+                # os.open's mode argument caps the file but the umask can narrow
+                # it further, which would hand the destination a mode the caller
+                # did not ask for. The file is still empty here.
                 os.fchmod(fd, mode)
             handle.write(content)
         tmp.replace(path)
