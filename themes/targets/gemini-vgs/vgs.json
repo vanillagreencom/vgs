@@ -1,0 +1,36 @@
+{
+  "name": "VGS",
+  "type": "custom",
+  "background": {
+    "primary": "{background}",
+    "diff": {
+      "added": "{successContainer}",
+      "removed": "{errorContainer}"
+    }
+  },
+  "text": {
+    "primary": "{foreground}",
+    "secondary": "{muted}",
+    "link": "{info}",
+    "accent": "{accent}",
+    "response": "{foreground}"
+  },
+  "border": {
+    "default": "{outline}",
+    "focused": "{accent}"
+  },
+  "status": {
+    "success": "{success}",
+    "warning": "{warning}",
+    "error": "{error}"
+  },
+  "ui": {
+    "comment": "{dim}",
+    "symbol": "{secondary}",
+    "gradient": [
+      "{accent}",
+      "{tertiary}",
+      "{secondary}"
+    ]
+  }
+}

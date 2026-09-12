@@ -292,7 +292,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends lua5.4
-          python3 -m pip install --user --break-system-packages Pillow
+          # PyYAML: the helper checks parse the generated hermes skin as YAML.
+          python3 -m pip install --user --break-system-packages Pillow PyYAML
           : "${HYPRLAND_BIN:?the Hyprland install step set no bin output}"
           PATH="$HYPRLAND_BIN:$PATH" scripts/check-vshell-helper.py
           scripts/check-keybinds-display.py
