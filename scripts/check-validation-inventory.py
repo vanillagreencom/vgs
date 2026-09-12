@@ -41,6 +41,7 @@ NOT_A_SUITE_CHECK = {
     "publish-aur.sh": "release tooling: pushes packaging/arch to the AUR, driven by the release path",
     "publish-gentoo.sh": "release tooling: pushes packaging/gentoo to the overlay, driven by the release path",
     "publish-ppa.sh": "release tooling: uploads the signed Ubuntu source package to the Launchpad PPA, driven by the release path",
+    "prune-ppa.py": "release tooling: deletes the Launchpad PPA publications older than VERSION, driven by the release path",
     "gen-theme-catalog.py": "theme-catalog generator; its --check mode is invoked by scripts/check-package-assets.sh, its --check-assets-published by the ci.yml step 'Theme asset publication', and its --check-release-pin by scripts/check-release.sh",
     "publish-theme-assets.py": "release tooling: builds and uploads the per-theme imagery archives and writes themes/asset-lock.json, driven by the release path",
 }
