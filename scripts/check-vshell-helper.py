@@ -8637,7 +8637,7 @@ def test_curated_vscode_theme_takes_the_terminal_palette():
         # install writes every bundled copy after the apply hook writes the
         # current theme's, so a copy without it reverts the user's colour.
         name = names[0]
-        helper.write_user_app_overrides(name, {"vscode": {"terminal_color0": "#ff0000"}})
+        helper.write_user_layer(name, "app-colors.toml", {"vscode": {"terminal_color0": "#ff0000"}})
         shipped = {slug: content for slug, _label, _ui, content in helper._all_bundled_vscode_themes()}
         assert_equal(json.loads(shipped[slugs[name]])["colors"].get("terminal.ansiBlack"), "#ff0000",
                      f"{name}: the bundled VS Code copy takes the saved override")
@@ -9473,8 +9473,8 @@ def test_declared_ui_roles_move_with_a_restyle_and_survive_a_save():
             files = helper.compose_theme_files("digestroles")
             meta = json.loads((package / "theme.json").read_text())
             meta["curatedPalette"] = helper.palette_digest(helper.package_palette(
-                helper.package_colors_map(files, "digestroles"), meta,
-                helper.package_ui_roles(files, "digestroles")))
+                helper.package_colors_map("digestroles"), meta,
+                helper.package_overlay_values("digestroles", helper.UI_ROLES_FILE)))
             (package / "theme.json").write_text(json.dumps(meta) + "\n")
             assert_equal(sorted((helper.load_theme_package("digestroles") or {}).get("apps") or {}),
                          ["claude-light.json"], "the recorded palette carries the curated file")
@@ -9501,7 +9501,7 @@ def test_declared_ui_roles_move_with_a_restyle_and_survive_a_save():
             # The save's exemption asks the same question over the package on
             # disk. Asked without the declarations, the file reads as dropped by
             # the palette rather than by the override and the prune deletes it.
-            helper.write_user_app_overrides("digestroles", {"claude": {"background": "#0b0b0b"}})
+            helper.write_user_layer("digestroles", "app-colors.toml", {"claude": {"background": "#0b0b0b"}})
             dropped = helper.load_theme_package("digestroles") or {}
             assert_equal(sorted(dropped.get("apps") or {}), [],
                          "the per-app override alone keeps the curated file out of the render")
@@ -9513,7 +9513,7 @@ def test_declared_ui_roles_move_with_a_restyle_and_survive_a_save():
 
             # Clear the override first, or the next row would pass on the
             # override's own drop and say nothing about the digest.
-            helper.write_user_app_overrides("digestroles", {})
+            helper.write_user_layer("digestroles", "app-colors.toml", {})
             assert_equal(sorted((helper.load_theme_package("digestroles") or {}).get("apps") or {}),
                          ["claude-light.json"], "clearing the override brings the curated file back")
             (package / helper.UI_ROLES_FILE).write_text('statusBg = "#e0b0a0"\n')
@@ -9576,8 +9576,7 @@ def test_declared_ui_roles_move_with_a_restyle_and_survive_a_save():
                 "the recorded digest counts no declaration the render does not read")
             assert_equal((helper.load_theme_package("editedroles-saved") or {}).get("uiRoles"), {},
                          "the saved package carries no declarations")
-            assert_equal(helper.package_ui_roles(helper.compose_theme_files("editedroles"),
-                                                 "editedroles"), DECLARED_UI_ROLES,
+            assert_equal(helper.package_overlay_values("editedroles", helper.UI_ROLES_FILE), DECLARED_UI_ROLES,
                          "the source package keeps its own declarations file")
 
             # The invariant, at every route that builds a generated blueprint
@@ -9617,7 +9616,7 @@ def test_declared_ui_roles_move_with_a_restyle_and_survive_a_save():
                 where = f"{name} through {argv[0]} at step {index}"
                 assert_equal((layer / name / helper.UI_ROLES_FILE).is_file(), True,
                              f"{where} keeps its declarations file")
-                assert_equal(helper.package_ui_roles(helper.compose_theme_files(name), name),
+                assert_equal(helper.package_overlay_values(name, helper.UI_ROLES_FILE),
                              DECLARED_UI_ROLES, f"{where} keeps every declared role")
                 assert_equal((helper.load_theme_package(name) or {}).get("uiRoles"), {},
                              f"{where} reads no declaration while its palette is generated")
@@ -9804,7 +9803,8 @@ def test_save_keeps_app_overrides():
 def test_theme_overlays_merge_key_by_key():
     """A user overlay of a built-in theme holds only the keys the user set, so a
     later change to the built-in files reaches every other key; `theme init`
-    shrinks a whole-file overlay to that difference and leaves a fork whole."""
+    shrinks a whole-file overlay to that difference and leaves a fork whole. A
+    save or copy under a built-in theme's name loads its source's terminal slots."""
     palette = {"accent": "#7aa2f7", "cursor": "#c0caf5", "foreground": "#c0caf5",
                "background": "#1a1b26", "selection_foreground": "#c0caf5",
                "selection_background": "#283457",
@@ -9845,16 +9845,20 @@ def test_theme_overlays_merge_key_by_key():
                 helper.persist_color_edits(["accent=#123456"], "keyfix")
             assert_equal(overlay("colors.toml"), {"accent": "#123456"},
                          "a colour edit writes only the key it set")
+            with contextlib.redirect_stdout(io.StringIO()):
+                helper.persist_color_edits(["cursor=#654321"], "keyfix")
+            assert_equal(overlay("colors.toml"), {"accent": "#123456", "cursor": "#654321"},
+                         "a second edit keeps the key the overlay already held")
             write_builtin(colors={**palette, "color4": "#445566", "accent": "#abcdef"})
             assert_equal(loaded()[:2], ("#123456", "#445566"),
                          "a built-in change reaches color4 and leaves the overlay's accent")
             with contextlib.redirect_stdout(io.StringIO()):
-                helper.persist_color_edits(["accent=#abcdef", "blue=#222222"], "keyfix")
+                helper.persist_color_edits(["accent=#abcdef", "cursor=#c0caf5", "blue=#222222"], "keyfix")
             assert_equal(overlay("colors.toml"), {"color4": "#222222"},
                          "an edit back to the built-in value drops the key; an ANSI name lands as colorN")
             write_builtin()
 
-            helper.write_user_app_overrides("keyfix", {"kitty": {"background": "#101010", "cursor": "#abcdef"}})
+            helper.write_user_layer("keyfix", "app-colors.toml", {"kitty": {"background": "#101010", "cursor": "#abcdef"}})
             assert_equal(helper.read_user_app_overrides("keyfix"), {"kitty": {"cursor": "#abcdef"}},
                          "an app override equal to the built-in role is not stored")
             write_builtin(apps={"kitty": {"background": "#101010", "foreground": "#dddddd"}})
@@ -9862,20 +9866,29 @@ def test_theme_overlays_merge_key_by_key():
                          {"kitty": {"background": "#101010", "foreground": "#dddddd", "cursor": "#abcdef"}},
                          "a built-in app role change reaches the merged overrides beside the user's role")
 
-            (user / helper.TERMINAL_COLORS_FILE).write_text('color2 = "#00bb00"\n')
+            # (what, user terminal file, loaded slots)
+            terminal_rows = [
+                ("a marked terminal file merges slot by slot",
+                 helper.OVERLAY_MERGE_LINE + 'color2 = "#00bb00"\n', {"color1": "#cc0000", "color2": "#00bb00"}),
+                ("an unmarked terminal file replaces the built-in slots",
+                 'color2 = "#00bb00"\n', {"color2": "#00bb00"}),
+            ]
             write_builtin(slots={"color1": "#cc0000"})
-            assert_equal(loaded()[2], {"color1": "#cc0000", "color2": "#00bb00"},
-                         "terminal slots merge slot by slot")
+            for what, text, expected in terminal_rows:
+                (user / helper.TERMINAL_COLORS_FILE).write_text(text)
+                assert_equal(loaded()[2], expected, what)
             write_builtin()
 
             # Whole-file overlays as the writers left them before the merge, and a
             # fork with no built-in layer under it.
-            (user / "colors.toml").write_text(helper.colors_toml_from_map({**palette, "accent": "#123456"}))
+            (user / "colors.toml").write_text(helper.flat_toml_text({**palette, "accent": "#123456"}))
             (user / helper.TERMINAL_COLORS_FILE).write_text(helper.flat_toml_text({"color1": "#aa0000"}))
+            (user / "app-colors.toml").write_text(helper.app_overrides_toml_text(
+                {"kitty": {"background": "#101010", "foreground": "#eeeeee", "cursor": "#abcdef"}}))
             fork = helper.user_themes_dir() / "forkfix"
             fork.mkdir(parents=True)
             (fork / "theme.json").write_text(json.dumps({"name": "forkfix", "mode": "dark"}) + "\n")
-            fork_colors = helper.colors_toml_from_map(palette)
+            fork_colors = helper.flat_toml_text(palette)
             (fork / "colors.toml").write_text(fork_colors)
             digest_before = helper.palette_digest(helper.package_palette(
                 helper.package_colors_map("keyfix"), {"mode": "dark"}))
@@ -9889,6 +9902,8 @@ def test_theme_overlays_merge_key_by_key():
                 ("the colours overlay shrinks to its difference", overlay("colors.toml"), {"accent": "#123456"}),
                 ("a terminal overlay equal to the built-in file is removed",
                  (user / helper.TERMINAL_COLORS_FILE).exists(), False),
+                ("an app-colors overlay shrinks to its differing role",
+                 helper.read_user_app_overrides("keyfix"), {"kitty": {"cursor": "#abcdef"}}),
                 ("a fork is left whole", (fork / "colors.toml").read_text(), fork_colors),
                 ("the merged palette digest is unchanged", helper.palette_digest(helper.package_palette(
                     helper.package_colors_map("keyfix"), {"mode": "dark"})), digest_before),
@@ -9898,8 +9913,62 @@ def test_theme_overlays_merge_key_by_key():
 
             with contextlib.redirect_stdout(io.StringIO()):
                 assert_equal(helper.cmd_theme(["duplicate", "keyfix", "--as", "keycopy"]), 0, "duplicate exit status")
-            assert_equal(helper.package_colors_map("keycopy"), helper.package_colors_map("keyfix"),
-                         "a copy of a shrunk overlay carries the merged palette")
+            # (what, copy, source)
+            copy_rows = [
+                ("a copy carries the merged palette",
+                 helper.package_colors_map("keycopy"), helper.package_colors_map("keyfix")),
+                ("a copy carries the terminal slots",
+                 helper.load_theme_package("keycopy")["terminalColors"], helper.package_overlay_values("keyfix", helper.TERMINAL_COLORS_FILE)),
+                ("a copy carries the merged app overrides",
+                 helper.theme_app_overrides("keycopy"), helper.theme_app_overrides("keyfix")),
+            ]
+            for what, actual, expected in copy_rows:
+                assert_equal(actual, expected, what)
+
+            # Saves under the built-in theme's own name, with no theme init after.
+            base = helper.load_theme_package("keyfix")
+            helper.save_theme_package(base, "keyfix")
+            write_builtin(colors={**palette, "color4": "#445566"})
+            assert_equal((overlay("colors.toml"), loaded()[1]), ({"accent": "#123456"}, "#445566"),
+                         "a save under the built-in name stores its difference, so a built-in change reaches it")
+            write_builtin()
+            # (what, saved slots, the user terminal file's slots and whether they merge)
+            save_rows = [
+                ("a different theme's slots saved under the built-in name load exactly",
+                 {"color2": "#00bb00"}, ({"color2": "#00bb00"}, False)),
+                ("an edit of the built-in theme's own slots stores its difference",
+                 {"color1": "#aa0000", "color3": "#333333"}, ({"color3": "#333333"}, True)),
+            ]
+            for what, slots, stored in save_rows:
+                helper.save_theme_package(dict(base, terminalColors=slots), "keyfix")
+                layer = helper.overlay_layer(user / helper.TERMINAL_COLORS_FILE, helper.TERMINAL_COLORS_FILE)
+                assert_equal((loaded()[2], (layer.values, layer.merges)), (slots, stored), what)
+
+            # Declared UI roles merge role by role over the built-in file.
+            (package / helper.UI_ROLES_FILE).write_text('outline = "#445566"\nstatusBg = "#232530"\n')
+            helper.save_theme_package(dict(helper.load_theme_package("keyfix"),
+                                           uiRoles={"outline": "#445566", "statusBg": "#303030"}), "keyfix")
+            (package / helper.UI_ROLES_FILE).write_text('outline = "#667788"\nstatusBg = "#343434"\n')
+            declared = helper.load_theme_package("keyfix")["uiRoles"]
+            # (what, role, loaded value)
+            role_rows = [
+                ("a built-in declared role the overlay did not set reaches the loaded package", "outline", "#667788"),
+                ("an overlay-declared role survives a built-in change to that role", "statusBg", "#303030"),
+            ]
+            for what, role, expected in role_rows:
+                assert_equal(declared.get(role), expected, what)
+            (package / helper.UI_ROLES_FILE).unlink()
+
+            other = builtin / "keyother"
+            other.mkdir()
+            (other / "theme.json").write_text(json.dumps({"name": "keyother", "mode": "dark", "source": "curated"}) + "\n")
+            (other / "colors.toml").write_text(helper.flat_toml_text(palette))
+            (other / helper.TERMINAL_COLORS_FILE).write_text(helper.flat_toml_text({"color5": "#550055"}))
+            helper.save_theme_package(dict(base, terminalColors={}), "keyfix")
+            with contextlib.redirect_stdout(io.StringIO()):
+                assert_equal(helper.cmd_theme(["duplicate", "keyfix", "--as", "keyother"]), 0, "masked duplicate exit status")
+            assert_equal(helper.load_theme_package("keyother")["terminalColors"], {},
+                         "a copy of a masked theme under a built-in name loads no terminal slots")
         finally:
             helper.builtin_themes_dir, helper.apply_theme_obj = original_builtin, original_apply
 
@@ -10025,7 +10094,7 @@ def test_terminal_app_overrides_show_on_their_editor_row():
         helper.builtin_themes_dir = lambda: builtin
         try:
             for app, saved_key, row in rows:
-                helper.write_user_app_overrides("rowfix", {app: {saved_key: override}})
+                helper.write_user_layer("rowfix", "app-colors.toml", {app: {saved_key: override}})
                 blueprint = helper.load_theme_package("rowfix")
                 view = {item["role"]: item for item in helper.app_role_view(app, blueprint)["roles"]}
                 if row not in view:

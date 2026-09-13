@@ -806,13 +806,13 @@ class RestyledPackages(unittest.TestCase):
     def overridden(self, app: str, roles: dict) -> dict:
         """The same package after `theme app-colors <app> --set role=#hex` on it.
 
-        The overrides go through `write_user_app_overrides`, the writer that CLI
+        The overrides go through `write_user_layer`, the writer that CLI
         path ends in, so this cannot drift into a file shape production no longer
         writes.
         """
         with temp_home() as home:
             write_package(home, "probe", self.COLORS, apps=self.APPS)
-            helper.write_user_app_overrides("probe", {app: roles})
+            helper.write_user_layer("probe", "app-colors.toml", {app: roles})
             return helper.load_theme_package("probe")
 
     def test_a_package_at_rest_keeps_every_curated_file(self):
@@ -932,7 +932,7 @@ class InstalledLayout(unittest.TestCase):
         a user cannot read."""
         with installed_layout():
             download_package("akane")
-            helper.write_user_app_overrides("akane", {"claude": {"background": "#0b0b0b"}})
+            helper.write_user_layer("akane", "app-colors.toml", {"claude": {"background": "#0b0b0b"}})
             blueprint = helper.load_theme_package("akane")
             self.assertEqual(
                 ("claude-light.json" in blueprint["apps"], self.light(blueprint)),
@@ -976,13 +976,13 @@ class InstalledLayout(unittest.TestCase):
                     helper.find_theme("akane"), transform,
                     str(helper.current_theme().get("wallpaper") or "")))
                 self.set_wallpaper_save()
-            helper.write_user_app_overrides("akane", overrides)
+            helper.write_user_layer("akane", "app-colors.toml", overrides)
             if edits:
                 with mock.patch.object(helper, "apply_theme_obj", side_effect=write_applied_state):
                     helper.apply_color_edits(list(edits), "akane")
             self.set_wallpaper_save()
             on_disk = {path.name for path in (dest / "apps").iterdir()}
-            helper.write_user_app_overrides("akane", {})
+            helper.write_user_layer("akane", "app-colors.toml", {})
             cleared = helper.load_theme_package("akane")
             return (json.loads((dest / "theme.json").read_text()).get("source"),
                     "claude-light.json" in on_disk, "claude-light.json" in cleared["apps"],
@@ -1054,8 +1054,8 @@ class InstalledLayout(unittest.TestCase):
         with installed_layout():
             download_package("akane")
             copy = helper.save_theme_package(helper.load_theme_package("akane"), name="akane-copy")
-            helper.write_user_app_overrides("akane-copy", {"claude": {"background": "#0b0b0b"}})
-            helper.write_user_app_overrides("akane", {"claude": {"background": "#0b0b0b"}})
+            helper.write_user_layer("akane-copy", "app-colors.toml", {"claude": {"background": "#0b0b0b"}})
+            helper.write_user_layer("akane", "app-colors.toml", {"claude": {"background": "#0b0b0b"}})
             overridden = helper.load_theme_package("akane")
             before = {path.name for path in (copy / "apps").iterdir()}
             helper.save_theme_package(overridden, name="akane-copy")
@@ -1160,7 +1160,7 @@ class InstalledLayout(unittest.TestCase):
             inherited = helper.load_theme_package("archwave")
             edited = dict(helper.parse_colors_toml(REPO / "themes" / "archwave" / "colors.toml"),
                           foreground="#101010")
-            (overlay / "colors.toml").write_text(helper.colors_toml_from_map(edited))
+            (overlay / "colors.toml").write_text(helper.flat_toml_text(edited))
             replaced = helper.load_theme_package("archwave")
         self.assertEqual(
             ("claude-light.json" in inherited["apps"], self.light(inherited),
@@ -1183,7 +1183,7 @@ class InstalledLayout(unittest.TestCase):
         edited = dict(helper.parse_colors_toml(REPO / "themes" / "akane" / "colors.toml"),
                       foreground="#101010")
         rows = (("metadata", None, (True, [])),
-                ("own palette", helper.colors_toml_from_map(edited), (False, [])))
+                ("own palette", helper.flat_toml_text(edited), (False, [])))
         for label, colors, expected in rows:
             with self.subTest(label), temp_home() as home:
                 overlay = home / ".config" / "vshell" / "themes" / "akane"
