@@ -131,7 +131,7 @@ name = "themes"
 globs = ["themes/**"]
 reviewer_only = true
 instructions = """
-Palettes marked source: curated pass through the engine unchanged. Contrast enforcement applies to generated palettes. Per-theme app files intentionally share structure so each theme package works independently. Generated app targets must use VGS-owned output paths. See docs/architecture/theme.md.
+Palettes marked source: curated pass through the engine unchanged. Contrast enforcement applies to generated palettes. Per-theme app files intentionally share structure so each theme package works independently. Generated app targets must use VGS-owned output paths. See docs/architecture/theme.md, and docs/architecture/agent-cli-themes.md for the agent CLI targets and the curated Claude Code files.
 """
 
 [[bot-instructions.surface]]
