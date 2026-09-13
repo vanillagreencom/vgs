@@ -1,6 +1,6 @@
 # Theme changes
 
-Read [../docs/architecture/theme.md](../docs/architecture/theme.md) for palette, overlay and output-path contracts.
+Read [../docs/architecture/theme.md](../docs/architecture/theme.md) for palette, overlay and output-path contracts. Read [../docs/architecture/agent-cli-themes.md](../docs/architecture/agent-cli-themes.md) for the agent CLI targets and the curated Claude Code files.
 
 Per-theme app files intentionally share structure. Keep each package independently usable instead of extracting shared theme content.
 

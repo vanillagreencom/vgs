@@ -444,7 +444,7 @@ class ModeCounterparts(unittest.TestCase):
         closing the rule also closes the warning.
 
         Asserting the exact set rather than one theme is what binds the list in
-        docs/architecture/theme.md to the tree: a seventh theme that starts
+        docs/architecture/agent-cli-themes.md to the tree: a seventh theme that starts
         needing a file, or one of these six that stops, reddens here and sends
         the author to that document.
         """
