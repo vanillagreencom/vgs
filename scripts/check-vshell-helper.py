@@ -8852,8 +8852,9 @@ def test_wallpaper_and_save_keep_terminal_slots():
 def test_save_keeps_app_overrides():
     """A saved theme keeps the per-app colours the user set on the theme it was
     saved from, and its editable app files, a regenerated file and an edit-app
-    seed render them. save-current rebuilds from the shell state, which carries
-    no package, so the overrides come from the applied package."""
+    seed render them. A rebuild from the shell state carries the overrides of the
+    package named exactly as the applied theme; a blueprint with no package keeps
+    the destination's."""
     overrides = {"kitty": {"background": "#ff0000"}, "ghostty": {"black": "#ff0022"}}
 
     def scenario(temp_home: Path):
@@ -8877,8 +8878,8 @@ def test_save_keeps_app_overrides():
         helper.apply_theme_obj = lambda bp, *args, **kwargs: {"success": True}
         mine = helper.user_themes_dir() / "mine"
 
-        def apply_state(name):
-            blueprint = helper.load_theme_package(name)
+        def apply_state(name, applied_name=None):
+            blueprint = dict(helper.load_theme_package(name), name=applied_name or name)
             (helper.cfg_dir() / "theme.json").write_text(helper.render_target_template(
                 "vgs-shell", "vgs-theme.json", helper.target_roles(blueprint)))
             (helper.cfg_dir() / "theme-current.json").write_text(json.dumps(
@@ -8891,35 +8892,39 @@ def test_save_keeps_app_overrides():
 
         try:
             apply_state("overfix")
+            imported = temp_home / "imported.toml"
+            imported.write_text('background = "#202020"\nforeground = "#dddddd"\n')
             # Each row runs and is checked before the next, since a later save
             # rewrites the files an earlier row wrote.
-            # (label, argv, file the step writes, colours that file carries)
+            # (label, argv, package, app file the step writes, colour that file carries)
             steps = [
                 ("save-current from the overridden theme", ["save-current", "--name", "mine"],
-                 mine / "apps" / "kitty.conf", ("#ff0000",)),
-                ("save-current from the overridden theme", None,
-                 mine / "apps" / "ghostty.conf", ("#ff0022",)),
+                 "mine", "kitty.conf", "#ff0000"),
+                ("save-current from the overridden theme", None, "mine", "ghostty.conf", "#ff0022"),
                 ("regenerate", ["regenerate", "mine", "--app", "kitty", "--yes"],
-                 mine / "apps" / "kitty.conf", ("#ff0000",)),
+                 "mine", "kitty.conf", "#ff0000"),
                 ("edit-app seed", ["edit-app", "kitty", "--theme", "overfix"],
-                 helper.user_themes_dir() / "overfix" / "apps" / "kitty.conf", ("#ff0000",)),
-                # A palette edit saved over the package rebuilds a blueprint with no
-                # package, and must not erase the overrides the package holds.
-                ("apply-colors --save over the package",
-                 ["apply-colors", "--name", "mine", "--set", "accent=#123456", "--save"],
-                 mine / "apps" / "kitty.conf", ("#ff0000",)),
+                 "overfix", "kitty.conf", "#ff0000"),
+                # A palette edit rebuilds from the applied theme, so a new name
+                # holding no overrides yet takes the applied package's.
+                ("apply-colors --save into a new name",
+                 ["apply-colors", "--name", "fresh", "--set", "accent=#123456", "--save"],
+                 "fresh", "kitty.conf", "#ff0000"),
+                # An import has no package and no applied theme behind it, and must
+                # not erase the overrides the package it is saved over holds.
+                ("import-colors over the package", ["import-colors", str(imported), "--name", "mine"],
+                 "mine", "kitty.conf", "#ff0000"),
             ]
-            for label, argv, path, colours in steps:
+            for label, argv, package, filename, colour in steps:
+                path = helper.user_themes_dir() / package / "apps" / filename
                 if argv:
                     # A file the step leaves alone would pass on what the previous
                     # step wrote.
                     path.unlink(missing_ok=True)
                     run(argv)
-                assert_equal(helper.theme_app_overrides("mine"), overrides, f"{label}: saved overrides")
-                content = path.read_text()
-                for colour in colours:
-                    if colour not in content:
-                        raise AssertionError(f"{label}: {path.name} lacks {colour}")
+                assert_equal(helper.theme_app_overrides(package), overrides, f"{label}: saved overrides")
+                if colour not in path.read_text():
+                    raise AssertionError(f"{label}: {filename} lacks {colour}")
 
             # Saved from a theme with no overrides, the package keeps none.
             apply_state("plainfix")
@@ -8928,6 +8933,13 @@ def test_save_keeps_app_overrides():
                          "save-current from a theme with no overrides removes the file")
             if "#ff0000" in (mine / "apps" / "kitty.conf").read_text():
                 raise AssertionError("save-current from a theme with no overrides still renders #ff0000")
+
+            # Applied under an unsaved name that is part of an overridden package's
+            # name, the theme has no package, so nothing is carried.
+            apply_state("plainfix", applied_name="over")
+            run(["save-current", "--name", "prefixed"])
+            assert_equal(helper.theme_app_overrides("prefixed"), {},
+                         "save-current from an unsaved name takes no other package's overrides")
         finally:
             helper.builtin_themes_dir, helper.apply_theme_obj = original_builtin, original_apply
 

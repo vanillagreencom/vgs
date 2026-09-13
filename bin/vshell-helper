@@ -1196,11 +1196,24 @@ def find_theme(name: str, themes: List[Dict[str, Any]] | None = None) -> Dict[st
     if not lname:
         return None
     themes = list_themes() if themes is None else themes
-    for bp in themes:
-        if bp.get("name", "").lower() == lname or Path(bp.get("path", "")).stem.lower() == lname:
-            return bp
+    exact = find_theme_exact(lname, themes)
+    if exact:
+        return exact
     for bp in themes:
         if lname in bp.get("name", "").lower():
+            return bp
+    return None
+
+
+def find_theme_exact(name: str, themes: List[Dict[str, Any]] | None = None) -> Dict[str, Any] | None:
+    """The theme whose name or package directory is `name`, ignoring case, or
+    None. Unlike `find_theme`, a miss never falls back to a substring match."""
+    lname = name.strip().lower()
+    if not lname:
+        return None
+    themes = list_themes() if themes is None else themes
+    for bp in themes:
+        if bp.get("name", "").lower() == lname or Path(bp.get("path", "")).stem.lower() == lname:
             return bp
     return None
 
@@ -2032,6 +2045,12 @@ def write_user_app_overrides(pkg_dir_name: str, data: Dict[str, Dict[str, str]])
             path.unlink()
 
 
+# The applied package's per-app overrides, carried on a blueprint rebuilt from
+# the current theme. Distinct from `appOverrides`, the per-app count the theme
+# list reports.
+CURRENT_APP_OVERRIDES_KEY = "appColorOverrides"
+
+
 def bp_app_overrides(bp: Dict[str, Any]) -> Dict[str, Dict[str, str]]:
     """Per-app overrides for a resolved blueprint (packages only)."""
     path = bp.get("path")
@@ -2197,8 +2216,7 @@ def override_dropped_curated(bp: Dict[str, Any]) -> List[str]:
                                                  theme_app_overrides(package), layers)))
 
 
-def save_theme_package(bp: Dict[str, Any], name: str | None = None,
-                       app_overrides: Dict[str, Dict[str, str]] | None = None) -> Path:
+def save_theme_package(bp: Dict[str, Any], name: str | None = None) -> Path:
     """Persist a theme as a user package: curated apps/ files carry over
     verbatim; every other toggled-on app gets an editable rendered file.
 
@@ -2211,18 +2229,18 @@ def save_theme_package(bp: Dict[str, Any], name: str | None = None,
     save path it reaches. Such a file is not carried in `apps`, so it is left
     exactly as it is rather than rewritten.
 
-    `app_overrides` are the per-app colours the saved package keeps and renders
-    its app files with. Left out, the blueprint's own package supplies them, and
-    a blueprint with no package keeps the ones the destination package already
-    holds, so a palette edit saved over a theme does not erase them. A blueprint
-    rebuilt from the current theme has no package, so `save-current` passes the
-    applied package's overrides, or the saved copy would lose them.
+    The package keeps, and renders its app files with, the per-app overrides of
+    the first source that answers: those `with_current_terminal_slots` carried
+    onto a blueprint rebuilt from the current theme; the blueprint's own package;
+    the package already saved under the destination name. The last answers for a
+    blueprint with neither, as `import-colors` builds, so a save over a package
+    does not erase what the user set on it.
     """
     bp = dict(bp)
     if name:
         bp["name"] = name
-    if app_overrides is not None:
-        overrides = app_overrides
+    if CURRENT_APP_OVERRIDES_KEY in bp:
+        overrides = bp[CURRENT_APP_OVERRIDES_KEY]
     elif bp.get("package"):
         overrides = bp_app_overrides(bp)
     else:
@@ -6818,7 +6836,9 @@ def blueprint_from_current_theme(name: str | None = None, mode: str | None = Non
 
 
 def with_current_terminal_slots(bp: Dict[str, Any]) -> Dict[str, Any]:
-    """Give a blueprint rebuilt from the applied theme's colours that theme's terminal slots.
+    """Give a blueprint rebuilt from the applied theme's colours that theme's
+    terminal slots, and its package's per-app overrides through
+    `with_current_app_overrides`.
 
     Neither the shell's theme.json nor the palette inside theme-current.json
     holds them, so every rebuild from the current theme passes through here. A
@@ -6837,22 +6857,37 @@ def with_current_terminal_slots(bp: Dict[str, Any]) -> Dict[str, Any]:
     applied = applied_blueprint()
     if applied and blueprint_mode(applied) == blueprint_mode(bp):
         slots = dict(applied.get("terminalColors") or {})
-    if not slots:
-        package = applied_theme_package()
-        if package and blueprint_mode(package) == blueprint_mode(bp):
-            slots = dict(package.get("terminalColors") or {})
+    package = applied_theme_package()
+    if package and blueprint_mode(package) != blueprint_mode(bp):
+        package = None
+    if not slots and package:
+        slots = dict(package.get("terminalColors") or {})
     bp["terminalColors"] = slots
+    return with_current_app_overrides(bp, package)
+
+
+def with_current_app_overrides(bp: Dict[str, Any], package: Dict[str, Any] | None) -> Dict[str, Any]:
+    """Carry `package`'s per-app overrides on bp for `save_theme_package`.
+
+    `package` is the applied package in bp's mode, or None, which carries
+    nothing and leaves the save to its next source. The overrides come from the
+    package alone, since an unsaved theme has none to carry. Mutate and return bp.
+    """
+    if package:
+        bp[CURRENT_APP_OVERRIDES_KEY] = bp_app_overrides(package)
     return bp
 
 
 def applied_theme_package() -> Dict[str, Any] | None:
-    """The saved package under the shell state's theme name, or None.
+    """The saved package whose name is exactly the shell state's theme name, or None.
 
     Found by name, not through `current_theme_obj`, whose fallback rebuilds from
-    the current theme and so carries no package.
+    the current theme and so carries no package. Exact, because a theme applied
+    under an unsaved name that is part of another package's name would otherwise
+    take that package's slots and overrides.
     """
     applied_name = str(current_theme().get("name") or "")
-    package = find_theme(applied_name) if applied_name else None
+    package = find_theme_exact(applied_name) if applied_name else None
     return package if package and package.get("package") else None
 
 
@@ -9660,8 +9695,7 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
         return 0
     if args.cmd == "save-current":
         bp = blueprint_from_current_theme(name=args.name)
-        applied = applied_theme_package()
-        saved = save_theme_package(bp, args.name, bp_app_overrides(applied) if applied else None)
+        saved = save_theme_package(bp, args.name)
         print(json.dumps({"success": True, "saved": str(saved)}, indent=2) if args.json else str(saved))
         return 0
     if args.cmd == "apply-colors":
