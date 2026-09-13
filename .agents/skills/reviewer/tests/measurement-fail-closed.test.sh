@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Contract test for fail-closed reviewer measurements.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/../../orch/tests/lib/git-env.sh"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -8,6 +9,7 @@ ORCH_DIR="$SKILL_DIR/../orch"
 CHECK="$ORCH_DIR/scripts/review-artifact-check"
 TMP_ROOT=$(mktemp -d)
 trap 'rm -rf "$TMP_ROOT"' EXIT
+source "$ORCH_DIR/tests/lib/review-artifact-fixture.sh"
 
 PASS=0
 FAIL=0
@@ -44,7 +46,7 @@ read_result() {
   path="$1"
   rc=0
   out=""
-  out=$("$CHECK" --file "$path" 2>/dev/null) || rc=$?
+  out=$(review_fixture_stamp "$path" && "$CHECK" --file "$path" "$TMP_ROOT" 2>/dev/null) || rc=$?
   reason=$(jq -r '.reason' <<<"$out" 2>/dev/null) || reason=unparseable
   ok=$(jq -r '.ok' <<<"$out" 2>/dev/null) || ok=unparseable
   declaration=$(jq -r 'if has("measurement_failed") then .measurement_failed else "ABSENT" end' <<<"$out" 2>/dev/null) || declaration=unparseable
@@ -169,7 +171,7 @@ SHIM
     esac
     rc=0
     out=""
-    out=$(PATH="$shim_path" "$CHECK" --file "$clean" 2>/dev/null) || rc=$?
+    out=$(review_fixture_stamp "$clean" && PATH="$shim_path" "$CHECK" --file "$clean" "$TMP_ROOT" 2>/dev/null) || rc=$?
     reason=$("$real_jq" -r '.reason' <<<"$out" 2>/dev/null) || reason=unparseable
     declaration=$("$real_jq" -r 'if has("measurement_failed") then "present" else "absent" end' <<<"$out" 2>/dev/null) || declaration=unparseable
     case "$shim" in
