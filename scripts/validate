@@ -28,6 +28,7 @@ cd "$repo_root" || exit 1
 manifest() {
   cat <<'MANIFEST_EOF'
 qml       | scripts/check-naming.sh
+qml       | scripts/test-naming.sh
 qml       | scripts/check-qml-imports.py
 qml       | scripts/check-settings-type.py
 qml       | scripts/test-qml-imports.sh

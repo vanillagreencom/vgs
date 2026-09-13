@@ -8560,13 +8560,13 @@ def test_curated_vscode_theme_takes_the_terminal_palette():
                    if (d / "apps" / "vscode-theme.json").is_file())
     if len(names) < 2:
         raise AssertionError("the bundled set must hold more than one curated VS Code theme")
-    blueprints = {name: helper.load_theme_package(name) for name in names}
-    if any(bp is None for bp in blueprints.values()):
-        raise AssertionError("every bundled VS Code theme must load its package identity")
-    labels = {name: str(blueprints[name]["name"]) for name in names}
-    slugs = {name: helper._vgs_theme_slug(labels[name]) for name in names}
 
     def scenario(_temp_home: Path):
+        blueprints = {name: helper.load_theme_package(name) for name in names}
+        if any(bp is None for bp in blueprints.values()):
+            raise AssertionError("every bundled VS Code theme must load its package identity")
+        labels = {name: str(blueprints[name]["name"]) for name in names}
+        slugs = {name: helper._vgs_theme_slug(labels[name]) for name in names}
         shipped = {slug: (label, content)
                    for slug, label, _ui, content in helper._all_bundled_vscode_themes()}
         assert_equal(set(shipped), set(slugs.values()),
@@ -8591,6 +8591,42 @@ def test_curated_vscode_theme_takes_the_terminal_palette():
         assert_equal(json.loads(shipped[slugs[name]])["colors"].get("terminal.ansiBlack"), "#ff0000",
                      f"{name}: the bundled VS Code copy takes the saved override")
 
+        # The active copy and bundled manifest use one package identity. Pick a
+        # shipped theme whose curated label differs only by spelling, so the old
+        # path returned a label that its same-slug bundled entry replaced.
+        active = next((candidate for candidate in names
+                       if helper._read_vgs_theme_name(
+                           helper.compose_theme_files(candidate)["apps/vscode-theme.json"])
+                       != labels[candidate]
+                       and helper._vgs_theme_slug(helper._read_vgs_theme_name(
+                           helper.compose_theme_files(candidate)["apps/vscode-theme.json"]))
+                       == slugs[candidate]), "")
+        if not active:
+            raise AssertionError("the bundled set needs a curated/package spelling mismatch")
+        theme_file = helper.generated_dir() / "vscode" / "vgs-theme.json"
+        theme_file.parent.mkdir(parents=True)
+        theme_file.write_text(helper.compose_theme_files(active)["apps/vscode-theme.json"].read_text())
+        ext_dir = _temp_home / ".vscode" / "extensions"
+        ext_dir.mkdir(parents=True)
+        settings_path = _temp_home / ".config" / "Code" / "User" / "settings.json"
+        settings_path.parent.mkdir(parents=True)
+        original_variants = helper.VSCODE_VARIANTS
+        helper.VSCODE_VARIANTS = [{
+            "id": "vscode", "ext": str(ext_dir), "settings": str(settings_path), "cli": ["code"],
+        }]
+        try:
+            active_bp = blueprints[active]
+            active_roles = helper.render_roles(active_bp, helper.target_roles(active_bp))
+            result = helper.apply_vscode_theme_hook(active_roles, active_bp)
+        finally:
+            helper.VSCODE_VARIANTS = original_variants
+        assert_equal(result.get("applied"), [str(settings_path)],
+                     "the active VS Code theme apply writes the test installation")
+        selected = json.loads(settings_path.read_text()).get("workbench.colorTheme")
+        assert_equal(selected, labels[active], "the active VS Code label comes from its package")
+        if selected not in helper._vgs_vscode_labels(ext_dir):
+            raise AssertionError(f"the selected VS Code label is not registered: {selected}")
+
         for package_name in ("slug collision", "slug-collision"):
             package = helper.user_themes_dir() / package_name
             (package / "apps").mkdir(parents=True)
@@ -8610,7 +8646,17 @@ def test_curated_vscode_theme_takes_the_terminal_palette():
             "a duplicate slug refuses and names both theme packages",
         )
 
-    with_temp_home(scenario)
+    def caller_with_restyle(_caller_home: Path):
+        # Expected blueprints load only after scenario enters its clean home.
+        # A Restyle overlay in the caller home must not change those expectations.
+        overlay = helper.user_themes_dir() / names[0]
+        overlay.mkdir(parents=True)
+        metadata = json.loads((helper.builtin_themes_dir() / names[0] / "theme.json").read_text())
+        metadata["adjustments"] = {"brightness": 0.4, "saturation": -0.2}
+        (overlay / "theme.json").write_text(json.dumps(metadata) + "\n")
+        with_temp_home(scenario)
+
+    with_temp_home(caller_with_restyle)
 
     # Must-fail control: a blueprint that did not load supplies no slot, and the
     # curated theme's own value stands rather than a default painted over it.
