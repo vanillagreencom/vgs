@@ -10,10 +10,18 @@
 # flag wins where both are set.
 ORCH_STATE_DIR = "tmp"
 
+# Overseer watcher baselines and lane claims. Empty uses
+# <project-root>/tmp/oversee-watch. The overseer's host owns persistence.
+OVERSEE_WATCH_STATE_DIR = ""
+
 # Path to the worktree CLI `open-terminal` drives. Empty resolves the
 # installed worktree skill's `scripts/worktree`; a value that is not
 # executable stops the launch with that path named.
 WORKTREE_CLI = ""
+
+# Host provider used by lane-host. Existing launchers keep their local behavior.
+# A script path opts in; credentials alone never select a remote host.
+ORCH_LANE_HOST = "local"
 
 # Reviewer merge gate: "approval" needs a GitHub approval; "review" needs a
 # non-author review of the current head plus zero unresolved threads (for
@@ -73,6 +81,14 @@ ORCH_TMUX_VERIFY_SECS = "15"
 # inventory is always discovered — this only renames it. ORCH_LANE_DIRS
 # covers layouts discovery cannot reach.
 # ORCH_LANE_ALIASES = "eclaude=work,mclaude=overflow"
+
+# Launch lanes never listed, measured or picked; lanes retired from a UTC date.
+# Each is named by its directory name or alias, never a path.
+# ORCH_LANE_EXCLUDE = "sclaude"
+# ORCH_LANE_RETIRE = "nclaude=YYYY-MM-DD"
+
+# Seconds a per-host cached lane usage figure is reused; 0 fetches every run.
+# ORCH_LANES_USAGE_TTL = "60"
 
 # Path globs that add the needs-perf-test QA signal to review routing.
 # QA_PERF_PATHS = "src/hot/* engine/src/*"
