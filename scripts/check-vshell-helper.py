@@ -8522,6 +8522,7 @@ def test_terminal_slot_overrides_reach_terminals_only():
     refusals = [
         ("a terminal slot the map lacks", "{terminal_color0}", {}, "template-role-missing t/x {terminal_color0}"),
         ("a palette slot the map lacks", "{color0}", {}, "template-role-missing t/x {color0}"),
+        ("a mode-prefixed role the map lacks", "{dark_accent}", {}, "template-role-missing t/x {dark_accent}"),
         ("tmux syntax names no role", "#{pane_id}", {}, "#{pane_id}"),
         ("a role the map carries", "{terminal_color0.strip}", {"terminal_color0": "#123456"}, "123456"),
     ]
@@ -8597,17 +8598,32 @@ def test_light_themes_read_in_a_terminal():
     other_targets = []
     for cfg_path in sorted(helper.targets_dir().glob("*/config.json")):
         cfg = json.loads(cfg_path.read_text())
-        if cfg.get("template") and cfg_path.parent.name not in terminal_targets:
-            other_targets.append((cfg_path.parent.name, cfg["template"]))
-    if ("helix-vgs", "vgs.toml") not in other_targets:
+        if cfg.get("template") and cfg.get("destination") and cfg_path.parent.name not in terminal_targets:
+            other_targets.append((cfg_path.parent.name, cfg))
+    if "helix-vgs" not in {target for target, _cfg in other_targets}:
         raise AssertionError("helix-vgs reads palette slots directly; the target list is broken")
 
     def other_renders(blueprint):
+        # Each target renders pass by pass the way apply renders it, so a target
+        # that writes both modes reads both modes' colours.
         shell = helper.target_roles(blueprint)
         app = helper.render_roles(blueprint, helper.app_target_roles(blueprint, shell))
-        return {target: helper.render_target_template(
-                    target, template, helper.render_roles(blueprint, shell) if target == "vgs-shell" else app)
-                for target, template in other_targets}
+        mode_maps = {}
+
+        def resolve_mode_maps():
+            if not mode_maps:
+                mode_maps.update(helper.mode_variant_role_maps(blueprint))
+            return mode_maps
+
+        out = {}
+        for target, cfg in other_targets:
+            roles = helper.render_roles(blueprint, shell) if target == "vgs-shell" else app
+            template = (helper.targets_dir() / target / cfg["template"]).read_text()
+            passes = helper.target_render_passes(
+                cfg, roles, helper.expand_dest(cfg["destination"]), resolve_mode_maps, {})
+            out[target] = [helper.render_template(template, pass_roles, f"{target}/{cfg['template']}")
+                           for pass_roles, _dest in passes]
+        return out
 
     for name, body_min, muted_min, band_min, selection_min in rows:
         blueprint = helper.load_theme_package(name)

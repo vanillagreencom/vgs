@@ -2453,12 +2453,8 @@ def mode_variant_blueprint(bp: Dict[str, Any], mode: str,
 
 
 def mode_variant_role_maps(bp: Dict[str, Any]) -> Dict[str, Dict[str, str]]:
-    """App-target render roles for both modes, keyed by mode."""
-    maps: Dict[str, Dict[str, str]] = {}
-    for mode in THEME_MODES:
-        variant = mode_variant_blueprint(bp, mode)
-        maps[mode] = render_roles(variant, app_target_roles(variant))
-    return maps
+    """App-target roles for both modes, keyed by mode."""
+    return {mode: app_target_roles(mode_variant_blueprint(bp, mode)) for mode in THEME_MODES}
 
 
 def target_render_passes(cfg: Dict[str, Any], roles: Dict[str, str], dest: Path,
