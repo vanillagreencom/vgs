@@ -3,13 +3,4 @@
 # derived roles and pi.
 
 # body text.
-color0 = "#4c4f69"
-
-# band under body text.
-color7 = "#c1c2cb"
-
-# muted text.
-color8 = "#666d88"
-
-# band under body text.
-color15 = "#c1c2cb"
+color0 = "#100F0F"

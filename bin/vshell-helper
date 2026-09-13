@@ -2027,8 +2027,7 @@ def rendered_apps_for(bp: Dict[str, Any]) -> Dict[str, str]:
     (no curatedDestination) materialize — pointer-style curated formats
     (vscode.json, icons.theme, hyprland.conf) are hand-written only.
     """
-    roles = target_roles(bp)
-    roles.update(terminal_palette_roles(bp, roles))
+    roles = render_roles(bp, target_roles(bp))
     theme_apps = theme_apps_settings()
     out: Dict[str, str] = {}
     for cfg_path in sorted(targets_dir().glob("*/config.json")):
@@ -2038,7 +2037,8 @@ def rendered_apps_for(bp: Dict[str, Any]) -> Dict[str, str]:
             continue
         if not target_enabled(cfg, theme_apps):
             continue
-        out[str(name)] = render_template((cfg_path.parent / cfg["template"]).read_text(), roles)
+        out[str(name)] = render_template((cfg_path.parent / cfg["template"]).read_text(), roles,
+                                         f"{cfg_path.parent.name}/{cfg['template']}")
     return out
 
 
@@ -2060,6 +2060,9 @@ def materialize_theme_package(bp: Dict[str, Any], apps: Dict[str, str] | None = 
     }
     write_file(root / "theme.json", json.dumps(meta, indent=2) + "\n")
     write_file(root / "colors.toml", colors_toml_from_blueprint(bp))
+    terminal = bp.get("terminalColors") or {}
+    if terminal:
+        write_file(root / TERMINAL_COLORS_FILE, "".join(f'{key} = "{value}"\n' for key, value in terminal.items()))
     wallpaper = resolve_path(str(bp.get("palette", {}).get("wallpaper") or ""))
     if wallpaper and Path(wallpaper).is_file():
         bg_dir = root / "backgrounds"
@@ -2344,22 +2347,39 @@ def terminal_slot_overrides(data: Dict[str, str]) -> Dict[str, str]:
             for index in range(16) if f"color{index}" in data}
 
 
-def terminal_palette_roles(bp: Dict[str, Any], roles: Dict[str, str]) -> Dict[str, str]:
+def terminal_palette_roles(bp: Dict[str, Any], roles: Dict[str, str],
+                           app_overrides: Dict[str, str]) -> Dict[str, str]:
     """The sixteen ANSI slots as a terminal paints them, under `terminal_` names.
 
     A template that writes an actual terminal palette reads these; every other
-    placeholder in the same template keeps the theme's own slot. Without an
-    override a slot is the palette's own value, so a theme that ships no
-    terminal-colors.toml renders exactly what it rendered before.
+    placeholder in the same template keeps the theme's own slot. A slot takes, in
+    order: the app's saved override of `colorN` or its ANSI name, which is the
+    user's choice for that one app; the theme's terminal-colors.toml; the
+    palette's own value. A theme that ships no terminal-colors.toml therefore
+    renders exactly what it rendered before.
     """
-    overrides = bp.get("terminalColors") or {}
+    terminal = bp.get("terminalColors") or {}
     out: Dict[str, str] = {}
     for index, name in enumerate(ANSI_NAMES):
         key = f"color{index}"
-        value = clean_hex(overrides.get(key) or roles.get(key) or DEFAULT_COLORS[index])
+        value = clean_hex(app_overrides.get(key) or app_overrides.get(name) or terminal.get(key)
+                          or roles.get(key) or DEFAULT_COLORS[index])
         out[f"terminal_{key}"] = value
         out[f"terminal_{name}"] = value
     return out
+
+
+def render_roles(bp: Dict[str, Any], base: Dict[str, str],
+                 app_overrides: Dict[str, str] | None = None) -> Dict[str, str]:
+    """The role map a target template renders with: `base`, the terminal slots,
+    then the app's saved overrides.
+
+    Every template render takes its map from here, so the terminal slots cannot
+    reach one render path and miss another; `render_template` refuses a role
+    placeholder the map lacks.
+    """
+    overrides = app_overrides or {}
+    return {**base, **terminal_palette_roles(bp, base, overrides), **overrides}
 
 
 def app_target_roles(bp: Dict[str, Any], shell_roles: Dict[str, str] | None = None) -> Dict[str, str]:
@@ -2400,7 +2420,6 @@ def app_target_roles(bp: Dict[str, Any], shell_roles: Dict[str, str] | None = No
         for snake, camel in CAMEL.items():
             if snake in raw:
                 roles[camel] = raw[snake]
-    roles.update(terminal_palette_roles(bp, roles))
     return roles
 
 
@@ -2434,8 +2453,12 @@ def mode_variant_blueprint(bp: Dict[str, Any], mode: str,
 
 
 def mode_variant_role_maps(bp: Dict[str, Any]) -> Dict[str, Dict[str, str]]:
-    """App-target roles for both modes, keyed by mode."""
-    return {mode: app_target_roles(mode_variant_blueprint(bp, mode)) for mode in THEME_MODES}
+    """App-target render roles for both modes, keyed by mode."""
+    maps: Dict[str, Dict[str, str]] = {}
+    for mode in THEME_MODES:
+        variant = mode_variant_blueprint(bp, mode)
+        maps[mode] = render_roles(variant, app_target_roles(variant))
+    return maps
 
 
 def target_render_passes(cfg: Dict[str, Any], roles: Dict[str, str], dest: Path,
@@ -2460,7 +2483,8 @@ def target_render_passes(cfg: Dict[str, Any], roles: Dict[str, str], dest: Path,
     passes: List[Tuple[Dict[str, str], Path]] = []
     for mode in modes:
         mode_roles = {**roles, **mode_maps()[str(mode)], **overrides}
-        passes.append((mode_roles, expand_dest(render_template(str(cfg["destination"]), mode_roles))))
+        passes.append((mode_roles, expand_dest(render_template(
+            str(cfg["destination"]), mode_roles, f"{cfg.get('app') or 'target'} destination"))))
     # A `modes` destination that does not vary by mode would write one file with
     # the last mode's colours and report every mode rendered. Refuse it here so a
     # target configuration that forgets `{theme_type}` fails where it is written.
@@ -2753,12 +2777,28 @@ def claude_theme_overrides(roles: Dict[str, str]) -> Tuple[Dict[str, str], List[
     }, shortfalls
 
 
-def render_template(text: str, roles: Dict[str, str]) -> str:
+def template_role_names() -> set[str]:
+    """Every role name a render map can carry, read from the builders of the map:
+    the palette and terminal roles, and each under the mode prefix that
+    `target_render_passes` gives a `modeVariants` target."""
+    names = set(target_roles({})) | set(terminal_palette_roles({}, {}, {}))
+    return names | {f"{mode}_{name}" for mode in THEME_MODES for name in names}
+
+
+def render_template(text: str, roles: Dict[str, str], source: str) -> str:
+    """Substitute role placeholders in the target template `source`.
+
+    A brace token that names no role is foreign template syntax, such as tmux
+    `#{pane_id}`, and passes through. A token naming a role the map lacks is a
+    render path that skipped `render_roles`: written out, it leaves literal
+    placeholder text in the app's config, so it raises instead.
+    """
     def repl(match: re.Match[str]) -> str:
         name = match.group(1)
         modifier = match.group(2)
         if name not in roles:
-            # Preserve foreign template syntaxes such as tmux #{pane_id}.
+            if name in template_role_names():
+                raise ValueError(f"template-role-missing {source} {{{name}}}")
             return match.group(0)
         value = roles.get(name, "")
         if modifier == "strip":
@@ -3569,8 +3609,7 @@ def _all_bundled_vscode_themes() -> List[Tuple[str, str, str, str]]:
             bp = bp_by_key.get(tdir.name.lower())
             roles = {"accent": "#808080", "theme_type": mode}
             if bp:
-                roles = target_roles(bp)
-                roles.update(terminal_palette_roles(bp, roles))
+                roles = render_roles(bp, target_roles(bp))
             content = augment_vscode_colors(content, roles)
             ui = "vs" if mode == "light" else "vs-dark"
             out[_vgs_theme_slug(label)] = (_vgs_theme_slug(label), label, ui, content)
@@ -5140,7 +5179,7 @@ def _apply_theme_obj_unlocked(bp: Dict[str, Any], only_app: str | None = None,
         app_id = str(cfg.get("app") or "")
         base_role_map = roles if cfg_path.parent.name == "vgs-shell" else external_roles
         target_overrides = app_overrides.get(app_id) or {}
-        target_role_map = {**base_role_map, **target_overrides} if target_overrides else base_role_map
+        target_role_map = render_roles(bp, base_role_map, target_overrides)
         if curated_src and curated_dest:
             install_curated_file(Path(curated_src), curated_dest, target_role_map)
             rendered.append(str(curated_dest))
@@ -5159,7 +5198,8 @@ def _apply_theme_obj_unlocked(bp: Dict[str, Any], only_app: str | None = None,
             for pass_roles, pass_dest in target_render_passes(
                 cfg, target_role_map, dest, resolve_mode_maps, target_overrides
             ):
-                write_file(pass_dest, render_template(template, pass_roles))
+                write_file(pass_dest, render_template(template, pass_roles,
+                                                      f"{cfg_path.parent.name}/{cfg['template']}"))
                 rendered.append(str(pass_dest))
         if cfg.get("hook"):
             hook_value = cfg["hook"]
@@ -5504,7 +5544,7 @@ def write_preview_home(tmp: Path) -> Path:
 
 
 def render_target_template(target: str, template: str, roles: Dict[str, str]) -> str:
-    return render_template((targets_dir() / target / template).read_text(), roles)
+    return render_template((targets_dir() / target / template).read_text(), roles, f"{target}/{template}")
 
 
 def parse_nvim_spec(spec_path: Path) -> Tuple[str, List[str]]:
@@ -5534,26 +5574,27 @@ def parse_nvim_spec(spec_path: Path) -> Tuple[str, List[str]]:
 def write_preview_tree(bp: Dict[str, Any], roles: Dict[str, str], tmp: Path) -> Dict[str, Any]:
     """Render the isolated config tree used by the preview session."""
     mode = (roles.get("theme_type") or "dark").lower()
+    app_roles = render_roles(bp, roles)
     cfg = tmp / "config"
     (cfg / "gtk-3.0").mkdir(parents=True)
     (cfg / "gtk-4.0").mkdir(parents=True)
-    (cfg / "gtk-3.0" / "gtk.css").write_text(render_target_template("gtk3-vgs", "gtk.css", roles))
-    (cfg / "gtk-4.0" / "gtk.css").write_text(render_target_template("gtk4-vgs", "gtk.css", roles))
+    (cfg / "gtk-3.0" / "gtk.css").write_text(render_target_template("gtk3-vgs", "gtk.css", app_roles))
+    (cfg / "gtk-4.0" / "gtk.css").write_text(render_target_template("gtk4-vgs", "gtk.css", app_roles))
     (cfg / "qt6ct" / "colors").mkdir(parents=True)
-    (cfg / "qt6ct" / "colors" / "vgs.conf").write_text(render_target_template("qt6ct-vgs", "vgs.conf", roles))
+    (cfg / "qt6ct" / "colors" / "vgs.conf").write_text(render_target_template("qt6ct-vgs", "vgs.conf", app_roles))
     (cfg / "qt6ct" / "qt6ct.conf").write_text(
         "[Appearance]\ncolor_scheme_path=" + str(cfg / "qt6ct" / "colors" / "vgs.conf") + "\ncustom_palette=true\n"
     )
 
     ghostty_conf = tmp / "ghostty.conf"
     ghostty_conf.write_text(
-        render_target_template("ghostty-vgs", "ghostty.conf", roles)
+        render_target_template("ghostty-vgs", "ghostty.conf", app_roles)
         + "\nfont-size = 11\nwindow-padding-x = 14\nwindow-padding-y = 10\nconfirm-close-surface = false\ncursor-style-blink = false\n"
     )
 
     (tmp / "sample.qml").write_text(PREVIEW_SAMPLE_CODE)
     theme_lua = tmp / "theme.nvim.lua"
-    theme_lua.write_text(render_target_template("nvim-vgs", "vgs-theme.lua", roles))
+    theme_lua.write_text(render_target_template("nvim-vgs", "vgs-theme.lua", app_roles))
     colorscheme, rtp_dirs = "", []
     nvim_spec = (bp.get("apps") or {}).get("neovim.lua")
     if nvim_spec:
@@ -6219,7 +6260,7 @@ def carry_curated_apps(bp: Dict[str, Any]) -> Dict[str, Any]:
     apps = cur.get("apps") or {}
     if apps:
         bp["apps"] = apps
-    for key in ("package", "path", "builtin", "userDir"):
+    for key in ("package", "path", "builtin", "userDir", "terminalColors"):
         if cur.get(key) is not None and key not in bp:
             bp[key] = cur[key]
     return bp
@@ -6361,7 +6402,7 @@ def apply_color_edits(edits: List[str], name: str, mode: str | None = None, wall
 
 def theme_role_universe(bp: Dict[str, Any]) -> Dict[str, str]:
     """Hex-valued derived roles for a theme — the app-override role namespace."""
-    roles = app_target_roles(bp, target_roles(bp))
+    roles = render_roles(bp, app_target_roles(bp, target_roles(bp)))
     return {k: v for k, v in roles.items() if isinstance(v, str) and HEX_RE.match(str(v).strip())}
 
 
@@ -9005,6 +9046,8 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
         return 0
     if args.cmd == "save-current":
         bp = blueprint_from_current_theme(name=args.name)
+        # The shell's theme.json carries no terminal slots; the applied package does.
+        bp["terminalColors"] = current_theme_obj().get("terminalColors") or {}
         saved = save_theme_package(bp, args.name)
         print(json.dumps({"success": True, "saved": str(saved)}, indent=2) if args.json else str(saved))
         return 0
@@ -9426,7 +9469,9 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
                 if existing:
                     content = Path(existing).read_text()
                 elif cfg.get("template"):
-                    content = render_template((cfg_dir_path / cfg["template"]).read_text(), target_roles(bp))
+                    content = render_template((cfg_dir_path / cfg["template"]).read_text(),
+                                              render_roles(bp, target_roles(bp)),
+                                              f"{cfg_dir_path.name}/{cfg['template']}")
                 else:
                     eprint(f"{args.app} has no template to seed from; create {user_path} by hand")
                     return 1
