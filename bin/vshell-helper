@@ -3945,7 +3945,7 @@ def run_hook(hook: Any, roles: Dict[str, str], bp: Dict[str, Any]) -> Dict[str, 
         result["colorThemeSelected"] = selected
         return result
     if hook == "vscode-theme":
-        return apply_vscode_theme_hook(roles)
+        return apply_vscode_theme_hook(roles, bp)
     if hook == "icon-theme":
         return apply_icon_theme_hook(roles)
     if hook == "fastfetch-logo":
@@ -4145,6 +4145,35 @@ def _vgs_theme_slug(name: str) -> str:
     return slug or "vgs"
 
 
+def _vgs_theme_identity(bp: Dict[str, Any], fallback: str) -> Tuple[str, str]:
+    """Return the package-owned VS Code label and its file slug."""
+    label = str(bp.get("name") or fallback or "VGS")
+    return label, _vgs_theme_slug(label)
+
+
+def _vgs_active_theme_identity(
+        bp: Dict[str, Any], bundled: List[Tuple[str, str, str, str]]) -> Tuple[str, str]:
+    """Return the active VS Code label and slug.
+
+    A package owns the active identity whenever its curated VS Code file is the
+    installed source. A template-rendered file uses a label that no bundled
+    package owns, even when its blueprint keeps a package display name.
+    """
+    apps = bp.get("apps") or {}
+    if apps.get("vscode-theme.json"):
+        return _vgs_theme_identity(bp, "VGS")
+
+    bundled_labels = {label for _slug, label, _ui, _content in bundled}
+    bundled_slugs = {slug for slug, _label, _ui, _content in bundled}
+    suffix = 1
+    while True:
+        label = "VGS Generated" if suffix == 1 else f"VGS Generated {suffix}"
+        slug = _vgs_theme_slug(label)
+        if label not in bundled_labels and slug not in bundled_slugs:
+            return label, slug
+        suffix += 1
+
+
 def _read_vgs_theme_name(theme_file: Path) -> str:
     """The theme's display name from its JSON `name` (JSONC-tolerant: some source
     bundles ship comments/trailing commas)."""
@@ -4161,56 +4190,51 @@ def _read_vgs_theme_name(theme_file: Path) -> str:
 
 def _all_bundled_vscode_themes() -> List[Tuple[str, str, str, str]]:
     """Return (slug, label, uiTheme, content) for bundled VS Code theme files.
-    User themes overlay built-ins by name. Register labels before VSCodium
-    starts so its theme picker can resolve them. Apply tab colors from each
-    theme's role map before writing the extension copy."""
-    bp_by_key: Dict[str, Dict[str, Any]] = {}
-    for bp in list_themes():
-        for key in (str(bp.get("name") or ""), Path(bp.get("path") or "").stem):
-            k = key.strip().lower()
-            if k:
-                bp_by_key.setdefault(k, bp)
-    out: Dict[str, Tuple[str, str, str, str]] = {}
-    for base in (builtin_themes_dir(), user_themes_dir()):
-        if not base.is_dir():
+    A theme package owns its label and slug; the curated file owns only its
+    content. User files overlay built-ins by package name. Register labels
+    before VSCodium starts so its theme picker can resolve them. Apply tab
+    colors from each theme's role map before writing the extension copy."""
+    bundled: List[Tuple[str, str, Path, Dict[str, Any]]] = []
+    slug_owners: Dict[str, str] = {}
+    for package_name in theme_package_names():
+        files = compose_theme_files(package_name)
+        vf = files.get("apps/vscode-theme.json")
+        if not vf:
             continue
-        for tdir in sorted(base.iterdir()):
-            if tdir.name in RESERVED_THEME_SUBDIRS or not tdir.is_dir():
-                continue
-            vf = tdir / "apps" / "vscode-theme.json"
-            if not vf.is_file():
-                continue
-            try:
-                content = vf.read_text()
-            except OSError:
-                continue
-            label = _read_vgs_theme_name(vf)
-            mode = "dark"
-            with contextlib.suppress(Exception):
-                mode = (json.loads((tdir / "theme.json").read_text()).get("mode") or "dark").lower()
-            bp = bp_by_key.get(tdir.name.lower())
-            roles = {"accent": "#808080", "theme_type": mode}
-            if bp:
-                # The saved [vscode] overrides too: the extension install writes every
-                # bundled copy after the apply hook writes the current theme's.
-                roles = render_roles(bp, target_roles(bp), bp_app_overrides(bp).get("vscode", {}))
-            content = augment_vscode_colors(content, roles)
-            ui = "vs" if mode == "light" else "vs-dark"
-            out[_vgs_theme_slug(label)] = (_vgs_theme_slug(label), label, ui, content)
-    return list(out.values())
+        bp = load_theme_package(package_name)
+        if not bp:
+            continue
+        label, slug = _vgs_theme_identity(bp, package_name)
+        previous = slug_owners.get(slug)
+        if previous is not None:
+            raise ValueError(
+                f"vscode-theme-slug-collision: {slug}: {previous} and {package_name}")
+        slug_owners[slug] = package_name
+        bundled.append((slug, label, vf, bp))
+
+    out: List[Tuple[str, str, str, str]] = []
+    for slug, label, vf, bp in bundled:
+        # The saved [vscode] overrides reach the bundled copy too: the extension
+        # install writes every copy after the apply hook writes the current theme's.
+        roles = render_roles(bp, target_roles(bp), bp_app_overrides(bp).get("vscode", {}))
+        content = augment_vscode_colors(vf.read_text(), roles)
+        ui = "vs" if blueprint_mode(bp) == "light" else "vs-dark"
+        out.append((slug, label, ui, content))
+    return out
 
 
-def _install_vgs_vscode_extension(ext_dir: Path, theme_file: Path, mode: str) -> str:
+def _install_vgs_vscode_extension(ext_dir: Path, theme_file: Path, mode: str,
+                                  identity: Tuple[str, str],
+                                  bundled: List[Tuple[str, str, str, str]]) -> str:
     """Install/refresh the local vgs.vgs-theme extension. Each VGS theme is
-    contributed under its own distinct label (from the theme JSON's `name`, e.g.
-    "VGS Artzen") so VSCodium shows a matching theme and a live switch actually
-    changes `workbench.colorTheme` (a single shared "VGS" label never refreshes).
-    Applied themes accumulate in a manifest so previously-seen names keep
-    resolving. Returns the label to point colorTheme at."""
+    contributed under the active label and slug supplied by the caller,
+    so VSCodium shows a matching theme and a live switch actually changes
+    `workbench.colorTheme` (a single shared "VGS" label never refreshes). Applied
+    themes accumulate in a manifest so previously-seen names keep resolving.
+    Returns the active label to point colorTheme at."""
     ext_root = ext_dir / "vgs.vgs-theme-1.0.0"
     themes_dir = ext_root / "themes"
-    name = _read_vgs_theme_name(theme_file)
-    slug = _vgs_theme_slug(name)
+    name, slug = identity
     ui = "vs" if mode == "light" else "vs-dark"
     content = theme_file.read_text()
     write_file(themes_dir / f"{slug}.json", content)
@@ -4225,7 +4249,7 @@ def _install_vgs_vscode_extension(ext_dir: Path, theme_file: Path, mode: str) ->
     manifest[slug] = {"label": name, "uiTheme": ui}
     # Register bundled labels before VSCodium starts. Write only changed files
     # to avoid causing an extension reload on every theme apply.
-    for b_slug, b_label, b_ui, b_content in _all_bundled_vscode_themes():
+    for b_slug, b_label, b_ui, b_content in bundled:
         tf = themes_dir / f"{b_slug}.json"
         try:
             unchanged = tf.exists() and tf.read_text() == b_content
@@ -4292,7 +4316,7 @@ def _register_vgs_vscode_extension(ext_dir: Path) -> None:
     write_file(reg, json.dumps(entries, indent=0) + "\n")
 
 
-def apply_vscode_theme_hook(roles: Dict[str, str]) -> Dict[str, Any]:
+def apply_vscode_theme_hook(roles: Dict[str, str], bp: Dict[str, Any]) -> Dict[str, Any]:
     gen = generated_dir() / "vscode"
     curated_pointer = gen / "curated.json"
     theme_file = gen / "vgs-theme.json"
@@ -4330,7 +4354,10 @@ def apply_vscode_theme_hook(roles: Dict[str, str]) -> Dict[str, Any]:
         if not theme_name:
             if not theme_file.exists() or not ext_dir.is_dir():
                 continue
-            theme_name = _install_vgs_vscode_extension(ext_dir, theme_file, mode)
+            bundled = _all_bundled_vscode_themes()
+            identity = _vgs_active_theme_identity(bp, bundled)
+            theme_name = _install_vgs_vscode_extension(
+                ext_dir, theme_file, mode, identity, bundled)
         note = _set_vscode_color_theme(settings_path, theme_name, state, _vgs_vscode_labels(ext_dir))
         if note:
             notes.append(f"{variant['id']}: {note}")
