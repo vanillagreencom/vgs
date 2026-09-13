@@ -8770,6 +8770,29 @@ def test_terminal_app_overrides_show_on_their_editor_row():
     with_temp_home(scenario)
 
 
+def test_preview_key_covers_terminal_slots():
+    """A generated preview draws its terminal from the theme's terminal slots, so
+    the cache key must move when only those slots change, or the theme browser
+    keeps a tile painted with the old ones."""
+
+    def scenario(_temp_home: Path):
+        blueprint = helper.load_theme_package("white")
+        if not blueprint or not blueprint.get("terminalColors"):
+            raise AssertionError("white must ship terminal slots for this fixture")
+        base = helper.blueprint_preview_hash(blueprint)
+        # (label, the blueprint the key is taken from, whether the key must equal the base)
+        rows = [
+            ("nothing changed", dict(blueprint), True),
+            ("the terminal slots dropped", dict(blueprint, terminalColors={}), False),
+            ("one terminal slot changed",
+             dict(blueprint, terminalColors={**blueprint["terminalColors"], "color0": "#123456"}), False),
+        ]
+        for label, variant, same in rows:
+            assert_equal(helper.blueprint_preview_hash(variant) == base, same, label)
+
+    with_temp_home(scenario)
+
+
 def main():
     test_system_font_family_targets()
     test_system_font_size_targets()
@@ -8815,6 +8838,7 @@ def main():
     test_light_themes_read_in_a_terminal()
     test_wallpaper_and_save_keep_terminal_slots()
     test_terminal_app_overrides_show_on_their_editor_row()
+    test_preview_key_covers_terminal_slots()
     test_restyle_integer_sweeps()
     test_fastfetch_portable_seed_and_logo_fallback()
     test_compositor_dependency_selection()

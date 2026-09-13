@@ -5507,7 +5507,12 @@ def blueprint_preview_hash(bp: Dict[str, Any]) -> str:
     for name, path in sorted((bp.get("apps") or {}).items()):
         with contextlib.suppress(OSError):
             apps_state[name] = int(Path(path).stat().st_mtime)
-    payload = json.dumps({"palette": bp.get("palette", {}), "wallpaper": preview_wallpaper(bp), "apps": apps_state, "v": PREVIEW_GENERATOR_VERSION}, sort_keys=True)
+    inputs: Dict[str, Any] = {"palette": bp.get("palette", {}), "wallpaper": preview_wallpaper(bp), "apps": apps_state, "v": PREVIEW_GENERATOR_VERSION}
+    # The preview's terminal draws its terminal slots, so they move the key too.
+    # Added only when present, so a theme without them keeps its cached preview.
+    if bp.get("terminalColors"):
+        inputs["terminal"] = bp["terminalColors"]
+    payload = json.dumps(inputs, sort_keys=True)
     return hashlib.sha256(payload.encode()).hexdigest()[:12]
 
 
