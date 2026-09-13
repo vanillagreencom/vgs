@@ -1,0 +1,15 @@
+# Terminal-only ANSI slots: what a terminal paints, where the palette's own
+# slot carries a different meaning for the other app templates, the shell's
+# derived roles and pi.
+
+# body text: the theme foreground darkened along its hue to 7:1.
+color0 = "#534f74"
+
+# band under body text.
+color7 = "#cccad9"
+
+# muted text.
+color8 = "#746d85"
+
+# band under body text.
+color15 = "#cccad9"

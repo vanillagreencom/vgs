@@ -77,6 +77,9 @@ CAMEL = {
     "bright_cyan": "brightCyan",
     "bright_white": "brightWhite",
 }
+# VS Code's workbench keys for the sixteen ANSI slots, in slot order. Derived
+# from the slot names so the two spellings cannot drift apart.
+VSCODE_ANSI_KEYS = ["terminal.ansi" + name.title().replace("_", "") for name in ANSI_NAMES]
 # Syntax roles and the palette role each derives from. Rendered into
 # themes/targets/codex-vgs/vgs.tmTheme, which paints code and diffs in Codex.
 SYNTAX_ROLE_BASES = {
@@ -820,7 +823,9 @@ def recognized_color_count(data: Dict[str, str]) -> int:
     return len([k for k in normalized if k in COLOR_KEYS and k not in {"theme_type", "mode", "variant", "scheme"}])
 
 
-def parse_colors_toml(path: Path) -> Dict[str, str]:
+def parse_colors_toml(path: Path, allow_empty: bool = False) -> Dict[str, str]:
+    """Read a colours file. `allow_empty` accepts a file holding no colours, which
+    a terminal-colors.toml overlay uses to mean no terminal slots."""
     if not path.exists():
         raise ValueError(f"colors file not found: {path}")
 
@@ -859,7 +864,7 @@ def parse_colors_toml(path: Path) -> Dict[str, str]:
                     out[sm.group(1)] = sm.group(2).lower()
 
     normalized = normalize_color_map(out)
-    if recognized_color_count(normalized) == 0:
+    if recognized_color_count(normalized) == 0 and not (allow_empty and toml_error is None):
         detail = f": {toml_error}" if toml_error else ""
         raise ValueError(f"no recognized colors in {path}{detail}")
     return normalized
@@ -1252,6 +1257,14 @@ def paired_blueprint(base: Dict[str, Any], target_mode: str,
 # installed (see the download catalog below); it is not a theme package.
 RESERVED_THEME_SUBDIRS = {"blueprints", "targets", "wallpapers", "thumbnails"}
 
+# Terminal-only ANSI slots. A slot carries two meanings at once: `colors.toml`
+# feeds the shell's derived roles and pi's interface as well as the terminal, so
+# a slot whose conventional terminal meaning needs a different colour than the
+# rest of VGS reads cannot be fixed there without moving a role. This file holds
+# that terminal value alone: only the targets that paint an actual terminal read
+# it, and `target_roles` and every app template outside a terminal ignore it.
+TERMINAL_COLORS_FILE = "terminal-colors.toml"
+
 
 def theme_package_names() -> List[str]:
     names = set()
@@ -1308,6 +1321,7 @@ def load_theme_package(name: str) -> Dict[str, Any] | None:
     # Restyle adjustments transform the base palette before role derivation and
     # stay non-destructive (colors.toml is never rewritten). All-zero is a no-op.
     adjustments = normalize_adjustments(meta.get("adjustments"))
+    unadjusted_colors = dict(colors)
     if not adjustments_all_zero(adjustments):
         colors = apply_adjustments(colors, adjustments)
     bp = palette_from_colors_map(colors, name=str(meta.get("name") or name), wallpaper=wallpaper, source=source)
@@ -1332,9 +1346,25 @@ def load_theme_package(name: str) -> Dict[str, Any] | None:
     bp["catalogPristine"] = catalog_pristine(name)
     bp["appOverrides"] = {app: len(roles) for app, roles in _parse_app_overrides_text(
         files["app-colors.toml"].read_text(errors="ignore") if "app-colors.toml" in files else "").items()}
+    bp["terminalColors"] = {}
+    if TERMINAL_COLORS_FILE in files:
+        try:
+            bp["terminalColors"] = terminal_slot_overrides(
+                parse_colors_toml(files[TERMINAL_COLORS_FILE], allow_empty=True))
+        except Exception as exc:
+            eprint(f"theme package {name}: {exc}")
+    if bp["terminalColors"] and not adjustments_all_zero(adjustments):
+        # Restyle moves explicit terminal slots with the palette. They go in beside
+        # the unadjusted palette under names outside its keys, so every transform
+        # is measured against the palette's own mean lightness, not moved by them.
+        moved = apply_adjustments({**unadjusted_colors, **{f"terminal_{key}": value
+                                   for key, value in bp["terminalColors"].items()}}, adjustments)
+        bp["terminalColors"] = {key: moved[f"terminal_{key}"] for key in bp["terminalColors"]}
     stamps = [meta_path.stat().st_mtime]
     if "colors.toml" in files:
         stamps.append(files["colors.toml"].stat().st_mtime)
+    if TERMINAL_COLORS_FILE in files:
+        stamps.append(files[TERMINAL_COLORS_FILE].stat().st_mtime)
     bp["timestamp"] = int(max(stamps) * 1000)
     return bp
 
@@ -1355,7 +1385,7 @@ def resolve_theme_package(name: str) -> Dict[str, Any] | None:
 # before unpacking. HTTPS is required except for the test base-URL override.
 # Downloaded files are theme data.
 
-CATALOG_ALLOWED_TOP_LEVEL = {"theme.json", "colors.toml", "preview.png"}
+CATALOG_ALLOWED_TOP_LEVEL = {"theme.json", "colors.toml", TERMINAL_COLORS_FILE, "preview.png"}
 CATALOG_ALLOWED_DIRS = ("apps/", "backgrounds/")
 CATALOG_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 CATALOG_RELEASE_RE = re.compile(r"^themes-v[0-9]+$")
@@ -2008,7 +2038,7 @@ def rendered_apps_for(bp: Dict[str, Any]) -> Dict[str, str]:
     (no curatedDestination) materialize — pointer-style curated formats
     (vscode.json, icons.theme, hyprland.conf) are hand-written only.
     """
-    roles = target_roles(bp)
+    roles = render_roles(bp, target_roles(bp))
     theme_apps = theme_apps_settings()
     out: Dict[str, str] = {}
     for cfg_path in sorted(targets_dir().glob("*/config.json")):
@@ -2018,7 +2048,8 @@ def rendered_apps_for(bp: Dict[str, Any]) -> Dict[str, str]:
             continue
         if not target_enabled(cfg, theme_apps):
             continue
-        out[str(name)] = render_template((cfg_path.parent / cfg["template"]).read_text(), roles)
+        out[str(name)] = render_template((cfg_path.parent / cfg["template"]).read_text(), roles,
+                                         f"{cfg_path.parent.name}/{cfg['template']}")
     return out
 
 
@@ -2040,6 +2071,17 @@ def materialize_theme_package(bp: Dict[str, Any], apps: Dict[str, str] | None = 
     }
     write_file(root / "theme.json", json.dumps(meta, indent=2) + "\n")
     write_file(root / "colors.toml", colors_toml_from_blueprint(bp))
+    terminal = bp.get("terminalColors") or {}
+    if terminal:
+        write_file(root / TERMINAL_COLORS_FILE, "".join(f'{key} = "{value}"\n' for key, value in terminal.items()))
+    elif user and (builtin_themes_dir() / name / TERMINAL_COLORS_FILE).is_file():
+        # The composed package would inherit the built-in theme's slots, so the
+        # overlay holds a file with none, which masks the built-in file.
+        write_file(root / TERMINAL_COLORS_FILE, "# No terminal slots: this overlay masks the built-in theme's.\n")
+    else:
+        # colors.toml is rewritten on every save, so a stale terminal file would
+        # paint the previous theme's slots over this one.
+        (root / TERMINAL_COLORS_FILE).unlink(missing_ok=True)
     wallpaper = resolve_path(str(bp.get("palette", {}).get("wallpaper") or ""))
     if wallpaper and Path(wallpaper).is_file():
         bg_dir = root / "backgrounds"
@@ -2313,6 +2355,69 @@ def target_roles(bp: Dict[str, Any]) -> Dict[str, str]:
     return roles
 
 
+def terminal_slot_overrides(data: Dict[str, str]) -> Dict[str, str]:
+    """The `colorN` entries of a parsed terminal-colors.toml, and nothing else.
+
+    Every other key is dropped rather than carried: a background, a foreground or
+    a role name here would silently claim a reach this file does not have, since
+    only the sixteen ANSI slots differ between the terminal and the rest of VGS.
+    """
+    return {f"color{index}": clean_hex(data[f"color{index}"])
+            for index in range(16) if f"color{index}" in data}
+
+
+def terminal_slot_override_keys(index: int) -> Tuple[str, ...]:
+    """The saved app-override keys that set terminal slot `index`, highest first.
+
+    The slot's own `terminal_` names are what the App Theming editor writes; the
+    palette's `colorN` and ANSI name are what an override saved against the
+    palette roles carries. The render and the editor both read this, so the
+    colour an editor row shows is the colour the terminal paints.
+    """
+    name = ANSI_NAMES[index]
+    return (f"terminal_color{index}", f"terminal_{name}", f"color{index}", name)
+
+
+# Each `terminal_` role name and the ANSI slot it paints.
+TERMINAL_SLOT_INDEX = {f"terminal_{key}": index for index, name in enumerate(ANSI_NAMES)
+                       for key in (f"color{index}", name)}
+
+
+def terminal_palette_roles(bp: Dict[str, Any], roles: Dict[str, str],
+                           app_overrides: Dict[str, str]) -> Dict[str, str]:
+    """The sixteen ANSI slots as a terminal paints them, under `terminal_` names.
+
+    A template that writes an actual terminal palette reads these; every other
+    placeholder in the same template keeps the theme's own slot. A slot takes, in
+    order: the app's saved override under a key `terminal_slot_override_keys`
+    lists, which is the user's choice for that one app; the theme's
+    terminal-colors.toml; the palette's own value. A theme that ships no
+    terminal-colors.toml therefore renders exactly what it rendered before.
+    """
+    terminal = bp.get("terminalColors") or {}
+    out: Dict[str, str] = {}
+    for index, name in enumerate(ANSI_NAMES):
+        key = f"color{index}"
+        saved = next((app_overrides[k] for k in terminal_slot_override_keys(index) if app_overrides.get(k)), "")
+        value = clean_hex(saved or terminal.get(key) or roles.get(key) or DEFAULT_COLORS[index])
+        out[f"terminal_{key}"] = value
+        out[f"terminal_{name}"] = value
+    return out
+
+
+def render_roles(bp: Dict[str, Any], base: Dict[str, str],
+                 app_overrides: Dict[str, str] | None = None) -> Dict[str, str]:
+    """The role map a target template renders with: `base`, the app's saved
+    overrides, then the terminal slots, which alone decide their own keys.
+
+    Every template render takes its map from here, so the terminal slots cannot
+    reach one render path and miss another; `render_template` refuses a role
+    placeholder the map lacks.
+    """
+    overrides = app_overrides or {}
+    return {**base, **overrides, **terminal_palette_roles(bp, base, overrides)}
+
+
 def app_target_roles(bp: Dict[str, Any], shell_roles: Dict[str, str] | None = None) -> Dict[str, str]:
     """Keep curated base/ANSI colors byte-faithful for external app targets.
 
@@ -2321,37 +2426,36 @@ def app_target_roles(bp: Dict[str, Any], shell_roles: Dict[str, str] | None = No
     Derived semantic/surface roles still come from the shell map.
     """
     roles = dict(shell_roles or target_roles(bp))
-    if blueprint_source(bp) != "curated":
-        return roles
-    pal = bp.get("palette", {})
-    colors = [
-        clean_hex(color, DEFAULT_COLORS[index] if index < len(DEFAULT_COLORS) else "#000000")
-        for index, color in enumerate(pal.get("colors", []))
-    ]
-    while len(colors) < 16:
-        colors.append(DEFAULT_COLORS[len(colors)])
-    ext = pal.get("extendedColors") or {}
-    raw = {
-        "background": clean_hex(ext.get("background") or colors[0], colors[0]),
-        "foreground": clean_hex(ext.get("foreground") or colors[7], colors[7]),
-        "accent": clean_hex(ext.get("accent") or colors[4], colors[4]),
-        "cursor": clean_hex(ext.get("cursor") or ext.get("accent") or colors[4], colors[4]),
-        "selection_background": clean_hex(
-            ext.get("selection_background") or ext.get("selectionBackground") or colors[4],
-            colors[4],
-        ),
-        "selection_foreground": clean_hex(
-            ext.get("selection_foreground") or ext.get("selectionForeground") or colors[15],
-            colors[15],
-        ),
-    }
-    for index, color in enumerate(colors[:16]):
-        raw[f"color{index}"] = color
-        raw[ANSI_NAMES[index]] = color
-    roles.update(raw)
-    for snake, camel in CAMEL.items():
-        if snake in raw:
-            roles[camel] = raw[snake]
+    if blueprint_source(bp) == "curated":
+        pal = bp.get("palette", {})
+        colors = [
+            clean_hex(color, DEFAULT_COLORS[index] if index < len(DEFAULT_COLORS) else "#000000")
+            for index, color in enumerate(pal.get("colors", []))
+        ]
+        while len(colors) < 16:
+            colors.append(DEFAULT_COLORS[len(colors)])
+        ext = pal.get("extendedColors") or {}
+        raw = {
+            "background": clean_hex(ext.get("background") or colors[0], colors[0]),
+            "foreground": clean_hex(ext.get("foreground") or colors[7], colors[7]),
+            "accent": clean_hex(ext.get("accent") or colors[4], colors[4]),
+            "cursor": clean_hex(ext.get("cursor") or ext.get("accent") or colors[4], colors[4]),
+            "selection_background": clean_hex(
+                ext.get("selection_background") or ext.get("selectionBackground") or colors[4],
+                colors[4],
+            ),
+            "selection_foreground": clean_hex(
+                ext.get("selection_foreground") or ext.get("selectionForeground") or colors[15],
+                colors[15],
+            ),
+        }
+        for index, color in enumerate(colors[:16]):
+            raw[f"color{index}"] = color
+            raw[ANSI_NAMES[index]] = color
+        roles.update(raw)
+        for snake, camel in CAMEL.items():
+            if snake in raw:
+                roles[camel] = raw[snake]
     return roles
 
 
@@ -2411,7 +2515,8 @@ def target_render_passes(cfg: Dict[str, Any], roles: Dict[str, str], dest: Path,
     passes: List[Tuple[Dict[str, str], Path]] = []
     for mode in modes:
         mode_roles = {**roles, **mode_maps()[str(mode)], **overrides}
-        passes.append((mode_roles, expand_dest(render_template(str(cfg["destination"]), mode_roles))))
+        passes.append((mode_roles, expand_dest(render_template(
+            str(cfg["destination"]), mode_roles, f"{cfg.get('app') or 'target'} destination"))))
     # A `modes` destination that does not vary by mode would write one file with
     # the last mode's colours and report every mode rendered. Refuse it here so a
     # target configuration that forgets `{theme_type}` fails where it is written.
@@ -2704,12 +2809,28 @@ def claude_theme_overrides(roles: Dict[str, str]) -> Tuple[Dict[str, str], List[
     }, shortfalls
 
 
-def render_template(text: str, roles: Dict[str, str]) -> str:
+def template_role_names() -> set[str]:
+    """Every role name a render map can carry, read from the builders of the map:
+    the palette and terminal roles, and each under the mode prefix that
+    `target_render_passes` gives a `modeVariants` target."""
+    names = set(target_roles({})) | set(terminal_palette_roles({}, {}, {}))
+    return names | {f"{mode}_{name}" for mode in THEME_MODES for name in names}
+
+
+def render_template(text: str, roles: Dict[str, str], source: str) -> str:
+    """Substitute role placeholders in the target template `source`.
+
+    A brace token that names no role is foreign template syntax, such as tmux
+    `#{pane_id}`, and passes through. A token naming a role the map lacks is a
+    render path that skipped `render_roles`: written out, it leaves literal
+    placeholder text in the app's config, so it raises instead.
+    """
     def repl(match: re.Match[str]) -> str:
         name = match.group(1)
         modifier = match.group(2)
         if name not in roles:
-            # Preserve foreign template syntaxes such as tmux #{pane_id}.
+            if name in template_role_names():
+                raise ValueError(f"template-role-missing {source} {{{name}}}")
             return match.group(0)
         value = roles.get(name, "")
         if modifier == "strip":
@@ -3518,7 +3639,11 @@ def _all_bundled_vscode_themes() -> List[Tuple[str, str, str, str]]:
             with contextlib.suppress(Exception):
                 mode = (json.loads((tdir / "theme.json").read_text()).get("mode") or "dark").lower()
             bp = bp_by_key.get(tdir.name.lower())
-            roles = target_roles(bp) if bp else {"accent": "#808080", "theme_type": mode}
+            roles = {"accent": "#808080", "theme_type": mode}
+            if bp:
+                # The saved [vscode] overrides too: the extension install writes every
+                # bundled copy after the apply hook writes the current theme's.
+                roles = render_roles(bp, target_roles(bp), bp_app_overrides(bp).get("vscode", {}))
             content = augment_vscode_colors(content, roles)
             ui = "vs" if mode == "light" else "vs-dark"
             out[_vgs_theme_slug(label)] = (_vgs_theme_slug(label), label, ui, content)
@@ -5008,6 +5133,15 @@ def augment_vscode_colors(text: str, roles: Dict[str, str]) -> str:
     colors.setdefault("tab.unfocusedActiveModifiedBorder", modified + "99")
     colors.setdefault("tab.unfocusedInactiveModifiedBorder", modified + "66")
 
+    # VS Code's integrated terminal is a terminal, so it takes the theme's
+    # terminal slots rather than the curated theme's own guess at them: a program
+    # printing ANSI there reads what it reads in ghostty or kitty. A blueprint
+    # that did not load supplies no slots, and the curated values stand.
+    for index, key in enumerate(VSCODE_ANSI_KEYS):
+        slot = roles.get(f"terminal_color{index}")
+        if slot:
+            colors[key] = slot
+
     data["colors"] = colors
     return json.dumps(data, indent=2) + "\n"
 
@@ -5079,7 +5213,7 @@ def _apply_theme_obj_unlocked(bp: Dict[str, Any], only_app: str | None = None,
         app_id = str(cfg.get("app") or "")
         base_role_map = roles if cfg_path.parent.name == "vgs-shell" else external_roles
         target_overrides = app_overrides.get(app_id) or {}
-        target_role_map = {**base_role_map, **target_overrides} if target_overrides else base_role_map
+        target_role_map = render_roles(bp, base_role_map, target_overrides)
         if curated_src and curated_dest:
             install_curated_file(Path(curated_src), curated_dest, target_role_map)
             rendered.append(str(curated_dest))
@@ -5098,7 +5232,8 @@ def _apply_theme_obj_unlocked(bp: Dict[str, Any], only_app: str | None = None,
             for pass_roles, pass_dest in target_render_passes(
                 cfg, target_role_map, dest, resolve_mode_maps, target_overrides
             ):
-                write_file(pass_dest, render_template(template, pass_roles))
+                write_file(pass_dest, render_template(template, pass_roles,
+                                                      f"{cfg_path.parent.name}/{cfg['template']}"))
                 rendered.append(str(pass_dest))
         if cfg.get("hook"):
             hook_value = cfg["hook"]
@@ -5387,7 +5522,12 @@ def blueprint_preview_hash(bp: Dict[str, Any]) -> str:
     for name, path in sorted((bp.get("apps") or {}).items()):
         with contextlib.suppress(OSError):
             apps_state[name] = int(Path(path).stat().st_mtime)
-    payload = json.dumps({"palette": bp.get("palette", {}), "wallpaper": preview_wallpaper(bp), "apps": apps_state, "v": PREVIEW_GENERATOR_VERSION}, sort_keys=True)
+    inputs: Dict[str, Any] = {"palette": bp.get("palette", {}), "wallpaper": preview_wallpaper(bp), "apps": apps_state, "v": PREVIEW_GENERATOR_VERSION}
+    # The preview's terminal draws its terminal slots, so they move the key too.
+    # Added only when present, so a theme without them keeps its cached preview.
+    if bp.get("terminalColors"):
+        inputs["terminal"] = bp["terminalColors"]
+    payload = json.dumps(inputs, sort_keys=True)
     return hashlib.sha256(payload.encode()).hexdigest()[:12]
 
 
@@ -5443,7 +5583,7 @@ def write_preview_home(tmp: Path) -> Path:
 
 
 def render_target_template(target: str, template: str, roles: Dict[str, str]) -> str:
-    return render_template((targets_dir() / target / template).read_text(), roles)
+    return render_template((targets_dir() / target / template).read_text(), roles, f"{target}/{template}")
 
 
 def parse_nvim_spec(spec_path: Path) -> Tuple[str, List[str]]:
@@ -5473,26 +5613,27 @@ def parse_nvim_spec(spec_path: Path) -> Tuple[str, List[str]]:
 def write_preview_tree(bp: Dict[str, Any], roles: Dict[str, str], tmp: Path) -> Dict[str, Any]:
     """Render the isolated config tree used by the preview session."""
     mode = (roles.get("theme_type") or "dark").lower()
+    app_roles = render_roles(bp, roles)
     cfg = tmp / "config"
     (cfg / "gtk-3.0").mkdir(parents=True)
     (cfg / "gtk-4.0").mkdir(parents=True)
-    (cfg / "gtk-3.0" / "gtk.css").write_text(render_target_template("gtk3-vgs", "gtk.css", roles))
-    (cfg / "gtk-4.0" / "gtk.css").write_text(render_target_template("gtk4-vgs", "gtk.css", roles))
+    (cfg / "gtk-3.0" / "gtk.css").write_text(render_target_template("gtk3-vgs", "gtk.css", app_roles))
+    (cfg / "gtk-4.0" / "gtk.css").write_text(render_target_template("gtk4-vgs", "gtk.css", app_roles))
     (cfg / "qt6ct" / "colors").mkdir(parents=True)
-    (cfg / "qt6ct" / "colors" / "vgs.conf").write_text(render_target_template("qt6ct-vgs", "vgs.conf", roles))
+    (cfg / "qt6ct" / "colors" / "vgs.conf").write_text(render_target_template("qt6ct-vgs", "vgs.conf", app_roles))
     (cfg / "qt6ct" / "qt6ct.conf").write_text(
         "[Appearance]\ncolor_scheme_path=" + str(cfg / "qt6ct" / "colors" / "vgs.conf") + "\ncustom_palette=true\n"
     )
 
     ghostty_conf = tmp / "ghostty.conf"
     ghostty_conf.write_text(
-        render_target_template("ghostty-vgs", "ghostty.conf", roles)
+        render_target_template("ghostty-vgs", "ghostty.conf", app_roles)
         + "\nfont-size = 11\nwindow-padding-x = 14\nwindow-padding-y = 10\nconfirm-close-surface = false\ncursor-style-blink = false\n"
     )
 
     (tmp / "sample.qml").write_text(PREVIEW_SAMPLE_CODE)
     theme_lua = tmp / "theme.nvim.lua"
-    theme_lua.write_text(render_target_template("nvim-vgs", "vgs-theme.lua", roles))
+    theme_lua.write_text(render_target_template("nvim-vgs", "vgs-theme.lua", app_roles))
     colorscheme, rtp_dirs = "", []
     nvim_spec = (bp.get("apps") or {}).get("neovim.lua")
     if nvim_spec:
@@ -6142,7 +6283,27 @@ def blueprint_mode_variant(base: Dict[str, Any], mode: str, wallpaper: str) -> D
 
 def blueprint_from_current_theme(name: str | None = None, mode: str | None = None) -> Dict[str, Any]:
     cur = current_theme()
-    return blueprint_from_theme_json(cur, name=name or cur.get("name", "vgs-theme"), mode=mode, wallpaper=cur.get("wallpaper", ""))
+    return with_current_terminal_slots(blueprint_from_theme_json(
+        cur, name=name or cur.get("name", "vgs-theme"), mode=mode, wallpaper=cur.get("wallpaper", "")))
+
+
+def with_current_terminal_slots(bp: Dict[str, Any]) -> Dict[str, Any]:
+    """Give a blueprint rebuilt from the applied theme's colours that theme's terminal slots.
+
+    Neither the shell's theme.json nor the palette in theme-current.json holds
+    them, so every rebuild from the current theme passes through here. A rebuild
+    into the other mode takes none, since the slots were chosen against the
+    applied background. The applied package is found by name, not through
+    `current_theme_obj`, whose fallback rebuilds from the current theme.
+    Mutate and return bp.
+    """
+    applied_name = str(current_theme().get("name") or "")
+    applied = find_theme(applied_name) if applied_name else None
+    slots: Dict[str, str] = {}
+    if applied and applied.get("package") and blueprint_mode(applied) == blueprint_mode(bp):
+        slots = dict(applied.get("terminalColors") or {})
+    bp["terminalColors"] = slots
+    return bp
 
 
 def carry_curated_apps(bp: Dict[str, Any]) -> Dict[str, Any]:
@@ -6290,7 +6451,9 @@ def persist_color_edits(edits: List[str], name: str) -> Dict[str, Any]:
 def apply_color_edits(edits: List[str], name: str, mode: str | None = None, wallpaper: str | None = None, save: bool = False) -> Dict[str, Any]:
     data = current_theme_color_data(mode=mode, wallpaper=wallpaper)
     data.update(parse_color_edits(edits))
-    bp = palette_from_colors_map(data, name=name or current_theme().get("name", "manual"), wallpaper=wallpaper if wallpaper is not None else current_theme().get("wallpaper", ""))
+    bp = with_current_terminal_slots(palette_from_colors_map(
+        data, name=name or current_theme().get("name", "manual"),
+        wallpaper=wallpaper if wallpaper is not None else current_theme().get("wallpaper", "")))
     result = apply_theme_obj(bp)
     result["saved"] = ""
     if save:
@@ -6300,7 +6463,7 @@ def apply_color_edits(edits: List[str], name: str, mode: str | None = None, wall
 
 def theme_role_universe(bp: Dict[str, Any]) -> Dict[str, str]:
     """Hex-valued derived roles for a theme — the app-override role namespace."""
-    roles = app_target_roles(bp, target_roles(bp))
+    roles = render_roles(bp, app_target_roles(bp, target_roles(bp)))
     return {k: v for k, v in roles.items() if isinstance(v, str) and HEX_RE.match(str(v).strip())}
 
 
@@ -6385,10 +6548,13 @@ def app_role_view(app: str, bp: Dict[str, Any]) -> Dict[str, Any]:
     overrides = bp_app_overrides(bp).get(app, {})
     roles: List[Dict[str, Any]] = []
     for role in app_template_roles(app, bp, effective):
+        slot = TERMINAL_SLOT_INDEX.get(role)
+        keys = terminal_slot_override_keys(slot) if slot is not None else (role,)
+        saved = [key for key in keys if overrides.get(key)]
         roles.append({
             "role": role,
-            "value": overrides.get(role) or effective.get(role, ""),
-            "overridden": role in overrides,
+            "value": overrides[saved[0]] if saved else effective.get(role, ""),
+            "overridden": bool(saved),
         })
     curated = not roles
     curated_name = app_curated_file(app, bp) if curated else ""
@@ -9091,7 +9257,13 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
                 role = role.strip()
                 if role not in universe:
                     raise ValueError(f"unknown role: {role}")
-                app_roles[role] = parse_hex_strict(value, role)
+                parsed = parse_hex_strict(value, role)
+                slot = TERMINAL_SLOT_INDEX.get(role)
+                if slot is not None:
+                    # One saved key per terminal slot, so the row just set is the colour painted.
+                    for key in terminal_slot_override_keys(slot):
+                        app_roles.pop(key, None)
+                app_roles[role] = parsed
         except ValueError as exc:
             eprint(str(exc))
             if args.json:
@@ -9365,7 +9537,9 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
                 if existing:
                     content = Path(existing).read_text()
                 elif cfg.get("template"):
-                    content = render_template((cfg_dir_path / cfg["template"]).read_text(), target_roles(bp))
+                    content = render_template((cfg_dir_path / cfg["template"]).read_text(),
+                                              render_roles(bp, target_roles(bp)),
+                                              f"{cfg_dir_path.name}/{cfg['template']}")
                 else:
                     eprint(f"{args.app} has no template to seed from; create {user_path} by hand")
                     return 1
