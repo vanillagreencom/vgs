@@ -40,11 +40,13 @@ clean="$(scan_curated_vscode_names "$fixture")" || fail "clean curated scan fail
 [[ -z "$clean" ]] || fail "a third-party plugin reference was treated as a display name"
 report_legacy_names "$clean" >/dev/null || fail "the clean inverse failed"
 
+# shellcheck disable=SC2329  # main invokes this replacement indirectly
 rg() {
   return 2
 }
 expect_failure "source scan error" 2 "source scan failed with exit 2" main
 
+# shellcheck disable=SC2329  # main invokes this replacement indirectly
 rg() {
   local arg
   for arg in "$@"; do
