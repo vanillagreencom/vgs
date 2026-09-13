@@ -41,6 +41,7 @@ Each resource has one owner. QML consumes the owner's state instead of starting 
 - [notifications.md](notifications.md): notification ownership and takeover.
 - [plugins.md](plugins.md): plugin loading, overrides and dependencies.
 - [theme.md](theme.md): palettes, app targets and wallpapers.
+- [theme-catalog.md](theme-catalog.md): wallpaper downloads, their marker and catalog updates.
 - [agent-cli-themes.md](agent-cli-themes.md): agent CLI theme rendering, Claude Code diff colours and settings-file selection.
 - [helper.md](helper.md): privileged operations and helper integrations.
 - [backend.md](backend.md): backend methods, processes and watchers.

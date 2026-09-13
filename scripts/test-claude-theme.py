@@ -220,7 +220,7 @@ def download_package(name: str) -> Path:
     wallpaper = dest / "backgrounds" / f"1-{name}.jpg"
     wallpaper.parent.mkdir(parents=True)
     wallpaper.write_bytes(b"\xff\xd8\xff wallpaper\n")
-    unpacked = [wallpaper.relative_to(dest).as_posix()]
+    unpacked = {wallpaper.relative_to(dest).as_posix(): helper._catalog_file_digest(wallpaper)}
     (dest / helper.CATALOG_MARKER).write_text(json.dumps(
         helper.catalog_marker_payload(
             name, dest, {"release": "themes-v5", "rev": 2, "sha256": "0" * 64},
