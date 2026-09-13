@@ -2152,11 +2152,11 @@ def lint_blueprint(bp: Dict[str, Any]) -> List[Dict[str, Any]]:
     # body text in it, so a light theme needs it dark. Same threshold as the
     # generated-palette rule for this slot. The terminal paints its own slot
     # from terminal-colors.toml when the theme ships one.
-    terminal = terminal_palette_roles(bp, {f"color{i}": value for i, value in enumerate(colors)}, {})
     if mode == "light":
-        check(f"color0 ({ANSI_NAMES[0]})", terminal["terminal_color0"], bg, 7.0)
+        terminal_black = clean_hex((bp.get("terminalColors") or {}).get("color0") or colors[0], colors[0])
+        check(f"color0 ({ANSI_NAMES[0]})", terminal_black, bg, 7.0)
     for i in range(1, 16):
-        check(f"color{i} ({ANSI_NAMES[i]})", terminal[f"terminal_color{i}"], bg, 3.0)
+        check(f"color{i} ({ANSI_NAMES[i]})", colors[i], bg, 3.0)
     return warnings
 
 
