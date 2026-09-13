@@ -95,6 +95,13 @@ jobs:
           esac
           (cd "$checker" && .agents/skills/bot-instructions/scripts/bot-instructions check --repo "$GITHUB_WORKSPACE" --spec "$GITHUB_WORKSPACE/.agents/skills/bot-instructions")
 
+      # The naming guard fails closed when its scanner cannot run. Install that
+      # scanner before the guard and its controls use it.
+      - name: Install naming guard scanner
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ripgrep
+
       # Run text checks before installing the Go and Qt toolchains.
       - name: Naming guard
         run: scripts/check-naming.sh

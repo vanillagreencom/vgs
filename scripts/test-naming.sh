@@ -42,9 +42,9 @@ report_legacy_names "$clean" >/dev/null || fail "the clean inverse failed"
 
 # shellcheck disable=SC2329  # main invokes this replacement indirectly
 rg() {
-  return 2
+  return 127
 }
-expect_failure "source scan error" 2 "source scan failed with exit 2" main
+expect_failure "source scan error" 127 "source scan failed with exit 127" main
 
 # shellcheck disable=SC2329  # main invokes this replacement indirectly
 rg() {
