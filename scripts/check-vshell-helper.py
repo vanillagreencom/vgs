@@ -8651,6 +8651,7 @@ def test_light_themes_read_in_a_terminal():
         ("catppuccin-latte", 4.5, 3.0, 4.5, None),
         ("flexoki-light", 4.5, 3.0, 4.5, None),
         ("rose-pine", 4.5, 3.0, 4.5, None),
+        ("thegreek", 4.5, 3.0, 4.5, None),
         ("white", 4.5, 3.0, 4.5, 4.5),
     ]
     other_targets = non_terminal_targets()

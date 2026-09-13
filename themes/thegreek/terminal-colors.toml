@@ -4,3 +4,9 @@
 
 # body text.
 color0 = "#242424"
+
+# band under body text.
+color7 = "#a6a696"
+
+# band under body text.
+color15 = "#a6a696"
