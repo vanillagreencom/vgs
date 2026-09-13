@@ -9028,8 +9028,9 @@ HORIZON_UPSTREAM_THEME_DIGESTS = {
     "horizon": "962976b0824665f13b53a8928000b6607f407db376e7e3d1f495d18be827a8e8",
     "horizon-light": "4f5d3eb25fe3e11bfcfd51df90958bb3a2a3fbc60b95896e88e6b321b7ecff01",
 }
-# The package files whose colours VGS picks; the VS Code file is held to the
-# upstream digest instead, since upstream itself writes `#000000` there.
+# The package files whose colours VGS picks. The VS Code file is copied verbatim,
+# so it is held to the upstream digest instead; upstream Horizon Bright also
+# writes `#000000b3` there, which is not in its globals.
 HORIZON_PICKED_FILES = ("colors.toml", "terminal-colors.toml", "ui-roles.toml", "apps/btop.theme")
 
 
@@ -9047,6 +9048,12 @@ def horizon_package_colours(package: Path) -> list[tuple[str, str]]:
         for value in re.findall(r"#[0-9A-Fa-f]+\b", path.read_text()):
             found.append((relpath, value.lower()))
     return found
+
+
+def horizon_invented_colours(package: Path, allowed: frozenset) -> list[str]:
+    """Every picked colour in `package` that upstream never published, as sorted `file value`."""
+    return sorted({f"{relpath} {value}" for relpath, value in horizon_package_colours(package)
+                   if value not in allowed})
 
 
 def horizon_theme_digest(path: Path) -> str:
@@ -9069,8 +9076,8 @@ def test_horizon_packages_use_only_upstream_colours():
             raise AssertionError(f"{name}: the colour extractor read no ui-roles.toml value; it is broken")
         if ("colors.toml", helper.parse_colors_toml(package / "colors.toml")["accent"]) not in colours:
             raise AssertionError(f"{name}: the colour extractor missed the accent; it is broken")
-        invented = sorted({f"{relpath} {value}" for relpath, value in colours if value not in allowed})
-        assert_equal(invented, [], f"{name}: every picked colour is an upstream Horizon colour")
+        assert_equal(horizon_invented_colours(package, allowed), [],
+                     f"{name}: every picked colour is an upstream Horizon colour")
         theme_file = package / "apps" / "vscode-theme.json"
         assert_equal(horizon_theme_digest(theme_file), HORIZON_UPSTREAM_THEME_DIGESTS[name],
                      f"{name}: the VS Code theme's colors and tokenColors are upstream's")
@@ -9081,6 +9088,8 @@ def test_horizon_packages_use_only_upstream_colours():
             # (file, planted line, what the check must report): a colour upstream
             # never published, and an upstream colour carrying an alpha channel.
             rows = [
+                ("colors.toml", 'color4 = "#18849a"\n', ["colors.toml #18849a"]),
+                ("terminal-colors.toml", 'color8 = "#63668d"\n', ["terminal-colors.toml #63668d"]),
                 ("ui-roles.toml", 'muted = "#18849a"\n', ["ui-roles.toml #18849a"]),
                 ("apps/btop.theme", 'theme[main_bg]="#2e303eff"\n', ["apps/btop.theme #2e303eff"]),
             ]
@@ -9088,9 +9097,8 @@ def test_horizon_packages_use_only_upstream_colours():
                 path = planted / relpath
                 original = path.read_text()
                 path.write_text(original + line)
-                reported = sorted({f"{rp} {value}" for rp, value in horizon_package_colours(planted)
-                                   if value not in allowed})
-                assert_equal(reported, expected, f"{name}: a planted {relpath} colour is named")
+                assert_equal(horizon_invented_colours(planted, allowed), expected,
+                             f"{name}: a planted {relpath} colour is named")
                 path.write_text(original)
 
             planted_theme = planted / "apps" / "vscode-theme.json"
