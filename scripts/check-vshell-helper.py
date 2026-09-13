@@ -8851,8 +8851,10 @@ def test_unsaved_applied_theme_keeps_terminal_slots():
     so its terminal slots survive only in theme-current.json. The next wallpaper
     change or colour edit must take them from that applied state; taking them from
     a package found by name finds nothing and restores the palette's own ANSI
-    slots, which on a light theme is unreadable terminal body text."""
-    slots = {"color0": "#ff0011"}
+    slots, which on a light theme is unreadable terminal body text. The two sources
+    are given different values so the rows also pin which one answers."""
+    shipped_slots = {"color0": "#ff0011"}
+    edited_slots = {"color0": "#00ff22"}
 
     def scenario(temp_home: Path):
         builtin = temp_home / "builtin"
@@ -8874,6 +8876,10 @@ def test_unsaved_applied_theme_keeps_terminal_slots():
             applied.append(bp)
             return original_apply(bp, only_app=only_app, only_target=only_target, run_hooks=False)
 
+        def run(argv, label):
+            with contextlib.redirect_stdout(io.StringIO()):
+                assert_equal(helper.cmd_theme(argv), 0, f"{label} exit status")
+
         helper.apply_theme_obj = apply_without_hooks
         try:
             blueprint = helper.load_theme_package("termfix")
@@ -8881,37 +8887,51 @@ def test_unsaved_applied_theme_keeps_terminal_slots():
                 raise AssertionError("termfix package did not load")
             helper.apply_theme_obj(blueprint)
 
-            # No applied state yet, as a HOME reaches a rebuild in before its first
-            # apply: the saved package under the shell state's name answers instead.
+            # The package's file edited on disk with no re-apply: the two sources now
+            # disagree, and the applied blueprint is the one a rebuild must read.
+            (package / helper.TERMINAL_COLORS_FILE).write_text('color0 = "#00ff22"\n')
+            run(["set-wallpaper", str(wallpaper)], "set-wallpaper against an edited package")
+            assert_equal(applied[-1].get("terminalColors"), shipped_slots,
+                         "the applied blueprint's slots win over the package's newer file")
+
+            # Shell state present, theme-current.json gone: the applied blueprint holds
+            # no slots, so the saved package under the shell state's name answers, with
+            # the value on disk rather than the one that was applied.
             (helper.cfg_dir() / "theme-current.json").unlink()
-            with contextlib.redirect_stdout(io.StringIO()):
-                assert_equal(helper.cmd_theme(["set-wallpaper", str(wallpaper)]), 0,
-                             "set-wallpaper with no applied state exit status")
-            assert_equal(applied[-1].get("terminalColors"), slots,
+            run(["set-wallpaper", str(wallpaper)], "set-wallpaper with no applied state")
+            assert_equal(applied[-1].get("terminalColors"), edited_slots,
                          "with no applied state the saved package's slots carry")
 
-            # (command, argv, the terminal slots the rebuilt blueprint must carry)
+            def last_applied():
+                return applied[-1].get("terminalColors")
+
+            # That rebuild applied edited_slots, so both sources hold it from here.
+            # (label, argv, what carries the rebuilt blueprint's slots, expected)
             rows = [
                 ("apply-colors --name, unsaved",
-                 ["apply-colors", "--name", "termfix-tweak", "--set", "accent=#123456"], slots),
+                 ["apply-colors", "--name", "termfix-tweak", "--set", "accent=#123456"],
+                 last_applied, edited_slots),
                 ("set-wallpaper after the unsaved apply",
-                 ["set-wallpaper", str(wallpaper)], slots),
+                 ["set-wallpaper", str(wallpaper)], last_applied, edited_slots),
                 ("a second apply-colors edit on the unsaved name",
-                 ["apply-colors", "--name", "termfix-tweak", "--set", "accent=#654321"], slots),
+                 ["apply-colors", "--name", "termfix-tweak", "--set", "accent=#654321"],
+                 last_applied, edited_slots),
                 ("clear-wallpaper after the unsaved apply",
-                 ["clear-wallpaper"], slots),
+                 ["clear-wallpaper"], last_applied, edited_slots),
+                # save-current writes a package instead of applying, so the slots it
+                # kept are read off disk; the loss there is permanent.
                 ("save-current from the unsaved name",
-                 ["save-current", "--name", "termfix-tweak-saved"], slots),
+                 ["save-current", "--name", "termfix-tweak-saved"],
+                 lambda: (helper.load_theme_package("termfix-tweak-saved") or {}).get("terminalColors"),
+                 edited_slots),
                 # Last: it leaves a dark applied state the rows above assume is light.
                 ("apply-colors into the other mode",
                  ["apply-colors", "--name", "termfix-tweak", "--mode", "dark",
-                  "--set", "accent=#123456"], {}),
+                  "--set", "accent=#123456"], last_applied, {}),
             ]
-            for index, (label, argv, expected) in enumerate(rows):
-                with contextlib.redirect_stdout(io.StringIO()):
-                    assert_equal(helper.cmd_theme(argv), 0, f"{label} exit status")
-                assert_equal(applied[-1].get("terminalColors"), expected,
-                             f"{label} carries the terminal slots")
+            for index, (label, argv, read, expected) in enumerate(rows):
+                run(argv, label)
+                assert_equal(read(), expected, f"{label} carries the terminal slots")
                 if index == 0:
                     assert_equal(helper.find_theme("termfix-tweak"), None,
                                  "the unsaved apply leaves no package under its name")
