@@ -1308,9 +1308,7 @@ def load_theme_package(name: str) -> Dict[str, Any] | None:
     except Exception as exc:
         eprint(f"skip theme package {name}: {exc}")
         return None
-    source = str(meta.get("source") or "curated").strip().lower()
-    if source not in {"curated", "generated"}:
-        source = "curated"
+    source = package_source(meta)
     hidden = {h for h in (meta.get("hiddenBackgrounds") or []) if isinstance(h, str)}
     backgrounds = sorted((rel, p) for rel, p in files.items() if rel.startswith("backgrounds/") and Path(rel).name not in hidden)
     wallpaper = ""
@@ -1319,17 +1317,16 @@ def load_theme_package(name: str) -> Dict[str, Any] | None:
         wallpaper = next((str(p) for rel, p in backgrounds if Path(rel).name == default_bg), "")
     if not wallpaper:
         wallpaper = str(backgrounds[0][1]) if backgrounds else ""
-    colors: Dict[str, str] = {}
-    if "colors.toml" in files:
-        try:
-            colors = parse_colors_toml(files["colors.toml"])
-        except Exception as exc:
-            eprint(f"theme package {name}: {exc}")
     # Restyle adjustments transform the base palette before role derivation and
     # stay non-destructive (colors.toml is never rewritten). All-zero is a no-op.
     adjustments = normalize_adjustments(meta.get("adjustments"))
-    unadjusted_colors = palette_identity(colors, str(meta.get("mode") or ""))
-    colors = palette_identity(colors, str(meta.get("mode") or ""), adjustments)
+    # The adjusted map is the palette the curated-file rule is asked about, so it
+    # comes from the one owner the save's exemption also calls. The unadjusted
+    # map is this loader's alone. Both derive from one parse, so a package whose
+    # `colors.toml` does not read reports it once.
+    raw_colors = package_colors_map(files, name)
+    unadjusted_colors = palette_identity(raw_colors, str(meta.get("mode") or ""))
+    colors = package_palette(raw_colors, meta)
     bp = palette_from_colors_map(colors, name=str(meta.get("name") or name), wallpaper=wallpaper, source=source)
     builtin_dir = builtin_themes_dir() / name
     user_dir = user_themes_dir() / name
@@ -1338,9 +1335,11 @@ def load_theme_package(name: str) -> Dict[str, Any] | None:
     bp["builtin"] = builtin_dir.is_dir()
     bp["path"] = str(builtin_dir if builtin_dir.is_dir() else user_dir)
     bp["userDir"] = str(user_dir) if user_dir.is_dir() else ""
+    app_overrides = _parse_app_overrides_text(
+        files["app-colors.toml"].read_text(errors="ignore") if "app-colors.toml" in files else "")
     bp["apps"] = curated_apps_for_palette(
         {Path(rel).name: str(p) for rel, p in files.items() if rel.startswith("apps/")},
-        palette_digest(colors),
+        colors, app_overrides,
         {str(root): layer_curated_palette(root) for root in (builtin_dir, user_dir)})
     bp["backgrounds"] = [str(p) for _rel, p in backgrounds]
     bp["packagedPreview"] = str(files["preview.png"]) if "preview.png" in files else ""
@@ -1353,8 +1352,7 @@ def load_theme_package(name: str) -> Dict[str, Any] | None:
     bp["modified"] = builtin_dir.is_dir() and user_dir.is_dir() and any(p.is_file() for p in user_dir.rglob("*"))
     bp["catalogOwned"] = catalog_owns(name)
     bp["catalogPristine"] = catalog_pristine(name)
-    bp["appOverrides"] = {app: len(roles) for app, roles in _parse_app_overrides_text(
-        files["app-colors.toml"].read_text(errors="ignore") if "app-colors.toml" in files else "").items()}
+    bp["appOverrides"] = {app: len(roles) for app, roles in app_overrides.items()}
     bp["terminalColors"] = {}
     if TERMINAL_COLORS_FILE in files:
         try:
@@ -2042,6 +2040,163 @@ def bp_app_overrides(bp: Dict[str, Any]) -> Dict[str, Dict[str, str]]:
     return theme_app_overrides(Path(str(path)).name)
 
 
+def theme_package_dir_name(bp: Dict[str, Any]) -> str:
+    """The directory name `materialize_theme_package` writes `bp` into."""
+    return re.sub(r"[^A-Za-z0-9_.-]+", "-", str(bp.get("name") or "theme")).strip("-") or "theme"
+
+
+def package_colors_map(files: Dict[str, Path], name: str) -> Dict[str, str]:
+    """The raw colours a theme package's own `colors.toml` holds.
+
+    One owner for the read, and only the read: a caller wanting a palette
+    identity passes the result to `palette_identity`. Owning both together gave
+    the loader two reads, one per identity map it needs, so a hand-edited overlay
+    with a typo in it reported its diagnostic twice per load and once more per
+    save, and a listing repeated the pair per package.
+
+    A package with no readable colours is a package with no colours, not a load
+    failure: `palette_from_colors_map` fills every role from the defaults and the
+    recorded digest still says which palette the curated files were picked for.
+    `name` is the package directory, which every caller has, rather than the
+    `name` key of a `theme.json` that need not carry one and printed an empty
+    name when it did not.
+    """
+    if "colors.toml" not in files:
+        return {}
+    try:
+        return parse_colors_toml(files["colors.toml"])
+    except Exception as exc:
+        eprint(f"theme package {name}: {exc}")
+        return {}
+
+
+def package_palette(colors: Dict[str, str], meta: Dict[str, Any]) -> Dict[str, str]:
+    """The palette identity a theme package renders from, over its parsed colours.
+
+    One owner for the assembly, because the loader decides which curated files a
+    package's palette still fits and the save's exemption has to ask the same
+    question of the same palette. Two spellings of these steps agreed until the
+    loader gained one the copy lacked, and the copy's answer is a refused
+    exemption, which prunes the only curated file a catalog download holds.
+
+    It takes the parsed colours rather than the package's files, so the loader
+    can pass one `package_colors_map` result here and to its own unadjusted map
+    instead of reading `colors.toml` twice.
+    """
+    return palette_identity(colors, str(meta.get("mode") or ""), meta.get("adjustments"))
+
+
+def package_source(meta: Dict[str, Any]) -> str:
+    """Whether a theme package's palette is hand-curated or machine-generated.
+
+    A package's colours are hand-picked unless its `theme.json` says otherwise,
+    which is the opposite of the default `blueprint_source` applies to a bare
+    blueprint, so that function cannot answer for a package.
+    """
+    source = str(meta.get("source") or "curated").strip().lower()
+    return source if source in {"curated", "generated"} else "curated"
+
+
+def rebuilt_palette_identity(bp: Dict[str, Any]) -> Dict[str, str]:
+    """A blueprint's palette in derived form, over the key set `theme.json` names.
+
+    The form two blueprints of different provenance are comparable in. A package
+    holds raw palette keys while `set-wallpaper --save` hands the save a
+    blueprint rebuilt out of `theme.json`, which holds derived roles; on akane
+    `accent`, `selection_background` and `selection_foreground` differ between the
+    two while naming the same palette. This also drops the terminal slots one
+    side carries and the other does not.
+
+    It is not a normal form. On the generated branch `target_roles` re-runs
+    contrast adjustment, so the derivation is not idempotent there: one more trip
+    through it moves the palette. On the akane package `theme mode --transform`
+    plus a save leaves behind, the roles that move are the six bright ANSI slots.
+    Two blueprints are therefore comparable only at equal rebuild depth, which is
+    what the call in `override_dropped_curated` arranges.
+    """
+    theme = theme_json_from_blueprint(bp)
+    return {**{str(key): str(value) for key, value in (theme.get("colors") or {}).items()},
+            "mode": str(theme.get("mode") or "")}
+
+
+def override_dropped_curated(bp: Dict[str, Any]) -> List[str]:
+    """Merge-style curated files the per-app override layer alone keeps out of
+    `bp`'s render, for the save's prune to spare.
+
+    A per-app override is a reversible layer stored beside the palette, and no
+    save writes it into `colors.toml`. The file it drops still fits the palette
+    the save records and comes back the moment the override is cleared, so
+    pruning it deleted the only copy a catalog download or a user-created package
+    has and `theme app-colors claude --reset` could not bring it back.
+
+    The question is asked here, against the package directory about to be written
+    over, rather than read off a key the loader put on the blueprint. No shipped
+    caller hands the save a loader blueprint: `set-wallpaper --save` passes
+    `carry_curated_apps` over a rebuild from the applied theme, which carries
+    `apps`, `package`, `path`, `builtin` and `userDir` and nothing else, so such
+    a key was dropped before the save ever read it.
+
+    The drop question is asked over the package's own palette, the one the loader
+    put the file in or out of `apps` against, not over the palette this save is
+    about to write. Those are held in different forms: the save writes a
+    blueprint rebuilt from the applied theme, which holds derived roles where the
+    package holds raw ones, so asking the drop question over the written palette
+    answers that every file was dropped and exempts none.
+
+    Two guards stand in front of that question, and the exemption needs both,
+    because either one alone certifies a file nobody judged:
+
+    - The save lands under the source package's own name. Under any other name
+      the destination is a different package, and a merge-style file already
+      sitting there was picked for colours this save never saw.
+    - The palette the save writes is still the source package's own, compared
+      through `rebuilt_palette_identity` at equal rebuild depth so the two forms
+      above meet. They part whenever a control moves the applied palette without
+      writing `colors.toml`: `theme apply-colors --set foreground=#101010` with
+      no `--save`, then `set-wallpaper --save`. The package still matches the digest
+      recorded beside it, so the drop question alone reads the file as merely
+      overridden and spares it, while the save writes the edited palette and
+      records its digest, which certifies colours the file was never picked for.
+      On akane the kept file then painted its diff bands at 1.05:1 and 1.06:1
+      against the new background.
+
+    A restyle or a colour edit written into `colors.toml` needs no guard: it
+    moves the package's own palette away from the digest recorded beside it, so
+    both drop questions drop the file, the difference is empty, and the prune
+    still removes it.
+    """
+    source = Path(str(bp.get("path") or "")).name
+    package = theme_package_dir_name(bp)
+    if not bp.get("package") or not source or source != package:
+        return []
+    files = compose_theme_files(package)
+    meta_path = files.get("theme.json")
+    if not meta_path:
+        return []
+    meta: Any = None
+    with contextlib.suppress(Exception):
+        meta = json.loads(meta_path.read_text())
+    if not isinstance(meta, dict):
+        return []
+    palette = package_palette(package_colors_map(files, package), meta)
+    # `bp` arrived through one rebuild out of `theme.json` already, so the
+    # package side is given the one trip the applied side already took. This
+    # equalises depth; it does not normalise. Derivation is not idempotent on the
+    # generated branch, so a package written by `theme mode --transform` plus a
+    # save never matched a copy of itself rebuilt a different number of times,
+    # and the exemption it was owed was refused.
+    pkg = palette_from_colors_map(palette, name=package, source=package_source(meta))
+    if rebuilt_palette_identity(bp) != rebuilt_palette_identity(
+            blueprint_from_theme_json(theme_json_from_blueprint(pkg))):
+        return []
+    curated = {Path(rel).name: str(p) for rel, p in files.items() if rel.startswith("apps/")}
+    layers = {str(root): layer_curated_palette(root)
+              for root in (builtin_themes_dir() / package, user_themes_dir() / package)}
+    return sorted(set(curated_apps_for_palette(curated, palette, {}, layers))
+                  - set(curated_apps_for_palette(curated, palette,
+                                                 theme_app_overrides(package), layers)))
+
+
 def save_theme_package(bp: Dict[str, Any], name: str | None = None) -> Path:
     """Persist a theme as a user package: curated apps/ files carry over
     verbatim; every other toggled-on app gets an editable rendered file.
@@ -2049,6 +2204,11 @@ def save_theme_package(bp: Dict[str, Any], name: str | None = None) -> Path:
     The blueprint's curated files are already the ones its palette fits, because
     the package loader dropped any the palette outgrew, so this copies what it is
     given rather than judging again.
+
+    A file a per-app override alone keeps out of the render is kept on disk
+    rather than pruned; `override_dropped_curated` states that rule and names the
+    save path it reaches. Such a file is not carried in `apps`, so it is left
+    exactly as it is rather than rewritten.
     """
     bp = dict(bp)
     if name:
@@ -2067,7 +2227,8 @@ def save_theme_package(bp: Dict[str, Any], name: str | None = None) -> Path:
             # unreadable curated file would block a colour edit.
             unreadable.append(filename)
             eprint(f"save {bp.get('name')}: keeping {filename}, which could not be read: {exc}")
-    return materialize_theme_package(bp, apps=apps, prune_curated=True, preserve=unreadable)
+    return materialize_theme_package(bp, apps=apps, prune_curated=True,
+                                     preserve=[*unreadable, *override_dropped_curated(bp)])
 
 
 def rendered_apps_for(bp: Dict[str, Any]) -> Dict[str, str]:
@@ -2101,8 +2262,11 @@ def materialize_theme_package(bp: Dict[str, Any], apps: Dict[str, str] | None = 
     Existing curated files are preserved unless new content is supplied.
 
     `prune_curated` additionally deletes any merge-style curated file in the
-    destination that `apps` does not carry, and only `save_theme_package` may ask
-    for it, because only its map is the complete intended contents. Every other
+    destination that `apps` does not carry and `preserve` does not name, and only
+    `save_theme_package` may ask for it, because only its map is the complete
+    intended contents. `preserve` is how that caller says a file it did not hand
+    in was not withheld: it could not read it, or the loader dropped it for a
+    reversible per-app override this save does not write. Every other
     caller arrives with a map from `rendered_apps_for`, which can never hold a
     claude file since that target has no template, so pruning unconditionally
     deleted a file those callers were never asked about: `theme regenerate
@@ -2110,7 +2274,7 @@ def materialize_theme_package(bp: Dict[str, Any], apps: Dict[str, str] | None = 
     a download or a user-created package is the only copy there is.
     """
     ensure_dirs()
-    name = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(bp.get("name") or "theme")).strip("-") or "theme"
+    name = theme_package_dir_name(bp)
     root = (user_themes_dir() if user else builtin_themes_dir()) / name
     root.mkdir(parents=True, exist_ok=True)
     mode = blueprint_mode(bp)
@@ -2694,6 +2858,11 @@ def claude_bands_apart(added: str, removed: str) -> Tuple[bool, float, float]:
 # disagree with, so only these are governed by the restyle rule below.
 CLAUDE_CURATED_FILES = frozenset(f"claude-{mode}.json" for mode in THEME_MODES)
 
+# The app that owns those files, and so the one whose per-app override section
+# moves the palette their values were picked against: the same section
+# `claude_theme_file` merges into the roles the curated values sit on top of.
+CLAUDE_CURATED_APP = "claude"
+
 
 def palette_identity(colors: Dict[str, str], mode: str,
                      adjustments: Dict[str, int] | None = None) -> Dict[str, str]:
@@ -2729,6 +2898,37 @@ def palette_digest(colors: Dict[str, str]) -> str:
     return hashlib.sha256("\n".join(f"{key}={value}" for key, value in items).encode()).hexdigest()
 
 
+# Namespace for the per-app override roles folded into a palette's identity
+# below. Role names and colors.toml keys are separate namespaces that spell some
+# names the same, so folding a role in bare could leave the digest unmoved where
+# an override replaced a role a palette key already happened to name.
+APP_OVERRIDE_IDENTITY_PREFIX = "appOverride."
+
+
+def effective_palette_digest(colors: Dict[str, str], overrides: Dict[str, str]) -> str:
+    """The palette identity a merge-style curated file is judged against.
+
+    That file merges over a render built from the roles *after* the per-app
+    override layer has been merged into them, so an override sits between the
+    palette and the values the curated bands were picked for. Digesting the
+    palette map alone reached one layer short of it: `vshell theme app-colors
+    claude --set background=#0b0b0b` on akane left the recorded and the effective
+    digest equal, so the file was kept and bands picked for the old background
+    were merged over the new one. The apply then named six shortfalls, body text
+    at 1.04:1 on one diff fill, 1.09:1 on the other and 1.07:1 on each diff band.
+
+    `overrides` is the owning app's section alone, so a `btop` override never
+    drops a `claude` file. With no section the map is the palette map itself and
+    the digest is the one every writer records, so a package carrying no override
+    keeps its curated file exactly as before. A package carrying one never
+    matches, because `curatedPalette` is recorded from a `colors.toml` and no
+    writer records an override; dropping is the answer wanted there, since the
+    curated values were picked for a colour the override has since replaced.
+    """
+    return palette_digest({**colors, **{f"{APP_OVERRIDE_IDENTITY_PREFIX}{role}": value
+                                        for role, value in overrides.items()}})
+
+
 def layer_curated_palette(root: Path) -> str:
     """The `curatedPalette` digest recorded by the theme.json in `root`.
 
@@ -2742,17 +2942,20 @@ def layer_curated_palette(root: Path) -> str:
     return str(meta.get("curatedPalette") or "") if isinstance(meta, dict) else ""
 
 
-def curated_apps_for_palette(apps: Dict[str, str], effective: str,
+def curated_apps_for_palette(apps: Dict[str, str], colors: Dict[str, str],
+                             app_overrides: Dict[str, Dict[str, str]],
                              recorded_by_layer: Dict[str, str]) -> Dict[str, str]:
     """A package's curated app files, minus those its palette no longer fits.
 
     The rule: a curated app file is valid only for the palette it was picked
-    against. `effective` is the digest of the palette about to be rendered, and
-    each file is matched against the digest recorded by the layer that supplied
-    it, which `recorded_by_layer` holds per package directory. They differ
-    whenever any control has replaced the palette: a restyle slider, a user
-    overlay `colors.toml`, a colour edit persisted in place, a saved copy, or a
-    catalogued download. Testing the controls one at a time instead needed a
+    against. The digest of the palette about to be rendered comes from
+    `effective_palette_digest`, which folds in the override section of the app
+    that owns the file, and each file is matched against the digest recorded by
+    the layer that supplied it, which `recorded_by_layer` holds per package
+    directory. They differ whenever any control has replaced the palette or that
+    app's overrides: a restyle slider, a user overlay `colors.toml`, a colour
+    edit persisted in place, a saved copy, a catalogued download, or `theme
+    app-colors <app>`. Testing the controls one at a time instead needed a
     parameter per control, went inert on a packaged install where the six curated
     themes are catalog-only, and dropped the files of pristine downloads that had
     changed nothing.
@@ -2787,6 +2990,10 @@ def curated_apps_for_palette(apps: Dict[str, str], effective: str,
     target such as icons, no template behind it: dropping one would delete the
     installed artifact on the next apply and leave nothing in its place.
     """
+    # Scoped to the owning app, so an override set for any other app leaves these
+    # files alone: `theme app-colors btop --set background=...` never reaches the
+    # roles a claude file merges over.
+    effective = effective_palette_digest(colors, app_overrides.get(CLAUDE_CURATED_APP, {}))
     kept: Dict[str, str] = {}
     for name, path in apps.items():
         if name not in CLAUDE_CURATED_FILES:
@@ -5055,7 +5262,7 @@ def claude_theme_file(bp: Dict[str, Any], mode: str) -> Tuple[Dict[str, Any], Li
     curated band that closes a rule generation could not reach stops warning,
     and a curated band that breaks one is reported.
     """
-    roles = {**target_roles(bp), **bp_app_overrides(bp).get("claude", {})}
+    roles = {**target_roles(bp), **bp_app_overrides(bp).get(CLAUDE_CURATED_APP, {})}
     overrides = claude_theme_overrides(roles)
     curated_path = (bp.get("apps") or {}).get(f"claude-{mode}.json")
     where = (f"{bp.get('name') or mode} claude-{mode}.json" if curated_path
@@ -5445,6 +5652,25 @@ def apply_theme_obj(bp: Dict[str, Any], only_app: str | None = None,
         return _apply_theme_obj_unlocked(bp, only_app, only_target, run_hooks)
 
 
+def applied_theme_state(bp: Dict[str, Any]) -> Dict[str, Any]:
+    """`bp` as `theme-current.json` records it: the applied palette, stamped.
+
+    Where the package sits on disk is not part of the applied state. `path`,
+    `builtin`, `userDir`, `backgrounds` and `packagedPreview` are re-resolved from
+    the package by every reader that wants them, and a copy kept here would
+    outlive the directory it names once the package is removed or renamed.
+
+    One owner, so a fixture seeding an applied theme writes the file the apply
+    writes. `path` and `package` are the keys `override_dropped_curated` gates
+    on, so a seeded state richer than the real one hides a refused exemption.
+    """
+    current = dict(bp)
+    for key in ("path", "builtin", "userDir", "backgrounds", "packagedPreview"):
+        current.pop(key, None)
+    current["appliedAt"] = int(time.time() * 1000)
+    return current
+
+
 def _apply_theme_obj_unlocked(bp: Dict[str, Any], only_app: str | None = None,
                               only_target: str | None = None,
                               run_hooks: bool = True) -> Dict[str, Any]:
@@ -5539,11 +5765,8 @@ def _apply_theme_obj_unlocked(bp: Dict[str, Any], only_app: str | None = None,
         warnings.append(f"{result.get('hook')}: {msg}")
         eprint(f"hook {result.get('hook')} failed: {msg}")
     if not only_app and not only_target:
-        current = dict(bp)
-        for key in ("path", "builtin", "userDir", "backgrounds", "packagedPreview"):
-            current.pop(key, None)
-        current["appliedAt"] = int(time.time() * 1000)
-        write_file(cfg_dir() / "theme-current.json", json.dumps(current, indent=2) + "\n")
+        write_file(cfg_dir() / "theme-current.json",
+                   json.dumps(applied_theme_state(bp), indent=2) + "\n")
     return {"success": True, "partial": bool(warnings), "name": bp.get("name"), "rendered": rendered, "curated": sorted(set(curated_used)), "skipped": sorted(set(skipped)), "hooks": hook_results, "warnings": warnings, "wallpaper": roles.get("wallpaper", "")}
 
 

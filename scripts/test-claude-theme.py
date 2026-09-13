@@ -12,6 +12,7 @@ import ast
 import contextlib
 import importlib.machinery
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -226,6 +227,26 @@ def download_package(name: str) -> Path:
             unpacked, written, ref="v0.5.0"),
         indent=2) + "\n")
     return dest
+
+
+def write_applied_state(bp: dict) -> dict:
+    """The shell state an apply leaves for `bp`, written by production's own composers.
+
+    Both halves come from the apply's own writers: `applied_theme_state` trims
+    `theme-current.json` and the `vgs-shell` template renders `theme.json`. A
+    fixture that assembled either by hand would seed a state richer than the
+    apply writes, and `path`, one of the two keys the save's exemption gates on,
+    is among those the apply drops; `carry_curated_apps` is what puts it back,
+    from the package it resolves by name.
+
+    Used both to seed an applied theme and as the stand-in for `apply_theme_obj`
+    inside a colour edit. Returns the empty result its caller assigns keys onto.
+    """
+    helper.write_file(helper.cfg_dir() / "theme-current.json",
+                      json.dumps(helper.applied_theme_state(bp), indent=2) + "\n")
+    helper.write_file(helper.cfg_dir() / "theme.json", helper.render_target_template(
+        "vgs-shell", "vgs-theme.json", helper.target_roles(bp)))
+    return {}
 
 
 def restyled(name: str, adjustments: dict) -> dict:
@@ -782,6 +803,18 @@ class RestyledPackages(unittest.TestCase):
             write_package(home, "probe", self.COLORS, adjustments=adjustments, apps=self.APPS)
             return helper.load_theme_package("probe")
 
+    def overridden(self, app: str, roles: dict) -> dict:
+        """The same package after `theme app-colors <app> --set role=#hex` on it.
+
+        The overrides go through `write_user_app_overrides`, the writer that CLI
+        path ends in, so this cannot drift into a file shape production no longer
+        writes.
+        """
+        with temp_home() as home:
+            write_package(home, "probe", self.COLORS, apps=self.APPS)
+            helper.write_user_app_overrides("probe", {app: roles})
+            return helper.load_theme_package("probe")
+
     def test_a_package_at_rest_keeps_every_curated_file(self):
         self.assertEqual(sorted(self.package({})["apps"]),
                          ["claude-dark.json", "icons.theme"])
@@ -797,6 +830,40 @@ class RestyledPackages(unittest.TestCase):
         """The consumer inherits the loader's answer rather than asking again."""
         content, _missed = helper.claude_theme_file(self.package({"brightness": 100}), "dark")
         self.assertNotEqual(content["overrides"]["claude"], "#abcdef")
+
+    def test_a_claude_override_drops_only_the_merge_style_file(self):
+        """`theme app-colors claude --set background=...` replaces a colour the
+        curated values were picked against, and that layer sits between the
+        palette and the render the file merges over. A digest taken over the
+        palette map alone read past it: the two digests stayed equal, the file was
+        kept, and bands picked for the old background were merged over the new one.
+        icons.theme has no template behind it and stays whatever the palette does.
+        """
+        self.assertEqual(sorted(self.overridden("claude", {"background": "#0b0b0b"})["apps"]),
+                         ["icons.theme"])
+
+    def test_an_override_whose_role_name_a_palette_key_spells_drops_it_too(self):
+        """The folded roles are namespaced because role names and colors.toml keys
+        are separate namespaces that spell some names the same. `accent` is one:
+        the class palette declares #9279aa and `target_roles` derives #937bab
+        through `ensure_usable_accent`, so the two hold different values under one
+        name. The override value here is the colors.toml accent itself, not an
+        arbitrary hex: that is what makes a bare fold produce a digest byte for
+        byte identical to the recorded one while the override still moves five
+        Claude Code tokens, so a reader who swaps it for any other colour removes
+        the control this case is. `theme app-colors claude --set accent=#9279aa`
+        reaches it, since `accent` is in `theme_role_universe`.
+        """
+        self.assertEqual(sorted(self.overridden("claude", {"accent": "#9279aa"})["apps"]),
+                         ["icons.theme"])
+
+    def test_an_override_for_another_app_leaves_the_claude_file_alone(self):
+        """The digest folds in the owning app's section and no other. Folding the
+        whole override table in instead would drop a theme's hand-picked diff
+        bands the moment a user set a btop colour, which reaches none of the roles
+        those bands sit on."""
+        self.assertEqual(sorted(self.overridden("btop", {"background": "#0b0b0b"})["apps"]),
+                         ["claude-dark.json", "icons.theme"])
 
     def test_a_saved_restyled_package_carries_what_the_loader_left(self):
         """save_theme_package copies curated files verbatim, so the loader's rule
@@ -854,6 +921,173 @@ class InstalledLayout(unittest.TestCase):
             self.assertEqual(
                 ("claude-light.json" in blueprint["apps"], self.light(blueprint)),
                 (False, []))
+
+    def test_a_claude_override_drops_the_curated_file_and_misses_no_rule(self):
+        """The reproduced case: `theme app-colors claude --set background=#0b0b0b`
+        on akane. The override merges into the roles the curated file sits on top
+        of, so it moves the palette those values were picked for while leaving
+        colors.toml untouched. Judged on the palette map alone the file was kept
+        and the light render named six shortfalls, body text at 1.04:1 on one diff
+        fill, 1.09:1 on the other and 1.07:1 on each diff band, over a /diff panel
+        a user cannot read."""
+        with installed_layout():
+            download_package("akane")
+            helper.write_user_app_overrides("akane", {"claude": {"background": "#0b0b0b"}})
+            blueprint = helper.load_theme_package("akane")
+            self.assertEqual(
+                ("claude-light.json" in blueprint["apps"], self.light(blueprint)),
+                (False, []))
+
+    def saved_under_own_name(self, overrides: dict, edits: tuple = (), transform: str = "") -> tuple:
+        """akane downloaded, optionally overridden, optionally colour-edited
+        without `--save`, then saved the way `set-wallpaper --save` saves:
+        `carry_curated_apps` over a rebuild from the applied theme, which is the
+        only shipped call that reaches this exemption.
+
+        A blueprint straight from `load_theme_package` is a shape production never
+        hands the save. `carry_curated_apps` copies `apps`, `package`, `path`,
+        `builtin` and `userDir` and nothing else, so a fixture that skips it tests
+        an exemption carried on a key the real caller drops, and passes while the
+        file is deleted in production.
+
+        `edits` runs `apply_color_edits` with no `--save`, which is what moves the
+        applied palette while leaving the package's `colors.toml` and its recorded
+        digest untouched. The save then writes the edited palette over the package
+        the exemption asks about.
+
+        `transform` runs `theme mode --transform <mode>` and a save ahead of all
+        that, which rewrites the package from a transformed palette and so leaves
+        it declaring `source: generated`. Role derivation adjusts contrast on that
+        branch and so is not idempotent there, and a package on this side matches
+        itself only when both sides of the comparison are rebuilt the same number
+        of times.
+
+        Returns the package's declared source, whether the save left the file on
+        disk, whether the loader takes it back once the override is cleared, and
+        that reload's light shortfalls. Every read happens inside the layout,
+        because the render resolves akane through `builtin_themes_dir` and `home`,
+        which the fixture restores on exit.
+        """
+        with installed_layout():
+            dest = download_package("akane")
+            write_applied_state(helper.load_theme_package("akane"))
+            if transform:
+                write_applied_state(helper.transformed_mode_blueprint(
+                    helper.find_theme("akane"), transform,
+                    str(helper.current_theme().get("wallpaper") or "")))
+                self.set_wallpaper_save()
+            helper.write_user_app_overrides("akane", overrides)
+            if edits:
+                with mock.patch.object(helper, "apply_theme_obj", side_effect=write_applied_state):
+                    helper.apply_color_edits(list(edits), "akane")
+            self.set_wallpaper_save()
+            on_disk = {path.name for path in (dest / "apps").iterdir()}
+            helper.write_user_app_overrides("akane", {})
+            cleared = helper.load_theme_package("akane")
+            return (json.loads((dest / "theme.json").read_text()).get("source"),
+                    "claude-light.json" in on_disk, "claude-light.json" in cleared["apps"],
+                    self.light(cleared))
+
+    def set_wallpaper_save(self) -> None:
+        """`set-wallpaper --save` on the applied theme: carry, apply, save."""
+        carried = helper.carry_curated_apps(helper.blueprint_from_current_theme(name="akane"))
+        write_applied_state(carried)
+        helper.save_theme_package(carried, name="akane")
+
+    def test_a_save_under_an_override_keeps_the_file_the_override_can_give_back(self):
+        """`set-wallpaper --save` saves under the theme's own name, and the prune
+        removes every merge-style file the map it is handed does not carry. The
+        override drop put this file outside that map while leaving `colors.toml`
+        untouched, so the prune deleted the only copy a download has and `theme
+        app-colors claude --reset` could not bring it back.
+
+        The no-override row says the same save spares the file when no override is
+        set, so what the first row measures is the exemption and not a difference
+        in what the save was handed.
+
+        The third row is the must-fail control that the prune reaches this file at
+        all, and the one that says the exemption asks about the palette as well as
+        the override. `apply-colors` with no `--save` moves the applied palette
+        while the package's `colors.toml` keeps the colours its recorded digest
+        names, so the override question alone still reads the file as merely
+        overridden. Sparing it there let the save certify colours the file was
+        never picked for, and the reload painted akane's diff bands at 1.05:1 and
+        1.06:1 against the new background.
+
+        The fourth row is the same first row over a package that declares
+        `source: generated`, which `theme mode --transform` plus a save is the
+        shipped way to reach. Role derivation adjusts contrast on that branch and
+        so is not idempotent there: one more trip through it moves the six bright
+        ANSI slots, so comparing the package against a copy of itself rebuilt a
+        different number of times never matched. The exemption was refused and the
+        save deleted the file the first row proves it must keep. The declared
+        source is asserted in every row so this one cannot quietly stop reaching
+        the branch it is named for.
+        """
+        self.assertEqual(
+            (self.saved_under_own_name({"claude": {"background": "#0b0b0b"}}),
+             self.saved_under_own_name({}),
+             self.saved_under_own_name({"claude": {"background": "#0b0b0b"}},
+                                       ("foreground=#101010",)),
+             self.saved_under_own_name({"claude": {"background": "#0b0b0b"}},
+                                       transform="light")),
+            (("curated", True, True, []), ("curated", True, True, []),
+             ("generated", False, False, []), ("generated", True, True, [])))
+
+    def test_a_save_under_another_name_grants_the_override_no_exemption(self):
+        """The exemption asks about the package the save is writing over. Under a
+        different name the destination is another package, and a merge-style file
+        already sitting there was picked for colours this save never saw, which is
+        the unjudged certification the digest exists to prevent.
+
+        The destination is a complete package carrying its own curated file and
+        its own claude override, because that is the only shape in which the name
+        comparison decides anything: a bare directory is refused earlier, for
+        holding no `theme.json`. Its palette is a faithful copy of the source's,
+        so the palette comparison passes and the name is the sole thing left to
+        refuse the exemption.
+
+        The source is a loader blueprint rather than a carried one, which gives
+        the exemption every key it could read. The save under the theme's own name
+        is where the carried shape has to be exact.
+        """
+        with installed_layout():
+            download_package("akane")
+            copy = helper.save_theme_package(helper.load_theme_package("akane"), name="akane-copy")
+            helper.write_user_app_overrides("akane-copy", {"claude": {"background": "#0b0b0b"}})
+            helper.write_user_app_overrides("akane", {"claude": {"background": "#0b0b0b"}})
+            overridden = helper.load_theme_package("akane")
+            before = {path.name for path in (copy / "apps").iterdir()}
+            helper.save_theme_package(overridden, name="akane-copy")
+            after = {path.name for path in (copy / "apps").iterdir()}
+            self.assertEqual(
+                ("claude-light.json" in before, "claude-light.json" in after), (True, False))
+
+    def test_a_package_whose_colours_do_not_parse_reports_once_and_still_loads(self):
+        """A user overlay `colors.toml` is hand-written, so a typo in it is how a
+        user meets this. The loader needs an adjusted and an unadjusted identity
+        map and once read the file for each, so the diagnostic arrived twice, and
+        it named the `theme.json` `name` key, which a package need not carry: the
+        pair printed as `theme package : no recognized colors`.
+
+        The package still loads rather than disappearing from the list. Every role
+        comes from the defaults, and the recorded digest still answers for the
+        curated files, so the only thing lost is the palette the user mistyped.
+        """
+        with installed_layout():
+            root = helper.user_themes_dir() / "probe"
+            (root / "apps").mkdir(parents=True)
+            (root / "theme.json").write_text(json.dumps({"mode": "dark", "source": "curated"}))
+            (root / "colors.toml").write_text("# a typo no parser reads\nbackgrund = notahex\n")
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                blueprint = helper.load_theme_package("probe")
+            reported = [line for line in stderr.getvalue().splitlines()
+                        if "no recognized colors" in line]
+            self.assertEqual(
+                (len(reported), reported[0].split(":")[0],
+                 blueprint["palette"]["colors"]),
+                (1, "theme package probe", helper.DEFAULT_COLORS))
 
     def test_a_colour_edit_keeps_the_replacing_file_it_drops_the_merge_style_one(self):
         """A user package owns its palette outright, so nothing about where its
