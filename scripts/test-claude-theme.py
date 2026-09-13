@@ -821,6 +821,21 @@ class RestyledPackages(unittest.TestCase):
         self.assertEqual(sorted(self.overridden("claude", {"background": "#0b0b0b"})["apps"]),
                          ["icons.theme"])
 
+    def test_an_override_whose_role_name_a_palette_key_spells_drops_it_too(self):
+        """The folded roles are namespaced because role names and colors.toml keys
+        are separate namespaces that spell some names the same. `accent` is one:
+        the class palette declares #9279aa and `target_roles` derives #937bab
+        through `ensure_usable_accent`, so the two hold different values under one
+        name. The override value here is the colors.toml accent itself, not an
+        arbitrary hex: that is what makes a bare fold produce a digest byte for
+        byte identical to the recorded one while the override still moves five
+        Claude Code tokens, so a reader who swaps it for any other colour removes
+        the control this case is. `theme app-colors claude --set accent=#9279aa`
+        reaches it, since `accent` is in `theme_role_universe`.
+        """
+        self.assertEqual(sorted(self.overridden("claude", {"accent": "#9279aa"})["apps"]),
+                         ["icons.theme"])
+
     def test_an_override_for_another_app_leaves_the_claude_file_alone(self):
         """The digest folds in the owning app's section and no other. Folding the
         whole override table in instead would drop a theme's hand-picked diff
@@ -891,9 +906,9 @@ class InstalledLayout(unittest.TestCase):
         on akane. The override merges into the roles the curated file sits on top
         of, so it moves the palette those values were picked for while leaving
         colors.toml untouched. Judged on the palette map alone the file was kept
-        and the light render named six shortfalls, body text at 1.04:1 on the diff
-        fill and 1.08:1 and 1.12:1 on the two diff bands, over a /diff panel a user
-        cannot read."""
+        and the light render named six shortfalls, body text at 1.04:1 on one diff
+        fill, 1.09:1 on the other and 1.07:1 on each diff band, over a /diff panel
+        a user cannot read."""
         with installed_layout():
             download_package("akane")
             helper.write_user_app_overrides("akane", {"claude": {"background": "#0b0b0b"}})
@@ -901,6 +916,29 @@ class InstalledLayout(unittest.TestCase):
             self.assertEqual(
                 ("claude-light.json" in blueprint["apps"], self.light(blueprint)),
                 (False, []))
+
+    def test_a_save_under_an_override_keeps_the_file_the_override_can_give_back(self):
+        """`set-wallpaper --save`, `theme save-current` and `apply-colors --save`
+        call save_theme_package with the theme's own name, and the prune removes
+        every merge-style file the map it is handed does not carry. The override
+        drop put this file outside that map while leaving `colors.toml` untouched,
+        so the prune deleted the only copy a download has and `theme app-colors
+        claude --reset` could not bring it back. A restyle or a colour edit is not
+        exempted the same way: those rewrite `colors.toml`, so the save records
+        the moved palette and the dropped file genuinely no longer fits.
+        """
+        with installed_layout():
+            dest = download_package("akane")
+            helper.write_user_app_overrides("akane", {"claude": {"background": "#0b0b0b"}})
+            overridden = helper.load_theme_package("akane")
+            helper.save_theme_package(overridden, name="akane")
+            on_disk = {path.name for path in (dest / "apps").iterdir()}
+            helper.write_user_app_overrides("akane", {})
+            cleared = helper.load_theme_package("akane")
+            self.assertEqual(
+                ("claude-light.json" in overridden["apps"], "claude-light.json" in on_disk,
+                 "claude-light.json" in cleared["apps"], self.light(cleared)),
+                (False, True, True, []))
 
     def test_a_colour_edit_keeps_the_replacing_file_it_drops_the_merge_style_one(self):
         """A user package owns its palette outright, so nothing about where its
