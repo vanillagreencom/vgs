@@ -8591,6 +8591,15 @@ def test_curated_vscode_theme_takes_the_terminal_palette():
         assert_equal(json.loads(shipped[slugs[name]])["colors"].get("terminal.ansiBlack"), "#ff0000",
                      f"{name}: the bundled VS Code copy takes the saved override")
 
+        # A user package can own the default generated label. The generated
+        # active copy must choose another identity instead of replacing it.
+        generated_owner = helper.user_themes_dir() / "generated-owner"
+        (generated_owner / "apps").mkdir(parents=True)
+        (generated_owner / "theme.json").write_text(
+            json.dumps({"name": "VGS Generated", "mode": "dark", "source": "curated"}) + "\n")
+        (generated_owner / "apps" / "vscode-theme.json").write_text(
+            json.dumps({"name": "foreign generated label", "colors": {}}) + "\n")
+
         # The active copy and bundled manifest use one package identity. Pick a
         # shipped theme whose curated label differs only by spelling, so the old
         # path returned a label that its same-slug bundled entry replaced.
@@ -8618,14 +8627,58 @@ def test_curated_vscode_theme_takes_the_terminal_palette():
             active_bp = blueprints[active]
             active_roles = helper.render_roles(active_bp, helper.target_roles(active_bp))
             result = helper.apply_vscode_theme_hook(active_roles, active_bp)
+            selected = json.loads(settings_path.read_text()).get("workbench.colorTheme")
+            from PIL import Image
+            wallpaper = _temp_home / "wallpaper.png"
+            Image.new("RGB", (2, 2), (33, 88, 144)).save(wallpaper)
+            generated_bp = helper.blueprint_from_wallpaper(
+                wallpaper, name=labels[active], mode=helper.blueprint_mode(active_bp))
+            generated_result = helper.apply_theme_obj(generated_bp, only_app="vscode")
         finally:
             helper.VSCODE_VARIANTS = original_variants
         assert_equal(result.get("applied"), [str(settings_path)],
                      "the active VS Code theme apply writes the test installation")
-        selected = json.loads(settings_path.read_text()).get("workbench.colorTheme")
         assert_equal(selected, labels[active], "the active VS Code label comes from its package")
         if selected not in helper._vgs_vscode_labels(ext_dir):
             raise AssertionError(f"the selected VS Code label is not registered: {selected}")
+
+        # A wallpaper palette can keep the current package name. Its generated
+        # file must not share that package's slug, because the bundled copy is
+        # written after the active copy and would replace the extracted colors.
+        assert_equal(generated_result.get("success"), True,
+                     "the wallpaper palette renders the VS Code target")
+        generated_selected = json.loads(settings_path.read_text()).get("workbench.colorTheme")
+        bundled = helper._all_bundled_vscode_themes()
+        bundled_labels = {label for _slug, label, _ui, _content in bundled}
+        if generated_selected in bundled_labels:
+            raise AssertionError(
+                f"the wallpaper palette selected a bundled package label: {generated_selected}")
+        package_json = json.loads(
+            (ext_dir / "vgs.vgs-theme-1.0.0" / "package.json").read_text())
+        registered = package_json["contributes"]["themes"]
+        generated_entry = next(
+            (entry for entry in registered if entry.get("label") == generated_selected), None)
+        if not generated_entry:
+            raise AssertionError(
+                f"the generated VS Code label is not registered: {generated_selected}")
+        selected_path = (ext_dir / "vgs.vgs-theme-1.0.0"
+                         / str(generated_entry["path"]).removeprefix("./"))
+        selected_colors = json.loads(selected_path.read_text())["colors"]
+        assert_equal(
+            selected_colors.get("editor.background"),
+            helper.app_target_roles(generated_bp)["background"],
+            "the selected VS Code file keeps the wallpaper-generated palette",
+        )
+        transformed_bp = helper.transformed_mode_blueprint(
+            active_bp,
+            "dark" if helper.blueprint_mode(active_bp) == "light" else "light",
+            "",
+        )
+        transformed_label, _transformed_slug = helper._vgs_active_theme_identity(
+            transformed_bp, bundled)
+        if transformed_label in bundled_labels:
+            raise AssertionError(
+                f"the transformed palette selected a bundled package label: {transformed_label}")
 
         for package_name in ("slug collision", "slug-collision"):
             package = helper.user_themes_dir() / package_name

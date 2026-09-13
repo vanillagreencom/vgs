@@ -1345,6 +1345,10 @@ def load_theme_package(name: str) -> Dict[str, Any] | None:
     user_dir = user_themes_dir() / name
     bp["pair"] = str(meta.get("pair") or "")
     bp["package"] = True
+    # A positive marker distinguishes this package's original mode from a
+    # palette-only blueprint that happens to retain its display name. Mode
+    # transforms intentionally do not carry this marker.
+    bp["packageMode"] = blueprint_mode(bp)
     bp["builtin"] = builtin_dir.is_dir()
     bp["path"] = str(builtin_dir if builtin_dir.is_dir() else user_dir)
     bp["userDir"] = str(user_dir) if user_dir.is_dir() else ""
@@ -4151,6 +4155,31 @@ def _vgs_theme_identity(bp: Dict[str, Any], fallback: str) -> Tuple[str, str]:
     return label, _vgs_theme_slug(label)
 
 
+def _vgs_active_theme_identity(
+        bp: Dict[str, Any], bundled: List[Tuple[str, str, str, str]]) -> Tuple[str, str]:
+    """Return the active VS Code label and slug.
+
+    A package owns the active identity only when its own curated VS Code file is
+    applied in the package's original mode. Generated palettes and transformed
+    modes use a label that no bundled package owns, even when they keep a
+    package display name.
+    """
+    apps = bp.get("apps") or {}
+    if (bp.get("package") and apps.get("vscode-theme.json")
+            and bp.get("packageMode") == blueprint_mode(bp)):
+        return _vgs_theme_identity(bp, "VGS")
+
+    bundled_labels = {label for _slug, label, _ui, _content in bundled}
+    bundled_slugs = {slug for slug, _label, _ui, _content in bundled}
+    suffix = 1
+    while True:
+        label = "VGS Generated" if suffix == 1 else f"VGS Generated {suffix}"
+        slug = _vgs_theme_slug(label)
+        if label not in bundled_labels and slug not in bundled_slugs:
+            return label, slug
+        suffix += 1
+
+
 def _read_vgs_theme_name(theme_file: Path) -> str:
     """The theme's display name from its JSON `name` (JSONC-tolerant: some source
     bundles ship comments/trailing commas)."""
@@ -4201,13 +4230,14 @@ def _all_bundled_vscode_themes() -> List[Tuple[str, str, str, str]]:
 
 
 def _install_vgs_vscode_extension(ext_dir: Path, theme_file: Path, mode: str,
-                                  identity: Tuple[str, str]) -> str:
+                                  identity: Tuple[str, str],
+                                  bundled: List[Tuple[str, str, str, str]]) -> str:
     """Install/refresh the local vgs.vgs-theme extension. Each VGS theme is
-    contributed under the package-owned label and slug supplied by the caller,
+    contributed under the active label and slug supplied by the caller,
     so VSCodium shows a matching theme and a live switch actually changes
     `workbench.colorTheme` (a single shared "VGS" label never refreshes). Applied
     themes accumulate in a manifest so previously-seen names keep resolving.
-    Returns the package-owned label to point colorTheme at."""
+    Returns the active label to point colorTheme at."""
     ext_root = ext_dir / "vgs.vgs-theme-1.0.0"
     themes_dir = ext_root / "themes"
     name, slug = identity
@@ -4225,7 +4255,7 @@ def _install_vgs_vscode_extension(ext_dir: Path, theme_file: Path, mode: str,
     manifest[slug] = {"label": name, "uiTheme": ui}
     # Register bundled labels before VSCodium starts. Write only changed files
     # to avoid causing an extension reload on every theme apply.
-    for b_slug, b_label, b_ui, b_content in _all_bundled_vscode_themes():
+    for b_slug, b_label, b_ui, b_content in bundled:
         tf = themes_dir / f"{b_slug}.json"
         try:
             unchanged = tf.exists() and tf.read_text() == b_content
@@ -4330,8 +4360,10 @@ def apply_vscode_theme_hook(roles: Dict[str, str], bp: Dict[str, Any]) -> Dict[s
         if not theme_name:
             if not theme_file.exists() or not ext_dir.is_dir():
                 continue
-            identity = _vgs_theme_identity(bp, "VGS")
-            theme_name = _install_vgs_vscode_extension(ext_dir, theme_file, mode, identity)
+            bundled = _all_bundled_vscode_themes()
+            identity = _vgs_active_theme_identity(bp, bundled)
+            theme_name = _install_vgs_vscode_extension(
+                ext_dir, theme_file, mode, identity, bundled)
         note = _set_vscode_color_theme(settings_path, theme_name, state, _vgs_vscode_labels(ext_dir))
         if note:
             notes.append(f"{variant['id']}: {note}")
@@ -6950,7 +6982,7 @@ def carry_curated_apps(bp: Dict[str, Any]) -> Dict[str, Any]:
     apps = cur.get("apps") or {}
     if apps:
         bp["apps"] = apps
-    for key in ("package", "path", "builtin", "userDir"):
+    for key in ("package", "packageMode", "path", "builtin", "userDir"):
         if cur.get(key) is not None and key not in bp:
             bp[key] = cur[key]
     return bp
