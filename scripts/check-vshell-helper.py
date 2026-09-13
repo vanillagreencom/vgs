@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import argparse
 import ast
+import colorsys
 import hashlib
 import importlib.machinery
 import importlib.util
@@ -8588,21 +8589,8 @@ def test_curated_vscode_theme_takes_the_terminal_palette():
                      f"no terminal slot means no change to {key}")
 
 
-def test_light_themes_read_in_a_terminal():
-    """Claude Code's light-ANSI mode draws body text in slot 0, muted text in
-    slot 8, and the bands under body text in slots 7 and 15. A light theme that
-    uses those slots as a mood palette prints body text at 1.10:1 to 1.82:1.
-
-    Every slot change lives in terminal-colors.toml, so each target that paints no
-    terminal renders what the theme renders without that file."""
-    # (theme, body text on the background, muted text, body text on each band,
-    #  body text on the selection fill in slot 6 or None where the fix leaves slot 6)
-    rows = [
-        ("catppuccin-latte", 4.5, 3.0, 4.5, None),
-        ("flexoki-light", 4.5, 3.0, 4.5, None),
-        ("rose-pine", 4.5, 3.0, 4.5, None),
-        ("white", 4.5, 3.0, 4.5, 4.5),
-    ]
+def non_terminal_targets():
+    """Every templated target that paints no terminal palette, as (name, config)."""
     terminal_targets = terminal_slot_templates()
     other_targets = []
     for cfg_path in sorted(helper.targets_dir().glob("*/config.json")):
@@ -8611,7 +8599,12 @@ def test_light_themes_read_in_a_terminal():
             other_targets.append((cfg_path.parent.name, cfg))
     if "helix-vgs" not in {target for target, _cfg in other_targets}:
         raise AssertionError("helix-vgs reads palette slots directly; the target list is broken")
+    return other_targets
 
+
+def assert_terminal_file_reaches_terminals_only(name, blueprint, other_targets):
+    """Each target that paints no terminal renders what the theme renders without
+    its terminal-colors.toml."""
     def other_renders(blueprint):
         # Each target renders pass by pass the way apply renders it, so a target
         # that writes both modes reads both modes' colours.
@@ -8634,16 +8627,36 @@ def test_light_themes_read_in_a_terminal():
                            for pass_roles, _dest in passes]
         return out
 
+    with_file = other_renders(blueprint)
+    without_file = other_renders(dict(blueprint, terminalColors={}))
+    for target, _cfg in other_targets:
+        assert_equal(with_file[target], without_file[target], f"{name}: {target} reads no terminal slot")
+
+
+def test_light_themes_read_in_a_terminal():
+    """Claude Code's light-ANSI mode draws body text in slot 0, muted text in
+    slot 8, and the bands under body text in slots 7 and 15. A light theme that
+    uses those slots as a mood palette prints body text at 1.10:1 to 1.82:1.
+
+    Every slot change lives in terminal-colors.toml, so each target that paints no
+    terminal renders what the theme renders without that file."""
+    # (theme, body text on the background, muted text, body text on each band,
+    #  body text on the selection fill in slot 6 or None where the fix leaves slot 6)
+    rows = [
+        ("catppuccin-latte", 4.5, 3.0, 4.5, None),
+        ("flexoki-light", 4.5, 3.0, 4.5, None),
+        ("rose-pine", 4.5, 3.0, 4.5, None),
+        ("white", 4.5, 3.0, 4.5, 4.5),
+    ]
+    other_targets = non_terminal_targets()
+
     for name, body_min, muted_min, band_min, selection_min in rows:
         blueprint = helper.load_theme_package(name)
         if not blueprint:
             raise AssertionError(f"bundled theme {name} did not load")
         if not blueprint["terminalColors"]:
             raise AssertionError(f"{name} ships no terminal-colors.toml")
-        with_file = other_renders(blueprint)
-        without_file = other_renders(dict(blueprint, terminalColors={}))
-        for target, _template in other_targets:
-            assert_equal(with_file[target], without_file[target], f"{name}: {target} reads no terminal slot")
+        assert_terminal_file_reaches_terminals_only(name, blueprint, other_targets)
         roles = helper.render_roles(blueprint, helper.app_target_roles(blueprint, helper.target_roles(blueprint)))
         assert_equal(roles["theme_type"], "light", f"{name} is a light theme")
         background = roles["background"]
@@ -8660,6 +8673,52 @@ def test_light_themes_read_in_a_terminal():
         for label, ratio, minimum in measured:
             if ratio < minimum:
                 raise AssertionError(f"{name}: {label} reads at {ratio:.2f}:1, under {minimum}:1")
+
+
+def test_dark_themes_draw_diffs_in_two_hues():
+    """git diff, Codex's ANSI theme and Claude Code's ANSI modes draw removed and
+    added lines in slots 1 and 2, and removed and added words in slots 9 and 10.
+    Each pair reads as two colours only when its hues sit 60 degrees apart, and
+    each slot carries HSL saturation of 0.15 and 3:1 on the background.
+
+    Every slot change lives in terminal-colors.toml, so each target that paints no
+    terminal renders what the theme renders without that file. The single-hue
+    palettes keep red and green in one hue by the owner's ruling, so their diffs
+    read by the + and - glyphs and they ship no terminal slots."""
+    fixed = ["akane", "arc-raiders", "cpunk", "ethereal", "greek-noir", "hackerman", "harbordark",
+             "kanagawa-dragon", "lowlight", "mechanoonna", "oxford", "reddcs", "tycho", "vengeance", "x-1632"]
+    single_hue = ["amberbyte", "artzen", "brutalism", "fireside", "lumon", "snow", "solitude", "vantablack"]
+    other_targets = non_terminal_targets()
+    for name in fixed:
+        blueprint = helper.load_theme_package(name)
+        if not blueprint:
+            raise AssertionError(f"bundled theme {name} did not load")
+        if not blueprint["terminalColors"]:
+            raise AssertionError(f"{name} ships no terminal-colors.toml")
+        assert_terminal_file_reaches_terminals_only(name, blueprint, other_targets)
+        roles = helper.render_roles(blueprint, helper.app_target_roles(blueprint, helper.target_roles(blueprint)))
+        assert_equal(roles["theme_type"], "dark", f"{name} is a dark theme")
+        background = roles["background"]
+        for removed, added in ((1, 2), (9, 10)):
+            for slot in (removed, added):
+                value = roles[f"terminal_color{slot}"]
+                red, green, blue = [channel / 255.0 for channel in helper.rgb(value)]
+                saturation = colorsys.rgb_to_hls(red, green, blue)[2]
+                if saturation < 0.15:
+                    raise AssertionError(f"{name}: slot {slot} {value} has HSL saturation {saturation:.2f}, under 0.15")
+                ratio = helper.contrast_ratio(value, background)
+                if ratio < 3.0:
+                    raise AssertionError(f"{name}: slot {slot} {value} reads at {ratio:.2f}:1, under 3:1")
+            removed_hue = helper.color_hue(roles[f"terminal_color{removed}"])
+            added_hue = helper.color_hue(roles[f"terminal_color{added}"])
+            distance = helper._hue_distance(removed_hue, added_hue)
+            if distance < 60.0:
+                raise AssertionError(f"{name}: slots {removed} and {added} sit {distance:.0f} degrees apart, under 60")
+    for name in single_hue:
+        blueprint = helper.load_theme_package(name)
+        if not blueprint:
+            raise AssertionError(f"bundled theme {name} did not load")
+        assert_equal(blueprint["terminalColors"], {}, f"{name} keeps its single-hue slots")
 
 
 def test_wallpaper_and_save_keep_terminal_slots():
@@ -8893,6 +8952,7 @@ def main():
     test_terminal_slot_overrides_reach_terminals_only()
     test_curated_vscode_theme_takes_the_terminal_palette()
     test_light_themes_read_in_a_terminal()
+    test_dark_themes_draw_diffs_in_two_hues()
     test_wallpaper_and_save_keep_terminal_slots()
     test_terminal_app_overrides_show_on_their_editor_row()
     test_preview_key_covers_terminal_slots()
