@@ -1,0 +1,82 @@
+/* VGS Theme for Obsidian */
+
+.theme-dark, .theme-light {
+  --background-primary: #fdf0ed;
+  --background-primary-alt: #fdf0ed;
+  --background-secondary: #fdf0ed;
+  --background-secondary-alt: #fdf0ed;
+  --text-normal: #333333;
+
+  --text-selection: #f9cbbe;
+
+  --background-modifier-border: #8a31b9;
+
+  --text-title-h1: #da103f;
+  --text-title-h2: #027e4f;
+  --text-title-h3: #af5427;
+  --text-title-h4: #8a31b9;
+  --text-title-h5: #cc2f59;
+  --text-title-h6: #cc2f59;
+
+  --text-link: #8a31b9;
+  --text-accent: #da103f;
+  --text-accent-hover: #da103f;
+  --interactive-accent: #da103f;
+  --interactive-accent-hover: #da103f;
+
+  --text-muted: color-mix(in srgb, #333333 70%, transparent);
+  --text-faint: color-mix(in srgb, #333333 55%, transparent);
+
+  --code-normal: #197a81;
+
+  --text-error: #da103f;
+  --text-error-hover: #da103f;
+  --text-success: #027e4f;
+
+  --tag-color: #333333;
+  --tag-background: #f9cbbe;
+
+  --graph-line: #8a31b9;
+  --graph-node: #da103f;
+  --graph-node-focused: #8a31b9;
+  --graph-node-tag: #197a81;
+  --graph-node-attachment: #027e4f;
+}
+
+.cm-header-1, .markdown-rendered h1 { color: var(--text-title-h1); }
+.cm-header-2, .markdown-rendered h2 { color: var(--text-title-h2); }
+.cm-header-3, .markdown-rendered h3 { color: var(--text-title-h3); }
+.cm-header-4, .markdown-rendered h4 { color: var(--text-title-h4); }
+.cm-header-5, .markdown-rendered h5 { color: var(--text-title-h5); }
+.cm-header-6, .markdown-rendered h6 { color: var(--text-title-h6); }
+
+.markdown-rendered code {
+  color: #197a81;
+}
+
+.cm-s-obsidian span.cm-keyword { color: #da103f; }
+.cm-s-obsidian span.cm-string { color: #027e4f; }
+.cm-s-obsidian span.cm-number { color: #af5427; }
+.cm-s-obsidian span.cm-comment { color: #8a31b9; }
+.cm-s-obsidian span.cm-operator { color: #8a31b9; }
+.cm-s-obsidian span.cm-def { color: #8a31b9; }
+
+.markdown-rendered a {
+  color: var(--text-link);
+}
+
+.markdown-rendered blockquote {
+  border-left-color: #da103f;
+}
+
+.workspace-leaf.mod-active .workspace-leaf-header-title {
+  color: var(--interactive-accent);
+}
+
+.nav-file-title.is-active {
+  color: var(--interactive-accent);
+}
+
+.search-result-file-title {
+  color: var(--interactive-accent);
+}
