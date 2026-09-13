@@ -1308,9 +1308,7 @@ def load_theme_package(name: str) -> Dict[str, Any] | None:
     except Exception as exc:
         eprint(f"skip theme package {name}: {exc}")
         return None
-    source = str(meta.get("source") or "curated").strip().lower()
-    if source not in {"curated", "generated"}:
-        source = "curated"
+    source = package_source(meta)
     hidden = {h for h in (meta.get("hiddenBackgrounds") or []) if isinstance(h, str)}
     backgrounds = sorted((rel, p) for rel, p in files.items() if rel.startswith("backgrounds/") and Path(rel).name not in hidden)
     wallpaper = ""
@@ -1322,8 +1320,9 @@ def load_theme_package(name: str) -> Dict[str, Any] | None:
     # Restyle adjustments transform the base palette before role derivation and
     # stay non-destructive (colors.toml is never rewritten). All-zero is a no-op.
     adjustments = normalize_adjustments(meta.get("adjustments"))
-    unadjusted_colors = package_palette_identity(files, meta, adjusted=False)
-    colors = package_palette_identity(files, meta)
+    raw_colors = package_colors_map(files, name)
+    unadjusted_colors = palette_identity(raw_colors, str(meta.get("mode") or ""))
+    colors = palette_identity(raw_colors, str(meta.get("mode") or ""), adjustments)
     bp = palette_from_colors_map(colors, name=str(meta.get("name") or name), wallpaper=wallpaper, source=source)
     builtin_dir = builtin_themes_dir() / name
     user_dir = user_themes_dir() / name
@@ -2042,26 +2041,56 @@ def theme_package_dir_name(bp: Dict[str, Any]) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "-", str(bp.get("name") or "theme")).strip("-") or "theme"
 
 
-def package_palette_identity(files: Dict[str, Path], meta: Dict[str, Any],
-                             adjusted: bool = True) -> Dict[str, str]:
-    """The palette identity a theme package renders from, from its own files.
+def package_colors_map(files: Dict[str, Path], name: str) -> Dict[str, str]:
+    """The raw colours a theme package's own `colors.toml` holds.
 
-    One owner, because the loader judges the package's curated files against this
-    map and the save has to ask about the same map to tell a file the per-app
-    override layer dropped from one the palette itself outgrew. A blueprint
-    rebuilt from the applied theme cannot answer for it: `theme.json` holds the
-    render, so the rebuild returns derived roles where the palette had raw ones,
-    and on akane `accent`, `selection_background` and `selection_foreground` all
-    come back moved.
+    One owner for the read, and only the read: a caller wanting a palette
+    identity passes the result to `palette_identity`. Owning both together gave
+    the loader two reads, one per identity map it needs, so a hand-edited overlay
+    with a typo in it reported its diagnostic twice per load and once more per
+    save, and a listing repeated the pair per package.
+
+    A package with no readable colours is a package with no colours, not a load
+    failure: `palette_from_colors_map` fills every role from the defaults and the
+    recorded digest still says which palette the curated files were picked for.
+    `name` is the package directory, which every caller has, rather than the
+    `name` key of a `theme.json` that need not carry one and printed an empty
+    name when it did not.
     """
-    colors: Dict[str, str] = {}
-    if "colors.toml" in files:
-        try:
-            colors = parse_colors_toml(files["colors.toml"])
-        except Exception as exc:
-            eprint(f"theme package {meta.get('name') or ''}: {exc}")
-    return palette_identity(colors, str(meta.get("mode") or ""),
-                            normalize_adjustments(meta.get("adjustments")) if adjusted else None)
+    if "colors.toml" not in files:
+        return {}
+    try:
+        return parse_colors_toml(files["colors.toml"])
+    except Exception as exc:
+        eprint(f"theme package {name}: {exc}")
+        return {}
+
+
+def package_source(meta: Dict[str, Any]) -> str:
+    """Whether a theme package's palette is hand-curated or machine-generated.
+
+    A package's colours are hand-picked unless its `theme.json` says otherwise,
+    which is the opposite of the default `blueprint_source` applies to a bare
+    blueprint, so that function cannot answer for a package.
+    """
+    source = str(meta.get("source") or "curated").strip().lower()
+    return source if source in {"curated", "generated"} else "curated"
+
+
+def rebuilt_palette_identity(bp: Dict[str, Any]) -> Dict[str, str]:
+    """A blueprint's palette in the space a rebuild from the applied theme lands in.
+
+    The one space two blueprints of different provenance can be compared in. A
+    package holds raw palette keys while `set-wallpaper --save` hands the save a
+    blueprint rebuilt out of `theme.json`, which holds derived roles; on akane
+    `accent`, `selection_background` and `selection_foreground` differ between the
+    two while naming the same palette. Passing both through the same round trip
+    puts each in derived form and drops the terminal slots one side carries and
+    the other does not, so what remains differs only where the colours do.
+    """
+    theme = theme_json_from_blueprint(blueprint_from_theme_json(theme_json_from_blueprint(bp)))
+    return {**{str(key): str(value) for key, value in (theme.get("colors") or {}).items()},
+            "mode": str(theme.get("mode") or "")}
 
 
 def override_dropped_curated(bp: Dict[str, Any]) -> List[str]:
@@ -2081,20 +2110,34 @@ def override_dropped_curated(bp: Dict[str, Any]) -> List[str]:
     `apps`, `package`, `path`, `builtin` and `userDir` and nothing else, so such
     a key was dropped before the save ever read it.
 
-    It is asked over the package's own palette, the one the loader put the file
-    in or out of `apps` against, not over the palette this save is about to
-    write. Those differ: the save writes a blueprint rebuilt from the applied
-    theme, which holds derived roles where the package holds raw ones, so asking
-    over the written palette answers that every file was dropped and exempts
-    none.
+    The drop question is asked over the package's own palette, the one the loader
+    put the file in or out of `apps` against, not over the palette this save is
+    about to write. Those are held in different forms: the save writes a
+    blueprint rebuilt from the applied theme, which holds derived roles where the
+    package holds raw ones, so asking the drop question over the written palette
+    answers that every file was dropped and exempts none.
 
-    Only a save landing under the source package's own name is exempted. Under
-    any other name the destination is a different package, and a merge-style file
-    already sitting there was picked for colours this save never saw, which is
-    the unjudged certification the digest exists to prevent. A restyle or a
-    colour edit moves the package's own palette away from the digest recorded
-    beside it, so both questions drop the file, the difference is empty, and the
-    prune still removes it.
+    Two guards stand in front of that question, and the exemption needs both,
+    because either one alone certifies a file nobody judged:
+
+    - The save lands under the source package's own name. Under any other name
+      the destination is a different package, and a merge-style file already
+      sitting there was picked for colours this save never saw.
+    - The palette the save writes is still the source package's own, compared
+      through `rebuilt_palette_identity` so the two forms above meet. They part
+      whenever a control moves the applied palette without writing `colors.toml`:
+      `theme apply-colors --set foreground=#101010` with no `--save`, then
+      `set-wallpaper --save`. The package on disk still matches the digest
+      recorded beside it, so the drop question alone reads the file as merely
+      overridden and spares it, while the save writes the edited palette and
+      records its digest, which certifies colours the file was never picked for.
+      On akane the kept file then painted its diff bands at 1.05:1 and 1.06:1
+      against the new background.
+
+    A restyle or a colour edit written into `colors.toml` needs no guard: it
+    moves the package's own palette away from the digest recorded beside it, so
+    both drop questions drop the file, the difference is empty, and the prune
+    still removes it.
     """
     source = Path(str(bp.get("path") or "")).name
     package = theme_package_dir_name(bp)
@@ -2109,7 +2152,11 @@ def override_dropped_curated(bp: Dict[str, Any]) -> List[str]:
         meta = json.loads(meta_path.read_text())
     if not isinstance(meta, dict):
         return []
-    palette = package_palette_identity(files, meta)
+    palette = palette_identity(package_colors_map(files, package), str(meta.get("mode") or ""),
+                               meta.get("adjustments"))
+    if rebuilt_palette_identity(bp) != rebuilt_palette_identity(
+            palette_from_colors_map(palette, name=package, source=package_source(meta))):
+        return []
     curated = {Path(rel).name: str(p) for rel, p in files.items() if rel.startswith("apps/")}
     layers = {str(root): layer_curated_palette(root)
               for root in (builtin_themes_dir() / package, user_themes_dir() / package)}

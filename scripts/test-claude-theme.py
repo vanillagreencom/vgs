@@ -228,6 +228,19 @@ def download_package(name: str) -> Path:
     return dest
 
 
+def write_applied_state(bp: dict) -> dict:
+    """The shell state an apply leaves for `bp`, written by production's own composers.
+
+    Used both to seed an applied theme and as the stand-in for `apply_theme_obj`
+    inside a colour edit, so a fixture cannot drift into a shell state the apply
+    no longer writes. Returns the empty result its caller assigns keys onto.
+    """
+    helper.write_file(helper.cfg_dir() / "theme-current.json", json.dumps(bp, indent=2))
+    helper.write_file(helper.cfg_dir() / "theme.json", helper.render_target_template(
+        "vgs-shell", "vgs-theme.json", helper.target_roles(bp)))
+    return {}
+
+
 def restyled(name: str, adjustments: dict) -> dict:
     """The bundled package `name` as a restyle slider leaves it.
 
@@ -917,16 +930,22 @@ class InstalledLayout(unittest.TestCase):
                 ("claude-light.json" in blueprint["apps"], self.light(blueprint)),
                 (False, []))
 
-    def saved_under_own_name(self, overrides: dict) -> tuple:
-        """akane downloaded, optionally overridden, then saved the way
-        `set-wallpaper --save` saves: `carry_curated_apps` over a rebuild from the
-        applied theme, which is the only shipped call that reaches this exemption.
+    def saved_under_own_name(self, overrides: dict, edits: tuple = ()) -> tuple:
+        """akane downloaded, optionally overridden, optionally colour-edited
+        without `--save`, then saved the way `set-wallpaper --save` saves:
+        `carry_curated_apps` over a rebuild from the applied theme, which is the
+        only shipped call that reaches this exemption.
 
         A blueprint straight from `load_theme_package` is a shape production never
         hands the save. `carry_curated_apps` copies `apps`, `package`, `path`,
         `builtin` and `userDir` and nothing else, so a fixture that skips it tests
         an exemption carried on a key the real caller drops, and passes while the
         file is deleted in production.
+
+        `edits` runs `apply_color_edits` with no `--save`, which is what moves the
+        applied palette while leaving the package's `colors.toml` and its recorded
+        digest untouched. The save then writes the edited palette over the package
+        the exemption asks about.
 
         Returns whether the save left the file on disk, whether the loader takes
         it back once the override is cleared, and that reload's light shortfalls.
@@ -936,14 +955,11 @@ class InstalledLayout(unittest.TestCase):
         """
         with installed_layout():
             dest = download_package("akane")
-            applied = helper.load_theme_package("akane")
-            # The state an apply leaves, written by production's own composer so
-            # this cannot drift into a shell state the apply no longer writes.
-            helper.write_file(helper.cfg_dir() / "theme-current.json",
-                              json.dumps(applied, indent=2))
-            helper.write_file(helper.cfg_dir() / "theme.json", helper.render_target_template(
-                "vgs-shell", "vgs-theme.json", helper.target_roles(applied)))
+            write_applied_state(helper.load_theme_package("akane"))
             helper.write_user_app_overrides("akane", overrides)
+            if edits:
+                with mock.patch.object(helper, "apply_theme_obj", side_effect=write_applied_state):
+                    helper.apply_color_edits(list(edits), "akane")
             carried = helper.carry_curated_apps(helper.blueprint_from_current_theme(name="akane"))
             helper.save_theme_package(carried, name="akane")
             on_disk = {path.name for path in (dest / "apps").iterdir()}
@@ -959,32 +975,54 @@ class InstalledLayout(unittest.TestCase):
         untouched, so the prune deleted the only copy a download has and `theme
         app-colors claude --reset` could not bring it back.
 
-        The no-override row is the control that says this case measures a file the
-        save threatened and spared, not one it never reached: without it a save
-        that pruned nothing at all would read as a pass.
+        The no-override row says the same save spares the file when no override is
+        set, so what the first row measures is the exemption and not a difference
+        in what the save was handed.
+
+        The third row is the must-fail control that the prune reaches this file at
+        all, and the one that says the exemption asks about the palette as well as
+        the override. `apply-colors` with no `--save` moves the applied palette
+        while the package's `colors.toml` keeps the colours its recorded digest
+        names, so the override question alone still reads the file as merely
+        overridden. Sparing it there let the save certify colours the file was
+        never picked for, and the reload painted akane's diff bands at 1.05:1 and
+        1.06:1 against the new background.
         """
         self.assertEqual(
             (self.saved_under_own_name({"claude": {"background": "#0b0b0b"}}),
-             self.saved_under_own_name({})),
-            ((True, True, []), (True, True, [])))
+             self.saved_under_own_name({}),
+             self.saved_under_own_name({"claude": {"background": "#0b0b0b"}},
+                                       ("foreground=#101010",))),
+            ((True, True, []), (True, True, []), (False, False, [])))
 
     def test_a_save_under_another_name_grants_the_override_no_exemption(self):
         """The exemption asks about the package the save is writing over. Under a
         different name the destination is another package, and a merge-style file
         already sitting there was picked for colours this save never saw, which is
-        the unjudged certification the digest exists to prevent."""
+        the unjudged certification the digest exists to prevent.
+
+        The destination is a complete package carrying its own curated file and
+        its own claude override, because that is the only shape in which the name
+        comparison decides anything: a bare directory is refused earlier, for
+        holding no `theme.json`. Its palette is a faithful copy of the source's,
+        so the palette comparison passes and the name is the sole thing left to
+        refuse the exemption.
+
+        The source is a loader blueprint rather than a carried one, which gives
+        the exemption every key it could read. The save under the theme's own name
+        is where the carried shape has to be exact.
+        """
         with installed_layout():
             download_package("akane")
+            copy = helper.save_theme_package(helper.load_theme_package("akane"), name="akane-copy")
+            helper.write_user_app_overrides("akane-copy", {"claude": {"background": "#0b0b0b"}})
             helper.write_user_app_overrides("akane", {"claude": {"background": "#0b0b0b"}})
             overridden = helper.load_theme_package("akane")
-            copy = helper.user_themes_dir() / "akane-copy"
-            (copy / "apps").mkdir(parents=True)
-            (copy / "apps" / "claude-light.json").write_text(
-                json.dumps({"overrides": {"claude": "#abcdef"}}))
+            before = {path.name for path in (copy / "apps").iterdir()}
             helper.save_theme_package(overridden, name="akane-copy")
+            after = {path.name for path in (copy / "apps").iterdir()}
             self.assertEqual(
-                sorted(path.name for path in (copy / "apps").iterdir() if "claude" in path.name),
-                [])
+                ("claude-light.json" in before, "claude-light.json" in after), (True, False))
 
     def test_a_colour_edit_keeps_the_replacing_file_it_drops_the_merge_style_one(self):
         """A user package owns its palette outright, so nothing about where its
