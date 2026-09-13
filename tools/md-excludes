@@ -16,6 +16,4 @@ quickshell/vshell/LICENSE_CHANGE_12_11_2025.md	licence notice; reflowing legal t
 !.agents/skills/vshell-dev/*	VGS-owned in-place skill, declared source = "in-place" in kendex.toml
 .claude/*	kendex render output, owned upstream
 .codex/*	kendex render output, owned upstream
-.opencode/*	kendex render output, owned upstream
 .pi/*	kendex render output, owned upstream
-.cursor/*	kendex render output, owned upstream
