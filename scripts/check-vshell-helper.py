@@ -7963,8 +7963,11 @@ def test_tmux_theme_reaches_the_running_server():
 def test_tmux_copy_mode_matches_take_theme_roles():
     """tmux's own match styles paint black on cyan and magenta, which a light
     theme cannot read, so the template sets both from theme roles."""
-    roles = {"selection_background": "#c68d95", "selection_foreground": "#35302a",
-             "secondary": "#713a56", "onSecondary": "#f5e6d3"}
+    # A complete role map, since the renderer refuses a role the map lacks, with
+    # the four roles under test set to values no default carries.
+    roles = helper.render_roles({}, {**helper.target_roles({}),
+                                     "selection_background": "#c68d95", "selection_foreground": "#35302a",
+                                     "secondary": "#713a56", "onSecondary": "#f5e6d3"})
     rendered = helper.render_target_template("tmux-vgs", "vgs-theme.conf", roles).splitlines()
     for option, style in (
         ("copy-mode-match-style", "bg=#c68d95,fg=#35302a"),

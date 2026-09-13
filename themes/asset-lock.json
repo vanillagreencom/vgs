@@ -123,12 +123,12 @@
       "published": true
     },
     "catppuccin-latte": {
-      "release": "themes-v3",
-      "archive": "vgs-theme-catppuccin-latte-r2.tar.gz",
-      "rev": 2,
-      "size": 2658369,
-      "sha256": "2ad6c7dfc2ab977ba54e3583fab77e1a4e9afdfeb38cda0c078347f5a3c07343",
-      "definitions": "6a699269471df3a9c4131eb579de5fe248999fc1505c7595c3114faf070ad941",
+      "release": "themes-v4",
+      "archive": "vgs-theme-catppuccin-latte-r3.tar.gz",
+      "rev": 3,
+      "size": 2658408,
+      "sha256": "8b7b7a00a8b25e2c7362d9cb121454db25c206a0828ab25b6b65b19751dcf75b",
+      "definitions": "2a3c2cb1e7bffd4fd057ee0b12dda27c5ec4f99cf354b9ef6fc5798d8eb09292",
       "preview": "d81081a44b381e0145e3d2729bff966b77f5c5ed5fba13a47abf4ae88d2526ed",
       "published": true
     },
@@ -243,12 +243,12 @@
       "published": true
     },
     "flexoki-light": {
-      "release": "themes-v3",
-      "archive": "vgs-theme-flexoki-light-r2.tar.gz",
-      "rev": 2,
-      "size": 1872209,
-      "sha256": "dedad7d1bb47d5e76d22df217e3c4fbf4fc0ae7d40f10a1c966c9f9fdb4eb94a",
-      "definitions": "31dde8fc4d3977a8055fe2ac012d3600247345cd7dade784dd8496c861ad25fe",
+      "release": "themes-v4",
+      "archive": "vgs-theme-flexoki-light-r3.tar.gz",
+      "rev": 3,
+      "size": 1872430,
+      "sha256": "0e30c51b9af0b31ffb45d3bf76422aec72c44b6dd154dc32d6a9931891fc828c",
+      "definitions": "75c184affc0fabc480bbd5d04bd39a5651c4559d33e1cc349efc6d00dab2740f",
       "preview": "98801cd1d401f8a4c9150ed951655bd1dca04b735631dd3686b76c078b5eb503",
       "published": true
     },
@@ -563,12 +563,12 @@
       "published": true
     },
     "rose-pine": {
-      "release": "themes-v3",
-      "archive": "vgs-theme-rose-pine-r2.tar.gz",
-      "rev": 2,
-      "size": 12646714,
-      "sha256": "641a77af1a0a72e715878e874f62e2c7e10fab19d46a4075129e0e5020acfc10",
-      "definitions": "889f9288c9ad2ece1423caef0c2942f8d4e654a902ac346b63aa806c14d66b49",
+      "release": "themes-v4",
+      "archive": "vgs-theme-rose-pine-r3.tar.gz",
+      "rev": 3,
+      "size": 12646780,
+      "sha256": "9e64d8e360523a1c33263edd700bf827c97d4b3d55ff07a6b2c1ec623444904f",
+      "definitions": "5c342865884a03c6d28f0a4d9b175b707a27ff22105f97ddf0572789e657fd60",
       "preview": "7249327358872e98a73963a182f508c0b38dd4a7bae1a1aa20b38cca671d612d",
       "published": true
     },
@@ -773,12 +773,12 @@
       "published": true
     },
     "white": {
-      "release": "themes-v3",
-      "archive": "vgs-theme-white-r2.tar.gz",
-      "rev": 2,
-      "size": 2871132,
-      "sha256": "d842f105db707cd2d212edd033da6b6a307aab9f59441db033490c26357b9505",
-      "definitions": "693c7279c56cb657605910cf1e3e11c4bfc730aa9a56a1d327f48aca8fc70390",
+      "release": "themes-v4",
+      "archive": "vgs-theme-white-r3.tar.gz",
+      "rev": 3,
+      "size": 2871181,
+      "sha256": "77775aeb260b593b668adabd81929e9b8b7ef3074b41db41fe38a89de8192a75",
+      "definitions": "ba325d80dad298b0dfcea4af9a178607b5a2dc70739a08822ed216467b45bc45",
       "preview": "7b3bac8b1646fdda6dfc8e34bda1114114d65a4885e6881f18278524bf0e2d96",
       "published": true
     },
