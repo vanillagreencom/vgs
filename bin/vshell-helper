@@ -2057,7 +2057,7 @@ def save_theme_package(bp: Dict[str, Any], name: str | None = None) -> Path:
     for filename, path in (bp.get("apps") or {}).items():
         with contextlib.suppress(OSError):
             apps[filename] = Path(path).read_text()
-    return materialize_theme_package(bp, apps=apps)
+    return materialize_theme_package(bp, apps=apps, prune_curated=True)
 
 
 def rendered_apps_for(bp: Dict[str, Any]) -> Dict[str, str]:
@@ -2082,11 +2082,21 @@ def rendered_apps_for(bp: Dict[str, Any]) -> Dict[str, str]:
     return out
 
 
-def materialize_theme_package(bp: Dict[str, Any], apps: Dict[str, str] | None = None, user: bool = True) -> Path:
+def materialize_theme_package(bp: Dict[str, Any], apps: Dict[str, str] | None = None,
+                              user: bool = True, prune_curated: bool = False) -> Path:
     """Write a blueprint out as a v2 theme package directory.
 
     `apps` maps curated file names to file contents (rendered or hand-written).
     Existing curated files are preserved unless new content is supplied.
+
+    `prune_curated` additionally deletes any merge-style curated file in the
+    destination that `apps` does not carry, and only `save_theme_package` may ask
+    for it, because only its map is the complete intended contents. Every other
+    caller arrives with a map from `rendered_apps_for`, which can never hold a
+    claude file since that target has no template, so pruning unconditionally
+    deleted a file those callers were never asked about: `theme regenerate
+    <name> --app btop` removed the user's own `apps/claude-dark.json`, which for
+    a download or a user-created package is the only copy there is.
     """
     ensure_dirs()
     name = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(bp.get("name") or "theme")).strip("-") or "theme"
@@ -2135,8 +2145,15 @@ def materialize_theme_package(bp: Dict[str, Any], apps: Dict[str, str] | None = 
     # --save` and `apply-colors --save`, and for a downloaded theme that is the
     # download's own directory, so the file the loader had just dropped survived
     # there and came back on the next load.
-    for stale in CLAUDE_CURATED_FILES - set(apps or {}):
-        (root / "apps" / stale).unlink(missing_ok=True)
+    #
+    # This and the per-layer digest test in `curated_apps_for_palette` answer
+    # different questions and neither replaces the other: that one asks which
+    # layer vouches for a file, and reaches a built-in file this writer cannot
+    # touch; this one asks whether the writer ever saw the file, and reaches a
+    # user-layer file whose layer record the save itself has just rewritten.
+    if prune_curated:
+        for stale in CLAUDE_CURATED_FILES - set(apps or {}):
+            (root / "apps" / stale).unlink(missing_ok=True)
     for filename, content in (apps or {}).items():
         write_file(root / "apps" / filename, content)
     return root

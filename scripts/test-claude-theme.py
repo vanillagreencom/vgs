@@ -942,6 +942,56 @@ class InstalledLayout(unittest.TestCase):
              content["overrides"]["diffAdded"] == curated["diffAdded"], missed),
             (False, False, False, []))
 
+    def test_a_theme_in_both_layers_loses_its_curated_values_on_a_save(self):
+        """A theme can exist in both layers at once: shipped built in and also
+        present in the user directory, which is what a download of a built-in
+        theme leaves. The save then writes the user layer while the built-in layer
+        keeps supplying its own curated file, so deleting in the destination
+        cannot reach it and only the per-layer digest test can. No other case in
+        this file builds that layout, which is why a version answering correctly
+        on one layer alone still passed the whole suite.
+        """
+        with installed_layout("akane") as home:
+            download_package("akane")
+            self.assertTrue((helper.builtin_themes_dir() / "akane" / "apps"
+                             / "claude-light.json").is_file())
+            self.assertTrue((home / ".config" / "vshell" / "themes" / "akane" / "apps"
+                             / "claude-light.json").is_file())
+            helper.set_theme_adjustments("akane", {"brightness": 100})
+            restyled_both = helper.load_theme_package("akane")
+            helper.save_theme_package(restyled_both, name="akane")
+            reloaded = helper.load_theme_package("akane")
+            content, missed = rendered_file(reloaded, "light")
+        curated = json.loads(
+            (REPO / "themes" / "akane" / "apps" / "claude-light.json").read_text())["overrides"]
+        carried = [token for token, value in curated.items()
+                   if content["overrides"].get(token) == value]
+        self.assertEqual(
+            ("claude-light.json" in restyled_both["apps"],
+             "claude-light.json" in reloaded["apps"], carried, missed),
+            (False, False, [], []))
+
+    def test_regenerating_one_app_leaves_a_curated_file_it_was_not_given(self):
+        """Only save_theme_package hands the writer the complete intended contents.
+        Every other caller arrives with a rendered_apps_for map, which can never
+        hold a claude file because that target has no template, so a prune that
+        read any short map as intent deleted a file the caller was never asked
+        about. `theme regenerate <name> --app btop` did that, and for a download
+        or a user-created package the user directory holds the only copy.
+        """
+        with temp_home() as home:
+            root = write_package(home, "probe", RestyledPackages.COLORS,
+                                 apps=RestyledPackages.APPS)
+            blueprint = helper.load_theme_package("probe")
+            rendered = {name: body for name, body in helper.rendered_apps_for(blueprint).items()
+                        if name.split(".")[0] == "btop"}
+            helper.materialize_theme_package(blueprint, apps=rendered)
+            survived = {path.name for path in (root / "apps").iterdir()}
+        self.assertEqual(
+            ("claude-dark.json" in blueprint["apps"], sorted(rendered),
+             "claude-dark.json" in survived, "icons.theme" in survived),
+            (True, ["btop.theme"], True, True))
+
     def test_a_package_recording_no_palette_drops_its_merge_style_file(self):
         """Nothing on disk says what a legacy package's curated values were picked
         against. The unreadable-diff-panel cost sits on keeping it and the plainer
