@@ -321,7 +321,7 @@ def run_selection_hook(name, roles=None):
     if os.environ.get("HOME") == _HOME_AT_IMPORT:
         raise AssertionError(
             f"{name} would write the real HOME; run selection hooks inside with_temp_home")
-    return helper.run_hook(name, roles or {})
+    return helper.run_hook(name, roles or {}, {})
 
 
 def _render_agent_cli_target(target, blueprint, mode_maps):
@@ -824,6 +824,33 @@ def test_agent_cli_theme_selection_keeps_the_settings_file_permissions():
     with_temp_home(check)
 
 
+def test_agent_cli_theme_selection_writes_through_a_symlinked_config():
+    """A user can point several account directories at one settings file, which is
+    how the owner's three Claude Code accounts share theirs. write_file replaces
+    the name it is given, so without resolving first the selection would turn that
+    link into a regular file and cut the other accounts loose."""
+    def check(home):
+        _write_agent_cli_theme_files(home)
+        (home / ".gemini").mkdir(parents=True, exist_ok=True)
+        shared = home / "shared-settings.json"
+        shared.write_text(json.dumps({"model": "gemini-3-pro"}, indent=2) + "\n")
+        os.chmod(shared, 0o600)
+        link = home / ".gemini" / "settings.json"
+        link.symlink_to(shared)
+        assert_equal(run_selection_hook("gemini-theme-select").get("changed"), True,
+                     "gemini write")
+        assert_equal(link.is_symlink(), True, "the settings file is still a symlink")
+        assert_equal(link.resolve(), shared.resolve(), "the link still points at the shared file")
+        target = json.loads(shared.read_text())
+        assert_equal(target["ui"]["theme"], str(home / ".gemini/themes/vgs.json"),
+                     "the theme landed in the file the link points at")
+        assert_equal(target["model"], "gemini-3-pro", "the shared file keeps its other settings")
+        assert_equal(stat.S_IMODE(shared.stat().st_mode), 0o600,
+                     "the shared file keeps its owner-only mode")
+
+    with_temp_home(check)
+
+
 def test_agent_cli_theme_selection_edits_the_omp_config_that_omp_reads():
     """oh-my-pi loads the first of config.yml and config.yaml that exists.
 
@@ -938,31 +965,6 @@ def test_agent_cli_theme_selection_refuses_a_config_shape_it_cannot_edit():
         assert_equal(settings.read_text(), '{"ui": "compact"}\n', "the refused settings are unchanged")
         if "ui" not in str(result.get("error") or ""):
             raise AssertionError(f"the refusal does not name the section: {result.get('error')!r}")
-
-    with_temp_home(check)
-
-
-def test_claude_theme_hook_selects_without_creating_or_widening():
-    """The Claude Code hook now shares the JSON writer. It must still leave an
-    absent settings file absent, keep the file's other keys and its mode, and
-    write nothing on a second apply of the same mode."""
-    def check(home):
-        result = run_selection_hook("claude-theme", {"theme_type": "dark"})
-        assert_equal(result.get("skipped"), True, "no settings file means no selection")
-        if (home / ".claude" / "settings.json").exists():
-            raise AssertionError("the hook created ~/.claude/settings.json")
-
-        settings = home / ".claude" / "settings.json"
-        settings.parent.mkdir(parents=True, exist_ok=True)
-        settings.write_text(json.dumps({"theme": "dark-ansi", "model": "opus"}, indent=2) + "\n")
-        os.chmod(settings, 0o600)
-        assert_equal(run_selection_hook("claude-theme", {"theme_type": "light"}).get("changed"), True,
-                     "a mode change selects the matching preset")
-        assert_equal(json.loads(settings.read_text()),
-                     {"theme": "light-ansi", "model": "opus"}, "the other settings survive")
-        assert_equal(stat.S_IMODE(settings.stat().st_mode), 0o600, "the settings mode is kept")
-        assert_equal(run_selection_hook("claude-theme", {"theme_type": "light"}).get("changed"), False,
-                     "a second apply of the same mode rewrites nothing")
 
     with_temp_home(check)
 
@@ -8252,12 +8254,12 @@ def test_codex_theme_selection_changes_only_the_tui_theme_key():
         config = codex / "config.toml"
         for label, initial, expect_ok, expect_text, expect_error in rows:
             config.write_text(initial)
-            result = helper.run_hook("codex-theme", {})
+            result = helper.run_hook("codex-theme", {}, {})
             assert_equal(result["ok"], expect_ok, label)
             assert_equal(config.read_text(), expect_text, f"file contents: {label}")
             if expect_ok:
                 assert_equal(result["theme"], "vgs", f"selected theme: {label}")
-                assert_equal(helper.run_hook("codex-theme", {}).get("unchanged"), True,
+                assert_equal(helper.run_hook("codex-theme", {}, {}).get("unchanged"), True,
                              f"second apply is a no-op: {label}")
             elif expect_error not in result["error"]:
                 raise AssertionError(
@@ -8272,13 +8274,13 @@ def test_codex_theme_selection_changes_only_the_tui_theme_key():
         # mode handling fails this row whatever the caller's umask is.
         config.write_text('[tui]\ntheme = "ansi"\n')
         os.chmod(config, 0o640)
-        assert_equal(helper.run_hook("codex-theme", {})["ok"], True, "a private config is themed")
+        assert_equal(helper.run_hook("codex-theme", {}, {})["ok"], True, "a private config is themed")
         assert_equal(oct(config.stat().st_mode & 0o777), oct(0o640), "the file keeps its own mode")
 
         # A missing config.toml is written, since Codex reads its theme from no
         # other file.
         config.unlink()
-        assert_equal(helper.run_hook("codex-theme", {})["ok"], True, "a missing config is created")
+        assert_equal(helper.run_hook("codex-theme", {}, {})["ok"], True, "a missing config is created")
         assert_equal(config.read_text(), '[tui]\ntheme = "vgs"\n', "created config holds the table alone")
 
         # config.toml is commonly a symlink into a dotfiles checkout.
@@ -8287,7 +8289,7 @@ def test_codex_theme_selection_changes_only_the_tui_theme_key():
         dotfiles.write_text('[tui]\ntheme = "ansi"\n')
         config.unlink()
         config.symlink_to(dotfiles)
-        assert_equal(helper.run_hook("codex-theme", {})["ok"], True, "a symlinked config is followed")
+        assert_equal(helper.run_hook("codex-theme", {}, {})["ok"], True, "a symlinked config is followed")
         assert_equal(config.is_symlink(), True, "the symlink survives the write")
         assert_equal(dotfiles.read_text(), '[tui]\ntheme = "vgs"\n', "the link target took the theme")
 
@@ -8296,7 +8298,7 @@ def test_codex_theme_selection_changes_only_the_tui_theme_key():
         dotfiles.write_text('[tui]\ntheme = "ansi"\n')
         os.chmod(dotfiles.parent, 0o500)
         try:
-            refused = helper.run_hook("codex-theme", {})
+            refused = helper.run_hook("codex-theme", {}, {})
         finally:
             os.chmod(dotfiles.parent, 0o700)
         assert_equal(refused["ok"], False, "an unwritable config fails as a hook result")
@@ -8307,13 +8309,13 @@ def test_codex_theme_selection_changes_only_the_tui_theme_key():
         # A config that is not UTF-8 is read through the same guard.
         config.unlink()
         config.write_bytes(b'[tui]\ntheme = "\xff\xfe"\n')
-        unreadable = helper.run_hook("codex-theme", {})
+        unreadable = helper.run_hook("codex-theme", {}, {})
         assert_equal(unreadable["ok"], False, "a non-UTF-8 config fails as a hook result")
         if "codex config unreadable" not in unreadable["error"]:
             raise AssertionError(f"the read failure must name itself: {unreadable['error']!r}")
 
         shutil.rmtree(codex)
-        skipped = helper.run_hook("codex-theme", {})
+        skipped = helper.run_hook("codex-theme", {}, {})
         assert_equal(skipped["skipped"], True, "no ~/.codex means no Codex to theme")
 
     with_temp_home(run)
@@ -8353,11 +8355,11 @@ def main():
     test_agent_cli_theme_selection_adds_an_absent_block_without_reflowing_the_file()
     test_agent_cli_theme_selection_ignores_a_deeper_key_of_the_same_name()
     test_agent_cli_theme_selection_keeps_the_settings_file_permissions()
+    test_agent_cli_theme_selection_writes_through_a_symlinked_config()
     test_agent_cli_theme_selection_edits_the_omp_config_that_omp_reads()
     test_agent_cli_theme_selection_waits_for_the_opencode_migration()
     test_agent_cli_theme_selection_acts_only_on_a_rendered_theme()
     test_agent_cli_theme_selection_refuses_a_config_shape_it_cannot_edit()
-    test_claude_theme_hook_selects_without_creating_or_widening()
     test_restyle_integer_sweeps()
     test_fastfetch_portable_seed_and_logo_fallback()
     test_compositor_dependency_selection()

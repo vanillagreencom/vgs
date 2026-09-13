@@ -137,7 +137,7 @@ def restyled(blueprint: dict, adjustments: dict) -> dict:
 
 def rendered_file(blueprint: dict, mode: str) -> tuple[dict, list]:
     return helper.claude_theme_file(
-        helper.claude_mode_blueprint(blueprint, mode, THEMES), mode)
+        helper.mode_variant_blueprint(blueprint, mode, THEMES), mode)
 
 
 def ratio(a: str, b: str) -> float:
@@ -262,18 +262,18 @@ class BundledThemeColours(unittest.TestCase):
 class ModeCounterparts(unittest.TestCase):
     def test_a_theme_renders_its_own_mode_from_itself(self):
         blueprint = helper.find_theme("catppuccin")
-        self.assertIs(helper.claude_mode_blueprint(blueprint, "dark"), blueprint)
+        self.assertIs(helper.mode_variant_blueprint(blueprint, "dark"), blueprint)
 
     def test_a_paired_theme_renders_its_counterpart_from_the_pair(self):
         blueprint = helper.find_theme("catppuccin")
-        counterpart = helper.claude_mode_blueprint(blueprint, "light")
+        counterpart = helper.mode_variant_blueprint(blueprint, "light")
         self.assertEqual((counterpart["name"], helper.blueprint_mode(counterpart)),
                          ("catppuccin-latte", "light"))
 
     def test_an_unpaired_theme_renders_its_counterpart_from_the_mode_transform(self):
         blueprint = helper.find_theme("bauhaus")
         self.assertIsNone(helper.paired_blueprint(blueprint, "light"))
-        counterpart = helper.claude_mode_blueprint(blueprint, "light")
+        counterpart = helper.mode_variant_blueprint(blueprint, "light")
         self.assertEqual(helper.blueprint_mode(counterpart), "light")
 
     def test_a_counterpart_file_carries_its_own_blueprint_colours(self):
@@ -310,7 +310,7 @@ class ModeCounterparts(unittest.TestCase):
     def test_every_bundled_theme_has_a_counterpart_in_both_modes(self):
         missing = [(name, mode) for name in THEME_NAMES for mode in ("dark", "light")
                    if helper.blueprint_mode(
-                       helper.claude_mode_blueprint(helper.find_theme(name), mode)) != mode]
+                       helper.mode_variant_blueprint(helper.find_theme(name), mode)) != mode]
         self.assertEqual(missing, [])
 
 
@@ -366,58 +366,6 @@ class UnreachableDiffBands(unittest.TestCase):
                     for line in missed if line.startswith("diff band")}
         self.assertEqual(reported, {f"{ratio(values[token], values['background']):.2f}"
                                     for token in DIMMED_BANDS})
-
-
-class ThemeSelection(unittest.TestCase):
-    def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
-        self.settings = self.home / "settings.json"
-
-    def test_an_absent_settings_file_is_created_with_the_theme(self):
-        changed = helper.select_claude_theme(self.settings, "custom:vgs-dark")
-        self.assertEqual((changed, json.loads(self.settings.read_text())),
-                         (True, {"theme": "custom:vgs-dark"}))
-
-    def test_the_selection_keeps_the_settings_the_file_already_holds(self):
-        self.settings.write_text(json.dumps({"theme": "dark-ansi", "model": "opus"}))
-        changed = helper.select_claude_theme(self.settings, "custom:vgs-light")
-        self.assertEqual((changed, json.loads(self.settings.read_text())),
-                         (True, {"theme": "custom:vgs-light", "model": "opus"}))
-
-    def test_an_unchanged_selection_reports_no_change(self):
-        self.settings.write_text(json.dumps({"theme": "custom:vgs-dark"}))
-        self.assertIs(helper.select_claude_theme(self.settings, "custom:vgs-dark"), False)
-
-    def test_a_symlinked_settings_file_is_still_a_symlink_afterwards(self):
-        """Three account directories can link their settings.json to this one file."""
-        real = self.home / "real-settings.json"
-        real.write_text(json.dumps({"theme": "dark-ansi"}))
-        self.settings.symlink_to(real)
-        helper.select_claude_theme(self.settings, "custom:vgs-dark")
-        self.assertEqual((self.settings.is_symlink(), self.settings.resolve(),
-                          json.loads(real.read_text())),
-                         (True, real.resolve(), {"theme": "custom:vgs-dark"}))
-
-    def test_a_settings_file_vgs_creates_is_owner_only(self):
-        """The user may add an API key or a key helper to it afterwards, and the
-        next apply would copy a world-readable mode forward."""
-        self.addCleanup(os.umask, os.umask(0o022))
-        helper.select_claude_theme(self.settings, "custom:vgs-dark")
-        self.assertEqual(self.settings.stat().st_mode & 0o777, 0o600)
-
-    def test_an_existing_settings_file_keeps_its_own_mode(self):
-        """A mode the user chose is theirs, including through the symlink."""
-        real = self.home / "real-settings.json"
-        real.write_text(json.dumps({"theme": "dark-ansi"}))
-        real.chmod(0o640)
-        self.settings.symlink_to(real)
-        plain = self.home / "plain.json"
-        plain.write_text(json.dumps({"theme": "dark-ansi"}))
-        plain.chmod(0o640)
-        helper.select_claude_theme(self.settings, "custom:vgs-dark")
-        helper.select_claude_theme(plain, "custom:vgs-dark")
-        self.assertEqual((real.stat().st_mode & 0o777, plain.stat().st_mode & 0o777),
-                         (0o640, 0o640))
 
 
 class HookBehaviour(unittest.TestCase):
