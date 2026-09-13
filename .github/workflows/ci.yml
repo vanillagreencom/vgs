@@ -299,6 +299,7 @@ jobs:
           scripts/check-dev-tools.py
           scripts/test-bounded-run.py
           scripts/check-brightness.py
+          scripts/test-claude-theme.py
           python3 -m py_compile bin/vshell-helper
           python3 -m py_compile scripts/publish-theme-assets.py
           bash -n bin/vshell
