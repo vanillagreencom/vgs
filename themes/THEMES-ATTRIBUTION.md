@@ -50,3 +50,12 @@ VGS theme packages listed below were ported from community Omarchy theme reposit
 | `void` | https://github.com/vyrx-dev/omarchy-void-theme | MIT |
 | `vurple` | https://github.com/tahfizhabib/omarchy-vurple-theme | no LICENSE file |
 | `x-1632` | https://github.com/OldJobobo/omarchy-x-1632-theme | no LICENSE file |
+
+## Horizon palettes
+
+| VGS theme | Palette source | License |
+|---|---|---|
+| `horizon` | [jolaleye/horizon-theme-vscode, dark globals](https://github.com/jolaleye/horizon-theme-vscode/blob/master/src/dark/globals.json) | [MIT, © 2018 Jonathan Olaleye](https://github.com/jolaleye/horizon-theme-vscode/blob/master/LICENSE) |
+| `horizon-light` | [jolaleye/horizon-theme-vscode, bright globals](https://github.com/jolaleye/horizon-theme-vscode/blob/master/src/bright/globals.json) | [MIT, © 2018 Jonathan Olaleye](https://github.com/jolaleye/horizon-theme-vscode/blob/master/LICENSE) |
+
+VGS maps these palettes into `colors.toml` and derives app files from its own render targets. Light ANSI colors derive from the bright syntax and UI colors. Contrast adjustments use the helper's OKLCH lightness mapping with hue preserved. The dark blue selection and bright-black band use the same adjustment. No upstream VS Code theme file is included.
