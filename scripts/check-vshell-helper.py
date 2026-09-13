@@ -2185,25 +2185,30 @@ def test_theme_init_applies_only_without_state():
     with_temp_home(scenario)
 
 
-def test_lint_checks_color0_in_light_mode_only():
-    """ANSI black is body text in a light terminal and unused in a dark one."""
-    def warns(mode: str, bg: str, fg: str, color0: str, terminal_color0: str) -> bool:
+def test_lint_checks_effective_terminal_slots():
+    """Lint checks painted ANSI slots; only light terminals draw text in black."""
+    def warns(mode: str, bg: str, fg: str, slot: int, palette: str, terminal: str) -> bool:
         colors = {f"color{i}": fg for i in range(16)}
-        colors.update({"background": bg, "foreground": fg, "color0": color0, "mode": mode})
+        colors.update({"background": bg, "foreground": fg, f"color{slot}": palette, "mode": mode})
         bp = helper.palette_from_colors_map(colors, name="lint-probe", source="curated")
-        bp["terminalColors"] = {"color0": terminal_color0} if terminal_color0 else {}
-        return any(w["role"].startswith("color0") for w in helper.lint_blueprint(bp))
+        bp["terminalColors"] = {f"color{slot}": terminal} if terminal else {}
+        role = f"color{slot} ({helper.ANSI_NAMES[slot]})"
+        return any(w["role"] == role for w in helper.lint_blueprint(bp))
 
-    for label, mode, bg, fg, color0, terminal_color0, expected in (
-        ("light, color0 equal to the background", "light", "#f5e6d3", "#35302a", "#f5e6d3", "", True),
-        ("light, a dark color0", "light", "#f5e6d3", "#35302a", "#35302a", "", False),
-        ("dark, color0 equal to the background", "dark", "#1a1b26", "#c0caf5", "#1a1b26", "", False),
-        ("light, a dark terminal color0 over a background-equal palette color0",
-         "light", "#f5e6d3", "#35302a", "#f5e6d3", "#35302a", False),
-        ("light, a background-equal terminal color0 over a dark palette color0",
-         "light", "#f5e6d3", "#35302a", "#35302a", "#f5e6d3", True),
+    for label, mode, bg, fg, slot, palette, terminal, expected in (
+        ("light, black equal to background", "light", "#f5e6d3", "#35302a", 0, "#f5e6d3", "", True),
+        ("light, dark black", "light", "#f5e6d3", "#35302a", 0, "#35302a", "", False),
+        ("dark, black equal to background", "dark", "#1a1b26", "#c0caf5", 0, "#1a1b26", "", False),
+        ("light, readable black override", "light", "#f5e6d3", "#35302a", 0, "#f5e6d3", "#35302a", False),
+        ("light, unreadable black override", "light", "#f5e6d3", "#35302a", 0, "#35302a", "#f5e6d3", True),
+        ("light, readable white override", "light", "#f5e6d3", "#35302a", 7, "#f5e6d3", "#35302a", False),
+        ("light, unreadable white override", "light", "#f5e6d3", "#35302a", 7, "#35302a", "#f5e6d3", True),
+        ("dark, readable bright black override", "dark", "#1a1b26", "#c0caf5", 8, "#1a1b26", "#c0caf5", False),
+        ("dark, unreadable bright black override", "dark", "#1a1b26", "#c0caf5", 8, "#c0caf5", "#1a1b26", True),
+        ("light, readable bright white override", "light", "#f5e6d3", "#35302a", 15, "#f5e6d3", "#35302a", False),
+        ("light, unreadable bright white override", "light", "#f5e6d3", "#35302a", 15, "#35302a", "#f5e6d3", True),
     ):
-        assert_equal(warns(mode, bg, fg, color0, terminal_color0), expected, f"lint color0 warning, {label}")
+        assert_equal(warns(mode, bg, fg, slot, palette, terminal), expected, f"lint ANSI warning, {label}")
 
 
 def test_theme_list_falls_back_to_the_shipped_thumbnail():
@@ -8988,7 +8993,7 @@ def main():
     test_shell_only_theme_preview()
     test_current_theme_reads_without_applying()
     test_theme_init_applies_only_without_state()
-    test_lint_checks_color0_in_light_mode_only()
+    test_lint_checks_effective_terminal_slots()
     test_theme_list_falls_back_to_the_shipped_thumbnail()
     test_hyprland_preview_native_lua()
     test_preview_stage_retires_its_window_rule()
