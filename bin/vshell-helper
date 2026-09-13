@@ -2200,8 +2200,11 @@ def declared_ui_roles(bp: Dict[str, Any]) -> Dict[str, str]:
     """The UI roles `bp` declares, which only a curated package has.
 
     One owner for that question, because a blueprint's declarations reach the
-    render, the carry from the applied theme, the file a save writes and the
-    digest that certifies it, and four spellings of the curated test disagreed.
+    render, the carry from the applied theme and the digest that certifies it,
+    and three spellings of the curated test disagreed. The save's write is not
+    one of them: it spells the source test itself, because an empty result here
+    cannot tell a curated package declaring nothing, which must write, mask or
+    remove the file, from a generated one, which must not touch it.
     `apply-colors --set <role>=<hex> --save` rebuilds through
     `palette_from_colors_map`, whose default source is generated: the carry
     handed the declarations on unconditionally, the save wrote a `ui-roles.toml`
@@ -2743,17 +2746,25 @@ def inert_declarations_path(bp: Dict[str, Any]) -> str:
     saves leave a package in exactly that state, and the save now keeps the file
     rather than deleting it, so the apply is where the state gets named.
 
-    Read from the layer directories rather than through `compose_theme_files`,
-    which walks the whole package, because this runs on every apply and the
-    question is only whether one file exists.
+    Whether the composed package declares anything, not whether a file exists.
+    A user overlay that masks a built-in file is the comment-only file this same
+    save path writes, and a file whose every value is unreadable states no
+    declaration either. Both sit on disk, and naming them told the user a palette
+    had dropped chrome it never had, with a partial apply behind it, on every
+    colour edit and every wallpaper change. `package_ui_roles` is the one reader
+    that answers it, so the apply and the loader cannot disagree.
+
+    The path named is the one `compose_theme_files` resolves, which is the file
+    the loader reads: a user overlay shadows the built-in copy, and naming the
+    shadowed one would send a user to a file that changes nothing.
     """
     if blueprint_source(bp) == "curated":
         return ""
     name = theme_package_dir_name(bp)
-    for root in (user_themes_dir() / name, builtin_themes_dir() / name):
-        if (root / UI_ROLES_FILE).is_file():
-            return str(root / UI_ROLES_FILE)
-    return ""
+    files = compose_theme_files(name)
+    if UI_ROLES_FILE not in files or not package_ui_roles(files, name):
+        return ""
+    return str(files[UI_ROLES_FILE])
 
 
 def target_roles(bp: Dict[str, Any]) -> Dict[str, str]:

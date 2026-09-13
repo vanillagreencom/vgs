@@ -9480,6 +9480,43 @@ def test_declared_ui_roles_move_with_a_restyle_and_survive_a_save():
                                                          run_hooks=False)
             assert_equal([line for line in curated_applied["warnings"] if "is not read" in line], [],
                          "a curated apply reads its declarations and names nothing")
+
+            # It is a file with declarations in it that goes unread, not any
+            # file. The masking overlay this same save path writes, and a file
+            # whose every value is unreadable, both state nothing: naming them
+            # reported chrome the palette never had, on every colour edit.
+            # (package, the user-layer ui-roles.toml body that states nothing)
+            silent = (("maskedroles", "# No declared UI roles: this overlay masks the built-in theme's.\n"),
+                      ("unreadableroles", 'statusBg = "#fadad1ff"\nmuted = "#fff"\n'))
+            for name, body in silent:
+                declared_roles_package(builtin, name, DECLARED_UI_ROLES_TOML)
+                overlay = helper.user_themes_dir() / name
+                overlay.mkdir(parents=True, exist_ok=True)
+                (overlay / "theme.json").write_text(json.dumps(
+                    {"name": name, "mode": "light", "source": "generated"}) + "\n")
+                (overlay / helper.UI_ROLES_FILE).write_text(body)
+                with contextlib.redirect_stderr(io.StringIO()):
+                    quiet_bp = helper.load_theme_package(name) or {}
+                    quiet = helper.apply_theme_obj(quiet_bp, only_target="tmux-vgs", run_hooks=False)
+                assert_equal([line for line in quiet["warnings"] if "is not read" in line], [],
+                             f"{name} states no declaration, so nothing is named unread")
+                assert_equal(quiet["partial"], False,
+                             f"{name} does not make every apply partial over a file that states nothing")
+                assert_equal(helper.inert_declarations_path(quiet_bp), "",
+                             f"{name} has no unread declarations file")
+
+            # The path named is the one the loader reads. A user overlay shadows
+            # the built-in copy, and naming the shadowed one sends a user to a
+            # file that changes nothing.
+            shadow = helper.user_themes_dir() / "downloadedroles"
+            (shadow / "theme.json").write_text(json.dumps(
+                {"name": "downloadedroles", "mode": "light", "source": "generated"}) + "\n")
+            declared_roles_package(builtin, "downloadedroles", 'statusBg = "#010203"\n')
+            with contextlib.redirect_stderr(io.StringIO()):
+                shadowed = helper.load_theme_package("downloadedroles") or {}
+            assert_equal(helper.inert_declarations_path(shadowed),
+                         str(shadow / helper.UI_ROLES_FILE),
+                         "the unread file named is the overlay the loader reads, not the built-in copy")
         finally:
             helper.builtin_themes_dir = original_builtin
 
