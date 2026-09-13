@@ -333,12 +333,12 @@
       "published": true
     },
     "horizon-light": {
-      "release": "themes-v7",
-      "archive": "vgs-theme-horizon-light-r2.tar.gz",
-      "rev": 2,
-      "size": 9815785,
-      "sha256": "abc8af567ec6b569823c067d0893580bf531fe1ee7b0413f9bcbb9f6427a265a",
-      "definitions": "6d3482da42d260e1cc4a7cd9c12507bb718feb388a4e0694320b45de6714eb52",
+      "release": "themes-v9",
+      "archive": "vgs-theme-horizon-light-r4.tar.gz",
+      "rev": 4,
+      "size": 9815015,
+      "sha256": "7fdc1b2070c431ce81138d851b37b512918f3283f3096bf581e6711657ac7c46",
+      "definitions": "63ae983d775355a582bd62b15f5ac155c2b1dea1d921a1724f278234284ae9ee",
       "preview": "896e8ce44a2256dcc4f13558623cf845208333e9c3fe71c269200c1b27fc2c70",
       "published": true
     },

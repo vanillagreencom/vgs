@@ -7,7 +7,7 @@
     "baseUrl": "https://github.com/vanillagreencom/vgs/releases/download"
   },
   "count": 81,
-  "totalSize": 1072743248,
+  "totalSize": 1072742478,
   "themes": [
     {
       "name": "akane",
@@ -2386,7 +2386,7 @@
       "background": "#fdf0ed",
       "foreground": "#333333",
       "accent": "#da103f",
-      "size": 9815785,
+      "size": 9815015,
       "files": [
         {
           "path": "apps/btop.theme",
@@ -2397,11 +2397,6 @@
           "path": "apps/icons.theme",
           "size": 12,
           "sha256": "fabce71aa1d6dff7a151d3ac1ce842c22ee11399e0279b311f97cfcfca30f7ad"
-        },
-        {
-          "path": "apps/obsidian.css",
-          "size": 2178,
-          "sha256": "bf23d6d65df357853cd04c40491171cab139027588ce2680794d805d2f337976"
         },
         {
           "path": "colors.toml",
@@ -2420,11 +2415,11 @@
         }
       ],
       "assets": {
-        "release": "themes-v7",
-        "archive": "vgs-theme-horizon-light-r2.tar.gz",
-        "rev": 2,
-        "size": 9815785,
-        "sha256": "abc8af567ec6b569823c067d0893580bf531fe1ee7b0413f9bcbb9f6427a265a"
+        "release": "themes-v9",
+        "archive": "vgs-theme-horizon-light-r4.tar.gz",
+        "rev": 4,
+        "size": 9815015,
+        "sha256": "7fdc1b2070c431ce81138d851b37b512918f3283f3096bf581e6711657ac7c46"
       }
     },
     {
