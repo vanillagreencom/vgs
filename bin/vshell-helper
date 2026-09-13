@@ -1321,6 +1321,7 @@ def load_theme_package(name: str) -> Dict[str, Any] | None:
     # Restyle adjustments transform the base palette before role derivation and
     # stay non-destructive (colors.toml is never rewritten). All-zero is a no-op.
     adjustments = normalize_adjustments(meta.get("adjustments"))
+    unadjusted_colors = dict(colors)
     if not adjustments_all_zero(adjustments):
         colors = apply_adjustments(colors, adjustments)
     bp = palette_from_colors_map(colors, name=str(meta.get("name") or name), wallpaper=wallpaper, source=source)
@@ -1352,6 +1353,13 @@ def load_theme_package(name: str) -> Dict[str, Any] | None:
                 parse_colors_toml(files[TERMINAL_COLORS_FILE], allow_empty=True))
         except Exception as exc:
             eprint(f"theme package {name}: {exc}")
+    if bp["terminalColors"] and not adjustments_all_zero(adjustments):
+        # Restyle moves explicit terminal slots with the palette. They go in beside
+        # the unadjusted palette under names outside its keys, so every transform
+        # is measured against the palette's own mean lightness, not moved by them.
+        moved = apply_adjustments({**unadjusted_colors, **{f"terminal_{key}": value
+                                   for key, value in bp["terminalColors"].items()}}, adjustments)
+        bp["terminalColors"] = {key: moved[f"terminal_{key}"] for key in bp["terminalColors"]}
     stamps = [meta_path.stat().st_mtime]
     if "colors.toml" in files:
         stamps.append(files["colors.toml"].stat().st_mtime)
@@ -6275,7 +6283,27 @@ def blueprint_mode_variant(base: Dict[str, Any], mode: str, wallpaper: str) -> D
 
 def blueprint_from_current_theme(name: str | None = None, mode: str | None = None) -> Dict[str, Any]:
     cur = current_theme()
-    return blueprint_from_theme_json(cur, name=name or cur.get("name", "vgs-theme"), mode=mode, wallpaper=cur.get("wallpaper", ""))
+    return with_current_terminal_slots(blueprint_from_theme_json(
+        cur, name=name or cur.get("name", "vgs-theme"), mode=mode, wallpaper=cur.get("wallpaper", "")))
+
+
+def with_current_terminal_slots(bp: Dict[str, Any]) -> Dict[str, Any]:
+    """Give a blueprint rebuilt from the applied theme's colours that theme's terminal slots.
+
+    Neither the shell's theme.json nor the palette in theme-current.json holds
+    them, so every rebuild from the current theme passes through here. A rebuild
+    into the other mode takes none, since the slots were chosen against the
+    applied background. The applied package is found by name, not through
+    `current_theme_obj`, whose fallback rebuilds from the current theme.
+    Mutate and return bp.
+    """
+    applied_name = str(current_theme().get("name") or "")
+    applied = find_theme(applied_name) if applied_name else None
+    slots: Dict[str, str] = {}
+    if applied and applied.get("package") and blueprint_mode(applied) == blueprint_mode(bp):
+        slots = dict(applied.get("terminalColors") or {})
+    bp["terminalColors"] = slots
+    return bp
 
 
 def carry_curated_apps(bp: Dict[str, Any]) -> Dict[str, Any]:
@@ -6291,7 +6319,7 @@ def carry_curated_apps(bp: Dict[str, Any]) -> Dict[str, Any]:
     apps = cur.get("apps") or {}
     if apps:
         bp["apps"] = apps
-    for key in ("package", "path", "builtin", "userDir", "terminalColors"):
+    for key in ("package", "path", "builtin", "userDir"):
         if cur.get(key) is not None and key not in bp:
             bp[key] = cur[key]
     return bp
@@ -6423,7 +6451,9 @@ def persist_color_edits(edits: List[str], name: str) -> Dict[str, Any]:
 def apply_color_edits(edits: List[str], name: str, mode: str | None = None, wallpaper: str | None = None, save: bool = False) -> Dict[str, Any]:
     data = current_theme_color_data(mode=mode, wallpaper=wallpaper)
     data.update(parse_color_edits(edits))
-    bp = palette_from_colors_map(data, name=name or current_theme().get("name", "manual"), wallpaper=wallpaper if wallpaper is not None else current_theme().get("wallpaper", ""))
+    bp = with_current_terminal_slots(palette_from_colors_map(
+        data, name=name or current_theme().get("name", "manual"),
+        wallpaper=wallpaper if wallpaper is not None else current_theme().get("wallpaper", "")))
     result = apply_theme_obj(bp)
     result["saved"] = ""
     if save:
@@ -9080,8 +9110,6 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
         return 0
     if args.cmd == "save-current":
         bp = blueprint_from_current_theme(name=args.name)
-        # The shell's theme.json carries no terminal slots; the applied package does.
-        bp["terminalColors"] = current_theme_obj().get("terminalColors") or {}
         saved = save_theme_package(bp, args.name)
         print(json.dumps({"success": True, "saved": str(saved)}, indent=2) if args.json else str(saved))
         return 0

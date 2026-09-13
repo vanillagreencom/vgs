@@ -8689,7 +8689,10 @@ def test_wallpaper_and_save_keep_terminal_slots():
             helper.cfg_dir().mkdir(parents=True, exist_ok=True)
             (helper.cfg_dir() / "theme.json").write_text(helper.render_target_template(
                 "vgs-shell", "vgs-theme.json", helper.target_roles(blueprint)))
-            (helper.cfg_dir() / "theme-current.json").write_text(json.dumps({"name": "termfix"}) + "\n")
+            # What an apply leaves behind: the applied blueprint, without its package paths.
+            applied_state = {key: value for key, value in blueprint.items()
+                             if key not in ("path", "builtin", "userDir", "backgrounds", "packagedPreview")}
+            (helper.cfg_dir() / "theme-current.json").write_text(json.dumps(applied_state) + "\n")
             # (command, argv, the terminal slots the command's result carries)
             rows = [
                 ("set-wallpaper", ["set-wallpaper", str(wallpaper)],
@@ -8698,6 +8701,10 @@ def test_wallpaper_and_save_keep_terminal_slots():
                  lambda: applied[-1].get("terminalColors")),
                 ("save-current", ["save-current", "--name", "termfix-saved"],
                  lambda: (helper.load_theme_package("termfix-saved") or {}).get("terminalColors")),
+                ("apply-colors", ["apply-colors", "--name", "termfix", "--set", "accent=#123456"],
+                 lambda: applied[-1].get("terminalColors")),
+                ("apply-colors --save", ["apply-colors", "--name", "termfix-colors", "--set", "accent=#123456", "--save"],
+                 lambda: (helper.load_theme_package("termfix-colors") or {}).get("terminalColors")),
             ]
             for label, argv, read in rows:
                 with contextlib.redirect_stdout(io.StringIO()):
@@ -8803,6 +8810,46 @@ def test_preview_key_covers_terminal_slots():
     with_temp_home(scenario)
 
 
+def test_restyle_moves_terminal_slots():
+    """Restyle Palette adjustments transform the palette, so a theme's explicit
+    terminal slots must move with it: a slot the file holds lands where the
+    palette's identical colour lands, or brightness leaves body text fixed while
+    the band under it darkens."""
+    name = "flexoki-light"
+    adjustments = {"brightness": -100}
+
+    def scenario(_temp_home: Path):
+        package = helper.builtin_themes_dir() / name
+        from_file = helper.terminal_slot_overrides(
+            helper.parse_colors_toml(package / helper.TERMINAL_COLORS_FILE, allow_empty=True))
+        if not from_file:
+            raise AssertionError(f"{name} must ship terminal slots for this fixture")
+        plain = helper.load_theme_package(name)
+        assert_equal(plain["terminalColors"], from_file, "with no adjustments the slots are the file's")
+
+        palette = helper.parse_colors_toml(package / "colors.toml")
+        palette["mode"] = json.loads((package / "theme.json").read_text())["mode"]
+        moved_palette = helper.apply_adjustments(palette, adjustments)
+        helper.set_theme_adjustments(name, adjustments)
+        restyled = helper.load_theme_package(name)
+        # (slot, a palette key holding the same colour as the slot's file value)
+        rows = []
+        for slot, value in from_file.items():
+            twin = next((key for key, colour in palette.items() if key != "background"
+                         and isinstance(colour, str) and colour.lower() == value.lower()), None)
+            if twin:
+                rows.append((slot, twin))
+        if not rows:
+            raise AssertionError(f"{name} holds no terminal slot matching a palette colour; pick another fixture")
+        for slot, twin in rows:
+            assert_equal(restyled["terminalColors"][slot], moved_palette[twin],
+                         f"{name} {slot} moves with the palette's {twin}")
+            if restyled["terminalColors"][slot] == from_file[slot]:
+                raise AssertionError(f"{name} {slot} stayed at {from_file[slot]} under brightness -100")
+
+    with_temp_home(scenario)
+
+
 def main():
     test_system_font_family_targets()
     test_system_font_size_targets()
@@ -8849,6 +8896,7 @@ def main():
     test_wallpaper_and_save_keep_terminal_slots()
     test_terminal_app_overrides_show_on_their_editor_row()
     test_preview_key_covers_terminal_slots()
+    test_restyle_moves_terminal_slots()
     test_restyle_integer_sweeps()
     test_fastfetch_portable_seed_and_logo_fallback()
     test_compositor_dependency_selection()
