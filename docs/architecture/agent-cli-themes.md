@@ -1,6 +1,6 @@
 # Agent CLI themes
 
-Covers: themes/targets/claude-vgs/, themes/targets/codex-vgs/, themes/targets/omp-vgs/, themes/targets/opencode-vgs/, themes/targets/pi-vgs/, themes/*/apps/claude-*.json, scripts/test-claude-theme.py
+Covers: themes/targets/claude-vgs/, themes/targets/codex-vgs/, themes/targets/gemini-vgs/, themes/targets/hermes-vgs/, themes/targets/omp-vgs/, themes/targets/opencode-vgs/, themes/targets/pi-vgs/, themes/*/apps/claude-*.json, scripts/test-claude-theme.py
 
 The helper renders theme files for the agent CLIs and selects the applied theme in each CLI's own settings file. Palette, overlay, curated-file and output-path contracts are in [theme.md](theme.md).
 
