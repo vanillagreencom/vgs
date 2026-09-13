@@ -22,7 +22,7 @@ vgs-shell (0.5.0-1) unstable; urgency=medium
   * A dead USB4 or i2c device can no longer freeze the desktop through the
     brightness poll.
 
- -- Brad <brad@vanillagreen>  Thu, 10 Sep 2026 20:22:30 +0000
+ -- Brad <brad@vanillagreen.com>  Thu, 10 Sep 2026 20:22:30 +0000
 
 vgs-shell (0.4.0-1) unstable; urgency=medium
 
@@ -33,7 +33,7 @@ vgs-shell (0.4.0-1) unstable; urgency=medium
     from cache instead of decoding full-size sources every time.
   * Gentoo has a publisher script and a weekly drift alarm.
 
- -- Brad <brad@vanillagreen>  Tue, 25 Aug 2026 04:32:15 +0000
+ -- Brad <brad@vanillagreen.com>  Tue, 25 Aug 2026 04:32:15 +0000
 
 vgs-shell (0.3.0-1) unstable; urgency=medium
 
@@ -41,7 +41,7 @@ vgs-shell (0.3.0-1) unstable; urgency=medium
     from ~1.1 GiB to ~71 MiB, with themes fetched on demand from the catalog.
   * vgs-shell-assets carries every other bundled theme, wallpaper and icon theme.
 
- -- Brad <brad@vanillagreen>  Thu, 20 Aug 2026 00:00:00 +0000
+ -- Brad <brad@vanillagreen.com>  Thu, 20 Aug 2026 00:00:00 +0000
 
 vgs-shell (0.2.0-1) unstable; urgency=medium
 
@@ -50,10 +50,10 @@ vgs-shell (0.2.0-1) unstable; urgency=medium
   * Split the optional themes, wallpapers and icon themes into vgs-shell-assets.
   * Take over org.freedesktop.Notifications so the notification centre works.
 
- -- Brad <brad@vanillagreen>  Wed, 19 Aug 2026 00:00:00 +0000
+ -- Brad <brad@vanillagreen.com>  Wed, 19 Aug 2026 00:00:00 +0000
 
 vgs-shell (0.1.0-1) unstable; urgency=medium
 
   * Initial package.
 
- -- Brad <brad@vanillagreen>  Sun, 26 Jul 2026 00:00:00 +0000
+ -- Brad <brad@vanillagreen.com>  Sun, 26 Jul 2026 00:00:00 +0000
