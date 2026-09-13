@@ -125,6 +125,20 @@ THEMES = helper.list_themes()
 RESTYLE_STEPS = ({}, {"brightness": -25}, {"brightness": 100}, {"contrast": -100})
 
 
+def pin_theme_apps(home: Path, **enabled: bool) -> None:
+    """Pin `themeApps` toggles in `home`, so a render set cannot read the host.
+
+    `target_enabled` takes a toggle where one exists and otherwise asks
+    `detect_target`, which answers whether the app is installed on this machine.
+    A fixture that leaves the toggle unset therefore renders a different set on a
+    developer's machine than on a runner with fewer apps installed, which is how
+    a case that passes locally fails in CI having found nothing wrong.
+    """
+    settings = home / ".config" / "vshell" / "settings.json"
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text(json.dumps({"themeApps": dict(enabled)}))
+
+
 @contextlib.contextmanager
 def temp_home(claude: bool = False, home: Path | None = None):
     """`helper.home` pointed at a throwaway HOME for the body, restored after.
@@ -980,6 +994,7 @@ class InstalledLayout(unittest.TestCase):
         or a user-created package the user directory holds the only copy.
         """
         with temp_home() as home:
+            pin_theme_apps(home, btop=True)
             root = write_package(home, "probe", RestyledPackages.COLORS,
                                  apps=RestyledPackages.APPS)
             blueprint = helper.load_theme_package("probe")
@@ -991,6 +1006,60 @@ class InstalledLayout(unittest.TestCase):
             ("claude-dark.json" in blueprint["apps"], sorted(rendered),
              "claude-dark.json" in survived, "icons.theme" in survived),
             (True, ["btop.theme"], True, True))
+
+    def test_a_curated_file_that_cannot_be_read_survives_the_save(self):
+        """The save reads each declared curated file to copy it, and a read that
+        fails once left the name out of the map it hands the writer. The prune
+        then removed that file, because a short map is how a caller says it did
+        not want one. The two are not the same: the prune's contract is what the
+        caller withheld, not what it could not read. For a download or a
+        user-created package the destination holds the only copy, so the failure
+        deleted a user's only curated customisation with nothing said.
+        """
+        with temp_home() as home:
+            root = write_package(home, "probe", RestyledPackages.COLORS,
+                                 apps=RestyledPackages.APPS)
+            blueprint = helper.load_theme_package("probe")
+            unreadable = Path(blueprint["apps"]["claude-dark.json"])
+            original = unreadable.read_text()
+            unreadable.chmod(0o000)
+            try:
+                helper.save_theme_package(blueprint, name="probe")
+            finally:
+                # Tolerant, so a save that deleted the file reports through the
+                # assertion below rather than as a traceback from the cleanup.
+                if unreadable.is_file():
+                    unreadable.chmod(0o644)
+            survived = {path.name for path in (root / "apps").iterdir()}
+            kept = unreadable.read_text() if unreadable.is_file() else None
+            self.assertEqual(
+                ("claude-dark.json" in survived, "icons.theme" in survived, kept),
+                (True, True, original))
+
+    def test_an_interrupted_save_publishes_no_digest_for_files_it_left(self):
+        """theme.json carries the digest that certifies the package's contents, so
+        it is written after the cleanup rather than before it. Written first, a
+        save killed between the metadata and the prune left the stale merge-style
+        file on disk already vouched for by the new palette, which is the state
+        the digest exists to prevent. Written last, the interrupted package has
+        no user theme.json at all, so the loader falls back to the built-in
+        record and certifies nothing that this save did not finish.
+        """
+        with temp_home() as home:
+            root = write_package(home, "probe", RestyledPackages.COLORS,
+                                 apps=RestyledPackages.APPS)
+            before = json.loads((root / "theme.json").read_text())["curatedPalette"]
+            blueprint = helper.load_theme_package("probe")
+            edited = dict(helper.parse_colors_toml_text(RestyledPackages.COLORS),
+                          foreground="#101010")
+            moved = dict(blueprint, palette=helper.palette_from_colors_map(
+                edited, name="probe", wallpaper="")["palette"])
+            with mock.patch.object(helper.Path, "unlink",
+                                   side_effect=OSError("interrupted")):
+                with self.assertRaises(OSError):
+                    helper.save_theme_package(moved, name="probe")
+            after = json.loads((root / "theme.json").read_text())["curatedPalette"]
+        self.assertEqual(after, before)
 
     def test_a_package_recording_no_palette_drops_its_merge_style_file(self):
         """Nothing on disk says what a legacy package's curated values were picked

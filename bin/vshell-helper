@@ -2054,10 +2054,20 @@ def save_theme_package(bp: Dict[str, Any], name: str | None = None) -> Path:
     if name:
         bp["name"] = name
     apps: Dict[str, str] = rendered_apps_for(bp)
+    unreadable: List[str] = []
     for filename, path in (bp.get("apps") or {}).items():
-        with contextlib.suppress(OSError):
+        try:
             apps[filename] = Path(path).read_text()
-    return materialize_theme_package(bp, apps=apps, prune_curated=True)
+        except OSError as exc:
+            # Declared but unreadable. It must still be preserved, because the
+            # prune removes what this caller deliberately did not hand in, and a
+            # file it could not read is not that. Dropping it silently deleted a
+            # user's only curated customisation on a save under the theme's own
+            # name. Refusing the whole save instead would be worse: one briefly
+            # unreadable curated file would block a colour edit.
+            unreadable.append(filename)
+            eprint(f"save {bp.get('name')}: keeping {filename}, which could not be read: {exc}")
+    return materialize_theme_package(bp, apps=apps, prune_curated=True, preserve=unreadable)
 
 
 def rendered_apps_for(bp: Dict[str, Any]) -> Dict[str, str]:
@@ -2083,7 +2093,8 @@ def rendered_apps_for(bp: Dict[str, Any]) -> Dict[str, str]:
 
 
 def materialize_theme_package(bp: Dict[str, Any], apps: Dict[str, str] | None = None,
-                              user: bool = True, prune_curated: bool = False) -> Path:
+                              user: bool = True, prune_curated: bool = False,
+                              preserve: List[str] | None = None) -> Path:
     """Write a blueprint out as a v2 theme package directory.
 
     `apps` maps curated file names to file contents (rendered or hand-written).
@@ -2118,7 +2129,6 @@ def materialize_theme_package(bp: Dict[str, Any], apps: Dict[str, str] | None = 
         "curatedPalette": palette_digest(
             palette_identity(parse_colors_toml_text(colors_toml), mode)),
     }
-    write_file(root / "theme.json", json.dumps(meta, indent=2) + "\n")
     write_file(root / "colors.toml", colors_toml)
     terminal = bp.get("terminalColors") or {}
     if terminal:
@@ -2152,10 +2162,18 @@ def materialize_theme_package(bp: Dict[str, Any], apps: Dict[str, str] | None = 
     # touch; this one asks whether the writer ever saw the file, and reaches a
     # user-layer file whose layer record the save itself has just rewritten.
     if prune_curated:
-        for stale in CLAUDE_CURATED_FILES - set(apps or {}):
+        for stale in CLAUDE_CURATED_FILES - set(apps or {}) - set(preserve or ()):
             (root / "apps" / stale).unlink(missing_ok=True)
     for filename, content in (apps or {}).items():
         write_file(root / "apps" / filename, content)
+    # theme.json last, because it carries the digest that certifies everything
+    # above it. Written first, an interruption before the prune left a stale
+    # merge-style file on disk already vouched for by the new palette, which is
+    # the unreadable-diff state the digest exists to prevent. Written last, an
+    # interrupted save leaves a package with no theme.json: the loader skips it
+    # and a user overlay falls back to the built-in record, so the worst case is
+    # a save that did not happen rather than one certifying the wrong files.
+    write_file(root / "theme.json", json.dumps(meta, indent=2) + "\n")
     return root
 
 
