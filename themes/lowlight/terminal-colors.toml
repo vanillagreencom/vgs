@@ -1,0 +1,13 @@
+# Terminal-only ANSI slots: the diff colours a terminal paints, where the
+# palette's own red and green collide in hue, are too grey, or are too dark
+# on the background. The shell's derived roles, pi and every other app
+# template keep the palette's slots.
+
+# red: removed lines in a diff.
+color1 = "#a88282"
+
+# green: added lines in a diff.
+color2 = "#7e9e76"
+
+# bright green: added words in a diff.
+color10 = "#92ae8c"
