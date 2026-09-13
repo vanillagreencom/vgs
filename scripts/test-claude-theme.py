@@ -894,13 +894,15 @@ class InstalledLayout(unittest.TestCase):
                 (False, False, True, False, []))
 
     def test_an_overlay_written_before_the_digest_keeps_the_built_in_record(self):
-        """`compose_theme_files` composes at file level, so a user overlay
-        `theme.json` shadows the built-in one whole. Setting a default wallpaper
-        wrote one of those, and every such overlay on disk predates this key, so
-        the package read as a palette that had moved when nothing had and the six
-        lost their hand-picked diff bands on upgrade. The built-in record applies
-        while the overlay supplies no palette of its own; once it does, it does
-        not."""
+        """A package is two directories and each vouches only for the files it
+        supplied. This curated file comes from the built-in layer, so the built-in
+        `theme.json` answers for it however the overlay is written. Reading one
+        digest for the whole package instead lost it: `compose_theme_files`
+        composes at file level, an overlay written before this key existed shadows
+        the built-in record whole, and setting a default wallpaper wrote one of
+        those, so the six lost their hand-picked diff bands on upgrade. An overlay
+        that supplies its own palette moves the effective digest, and then the
+        built-in record no longer matches."""
         with temp_home() as home:
             overlay = home / ".config" / "vshell" / "themes" / "archwave"
             overlay.mkdir(parents=True)
@@ -916,6 +918,29 @@ class InstalledLayout(unittest.TestCase):
             ("claude-light.json" in inherited["apps"], self.light(inherited),
              "claude-light.json" in replaced["apps"]),
             (True, [], False))
+
+    def test_a_save_over_a_built_in_theme_leaves_its_curated_values_behind(self):
+        """`compose_theme_files` is a union, so a save under a built-in theme's own
+        name writes the user layer while the built-in layer keeps supplying the
+        curated file the save never saw. Judging the package by one digest, the
+        user `theme.json` the save had just written matched the saved palette and
+        certified a file picked against the palette that save replaced. The saver
+        cannot fix this by deleting: the file is not in the directory it writes,
+        and `save-current` hands it a palette-only blueprint with no apps at all.
+        """
+        with temp_home():
+            helper.set_theme_adjustments("akane", {"brightness": 100})
+            restyled_builtin = helper.load_theme_package("akane")
+            helper.save_theme_package(restyled_builtin, name="akane")
+            reloaded = helper.load_theme_package("akane")
+            content, missed = rendered_file(reloaded, "light")
+        curated = json.loads(
+            (REPO / "themes" / "akane" / "apps" / "claude-light.json").read_text())["overrides"]
+        self.assertEqual(
+            ("claude-light.json" in restyled_builtin["apps"],
+             "claude-light.json" in reloaded["apps"],
+             content["overrides"]["diffAdded"] == curated["diffAdded"], missed),
+            (False, False, False, []))
 
     def test_a_package_recording_no_palette_drops_its_merge_style_file(self):
         """Nothing on disk says what a legacy package's curated values were picked

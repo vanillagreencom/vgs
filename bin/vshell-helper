@@ -1341,7 +1341,7 @@ def load_theme_package(name: str) -> Dict[str, Any] | None:
     bp["apps"] = curated_apps_for_palette(
         {Path(rel).name: str(p) for rel, p in files.items() if rel.startswith("apps/")},
         palette_digest(colors),
-        recorded_curated_palette(meta, files.get("colors.toml"), builtin_dir))
+        {str(root): layer_curated_palette(root) for root in (builtin_dir, user_dir)})
     bp["backgrounds"] = [str(p) for _rel, p in backgrounds]
     bp["packagedPreview"] = str(files["preview.png"]) if "preview.png" in files else ""
     bp["adjustments"] = adjustments
@@ -2694,45 +2694,43 @@ def palette_digest(colors: Dict[str, str]) -> str:
     return hashlib.sha256("\n".join(f"{key}={value}" for key, value in items).encode()).hexdigest()
 
 
-def recorded_curated_palette(meta: Dict[str, Any], colors_path: Path | None,
-                             builtin_dir: Path) -> str:
-    """The digest the package records for the palette its curated files fit.
+def layer_curated_palette(root: Path) -> str:
+    """The `curatedPalette` digest recorded by the theme.json in `root`.
 
-    `compose_theme_files` composes at file level, so a user overlay `theme.json`
-    shadows the built-in one whole. An overlay written before this key existed,
-    as setting a default wallpaper wrote one, therefore hides the built-in record
-    and the package reads as a palette that has moved when nothing has. The
-    built-in record still applies whenever the overlay supplied no palette of its
-    own, which is exactly when the composed `colors.toml` is the built-in file.
+    Read per layer rather than from the composed metadata, because a package is
+    two directories and each one vouches only for the files it supplied.
     """
-    recorded = str(meta.get("curatedPalette") or "")
-    if recorded or colors_path is None:
-        return recorded
-    if colors_path != builtin_dir / "colors.toml":
-        return ""
     try:
-        builtin_meta = json.loads((builtin_dir / "theme.json").read_text())
+        meta = json.loads((root / "theme.json").read_text())
     except Exception:
         return ""
-    return str(builtin_meta.get("curatedPalette") or "") if isinstance(builtin_meta, dict) else ""
+    return str(meta.get("curatedPalette") or "") if isinstance(meta, dict) else ""
 
 
 def curated_apps_for_palette(apps: Dict[str, str], effective: str,
-                             picked_against: str) -> Dict[str, str]:
+                             recorded_by_layer: Dict[str, str]) -> Dict[str, str]:
     """A package's curated app files, minus those its palette no longer fits.
 
     The rule: a curated app file is valid only for the palette it was picked
-    against. `picked_against` is the `curatedPalette` digest the package records
-    for that palette, and `effective` is the digest of the palette about to be
-    rendered. They differ whenever any control has replaced it: a restyle slider,
-    a user overlay `colors.toml` over a built-in package, a colour edit persisted
-    in place, a saved copy, or a catalogued download of a theme that also ships
-    built in. Testing the controls one at a time instead needed a parameter per
-    control, went inert on a packaged install where the six curated themes are
-    catalog-only, and dropped the files of pristine downloads that had changed
-    nothing.
+    against. `effective` is the digest of the palette about to be rendered, and
+    each file is matched against the digest recorded by the layer that supplied
+    it, which `recorded_by_layer` holds per package directory. They differ
+    whenever any control has replaced the palette: a restyle slider, a user
+    overlay `colors.toml`, a colour edit persisted in place, a saved copy, or a
+    catalogued download. Testing the controls one at a time instead needed a
+    parameter per control, went inert on a packaged install where the six curated
+    themes are catalog-only, and dropped the files of pristine downloads that had
+    changed nothing.
 
-    A package recording no digest is treated as a palette that does not match.
+    Per layer rather than per package, because `compose_theme_files` is a union
+    and the two directories can disagree. A save under a built-in theme's own
+    name writes the user layer while the built-in layer keeps supplying the
+    curated file that save never saw, and one digest for the package let the
+    freshly written user record certify it. The same read in reverse dropped a
+    built-in file whenever a user overlay `theme.json` carried no digest at all,
+    which every overlay written before this key does.
+
+    A layer recording no digest is treated as a palette that does not match.
     Nothing on disk says what its curated values were picked against, and the
     cost of guessing wrong in that direction is a diff panel a user cannot read,
     against a plainer render in this one.
@@ -2754,9 +2752,17 @@ def curated_apps_for_palette(apps: Dict[str, str], effective: str,
     target such as icons, no template behind it: dropping one would delete the
     installed artifact on the next apply and leave nothing in its place.
     """
-    if picked_against and picked_against == effective:
-        return apps
-    return {name: path for name, path in apps.items() if name not in CLAUDE_CURATED_FILES}
+    kept: Dict[str, str] = {}
+    for name, path in apps.items():
+        if name not in CLAUDE_CURATED_FILES:
+            kept[name] = path
+            continue
+        # <layer>/apps/<name>: the directory two levels up is the layer that
+        # supplied this file, and so the one whose record can vouch for it.
+        recorded = recorded_by_layer.get(str(Path(path).parent.parent), "")
+        if recorded and recorded == effective:
+            kept[name] = path
+    return kept
 
 
 def claude_diff_shortfalls(values: Dict[str, str]) -> List[str]:
