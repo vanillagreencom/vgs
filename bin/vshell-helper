@@ -1325,10 +1325,6 @@ TERMINAL_COLORS_FILE = "terminal-colors.toml"
 # published. A sibling file rather than a `[roles]` table inside `colors.toml`,
 # whose parser flattens a nested table and would deliver `roles_statusBg`.
 UI_ROLES_FILE = "ui-roles.toml"
-# The package directory whose declarations `declared_ui_roles` hid from a
-# generated rebuild, carried on the blueprint so a save onto that same package
-# leaves its `ui-roles.toml` alone instead of deleting the vendor's only copy.
-UI_ROLES_GATED_FROM = "uiRolesGatedFrom"
 # The roles a package may declare, and the authority on that set: a role outside
 # it is refused by name whatever its provenance. It holds the surfaces and
 # containers, the outline and muted tones, the status background, the secondary
@@ -1359,11 +1355,16 @@ DECLARABLE_UI_ROLES = frozenset({
 # colour nothing puts there: a container at 4.5:1 on the foreground carried its
 # own declared text at 1.33:1 and the apply reported nothing.
 #
-# A container carries two texts, so it has two rules. The `vgs-shell` target
-# exports no `on*Container` role, and its MuxModal and widget drag rows still
-# draw the palette's own foreground on these fills, so dropping that rule left
-# shell text at 1:1 with the apply reporting nothing. Every rule a role carries
-# is measured and whichever misses is named.
+# Each value is the rules that role carries. Only the three accent containers
+# carry two: they take a declared `on*Container` companion and the palette's own
+# foreground, which the `vgs-shell` target still draws on them through its
+# MuxModal and widget drag rows, so dropping that second rule left shell text at
+# 1:1 with the apply reporting nothing. `surfaceContainerHigh` and
+# `surfaceContainerHighest` carry one, against the foreground, and so does every
+# other role here. A rule whose target lands on a colour an earlier rule for the
+# same declared role already measured is skipped, so a container declared
+# without its companion, which is the ordinary vendor shape, reports its one
+# defect once instead of twice against the same foreground.
 UI_ROLE_CONTRAST_RULES = {
     "surfaceContainerHigh": (("foreground", 4.0),),
     "surfaceContainerHighest": (("foreground", 4.0),),
@@ -2500,7 +2501,7 @@ def rendered_apps_for(bp: Dict[str, Any], app_overrides: Dict[str, Dict[str, str
 
 
 def write_overlay_toml(root: Path, filename: str, values: Dict[str, str],
-                       user: bool, mask_note: str, preserve: bool = False) -> None:
+                       user: bool, mask_note: str) -> None:
     """Write, mask or remove one of a package's optional key/value TOML files.
 
     `terminal-colors.toml` and `ui-roles.toml` answer the same three questions,
@@ -2510,15 +2511,8 @@ def write_overlay_toml(root: Path, filename: str, values: Dict[str, str],
     comment-only file, because the composed package would otherwise inherit the
     built-in one. No values otherwise remove it: `colors.toml` is rewritten on
     every save, so a stale file would carry the previous theme's slots or tones
-    over this one.
-
-    `preserve` is the caller saying that no values is not the same answer as no
-    file: it leaves whatever is on disk exactly as it is, writing nothing and
-    removing nothing. `save_theme_package` already spares a curated app file it
-    was not handed for the same reason, and states when it applies here.
+    over this one. A caller with nothing to say about a file does not call this.
     """
-    if preserve and not values:
-        return
     if values:
         write_file(root / filename, "".join(f'{key} = "{value}"\n'
                                             for key, value in sorted(values.items())))
@@ -2580,17 +2574,17 @@ def materialize_theme_package(bp: Dict[str, Any], apps: Dict[str, str] | None = 
     # file here and records no declaration in the digest above. Those two answers
     # have to agree: the digest certifies the roles a merge-style curated file
     # merges over, and a file the render ignores would certify tones nothing paints.
-    # A generated rebuild of a declaring package reaches here with no roles at
-    # all, because `declared_ui_roles` hides them from its render. That is not
-    # the package saying it has none: removing the file deleted a downloaded
-    # vendor theme's only copy of its chrome, and under a built-in theme's own
-    # name the masking overlay hid the shipped file just as completely. The file
-    # is kept as it is, not rewritten and not folded into the digest above: it
-    # stays inert while the palette is generated and is read again the moment the
-    # package is curated once more.
-    write_overlay_toml(root, UI_ROLES_FILE, ui_roles, user,
-                       "No declared UI roles: this overlay masks the built-in theme's.",
-                       preserve=str(bp.get(UI_ROLES_GATED_FROM) or "") == root.name)
+    # Only a curated save owns `ui-roles.toml`. A generated blueprint reads no
+    # declaration, so it has nothing to say about the file and never writes,
+    # masks or removes it. The test is the blueprint's own source rather than the
+    # route it took here, because every route builds a generated blueprint and
+    # each one deleted a downloaded vendor theme's only copy of its chrome, or
+    # masked a built-in package's file: `apply-colors --save`, `set-wallpaper
+    # --extract --save`, `extract-wallpaper --save` and `import-colors`. A marker
+    # carried by one of them closed that one and left the rest.
+    if blueprint_source(bp) == "curated":
+        write_overlay_toml(root, UI_ROLES_FILE, ui_roles, user,
+                           "No declared UI roles: this overlay masks the built-in theme's.")
     wallpaper = resolve_path(str(bp.get("palette", {}).get("wallpaper") or ""))
     if wallpaper and Path(wallpaper).is_file():
         bg_dir = root / "backgrounds"
@@ -2706,6 +2700,12 @@ def ui_role_shortfalls(roles: Dict[str, str], declared: Dict[str, str]) -> List[
     rule is the one VGS-285 set for a curated Claude Code file: written as
     declared, every missed rule named on the apply result.
 
+    One line per fill-and-text pair: a role's rules are measured against the
+    colours they resolve to, and a second rule landing on a colour already
+    measured for that role is skipped. A container declared without its
+    companion has the companion derive to the foreground verbatim, so both its
+    rules read the same colour and one defect was named twice.
+
     Judged over the base role map alone, which is the map the apply builds once
     and hands here. Each app then renders from `app_target_roles`, which can
     replace background and foreground for that one app, so a per-app override
@@ -2721,12 +2721,39 @@ def ui_role_shortfalls(roles: Dict[str, str], declared: Dict[str, str]) -> List[
                 lines.append(f"statusBg {value}: no text reaches "
                              f"{STATUS_BG_MIN_TEXT_CONTRAST:g}:1 on it ({ratio:.2f}:1)")
             continue
+        measured: List[str] = []
         for against, minimum in UI_ROLE_CONTRAST_RULES.get(role, ()):
-            ratio = contrast_ratio(value, roles[against])
+            target = roles[against]
+            if target in measured:
+                continue
+            measured.append(target)
+            ratio = contrast_ratio(value, target)
             if ratio < minimum:
                 lines.append(f"{role} {value}: {ratio:.2f}:1 against {against} "
-                             f"{roles[against]} (want >= {minimum:g}:1)")
+                             f"{target} (want >= {minimum:g}:1)")
     return lines
+
+
+def inert_declarations_path(bp: Dict[str, Any]) -> str:
+    """The `ui-roles.toml` an apply of `bp` will not read, or "".
+
+    A generated palette derives every role, so a declaring package's file sits
+    unread with nothing on screen saying so: the chrome is the derived tone and
+    the file is still on disk. `apply-colors --save` and the other generated
+    saves leave a package in exactly that state, and the save now keeps the file
+    rather than deleting it, so the apply is where the state gets named.
+
+    Read from the layer directories rather than through `compose_theme_files`,
+    which walks the whole package, because this runs on every apply and the
+    question is only whether one file exists.
+    """
+    if blueprint_source(bp) == "curated":
+        return ""
+    name = theme_package_dir_name(bp)
+    for root in (user_themes_dir() / name, builtin_themes_dir() / name):
+        if (root / UI_ROLES_FILE).is_file():
+            return str(root / UI_ROLES_FILE)
+    return ""
 
 
 def target_roles(bp: Dict[str, Any]) -> Dict[str, str]:
@@ -6073,12 +6100,9 @@ def applied_theme_state(bp: Dict[str, Any]) -> Dict[str, Any]:
     One owner, so a fixture seeding an applied theme writes the file the apply
     writes. `path` and `package` are the keys `override_dropped_curated` gates
     on, so a seeded state richer than the real one hides a refused exemption.
-    `UI_ROLES_GATED_FROM` goes too: it describes one rebuild for the save that
-    follows it, not the theme that was applied.
     """
     current = dict(bp)
-    for key in ("path", "builtin", "userDir", "backgrounds", "packagedPreview",
-                UI_ROLES_GATED_FROM):
+    for key in ("path", "builtin", "userDir", "backgrounds", "packagedPreview"):
         current.pop(key, None)
     current["appliedAt"] = int(time.time() * 1000)
     return current
@@ -6167,6 +6191,14 @@ def _apply_theme_obj_unlocked(bp: Dict[str, Any], only_app: str | None = None,
     # One line per apply, as the Claude Code hook's own shortfall warning is: the
     # user needs to know the declared chrome is compromised, not a list of every
     # role. The tones are already written as declared; this only names them.
+    # The file the palette no longer reads, named once, in the same shape. The
+    # save keeps it rather than deleting it, so without this line a colour edit
+    # left a vendor's chrome on disk and silently unused.
+    inert = inert_declarations_path(bp)
+    if inert:
+        message = f"declared UI roles: {inert} is not read for a generated palette"
+        warnings.append(message)
+        eprint(message)
     declared_missed = ui_role_shortfalls(roles, declared_ui_roles(bp))
     if declared_missed:
         message = (f"declared UI roles: {len(declared_missed)} rule(s) below target: "
@@ -7258,12 +7290,6 @@ def with_current_terminal_slots(bp: Dict[str, Any]) -> Dict[str, Any]:
     # rebuilds a generated blueprint and would otherwise carry declarations its
     # own render ignores.
     bp["uiRoles"] = declared_ui_roles(dict(bp, uiRoles=declared))
-    # Where those declarations came from, when the gate above hid them from this
-    # rebuild. A save onto that same package leaves its file alone; a save under
-    # any other name is a different package, whose own file this rebuild never
-    # saw and must not keep.
-    bp[UI_ROLES_GATED_FROM] = (theme_package_dir_name(applied or package or {})
-                               if declared and not bp["uiRoles"] else "")
     return with_current_app_overrides(bp, package)
 
 

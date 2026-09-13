@@ -9079,6 +9079,10 @@ def test_declared_ui_roles_replace_the_derivation_without_a_contrast_rewrite():
                                'primaryContainer = "#78799a"\nonPrimaryContainer = "#d4e4fd"\n')
         # A container the shell's own foreground cannot be read on, and three
         # accent companions just off the derived role each is painted on.
+        # The ordinary vendor shape: a fill declared, its text left derived. The
+        # companion then derives to the foreground verbatim, so both of the
+        # container's rules read the same colour.
+        declared_roles_package(builtin, "lonecontainerroles", 'primaryContainer = "#2a2a2a"\n')
         declared_roles_package(builtin, "fgpairroles",
                                'primaryContainer = "#101010"\nonPrimaryContainer = "#fff5f0"\n'
                                'onPrimary = "#141414"\nonSecondary = "#141414"\n'
@@ -9095,7 +9099,8 @@ def test_declared_ui_roles_replace_the_derivation_without_a_contrast_rewrite():
                 packages = {name: helper.load_theme_package(name)
                             for name in ("plainroles", "vendorroles", "typoroles", "badvalueroles",
                                          "everyroles", "greybarroles", "pairroles", "genroles",
-                                         "genplainroles", "alpharoles", "fgpairroles")}
+                                         "genplainroles", "alpharoles", "fgpairroles",
+                                         "lonecontainerroles")}
             for name, blueprint in packages.items():
                 if not blueprint:
                     raise AssertionError(f"fixture theme {name} did not load")
@@ -9223,6 +9228,15 @@ def test_declared_ui_roles_replace_the_derivation_without_a_contrast_rewrite():
             assert_equal(fg_applied["partial"], True,
                          "a declared role below any of its rules makes the apply partial")
 
+            # One fill-and-text pair, one line: both rules land on the same
+            # colour here, and one defect named twice is one defect.
+            lone = packages["lonecontainerroles"]
+            lone_missed = helper.ui_role_shortfalls(helper.target_roles(lone), helper.declared_ui_roles(lone))
+            assert_equal(len(lone_missed), 1,
+                         f"a container declared without its companion is named once: {lone_missed}")
+            if not lone_missed[0].startswith("primaryContainer #2a2a2a: 1.33:1 against foreground"):
+                raise AssertionError(f"the lone container line is wrong: {lone_missed[0]}")
+
             # A mid-grey status bar carries no readable text at all, which is the
             # one rule measured against black and white rather than a role.
             grey_roles = helper.target_roles(packages["greybarroles"])
@@ -9241,8 +9255,10 @@ def test_declared_ui_roles_replace_the_derivation_without_a_contrast_rewrite():
             with contextlib.redirect_stderr(io.StringIO()):
                 gen_applied = helper.apply_theme_obj(packages["genroles"], only_target="tmux-vgs",
                                                      run_hooks=False)
-            assert_equal([line for line in gen_applied["warnings"] if "declared UI roles" in line], [],
+            assert_equal([line for line in gen_applied["warnings"] if "below target" in line], [],
                          "a generated palette reports no shortfall for a file it does not read")
+            assert_equal(len([line for line in gen_applied["warnings"] if "is not read" in line]), 1,
+                         "it names the unread file instead")
 
             # The preview renders from target_roles, so a declaration moves the
             # cached screenshot and has to move its key.
@@ -9361,6 +9377,8 @@ def test_declared_ui_roles_move_with_a_restyle_and_survive_a_save():
                          "a save carries the declared roles onto the saved package")
             assert_equal((helper.user_themes_dir() / "restyled-saved" / helper.UI_ROLES_FILE).is_file(),
                          True, "the saved package writes the file the loader reads")
+            # The other half of the invariant: a CURATED save stating no
+            # declarations does own the file, and removes or masks it.
             # colors.toml is rewritten on every save, so a stale declaration file
             # would paint the previous theme's chrome over this one.
             helper.save_theme_package(dict(shipped, uiRoles={}), "restyled-saved")
@@ -9404,15 +9422,29 @@ def test_declared_ui_roles_move_with_a_restyle_and_survive_a_save():
                                                  "editedroles"), DECLARED_UI_ROLES,
                          "the source package keeps its own declarations file")
 
-            # The same edit under the theme's OWN name. The rebuild is generated
-            # and so carries no declarations, but that is the gate speaking, not
-            # the package: removing the file deleted a downloaded vendor theme's
-            # only copy of its chrome, and under a built-in name the masking
-            # overlay hid the shipped file just as completely. Both kinds of
-            # package, because the save writes the user directory either way.
+            # The invariant, at every route that builds a generated blueprint
+            # and hands it to the save. A marker carried by one of them closed
+            # that one and left the rest: the second own-name save found none,
+            # and the wallpaper routes never carried one at all.
             declared_roles_package(helper.user_themes_dir(), "downloadedroles",
                                    DECLARED_UI_ROLES_TOML)
-            for name, layer in (("editedroles", builtin), ("downloadedroles", helper.user_themes_dir())):
+            from PIL import Image
+            wallpaper = temp_home / "extract.png"
+            Image.new("RGB", (2, 2), (33, 88, 144)).save(wallpaper)
+            # (package, the layer directory holding its file, the argv the route runs)
+            routes = [
+                ("editedroles", builtin,
+                 ["apply-colors", "--name", "editedroles", "--set", "foreground=#101010", "--save"]),
+                ("editedroles", builtin,
+                 ["apply-colors", "--name", "editedroles", "--set", "foreground=#111111", "--save"]),
+                ("downloadedroles", helper.user_themes_dir(),
+                 ["apply-colors", "--name", "downloadedroles", "--set", "foreground=#101010", "--save"]),
+                ("downloadedroles", helper.user_themes_dir(),
+                 ["apply-colors", "--name", "downloadedroles", "--set", "foreground=#111111", "--save"]),
+                ("downloadedroles", helper.user_themes_dir(),
+                 ["set-wallpaper", str(wallpaper), "--extract", "--save", "--name", "downloadedroles"]),
+            ]
+            for index, (name, layer, argv) in enumerate(routes):
                 own = helper.load_theme_package(name) or {}
                 (helper.cfg_dir() / "theme.json").write_text(helper.render_target_template(
                     "vgs-shell", "vgs-theme.json", helper.target_roles(own)))
@@ -9421,28 +9453,33 @@ def test_declared_ui_roles_move_with_a_restyle_and_survive_a_save():
                 helper.apply_theme_obj = lambda bp, *args, **kwargs: {"success": True}
                 try:
                     with contextlib.redirect_stdout(io.StringIO()):
-                        assert_equal(helper.cmd_theme(
-                            ["apply-colors", "--name", name,
-                             "--set", "foreground=#101010", "--save"]), 0,
-                            f"{name} own-name apply-colors --save exit status")
+                        assert_equal(helper.cmd_theme(argv), 0, f"{argv[0]} {index} exit status")
                 finally:
                     helper.apply_theme_obj = original_apply
+                where = f"{name} through {argv[0]} at step {index}"
                 assert_equal((layer / name / helper.UI_ROLES_FILE).is_file(), True,
-                             f"{name} keeps its declarations file through an own-name save")
+                             f"{where} keeps its declarations file")
                 assert_equal(helper.package_ui_roles(helper.compose_theme_files(name), name),
-                             DECLARED_UI_ROLES,
-                             f"{name} keeps every declared role through an own-name save")
+                             DECLARED_UI_ROLES, f"{where} keeps every declared role")
                 assert_equal((helper.load_theme_package(name) or {}).get("uiRoles"), {},
-                             f"{name} reads no declaration while its palette is generated")
-                # The kept file is inert, not lost: re-curating the package reads
-                # it again, which is why keeping it is the right answer.
-                saved_json = helper.user_themes_dir() / name / "theme.json"
-                recurated = json.loads(saved_json.read_text())
-                recurated["source"] = "curated"
-                saved_json.write_text(json.dumps(recurated) + "\n")
-                assert_equal((helper.load_theme_package(name) or {}).get("uiRoles"),
-                             DECLARED_UI_ROLES,
-                             f"{name} reads its declarations again once it is curated")
+                             f"{where} reads no declaration while its palette is generated")
+
+            # Nothing on screen says the chrome is derived rather than declared,
+            # so the apply names the unread file once.
+            generated = helper.load_theme_package("downloadedroles") or {}
+            with contextlib.redirect_stderr(io.StringIO()):
+                inert_applied = helper.apply_theme_obj(generated, only_target="tmux-vgs",
+                                                       run_hooks=False)
+            named = [line for line in inert_applied["warnings"] if "is not read" in line]
+            assert_equal(len(named), 1, f"the unread file is named once: {inert_applied['warnings']}")
+            if helper.UI_ROLES_FILE not in named[0]:
+                raise AssertionError(f"the warning does not name the file: {named[0]}")
+            assert_equal(inert_applied["partial"], True, "an unread declarations file makes the apply partial")
+            with contextlib.redirect_stderr(io.StringIO()):
+                curated_applied = helper.apply_theme_obj(shipped, only_target="tmux-vgs",
+                                                         run_hooks=False)
+            assert_equal([line for line in curated_applied["warnings"] if "is not read" in line], [],
+                         "a curated apply reads its declarations and names nothing")
         finally:
             helper.builtin_themes_dir = original_builtin
 
