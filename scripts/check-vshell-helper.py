@@ -2224,6 +2224,8 @@ def test_lint_reports_listed_shortfalls_as_known():
          (["accent", "contrastShortfalls"], [])),
         ("listed for a slot that meets its floor", [{"slot": "color4", "ratio": 2.17, "floor": 3}],
          (["accent", "contrastShortfalls"], [])),
+        ("listed at a floor the slot is not judged against", [{"slot": "accent", "ratio": 2.17, "floor": 4.5}],
+         (["accent", "contrastShortfalls"], [])),
     ):
         assert_equal(lint(shortfalls), expected, f"lint shortfall list, {label}")
 
@@ -2232,6 +2234,22 @@ def test_lint_reports_listed_shortfalls_as_known():
         assert_equal(([w["role"] for w in results if not w["known"]], [w["role"] for w in results if w["known"]]),
                      ([], ["accent", "color4 (blue)", "color12 (bright_blue)"]),
                      "thegreek lints with no warning and its three upstream shortfalls known")
+
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            assert_equal(helper.cmd_theme(["lint", "thegreek", "--json"]), 0, "theme lint thegreek --json exit status")
+        payload = json.loads(buffer.getvalue())
+        assert_equal((payload["count"], payload["warnings"], [w["role"] for w in payload["known"]]),
+                     (0, [], ["accent", "color4 (blue)", "color12 (bright_blue)"]),
+                     "theme lint thegreek --json counts no warning and lists the known shortfalls")
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            assert_equal(helper.cmd_theme(["lint", "thegreek"]), 0, "theme lint thegreek exit status")
+        assert_equal(buffer.getvalue().splitlines(),
+                     [f"{payload['name']} ({payload['source']}): no warnings",
+                      f"{len(payload['known'])} known upstream shortfall(s):",
+                      *[f"  - {w['message']}" for w in payload["known"]]],
+                     "theme lint thegreek prints no warning and each known shortfall")
 
     with_temp_home(scenario)
 
@@ -8968,13 +8986,15 @@ def test_wallpaper_and_save_keep_terminal_slots():
     theme.json, which carries no terminal slots, so each must carry the package's
     terminal-colors.toml forward or the terminal loses its readable slots."""
     slots = {"color0": "#ff0011"}
+    shortfalls = [{"slot": "accent", "ratio": 1.0, "floor": 3}]
 
     def scenario(temp_home: Path):
         builtin = temp_home / "builtin"
         package = builtin / "termfix"
         package.mkdir(parents=True)
         (package / "theme.json").write_text(
-            json.dumps({"name": "termfix", "mode": "light", "source": "curated"}) + "\n")
+            json.dumps({"name": "termfix", "mode": "light", "source": "curated",
+                        "contrastShortfalls": shortfalls}) + "\n")
         (package / "colors.toml").write_text('background = "#fafafa"\nforeground = "#101010"\n')
         (package / helper.TERMINAL_COLORS_FILE).write_text('color0 = "#ff0011"\n')
         wallpaper = temp_home / "wall.png"
@@ -9011,6 +9031,10 @@ def test_wallpaper_and_save_keep_terminal_slots():
                 with contextlib.redirect_stdout(io.StringIO()):
                     assert_equal(helper.cmd_theme(argv), 0, f"{label} exit status")
                 assert_equal(read(), slots, f"{label} keeps the terminal slots")
+            # The saved theme.json masks the package's own, so it must repeat the list.
+            for saved in ("termfix-saved", "termfix-colors"):
+                assert_equal(json.loads((helper.user_themes_dir() / saved / "theme.json").read_text())
+                             .get("contrastShortfalls"), shortfalls, f"{saved} keeps the contrast shortfall list")
 
             # A theme with no terminal slots saved over that package leaves no file
             # behind, or the next load paints the previous theme's slots.

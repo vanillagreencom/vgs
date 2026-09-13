@@ -2571,6 +2571,11 @@ def materialize_theme_package(bp: Dict[str, Any], apps: Dict[str, str] | None = 
         "curatedPalette": palette_digest(
             palette_identity(parse_colors_toml_text(colors_toml), mode, ui_roles=ui_roles)),
     }
+    # A user overlay's theme.json masks the built-in one whole, so a list left
+    # out here stops lint from marking the shortfalls it names. A copy whose
+    # palette has moved keeps the list and lint reports each entry unmatched.
+    if bp.get("contrastShortfalls"):
+        meta["contrastShortfalls"] = bp["contrastShortfalls"]
     write_file(root / "colors.toml", colors_toml)
     write_overlay_toml(root, TERMINAL_COLORS_FILE, bp.get("terminalColors") or {}, user,
                        "No terminal slots: this overlay masks the built-in theme's.")
@@ -7286,8 +7291,8 @@ def blueprint_from_current_theme(name: str | None = None, mode: str | None = Non
 
 def with_current_terminal_slots(bp: Dict[str, Any]) -> Dict[str, Any]:
     """Give a blueprint rebuilt from the applied theme's colours that theme's
-    terminal slots and declared UI roles, and its package's per-app overrides
-    through `with_current_app_overrides`.
+    terminal slots, declared UI roles and `contrastShortfalls`, and its package's
+    per-app overrides through `with_current_app_overrides`.
 
     Neither the shell's theme.json nor the palette inside theme-current.json
     holds them, so every rebuild from the current theme passes through here. A
@@ -7304,17 +7309,21 @@ def with_current_terminal_slots(bp: Dict[str, Any]) -> Dict[str, Any]:
     """
     slots: Dict[str, str] = {}
     declared: Dict[str, str] = {}
+    shortfalls: List[Any] = []
     applied = applied_blueprint()
     if applied and blueprint_mode(applied) == blueprint_mode(bp):
         slots = dict(applied.get("terminalColors") or {})
         declared = dict(applied.get("uiRoles") or {})
+        shortfalls = list(applied.get("contrastShortfalls") or [])
     package = applied_theme_package()
     if package and blueprint_mode(package) != blueprint_mode(bp):
         package = None
     if package:
         slots = slots or dict(package.get("terminalColors") or {})
         declared = declared or dict(package.get("uiRoles") or {})
+        shortfalls = shortfalls or list(package.get("contrastShortfalls") or [])
     bp["terminalColors"] = slots
+    bp["contrastShortfalls"] = shortfalls
     # Declared roles answer from the same two sources under the same mode rule.
     # Without the carry a wallpaper change or a saved colour edit rebuilt the
     # theme without them and the save then deleted the package's own file. The
