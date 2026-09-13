@@ -98,6 +98,8 @@ jobs:
       # Run text checks before installing the Go and Qt toolchains.
       - name: Naming guard
         run: scripts/check-naming.sh
+      - name: Naming guard controls
+        run: scripts/test-naming.sh
 
       # Compare the workflow commands with the scripts/validate manifest.
       - name: Validation inventory
