@@ -2206,6 +2206,36 @@ def test_lint_checks_color0_in_light_mode_only():
         assert_equal(warns(mode, bg, fg, color0, terminal_color0), expected, f"lint color0 warning, {label}")
 
 
+def test_lint_reports_listed_shortfalls_as_known():
+    """A shortfall listed in theme.json is known only while the palette still measures it."""
+    def lint(shortfalls):
+        colors = {f"color{i}": "#242424" for i in range(16)}
+        colors.update({"background": "#d0d0c8", "foreground": "#242424", "accent": "#de6a41", "cursor": "#242424",
+                       "selection_background": "#d0d0c8", "selection_foreground": "#242424", "mode": "light"})
+        bp = helper.palette_from_colors_map(colors, name="lint-probe", source="curated")
+        bp["contrastShortfalls"] = shortfalls
+        results = helper.lint_blueprint(bp)
+        return ([w["role"] for w in results if not w["known"]], [w["role"] for w in results if w["known"]])
+
+    for label, shortfalls, expected in (
+        ("nothing listed", [], (["accent"], [])),
+        ("listed at the measured ratio and floor", [{"slot": "accent", "ratio": 2.17, "floor": 3}], ([], ["accent"])),
+        ("listed at a ratio the palette does not measure", [{"slot": "accent", "ratio": 2.5, "floor": 3}],
+         (["accent", "contrastShortfalls"], [])),
+        ("listed for a slot that meets its floor", [{"slot": "color4", "ratio": 2.17, "floor": 3}],
+         (["accent", "contrastShortfalls"], [])),
+    ):
+        assert_equal(lint(shortfalls), expected, f"lint shortfall list, {label}")
+
+    def scenario(_temp_home: Path):
+        results = helper.lint_blueprint(helper.find_theme_exact("thegreek"))
+        assert_equal(([w["role"] for w in results if not w["known"]], [w["role"] for w in results if w["known"]]),
+                     ([], ["accent", "color4 (blue)", "color12 (bright_blue)"]),
+                     "thegreek lints with no warning and its three upstream shortfalls known")
+
+    with_temp_home(scenario)
+
+
 def test_theme_list_falls_back_to_the_shipped_thumbnail():
     """A theme with definitions and no preview.png reports its 480 px thumbnail.
 
@@ -10030,6 +10060,7 @@ def main():
     test_current_theme_reads_without_applying()
     test_theme_init_applies_only_without_state()
     test_lint_checks_color0_in_light_mode_only()
+    test_lint_reports_listed_shortfalls_as_known()
     test_theme_list_falls_back_to_the_shipped_thumbnail()
     test_hyprland_preview_native_lua()
     test_preview_stage_retires_its_window_rule()
