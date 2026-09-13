@@ -139,10 +139,15 @@ def restyled(blueprint: dict, adjustments: dict) -> dict:
     variant = helper.palette_from_colors_map(
         helper.apply_adjustments(colors, helper.normalize_adjustments(adjustments)),
         name=blueprint["name"], wallpaper="", source="generated")
-    for key in ("apps", "package", "path"):
+    normalized = helper.normalize_adjustments(adjustments)
+    for key in ("package", "path"):
         if blueprint.get(key):
             variant[key] = blueprint[key]
-    variant["adjustments"] = helper.normalize_adjustments(adjustments)
+    # The loader drops the curated files a restyled palette no longer fits, so
+    # the harness asks it rather than carrying the package's files verbatim.
+    # Copying them would test a blueprint the helper never builds.
+    variant["apps"] = helper.curated_apps_for_palette(blueprint.get("apps") or {}, normalized)
+    variant["adjustments"] = normalized
     return variant
 
 
@@ -629,31 +634,67 @@ class HookBehaviour(unittest.TestCase):
             (True, True, True))
 
 
-class SavedPackages(unittest.TestCase):
-    """Saving a theme must not bake a curated file onto a palette it does not fit.
+class RestyledPackages(unittest.TestCase):
+    """The loader drops the curated files a restyled palette no longer fits.
 
-    save_theme_package copies every curated file verbatim, so without the same
-    rule the apply path uses, a user who moves a slider and saves gets a package
-    whose claude-light.json was picked for the colours the slider just replaced.
-    An apply can recover from a bad render; it cannot recover from a bad package.
+    Built from a real package on disk so load_theme_package does the work: the
+    rule lives where bp["apps"] is set, and every consumer inherits it rather
+    than judging again.
     """
 
-    def saved_apps(self, blueprint: dict) -> set:
+    COLORS = "\n".join(
+        ['accent = "#9279aa"', 'cursor = "#F4B999"', 'foreground = "#F4B999"',
+         'background = "#0E1E36"', 'selection_foreground = "#F4B999"',
+         'selection_background = "#9279AA"']
+        + [f'color{index} = "#4A2036"' for index in range(16)]) + "\n"
+
+    def package(self, adjustments: dict) -> dict:
+        """A user package carrying one merge-style and one replacing curated file."""
+        home = Path(tempfile.mkdtemp())
+        root = home / ".config" / "vshell" / "themes" / "probe"
+        (root / "apps").mkdir(parents=True)
+        meta = {"name": "probe", "mode": "dark", "pair": "", "source": "curated"}
+        if adjustments:
+            meta["adjustments"] = adjustments
+        (root / "theme.json").write_text(json.dumps(meta))
+        (root / "colors.toml").write_text(self.COLORS)
+        (root / "apps" / "claude-dark.json").write_text(
+            json.dumps({"overrides": {"claude": "#abcdef"}}))
+        (root / "apps" / "icons.theme").write_text("[Icon Theme]\nName=probe\n")
+        original = helper.home
+        helper.home = lambda: home
+        try:
+            return helper.find_theme("probe")
+        finally:
+            helper.home = original
+
+    def test_a_package_at_rest_keeps_every_curated_file(self):
+        self.assertEqual(sorted(self.package({})["apps"]),
+                         ["claude-dark.json", "icons.theme"])
+
+    def test_a_restyled_package_drops_only_the_merge_style_file(self):
+        """icons.theme has no template behind it, so dropping it would delete the
+        installed artifact on the next apply and leave nothing in its place. Only
+        the file that merges over a generated render goes."""
+        self.assertEqual(sorted(self.package({"brightness": 100})["apps"]),
+                         ["icons.theme"])
+
+    def test_a_restyled_package_renders_without_the_curated_values(self):
+        """The consumer inherits the loader's answer rather than asking again."""
+        content, _missed = helper.claude_theme_file(self.package({"brightness": 100}), "dark")
+        self.assertNotEqual(content["overrides"]["claude"], "#abcdef")
+
+    def test_a_saved_restyled_package_carries_what_the_loader_left(self):
+        """save_theme_package copies curated files verbatim, so the loader's rule
+        is what keeps a mismatch from being baked into a package on disk."""
         home = Path(tempfile.mkdtemp())
         original = helper.home
         helper.home = lambda: home
         try:
-            root = helper.save_theme_package(blueprint, name="saved-probe")
+            root = helper.save_theme_package(self.package({"brightness": 100}), name="saved-probe")
         finally:
             helper.home = original
-        return {path.name for path in (root / "apps").iterdir()} if (root / "apps").is_dir() else set()
-
-    def test_a_saved_package_keeps_the_curated_file_at_rest(self):
-        self.assertIn("claude-light.json", self.saved_apps(helper.find_theme("akane", THEMES)))
-
-    def test_a_saved_restyled_package_drops_the_curated_file(self):
-        restyled_akane = restyled(helper.find_theme("akane", THEMES), {"brightness": 100})
-        self.assertNotIn("claude-light.json", self.saved_apps(restyled_akane))
+        self.assertNotIn("claude-dark.json", {path.name for path in (root / "apps").iterdir()})
 
 
 class TargetWiring(unittest.TestCase):

@@ -1332,7 +1332,9 @@ def load_theme_package(name: str) -> Dict[str, Any] | None:
     bp["builtin"] = builtin_dir.is_dir()
     bp["path"] = str(builtin_dir if builtin_dir.is_dir() else user_dir)
     bp["userDir"] = str(user_dir) if user_dir.is_dir() else ""
-    bp["apps"] = {Path(rel).name: str(p) for rel, p in files.items() if rel.startswith("apps/")}
+    bp["apps"] = curated_apps_for_palette(
+        {Path(rel).name: str(p) for rel, p in files.items() if rel.startswith("apps/")},
+        adjustments)
     bp["backgrounds"] = [str(p) for _rel, p in backgrounds]
     bp["packagedPreview"] = str(files["preview.png"]) if "preview.png" in files else ""
     bp["adjustments"] = adjustments
@@ -2022,18 +2024,15 @@ def save_theme_package(bp: Dict[str, Any], name: str | None = None) -> Path:
     """Persist a theme as a user package: curated apps/ files carry over
     verbatim; every other toggled-on app gets an editable rendered file.
 
-    A merge-style curated file is dropped when the palette is restyled, by the
-    same rule that governs it on an apply. Copying one here would bake the
-    mismatch into a package on disk, where no later apply can recover it.
+    The blueprint's curated files are already the ones its palette fits, because
+    the package loader dropped any the palette outgrew, so this copies what it is
+    given rather than judging again.
     """
     bp = dict(bp)
     if name:
         bp["name"] = name
     apps: Dict[str, str] = rendered_apps_for(bp)
-    merges = curated_merge_files_apply(bp)
     for filename, path in (bp.get("apps") or {}).items():
-        if not merges and filename in CLAUDE_CURATED_FILES:
-            continue
         with contextlib.suppress(OSError):
             apps[filename] = Path(path).read_text()
     return materialize_theme_package(bp, apps=apps)
@@ -2491,10 +2490,9 @@ def mode_variant_blueprint(bp: Dict[str, Any], mode: str,
     variant = blueprint_mode_variant(bp, mode, str((bp.get("palette") or {}).get("wallpaper") or ""))
     # The transform rebuilds the palette alone, so the package identity that
     # locates a target's curated files has to be carried across or a counterpart
-    # mode silently loses them. `adjustments` rides with them because the variant
-    # is derived from the already-restyled palette: a reader that finds the
-    # curated files has to see the restyle that decides whether they still apply.
-    for key in ("apps", "package", "path", "adjustments"):
+    # mode silently loses them. Those files are already the ones the palette fits:
+    # the package loader dropped any it outgrew before this point.
+    for key in ("apps", "package", "path"):
         if bp.get(key):
             variant[key] = bp[key]
     return variant
@@ -2607,18 +2605,27 @@ def claude_bands_apart(added: str, removed: str) -> Tuple[bool, float, float]:
 CLAUDE_CURATED_FILES = frozenset(f"claude-{mode}.json" for mode in THEME_MODES)
 
 
-def curated_merge_files_apply(bp: Dict[str, Any]) -> bool:
-    """Whether a package's merge-style curated files still describe `bp`.
+def curated_apps_for_palette(apps: Dict[str, str],
+                             adjustments: Dict[str, int]) -> Dict[str, str]:
+    """A package's curated app files, minus those its palette no longer fits.
 
-    Such a file holds colours picked against the package's shipped palette, and
-    it is judged against the background and body text the render derives. A
-    restyle transforms that palette before roles are derived, so the render
-    follows the slider while the frozen values do not: merging them then puts
-    hand-picked bands on a background they were never chosen for, and a case the
-    generator alone keeps readable becomes unreadable. Once any slider has moved,
-    the generated answer is the correct one.
+    The rule: a curated app file is valid only for the palette it was picked
+    against. Once the palette has been restyled, the merge-style files are
+    dropped and the generated render answers instead. Adapting them would mean
+    re-deriving the hand-picked values, which is the one thing curated means not
+    doing, and it would hand the generator colours a person chose. Dropping is
+    safe by construction, because the generated render is required to be readable
+    at every restyle step: it is written best-effort with a named shortfall
+    rather than refused.
+
+    Only merge-style files are dropped. A replacing curated file is the whole
+    output, with no generated value to disagree with and, for a pointer-style
+    target such as icons, no template behind it: dropping one would delete the
+    installed artifact on the next apply and leave nothing in its place.
     """
-    return adjustments_all_zero(normalize_adjustments(bp.get("adjustments")))
+    if adjustments_all_zero(adjustments):
+        return apps
+    return {name: path for name, path in apps.items() if name not in CLAUDE_CURATED_FILES}
 
 
 def claude_diff_shortfalls(values: Dict[str, str]) -> List[str]:
@@ -4875,8 +4882,7 @@ def claude_theme_file(bp: Dict[str, Any], mode: str) -> Tuple[Dict[str, Any], Li
     """
     roles = {**target_roles(bp), **bp_app_overrides(bp).get("claude", {})}
     overrides = claude_theme_overrides(roles)
-    curated_path = ((bp.get("apps") or {}).get(f"claude-{mode}.json")
-                    if curated_merge_files_apply(bp) else None)
+    curated_path = (bp.get("apps") or {}).get(f"claude-{mode}.json")
     where = (f"{bp.get('name') or mode} claude-{mode}.json" if curated_path
              else f"{bp.get('name') or mode} vgs-{mode}.json")
     if curated_path:
