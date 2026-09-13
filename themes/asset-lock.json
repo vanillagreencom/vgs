@@ -322,6 +322,26 @@
       "preview": "3543576386574bc4fff6d9408d4a64e6c160d8eba3d3d85066e9afe8b9f38f7f",
       "published": true
     },
+    "horizon": {
+      "release": "themes-v3",
+      "archive": "vgs-theme-horizon-r1.tar.gz",
+      "rev": 1,
+      "size": 11151609,
+      "sha256": "4e43c0de11b670b9302848384eaedee1f2bfd85229c46f3cc02b2effbc8dffa5",
+      "definitions": "6b88e7bc28bba02f512efcb632a205c6d38dd24d08e41b87bccac1f459dd7ba9",
+      "preview": "40476f1d4607cc76ff462856bff80b49d6f543848f9afa3f215ca94db224822b",
+      "published": true
+    },
+    "horizon-light": {
+      "release": "themes-v3",
+      "archive": "vgs-theme-horizon-light-r1.tar.gz",
+      "rev": 1,
+      "size": 9814892,
+      "sha256": "324da4e6f8912c07424adf07a3a2b668e012b9431d25e4b71ff725acc986fd69",
+      "definitions": "8813781008d7c1a9dde7fb6452f6607b6f90bbcbe7dd83c96c1d9fe4ac437b44",
+      "preview": "896e8ce44a2256dcc4f13558623cf845208333e9c3fe71c269200c1b27fc2c70",
+      "published": true
+    },
     "inkypinky": {
       "release": "themes-v1",
       "archive": "vgs-theme-inkypinky-r1.tar.gz",
