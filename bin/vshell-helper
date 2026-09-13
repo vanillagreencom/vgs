@@ -1338,9 +1338,11 @@ def load_theme_package(name: str) -> Dict[str, Any] | None:
     bp["builtin"] = builtin_dir.is_dir()
     bp["path"] = str(builtin_dir if builtin_dir.is_dir() else user_dir)
     bp["userDir"] = str(user_dir) if user_dir.is_dir() else ""
+    app_overrides = _parse_app_overrides_text(
+        files["app-colors.toml"].read_text(errors="ignore") if "app-colors.toml" in files else "")
     bp["apps"] = curated_apps_for_palette(
         {Path(rel).name: str(p) for rel, p in files.items() if rel.startswith("apps/")},
-        palette_digest(colors),
+        colors, app_overrides,
         {str(root): layer_curated_palette(root) for root in (builtin_dir, user_dir)})
     bp["backgrounds"] = [str(p) for _rel, p in backgrounds]
     bp["packagedPreview"] = str(files["preview.png"]) if "preview.png" in files else ""
@@ -1353,8 +1355,7 @@ def load_theme_package(name: str) -> Dict[str, Any] | None:
     bp["modified"] = builtin_dir.is_dir() and user_dir.is_dir() and any(p.is_file() for p in user_dir.rglob("*"))
     bp["catalogOwned"] = catalog_owns(name)
     bp["catalogPristine"] = catalog_pristine(name)
-    bp["appOverrides"] = {app: len(roles) for app, roles in _parse_app_overrides_text(
-        files["app-colors.toml"].read_text(errors="ignore") if "app-colors.toml" in files else "").items()}
+    bp["appOverrides"] = {app: len(roles) for app, roles in app_overrides.items()}
     bp["terminalColors"] = {}
     if TERMINAL_COLORS_FILE in files:
         try:
@@ -2694,6 +2695,11 @@ def claude_bands_apart(added: str, removed: str) -> Tuple[bool, float, float]:
 # disagree with, so only these are governed by the restyle rule below.
 CLAUDE_CURATED_FILES = frozenset(f"claude-{mode}.json" for mode in THEME_MODES)
 
+# The app that owns those files, and so the one whose per-app override section
+# moves the palette their values were picked against: the same section
+# `claude_theme_file` merges into the roles the curated values sit on top of.
+CLAUDE_CURATED_APP = "claude"
+
 
 def palette_identity(colors: Dict[str, str], mode: str,
                      adjustments: Dict[str, int] | None = None) -> Dict[str, str]:
@@ -2729,6 +2735,37 @@ def palette_digest(colors: Dict[str, str]) -> str:
     return hashlib.sha256("\n".join(f"{key}={value}" for key, value in items).encode()).hexdigest()
 
 
+# Namespace for the per-app override roles folded into a palette's identity
+# below. Role names and colors.toml keys are separate namespaces that spell some
+# names the same, so folding a role in bare could leave the digest unmoved where
+# an override replaced a role a palette key already happened to name.
+APP_OVERRIDE_IDENTITY_PREFIX = "appOverride."
+
+
+def effective_palette_digest(colors: Dict[str, str], overrides: Dict[str, str]) -> str:
+    """The palette identity a merge-style curated file is judged against.
+
+    That file merges over a render built from the roles *after* the per-app
+    override layer has been merged into them, so an override sits between the
+    palette and the values the curated bands were picked for. Digesting the
+    palette map alone reached one layer short of it: `vshell theme app-colors
+    claude --set background=#0b0b0b` on akane left the recorded and the effective
+    digest equal, so the file was kept and bands picked for the old background
+    were merged over the new one. The apply then named six shortfalls, body text
+    at 1.04:1 on the diff fill and 1.08:1 and 1.12:1 on the two diff bands.
+
+    `overrides` is the owning app's section alone, so a `btop` override never
+    drops a `claude` file. With no section the map is the palette map itself and
+    the digest is the one every writer records, so a package carrying no override
+    keeps its curated file exactly as before. A package carrying one never
+    matches, because `curatedPalette` is recorded from a `colors.toml` and no
+    writer records an override; dropping is the answer wanted there, since the
+    curated values were picked for a colour the override has since replaced.
+    """
+    return palette_digest({**colors, **{f"{APP_OVERRIDE_IDENTITY_PREFIX}{role}": value
+                                        for role, value in overrides.items()}})
+
+
 def layer_curated_palette(root: Path) -> str:
     """The `curatedPalette` digest recorded by the theme.json in `root`.
 
@@ -2742,17 +2779,20 @@ def layer_curated_palette(root: Path) -> str:
     return str(meta.get("curatedPalette") or "") if isinstance(meta, dict) else ""
 
 
-def curated_apps_for_palette(apps: Dict[str, str], effective: str,
+def curated_apps_for_palette(apps: Dict[str, str], colors: Dict[str, str],
+                             app_overrides: Dict[str, Dict[str, str]],
                              recorded_by_layer: Dict[str, str]) -> Dict[str, str]:
     """A package's curated app files, minus those its palette no longer fits.
 
     The rule: a curated app file is valid only for the palette it was picked
-    against. `effective` is the digest of the palette about to be rendered, and
-    each file is matched against the digest recorded by the layer that supplied
-    it, which `recorded_by_layer` holds per package directory. They differ
-    whenever any control has replaced the palette: a restyle slider, a user
-    overlay `colors.toml`, a colour edit persisted in place, a saved copy, or a
-    catalogued download. Testing the controls one at a time instead needed a
+    against. The digest of the palette about to be rendered comes from
+    `effective_palette_digest`, which folds in the override section of the app
+    that owns the file, and each file is matched against the digest recorded by
+    the layer that supplied it, which `recorded_by_layer` holds per package
+    directory. They differ whenever any control has replaced the palette or that
+    app's overrides: a restyle slider, a user overlay `colors.toml`, a colour
+    edit persisted in place, a saved copy, a catalogued download, or `theme
+    app-colors <app>`. Testing the controls one at a time instead needed a
     parameter per control, went inert on a packaged install where the six curated
     themes are catalog-only, and dropped the files of pristine downloads that had
     changed nothing.
@@ -2787,6 +2827,10 @@ def curated_apps_for_palette(apps: Dict[str, str], effective: str,
     target such as icons, no template behind it: dropping one would delete the
     installed artifact on the next apply and leave nothing in its place.
     """
+    # Scoped to the owning app, so an override set for any other app leaves these
+    # files alone: `theme app-colors btop --set background=...` never reaches the
+    # roles a claude file merges over.
+    effective = effective_palette_digest(colors, app_overrides.get(CLAUDE_CURATED_APP, {}))
     kept: Dict[str, str] = {}
     for name, path in apps.items():
         if name not in CLAUDE_CURATED_FILES:
@@ -5055,7 +5099,7 @@ def claude_theme_file(bp: Dict[str, Any], mode: str) -> Tuple[Dict[str, Any], Li
     curated band that closes a rule generation could not reach stops warning,
     and a curated band that breaks one is reported.
     """
-    roles = {**target_roles(bp), **bp_app_overrides(bp).get("claude", {})}
+    roles = {**target_roles(bp), **bp_app_overrides(bp).get(CLAUDE_CURATED_APP, {})}
     overrides = claude_theme_overrides(roles)
     curated_path = (bp.get("apps") or {}).get(f"claude-{mode}.json")
     where = (f"{bp.get('name') or mode} claude-{mode}.json" if curated_path

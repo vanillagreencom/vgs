@@ -782,6 +782,18 @@ class RestyledPackages(unittest.TestCase):
             write_package(home, "probe", self.COLORS, adjustments=adjustments, apps=self.APPS)
             return helper.load_theme_package("probe")
 
+    def overridden(self, app: str, roles: dict) -> dict:
+        """The same package after `theme app-colors <app> --set role=#hex` on it.
+
+        The overrides go through `write_user_app_overrides`, the writer that CLI
+        path ends in, so this cannot drift into a file shape production no longer
+        writes.
+        """
+        with temp_home() as home:
+            write_package(home, "probe", self.COLORS, apps=self.APPS)
+            helper.write_user_app_overrides("probe", {app: roles})
+            return helper.load_theme_package("probe")
+
     def test_a_package_at_rest_keeps_every_curated_file(self):
         self.assertEqual(sorted(self.package({})["apps"]),
                          ["claude-dark.json", "icons.theme"])
@@ -797,6 +809,25 @@ class RestyledPackages(unittest.TestCase):
         """The consumer inherits the loader's answer rather than asking again."""
         content, _missed = helper.claude_theme_file(self.package({"brightness": 100}), "dark")
         self.assertNotEqual(content["overrides"]["claude"], "#abcdef")
+
+    def test_a_claude_override_drops_only_the_merge_style_file(self):
+        """`theme app-colors claude --set background=...` replaces a colour the
+        curated values were picked against, and that layer sits between the
+        palette and the render the file merges over. A digest taken over the
+        palette map alone read past it: the two digests stayed equal, the file was
+        kept, and bands picked for the old background were merged over the new one.
+        icons.theme has no template behind it and stays whatever the palette does.
+        """
+        self.assertEqual(sorted(self.overridden("claude", {"background": "#0b0b0b"})["apps"]),
+                         ["icons.theme"])
+
+    def test_an_override_for_another_app_leaves_the_claude_file_alone(self):
+        """The digest folds in the owning app's section and no other. Folding the
+        whole override table in instead would drop a theme's hand-picked diff
+        bands the moment a user set a btop colour, which reaches none of the roles
+        those bands sit on."""
+        self.assertEqual(sorted(self.overridden("btop", {"background": "#0b0b0b"})["apps"]),
+                         ["claude-dark.json", "icons.theme"])
 
     def test_a_saved_restyled_package_carries_what_the_loader_left(self):
         """save_theme_package copies curated files verbatim, so the loader's rule
@@ -850,6 +881,22 @@ class InstalledLayout(unittest.TestCase):
             download_package("akane")
             with mock.patch.object(helper, "apply_theme_obj", return_value={}):
                 helper.persist_color_edits(["foreground=#101010"], "akane")
+            blueprint = helper.load_theme_package("akane")
+            self.assertEqual(
+                ("claude-light.json" in blueprint["apps"], self.light(blueprint)),
+                (False, []))
+
+    def test_a_claude_override_drops_the_curated_file_and_misses_no_rule(self):
+        """The reproduced case: `theme app-colors claude --set background=#0b0b0b`
+        on akane. The override merges into the roles the curated file sits on top
+        of, so it moves the palette those values were picked for while leaving
+        colors.toml untouched. Judged on the palette map alone the file was kept
+        and the light render named six shortfalls, body text at 1.04:1 on the diff
+        fill and 1.08:1 and 1.12:1 on the two diff bands, over a /diff panel a user
+        cannot read."""
+        with installed_layout():
+            download_package("akane")
+            helper.write_user_app_overrides("akane", {"claude": {"background": "#0b0b0b"}})
             blueprint = helper.load_theme_package("akane")
             self.assertEqual(
                 ("claude-light.json" in blueprint["apps"], self.light(blueprint)),
