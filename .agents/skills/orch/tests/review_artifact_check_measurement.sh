@@ -18,6 +18,7 @@ CHECK="$REPO_ROOT/skills/orch/scripts/review-artifact-check"
 source "$TEST_DIR/lib/waiter-assertions.sh"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
+source "$TEST_DIR/lib/review-artifact-fixture.sh"
 
 DELEG=1750000000
 BEFORE=$((DELEG - 100))
@@ -61,6 +62,7 @@ fresh_run() {
 run_check() {
   local args=() a
   for a in "$@"; do a="${a//%W/$WT}"; a="${a//%F/$F}"; a="${a//%D/$DELEG}"; args+=("$a"); done
+  [[ "${args[0]}" != --file ]] || { review_fixture_stamp "${args[1]}" || return 1; args=(--file "${args[1]}" "$WT" "${args[@]:2}"); }
   set +e
   OUT=$("$CHECK" ${args[@]+"${args[@]}"} 2>"$ERR")
   RC=$?
@@ -142,6 +144,7 @@ glob_table() {
     for item in "${items[@]}"; do
       file="${item%%@*}"; when="${item#*@}"; when="${when%%=*}"; name="${item#*=}"
       body "$name" > "$WT/tmp/review-r-$file.json"
+      review_fixture_stamp "$WT/tmp/review-r-$file.json"
       case "$when" in
         before) mtime=$BEFORE ;; after) mtime=$AFTER ;; later) mtime=$LATER ;;
         *) echo "glob_table: unknown time $when in $item" >&2; exit 1 ;;

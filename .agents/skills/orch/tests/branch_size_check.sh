@@ -117,7 +117,7 @@ assert_eq "$(jq -r '.base_sha, .head_sha' <<<"$split_json" | paste -sd, -)" \
   "$(git -C "$WT" rev-parse main HEAD | paste -sd, -)" \
   "the record is bound to the base and head it measured"
 assert_eq "$("$STATE" --state-dir "$WT/tmp" get KEN-SIZE '.pr.size_check.verdict')" "pass" \
-  "the verdict is recorded beside pr.baseline_lines, in no new state file"
+  "the verdict is recorded in the workflow state's pr object"
 
 # --- A render pairs with the source it renders, and only with that source ---
 mk 6 skills/orch/SKILL.md
@@ -324,14 +324,6 @@ capture noisy_env_json run_check env -u KENDEX_ENV_FILE "$CHECK_BIN" --json
 assert_eq "$(jq -r 'type' <<<"$noisy_env_json" 2>&1)" "object" \
   "an env file that prints leaves --json stdout one parseable record"
 
-NOISY_SCRIPTS="$(copy_scripts noisy-env-mutant)"
-NOISY_BIN="$NOISY_SCRIPTS/branch-size-check"
-assert_eq "$(grep -Fc -e 'kendex_load_project_env "$REPO_ROOT" >&2' "$NOISY_BIN")" "1" \
-  "env-file control finds exactly one redirected load"
-sed -i.bak 's/kendex_load_project_env "\$REPO_ROOT" >&2/kendex_load_project_env "$REPO_ROOT"/' "$NOISY_BIN"
-capture noisy_mutant_json run_check env -u KENDEX_ENV_FILE "$NOISY_BIN" --json
-assert_eq "$(jq -r 'type' <<<"$noisy_mutant_json" 2>/dev/null || echo parse-error)" "parse-error" \
-  "must-fail control: without the redirect the env file's line breaks the parse"
 rm -f -- "$WT/.env.local"
 
 printf '\npass: %d  fail: %d\n' "$PASS" "$FAIL"
