@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate the theme download catalog from the tree and themes/asset-lock.json.
 
-Definition files (theme.json, colors.toml, apps/*) are read and hashed from the
+Definition files (theme.json, colors.toml, terminal-colors.toml, apps/*) are read and hashed from the
 working tree. A theme's imagery is not in the tree: scripts/publish-theme-assets.py
 publishes one archive per theme to a themes-vN release and records its size and
 sha256 in themes/asset-lock.json, which this script reads. --check therefore runs
@@ -77,7 +77,7 @@ def catalog_relpaths(helper: Any, theme_dir: Path) -> List[str]:
         try:
             rels.append(helper._catalog_check_relpath(rel))
         except ValueError as exc:
-            if rel.split("/")[0] == "apps" or rel in {"theme.json", "colors.toml"}:
+            if rel.split("/")[0] == "apps" or rel in {"theme.json", "colors.toml", "terminal-colors.toml"}:
                 raise SystemExit(f"{theme_dir.name}: {exc}") from exc
     return rels
 
