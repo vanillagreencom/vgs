@@ -5,7 +5,7 @@ background = "#d0d0c8"
 selection_foreground = "#d0d0c8"
 selection_background = "#242424"
 
-color0 = "#242424"
+color0 = "#d0d0c8"
 color1 = "#db0030"
 color2 = "#2e3125"
 color3 = "#51573b"

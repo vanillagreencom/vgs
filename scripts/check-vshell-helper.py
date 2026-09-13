@@ -2187,18 +2187,23 @@ def test_theme_init_applies_only_without_state():
 
 def test_lint_checks_color0_in_light_mode_only():
     """ANSI black is body text in a light terminal and unused in a dark one."""
-    def warns(mode: str, bg: str, fg: str, color0: str) -> bool:
+    def warns(mode: str, bg: str, fg: str, color0: str, terminal_color0: str) -> bool:
         colors = {f"color{i}": fg for i in range(16)}
         colors.update({"background": bg, "foreground": fg, "color0": color0, "mode": mode})
         bp = helper.palette_from_colors_map(colors, name="lint-probe", source="curated")
+        bp["terminalColors"] = {"color0": terminal_color0} if terminal_color0 else {}
         return any(w["role"].startswith("color0") for w in helper.lint_blueprint(bp))
 
-    for label, mode, bg, fg, color0, expected in (
-        ("light, color0 equal to the background", "light", "#f5e6d3", "#35302a", "#f5e6d3", True),
-        ("light, a dark color0", "light", "#f5e6d3", "#35302a", "#35302a", False),
-        ("dark, color0 equal to the background", "dark", "#1a1b26", "#c0caf5", "#1a1b26", False),
+    for label, mode, bg, fg, color0, terminal_color0, expected in (
+        ("light, color0 equal to the background", "light", "#f5e6d3", "#35302a", "#f5e6d3", "", True),
+        ("light, a dark color0", "light", "#f5e6d3", "#35302a", "#35302a", "", False),
+        ("dark, color0 equal to the background", "dark", "#1a1b26", "#c0caf5", "#1a1b26", "", False),
+        ("light, a dark terminal color0 over a background-equal palette color0",
+         "light", "#f5e6d3", "#35302a", "#f5e6d3", "#35302a", False),
+        ("light, a background-equal terminal color0 over a dark palette color0",
+         "light", "#f5e6d3", "#35302a", "#35302a", "#f5e6d3", True),
     ):
-        assert_equal(warns(mode, bg, fg, color0), expected, f"lint color0 warning, {label}")
+        assert_equal(warns(mode, bg, fg, color0, terminal_color0), expected, f"lint color0 warning, {label}")
 
 
 def test_theme_list_falls_back_to_the_shipped_thumbnail():
