@@ -4334,6 +4334,19 @@ def apply_system_fonts(reset: bool = False, size_only: bool = False) -> Dict[str
 CREATED_CONFIG_MODE = 0o600
 
 
+def resolved_config_path(path: Path) -> Path:
+    """Where a settings write must land for `path`.
+
+    These files are commonly symlinked into a dotfiles checkout, and a user can
+    point several account directories at one of them, as three Claude Code
+    accounts do. write_file replaces the name it is given, so writing the link
+    itself would leave a regular file in its place, strand the other names and
+    take the live config out of the user's version control. Resolving a path
+    whose leaf is not a link changes nothing, so every settings writer resolves.
+    """
+    return path.resolve()
+
+
 def set_json_config_key(path: Path, keys: Tuple[str, ...], value: Any,
                         create: bool = False) -> Dict[str, Any]:
     """Write one key into another app's own settings file, and only when it differs.
@@ -4367,12 +4380,8 @@ def set_json_config_key(path: Path, keys: Tuple[str, ...], value: Any,
     if node.get(keys[-1]) == value:
         return {"ok": True, "path": str(path), "changed": False}
     node[keys[-1]] = value
-    # Written through a symlink rather than over it: a user can point several
-    # account directories at one settings file, and write_file replaces the name
-    # it is given, which would leave that link a regular file and cut the others
-    # loose. Resolving a path that is not a link changes nothing.
     try:
-        write_file(path.resolve(), json.dumps(data, indent=2) + "\n", mode)
+        write_file(resolved_config_path(path), json.dumps(data, indent=2) + "\n", mode)
     except OSError as exc:
         return {"ok": False, "error": f"cannot write {path}: {exc}"}
     return {"ok": True, "path": str(path), "changed": True}
@@ -4416,7 +4425,7 @@ def set_yaml_config_key(path: Path, parent: str, values: Dict[str, str]) -> Dict
     if not changed:
         return {"ok": True, "path": str(path), "changed": False}
     try:
-        write_file(path, "\n".join(lines) + "\n", mode)
+        write_file(resolved_config_path(path), "\n".join(lines) + "\n", mode)
     except OSError as exc:
         return {"ok": False, "error": f"cannot write {path}: {exc}"}
     return {"ok": True, "path": str(path), "changed": True}
@@ -4626,14 +4635,13 @@ def set_codex_tui_theme(config: Path, value: str = CODEX_THEME_NAME) -> Dict[str
         # `tui.theme`, or an inline `tui = { ... }` table). Writing anyway would
         # leave two spellings of one key behind.
         return {"ok": False, "error": "codex config sets [tui] theme in a form VGS cannot rewrite"}
-    # config.toml is commonly a symlink into a dotfiles checkout, and the atomic
-    # replace below would swap the link itself for a regular file.
-    target = config.resolve() if config.is_symlink() else config
+    target = resolved_config_path(config)
     # config.toml carries [mcp_servers.*] env values and [model_providers]
-    # http_headers, which hold API keys, so a file the user kept private must
-    # not come back world-readable under this process's umask.
+    # http_headers, which hold API keys, so a file the user kept private must not
+    # come back world-readable under this process's umask, and one VGS brings into
+    # existence must not start that way either.
     try:
-        mode = target.stat().st_mode & 0o777 if target.exists() else None
+        mode = target.stat().st_mode & 0o777 if target.exists() else CREATED_CONFIG_MODE
         write_file(target, new_text, mode)
     except OSError as exc:
         return {"ok": False, "error": f"codex config write failed: {exc}"}

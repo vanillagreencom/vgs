@@ -523,17 +523,22 @@ class HookBehaviour(unittest.TestCase):
         self.assertEqual((result["ok"], json.loads(stale.read_text())["name"]),
                          (True, "vgs-dark"))
 
-    def test_a_theme_file_whose_bytes_already_match_is_not_rewritten(self):
+    def test_a_second_apply_of_one_theme_rewrites_and_reports_nothing(self):
         """write_file replaces unconditionally and Claude Code reloads what changes,
-        so an identical rewrite repaints every open session for nothing."""
+        so an identical rewrite repaints every open session for nothing. The report
+        is pinned beside it: a hook that always claimed it rewrote the selection
+        would make every apply look like a change to whoever reads the result."""
         (self.home / ".claude").mkdir()
-        self.run_hook()
+        first = self.run_hook()
         light = self.home / ".claude" / "themes" / "vgs-light.json"
         stamped = light.stat().st_mtime_ns
         result = self.run_hook()
-        self.assertEqual((result["unchangedThemes"], light.stat().st_mtime_ns == stamped),
-                         (sorted(str(self.home / ".claude" / "themes" / f"vgs-{mode}.json")
-                                 for mode in ("dark", "light")), True))
+        self.assertEqual(
+            (first["unchanged"], result["unchanged"], result["unchangedThemes"],
+             light.stat().st_mtime_ns == stamped),
+            (False, True,
+             sorted(str(self.home / ".claude" / "themes" / f"vgs-{mode}.json")
+                    for mode in ("dark", "light")), True))
 
     def test_a_restyle_a_palette_cannot_carry_is_reported_and_still_written(self):
         (self.home / ".claude").mkdir()
