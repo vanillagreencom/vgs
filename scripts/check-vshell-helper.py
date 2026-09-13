@@ -8700,6 +8700,59 @@ def test_wallpaper_and_save_keep_terminal_slots():
     with_temp_home(scenario)
 
 
+def test_terminal_app_overrides_show_on_their_editor_row():
+    """The App Theming editor lists a terminal's `terminal_*` rows, and an override
+    saved under the palette's `colorN` or ANSI name paints that slot. The row must
+    show that colour as overridden, or the editor displays the theme's colour
+    while the terminal paints another and offers no way to replace it."""
+    override = "#ff0022"
+    # (app, the key an override was saved under, the editor row that slot shows on)
+    rows = [
+        ("ghostty", "black", "terminal_black"),
+        ("kitty", "color1", "terminal_color1"),
+    ]
+
+    def scenario(temp_home: Path):
+        builtin = temp_home / "builtin"
+        package = builtin / "rowfix"
+        package.mkdir(parents=True)
+        (package / "theme.json").write_text(
+            json.dumps({"name": "rowfix", "mode": "dark", "source": "curated"}) + "\n")
+        palette = "\n".join(f'color{index} = "#0000{index:02d}"' for index in range(16))
+        (package / "colors.toml").write_text(f'background = "#101010"\nforeground = "#eeeeee"\n{palette}\n')
+        original_builtin = helper.builtin_themes_dir
+        helper.builtin_themes_dir = lambda: builtin
+        try:
+            for app, saved_key, row in rows:
+                helper.write_user_app_overrides("rowfix", {app: {saved_key: override}})
+                blueprint = helper.load_theme_package("rowfix")
+                view = {item["role"]: item for item in helper.app_role_view(app, blueprint)["roles"]}
+                if row not in view:
+                    raise AssertionError(f"{app}: the editor lists no {row} row")
+                painted = helper.render_roles(blueprint, helper.app_target_roles(blueprint),
+                                              helper.bp_app_overrides(blueprint)[app])[row]
+                assert_equal((view[row]["value"], view[row]["overridden"]), (override, True),
+                             f"{app}: {row} shows the saved {saved_key}")
+                assert_equal(painted, override, f"{app}: {row} paints the saved {saved_key}")
+                others = [role for role in view if role.startswith("terminal_")
+                          and helper.TERMINAL_SLOT_INDEX[role] != helper.TERMINAL_SLOT_INDEX[row]]
+                if not others:
+                    raise AssertionError(f"{app}: the editor lists no other terminal row to compare")
+                for role in others:
+                    assert_equal(view[role]["overridden"], False, f"{app}: {role} carries no override")
+
+                with contextlib.redirect_stdout(io.StringIO()):
+                    assert_equal(helper.cmd_theme(["app-colors", app, "--theme", "rowfix",
+                                                   "--set", f"{row}=#123456"]), 0,
+                                 f"{app}: setting the {row} row")
+                assert_equal(helper.read_user_app_overrides("rowfix").get(app), {row: "#123456"},
+                             f"{app}: setting the row replaces the saved {saved_key}")
+        finally:
+            helper.builtin_themes_dir = original_builtin
+
+    with_temp_home(scenario)
+
+
 def main():
     test_system_font_family_targets()
     test_system_font_size_targets()
@@ -8744,6 +8797,7 @@ def main():
     test_curated_vscode_theme_takes_the_terminal_palette()
     test_light_themes_read_in_a_terminal()
     test_wallpaper_and_save_keep_terminal_slots()
+    test_terminal_app_overrides_show_on_their_editor_row()
     test_restyle_integer_sweeps()
     test_fastfetch_portable_seed_and_logo_fallback()
     test_compositor_dependency_selection()

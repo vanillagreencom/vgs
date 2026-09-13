@@ -2347,23 +2347,40 @@ def terminal_slot_overrides(data: Dict[str, str]) -> Dict[str, str]:
             for index in range(16) if f"color{index}" in data}
 
 
+def terminal_slot_override_keys(index: int) -> Tuple[str, ...]:
+    """The saved app-override keys that set terminal slot `index`, highest first.
+
+    The slot's own `terminal_` names are what the App Theming editor writes; the
+    palette's `colorN` and ANSI name are what an override saved against the
+    palette roles carries. The render and the editor both read this, so the
+    colour an editor row shows is the colour the terminal paints.
+    """
+    name = ANSI_NAMES[index]
+    return (f"terminal_color{index}", f"terminal_{name}", f"color{index}", name)
+
+
+# Each `terminal_` role name and the ANSI slot it paints.
+TERMINAL_SLOT_INDEX = {f"terminal_{key}": index for index, name in enumerate(ANSI_NAMES)
+                       for key in (f"color{index}", name)}
+
+
 def terminal_palette_roles(bp: Dict[str, Any], roles: Dict[str, str],
                            app_overrides: Dict[str, str]) -> Dict[str, str]:
     """The sixteen ANSI slots as a terminal paints them, under `terminal_` names.
 
     A template that writes an actual terminal palette reads these; every other
     placeholder in the same template keeps the theme's own slot. A slot takes, in
-    order: the app's saved override of `colorN` or its ANSI name, which is the
-    user's choice for that one app; the theme's terminal-colors.toml; the
-    palette's own value. A theme that ships no terminal-colors.toml therefore
-    renders exactly what it rendered before.
+    order: the app's saved override under a key `terminal_slot_override_keys`
+    lists, which is the user's choice for that one app; the theme's
+    terminal-colors.toml; the palette's own value. A theme that ships no
+    terminal-colors.toml therefore renders exactly what it rendered before.
     """
     terminal = bp.get("terminalColors") or {}
     out: Dict[str, str] = {}
     for index, name in enumerate(ANSI_NAMES):
         key = f"color{index}"
-        value = clean_hex(app_overrides.get(key) or app_overrides.get(name) or terminal.get(key)
-                          or roles.get(key) or DEFAULT_COLORS[index])
+        saved = next((app_overrides[k] for k in terminal_slot_override_keys(index) if app_overrides.get(k)), "")
+        value = clean_hex(saved or terminal.get(key) or roles.get(key) or DEFAULT_COLORS[index])
         out[f"terminal_{key}"] = value
         out[f"terminal_{name}"] = value
     return out
@@ -2371,15 +2388,15 @@ def terminal_palette_roles(bp: Dict[str, Any], roles: Dict[str, str],
 
 def render_roles(bp: Dict[str, Any], base: Dict[str, str],
                  app_overrides: Dict[str, str] | None = None) -> Dict[str, str]:
-    """The role map a target template renders with: `base`, the terminal slots,
-    then the app's saved overrides.
+    """The role map a target template renders with: `base`, the app's saved
+    overrides, then the terminal slots, which alone decide their own keys.
 
     Every template render takes its map from here, so the terminal slots cannot
     reach one render path and miss another; `render_template` refuses a role
     placeholder the map lacks.
     """
     overrides = app_overrides or {}
-    return {**base, **terminal_palette_roles(bp, base, overrides), **overrides}
+    return {**base, **overrides, **terminal_palette_roles(bp, base, overrides)}
 
 
 def app_target_roles(bp: Dict[str, Any], shell_roles: Dict[str, str] | None = None) -> Dict[str, str]:
@@ -6483,10 +6500,13 @@ def app_role_view(app: str, bp: Dict[str, Any]) -> Dict[str, Any]:
     overrides = bp_app_overrides(bp).get(app, {})
     roles: List[Dict[str, Any]] = []
     for role in app_template_roles(app, bp, effective):
+        slot = TERMINAL_SLOT_INDEX.get(role)
+        keys = terminal_slot_override_keys(slot) if slot is not None else (role,)
+        saved = [key for key in keys if overrides.get(key)]
         roles.append({
             "role": role,
-            "value": overrides.get(role) or effective.get(role, ""),
-            "overridden": role in overrides,
+            "value": overrides[saved[0]] if saved else effective.get(role, ""),
+            "overridden": bool(saved),
         })
     curated = not roles
     curated_name = app_curated_file(app, bp) if curated else ""
@@ -9191,7 +9211,13 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
                 role = role.strip()
                 if role not in universe:
                     raise ValueError(f"unknown role: {role}")
-                app_roles[role] = parse_hex_strict(value, role)
+                parsed = parse_hex_strict(value, role)
+                slot = TERMINAL_SLOT_INDEX.get(role)
+                if slot is not None:
+                    # One saved key per terminal slot, so the row just set is the colour painted.
+                    for key in terminal_slot_override_keys(slot):
+                        app_roles.pop(key, None)
+                app_roles[role] = parsed
         except ValueError as exc:
             eprint(str(exc))
             if args.json:
