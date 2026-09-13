@@ -196,19 +196,21 @@ def installed_layout(*builtin: str):
 def download_package(name: str) -> Path:
     """A catalogued theme published into HOME the way `catalog_download_theme` does.
 
-    The archive's files land in the user directory and the marker records the
-    list, which is what `catalog_owns` and `catalog_pristine` read.
+    The marker comes from `catalog_marker_payload`, the downloader's own
+    composer, so this fixture cannot drift into testing a marker production no
+    longer writes. Hand-writing the fields today's readers consult is how a
+    fixture stays green while the thing it stands in for changes shape.
     """
     dest = helper.user_themes_dir() / name
     shutil.copytree(REPO / "themes" / name, dest)
-    (dest / helper.CATALOG_MARKER).write_text(json.dumps({
-        "name": name,
-        "path": str(dest),
-        "release": "themes-v5",
-        "rev": 2,
-        "files": sorted(path.relative_to(dest).as_posix() for path in dest.rglob("*")
-                        if path.is_file() and path.name != helper.CATALOG_MARKER),
-    }, indent=2) + "\n")
+    unpacked = sorted(path.relative_to(dest).as_posix() for path in dest.rglob("*")
+                      if path.is_file() and path.name != helper.CATALOG_MARKER)
+    written = sum((dest / rel).stat().st_size for rel in unpacked)
+    (dest / helper.CATALOG_MARKER).write_text(json.dumps(
+        helper.catalog_marker_payload(
+            name, dest, {"release": "themes-v5", "rev": 2, "sha256": "0" * 64},
+            unpacked, written, ref="v0.5.0"),
+        indent=2) + "\n")
     return dest
 
 
@@ -870,6 +872,50 @@ class InstalledLayout(unittest.TestCase):
                 ("claude-light.json" in source["apps"], "claude-light.json" in copied["apps"],
                  self.light(copied), "claude-light.json" in edited["apps"]),
                 (True, True, [], False))
+
+    def test_a_save_under_the_theme_name_removes_the_file_it_just_dropped(self):
+        """`set-wallpaper --save` and `apply-colors --save` call save_theme_package
+        with the theme's own name, and for a downloaded theme that is the
+        download's own directory. A merge-style file left there from the download
+        was not written by this save and was never judged against the palette it
+        records, so the new digest certified it and the next load took it back.
+        The replacing file has no such claim to answer and stays."""
+        with installed_layout():
+            dest = download_package("akane")
+            helper.set_theme_adjustments("akane", {"brightness": 100})
+            restyled_download = helper.load_theme_package("akane")
+            helper.save_theme_package(restyled_download, name="akane")
+            on_disk = {path.name for path in (dest / "apps").iterdir()}
+            reloaded = helper.load_theme_package("akane")
+            self.assertEqual(
+                ("claude-light.json" in restyled_download["apps"],
+                 "claude-light.json" in on_disk, "icons.theme" in on_disk,
+                 "claude-light.json" in reloaded["apps"], self.light(reloaded)),
+                (False, False, True, False, []))
+
+    def test_an_overlay_written_before_the_digest_keeps_the_built_in_record(self):
+        """`compose_theme_files` composes at file level, so a user overlay
+        `theme.json` shadows the built-in one whole. Setting a default wallpaper
+        wrote one of those, and every such overlay on disk predates this key, so
+        the package read as a palette that had moved when nothing had and the six
+        lost their hand-picked diff bands on upgrade. The built-in record applies
+        while the overlay supplies no palette of its own; once it does, it does
+        not."""
+        with temp_home() as home:
+            overlay = home / ".config" / "vshell" / "themes" / "archwave"
+            overlay.mkdir(parents=True)
+            (overlay / "theme.json").write_text(json.dumps(
+                {"name": "archwave", "mode": "dark", "pair": "", "source": "curated",
+                 "wallpaper": "some.jpg"}))
+            inherited = helper.load_theme_package("archwave")
+            edited = dict(helper.parse_colors_toml(REPO / "themes" / "archwave" / "colors.toml"),
+                          foreground="#101010")
+            (overlay / "colors.toml").write_text(helper.colors_toml_from_map(edited))
+            replaced = helper.load_theme_package("archwave")
+        self.assertEqual(
+            ("claude-light.json" in inherited["apps"], self.light(inherited),
+             "claude-light.json" in replaced["apps"]),
+            (True, [], False))
 
     def test_a_package_recording_no_palette_drops_its_merge_style_file(self):
         """Nothing on disk says what a legacy package's curated values were picked

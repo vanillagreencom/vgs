@@ -1325,14 +1325,11 @@ def load_theme_package(name: str) -> Dict[str, Any] | None:
             colors = parse_colors_toml(files["colors.toml"])
         except Exception as exc:
             eprint(f"theme package {name}: {exc}")
-    if meta.get("mode") in {"dark", "light"}:
-        colors["mode"] = meta["mode"]
     # Restyle adjustments transform the base palette before role derivation and
     # stay non-destructive (colors.toml is never rewritten). All-zero is a no-op.
     adjustments = normalize_adjustments(meta.get("adjustments"))
-    unadjusted_colors = dict(colors)
-    if not adjustments_all_zero(adjustments):
-        colors = apply_adjustments(colors, adjustments)
+    unadjusted_colors = palette_identity(colors, str(meta.get("mode") or ""))
+    colors = palette_identity(colors, str(meta.get("mode") or ""), adjustments)
     bp = palette_from_colors_map(colors, name=str(meta.get("name") or name), wallpaper=wallpaper, source=source)
     builtin_dir = builtin_themes_dir() / name
     user_dir = user_themes_dir() / name
@@ -1343,7 +1340,8 @@ def load_theme_package(name: str) -> Dict[str, Any] | None:
     bp["userDir"] = str(user_dir) if user_dir.is_dir() else ""
     bp["apps"] = curated_apps_for_palette(
         {Path(rel).name: str(p) for rel, p in files.items() if rel.startswith("apps/")},
-        palette_digest(colors), str(meta.get("curatedPalette") or ""))
+        palette_digest(colors),
+        recorded_curated_palette(meta, files.get("colors.toml"), builtin_dir))
     bp["backgrounds"] = [str(p) for _rel, p in backgrounds]
     bp["packagedPreview"] = str(files["preview.png"]) if "preview.png" in files else ""
     bp["adjustments"] = adjustments
@@ -1551,6 +1549,30 @@ def _catalog_fetch_verified(label: str, rel: str, size: int, digest: str,
         except Exception as exc:
             problems.append(f"{base}: {exc}")
     raise ValueError(f"{label}: no source served the catalogued file (" + "; ".join(problems) + ")")
+
+
+def catalog_marker_payload(name: str, dest: Path, assets: Dict[str, Any],
+                           files: List[str], written: int, ref: str = "") -> Dict[str, Any]:
+    """Everything a downloaded theme's marker records.
+
+    The one owner of the marker's shape, so a test fixture standing in for a
+    download writes the marker production writes rather than the subset today's
+    readers happen to consult. A fixture carrying its own copy of this schema
+    stays green against a marker the downloader no longer emits.
+    """
+    return {
+        "name": name,
+        "path": str(dest),
+        "ref": ref,
+        "release": assets.get("release", ""),
+        "rev": assets.get("rev", 0),
+        "sha256": assets.get("sha256", ""),
+        "bytes": written,
+        # What the archive carried, so a later read can tell this directory
+        # apart from the same directory after the user has edited it.
+        "files": files,
+        "installedAt": int(time.time()),
+    }
 
 
 def catalog_marker(name: str) -> Dict[str, Any]:
@@ -1777,19 +1799,10 @@ def catalog_download_theme(entry: Dict[str, Any], base_urls: List[str], allow_lo
         written, unpacked = _catalog_unpack(name, archive, staging)
         if not (staging / "theme.json").is_file():
             raise ValueError(f"{name}: {assets['archive']} has no theme.json")
-        (staging / CATALOG_MARKER).write_text(json.dumps({
-            "name": name,
-            "path": str(dest),
-            "ref": str((load_theme_catalog().get("source") or {}).get("ref") or ""),
-            "release": assets["release"],
-            "rev": assets["rev"],
-            "sha256": assets["sha256"],
-            "bytes": written,
-            # What the archive carried, so a later read can tell this directory
-            # apart from the same directory after the user has edited it.
-            "files": unpacked,
-            "installedAt": int(time.time()),
-        }, indent=2) + "\n")
+        (staging / CATALOG_MARKER).write_text(json.dumps(
+            catalog_marker_payload(name, dest, assets, unpacked, written,
+                                   str((load_theme_catalog().get("source") or {}).get("ref") or "")),
+            indent=2) + "\n")
         # Rename the installed theme aside before publishing its replacement.
         # If publication is interrupted, the old directory remains under
         # .catalog-replaced-* until cleanup removes it.
@@ -2092,7 +2105,8 @@ def materialize_theme_package(bp: Dict[str, Any], apps: Dict[str, str] | None = 
         "mode": mode,
         "pair": bp.get("pair") or "",
         "source": blueprint_source(bp),
-        "curatedPalette": palette_digest(dict(parse_colors_toml_text(colors_toml), mode=mode)),
+        "curatedPalette": palette_digest(
+            palette_identity(parse_colors_toml_text(colors_toml), mode)),
     }
     write_file(root / "theme.json", json.dumps(meta, indent=2) + "\n")
     write_file(root / "colors.toml", colors_toml)
@@ -2114,6 +2128,15 @@ def materialize_theme_package(bp: Dict[str, Any], apps: Dict[str, str] | None = 
         dest = bg_dir / Path(wallpaper).name
         if not dest.exists() or not Path(wallpaper).samefile(dest):
             shutil.copy2(wallpaper, dest)
+    # The recorded digest certifies the curated files this package carries, so a
+    # merge-style file left behind from an earlier write would be certified
+    # without ever having been judged against the palette now being written.
+    # `save_theme_package` is called with a theme's own name by `set-wallpaper
+    # --save` and `apply-colors --save`, and for a downloaded theme that is the
+    # download's own directory, so the file the loader had just dropped survived
+    # there and came back on the next load.
+    for stale in CLAUDE_CURATED_FILES - set(apps or {}):
+        (root / "apps" / stale).unlink(missing_ok=True)
     for filename, content in (apps or {}).items():
         write_file(root / "apps" / filename, content)
     return root
@@ -2637,6 +2660,25 @@ def claude_bands_apart(added: str, removed: str) -> Tuple[bool, float, float]:
 CLAUDE_CURATED_FILES = frozenset(f"claude-{mode}.json" for mode in THEME_MODES)
 
 
+def palette_identity(colors: Dict[str, str], mode: str,
+                     adjustments: Dict[str, int] | None = None) -> Dict[str, str]:
+    """The colour map a palette's identity is taken over.
+
+    The one owner of that assembly. The digest is derived rather than stored, so
+    a reader and a writer that each build the map their own way produce values
+    that cannot be compared: a package whose `theme.json` carried no valid mode
+    would be written with one spelling and read with another, and its curated
+    files would be dropped on reload having changed nothing.
+    """
+    identity = dict(colors)
+    if mode in THEME_MODES:
+        identity["mode"] = mode
+    adjustments = normalize_adjustments(adjustments)
+    if not adjustments_all_zero(adjustments):
+        identity = apply_adjustments(identity, adjustments)
+    return identity
+
+
 def palette_digest(colors: Dict[str, str]) -> str:
     """A palette's identity: one digest over the colours themselves.
 
@@ -2650,6 +2692,29 @@ def palette_digest(colors: Dict[str, str]) -> str:
     """
     items = sorted((str(key), str(value)) for key, value in colors.items())
     return hashlib.sha256("\n".join(f"{key}={value}" for key, value in items).encode()).hexdigest()
+
+
+def recorded_curated_palette(meta: Dict[str, Any], colors_path: Path | None,
+                             builtin_dir: Path) -> str:
+    """The digest the package records for the palette its curated files fit.
+
+    `compose_theme_files` composes at file level, so a user overlay `theme.json`
+    shadows the built-in one whole. An overlay written before this key existed,
+    as setting a default wallpaper wrote one, therefore hides the built-in record
+    and the package reads as a palette that has moved when nothing has. The
+    built-in record still applies whenever the overlay supplied no palette of its
+    own, which is exactly when the composed `colors.toml` is the built-in file.
+    """
+    recorded = str(meta.get("curatedPalette") or "")
+    if recorded or colors_path is None:
+        return recorded
+    if colors_path != builtin_dir / "colors.toml":
+        return ""
+    try:
+        builtin_meta = json.loads((builtin_dir / "theme.json").read_text())
+    except Exception:
+        return ""
+    return str(builtin_meta.get("curatedPalette") or "") if isinstance(builtin_meta, dict) else ""
 
 
 def curated_apps_for_palette(apps: Dict[str, str], effective: str,
