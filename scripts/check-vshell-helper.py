@@ -9801,6 +9801,111 @@ def test_save_keeps_app_overrides():
     with_temp_home(scenario)
 
 
+def test_theme_overlays_merge_key_by_key():
+    """A user overlay of a built-in theme holds only the keys the user set, so a
+    later change to the built-in files reaches every other key; `theme init`
+    shrinks a whole-file overlay to that difference and leaves a fork whole."""
+    palette = {"accent": "#7aa2f7", "cursor": "#c0caf5", "foreground": "#c0caf5",
+               "background": "#1a1b26", "selection_foreground": "#c0caf5",
+               "selection_background": "#283457",
+               **{f"color{i}": f"#{i:02x}{i:02x}{i:02x}" for i in range(16)}}
+
+    def scenario(temp_home: Path):
+        builtin = temp_home / "builtin"
+        package = builtin / "keyfix"
+        package.mkdir(parents=True)
+        (package / "theme.json").write_text(
+            json.dumps({"name": "keyfix", "mode": "dark", "source": "curated"}) + "\n")
+
+        def write_builtin(colors=None, slots=None, apps=None):
+            (package / "colors.toml").write_text(helper.flat_toml_text(colors or palette))
+            (package / helper.TERMINAL_COLORS_FILE).write_text(
+                helper.flat_toml_text(slots or {"color1": "#aa0000"}))
+            (package / "app-colors.toml").write_text(helper.app_overrides_toml_text(
+                apps or {"kitty": {"background": "#101010", "foreground": "#eeeeee"}}))
+
+        write_builtin()
+        user = helper.user_themes_dir() / "keyfix"
+        original_builtin, original_apply = helper.builtin_themes_dir, helper.apply_theme_obj
+        helper.builtin_themes_dir = lambda: builtin
+        # A real apply runs hooks that reach the login session; these rows read
+        # the files the writers leave and the package the loader composes.
+        helper.apply_theme_obj = lambda bp, *args, **kwargs: {"success": True}
+
+        def overlay(filename):
+            path = user / filename
+            return helper.parse_colors_toml(path, allow_empty=True) if path.exists() else None
+
+        def loaded():
+            bp = helper.load_theme_package("keyfix")
+            return bp["palette"]["extendedColors"]["accent"], bp["palette"]["colors"][4], bp["terminalColors"]
+
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                helper.persist_color_edits(["accent=#123456"], "keyfix")
+            assert_equal(overlay("colors.toml"), {"accent": "#123456"},
+                         "a colour edit writes only the key it set")
+            write_builtin(colors={**palette, "color4": "#445566", "accent": "#abcdef"})
+            assert_equal(loaded()[:2], ("#123456", "#445566"),
+                         "a built-in change reaches color4 and leaves the overlay's accent")
+            with contextlib.redirect_stdout(io.StringIO()):
+                helper.persist_color_edits(["accent=#abcdef", "blue=#222222"], "keyfix")
+            assert_equal(overlay("colors.toml"), {"color4": "#222222"},
+                         "an edit back to the built-in value drops the key; an ANSI name lands as colorN")
+            write_builtin()
+
+            helper.write_user_app_overrides("keyfix", {"kitty": {"background": "#101010", "cursor": "#abcdef"}})
+            assert_equal(helper.read_user_app_overrides("keyfix"), {"kitty": {"cursor": "#abcdef"}},
+                         "an app override equal to the built-in role is not stored")
+            write_builtin(apps={"kitty": {"background": "#101010", "foreground": "#dddddd"}})
+            assert_equal(helper.theme_app_overrides("keyfix"),
+                         {"kitty": {"background": "#101010", "foreground": "#dddddd", "cursor": "#abcdef"}},
+                         "a built-in app role change reaches the merged overrides beside the user's role")
+
+            (user / helper.TERMINAL_COLORS_FILE).write_text('color2 = "#00bb00"\n')
+            write_builtin(slots={"color1": "#cc0000"})
+            assert_equal(loaded()[2], {"color1": "#cc0000", "color2": "#00bb00"},
+                         "terminal slots merge slot by slot")
+            write_builtin()
+
+            # Whole-file overlays as the writers left them before the merge, and a
+            # fork with no built-in layer under it.
+            (user / "colors.toml").write_text(helper.colors_toml_from_map({**palette, "accent": "#123456"}))
+            (user / helper.TERMINAL_COLORS_FILE).write_text(helper.flat_toml_text({"color1": "#aa0000"}))
+            fork = helper.user_themes_dir() / "forkfix"
+            fork.mkdir(parents=True)
+            (fork / "theme.json").write_text(json.dumps({"name": "forkfix", "mode": "dark"}) + "\n")
+            fork_colors = helper.colors_toml_from_map(palette)
+            (fork / "colors.toml").write_text(fork_colors)
+            digest_before = helper.palette_digest(helper.package_palette(
+                helper.package_colors_map("keyfix"), {"mode": "dark"}))
+            # An applied theme, so init runs the shrink and applies nothing.
+            helper.cfg_dir().mkdir(parents=True, exist_ok=True)
+            (helper.cfg_dir() / "theme.json").write_text('{"name": "keyfix", "mode": "dark"}\n')
+            with contextlib.redirect_stdout(io.StringIO()):
+                assert_equal(helper.cmd_theme(["init", "--json"]), 0, "theme init exit status")
+            # (what, actual, expected)
+            rows = [
+                ("the colours overlay shrinks to its difference", overlay("colors.toml"), {"accent": "#123456"}),
+                ("a terminal overlay equal to the built-in file is removed",
+                 (user / helper.TERMINAL_COLORS_FILE).exists(), False),
+                ("a fork is left whole", (fork / "colors.toml").read_text(), fork_colors),
+                ("the merged palette digest is unchanged", helper.palette_digest(helper.package_palette(
+                    helper.package_colors_map("keyfix"), {"mode": "dark"})), digest_before),
+            ]
+            for what, actual, expected in rows:
+                assert_equal(actual, expected, what)
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                assert_equal(helper.cmd_theme(["duplicate", "keyfix", "--as", "keycopy"]), 0, "duplicate exit status")
+            assert_equal(helper.package_colors_map("keycopy"), helper.package_colors_map("keyfix"),
+                         "a copy of a shrunk overlay carries the merged palette")
+        finally:
+            helper.builtin_themes_dir, helper.apply_theme_obj = original_builtin, original_apply
+
+    with_temp_home(scenario)
+
+
 def test_unsaved_applied_theme_keeps_terminal_slots():
     """`apply-colors --name X` without `--save` applies a theme no package carries,
     so its terminal slots survive only in theme-current.json. The next wallpaper
@@ -10062,6 +10167,7 @@ def main():
     test_declared_ui_roles_replace_the_derivation_without_a_contrast_rewrite()
     test_declared_ui_roles_move_with_a_restyle_and_survive_a_save()
     test_save_keeps_app_overrides()
+    test_theme_overlays_merge_key_by_key()
     test_unsaved_applied_theme_keeps_terminal_slots()
     test_terminal_app_overrides_show_on_their_editor_row()
     test_preview_key_covers_terminal_slots()

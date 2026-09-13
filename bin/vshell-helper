@@ -1306,7 +1306,8 @@ def paired_blueprint(base: Dict[str, Any], target_mode: str,
 # backgrounds/ (wallpapers, first alphabetical = default), optional preview.png,
 # and apps/ (curated per-app configs that win over template generation).
 # Built-ins live in themes/<name>/, user themes in ~/.config/vshell/themes/<name>/;
-# a user directory overlays the built-in one file-by-file (user file wins).
+# a user directory overlays the built-in one file-by-file (user file wins), except
+# the files `package_layer_paths` names, which merge key by key.
 
 # `thumbnails/` holds the shipped 480 px screenshots of themes that are not
 # installed (see the download catalog below); it is not a theme package.
@@ -1410,6 +1411,86 @@ def compose_theme_files(name: str) -> Dict[str, Path]:
     return files
 
 
+def package_layer_paths(name: str, filename: str) -> List[Path]:
+    """`filename` in each layer of package `name` that holds it, built-in first.
+
+    `colors.toml`, `terminal-colors.toml` and `app-colors.toml` are read through
+    this and merged key by key, so a user overlay holds only the keys the user
+    set and a package update still reaches every value they did not. A whole
+    file in the overlay would freeze every key at the version the user edited.
+    """
+    return [root / filename for root in (builtin_themes_dir() / name, user_themes_dir() / name)
+            if (root / filename).is_file()]
+
+
+def flat_toml_text(values: Dict[str, str]) -> str:
+    """A `key = "value"` TOML body holding `values` in their order."""
+    return "".join(f'{key} = "{value}"\n' for key, value in values.items())
+
+
+def write_overlay_keys(path: Path, values: Dict[str, str], below: Dict[str, str]) -> None:
+    """Write the entries of `values` that the built-in layer's map `below` does
+    not already hold, or remove the overlay file when none remain."""
+    delta = {key: value for key, value in values.items() if below.get(key) != value}
+    if delta:
+        write_file(path, flat_toml_text(delta))
+    else:
+        path.unlink(missing_ok=True)
+
+
+def package_terminal_slots(name: str) -> Dict[str, str]:
+    """The terminal slots of package `name`, merged slot by slot across its layers.
+
+    A layer file holding no slots replaces the slots below it instead of merging:
+    it is the file a save under a built-in theme's name writes to say the saved
+    theme has none.
+    """
+    slots: Dict[str, str] = {}
+    for path in package_layer_paths(name, TERMINAL_COLORS_FILE):
+        try:
+            layer = terminal_slot_overrides(parse_colors_toml(path, allow_empty=True))
+        except Exception as exc:
+            eprint(f"theme package {name}: {exc}")
+            continue
+        slots = {**slots, **layer} if layer else {}
+    return slots
+
+
+def shrink_theme_overlays() -> None:
+    """Reduce each user overlay of a built-in theme to the keys whose values
+    differ from the built-in layer's.
+
+    An overlay written as a whole file holds every key, so it keeps every value
+    at the version the user edited. Removing only the keys equal to the built-in
+    value leaves the merged package unchanged, so every digest over it is
+    unchanged too. Running it again changes nothing, so `theme init` runs it on
+    every start instead of recording that it ran. A user theme with no built-in
+    counterpart is a whole theme, and an untouched catalog download holds no user
+    edit, so neither is rewritten. A terminal file holding no slots is left as it
+    is, because it means the saved theme has none.
+    """
+    for name in theme_package_names():
+        builtin, user = builtin_themes_dir() / name, user_themes_dir() / name
+        if not (builtin / "theme.json").is_file() or not user.is_dir() or catalog_pristine(name):
+            continue
+        for filename in ("colors.toml", TERMINAL_COLORS_FILE):
+            overlay, base = user / filename, builtin / filename
+            if not (overlay.is_file() and base.is_file()):
+                continue
+            try:
+                values = parse_colors_toml(overlay, allow_empty=True)
+                below = parse_colors_toml(base, allow_empty=True)
+            except Exception as exc:
+                eprint(f"theme package {name}: {exc}")
+                continue
+            if filename == TERMINAL_COLORS_FILE:
+                values, below = terminal_slot_overrides(values), terminal_slot_overrides(below)
+            if values and any(below.get(key) == value for key, value in values.items()):
+                write_overlay_keys(overlay, values, below)
+        if (user / "app-colors.toml").is_file() and (builtin / "app-colors.toml").is_file():
+            write_user_app_overrides(name, read_user_app_overrides(name))
+
+
 def load_theme_package(name: str) -> Dict[str, Any] | None:
     files = compose_theme_files(name)
     meta_path = files.get("theme.json")
@@ -1436,7 +1517,7 @@ def load_theme_package(name: str) -> Dict[str, Any] | None:
     # comes from the one owner the save's exemption also calls. The unadjusted
     # map is this loader's alone. Both derive from one parse, so a package whose
     # `colors.toml` does not read reports it once.
-    raw_colors = package_colors_map(files, name)
+    raw_colors = package_colors_map(name)
     unadjusted_colors = palette_identity(raw_colors, str(meta.get("mode") or ""))
     colors = package_palette(raw_colors, meta, package_declared_ui_roles(files, meta, name))
     bp = palette_from_colors_map(colors, name=str(meta.get("name") or name), wallpaper=wallpaper, source=source)
@@ -1448,8 +1529,7 @@ def load_theme_package(name: str) -> Dict[str, Any] | None:
     bp["builtin"] = builtin_dir.is_dir()
     bp["path"] = str(builtin_dir if builtin_dir.is_dir() else user_dir)
     bp["userDir"] = str(user_dir) if user_dir.is_dir() else ""
-    app_overrides = _parse_app_overrides_text(
-        files["app-colors.toml"].read_text(errors="ignore") if "app-colors.toml" in files else "")
+    app_overrides = theme_app_overrides(name)
     bp["apps"] = curated_apps_for_palette(
         {Path(rel).name: str(p) for rel, p in files.items() if rel.startswith("apps/")},
         colors, app_overrides, package_layer_palettes(name))
@@ -1471,13 +1551,7 @@ def load_theme_package(name: str) -> Dict[str, Any] | None:
     # roles that digest covers cannot part.
     bp["uiRoles"] = {key[len(UI_ROLE_IDENTITY_PREFIX):]: value for key, value in colors.items()
                      if key.startswith(UI_ROLE_IDENTITY_PREFIX)}
-    bp["terminalColors"] = {}
-    if TERMINAL_COLORS_FILE in files:
-        try:
-            bp["terminalColors"] = terminal_slot_overrides(
-                parse_colors_toml(files[TERMINAL_COLORS_FILE], allow_empty=True))
-        except Exception as exc:
-            eprint(f"theme package {name}: {exc}")
+    bp["terminalColors"] = package_terminal_slots(name)
     if bp["terminalColors"] and not adjustments_all_zero(adjustments):
         # Restyle moves explicit terminal slots with the palette. They go in beside
         # the unadjusted palette under names outside its keys, so every transform
@@ -2119,24 +2193,16 @@ def _parse_app_overrides_text(text: str) -> Dict[str, Dict[str, str]]:
 
 
 def theme_app_overrides(pkg_dir_name: str) -> Dict[str, Dict[str, str]]:
-    """Composed per-app overrides for a theme (built-in then user, user wins)."""
-    files = compose_theme_files(pkg_dir_name)
-    path = files.get("app-colors.toml")
-    if not path:
-        return {}
-    return _parse_app_overrides_text(path.read_text(errors="ignore"))
+    """Per-app overrides for a theme, merged role by role: built-in, then user."""
+    merged: Dict[str, Dict[str, str]] = {}
+    for path in package_layer_paths(pkg_dir_name, "app-colors.toml"):
+        for app, roles in _parse_app_overrides_text(path.read_text(errors="ignore")).items():
+            merged.setdefault(app, {}).update(roles)
+    return merged
 
 
-def read_user_app_overrides(pkg_dir_name: str) -> Dict[str, Dict[str, str]]:
-    """Only the user overlay app-colors.toml, for read-modify-write editing."""
-    path = user_themes_dir() / pkg_dir_name / "app-colors.toml"
-    if not path.exists():
-        return {}
-    return _parse_app_overrides_text(path.read_text(errors="ignore"))
-
-
-def write_user_app_overrides(pkg_dir_name: str, data: Dict[str, Dict[str, str]]) -> None:
-    path = user_themes_dir() / pkg_dir_name / "app-colors.toml"
+def app_overrides_toml_text(data: Dict[str, Dict[str, str]]) -> str:
+    """An `app-colors.toml` body for `data`, or "" when no app keeps a valid role."""
     lines: List[str] = []
     for app in sorted(data):
         roles = {r: v for r, v in data[app].items() if isinstance(v, str) and HEX_RE.match(v.strip())}
@@ -2146,8 +2212,35 @@ def write_user_app_overrides(pkg_dir_name: str, data: Dict[str, Dict[str, str]])
         for role in sorted(roles):
             lines.append(f'{role} = "{clean_hex(roles[role])}"')
         lines.append("")
-    if lines:
-        write_file(path, "\n".join(lines).rstrip("\n") + "\n")
+    return "\n".join(lines).rstrip("\n") + "\n" if lines else ""
+
+
+def theme_app_overrides_layer(root: Path) -> Dict[str, Dict[str, str]]:
+    """The app-colors.toml of one package layer directory alone."""
+    path = root / "app-colors.toml"
+    if not path.exists():
+        return {}
+    return _parse_app_overrides_text(path.read_text(errors="ignore"))
+
+
+def read_user_app_overrides(pkg_dir_name: str) -> Dict[str, Dict[str, str]]:
+    """Only the user overlay app-colors.toml, for read-modify-write editing."""
+    return theme_app_overrides_layer(user_themes_dir() / pkg_dir_name)
+
+
+def write_user_app_overrides(pkg_dir_name: str, data: Dict[str, Dict[str, str]]) -> None:
+    """Write the user overlay's app-colors.toml, keeping only the roles whose value
+    differs from the built-in layer's, so `theme_app_overrides` still merges every
+    other built-in role in."""
+    path = user_themes_dir() / pkg_dir_name / "app-colors.toml"
+    below = theme_app_overrides_layer(builtin_themes_dir() / pkg_dir_name)
+    text = app_overrides_toml_text({
+        app: {role: value for role, value in roles.items()
+              if not (isinstance(value, str) and HEX_RE.match(value.strip())
+                      and below.get(app, {}).get(role) == clean_hex(value))}
+        for app, roles in data.items()})
+    if text:
+        write_file(path, text)
     elif path.exists():
         with contextlib.suppress(OSError):
             path.unlink()
@@ -2172,8 +2265,9 @@ def theme_package_dir_name(bp: Dict[str, Any]) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "-", str(bp.get("name") or "theme")).strip("-") or "theme"
 
 
-def package_colors_map(files: Dict[str, Path], name: str) -> Dict[str, str]:
-    """The raw colours a theme package's own `colors.toml` holds.
+def package_colors_map(name: str) -> Dict[str, str]:
+    """The raw colours theme package `name`'s `colors.toml` layers hold, merged key
+    by key with the user layer last.
 
     One owner for the read, and only the read: a caller wanting a palette
     identity passes the result to `palette_identity`. Owning both together gave
@@ -2186,15 +2280,16 @@ def package_colors_map(files: Dict[str, Path], name: str) -> Dict[str, str]:
     recorded digest still says which palette the curated files were picked for.
     `name` is the package directory, which every caller has, rather than the
     `name` key of a `theme.json` that need not carry one and printed an empty
-    name when it did not.
+    name when it did not. A layer that does not read contributes no colours and
+    the other layer still does.
     """
-    if "colors.toml" not in files:
-        return {}
-    try:
-        return parse_colors_toml(files["colors.toml"])
-    except Exception as exc:
-        eprint(f"theme package {name}: {exc}")
-        return {}
+    colors: Dict[str, str] = {}
+    for path in package_layer_paths(name, "colors.toml"):
+        try:
+            colors.update(parse_colors_toml(path))
+        except Exception as exc:
+            eprint(f"theme package {name}: {exc}")
+    return colors
 
 
 def declared_ui_roles(bp: Dict[str, Any]) -> Dict[str, str]:
@@ -2377,7 +2472,7 @@ def override_dropped_curated(bp: Dict[str, Any]) -> List[str]:
         meta = json.loads(meta_path.read_text())
     if not isinstance(meta, dict):
         return []
-    palette = package_palette(package_colors_map(files, package), meta,
+    palette = package_palette(package_colors_map(package), meta,
                               package_declared_ui_roles(files, meta, package))
     # `bp` arrived through one rebuild out of `theme.json` already, so the
     # package side is given the one trip the applied side already took. This
@@ -2410,10 +2505,14 @@ def duplicate_theme_package(package: str, dest: Path, new_name: str) -> None:
 
     Restyle adjustments and per-app overrides are copied rather than folded in,
     so the loader folds them in on the copy exactly as it does on the source.
+    The files merged key by key across the source's layers are written merged,
+    because the copy has no built-in layer under it to supply the keys a user
+    overlay leaves out.
     """
     files = compose_theme_files(package)
     meta = json.loads(files["theme.json"].read_text())
-    palette = palette_identity(package_colors_map(files, package), str(meta.get("mode") or ""),
+    colors = package_colors_map(package)
+    palette = palette_identity(colors, str(meta.get("mode") or ""),
                                ui_roles=package_declared_ui_roles(files, meta, package))
     vouched = curated_apps_for_palette(
         {Path(rel).name: str(p) for rel, p in files.items() if rel.startswith("apps/")},
@@ -2421,12 +2520,19 @@ def duplicate_theme_package(package: str, dest: Path, new_name: str) -> None:
     for rel, src in files.items():
         # A copy is the user's own theme, never something the catalog may remove
         # later, so the download marker stays behind with the unvouched files.
-        if rel in ("theme.json", CATALOG_MARKER) or (
+        if rel in ("theme.json", CATALOG_MARKER, "colors.toml", TERMINAL_COLORS_FILE, "app-colors.toml") or (
                 rel.startswith("apps/") and Path(rel).name not in vouched):
             continue
         target_path = dest / rel
         target_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, target_path)
+    slots = package_terminal_slots(package)
+    app_text = app_overrides_toml_text(theme_app_overrides(package))
+    for filename, text in (("colors.toml", flat_toml_text(colors)),
+                           (TERMINAL_COLORS_FILE, flat_toml_text(slots)),
+                           ("app-colors.toml", app_text)):
+        if text:
+            write_file(dest / filename, text)
     meta["name"] = new_name
     meta["curatedPalette"] = palette_digest(palette)
     write_file(dest / "theme.json", json.dumps(meta, indent=2) + "\n")
@@ -7455,12 +7561,7 @@ def parse_color_edits(edits: List[str]) -> Dict[str, str]:
 
 def theme_base_colors(bp: Dict[str, Any]) -> Dict[str, str]:
     """Return the normalized base palette before restyle adjustments for editing."""
-    pkg_dir_name = Path(str(bp.get("path"))).name
-    files = compose_theme_files(pkg_dir_name)
-    base_map: Dict[str, str] = {}
-    if "colors.toml" in files:
-        with contextlib.suppress(Exception):
-            base_map = parse_colors_toml(files["colors.toml"])
+    base_map = package_colors_map(Path(str(bp.get("path"))).name)
     if blueprint_mode(bp) in {"dark", "light"}:
         base_map["mode"] = blueprint_mode(bp)
     base_bp = palette_from_colors_map(base_map, name=str(bp.get("name") or ""), wallpaper="", source=blueprint_source(bp))
@@ -7474,7 +7575,12 @@ def theme_base_colors(bp: Dict[str, Any]) -> Dict[str, str]:
 
 def persist_color_edits(edits: List[str], name: str) -> Dict[str, Any]:
     """Merge edits over a theme's base palette, write the overlay colors.toml
-    (source preserved, no contrast rewrite), then re-apply."""
+    (source preserved, no contrast rewrite), then re-apply.
+
+    Over a built-in theme the overlay keeps only the keys the user has set, this
+    edit's and the ones it already held, and of those only the ones whose value
+    differs from the built-in file's. A user theme with no built-in layer is
+    written whole, since nothing else supplies its other keys."""
     target = None
     if name and name != "manual-theme":
         target = find_theme(name)
@@ -7487,12 +7593,24 @@ def persist_color_edits(edits: List[str], name: str) -> Dict[str, Any]:
     base.update(edit_map)
     pkg_dir_name = Path(str(target.get("path"))).name
     overlay = user_themes_dir() / pkg_dir_name / "colors.toml"
+    builtin = builtin_themes_dir() / pkg_dir_name / "colors.toml"
+    below: Dict[str, str] | None = None
+    if builtin.is_file():
+        below = parse_colors_toml(builtin)
+        chosen = set(edit_map)
+        if overlay.is_file():
+            chosen.update(f"color{ANSI_NAMES.index(key)}" if key in ANSI_NAMES else key
+                          for key in parse_colors_toml(overlay))
+        values = {key: base[key] for key in BASE_COLOR_KEYS if key in chosen}
     # Mark before the write. An interruption between the two leaves the file
     # rewritten and the marker still listing it, so the theme reads as untouched
     # and nothing says otherwise. Marking for a write that then fails costs one
     # preview render on the next open.
     catalog_mark_edited(pkg_dir_name)
-    write_file(overlay, colors_toml_from_map(base))
+    if below is None:
+        write_file(overlay, colors_toml_from_map(base))
+    else:
+        write_overlay_keys(overlay, values, below)
     refreshed = load_theme_package(pkg_dir_name) or target
     result = apply_theme_obj(refreshed)
     result["persisted"] = str(overlay)
@@ -9903,6 +10021,7 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
     args = parser.parse_args(argv)
 
     if args.cmd == "init":
+        shrink_theme_overlays()
         applied = not (cfg_dir() / "theme.json").exists()
         if applied:
             apply_theme_obj(default_theme_blueprint())
