@@ -5223,15 +5223,29 @@ def set_settings_value(key: str, value: Any) -> Dict[str, Any]:
     return data
 
 
-def current_theme_obj() -> Dict[str, Any]:
-    """The last applied theme as a full object (palette + curated apps)."""
+def applied_blueprint() -> Dict[str, Any] | None:
+    """The last applied blueprint exactly as `apply_theme_obj` wrote it, or None.
+
+    Unlike `current_theme_obj`, this resolves no package, so it still answers for
+    a theme applied under a name no package carries. A file that is missing or
+    unreadable answers None; every caller has a second source.
+    """
     current_bp_path = cfg_dir() / "theme-current.json"
     if current_bp_path.exists():
         with contextlib.suppress(Exception):
             bp = json.loads(current_bp_path.read_text())
-            # Re-resolve the package so curated apps/ files reflect disk state.
-            pkg = find_theme(str(bp.get("name") or "")) if bp.get("name") else None
-            return pkg if pkg and pkg.get("package") else bp
+            if isinstance(bp, dict):
+                return bp
+    return None
+
+
+def current_theme_obj() -> Dict[str, Any]:
+    """The last applied theme as a full object (palette + curated apps)."""
+    bp = applied_blueprint()
+    if bp is not None:
+        # Re-resolve the package so curated apps/ files reflect disk state.
+        pkg = find_theme(str(bp.get("name") or "")) if bp.get("name") else None
+        return pkg if pkg and pkg.get("package") else bp
     return find_theme(current_theme().get("name", "")) or blueprint_from_current_theme()
 
 
@@ -6558,18 +6572,28 @@ def blueprint_from_current_theme(name: str | None = None, mode: str | None = Non
 def with_current_terminal_slots(bp: Dict[str, Any]) -> Dict[str, Any]:
     """Give a blueprint rebuilt from the applied theme's colours that theme's terminal slots.
 
-    Neither the shell's theme.json nor the palette in theme-current.json holds
-    them, so every rebuild from the current theme passes through here. A rebuild
-    into the other mode takes none, since the slots were chosen against the
-    applied background. The applied package is found by name, not through
-    `current_theme_obj`, whose fallback rebuilds from the current theme.
-    Mutate and return bp.
+    Neither the shell's theme.json nor the palette inside theme-current.json
+    holds them, so every rebuild from the current theme passes through here. A
+    rebuild into the other mode takes none, since the slots were chosen against
+    the applied background.
+
+    The applied blueprint answers first: a theme applied under a name with no
+    saved package, as `apply-colors --name` without `--save` leaves behind, holds
+    its slots there and nowhere else. The saved package answers only when the
+    applied blueprint holds none, which is a HOME where nothing has been applied
+    yet. Mutate and return bp.
     """
-    applied_name = str(current_theme().get("name") or "")
-    applied = find_theme(applied_name) if applied_name else None
     slots: Dict[str, str] = {}
-    if applied and applied.get("package") and blueprint_mode(applied) == blueprint_mode(bp):
+    applied = applied_blueprint()
+    if applied and blueprint_mode(applied) == blueprint_mode(bp):
         slots = dict(applied.get("terminalColors") or {})
+    if not slots:
+        # Found by name, not through `current_theme_obj`, whose fallback rebuilds
+        # from the current theme.
+        applied_name = str(current_theme().get("name") or "")
+        package = find_theme(applied_name) if applied_name else None
+        if package and package.get("package") and blueprint_mode(package) == blueprint_mode(bp):
+            slots = dict(package.get("terminalColors") or {})
     bp["terminalColors"] = slots
     return bp
 
