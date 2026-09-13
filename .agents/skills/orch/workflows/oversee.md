@@ -6,13 +6,13 @@ Standing fleet mode: burn down unblocked work items by launching one orch sessio
 
 Once per session, first match wins:
 
-1. `$TMUX` set → tmux lanes: launch each item with `open-terminal` (`lanes pick` chooses the account lane; launch flags sized per item — `handoff.md` § 2).
+1. `$TMUX` set → tmux lanes: launch each item with `open-terminal` (`handoff.md` § 2), a claude or codex item under § 3 Lane directive.
 2. The harness ships session or thread launching (Codex threads, Claude Code agent teams, a desktop app's session tool or bundled skill) → use it: one managed session per item, carrying the same brief `open-terminal` would render.
 3. Neither → no parallel surface. Say so once and work the queue sequentially in this session: `start [ISSUE_ID]` per item, § 2 selection between items.
 
 On a non-tmux surface, read lane questions, new tracker items, and session banners through the harness's own session and tracker tooling.
 
-Then read the overseer handoff file the fleet brief names (default `docs/handoff/OVERSEER-HANDOFF.md`; tracked or gitignored is the repo's choice): the prior session's live lanes, sequence and standing rulings. Absent, start from the tracker. § 5 rewrites it.
+Then read the overseer handoff file the fleet brief names (default `docs/handoff/OVERSEER-HANDOFF.md`): the prior session's live lanes, sequence and standing rulings. Absent, start from the tracker. `kendex apply` manages the default path's ignore rule. For a custom path inside a repository, verify before the first read and each write that Git's index has no entry for the file and Git's ignore rules cover the path. If either check fails, stop and report the path. The handoff stays local to the overseer's host, which owns its disk or snapshot persistence, including paths outside a repository. § 5 rewrites it.
 
 ## 2. Select Work
 
@@ -23,6 +23,15 @@ Unblocked, non-terminal items from the tracker, gated exactly as `start.md` gate
 ```
 
 ## 3. Launch
+
+### Lane directive
+
+A launch through `open-terminal` on the tmux surface for the claude or codex harness, whose launcher takes a lane config dir, takes these steps in order, local or on a remote control host. Every other surface or harness launches as § 1 says, with no inventory or pick.
+
+1. Inventory: `lanes list`. It holds the discovered config dirs minus `ORCH_LANE_EXCLUDE`; a lane past its `ORCH_LANE_RETIRE` date is listed with status `retired` and never picked. On a control host the inventory is that host's login dirs.
+2. Choose: `lanes pick --harness [HARNESS] --json`. The fewest live claims wins, then the most headroom on the binding bucket. Exit 3 means no lane qualifies, and nothing launches: read `lanes list`, wait only when its lanes are over the threshold, and report every `expired`, `unreachable`, `no_credentials`, `no_usage_data` or `error` lane to the operator.
+3. Size: set model and effort for the item from the record's `headroom_pct`, `binding_bucket` and `binding_resets_at`. A lane near its wall gets a cheaper model, or the item waits for `binding_resets_at`.
+4. Launch: the `handoff.md` § 2 `open-terminal` invocation plus `--lane [CONFIG_DIR]` from the picked record and the sized `--launch-flags`, one item per launch.
 
 Per item, mint the brief `/orch start [ISSUE_ID]` (or `/orch start github [OWNER/REPO]#[N]`). The brief also carries question routing: "If your harness can message other sessions (a session list plus a send-message tool), push any blocking question to the overseer session that launched you the moment it arises — the user may not be watching this session — and still raise it locally through your normal question tool. Without such messaging, just ask normally; the overseer's watch will find it." `/orch` slash syntax does nothing in Codex: a Codex CLI lane uses the form open-terminal renders — `Read .agents/skills/orch/SKILL.md and execute the orch start workflow for [ITEM]` — and a Codex Desktop thread uses `$orch start [ITEM]` (`handoff.md` § 2). Size launch flags to the item, read `[NOW]` for the lane record below, then launch on the § 1 surface.
 
@@ -121,4 +130,4 @@ A lane never arms the shared git hooks from its worktree; a guard-script PR whos
 
 ## 5. Stop
 
-Queue empty, or the user stops it. Report one line per lane: merged SHAs, still-open PRs, items skipped as owned or blocked. Rewrite the § 1 overseer handoff file in place for the next session, and delete stale per-session handoff files beside it at that rewrite, never leave them.
+Queue empty, or the user stops it. Report one line per lane: merged SHAs, still-open PRs, items skipped as owned or blocked. Reapply the § 1 handoff-path check before rewriting the overseer handoff file in place for the next session, and delete stale per-session handoff files beside it at that rewrite, never leave them.
