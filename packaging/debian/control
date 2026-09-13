@@ -1,7 +1,7 @@
 Source: vgs-shell
 Section: x11
 Priority: optional
-Maintainer: Brad <brad@vanillagreen>
+Maintainer: Brad <brad@vanillagreen.com>
 Build-Depends: debhelper-compat (= 13), golang-any
 Standards-Version: 4.7.0
 Homepage: https://github.com/vanillagreencom/vgs

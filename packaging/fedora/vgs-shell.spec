@@ -169,7 +169,7 @@ EOF
 /usr/lib/systemd/user/vshell.service
 
 %changelog
-* Thu Sep 10 2026 Brad <brad@vanillagreen> - 0.5.0-1
+* Thu Sep 10 2026 Brad <brad@vanillagreen.com> - 0.5.0-1
 - Themes download on demand from the theme browser, and the package ships only
   bauhaus and rose of dune
 - Each downloaded theme arrives as one checksum-verified archive, with its
@@ -190,7 +190,7 @@ EOF
 - A dead USB4 or i2c device can no longer freeze the desktop through the
   brightness poll
 
-* Tue Aug 25 2026 Brad <brad@vanillagreen> - 0.4.0-1
+* Tue Aug 25 2026 Brad <brad@vanillagreen.com> - 0.4.0-1
 - Full-screen wallpaper and theme switchers, replacing the cramped popups
 - The wallpaper switcher can target one monitor or all of them, with the scope
   toggle sitting directly above the wallpaper rail
@@ -198,16 +198,16 @@ EOF
   cache instead of decoding full-size sources every time
 - Gentoo has a publisher script and a weekly drift alarm
 
-* Thu Aug 20 2026 Brad <brad@vanillagreen> - 0.3.0-1
+* Thu Aug 20 2026 Brad <brad@vanillagreen.com> - 0.3.0-1
 - Split the extras into their own release bundle; the shell download drops from
   ~1.1 GiB to ~71 MiB, with themes fetched on demand from the catalog
 - vgs-shell-assets carries every other bundled theme, wallpaper and icon theme
 
-* Wed Aug 19 2026 Brad <brad@vanillagreen> - 0.2.0-1
+* Wed Aug 19 2026 Brad <brad@vanillagreen.com> - 0.2.0-1
 - Widget, launcher, greeter and theming fixes across the shell
 - Declare the full runtime and optional dependency set
 - Split optional themes, wallpapers and icon themes into vgs-shell-assets
 - Take over org.freedesktop.Notifications so the notification centre works
 
-* Sun Jul 26 2026 Brad <brad@vanillagreen> - 0.1.0-1
+* Sun Jul 26 2026 Brad <brad@vanillagreen.com> - 0.1.0-1
 - Initial package

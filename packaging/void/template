@@ -13,7 +13,7 @@ depends="quickshell jq python3 grim slurp hyprpicker wl-clipboard libnotify glib
 conflicts="mako>=0 dunst>=0 SwayNotificationCenter>=0"
 replaces="vgs-shell-assets>=0"
 short_desc="VanillaGreen desktop shell for Hyprland and Niri"
-maintainer="Brad <brad@vanillagreen>"
+maintainer="Brad <brad@vanillagreen.com>"
 license="MIT"
 homepage="https://github.com/vanillagreencom/vgs"
 case "$XBPS_TARGET_MACHINE" in
