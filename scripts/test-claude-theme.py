@@ -1232,7 +1232,7 @@ class InstalledLayout(unittest.TestCase):
             root = write_package(home, "probe", RestyledPackages.COLORS,
                                  apps=RestyledPackages.APPS)
             blueprint = helper.load_theme_package("probe")
-            rendered = {name: body for name, body in helper.rendered_apps_for(blueprint).items()
+            rendered = {name: body for name, body in helper.rendered_apps_for(blueprint, helper.bp_app_overrides(blueprint)).items()
                         if name.split(".")[0] == "btop"}
             helper.materialize_theme_package(blueprint, apps=rendered)
             survived = {path.name for path in (root / "apps").iterdir()}

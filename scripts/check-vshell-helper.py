@@ -8471,7 +8471,8 @@ def test_terminal_slot_overrides_reach_terminals_only():
                     result = helper.apply_theme_obj(blueprint, only_target=target, run_hooks=False)
                     assert_equal(len(result["rendered"]), 1, f"{name}: applying {target} writes one file")
                     surfaces[("apply", target)] = Path(result["rendered"][0]).read_text()
-                for filename, content in helper.rendered_apps_for(blueprint).items():
+                for filename, content in helper.rendered_apps_for(
+                        blueprint, helper.bp_app_overrides(blueprint)).items():
                     if filename in saved_files:
                         surfaces[("saved package", saved_files[filename])] = content
                 preview = temp_home / f"preview-{name}"
@@ -8498,6 +8499,8 @@ def test_terminal_slot_overrides_reach_terminals_only():
                     ("app-override", ("apply", "ghostty-vgs"), "#ff0022", override),
                     ("app-override", ("apply", "kitty-vgs"), "#ff0033", None),
                     ("app-override", ("apply", "alacritty-vgs"), override, "#ff0022"),
+                    ("app-override", ("saved package", "ghostty-vgs"), "#ff0022", override),
+                    ("app-override", ("edit-app seed", "ghostty-vgs"), "#ff0022", override),
                 ]
             )
             # foot takes its colours without the leading "#", so a render counts as
@@ -8846,6 +8849,91 @@ def test_wallpaper_and_save_keep_terminal_slots():
     with_temp_home(scenario)
 
 
+def test_save_keeps_app_overrides():
+    """A saved theme keeps the per-app colours the user set on the theme it was
+    saved from, and its editable app files, a regenerated file and an edit-app
+    seed render them. save-current rebuilds from the shell state, which carries
+    no package, so the overrides come from the applied package."""
+    overrides = {"kitty": {"background": "#ff0000"}, "ghostty": {"black": "#ff0022"}}
+
+    def scenario(temp_home: Path):
+        builtin = temp_home / "builtin"
+        for name, app_colors in (("overfix", '[kitty]\nbackground = "#ff0000"\n\n[ghostty]\nblack = "#ff0022"\n'),
+                                 ("plainfix", "")):
+            package = builtin / name
+            package.mkdir(parents=True)
+            (package / "theme.json").write_text(
+                json.dumps({"name": name, "mode": "dark", "source": "curated"}) + "\n")
+            (package / "colors.toml").write_text('background = "#101010"\nforeground = "#eeeeee"\n')
+            if app_colors:
+                (package / "app-colors.toml").write_text(app_colors)
+        helper.cfg_dir().mkdir(parents=True, exist_ok=True)
+        (helper.cfg_dir() / "settings.json").write_text(
+            json.dumps({"themeApps": {"kitty": True, "ghostty": True}}) + "\n")
+        original_builtin, original_apply = helper.builtin_themes_dir, helper.apply_theme_obj
+        helper.builtin_themes_dir = lambda: builtin
+        # apply-colors applies before it saves, and a real apply runs hooks that
+        # reach the login session; these rows measure the saved package.
+        helper.apply_theme_obj = lambda bp, *args, **kwargs: {"success": True}
+        mine = helper.user_themes_dir() / "mine"
+
+        def apply_state(name):
+            blueprint = helper.load_theme_package(name)
+            (helper.cfg_dir() / "theme.json").write_text(helper.render_target_template(
+                "vgs-shell", "vgs-theme.json", helper.target_roles(blueprint)))
+            (helper.cfg_dir() / "theme-current.json").write_text(json.dumps(
+                {key: value for key, value in blueprint.items()
+                 if key not in ("path", "builtin", "userDir", "backgrounds", "packagedPreview")}) + "\n")
+
+        def run(argv):
+            with contextlib.redirect_stdout(io.StringIO()):
+                assert_equal(helper.cmd_theme(argv), 0, f"{' '.join(argv)} exit status")
+
+        try:
+            apply_state("overfix")
+            # Each row runs and is checked before the next, since a later save
+            # rewrites the files an earlier row wrote.
+            # (label, argv, file the step writes, colours that file carries)
+            steps = [
+                ("save-current from the overridden theme", ["save-current", "--name", "mine"],
+                 mine / "apps" / "kitty.conf", ("#ff0000",)),
+                ("save-current from the overridden theme", None,
+                 mine / "apps" / "ghostty.conf", ("#ff0022",)),
+                ("regenerate", ["regenerate", "mine", "--app", "kitty", "--yes"],
+                 mine / "apps" / "kitty.conf", ("#ff0000",)),
+                ("edit-app seed", ["edit-app", "kitty", "--theme", "overfix"],
+                 helper.user_themes_dir() / "overfix" / "apps" / "kitty.conf", ("#ff0000",)),
+                # A palette edit saved over the package rebuilds a blueprint with no
+                # package, and must not erase the overrides the package holds.
+                ("apply-colors --save over the package",
+                 ["apply-colors", "--name", "mine", "--set", "accent=#123456", "--save"],
+                 mine / "apps" / "kitty.conf", ("#ff0000",)),
+            ]
+            for label, argv, path, colours in steps:
+                if argv:
+                    # A file the step leaves alone would pass on what the previous
+                    # step wrote.
+                    path.unlink(missing_ok=True)
+                    run(argv)
+                assert_equal(helper.theme_app_overrides("mine"), overrides, f"{label}: saved overrides")
+                content = path.read_text()
+                for colour in colours:
+                    if colour not in content:
+                        raise AssertionError(f"{label}: {path.name} lacks {colour}")
+
+            # Saved from a theme with no overrides, the package keeps none.
+            apply_state("plainfix")
+            run(["save-current", "--name", "mine"])
+            assert_equal((mine / "app-colors.toml").exists(), False,
+                         "save-current from a theme with no overrides removes the file")
+            if "#ff0000" in (mine / "apps" / "kitty.conf").read_text():
+                raise AssertionError("save-current from a theme with no overrides still renders #ff0000")
+        finally:
+            helper.builtin_themes_dir, helper.apply_theme_obj = original_builtin, original_apply
+
+    with_temp_home(scenario)
+
+
 def test_unsaved_applied_theme_keeps_terminal_slots():
     """`apply-colors --name X` without `--save` applies a theme no package carries,
     so its terminal slots survive only in theme-current.json. The next wallpaper
@@ -9103,6 +9191,7 @@ def main():
     test_dark_themes_read_in_a_terminal()
     test_dark_themes_draw_diffs_in_two_hues()
     test_wallpaper_and_save_keep_terminal_slots()
+    test_save_keeps_app_overrides()
     test_unsaved_applied_theme_keeps_terminal_slots()
     test_terminal_app_overrides_show_on_their_editor_row()
     test_preview_key_covers_terminal_slots()
