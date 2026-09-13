@@ -828,8 +828,17 @@ def parse_colors_toml(path: Path, allow_empty: bool = False) -> Dict[str, str]:
     a terminal-colors.toml overlay uses to mean no terminal slots."""
     if not path.exists():
         raise ValueError(f"colors file not found: {path}")
+    return parse_colors_toml_text(path.read_text(errors="ignore"), str(path), allow_empty)
 
-    raw_text = path.read_text(errors="ignore")
+
+def parse_colors_toml_text(raw_text: str, label: str = "colors.toml",
+                           allow_empty: bool = False) -> Dict[str, str]:
+    """The colours a `colors.toml` body holds, for a caller holding the text.
+
+    `parse_colors_toml` reads a file and lands here, so a writer that needs the
+    map of what it is about to write reads it with the same parser the loader
+    will use rather than a second one that could drift from it.
+    """
 
     def flatten(prefix: str, value: Any, out: Dict[str, str]) -> None:
         if isinstance(value, dict):
@@ -866,7 +875,7 @@ def parse_colors_toml(path: Path, allow_empty: bool = False) -> Dict[str, str]:
     normalized = normalize_color_map(out)
     if recognized_color_count(normalized) == 0 and not (allow_empty and toml_error is None):
         detail = f": {toml_error}" if toml_error else ""
-        raise ValueError(f"no recognized colors in {path}{detail}")
+        raise ValueError(f"no recognized colors in {label}{detail}")
     return normalized
 
 
@@ -1316,14 +1325,11 @@ def load_theme_package(name: str) -> Dict[str, Any] | None:
             colors = parse_colors_toml(files["colors.toml"])
         except Exception as exc:
             eprint(f"theme package {name}: {exc}")
-    if meta.get("mode") in {"dark", "light"}:
-        colors["mode"] = meta["mode"]
     # Restyle adjustments transform the base palette before role derivation and
     # stay non-destructive (colors.toml is never rewritten). All-zero is a no-op.
     adjustments = normalize_adjustments(meta.get("adjustments"))
-    unadjusted_colors = dict(colors)
-    if not adjustments_all_zero(adjustments):
-        colors = apply_adjustments(colors, adjustments)
+    unadjusted_colors = palette_identity(colors, str(meta.get("mode") or ""))
+    colors = palette_identity(colors, str(meta.get("mode") or ""), adjustments)
     bp = palette_from_colors_map(colors, name=str(meta.get("name") or name), wallpaper=wallpaper, source=source)
     builtin_dir = builtin_themes_dir() / name
     user_dir = user_themes_dir() / name
@@ -1332,7 +1338,10 @@ def load_theme_package(name: str) -> Dict[str, Any] | None:
     bp["builtin"] = builtin_dir.is_dir()
     bp["path"] = str(builtin_dir if builtin_dir.is_dir() else user_dir)
     bp["userDir"] = str(user_dir) if user_dir.is_dir() else ""
-    bp["apps"] = {Path(rel).name: str(p) for rel, p in files.items() if rel.startswith("apps/")}
+    bp["apps"] = curated_apps_for_palette(
+        {Path(rel).name: str(p) for rel, p in files.items() if rel.startswith("apps/")},
+        palette_digest(colors),
+        {str(root): layer_curated_palette(root) for root in (builtin_dir, user_dir)})
     bp["backgrounds"] = [str(p) for _rel, p in backgrounds]
     bp["packagedPreview"] = str(files["preview.png"]) if "preview.png" in files else ""
     bp["adjustments"] = adjustments
@@ -1540,6 +1549,30 @@ def _catalog_fetch_verified(label: str, rel: str, size: int, digest: str,
         except Exception as exc:
             problems.append(f"{base}: {exc}")
     raise ValueError(f"{label}: no source served the catalogued file (" + "; ".join(problems) + ")")
+
+
+def catalog_marker_payload(name: str, dest: Path, assets: Dict[str, Any],
+                           files: List[str], written: int, ref: str = "") -> Dict[str, Any]:
+    """Everything a downloaded theme's marker records.
+
+    The one owner of the marker's shape, so a test fixture standing in for a
+    download writes the marker production writes rather than the subset today's
+    readers happen to consult. A fixture carrying its own copy of this schema
+    stays green against a marker the downloader no longer emits.
+    """
+    return {
+        "name": name,
+        "path": str(dest),
+        "ref": ref,
+        "release": assets.get("release", ""),
+        "rev": assets.get("rev", 0),
+        "sha256": assets.get("sha256", ""),
+        "bytes": written,
+        # What the archive carried, so a later read can tell this directory
+        # apart from the same directory after the user has edited it.
+        "files": files,
+        "installedAt": int(time.time()),
+    }
 
 
 def catalog_marker(name: str) -> Dict[str, Any]:
@@ -1766,19 +1799,10 @@ def catalog_download_theme(entry: Dict[str, Any], base_urls: List[str], allow_lo
         written, unpacked = _catalog_unpack(name, archive, staging)
         if not (staging / "theme.json").is_file():
             raise ValueError(f"{name}: {assets['archive']} has no theme.json")
-        (staging / CATALOG_MARKER).write_text(json.dumps({
-            "name": name,
-            "path": str(dest),
-            "ref": str((load_theme_catalog().get("source") or {}).get("ref") or ""),
-            "release": assets["release"],
-            "rev": assets["rev"],
-            "sha256": assets["sha256"],
-            "bytes": written,
-            # What the archive carried, so a later read can tell this directory
-            # apart from the same directory after the user has edited it.
-            "files": unpacked,
-            "installedAt": int(time.time()),
-        }, indent=2) + "\n")
+        (staging / CATALOG_MARKER).write_text(json.dumps(
+            catalog_marker_payload(name, dest, assets, unpacked, written,
+                                   str((load_theme_catalog().get("source") or {}).get("ref") or "")),
+            indent=2) + "\n")
         # Rename the installed theme aside before publishing its replacement.
         # If publication is interrupted, the old directory remains under
         # .catalog-replaced-* until cleanup removes it.
@@ -2020,15 +2044,30 @@ def bp_app_overrides(bp: Dict[str, Any]) -> Dict[str, Dict[str, str]]:
 
 def save_theme_package(bp: Dict[str, Any], name: str | None = None) -> Path:
     """Persist a theme as a user package: curated apps/ files carry over
-    verbatim; every other toggled-on app gets an editable rendered file."""
+    verbatim; every other toggled-on app gets an editable rendered file.
+
+    The blueprint's curated files are already the ones its palette fits, because
+    the package loader dropped any the palette outgrew, so this copies what it is
+    given rather than judging again.
+    """
     bp = dict(bp)
     if name:
         bp["name"] = name
     apps: Dict[str, str] = rendered_apps_for(bp)
+    unreadable: List[str] = []
     for filename, path in (bp.get("apps") or {}).items():
-        with contextlib.suppress(OSError):
+        try:
             apps[filename] = Path(path).read_text()
-    return materialize_theme_package(bp, apps=apps)
+        except OSError as exc:
+            # Declared but unreadable. It must still be preserved, because the
+            # prune removes what this caller deliberately did not hand in, and a
+            # file it could not read is not that. Dropping it silently deleted a
+            # user's only curated customisation on a save under the theme's own
+            # name. Refusing the whole save instead would be worse: one briefly
+            # unreadable curated file would block a colour edit.
+            unreadable.append(filename)
+            eprint(f"save {bp.get('name')}: keeping {filename}, which could not be read: {exc}")
+    return materialize_theme_package(bp, apps=apps, prune_curated=True, preserve=unreadable)
 
 
 def rendered_apps_for(bp: Dict[str, Any]) -> Dict[str, str]:
@@ -2053,24 +2092,44 @@ def rendered_apps_for(bp: Dict[str, Any]) -> Dict[str, str]:
     return out
 
 
-def materialize_theme_package(bp: Dict[str, Any], apps: Dict[str, str] | None = None, user: bool = True) -> Path:
+def materialize_theme_package(bp: Dict[str, Any], apps: Dict[str, str] | None = None,
+                              user: bool = True, prune_curated: bool = False,
+                              preserve: List[str] | None = None) -> Path:
     """Write a blueprint out as a v2 theme package directory.
 
     `apps` maps curated file names to file contents (rendered or hand-written).
     Existing curated files are preserved unless new content is supplied.
+
+    `prune_curated` additionally deletes any merge-style curated file in the
+    destination that `apps` does not carry, and only `save_theme_package` may ask
+    for it, because only its map is the complete intended contents. Every other
+    caller arrives with a map from `rendered_apps_for`, which can never hold a
+    claude file since that target has no template, so pruning unconditionally
+    deleted a file those callers were never asked about: `theme regenerate
+    <name> --app btop` removed the user's own `apps/claude-dark.json`, which for
+    a download or a user-created package is the only copy there is.
     """
     ensure_dirs()
     name = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(bp.get("name") or "theme")).strip("-") or "theme"
     root = (user_themes_dir() if user else builtin_themes_dir()) / name
     root.mkdir(parents=True, exist_ok=True)
+    mode = blueprint_mode(bp)
+    colors_toml = colors_toml_from_blueprint(bp)
+    # What palette this package's content was built for. Without it a saved copy
+    # records nothing about its own colours, so the loader cannot tell a copy
+    # whose curated files still fit from one whose palette has since moved. The
+    # digest is taken from the file this writes, read back the way the loader
+    # reads it, so a reload of an untouched copy matches rather than nearly
+    # matching.
     meta = {
         "name": bp.get("name") or name,
-        "mode": blueprint_mode(bp),
+        "mode": mode,
         "pair": bp.get("pair") or "",
         "source": blueprint_source(bp),
+        "curatedPalette": palette_digest(
+            palette_identity(parse_colors_toml_text(colors_toml), mode)),
     }
-    write_file(root / "theme.json", json.dumps(meta, indent=2) + "\n")
-    write_file(root / "colors.toml", colors_toml_from_blueprint(bp))
+    write_file(root / "colors.toml", colors_toml)
     terminal = bp.get("terminalColors") or {}
     if terminal:
         write_file(root / TERMINAL_COLORS_FILE, "".join(f'{key} = "{value}"\n' for key, value in terminal.items()))
@@ -2089,8 +2148,32 @@ def materialize_theme_package(bp: Dict[str, Any], apps: Dict[str, str] | None = 
         dest = bg_dir / Path(wallpaper).name
         if not dest.exists() or not Path(wallpaper).samefile(dest):
             shutil.copy2(wallpaper, dest)
+    # The recorded digest certifies the curated files this package carries, so a
+    # merge-style file left behind from an earlier write would be certified
+    # without ever having been judged against the palette now being written.
+    # `save_theme_package` is called with a theme's own name by `set-wallpaper
+    # --save` and `apply-colors --save`, and for a downloaded theme that is the
+    # download's own directory, so the file the loader had just dropped survived
+    # there and came back on the next load.
+    #
+    # This and the per-layer digest test in `curated_apps_for_palette` answer
+    # different questions and neither replaces the other: that one asks which
+    # layer vouches for a file, and reaches a built-in file this writer cannot
+    # touch; this one asks whether the writer ever saw the file, and reaches a
+    # user-layer file whose layer record the save itself has just rewritten.
+    if prune_curated:
+        for stale in CLAUDE_CURATED_FILES - set(apps or {}) - set(preserve or ()):
+            (root / "apps" / stale).unlink(missing_ok=True)
     for filename, content in (apps or {}).items():
         write_file(root / "apps" / filename, content)
+    # theme.json last, because it carries the digest that certifies everything
+    # above it. Written first, an interruption before the prune left a stale
+    # merge-style file on disk already vouched for by the new palette, which is
+    # the unreadable-diff state the digest exists to prevent. Written last, an
+    # interrupted save leaves a package with no theme.json: the loader skips it
+    # and a user overlay falls back to the built-in record, so the worst case is
+    # a save that did not happen rather than one certifying the wrong files.
+    write_file(root / "theme.json", json.dumps(meta, indent=2) + "\n")
     return root
 
 
@@ -2480,10 +2563,25 @@ def mode_variant_blueprint(bp: Dict[str, Any], mode: str,
     pair = paired_blueprint(bp, mode, themes)
     if pair:
         return pair
-    variant = blueprint_mode_variant(bp, mode, str((bp.get("palette") or {}).get("wallpaper") or ""))
-    # The transform rebuilds the palette alone, so the package identity that
-    # locates a target's curated files has to be carried across or a counterpart
-    # mode silently loses them.
+    return transformed_mode_blueprint(
+        bp, mode, str((bp.get("palette") or {}).get("wallpaper") or ""))
+
+
+def transformed_mode_blueprint(bp: Dict[str, Any], mode: str, wallpaper: str) -> Dict[str, Any]:
+    """`bp` transformed into `mode`, keeping the package it came from.
+
+    The transform rebuilds the palette alone, so the package identity that
+    locates a target's curated files has to be carried across or the variant
+    silently loses them and every target falls back to its generated output.
+    Those files are already the ones the palette fits: the package loader dropped
+    any it outgrew before this point.
+
+    Both callers that skip the pair lookup resolve here: the counterpart mode of
+    an unpaired theme, and `theme mode --transform`, which asks for the lossy
+    variant even where a pair exists. A second copy of the carry would let the
+    two drift, which is how the flag came to answer with no curated files at all.
+    """
+    variant = blueprint_mode_variant(bp, mode, wallpaper)
     for key in ("apps", "package", "path"):
         if bp.get(key):
             variant[key] = bp[key]
@@ -2544,8 +2642,11 @@ CLAUDE_DIFF_DIMMED_SEPARATION = 1.3
 # A changed word sits on its own changed line, so it is held off the band under
 # it rather than off the background.
 CLAUDE_DIFF_WORD_SEPARATION = 1.5
+# WCAG AA for normal text, which every text token and every ordinary fill meets
+# against what it is read on. The diff bands take the enhanced ratio below.
+CLAUDE_BODY_CONTRAST = 4.5
 # The /diff panel fills whole rows for a whole file, so body text on a diff band
-# is read by the screenful and takes the enhanced ratio, not the 4.5:1 floor.
+# is read by the screenful and takes the enhanced ratio, not the body floor.
 CLAUDE_DIFF_TEXT_CONTRAST = 7.0
 # A word fill already on the gamut's end has nowhere left to move, so a maxed-out
 # ANSI slot is held this far short of pure black and pure white.
@@ -2558,30 +2659,212 @@ CLAUDE_WORD_LIGHTNESS_MARGIN = 0.04
 CLAUDE_TEXT_CONTRAST = 9.5
 
 
-def claude_theme_overrides(roles: Dict[str, str]) -> Tuple[Dict[str, str], List[str]]:
-    """Claude Code's colour tokens for one VGS theme, and the rules they missed.
+def claude_band_reads(text: str, band: str) -> bool:
+    """Whether body text on a diff band is readable by the screenful."""
+    return contrast_ratio(text, band) >= CLAUDE_DIFF_TEXT_CONTRAST
+
+
+def claude_band_shows(band: str, bg: str) -> bool:
+    """Whether a dimmed band is visible against the panel behind it."""
+    return contrast_ratio(band, bg) >= CLAUDE_DIFF_DIMMED_SEPARATION
+
+
+def claude_word_stands_out(word: str, band: str, text: str) -> bool:
+    """Whether a changed word reads inside the changed line it is drawn in."""
+    return (contrast_ratio(word, band) >= CLAUDE_DIFF_WORD_SEPARATION
+            and contrast_ratio(text, word) >= CLAUDE_BODY_CONTRAST)
+
+
+def claude_bands_apart(added: str, removed: str) -> Tuple[bool, float, float]:
+    """Whether the two bands read as two colours, with the gaps that decided it.
+
+    Either axis satisfies the rule on its own: a hue apart at one lightness and
+    a lightness apart at one hue are both legible as two kinds of changed row.
+    """
+    added_lightness, _ar, _ac, added_hue = _relative_oklch(added)
+    removed_lightness, _rr, _rc, removed_hue = _relative_oklch(removed)
+    hue_gap = _hue_distance(added_hue, removed_hue)
+    lightness_gap = abs(added_lightness - removed_lightness)
+    return (hue_gap >= CLAUDE_DIFF_HUE_SEPARATION
+            or lightness_gap >= CLAUDE_DIFF_LIGHTNESS_SEPARATION), hue_gap, lightness_gap
+
+
+# The curated files that merge over a generated render rather than replacing it.
+# A replacing curated file is the whole output and carries no generated value to
+# disagree with, so only these are governed by the restyle rule below.
+CLAUDE_CURATED_FILES = frozenset(f"claude-{mode}.json" for mode in THEME_MODES)
+
+
+def palette_identity(colors: Dict[str, str], mode: str,
+                     adjustments: Dict[str, int] | None = None) -> Dict[str, str]:
+    """The colour map a palette's identity is taken over.
+
+    The one owner of that assembly. The digest is derived rather than stored, so
+    a reader and a writer that each build the map their own way produce values
+    that cannot be compared: a package whose `theme.json` carried no valid mode
+    would be written with one spelling and read with another, and its curated
+    files would be dropped on reload having changed nothing.
+    """
+    identity = dict(colors)
+    if mode in THEME_MODES:
+        identity["mode"] = mode
+    adjustments = normalize_adjustments(adjustments)
+    if not adjustments_all_zero(adjustments):
+        identity = apply_adjustments(identity, adjustments)
+    return identity
+
+
+def palette_digest(colors: Dict[str, str]) -> str:
+    """A palette's identity: one digest over the colours themselves.
+
+    Every control that replaces a palette changes this value, so one comparison
+    answers all of them. Digesting where `colors.toml` sits, or which control
+    last ran, is what needed a new parameter per control and still missed the
+    ones reached by a second route.
+
+    The map, not the file's bytes, is what is hashed, because a restyle slider
+    never rewrites `colors.toml`: it transforms the map after the file is read.
+    """
+    items = sorted((str(key), str(value)) for key, value in colors.items())
+    return hashlib.sha256("\n".join(f"{key}={value}" for key, value in items).encode()).hexdigest()
+
+
+def layer_curated_palette(root: Path) -> str:
+    """The `curatedPalette` digest recorded by the theme.json in `root`.
+
+    Read per layer rather than from the composed metadata, because a package is
+    two directories and each one vouches only for the files it supplied.
+    """
+    try:
+        meta = json.loads((root / "theme.json").read_text())
+    except Exception:
+        return ""
+    return str(meta.get("curatedPalette") or "") if isinstance(meta, dict) else ""
+
+
+def curated_apps_for_palette(apps: Dict[str, str], effective: str,
+                             recorded_by_layer: Dict[str, str]) -> Dict[str, str]:
+    """A package's curated app files, minus those its palette no longer fits.
+
+    The rule: a curated app file is valid only for the palette it was picked
+    against. `effective` is the digest of the palette about to be rendered, and
+    each file is matched against the digest recorded by the layer that supplied
+    it, which `recorded_by_layer` holds per package directory. They differ
+    whenever any control has replaced the palette: a restyle slider, a user
+    overlay `colors.toml`, a colour edit persisted in place, a saved copy, or a
+    catalogued download. Testing the controls one at a time instead needed a
+    parameter per control, went inert on a packaged install where the six curated
+    themes are catalog-only, and dropped the files of pristine downloads that had
+    changed nothing.
+
+    Per layer rather than per package, because `compose_theme_files` is a union
+    and the two directories can disagree. A save under a built-in theme's own
+    name writes the user layer while the built-in layer keeps supplying the
+    curated file that save never saw, and one digest for the package let the
+    freshly written user record certify it. The same read in reverse dropped a
+    built-in file whenever a user overlay `theme.json` carried no digest at all,
+    which every overlay written before this key does.
+
+    A layer recording no digest is treated as a palette that does not match.
+    Nothing on disk says what its curated values were picked against, and the
+    cost of guessing wrong in that direction is a diff panel a user cannot read,
+    against a plainer render in this one.
+
+    Adapting the values instead would mean re-deriving the hand-picked ones,
+    which is the one thing curated means not doing, and it would hand the
+    generator colours a person chose. Dropping costs the plainer generated
+    render: that render is written best-effort with every rule it misses named in
+    the apply warning rather than refused, so the shortfall is reported and
+    Claude Code never keeps the colours of the theme the user just left.
+
+    Evaluating the curated file's own rules and falling back only on failure was
+    considered and declined: it would make one theme's curated file sometimes
+    used and sometimes not depending on a measurement, which is harder to reason
+    about than this palette-identity test.
+
+    Only merge-style files are dropped. A replacing curated file is the whole
+    output, with no generated value to disagree with and, for a pointer-style
+    target such as icons, no template behind it: dropping one would delete the
+    installed artifact on the next apply and leave nothing in its place.
+    """
+    kept: Dict[str, str] = {}
+    for name, path in apps.items():
+        if name not in CLAUDE_CURATED_FILES:
+            kept[name] = path
+            continue
+        # <layer>/apps/<name>: the directory two levels up is the layer that
+        # supplied this file, and so the one whose record can vouch for it.
+        recorded = recorded_by_layer.get(str(Path(path).parent.parent), "")
+        if recorded and recorded == effective:
+            kept[name] = path
+    return kept
+
+
+def claude_diff_shortfalls(values: Dict[str, str]) -> List[str]:
+    """Every diff rule the finished token map misses, one line each.
+
+    The rules are measured on the colours Claude Code will paint rather than on
+    the candidates generation chose between, so this is also what a theme
+    package's curated file is judged by: a hand-picked band that closes a rule
+    closes its warning, and one that breaks a rule is named the same way a
+    palette out of reach is.
+    """
+    shortfalls: List[str] = []
+    bg = values["background"]
+    text = values["text"]
+    for fill, dimmed in (("diffAdded", "diffAddedDimmed"),
+                         ("diffRemoved", "diffRemovedDimmed")):
+        if not (claude_band_shows(values[dimmed], bg) and claude_band_reads(text, values[dimmed])):
+            shortfalls.append(
+                f"diff band {values[dimmed]}: "
+                f"{contrast_ratio(values[dimmed], bg):.2f}:1 off the background, "
+                f"body text {contrast_ratio(text, values[dimmed]):.2f}:1 on it")
+        if not claude_band_reads(text, values[fill]):
+            # The strong fill carries no separation rule of its own: it is the
+            # dimmed band's tint twice over and visible by construction.
+            shortfalls.append(f"diff fill {values[fill]}: "
+                              f"body text {contrast_ratio(text, values[fill]):.2f}:1 on it")
+    apart, hue_gap, lightness_gap = claude_bands_apart(values["diffAdded"], values["diffRemoved"])
+    if not apart:
+        # A band is a weak tint, so a strongly hued background pulls both of them
+        # onto its own hue and no anchor can part them. Naming it beats refusing.
+        shortfalls.append(
+            f"diff bands {values['diffAdded']} and {values['diffRemoved']}: "
+            f"{hue_gap:.1f} degrees and {lightness_gap:.3f} lightness apart")
+    for word, band in (("diffAddedWord", "diffAdded"), ("diffRemovedWord", "diffRemoved")):
+        if not claude_word_stands_out(values[word], values[band], text):
+            shortfalls.append(
+                f"diff word {values[word]} on band {values[band]}: "
+                f"{contrast_ratio(values[word], values[band]):.2f}:1 off the band, "
+                f"body text {contrast_ratio(text, values[word]):.2f}:1 on it")
+    return shortfalls
+
+
+def claude_theme_overrides(roles: Dict[str, str]) -> Dict[str, str]:
+    """Claude Code's colour tokens for one VGS theme.
 
     Claude Code's ANSI presets read the terminal's sixteen slots with fixed
     meanings that most VGS palettes do not keep, so a custom theme sets every
     token directly and readability stops depending on those meanings. Text
-    tokens reach 4.5:1 on the background and bands carry body text at 4.5:1;
-    the diff bands take the rules above.
+    tokens reach CLAUDE_BODY_CONTRAST on the background and bands carry body
+    text at the same ratio; the diff bands take the rules above.
 
     A restyled palette can put a diff rule out of reach. The closest value the
-    palette allows is used and named in the returned shortfalls: refusing would
-    leave Claude Code on the colours of the theme the user just left.
+    palette allows is used rather than refused, because refusing would leave
+    Claude Code on the colours of the theme the user just left. What the
+    finished map still misses is `claude_diff_shortfalls`, measured there once
+    over the values every source has contributed to.
     """
-    shortfalls: List[str] = []
     bg = roles["background"]
     mode = (roles.get("theme_type") or "dark").lower()
     prefer_text = "#000000" if mode == "light" else "#ffffff"
     text = _oklab_contrast_adjust(roles["foreground"], bg, CLAUDE_TEXT_CONTRAST, prefer_text)
     toward_text = 1.0 if color_to_oklab(text)[0] > color_to_oklab(bg)[0] else 0.0
 
-    def on_background(color: str, minimum: float = 4.5) -> str:
+    def on_background(color: str, minimum: float = CLAUDE_BODY_CONTRAST) -> str:
         return _oklab_contrast_adjust(color, bg, minimum, prefer_text)
 
-    def band(color: str, minimum: float = 4.5) -> str:
+    def band(color: str, minimum: float = CLAUDE_BODY_CONTRAST) -> str:
         """Keep as much of a fill's own colour as body text on it allows."""
         if contrast_ratio(text, color) >= minimum:
             return color
@@ -2642,13 +2925,12 @@ def claude_theme_overrides(roles: Dict[str, str]) -> Tuple[Dict[str, str], List[
             low, high = dimmed_tint, min(1.0, dimmed_tint * 2.0)
             for _ in range(18):
                 fraction = (low + high) / 2.0
-                if contrast_ratio(text, blend(bg, endpoint, fraction)) >= CLAUDE_DIFF_TEXT_CONTRAST:
+                if claude_band_reads(text, blend(bg, endpoint, fraction)):
                     low = fraction
                 else:
                     high = fraction
             strong = blend(bg, endpoint, low)
-            if (contrast_ratio(dimmed, bg) >= CLAUDE_DIFF_DIMMED_SEPARATION
-                    and contrast_ratio(text, dimmed) >= CLAUDE_DIFF_TEXT_CONTRAST):
+            if claude_band_shows(dimmed, bg) and claude_band_reads(text, dimmed):
                 return strong, dimmed
             # Score a side that misses by how far it misses, summed over both
             # rules, so the side that comes closest wins. No sentinel candidate:
@@ -2658,9 +2940,6 @@ def claude_theme_overrides(roles: Dict[str, str]) -> Tuple[Dict[str, str], List[
                 + max(0.0, CLAUDE_DIFF_TEXT_CONTRAST - contrast_ratio(text, dimmed)),
                 strong, dimmed))
         _miss, strong, dimmed = min(candidates, key=lambda entry: entry[0])
-        shortfalls.append(
-            f"diff band {color}: {contrast_ratio(dimmed, bg):.2f}:1 off the background, "
-            f"body text {contrast_ratio(text, dimmed):.2f}:1 on it")
         return strong, dimmed
 
     def diff_word(color: str, band_color: str) -> str:
@@ -2688,54 +2967,32 @@ def claude_theme_overrides(roles: Dict[str, str]) -> Tuple[Dict[str, str], List[
                 else:
                     low = fraction
             candidate = blend(band_color, endpoint, high)
-            if (contrast_ratio(candidate, band_color) >= CLAUDE_DIFF_WORD_SEPARATION
-                    and contrast_ratio(text, candidate) >= 4.5):
+            if claude_word_stands_out(candidate, band_color, text):
                 return candidate
             candidates.append((
                 max(0.0, CLAUDE_DIFF_WORD_SEPARATION - contrast_ratio(candidate, band_color))
-                + max(0.0, 4.5 - contrast_ratio(text, candidate)), candidate))
+                + max(0.0, CLAUDE_BODY_CONTRAST - contrast_ratio(text, candidate)), candidate))
         _miss, candidate = min(candidates, key=lambda entry: entry[0])
-        shortfalls.append(
-            f"diff word {color} on band {band_color}: "
-            f"{contrast_ratio(candidate, band_color):.2f}:1 off the band, "
-            f"body text {contrast_ratio(text, candidate):.2f}:1 on it")
         return candidate
-
-    def collision(added_fill: str, removed_fill: str) -> Tuple[float, float]:
-        """How far apart the two bands read, in OKLCH hue and in lightness."""
-        added_lightness, _ar, _ac, added_hue = _relative_oklch(added_fill)
-        removed_lightness, _rr, _rc, removed_hue = _relative_oklch(removed_fill)
-        return _hue_distance(added_hue, removed_hue), abs(added_lightness - removed_lightness)
-
-    def apart(added_fill: str, removed_fill: str) -> bool:
-        hue_gap, lightness_gap = collision(added_fill, removed_fill)
-        return (hue_gap >= CLAUDE_DIFF_HUE_SEPARATION
-                or lightness_gap >= CLAUDE_DIFF_LIGHTNESS_SEPARATION)
 
     added, added_dimmed = diff_fills(roles["green"])
     removed, removed_dimmed = diff_fills(roles["red"])
-    if not apart(added, removed):
+    if not claude_bands_apart(added, removed)[0]:
         added, added_dimmed = diff_fills(roles["green"], CLAUDE_DIFF_GREEN_HUE)
         removed, removed_dimmed = diff_fills(roles["red"], CLAUDE_DIFF_RED_HUE)
-    if not apart(added, removed):
-        # A band is a weak tint, so a strongly hued background pulls both of them
-        # onto its own hue and no anchor can part them. Naming it beats refusing.
-        hue_gap, lightness_gap = collision(added, removed)
-        shortfalls.append(
-            f"diff bands {added} and {removed}: {hue_gap:.1f} degrees and "
-            f"{lightness_gap:.3f} lightness apart")
     added_word = diff_word(roles["bright_green"], added)
     removed_word = diff_word(roles["bright_red"], removed)
 
     accent = roles["accent"]
     bright_black = roles["bright_black"]
-    inactive = bright_black if contrast_ratio(bright_black, bg) >= 4.5 else roles["muted"]
+    inactive = (bright_black if contrast_ratio(bright_black, bg) >= CLAUDE_BODY_CONTRAST
+                else roles["muted"])
     magenta = on_background(roles["magenta"])
     bright_magenta = on_background(roles["bright_magenta"])
     blue = on_background(roles["blue"])
     bright_blue = on_background(roles["bright_blue"])
     orange = on_background(blend(roles["red"], roles["yellow"], 0.5))
-    return {
+    values = {
         "text": text,
         "inverseText": bg,
         "subtle": on_background(roles["outline"]),
@@ -2808,7 +3065,8 @@ def claude_theme_overrides(roles: Dict[str, str]) -> Tuple[Dict[str, str], List[
         "rainbow_blue_shimmer": on_background(roles["bright_cyan"]),
         "rainbow_indigo_shimmer": bright_blue,
         "rainbow_violet_shimmer": bright_magenta,
-    }, shortfalls
+    }
+    return values
 
 
 def template_role_names() -> set[str]:
@@ -4789,9 +5047,13 @@ def claude_theme_file(bp: Dict[str, Any], mode: str) -> Tuple[Dict[str, Any], Li
     enforcement as the palette's own colours. The theme package may carry
     `apps/claude-<mode>.json`, whose `overrides` are merged over the computed
     ones so a curated file states only what differs.
+
+    The diff rules are re-measured once every source has contributed, so a
+    curated band that closes a rule generation could not reach stops warning,
+    and a curated band that breaks one is reported.
     """
     roles = {**target_roles(bp), **bp_app_overrides(bp).get("claude", {})}
-    overrides, shortfalls = claude_theme_overrides(roles)
+    overrides = claude_theme_overrides(roles)
     curated_path = (bp.get("apps") or {}).get(f"claude-{mode}.json")
     where = (f"{bp.get('name') or mode} claude-{mode}.json" if curated_path
              else f"{bp.get('name') or mode} vgs-{mode}.json")
@@ -4826,7 +5088,8 @@ def claude_theme_file(bp: Dict[str, Any], mode: str) -> Tuple[Dict[str, Any], Li
     if unreadable:
         raise ValueError(f"{where}: values that are not hex colours: {', '.join(unreadable)}")
     overrides = {token: clean_hex(value) for token, value in overrides.items()}
-    return {"name": f"vgs-{mode}", "base": mode, "overrides": overrides}, shortfalls
+    return ({"name": f"vgs-{mode}", "base": mode, "overrides": overrides},
+            claude_diff_shortfalls(overrides))
 
 
 def apply_claude_theme_hook(roles: Dict[str, str], bp: Dict[str, Any]) -> Dict[str, Any]:
@@ -9356,7 +9619,8 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
         cur_name = cur.get("name", "")
         if args.transform:
             base = find_theme(cur_name)
-            bp = blueprint_mode_variant(base, target, cur.get("wallpaper", "")) if base else blueprint_from_current_theme(name=cur_name or "vgs-theme", mode=target)
+            bp = (transformed_mode_blueprint(base, target, cur.get("wallpaper", "")) if base
+                  else blueprint_from_current_theme(name=cur_name or "vgs-theme", mode=target))
             result = apply_theme_obj(bp)
             print(json.dumps(result, indent=2) if args.json else f"Mode set: {target}")
             return 0
