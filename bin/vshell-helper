@@ -4963,12 +4963,12 @@ def select_omp_theme_hook() -> Dict[str, Any]:
 # The theme name Codex reads from its [tui] table, and the basename of the
 # rendered themes/targets/codex-vgs destination it resolves that name against.
 CODEX_THEME_NAME = "vgs"
-_CODEX_TUI_HEADER_RE = re.compile(r"^[ \t]*\[tui\][ \t]*$", re.M)
+_CODEX_TUI_HEADER_RE = re.compile(r"^[ \t]*\[[ \t]*(?:tui|\"tui\"|'tui')[ \t]*\][ \t]*(?:#[^\r\n]*)?\r?$", re.M)
 _CODEX_TABLE_HEADER_RE = re.compile(r"^[ \t]*\[", re.M)
 _CODEX_THEME_KEY_RE = re.compile(r"^[ \t]*theme[ \t]*=.*$", re.M)
 
 
-def _codex_config_with_theme(text: str, value: str) -> str:
+def _codex_config_with_theme(text: str, value: str, header: Optional[re.Match]) -> str:
     """`text` with `theme` set inside its [tui] table, every other byte kept.
 
     config.toml carries the user's whole Codex setup — model, approvals, one
@@ -4976,7 +4976,6 @@ def _codex_config_with_theme(text: str, value: str) -> str:
     parsed document, which would drop their comments and key order.
     """
     line = f'theme = "{value}"'
-    header = _CODEX_TUI_HEADER_RE.search(text)
     if not header:
         prefix = text.rstrip("\n") + "\n\n" if text.strip() else ""
         return f"{prefix}[tui]\n{line}\n"
@@ -5010,7 +5009,11 @@ def set_codex_tui_theme(config: Path, value: str = CODEX_THEME_NAME) -> Dict[str
     tui = before.get("tui") if isinstance(before.get("tui"), dict) else {}
     if tui.get("theme") == value:
         return {"ok": True, "theme": value, "unchanged": True, "config": str(config)}
-    new_text = _codex_config_with_theme(text, value)
+    header = _CODEX_TUI_HEADER_RE.search(text)
+    if header is None and "tui" in before:
+        return {"ok": False, "error": f"codex-tui-header-unrecognised: {config}\n"
+                "Codex [tui] header spelling was not recognised; config left unchanged"}
+    new_text = _codex_config_with_theme(text, value, header)
     expected = {**before, "tui": {**tui, "theme": value}}
     try:
         after = tomllib.loads(new_text)

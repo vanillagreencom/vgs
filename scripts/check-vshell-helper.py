@@ -8287,14 +8287,14 @@ def test_codex_theme_selection_changes_only_the_tui_theme_key():
             'tui = { theme = "ansi" }\n\n' + kept,
             False,
             'tui = { theme = "ansi" }\n\n' + kept,
-            "codex theme edit would break the config",
+            "codex-tui-header-unrecognised:",
         ),
         (
             "a dotted tui.theme key would declare [tui] twice",
             'tui.theme = "ansi"\n\n' + kept,
             False,
             'tui.theme = "ansi"\n\n' + kept,
-            "codex theme edit would break the config",
+            "codex-tui-header-unrecognised:",
         ),
         (
             "a theme line inside a multi-line value is not the key",
@@ -8311,6 +8311,20 @@ def test_codex_theme_selection_changes_only_the_tui_theme_key():
             "codex config is not valid TOML",
         ),
     ]
+
+    for header in ('[tui]  # my ui', '[ tui ]', '["tui"]', "['tui']", '[tui]\r'):
+        initial = kept + header + '\nstatus_line = ["model"]\ntheme = "ansi"\nnotifications = true\n'
+        expected = initial.replace('theme = "ansi"', 'theme = "vgs"')
+        rows.append((header, initial, True, expected.replace("\r\n", "\n"), ""))
+        # File reads normalise CRLF, so exercise the raw header before that read.
+        match = helper._CODEX_TUI_HEADER_RE.search(initial)
+        if match is None:
+            raise AssertionError(f"Codex header not recognised: {header!r}")
+        assert_equal(helper._codex_config_with_theme(initial, "vgs", match), expected,
+                     f"raw header spelling: {header!r}")
+    escaped_header = kept + '["\\u0074ui"]\ntheme = "ansi"\n'
+    rows.append(("an escaped table key needs a recognised header", escaped_header, False,
+                 escaped_header, "codex-tui-header-unrecognised:"))
 
     def run(temp_home):
         codex = temp_home / ".codex"
