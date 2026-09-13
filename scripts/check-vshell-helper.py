@@ -8565,6 +8565,15 @@ def test_curated_vscode_theme_takes_the_terminal_palette():
                 assert_equal(colors.get(key), roles[f"terminal_color{index}"],
                              f"{name} VS Code {key}")
 
+        # A saved [vscode] override reaches the bundled copy too: the extension
+        # install writes every bundled copy after the apply hook writes the
+        # current theme's, so a copy without it reverts the user's colour.
+        name = owners[0]
+        helper.write_user_app_overrides(name, {"vscode": {"terminal_color0": "#ff0000"}})
+        shipped = {slug: content for slug, _label, _ui, content in helper._all_bundled_vscode_themes()}
+        assert_equal(json.loads(shipped[slugs[name]])["colors"].get("terminal.ansiBlack"), "#ff0000",
+                     f"{name}: the bundled VS Code copy takes the saved override")
+
     with_temp_home(scenario)
 
     # Must-fail control: a blueprint that did not load supplies no slot, and the
@@ -8694,6 +8703,14 @@ def test_wallpaper_and_save_keep_terminal_slots():
                 with contextlib.redirect_stdout(io.StringIO()):
                     assert_equal(helper.cmd_theme(argv), 0, f"{label} exit status")
                 assert_equal(read(), slots, f"{label} keeps the terminal slots")
+
+            # A theme with no terminal slots saved over that package leaves no file
+            # behind, or the next load paints the previous theme's slots.
+            helper.save_theme_package(dict(blueprint, terminalColors={}), "termfix-saved")
+            assert_equal((helper.user_themes_dir() / "termfix-saved" / helper.TERMINAL_COLORS_FILE).exists(),
+                         False, "a save with no terminal slots removes the stale file")
+            assert_equal((helper.load_theme_package("termfix-saved") or {}).get("terminalColors"), {},
+                         "the re-saved package carries no terminal slots")
         finally:
             helper.builtin_themes_dir, helper.apply_theme_obj = original_builtin, original_apply
 

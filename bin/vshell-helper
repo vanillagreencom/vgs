@@ -2063,6 +2063,10 @@ def materialize_theme_package(bp: Dict[str, Any], apps: Dict[str, str] | None = 
     terminal = bp.get("terminalColors") or {}
     if terminal:
         write_file(root / TERMINAL_COLORS_FILE, "".join(f'{key} = "{value}"\n' for key, value in terminal.items()))
+    else:
+        # colors.toml is rewritten on every save, so a stale terminal file would
+        # paint the previous theme's slots over this one.
+        (root / TERMINAL_COLORS_FILE).unlink(missing_ok=True)
     wallpaper = resolve_path(str(bp.get("palette", {}).get("wallpaper") or ""))
     if wallpaper and Path(wallpaper).is_file():
         bg_dir = root / "backgrounds"
@@ -3622,7 +3626,9 @@ def _all_bundled_vscode_themes() -> List[Tuple[str, str, str, str]]:
             bp = bp_by_key.get(tdir.name.lower())
             roles = {"accent": "#808080", "theme_type": mode}
             if bp:
-                roles = render_roles(bp, target_roles(bp))
+                # The saved [vscode] overrides too: the extension install writes every
+                # bundled copy after the apply hook writes the current theme's.
+                roles = render_roles(bp, target_roles(bp), bp_app_overrides(bp).get("vscode", {}))
             content = augment_vscode_colors(content, roles)
             ui = "vs" if mode == "light" else "vs-dark"
             out[_vgs_theme_slug(label)] = (_vgs_theme_slug(label), label, ui, content)
