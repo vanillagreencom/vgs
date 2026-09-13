@@ -8846,6 +8846,101 @@ def test_wallpaper_and_save_keep_terminal_slots():
     with_temp_home(scenario)
 
 
+def test_unsaved_applied_theme_keeps_terminal_slots():
+    """`apply-colors --name X` without `--save` applies a theme no package carries,
+    so its terminal slots survive only in theme-current.json. The next wallpaper
+    change or colour edit must take them from that applied state; taking them from
+    a package found by name finds nothing and restores the palette's own ANSI
+    slots, which on a light theme is unreadable terminal body text. The two sources
+    are given different values so the rows also pin which one answers."""
+    shipped_slots = {"color0": "#ff0011"}
+    edited_slots = {"color0": "#00ff22"}
+
+    def scenario(temp_home: Path):
+        builtin = temp_home / "builtin"
+        package = builtin / "termfix"
+        package.mkdir(parents=True)
+        (package / "theme.json").write_text(
+            json.dumps({"name": "termfix", "mode": "light", "source": "curated"}) + "\n")
+        (package / "colors.toml").write_text('background = "#fafafa"\nforeground = "#101010"\n')
+        (package / helper.TERMINAL_COLORS_FILE).write_text('color0 = "#ff0011"\n')
+        wallpaper = temp_home / "wall.png"
+        wallpaper.write_bytes(b"\x89PNG\r\n\x1a\n")
+        applied = []
+        original_builtin, original_apply = helper.builtin_themes_dir, helper.apply_theme_obj
+        helper.builtin_themes_dir = lambda: builtin
+
+        def apply_without_hooks(bp, only_app=None, only_target=None, run_hooks=True):
+            # The real apply writes theme.json and theme-current.json, which is the
+            # state under test. Its hooks reach the login session, so they stay off.
+            applied.append(bp)
+            return original_apply(bp, only_app=only_app, only_target=only_target, run_hooks=False)
+
+        def run(argv, label):
+            with contextlib.redirect_stdout(io.StringIO()):
+                assert_equal(helper.cmd_theme(argv), 0, f"{label} exit status")
+
+        helper.apply_theme_obj = apply_without_hooks
+        try:
+            blueprint = helper.load_theme_package("termfix")
+            if not blueprint:
+                raise AssertionError("termfix package did not load")
+            helper.apply_theme_obj(blueprint)
+
+            # The package's file edited on disk with no re-apply: the two sources now
+            # disagree, and the applied blueprint is the one a rebuild must read.
+            (package / helper.TERMINAL_COLORS_FILE).write_text('color0 = "#00ff22"\n')
+            run(["set-wallpaper", str(wallpaper)], "set-wallpaper against an edited package")
+            assert_equal(applied[-1].get("terminalColors"), shipped_slots,
+                         "the applied blueprint's slots win over the package's newer file")
+
+            # Shell state present, theme-current.json gone: the applied blueprint holds
+            # no slots, so the saved package under the shell state's name answers, with
+            # the value on disk rather than the one that was applied.
+            (helper.cfg_dir() / "theme-current.json").unlink()
+            run(["set-wallpaper", str(wallpaper)], "set-wallpaper with no applied state")
+            assert_equal(applied[-1].get("terminalColors"), edited_slots,
+                         "with no applied state the saved package's slots carry")
+
+            def last_applied():
+                return applied[-1].get("terminalColors")
+
+            # That rebuild applied edited_slots, so both sources hold it from here.
+            # (label, argv, what carries the rebuilt blueprint's slots, expected)
+            rows = [
+                ("apply-colors --name, unsaved",
+                 ["apply-colors", "--name", "termfix-tweak", "--set", "accent=#123456"],
+                 last_applied, edited_slots),
+                ("set-wallpaper after the unsaved apply",
+                 ["set-wallpaper", str(wallpaper)], last_applied, edited_slots),
+                ("a second apply-colors edit on the unsaved name",
+                 ["apply-colors", "--name", "termfix-tweak", "--set", "accent=#654321"],
+                 last_applied, edited_slots),
+                ("clear-wallpaper after the unsaved apply",
+                 ["clear-wallpaper"], last_applied, edited_slots),
+                # save-current writes a package instead of applying, so the slots it
+                # kept are read off disk; the loss there is permanent.
+                ("save-current from the unsaved name",
+                 ["save-current", "--name", "termfix-tweak-saved"],
+                 lambda: (helper.load_theme_package("termfix-tweak-saved") or {}).get("terminalColors"),
+                 edited_slots),
+                # Last: it leaves a dark applied state the rows above assume is light.
+                ("apply-colors into the other mode",
+                 ["apply-colors", "--name", "termfix-tweak", "--mode", "dark",
+                  "--set", "accent=#123456"], last_applied, {}),
+            ]
+            for index, (label, argv, read, expected) in enumerate(rows):
+                run(argv, label)
+                assert_equal(read(), expected, f"{label} carries the terminal slots")
+                if index == 0:
+                    assert_equal(helper.find_theme("termfix-tweak"), None,
+                                 "the unsaved apply leaves no package under its name")
+        finally:
+            helper.builtin_themes_dir, helper.apply_theme_obj = original_builtin, original_apply
+
+    with_temp_home(scenario)
+
+
 def test_terminal_app_overrides_show_on_their_editor_row():
     """The App Theming editor lists a terminal's `terminal_*` rows, and an override
     saved under the palette's `colorN` or ANSI name paints that slot. The row must
@@ -9008,6 +9103,7 @@ def main():
     test_dark_themes_read_in_a_terminal()
     test_dark_themes_draw_diffs_in_two_hues()
     test_wallpaper_and_save_keep_terminal_slots()
+    test_unsaved_applied_theme_keeps_terminal_slots()
     test_terminal_app_overrides_show_on_their_editor_row()
     test_preview_key_covers_terminal_slots()
     test_restyle_moves_terminal_slots()
