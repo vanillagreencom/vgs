@@ -4427,6 +4427,9 @@ def test_theme_catalog_download_verifies_its_archive():
     package = {
         "theme.json": b'{"name":"demo","mode":"dark","source":"curated"}\n',
         "colors.toml": b'background = "#101010"\nforeground = "#eeeeee"\n',
+        # A definition file like the rest: dropped from the allowlist, extraction
+        # refuses the member and a published theme carrying it cannot install.
+        "ui-roles.toml": b'statusBg = "#232530"\n',
         "apps/btop.theme": b"theme\n",
         "backgrounds/1-demo.jpg": b"\xff\xd8\xff\xe0 demo wallpaper bytes\n",
         "preview.png": b"\x89PNG\r\n\x1a\n demo screenshot bytes\n",
@@ -9002,6 +9005,524 @@ def test_wallpaper_and_save_keep_terminal_slots():
     with_temp_home(scenario)
 
 
+# A curated package's own UI tones, keyed by the role names `target_roles` emits.
+# The values are Horizon Bright's published surfaces, which is the palette whose
+# flat-grey render this file exists to stop; `muted` is deliberately unreadable
+# on the background so the reporter has something to name.
+DECLARED_UI_ROLES = {
+    "statusBg": "#fadad1",
+    "surfaceContainerHighest": "#f9cbbe",
+    "muted": "#f9cec3",
+}
+DECLARED_UI_ROLES_TOML = "".join(f'{role} = "{value}"\n'
+                                 for role, value in sorted(DECLARED_UI_ROLES.items()))
+# One distinct value per declarable role, taken from the helper's own set so a
+# role added there is covered without editing this file. Every one must arrive in
+# the role map, or the set admits a role no derivation assignment reads.
+EVERY_ROLE_VALUES = {role: f"#{index:02x}c0de"
+                     for index, role in enumerate(sorted(helper.DECLARABLE_UI_ROLES))}
+
+
+def declared_roles_package(root: Path, name: str, ui_roles: str = "",
+                           source: str = "curated", mode: str = "light") -> Path:
+    """One theme package on disk, optionally declaring its own UI roles."""
+    package = root / name
+    package.mkdir(parents=True, exist_ok=True)
+    (package / "theme.json").write_text(
+        json.dumps({"name": name, "mode": mode, "source": source}) + "\n")
+    (package / "colors.toml").write_text(
+        'background = "#fafafa"\nforeground = "#101010"\n'
+        + "".join(f'color{index} = "#{index:02x}00{index:02x}"\n' for index in range(16)))
+    if ui_roles:
+        (package / helper.UI_ROLES_FILE).write_text(ui_roles)
+    return package
+
+
+def test_declared_ui_roles_replace_the_derivation_without_a_contrast_rewrite():
+    """A curated package declaring a UI role renders that role's own value.
+
+    Every declarable role is otherwise derived from the palette with no way for a
+    vendor to supply its own: `outline`, `outlineVariant`, `muted` and `dim` are
+    a blend of background and foreground pulled toward black or white by the
+    contrast guards, the surfaces and `statusBg` are a lightness shift of the
+    background, `surface` and the `on*` accent companions are the background
+    verbatim, and `secondary`, `tertiary` and the containers are tinted from the
+    palette's own cyan, magenta and accent. A vendor that publishes its own UI
+    palette could state none of them, so its chrome came out a grey the vendor
+    never published.
+
+    A declaration replaces the derivation for that one role: the guards report
+    the shortfall on the apply result instead of rewriting the tone, roles
+    computed from a declared one follow it, an undeclared role derives exactly as
+    before, every key the file states is honoured or named, and a generated
+    palette, which has no vendor behind it, ignores the file.
+    """
+
+    def scenario(temp_home: Path):
+        builtin = temp_home / "builtin"
+        declared_roles_package(builtin, "plainroles")
+        declared_roles_package(builtin, "vendorroles", DECLARED_UI_ROLES_TOML)
+        declared_roles_package(builtin, "typoroles", 'statusBackground = "#123456"\n')
+        # Neither value is a six-digit hex, so neither enters the parsed map and
+        # only the parser knows the file named them.
+        declared_roles_package(builtin, "badvalueroles",
+                               'muted = "#fff"\nsurface = "steelblue"\ndim = "#123456"\n')
+        # Every value unreadable, so the strict pass produces nothing at all.
+        # The loose matugen fallback would run on that and hand back the
+        # eight-digit value truncated, having already named the key unreadable.
+        declared_roles_package(builtin, "alpharoles",
+                               'statusBg = "#fadad1ff"\nmuted = "#fff"\n')
+        declared_roles_package(builtin, "everyroles", "".join(
+            f'{role} = "{EVERY_ROLE_VALUES[role]}"\n' for role in sorted(EVERY_ROLE_VALUES)))
+        declared_roles_package(builtin, "greybarroles", 'statusBg = "#767676"\n')
+        declared_roles_package(builtin, "pairroles",
+                               'primaryContainer = "#78799a"\nonPrimaryContainer = "#d4e4fd"\n')
+        # A container the shell's own foreground cannot be read on, and three
+        # accent companions just off the derived role each is painted on.
+        # The ordinary vendor shape: a fill declared, its text left derived. The
+        # companion then derives to the foreground verbatim, so both of the
+        # container's rules read the same colour.
+        declared_roles_package(builtin, "lonecontainerroles", 'primaryContainer = "#2a2a2a"\n')
+        declared_roles_package(builtin, "fgpairroles",
+                               'primaryContainer = "#101010"\nonPrimaryContainer = "#fff5f0"\n'
+                               'onPrimary = "#141414"\nonSecondary = "#141414"\n'
+                               'onTertiary = "#141414"\n')
+        declared_roles_package(builtin, "genroles", DECLARED_UI_ROLES_TOML, source="generated")
+        declared_roles_package(builtin, "genplainroles", source="generated")
+        helper.cfg_dir().mkdir(parents=True, exist_ok=True)
+        (helper.cfg_dir() / "settings.json").write_text(json.dumps({"themeApps": {"tmux": True}}) + "\n")
+        original_builtin = helper.builtin_themes_dir
+        helper.builtin_themes_dir = lambda: builtin
+        try:
+            errors = io.StringIO()
+            with contextlib.redirect_stderr(errors):
+                packages = {name: helper.load_theme_package(name)
+                            for name in ("plainroles", "vendorroles", "typoroles", "badvalueroles",
+                                         "everyroles", "greybarroles", "pairroles", "genroles",
+                                         "genplainroles", "alpharoles", "fgpairroles",
+                                         "lonecontainerroles")}
+            for name, blueprint in packages.items():
+                if not blueprint:
+                    raise AssertionError(f"fixture theme {name} did not load")
+            assert_equal(packages["vendorroles"].get("uiRoles"), DECLARED_UI_ROLES,
+                         "the loader carries every declared role and nothing else")
+            assert_equal(packages["plainroles"].get("uiRoles"), {},
+                         "a package declaring nothing carries no declared roles")
+            # A misspelled role is named, not dropped in silence: the file's whole
+            # purpose is that the vendor's tone reaches the chrome, and a silent
+            # drop looks exactly like a package that declared nothing.
+            assert_equal(packages["typoroles"].get("uiRoles"), {},
+                         "a role VGS does not derive reaches no render")
+            if "statusBackground" not in errors.getvalue():
+                raise AssertionError(f"the undeclarable role was not named: {errors.getvalue()!r}")
+            # A value no colour can be read from loses the role just as silently
+            # as a misspelled key, and needs the same line.
+            assert_equal(packages["badvalueroles"].get("uiRoles"), {"dim": "#123456"},
+                         "a role whose value is not a colour reaches no render")
+            assert_equal(packages["alpharoles"].get("uiRoles"), {},
+                         "no pass revives a value the strict pass named unreadable")
+            for package, roles in (("badvalueroles", "muted, surface"),
+                                   ("alpharoles", "muted, statusBg")):
+                line = f"theme package {package}: {helper.UI_ROLES_FILE} states no readable colour for: {roles}"
+                if line not in errors.getvalue():
+                    raise AssertionError(f"{package} did not name its unreadable values: {errors.getvalue()!r}")
+
+            # The declarable set and the assignment sites are one list: every
+            # member arrives verbatim, so a member with no site cannot hide.
+            every = helper.target_roles(packages["everyroles"])
+            for role, value in sorted(EVERY_ROLE_VALUES.items()):
+                assert_equal(every[role], value, f"{role} is declarable and arrives verbatim")
+            assert_equal(sorted(packages["everyroles"].get("uiRoles") or {}),
+                         sorted(helper.DECLARABLE_UI_ROLES),
+                         "the fixture declares the whole set the helper accepts")
+            # The diagnostic behind that guarantee, driven directly because no
+            # shipped reader hands the derivation a role outside the set: it is
+            # the code's check on its own two lists, not a check on theme data.
+            unread_errors = io.StringIO()
+            with contextlib.redirect_stderr(unread_errors):
+                helper.target_roles(dict(packages["vendorroles"], uiRoles={"errorContainer": "#123456"}))
+            if "errorContainer" not in unread_errors.getvalue():
+                raise AssertionError(
+                    f"a declared role no derivation reads was not named: {unread_errors.getvalue()!r}")
+            # Pinned silent as well as firing: every declared role has an
+            # assignment site, so an ordinary render says nothing.
+            quiet = io.StringIO()
+            with contextlib.redirect_stderr(quiet):
+                helper.target_roles(packages["everyroles"])
+                helper.target_roles(packages["vendorroles"])
+            if "no derivation reads" in quiet.getvalue():
+                raise AssertionError(f"a declaring package rendered with a diagnostic: {quiet.getvalue()!r}")
+
+            plain, vendor = (helper.target_roles(packages["plainroles"]),
+                             helper.target_roles(packages["vendorroles"]))
+            # The control the whole feature rests on: the derivation's own answer
+            # for this palette is a grey, so an assertion that the declared value
+            # arrives cannot pass by accident.
+            for role, value in DECLARED_UI_ROLES.items():
+                if plain[role] == value:
+                    raise AssertionError(f"{role} derives to the declared value; the fixture proves nothing")
+                assert_equal(vendor[role], value, f"{role} is written as declared")
+            assert_equal(helper.app_target_roles(packages["vendorroles"], vendor)["statusBg"],
+                         DECLARED_UI_ROLES["statusBg"],
+                         "app targets take the declared role, not the derived one")
+            assert_equal(helper.target_roles(packages["genroles"])["statusBg"], plain["statusBg"],
+                         "a generated palette derives its roles whatever the file declares")
+            assert_equal(packages["genroles"].get("uiRoles"), {},
+                         "a generated package folds no declaration into its identity")
+            for role in ("outline", "outlineVariant", "dim", "secondary", "surfaceContainerLow"):
+                assert_equal(vendor[role], plain[role], f"{role} is undeclared and derives as before")
+            # A role computed from a declared one follows it, or the status bar
+            # gets text measured against a background it no longer paints.
+            if vendor["statusMuted"] == plain["statusMuted"]:
+                raise AssertionError("statusMuted was measured against the derived status background")
+            if helper.contrast_ratio(vendor["statusFg"], vendor["statusBg"]) < 7.0:
+                raise AssertionError("status text is unreadable on the declared status background")
+
+            # The guard reports and does not rewrite: the declared `muted` misses
+            # its 4.5:1 rule, is written as declared, and is named once on the apply.
+            missed = helper.ui_role_shortfalls(vendor, DECLARED_UI_ROLES)
+            assert_equal(len(missed), 1, f"one declared role misses a rule: {missed}")
+            if "muted" not in missed[0] or DECLARED_UI_ROLES["muted"] not in missed[0]:
+                raise AssertionError(f"the shortfall names neither the role nor its value: {missed[0]}")
+            assert_equal(helper.ui_role_shortfalls(plain, {}), [],
+                         "a package declaring nothing reports no shortfall")
+            with contextlib.redirect_stderr(io.StringIO()):
+                applied = helper.apply_theme_obj(packages["vendorroles"], only_target="tmux-vgs",
+                                                 run_hooks=False)
+            warnings = [line for line in applied["warnings"] if "declared UI roles" in line]
+            assert_equal(len(warnings), 1, f"one apply warning names the declared shortfalls: {applied['warnings']}")
+            if missed[0] not in warnings[0]:
+                raise AssertionError(f"the apply warning drops the shortfall: {warnings[0]}")
+            assert_equal(applied["partial"], True, "a declared role below its rule makes the apply partial")
+            rendered = Path(applied["rendered"][0]).read_text()
+            if f"bg={DECLARED_UI_ROLES['statusBg']}" not in rendered:
+                raise AssertionError(f"tmux does not paint the declared status background: {rendered}")
+
+            # A fill and the text on it are judged as the pair the render paints.
+            # Against the palette's foreground instead, this container passes and
+            # its own declared text sits on it unreadably.
+            pair_roles = helper.target_roles(packages["pairroles"])
+            pair_missed = helper.ui_role_shortfalls(pair_roles, helper.declared_ui_roles(packages["pairroles"]))
+            assert_equal(sorted(line.split()[0] for line in pair_missed),
+                         ["onPrimaryContainer", "primaryContainer"],
+                         f"each side of a declared pair names the other: {pair_missed}")
+            for line in pair_missed:
+                if "background" in line or "foreground" in line:
+                    raise AssertionError(f"a container pair was judged against the palette: {line}")
+
+            # The vgs-shell target exports no on*Container role and still draws
+            # the palette's own foreground on these fills, so a container keeps
+            # that rule beside its companion rule. Judged against the companion
+            # alone, this fill carries shell text at 1:1 and nothing is named.
+            fg_bp = packages["fgpairroles"]
+            fg_roles = helper.target_roles(fg_bp)
+            fg_missed = helper.ui_role_shortfalls(fg_roles, helper.declared_ui_roles(fg_bp))
+            measured = sorted((line.split()[0], line.split(" against ")[1].split()[0])
+                              for line in fg_missed)
+            assert_equal(measured,
+                         [("onPrimary", "primary"), ("onSecondary", "secondary"),
+                          ("onTertiary", "tertiary"), ("primaryContainer", "foreground")],
+                         f"every rule a declared role carries is measured: {fg_missed}")
+            with contextlib.redirect_stderr(io.StringIO()):
+                fg_applied = helper.apply_theme_obj(fg_bp, only_target="tmux-vgs", run_hooks=False)
+            assert_equal(fg_applied["partial"], True,
+                         "a declared role below any of its rules makes the apply partial")
+
+            # One fill-and-text pair, one line: both rules land on the same
+            # colour here, and one defect named twice is one defect.
+            lone = packages["lonecontainerroles"]
+            lone_missed = helper.ui_role_shortfalls(helper.target_roles(lone), helper.declared_ui_roles(lone))
+            assert_equal(len(lone_missed), 1,
+                         f"a container declared without its companion is named once: {lone_missed}")
+            if not lone_missed[0].startswith("primaryContainer #2a2a2a: 1.33:1 against foreground"):
+                raise AssertionError(f"the lone container line is wrong: {lone_missed[0]}")
+
+            # A mid-grey status bar carries no readable text at all, which is the
+            # one rule measured against black and white rather than a role.
+            grey_roles = helper.target_roles(packages["greybarroles"])
+            grey_missed = helper.ui_role_shortfalls(grey_roles, helper.declared_ui_roles(packages["greybarroles"]))
+            assert_equal(len(grey_missed), 1, f"the grey status background is named once: {grey_missed}")
+            if not grey_missed[0].startswith("statusBg #767676: no text reaches"):
+                raise AssertionError(f"the statusBg rule did not fire: {grey_missed[0]}")
+            with contextlib.redirect_stderr(io.StringIO()):
+                grey_applied = helper.apply_theme_obj(packages["greybarroles"], only_target="tmux-vgs",
+                                                      run_hooks=False)
+            assert_equal(grey_applied["partial"], True,
+                         "an unreadable declared status background makes the apply partial")
+
+            # The control on the curated gate: the same file under a generated
+            # source paints nothing and so must warn about nothing.
+            with contextlib.redirect_stderr(io.StringIO()):
+                gen_applied = helper.apply_theme_obj(packages["genroles"], only_target="tmux-vgs",
+                                                     run_hooks=False)
+            assert_equal([line for line in gen_applied["warnings"] if "below target" in line], [],
+                         "a generated palette reports no shortfall for a file it does not read")
+            assert_equal(len([line for line in gen_applied["warnings"] if "is not read" in line]), 1,
+                         "it names the unread file instead")
+
+            # The preview renders from target_roles, so a declaration moves the
+            # cached screenshot and has to move its key.
+            if helper.blueprint_preview_hash(packages["vendorroles"]) == helper.blueprint_preview_hash(
+                    packages["plainroles"]):
+                raise AssertionError("the preview key does not cover the declared roles")
+            assert_equal(helper.blueprint_preview_hash(packages["genroles"]),
+                         helper.blueprint_preview_hash(packages["genplainroles"]),
+                         "a package whose declarations are not read keeps the undeclared preview")
+        finally:
+            helper.builtin_themes_dir = original_builtin
+
+    with_temp_home(scenario)
+
+
+def test_declared_ui_roles_move_with_a_restyle_and_survive_a_save():
+    """Declared roles are part of a package's palette identity.
+
+    They move with a restyle slider the way explicit terminal slots do, so the
+    chrome stays coherent with the restyled palette; a rebuild from the applied
+    theme carries them, or a wallpaper change or a saved colour edit would write
+    the package back without them; and the `curatedPalette` digest covers them,
+    because a merge-style curated file's bands are picked against the roles it
+    merges over and a declaration replaces one of those roles.
+    """
+
+    def scenario(temp_home: Path):
+        builtin = temp_home / "builtin"
+        declared_roles_package(builtin, "restyled", DECLARED_UI_ROLES_TOML)
+        original_builtin = helper.builtin_themes_dir
+        helper.builtin_themes_dir = lambda: builtin
+        try:
+            shipped = helper.load_theme_package("restyled") or {}
+            (builtin / "restyled" / "theme.json").write_text(json.dumps(
+                {"name": "restyled", "mode": "light", "source": "curated",
+                 "adjustments": {"brightness": -60}}) + "\n")
+            restyled = helper.load_theme_package("restyled") or {}
+            assert_equal(sorted(restyled.get("uiRoles") or {}), sorted(DECLARED_UI_ROLES),
+                         "a restyle keeps every declared role")
+            moved = [role for role, value in (restyled.get("uiRoles") or {}).items()
+                     if value != DECLARED_UI_ROLES[role]]
+            assert_equal(sorted(moved), sorted(DECLARED_UI_ROLES),
+                         "a restyle moves every declared role with the palette")
+            assert_equal(helper.target_roles(restyled)["statusBg"], restyled["uiRoles"]["statusBg"],
+                         "the restyled declaration is what the render paints")
+
+            # A merge-style curated file is judged against the palette it was
+            # picked for. Declared roles sit inside that palette's identity, so a
+            # package whose declarations moved no longer carries the file.
+            package = declared_roles_package(helper.user_themes_dir(), "digestroles",
+                                             DECLARED_UI_ROLES_TOML)
+            (package / "apps").mkdir(exist_ok=True)
+            (package / "apps" / "claude-light.json").write_text(json.dumps({"overrides": {}}) + "\n")
+            files = helper.compose_theme_files("digestroles")
+            meta = json.loads((package / "theme.json").read_text())
+            meta["curatedPalette"] = helper.palette_digest(helper.package_palette(
+                helper.package_colors_map(files, "digestroles"), meta,
+                helper.package_ui_roles(files, "digestroles")))
+            (package / "theme.json").write_text(json.dumps(meta) + "\n")
+            assert_equal(sorted((helper.load_theme_package("digestroles") or {}).get("apps") or {}),
+                         ["claude-light.json"], "the recorded palette carries the curated file")
+            # The mtime of this file orders the theme list, so an edit to it
+            # alone has to advance the package's stamp.
+            before_stamp = (helper.load_theme_package("digestroles") or {}).get("timestamp")
+            os.utime(package / helper.UI_ROLES_FILE,
+                     (time.time() + 120, time.time() + 120))
+            if (helper.load_theme_package("digestroles") or {}).get("timestamp") == before_stamp:
+                raise AssertionError("an edit to the declarations alone left the stamp where it was")
+
+            # A duplicate flattens both layers into one directory and records the
+            # digest of the copy's own palette. Built without the declarations,
+            # that digest certifies nothing the copy carries and the curated file
+            # is left behind, which is the VGS-314 symptom.
+            with contextlib.redirect_stdout(io.StringIO()):
+                assert_equal(helper.cmd_theme(["duplicate", "digestroles", "--as", "digestroles-copy"]), 0,
+                             "duplicate exit status")
+            assert_equal(sorted((helper.load_theme_package("digestroles-copy") or {}).get("apps") or {}),
+                         ["claude-light.json"], "a duplicate keeps the curated file its record vouches for")
+            assert_equal((helper.load_theme_package("digestroles-copy") or {}).get("uiRoles"),
+                         DECLARED_UI_ROLES, "a duplicate carries the declarations")
+
+            # The save's exemption asks the same question over the package on
+            # disk. Asked without the declarations, the file reads as dropped by
+            # the palette rather than by the override and the prune deletes it.
+            helper.write_user_app_overrides("digestroles", {"claude": {"background": "#0b0b0b"}})
+            dropped = helper.load_theme_package("digestroles") or {}
+            assert_equal(sorted(dropped.get("apps") or {}), [],
+                         "the per-app override alone keeps the curated file out of the render")
+            rebuilt = helper.blueprint_from_theme_json(
+                helper.theme_json_from_blueprint(dropped), name="digestroles")
+            rebuilt.update({"package": True, "path": str(helper.user_themes_dir() / "digestroles")})
+            assert_equal(helper.override_dropped_curated(rebuilt), ["claude-light.json"],
+                         "the save spares a file the override alone dropped")
+
+            # Clear the override first, or the next row would pass on the
+            # override's own drop and say nothing about the digest.
+            helper.write_user_app_overrides("digestroles", {})
+            assert_equal(sorted((helper.load_theme_package("digestroles") or {}).get("apps") or {}),
+                         ["claude-light.json"], "clearing the override brings the curated file back")
+            (package / helper.UI_ROLES_FILE).write_text('statusBg = "#e0b0a0"\n')
+            assert_equal(sorted((helper.load_theme_package("digestroles") or {}).get("apps") or {}),
+                         [], "a changed declaration drops the file picked for the old one")
+
+            # `save-current` rebuilds the theme from the shell's theme.json, which
+            # carries no declared roles, so the rebuild has to carry them forward.
+            helper.cfg_dir().mkdir(parents=True, exist_ok=True)
+            (helper.cfg_dir() / "theme.json").write_text(helper.render_target_template(
+                "vgs-shell", "vgs-theme.json", helper.target_roles(shipped)))
+            (helper.cfg_dir() / "theme-current.json").write_text(
+                json.dumps(helper.applied_theme_state(shipped)) + "\n")
+            with contextlib.redirect_stdout(io.StringIO()):
+                assert_equal(helper.cmd_theme(["save-current", "--name", "restyled-saved"]), 0,
+                             "save-current exit status")
+            saved = helper.load_theme_package("restyled-saved") or {}
+            assert_equal(saved.get("uiRoles"), DECLARED_UI_ROLES,
+                         "a save carries the declared roles onto the saved package")
+            assert_equal((helper.user_themes_dir() / "restyled-saved" / helper.UI_ROLES_FILE).is_file(),
+                         True, "the saved package writes the file the loader reads")
+            # The other half of the invariant: a CURATED save stating no
+            # declarations does own the file, and removes or masks it.
+            # colors.toml is rewritten on every save, so a stale declaration file
+            # would paint the previous theme's chrome over this one.
+            helper.save_theme_package(dict(shipped, uiRoles={}), "restyled-saved")
+            assert_equal((helper.user_themes_dir() / "restyled-saved" / helper.UI_ROLES_FILE).exists(),
+                         False, "a save with no declared roles removes the stale file")
+            helper.save_theme_package(dict(shipped, uiRoles={}), "restyled")
+            with contextlib.redirect_stderr(io.StringIO()):
+                masked = helper.load_theme_package("restyled") or {}
+            assert_equal(masked.get("uiRoles"), {},
+                         "a save with no declared roles masks the built-in file")
+
+            # `apply-colors --save` rebuilds through palette_from_colors_map,
+            # whose source is generated, so its render reads no declaration. The
+            # save must write none either, or the file sits inert while the
+            # recorded digest counts it and a later edit to it drops the
+            # package's curated files.
+            declared_roles_package(builtin, "editedroles", DECLARED_UI_ROLES_TOML)
+            reference = helper.load_theme_package("editedroles") or {}
+            (helper.cfg_dir() / "theme-current.json").write_text(
+                json.dumps(helper.applied_theme_state(reference)) + "\n")
+            original_apply = helper.apply_theme_obj
+            helper.apply_theme_obj = lambda bp, *args, **kwargs: {"success": True}
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    assert_equal(helper.cmd_theme(
+                        ["apply-colors", "--name", "editedroles-saved",
+                         "--set", "accent=#123456", "--save"]), 0, "apply-colors --save exit status")
+            finally:
+                helper.apply_theme_obj = original_apply
+            saved_root = helper.user_themes_dir() / "editedroles-saved"
+            assert_equal((saved_root / helper.UI_ROLES_FILE).exists(), False,
+                         "a generated save writes no declarations file")
+            saved_meta = json.loads((saved_root / "theme.json").read_text())
+            assert_equal(saved_meta["curatedPalette"], helper.palette_digest(helper.palette_identity(
+                helper.parse_colors_toml_text((saved_root / "colors.toml").read_text()),
+                saved_meta["mode"])),
+                "the recorded digest counts no declaration the render does not read")
+            assert_equal((helper.load_theme_package("editedroles-saved") or {}).get("uiRoles"), {},
+                         "the saved package carries no declarations")
+            assert_equal(helper.package_ui_roles(helper.compose_theme_files("editedroles"),
+                                                 "editedroles"), DECLARED_UI_ROLES,
+                         "the source package keeps its own declarations file")
+
+            # The invariant, at every route that builds a generated blueprint
+            # and hands it to the save. A marker carried by one of them closed
+            # that one and left the rest: the second own-name save found none,
+            # and the wallpaper routes never carried one at all.
+            declared_roles_package(helper.user_themes_dir(), "downloadedroles",
+                                   DECLARED_UI_ROLES_TOML)
+            from PIL import Image
+            wallpaper = temp_home / "extract.png"
+            Image.new("RGB", (2, 2), (33, 88, 144)).save(wallpaper)
+            # (package, the layer directory holding its file, the argv the route runs)
+            routes = [
+                ("editedroles", builtin,
+                 ["apply-colors", "--name", "editedroles", "--set", "foreground=#101010", "--save"]),
+                ("editedroles", builtin,
+                 ["apply-colors", "--name", "editedroles", "--set", "foreground=#111111", "--save"]),
+                ("downloadedroles", helper.user_themes_dir(),
+                 ["apply-colors", "--name", "downloadedroles", "--set", "foreground=#101010", "--save"]),
+                ("downloadedroles", helper.user_themes_dir(),
+                 ["apply-colors", "--name", "downloadedroles", "--set", "foreground=#111111", "--save"]),
+                ("downloadedroles", helper.user_themes_dir(),
+                 ["set-wallpaper", str(wallpaper), "--extract", "--save", "--name", "downloadedroles"]),
+            ]
+            for index, (name, layer, argv) in enumerate(routes):
+                own = helper.load_theme_package(name) or {}
+                (helper.cfg_dir() / "theme.json").write_text(helper.render_target_template(
+                    "vgs-shell", "vgs-theme.json", helper.target_roles(own)))
+                (helper.cfg_dir() / "theme-current.json").write_text(
+                    json.dumps(helper.applied_theme_state(own)) + "\n")
+                helper.apply_theme_obj = lambda bp, *args, **kwargs: {"success": True}
+                try:
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        assert_equal(helper.cmd_theme(argv), 0, f"{argv[0]} {index} exit status")
+                finally:
+                    helper.apply_theme_obj = original_apply
+                where = f"{name} through {argv[0]} at step {index}"
+                assert_equal((layer / name / helper.UI_ROLES_FILE).is_file(), True,
+                             f"{where} keeps its declarations file")
+                assert_equal(helper.package_ui_roles(helper.compose_theme_files(name), name),
+                             DECLARED_UI_ROLES, f"{where} keeps every declared role")
+                assert_equal((helper.load_theme_package(name) or {}).get("uiRoles"), {},
+                             f"{where} reads no declaration while its palette is generated")
+
+            # Nothing on screen says the chrome is derived rather than declared,
+            # so the apply names the unread file once.
+            generated = helper.load_theme_package("downloadedroles") or {}
+            with contextlib.redirect_stderr(io.StringIO()):
+                inert_applied = helper.apply_theme_obj(generated, only_target="tmux-vgs",
+                                                       run_hooks=False)
+            named = [line for line in inert_applied["warnings"] if "is not read" in line]
+            assert_equal(len(named), 1, f"the unread file is named once: {inert_applied['warnings']}")
+            if helper.UI_ROLES_FILE not in named[0]:
+                raise AssertionError(f"the warning does not name the file: {named[0]}")
+            assert_equal(inert_applied["partial"], True, "an unread declarations file makes the apply partial")
+            with contextlib.redirect_stderr(io.StringIO()):
+                curated_applied = helper.apply_theme_obj(shipped, only_target="tmux-vgs",
+                                                         run_hooks=False)
+            assert_equal([line for line in curated_applied["warnings"] if "is not read" in line], [],
+                         "a curated apply reads its declarations and names nothing")
+
+            # It is a file with declarations in it that goes unread, not any
+            # file. The masking overlay this same save path writes, and a file
+            # whose every value is unreadable, both state nothing: naming them
+            # reported chrome the palette never had, on every colour edit.
+            # (package, the user-layer ui-roles.toml body that states nothing)
+            silent = (("maskedroles", "# No declared UI roles: this overlay masks the built-in theme's.\n"),
+                      ("unreadableroles", 'statusBg = "#fadad1ff"\nmuted = "#fff"\n'))
+            for name, body in silent:
+                declared_roles_package(builtin, name, DECLARED_UI_ROLES_TOML)
+                overlay = helper.user_themes_dir() / name
+                overlay.mkdir(parents=True, exist_ok=True)
+                (overlay / "theme.json").write_text(json.dumps(
+                    {"name": name, "mode": "light", "source": "generated"}) + "\n")
+                (overlay / helper.UI_ROLES_FILE).write_text(body)
+                with contextlib.redirect_stderr(io.StringIO()):
+                    quiet_bp = helper.load_theme_package(name) or {}
+                    quiet = helper.apply_theme_obj(quiet_bp, only_target="tmux-vgs", run_hooks=False)
+                assert_equal([line for line in quiet["warnings"] if "is not read" in line], [],
+                             f"{name} states no declaration, so nothing is named unread")
+                assert_equal(quiet["partial"], False,
+                             f"{name} does not make every apply partial over a file that states nothing")
+                assert_equal(helper.inert_declarations_path(quiet_bp), "",
+                             f"{name} has no unread declarations file")
+
+            # The path named is the one the loader reads. A user overlay shadows
+            # the built-in copy, and naming the shadowed one sends a user to a
+            # file that changes nothing.
+            shadow = helper.user_themes_dir() / "downloadedroles"
+            (shadow / "theme.json").write_text(json.dumps(
+                {"name": "downloadedroles", "mode": "light", "source": "generated"}) + "\n")
+            declared_roles_package(builtin, "downloadedroles", 'statusBg = "#010203"\n')
+            with contextlib.redirect_stderr(io.StringIO()):
+                shadowed = helper.load_theme_package("downloadedroles") or {}
+            assert_equal(helper.inert_declarations_path(shadowed),
+                         str(shadow / helper.UI_ROLES_FILE),
+                         "the unread file named is the overlay the loader reads, not the built-in copy")
+        finally:
+            helper.builtin_themes_dir = original_builtin
+
+    with_temp_home(scenario)
+
+
 def test_save_keeps_app_overrides():
     """A saved theme keeps the per-app colours the user set on the theme it was
     saved from, and its editable app files, a regenerated file and an edit-app
@@ -9379,6 +9900,8 @@ def main():
     test_dark_themes_read_in_a_terminal()
     test_dark_themes_draw_diffs_in_two_hues()
     test_wallpaper_and_save_keep_terminal_slots()
+    test_declared_ui_roles_replace_the_derivation_without_a_contrast_rewrite()
+    test_declared_ui_roles_move_with_a_restyle_and_survive_a_save()
     test_save_keeps_app_overrides()
     test_unsaved_applied_theme_keeps_terminal_slots()
     test_terminal_app_overrides_show_on_their_editor_row()
