@@ -3,12 +3,12 @@
   "repo": "vanillagreencom/vgs",
   "themes": {
     "akane": {
-      "release": "themes-v1",
-      "archive": "vgs-theme-akane-r1.tar.gz",
-      "rev": 1,
-      "size": 41993828,
-      "sha256": "91d7a2ffbf237847e9192d911e3cbbf37c6080f85049e88d1e63b7e42f0bee22",
-      "definitions": "7c2bf9a4478fdcf15de0ac0fd015448726b54920b325d62fd28dafdf5bfa2ec1",
+      "release": "themes-v5",
+      "archive": "vgs-theme-akane-r3.tar.gz",
+      "rev": 3,
+      "size": 41994105,
+      "sha256": "567192e4be6e505388a668865c6a4e148971a50cc6f99c5e0a74927f7ed08007",
+      "definitions": "1db287f954d09e95612b716b52b1de8e4d56b20265a3728ae7706a3e91a4368e",
       "preview": "fad44cf67f568889386842264ba3506da3ca8aa6140488796d786141084b7f49",
       "published": true
     },
@@ -33,12 +33,12 @@
       "published": true
     },
     "arc-raiders": {
-      "release": "themes-v1",
-      "archive": "vgs-theme-arc-raiders-r1.tar.gz",
-      "rev": 1,
-      "size": 5117405,
-      "sha256": "d20ed1dd2d59451c2814eb3f04692ee92fe5b39261cf0b09f7b519661402fdcb",
-      "definitions": "34cc88dd19c74baa38b68990d3c4ff2784d0d9285839643f1808acfae020abdb",
+      "release": "themes-v5",
+      "archive": "vgs-theme-arc-raiders-r2.tar.gz",
+      "rev": 2,
+      "size": 5117725,
+      "sha256": "c48601ad7e33f3d157349507a3cec943f89479ff568761139e30b7364fba7e2d",
+      "definitions": "c3e818597d7482c47480a69097fd7d9e0a064c01ec730d3976f578c9f65e37e4",
       "preview": "60b9aa8edabdcb8399e246009db886073731d914ab8234eae517f720e4eb8e2c",
       "published": true
     },
@@ -153,12 +153,12 @@
       "published": true
     },
     "cpunk": {
-      "release": "themes-v1",
-      "archive": "vgs-theme-cpunk-r1.tar.gz",
-      "rev": 1,
-      "size": 25775050,
-      "sha256": "4980bfb3e32829171c70b143a8364ed99902029040d38068640d7343963338a6",
-      "definitions": "4c26699a24a3aa954d09d5dd6427865a8e9c29b5ff0c3402273eae8043f6f73a",
+      "release": "themes-v5",
+      "archive": "vgs-theme-cpunk-r2.tar.gz",
+      "rev": 2,
+      "size": 25775321,
+      "sha256": "f9827a087822cbaefbc3ddc376d195f714dc2f40ef7ecbf67888c9d504e6aedb",
+      "definitions": "0b370b16dacdb573c6d228ad6f98ec7060c8bc761dd56790d68cdddde758c5ce",
       "preview": "a5802860bd8ae76c02d787153e9d45d2b7437d412de30d73725f9b99e5fe6ba1",
       "published": true
     },
@@ -203,12 +203,12 @@
       "published": true
     },
     "ethereal": {
-      "release": "themes-v1",
-      "archive": "vgs-theme-ethereal-r1.tar.gz",
-      "rev": 1,
-      "size": 4890671,
-      "sha256": "48eeeb35ef69a56f3f4adeb5d92f7ad979f398dba0ed3793ab36e752fbc75f88",
-      "definitions": "3a730ef4a81897658a8e7bdd3060e0e8e4b427dac6495abb443ec88964144342",
+      "release": "themes-v5",
+      "archive": "vgs-theme-ethereal-r2.tar.gz",
+      "rev": 2,
+      "size": 4890921,
+      "sha256": "e9f0f6713d627b0a753c98f3bfa3bf7f940f4db56bfd4e7e5b0ed76f840e238b",
+      "definitions": "be7145c4194a8e6556e109216dade6d4ee11dd15945402162942fe7ba85cc52e",
       "preview": "1868a80de422c2ae0d72e15a40d0eb65fe8c8df412e6619ce32cbd92e1c91f06",
       "published": true
     },
@@ -273,12 +273,12 @@
       "published": true
     },
     "greek-noir": {
-      "release": "themes-v1",
-      "archive": "vgs-theme-greek-noir-r1.tar.gz",
-      "rev": 1,
-      "size": 2321462,
-      "sha256": "43c635296842c42db3b307241901796ba7bb89f23ccf1e15709820a639a6532b",
-      "definitions": "0ca3cebf8884bb0ce5e14f3b3711886775a118ec221526949846772e08769fa3",
+      "release": "themes-v5",
+      "archive": "vgs-theme-greek-noir-r2.tar.gz",
+      "rev": 2,
+      "size": 2321744,
+      "sha256": "bf94cabd7c1df80ec0dfc94a80a86e62fdf02259612a9fd4631edaac6e735a55",
+      "definitions": "e6167b032582452cd863f718e1adab9f4c32eed54dd73696b19dabd893c4efe1",
       "preview": "f0c5990fe2f201d789871ee6411b1b457a47c2fe420ae9bbea04a5b6ae7c905f",
       "published": true
     },
@@ -303,22 +303,22 @@
       "published": true
     },
     "hackerman": {
-      "release": "themes-v1",
-      "archive": "vgs-theme-hackerman-r1.tar.gz",
-      "rev": 1,
-      "size": 7549408,
-      "sha256": "ca4085b51b6e8b28c944532fc75799fd300751f57dbca0ad91c582f18435dc06",
-      "definitions": "68bb88ab228955d00cf8ead171e0a214a31b679026b994234f424fe7d19a58dd",
+      "release": "themes-v5",
+      "archive": "vgs-theme-hackerman-r2.tar.gz",
+      "rev": 2,
+      "size": 7549672,
+      "sha256": "de7a7cd30b139116573b5b0f959511c740dd9abc4d50541cb493ab115bdf9e2c",
+      "definitions": "7a39b08b746aba0e45570cd1cd8f1fbd54d67828f5abed476d085e9ff39238b2",
       "preview": "e04eee32bc86bcdd9a838dd12e32a14fbe5d66212ad12331c65e2e89fc864ec1",
       "published": true
     },
     "harbordark": {
-      "release": "themes-v1",
-      "archive": "vgs-theme-harbordark-r1.tar.gz",
-      "rev": 1,
-      "size": 8121411,
-      "sha256": "0594b508e40443be99e120fc613bc1f47ca8f9f24187b3bab8c5f2edee88f87b",
-      "definitions": "e0c06db165c88b6b784848b3e569ba41349fb8e95ee7b11cf844c869823372b0",
+      "release": "themes-v5",
+      "archive": "vgs-theme-harbordark-r2.tar.gz",
+      "rev": 2,
+      "size": 8121684,
+      "sha256": "878bcf75c68a27b69b6eb87237bfc6e77750286d9a095764d1798938c809e27b",
+      "definitions": "51857ba36d3bf330d92afdd58c3d3c5762c982818a5b57056039b14a95d45758",
       "preview": "3543576386574bc4fff6d9408d4a64e6c160d8eba3d3d85066e9afe8b9f38f7f",
       "published": true
     },
@@ -343,12 +343,12 @@
       "published": true
     },
     "kanagawa-dragon": {
-      "release": "themes-v1",
-      "archive": "vgs-theme-kanagawa-dragon-r1.tar.gz",
-      "rev": 1,
-      "size": 9442070,
-      "sha256": "bf831e421376c017c8912e0fdb0aae148a753f27ff93ac70c52de18d4c70212d",
-      "definitions": "990a63c4f2fffe9a1300ce5656ef437e62274f096b2e8aa88922567cb8deac76",
+      "release": "themes-v5",
+      "archive": "vgs-theme-kanagawa-dragon-r2.tar.gz",
+      "rev": 2,
+      "size": 9442312,
+      "sha256": "9c7dd94c679549af4c71ece20c4a4cfd6c1bee0b6e5382f37d813ef0f435cdda",
+      "definitions": "bed67909cab4807da25aee8aa13d2850cff0e2a24870529ee260e63663e78cc8",
       "preview": "c46876368ab8b72fe5ef206c9642ff1e148678a18c811435ab8c3babe5cda15b",
       "published": true
     },
@@ -373,12 +373,12 @@
       "published": true
     },
     "lowlight": {
-      "release": "themes-v1",
-      "archive": "vgs-theme-lowlight-r1.tar.gz",
-      "rev": 1,
-      "size": 3519170,
-      "sha256": "b9d4e310fd53af4b3a4aefd7a4557e81edbd7cb8d6101e1a50b2f848a8549598",
-      "definitions": "30ce8fd4de526c4ba015361037ebfe0d74f031bb10b95d71c3729f01fbd426d5",
+      "release": "themes-v5",
+      "archive": "vgs-theme-lowlight-r2.tar.gz",
+      "rev": 2,
+      "size": 3519477,
+      "sha256": "34dffc4a767cce9c98a2a55186b33614192a767966ac7affb7021c6143dca27a",
+      "definitions": "a0a64786b8d6d9ab001257ac84251c72634ca65e68d9ac56367fbbda1b78c865",
       "preview": "12b0941a0d02fea289197bdaec8438bac08372a5dca2549a74ffbdf4c759510d",
       "published": true
     },
@@ -413,12 +413,12 @@
       "published": true
     },
     "mechanoonna": {
-      "release": "themes-v1",
-      "archive": "vgs-theme-mechanoonna-r1.tar.gz",
-      "rev": 1,
-      "size": 7507376,
-      "sha256": "9723cf02d852b9cb7f145393e75fcdab9aa80136cc19d5bf485426ad4a0bc756",
-      "definitions": "389495464ea375d4023b12d07c6b838d4594be9624cb4c56de6e5d15e16da661",
+      "release": "themes-v5",
+      "archive": "vgs-theme-mechanoonna-r2.tar.gz",
+      "rev": 2,
+      "size": 7507652,
+      "sha256": "fb029fba96b48ccd6e9b5469bb2fcb5e39d0e4a12604d023fe01137de520c52a",
+      "definitions": "20284bf0f2eebc40b58fefa9aa0a310c3ae46059ddbde79c0ffdadf14229316f",
       "preview": "37ce4f10b3d935fe58fe7de7a4482d1c873e51e8fb2a8b5c58511dbe8154d280",
       "published": true
     },
@@ -503,12 +503,12 @@
       "published": true
     },
     "oxford": {
-      "release": "themes-v1",
-      "archive": "vgs-theme-oxford-r1.tar.gz",
-      "rev": 1,
-      "size": 12228602,
-      "sha256": "f215f900f6bd67a4d5629821c2292a23dec17898d2425531c5f8f9d761017790",
-      "definitions": "f79aa06cdf23b8579bc451f0fc906bf0a94259e6c2c94393b388e1d2e25cdcf2",
+      "release": "themes-v5",
+      "archive": "vgs-theme-oxford-r2.tar.gz",
+      "rev": 2,
+      "size": 12228875,
+      "sha256": "3dc5ddc30b23d89096343e356e75dd46cd442c414eb0fba156d923789efb73b4",
+      "definitions": "6a8c25f459ab729a90bd421786d428da468d1891b8f47866248de7c85ed7798f",
       "preview": "7601abb5a3b7d115b7d7e28f20bd298ee2fb732106f2321734d2ffc5a6996c01",
       "published": true
     },
@@ -523,12 +523,12 @@
       "published": true
     },
     "reddcs": {
-      "release": "themes-v1",
-      "archive": "vgs-theme-reddcs-r1.tar.gz",
-      "rev": 1,
-      "size": 24703766,
-      "sha256": "7377f0b4612f802b446ac5e9eb86be01db308aa3f6e1ba41e4ce34764459a53b",
-      "definitions": "7da0b60f98f252e634b646e69906580d037b2bc24e6bfaf6981c4aa6a3161808",
+      "release": "themes-v5",
+      "archive": "vgs-theme-reddcs-r3.tar.gz",
+      "rev": 3,
+      "size": 24704014,
+      "sha256": "ecf125f1887ea704239298dbbfc3720cd467ef261701c2869233f9b55dca3e46",
+      "definitions": "c77ea5ca5ce84b2ae432d201a0cc5460a6315fbec1f80aa50e9afdefaea5ddcb",
       "preview": "645e9b5e198fdf2d98f5a7266103a9ea55e967e8f37578320875572695527e55",
       "published": true
     },
@@ -703,12 +703,12 @@
       "published": true
     },
     "tycho": {
-      "release": "themes-v1",
-      "archive": "vgs-theme-tycho-r1.tar.gz",
-      "rev": 1,
-      "size": 1184224,
-      "sha256": "8afde59d15b538373f5f29b0cedb2f5b54b142bf8c36d17b3cc3b5194420aa11",
-      "definitions": "da08feae0eeb497b598a7b277ec6222e05f4b7c78b5ea89aedab9070009c5d00",
+      "release": "themes-v5",
+      "archive": "vgs-theme-tycho-r2.tar.gz",
+      "rev": 2,
+      "size": 1184489,
+      "sha256": "62ceb8a153a2a71b1ffac88d02ba0008fef3b65884035f2dc9fb5bca622ccb6b",
+      "definitions": "bc21baab7fcae42907d3c7055a8cdd46ec6f4d68f1b51b7592b6e8ab8b3a277a",
       "preview": "95fbf6b2737a0023f080662bbead4b5c2781547a3bd544cf7680dabc5a14a2f3",
       "published": true
     },
@@ -733,12 +733,12 @@
       "published": true
     },
     "vengeance": {
-      "release": "themes-v1",
-      "archive": "vgs-theme-vengeance-r1.tar.gz",
-      "rev": 1,
-      "size": 7326788,
-      "sha256": "b86827f0bd28df5e19aa293821e6fae02cdf1388f88fb9a96e624f23404c882b",
-      "definitions": "4be1f5ea63588b6fbb3445cac300d26a408d129aa0af0f502946edb2b051ca97",
+      "release": "themes-v5",
+      "archive": "vgs-theme-vengeance-r2.tar.gz",
+      "rev": 2,
+      "size": 7327049,
+      "sha256": "72e14069c65d20290128f839a16b23a32e5b70aea9709236966a3b8dad4095aa",
+      "definitions": "c9baeaf622d226241dbd5935581b9105fd70be6cfc3eef1eff21a0fa02cec920",
       "preview": "d1eed8356ad6cac397efb39ab3d7a27e494a415333891060a340d0315c78cfdf",
       "published": true
     },
@@ -783,12 +783,12 @@
       "published": true
     },
     "x-1632": {
-      "release": "themes-v1",
-      "archive": "vgs-theme-x-1632-r1.tar.gz",
-      "rev": 1,
-      "size": 19140577,
-      "sha256": "e984e1215268e380965e6df6bccf0a67152b82a0cc41624d49b490dc4bc8056e",
-      "definitions": "d0c131dc115e5292857871e4e68d1088bd21c69196deede544ce71c74054269d",
+      "release": "themes-v5",
+      "archive": "vgs-theme-x-1632-r2.tar.gz",
+      "rev": 2,
+      "size": 19140851,
+      "sha256": "fdbbeaae7710f8111c1990fb4b2d57f657ed07b8082e78fa86c87d0a7f3a584c",
+      "definitions": "afdff2232abd305fe0f32a478475bbff4bbe9096fd9885e007f425fca38ec8bf",
       "preview": "42124d33c49aadecf8f5c41b377528dbc2d572007951186a56fc4f6806e4b353",
       "published": true
     }
