@@ -917,28 +917,74 @@ class InstalledLayout(unittest.TestCase):
                 ("claude-light.json" in blueprint["apps"], self.light(blueprint)),
                 (False, []))
 
-    def test_a_save_under_an_override_keeps_the_file_the_override_can_give_back(self):
-        """`set-wallpaper --save`, `theme save-current` and `apply-colors --save`
-        call save_theme_package with the theme's own name, and the prune removes
-        every merge-style file the map it is handed does not carry. The override
-        drop put this file outside that map while leaving `colors.toml` untouched,
-        so the prune deleted the only copy a download has and `theme app-colors
-        claude --reset` could not bring it back. A restyle or a colour edit is not
-        exempted the same way: those rewrite `colors.toml`, so the save records
-        the moved palette and the dropped file genuinely no longer fits.
+    def saved_under_own_name(self, overrides: dict) -> tuple:
+        """akane downloaded, optionally overridden, then saved the way
+        `set-wallpaper --save` saves: `carry_curated_apps` over a rebuild from the
+        applied theme, which is the only shipped call that reaches this exemption.
+
+        A blueprint straight from `load_theme_package` is a shape production never
+        hands the save. `carry_curated_apps` copies `apps`, `package`, `path`,
+        `builtin` and `userDir` and nothing else, so a fixture that skips it tests
+        an exemption carried on a key the real caller drops, and passes while the
+        file is deleted in production.
+
+        Returns whether the save left the file on disk, whether the loader takes
+        it back once the override is cleared, and that reload's light shortfalls.
+        Every read happens inside the layout, because the render resolves akane
+        through `builtin_themes_dir` and `home`, which the fixture restores on
+        exit.
         """
         with installed_layout():
             dest = download_package("akane")
-            helper.write_user_app_overrides("akane", {"claude": {"background": "#0b0b0b"}})
-            overridden = helper.load_theme_package("akane")
-            helper.save_theme_package(overridden, name="akane")
+            applied = helper.load_theme_package("akane")
+            # The state an apply leaves, written by production's own composer so
+            # this cannot drift into a shell state the apply no longer writes.
+            helper.write_file(helper.cfg_dir() / "theme-current.json",
+                              json.dumps(applied, indent=2))
+            helper.write_file(helper.cfg_dir() / "theme.json", helper.render_target_template(
+                "vgs-shell", "vgs-theme.json", helper.target_roles(applied)))
+            helper.write_user_app_overrides("akane", overrides)
+            carried = helper.carry_curated_apps(helper.blueprint_from_current_theme(name="akane"))
+            helper.save_theme_package(carried, name="akane")
             on_disk = {path.name for path in (dest / "apps").iterdir()}
             helper.write_user_app_overrides("akane", {})
             cleared = helper.load_theme_package("akane")
+            return ("claude-light.json" in on_disk, "claude-light.json" in cleared["apps"],
+                    self.light(cleared))
+
+    def test_a_save_under_an_override_keeps_the_file_the_override_can_give_back(self):
+        """`set-wallpaper --save` saves under the theme's own name, and the prune
+        removes every merge-style file the map it is handed does not carry. The
+        override drop put this file outside that map while leaving `colors.toml`
+        untouched, so the prune deleted the only copy a download has and `theme
+        app-colors claude --reset` could not bring it back.
+
+        The no-override row is the control that says this case measures a file the
+        save threatened and spared, not one it never reached: without it a save
+        that pruned nothing at all would read as a pass.
+        """
+        self.assertEqual(
+            (self.saved_under_own_name({"claude": {"background": "#0b0b0b"}}),
+             self.saved_under_own_name({})),
+            ((True, True, []), (True, True, [])))
+
+    def test_a_save_under_another_name_grants_the_override_no_exemption(self):
+        """The exemption asks about the package the save is writing over. Under a
+        different name the destination is another package, and a merge-style file
+        already sitting there was picked for colours this save never saw, which is
+        the unjudged certification the digest exists to prevent."""
+        with installed_layout():
+            download_package("akane")
+            helper.write_user_app_overrides("akane", {"claude": {"background": "#0b0b0b"}})
+            overridden = helper.load_theme_package("akane")
+            copy = helper.user_themes_dir() / "akane-copy"
+            (copy / "apps").mkdir(parents=True)
+            (copy / "apps" / "claude-light.json").write_text(
+                json.dumps({"overrides": {"claude": "#abcdef"}}))
+            helper.save_theme_package(overridden, name="akane-copy")
             self.assertEqual(
-                ("claude-light.json" in overridden["apps"], "claude-light.json" in on_disk,
-                 "claude-light.json" in cleared["apps"], self.light(cleared)),
-                (False, True, True, []))
+                sorted(path.name for path in (copy / "apps").iterdir() if "claude" in path.name),
+                [])
 
     def test_a_colour_edit_keeps_the_replacing_file_it_drops_the_merge_style_one(self):
         """A user package owns its palette outright, so nothing about where its
