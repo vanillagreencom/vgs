@@ -1167,6 +1167,39 @@ class InstalledLayout(unittest.TestCase):
              "claude-light.json" in replaced["apps"]),
             (True, [], False))
 
+    def test_a_duplicate_carries_only_the_curated_files_its_record_vouches_for(self):
+        """`theme duplicate` flattens both layers into one directory, so the copy
+        holds one `theme.json`. Copied as it stood, an overlay written before the
+        digest became the only record beside the built-in curated file, and the
+        copy dropped it on every load, leaving akane's light diff bands below both
+        separation floors. The copy records its own palette, and a file whose
+        layer never vouched for that palette stays behind rather than being
+        certified by that record.
+
+        Rows: the overlay as metadata alone, then with its own `colors.toml`.
+        Each holds whether the copy's loader keeps the file and what the light
+        render misses.
+        """
+        edited = dict(helper.parse_colors_toml(REPO / "themes" / "akane" / "colors.toml"),
+                      foreground="#101010")
+        rows = (("metadata", None, (True, [])),
+                ("own palette", helper.colors_toml_from_map(edited), (False, [])))
+        for label, colors, expected in rows:
+            with self.subTest(label), temp_home() as home:
+                overlay = home / ".config" / "vshell" / "themes" / "akane"
+                overlay.mkdir(parents=True)
+                (overlay / "theme.json").write_text(json.dumps(
+                    {"name": "akane", "mode": "dark", "pair": "", "source": "curated",
+                     "wallpaper": "1-6-akane.jpg"}))
+                if colors is not None:
+                    (overlay / "colors.toml").write_text(colors)
+                with contextlib.redirect_stdout(io.StringIO()):
+                    status = helper.cmd_theme(["duplicate", "akane", "--as", "akane-copy"])
+                copy = helper.load_theme_package("akane-copy")
+                self.assertEqual(
+                    (status, "claude-light.json" in copy["apps"], self.light(copy)),
+                    (0, *expected))
+
     def test_a_save_over_a_built_in_theme_leaves_its_curated_values_behind(self):
         """`compose_theme_files` is a union, so a save under a built-in theme's own
         name writes the user layer while the built-in layer keeps supplying the
