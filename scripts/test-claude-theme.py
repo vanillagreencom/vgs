@@ -14,6 +14,7 @@ import importlib.machinery
 import importlib.util
 import json
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -145,11 +146,20 @@ def temp_home(claude: bool = False, home: Path | None = None):
 
 
 def write_package(home: Path, dir_name: str, colors: str, mode: str = "dark",
-                  adjustments: dict | None = None, apps: dict | None = None) -> Path:
-    """A user theme package on disk under `home`, for the loader to read back."""
+                  adjustments: dict | None = None, apps: dict | None = None,
+                  record_palette: bool = True) -> Path:
+    """A user theme package on disk under `home`, for the loader to read back.
+
+    The `curatedPalette` digest is recorded the way every writer that authors or
+    copies a merge-style curated file records it. `record_palette=False` writes
+    the package a legacy writer left, which recorded nothing.
+    """
     root = home / ".config" / "vshell" / "themes" / dir_name
     (root / "apps").mkdir(parents=True, exist_ok=True)
     meta = {"name": dir_name, "mode": mode, "pair": "", "source": "curated"}
+    if record_palette:
+        meta["curatedPalette"] = helper.palette_digest(
+            dict(helper.parse_colors_toml_text(colors), mode=mode))
     if adjustments:
         meta["adjustments"] = adjustments
     (root / "theme.json").write_text(json.dumps(meta))
@@ -157,6 +167,49 @@ def write_package(home: Path, dir_name: str, colors: str, mode: str = "dark",
     for filename, content in (apps or {}).items():
         (root / "apps" / filename).write_text(content)
     return root
+
+
+@contextlib.contextmanager
+def installed_layout(*builtin: str):
+    """A HOME plus a built-in themes directory holding only `builtin`.
+
+    `packaging/install-system.sh` copies bauhaus, roseofdune and targets and
+    nothing else, so on a packaged install every other theme, the six this
+    branch curates included, exists only as a catalog download under HOME. A
+    fixture that leaves `builtin_themes_dir` pointed at this checkout tests the
+    one shape a real install never has, which is how a guard that could not fire
+    in production passed a suite of fifty cases.
+    """
+    root = Path(tempfile.mkdtemp())
+    for name in ("targets", *builtin):
+        shutil.copytree(REPO / "themes" / name, root / name)
+    original = helper.builtin_themes_dir
+    helper.builtin_themes_dir = lambda: root
+    try:
+        with temp_home() as home:
+            helper.ensure_dirs()
+            yield home
+    finally:
+        helper.builtin_themes_dir = original
+
+
+def download_package(name: str) -> Path:
+    """A catalogued theme published into HOME the way `catalog_download_theme` does.
+
+    The archive's files land in the user directory and the marker records the
+    list, which is what `catalog_owns` and `catalog_pristine` read.
+    """
+    dest = helper.user_themes_dir() / name
+    shutil.copytree(REPO / "themes" / name, dest)
+    (dest / helper.CATALOG_MARKER).write_text(json.dumps({
+        "name": name,
+        "path": str(dest),
+        "release": "themes-v5",
+        "rev": 2,
+        "files": sorted(path.relative_to(dest).as_posix() for path in dest.rglob("*")
+                        if path.is_file() and path.name != helper.CATALOG_MARKER),
+    }, indent=2) + "\n")
+    return dest
 
 
 def restyled(name: str, adjustments: dict) -> dict:
@@ -729,27 +782,6 @@ class RestyledPackages(unittest.TestCase):
         content, _missed = helper.claude_theme_file(self.package({"brightness": 100}), "dark")
         self.assertNotEqual(content["overrides"]["claude"], "#abcdef")
 
-    def test_a_persisted_colour_edit_drops_the_curated_file(self):
-        """A slider is not the only control that replaces the palette a curated
-        file was picked against. `persist_color_edits` writes a user overlay
-        colors.toml over the package's own and reloads with the adjustments still
-        at zero, so a rule reading only the sliders kept the frozen bands over
-        colours the user had just changed. Measured on akane: with the file kept,
-        both curated light bands sit 1.03:1 off the edited background, which is a
-        diff panel whose changed rows cannot be seen, where the generated render
-        misses no rule at all. The replacing file stays, because dropping it would
-        delete the installed artifact and leave nothing in its place.
-        """
-        with temp_home():
-            helper.ensure_dirs()
-            with mock.patch.object(helper, "apply_theme_obj", return_value={}):
-                helper.persist_color_edits(["foreground=#101010"], "akane")
-            edited = helper.load_theme_package("akane")
-        _content, missed = rendered_file(edited, "light")
-        self.assertEqual(
-            ("claude-light.json" in edited["apps"], "icons.theme" in edited["apps"], missed),
-            (False, True, []))
-
     def test_a_saved_restyled_package_carries_what_the_loader_left(self):
         """save_theme_package copies curated files verbatim, so the loader's rule
         is what keeps a mismatch from being baked into a package on disk.
@@ -767,6 +799,87 @@ class RestyledPackages(unittest.TestCase):
         saved = {path.name for path in (root / "apps").iterdir()}
         self.assertEqual((set(blueprint["apps"]) - saved, "claude-dark.json" in saved),
                          (set(), False))
+
+
+class InstalledLayout(unittest.TestCase):
+    """The curated-file rule as a packaged install reaches it.
+
+    Every case here runs with `builtin_themes_dir` holding only what
+    `install-system.sh` copies, because the six curated themes are catalog-only
+    there. The rule is one comparison: the palette about to be rendered against
+    the `curatedPalette` digest the package recorded for the palette its curated
+    values were picked against.
+    """
+
+    def light(self, blueprint: dict) -> list:
+        return rendered_file(blueprint, "light")[1]
+
+    def test_a_pristine_download_keeps_its_curated_file_and_misses_no_rule(self):
+        """The download writes colors.toml into the user directory, so a rule that
+        asked where that file sat read every untouched download as edited and
+        dropped the file that closes akane's light diff bands."""
+        with installed_layout():
+            download_package("akane")
+            blueprint = helper.load_theme_package("akane")
+            self.assertEqual(
+                (blueprint["catalogOwned"], blueprint["catalogPristine"],
+                 "claude-light.json" in blueprint["apps"], self.light(blueprint)),
+                (True, True, True, []))
+
+    def test_a_colour_edit_on_a_download_drops_the_curated_file(self):
+        """No built-in directory exists for a catalog-only theme, so a rule that
+        required one never fired here: the frozen bands stayed over the edited
+        colours and the light theme rendered them 1.03:1 off the background."""
+        with installed_layout():
+            download_package("akane")
+            with mock.patch.object(helper, "apply_theme_obj", return_value={}):
+                helper.persist_color_edits(["foreground=#101010"], "akane")
+            blueprint = helper.load_theme_package("akane")
+            self.assertEqual(
+                ("claude-light.json" in blueprint["apps"], self.light(blueprint)),
+                (False, []))
+
+    def test_a_colour_edit_keeps_the_replacing_file_it_drops_the_merge_style_one(self):
+        """A user package owns its palette outright, so nothing about where its
+        files sit distinguishes it from one that was edited. icons.theme has no
+        template behind it and stays whatever the palette does."""
+        with installed_layout() as home:
+            write_package(home, "probe", RestyledPackages.COLORS, apps=RestyledPackages.APPS)
+            before = helper.load_theme_package("probe")
+            with mock.patch.object(helper, "apply_theme_obj", return_value={}):
+                helper.persist_color_edits(["foreground=#101010"], "probe")
+            after = helper.load_theme_package("probe")
+            self.assertEqual(
+                (sorted(before["apps"]), sorted(after["apps"])),
+                (["claude-dark.json", "icons.theme"], ["icons.theme"]))
+
+    def test_a_saved_copy_answers_the_same_as_the_package_it_came_from(self):
+        """save_theme_package records the digest of the colors.toml it writes, so
+        an untouched copy keeps what its source kept and an edited copy drops it.
+        Without that record a copy says nothing about its own palette and every
+        curated file it carried would have to be dropped on sight."""
+        with installed_layout():
+            download_package("akane")
+            source = helper.load_theme_package("akane")
+            helper.save_theme_package(source, name="akane-copy")
+            copied = helper.load_theme_package("akane-copy")
+            with mock.patch.object(helper, "apply_theme_obj", return_value={}):
+                helper.persist_color_edits(["foreground=#101010"], "akane-copy")
+            edited = helper.load_theme_package("akane-copy")
+            self.assertEqual(
+                ("claude-light.json" in source["apps"], "claude-light.json" in copied["apps"],
+                 self.light(copied), "claude-light.json" in edited["apps"]),
+                (True, True, [], False))
+
+    def test_a_package_recording_no_palette_drops_its_merge_style_file(self):
+        """Nothing on disk says what a legacy package's curated values were picked
+        against. The unreadable-diff-panel cost sits on keeping it and the plainer
+        render on dropping it, so absence reads as a palette that does not match."""
+        with installed_layout() as home:
+            write_package(home, "legacy", RestyledPackages.COLORS,
+                          apps=RestyledPackages.APPS, record_palette=False)
+            self.assertEqual(sorted(helper.load_theme_package("legacy")["apps"]),
+                             ["icons.theme"])
 
 
 class TargetWiring(unittest.TestCase):

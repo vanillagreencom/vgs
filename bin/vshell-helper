@@ -828,8 +828,17 @@ def parse_colors_toml(path: Path, allow_empty: bool = False) -> Dict[str, str]:
     a terminal-colors.toml overlay uses to mean no terminal slots."""
     if not path.exists():
         raise ValueError(f"colors file not found: {path}")
+    return parse_colors_toml_text(path.read_text(errors="ignore"), str(path), allow_empty)
 
-    raw_text = path.read_text(errors="ignore")
+
+def parse_colors_toml_text(raw_text: str, label: str = "colors.toml",
+                           allow_empty: bool = False) -> Dict[str, str]:
+    """The colours a `colors.toml` body holds, for a caller holding the text.
+
+    `parse_colors_toml` reads a file and lands here, so a writer that needs the
+    map of what it is about to write reads it with the same parser the loader
+    will use rather than a second one that could drift from it.
+    """
 
     def flatten(prefix: str, value: Any, out: Dict[str, str]) -> None:
         if isinstance(value, dict):
@@ -866,7 +875,7 @@ def parse_colors_toml(path: Path, allow_empty: bool = False) -> Dict[str, str]:
     normalized = normalize_color_map(out)
     if recognized_color_count(normalized) == 0 and not (allow_empty and toml_error is None):
         detail = f": {toml_error}" if toml_error else ""
-        raise ValueError(f"no recognized colors in {path}{detail}")
+        raise ValueError(f"no recognized colors in {label}{detail}")
     return normalized
 
 
@@ -1332,14 +1341,9 @@ def load_theme_package(name: str) -> Dict[str, Any] | None:
     bp["builtin"] = builtin_dir.is_dir()
     bp["path"] = str(builtin_dir if builtin_dir.is_dir() else user_dir)
     bp["userDir"] = str(user_dir) if user_dir.is_dir() else ""
-    # A user overlay colors.toml replaces the palette the package shipped just as
-    # completely as a slider does, and reaches here with the adjustments still at
-    # zero, so the curated files have to be judged against both.
     bp["apps"] = curated_apps_for_palette(
         {Path(rel).name: str(p) for rel, p in files.items() if rel.startswith("apps/")},
-        adjustments,
-        palette_overlaid=(builtin_dir / "colors.toml").is_file()
-        and files.get("colors.toml") == user_dir / "colors.toml")
+        palette_digest(colors), str(meta.get("curatedPalette") or ""))
     bp["backgrounds"] = [str(p) for _rel, p in backgrounds]
     bp["packagedPreview"] = str(files["preview.png"]) if "preview.png" in files else ""
     bp["adjustments"] = adjustments
@@ -2075,14 +2079,23 @@ def materialize_theme_package(bp: Dict[str, Any], apps: Dict[str, str] | None = 
     name = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(bp.get("name") or "theme")).strip("-") or "theme"
     root = (user_themes_dir() if user else builtin_themes_dir()) / name
     root.mkdir(parents=True, exist_ok=True)
+    mode = blueprint_mode(bp)
+    colors_toml = colors_toml_from_blueprint(bp)
+    # What palette this package's content was built for. Without it a saved copy
+    # records nothing about its own colours, so the loader cannot tell a copy
+    # whose curated files still fit from one whose palette has since moved. The
+    # digest is taken from the file this writes, read back the way the loader
+    # reads it, so a reload of an untouched copy matches rather than nearly
+    # matching.
     meta = {
         "name": bp.get("name") or name,
-        "mode": blueprint_mode(bp),
+        "mode": mode,
         "pair": bp.get("pair") or "",
         "source": blueprint_source(bp),
+        "curatedPalette": palette_digest(dict(parse_colors_toml_text(colors_toml), mode=mode)),
     }
     write_file(root / "theme.json", json.dumps(meta, indent=2) + "\n")
-    write_file(root / "colors.toml", colors_toml_from_blueprint(bp))
+    write_file(root / "colors.toml", colors_toml)
     terminal = bp.get("terminalColors") or {}
     if terminal:
         write_file(root / TERMINAL_COLORS_FILE, "".join(f'{key} = "{value}"\n' for key, value in terminal.items()))
@@ -2624,18 +2637,40 @@ def claude_bands_apart(added: str, removed: str) -> Tuple[bool, float, float]:
 CLAUDE_CURATED_FILES = frozenset(f"claude-{mode}.json" for mode in THEME_MODES)
 
 
-def curated_apps_for_palette(apps: Dict[str, str],
-                             adjustments: Dict[str, int],
-                             palette_overlaid: bool = False) -> Dict[str, str]:
+def palette_digest(colors: Dict[str, str]) -> str:
+    """A palette's identity: one digest over the colours themselves.
+
+    Every control that replaces a palette changes this value, so one comparison
+    answers all of them. Digesting where `colors.toml` sits, or which control
+    last ran, is what needed a new parameter per control and still missed the
+    ones reached by a second route.
+
+    The map, not the file's bytes, is what is hashed, because a restyle slider
+    never rewrites `colors.toml`: it transforms the map after the file is read.
+    """
+    items = sorted((str(key), str(value)) for key, value in colors.items())
+    return hashlib.sha256("\n".join(f"{key}={value}" for key, value in items).encode()).hexdigest()
+
+
+def curated_apps_for_palette(apps: Dict[str, str], effective: str,
+                             picked_against: str) -> Dict[str, str]:
     """A package's curated app files, minus those its palette no longer fits.
 
     The rule: a curated app file is valid only for the palette it was picked
-    against. Two controls replace that palette, and both drop the merge-style
-    files. A restyle slider transforms it, which `adjustments` reports. A
-    persisted colour edit rewrites it: `persist_color_edits` writes a user
-    overlay colors.toml over the package's own and reloads with the adjustments
-    still at zero, which `palette_overlaid` reports. Testing only the slider left
-    the frozen bands merging over colours the user had just changed.
+    against. `picked_against` is the `curatedPalette` digest the package records
+    for that palette, and `effective` is the digest of the palette about to be
+    rendered. They differ whenever any control has replaced it: a restyle slider,
+    a user overlay `colors.toml` over a built-in package, a colour edit persisted
+    in place, a saved copy, or a catalogued download of a theme that also ships
+    built in. Testing the controls one at a time instead needed a parameter per
+    control, went inert on a packaged install where the six curated themes are
+    catalog-only, and dropped the files of pristine downloads that had changed
+    nothing.
+
+    A package recording no digest is treated as a palette that does not match.
+    Nothing on disk says what its curated values were picked against, and the
+    cost of guessing wrong in that direction is a diff panel a user cannot read,
+    against a plainer render in this one.
 
     Adapting the values instead would mean re-deriving the hand-picked ones,
     which is the one thing curated means not doing, and it would hand the
@@ -2654,7 +2689,7 @@ def curated_apps_for_palette(apps: Dict[str, str],
     target such as icons, no template behind it: dropping one would delete the
     installed artifact on the next apply and leave nothing in its place.
     """
-    if adjustments_all_zero(adjustments) and not palette_overlaid:
+    if picked_against and picked_against == effective:
         return apps
     return {name: path for name, path in apps.items() if name not in CLAUDE_CURATED_FILES}
 
