@@ -6581,9 +6581,7 @@ def with_current_terminal_slots(bp: Dict[str, Any]) -> Dict[str, Any]:
     saved package, as `apply-colors --name` without `--save` leaves behind, holds
     its slots there and nowhere else. The saved package under the shell state's
     name answers whenever the applied blueprint carries no slots for the rebuilt
-    mode: a mode round trip, which drops them on the way out, a theme that ships
-    no terminal-colors.toml, and a theme-current.json that is missing or
-    unreadable all reach it. Because the applied blueprint wins, a package whose
+    mode. Because the applied blueprint wins, a package whose
     terminal-colors.toml is edited on disk reaches a rebuild only after the theme
     is applied again. Mutate and return bp.
     """
