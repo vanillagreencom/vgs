@@ -19,6 +19,7 @@ CHECK="$REPO_ROOT/skills/orch/scripts/review-artifact-check"
 source "$TEST_DIR/lib/waiter-assertions.sh"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
+source "$TEST_DIR/lib/review-artifact-fixture.sh"
 
 DELEG=1750000000
 BEFORE=$((DELEG - 100))
@@ -68,6 +69,10 @@ body() {
     chain_zero) printf '{"verdict":"pass","summary":"mutation: killed 0/0","blockers":[],"suggestions":[],"qa_metadata":{}}' ;;
     item_bad) printf '{"verdict":"pass","blockers":[],"suggestions":[{"title":"t","location":"l","detail":"x","severity":"low"}],"qa_metadata":{}}' ;;
     item_ok) printf '{"verdict":"pass","blockers":[],"suggestions":[{"id":1,"title":"t","location":"l","description":"d","recommendation":"r","priority":3,"estimate":2,"category":"issue","impact":"nightly importers hit it on every run"}],"qa_metadata":{}}' ;;
+    tree_dirty) printf '{"verdict":"pass","head":"%s","dirty_paths":["src/changed.rs"]}' "$REVIEW_FIXTURE_HEAD" ;;
+    tree_head) printf '{"verdict":"pass","head":"previous-commit","dirty_paths":[]}' ;;
+    tree_nohead) printf '{"verdict":"pass","dirty_paths":[]}' ;;
+    tree_nopaths) printf '{"verdict":"pass","head":"%s"}' "$REVIEW_FIXTURE_HEAD" ;;
     *) echo "body: unknown name $1" >&2; exit 1 ;;
   esac
 }
@@ -83,7 +88,8 @@ stage() {
   local spec="$1" items item file when name mtime
   RUN="$TMP_ROOT/runs/$((++RUN_SEQ))"
   WT="$RUN/wt"
-  mkdir -p "$WT/tmp"
+  mkdir -p "$WT" "$TMP_ROOT/storage/$RUN_SEQ"
+  ln -s "$TMP_ROOT/storage/$RUN_SEQ" "$WT/tmp"
   F="$WT/tmp/review-external-F.json"
   [[ -n "$spec" ]] || return 0
   IFS=';' read -ra items <<<"$spec"
@@ -91,6 +97,7 @@ stage() {
     file="${item%%@*}"; when="${item#*@}"; when="${when%%=*}"; name="${item#*=}"
     [[ "$file" != F ]] || file="review-external-F"
     body "$name" > "$WT/tmp/$file.json"
+    case "$name" in tree_*|notjson) ;; *) review_fixture_stamp "$WT/tmp/$file.json" ;; esac
     case "$when" in
       before) mtime=$BEFORE ;; at) mtime=$DELEG ;; after) mtime=$AFTER ;; later) mtime=$LATER ;; later2) mtime=$LATER2 ;;
       none) continue ;;
@@ -109,6 +116,7 @@ SHIM_PATH=""
 run_check() {
   local args=() a
   for a in "$@"; do a="${a//%W/$WT}"; a="${a//%F/$F}"; a="${a//%D/$DELEG}"; args+=("$a"); done
+  if [[ "${args[0]:-}" == --file ]] && (( ${#args[@]} >= 2 )); then args=(--file "${args[1]}" "$WT" "${args[@]:2}"); fi
   ERR="$RUN/stderr"
   set +e
   OUT=$(PATH="${SHIM_PATH:+$SHIM_PATH:}$PATH" "$CHECK" ${args[@]+"${args[@]}"} 2>"$ERR")
@@ -183,6 +191,11 @@ table() {
 GLOB='%W reviewer-quality %D'
 Q=review-reviewer-quality
 
+for mode in '--file %F' '%W external %D'; do table \
+    "dirty starting tree|F@after=tree_dirty|$mode|rc=1 ok=false reason=moving_tree" \
+    "different starting head|F@after=tree_head|$mode|rc=1 ok=false reason=moving_tree" \
+    "missing starting head|F@after=tree_nohead|$mode|rc=1 ok=false reason=moving_tree" \
+    "missing dirty paths|F@after=tree_nopaths|$mode|rc=1 ok=false reason=moving_tree"; done
 echo "=== glob mode resolves the newest fresh artifact of the agent ==="
 # Another agent's file does not count; an artifact older than the boundary is
 # stale; a fresh one without a verdict is invalid and named; a fresh valid one
@@ -303,7 +316,7 @@ table \
   "a nonexistent worktree||%W/does-not-exist reviewer-quality %D|rc=2 stderr_code=worktree stderr~path:%W/does-not-exist=true" \
   "--file with no path||--file|rc=2 stderr_code=usage stderr~argc:1=true" \
   "--file with a non-numeric boundary|F@none=pass|--file %F not-a-number|rc=2 stderr_code=delegated_at stderr~value:not-a-number=true" \
-  "--file with too many arguments|F@none=pass|--file %F %D extra-arg|rc=2 stderr_code=usage stderr~argc:4=true" \
+  "--file with too many arguments|F@none=pass|--file %F %D extra-arg|rc=2 stderr_code=usage stderr~argc:5=true" \
   "a non-integer --wait|F@none=pass|%W waitrev 0 --wait nope|rc=2 stderr_code=wait stderr~value:nope=true" \
   "the bare three-positional contract still validates|review-waitrev-1@after=qa_ok|%W waitrev 0|rc=0"
 
@@ -314,7 +327,7 @@ echo "=== --wait blocks until an artifact lands or the deadline ==="
 # ending it instantly.
 stage ""
 start_epoch="$(date +%s)"
-( sleep 2; body qa_ok > "$WT/tmp/review-waitrev-20260101-000001.json" ) &
+( sleep 2; body qa_ok > "$WT/tmp/review-waitrev-20260101-000001.json"; review_fixture_stamp "$WT/tmp/review-waitrev-20260101-000001.json" ) &
 writer_pid=$!
 run_check %W waitrev 0 --wait 20 --interval 1
 wait "$writer_pid" 2>/dev/null || true
@@ -325,7 +338,7 @@ run_check %W ghostrev 0 --wait 2 --interval 1
 assert_eq "$(observe "rc=1 reason=missing")" "rc=1 reason=missing" "--wait at the deadline with nothing landed is missing" "$ERR"
 stage "review-cyc-20200101-000000@before=qa_ok"
 now_epoch="$(date +%s)"
-( sleep 2; body qa_ok > "$WT/tmp/review-cyc-20990101-000000.json" ) &
+( sleep 2; body qa_ok > "$WT/tmp/review-cyc-20990101-000000.json"; review_fixture_stamp "$WT/tmp/review-cyc-20990101-000000.json" ) &
 writer_pid=$!
 run_check %W cyc "$now_epoch" --wait 20 --interval 1
 elapsed=$(( $(date +%s) - now_epoch ))

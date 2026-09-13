@@ -21,6 +21,7 @@ CHECK="$REPO_ROOT/skills/orch/scripts/review-artifact-check"
 source "$TEST_DIR/lib/waiter-assertions.sh"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
+source "$TEST_DIR/lib/review-artifact-fixture.sh"
 REAL_JQ="$(command -v jq)"
 
 # body NAME — the artifact bodies the rows stage, by name. Every body passes
@@ -88,7 +89,7 @@ fresh_run() {
 run_check() {
   local args
   case "$2" in
-    file) args=(--file "$F") ;;
+    file) args=(--file "$F" "$WT") ;;
     glob) args=("$WT" r 0) ;;
     wait) args=("$WT" r 0 --wait 3 --interval 1) ;;
     *) echo "run_check: unknown mode $2" >&2; exit 1 ;;
@@ -152,6 +153,7 @@ check_table() {
     [[ -n "$expect" ]] || { printf 'check_table: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
     fresh_run
     body "$name" > "$F"
+    review_fixture_stamp "$F"
     run_check "$which" "$mode"
     assert_eq "$(observe "$expect")" "$expect" "$label" "$ERR"
   done

@@ -86,9 +86,4 @@ docs/handoff/
 /tmp/
 /.kendex-lock.json
 /.cache/
-/docs/handoff/OVERSEER-HANDOFF.md
-/docs/roadmaps/
-/docs/research/
-/docs/plans/
-/docs/reviews/
 # kendex:local-state end
