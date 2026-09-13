@@ -7,7 +7,7 @@
     "baseUrl": "https://github.com/vanillagreencom/vgs/releases/download"
   },
   "count": 81,
-  "totalSize": 1072742652,
+  "totalSize": 1072743773,
   "themes": [
     {
       "name": "akane",
@@ -35,7 +35,7 @@
       "background": "#0e1e36",
       "foreground": "#f4b999",
       "accent": "#9279aa",
-      "size": 41994163,
+      "size": 41994328,
       "files": [
         {
           "path": "apps/btop.theme",
@@ -79,16 +79,16 @@
         },
         {
           "path": "theme.json",
-          "size": 108,
-          "sha256": "c16c3a1c0a173ff629f6f5086c321ed352752e2b2abfaab363f1db093b46a466"
+          "size": 197,
+          "sha256": "e3f94e246633ad59d4bf19f6cbb9df2d273929535f270104627afafbdfa94497"
         }
       ],
       "assets": {
-        "release": "themes-v6",
-        "archive": "vgs-theme-akane-r4.tar.gz",
-        "rev": 4,
-        "size": 41994163,
-        "sha256": "76c8a6f8627ad425f3364a90f7ae62a6eb5bc5fd290a43b116972db1ee66065c"
+        "release": "themes-v12",
+        "archive": "vgs-theme-akane-r5.tar.gz",
+        "rev": 5,
+        "size": 41994328,
+        "sha256": "4f97b2eeba0cd982098df8334bf8ea713e7dffb58a9d6f84598c993322129032"
       }
     },
     {
@@ -338,7 +338,7 @@
       "background": "#1a0d2e",
       "foreground": "#d4a5ff",
       "accent": "#ff6ec7",
-      "size": 10616031,
+      "size": 10616110,
       "files": [
         {
           "path": "apps/btop.theme",
@@ -377,16 +377,16 @@
         },
         {
           "path": "theme.json",
-          "size": 117,
-          "sha256": "8a2abf1603add7f9d010f5c538196c6d9a1bfe9c5ce8a4e34d52f3650c865dda"
+          "size": 206,
+          "sha256": "48571bab2abb430862e6b463e694589142f43935bb6264ffe57900ffee0fe815"
         }
       ],
       "assets": {
-        "release": "themes-v5",
-        "archive": "vgs-theme-archwave-r2.tar.gz",
-        "rev": 2,
-        "size": 10616031,
-        "sha256": "9543e04e73a28a249c6f73416573be9b870c10e89be871c7cd99e46dd8d954dc"
+        "release": "themes-v12",
+        "archive": "vgs-theme-archwave-r3.tar.gz",
+        "rev": 3,
+        "size": 10616110,
+        "sha256": "62777ad83ed6840abd63b35609204dacc251456760b50942d57b6203961f995a"
       }
     },
     {
@@ -1835,7 +1835,7 @@
       "background": "#313132",
       "foreground": "#8dffd5",
       "accent": "#849be3",
-      "size": 12165584,
+      "size": 12165665,
       "files": [
         {
           "path": "apps/btop.theme",
@@ -1874,16 +1874,16 @@
         },
         {
           "path": "theme.json",
-          "size": 117,
-          "sha256": "a37ecef871879bc8277e8b733ed13b303a0ed4f88816d241197bfc496439d664"
+          "size": 206,
+          "sha256": "047de6b96c7136972c1f34d04df94d2aae5593e471212cfb2386e45598726e4a"
         }
       ],
       "assets": {
-        "release": "themes-v5",
-        "archive": "vgs-theme-frankenstein-r2.tar.gz",
-        "rev": 2,
-        "size": 12165584,
-        "sha256": "09173b293ff4c407b388a8846c23a782d6cb39768d070f87a8fadabe37e4133b"
+        "release": "themes-v12",
+        "archive": "vgs-theme-frankenstein-r3.tar.gz",
+        "rev": 3,
+        "size": 12165665,
+        "sha256": "6a49a49e6ff49decfdeec53aae50cf6c0f5b34937ada46d1331662e88d3e2024"
       }
     },
     {
@@ -3347,7 +3347,7 @@
       "background": "#2d2940",
       "foreground": "#6096fd",
       "accent": "#7b79a4",
-      "size": 27140061,
+      "size": 27140251,
       "files": [
         {
           "path": "apps/btop.theme",
@@ -3391,16 +3391,16 @@
         },
         {
           "path": "theme.json",
-          "size": 117,
-          "sha256": "e2207da273b7c74ef9b130b191eaf1760a29d621fe1a5a548225bca2e589f94d"
+          "size": 206,
+          "sha256": "31e226599cece46d84bfdf32151aa92e670899dbb0eaf3c2a9ec5ef0612a1f61"
         }
       ],
       "assets": {
-        "release": "themes-v6",
-        "archive": "vgs-theme-moon-orbit-r2.tar.gz",
-        "rev": 2,
-        "size": 27140061,
-        "sha256": "9d86d09ec8ecc89ec15b3251a215baa890da17bfa3724c13c62b39c181ca2ab7"
+        "release": "themes-v12",
+        "archive": "vgs-theme-moon-orbit-r3.tar.gz",
+        "rev": 3,
+        "size": 27140251,
+        "sha256": "2f2b4140ecf4cc1d66091e92178b08a069db43620deaf06f9bc0e847700d178e"
       }
     },
     {
@@ -3913,7 +3913,7 @@
       "background": "#1c1213",
       "foreground": "#e3a68c",
       "accent": "#684c59",
-      "size": 24704067,
+      "size": 24704222,
       "files": [
         {
           "path": "apps/btop.theme",
@@ -3957,16 +3957,16 @@
         },
         {
           "path": "theme.json",
-          "size": 111,
-          "sha256": "3b1da9ce0f8e77d28953deed595a4cfeab89504f8d15fe5f7722d50432cfa0cb"
+          "size": 200,
+          "sha256": "ae4b38739b26fdbb630f595c0567cc985466afc92d778d8325ff6f1cbd713984"
         }
       ],
       "assets": {
-        "release": "themes-v6",
-        "archive": "vgs-theme-reddcs-r4.tar.gz",
-        "rev": 4,
-        "size": 24704067,
-        "sha256": "db14e81e8ae31f46e65719d517dee677fc49c6714257ef2e7071a791c74417e5"
+        "release": "themes-v12",
+        "archive": "vgs-theme-reddcs-r5.tar.gz",
+        "rev": 5,
+        "size": 24704222,
+        "sha256": "b5c3f3beaaadeaf7c548ddc477e4f7111de409acf50e8ce4bd3261dce87d9bd0"
       }
     },
     {
@@ -5502,7 +5502,7 @@
       "background": "#0a0a14",
       "foreground": "#f793d9",
       "accent": "#f793d9",
-      "size": 6516514,
+      "size": 6516588,
       "files": [
         {
           "path": "apps/btop.theme",
@@ -5541,16 +5541,16 @@
         },
         {
           "path": "theme.json",
-          "size": 116,
-          "sha256": "53efd59e4445082d5ee2870e75e25b8a6d8635391edc5812fc1ac26c4c8bc44f"
+          "size": 205,
+          "sha256": "72caee999113c75b64df57e8f972a742ad171b8930f6ea5ef14bde6dd957f12c"
         }
       ],
       "assets": {
-        "release": "themes-v5",
-        "archive": "vgs-theme-vice-city-r2.tar.gz",
-        "rev": 2,
-        "size": 6516514,
-        "sha256": "cb4d9ef244773d47f3127431a155eeb649e808200d79ee29e97ffca8d0921169"
+        "release": "themes-v12",
+        "archive": "vgs-theme-vice-city-r3.tar.gz",
+        "rev": 3,
+        "size": 6516588,
+        "sha256": "73ad054f12bbf4a7e84d0ef3ac86e2f25b5b4f722edbaf768bdd468fb7f7da22"
       }
     },
     {
