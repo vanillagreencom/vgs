@@ -5490,13 +5490,18 @@ def applied_blueprint() -> Dict[str, Any] | None:
 
 
 def current_theme_obj() -> Dict[str, Any]:
-    """The last applied theme as a full object (palette + curated apps)."""
+    """The last applied theme as a full object (palette + curated apps).
+
+    The package is matched by exact name: an applied name is not something a user
+    typed, and a theme applied under an unsaved name that is part of another
+    package's name must not take that package's curated files or overrides.
+    """
     bp = applied_blueprint()
     if bp is not None:
         # Re-resolve the package so curated apps/ files reflect disk state.
-        pkg = find_theme(str(bp.get("name") or "")) if bp.get("name") else None
+        pkg = find_theme_exact(str(bp.get("name") or ""))
         return pkg if pkg and pkg.get("package") else bp
-    return find_theme(current_theme().get("name", "")) or blueprint_from_current_theme()
+    return find_theme_exact(str(current_theme().get("name") or "")) or blueprint_from_current_theme()
 
 
 def theme_apps_inventory() -> List[Dict[str, Any]]:

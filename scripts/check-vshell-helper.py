@@ -8914,14 +8914,19 @@ def test_save_keeps_app_overrides():
                 # not erase the overrides the package it is saved over holds.
                 ("import-colors over the package", ["import-colors", str(imported), "--name", "mine"],
                  "mine", "kitty.conf", "#ff0000"),
+                # A blueprint with its own package and nothing carried takes that
+                # package's overrides.
+                ("a package saved under a new name",
+                 lambda: helper.save_theme_package(helper.load_theme_package("overfix"), "copy"),
+                 "copy", "kitty.conf", "#ff0000"),
             ]
-            for label, argv, package, filename, colour in steps:
+            for label, step, package, filename, colour in steps:
                 path = helper.user_themes_dir() / package / "apps" / filename
-                if argv:
+                if step:
                     # A file the step leaves alone would pass on what the previous
                     # step wrote.
                     path.unlink(missing_ok=True)
-                    run(argv)
+                    run(step) if isinstance(step, list) else step()
                 assert_equal(helper.theme_app_overrides(package), overrides, f"{label}: saved overrides")
                 if colour not in path.read_text():
                     raise AssertionError(f"{label}: {filename} lacks {colour}")
@@ -8937,9 +8942,16 @@ def test_save_keeps_app_overrides():
             # Applied under an unsaved name that is part of an overridden package's
             # name, the theme has no package, so nothing is carried.
             apply_state("plainfix", applied_name="over")
-            run(["save-current", "--name", "prefixed"])
-            assert_equal(helper.theme_app_overrides("prefixed"), {},
-                         "save-current from an unsaved name takes no other package's overrides")
+            wallpaper = temp_home / "wall.png"
+            wallpaper.write_bytes(b"\x89PNG\r\n\x1a\n")
+            # (command, argv, the package it saves)
+            for label, argv, package in (
+                ("save-current", ["save-current", "--name", "prefixed"], "prefixed"),
+                ("set-wallpaper --save", ["set-wallpaper", str(wallpaper), "--save"], "over"),
+            ):
+                run(argv)
+                assert_equal(helper.theme_app_overrides(package), {},
+                             f"{label} from an unsaved name takes no other package's overrides")
         finally:
             helper.builtin_themes_dir, helper.apply_theme_obj = original_builtin, original_apply
 
