@@ -2487,11 +2487,25 @@ def mode_variant_blueprint(bp: Dict[str, Any], mode: str,
     pair = paired_blueprint(bp, mode, themes)
     if pair:
         return pair
-    variant = blueprint_mode_variant(bp, mode, str((bp.get("palette") or {}).get("wallpaper") or ""))
-    # The transform rebuilds the palette alone, so the package identity that
-    # locates a target's curated files has to be carried across or a counterpart
-    # mode silently loses them. Those files are already the ones the palette fits:
-    # the package loader dropped any it outgrew before this point.
+    return transformed_mode_blueprint(
+        bp, mode, str((bp.get("palette") or {}).get("wallpaper") or ""))
+
+
+def transformed_mode_blueprint(bp: Dict[str, Any], mode: str, wallpaper: str) -> Dict[str, Any]:
+    """`bp` transformed into `mode`, keeping the package it came from.
+
+    The transform rebuilds the palette alone, so the package identity that
+    locates a target's curated files has to be carried across or the variant
+    silently loses them and every target falls back to its generated output.
+    Those files are already the ones the palette fits: the package loader dropped
+    any it outgrew before this point.
+
+    Both callers that skip the pair lookup resolve here: the counterpart mode of
+    an unpaired theme, and `theme mode --transform`, which asks for the lossy
+    variant even where a pair exists. A second copy of the carry would let the
+    two drift, which is how the flag came to answer with no curated files at all.
+    """
+    variant = blueprint_mode_variant(bp, mode, wallpaper)
     for key in ("apps", "package", "path"):
         if bp.get(key):
             variant[key] = bp[key]
@@ -9447,7 +9461,8 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
         cur_name = cur.get("name", "")
         if args.transform:
             base = find_theme(cur_name)
-            bp = blueprint_mode_variant(base, target, cur.get("wallpaper", "")) if base else blueprint_from_current_theme(name=cur_name or "vgs-theme", mode=target)
+            bp = (transformed_mode_blueprint(base, target, cur.get("wallpaper", "")) if base
+                  else blueprint_from_current_theme(name=cur_name or "vgs-theme", mode=target))
             result = apply_theme_obj(bp)
             print(json.dumps(result, indent=2) if args.json else f"Mode set: {target}")
             return 0

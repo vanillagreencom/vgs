@@ -8,6 +8,7 @@ packages are read and nothing touches the user's own Claude Code configuration.
 """
 from __future__ import annotations
 
+import ast
 import importlib.machinery
 import importlib.util
 import json
@@ -365,6 +366,38 @@ class ModeCounterparts(unittest.TestCase):
         self.assertEqual((overridden["overrides"]["claude"],
                           plain["overrides"]["claude"] != "#c71585"),
                          ("#c71585", True))
+
+    def test_the_lossy_transform_keeps_the_package_its_curated_files_live_in(self):
+        """`theme mode --transform` asks for the lossy variant even where a pair
+        exists, so it cannot go through mode_variant_blueprint, which would hand
+        back the pair. Both resolve through transformed_mode_blueprint instead: a
+        second copy of the carry let the flag answer with no curated files, and
+        the six themes then rendered the colliding bands their files replace."""
+        blueprint = helper.find_theme("akane", THEMES)
+        variant = helper.transformed_mode_blueprint(blueprint, "light", "")
+        content, missed = helper.claude_theme_file(variant, "light")
+        curated = json.loads(
+            (REPO / "themes" / "akane" / "apps" / "claude-light.json").read_text())["overrides"]
+        self.assertEqual(
+            (helper.blueprint_mode(variant), variant["apps"], variant["path"],
+             content["overrides"]["diffAdded"], missed),
+            ("light", blueprint["apps"], blueprint["path"], curated["diffAdded"], []))
+
+    def test_the_lossy_variant_has_one_caller_carrying_the_package(self):
+        """The carry lives in transformed_mode_blueprint, so a caller that reaches
+        blueprint_mode_variant itself gets the palette without the package and
+        every curated file goes missing. That is what `theme mode --transform`
+        did. Naming the one permitted caller reddens the next such call wherever
+        it is written, which asserting on the wrapper alone cannot do.
+        """
+        source = ast.parse((REPO / "bin" / "vshell-helper").read_text())
+        callers = {
+            node.name for node in ast.walk(source)
+            if isinstance(node, ast.FunctionDef)
+            and any(isinstance(call.func, ast.Name)
+                    and call.func.id == "blueprint_mode_variant"
+                    for call in ast.walk(node) if isinstance(call, ast.Call))}
+        self.assertEqual(callers, {"transformed_mode_blueprint"})
 
     def test_every_bundled_theme_has_a_counterpart_in_both_modes(self):
         missing = [(name, mode) for name in THEME_NAMES for mode in ("dark", "light")
