@@ -254,6 +254,7 @@ print_cleanup_help() {
   worktree_message help cleanup
   cat <<'EOF'
 Usage: worktree cleanup [--stale] [--ttl-minutes N]
+       worktree cleanup --targets-only [--apply] [--older-than-days N]
 
 Remove worktrees whose branch is already merged into origin/<default>.
 A worktree held by a session guard lease is never collected — not even one
@@ -281,10 +282,79 @@ path, configured symlinks, and branch for manual recovery. If branch deletion
 fails after worktree removal, cleanup also exits nonzero and names the
 remaining branch.
 
+--targets-only reclaims build output instead of removing worktrees. It keeps
+every worktree, branch, and tracked and untracked source file, and never
+fetches origin or proves a branch merged: build output is written by a compiler
+or a package manager, so uncommitted work in a worktree is no reason to leave
+its output in place. It previews by default and deletes only with --apply,
+reporting bytes per output path and naming a reason for every path it keeps.
+
+It recognizes Cargo (target/, one prunable unit per profile directory holding a
+.cargo-lock, which is held while that unit is pruned and is the one file left
+behind) and JavaScript (node_modules/ and .next/ beside a package.json and a
+package manager's lock file, each removed whole).
+
+Neither the marker nor the lock file has to sit at the worktree root. Each
+directory carrying a marker is its own root, and a lock file in any enclosing
+directory identifies it, so a workspace that writes its lock once at the root
+has every package under it reclaimed. A manifest with no lock file above it
+anywhere is still refused. The walk that finds these roots descends into neither
+build output nor any dot-prefixed directory, .git among them, follows no symlink
+out of the worktree, and stops at any directory holding a .git entry of its own.
+A submodule or nested checkout is therefore reported and left alone: this
+repository's index tracks it as a gitlink and knows nothing of the files in it,
+so its committed source would read as untracked. A project hidden under a dotted
+directory is left alone for the same reason. Either reclaims less and deletes
+nothing. A repository matching no layout is a reported no-op, not an error.
+
+What the live-build refusal is worth depends on whether the output has a lock.
+A Cargo profile is pruned under its own .cargo-lock, held from before the check
+until after the delete, so a build cannot start in it meanwhile. An output with
+no lock file -- node_modules, .next -- has nothing to hold: its refusal is a
+point-in-time scan of running processes, taken once during inspection and again
+immediately before the delete. That narrows the window to the gap between the
+second scan and the first unlink. It does not close it, and nothing can while no
+observable lock exists: a package manager that starts inside that gap, or during
+a multi-second recursive delete, is not seen. Run --apply when no install is
+expected, or leave the worktree claimed, which refuses it outright.
+
+A delete that fails partway names its unit in a prune-failed record and stops
+the sweep there; the units already pruned keep their records.
+
+Reported bytes are what the sweep would actually free. A hardlinked file counts
+only once every link to it is inside what this sweep prunes, so a pnpm
+node_modules linked from a global store reports the space its removal returns
+rather than the size of the tree.
+
+It keeps an output path, naming the reason, when the path is a symlink, is not
+a directory, resolves outside the worktree, or has tracked content under it;
+when a Cargo target/ holds no profile lock for it to take; when a unit's name,
+or the name of the package root holding it, carries a control byte the report
+cannot carry, in which case the record names the reason without the path and
+nothing under that root is touched; when the unit was written to
+within the retention window, or changed under the measurement itself;
+when its build lock is held or was replaced while it was being read; when a
+live process holds it; and when the unit is lock-free on a platform with no
+process inspection. It keeps the whole worktree when a session guard lease is
+present or HEAD moves mid-run.
+
+--apply claims each worktree through the session guard for the duration of the
+delete and refuses outright when that guard is unavailable; the preview needs
+no lease because it writes nothing. Only this mode needs python3 and Unix
+advisory file locks, and without either it refuses and deletes nothing.
+An --apply that does not reach its own end, interrupted or killed, leaves its
+lease behind, and the next sweep then refuses that worktree: clear it with
+  worktree-session-guard release <worktree> --force
+since this mode never takes --stale.
+
 Options:
   --stale             Also collect worktrees whose guard lease is past the TTL
                       (an abandoned session). Releases the lease, then removes.
   --ttl-minutes N     Staleness horizon for --stale (default: 720)
+  --targets-only      Prune build output; keep the worktree and its branch.
+  --apply             Delete what the preview listed. --targets-only only.
+  --older-than-days N Keep output written within N days (default: 7).
+                      --targets-only only.
 EOF
 }
 
