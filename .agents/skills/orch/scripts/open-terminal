@@ -37,6 +37,7 @@ ot_message() { # REASON FIELD=VALUE...
     lane-resolution-failed) text='The lanes helper failed to select an account.' ;;
     lane-directory-missing) text='The specified lane directory does not exist.' ;;
     lane-unknown) text='The lane is neither a known alias nor a directory.' ;;
+    lane-refused) text='A lane setting excludes or retires this lane. No window was opened.' ;;
     lane-selected) text='The launch account is selected.' ;;
     harness-unsupported) text='This terminal harness is not supported.' ;;
     directory-missing) text='The working directory does not exist. No window was opened.' ;;
@@ -89,8 +90,11 @@ Options:
                     qualifying account with the fewest launches in flight for
                     --harness; `auto:<h>` picks for harness <h>; a config dir
                     is used literally; any other value is looked up as a lane
-                    alias. Refuses to launch when no lane is under the usage
-                    threshold, rather than launching into a wall. On tmux
+                    alias. A named lane (alias or config dir) that
+                    ORCH_LANE_EXCLUDE or ORCH_LANE_RETIRE covers is refused,
+                    as `lanes check` decides. Refuses to launch when no lane
+                    is under the usage threshold, rather than launching into
+                    a wall. On tmux
                     lanes only: every window launched under a lane records a
                     claim (see `lanes --help`), live while its pane is, and
                     `auto` re-picks before each further item, so a batch
@@ -336,6 +340,19 @@ lane_value_error() {
   fi
   return 1
 }
+# Exits unless lanes clears the lane $1 names. lanes owns the name, alias and
+# retirement matching: its exit 4 is a lane a setting excludes or retires, and
+# any other failure is lanes failing, never reported as a covered lane.
+lane_check() {
+  [[ -x "$LANES_CLI" ]] || { ot_message helper-missing "path=$LANES_CLI" >&2; exit 1; }
+  local rc=0
+  "$LANES_CLI" check "$1" >&2 || rc=$?
+  case "$rc" in
+    0) ;;
+    4) ot_message lane-refused "lane=$LANE" "exit=$rc" >&2; exit 1 ;;
+    *) ot_message lane-resolution-failed "exit=$rc" >&2; exit 1 ;;
+  esac
+}
 pick_auto_lane() { "$LANES_CLI" pick --harness "$LANE_HARNESS" --max-pct "$LANE_MAX_PCT"; }
 if [[ -n "$LANE" ]]; then
   case "$LANE" in
@@ -376,10 +393,16 @@ if [[ -n "$LANE" ]]; then
         [[ -x "$LANES_CLI" ]] || { ot_message helper-missing "path=$LANES_CLI" >&2; exit 1; }
         lane_dir="$("$LANES_CLI" list --json | jq -r --arg a "$LANE" 'map(select(.alias == $a)) | first | .config_dir // empty')"
         if [[ -z "$lane_dir" ]]; then
+          # An excluded lane is absent from `list`, so its name or alias is
+          # refused here, before a same-named cwd directory can stand in for it.
+          lane_check "$LANE"
           lane_dir="$LANE"
           [[ -d "$lane_dir" ]] || { ot_message lane-unknown "lane=$LANE" >&2; exit 1; }
         fi
       fi
+      # Whether a setting excludes or retires the lane is lanes' decision, asked
+      # of the resolved directory so an alias and a path answer alike.
+      lane_check "$lane_dir"
       case "$HARNESS" in
         codex) LANE_ENV="CODEX_HOME=$lane_dir" ;;
         *)     LANE_ENV="CLAUDE_CONFIG_DIR=$lane_dir" ;;
