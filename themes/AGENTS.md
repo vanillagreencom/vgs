@@ -6,4 +6,4 @@ Per-theme app files intentionally share structure. Keep each package independent
 
 A slot whose terminal meaning needs a different colour than the shell's derived roles and pi read goes in the package's `terminal-colors.toml`, never in `colors.toml`.
 
-A derived UI role a package publishes its own tone for goes in the package's `ui-roles.toml`, keyed by the role names `target_roles` emits. An undeclared role is derived from the palette as before.
+A curated package that publishes its own tone for a derived UI role states it in the package's `ui-roles.toml`. `DECLARABLE_UI_ROLES` in `bin/vshell-helper` is the set of roles it may name, not every role `target_roles` emits, and a key outside it is refused by name. Only a `source: curated` package is read this way; a generated palette derives every role. An undeclared role is derived from the palette as before.
