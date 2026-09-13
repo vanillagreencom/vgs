@@ -4762,7 +4762,7 @@
       "pair": "",
       "source": "curated",
       "colors": [
-        "#d0d0c8",
+        "#242424",
         "#db0030",
         "#2e3125",
         "#51573b",
@@ -4812,7 +4812,7 @@
         {
           "path": "colors.toml",
           "size": 461,
-          "sha256": "5e843b999f4cfe3ddb3f2aadae4e61c6f4ca7b5a48f5824308487be9b75b8911"
+          "sha256": "e5c8d232f40041a224eb0eb0e4a28223f4eb09e32fab14d09af43539227d73ec"
         },
         {
           "path": "theme.json",
@@ -4821,11 +4821,11 @@
         }
       ],
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-thegreek-r1.tar.gz",
-        "rev": 1,
+        "release": "themes-v3",
+        "archive": "vgs-theme-thegreek-r2.tar.gz",
+        "rev": 2,
         "size": 3973318,
-        "sha256": "beed9df40d1dbb7dd5b4eea6a501172ead3330878eb94bcf9aa297ddb565830b"
+        "sha256": "0bceaee0c3a97e6186ce02de4d0b6f08a100e117dd1819d71e4e8c3fd6c3ecd3"
       }
     },
     {
