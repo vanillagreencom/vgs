@@ -321,7 +321,7 @@ def run_selection_hook(name, roles=None):
     if os.environ.get("HOME") == _HOME_AT_IMPORT:
         raise AssertionError(
             f"{name} would write the real HOME; run selection hooks inside with_temp_home")
-    return helper.run_hook(name, roles or {})
+    return helper.run_hook(name, roles or {}, {})
 
 
 def _render_agent_cli_target(target, blueprint, mode_maps):
@@ -802,26 +802,108 @@ def test_agent_cli_theme_selection_ignores_a_deeper_key_of_the_same_name():
     with_temp_home(check)
 
 
+# Every settings file a theme apply selects a theme in, with the content its
+# writer can parse. One row per writer and caller, so the three file rules below
+# cannot be pinned at a point that does not reach the writer they describe:
+# opencode, gemini and claude reach set_json_config_key, hermes and omp reach
+# set_yaml_config_key, and codex reaches set_codex_tui_theme.
+SELECTION_CONFIGS = (
+    ("opencode-theme-select", ".config/opencode/tui.json", '{"theme": "ansi"}\n'),
+    ("gemini-theme-select", ".gemini/settings.json", '{"ui": {"theme": "ansi"}}\n'),
+    ("claude-theme", ".claude/settings.json", '{"theme": "dark-ansi"}\n'),
+    ("hermes-skin-select", ".hermes/config.yaml", "display:\n  skin: default\n"),
+    ("omp-theme-select", ".omp/agent/config.yml", "theme:\n  dark: titanium\n"),
+    ("codex-theme", ".codex/config.toml", '[tui]\ntheme = "ansi"\n'),
+)
+# The mode a settings file VGS creates must land at, pinned here rather than read
+# from the helper: a constant the helper owns moves with the code it is meant to
+# hold, so widening it would pass its own assertion.
+CREATED_CONFIG_MODE = 0o600
+# A mode no umask yields on a fresh file, and not the created mode, so a writer
+# that always wrote the created default could not pass the row below that keeps an
+# existing file's own mode.
+EXISTING_CONFIG_MODE = 0o640
+
+
+def _selection_wrote(result):
+    """Whether a selection hook reports that it wrote its settings file.
+
+    Three result shapes reach here: the hooks that only set a theme key pass the
+    writer's own `changed` through, the codex hook omits the key when it wrote and
+    sets `unchanged` when it had nothing to do, and the claude hook reports
+    `unchanged` either way. This is the one place that reads any of them.
+    """
+    if "changed" in result:
+        return bool(result["changed"])
+    return bool(result.get("ok")) and not result.get("unchanged")
+
+
+def _selection_home(home, relative):
+    """A home ready for one selection hook, with its settings file absent."""
+    _write_agent_cli_theme_files(home)
+    for directory in (".claude", ".codex"):
+        (home / directory).mkdir(parents=True, exist_ok=True)
+    path = home / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def test_agent_cli_theme_selection_creates_its_config_owner_only():
+    """These files hold provider credentials, and a user may add an API key or a
+    key helper to one VGS brought into existence, so a created file must not start
+    at the process umask."""
+    for hook, relative, _content in SELECTION_CONFIGS:
+        def check(home, hook=hook, relative=relative):
+            path = _selection_home(home, relative)
+            previous = os.umask(0o022)
+            try:
+                assert_equal(_selection_wrote(run_selection_hook(hook)), True, f"{hook} write")
+            finally:
+                os.umask(previous)
+            assert_equal(stat.S_IMODE(path.stat().st_mode), CREATED_CONFIG_MODE,
+                         f"{hook} creates {relative} owner-only")
+
+        with_temp_home(check)
+
+
 def test_agent_cli_theme_selection_keeps_the_settings_file_permissions():
-    """Hermes and oh-my-pi keep provider credentials in the file the theme key
-    lives in, and set it to 0600. A theme apply must not widen that, and a file
-    VGS creates itself must not start at the umask."""
-    def check(home):
-        _write_agent_cli_theme_files(home)
-        (home / ".hermes").mkdir(parents=True, exist_ok=True)
-        secret = home / ".hermes" / "config.yaml"
-        secret.write_text("api_key: sk-test\ndisplay:\n  skin: default\n")
-        os.chmod(secret, 0o600)
-        assert_equal(run_selection_hook("hermes-skin-select").get("changed"), True, "hermes write")
-        assert_equal(stat.S_IMODE(secret.stat().st_mode), 0o600,
-                     "the hermes config keeps its owner-only mode")
+    """A mode the user chose is theirs. A theme apply must neither widen a private
+    config nor narrow one they left readable."""
+    for hook, relative, content in SELECTION_CONFIGS:
+        def check(home, hook=hook, relative=relative, content=content):
+            path = _selection_home(home, relative)
+            path.write_text(content)
+            os.chmod(path, EXISTING_CONFIG_MODE)
+            assert_equal(_selection_wrote(run_selection_hook(hook)), True, f"{hook} write")
+            assert_equal(stat.S_IMODE(path.stat().st_mode), EXISTING_CONFIG_MODE,
+                         f"{hook} keeps the mode of an existing {relative}")
 
-        created = home / ".omp" / "agent" / "config.yml"
-        assert_equal(run_selection_hook("omp-theme-select").get("changed"), True, "omp write")
-        assert_equal(stat.S_IMODE(created.stat().st_mode), helper.CREATED_CONFIG_MODE,
-                     "a config VGS creates starts owner-only")
+        with_temp_home(check)
 
-    with_temp_home(check)
+
+def test_agent_cli_theme_selection_writes_through_a_symlinked_config():
+    """These files are commonly symlinked into a dotfiles checkout, and a user can
+    point several account directories at one of them, as three Claude Code accounts
+    do. write_file replaces the name it is given, so without resolving first the
+    selection would leave a regular file there, strand the other names and take the
+    live config out of the user's version control."""
+    for hook, relative, content in SELECTION_CONFIGS:
+        def check(home, hook=hook, relative=relative, content=content):
+            link = _selection_home(home, relative)
+            shared = home / "dotfiles" / Path(relative).name
+            shared.parent.mkdir(parents=True, exist_ok=True)
+            shared.write_text(content)
+            os.chmod(shared, EXISTING_CONFIG_MODE)
+            link.symlink_to(shared)
+            assert_equal(_selection_wrote(run_selection_hook(hook)), True, f"{hook} write")
+            assert_equal(link.is_symlink(), True, f"{relative} is still a symlink")
+            assert_equal(link.resolve(), shared.resolve(), f"{relative} still points at the target")
+            assert_equal(shared.read_text() != content, True,
+                         f"{hook} wrote the theme into the link target")
+            assert_equal(stat.S_IMODE(shared.stat().st_mode), EXISTING_CONFIG_MODE,
+                         f"{hook} keeps the link target's mode")
+
+        with_temp_home(check)
 
 
 def test_agent_cli_theme_selection_edits_the_omp_config_that_omp_reads():
@@ -938,31 +1020,6 @@ def test_agent_cli_theme_selection_refuses_a_config_shape_it_cannot_edit():
         assert_equal(settings.read_text(), '{"ui": "compact"}\n', "the refused settings are unchanged")
         if "ui" not in str(result.get("error") or ""):
             raise AssertionError(f"the refusal does not name the section: {result.get('error')!r}")
-
-    with_temp_home(check)
-
-
-def test_claude_theme_hook_selects_without_creating_or_widening():
-    """The Claude Code hook now shares the JSON writer. It must still leave an
-    absent settings file absent, keep the file's other keys and its mode, and
-    write nothing on a second apply of the same mode."""
-    def check(home):
-        result = run_selection_hook("claude-theme", {"theme_type": "dark"})
-        assert_equal(result.get("skipped"), True, "no settings file means no selection")
-        if (home / ".claude" / "settings.json").exists():
-            raise AssertionError("the hook created ~/.claude/settings.json")
-
-        settings = home / ".claude" / "settings.json"
-        settings.parent.mkdir(parents=True, exist_ok=True)
-        settings.write_text(json.dumps({"theme": "dark-ansi", "model": "opus"}, indent=2) + "\n")
-        os.chmod(settings, 0o600)
-        assert_equal(run_selection_hook("claude-theme", {"theme_type": "light"}).get("changed"), True,
-                     "a mode change selects the matching preset")
-        assert_equal(json.loads(settings.read_text()),
-                     {"theme": "light-ansi", "model": "opus"}, "the other settings survive")
-        assert_equal(stat.S_IMODE(settings.stat().st_mode), 0o600, "the settings mode is kept")
-        assert_equal(run_selection_hook("claude-theme", {"theme_type": "light"}).get("changed"), False,
-                     "a second apply of the same mode rewrites nothing")
 
     with_temp_home(check)
 
@@ -1830,7 +1887,7 @@ def test_theme_hooks_stay_out_of_the_login_session():
                         patch.object(helper.subprocess, "run", side_effect=trip):
                     for hook in ("ghostty-reload", "hypr-reload", "shell-reload", "tmux-source", "nvim-reload",
                                  "gtk-settings", "icon-theme"):
-                        skipped = helper.run_hook(hook, {"background": "#123456"})
+                        skipped = helper.run_hook(hook, {"background": "#123456"}, {})
                         assert_equal(skipped.get("skipped"), True, f"{hook} reports a skip under a sandbox HOME")
                         assert_equal(skipped.get("reason"), helper.SANDBOX_REFUSAL,
                                      f"{hook} names the refusal rather than an absent app")
@@ -1862,7 +1919,7 @@ def test_theme_hooks_stay_out_of_the_login_session():
                     patch.object(helper.Path, "is_dir", lambda self: self.name == "vgs-probe-icons" or real_is_dir(self)), \
                     patch.object(helper.time, "sleep"):
                 for hook in ("gtk-settings", "icon-theme"):
-                    helper.run_hook(hook, {"theme_type": "dark"})
+                    helper.run_hook(hook, {"theme_type": "dark"}, {})
         interface = ("gsettings", "set", "org.gnome.desktop.interface")
         assert_equal(written, [interface + ("gtk-theme",), interface + ("color-scheme",), interface + ("icon-theme",)],
                      "the settings hooks write gsettings from the login user's own home")
@@ -2043,7 +2100,7 @@ def test_generated_theme_consumer_wiring():
         def fail_foot_hook():
             raise OSError("read-only test config")
         helper.ensure_foot_theme_config = fail_foot_hook
-        failed = helper.run_hook("foot-config", {})
+        failed = helper.run_hook("foot-config", {}, {})
         assert_equal(failed["ok"], False, "consumer hook failure result")
         if "read-only test config" not in failed.get("error", ""):
             raise AssertionError("consumer hook failure must remain observable")
@@ -2104,7 +2161,7 @@ def test_theme_init_applies_only_without_state():
     def init():
         hooks = []
         buffer = io.StringIO()
-        with patch.object(helper, "run_hook", side_effect=lambda hook, roles: hooks.append(hook) or {"hook": hook, "ok": True}), \
+        with patch.object(helper, "run_hook", side_effect=lambda hook, roles, bp: hooks.append(hook) or {"hook": hook, "ok": True}), \
                 contextlib.redirect_stdout(buffer):
             status = helper.cmd_theme(["init", "--json"])
         assert_equal(status, 0, "theme init exit status")
@@ -8252,12 +8309,12 @@ def test_codex_theme_selection_changes_only_the_tui_theme_key():
         config = codex / "config.toml"
         for label, initial, expect_ok, expect_text, expect_error in rows:
             config.write_text(initial)
-            result = helper.run_hook("codex-theme", {})
+            result = helper.run_hook("codex-theme", {}, {})
             assert_equal(result["ok"], expect_ok, label)
             assert_equal(config.read_text(), expect_text, f"file contents: {label}")
             if expect_ok:
                 assert_equal(result["theme"], "vgs", f"selected theme: {label}")
-                assert_equal(helper.run_hook("codex-theme", {}).get("unchanged"), True,
+                assert_equal(helper.run_hook("codex-theme", {}, {}).get("unchanged"), True,
                              f"second apply is a no-op: {label}")
             elif expect_error not in result["error"]:
                 raise AssertionError(
@@ -8265,38 +8322,26 @@ def test_codex_theme_selection_changes_only_the_tui_theme_key():
                     f"{expect_error!r} in {result['error']!r}"
                 )
 
-        # config.toml carries [mcp_servers.*] env values and [model_providers]
-        # http_headers, which hold API keys, so the hook must not widen a
-        # private file to whatever the process umask yields.
-        # 0o640 is a mode no umask produces on a fresh file, so dropping the
-        # mode handling fails this row whatever the caller's umask is.
-        config.write_text('[tui]\ntheme = "ansi"\n')
-        os.chmod(config, 0o640)
-        assert_equal(helper.run_hook("codex-theme", {})["ok"], True, "a private config is themed")
-        assert_equal(oct(config.stat().st_mode & 0o777), oct(0o640), "the file keeps its own mode")
+        # The file's mode and its symlink are SELECTION_CONFIGS' rules, checked
+        # there for every selection writer at once.
 
         # A missing config.toml is written, since Codex reads its theme from no
         # other file.
         config.unlink()
-        assert_equal(helper.run_hook("codex-theme", {})["ok"], True, "a missing config is created")
+        assert_equal(helper.run_hook("codex-theme", {}, {})["ok"], True, "a missing config is created")
         assert_equal(config.read_text(), '[tui]\ntheme = "vgs"\n', "created config holds the table alone")
 
-        # config.toml is commonly a symlink into a dotfiles checkout.
+        # An unwritable config is a warning the apply carries, not an exception
+        # that strands the twenty hooks ordered after this one. The path is the
+        # link target, because the write resolves.
         dotfiles = temp_home / "dotfiles" / "config.toml"
         dotfiles.parent.mkdir()
-        dotfiles.write_text('[tui]\ntheme = "ansi"\n')
         config.unlink()
         config.symlink_to(dotfiles)
-        assert_equal(helper.run_hook("codex-theme", {})["ok"], True, "a symlinked config is followed")
-        assert_equal(config.is_symlink(), True, "the symlink survives the write")
-        assert_equal(dotfiles.read_text(), '[tui]\ntheme = "vgs"\n', "the link target took the theme")
-
-        # An unwritable config is a warning the apply carries, not an exception
-        # that strands the twenty hooks ordered after this one.
         dotfiles.write_text('[tui]\ntheme = "ansi"\n')
         os.chmod(dotfiles.parent, 0o500)
         try:
-            refused = helper.run_hook("codex-theme", {})
+            refused = helper.run_hook("codex-theme", {}, {})
         finally:
             os.chmod(dotfiles.parent, 0o700)
         assert_equal(refused["ok"], False, "an unwritable config fails as a hook result")
@@ -8307,13 +8352,13 @@ def test_codex_theme_selection_changes_only_the_tui_theme_key():
         # A config that is not UTF-8 is read through the same guard.
         config.unlink()
         config.write_bytes(b'[tui]\ntheme = "\xff\xfe"\n')
-        unreadable = helper.run_hook("codex-theme", {})
+        unreadable = helper.run_hook("codex-theme", {}, {})
         assert_equal(unreadable["ok"], False, "a non-UTF-8 config fails as a hook result")
         if "codex config unreadable" not in unreadable["error"]:
             raise AssertionError(f"the read failure must name itself: {unreadable['error']!r}")
 
         shutil.rmtree(codex)
-        skipped = helper.run_hook("codex-theme", {})
+        skipped = helper.run_hook("codex-theme", {}, {})
         assert_equal(skipped["skipped"], True, "no ~/.codex means no Codex to theme")
 
     with_temp_home(run)
@@ -8352,12 +8397,13 @@ def main():
     test_agent_cli_theme_selection_reads_the_users_own_spelling_of_the_value()
     test_agent_cli_theme_selection_adds_an_absent_block_without_reflowing_the_file()
     test_agent_cli_theme_selection_ignores_a_deeper_key_of_the_same_name()
+    test_agent_cli_theme_selection_creates_its_config_owner_only()
     test_agent_cli_theme_selection_keeps_the_settings_file_permissions()
+    test_agent_cli_theme_selection_writes_through_a_symlinked_config()
     test_agent_cli_theme_selection_edits_the_omp_config_that_omp_reads()
     test_agent_cli_theme_selection_waits_for_the_opencode_migration()
     test_agent_cli_theme_selection_acts_only_on_a_rendered_theme()
     test_agent_cli_theme_selection_refuses_a_config_shape_it_cannot_edit()
-    test_claude_theme_hook_selects_without_creating_or_widening()
     test_restyle_integer_sweeps()
     test_fastfetch_portable_seed_and_logo_fallback()
     test_compositor_dependency_selection()
