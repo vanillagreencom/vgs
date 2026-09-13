@@ -1586,10 +1586,10 @@ def catalog_marker(name: str) -> Dict[str, Any]:
 def catalog_owns(name: str) -> bool:
     """Whether this exact directory is one the catalog downloaded.
 
-    The marker lives inside the theme package, and `theme duplicate` copies a
-    package wholesale — so a copy inherits the marker. Ownership therefore has to
-    be identity, not presence: the marker must name this directory, which the
-    copy's inherited marker never does.
+    The marker lives inside the theme package. A copy made by `theme duplicate`
+    carries no marker, but a package copied by hand or by an older duplicate can.
+    Ownership therefore has to be identity, not presence: the marker must name
+    this directory, which a copied marker never does.
     """
     dest = user_themes_dir() / name
     marker = catalog_marker(name)
@@ -1863,8 +1863,9 @@ def catalog_remove_theme(name: str) -> Dict[str, Any]:
     """Remove a downloaded theme. Never touches built-ins or hand-made user themes."""
     clean = _catalog_check_name(name)
     dest = user_themes_dir() / clean
-    # A duplicate inherits the download marker. Check the directory identity
-    # before removal so a user copy does not count as a catalog download.
+    # A package copied by hand or by an older duplicate can carry a download
+    # marker. Check the directory identity before removal so a user copy does
+    # not count as a catalog download.
     if not catalog_owns(clean):
         if catalog_marker(clean):
             raise ValueError(f"{clean} is a copy of a downloaded theme, not one the catalog installed")
