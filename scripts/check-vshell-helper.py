@@ -8931,6 +8931,17 @@ def test_save_keeps_app_overrides():
                 if colour not in path.read_text():
                     raise AssertionError(f"{label}: {filename} lacks {colour}")
 
+            # Overrides were chosen against the applied background, so a rebuild
+            # into the other mode carries none.
+            run(["apply-colors", "--name", "lightcopy", "--mode", "light", "--set", "accent=#123456", "--save"])
+            lightcopy = helper.user_themes_dir() / "lightcopy"
+            assert_equal(helper.blueprint_mode(helper.load_theme_package("lightcopy")), "light",
+                         "apply-colors --mode light saves a light rebuild")
+            assert_equal((lightcopy / "app-colors.toml").exists(), False,
+                         "a rebuild into the other mode carries no overrides")
+            if "#ff0000" in (lightcopy / "apps" / "kitty.conf").read_text():
+                raise AssertionError("a rebuild into the other mode still renders #ff0000")
+
             # Saved from a theme with no overrides, the package keeps none.
             apply_state("plainfix")
             run(["save-current", "--name", "mine"])
