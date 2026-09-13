@@ -7,7 +7,7 @@
     "baseUrl": "https://github.com/vanillagreencom/vgs/releases/download"
   },
   "count": 81,
-  "totalSize": 1072742478,
+  "totalSize": 1072742652,
   "themes": [
     {
       "name": "akane",
@@ -2317,7 +2317,7 @@
         "#ee64ac",
         "#59e1e3",
         "#bbbbbb",
-        "#585a83",
+        "#63668d",
         "#ec6a88",
         "#3fdaa4",
         "#fbc3a7",
@@ -2329,12 +2329,12 @@
       "background": "#1c1e26",
       "foreground": "#d5d8da",
       "accent": "#e95678",
-      "size": 11151612,
+      "size": 11151771,
       "files": [
         {
           "path": "apps/btop.theme",
           "size": 2075,
-          "sha256": "26ec01a9bd7bffd26c4f8d7da9eedeaca515c6e3709d84472fcb4866454b29be"
+          "sha256": "177a7f6b2900973b9834dcd9742f228c4922a0659c362db1e8e392282df99137"
         },
         {
           "path": "apps/icons.theme",
@@ -2344,7 +2344,12 @@
         {
           "path": "colors.toml",
           "size": 460,
-          "sha256": "b9349b27583f5fa2b6c54464a7dcc73de78b2c0885253ebe5d03c487ab74586a"
+          "sha256": "67c079fe71a31d996af18f43ea22f849b9f1728a5fb9b7a5a34b1aea4167bcad"
+        },
+        {
+          "path": "terminal-colors.toml",
+          "size": 110,
+          "sha256": "be27253c5d22da42deb73b8ef5bec57c7720c157dd861f494550d3a7c99d4dd1"
         },
         {
           "path": "theme.json",
@@ -2353,11 +2358,11 @@
         }
       ],
       "assets": {
-        "release": "themes-v7",
-        "archive": "vgs-theme-horizon-r2.tar.gz",
-        "rev": 2,
-        "size": 11151612,
-        "sha256": "838aa7097330e1cc2ee05803ff4b31fb86a46623ee717694846638b8dfa5396b"
+        "release": "themes-v11",
+        "archive": "vgs-theme-horizon-r4.tar.gz",
+        "rev": 4,
+        "size": 11151771,
+        "sha256": "1412242a615dd62da9bbdab7b825c68c8ec918eccc5eda8821b6bf4e3873ca4c"
       }
     },
     {
@@ -2381,12 +2386,12 @@
         "#8a31b9",
         "#c33c5f",
         "#127b7b",
-        "#fdf0ed"
+        "#978986"
       ],
       "background": "#fdf0ed",
       "foreground": "#333333",
       "accent": "#da103f",
-      "size": 9815015,
+      "size": 9815030,
       "files": [
         {
           "path": "apps/btop.theme",
@@ -2401,12 +2406,12 @@
         {
           "path": "colors.toml",
           "size": 460,
-          "sha256": "985d07f0ef0181ccf931735526ae453dc507e24c14704d7c79854b9d2562b039"
+          "sha256": "39ef5a73df846462b29bf87d01af2c2fdf5a52d9f85801b9382c97d898c4ecfc"
         },
         {
           "path": "terminal-colors.toml",
-          "size": 116,
-          "sha256": "ac7e21f4236a7ce5d4df34f263dd17d0acf5b925ef4a51a69d9e84887836eaee"
+          "size": 136,
+          "sha256": "994088e5180189f297e7235b3f75f6504ae066be3fbd75f888d53f655fe1589a"
         },
         {
           "path": "theme.json",
@@ -2415,11 +2420,11 @@
         }
       ],
       "assets": {
-        "release": "themes-v9",
-        "archive": "vgs-theme-horizon-light-r4.tar.gz",
-        "rev": 4,
-        "size": 9815015,
-        "sha256": "7fdc1b2070c431ce81138d851b37b512918f3283f3096bf581e6711657ac7c46"
+        "release": "themes-v11",
+        "archive": "vgs-theme-horizon-light-r6.tar.gz",
+        "rev": 6,
+        "size": 9815030,
+        "sha256": "01e2a56a4d814b0ec0925892899160dadffed1badce6c7247ac426847bdee930"
       }
     },
     {
