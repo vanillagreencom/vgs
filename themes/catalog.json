@@ -48,6 +48,11 @@
           "sha256": "e8e4b79e0a4b70a294c2d06731071e58b6fca4973c4c5ccf0cbc3191467a44f5"
         },
         {
+          "path": "apps/claude-light.json",
+          "size": 218,
+          "sha256": "3924bb19af7627c76329007137333793fc459ea57089b94a4eadfb0bbde1059f"
+        },
+        {
           "path": "apps/icons.theme",
           "size": 13,
           "sha256": "328fd2519268a09cbcb45b3e8393f6abcc1739b9816bdc87bd4761d9d240f026"
@@ -333,7 +338,7 @@
       "background": "#1a0d2e",
       "foreground": "#d4a5ff",
       "accent": "#ff6ec7",
-      "size": 10615920,
+      "size": 10616031,
       "files": [
         {
           "path": "apps/btop.theme",
@@ -344,6 +349,11 @@
           "path": "apps/chromium.theme",
           "size": 9,
           "sha256": "cdd0d5f2633861b8b555a6f2825452de5e0c960bfc58819330bc887223a2ebfb"
+        },
+        {
+          "path": "apps/claude-light.json",
+          "size": 218,
+          "sha256": "c33772fe4dd05c293268eb33135816583206e02c913292de5493efe67f04c631"
         },
         {
           "path": "apps/icons.theme",
@@ -372,11 +382,11 @@
         }
       ],
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-archwave-r1.tar.gz",
-        "rev": 1,
-        "size": 10615920,
-        "sha256": "2362a30c2aed344b3e3f411816cacb6ff902a30c4d1908b3f8e61dca08afa0ac"
+        "release": "themes-v5",
+        "archive": "vgs-theme-archwave-r2.tar.gz",
+        "rev": 2,
+        "size": 10616031,
+        "sha256": "9543e04e73a28a249c6f73416573be9b870c10e89be871c7cd99e46dd8d954dc"
       }
     },
     {
@@ -1825,7 +1835,7 @@
       "background": "#313132",
       "foreground": "#8dffd5",
       "accent": "#849be3",
-      "size": 12165453,
+      "size": 12165584,
       "files": [
         {
           "path": "apps/btop.theme",
@@ -1836,6 +1846,11 @@
           "path": "apps/chromium.theme",
           "size": 9,
           "sha256": "8c2ad9de3b78c06a38b32ae134cd3ec8cf6accb3f562211b930e5b2f3a873af9"
+        },
+        {
+          "path": "apps/claude-light.json",
+          "size": 218,
+          "sha256": "597ed6a2457579764f59021be1bfe1b5973ac6af468f409aacea4c5083bc36c4"
         },
         {
           "path": "apps/icons.theme",
@@ -1864,11 +1879,11 @@
         }
       ],
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-frankenstein-r1.tar.gz",
-        "rev": 1,
-        "size": 12165453,
-        "sha256": "5ed96f4197049d7c67114dbcbe2d07420e5479625adeceb6f9ea69485a912193"
+        "release": "themes-v5",
+        "archive": "vgs-theme-frankenstein-r2.tar.gz",
+        "rev": 2,
+        "size": 12165584,
+        "sha256": "09173b293ff4c407b388a8846c23a782d6cb39768d070f87a8fadabe37e4133b"
       }
     },
     {
@@ -3345,6 +3360,11 @@
           "sha256": "220934e34a3065d4294064061bb0e170a6c6534194e2a7377a0c9c17c73f0fc6"
         },
         {
+          "path": "apps/claude-light.json",
+          "size": 218,
+          "sha256": "eabaa0fdd7cf886448231bb4eaa4f1cdb050662d4978a199ac5891b7d68d0f80"
+        },
+        {
           "path": "apps/icons.theme",
           "size": 12,
           "sha256": "fabce71aa1d6dff7a151d3ac1ce842c22ee11399e0279b311f97cfcfca30f7ad"
@@ -3904,6 +3924,11 @@
           "path": "apps/chromium.theme",
           "size": 9,
           "sha256": "e77d53ae94f938084727bfff67523627173ec0c70b712f4057cc281607b9bbd0"
+        },
+        {
+          "path": "apps/claude-light.json",
+          "size": 218,
+          "sha256": "93e2c13d7d26b5489f1f78d4f038c822c3e31f84ba33651ced675c75ad0b2705"
         },
         {
           "path": "apps/icons.theme",
@@ -5477,7 +5502,7 @@
       "background": "#0a0a14",
       "foreground": "#f793d9",
       "accent": "#f793d9",
-      "size": 6516379,
+      "size": 6516514,
       "files": [
         {
           "path": "apps/btop.theme",
@@ -5488,6 +5513,11 @@
           "path": "apps/chromium.theme",
           "size": 9,
           "sha256": "e8e4b79e0a4b70a294c2d06731071e58b6fca4973c4c5ccf0cbc3191467a44f5"
+        },
+        {
+          "path": "apps/claude-light.json",
+          "size": 218,
+          "sha256": "75d42e9358af0e1d9447fa15f83746f193ec9a4912cc73f038b7f1c56e83c2a2"
         },
         {
           "path": "apps/icons.theme",
@@ -5516,11 +5546,11 @@
         }
       ],
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-vice-city-r1.tar.gz",
-        "rev": 1,
-        "size": 6516379,
-        "sha256": "499dec0ba45785671aacb2b657e41637afa104175b4b08f47043bd0ca1818b7c"
+        "release": "themes-v5",
+        "archive": "vgs-theme-vice-city-r2.tar.gz",
+        "rev": 2,
+        "size": 6516514,
+        "sha256": "cb4d9ef244773d47f3127431a155eeb649e808200d79ee29e97ffca8d0921169"
       }
     },
     {
