@@ -9005,6 +9005,110 @@ def test_wallpaper_and_save_keep_terminal_slots():
     with_temp_home(scenario)
 
 
+# Every colour jolaleye/horizon-theme-vscode v2.0.2 publishes in its
+# `src/dark/globals.json` and `src/bright/globals.json` (syntax, ui and ansi).
+HORIZON_UPSTREAM_COLOURS = {
+    "horizon": frozenset({
+        "#06060c", "#09f7a0", "#16161c", "#1a1c23", "#1c1e26", "#21bfc2", "#232530", "#25b0bc",
+        "#26bbd9", "#27d797", "#29d398", "#2e303e", "#3fc4de", "#3fdaa4", "#59e1e3", "#6be4e6",
+        "#6c6f93", "#b877db", "#bbbbbb", "#d5d8da", "#e9436d", "#e95378", "#e95678", "#ec6a88",
+        "#ee64ac", "#f075b5", "#f09483", "#f43e5c", "#fab38e", "#fab795", "#fac29a", "#fbc3a7",
+    }),
+    "horizon-light": frozenset({
+        "#06060c", "#07da8c", "#16161c", "#1a1c23", "#1d8991", "#1eaeae", "#1eb980", "#26bbd9",
+        "#29d398", "#333333", "#3fc4de", "#3fdaa4", "#59e1e3", "#6be4e6", "#8a31b9", "#af5427",
+        "#d5d8da", "#da103f", "#dc3318", "#e73665", "#e84a72", "#e95678", "#ec6a88", "#ee64ac",
+        "#f075b5", "#f43e5c", "#f6661e", "#f77d26", "#f9cbbe", "#f9cec3", "#fab795", "#fadad1",
+        "#fbc3a7", "#fdf0ed",
+    }),
+}
+# sha256 of the canonical JSON of `{"colors", "tokenColors"}` parsed from the
+# upstream `themes/horizon.json` and `themes/horizon-bright.json` at v2.0.2.
+HORIZON_UPSTREAM_THEME_DIGESTS = {
+    "horizon": "962976b0824665f13b53a8928000b6607f407db376e7e3d1f495d18be827a8e8",
+    "horizon-light": "4f5d3eb25fe3e11bfcfd51df90958bb3a2a3fbc60b95896e88e6b321b7ecff01",
+}
+# The package files whose colours VGS picks. The VS Code file is copied verbatim,
+# so it is held to the upstream digest instead; upstream Horizon Bright also
+# writes `#000000b3` there, which is not in its globals.
+HORIZON_PICKED_FILES = ("colors.toml", "terminal-colors.toml", "ui-roles.toml", "apps/btop.theme")
+
+
+def horizon_package_colours(package: Path) -> list[tuple[str, str]]:
+    """Every `#` colour literal in a Horizon package's picked files, as (file, value).
+
+    An eight-digit or other non-six-digit literal comes back whole, so it is
+    never read as an upstream colour it merely starts with.
+    """
+    found = []
+    for relpath in HORIZON_PICKED_FILES:
+        path = package / relpath
+        if not path.is_file():
+            raise AssertionError(f"{package.name} ships no {relpath}")
+        for value in re.findall(r"#[0-9A-Fa-f]+\b", path.read_text()):
+            found.append((relpath, value.lower()))
+    return found
+
+
+def horizon_invented_colours(package: Path, allowed: frozenset) -> list[str]:
+    """Every picked colour in `package` that upstream never published, as sorted `file value`."""
+    return sorted({f"{relpath} {value}" for relpath, value in horizon_package_colours(package)
+                   if value not in allowed})
+
+
+def horizon_theme_digest(path: Path) -> str:
+    data = json.loads(path.read_text())
+    canonical = json.dumps({"colors": data["colors"], "tokenColors": data["tokenColors"]},
+                           sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def test_horizon_packages_use_only_upstream_colours():
+    """Both Horizon packages carry the vendor's own values and nothing VGS invented.
+
+    Every colour VGS picks for them is a member of the upstream globals, and the
+    curated VS Code file's `colors` and `tokenColors` are upstream's exactly. Each
+    check also runs on a copy with one planted defect, which it must name."""
+    for name, allowed in HORIZON_UPSTREAM_COLOURS.items():
+        package = helper.builtin_themes_dir() / name
+        colours = horizon_package_colours(package)
+        if not any(relpath == "ui-roles.toml" for relpath, _value in colours):
+            raise AssertionError(f"{name}: the colour extractor read no ui-roles.toml value; it is broken")
+        if ("colors.toml", helper.parse_colors_toml(package / "colors.toml")["accent"]) not in colours:
+            raise AssertionError(f"{name}: the colour extractor missed the accent; it is broken")
+        assert_equal(horizon_invented_colours(package, allowed), [],
+                     f"{name}: every picked colour is an upstream Horizon colour")
+        theme_file = package / "apps" / "vscode-theme.json"
+        assert_equal(horizon_theme_digest(theme_file), HORIZON_UPSTREAM_THEME_DIGESTS[name],
+                     f"{name}: the VS Code theme's colors and tokenColors are upstream's")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            planted = Path(tmp) / name
+            shutil.copytree(package, planted)
+            # (file, planted line, what the check must report): a colour upstream
+            # never published, and an upstream colour carrying an alpha channel.
+            rows = [
+                ("colors.toml", 'color4 = "#18849a"\n', ["colors.toml #18849a"]),
+                ("terminal-colors.toml", 'color8 = "#63668d"\n', ["terminal-colors.toml #63668d"]),
+                ("ui-roles.toml", 'muted = "#18849a"\n', ["ui-roles.toml #18849a"]),
+                ("apps/btop.theme", 'theme[main_bg]="#2e303eff"\n', ["apps/btop.theme #2e303eff"]),
+            ]
+            for relpath, line, expected in rows:
+                path = planted / relpath
+                original = path.read_text()
+                path.write_text(original + line)
+                assert_equal(horizon_invented_colours(planted, allowed), expected,
+                             f"{name}: a planted {relpath} colour is named")
+                path.write_text(original)
+
+            planted_theme = planted / "apps" / "vscode-theme.json"
+            data = json.loads(planted_theme.read_text())
+            data["tokenColors"][0]["settings"]["foreground"] = "#18849a"
+            planted_theme.write_text(json.dumps(data, indent=4))
+            if horizon_theme_digest(planted_theme) == HORIZON_UPSTREAM_THEME_DIGESTS[name]:
+                raise AssertionError(f"{name}: a changed token colour must move the VS Code theme digest")
+
+
 # A curated package's own UI tones, keyed by the role names `target_roles` emits.
 # The values are Horizon Bright's published surfaces, which is the palette whose
 # flat-grey render this file exists to stop; `muted` is deliberately unreadable
@@ -9899,6 +10003,7 @@ def main():
     test_light_themes_read_in_a_terminal()
     test_dark_themes_read_in_a_terminal()
     test_dark_themes_draw_diffs_in_two_hues()
+    test_horizon_packages_use_only_upstream_colours()
     test_wallpaper_and_save_keep_terminal_slots()
     test_declared_ui_roles_replace_the_derivation_without_a_contrast_rewrite()
     test_declared_ui_roles_move_with_a_restyle_and_survive_a_save()
