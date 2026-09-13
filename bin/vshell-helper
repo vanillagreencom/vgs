@@ -4335,14 +4335,15 @@ CREATED_CONFIG_MODE = 0o600
 
 
 def resolved_config_path(path: Path) -> Path:
-    """Where a settings write must land for `path`.
+    """Where a theme selection must land when it writes `path`.
 
     These files are commonly symlinked into a dotfiles checkout, and a user can
     point several account directories at one of them, as three Claude Code
     accounts do. write_file replaces the name it is given, so writing the link
     itself would leave a regular file in its place, strand the other names and
     take the live config out of the user's version control. Resolving a path
-    whose leaf is not a link changes nothing, so every settings writer resolves.
+    whose leaf is not a link changes nothing, so all three selection writers
+    resolve.
     """
     return path.resolve()
 
