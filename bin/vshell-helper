@@ -823,21 +823,28 @@ def recognized_color_count(data: Dict[str, str]) -> int:
     return len([k for k in normalized if k in COLOR_KEYS and k not in {"theme_type", "mode", "variant", "scheme"}])
 
 
-def parse_colors_toml(path: Path, allow_empty: bool = False) -> Dict[str, str]:
+def parse_colors_toml(path: Path, allow_empty: bool = False,
+                      normalize: bool = True) -> Dict[str, str]:
     """Read a colours file. `allow_empty` accepts a file holding no colours, which
     a terminal-colors.toml overlay uses to mean no terminal slots."""
     if not path.exists():
         raise ValueError(f"colors file not found: {path}")
-    return parse_colors_toml_text(path.read_text(errors="ignore"), str(path), allow_empty)
+    return parse_colors_toml_text(path.read_text(errors="ignore"), str(path), allow_empty, normalize)
 
 
 def parse_colors_toml_text(raw_text: str, label: str = "colors.toml",
-                           allow_empty: bool = False) -> Dict[str, str]:
+                           allow_empty: bool = False, normalize: bool = True) -> Dict[str, str]:
     """The colours a `colors.toml` body holds, for a caller holding the text.
 
     `parse_colors_toml` reads a file and lands here, so a writer that needs the
     map of what it is about to write reads it with the same parser the loader
     will use rather than a second one that could drift from it.
+
+    `normalize` off returns the hex map under the keys the file itself wrote, for
+    a file keyed by role names instead of palette slots: `normalize_color_map`
+    emits only `COLOR_KEYS` and drops every role name there is. One parser
+    either way, so `ui-roles.toml` reads through this TOML pass and this loose
+    matugen-style fallback rather than a second spelling of them.
     """
 
     def flatten(prefix: str, value: Any, out: Dict[str, str]) -> None:
@@ -872,8 +879,9 @@ def parse_colors_toml_text(raw_text: str, label: str = "colors.toml",
                 if sm and sm.group(1).replace("-", "_").lower() in {"theme_type", "mode", "variant", "scheme"}:
                     out[sm.group(1)] = sm.group(2).lower()
 
-    normalized = normalize_color_map(out)
-    if recognized_color_count(normalized) == 0 and not (allow_empty and toml_error is None):
+    normalized = normalize_color_map(out) if normalize else dict(out)
+    recognized = recognized_color_count(normalized) if normalize else len(normalized)
+    if recognized == 0 and not (allow_empty and toml_error is None):
         detail = f": {toml_error}" if toml_error else ""
         raise ValueError(f"no recognized colors in {label}{detail}")
     return normalized
@@ -1286,6 +1294,44 @@ RESERVED_THEME_SUBDIRS = {"blueprints", "targets", "wallpapers", "thumbnails"}
 # that terminal value alone: only the targets that paint an actual terminal read
 # it, and `target_roles` and every app template outside a terminal ignore it.
 TERMINAL_COLORS_FILE = "terminal-colors.toml"
+# A curated theme package's optional declared UI roles. A vendor that publishes
+# its own UI palette states those tones here and `target_roles` writes them
+# instead of blending its background and foreground into a grey the vendor never
+# published. A sibling file rather than a `[roles]` table inside `colors.toml`,
+# whose parser flattens a nested table and would deliver `roles_statusBg`.
+UI_ROLES_FILE = "ui-roles.toml"
+# The roles a package may declare: the derived ones a generated target consumes,
+# and their `on*` companions. Every other role in the map is either the palette's
+# own colour, which `colors.toml` already states, or computed from one of these,
+# so declaring it would state the same tone twice.
+DECLARABLE_UI_ROLES = frozenset({
+    "surface", "surfaceVariant", "surfaceContainerLowest", "surfaceContainerLow",
+    "surfaceContainer", "surfaceContainerHigh", "surfaceContainerHighest",
+    "outline", "outlineVariant", "muted", "dim", "statusBg", "secondary", "tertiary",
+    "primaryContainer", "secondaryContainer", "tertiaryContainer",
+    "onPrimary", "onSecondary", "onTertiary",
+    "onPrimaryContainer", "onSecondaryContainer", "onTertiaryContainer",
+})
+# What the derivation guarantees for a declarable role, as the role it is
+# measured against and the minimum ratio. A declaration replaces the derivation,
+# so these become reporters: `ui_role_shortfalls` names what a declared tone
+# misses and the tone is still written as declared. `statusBg` is not here
+# because its guard asks a different question, whether any text reaches 7:1 on
+# it, and that check lives beside this one in the same reporter.
+UI_ROLE_CONTRAST_RULES = {
+    "surfaceContainerHigh": ("foreground", 4.0),
+    "surfaceContainerHighest": ("foreground", 4.0),
+    "primaryContainer": ("foreground", 4.5),
+    "secondaryContainer": ("foreground", 4.5),
+    "tertiaryContainer": ("foreground", 4.5),
+    "secondary": ("background", 4.5),
+    "tertiary": ("background", 4.5),
+    "outline": ("background", 3.0),
+    "outlineVariant": ("background", 2.2),
+    "muted": ("background", 4.5),
+    "dim": ("background", 4.5),
+}
+STATUS_BG_MIN_TEXT_CONTRAST = 7.0
 
 
 def theme_package_names() -> List[str]:
@@ -1339,7 +1385,7 @@ def load_theme_package(name: str) -> Dict[str, Any] | None:
     # `colors.toml` does not read reports it once.
     raw_colors = package_colors_map(files, name)
     unadjusted_colors = palette_identity(raw_colors, str(meta.get("mode") or ""))
-    colors = package_palette(raw_colors, meta)
+    colors = package_palette(raw_colors, meta, package_ui_roles(files, name))
     bp = palette_from_colors_map(colors, name=str(meta.get("name") or name), wallpaper=wallpaper, source=source)
     builtin_dir = builtin_themes_dir() / name
     user_dir = user_themes_dir() / name
@@ -1365,6 +1411,12 @@ def load_theme_package(name: str) -> Dict[str, Any] | None:
     bp["catalogOwned"] = catalog_owns(name)
     bp["catalogPristine"] = catalog_pristine(name)
     bp["appOverrides"] = {app: len(roles) for app, roles in app_overrides.items()}
+    # Read back out of the identity map rather than moved a second time: a
+    # restyle slider moves declared roles with the palette there, in the map the
+    # curated-file digest is taken over, so the roles the render uses and the
+    # roles that digest covers cannot part.
+    bp["uiRoles"] = {key[len(UI_ROLE_IDENTITY_PREFIX):]: value for key, value in colors.items()
+                     if key.startswith(UI_ROLE_IDENTITY_PREFIX)}
     bp["terminalColors"] = {}
     if TERMINAL_COLORS_FILE in files:
         try:
@@ -1384,6 +1436,8 @@ def load_theme_package(name: str) -> Dict[str, Any] | None:
         stamps.append(files["colors.toml"].stat().st_mtime)
     if TERMINAL_COLORS_FILE in files:
         stamps.append(files[TERMINAL_COLORS_FILE].stat().st_mtime)
+    if UI_ROLES_FILE in files:
+        stamps.append(files[UI_ROLES_FILE].stat().st_mtime)
     bp["timestamp"] = int(max(stamps) * 1000)
     return bp
 
@@ -1404,7 +1458,7 @@ def resolve_theme_package(name: str) -> Dict[str, Any] | None:
 # before unpacking. HTTPS is required except for the test base-URL override.
 # Downloaded files are theme data.
 
-CATALOG_ALLOWED_TOP_LEVEL = {"theme.json", "colors.toml", TERMINAL_COLORS_FILE, "preview.png"}
+CATALOG_ALLOWED_TOP_LEVEL = {"theme.json", "colors.toml", TERMINAL_COLORS_FILE, UI_ROLES_FILE, "preview.png"}
 CATALOG_ALLOWED_DIRS = ("apps/", "backgrounds/")
 CATALOG_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 CATALOG_RELEASE_RE = re.compile(r"^themes-v[0-9]+$")
@@ -2089,7 +2143,34 @@ def package_colors_map(files: Dict[str, Path], name: str) -> Dict[str, str]:
         return {}
 
 
-def package_palette(colors: Dict[str, str], meta: Dict[str, Any]) -> Dict[str, str]:
+def package_ui_roles(files: Dict[str, Path], name: str) -> Dict[str, str]:
+    """The UI roles a theme package declares for itself, or none.
+
+    One owner for the read, so the loader, the save's exemption and `theme
+    duplicate` ask one file one question. Read the way `terminal-colors.toml` is
+    read, `allow_empty` included, because an overlay that declares nothing is how
+    a user package masks the built-in package's declarations.
+
+    A key VGS does not derive is named rather than dropped in silence. The file
+    exists so a vendor's own tone reaches the chrome, and a misspelled role would
+    otherwise be indistinguishable from a package that declared nothing.
+    """
+    if UI_ROLES_FILE not in files:
+        return {}
+    try:
+        declared = parse_colors_toml(files[UI_ROLES_FILE], allow_empty=True, normalize=False)
+    except Exception as exc:
+        eprint(f"theme package {name}: {exc}")
+        return {}
+    unknown = sorted(set(declared) - DECLARABLE_UI_ROLES)
+    if unknown:
+        eprint(f"theme package {name}: {UI_ROLES_FILE} names roles VGS does not derive: "
+               + ", ".join(unknown))
+    return {role: declared[role] for role in sorted(DECLARABLE_UI_ROLES) if role in declared}
+
+
+def package_palette(colors: Dict[str, str], meta: Dict[str, Any],
+                    ui_roles: Dict[str, str] | None = None) -> Dict[str, str]:
     """The palette identity a theme package renders from, over its parsed colours.
 
     One owner for the assembly, because the loader decides which curated files a
@@ -2102,7 +2183,7 @@ def package_palette(colors: Dict[str, str], meta: Dict[str, Any]) -> Dict[str, s
     can pass one `package_colors_map` result here and to its own unadjusted map
     instead of reading `colors.toml` twice.
     """
-    return palette_identity(colors, str(meta.get("mode") or ""), meta.get("adjustments"))
+    return palette_identity(colors, str(meta.get("mode") or ""), meta.get("adjustments"), ui_roles)
 
 
 def package_source(meta: Dict[str, Any]) -> str:
@@ -2197,7 +2278,8 @@ def override_dropped_curated(bp: Dict[str, Any]) -> List[str]:
         meta = json.loads(meta_path.read_text())
     if not isinstance(meta, dict):
         return []
-    palette = package_palette(package_colors_map(files, package), meta)
+    palette = package_palette(package_colors_map(files, package), meta,
+                              package_ui_roles(files, package))
     # `bp` arrived through one rebuild out of `theme.json` already, so the
     # package side is given the one trip the applied side already took. This
     # equalises depth; it does not normalise. Derivation is not idempotent on the
@@ -2232,7 +2314,8 @@ def duplicate_theme_package(package: str, dest: Path, new_name: str) -> None:
     """
     files = compose_theme_files(package)
     meta = json.loads(files["theme.json"].read_text())
-    palette = palette_identity(package_colors_map(files, package), str(meta.get("mode") or ""))
+    palette = palette_identity(package_colors_map(files, package), str(meta.get("mode") or ""),
+                               ui_roles=package_ui_roles(files, package))
     vouched = curated_apps_for_palette(
         {Path(rel).name: str(p) for rel, p in files.items() if rel.startswith("apps/")},
         palette, {}, package_layer_palettes(package))
@@ -2352,6 +2435,7 @@ def materialize_theme_package(bp: Dict[str, Any], apps: Dict[str, str] | None = 
     root.mkdir(parents=True, exist_ok=True)
     mode = blueprint_mode(bp)
     colors_toml = colors_toml_from_blueprint(bp)
+    ui_roles = bp.get("uiRoles") or {}
     # What palette this package's content was built for. Without it a saved copy
     # records nothing about its own colours, so the loader cannot tell a copy
     # whose curated files still fit from one whose palette has since moved. The
@@ -2364,7 +2448,7 @@ def materialize_theme_package(bp: Dict[str, Any], apps: Dict[str, str] | None = 
         "pair": bp.get("pair") or "",
         "source": blueprint_source(bp),
         "curatedPalette": palette_digest(
-            palette_identity(parse_colors_toml_text(colors_toml), mode)),
+            palette_identity(parse_colors_toml_text(colors_toml), mode, ui_roles=ui_roles)),
     }
     write_file(root / "colors.toml", colors_toml)
     terminal = bp.get("terminalColors") or {}
@@ -2378,6 +2462,17 @@ def materialize_theme_package(bp: Dict[str, Any], apps: Dict[str, str] | None = 
         # colors.toml is rewritten on every save, so a stale terminal file would
         # paint the previous theme's slots over this one.
         (root / TERMINAL_COLORS_FILE).unlink(missing_ok=True)
+    # The declared roles follow the same three answers, for the same reasons: the
+    # digest above certifies the roles a curated file merges over, so a file this
+    # save did not write would certify tones it never saw.
+    if ui_roles:
+        write_file(root / UI_ROLES_FILE,
+                   "".join(f'{role} = "{value}"\n' for role, value in sorted(ui_roles.items())))
+    elif user and (builtin_themes_dir() / name / UI_ROLES_FILE).is_file():
+        write_file(root / UI_ROLES_FILE,
+                   "# No declared UI roles: this overlay masks the built-in theme's.\n")
+    else:
+        (root / UI_ROLES_FILE).unlink(missing_ok=True)
     wallpaper = resolve_path(str(bp.get("palette", {}).get("wallpaper") or ""))
     if wallpaper and Path(wallpaper).is_file():
         bg_dir = root / "backgrounds"
@@ -2484,9 +2579,43 @@ def lint_blueprint(bp: Dict[str, Any]) -> List[Dict[str, Any]]:
     return warnings
 
 
+def ui_role_shortfalls(roles: Dict[str, str], declared: Dict[str, str]) -> List[str]:
+    """Contrast rules a package's declared UI roles miss, one line each.
+
+    The derivation enforces these rules; a declaration replaces the derivation,
+    so the guard reports instead of rewriting. Pulling a vendor's own tone toward
+    black or white is the invented grey `ui-roles.toml` exists to stop, and the
+    rule is the one VGS-285 set for a curated Claude Code file: written as
+    declared, every missed rule named on the apply result.
+
+    Judged over the finished role map, so a declared tone is measured against the
+    foreground and background the render actually paints it with.
+    """
+    lines: List[str] = []
+    for role, value in sorted(declared.items()):
+        if role == "statusBg":
+            ratio = max(contrast_ratio("#000000", value), contrast_ratio("#ffffff", value))
+            if ratio < STATUS_BG_MIN_TEXT_CONTRAST:
+                lines.append(f"statusBg {value}: no text reaches "
+                             f"{STATUS_BG_MIN_TEXT_CONTRAST:g}:1 on it ({ratio:.2f}:1)")
+            continue
+        rule = UI_ROLE_CONTRAST_RULES.get(role)
+        if not rule:
+            continue
+        against, minimum = rule
+        ratio = contrast_ratio(value, roles[against])
+        if ratio < minimum:
+            lines.append(f"{role} {value}: {ratio:.2f}:1 against {against} "
+                         f"{roles[against]} (want >= {minimum:g}:1)")
+    return lines
+
+
 def target_roles(bp: Dict[str, Any]) -> Dict[str, str]:
     pal = bp.get("palette", {})
     curated = blueprint_source(bp) == "curated"
+    # A package's own UI tones, for a curated package alone: a generated palette
+    # has no vendor behind it and its roles are the derivation's to own.
+    declared = dict(bp.get("uiRoles") or {}) if curated else {}
     colors = [clean_hex(c, DEFAULT_COLORS[i] if i < len(DEFAULT_COLORS) else "#000000") for i, c in enumerate(pal.get("colors", []))]
     while len(colors) < 16:
         colors.append(DEFAULT_COLORS[len(colors)])
@@ -2604,38 +2733,50 @@ def target_roles(bp: Dict[str, Any]) -> Dict[str, str]:
         "success": "#5bd77a",
         "info": "#60a5fa",
     })
+
+    def declared_or(role: str, computed: str) -> str:
+        """The package's own tone for `role`, else the one just derived.
+
+        The single input `ui-roles.toml` has. The derivation runs either way and
+        the declaration replaces its result, so an undeclared role is derived
+        exactly as before and no second derivation path exists. The roles
+        computed from these read `roles` and so follow a declared tone: a
+        declared `statusBg` gets status text measured against itself.
+        """
+        return declared.get(role) or computed
+
     roles["primary"] = accent
     # Primary/semantic colors are foreground-readable against the base surface,
     # so using that same surface as their companion avoids a black/white
     # readable_on() polarity flip as a slider crosses the midpoint.
-    roles["onPrimary"] = bg
+    roles["onPrimary"] = declared_or("onPrimary", bg)
     roles["error"] = _oklab_contrast_adjust(semantic_bases["error"], bg, 4.5, prefer_text)
     roles["warning"] = _oklab_contrast_adjust(semantic_bases["warning"], bg, 4.5, prefer_text)
     roles["success"] = _oklab_contrast_adjust(semantic_bases["success"], bg, 4.5, prefer_text)
     roles["info"] = _oklab_contrast_adjust(semantic_bases["info"], bg, 4.5, prefer_text)
-    roles["surface"] = bg
-    roles["surfaceVariant"] = surface(0.06)
-    roles["surfaceContainerLowest"] = bg
-    roles["surfaceContainerLow"] = surface(0.035)
-    roles["surfaceContainer"] = surface(0.06)
-    roles["surfaceContainerHigh"] = surface(0.10)
-    roles["surfaceContainerHighest"] = surface(0.15)
+    roles["surface"] = declared_or("surface", bg)
+    roles["surfaceVariant"] = declared_or("surfaceVariant", surface(0.06))
+    roles["surfaceContainerLowest"] = declared_or("surfaceContainerLowest", bg)
+    roles["surfaceContainerLow"] = declared_or("surfaceContainerLow", surface(0.035))
+    roles["surfaceContainer"] = declared_or("surfaceContainer", surface(0.06))
     # Medium-dark backgrounds can lighten far enough that foreground text on the
     # top containers drops below readable contrast (e.g. moon-orbit). Pull the
-    # container back toward the background until foreground reads again.
-    for _ck in ("surfaceContainerHigh", "surfaceContainerHighest"):
-        roles[_ck] = readable_surface(roles[_ck])
-    roles["primaryContainer"] = readable_container(tinted(accent, 0.30))
-    roles["secondaryContainer"] = readable_container(tinted(roles["cyan"], 0.24))
-    roles["tertiaryContainer"] = readable_container(tinted(roles["magenta"], 0.24))
-    roles["secondary"] = _oklab_contrast_adjust(roles["cyan"], bg, 4.5, prefer_text)
-    roles["tertiary"] = _oklab_contrast_adjust(roles["magenta"], bg, 4.5, prefer_text)
-    roles["onSecondary"] = bg
-    roles["onTertiary"] = bg
+    # container back toward the background until foreground reads again. The pull
+    # is part of the derivation, so a declared tone replaces it rather than
+    # passing through it.
+    roles["surfaceContainerHigh"] = declared_or("surfaceContainerHigh", readable_surface(surface(0.10)))
+    roles["surfaceContainerHighest"] = declared_or("surfaceContainerHighest", readable_surface(surface(0.15)))
+    roles["primaryContainer"] = declared_or("primaryContainer", readable_container(tinted(accent, 0.30)))
+    roles["secondaryContainer"] = declared_or("secondaryContainer", readable_container(tinted(roles["cyan"], 0.24)))
+    roles["tertiaryContainer"] = declared_or("tertiaryContainer", readable_container(tinted(roles["magenta"], 0.24)))
+    roles["secondary"] = declared_or("secondary", _oklab_contrast_adjust(roles["cyan"], bg, 4.5, prefer_text))
+    roles["tertiary"] = declared_or("tertiary", _oklab_contrast_adjust(roles["magenta"], bg, 4.5, prefer_text))
+    roles["onSecondary"] = declared_or("onSecondary", bg)
+    roles["onTertiary"] = declared_or("onTertiary", bg)
     roles["onError"] = bg
-    roles["onPrimaryContainer"] = fg
-    roles["onSecondaryContainer"] = fg
-    roles["onTertiaryContainer"] = fg
+    roles["onPrimaryContainer"] = declared_or("onPrimaryContainer", fg)
+    roles["onSecondaryContainer"] = declared_or("onSecondaryContainer", fg)
+    roles["onTertiaryContainer"] = declared_or("onTertiaryContainer", fg)
     roles["inverseSurface"] = fg
     roles["inverseOnSurface"] = bg
     roles["inversePrimary"] = roles["primaryContainer"]
@@ -2646,12 +2787,13 @@ def target_roles(bp: Dict[str, Any]) -> Dict[str, str]:
     roles["errorContainer"] = readable_container(tinted(roles["error"], 0.20))
     roles["infoContainer"] = tinted(roles["info"], 0.20)
     roles["onErrorContainer"] = fg
-    roles["outline"] = ensure_contrast(blend(fg, bg, 0.52), bg, 3.0, prefer_text)
-    roles["outlineVariant"] = ensure_contrast(blend(fg, bg, 0.68), bg, 2.2, prefer_text)
-    roles["muted"] = ensure_contrast(blend(fg, bg, 0.35), bg, 4.5, prefer_text)
-    roles["dim"] = ensure_contrast(blend(fg, bg, 0.50), bg, 4.5, prefer_text)
+    roles["outline"] = declared_or("outline", ensure_contrast(blend(fg, bg, 0.52), bg, 3.0, prefer_text))
+    roles["outlineVariant"] = declared_or("outlineVariant", ensure_contrast(blend(fg, bg, 0.68), bg, 2.2, prefer_text))
+    roles["muted"] = declared_or("muted", ensure_contrast(blend(fg, bg, 0.35), bg, 4.5, prefer_text))
+    roles["dim"] = declared_or("dim", ensure_contrast(blend(fg, bg, 0.50), bg, 4.5, prefer_text))
     status_surface = roles["surfaceContainerHighest"] if dark_mode else ensure_contrast(roles["surfaceContainerHighest"], bg, 1.25, "#000000")
-    roles["statusBg"] = ensure_background_supports_text(status_surface, mode, 7.0)
+    roles["statusBg"] = declared_or(
+        "statusBg", ensure_background_supports_text(status_surface, mode, STATUS_BG_MIN_TEXT_CONTRAST))
     roles["statusFg"] = ensure_contrast(fg, roles["statusBg"], 7.0, prefer_text)
     roles["statusMuted"] = ensure_contrast(roles["muted"], roles["statusBg"], 4.5, prefer_text)
     roles["statusAccent"] = ensure_contrast(accent, roles["statusBg"], 4.5, prefer_text)
@@ -2941,8 +3083,16 @@ CLAUDE_CURATED_FILES = frozenset(f"claude-{mode}.json" for mode in THEME_MODES)
 CLAUDE_CURATED_APP = "claude"
 
 
+# Namespace for the declared UI roles folded into a palette's identity below.
+# Role names and colors.toml keys are separate namespaces that spell some names
+# the same, so a declared `secondary` folded in bare could be read as a palette
+# key of that spelling and leave the digest unmoved.
+UI_ROLE_IDENTITY_PREFIX = "uiRole."
+
+
 def palette_identity(colors: Dict[str, str], mode: str,
-                     adjustments: Dict[str, int] | None = None) -> Dict[str, str]:
+                     adjustments: Dict[str, int] | None = None,
+                     ui_roles: Dict[str, str] | None = None) -> Dict[str, str]:
     """The colour map a palette's identity is taken over.
 
     The one owner of that assembly. The digest is derived rather than stored, so
@@ -2950,8 +3100,17 @@ def palette_identity(colors: Dict[str, str], mode: str,
     that cannot be compared: a package whose `theme.json` carried no valid mode
     would be written with one spelling and read with another, and its curated
     files would be dropped on reload having changed nothing.
+
+    A package's declared UI roles belong in it for the same reason its per-app
+    overrides do: a merge-style curated file's bands are picked against the roles
+    it merges over, and a declaration replaces one of those roles. Folding them
+    in here also gives them the restyle move, in the one place adjustments are
+    applied. Their names sit outside `BASE_COLOR_KEYS`, so the transform is still
+    measured against the palette's own mean lightness rather than moved by them.
     """
     identity = dict(colors)
+    for role, value in (ui_roles or {}).items():
+        identity[f"{UI_ROLE_IDENTITY_PREFIX}{role}"] = value
     if mode in THEME_MODES:
         identity["mode"] = mode
     adjustments = normalize_adjustments(adjustments)
@@ -5791,6 +5950,7 @@ def _apply_theme_obj_unlocked(bp: Dict[str, Any], only_app: str | None = None,
                               run_hooks: bool = True) -> Dict[str, Any]:
     ensure_dirs()
     roles = target_roles(bp)
+    source_is_curated = blueprint_source(bp) == "curated"
     external_roles = app_target_roles(bp, roles)
     curated_apps: Dict[str, str] = bp.get("apps") or {}
     app_overrides = bp_app_overrides(bp)
@@ -5866,6 +6026,15 @@ def _apply_theme_obj_unlocked(bp: Dict[str, Any], only_app: str | None = None,
                 hook_specs.append(hook_value)
     hook_results = [run_hook(hook, roles, bp) for hook in hook_specs] if run_hooks else []
     warnings = []
+    # One line per apply, as the Claude Code hook's own shortfall warning is: the
+    # user needs to know the declared chrome is compromised, not a list of every
+    # role. The tones are already written as declared; this only names them.
+    declared_missed = ui_role_shortfalls(roles, bp.get("uiRoles") or {}) if source_is_curated else []
+    if declared_missed:
+        message = (f"declared UI roles: {len(declared_missed)} rule(s) below target: "
+                   + "; ".join(declared_missed))
+        warnings.append(message)
+        eprint(message)
     for result in hook_results:
         # A hook can degrade one unit of work and fail another, so a warning is
         # read before the verdict rather than inside the passing branch. The apply
@@ -6909,8 +7078,8 @@ def blueprint_from_current_theme(name: str | None = None, mode: str | None = Non
 
 def with_current_terminal_slots(bp: Dict[str, Any]) -> Dict[str, Any]:
     """Give a blueprint rebuilt from the applied theme's colours that theme's
-    terminal slots, and its package's per-app overrides through
-    `with_current_app_overrides`.
+    terminal slots and declared UI roles, and its package's per-app overrides
+    through `with_current_app_overrides`.
 
     Neither the shell's theme.json nor the palette inside theme-current.json
     holds them, so every rebuild from the current theme passes through here. A
@@ -6926,15 +7095,22 @@ def with_current_terminal_slots(bp: Dict[str, Any]) -> Dict[str, Any]:
     is applied again. Mutate and return bp.
     """
     slots: Dict[str, str] = {}
+    declared: Dict[str, str] = {}
     applied = applied_blueprint()
     if applied and blueprint_mode(applied) == blueprint_mode(bp):
         slots = dict(applied.get("terminalColors") or {})
+        declared = dict(applied.get("uiRoles") or {})
     package = applied_theme_package()
     if package and blueprint_mode(package) != blueprint_mode(bp):
         package = None
-    if not slots and package:
-        slots = dict(package.get("terminalColors") or {})
+    if package:
+        slots = slots or dict(package.get("terminalColors") or {})
+        declared = declared or dict(package.get("uiRoles") or {})
     bp["terminalColors"] = slots
+    # Declared roles answer from the same two sources under the same mode rule.
+    # Without the carry a wallpaper change or a saved colour edit rebuilt the
+    # theme without them and the save then deleted the package's own file.
+    bp["uiRoles"] = declared
     return with_current_app_overrides(bp, package)
 
 

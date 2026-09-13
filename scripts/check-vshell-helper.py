@@ -9002,6 +9002,206 @@ def test_wallpaper_and_save_keep_terminal_slots():
     with_temp_home(scenario)
 
 
+# A curated package's own UI tones, keyed by the role names `target_roles` emits.
+# The values are Horizon Bright's published surfaces, which is the palette whose
+# flat-grey render this file exists to stop; `muted` is deliberately unreadable
+# on the background so the reporter has something to name.
+DECLARED_UI_ROLES = {
+    "statusBg": "#fadad1",
+    "surfaceContainerHighest": "#f9cbbe",
+    "muted": "#f9cec3",
+}
+DECLARED_UI_ROLES_TOML = "".join(f'{role} = "{value}"\n'
+                                 for role, value in sorted(DECLARED_UI_ROLES.items()))
+
+
+def declared_roles_package(root: Path, name: str, ui_roles: str = "",
+                           source: str = "curated", mode: str = "light") -> Path:
+    """One theme package on disk, optionally declaring its own UI roles."""
+    package = root / name
+    package.mkdir(parents=True, exist_ok=True)
+    (package / "theme.json").write_text(
+        json.dumps({"name": name, "mode": mode, "source": source}) + "\n")
+    (package / "colors.toml").write_text(
+        'background = "#fafafa"\nforeground = "#101010"\n'
+        + "".join(f'color{index} = "#{index:02x}00{index:02x}"\n' for index in range(16)))
+    if ui_roles:
+        (package / helper.UI_ROLES_FILE).write_text(ui_roles)
+    return package
+
+
+def test_declared_ui_roles_replace_the_derivation_without_a_contrast_rewrite():
+    """A curated package declaring a UI role renders that role's own value.
+
+    Every derived role a target consumes is a blend of the palette's background
+    and foreground pulled toward black or white by the contrast guards, so a
+    vendor that publishes its own UI palette had no way to supply it and its
+    chrome came out a grey the vendor never published. A declaration replaces the
+    derivation for that one role: the guards report the shortfall on the apply
+    result instead of rewriting the tone, roles computed from a declared one
+    follow it, an undeclared role derives exactly as before, and a generated
+    palette, which has no vendor behind it, ignores the file.
+    """
+
+    def scenario(temp_home: Path):
+        builtin = temp_home / "builtin"
+        declared_roles_package(builtin, "plainroles")
+        declared_roles_package(builtin, "vendorroles", DECLARED_UI_ROLES_TOML)
+        declared_roles_package(builtin, "typoroles", 'statusBackground = "#123456"\n')
+        declared_roles_package(builtin, "genroles", DECLARED_UI_ROLES_TOML, source="generated")
+        helper.cfg_dir().mkdir(parents=True, exist_ok=True)
+        (helper.cfg_dir() / "settings.json").write_text(json.dumps({"themeApps": {"tmux": True}}) + "\n")
+        original_builtin = helper.builtin_themes_dir
+        helper.builtin_themes_dir = lambda: builtin
+        try:
+            errors = io.StringIO()
+            with contextlib.redirect_stderr(errors):
+                packages = {name: helper.load_theme_package(name)
+                            for name in ("plainroles", "vendorroles", "typoroles", "genroles")}
+            for name, blueprint in packages.items():
+                if not blueprint:
+                    raise AssertionError(f"fixture theme {name} did not load")
+            assert_equal(packages["vendorroles"].get("uiRoles"), DECLARED_UI_ROLES,
+                         "the loader carries every declared role and nothing else")
+            assert_equal(packages["plainroles"].get("uiRoles"), {},
+                         "a package declaring nothing carries no declared roles")
+            # A misspelled role is named, not dropped in silence: the file's whole
+            # purpose is that the vendor's tone reaches the chrome, and a silent
+            # drop looks exactly like a package that declared nothing.
+            assert_equal(packages["typoroles"].get("uiRoles"), {},
+                         "a role VGS does not derive reaches no render")
+            if "statusBackground" not in errors.getvalue():
+                raise AssertionError(f"the undeclarable role was not named: {errors.getvalue()!r}")
+
+            plain, vendor = (helper.target_roles(packages["plainroles"]),
+                             helper.target_roles(packages["vendorroles"]))
+            # The control the whole feature rests on: the derivation's own answer
+            # for this palette is a grey, so an assertion that the declared value
+            # arrives cannot pass by accident.
+            for role, value in DECLARED_UI_ROLES.items():
+                if plain[role] == value:
+                    raise AssertionError(f"{role} derives to the declared value; the fixture proves nothing")
+                assert_equal(vendor[role], value, f"{role} is written as declared")
+            assert_equal(helper.app_target_roles(packages["vendorroles"], vendor)["statusBg"],
+                         DECLARED_UI_ROLES["statusBg"],
+                         "app targets take the declared role, not the derived one")
+            assert_equal(helper.target_roles(packages["genroles"])["statusBg"], plain["statusBg"],
+                         "a generated palette derives its roles whatever the file declares")
+            for role in ("outline", "outlineVariant", "dim", "secondary", "surfaceContainerLow"):
+                assert_equal(vendor[role], plain[role], f"{role} is undeclared and derives as before")
+            # A role computed from a declared one follows it, or the status bar
+            # gets text measured against a background it no longer paints.
+            if vendor["statusMuted"] == plain["statusMuted"]:
+                raise AssertionError("statusMuted was measured against the derived status background")
+            if helper.contrast_ratio(vendor["statusFg"], vendor["statusBg"]) < 7.0:
+                raise AssertionError("status text is unreadable on the declared status background")
+
+            # The guard reports and does not rewrite: the declared `muted` misses
+            # its 4.5:1 rule, is written as declared, and is named once on the apply.
+            missed = helper.ui_role_shortfalls(vendor, DECLARED_UI_ROLES)
+            assert_equal(len(missed), 1, f"one declared role misses a rule: {missed}")
+            if "muted" not in missed[0] or DECLARED_UI_ROLES["muted"] not in missed[0]:
+                raise AssertionError(f"the shortfall names neither the role nor its value: {missed[0]}")
+            assert_equal(helper.ui_role_shortfalls(plain, {}), [],
+                         "a package declaring nothing reports no shortfall")
+            with contextlib.redirect_stderr(io.StringIO()):
+                applied = helper.apply_theme_obj(packages["vendorroles"], only_target="tmux-vgs",
+                                                 run_hooks=False)
+            warnings = [line for line in applied["warnings"] if "declared UI roles" in line]
+            assert_equal(len(warnings), 1, f"one apply warning names the declared shortfalls: {applied['warnings']}")
+            if missed[0] not in warnings[0]:
+                raise AssertionError(f"the apply warning drops the shortfall: {warnings[0]}")
+            assert_equal(applied["partial"], True, "a declared role below its rule makes the apply partial")
+            rendered = Path(applied["rendered"][0]).read_text()
+            if f"bg={DECLARED_UI_ROLES['statusBg']}" not in rendered:
+                raise AssertionError(f"tmux does not paint the declared status background: {rendered}")
+        finally:
+            helper.builtin_themes_dir = original_builtin
+
+    with_temp_home(scenario)
+
+
+def test_declared_ui_roles_move_with_a_restyle_and_survive_a_save():
+    """Declared roles are part of a package's palette identity.
+
+    They move with a restyle slider the way explicit terminal slots do, so the
+    chrome stays coherent with the restyled palette; a rebuild from the applied
+    theme carries them, or a wallpaper change or a saved colour edit would write
+    the package back without them; and the `curatedPalette` digest covers them,
+    because a merge-style curated file's bands are picked against the roles it
+    merges over and a declaration replaces one of those roles.
+    """
+
+    def scenario(temp_home: Path):
+        builtin = temp_home / "builtin"
+        declared_roles_package(builtin, "restyled", DECLARED_UI_ROLES_TOML)
+        original_builtin = helper.builtin_themes_dir
+        helper.builtin_themes_dir = lambda: builtin
+        try:
+            shipped = helper.load_theme_package("restyled") or {}
+            (builtin / "restyled" / "theme.json").write_text(json.dumps(
+                {"name": "restyled", "mode": "light", "source": "curated",
+                 "adjustments": {"brightness": -60}}) + "\n")
+            restyled = helper.load_theme_package("restyled") or {}
+            assert_equal(sorted(restyled.get("uiRoles") or {}), sorted(DECLARED_UI_ROLES),
+                         "a restyle keeps every declared role")
+            moved = [role for role, value in (restyled.get("uiRoles") or {}).items()
+                     if value != DECLARED_UI_ROLES[role]]
+            assert_equal(sorted(moved), sorted(DECLARED_UI_ROLES),
+                         "a restyle moves every declared role with the palette")
+            assert_equal(helper.target_roles(restyled)["statusBg"], restyled["uiRoles"]["statusBg"],
+                         "the restyled declaration is what the render paints")
+
+            # A merge-style curated file is judged against the palette it was
+            # picked for. Declared roles sit inside that palette's identity, so a
+            # package whose declarations moved no longer carries the file.
+            package = declared_roles_package(helper.user_themes_dir(), "digestroles",
+                                             DECLARED_UI_ROLES_TOML)
+            (package / "apps").mkdir(exist_ok=True)
+            (package / "apps" / "claude-light.json").write_text(json.dumps({"overrides": {}}) + "\n")
+            files = helper.compose_theme_files("digestroles")
+            meta = json.loads((package / "theme.json").read_text())
+            meta["curatedPalette"] = helper.palette_digest(helper.package_palette(
+                helper.package_colors_map(files, "digestroles"), meta,
+                helper.package_ui_roles(files, "digestroles")))
+            (package / "theme.json").write_text(json.dumps(meta) + "\n")
+            assert_equal(sorted((helper.load_theme_package("digestroles") or {}).get("apps") or {}),
+                         ["claude-light.json"], "the recorded palette carries the curated file")
+            (package / helper.UI_ROLES_FILE).write_text('statusBg = "#e0b0a0"\n')
+            assert_equal(sorted((helper.load_theme_package("digestroles") or {}).get("apps") or {}),
+                         [], "a changed declaration drops the file picked for the old one")
+
+            # `save-current` rebuilds the theme from the shell's theme.json, which
+            # carries no declared roles, so the rebuild has to carry them forward.
+            helper.cfg_dir().mkdir(parents=True, exist_ok=True)
+            (helper.cfg_dir() / "theme.json").write_text(helper.render_target_template(
+                "vgs-shell", "vgs-theme.json", helper.target_roles(shipped)))
+            (helper.cfg_dir() / "theme-current.json").write_text(
+                json.dumps(helper.applied_theme_state(shipped)) + "\n")
+            with contextlib.redirect_stdout(io.StringIO()):
+                assert_equal(helper.cmd_theme(["save-current", "--name", "restyled-saved"]), 0,
+                             "save-current exit status")
+            saved = helper.load_theme_package("restyled-saved") or {}
+            assert_equal(saved.get("uiRoles"), DECLARED_UI_ROLES,
+                         "a save carries the declared roles onto the saved package")
+            assert_equal((helper.user_themes_dir() / "restyled-saved" / helper.UI_ROLES_FILE).is_file(),
+                         True, "the saved package writes the file the loader reads")
+            # colors.toml is rewritten on every save, so a stale declaration file
+            # would paint the previous theme's chrome over this one.
+            helper.save_theme_package(dict(shipped, uiRoles={}), "restyled-saved")
+            assert_equal((helper.user_themes_dir() / "restyled-saved" / helper.UI_ROLES_FILE).exists(),
+                         False, "a save with no declared roles removes the stale file")
+            helper.save_theme_package(dict(shipped, uiRoles={}), "restyled")
+            with contextlib.redirect_stderr(io.StringIO()):
+                masked = helper.load_theme_package("restyled") or {}
+            assert_equal(masked.get("uiRoles"), {},
+                         "a save with no declared roles masks the built-in file")
+        finally:
+            helper.builtin_themes_dir = original_builtin
+
+    with_temp_home(scenario)
+
+
 def test_save_keeps_app_overrides():
     """A saved theme keeps the per-app colours the user set on the theme it was
     saved from, and its editable app files, a regenerated file and an edit-app
@@ -9379,6 +9579,8 @@ def main():
     test_dark_themes_read_in_a_terminal()
     test_dark_themes_draw_diffs_in_two_hues()
     test_wallpaper_and_save_keep_terminal_slots()
+    test_declared_ui_roles_replace_the_derivation_without_a_contrast_rewrite()
+    test_declared_ui_roles_move_with_a_restyle_and_survive_a_save()
     test_save_keeps_app_overrides()
     test_unsaved_applied_theme_keeps_terminal_slots()
     test_terminal_app_overrides_show_on_their_editor_row()

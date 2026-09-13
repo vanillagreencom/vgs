@@ -5,3 +5,5 @@ Read [../docs/architecture/theme.md](../docs/architecture/theme.md) for palette,
 Per-theme app files intentionally share structure. Keep each package independently usable instead of extracting shared theme content.
 
 A slot whose terminal meaning needs a different colour than the shell's derived roles and pi read goes in the package's `terminal-colors.toml`, never in `colors.toml`.
+
+A derived UI role a package publishes its own tone for goes in the package's `ui-roles.toml`, keyed by the role names `target_roles` emits. An undeclared role is derived from the palette as before.
