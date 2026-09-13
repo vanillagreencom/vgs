@@ -8560,25 +8560,24 @@ def test_curated_vscode_theme_takes_the_terminal_palette():
                    if (d / "apps" / "vscode-theme.json").is_file())
     if len(names) < 2:
         raise AssertionError("the bundled set must hold more than one curated VS Code theme")
-    # The extension keys each theme by its label, so themes sharing a label ship
-    # one entry between them; only a theme that owns its label is measured.
-    slugs = {name: helper._vgs_theme_slug(helper._read_vgs_theme_name(
-        helper.builtin_themes_dir() / name / "apps" / "vscode-theme.json")) for name in names}
-    owners = [name for name in names if list(slugs.values()).count(slugs[name]) == 1]
-    if len(owners) < 2:
-        raise AssertionError("the bundled set must hold more than one uniquely labelled VS Code theme")
+    blueprints = {name: helper.load_theme_package(name) for name in names}
+    if any(bp is None for bp in blueprints.values()):
+        raise AssertionError("every bundled VS Code theme must load its package identity")
+    labels = {name: str(blueprints[name]["name"]) for name in names}
+    slugs = {name: helper._vgs_theme_slug(labels[name]) for name in names}
 
     def scenario(_temp_home: Path):
-        shipped = {slug: content for slug, _label, _ui, content in helper._all_bundled_vscode_themes()}
-        for name in owners:
-            blueprint = helper.load_theme_package(name)
-            if not blueprint:
-                raise AssertionError(f"bundled theme {name} did not load")
+        shipped = {slug: (label, content)
+                   for slug, label, _ui, content in helper._all_bundled_vscode_themes()}
+        assert_equal(set(shipped), set(slugs.values()),
+                     "every bundled VS Code theme ships under its package slug")
+        for name in names:
+            blueprint = blueprints[name]
             roles = helper.render_roles(blueprint, helper.target_roles(blueprint))
             slug = slugs[name]
-            if slug not in shipped:
-                raise AssertionError(f"{name}: no bundled VS Code theme under {slug}")
-            colors = json.loads(shipped[slug])["colors"]
+            label, content = shipped[slug]
+            assert_equal(label, labels[name], f"{name}: VS Code label matches the package name")
+            colors = json.loads(content)["colors"]
             for index, key in enumerate(helper.VSCODE_ANSI_KEYS):
                 assert_equal(colors.get(key), roles[f"terminal_color{index}"],
                              f"{name} VS Code {key}")
@@ -8586,11 +8585,30 @@ def test_curated_vscode_theme_takes_the_terminal_palette():
         # A saved [vscode] override reaches the bundled copy too: the extension
         # install writes every bundled copy after the apply hook writes the
         # current theme's, so a copy without it reverts the user's colour.
-        name = owners[0]
+        name = names[0]
         helper.write_user_app_overrides(name, {"vscode": {"terminal_color0": "#ff0000"}})
         shipped = {slug: content for slug, _label, _ui, content in helper._all_bundled_vscode_themes()}
         assert_equal(json.loads(shipped[slugs[name]])["colors"].get("terminal.ansiBlack"), "#ff0000",
                      f"{name}: the bundled VS Code copy takes the saved override")
+
+        for package_name in ("slug collision", "slug-collision"):
+            package = helper.user_themes_dir() / package_name
+            (package / "apps").mkdir(parents=True)
+            (package / "theme.json").write_text(
+                json.dumps({"name": package_name, "mode": "dark", "source": "curated"}) + "\n")
+            (package / "apps" / "vscode-theme.json").write_text(
+                json.dumps({"name": "foreign label", "colors": {}}) + "\n")
+        try:
+            helper._all_bundled_vscode_themes()
+        except ValueError as error:
+            collision = str(error)
+        else:
+            collision = ""
+        assert_equal(
+            collision,
+            "vscode-theme-slug-collision: slug-collision: slug collision and slug-collision",
+            "a duplicate slug refuses and names both theme packages",
+        )
 
     with_temp_home(scenario)
 
