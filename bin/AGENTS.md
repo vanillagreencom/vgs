@@ -1,3 +1,3 @@
 # Helper changes
 
-Read [../docs/architecture/helper.md](../docs/architecture/helper.md) for helper ownership and privileged-operation contracts. Read [../docs/architecture/theme.md](../docs/architecture/theme.md) when changing palette or app-target generation.
+Read [../docs/architecture/helper.md](../docs/architecture/helper.md) for helper ownership and privileged-operation contracts. Read [../docs/architecture/theme.md](../docs/architecture/theme.md) when changing palette or app-target generation, and [../docs/architecture/agent-cli-themes.md](../docs/architecture/agent-cli-themes.md) when changing agent CLI theme rendering or settings-file selection.

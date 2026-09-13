@@ -12,4 +12,3 @@ quickshell/vshell/assets/sounds/plasma/*	vendored upstream sound theme and docum
 .claude/*	kendex render output, owned upstream
 .codex/*	kendex render output, owned upstream
 .pi/*	kendex render output, owned upstream
-docs/architecture/theme.md	exceeds its class and cannot be trimmed: VGS-286's Claude Code target rules merged with VGS-281's and VGS-305's terminal-slot additions, neither side's content is removable, and three trimming passes had already taken out every restatement. Splitting the Claude Code target into its own reference is the intended fix and is not done here
