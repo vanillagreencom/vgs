@@ -851,10 +851,11 @@ def parse_colors_toml_text(raw_text: str, label: str = "colors.toml",
     `discarded`, when given, collects the keys an assignment named and this
     produced no value for. A caller that means to honour every key its file
     states cannot otherwise tell one from a key the file never held: a
-    three-digit `#fff`, a bare `fadad1` or a CSS colour name leaves through both
-    the flatten and the fallback below without a trace, so `ui-roles.toml`
-    reported nothing and the derivation painted the grey the file exists to
-    remove.
+    three-digit `#fff`, an eight-digit `#rrggbbaa` or a CSS colour name leaves
+    without a trace, so `ui-roles.toml` reported nothing and the derivation
+    painted the grey the file exists to remove. It is filled by the strict pass,
+    which is the only pass a `normalize`-off read runs, so a key is named there
+    or honoured there and never both.
     """
 
     def discard(key: str) -> None:
@@ -885,8 +886,14 @@ def parse_colors_toml_text(raw_text: str, label: str = "colors.toml",
     except Exception as exc:
         toml_error = exc
 
-    # Also support loose matugen-style variants that are close to TOML.
-    if not out:
+    # Also support loose matugen-style variants that are close to TOML. Only for
+    # a palette file: its hex group is unanchored where `HEX_RE` is not, so an
+    # eight-digit `#rrggbbaa` came back through it truncated while the strict
+    # pass above had already named the key as unreadable, and one declaration was
+    # honoured or refused depending on whether an unrelated key happened to
+    # parse. `ui-roles.toml`, the one file read with `normalize` off, is
+    # hand-written and never matugen output, so it takes the strict pass alone.
+    if not out and normalize:
         for raw in raw_text.splitlines():
             m = re.match(r"^\s*([A-Za-z0-9_\-.]+)\s*=\s*['\"]?((?:#)?[0-9A-Fa-f]{6})['\"]?", raw)
             if m:
@@ -896,9 +903,6 @@ def parse_colors_toml_text(raw_text: str, label: str = "colors.toml",
             if sm and sm.group(1).replace("-", "_").lower() in {"theme_type", "mode", "variant", "scheme"}:
                 out[sm.group(1)] = sm.group(2).lower()
                 continue
-            assignment = re.match(r"^\s*([A-Za-z0-9_\-.]+)\s*=", raw)
-            if assignment:
-                discard(assignment.group(1))
 
     normalized = normalize_color_map(out) if normalize else dict(out)
     recognized = recognized_color_count(normalized) if normalize else len(normalized)
@@ -1321,12 +1325,16 @@ TERMINAL_COLORS_FILE = "terminal-colors.toml"
 # published. A sibling file rather than a `[roles]` table inside `colors.toml`,
 # whose parser flattens a nested table and would deliver `roles_statusBg`.
 UI_ROLES_FILE = "ui-roles.toml"
+# The package directory whose declarations `declared_ui_roles` hid from a
+# generated rebuild, carried on the blueprint so a save onto that same package
+# leaves its `ui-roles.toml` alone instead of deleting the vendor's only copy.
+UI_ROLES_GATED_FROM = "uiRolesGatedFrom"
 # The roles a package may declare, and the authority on that set: a role outside
 # it is refused by name whatever its provenance. It holds the surfaces and
 # containers, the outline and muted tones, the status background, the secondary
 # and tertiary accents, and the `on*` companions of those. The semantic roles
 # `target_roles` also emits, the `error`, `warning`, `success` and `info` family
-# with their containers, and the `inverse*` pair are outside it: they are not
+# with their containers, and the `inverse*` roles are outside it: they are not
 # vendor chrome, and a vendor that wants its own error tone states the palette
 # colour the derivation builds them from.
 DECLARABLE_UI_ROLES = frozenset({
@@ -1347,27 +1355,33 @@ DECLARABLE_UI_ROLES = frozenset({
 # A fill and the text on it are judged as the pair the render paints, each side
 # naming the other, rather than both against the palette's foreground. A
 # declared `onPrimaryContainer` replaces the foreground the container was judged
-# against, so judging the container against the foreground measures a colour
-# nothing puts there: a container at 4.5:1 on the foreground carried its own
-# declared text at 1.33:1 and the apply reported nothing.
+# against, so judging the container against the foreground alone measures a
+# colour nothing puts there: a container at 4.5:1 on the foreground carried its
+# own declared text at 1.33:1 and the apply reported nothing.
+#
+# A container carries two texts, so it has two rules. The `vgs-shell` target
+# exports no `on*Container` role, and its MuxModal and widget drag rows still
+# draw the palette's own foreground on these fills, so dropping that rule left
+# shell text at 1:1 with the apply reporting nothing. Every rule a role carries
+# is measured and whichever misses is named.
 UI_ROLE_CONTRAST_RULES = {
-    "surfaceContainerHigh": ("foreground", 4.0),
-    "surfaceContainerHighest": ("foreground", 4.0),
-    "primaryContainer": ("onPrimaryContainer", 4.5),
-    "secondaryContainer": ("onSecondaryContainer", 4.5),
-    "tertiaryContainer": ("onTertiaryContainer", 4.5),
-    "onPrimaryContainer": ("primaryContainer", 4.5),
-    "onSecondaryContainer": ("secondaryContainer", 4.5),
-    "onTertiaryContainer": ("tertiaryContainer", 4.5),
-    "onPrimary": ("primary", 4.5),
-    "onSecondary": ("secondary", 4.5),
-    "onTertiary": ("tertiary", 4.5),
-    "secondary": ("background", 4.5),
-    "tertiary": ("background", 4.5),
-    "outline": ("background", 3.0),
-    "outlineVariant": ("background", 2.2),
-    "muted": ("background", 4.5),
-    "dim": ("background", 4.5),
+    "surfaceContainerHigh": (("foreground", 4.0),),
+    "surfaceContainerHighest": (("foreground", 4.0),),
+    "primaryContainer": (("foreground", 4.5), ("onPrimaryContainer", 4.5)),
+    "secondaryContainer": (("foreground", 4.5), ("onSecondaryContainer", 4.5)),
+    "tertiaryContainer": (("foreground", 4.5), ("onTertiaryContainer", 4.5)),
+    "onPrimaryContainer": (("primaryContainer", 4.5),),
+    "onSecondaryContainer": (("secondaryContainer", 4.5),),
+    "onTertiaryContainer": (("tertiaryContainer", 4.5),),
+    "onPrimary": (("primary", 4.5),),
+    "onSecondary": (("secondary", 4.5),),
+    "onTertiary": (("tertiary", 4.5),),
+    "secondary": (("background", 4.5),),
+    "tertiary": (("background", 4.5),),
+    "outline": (("background", 3.0),),
+    "outlineVariant": (("background", 2.2),),
+    "muted": (("background", 4.5),),
+    "dim": (("background", 4.5),),
 }
 STATUS_BG_MIN_TEXT_CONTRAST = 7.0
 
@@ -2212,8 +2226,9 @@ def package_ui_roles(files: Dict[str, Path], name: str) -> Dict[str, str]:
     to lose one, so two lines. A key naming no declarable role is named against
     `DECLARABLE_UI_ROLES`, which is the authority on the set. A key whose value
     is not a six-digit hex is named from what the parser discarded, because a
-    three-digit `#fff`, a bare `fadad1` or a CSS colour name never enters the
-    parsed map at all.
+    three-digit `#fff`, an eight-digit `#rrggbbaa` or a CSS colour name never
+    enters the parsed map at all. The `#` is optional and the value must be a
+    quoted string, since a bare `#` opens a TOML comment and loses the line.
     """
     if UI_ROLES_FILE not in files:
         return {}
@@ -2485,7 +2500,7 @@ def rendered_apps_for(bp: Dict[str, Any], app_overrides: Dict[str, Dict[str, str
 
 
 def write_overlay_toml(root: Path, filename: str, values: Dict[str, str],
-                       user: bool, mask_note: str) -> None:
+                       user: bool, mask_note: str, preserve: bool = False) -> None:
     """Write, mask or remove one of a package's optional key/value TOML files.
 
     `terminal-colors.toml` and `ui-roles.toml` answer the same three questions,
@@ -2496,7 +2511,14 @@ def write_overlay_toml(root: Path, filename: str, values: Dict[str, str],
     built-in one. No values otherwise remove it: `colors.toml` is rewritten on
     every save, so a stale file would carry the previous theme's slots or tones
     over this one.
+
+    `preserve` is the caller saying that no values is not the same answer as no
+    file: it leaves whatever is on disk exactly as it is, writing nothing and
+    removing nothing. `save_theme_package` already spares a curated app file it
+    was not handed for the same reason, and states when it applies here.
     """
+    if preserve and not values:
+        return
     if values:
         write_file(root / filename, "".join(f'{key} = "{value}"\n'
                                             for key, value in sorted(values.items())))
@@ -2558,8 +2580,17 @@ def materialize_theme_package(bp: Dict[str, Any], apps: Dict[str, str] | None = 
     # file here and records no declaration in the digest above. Those two answers
     # have to agree: the digest certifies the roles a merge-style curated file
     # merges over, and a file the render ignores would certify tones nothing paints.
+    # A generated rebuild of a declaring package reaches here with no roles at
+    # all, because `declared_ui_roles` hides them from its render. That is not
+    # the package saying it has none: removing the file deleted a downloaded
+    # vendor theme's only copy of its chrome, and under a built-in theme's own
+    # name the masking overlay hid the shipped file just as completely. The file
+    # is kept as it is, not rewritten and not folded into the digest above: it
+    # stays inert while the palette is generated and is read again the moment the
+    # package is curated once more.
     write_overlay_toml(root, UI_ROLES_FILE, ui_roles, user,
-                       "No declared UI roles: this overlay masks the built-in theme's.")
+                       "No declared UI roles: this overlay masks the built-in theme's.",
+                       preserve=str(bp.get(UI_ROLES_GATED_FROM) or "") == root.name)
     wallpaper = resolve_path(str(bp.get("palette", {}).get("wallpaper") or ""))
     if wallpaper and Path(wallpaper).is_file():
         bg_dir = root / "backgrounds"
@@ -2690,14 +2721,11 @@ def ui_role_shortfalls(roles: Dict[str, str], declared: Dict[str, str]) -> List[
                 lines.append(f"statusBg {value}: no text reaches "
                              f"{STATUS_BG_MIN_TEXT_CONTRAST:g}:1 on it ({ratio:.2f}:1)")
             continue
-        rule = UI_ROLE_CONTRAST_RULES.get(role)
-        if not rule:
-            continue
-        against, minimum = rule
-        ratio = contrast_ratio(value, roles[against])
-        if ratio < minimum:
-            lines.append(f"{role} {value}: {ratio:.2f}:1 against {against} "
-                         f"{roles[against]} (want >= {minimum:g}:1)")
+        for against, minimum in UI_ROLE_CONTRAST_RULES.get(role, ()):
+            ratio = contrast_ratio(value, roles[against])
+            if ratio < minimum:
+                lines.append(f"{role} {value}: {ratio:.2f}:1 against {against} "
+                             f"{roles[against]} (want >= {minimum:g}:1)")
     return lines
 
 
@@ -2837,11 +2865,15 @@ def target_roles(bp: Dict[str, Any]) -> Dict[str, str]:
         computed from these read `roles` and so follow a declared tone: a
         declared `statusBg` gets status text measured against itself.
 
-        Each call takes its role out of `unread`, so the set and the assignment
-        sites cannot be two independent lists: a member of `DECLARABLE_UI_ROLES`
-        that no assignment reads is left behind and named below. Without that a
-        role could be accepted from the file, folded into the digest and reported
-        on for contrast while nothing ever painted it.
+        Each call takes its role out of `unread`, which is seeded from what the
+        package declared: a declared role no assignment reads is left behind and
+        named below, so a package cannot have a role accepted from its file,
+        folded into the digest and reported on for contrast while nothing paints
+        it. That line says nothing about a set member no package happens to
+        declare; the guarantee that every member of `DECLARABLE_UI_ROLES` has an
+        assignment site belongs to the `everyroles` fixture in
+        `scripts/check-vshell-helper.py`, which declares the whole set and reads
+        each value back.
         """
         unread.pop(role, None)
         return declared.get(role) or computed
@@ -6041,9 +6073,12 @@ def applied_theme_state(bp: Dict[str, Any]) -> Dict[str, Any]:
     One owner, so a fixture seeding an applied theme writes the file the apply
     writes. `path` and `package` are the keys `override_dropped_curated` gates
     on, so a seeded state richer than the real one hides a refused exemption.
+    `UI_ROLES_GATED_FROM` goes too: it describes one rebuild for the save that
+    follows it, not the theme that was applied.
     """
     current = dict(bp)
-    for key in ("path", "builtin", "userDir", "backgrounds", "packagedPreview"):
+    for key in ("path", "builtin", "userDir", "backgrounds", "packagedPreview",
+                UI_ROLES_GATED_FROM):
         current.pop(key, None)
     current["appliedAt"] = int(time.time() * 1000)
     return current
@@ -7223,6 +7258,12 @@ def with_current_terminal_slots(bp: Dict[str, Any]) -> Dict[str, Any]:
     # rebuilds a generated blueprint and would otherwise carry declarations its
     # own render ignores.
     bp["uiRoles"] = declared_ui_roles(dict(bp, uiRoles=declared))
+    # Where those declarations came from, when the gate above hid them from this
+    # rebuild. A save onto that same package leaves its file alone; a save under
+    # any other name is a different package, whose own file this rebuild never
+    # saw and must not keep.
+    bp[UI_ROLES_GATED_FROM] = (theme_package_dir_name(applied or package or {})
+                               if declared and not bp["uiRoles"] else "")
     return with_current_app_overrides(bp, package)
 
 
