@@ -8650,6 +8650,7 @@ def test_light_themes_read_in_a_terminal():
     rows = [
         ("catppuccin-latte", 4.5, 3.0, 4.5, None),
         ("flexoki-light", 4.5, 3.0, 4.5, None),
+        ("horizon-light", 4.5, 3.0, 4.5, 3.0),
         ("rose-pine", 4.5, 3.0, 4.5, None),
         ("thegreek", 4.5, 3.0, 4.5, None),
         ("white", 4.5, 3.0, 4.5, 4.5),
