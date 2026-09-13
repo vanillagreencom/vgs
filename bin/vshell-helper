@@ -2107,13 +2107,12 @@ def rebuilt_palette_identity(bp: Dict[str, Any]) -> Dict[str, str]:
     two while naming the same palette. This also drops the terminal slots one
     side carries and the other does not.
 
-    It is not a normal form, and re-applying it does not converge. On a
-    generated-source palette `target_roles` re-runs contrast adjustment, which on
-    akane moves `blue`, `cyan`, `green`, `magenta`, `red` and `yellow` on every
-    one of eight successive trips, by 16 units in a channel on the first and 3 on
-    the eighth. Comparing two blueprints therefore means giving both the same
-    number of trips, not trusting the function to settle: see the call in
-    `override_dropped_curated`.
+    It is not a normal form. On the generated branch `target_roles` re-runs
+    contrast adjustment, so the derivation is not idempotent there: one more trip
+    through it moves the palette. On the akane package `theme mode --transform`
+    plus a save leaves behind, the roles that move are the six bright ANSI slots.
+    Two blueprints are therefore comparable only at equal rebuild depth, which is
+    what the call in `override_dropped_curated` arranges.
     """
     theme = theme_json_from_blueprint(bp)
     return {**{str(key): str(value) for key, value in (theme.get("colors") or {}).items()},
@@ -2181,10 +2180,10 @@ def override_dropped_curated(bp: Dict[str, Any]) -> List[str]:
         return []
     palette = package_palette(package_colors_map(files, package), meta)
     # `bp` arrived through one rebuild out of `theme.json` already, so the
-    # package side is given the same trip before the two are compared. This
-    # equalises depth; it does not normalise. `rebuilt_palette_identity` does not
-    # converge on a generated-source palette, so a package written by `theme mode
-    # --transform` plus a save never matched a copy of itself rebuilt once more,
+    # package side is given the one trip the applied side already took. This
+    # equalises depth; it does not normalise. Derivation is not idempotent on the
+    # generated branch, so a package written by `theme mode --transform` plus a
+    # save never matched a copy of itself rebuilt a different number of times,
     # and the exemption it was owed was refused.
     pkg = palette_from_colors_map(palette, name=package, source=package_source(meta))
     if rebuilt_palette_identity(bp) != rebuilt_palette_identity(

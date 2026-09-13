@@ -958,8 +958,9 @@ class InstalledLayout(unittest.TestCase):
         `transform` runs `theme mode --transform <mode>` and a save ahead of all
         that, which rewrites the package from a transformed palette and so leaves
         it declaring `source: generated`. Role derivation adjusts contrast on that
-        branch and does not settle, so a package on this side only matches itself
-        when both sides of the comparison are rebuilt the same number of times.
+        branch and so is not idempotent there, and a package on this side matches
+        itself only when both sides of the comparison are rebuilt the same number
+        of times.
 
         Returns the package's declared source, whether the save left the file on
         disk, whether the loader takes it back once the override is cleared, and
@@ -1016,11 +1017,12 @@ class InstalledLayout(unittest.TestCase):
         The fourth row is the same first row over a package that declares
         `source: generated`, which `theme mode --transform` plus a save is the
         shipped way to reach. Role derivation adjusts contrast on that branch and
-        does not settle, so comparing the package against a copy of itself rebuilt
-        one extra time never matched: the exemption was refused and the save
-        deleted the file the first row proves it must keep. The declared source is
-        asserted in every row so this one cannot quietly stop reaching the branch
-        it is named for.
+        so is not idempotent there: one more trip through it moves the six bright
+        ANSI slots, so comparing the package against a copy of itself rebuilt a
+        different number of times never matched. The exemption was refused and the
+        save deleted the file the first row proves it must keep. The declared
+        source is asserted in every row so this one cannot quietly stop reaching
+        the branch it is named for.
         """
         self.assertEqual(
             (self.saved_under_own_name({"claude": {"background": "#0b0b0b"}}),
