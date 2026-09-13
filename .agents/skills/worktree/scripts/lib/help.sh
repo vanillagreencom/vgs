@@ -136,6 +136,13 @@ to agree with, so abort takes the record alone: it requires the recorded branch
 to still be at its recorded original head, checks that branch out, clears the
 record, and re-applies worktree setup, refusing and keeping the record when the
 branch has moved or the checkout fails.
+
+On completion, continue and skip report one 'rebase-map: <old-sha>
+<new-sha|dropped>' line per rewritten commit on stderr and append the same
+lines, under a 'rebase-hop:' line of their own, to 'kendex-rebase-map' in the
+worktree's git dir, the same contract the push auto-rebase reports
+(push --help). A skipped commit is reported as 'dropped'. abort rewrites
+nothing and reports no map.
 EOF
 }
 
@@ -206,6 +213,16 @@ Reuse rebase conflicts:
   guarded actions fail closed on missing, stale, or unrelated state
   (restack --help).
 
+Rewritten commits:
+  A completed --reuse/--restack rebase reports one 'rebase-map: <old-sha>
+  <new-sha|dropped>' line per rewritten commit on stderr (stdout is the
+  worktree path) and appends the same lines, under a 'rebase-hop:' line of
+  their own, to 'kendex-rebase-map' in the worktree's git dir.
+  'orch/scripts/worktree-push' applies each hop there in order to reconcile
+  SHAs recorded before the restack, so restacking twice before pushing carries
+  a recorded SHA through both rewrites (push --help). A base the branch already
+  contains rebases nothing and reports no map.
+
 Policy-blocked rebase (cherry-pick replay fallback):
   When an execution policy rejects top-level 'git rebase' porcelain, never
   retry the porcelain and never substitute a raw --force push. Add --replay
@@ -232,7 +249,17 @@ Failure semantics:
   message is reported. A failure partway through can leave the worktree
   partially removed: treat a removal failure as "inspect what remains"
   (fix-links restores configured symlinks); the branch is never deleted on
-  that path. remove checks for a native 'git worktree lock' up front and
+  that path. A worktree still holding an unreconciled rebase map is refused
+  before anything is released, removed or pruned: that map lives in the
+  worktree's own git dir and would die with it, while the branch it describes
+  is kept whenever it is not provably merged (push --help). The check reads the
+  registration rather than the worktree, so it covers a worktree whose
+  directory is already gone and whose private git dir only the prune would
+  take. A target that resolves to no registration at all is refused for the
+  same reason, rather than removed on the chance that nothing is registered
+  under it; a path with nothing at it is the exception, since there is nothing
+  there to protect, and it still prunes. remove checks for a native
+  'git worktree lock' up front and
   exits non-zero with a diagnostic naming the lock reason and the
   'git worktree unlock' command. The branch goes only on the proof cleanup
   uses: ancestry into the default branch, or, when a squash erased that, a
@@ -390,6 +417,45 @@ already upstream) so callers can remap commit SHAs recorded before the rebase
 (kendex#728). Commits pair by position when the pre/post counts match,
 otherwise by commit subject. A push that skips the rebase, or one run with
 --no-rebase, prints no map.
+
+Those printed lines are a report, not the record. The same map is appended to
+'kendex-rebase-map' in the worktree's git dir as its own hop, and that file is
+what 'orch/scripts/worktree-push' reconciles from: a map only printed lives in
+its reader's temporary capture, which that reader does not act on until this
+process has returned and which its own exit trap then removes. A push whose
+map cannot be recorded there refuses rather than publishing.
+
+Subjects pair a group the rebase kept whole or dropped whole. Where it kept
+only part of a group, which commit each one became is not derivable, and a
+guess would name a real commit that is not the recorded one: push prints no
+map and refuses, leaving the branch rebased and unpushed.
+
+That rewrite outlives the refusal, and a retry would find the base already
+contained, rebase nothing and derive nothing. So before any rewrite starts,
+push and restack record 'rebase-unmapped: <head-about-to-be-rewritten>' in
+'kendex-rebase-map' in the worktree's git dir, and clear it only once the map
+is durable or the rewrite is unwound and the branch is back on that head. A
+death anywhere in between, an OOM kill included, leaves the record standing,
+and every later push refuses on it, --no-rebase included. Reconcile every
+recorded SHA against the worktree's reflog, then remove that file to push
+again; there is no flag that skips it. A rewrite whose record cannot be
+written does not start, and one whose record cannot be cleared afterwards does
+not publish.
+
+Every path that rewrites branch commits reports the same map from the same
+emitter: this auto-rebase, and a completed restack through 'create --reuse',
+'create --restack' or 'restack continue|skip'. A restack reports its lines on
+stderr, because create's stdout is the worktree path it hands its caller, and
+records them the same way this auto-rebase does. Each rewrite appends its own
+hop to 'kendex-rebase-map', a 'rebase-hop:' line followed by that rewrite's
+map lines, and 'orch/scripts/worktree-push' applies the hops in order, one
+reconciliation each: those standing before it pushes, then the one its own
+push writes. It deletes the file only once every hop it read is recorded. The
+hops stay separate because each reconciliation compares a record against the
+value it held when that reconciliation began, so a record carried through two
+rewrites needs two. A rewrite over a base its branch already contains rewrites
+nothing, reports no map, and writes no hop; a restack whose map cannot be
+recorded authorizes no push.
 
 A refused push names its judge, and every judge reads a line rather than the
 absence of one. A pre-push hook that publishes the commit-guards message
