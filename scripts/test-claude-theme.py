@@ -123,16 +123,27 @@ RESTYLE_STEPS = ({}, {"brightness": -25}, {"brightness": 100}, {"contrast": -100
 
 
 def restyled(blueprint: dict, adjustments: dict) -> dict:
-    """`blueprint` with a restyle applied, the way a slider reaches the helper."""
+    """`blueprint` with a restyle applied, the way a slider reaches the helper.
+
+    The package identity and the adjustments ride across, because that is what
+    load_theme_package produces: it transforms the palette and still points the
+    blueprint at the package's own curated files. Rebuilding the palette alone
+    drops them, which leaves every curated file untested under every slider.
+    """
     if not adjustments:
         return blueprint
     palette = blueprint["palette"]
     colors = {f"color{index}": value for index, value in enumerate(palette["colors"])}
     colors.update(palette.get("extendedColors") or {})
     colors["mode"] = helper.blueprint_mode(blueprint)
-    return helper.palette_from_colors_map(
+    variant = helper.palette_from_colors_map(
         helper.apply_adjustments(colors, helper.normalize_adjustments(adjustments)),
         name=blueprint["name"], wallpaper="", source="generated")
+    for key in ("apps", "package", "path"):
+        if blueprint.get(key):
+            variant[key] = blueprint[key]
+    variant["adjustments"] = helper.normalize_adjustments(adjustments)
+    return variant
 
 
 def rendered_file(blueprint: dict, mode: str) -> tuple[dict, list]:
@@ -303,19 +314,40 @@ class ModeCounterparts(unittest.TestCase):
         self.assertEqual(content["overrides"]["claude"], "#abcdef")
 
     def test_a_curated_file_is_what_closes_a_rule_the_palette_cannot_reach(self):
-        """akane's light counterpart comes from the mode transform onto a peach
-        background, which pulls both diff bands onto that one hue: a band is a
-        weak tint and no anchor the generator has parts them. The package's
-        curated file is the only thing that does, and the rules are measured
-        after it merges so closing the rule also closes the warning."""
-        blueprint = helper.find_theme("akane")
-        _curated, missed = rendered_file(blueprint, "light")
-        bare = dict(blueprint, apps={name: path for name, path in blueprint["apps"].items()
-                                     if name != "claude-light.json"})
-        _plain, without = rendered_file(bare, "light")
+        """The exact set of shipped cases that need a curated file to meet a rule.
+
+        These counterparts come from the mode transform onto strongly hued
+        backgrounds, which pull both diff bands onto that one hue: a band is a
+        weak tint and no anchor the generator has parts them. The curated file is
+        the only thing that does, and the rules are measured after it merges, so
+        closing the rule also closes the warning.
+
+        Asserting the exact set rather than one theme is what binds the list in
+        docs/architecture/theme.md to the tree: a seventh theme that starts
+        needing a file, or one of these six that stops, reddens here and sends
+        the author to that document.
+        """
+        needs_curation, still_short = set(), {}
+        for name in THEME_NAMES:
+            blueprint = helper.find_theme(name, THEMES)
+            for mode in ("dark", "light"):
+                curated = f"claude-{mode}.json"
+                if curated not in (blueprint.get("apps") or {}):
+                    continue
+                _shipped, missed = rendered_file(blueprint, mode)
+                bare = dict(blueprint, apps={
+                    filename: path for filename, path in blueprint["apps"].items()
+                    if filename != curated})
+                _plain, without = rendered_file(bare, mode)
+                if missed:
+                    still_short[(name, mode)] = missed
+                if without:
+                    needs_curation.add((name, mode))
         self.assertEqual(
-            (missed, [line for line in without if line.startswith("diff bands")] != []),
-            ([], True))
+            (needs_curation, still_short),
+            ({(name, "light") for name in
+              ("akane", "archwave", "frankenstein", "moon-orbit", "reddcs", "vice-city")},
+             {}))
 
     def test_an_app_override_for_claude_reaches_the_rendered_files(self):
         """Every other target consumes the loop's merged map; this one builds its
@@ -350,7 +382,8 @@ class UnreachableDiffBands(unittest.TestCase):
         grey.update(background="#808080", foreground="#8a8a8a", mode=mode)
         blueprint = helper.palette_from_colors_map(grey, name="flat-grey", wallpaper="",
                                                    source="curated")
-        return helper.claude_theme_overrides(helper.target_roles(blueprint))
+        values = helper.claude_theme_overrides(helper.target_roles(blueprint))
+        return values, helper.claude_diff_shortfalls(values)
 
     def test_a_background_no_band_can_sit_on_reports_the_band_it_wrote(self):
         """Every line names both ratios, so the report says which rule was missed
@@ -434,7 +467,7 @@ class HookBehaviour(unittest.TestCase):
         curated.write_text(json.dumps({"overrides": {"claude": "#abcdef"}}))
         blueprint = dict(self.blueprint, apps={"claude-dark.json": str(curated)})
         rendered, _missed = helper.claude_theme_file(blueprint, "dark")
-        generated, _ = helper.claude_theme_overrides(helper.target_roles(self.blueprint))
+        generated = helper.claude_theme_overrides(helper.target_roles(self.blueprint))
         self.assertEqual(
             (rendered["overrides"]["claude"], len(rendered["overrides"]),
              rendered["overrides"]["text"]),
@@ -454,6 +487,19 @@ class HookBehaviour(unittest.TestCase):
         _content, missed = helper.claude_theme_file(
             self.curated('{"overrides": {"diffAddedDimmed": "#1e1e2e"}}'), "dark")
         self.assertEqual([line for line in missed if line.startswith("diff band #1e1e2e")] != [],
+                         True)
+
+    def test_a_curated_strong_fill_body_text_cannot_read_is_reported(self):
+        """The strong fill carries the body-text rule the dimmed band carries, and
+        this PR ships six curated files that set diffAdded, so a hand-picked fill
+        too close to the text is reachable. The oracle in BundledThemeColours
+        cannot cover it: it measures the clean cases, and a fill miss makes a case
+        non-clean, so the case drops out before the rule is applied to it.
+        catppuccin's dark text is near-white, so a near-white fill hides the
+        added rows' text on the rows themselves."""
+        _content, missed = helper.claude_theme_file(
+            self.curated('{"overrides": {"diffAdded": "#fdfdfd"}}'), "dark")
+        self.assertEqual([line for line in missed if line.startswith("diff fill #fdfdfd")] != [],
                          True)
 
     def test_a_curated_file_claude_code_would_not_paint_is_refused_by_name(self):
@@ -583,6 +629,33 @@ class HookBehaviour(unittest.TestCase):
             (True, True, True))
 
 
+class SavedPackages(unittest.TestCase):
+    """Saving a theme must not bake a curated file onto a palette it does not fit.
+
+    save_theme_package copies every curated file verbatim, so without the same
+    rule the apply path uses, a user who moves a slider and saves gets a package
+    whose claude-light.json was picked for the colours the slider just replaced.
+    An apply can recover from a bad render; it cannot recover from a bad package.
+    """
+
+    def saved_apps(self, blueprint: dict) -> set:
+        home = Path(tempfile.mkdtemp())
+        original = helper.home
+        helper.home = lambda: home
+        try:
+            root = helper.save_theme_package(blueprint, name="saved-probe")
+        finally:
+            helper.home = original
+        return {path.name for path in (root / "apps").iterdir()} if (root / "apps").is_dir() else set()
+
+    def test_a_saved_package_keeps_the_curated_file_at_rest(self):
+        self.assertIn("claude-light.json", self.saved_apps(helper.find_theme("akane", THEMES)))
+
+    def test_a_saved_restyled_package_drops_the_curated_file(self):
+        restyled_akane = restyled(helper.find_theme("akane", THEMES), {"brightness": 100})
+        self.assertNotIn("claude-light.json", self.saved_apps(restyled_akane))
+
+
 class TargetWiring(unittest.TestCase):
     def apply(self, blueprint: dict) -> tuple:
         """One apply of `blueprint` against a fresh HOME holding ~/.claude."""
@@ -624,7 +697,13 @@ class TargetWiring(unittest.TestCase):
         added and removed rows in one colour."""
         broken = Path(tempfile.mkdtemp()) / "claude-light.json"
         broken.write_text("[]")
-        blueprint = restyled(helper.find_theme("akane"), {"contrast": -100})
+        # A restyled package would not do: a slider drops the curated file by
+        # design, so the malformed one would never be read. This palette is
+        # degraded where it ships, which is the case that keeps both reports live.
+        grey = {f"color{index}": "#808080" for index in range(16)}
+        grey.update(background="#808080", foreground="#8a8a8a", mode="dark")
+        blueprint = helper.palette_from_colors_map(grey, name="flat-grey", wallpaper="",
+                                                   source="curated")
         result, _home = self.apply(dict(blueprint, apps={"claude-light.json": str(broken)}))
         self.assertEqual(
             (result["partial"],
