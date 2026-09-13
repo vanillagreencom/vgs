@@ -7,7 +7,7 @@
     "baseUrl": "https://github.com/vanillagreencom/vgs/releases/download"
   },
   "count": 81,
-  "totalSize": 1072743773,
+  "totalSize": 1072743760,
   "themes": [
     {
       "name": "akane",
@@ -1480,7 +1480,7 @@
       "background": "#060b1e",
       "foreground": "#ffcead",
       "accent": "#7d82d9",
-      "size": 4890975,
+      "size": 4890971,
       "files": [
         {
           "path": "apps/btop.theme",
@@ -1499,8 +1499,8 @@
         },
         {
           "path": "apps/vscode-theme.json",
-          "size": 46368,
-          "sha256": "f08c0fb9aaeedc2283168838197705ba943a41a5bdc4d32a58d8ccf4750f84c4"
+          "size": 46370,
+          "sha256": "32105c002a232308cb614c6dacbc581810cb494fd30fa8b24793e7ee9318418f"
         },
         {
           "path": "colors.toml",
@@ -1519,11 +1519,11 @@
         }
       ],
       "assets": {
-        "release": "themes-v6",
-        "archive": "vgs-theme-ethereal-r3.tar.gz",
-        "rev": 3,
-        "size": 4890975,
-        "sha256": "a0ebe5819b20b89babb955306c9c48e607af222d35d77ab5fbc20a89922f7d14"
+        "release": "themes-v13",
+        "archive": "vgs-theme-ethereal-r4.tar.gz",
+        "rev": 4,
+        "size": 4890971,
+        "sha256": "7e02bf30baf91e75124d0855f3cf865d70509f55313ef311703d22663b920109"
       }
     },
     {
@@ -1835,7 +1835,7 @@
       "background": "#313132",
       "foreground": "#8dffd5",
       "accent": "#849be3",
-      "size": 12165665,
+      "size": 12165651,
       "files": [
         {
           "path": "apps/btop.theme",
@@ -1864,8 +1864,8 @@
         },
         {
           "path": "apps/vscode-theme.json",
-          "size": 44663,
-          "sha256": "ec97686f6c39f67d1039878af482bd016be6efe8d6fb6ed27085370c68d2b9e0"
+          "size": 44669,
+          "sha256": "b32014a9d251f0e9c47a8cc7705d116c2694138c1957828880cf34e7b209d6b1"
         },
         {
           "path": "colors.toml",
@@ -1879,11 +1879,11 @@
         }
       ],
       "assets": {
-        "release": "themes-v12",
-        "archive": "vgs-theme-frankenstein-r3.tar.gz",
-        "rev": 3,
-        "size": 12165665,
-        "sha256": "6a49a49e6ff49decfdeec53aae50cf6c0f5b34937ada46d1331662e88d3e2024"
+        "release": "themes-v13",
+        "archive": "vgs-theme-frankenstein-r4.tar.gz",
+        "rev": 4,
+        "size": 12165651,
+        "sha256": "5d23778652e2c35ee36fc3ecbdfbe94646cad58886619e9d41d14dc2cec33ca9"
       }
     },
     {
@@ -2195,7 +2195,7 @@
       "background": "#0b0c16",
       "foreground": "#ddf7ff",
       "accent": "#82fb9c",
-      "size": 7549728,
+      "size": 7549733,
       "files": [
         {
           "path": "apps/btop.theme",
@@ -2214,8 +2214,8 @@
         },
         {
           "path": "apps/vscode-theme.json",
-          "size": 46368,
-          "sha256": "a108d81d138d928bca7bfa0712cd8264a575f978a004a7dae516aef7b61592cd"
+          "size": 46371,
+          "sha256": "ab811a261e1926f5fe442798f6472ff73da3f6702331bb3b61c78c408a1a0fea"
         },
         {
           "path": "colors.toml",
@@ -2234,11 +2234,11 @@
         }
       ],
       "assets": {
-        "release": "themes-v6",
-        "archive": "vgs-theme-hackerman-r3.tar.gz",
-        "rev": 3,
-        "size": 7549728,
-        "sha256": "46ba051d9ca95ede031ad706a1707cfa40502f40e6ad8e3fe80d8ab344046f28"
+        "release": "themes-v13",
+        "archive": "vgs-theme-hackerman-r4.tar.gz",
+        "rev": 4,
+        "size": 7549733,
+        "sha256": "e50dde2c0446ceb91b747854488e6dba8cea8ad85e5ec75877e06ad7218d223c"
       }
     },
     {

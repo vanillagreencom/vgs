@@ -8560,25 +8560,24 @@ def test_curated_vscode_theme_takes_the_terminal_palette():
                    if (d / "apps" / "vscode-theme.json").is_file())
     if len(names) < 2:
         raise AssertionError("the bundled set must hold more than one curated VS Code theme")
-    # The extension keys each theme by its label, so themes sharing a label ship
-    # one entry between them; only a theme that owns its label is measured.
-    slugs = {name: helper._vgs_theme_slug(helper._read_vgs_theme_name(
-        helper.builtin_themes_dir() / name / "apps" / "vscode-theme.json")) for name in names}
-    owners = [name for name in names if list(slugs.values()).count(slugs[name]) == 1]
-    if len(owners) < 2:
-        raise AssertionError("the bundled set must hold more than one uniquely labelled VS Code theme")
 
     def scenario(_temp_home: Path):
-        shipped = {slug: content for slug, _label, _ui, content in helper._all_bundled_vscode_themes()}
-        for name in owners:
-            blueprint = helper.load_theme_package(name)
-            if not blueprint:
-                raise AssertionError(f"bundled theme {name} did not load")
+        blueprints = {name: helper.load_theme_package(name) for name in names}
+        if any(bp is None for bp in blueprints.values()):
+            raise AssertionError("every bundled VS Code theme must load its package identity")
+        labels = {name: str(blueprints[name]["name"]) for name in names}
+        slugs = {name: helper._vgs_theme_slug(labels[name]) for name in names}
+        shipped = {slug: (label, content)
+                   for slug, label, _ui, content in helper._all_bundled_vscode_themes()}
+        assert_equal(set(shipped), set(slugs.values()),
+                     "every bundled VS Code theme ships under its package slug")
+        for name in names:
+            blueprint = blueprints[name]
             roles = helper.render_roles(blueprint, helper.target_roles(blueprint))
             slug = slugs[name]
-            if slug not in shipped:
-                raise AssertionError(f"{name}: no bundled VS Code theme under {slug}")
-            colors = json.loads(shipped[slug])["colors"]
+            label, content = shipped[slug]
+            assert_equal(label, labels[name], f"{name}: VS Code label matches the package name")
+            colors = json.loads(content)["colors"]
             for index, key in enumerate(helper.VSCODE_ANSI_KEYS):
                 assert_equal(colors.get(key), roles[f"terminal_color{index}"],
                              f"{name} VS Code {key}")
@@ -8586,13 +8585,167 @@ def test_curated_vscode_theme_takes_the_terminal_palette():
         # A saved [vscode] override reaches the bundled copy too: the extension
         # install writes every bundled copy after the apply hook writes the
         # current theme's, so a copy without it reverts the user's colour.
-        name = owners[0]
+        name = names[0]
         helper.write_user_app_overrides(name, {"vscode": {"terminal_color0": "#ff0000"}})
         shipped = {slug: content for slug, _label, _ui, content in helper._all_bundled_vscode_themes()}
         assert_equal(json.loads(shipped[slugs[name]])["colors"].get("terminal.ansiBlack"), "#ff0000",
                      f"{name}: the bundled VS Code copy takes the saved override")
 
-    with_temp_home(scenario)
+        # A user package can own the default generated label. The generated
+        # active copy must choose another identity instead of replacing it.
+        generated_owner = helper.user_themes_dir() / "generated-owner"
+        (generated_owner / "apps").mkdir(parents=True)
+        (generated_owner / "theme.json").write_text(
+            json.dumps({"name": "VGS Generated", "mode": "dark", "source": "curated"}) + "\n")
+        (generated_owner / "apps" / "vscode-theme.json").write_text(
+            json.dumps({"name": "foreign generated label", "colors": {}}) + "\n")
+
+        # The active copy and bundled manifest use one package identity. Pick a
+        # shipped theme whose curated label differs only by spelling, so the old
+        # path returned a label that its same-slug bundled entry replaced.
+        active = next((candidate for candidate in names
+                       if helper._read_vgs_theme_name(
+                           helper.compose_theme_files(candidate)["apps/vscode-theme.json"])
+                       != labels[candidate]
+                       and helper._vgs_theme_slug(helper._read_vgs_theme_name(
+                           helper.compose_theme_files(candidate)["apps/vscode-theme.json"]))
+                       == slugs[candidate]), "")
+        if not active:
+            raise AssertionError("the bundled set needs a curated/package spelling mismatch")
+        theme_file = helper.generated_dir() / "vscode" / "vgs-theme.json"
+        theme_file.parent.mkdir(parents=True)
+        theme_file.write_text(helper.compose_theme_files(active)["apps/vscode-theme.json"].read_text())
+        ext_dir = _temp_home / ".vscode" / "extensions"
+        ext_dir.mkdir(parents=True)
+        settings_path = _temp_home / ".config" / "Code" / "User" / "settings.json"
+        settings_path.parent.mkdir(parents=True)
+        original_variants = helper.VSCODE_VARIANTS
+        helper.VSCODE_VARIANTS = [{
+            "id": "vscode", "ext": str(ext_dir), "settings": str(settings_path), "cli": ["code"],
+        }]
+        try:
+            active_bp = blueprints[active]
+            active_roles = helper.render_roles(active_bp, helper.target_roles(active_bp))
+            result = helper.apply_vscode_theme_hook(active_roles, active_bp)
+            selected = json.loads(settings_path.read_text()).get("workbench.colorTheme")
+            from PIL import Image
+            wallpaper = _temp_home / "wallpaper.png"
+            Image.new("RGB", (2, 2), (33, 88, 144)).save(wallpaper)
+            generated_bp = helper.blueprint_from_wallpaper(
+                wallpaper, name=labels[active], mode=helper.blueprint_mode(active_bp))
+            generated_result = helper.apply_theme_obj(generated_bp, only_app="vscode")
+        finally:
+            helper.VSCODE_VARIANTS = original_variants
+        assert_equal(result.get("applied"), [str(settings_path)],
+                     "the active VS Code theme apply writes the test installation")
+        assert_equal(selected, labels[active], "the active VS Code label comes from its package")
+        if selected not in helper._vgs_vscode_labels(ext_dir):
+            raise AssertionError(f"the selected VS Code label is not registered: {selected}")
+
+        # A wallpaper palette can keep the current package name. Its generated
+        # file must not share that package's slug, because the bundled copy is
+        # written after the active copy and would replace the extracted colors.
+        assert_equal(generated_result.get("success"), True,
+                     "the wallpaper palette renders the VS Code target")
+        generated_selected = json.loads(settings_path.read_text()).get("workbench.colorTheme")
+        bundled = helper._all_bundled_vscode_themes()
+        bundled_labels = {label for _slug, label, _ui, _content in bundled}
+        if generated_selected in bundled_labels:
+            raise AssertionError(
+                f"the wallpaper palette selected a bundled package label: {generated_selected}")
+        package_json = json.loads(
+            (ext_dir / "vgs.vgs-theme-1.0.0" / "package.json").read_text())
+        registered = package_json["contributes"]["themes"]
+        generated_entry = next(
+            (entry for entry in registered if entry.get("label") == generated_selected), None)
+        if not generated_entry:
+            raise AssertionError(
+                f"the generated VS Code label is not registered: {generated_selected}")
+        selected_path = (ext_dir / "vgs.vgs-theme-1.0.0"
+                         / str(generated_entry["path"]).removeprefix("./"))
+        selected_colors = json.loads(selected_path.read_text())["colors"]
+        assert_equal(
+            selected_colors.get("editor.background"),
+            helper.app_target_roles(generated_bp)["background"],
+            "the selected VS Code file keeps the wallpaper-generated palette",
+        )
+        opposite_mode = "dark" if helper.blueprint_mode(active_bp) == "light" else "light"
+        current_data = helper.theme_json_from_blueprint(active_bp)
+        with (patch.object(helper, "current_theme", return_value=current_data),
+              patch.object(helper, "current_theme_obj", return_value=active_bp)):
+            carried_same_mode = helper.carry_curated_apps(
+                helper.blueprint_from_current_theme(
+                    name=labels[active], mode=helper.blueprint_mode(active_bp)))
+            carried_palette = dict(carried_same_mode["palette"])
+            carried_palette["wallpaper"] = str(wallpaper)
+            carried_same_mode["palette"] = carried_palette
+            carried_other_mode = helper.carry_curated_apps(
+                helper.blueprint_from_current_theme(
+                    name=labels[active], mode=opposite_mode))
+        identity_rows = [
+            ("same-mode wallpaper carry", carried_same_mode),
+            ("mode-mismatched wallpaper carry", carried_other_mode),
+            ("transformed package mode",
+             helper.transformed_mode_blueprint(active_bp, opposite_mode, "")),
+        ]
+        helper.VSCODE_VARIANTS = [{
+            "id": "vscode", "ext": str(ext_dir), "settings": str(settings_path), "cli": ["code"],
+        }]
+        try:
+            for row_label, row_bp in identity_rows:
+                row_result = helper.apply_theme_obj(row_bp, only_app="vscode")
+                assert_equal(row_result.get("success"), True,
+                             f"{row_label}: the VS Code target applies")
+                row_selected = json.loads(settings_path.read_text()).get("workbench.colorTheme")
+                assert_equal(row_selected, labels[active],
+                             f"{row_label}: the curated file uses its package label")
+                row_package = json.loads(
+                    (ext_dir / "vgs.vgs-theme-1.0.0" / "package.json").read_text())
+                row_entry = next((
+                    entry for entry in row_package["contributes"]["themes"]
+                    if entry.get("label") == row_selected), None)
+                if not row_entry:
+                    raise AssertionError(
+                        f"{row_label}: the selected curated label is not registered")
+                row_path = (ext_dir / "vgs.vgs-theme-1.0.0"
+                            / str(row_entry["path"]).removeprefix("./"))
+                row_file = json.loads(helper._strip_jsonc(row_path.read_text()))
+                row_ui = "vs" if row_file.get("type") == "light" else "vs-dark"
+                assert_equal(row_entry.get("uiTheme"), row_ui,
+                             f"{row_label}: uiTheme matches the installed curated file")
+        finally:
+            helper.VSCODE_VARIANTS = original_variants
+
+        for package_name in ("slug collision", "slug-collision"):
+            package = helper.user_themes_dir() / package_name
+            (package / "apps").mkdir(parents=True)
+            (package / "theme.json").write_text(
+                json.dumps({"name": package_name, "mode": "dark", "source": "curated"}) + "\n")
+            (package / "apps" / "vscode-theme.json").write_text(
+                json.dumps({"name": "foreign label", "colors": {}}) + "\n")
+        try:
+            helper._all_bundled_vscode_themes()
+        except ValueError as error:
+            collision = str(error)
+        else:
+            collision = ""
+        assert_equal(
+            collision,
+            "vscode-theme-slug-collision: slug-collision: slug collision and slug-collision",
+            "a duplicate slug refuses and names both theme packages",
+        )
+
+    def caller_with_restyle(_caller_home: Path):
+        # Expected blueprints load only after scenario enters its clean home.
+        # A Restyle overlay in the caller home must not change those expectations.
+        overlay = helper.user_themes_dir() / names[0]
+        overlay.mkdir(parents=True)
+        metadata = json.loads((helper.builtin_themes_dir() / names[0] / "theme.json").read_text())
+        metadata["adjustments"] = {"brightness": 0.4, "saturation": -0.2}
+        (overlay / "theme.json").write_text(json.dumps(metadata) + "\n")
+        with_temp_home(scenario)
+
+    with_temp_home(caller_with_restyle)
 
     # Must-fail control: a blueprint that did not load supplies no slot, and the
     # curated theme's own value stands rather than a default painted over it.
