@@ -203,12 +203,12 @@
       "published": true
     },
     "ethereal": {
-      "release": "themes-v6",
-      "archive": "vgs-theme-ethereal-r3.tar.gz",
-      "rev": 3,
-      "size": 4890975,
-      "sha256": "a0ebe5819b20b89babb955306c9c48e607af222d35d77ab5fbc20a89922f7d14",
-      "definitions": "439d58d2c4a75e055a4d397539193a738746c56cfc6a24c0bafb2dc57135dcbb",
+      "release": "themes-v13",
+      "archive": "vgs-theme-ethereal-r4.tar.gz",
+      "rev": 4,
+      "size": 4890971,
+      "sha256": "7e02bf30baf91e75124d0855f3cf865d70509f55313ef311703d22663b920109",
+      "definitions": "84070949858b3f7647ddf4f6d94455b1af8877d99f3992cd47c63f7f21b11794",
       "preview": "1868a80de422c2ae0d72e15a40d0eb65fe8c8df412e6619ce32cbd92e1c91f06",
       "published": true
     },
@@ -253,12 +253,12 @@
       "published": true
     },
     "frankenstein": {
-      "release": "themes-v12",
-      "archive": "vgs-theme-frankenstein-r3.tar.gz",
-      "rev": 3,
-      "size": 12165665,
-      "sha256": "6a49a49e6ff49decfdeec53aae50cf6c0f5b34937ada46d1331662e88d3e2024",
-      "definitions": "d2bc9dbbb5e18846921030c30c0ae5e527ab04d3d3c43e826bafc112b9d347b7",
+      "release": "themes-v13",
+      "archive": "vgs-theme-frankenstein-r4.tar.gz",
+      "rev": 4,
+      "size": 12165651,
+      "sha256": "5d23778652e2c35ee36fc3ecbdfbe94646cad58886619e9d41d14dc2cec33ca9",
+      "definitions": "8650a65fd43d3e38e67b54945d5db42784fe8a144a9eb5785a28461613fb8fbb",
       "preview": "b1d139f45fdbffe51900b435cdb205e78f6cc007f0408ad5026d86891e003c4c",
       "published": true
     },
@@ -303,12 +303,12 @@
       "published": true
     },
     "hackerman": {
-      "release": "themes-v6",
-      "archive": "vgs-theme-hackerman-r3.tar.gz",
-      "rev": 3,
-      "size": 7549728,
-      "sha256": "46ba051d9ca95ede031ad706a1707cfa40502f40e6ad8e3fe80d8ab344046f28",
-      "definitions": "be107c92d69d575ba7123575ce9ebf97ffb9fefbca66d9f916f18ec6bc44f5c9",
+      "release": "themes-v13",
+      "archive": "vgs-theme-hackerman-r4.tar.gz",
+      "rev": 4,
+      "size": 7549733,
+      "sha256": "e50dde2c0446ceb91b747854488e6dba8cea8ad85e5ec75877e06ad7218d223c",
+      "definitions": "b936fdfa34d0d00c570a4ba65b14d657a65cc49f490ca04aecf188b4f865128a",
       "preview": "e04eee32bc86bcdd9a838dd12e32a14fbe5d66212ad12331c65e2e89fc864ec1",
       "published": true
     },
