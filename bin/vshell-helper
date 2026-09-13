@@ -1339,8 +1339,7 @@ def load_theme_package(name: str) -> Dict[str, Any] | None:
         files["app-colors.toml"].read_text(errors="ignore") if "app-colors.toml" in files else "")
     bp["apps"] = curated_apps_for_palette(
         {Path(rel).name: str(p) for rel, p in files.items() if rel.startswith("apps/")},
-        colors, app_overrides,
-        {str(root): layer_curated_palette(root) for root in (builtin_dir, user_dir)})
+        colors, app_overrides, package_layer_palettes(name))
     bp["backgrounds"] = [str(p) for _rel, p in backgrounds]
     bp["packagedPreview"] = str(files["preview.png"]) if "preview.png" in files else ""
     bp["adjustments"] = adjustments
@@ -2190,11 +2189,45 @@ def override_dropped_curated(bp: Dict[str, Any]) -> List[str]:
             blueprint_from_theme_json(theme_json_from_blueprint(pkg))):
         return []
     curated = {Path(rel).name: str(p) for rel, p in files.items() if rel.startswith("apps/")}
-    layers = {str(root): layer_curated_palette(root)
-              for root in (builtin_themes_dir() / package, user_themes_dir() / package)}
+    layers = package_layer_palettes(package)
     return sorted(set(curated_apps_for_palette(curated, palette, {}, layers))
                   - set(curated_apps_for_palette(curated, palette,
                                                  theme_app_overrides(package), layers)))
+
+
+def duplicate_theme_package(package: str, dest: Path, new_name: str) -> None:
+    """Copy a theme package's composed files into `dest` as one user package.
+
+    The copy is one directory, so the source's per-layer records cannot come
+    with it. Flattened as they stood, a legacy overlay `theme.json` that recorded
+    no digest became the only record beside the built-in curated file, and the
+    copy dropped that file on every load. The copy records the digest of the
+    palette its own `colors.toml` holds, as every writer does, and carries a
+    merge-style file only where the source layer that supplied it vouched for
+    that palette: the one record the copy writes would otherwise certify a file
+    nobody judged against it.
+
+    Restyle adjustments and per-app overrides are copied rather than folded in,
+    so the loader folds them in on the copy exactly as it does on the source.
+    """
+    files = compose_theme_files(package)
+    meta = json.loads(files["theme.json"].read_text())
+    palette = palette_identity(package_colors_map(files, package), str(meta.get("mode") or ""))
+    vouched = curated_apps_for_palette(
+        {Path(rel).name: str(p) for rel, p in files.items() if rel.startswith("apps/")},
+        palette, {}, package_layer_palettes(package))
+    for rel, src in files.items():
+        # A copy is the user's own theme, never something the catalog may remove
+        # later, so the download marker stays behind with the unvouched files.
+        if rel in ("theme.json", CATALOG_MARKER) or (
+                rel.startswith("apps/") and Path(rel).name not in vouched):
+            continue
+        target_path = dest / rel
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, target_path)
+    meta["name"] = new_name
+    meta["curatedPalette"] = palette_digest(palette)
+    write_file(dest / "theme.json", json.dumps(meta, indent=2) + "\n")
 
 
 def save_theme_package(bp: Dict[str, Any], name: str | None = None) -> Path:
@@ -2940,6 +2973,12 @@ def layer_curated_palette(root: Path) -> str:
     except Exception:
         return ""
     return str(meta.get("curatedPalette") or "") if isinstance(meta, dict) else ""
+
+
+def package_layer_palettes(name: str) -> Dict[str, str]:
+    """Each layer directory of package `name`, mapped to the digest it records."""
+    return {str(root): layer_curated_palette(root)
+            for root in (builtin_themes_dir() / name, user_themes_dir() / name)}
 
 
 def curated_apps_for_palette(apps: Dict[str, str], colors: Dict[str, str],
@@ -10125,19 +10164,7 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
             eprint(f"Theme already exists: {safe_new}")
             return 1
         if bp.get("package"):
-            files = compose_theme_files(Path(str(bp.get("path"))).name)
-            for rel, src in files.items():
-                target_path = dest / rel
-                target_path.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(src, target_path)
-            meta = json.loads((dest / "theme.json").read_text())
-            meta["name"] = new_name
-            write_file(dest / "theme.json", json.dumps(meta, indent=2) + "\n")
-            # A copy is the user's own theme, never something the catalog may
-            # remove later. `catalog_owns()` rejects an inherited marker anyway;
-            # dropping it here keeps the copy honest on disk too.
-            with contextlib.suppress(OSError):
-                (dest / CATALOG_MARKER).unlink()
+            duplicate_theme_package(Path(str(bp.get("path"))).name, dest, new_name)
         else:
             bp = dict(bp)
             bp["name"] = new_name
