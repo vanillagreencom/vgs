@@ -8711,6 +8711,16 @@ def test_wallpaper_and_save_keep_terminal_slots():
                          False, "a save with no terminal slots removes the stale file")
             assert_equal((helper.load_theme_package("termfix-saved") or {}).get("terminalColors"), {},
                          "the re-saved package carries no terminal slots")
+
+            # Saved under the built-in theme's own name, the user overlay must mask
+            # the built-in terminal file, or the saved palette inherits its slots.
+            helper.save_theme_package(dict(blueprint, terminalColors={}), "termfix")
+            errors = io.StringIO()
+            with contextlib.redirect_stderr(errors):
+                masked = helper.load_theme_package("termfix") or {}
+            assert_equal(masked.get("terminalColors"), {},
+                         "a save with no terminal slots masks the built-in terminal file")
+            assert_equal(errors.getvalue(), "", "the masking overlay loads without an error")
         finally:
             helper.builtin_themes_dir, helper.apply_theme_obj = original_builtin, original_apply
 

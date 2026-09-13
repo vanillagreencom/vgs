@@ -823,7 +823,9 @@ def recognized_color_count(data: Dict[str, str]) -> int:
     return len([k for k in normalized if k in COLOR_KEYS and k not in {"theme_type", "mode", "variant", "scheme"}])
 
 
-def parse_colors_toml(path: Path) -> Dict[str, str]:
+def parse_colors_toml(path: Path, allow_empty: bool = False) -> Dict[str, str]:
+    """Read a colours file. `allow_empty` accepts a file holding no colours, which
+    a terminal-colors.toml overlay uses to mean no terminal slots."""
     if not path.exists():
         raise ValueError(f"colors file not found: {path}")
 
@@ -862,7 +864,7 @@ def parse_colors_toml(path: Path) -> Dict[str, str]:
                     out[sm.group(1)] = sm.group(2).lower()
 
     normalized = normalize_color_map(out)
-    if recognized_color_count(normalized) == 0:
+    if recognized_color_count(normalized) == 0 and not (allow_empty and toml_error is None):
         detail = f": {toml_error}" if toml_error else ""
         raise ValueError(f"no recognized colors in {path}{detail}")
     return normalized
@@ -1346,7 +1348,8 @@ def load_theme_package(name: str) -> Dict[str, Any] | None:
     bp["terminalColors"] = {}
     if TERMINAL_COLORS_FILE in files:
         try:
-            bp["terminalColors"] = terminal_slot_overrides(parse_colors_toml(files[TERMINAL_COLORS_FILE]))
+            bp["terminalColors"] = terminal_slot_overrides(
+                parse_colors_toml(files[TERMINAL_COLORS_FILE], allow_empty=True))
         except Exception as exc:
             eprint(f"theme package {name}: {exc}")
     stamps = [meta_path.stat().st_mtime]
@@ -2063,6 +2066,10 @@ def materialize_theme_package(bp: Dict[str, Any], apps: Dict[str, str] | None = 
     terminal = bp.get("terminalColors") or {}
     if terminal:
         write_file(root / TERMINAL_COLORS_FILE, "".join(f'{key} = "{value}"\n' for key, value in terminal.items()))
+    elif user and (builtin_themes_dir() / name / TERMINAL_COLORS_FILE).is_file():
+        # The composed package would inherit the built-in theme's slots, so the
+        # overlay holds a file with none, which masks the built-in file.
+        write_file(root / TERMINAL_COLORS_FILE, "# No terminal slots: this overlay masks the built-in theme's.\n")
     else:
         # colors.toml is rewritten on every save, so a stale terminal file would
         # paint the previous theme's slots over this one.
