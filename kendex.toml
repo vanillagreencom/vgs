@@ -175,7 +175,6 @@ enabled = true
 [install]
 harnesses = [
     "claude",
-    "opencode",
     "codex",
     "pi",
 ]
@@ -321,7 +320,6 @@ enabled = true
 source = "kendex"
 harnesses = [
     "claude",
-    "opencode",
     "codex",
     "pi",
 ]
@@ -362,7 +360,6 @@ enabled = true
 source = "kendex"
 harnesses = [
     "claude",
-    "opencode",
     "codex",
     "pi",
 ]
@@ -371,7 +368,6 @@ harnesses = [
 source = "kendex"
 harnesses = [
     "claude",
-    "opencode",
     "codex",
     "pi",
 ]
@@ -380,7 +376,6 @@ harnesses = [
 source = "kendex"
 harnesses = [
     "claude",
-    "opencode",
     "codex",
     "pi",
 ]
