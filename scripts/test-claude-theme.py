@@ -251,6 +251,13 @@ class BundledThemeColours(unittest.TestCase):
                 if self.rendered[(name, key, "dark")] == self.rendered[(name, key, "light")]]
         self.assertEqual(same, [])
 
+    def test_every_bundled_theme_ships_both_modes_with_every_diff_rule_met(self):
+        """The shipped packages, with no slider moved, are what a user sees on a
+        theme apply. Six of them reach this only through a curated file, so
+        dropping one paints that theme's added and removed rows in one colour."""
+        self.assertEqual({case: missed for case, missed in self.shortfalls.items()
+                          if case[1] == () and missed}, {})
+
     def test_every_rendered_value_is_a_hex_colour(self):
         malformed = [(case, token, value)
                      for case, values in self.rendered.items()
@@ -294,6 +301,21 @@ class ModeCounterparts(unittest.TestCase):
         blueprint = dict(helper.find_theme("bauhaus"), apps={"claude-light.json": str(curated)})
         content, _missed = rendered_file(blueprint, "light")
         self.assertEqual(content["overrides"]["claude"], "#abcdef")
+
+    def test_a_curated_file_is_what_closes_a_rule_the_palette_cannot_reach(self):
+        """akane's light counterpart comes from the mode transform onto a peach
+        background, which pulls both diff bands onto that one hue: a band is a
+        weak tint and no anchor the generator has parts them. The package's
+        curated file is the only thing that does, and the rules are measured
+        after it merges so closing the rule also closes the warning."""
+        blueprint = helper.find_theme("akane")
+        _curated, missed = rendered_file(blueprint, "light")
+        bare = dict(blueprint, apps={name: path for name, path in blueprint["apps"].items()
+                                     if name != "claude-light.json"})
+        _plain, without = rendered_file(bare, "light")
+        self.assertEqual(
+            (missed, [line for line in without if line.startswith("diff bands")] != []),
+            ([], True))
 
     def test_an_app_override_for_claude_reaches_the_rendered_files(self):
         """Every other target consumes the loop's merged map; this one builds its
@@ -423,6 +445,16 @@ class HookBehaviour(unittest.TestCase):
         path = Path(tempfile.mkdtemp()) / "claude-dark.json"
         path.write_text(body)
         return dict(self.blueprint, apps={"claude-dark.json": str(path)})
+
+    def test_a_curated_band_that_breaks_a_rule_is_reported_like_a_palette_that_cannot(self):
+        """A curated file is judged by the rules the generator is judged by, so a
+        hand-picked band equal to the background warns rather than shipping a
+        /diff panel whose changed rows are invisible. catppuccin's background is
+        the value used here."""
+        _content, missed = helper.claude_theme_file(
+            self.curated('{"overrides": {"diffAddedDimmed": "#1e1e2e"}}'), "dark")
+        self.assertEqual([line for line in missed if line.startswith("diff band #1e1e2e")] != [],
+                         True)
 
     def test_a_curated_file_claude_code_would_not_paint_is_refused_by_name(self):
         """Claude Code ignores a key it does not carry and reports nothing, so each

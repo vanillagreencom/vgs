@@ -2558,6 +2558,53 @@ CLAUDE_WORD_LIGHTNESS_MARGIN = 0.04
 CLAUDE_TEXT_CONTRAST = 9.5
 
 
+def claude_diff_shortfalls(values: Dict[str, str]) -> List[str]:
+    """Every diff rule the finished token map misses, one line each.
+
+    The rules are measured on the colours Claude Code will paint rather than on
+    the candidates generation chose between, so this is also what a theme
+    package's curated file is judged by: a hand-picked band that closes a rule
+    closes its warning, and one that breaks a rule is named the same way a
+    palette out of reach is.
+    """
+    shortfalls: List[str] = []
+    bg = values["background"]
+    text = values["text"]
+    for fill, dimmed in (("diffAdded", "diffAddedDimmed"),
+                         ("diffRemoved", "diffRemovedDimmed")):
+        separation = contrast_ratio(values[dimmed], bg)
+        on_dimmed = contrast_ratio(text, values[dimmed])
+        if (separation < CLAUDE_DIFF_DIMMED_SEPARATION
+                or on_dimmed < CLAUDE_DIFF_TEXT_CONTRAST):
+            shortfalls.append(
+                f"diff band {values[dimmed]}: {separation:.2f}:1 off the background, "
+                f"body text {on_dimmed:.2f}:1 on it")
+        on_fill = contrast_ratio(text, values[fill])
+        if on_fill < CLAUDE_DIFF_TEXT_CONTRAST:
+            # The strong fill carries no separation rule of its own: it is the
+            # dimmed band's tint twice over and visible by construction.
+            shortfalls.append(f"diff fill {values[fill]}: body text {on_fill:.2f}:1 on it")
+    added_lightness, _ar, _ac, added_hue = _relative_oklch(values["diffAdded"])
+    removed_lightness, _rr, _rc, removed_hue = _relative_oklch(values["diffRemoved"])
+    hue_gap = _hue_distance(added_hue, removed_hue)
+    lightness_gap = abs(added_lightness - removed_lightness)
+    if (hue_gap < CLAUDE_DIFF_HUE_SEPARATION
+            and lightness_gap < CLAUDE_DIFF_LIGHTNESS_SEPARATION):
+        # A band is a weak tint, so a strongly hued background pulls both of them
+        # onto its own hue and no anchor can part them. Naming it beats refusing.
+        shortfalls.append(
+            f"diff bands {values['diffAdded']} and {values['diffRemoved']}: "
+            f"{hue_gap:.1f} degrees and {lightness_gap:.3f} lightness apart")
+    for word, band in (("diffAddedWord", "diffAdded"), ("diffRemovedWord", "diffRemoved")):
+        off_band = contrast_ratio(values[word], values[band])
+        on_word = contrast_ratio(text, values[word])
+        if off_band < CLAUDE_DIFF_WORD_SEPARATION or on_word < 4.5:
+            shortfalls.append(
+                f"diff word {values[word]} on band {values[band]}: "
+                f"{off_band:.2f}:1 off the band, body text {on_word:.2f}:1 on it")
+    return shortfalls
+
+
 def claude_theme_overrides(roles: Dict[str, str]) -> Tuple[Dict[str, str], List[str]]:
     """Claude Code's colour tokens for one VGS theme, and the rules they missed.
 
@@ -2568,10 +2615,10 @@ def claude_theme_overrides(roles: Dict[str, str]) -> Tuple[Dict[str, str], List[
     the diff bands take the rules above.
 
     A restyled palette can put a diff rule out of reach. The closest value the
-    palette allows is used and named in the returned shortfalls: refusing would
-    leave Claude Code on the colours of the theme the user just left.
+    palette allows is used, and `claude_diff_shortfalls` names what the finished
+    map still misses: refusing would leave Claude Code on the colours of the
+    theme the user just left.
     """
-    shortfalls: List[str] = []
     bg = roles["background"]
     mode = (roles.get("theme_type") or "dark").lower()
     prefer_text = "#000000" if mode == "light" else "#ffffff"
@@ -2658,9 +2705,6 @@ def claude_theme_overrides(roles: Dict[str, str]) -> Tuple[Dict[str, str], List[
                 + max(0.0, CLAUDE_DIFF_TEXT_CONTRAST - contrast_ratio(text, dimmed)),
                 strong, dimmed))
         _miss, strong, dimmed = min(candidates, key=lambda entry: entry[0])
-        shortfalls.append(
-            f"diff band {color}: {contrast_ratio(dimmed, bg):.2f}:1 off the background, "
-            f"body text {contrast_ratio(text, dimmed):.2f}:1 on it")
         return strong, dimmed
 
     def diff_word(color: str, band_color: str) -> str:
@@ -2695,10 +2739,6 @@ def claude_theme_overrides(roles: Dict[str, str]) -> Tuple[Dict[str, str], List[
                 max(0.0, CLAUDE_DIFF_WORD_SEPARATION - contrast_ratio(candidate, band_color))
                 + max(0.0, 4.5 - contrast_ratio(text, candidate)), candidate))
         _miss, candidate = min(candidates, key=lambda entry: entry[0])
-        shortfalls.append(
-            f"diff word {color} on band {band_color}: "
-            f"{contrast_ratio(candidate, band_color):.2f}:1 off the band, "
-            f"body text {contrast_ratio(text, candidate):.2f}:1 on it")
         return candidate
 
     def collision(added_fill: str, removed_fill: str) -> Tuple[float, float]:
@@ -2717,13 +2757,6 @@ def claude_theme_overrides(roles: Dict[str, str]) -> Tuple[Dict[str, str], List[
     if not apart(added, removed):
         added, added_dimmed = diff_fills(roles["green"], CLAUDE_DIFF_GREEN_HUE)
         removed, removed_dimmed = diff_fills(roles["red"], CLAUDE_DIFF_RED_HUE)
-    if not apart(added, removed):
-        # A band is a weak tint, so a strongly hued background pulls both of them
-        # onto its own hue and no anchor can part them. Naming it beats refusing.
-        hue_gap, lightness_gap = collision(added, removed)
-        shortfalls.append(
-            f"diff bands {added} and {removed}: {hue_gap:.1f} degrees and "
-            f"{lightness_gap:.3f} lightness apart")
     added_word = diff_word(roles["bright_green"], added)
     removed_word = diff_word(roles["bright_red"], removed)
 
@@ -2735,7 +2768,7 @@ def claude_theme_overrides(roles: Dict[str, str]) -> Tuple[Dict[str, str], List[
     blue = on_background(roles["blue"])
     bright_blue = on_background(roles["bright_blue"])
     orange = on_background(blend(roles["red"], roles["yellow"], 0.5))
-    return {
+    values = {
         "text": text,
         "inverseText": bg,
         "subtle": on_background(roles["outline"]),
@@ -2808,7 +2841,8 @@ def claude_theme_overrides(roles: Dict[str, str]) -> Tuple[Dict[str, str], List[
         "rainbow_blue_shimmer": on_background(roles["bright_cyan"]),
         "rainbow_indigo_shimmer": bright_blue,
         "rainbow_violet_shimmer": bright_magenta,
-    }, shortfalls
+    }
+    return values, claude_diff_shortfalls(values)
 
 
 def template_role_names() -> set[str]:
@@ -4789,9 +4823,13 @@ def claude_theme_file(bp: Dict[str, Any], mode: str) -> Tuple[Dict[str, Any], Li
     enforcement as the palette's own colours. The theme package may carry
     `apps/claude-<mode>.json`, whose `overrides` are merged over the computed
     ones so a curated file states only what differs.
+
+    The diff rules are re-measured once every source has contributed, so a
+    curated band that closes a rule generation could not reach stops warning,
+    and a curated band that breaks one is reported.
     """
     roles = {**target_roles(bp), **bp_app_overrides(bp).get("claude", {})}
-    overrides, shortfalls = claude_theme_overrides(roles)
+    overrides, _before_merge = claude_theme_overrides(roles)
     curated_path = (bp.get("apps") or {}).get(f"claude-{mode}.json")
     where = (f"{bp.get('name') or mode} claude-{mode}.json" if curated_path
              else f"{bp.get('name') or mode} vgs-{mode}.json")
@@ -4826,7 +4864,8 @@ def claude_theme_file(bp: Dict[str, Any], mode: str) -> Tuple[Dict[str, Any], Li
     if unreadable:
         raise ValueError(f"{where}: values that are not hex colours: {', '.join(unreadable)}")
     overrides = {token: clean_hex(value) for token, value in overrides.items()}
-    return {"name": f"vgs-{mode}", "base": mode, "overrides": overrides}, shortfalls
+    return ({"name": f"vgs-{mode}", "base": mode, "overrides": overrides},
+            claude_diff_shortfalls(overrides))
 
 
 def apply_claude_theme_hook(roles: Dict[str, str], bp: Dict[str, Any]) -> Dict[str, Any]:
