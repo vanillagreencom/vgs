@@ -3,5 +3,8 @@
 # on the background. The shell's derived roles, pi and every other app
 # template keep the palette's slots.
 
-# green: added lines in a diff.
-color2 = "#7c9f75"
+# red: removed lines in a diff.
+color1 = "#eeaea6"
+
+# bright red: removed words in a diff.
+color9 = "#d6b5b0"

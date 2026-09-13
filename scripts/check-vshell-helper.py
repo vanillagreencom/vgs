@@ -8681,23 +8681,28 @@ def test_dark_themes_draw_diffs_in_two_hues():
     Each pair reads as two colours only when its hues sit 60 degrees apart, and
     each slot carries HSL saturation of 0.15 and 3:1 on the background.
 
-    Every slot change lives in terminal-colors.toml, so each target that paints no
-    terminal renders what the theme renders without that file. The single-hue
-    palettes keep red and green in one hue by the owner's ruling, so their diffs
-    read by the + and - glyphs and they ship no terminal slots."""
-    fixed = ["akane", "arc-raiders", "cpunk", "ethereal", "greek-noir", "hackerman", "harbordark",
-             "kanagawa-dragon", "lowlight", "mechanoonna", "oxford", "reddcs", "tycho", "vengeance", "x-1632"]
+    Every bundled dark theme is checked, so a theme added later is too. Every slot
+    change lives in terminal-colors.toml, so each target that paints no terminal
+    renders what the theme renders without that file. The owner's ruling keeps the
+    single-hue palettes as they are and their diffs read by the + and - glyphs:
+    most keep red and green in one hue, and fireside's green is near-grey. They
+    ship no terminal slots."""
     single_hue = ["amberbyte", "artzen", "brutalism", "fireside", "lumon", "snow", "solitude", "vantablack"]
     other_targets = non_terminal_targets()
-    for name in fixed:
+    checked = []
+    for theme_dir in sorted(helper.builtin_themes_dir().iterdir()):
+        if not (theme_dir / "colors.toml").is_file() or theme_dir.name in single_hue:
+            continue
+        name = theme_dir.name
         blueprint = helper.load_theme_package(name)
         if not blueprint:
             raise AssertionError(f"bundled theme {name} did not load")
-        if not blueprint["terminalColors"]:
-            raise AssertionError(f"{name} ships no terminal-colors.toml")
-        assert_terminal_file_reaches_terminals_only(name, blueprint, other_targets)
         roles = helper.render_roles(blueprint, helper.app_target_roles(blueprint, helper.target_roles(blueprint)))
-        assert_equal(roles["theme_type"], "dark", f"{name} is a dark theme")
+        if roles["theme_type"] != "dark":
+            continue
+        checked.append(name)
+        if blueprint["terminalColors"]:
+            assert_terminal_file_reaches_terminals_only(name, blueprint, other_targets)
         background = roles["background"]
         for removed, added in ((1, 2), (9, 10)):
             for slot in (removed, added):
@@ -8714,6 +8719,8 @@ def test_dark_themes_draw_diffs_in_two_hues():
             distance = helper._hue_distance(removed_hue, added_hue)
             if distance < 60.0:
                 raise AssertionError(f"{name}: slots {removed} and {added} sit {distance:.0f} degrees apart, under 60")
+    if len(checked) < 60 or not {"akane", "synthwave84"} <= set(checked) or "catppuccin-latte" in checked:
+        raise AssertionError(f"the dark theme scan is broken: it found {len(checked)} themes")
     for name in single_hue:
         blueprint = helper.load_theme_package(name)
         if not blueprint:

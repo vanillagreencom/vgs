@@ -4,4 +4,7 @@
 # template keep the palette's slots.
 
 # green: added lines in a diff.
-color2 = "#7c9f75"
+color2 = "#5a8151"
+
+# bright green: added words in a diff.
+color10 = "#8ba884"
