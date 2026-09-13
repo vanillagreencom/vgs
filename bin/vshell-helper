@@ -1345,10 +1345,6 @@ def load_theme_package(name: str) -> Dict[str, Any] | None:
     user_dir = user_themes_dir() / name
     bp["pair"] = str(meta.get("pair") or "")
     bp["package"] = True
-    # A positive marker distinguishes this package's original mode from a
-    # palette-only blueprint that happens to retain its display name. Mode
-    # transforms intentionally do not carry this marker.
-    bp["packageMode"] = blueprint_mode(bp)
     bp["builtin"] = builtin_dir.is_dir()
     bp["path"] = str(builtin_dir if builtin_dir.is_dir() else user_dir)
     bp["userDir"] = str(user_dir) if user_dir.is_dir() else ""
@@ -4159,14 +4155,12 @@ def _vgs_active_theme_identity(
         bp: Dict[str, Any], bundled: List[Tuple[str, str, str, str]]) -> Tuple[str, str]:
     """Return the active VS Code label and slug.
 
-    A package owns the active identity only when its own curated VS Code file is
-    applied in the package's original mode. Generated palettes and transformed
-    modes use a label that no bundled package owns, even when they keep a
-    package display name.
+    A package owns the active identity whenever its curated VS Code file is the
+    installed source. A template-rendered file uses a label that no bundled
+    package owns, even when its blueprint keeps a package display name.
     """
     apps = bp.get("apps") or {}
-    if (bp.get("package") and apps.get("vscode-theme.json")
-            and bp.get("packageMode") == blueprint_mode(bp)):
+    if apps.get("vscode-theme.json"):
         return _vgs_theme_identity(bp, "VGS")
 
     bundled_labels = {label for _slug, label, _ui, _content in bundled}
@@ -6982,7 +6976,7 @@ def carry_curated_apps(bp: Dict[str, Any]) -> Dict[str, Any]:
     apps = cur.get("apps") or {}
     if apps:
         bp["apps"] = apps
-    for key in ("package", "packageMode", "path", "builtin", "userDir"):
+    for key in ("package", "path", "builtin", "userDir"):
         if cur.get(key) is not None and key not in bp:
             bp[key] = cur[key]
     return bp

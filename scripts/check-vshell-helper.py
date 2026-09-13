@@ -8669,16 +8669,52 @@ def test_curated_vscode_theme_takes_the_terminal_palette():
             helper.app_target_roles(generated_bp)["background"],
             "the selected VS Code file keeps the wallpaper-generated palette",
         )
-        transformed_bp = helper.transformed_mode_blueprint(
-            active_bp,
-            "dark" if helper.blueprint_mode(active_bp) == "light" else "light",
-            "",
-        )
-        transformed_label, _transformed_slug = helper._vgs_active_theme_identity(
-            transformed_bp, bundled)
-        if transformed_label in bundled_labels:
-            raise AssertionError(
-                f"the transformed palette selected a bundled package label: {transformed_label}")
+        opposite_mode = "dark" if helper.blueprint_mode(active_bp) == "light" else "light"
+        current_data = helper.theme_json_from_blueprint(active_bp)
+        with (patch.object(helper, "current_theme", return_value=current_data),
+              patch.object(helper, "current_theme_obj", return_value=active_bp)):
+            carried_same_mode = helper.carry_curated_apps(
+                helper.blueprint_from_current_theme(
+                    name=labels[active], mode=helper.blueprint_mode(active_bp)))
+            carried_palette = dict(carried_same_mode["palette"])
+            carried_palette["wallpaper"] = str(wallpaper)
+            carried_same_mode["palette"] = carried_palette
+            carried_other_mode = helper.carry_curated_apps(
+                helper.blueprint_from_current_theme(
+                    name=labels[active], mode=opposite_mode))
+        identity_rows = [
+            ("same-mode wallpaper carry", carried_same_mode),
+            ("mode-mismatched wallpaper carry", carried_other_mode),
+            ("transformed package mode",
+             helper.transformed_mode_blueprint(active_bp, opposite_mode, "")),
+        ]
+        helper.VSCODE_VARIANTS = [{
+            "id": "vscode", "ext": str(ext_dir), "settings": str(settings_path), "cli": ["code"],
+        }]
+        try:
+            for row_label, row_bp in identity_rows:
+                row_result = helper.apply_theme_obj(row_bp, only_app="vscode")
+                assert_equal(row_result.get("success"), True,
+                             f"{row_label}: the VS Code target applies")
+                row_selected = json.loads(settings_path.read_text()).get("workbench.colorTheme")
+                assert_equal(row_selected, labels[active],
+                             f"{row_label}: the curated file uses its package label")
+                row_package = json.loads(
+                    (ext_dir / "vgs.vgs-theme-1.0.0" / "package.json").read_text())
+                row_entry = next((
+                    entry for entry in row_package["contributes"]["themes"]
+                    if entry.get("label") == row_selected), None)
+                if not row_entry:
+                    raise AssertionError(
+                        f"{row_label}: the selected curated label is not registered")
+                row_path = (ext_dir / "vgs.vgs-theme-1.0.0"
+                            / str(row_entry["path"]).removeprefix("./"))
+                row_file = json.loads(helper._strip_jsonc(row_path.read_text()))
+                row_ui = "vs" if row_file.get("type") == "light" else "vs-dark"
+                assert_equal(row_entry.get("uiTheme"), row_ui,
+                             f"{row_label}: uiTheme matches the installed curated file")
+        finally:
+            helper.VSCODE_VARIANTS = original_variants
 
         for package_name in ("slug collision", "slug-collision"):
             package = helper.user_themes_dir() / package_name
