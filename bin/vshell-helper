@@ -1320,9 +1320,13 @@ def load_theme_package(name: str) -> Dict[str, Any] | None:
     # Restyle adjustments transform the base palette before role derivation and
     # stay non-destructive (colors.toml is never rewritten). All-zero is a no-op.
     adjustments = normalize_adjustments(meta.get("adjustments"))
+    # The adjusted map is the palette the curated-file rule is asked about, so it
+    # comes from the one owner the save's exemption also calls. The unadjusted
+    # map is this loader's alone. Both derive from one parse, so a package whose
+    # `colors.toml` does not read reports it once.
     raw_colors = package_colors_map(files, name)
     unadjusted_colors = palette_identity(raw_colors, str(meta.get("mode") or ""))
-    colors = palette_identity(raw_colors, str(meta.get("mode") or ""), adjustments)
+    colors = package_palette(raw_colors, meta)
     bp = palette_from_colors_map(colors, name=str(meta.get("name") or name), wallpaper=wallpaper, source=source)
     builtin_dir = builtin_themes_dir() / name
     user_dir = user_themes_dir() / name
@@ -2066,6 +2070,22 @@ def package_colors_map(files: Dict[str, Path], name: str) -> Dict[str, str]:
         return {}
 
 
+def package_palette(colors: Dict[str, str], meta: Dict[str, Any]) -> Dict[str, str]:
+    """The palette identity a theme package renders from, over its parsed colours.
+
+    One owner for the assembly, because the loader decides which curated files a
+    package's palette still fits and the save's exemption has to ask the same
+    question of the same palette. Two spellings of these steps agreed until the
+    loader gained one the copy lacked, and the copy's answer is a refused
+    exemption, which prunes the only curated file a catalog download holds.
+
+    It takes the parsed colours rather than the package's files, so the loader
+    can pass one `package_colors_map` result here and to its own unadjusted map
+    instead of reading `colors.toml` twice.
+    """
+    return palette_identity(colors, str(meta.get("mode") or ""), meta.get("adjustments"))
+
+
 def package_source(meta: Dict[str, Any]) -> str:
     """Whether a theme package's palette is hand-curated or machine-generated.
 
@@ -2078,17 +2098,24 @@ def package_source(meta: Dict[str, Any]) -> str:
 
 
 def rebuilt_palette_identity(bp: Dict[str, Any]) -> Dict[str, str]:
-    """A blueprint's palette in the space a rebuild from the applied theme lands in.
+    """A blueprint's palette in derived form, over the key set `theme.json` names.
 
-    The one space two blueprints of different provenance can be compared in. A
-    package holds raw palette keys while `set-wallpaper --save` hands the save a
+    The form two blueprints of different provenance are comparable in. A package
+    holds raw palette keys while `set-wallpaper --save` hands the save a
     blueprint rebuilt out of `theme.json`, which holds derived roles; on akane
     `accent`, `selection_background` and `selection_foreground` differ between the
-    two while naming the same palette. Passing both through the same round trip
-    puts each in derived form and drops the terminal slots one side carries and
-    the other does not, so what remains differs only where the colours do.
+    two while naming the same palette. This also drops the terminal slots one
+    side carries and the other does not.
+
+    It is not a normal form, and re-applying it does not converge. On a
+    generated-source palette `target_roles` re-runs contrast adjustment, which on
+    akane moves `blue`, `cyan`, `green`, `magenta`, `red` and `yellow` on every
+    one of eight successive trips, by 16 units in a channel on the first and 3 on
+    the eighth. Comparing two blueprints therefore means giving both the same
+    number of trips, not trusting the function to settle: see the call in
+    `override_dropped_curated`.
     """
-    theme = theme_json_from_blueprint(blueprint_from_theme_json(theme_json_from_blueprint(bp)))
+    theme = theme_json_from_blueprint(bp)
     return {**{str(key): str(value) for key, value in (theme.get("colors") or {}).items()},
             "mode": str(theme.get("mode") or "")}
 
@@ -2124,10 +2151,10 @@ def override_dropped_curated(bp: Dict[str, Any]) -> List[str]:
       the destination is a different package, and a merge-style file already
       sitting there was picked for colours this save never saw.
     - The palette the save writes is still the source package's own, compared
-      through `rebuilt_palette_identity` so the two forms above meet. They part
-      whenever a control moves the applied palette without writing `colors.toml`:
-      `theme apply-colors --set foreground=#101010` with no `--save`, then
-      `set-wallpaper --save`. The package on disk still matches the digest
+      through `rebuilt_palette_identity` at equal rebuild depth so the two forms
+      above meet. They part whenever a control moves the applied palette without
+      writing `colors.toml`: `theme apply-colors --set foreground=#101010` with
+      no `--save`, then `set-wallpaper --save`. The package still matches the digest
       recorded beside it, so the drop question alone reads the file as merely
       overridden and spares it, while the save writes the edited palette and
       records its digest, which certifies colours the file was never picked for.
@@ -2152,10 +2179,16 @@ def override_dropped_curated(bp: Dict[str, Any]) -> List[str]:
         meta = json.loads(meta_path.read_text())
     if not isinstance(meta, dict):
         return []
-    palette = palette_identity(package_colors_map(files, package), str(meta.get("mode") or ""),
-                               meta.get("adjustments"))
+    palette = package_palette(package_colors_map(files, package), meta)
+    # `bp` arrived through one rebuild out of `theme.json` already, so the
+    # package side is given the same trip before the two are compared. This
+    # equalises depth; it does not normalise. `rebuilt_palette_identity` does not
+    # converge on a generated-source palette, so a package written by `theme mode
+    # --transform` plus a save never matched a copy of itself rebuilt once more,
+    # and the exemption it was owed was refused.
+    pkg = palette_from_colors_map(palette, name=package, source=package_source(meta))
     if rebuilt_palette_identity(bp) != rebuilt_palette_identity(
-            palette_from_colors_map(palette, name=package, source=package_source(meta))):
+            blueprint_from_theme_json(theme_json_from_blueprint(pkg))):
         return []
     curated = {Path(rel).name: str(p) for rel, p in files.items() if rel.startswith("apps/")}
     layers = {str(root): layer_curated_palette(root)
@@ -5620,6 +5653,25 @@ def apply_theme_obj(bp: Dict[str, Any], only_app: str | None = None,
         return _apply_theme_obj_unlocked(bp, only_app, only_target, run_hooks)
 
 
+def applied_theme_state(bp: Dict[str, Any]) -> Dict[str, Any]:
+    """`bp` as `theme-current.json` records it: the applied palette, stamped.
+
+    Where the package sits on disk is not part of the applied state. `path`,
+    `builtin`, `userDir`, `backgrounds` and `packagedPreview` are re-resolved from
+    the package by every reader that wants them, and a copy kept here would
+    outlive the directory it names once the package is removed or renamed.
+
+    One owner, so a fixture seeding an applied theme writes the file the apply
+    writes. `path` and `package` are the keys `override_dropped_curated` gates
+    on, so a seeded state richer than the real one hides a refused exemption.
+    """
+    current = dict(bp)
+    for key in ("path", "builtin", "userDir", "backgrounds", "packagedPreview"):
+        current.pop(key, None)
+    current["appliedAt"] = int(time.time() * 1000)
+    return current
+
+
 def _apply_theme_obj_unlocked(bp: Dict[str, Any], only_app: str | None = None,
                               only_target: str | None = None,
                               run_hooks: bool = True) -> Dict[str, Any]:
@@ -5714,11 +5766,8 @@ def _apply_theme_obj_unlocked(bp: Dict[str, Any], only_app: str | None = None,
         warnings.append(f"{result.get('hook')}: {msg}")
         eprint(f"hook {result.get('hook')} failed: {msg}")
     if not only_app and not only_target:
-        current = dict(bp)
-        for key in ("path", "builtin", "userDir", "backgrounds", "packagedPreview"):
-            current.pop(key, None)
-        current["appliedAt"] = int(time.time() * 1000)
-        write_file(cfg_dir() / "theme-current.json", json.dumps(current, indent=2) + "\n")
+        write_file(cfg_dir() / "theme-current.json",
+                   json.dumps(applied_theme_state(bp), indent=2) + "\n")
     return {"success": True, "partial": bool(warnings), "name": bp.get("name"), "rendered": rendered, "curated": sorted(set(curated_used)), "skipped": sorted(set(skipped)), "hooks": hook_results, "warnings": warnings, "wallpaper": roles.get("wallpaper", "")}
 
 

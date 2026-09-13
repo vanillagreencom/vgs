@@ -8801,10 +8801,10 @@ def test_wallpaper_and_save_keep_terminal_slots():
             helper.cfg_dir().mkdir(parents=True, exist_ok=True)
             (helper.cfg_dir() / "theme.json").write_text(helper.render_target_template(
                 "vgs-shell", "vgs-theme.json", helper.target_roles(blueprint)))
-            # What an apply leaves behind: the applied blueprint, without its package paths.
-            applied_state = {key: value for key, value in blueprint.items()
-                             if key not in ("path", "builtin", "userDir", "backgrounds", "packagedPreview")}
-            (helper.cfg_dir() / "theme-current.json").write_text(json.dumps(applied_state) + "\n")
+            # What an apply leaves behind, from the apply's own writer, so this
+            # cannot keep seeding keys a later apply stops recording.
+            (helper.cfg_dir() / "theme-current.json").write_text(
+                json.dumps(helper.applied_theme_state(blueprint)) + "\n")
             # (command, argv, the terminal slots the command's result carries)
             rows = [
                 ("set-wallpaper", ["set-wallpaper", str(wallpaper)],
