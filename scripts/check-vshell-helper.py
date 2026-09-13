@@ -8650,6 +8650,7 @@ def test_light_themes_read_in_a_terminal():
     rows = [
         ("catppuccin-latte", 4.5, 3.0, 4.5, None),
         ("flexoki-light", 4.5, 3.0, 4.5, None),
+        ("horizon-light", 4.5, 3.0, 4.5, 3.0),
         ("rose-pine", 4.5, 3.0, 4.5, None),
         ("thegreek", 4.5, 3.0, 4.5, None),
         ("white", 4.5, 3.0, 4.5, 4.5),
@@ -8676,6 +8677,36 @@ def test_light_themes_read_in_a_terminal():
         if selection_min is not None:
             measured.append(("the selection fill in slot 6",
                              helper.contrast_ratio(body, roles["terminal_color6"]), selection_min))
+        for label, ratio, minimum in measured:
+            if ratio < minimum:
+                raise AssertionError(f"{name}: {label} reads at {ratio:.2f}:1, under {minimum}:1")
+
+
+def test_dark_themes_read_in_a_terminal():
+    """Dark ANSI mode draws body text in slot 15 and bands in slots 8 and 0."""
+    # (theme, body text on the background, muted text, body text on each band)
+    rows = [
+        ("horizon", 4.5, 3.0, 4.5),
+    ]
+    other_targets = non_terminal_targets()
+
+    for name, body_min, muted_min, band_min in rows:
+        blueprint = helper.load_theme_package(name)
+        if not blueprint:
+            raise AssertionError(f"bundled theme {name} did not load")
+        if not blueprint["terminalColors"]:
+            raise AssertionError(f"{name} ships no terminal-colors.toml")
+        assert_terminal_file_reaches_terminals_only(name, blueprint, other_targets)
+        roles = helper.render_roles(blueprint, helper.app_target_roles(blueprint, helper.target_roles(blueprint)))
+        assert_equal(roles["theme_type"], "dark", f"{name} is a dark theme")
+        background = roles["background"]
+        body = roles["terminal_color15"]
+        measured = [
+            ("body text", helper.contrast_ratio(body, background), body_min),
+            ("muted text", helper.contrast_ratio(roles["terminal_color7"], background), muted_min),
+            ("the band on slot 8", helper.contrast_ratio(body, roles["terminal_color8"]), band_min),
+            ("the band on slot 0", helper.contrast_ratio(body, roles["terminal_color0"]), band_min),
+        ]
         for label, ratio, minimum in measured:
             if ratio < minimum:
                 raise AssertionError(f"{name}: {label} reads at {ratio:.2f}:1, under {minimum}:1")
@@ -8965,6 +8996,7 @@ def main():
     test_terminal_slot_overrides_reach_terminals_only()
     test_curated_vscode_theme_takes_the_terminal_palette()
     test_light_themes_read_in_a_terminal()
+    test_dark_themes_read_in_a_terminal()
     test_dark_themes_draw_diffs_in_two_hues()
     test_wallpaper_and_save_keep_terminal_slots()
     test_terminal_app_overrides_show_on_their_editor_row()

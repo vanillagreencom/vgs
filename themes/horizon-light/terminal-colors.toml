@@ -1,0 +1,4 @@
+# Terminal body and band colors differ from editor background and foreground.
+color0 = "#06060c"
+color7 = "#c27965"
+color15 = "#978986"

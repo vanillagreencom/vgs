@@ -1,0 +1,3 @@
+# ANSI text and bands need more contrast than the shared editor slots.
+color8 = "#63668d"
+color15 = "#e8e9ea"
