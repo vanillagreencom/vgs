@@ -9,6 +9,7 @@ packages are read and nothing touches the user's own Claude Code configuration.
 from __future__ import annotations
 
 import ast
+import contextlib
 import importlib.machinery
 import importlib.util
 import json
@@ -123,33 +124,57 @@ THEMES = helper.list_themes()
 RESTYLE_STEPS = ({}, {"brightness": -25}, {"brightness": 100}, {"contrast": -100})
 
 
-def restyled(blueprint: dict, adjustments: dict) -> dict:
-    """`blueprint` with a restyle applied, the way a slider reaches the helper.
+@contextlib.contextmanager
+def temp_home(claude: bool = False, home: Path | None = None):
+    """`helper.home` pointed at a throwaway HOME for the body, restored after.
 
-    The package identity and the adjustments ride across, because that is what
-    load_theme_package produces: it transforms the palette and still points the
-    blueprint at the package's own curated files. Rebuilding the palette alone
-    drops them, which leaves every curated file untested under every slider.
+    Four sites saved, reassigned and restored `helper.home` by hand. The restore
+    is the half a new site forgets, and one leak sends every later case at the
+    wrong directory. `claude` creates ~/.claude, which is what the hook tests
+    whether it writes at all.
+    """
+    home = Path(tempfile.mkdtemp()) if home is None else home
+    if claude:
+        (home / ".claude").mkdir(exist_ok=True)
+    original = helper.home
+    helper.home = lambda: home
+    try:
+        yield home
+    finally:
+        helper.home = original
+
+
+def write_package(home: Path, dir_name: str, colors: str, mode: str = "dark",
+                  adjustments: dict | None = None, apps: dict | None = None) -> Path:
+    """A user theme package on disk under `home`, for the loader to read back."""
+    root = home / ".config" / "vshell" / "themes" / dir_name
+    (root / "apps").mkdir(parents=True, exist_ok=True)
+    meta = {"name": dir_name, "mode": mode, "pair": "", "source": "curated"}
+    if adjustments:
+        meta["adjustments"] = adjustments
+    (root / "theme.json").write_text(json.dumps(meta))
+    (root / "colors.toml").write_text(colors)
+    for filename, content in (apps or {}).items():
+        (root / "apps" / filename).write_text(content)
+    return root
+
+
+def restyled(name: str, adjustments: dict) -> dict:
+    """The bundled package `name` as a restyle slider leaves it.
+
+    The adjustments are written as the overlay a slider writes and read back
+    through `load_theme_package`, so every fixture in this file is whatever
+    production assembles. A harness that re-stated that assembly would keep
+    mirroring it after the loader's inputs changed, and the oracle would then
+    grade blueprints the helper never builds: the drop now reads a persisted
+    colour edit as well as the sliders, which is exactly such a change.
     """
     if not adjustments:
-        return blueprint
-    palette = blueprint["palette"]
-    colors = {f"color{index}": value for index, value in enumerate(palette["colors"])}
-    colors.update(palette.get("extendedColors") or {})
-    colors["mode"] = helper.blueprint_mode(blueprint)
-    variant = helper.palette_from_colors_map(
-        helper.apply_adjustments(colors, helper.normalize_adjustments(adjustments)),
-        name=blueprint["name"], wallpaper="", source="generated")
-    normalized = helper.normalize_adjustments(adjustments)
-    for key in ("package", "path"):
-        if blueprint.get(key):
-            variant[key] = blueprint[key]
-    # The loader drops the curated files a restyled palette no longer fits, so
-    # the harness asks it rather than carrying the package's files verbatim.
-    # Copying them would test a blueprint the helper never builds.
-    variant["apps"] = helper.curated_apps_for_palette(blueprint.get("apps") or {}, normalized)
-    variant["adjustments"] = normalized
-    return variant
+        return helper.find_theme(name, THEMES)
+    with temp_home():
+        helper.ensure_dirs()
+        helper.set_theme_adjustments(name, adjustments)
+        return helper.load_theme_package(name)
 
 
 def rendered_file(blueprint: dict, mode: str) -> tuple[dict, list]:
@@ -174,7 +199,7 @@ class BundledThemeColours(unittest.TestCase):
         cls.shortfalls = {}
         for name in THEME_NAMES:
             for adjustments in RESTYLE_STEPS:
-                blueprint = restyled(helper.find_theme(name, THEMES), adjustments)
+                blueprint = restyled(name, adjustments)
                 for mode in ("dark", "light"):
                     case = (name, tuple(sorted(adjustments.items())), mode)
                     content, missed = rendered_file(blueprint, mode)
@@ -387,8 +412,10 @@ class ModeCounterparts(unittest.TestCase):
         """The carry lives in transformed_mode_blueprint, so a caller that reaches
         blueprint_mode_variant itself gets the palette without the package and
         every curated file goes missing. That is what `theme mode --transform`
-        did. Naming the one permitted caller reddens the next such call wherever
-        it is written, which asserting on the wrapper alone cannot do.
+        did. Naming the one permitted caller reddens the next such call written
+        inside a function, which asserting on the wrapper alone cannot do. A call
+        at module or class scope is attributed to no caller and passes; the helper
+        has no such call site today, so widening the walk would buy nothing.
         """
         source = ast.parse((REPO / "bin" / "vshell-helper").read_text())
         callers = {
@@ -468,12 +495,8 @@ class HookBehaviour(unittest.TestCase):
         self.roles = helper.target_roles(self.blueprint)
 
     def run_hook(self):
-        original = helper.home
-        helper.home = lambda: self.home
-        try:
+        with temp_home(home=self.home):
             return helper.run_hook("claude-theme", self.roles, self.blueprint)
-        finally:
-            helper.home = original
 
     def test_no_claude_directory_skips_without_writing(self):
         result = self.run_hook()
@@ -658,7 +681,7 @@ class HookBehaviour(unittest.TestCase):
 
     def test_a_restyle_a_palette_cannot_carry_is_reported_and_still_written(self):
         (self.home / ".claude").mkdir()
-        self.blueprint = restyled(helper.find_theme("pmndrs"), {"brightness": -25})
+        self.blueprint = restyled("pmndrs", {"brightness": -25})
         self.roles = helper.target_roles(self.blueprint)
         result = self.run_hook()
         self.assertEqual(
@@ -681,25 +704,14 @@ class RestyledPackages(unittest.TestCase):
          'selection_background = "#9279AA"']
         + [f'color{index} = "#4A2036"' for index in range(16)]) + "\n"
 
+    APPS = {"claude-dark.json": json.dumps({"overrides": {"claude": "#abcdef"}}),
+            "icons.theme": "[Icon Theme]\nName=probe\n"}
+
     def package(self, adjustments: dict) -> dict:
         """A user package carrying one merge-style and one replacing curated file."""
-        home = Path(tempfile.mkdtemp())
-        root = home / ".config" / "vshell" / "themes" / "probe"
-        (root / "apps").mkdir(parents=True)
-        meta = {"name": "probe", "mode": "dark", "pair": "", "source": "curated"}
-        if adjustments:
-            meta["adjustments"] = adjustments
-        (root / "theme.json").write_text(json.dumps(meta))
-        (root / "colors.toml").write_text(self.COLORS)
-        (root / "apps" / "claude-dark.json").write_text(
-            json.dumps({"overrides": {"claude": "#abcdef"}}))
-        (root / "apps" / "icons.theme").write_text("[Icon Theme]\nName=probe\n")
-        original = helper.home
-        helper.home = lambda: home
-        try:
-            return helper.find_theme("probe")
-        finally:
-            helper.home = original
+        with temp_home() as home:
+            write_package(home, "probe", self.COLORS, adjustments=adjustments, apps=self.APPS)
+            return helper.load_theme_package("probe")
 
     def test_a_package_at_rest_keeps_every_curated_file(self):
         self.assertEqual(sorted(self.package({})["apps"]),
@@ -717,30 +729,51 @@ class RestyledPackages(unittest.TestCase):
         content, _missed = helper.claude_theme_file(self.package({"brightness": 100}), "dark")
         self.assertNotEqual(content["overrides"]["claude"], "#abcdef")
 
+    def test_a_persisted_colour_edit_drops_the_curated_file(self):
+        """A slider is not the only control that replaces the palette a curated
+        file was picked against. `persist_color_edits` writes a user overlay
+        colors.toml over the package's own and reloads with the adjustments still
+        at zero, so a rule reading only the sliders kept the frozen bands over
+        colours the user had just changed. Measured on akane: with the file kept,
+        both curated light bands sit 1.03:1 off the edited background, which is a
+        diff panel whose changed rows cannot be seen, where the generated render
+        misses no rule at all. The replacing file stays, because dropping it would
+        delete the installed artifact and leave nothing in its place.
+        """
+        with temp_home():
+            helper.ensure_dirs()
+            with mock.patch.object(helper, "apply_theme_obj", return_value={}):
+                helper.persist_color_edits(["foreground=#101010"], "akane")
+            edited = helper.load_theme_package("akane")
+        _content, missed = rendered_file(edited, "light")
+        self.assertEqual(
+            ("claude-light.json" in edited["apps"], "icons.theme" in edited["apps"], missed),
+            (False, True, []))
+
     def test_a_saved_restyled_package_carries_what_the_loader_left(self):
         """save_theme_package copies curated files verbatim, so the loader's rule
-        is what keeps a mismatch from being baked into a package on disk."""
-        home = Path(tempfile.mkdtemp())
-        original = helper.home
-        helper.home = lambda: home
-        try:
-            root = helper.save_theme_package(self.package({"brightness": 100}), name="saved-probe")
-        finally:
-            helper.home = original
-        self.assertNotIn("claude-dark.json", {path.name for path in (root / "apps").iterdir()})
+        is what keeps a mismatch from being baked into a package on disk.
+
+        Naming only the dropped file cannot fail for this function: the fixture
+        already went through the loader, which removed it before the save saw it.
+        What the save alone decides is the carry, so the case reads both halves.
+        Without the copy loop the saved package loses icons.theme, a target with
+        no template behind it, so the next apply of the saved theme installs no
+        icon theme and leaves nothing in its place.
+        """
+        blueprint = self.package({"brightness": 100})
+        with temp_home():
+            root = helper.save_theme_package(blueprint, name="saved-probe")
+        saved = {path.name for path in (root / "apps").iterdir()}
+        self.assertEqual((set(blueprint["apps"]) - saved, "claude-dark.json" in saved),
+                         (set(), False))
 
 
 class TargetWiring(unittest.TestCase):
     def apply(self, blueprint: dict) -> tuple:
         """One apply of `blueprint` against a fresh HOME holding ~/.claude."""
-        home = Path(tempfile.mkdtemp())
-        (home / ".claude").mkdir()
-        original = helper.home
-        helper.home = lambda: home
-        try:
+        with temp_home(claude=True) as home:
             return helper._apply_theme_obj_unlocked(blueprint, only_app="claude"), home
-        finally:
-            helper.home = original
 
     def test_an_apply_reaches_the_hook_from_a_target_with_no_template(self):
         """The hook moved onto a target with no template and no destination, so the
@@ -758,7 +791,7 @@ class TargetWiring(unittest.TestCase):
         """The settings UI builds its message from the apply result's warnings and
         reads stderr only on a non-zero exit, so a shortfall the hook keeps to
         itself shows as a clean success over a /diff panel painted in one colour."""
-        result, home = self.apply(restyled(helper.find_theme("pmndrs"), {"brightness": -25}))
+        result, home = self.apply(restyled("pmndrs", {"brightness": -25}))
         self.assertEqual(
             (result["partial"], [line for line in result["warnings"] if "diff" in line] != [],
              (home / ".claude" / "themes" / "vgs-light.json").is_file()),

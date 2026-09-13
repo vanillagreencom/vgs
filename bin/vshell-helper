@@ -1332,9 +1332,14 @@ def load_theme_package(name: str) -> Dict[str, Any] | None:
     bp["builtin"] = builtin_dir.is_dir()
     bp["path"] = str(builtin_dir if builtin_dir.is_dir() else user_dir)
     bp["userDir"] = str(user_dir) if user_dir.is_dir() else ""
+    # A user overlay colors.toml replaces the palette the package shipped just as
+    # completely as a slider does, and reaches here with the adjustments still at
+    # zero, so the curated files have to be judged against both.
     bp["apps"] = curated_apps_for_palette(
         {Path(rel).name: str(p) for rel, p in files.items() if rel.startswith("apps/")},
-        adjustments)
+        adjustments,
+        palette_overlaid=(builtin_dir / "colors.toml").is_file()
+        and files.get("colors.toml") == user_dir / "colors.toml")
     bp["backgrounds"] = [str(p) for _rel, p in backgrounds]
     bp["packagedPreview"] = str(files["preview.png"]) if "preview.png" in files else ""
     bp["adjustments"] = adjustments
@@ -2620,24 +2625,36 @@ CLAUDE_CURATED_FILES = frozenset(f"claude-{mode}.json" for mode in THEME_MODES)
 
 
 def curated_apps_for_palette(apps: Dict[str, str],
-                             adjustments: Dict[str, int]) -> Dict[str, str]:
+                             adjustments: Dict[str, int],
+                             palette_overlaid: bool = False) -> Dict[str, str]:
     """A package's curated app files, minus those its palette no longer fits.
 
     The rule: a curated app file is valid only for the palette it was picked
-    against. Once the palette has been restyled, the merge-style files are
-    dropped and the generated render answers instead. Adapting them would mean
-    re-deriving the hand-picked values, which is the one thing curated means not
-    doing, and it would hand the generator colours a person chose. Dropping is
-    safe by construction, because the generated render is required to be readable
-    at every restyle step: it is written best-effort with a named shortfall
-    rather than refused.
+    against. Two controls replace that palette, and both drop the merge-style
+    files. A restyle slider transforms it, which `adjustments` reports. A
+    persisted colour edit rewrites it: `persist_color_edits` writes a user
+    overlay colors.toml over the package's own and reloads with the adjustments
+    still at zero, which `palette_overlaid` reports. Testing only the slider left
+    the frozen bands merging over colours the user had just changed.
+
+    Adapting the values instead would mean re-deriving the hand-picked ones,
+    which is the one thing curated means not doing, and it would hand the
+    generator colours a person chose. Dropping costs the plainer generated
+    render: that render is written best-effort with every rule it misses named in
+    the apply warning rather than refused, so the shortfall is reported and
+    Claude Code never keeps the colours of the theme the user just left.
+
+    Evaluating the curated file's own rules and falling back only on failure was
+    considered and declined: it would make one theme's curated file sometimes
+    used and sometimes not depending on a measurement, which is harder to reason
+    about than this palette-identity test.
 
     Only merge-style files are dropped. A replacing curated file is the whole
     output, with no generated value to disagree with and, for a pointer-style
     target such as icons, no template behind it: dropping one would delete the
     installed artifact on the next apply and leave nothing in its place.
     """
-    if adjustments_all_zero(adjustments):
+    if adjustments_all_zero(adjustments) and not palette_overlaid:
         return apps
     return {name: path for name, path in apps.items() if name not in CLAUDE_CURATED_FILES}
 
