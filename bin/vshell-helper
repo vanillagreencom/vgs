@@ -7291,8 +7291,10 @@ def blueprint_from_current_theme(name: str | None = None, mode: str | None = Non
 
 def with_current_terminal_slots(bp: Dict[str, Any]) -> Dict[str, Any]:
     """Give a blueprint rebuilt from the applied theme's colours that theme's
-    terminal slots, declared UI roles and `contrastShortfalls`, and its package's
-    per-app overrides through `with_current_app_overrides`.
+    terminal slots and declared UI roles, its package's `contrastShortfalls`, and
+    its package's per-app overrides through `with_current_app_overrides`. The
+    shortfall list comes from the package alone, since only a package's
+    theme.json declares one.
 
     Neither the shell's theme.json nor the palette inside theme-current.json
     holds them, so every rebuild from the current theme passes through here. A
@@ -7309,21 +7311,18 @@ def with_current_terminal_slots(bp: Dict[str, Any]) -> Dict[str, Any]:
     """
     slots: Dict[str, str] = {}
     declared: Dict[str, str] = {}
-    shortfalls: List[Any] = []
     applied = applied_blueprint()
     if applied and blueprint_mode(applied) == blueprint_mode(bp):
         slots = dict(applied.get("terminalColors") or {})
         declared = dict(applied.get("uiRoles") or {})
-        shortfalls = list(applied.get("contrastShortfalls") or [])
     package = applied_theme_package()
     if package and blueprint_mode(package) != blueprint_mode(bp):
         package = None
     if package:
         slots = slots or dict(package.get("terminalColors") or {})
         declared = declared or dict(package.get("uiRoles") or {})
-        shortfalls = shortfalls or list(package.get("contrastShortfalls") or [])
     bp["terminalColors"] = slots
-    bp["contrastShortfalls"] = shortfalls
+    bp["contrastShortfalls"] = list((package or {}).get("contrastShortfalls") or [])
     # Declared roles answer from the same two sources under the same mode rule.
     # Without the carry a wallpaper change or a saved colour edit rebuilt the
     # theme without them and the save then deleted the package's own file. The
