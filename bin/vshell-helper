@@ -4965,7 +4965,7 @@ def select_omp_theme_hook() -> Dict[str, Any]:
 CODEX_THEME_NAME = "vgs"
 _CODEX_TUI_HEADER_RE = re.compile(r"^[ \t]*\[[ \t]*(?:tui|\"tui\"|'tui')[ \t]*\][ \t]*(?:#[^\r\n]*)?\r?$", re.M)
 _CODEX_TABLE_HEADER_RE = re.compile(r"^[ \t]*\[", re.M)
-_CODEX_THEME_KEY_RE = re.compile(r"^[ \t]*theme[ \t]*=.*$", re.M)
+_CODEX_THEME_KEY_RE = re.compile(r"^[ \t]*theme[ \t]*=[^\r\n]*", re.M)
 
 
 def _codex_config_with_theme(text: str, value: str, header: Optional[re.Match]) -> str:
@@ -4997,7 +4997,7 @@ def set_codex_tui_theme(config: Path, value: str = CODEX_THEME_NAME) -> Dict[str
     whatever `[tui] theme` it had, so the file is ignored until this sets it.
     """
     try:
-        text = config.read_text() if config.exists() else ""
+        text = config.read_bytes().decode("utf-8") if config.exists() else ""
     except (OSError, UnicodeDecodeError) as exc:
         return {"ok": False, "error": f"codex config unreadable: {exc}"}
     try:

@@ -8312,16 +8312,11 @@ def test_codex_theme_selection_changes_only_the_tui_theme_key():
         ),
     ]
 
-    for header in ('[tui]  # my ui', '[ tui ]', '["tui"]', "['tui']", '[tui]\r'):
-        initial = kept + header + '\nstatus_line = ["model"]\ntheme = "ansi"\nnotifications = true\n'
+    for header, newline in (('[tui]  # my ui', '\n'), ('[ tui ]', '\n'),
+                            ('["tui"]', '\n'), ("['tui']", '\n'), ('[tui]', '\r\n')):
+        initial = (kept + header + '\nstatus_line = ["model"]\ntheme = "ansi"\nnotifications = true\n').replace('\n', newline)
         expected = initial.replace('theme = "ansi"', 'theme = "vgs"')
-        rows.append((header, initial, True, expected.replace("\r\n", "\n"), ""))
-        # File reads normalise CRLF, so exercise the raw header before that read.
-        match = helper._CODEX_TUI_HEADER_RE.search(initial)
-        if match is None:
-            raise AssertionError(f"Codex header not recognised: {header!r}")
-        assert_equal(helper._codex_config_with_theme(initial, "vgs", match), expected,
-                     f"raw header spelling: {header!r}")
+        rows.append((f"{header} with {newline!r}", initial, True, expected, ""))
     escaped_header = kept + '["\\u0074ui"]\ntheme = "ansi"\n'
     rows.append(("an escaped table key needs a recognised header", escaped_header, False,
                  escaped_header, "codex-tui-header-unrecognised:"))
@@ -8331,10 +8326,10 @@ def test_codex_theme_selection_changes_only_the_tui_theme_key():
         codex.mkdir()
         config = codex / "config.toml"
         for label, initial, expect_ok, expect_text, expect_error in rows:
-            config.write_text(initial)
+            config.write_bytes(initial.encode("utf-8"))
             result = helper.run_hook("codex-theme", {}, {})
             assert_equal(result["ok"], expect_ok, label)
-            assert_equal(config.read_text(), expect_text, f"file contents: {label}")
+            assert_equal(config.read_bytes(), expect_text.encode("utf-8"), f"file contents: {label}")
             if expect_ok:
                 assert_equal(result["theme"], "vgs", f"selected theme: {label}")
                 assert_equal(helper.run_hook("codex-theme", {}, {}).get("unchanged"), True,
