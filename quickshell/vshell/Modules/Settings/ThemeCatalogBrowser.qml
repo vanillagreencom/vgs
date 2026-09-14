@@ -348,7 +348,7 @@ FloatingWindow {
                                         StyledText {
                                             id: installedLabel
                                             anchors.centerIn: parent
-                                            text: cell.modelData.builtin ? I18n.tr("Included") : I18n.tr("Installed")
+                                            text: I18n.tr("Installed")
                                             font.pixelSize: Theme.settingsFontSize - 1
                                             color: Theme.surfaceText
                                         }
@@ -409,15 +409,15 @@ FloatingWindow {
                                     variant: cell.modelData.imageryInstalled ? "secondary" : "primary"
                                     enabled: !cell.pending && (!cell.modelData.imageryInstalled || cell.removable)
                                     iconName: cell.modelData.imageryInstalled ? (cell.removable ? "delete" : "check") : "download"
-                                    // "Included" means the package shipped it; a
-                                    // hand-made user theme of the same name is
-                                    // "Installed" and equally not removable here.
+                                    // Wallpapers the catalog did not place, the
+                                    // default theme's or ones added by hand, are
+                                    // "Installed" and not removable here.
                                     text: {
                                         if (!cell.modelData.imageryInstalled)
                                             return I18n.tr("Download");
                                         if (cell.removable)
                                             return I18n.tr("Remove");
-                                        return cell.modelData.builtin ? I18n.tr("Included") : I18n.tr("Installed");
+                                        return I18n.tr("Installed");
                                     }
                                     onClicked: {
                                         if (!cell.modelData.imageryInstalled)
