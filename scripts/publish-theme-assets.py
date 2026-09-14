@@ -35,8 +35,8 @@ THEMES_DIR = REPO_ROOT / "themes"
 LOCK_PATH = THEMES_DIR / "asset-lock.json"
 THUMBNAIL_DIR = THEMES_DIR / "thumbnails"
 RELEASE_TAG_RE = re.compile(r"^themes-v(\d+)$")
-# The browser paints catalog tiles at 480 px (ThemeCatalogBrowser.qml), so the
-# thumbnail is the exact resolution it needs and never a downscale at paint time.
+# A placeholder the theme switcher paints while a theme has no full-size preview
+# (D015 § 3 amendment); the full-size preview.jpg ships beside it.
 THUMBNAIL_WIDTH = 480
 THUMBNAIL_QUALITY = 82
 DOWNLOAD_TIMEOUT = 300

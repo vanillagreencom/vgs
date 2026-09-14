@@ -1707,7 +1707,8 @@ def load_theme_package(name: str) -> Dict[str, Any] | None:
     # without that second flag an untouched download loses its shipped
     # screenshot and goes to the preview generator on the first open after a
     # cold cache.
-    bp["modified"] = builtin_dir.is_dir() and user_dir.is_dir() and any(p.is_file() for p in user_dir.rglob("*"))
+    bp["modified"] = builtin_dir.is_dir() and bool(user_layer_files(name))
+    bp["starred"] = meta.get("starred") is True
     bp["catalogOwned"] = catalog_owns(name)
     bp["catalogPristine"] = catalog_pristine(name)
     bp["appOverrides"] = {app: len(roles) for app, roles in app_overrides.items()}
@@ -1980,22 +1981,30 @@ def catalog_placed_wallpapers(name: str) -> Dict[str, str | None] | None:
 def catalog_imagery_installed(name: str) -> bool:
     """Whether a catalog theme's wallpapers are on disk: its package ships them, or a catalog download placed them.
 
-    The catalog listing and the download's skip ask this one question. A wallpaper
-    `wallpaper-add` copied into the user directory is neither, so it never hides the
-    download it did not replace."""
+    The catalog listing, the download's skip and `theme list --json`'s `installed`
+    ask this one question. A wallpaper `wallpaper-add` copied into the user
+    directory is neither, so it never hides the download it did not replace."""
     return theme_dir_has_wallpapers(builtin_themes_dir() / name) or catalog_placed_wallpapers(name) is not None
 
 
-def theme_shipped_preview(name: str, packaged: str = "") -> str:
-    """A theme's screenshot without rendering one: its own, else the shipped thumbnail.
+class ShippedPreview(NamedTuple):
+    """What can be painted for a theme with no rendering."""
+    # The package's full-size preview.jpg, or "" when the package has none.
+    preview: str
+    # The shipped 480 px thumbnail, or "" when none ships. A placeholder only:
+    # the full-screen switcher lays its selected frame out far wider than 480 px.
+    thumbnail: str
 
-    The one answer to "what can be painted for this theme with no work": the
-    package's full-size preview.jpg when it has one, and otherwise the 480 px
-    thumbnail that ships for every catalogued theme. Both the catalog browser and
-    `theme list --json` ask this question, and a second spelling of it would let
-    one of them paint a screenshot the other says does not exist.
+
+def theme_shipped_preview(name: str, packaged: str = "") -> ShippedPreview:
+    """A theme's shipped screenshot and its thumbnail, as separate answers.
+
+    The one answer to "what can be painted for this theme with no work". The
+    thumbnail never stands in for the preview: a surface that paints a full-size
+    frame reads `preview`, and an empty `preview` is what sends a theme to the
+    preview generator.
     """
-    return packaged or theme_thumbnail_path(name)
+    return ShippedPreview(packaged, theme_thumbnail_path(name))
 
 
 def theme_dir_has_wallpapers(package: Path) -> bool:
@@ -2027,11 +2036,34 @@ def catalog_pristine(name: str) -> bool:
     placed = catalog_placed_wallpapers(name)
     if not placed:
         return False
+    return [rel for rel in user_layer_files(name) if rel != CATALOG_MARKER] == sorted(placed)
+
+
+# `theme.json` keys that record how the user files a theme rather than an edit
+# of it. A star must not raise the modified badge or drop the shipped screenshot.
+THEME_META_BOOKKEEPING_KEYS = frozenset({"starred"})
+
+
+def user_layer_files(name: str) -> List[str]:
+    """The files under package `name`'s user directory, relative and sorted,
+    leaving out a `theme.json` that holds only `THEME_META_BOOKKEEPING_KEYS`.
+
+    The one reader `modified` and `catalog_pristine` share, so a starred theme
+    reads as untouched to both. A `theme.json` that does not read as an object
+    is kept, since nothing can say it holds no edit.
+    """
     root = user_themes_dir() / name
-    present = sorted(path.relative_to(root).as_posix()
-                     for path in root.rglob("*")
-                     if path.is_file() and path.name != CATALOG_MARKER)
-    return present == sorted(placed)
+    files: List[str] = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(root).as_posix()
+        if rel == "theme.json":
+            with contextlib.suppress(Exception):
+                if set(theme_json_layer(path)) <= THEME_META_BOOKKEEPING_KEYS:
+                    continue
+        files.append(rel)
+    return files
 
 
 def catalog_imagery_update_available(marker: Dict[str, Any], raw: Dict[str, Any]) -> bool:
@@ -2074,7 +2106,7 @@ def catalog_entries() -> List[Dict[str, Any]]:
             "downloaded": bool(marker),
             "downloadedRef": str(marker.get("ref") or ""),
             "preview": theme_shipped_preview(
-                name, str(packaged) if packaged and packaged.is_file() else ""),
+                name, str(packaged) if packaged and packaged.is_file() else "").preview,
         })
     entries.sort(key=lambda e: e["name"])
     return entries
@@ -2375,21 +2407,30 @@ def drop_theme_overlay(package: str) -> None:
     """Delete a built-in theme's user overlay, keeping the wallpapers a download placed and its marker.
 
     A revert cannot fetch those wallpapers back; removing them is `theme catalog remove`.
+    The overlay `theme.json`'s `THEME_META_BOOKKEEPING_KEYS` are kept too, since
+    they file the theme rather than edit it. An overlay `theme.json` that does
+    not read as an object keeps nothing, as nothing in it can be told from an edit.
     """
     user_dir = user_themes_dir() / package
     placed = catalog_placed_wallpapers(package)
     if not user_dir.is_dir():
         return
+    bookkeeping: Dict[str, Any] = {}
+    with contextlib.suppress(Exception):
+        bookkeeping = {key: value for key, value in theme_json_layer(user_dir / "theme.json").items()
+                       if key in THEME_META_BOOKKEEPING_KEYS}
     if not placed:
         shutil.rmtree(user_dir, ignore_errors=True)
-        return
-    kept = {CATALOG_MARKER, *placed}
-    for path in sorted(user_dir.rglob("*"), reverse=True):
-        if path.is_dir() and not path.is_symlink():
-            with contextlib.suppress(OSError):
-                path.rmdir()
-        elif path.relative_to(user_dir).as_posix() not in kept:
-            path.unlink()
+    else:
+        kept = {CATALOG_MARKER, *placed}
+        for path in sorted(user_dir.rglob("*"), reverse=True):
+            if path.is_dir() and not path.is_symlink():
+                with contextlib.suppress(OSError):
+                    path.rmdir()
+            elif path.relative_to(user_dir).as_posix() not in kept:
+                path.unlink()
+    if bookkeeping:
+        write_user_layer(package, "theme.json", {**read_theme_overlay_meta(package), **bookkeeping})
 
 
 def theme_wallpaper_entries(bp: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -2455,6 +2496,39 @@ def read_theme_overlay_meta(pkg_dir_name: str) -> Dict[str, Any]:
         return package_meta(pkg_dir_name) or {}
     except Exception:
         return {}
+
+
+def set_theme_starred(pkg_dir_name: str, starred: bool) -> None:
+    """Star or unstar package `pkg_dir_name`: the one writer that sets or clears `starred`.
+
+    The star lives in the theme's overlay `theme.json`, so it travels with the
+    theme. Over a built-in theme an unstar leaves no overlay file behind, and a
+    user directory the star alone created is removed with it.
+    """
+    meta = read_theme_overlay_meta(pkg_dir_name)
+    if starred:
+        meta["starred"] = True
+    else:
+        meta.pop("starred", None)
+    write_user_layer(pkg_dir_name, "theme.json", meta)
+    with contextlib.suppress(OSError):
+        (user_themes_dir() / pkg_dir_name).rmdir()
+
+
+def prune_theme_previews(live: Set[str]) -> int:
+    """Remove cached preview renders whose file name `live` does not hold.
+
+    `live` holds the `blueprint_preview_path` name of every listed theme. A render
+    is keyed on its theme's palette, wallpaper and app files, so every edit
+    leaves the previous render behind, and nothing else removes it. The caller
+    holds `preview_lock`, so a generator cannot be writing a render meanwhile.
+    """
+    removed = 0
+    for path in theme_previews_dir().glob("*.png"):
+        if path.name not in live:
+            path.unlink(missing_ok=True)
+            removed += 1
+    return removed
 
 
 def colors_toml_from_blueprint(bp: Dict[str, Any]) -> str:
@@ -2776,6 +2850,9 @@ def duplicate_theme_package(package: str, dest_name: str, new_name: str) -> None
                              *((overlay, package_overlay_values(package, overlay)) for overlay in OVERLAY_MASK_TEXT),
                              ("app-colors.toml", theme_app_overrides(package))):
         write_user_layer(dest_name, filename, values)
+    # A copy is a new theme the user has not filed yet, so it starts unstarred.
+    for key in THEME_META_BOOKKEEPING_KEYS:
+        meta.pop(key, None)
     meta["name"] = new_name
     meta["curatedPalette"] = palette_digest(palette)
     write_user_layer(dest_name, "theme.json", meta)
@@ -10017,7 +10094,9 @@ _THEME_MUTATING_COMMANDS = {
     "save-current",
     "set-pair",
     "set-wallpaper",
+    "star",
     "toggle",
+    "unstar",
     "wallpaper-add",
     "wallpaper-default",
     "wallpaper-remove",
@@ -10200,6 +10279,10 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
     p_dup.add_argument("name")
     p_dup.add_argument("--as", dest="new_name", default="", help="name for the copy (default: <name>-copy)")
     p_dup.add_argument("--json", action="store_true")
+    for verb in ("star", "unstar"):
+        p_star = sub.add_parser(verb, help=f"{verb} a theme for the switcher's Starred list")
+        p_star.add_argument("name")
+        p_star.add_argument("--json", action="store_true")
     p_catalog = sub.add_parser("catalog", help="download the wallpapers of themes that have none on disk")
     catalog_sub = p_catalog.add_subparsers(dest="catalog_cmd", required=True)
     p_cat_list = catalog_sub.add_parser("list", help="every published theme with its wallpaper state")
@@ -10263,27 +10346,26 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
         bps = list_themes()
         if args.json:
             entries = []
+            live_previews: Set[str] = set()
             for b in bps:
                 pal = b.get("palette", {})
                 ext = pal.get("extendedColors") or {}
                 preview = blueprint_preview_path(b)
-                # A committed preview.jpg, or failing that the 480 px thumbnail
-                # that ships for every catalogued theme, is what makes a fresh
-                # install or checkout show screenshots without regenerating
-                # anything. Without them every theme reports no screenshot,
-                # and generateMissingPreviews() renders the whole set through a
-                # nested compositor on the first open after a cold preview
-                # cache. Both stop being truthful once the user restyles or
-                # overlays the theme, so in that case drop back to "missing" and
-                # let the generator run. An untouched catalog download is the
-                # shipped theme rather than an edit of it, so its screenshot
-                # still describes what the user sees.
-                shipped_preview = theme_shipped_preview(
+                live_previews.add(preview.name)
+                # The committed preview.jpg is what makes a fresh install or
+                # checkout show full-size screenshots without regenerating
+                # anything. It stops being truthful once the user restyles or
+                # overlays the theme, so in that case report no preview and let
+                # generateMissingPreviews() render one. An untouched catalog
+                # download is the shipped theme rather than an edit of it, so
+                # its screenshot still describes what the user sees. The
+                # thumbnail is reported beside it as a placeholder only.
+                shipped = theme_shipped_preview(
                     str(b.get("name") or ""), b.get("packagedPreview", ""))
                 edited = (b.get("modified") and not b.get("catalogPristine")) or \
                     not adjustments_all_zero(normalize_adjustments(b.get("adjustments")))
-                if shipped_preview and not preview.exists() and edited:
-                    shipped_preview = ""
+                shipped_preview = "" if edited else shipped.preview
+                package_dir = Path(str(b.get("path") or "")).name if b.get("package") else ""
                 entries.append({
                     "name": b.get("name"),
                     "source": blueprint_source(b),
@@ -10300,6 +10382,10 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
                     "pair": b.get("pair", ""),
                     "builtin": b.get("builtin", False),
                     "preview": str(preview) if preview.exists() else shipped_preview,
+                    "thumbnail": shipped.thumbnail,
+                    # A legacy v1 blueprint has no package directory to hold wallpapers.
+                    "installed": bool(package_dir) and catalog_imagery_installed(package_dir),
+                    "starred": bool(b.get("starred")),
                     "modified": bool(b.get("modified")),
                     "catalogOwned": bool(b.get("catalogOwned")),
                     "catalogPristine": bool(b.get("catalogPristine")),
@@ -10307,6 +10393,11 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
                     "appOverrides": b.get("appOverrides") or {},
                     "timestamp": b.get("timestamp", 0),
                 })
+            # Skipped while a generator holds the lock: it may be writing a
+            # render for a theme whose hash this list has not seen.
+            with preview_lock() as locked:
+                if locked:
+                    prune_theme_previews(live_previews)
             print(json.dumps({"blueprints": entries, "count": len(entries)}, indent=2))
         else:
             print("\n".join(str(b.get("name")) for b in bps))
@@ -10949,6 +11040,16 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
         write_user_layer(pkg_dir_name, "theme.json", meta)
         result = {"success": True, "name": bp.get("name"), "pair": args.pair}
         print(json.dumps(result, indent=2) if args.json else f"{bp.get('name')} pairs with {args.pair or '(none)'}")
+        return 0
+    if args.cmd in {"star", "unstar"}:
+        bp = find_theme(args.name)
+        if not bp or not bp.get("package"):
+            eprint(f"Theme package not found: {args.name}")
+            return 1
+        starred = args.cmd == "star"
+        set_theme_starred(Path(str(bp.get("path"))).name, starred)
+        result = {"success": True, "name": bp.get("name"), "starred": starred}
+        print(json.dumps(result, indent=2) if args.json else f"{bp.get('name')} {'starred' if starred else 'unstarred'}")
         return 0
     if args.cmd == "delete":
         bp = find_theme(args.name)

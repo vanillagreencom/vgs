@@ -78,22 +78,6 @@ Item {
         VGSThemeService.generateMissingPreviews();
     }
 
-    function showThemeCatalog() {
-        themeCatalogLoader.active = true;
-        if (themeCatalogLoader.item)
-            themeCatalogLoader.item.show();
-    }
-
-    LazyLoader {
-        id: themeCatalogLoader
-        active: false
-
-        ThemeCatalogBrowser {
-            id: themeCatalogBrowser
-            Component.onCompleted: themeCatalogBrowser.parentModal = root.parentModal
-        }
-    }
-
     Timer {
         id: revertConfirmTimer
         interval: 4000
@@ -291,17 +275,10 @@ Item {
 
                     VgsButton {
                         variant: "secondary"
-                        iconName: "cloud_download"
-                        text: I18n.tr("Download More Themes")
-                        onClicked: root.showThemeCatalog()
-                    }
-
-                    VgsButton {
-                        variant: "secondary"
                         visible: (root.currentEntry.pair || "") !== ""
                         text: (VGSThemeService.currentTheme.mode || "dark") === "light" ? I18n.tr("Switch to Dark") : I18n.tr("Switch to Light")
                         enabled: !VGSThemeService.busy
-                        onClicked: VGSThemeService.applyBlueprint(root.currentEntry.pair)
+                        onClicked: VGSThemeService.applyBlueprint(root.currentEntry.pair, true)
                     }
 
                     VgsButton {
