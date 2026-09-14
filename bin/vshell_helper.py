@@ -4178,13 +4178,26 @@ def render_template(text: str, roles: Dict[str, str], source: str) -> str:
     return TEMPLATE_RE.sub(repl, text)
 
 
-def write_file(path: Path, content: str, mode: int | None = None) -> None:
-    """Replace `path` atomically. With `mode`, the temporary file is created at
-    that mode, so no copy of the content ever exists at a wider one — which
-    matters for a config another app keeps at 0600 for its API keys — and is
-    chmod'ed to it while still empty, so a narrow umask cannot leave a user's
-    0644 config at 0600. Without a mode the temporary file takes the process
-    umask, as every caller that does not name one has always had."""
+def write_file(path: Path, content: str, mode: int | None = None) -> bool:
+    """Replace `path` atomically and report whether its bytes moved.
+
+    A destination already holding `content` is left alone and reports False, so a
+    caller can tell a consumer to reload only the files that actually changed. A
+    destination it cannot read reads as changed: bytes that cannot be compared
+    are bytes that must be written. Every caller passing `mode` takes that mode
+    from the destination's own `stat`, so a file left alone already carries it.
+
+    With `mode`, the temporary file is created at that mode, so no copy of the
+    content ever exists at a wider one — which matters for a config another app
+    keeps at 0600 for its API keys — and is chmod'ed to it while still empty, so
+    a narrow umask cannot leave a user's 0644 config at 0600. Without a mode the
+    temporary file takes the process umask, as every caller that does not name
+    one has always had."""
+    try:
+        if path.read_bytes() == content.encode():
+            return False
+    except OSError:
+        pass
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}.{time.time_ns()}")
     try:
@@ -4204,6 +4217,7 @@ def write_file(path: Path, content: str, mode: int | None = None) -> None:
         with contextlib.suppress(OSError):
             tmp.unlink()
         raise
+    return True
 
 
 def _niri() -> Any:
@@ -6671,14 +6685,31 @@ def augment_vscode_colors(text: str, roles: Dict[str, str]) -> str:
     return json.dumps(data, indent=2) + "\n"
 
 
-def install_curated_file(path: Path, dest: Path, roles: Dict[str, str], app: str = "") -> None:
-    """Install a curated apps/ file verbatim; only {wallpaper}-style path tokens render."""
+def curated_file_text(path: Path, dest: Path, roles: Dict[str, str], app: str = "") -> str:
+    """A curated apps/ file as it lands at `dest`: verbatim, with only
+    {wallpaper}-style path tokens rendered."""
     text = path.read_text()
     if "{wallpaper}" in text:
         text = text.replace("{wallpaper}", roles.get("wallpaper", ""))
     if app == "vscode" and dest.suffix == ".json":
         text = augment_vscode_colors(text, roles)
-    write_file(dest, text)
+    return text
+
+
+class _TargetPlan(NamedTuple):
+    """One theme target's output, rendered into memory before anything is committed.
+
+    `writes` is empty for a target whose whole output is its hook — `claude-vgs`
+    and `fastfetch-vgs` declare no destination — and for one whose curated file
+    this theme does not ship. Such a target has no bytes on disk to compare
+    against, so its hooks run on every apply; each of those hooks compares its
+    own inputs before it does any work.
+    """
+    target: str
+    writes: List[Tuple[Path, str]]
+    stale_curated: Optional[Path]
+    curated_used: List[str]
+    hooks: List[Any]
 
 
 def apply_theme_obj(bp: Dict[str, Any], only_app: str | None = None,
@@ -6717,9 +6748,11 @@ def _apply_theme_obj_unlocked(bp: Dict[str, Any], only_app: str | None = None,
     app_overrides = bp_app_overrides(bp)
     theme_apps = theme_apps_settings()
     rendered: List[str] = []
+    changed: List[str] = []
     curated_used: List[str] = []
     skipped: List[str] = []
     hook_specs: List[Any] = []
+    warnings: List[str] = []
     # Both-mode targets cost two extra palette derivations and a theme-directory
     # scan for the pair, so resolve them once and only when a target asks.
     mode_maps: Dict[str, Dict[str, str]] = {}
@@ -6729,16 +6762,12 @@ def _apply_theme_obj_unlocked(bp: Dict[str, Any], only_app: str | None = None,
             mode_maps.update(mode_variant_role_maps(bp))
         return mode_maps
 
-    for cfg_path in sorted(targets_dir().glob("*/config.json")):
-        if only_target and cfg_path.parent.name != only_target:
-            continue
-        cfg = json.loads(cfg_path.read_text())
-        if only_app and str(cfg.get("app") or "") != only_app:
-            continue
-        if not target_enabled(cfg, theme_apps):
-            # Disabled apps keep their last output; VGS just stops updating it.
-            skipped.append(str(cfg.get("app") or cfg_path.parent.name))
-            continue
+    def warn(message: str) -> None:
+        warnings.append(message)
+        eprint(message)
+
+    def plan_target(cfg_path: Path, cfg: Dict[str, Any]) -> _TargetPlan:
+        """Render one target's files into memory. Nothing here touches a destination."""
         curated_name = str(cfg.get("curatedFile") or "")
         curated_src = curated_apps.get(curated_name) if curated_name else None
         dest = expand_dest(cfg["destination"]) if cfg.get("destination") else None
@@ -6758,35 +6787,93 @@ def _apply_theme_obj_unlocked(bp: Dict[str, Any], only_app: str | None = None,
         base_role_map = roles if cfg_path.parent.name == "vgs-shell" else external_roles
         target_overrides = app_overrides.get(app_id) or {}
         target_role_map = render_roles(bp, base_role_map, target_overrides)
+        writes: List[Tuple[Path, str]] = []
+        used: List[str] = []
+        stale_curated: Optional[Path] = None
         if curated_src and curated_dest:
-            install_curated_file(Path(curated_src), curated_dest, target_role_map)
-            rendered.append(str(curated_dest))
-            curated_used.append(curated_name)
+            writes.append((curated_dest, curated_file_text(
+                Path(curated_src), curated_dest, target_role_map)))
+            used.append(curated_name)
         elif cfg.get("curatedDestination") and curated_dest:
             # No curated file in this theme: drop the stale curated artifact so
             # consumers fall back to the generated output.
-            with contextlib.suppress(OSError):
-                curated_dest.unlink()
+            stale_curated = curated_dest
         if curated_theme_src and dest:
-            install_curated_file(Path(curated_theme_src), dest, target_role_map, app_id)
-            rendered.append(str(dest))
-            curated_used.append(curated_theme_name)
+            writes.append((dest, curated_file_text(
+                Path(curated_theme_src), dest, target_role_map, app_id)))
+            used.append(curated_theme_name)
         if cfg.get("template") and dest and (not curated_src or additional) and not curated_theme_src:
             template = (cfg_path.parent / cfg["template"]).read_text()
             for pass_roles, pass_dest in target_render_passes(
                 cfg, target_role_map, dest, resolve_mode_maps, target_overrides
             ):
-                write_file(pass_dest, render_template(template, pass_roles,
-                                                      f"{cfg_path.parent.name}/{cfg['template']}"))
-                rendered.append(str(pass_dest))
-        if cfg.get("hook"):
-            hook_value = cfg["hook"]
-            if isinstance(hook_value, list):
-                hook_specs.extend(hook_value)
-            else:
-                hook_specs.append(hook_value)
+                writes.append((pass_dest, render_template(
+                    template, pass_roles, f"{cfg_path.parent.name}/{cfg['template']}")))
+        # A target declares one hook or a list of them; both spellings ship.
+        hook_value = cfg.get("hook") or []
+        hooks = list(hook_value) if isinstance(hook_value, list) else [hook_value]
+        return _TargetPlan(cfg_path.parent.name, writes, stale_curated, used, hooks)
+
+    plans: List[_TargetPlan] = []
+    for cfg_path in sorted(targets_dir().glob("*/config.json")):
+        if only_target and cfg_path.parent.name != only_target:
+            continue
+        cfg = json.loads(cfg_path.read_text())
+        if only_app and str(cfg.get("app") or "") != only_app:
+            continue
+        if not target_enabled(cfg, theme_apps):
+            # Disabled apps keep their last output; VGS just stops updating it.
+            skipped.append(str(cfg.get("app") or cfg_path.parent.name))
+            continue
+        try:
+            plans.append(plan_target(cfg_path, cfg))
+        except (OSError, UnicodeError) as exc:
+            # The theme package supplies the curated files and the distribution
+            # the templates, so a half-installed package costs its own target and
+            # leaves every other target rendering.
+            warn(f"{cfg_path.parent.name}: render failed: {exc}")
+
+    # Nothing above reached a destination, so every target below commits from a
+    # complete render: a broken template can no longer land half an apply.
+    for plan in plans:
+        target_changed = False
+        try:
+            if plan.stale_curated is not None:
+                try:
+                    plan.stale_curated.unlink()
+                    target_changed = True
+                except FileNotFoundError:
+                    pass
+            for dest, content in plan.writes:
+                if write_file(dest, content):
+                    target_changed = True
+                    changed.append(str(dest))
+                rendered.append(str(dest))
+        except OSError as exc:
+            # The destination belongs to another application, so a read-only
+            # mount or a root-owned config directory is that target's failure and
+            # not the apply's: the rest still land and the state files still get
+            # written, which is what stops the next apply starting from a palette
+            # the shell is no longer showing.
+            warn(f"{plan.target}: {exc}")
+            continue
+        curated_used.extend(plan.curated_used)
+        # Hook ownership is per target, so a target whose bytes did not move
+        # tells no consumer to reload. A wallpaper pick moves only the targets
+        # whose template names {wallpaper}; the rest render byte-identical files.
+        if target_changed or not plan.writes:
+            hook_specs.extend(plan.hooks)
+
+    if not only_app and not only_target:
+        # Before the hooks: a hook that raises past its own handler must not leave
+        # the applied theme unrecorded, or the next rebuild from the current theme
+        # starts from the previous palette while the shell shows this one.
+        try:
+            write_file(cfg_dir() / "theme-current.json",
+                       json.dumps(applied_theme_state(bp), indent=2) + "\n")
+        except OSError as exc:
+            warn(f"theme-current.json: {exc}")
     hook_results = [run_hook(hook, roles, bp) for hook in hook_specs] if run_hooks else []
-    warnings = []
     # One line per apply, as the Claude Code hook's own shortfall warning is: the
     # user needs to know the declared chrome is compromised, not a list of every
     # role. The tones are already written as declared; this only names them.
@@ -6795,15 +6882,11 @@ def _apply_theme_obj_unlocked(bp: Dict[str, Any], only_app: str | None = None,
     # left a vendor's chrome on disk and silently unused.
     inert = inert_declarations_path(bp)
     if inert:
-        message = f"declared UI roles: {inert} is not read for a generated palette"
-        warnings.append(message)
-        eprint(message)
+        warn(f"declared UI roles: {inert} is not read for a generated palette")
     declared_missed = ui_role_shortfalls(roles, declared_ui_roles(bp))
     if declared_missed:
-        message = (f"declared UI roles: {len(declared_missed)} rule(s) below target: "
-                   + "; ".join(declared_missed))
-        warnings.append(message)
-        eprint(message)
+        warn(f"declared UI roles: {len(declared_missed)} rule(s) below target: "
+             + "; ".join(declared_missed))
     for result in hook_results:
         # A hook can degrade one unit of work and fail another, so a warning is
         # read before the verdict rather than inside the passing branch. The apply
@@ -6817,10 +6900,7 @@ def _apply_theme_obj_unlocked(bp: Dict[str, Any], only_app: str | None = None,
         msg = result.get("error") or result.get("stderr") or result.get("stdout") or "failed"
         warnings.append(f"{result.get('hook')}: {msg}")
         eprint(f"hook {result.get('hook')} failed: {msg}")
-    if not only_app and not only_target:
-        write_file(cfg_dir() / "theme-current.json",
-                   json.dumps(applied_theme_state(bp), indent=2) + "\n")
-    return {"success": True, "partial": bool(warnings), "name": bp.get("name"), "rendered": rendered, "curated": sorted(set(curated_used)), "skipped": sorted(set(skipped)), "hooks": hook_results, "warnings": warnings, "wallpaper": roles.get("wallpaper", "")}
+    return {"success": True, "partial": bool(warnings), "name": bp.get("name"), "rendered": rendered, "changed": changed, "curated": sorted(set(curated_used)), "skipped": sorted(set(skipped)), "hooks": hook_results, "warnings": warnings, "wallpaper": roles.get("wallpaper", "")}
 
 
 # --- Theme preview screenshots -------------------------------------------------

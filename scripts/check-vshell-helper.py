@@ -463,6 +463,145 @@ def test_write_file_leaves_no_temporary_behind_when_the_write_fails():
     with_temp_home(check)
 
 
+def test_write_file_reports_whether_the_destination_moved():
+    """The apply tells a consumer to reload only the files whose bytes moved, so
+    the write itself has to answer whether they did.
+
+    Without the answer every apply reported every destination written, and a
+    wallpaper pick reloaded the compositor, every tmux server and every editor
+    for files it had just rewritten byte for byte.
+    """
+    def check(home):
+        target = home / "config.yaml"
+        assert_equal(helper.write_file(target, "theme: vgs\n"), True, "a destination that did not exist")
+        before = target.stat()
+        assert_equal(helper.write_file(target, "theme: vgs\n"), False, "the same bytes again")
+        after = target.stat()
+        # write_file replaces the destination, so an inode that survived is the
+        # write not happening rather than a write that happened to be identical.
+        assert_equal((after.st_ino, after.st_mtime_ns), (before.st_ino, before.st_mtime_ns),
+                     "an unchanged destination was replaced anyway")
+        assert_equal(helper.write_file(target, "theme: other\n"), True, "different bytes")
+        assert_equal(target.read_text(), "theme: other\n", "the content of a changed destination")
+        assert_equal(target.stat().st_ino != before.st_ino, True,
+                     "a changed destination must be replaced")
+
+    with_temp_home(check)
+
+
+# Three targets with a file of their own and one whose only output is its hook.
+# `app` is "shell" on each, which target_enabled admits without detection, so the
+# set is the same on a machine with no themed application installed at all.
+_APPLY_TARGETS = {
+    "alpha": {"app": "shell", "template": "alpha.txt", "destination": "~/.alpha/colors",
+              "hook": "alpha-hook"},
+    "beta": {"app": "shell", "template": "beta.txt", "destination": "~/.beta/colors",
+             "hook": "beta-hook"},
+    "gamma": {"app": "shell", "hook": "gamma-hook"},
+    "delta": {"app": "shell", "template": "delta.txt", "destination": "~/.delta/colors",
+              "hook": "delta-hook"},
+}
+_APPLY_TEMPLATES = {"alpha": "wallpaper {wallpaper}\n", "beta": "fixed\n",
+                    "delta": "wallpaper {wallpaper}\n"}
+
+
+def _seed_apply_targets(root: Path, templates=None):
+    """`_APPLY_TARGETS` written out as a targets directory the apply can read."""
+    for name, cfg in _APPLY_TARGETS.items():
+        (root / name).mkdir(parents=True, exist_ok=True)
+        (root / name / "config.json").write_text(json.dumps(cfg))
+    for name, text in (templates or _APPLY_TEMPLATES).items():
+        (root / name / f"{name}.txt").write_text(text)
+
+
+def _hooks_of(result):
+    return sorted(entry.get("hook") for entry in result.get("hooks", []))
+
+
+def test_theme_apply_runs_only_the_hooks_whose_target_changed():
+    """A target whose rendered bytes match what is on disk tells no consumer to
+    reload, and a target whose whole output is its hook runs on every apply.
+
+    Every apply used to run every enabled target's hook. A wallpaper pick moves
+    only the shipped targets whose template names {wallpaper}, vgs-shell and
+    pywalfox-vgs, so every other hook reloaded its application for nothing.
+    """
+    def check(home):
+        targets = home / "targets"
+        _seed_apply_targets(targets)
+        blueprint = helper.load_theme_package("tokyo-night")
+        with patch.object(helper, "targets_dir", lambda: targets):
+            first = helper.apply_theme_obj(blueprint)
+            assert_equal(sorted(Path(path).parent.name for path in first["changed"]),
+                         [".alpha", ".beta", ".delta"], "the first apply writes every target")
+            assert_equal(_hooks_of(first), ["alpha-hook", "beta-hook", "delta-hook", "gamma-hook"],
+                         "the first apply runs every target's hook")
+
+            again = helper.apply_theme_obj(blueprint)
+            assert_equal(again["changed"], [], "re-applying the same theme moves no bytes")
+            assert_equal(sorted(Path(path).parent.name for path in again["rendered"]),
+                         [".alpha", ".beta", ".delta"],
+                         "every destination is still rendered and confirmed")
+            assert_equal(_hooks_of(again), ["gamma-hook"],
+                         "only the target with no file of its own keeps running its hook")
+
+            # The shape of a wallpaper pick: the targets naming {wallpaper}
+            # move and every other target renders the bytes already on disk.
+            moved = dict(blueprint)
+            moved["palette"] = {**blueprint.get("palette", {}), "wallpaper": str(home / "wall.png")}
+            third = helper.apply_theme_obj(moved)
+            assert_equal(sorted(Path(path).parent.name for path in third["changed"]),
+                         [".alpha", ".delta"], "only the targets naming the wallpaper move")
+            assert_equal(_hooks_of(third), ["alpha-hook", "delta-hook", "gamma-hook"],
+                         "the unchanged target's hook stays out of the apply")
+            assert_equal((home / ".beta" / "colors").read_text(), "fixed\n",
+                         "the unchanged target keeps its file")
+
+    with_temp_home(check)
+
+
+def test_theme_apply_lands_every_other_target_when_one_target_fails():
+    """One target's OSError costs that target, not the apply.
+
+    The per-target loop had no handler, so an unwritable destination raised out
+    after the shell's own palette had been written and before the applied-state
+    file was: the shell showed the new theme while the next wallpaper pick
+    rebuilt from the old palette. The applied state is now written before the
+    hooks, so a hook cannot strand it either.
+    """
+    def check(home):
+        targets = home / "targets"
+        # delta's destination directory is a regular file, so its write fails at
+        # the parent mkdir; beta's template is missing, so its render fails. One
+        # failure per phase, and neither may cost the targets that work.
+        _seed_apply_targets(targets, templates={"alpha": "wallpaper {wallpaper}\n",
+                                                "delta": "wallpaper {wallpaper}\n"})
+        (home / ".delta").write_text("not a directory\n")
+        blueprint = helper.load_theme_package("tokyo-night")
+        seen_state = []
+        real_hook = helper.run_hook
+
+        def watching_hook(hook, roles, bp):
+            seen_state.append((hook, (home / ".config" / "vshell" / "theme-current.json").is_file()))
+            return real_hook(hook, roles, bp)
+
+        with patch.object(helper, "targets_dir", lambda: targets), \
+                patch.object(helper, "run_hook", watching_hook):
+            result = helper.apply_theme_obj(blueprint)
+
+        assert_equal(result["partial"], True, "an apply that lost a target is partial")
+        named = sorted(warning.split(":")[0] for warning in result["warnings"])
+        assert_equal(named, ["beta", "delta"], "each failed target is named in its own warning")
+        assert_equal((home / ".alpha" / "colors").is_file(), True,
+                     "a target that works must still land")
+        assert_equal(_hooks_of(result), ["alpha-hook", "gamma-hook"],
+                     "only the targets that landed tell their consumer to reload")
+        assert_equal(sorted(seen_state), [("alpha-hook", True), ("gamma-hook", True)],
+                     "the applied state must be on disk before the first hook runs")
+
+    with_temp_home(check)
+
+
 def test_selection_hooks_refuse_a_home_the_test_did_not_create():
     """The guard every selection-hook call in this file goes through.
 
@@ -10829,6 +10968,9 @@ def main():
     test_codex_theme_selection_changes_only_the_tui_theme_key()
     test_write_file_gives_the_temporary_file_the_requested_mode_before_writing()
     test_write_file_leaves_no_temporary_behind_when_the_write_fails()
+    test_write_file_reports_whether_the_destination_moved()
+    test_theme_apply_runs_only_the_hooks_whose_target_changed()
+    test_theme_apply_lands_every_other_target_when_one_target_fails()
     test_selection_hooks_refuse_a_home_the_test_did_not_create()
     test_agent_cli_themes_render_for_every_bundled_theme()
     test_agent_cli_theme_targets_reach_the_apply_path()
