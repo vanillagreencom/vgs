@@ -6,6 +6,7 @@ import contextlib
 import argparse
 import ast
 import colorsys
+import fcntl
 import hashlib
 import importlib.machinery
 import importlib.util
@@ -2302,6 +2303,13 @@ def test_theme_list_reports_the_preview_and_the_thumbnail_apart():
             rendered.write_bytes(b"\x89PNG render\n")
             orphan = previews / "rendered-000000000000.png"
             orphan.write_bytes(b"\x89PNG stale render\n")
+            # A generator holding the preview lock may be writing a render whose
+            # hash the list has not seen, so a list meanwhile prunes nothing.
+            with (previews / ".lock").open("a+") as held:
+                fcntl.flock(held.fileno(), fcntl.LOCK_EX)
+                _theme_list_entries()
+                assert_equal(orphan.exists(), True, "theme list prunes no render while the preview lock is held")
+                fcntl.flock(held.fileno(), fcntl.LOCK_UN)
             listed = _theme_list_entries()
         finally:
             helper.builtin_themes_dir = original_builtin
@@ -2381,6 +2389,23 @@ def test_theme_list_reports_installed_wallpapers_and_the_star():
                 assert_equal(helper.cmd_theme(["revert", "pictured"]), 0, "theme revert exit status")
             entry = _theme_list_entries()["pictured"]
             assert_equal((entry["starred"], entry["modified"]), (True, False), "revert keeps the star and drops the edit")
+
+            # A copy is a theme the user has not filed yet.
+            with contextlib.redirect_stdout(io.StringIO()):
+                assert_equal(helper.cmd_theme(["duplicate", "pictured", "--as", "pictured-copy"]), 0,
+                             "theme duplicate exit status")
+            assert_equal(_theme_list_entries()["pictured-copy"]["starred"], False,
+                         "a copy of a starred theme starts unstarred")
+
+            # A star and an unstar change the star alone, never an edit beside it.
+            helper.write_user_layer("pictured", "theme.json",
+                                    {**helper.read_theme_overlay_meta("pictured"), "adjustments": {"brightness": 17}})
+            for verb, starred in (("star", True), ("unstar", False)):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    assert_equal(helper.cmd_theme([verb, "pictured"]), 0, f"theme {verb} exit status over adjustments")
+                entry = _theme_list_entries()["pictured"]
+                assert_equal((entry["starred"], entry["adjustments"]["brightness"], overlay.is_dir()),
+                             (starred, 17, True), f"theme {verb} keeps the restyle adjustments in the overlay")
         finally:
             helper.builtin_themes_dir = original_builtin
 
@@ -4444,6 +4469,14 @@ def test_theme_catalog_offers_a_builtin_theme_with_no_imagery():
             # modified && !catalogPristine.
             assert_equal((listed.get("modified"), listed.get("catalogPristine"), listed.get("catalogOwned")),
                          (True, True, True), "theme list reports the flags for an untouched download")
+            # A star files the download rather than editing it.
+            with contextlib.redirect_stdout(io.StringIO()):
+                assert_equal(helper.cmd_theme(["star", "demo"]), 0, "theme star exit status on a download")
+            starred = _theme_list_entries()["demo"]
+            assert_equal((starred["starred"], starred["catalogPristine"], starred["preview"]), (True, True, str(preview)),
+                         "a starred download stays pristine and keeps the preview the package ships")
+            with contextlib.redirect_stdout(io.StringIO()):
+                assert_equal(helper.cmd_theme(["unstar", "demo"]), 0, "theme unstar exit status on a download")
 
             # Every overlay write adds a file beside the downloaded set.
             for label, rel, content in (

@@ -25,6 +25,8 @@ const SLICE = path.join(SWITCHER, "SwitcherSlice.qml");
 const SHORTCUT_ROW = path.join(repoRoot, "quickshell", "vshell", "Modules", "Settings", "Widgets", "SwitcherShortcutRow.qml");
 const CATALOG_SERVICE = path.join(repoRoot, "quickshell", "vshell", "Services", "VGSThemeCatalogService.qml");
 const SHELL_ROOT = path.join(repoRoot, "quickshell", "vshell", "VGS.qml");
+const DASH_THEMES_TAB = path.join(repoRoot, "quickshell", "vshell", "Modules", "Dash", "ThemesTab.qml");
+const ICONS_TAB = path.join(repoRoot, "quickshell", "vshell", "Modules", "Settings", "IconsTab.qml");
 
 // Extracted code runs under qml-region process deadlines.
 const { evaluateMarked, regionOf, guardChild } = require("./lib/qml-region.js");
@@ -48,6 +50,8 @@ const sliceSource = read(SLICE);
 const shortcutRowSource = read(SHORTCUT_ROW);
 const catalogSource = read(CATALOG_SERVICE);
 const shellRootSource = read(SHELL_ROOT);
+const dashThemesTabSource = read(DASH_THEMES_TAB);
+const iconsTabSource = read(ICONS_TAB);
 
 const MARKER = "SWITCHER SELECTION DECISION";
 const OFFER_MARKER = "DOWNLOAD OFFER DECISION";
@@ -77,16 +81,16 @@ test("the marked decision regions stay plain JavaScript", () => {
 test("downloadOffer offers the download only for a catalogued theme with no wallpapers, while online", () => {
     const missing = { name: "demo", imageryInstalled: false, imagerySize: 4096 };
     for (const [entry, online, pending, expected, why] of [
-        [missing, true, false, "offer", "an applied theme with no wallpapers on disk and an archive to fetch is offered"],
-        [{ ...missing, imageryInstalled: true }, true, false, "none", "a theme whose wallpapers are on disk is not offered"],
-        [{ name: "demo", imagerySize: 4096 }, true, false, "none",
+        [missing, true, false, true, "an applied theme with no wallpapers on disk and an archive to fetch is offered"],
+        [{ ...missing, imageryInstalled: true }, true, false, false, "a theme whose wallpapers are on disk is not offered"],
+        [{ name: "demo", imagerySize: 4096 }, true, false, false,
             "an entry that does not say the wallpapers are missing is not offered: only an explicit false offers"],
-        [null, true, false, "none", "a theme the catalog does not list has nothing to download"],
-        [{ ...missing, imagerySize: 0 }, true, false, "none", "an entry with no archive size has no size to offer"],
-        [missing, true, true, "none", "a download already running is not offered twice"],
-        [missing, false, false, "none", "offline behaves as Not now"]
+        [null, true, false, false, "a theme the catalog does not list has nothing to download"],
+        [{ ...missing, imagerySize: 0 }, true, false, false, "an entry with no archive size has no size to offer"],
+        [missing, true, true, false, "a download already running is not offered twice"],
+        [missing, false, false, false, "offline behaves as Not now"]
     ]) {
-        assert.equal(offer.downloadOffer(entry, online, pending), expected, why);
+        assert.strictEqual(offer.downloadOffer(entry, online, pending), expected, why);
     }
 });
 
@@ -231,7 +235,9 @@ const sources = new Map([
     ["SwitcherSlice.qml", sliceSource],
     ["SwitcherShortcutRow.qml", shortcutRowSource],
     ["VGSThemeCatalogService.qml", catalogSource],
-    ["VGS.qml", shellRootSource]
+    ["VGS.qml", shellRootSource],
+    ["ThemesTab.qml", dashThemesTabSource],
+    ["IconsTab.qml", iconsTabSource]
 ]);
 
 const readers = new Map();
@@ -470,7 +476,7 @@ test("the reporter arms on the returned id and matches each reply to it before t
 // Subclasses must track the service call's returned ID. The wallpaper screen route is covered by the scope suite.
 test("each switcher tracks the service's returned id and gates Enter on applies in flight", () => {
     for (const [file, trackPin] of [
-        ["ThemeSwitcherModal.qml", "onApplied: item => applyReporter.track(VGSThemeService.applyBlueprint(item.key))"],
+        ["ThemeSwitcherModal.qml", "onApplied: item => applyReporter.track(VGSThemeService.applyBlueprint(item.key, true))"],
         ["WallpaperSwitcherModal.qml", "applyReporter.track(VGSThemeService.setWallpaper(item.key));"]
     ]) {
         q(file).requires(sources.get(file), file, [
@@ -660,13 +666,30 @@ test("bare applyCompleted emissions are counted so a new operation must go throu
     ]);
 });
 
-test("the download offer follows a successful apply and Not now leaves the theme applied", () => {
+test("the download offer follows a successful user pick and Not now leaves the theme applied", () => {
     const svc = q("VGSThemeService.qml");
     const apply = svc.body("applyBlueprint");
     svc.requires(apply, "applyBlueprint()", [
-        ["VGSThemeCatalogService.offerDownload(appliedName, listed ? listed.installed : undefined);",
-            "every successful apply asks, with the theme list's installed answer", 1]
+        ['const themeWallpaper = SettingsData.wallpaperSource !== "folder";',
+            "one reading of the wallpaper policy serves the kept-wallpaper note, the wallpaper write and the offer", 1],
+        ["if (offersDownload === true && themeWallpaper) { const listed = (blueprints || []).find(bp => bp.name === appliedName); " +
+            "VGSThemeCatalogService.offerDownload(appliedName, listed ? listed.installed : undefined); }",
+            "only a user's pick asks, only while theme wallpapers are on, with the theme list's installed answer", 1]
     ]);
+    // A pick the user makes asks; a re-apply the shell makes itself does not, or Not now is asked again.
+    for (const [file, pin, count, why] of [
+        ["ThemeSwitcherModal.qml", "applyReporter.track(VGSThemeService.applyBlueprint(item.key, true))", 1, "a switcher pick asks"],
+        ["ThemesTab.qml", "VGSThemeService.applyBlueprint(entry.name, true);", 2, "a Dash Enter and a Dash search accept ask"],
+        ["ThemesTab.qml", "VGSThemeService.applyBlueprint(themeRow.modelData.name, true);", 1, "a Dash row click asks"],
+        ["ThemesSettingsTab.qml", "onClicked: VGSThemeService.applyBlueprint(root.currentEntry.pair, true)", 1,
+            "the Settings pair switch asks"],
+        ["IconsTab.qml", "VGSThemeService.applyBlueprint(VGSThemeService.currentTheme.name);", 1,
+            "an icon setting change re-applies the current theme without asking"],
+        ["VGSThemeCatalogService.qml", "VGSThemeService.applyBlueprint(name);", 1,
+            "the re-apply after a finished download does not ask"]
+    ]) {
+        q(file).requires(body(file), file, [[pin, why, count]]);
+    }
     mustPrecedeIn(apply, "applyBlueprint()", /if \(exitCode !== 0\)/, /offerDownload\(/,
         "the offer is made inside the apply's completion, after a failed apply has returned, so it never runs before the colours land");
     mustPrecedeIn(apply, "applyBlueprint()", /_persistAppliedTheme\(appliedName\);/, /offerDownload\(/,
@@ -677,11 +700,21 @@ test("the download offer follows a successful apply and Not now leaves the theme
     catalog.requires(offerBody, "offerDownload()", [
         ["if (!name || installed !== false) return;",
             "a theme the list reports installed costs no catalog read", 1],
-        ['if (downloadOffer(entry, online, isPending(name)) === "offer") downloadOffered(name, entry.imagerySize);',
+        ["const entry = themes.find(theme => theme.name === name) || null;",
+            "the decision reads the applied theme's entry from this read's own themes", 1],
+        ["if (downloadOffer(entry, online, isPending(name))) downloadOffered(name, entry.imagerySize);",
             "the dialog is raised on the extracted decision, with the archive size", 1]
     ]);
-    mustPrecedeIn(offerBody, "offerDownload()", /entries = JSON\.parse/, /downloadOffer\(/,
+    mustPrecedeIn(offerBody, "offerDownload()", /themes = JSON\.parse/, /downloadOffer\(/,
         "the decision reads the catalog read made after the apply, so a finished download is not offered again");
+
+    const install = catalog.body("install");
+    catalog.requires(install, "install()", [
+        ["if ((VGSThemeService.currentTheme || {}).name === name) VGSThemeService.applyBlueprint(name);",
+            "a finished download re-applies the theme still on screen, so it takes its wallpaper", 1]
+    ]);
+    mustPrecedeIn(install, "install()", /if \(result\.status !== "installed"\)/, /VGSThemeService\.applyBlueprint\(name\)/,
+        "the re-apply follows the failed-status return, so a failed download re-applies nothing");
 
     const shell = q("VGS.qml");
     const offered = shell.body("onDownloadOffered");
@@ -691,6 +724,28 @@ test("the download offer follows a successful apply and Not now leaves the theme
     ]);
     assert.doesNotMatch(qmlSource.stripComments(offered), /onCancel|applyBlueprint|revert/,
         "VGS.qml: Not now does nothing, so the theme stays applied with its colours");
+});
+
+test("the Dash star button stars through the helper and flips the listed entry before it answers", () => {
+    q("ThemesTab.qml").requires(body("ThemesTab.qml"), "ThemesTab.qml", [
+        ["onClicked: VGSThemeService.setStarred(themeRow.modelData.name, !themeRow.isStarred)",
+            "the star button flips the star it shows through the service", 1]
+    ]);
+    const svc = q("VGSThemeService.qml");
+    const star = svc.body("setStarred");
+    svc.requires(star, "setStarred()", [
+        ['["theme", starred ? "star" : "unstar", name, "--json"]', "a star runs theme star and an unstar theme unstar", 1],
+        ["_setListedStar(name, starred);", "the listed entry flips before the helper answers", 1],
+        ["if (exitCode !== 0) { _setListedStar(name, previous);",
+            "a refused star flips the entry back, on the refused path", 1],
+        ["refreshBlueprints();", "a stored star is confirmed by the list re-read", 1]
+    ]);
+    mustPrecedeIn(star, "setStarred()", /_setListedStar\(name, starred\);/, /_run\(/,
+        "the flip is shown before the helper runs, which with the list re-read takes seconds");
+    svc.requires(svc.body("_setListedStar"), "_setListedStar()", [
+        ["blueprints = (blueprints || []).map(bp => bp.name === name ? Object.assign({}, bp, { starred: starred }) : bp);",
+            "the list is reassigned rather than mutated, so every binding on it re-evaluates", 1]
+    ]);
 });
 
 test("generateMissingPreviews releases its guard, keys on the full-size preview, and a failed preview probe does not flag the list", () => {

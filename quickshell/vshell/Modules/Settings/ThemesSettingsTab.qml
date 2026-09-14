@@ -278,7 +278,7 @@ Item {
                         visible: (root.currentEntry.pair || "") !== ""
                         text: (VGSThemeService.currentTheme.mode || "dark") === "light" ? I18n.tr("Switch to Dark") : I18n.tr("Switch to Light")
                         enabled: !VGSThemeService.busy
-                        onClicked: VGSThemeService.applyBlueprint(root.currentEntry.pair)
+                        onClicked: VGSThemeService.applyBlueprint(root.currentEntry.pair, true)
                     }
 
                     VgsButton {

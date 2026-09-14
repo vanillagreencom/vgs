@@ -311,17 +311,27 @@ Singleton {
         });
     }
 
-    // The star is stored in the theme's overlay by the helper; the list re-read shows it.
+    // The helper stores the star in the theme's overlay. The listed entry flips
+    // before the helper runs, because the list re-read that confirms it takes
+    // seconds, and flips back when the helper refuses.
     function setStarred(name, starred) {
         if (!name)
             return;
+        const listed = (blueprints || []).find(bp => bp.name === name);
+        const previous = !!listed && listed.starred === true;
+        _setListedStar(name, starred);
         _run("vgs-theme-star", ["theme", starred ? "star" : "unstar", name, "--json"], function(output, exitCode, stderr) {
             if (exitCode !== 0) {
+                _setListedStar(name, previous);
                 ToastService.showError(I18n.tr("VGS theme error"), stderr || output || "Starring failed");
                 return;
             }
             refreshBlueprints();
         });
+    }
+
+    function _setListedStar(name, starred) {
+        blueprints = (blueprints || []).map(bp => bp.name === name ? Object.assign({}, bp, { starred: starred }) : bp);
     }
 
     function deleteTheme(name) {
@@ -538,7 +548,8 @@ Singleton {
     // thumbnails nothing would otherwise sweep, and an install adds a theme
     // whose wallpapers are missing but invisible from here — without this its
     // rail falls back to full-size sources until it is applied.
-    // Public because both happen outside this service, in the catalog browser.
+    // Public for the install side: VGSThemeCatalogService.install, raised from
+    // the download offer after an apply, adds wallpapers outside this service.
     function requestThumbnailSweep() {
         root._thumbSweepWanted = true;
     }
@@ -686,7 +697,10 @@ Singleton {
     // Returns the request id the completion will carry, or "" when nothing was
     // dispatched. A caller latching on the reply must check for "": there is no
     // completion coming for a request that was never made.
-    function applyBlueprint(name) {
+    // `offersDownload` is true only for a theme the user picked: a re-apply the
+    // shell makes itself, after an icon setting change or a finished download,
+    // must not ask again after the user answered Not now.
+    function applyBlueprint(name, offersDownload) {
         if (!name)
             return "";
         const requestId = _beginApply("vgs-theme-apply-" + name);
@@ -719,12 +733,13 @@ Singleton {
                     details.push("off: " + data.skipped.join(", "));
                 if (warnings.length > 0)
                     details.push("warnings: " + warnings.join("; "));
-                if (data.wallpaper && SettingsData.wallpaperSource === "folder")
+                // wallpaperSource=folder decouples the wallpaper from theme applies.
+                const themeWallpaper = SettingsData.wallpaperSource !== "folder";
+                if (data.wallpaper && !themeWallpaper)
                     details.push("wallpaper kept (theme wallpapers off)");
                 lastMessage = "Applied " + appliedName + (details.length > 0 ? " · " + details.join(" · ") : "");
                 _persistAppliedTheme(appliedName);
-                // wallpaperSource=folder decouples the wallpaper from theme applies.
-                if (data.wallpaper && typeof SessionData !== "undefined" && SettingsData.wallpaperSource !== "folder")
+                if (data.wallpaper && typeof SessionData !== "undefined" && themeWallpaper)
                     SessionData.setWallpaper(data.wallpaper);
                 _markGreeterThemeSyncPending();
                 refreshCurrent();
@@ -732,8 +747,11 @@ Singleton {
                 // reading `themeWallpapers` keeps the previous theme's list.
                 refreshWallpapers();
                 // Offered only after the colours landed, so the offer never holds up the apply.
-                const listed = (blueprints || []).find(bp => bp.name === appliedName);
-                VGSThemeCatalogService.offerDownload(appliedName, listed ? listed.installed : undefined);
+                // With theme wallpapers off the user's own wallpaper stays, so there is nothing to offer.
+                if (offersDownload === true && themeWallpaper) {
+                    const listed = (blueprints || []).find(bp => bp.name === appliedName);
+                    VGSThemeCatalogService.offerDownload(appliedName, listed ? listed.installed : undefined);
+                }
                 message = lastMessage;
             } catch (e) {
                 _finishApply(requestId, false, "Theme applied but the shell could not finish updating: " + e);

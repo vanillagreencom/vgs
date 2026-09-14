@@ -2407,21 +2407,30 @@ def drop_theme_overlay(package: str) -> None:
     """Delete a built-in theme's user overlay, keeping the wallpapers a download placed and its marker.
 
     A revert cannot fetch those wallpapers back; removing them is `theme catalog remove`.
+    The overlay `theme.json`'s `THEME_META_BOOKKEEPING_KEYS` are kept too, since
+    they file the theme rather than edit it. An overlay `theme.json` that does
+    not read as an object keeps nothing, as nothing in it can be told from an edit.
     """
     user_dir = user_themes_dir() / package
     placed = catalog_placed_wallpapers(package)
     if not user_dir.is_dir():
         return
+    bookkeeping: Dict[str, Any] = {}
+    with contextlib.suppress(Exception):
+        bookkeeping = {key: value for key, value in theme_json_layer(user_dir / "theme.json").items()
+                       if key in THEME_META_BOOKKEEPING_KEYS}
     if not placed:
         shutil.rmtree(user_dir, ignore_errors=True)
-        return
-    kept = {CATALOG_MARKER, *placed}
-    for path in sorted(user_dir.rglob("*"), reverse=True):
-        if path.is_dir() and not path.is_symlink():
-            with contextlib.suppress(OSError):
-                path.rmdir()
-        elif path.relative_to(user_dir).as_posix() not in kept:
-            path.unlink()
+    else:
+        kept = {CATALOG_MARKER, *placed}
+        for path in sorted(user_dir.rglob("*"), reverse=True):
+            if path.is_dir() and not path.is_symlink():
+                with contextlib.suppress(OSError):
+                    path.rmdir()
+            elif path.relative_to(user_dir).as_posix() not in kept:
+                path.unlink()
+    if bookkeeping:
+        write_user_layer(package, "theme.json", {**read_theme_overlay_meta(package), **bookkeeping})
 
 
 def theme_wallpaper_entries(bp: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -2490,7 +2499,7 @@ def read_theme_overlay_meta(pkg_dir_name: str) -> Dict[str, Any]:
 
 
 def set_theme_starred(pkg_dir_name: str, starred: bool) -> None:
-    """Star or unstar package `pkg_dir_name`: the one writer of `starred`.
+    """Star or unstar package `pkg_dir_name`: the one writer that sets or clears `starred`.
 
     The star lives in the theme's overlay `theme.json`, so it travels with the
     theme. Over a built-in theme an unstar leaves no overlay file behind, and a
@@ -2841,6 +2850,9 @@ def duplicate_theme_package(package: str, dest_name: str, new_name: str) -> None
                              *((overlay, package_overlay_values(package, overlay)) for overlay in OVERLAY_MASK_TEXT),
                              ("app-colors.toml", theme_app_overrides(package))):
         write_user_layer(dest_name, filename, values)
+    # A copy is a new theme the user has not filed yet, so it starts unstarred.
+    for key in THEME_META_BOOKKEEPING_KEYS:
+        meta.pop(key, None)
     meta["name"] = new_name
     meta["curatedPalette"] = palette_digest(palette)
     write_user_layer(dest_name, "theme.json", meta)
@@ -10603,9 +10615,6 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
                 print(json.dumps({"reverted": False, "name": bp.get("name"), "applied": False, "error": "not a built-in theme"}, indent=2))
             return 1
         drop_theme_overlay(Path(str(bp.get("path"))).name)
-        # A star is not an edit, so reverting the edits keeps it.
-        if bp.get("starred"):
-            set_theme_starred(Path(str(bp.get("path"))).name, True)
         applied = False
         if str(bp.get("name")) == str(current_theme().get("name")):
             reverted = find_theme(args.name)

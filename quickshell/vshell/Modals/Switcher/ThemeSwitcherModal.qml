@@ -68,7 +68,7 @@ FullScreenSwitcher {
         errorTitle: I18n.tr("VGS theme error")
     }
 
-    onApplied: item => applyReporter.track(VGSThemeService.applyBlueprint(item.key))
+    onApplied: item => applyReporter.track(VGSThemeService.applyBlueprint(item.key, true))
 
     Component {
         id: starPill

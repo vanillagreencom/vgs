@@ -90,7 +90,7 @@ Item {
         if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
             const entry = filteredThemes[themeList.currentIndex];
             if (entry && !VGSThemeService.busy)
-                VGSThemeService.applyBlueprint(entry.name);
+                VGSThemeService.applyBlueprint(entry.name, true);
             return true;
         }
         return false;
@@ -122,7 +122,7 @@ Item {
                 onAccepted: {
                     const entry = root.filteredThemes[themeList.currentIndex];
                     if (entry && !VGSThemeService.busy)
-                        VGSThemeService.applyBlueprint(entry.name);
+                        VGSThemeService.applyBlueprint(entry.name, true);
                 }
             }
 
@@ -209,7 +209,7 @@ Item {
                     cursorShape: Qt.PointingHandCursor
                     onClicked: {
                         if (!themeRow.isCurrent && !VGSThemeService.busy)
-                            VGSThemeService.applyBlueprint(themeRow.modelData.name);
+                            VGSThemeService.applyBlueprint(themeRow.modelData.name, true);
                     }
                 }
 
