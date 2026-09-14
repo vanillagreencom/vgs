@@ -296,9 +296,9 @@ if [[ -z "$LOG" ]]; then
   LOG="${XDG_CACHE_HOME:-$HOME/.cache}/vshell/memory-samples.tsv"
 fi
 # The log path is an argument, so every way it can be unusable is a bad
-# invocation and refuses with a key, not a raw redirection or mkdir error. The
-# read side is left to the append guard below, whose awk fails on an unreadable
-# file and refuses by name there.
+# invocation and refuses with a key, not a raw mkdir, redirection or awk error.
+# The append guard below keeps its own refusal as the fallback for a read that
+# fails after these tests.
 if ! log_dir="$(dirname -- "$LOG")"; then
   refuse 2 "unwritable-log=$LOG" "Its directory name could not be resolved."
 fi
@@ -311,6 +311,11 @@ if [[ -e "$LOG" ]]; then
     refuse 2 "unwritable-log=$LOG" "The log path exists and is not a regular file."
   [[ -w "$LOG" ]] ||
     refuse 2 "unwritable-log=$LOG" "The existing log cannot be appended to."
+  # Readability belongs here beside the other two: the append guard's awk does
+  # refuse an unreadable log, but only after printing its own fatal error, and
+  # every refusal this script makes opens with its key.
+  [[ -r "$LOG" ]] ||
+    refuse 2 "unreadable-log=$LOG" "The existing log could not be read to check whose session it holds."
 fi
 if [[ -s "$LOG" ]]; then
   # Appending a second session's rows to a foreign log is how a 100 MiB/h leak

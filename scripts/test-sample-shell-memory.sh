@@ -161,6 +161,14 @@ a log with no sample rows refuses|header-only|err|no-samples=0|1
 a header missing a column the report reads refuses|no-rss-column|err|header-missing-column=rss_kb|2
 CASES
 
+# A bad header has one cause, and the report must name only that one. When the
+# prelude shared awk's own status for an unopenable input, a perfectly readable
+# log with a bad header also drew an unreadable-log= refusal, telling the reader
+# the file could not be read when it could.
+report_case "a bad header is reported as one cause, not two" no-rss-column err "header-missing-column=rss_kb" 2
+expect_absent "$err" "unreadable-log=" "a bad header is reported as one cause, not two"
+ok "a bad header is reported as one cause, not two"
+
 # The negative of the rate rule: a span at or over the floor reports fields, not
 # a status. Asserting only the status line would pass with rates never emitted.
 report_case "a span over the floor reports rate fields" spans-8h out "rss_mib_h=" 0
@@ -262,9 +270,15 @@ drive_sample_row() {
     # A planted defect makes the copy complain here; that is the control's
     # evidence, not a suite failure, so it stays out of the run's output.
     exec 2>"$tmp/row-stderr"
-    extract_functions "$script" >"$row_builder"
+    # 3 is the liveness status the controls read: a copy that could not be
+    # lifted or parsed proves nothing, and bash parses a function body when it
+    # sources it, so a mutation that is a syntax error lands here rather than
+    # looking like the row builder refusing a row.
+    extract_functions "$script" >"$row_builder" || exit 3
     # shellcheck source=/dev/null
-    source "$row_builder"
+    source "$row_builder" || exit 3
+    declare -F stat_fields >/dev/null || exit 3
+    declare -F sample_row >/dev/null || exit 3
     PID="$victim"
     CLK_TCK="$(getconf CLK_TCK)"
     mapfile -t f < <(stat_fields "$PID")
@@ -329,151 +343,159 @@ open(path, "w").write(text.replace(old, new))
 MUTATE_PY
 }
 
+# One liveness verdict for every control, whichever surface it plants into. A
+# mutation that did not apply and a copy that did not run both prove nothing,
+# and saying so is what keeps a dead mutant from satisfying a control's pass
+# condition. Statuses 2 and 3 are reserved for those two; no surface under test
+# returns either.
+UNPROVEN_MUTATION="the mutation did not apply, so the rule is unproven"
+UNPROVEN_MUTANT="the mutant did not run, so the rule is unproven"
 
-# Build a copy of the sampler beside a real library, apply one substitution, and
-# report what --report then does. A mutation that does not apply, or a copy that
-# does not start, is a fixture defect rather than a verdict: run_control returns
-# non-zero for both so the callers below can say which.
-run_control() {
-  local from="$1" to="$2" fixture="$3"
-  local mutant="$tmp/mutant.sh"
+# Build a mutated copy from a list of from/to pairs. 2 when a pair did not apply.
+build_mutant() {
+  local mutant="$1"
+  shift
   cp "$sampler" "$mutant"
-  if [[ -n "$from" ]]; then
-    mutate "$mutant" "$from" "$to" || return 2
-  fi
+  while [[ $# -ge 2 ]]; do
+    mutate "$mutant" "$1" "$2" || return 2
+    shift 2
+  done
   chmod +x "$mutant"
+}
+
+# A control on the report surface. WANT says what the owning case asserts:
+# `present` for a case that expects EXPECT in its stream, `absent` for one that
+# expects it to stay away. Either way the control requires the defect to move
+# the case, so a control that changes nothing fails.
+report_control() {
+  local label="$1" want="$2" fixture="$3" stream="$4" expect="$5" status="$6"
+  shift 6
+  local mutant="$tmp/mutant.sh" rcm=0
+  build_mutant "$mutant" "$@" || { fail "$label" "$UNPROVEN_MUTATION"; return; }
   local log="$tmp/log.tsv"
   rm -f -- "${tmp:?}/log.tsv"
   build_fixture "$fixture" "$log"
   run_report "$mutant" "$log"
-  # A mutant that died in its preamble emits neither stream and judges nothing.
-  # Every fixture here yields at least one session line from a script that ran.
-  [[ "$out" == *"session="* ]] || return 3
-  return 0
-}
-
-control() {
-  local label="$1" from="$2" to="$3" fixture="$4" stream="$5" expect="$6" status="$7"
-  local rcc=0
-  run_control "$from" "$to" "$fixture" || rcc=$?
-  case "$rcc" in
-    2) fail "$label" "the mutation did not apply, so the rule is unproven" ; return ;;
-    3) fail "$label" "the mutant did not run (no session= line), so the rule is unproven" ; return ;;
-  esac
+  # Every fixture here yields a session line from a script that ran; without one
+  # the copy died before reaching the report and judges nothing.
+  if [[ "$out" != *"session="* && "$err" != *"sample-shell-memory:"* ]]; then
+    fail "$label" "$UNPROVEN_MUTANT"
+    return
+  fi
   local body="$out"
   [[ "$stream" == err ]] && body="$err"
-  if [[ "$rc" == "$status" && "$body" == *"$expect"* ]]; then
-    fail "$label" "the defect did not redden its case: still saw $expect at exit $status"
-  else
-    printf '  ok    %s\n' "$label"
-  fi
+  case "$want" in
+    present)
+      [[ "$rc" == "$status" && "$body" == *"$expect"* ]] &&
+        fail "$label" "the defect did not redden its case: still saw $expect at exit $status" ;;
+    absent)
+      [[ "$body" == *"$expect"* ]] ||
+        fail "$label" "the defect did not redden its case: $expect stayed away" ;;
+  esac
+  ok "$label"
 }
 
-# The control of the controls. An UNMUTATED copy through the same path must
+# A control on the row builder. WANT is what the owning case asserts about the
+# builder: `rejects` for a case where sample_row must refuse the row, `accepts`
+# for the inverted control that shows which test did the refusing.
+row_control() {
+  local label="$1" want="$2"
+  shift 2
+  local mutant="$tmp/row-mutant.sh" rcm=0
+  build_mutant "$mutant" "$@" || { fail "$label" "$UNPROVEN_MUTATION"; return; }
+  drive_sample_row "$mutant" || rcm=$?
+  if [[ "$rcm" == 3 ]]; then
+    fail "$label" "$UNPROVEN_MUTANT"
+    return
+  fi
+  case "$want" in
+    rejects)
+      [[ "$rcm" != 0 ]] ||
+        fail "$label" "the defect did not redden its case: the row builder still accepted the row" ;;
+    accepts)
+      [[ "$rcm" == 0 ]] ||
+        fail "$label" "the control could not show which test refused the row: still refused, exit $rcm" ;;
+  esac
+  ok "$label"
+}
+
+# The control of the controls. An UNMUTATED copy through the report path must
 # still produce its case's expected line: if it does not, every control above
 # passes for the wrong reason and proves nothing.
 unmutated_check() {
   local label="a copy with nothing planted still passes its case"
-  local rcc=0
-  run_control "" "" spans-8h || rcc=$?
-  case "$rcc" in
-    3) fail "$label" "the unmutated copy did not run, so every control below is vacuous" ; return ;;
-    0) ;;
-    *) fail "$label" "the unmutated copy could not be built (status $rcc)" ; return ;;
-  esac
+  local mutant="$tmp/mutant.sh"
+  build_mutant "$mutant" || { fail "$label" "$UNPROVEN_MUTATION"; return; }
+  local log="$tmp/log.tsv"
+  rm -f -- "${tmp:?}/log.tsv"
+  build_fixture spans-8h "$log"
+  run_report "$mutant" "$log"
   [[ "$rc" == 0 ]] || fail "$label" "expected exit 0 from an unmutated copy, got $rc"
   expect_contains "$out" "mark=1h uptime_s=3600" "$label"
   ok "$label"
 }
 unmutated_check
 
-control "removing the mark-reached test reddens the not-reached case" \
-  'if (u[n] < target) return -1' 'if (0) return -1' \
-  short out "mark=1h status=not-reached" 0
+report_control "removing the mark-reached test reddens the not-reached case" \
+  present short out "mark=1h status=not-reached" 0 \
+  'if (u[n] < target) return -1' 'if (0) return -1'
 
-control "removing the mark tolerance reddens the gap case" \
-  'if (target - u[best] > tol) return -2' 'if (0) return -2' \
-  hole out "mark=1h status=no-sample-within tolerance_s=300" 0
+report_control "removing the mark tolerance reddens the gap case" \
+  present hole out "mark=1h status=no-sample-within tolerance_s=300" 0 \
+  'if (target - u[best] > tol) return -2' 'if (0) return -2'
 
 # shellcheck disable=SC2016  # awk source: $ is awk's field operator, not shell expansion
-control "merging sessions reddens the newest-session case" \
+report_control "merging sessions reddens the newest-session case" \
+  present two-sessions out "session=200:22 samples=481" 0 \
   'function session_key() { return $(col["pid"]) ":" $(col["session"]) }' \
-  'function session_key() { return "merged" }' \
-  two-sessions out "session=200:22 samples=481" 0
+  'function session_key() { return "merged" }'
 
-control "removing the order test reddens the uptime-backwards case" \
-  'if (u[i] < u[i - 1]) {' 'if (0) {' \
-  backwards err "uptime-backwards=0 after=240 row=6" 1
+report_control "removing the order test reddens the uptime-backwards case" \
+  present backwards err "uptime-backwards=0 after=240 row=6" 1 \
+  'if (u[i] < u[i - 1]) {' 'if (0) {'
 
-control "removing the rate floor reddens the span-under-floor case" \
-  'if (d < floor) {' 'if (0) {' \
-  under-floor out "rate=1h..last status=span-under-floor" 0
+report_control "removing the rate floor reddens the span-under-floor case" \
+  present under-floor out "rate=1h..last status=span-under-floor" 0 \
+  'if (d < floor) {' 'if (0) {'
 
 # shellcheck disable=SC2016  # awk source: $ is awk's field operator, not shell expansion
-control "shifting the header map reddens the column-by-name case" \
-  'for (i = 1; i <= NF; i++) col[$i] = i' 'for (i = 1; i <= NF; i++) col[$i] = i + 1' \
-  spans-8h out "mark=1h uptime_s=3600" 0
+report_control "shifting the header map reddens the column-by-name case" \
+  present spans-8h out "mark=1h uptime_s=3600" 0 \
+  'for (i = 1; i <= NF; i++) col[$i] = i' 'for (i = 1; i <= NF; i++) col[$i] = i + 1'
 
-control "drifting the 24 h target reddens the far-mark case" \
-  'idx[3] = at(24 * 3600)' 'idx[3] = at(25 * 3600)' \
-  spans-24h out "mark=24h uptime_s=86400" 0
+report_control "drifting the 24 h target reddens the far-mark case" \
+  present spans-24h out "mark=24h uptime_s=86400" 0 \
+  'idx[3] = at(24 * 3600)' 'idx[3] = at(25 * 3600)'
 
-# The row builder's own controls. Each runs a mutated copy through the same
-# driver, so a defect in the field splitting or the truncation floor shows up as
-# a row the case rejects rather than as a silent empty log.
-row_control() {
-  local label="$1"
-  shift
-  local mutant="$tmp/row-mutant.sh"
-  local rcm=0
-  cp "$sampler" "$mutant"
-  while [[ $# -ge 2 ]]; do
-    if ! mutate "$mutant" "$1" "$2"; then
-      fail "$label" "a mutation did not apply, so the rule is unproven"
-      return
-    fi
-    shift 2
-  done
-  drive_sample_row "$mutant" || rcm=$?
-  [[ "$rcm" != 0 ]] ||
-    fail "$label" "the defect did not redden its case: sample_row still exited 0"
-  [[ $case_failed -eq 0 ]] && printf '  ok    %s\n' "$label"
-  case_failed=0
-}
+report_control "dropping the window rate reddens the joined-late case" \
+  present late-start out "rate=window from_uptime_s=273600" 0 \
+  'raterow("window", 1, n)' ''
+
+# Putting the prelude back on awk's own status makes a bad header also report a
+# cause that is not true, so the case asserting that second refusal stays away
+# is what this control must move.
+report_control "putting the prelude back on awk's status reddens the one-cause case" \
+  absent no-rss-column err "unreadable-log=" 2 \
+  'refused = 3' 'refused = 2'
 
 # Stand in for the tab escape failing to expand: a pattern that cannot match
 # leaves the mapping count in the row, so the arithmetic test rejects every one.
 # shellcheck disable=SC2016  # bash source of the script under test, quoted verbatim as its anchor
-row_control "breaking the field split reddens the row-builder case" \
+row_control "breaking the field split reddens the row-builder case" rejects \
   'counted="${row%%$'"'"'\t'"'"'*}"' 'counted="${row%%NO_SUCH_SEPARATOR*}"'
 
 # The truncation floor guards a short read, which cannot be staged against a
 # healthy process: /proc hands back the whole file. Making the counter
 # under-report stands in for the truncation, and with it the floor must reject
-# the row. This is the guarantee, so its control removes the floor rather than
-# the counter: with both gone the under-counted row is accepted and the case
-# goes green, which is what must not happen.
-row_control "an under-counted mapping read is rejected" \
+# the row. That is the guarantee, so its control removes the floor as well: with
+# both gone the under-counted row is accepted, which is what must not happen.
+row_control "an under-counted mapping read is rejected" rejects \
   'nmaps++; next' 'next'
 
-floor_label="removing the truncation floor reddens the under-counted case"
-floor_rc=0
-floor_mutant="$tmp/floor-mutant.sh"
-cp "$sampler" "$floor_mutant"
 # shellcheck disable=SC2016  # bash source of the script under test, quoted verbatim as its anchor
-if mutate "$floor_mutant" 'nmaps++; next' 'next' &&
-  mutate "$floor_mutant" '[[ "$counted" -ge "$floor" ]] || return 1' ':'; then
-  drive_sample_row "$floor_mutant" || floor_rc=$?
-  [[ "$floor_rc" == 0 ]] ||
-    fail "$floor_label" "the control could not show the floor was what rejected: exit $floor_rc"
-else
-  fail "$floor_label" "a mutation did not apply, so the rule is unproven"
-fi
-ok "$floor_label"
-
-control "dropping the window rate reddens the joined-late case" \
-  'raterow("window", 1, n)' '' \
-  late-start out "rate=window from_uptime_s=273600" 0
+row_control "removing the truncation floor reddens the under-counted case" accepts \
+  'nmaps++; next' 'next' \
+  '[[ "$counted" -ge "$floor" ]] || return 1' ':'
 
 if [[ $failures -ne 0 ]]; then
   printf '\ntest-sample-shell-memory: %d failure(s)\n' "$failures" >&2
