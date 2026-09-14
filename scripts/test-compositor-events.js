@@ -13,7 +13,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 // Use the shared comment-aware and string-aware brace reader to prevent truncated extraction.
-const { extractBlock } = require("./lib/qml-block.js");
+const { extractBlock, callInScope } = require("./lib/qml-block.js");
 
 const QML = path.join(__dirname, "..", "quickshell", "vshell", "Services", "CompositorService.qml");
 const source = fs.readFileSync(QML, "utf8");
@@ -32,41 +32,94 @@ function eventList(name) {
 const MONITOR_EVENTS = eventList("_hyprMonitorRefreshEvents");
 const TOPLEVEL_EVENTS = eventList("_hyprToplevelViewEvents");
 
-// Model the zero-interval Timer: restart re-arms a pending trigger, and turn() runs the event
-// loop once. Firing on restart instead would hide every missing coalesce.
-function timer(onTriggered) {
-    return { pending: false, restart() { this.pending = true; }, fire() { this.pending = false; onTriggered(); } };
+// Read each Timer out of the shipped file: its onTriggered body is the half of the change that
+// makes one action cost one refresh, and writing that call here would certify the test's own copy.
+function timerBlock(id) {
+    const owner = source.slice(0, source.indexOf(`id: ${id}`)).lastIndexOf("Timer {");
+    assert.ok(owner !== -1, `${id} must be declared inside a Timer`);
+    const declaration = extractBlock(source, "Timer {", owner);
+    assert.ok(declaration.includes(`id: ${id}`), `${id} must be the id of the Timer that encloses it`);
+    return { id, declaration, body: handlerBody(declaration, id) };
 }
 
-// with models QML's unqualified component lookup without rewriting the extracted handler body.
-function callInScope(body, root, scope, parameters, args) {
-    return new Function("root", "scope", ...parameters, `with (scope) { with (root) {\n${body}\n} }`)(root, scope, ...args);
+// QML writes a handler as a braced block or as one expression after the colon. Read whichever
+// the file uses, so the shipped call runs here instead of a stand-in written in this file.
+function handlerBody(declaration, id) {
+    const at = declaration.indexOf("onTriggered:");
+    assert.ok(at !== -1, `${id} must declare an onTriggered handler`);
+    const rest = declaration.slice(at + "onTriggered:".length);
+    const body = rest.trimStart().startsWith("{")
+        ? extractBlock(declaration, "onTriggered:")
+        : rest.slice(0, rest.indexOf("\n") === -1 ? rest.length : rest.indexOf("\n"));
+    // An empty body is reported by the timer case below, not thrown here: a throw at load
+    // hides every other verdict in the file behind the first broken timer.
+    return body;
+}
+
+// The second producer of the toplevel view. A direct call here rebuilt every consumer twice
+// for one window open, so this handler shares the timer and the test must run the shipped body.
+const VALUES_CHANGED = extractBlock(source, "function onValuesChanged()", source.indexOf("target: ToplevelManager.toplevels"));
+const TIMERS = ["hyprMonitorRefreshTimer", "toplevelViewTimer"].map(timerBlock);
+
+// Model the zero-interval Timer: restart re-arms a pending trigger, and a turn fires it once.
+// Firing on restart instead would hide every missing coalesce.
+function timer(fire) {
+    return { pending: false, restart() { this.pending = true; }, fire() { this.pending = false; fire(); } };
 }
 
 function shell() {
     const root = { calls: [], _hyprMonitorRefreshEvents: MONITOR_EVENTS, _hyprToplevelViewEvents: TOPLEVEL_EVENTS };
     root.refreshToplevels = () => root.calls.push("toplevelsChanged");
+    root.refreshMonitors = () => root.calls.push("refreshMonitors");
     const scope = {
         Hyprland: {
-            refreshMonitors: () => root.calls.push("refreshMonitors"),
+            refreshMonitors: () => root.calls.push("Hyprland.refreshMonitors"),
             refreshToplevels: () => root.calls.push("Hyprland.refreshToplevels"),
         },
-        hyprMonitorRefreshTimer: timer(() => scope.Hyprland.refreshMonitors()),
-        hyprToplevelViewTimer: timer(() => root.refreshToplevels()),
     };
-    // Deliver one socket batch: every event of one action, then a single event-loop turn.
-    root.action = (...names) => {
+    // Run each shipped onTriggered body rather than a hand-written stand-in for it.
+    for (const { id, body } of TIMERS)
+        scope[id] = timer(() => callInScope(body, root, scope));
+
+    // Deliver one socket batch: every producer this action reaches, then one event-loop turn.
+    // wayland: true adds the ToplevelManager producer, which a window open or close reaches too.
+    root.action = (...names) => root.deliver({}, ...names);
+    root.deliver = ({ wayland = false }, ...names) => {
         for (const name of names)
             callInScope(RAW_EVENT, root, scope, ["event"], [{ name }]);
-        for (const t of [scope.hyprMonitorRefreshTimer, scope.hyprToplevelViewTimer])
-            if (t.pending) t.fire();
+        if (wayland)
+            callInScope(VALUES_CHANGED, root, scope);
+        for (const { id } of TIMERS)
+            if (scope[id].pending) scope[id].fire();
         return root.calls;
     };
     return root;
 }
 
+test("every timer this shell arms fires once per turn and nothing more", () => {
+    for (const { id, declaration, body } of TIMERS) {
+        assert.ok(body.trim(), `${id} must run something when it fires`);
+        assert.match(declaration, /(^|\n)\s*interval:\s*0\s*(\n|$)/, `${id} must fire on the next turn, not after a delay`);
+        assert.match(declaration, /(^|\n)\s*repeat:\s*false\s*(\n|$)/, `${id} must fire once, not on a loop`);
+    }
+});
+
+test("both producers of the toplevel view share one coalescing timer", () => {
+    const timerId = TIMERS.find(t => t.body.includes("refreshToplevels")).id;
+    assert.ok(VALUES_CHANGED.includes(`${timerId}.restart()`),
+        "the ToplevelManager handler must share the timer, or one window open rebuilds every consumer twice");
+    assert.deepEqual(shell().deliver({ wayland: true }), ["toplevelsChanged"],
+        "the Wayland list alone rebuilds once");
+
+    // openwindow and closewindow reach both producers. The shared timer keeps that at one rebuild.
+    for (const name of ["openwindow", "closewindow"]) {
+        assert.deepEqual(shell().deliver({ wayland: true }, name), ["toplevelsChanged"],
+            `${name} reaches both producers and must still rebuild every consumer once`);
+    }
+});
+
 test("the extracted handler routes through both shipped event lists and the coalescing timers", () => {
-    for (const needle of ["_hyprMonitorRefreshEvents", "_hyprToplevelViewEvents", "hyprMonitorRefreshTimer", "hyprToplevelViewTimer", "restart"])
+    for (const needle of ["_hyprMonitorRefreshEvents", "_hyprToplevelViewEvents", ...TIMERS.map(t => t.id), "restart"])
         assert.ok(RAW_EVENT.includes(needle), `the extracted onRawEvent must contain ${needle}`);
 });
 
@@ -82,13 +135,15 @@ test("no matched event name has a v2 twin that is also matched", () => {
     }
 });
 
-test("the handler never issues an explicit toplevel fetch", () => {
-    // Quickshell maintains every HyprlandToplevel property this shell reads from the event stream.
-    assert.ok(!RAW_EVENT.includes("refreshToplevels()") || !RAW_EVENT.includes("Hyprland.refreshToplevels"),
-        "the handler must not call Hyprland.refreshToplevels");
+test("the fan-out never issues an explicit toplevel fetch", () => {
+    // Every HyprlandToplevel property the bar, dock and workspace filters read is a dedicated
+    // one Quickshell tracks from the event stream. lastIpcObject is the exception: it holds
+    // geometry and class, which no property carries, and the overview fetches it for itself.
     for (const name of [...MONITOR_EVENTS, ...TOPLEVEL_EVENTS])
         assert.ok(!shell().action(name).includes("Hyprland.refreshToplevels"),
             `${name} must not issue a j/clients fetch`);
+    assert.ok(!shell().deliver({ wayland: true }).includes("Hyprland.refreshToplevels"),
+        "the Wayland list producer must not issue a j/clients fetch either");
 });
 
 test("one user action costs one refresh of each kind", () => {
@@ -104,10 +159,10 @@ test("one user action costs one refresh of each kind", () => {
             "a move re-runs the workspace filters once"],
         ["scratchpad toggle", ["activespecial"], ["refreshMonitors", "toplevelsChanged"],
             "activespecial refetches the monitor lastIpcObject the scratchpad badge reads"],
-        ["monitor hotplug", ["monitoradded"], ["refreshMonitors"],
-            "a new monitor refetches monitor state and leaves the toplevel filters alone"],
-        ["monitor removal", ["monitorremoved"], ["refreshMonitors"],
-            "a removed monitor refetches monitor state and leaves the toplevel filters alone"],
+        ["monitor hotplug", ["monitoradded"], ["refreshMonitors", "toplevelsChanged"],
+            "a new monitor refetches monitor state and re-runs the per-screen window filters"],
+        ["monitor removal", ["monitorremoved"], ["refreshMonitors", "toplevelsChanged"],
+            "a hotplug migrates workspaces, so the surviving bar re-runs its per-screen filter"],
         ["fullscreen toggle", ["fullscreen"], ["toplevelsChanged"],
             "a fullscreen toggle re-runs the bar's hide decision and fetches no monitors"],
     ]) {
@@ -149,6 +204,6 @@ test("separate socket batches are not coalesced into one another", () => {
 test("the extracted handler assigns on the component, not the global scope", () => {
     // with assigns to an object only for an existing property. Assert against accidental global writes.
     shell().action("activewindowv2");
-    for (const name of ["hyprMonitorRefreshTimer", "hyprToplevelViewTimer", "event"])
+    for (const name of [...TIMERS.map(t => t.id), "event"])
         assert.ok(!(name in globalThis), `${name} must not leak to the global scope`);
 });

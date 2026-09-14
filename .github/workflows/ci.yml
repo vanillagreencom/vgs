@@ -256,6 +256,7 @@ jobs:
           scripts/test-compositor-focus.js
           scripts/test-compositor-events.js
           scripts/test-dock-scratchpad-identity.js
+          scripts/test-overview-refetch.js
           scripts/check-paste-injection.py
           scripts/test-launcher-search-gate.js
           scripts/check-notification-takeover.js

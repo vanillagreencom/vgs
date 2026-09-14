@@ -160,6 +160,22 @@ Item {
         }
     }
 
+    // HyprlandToplevel carries no geometry or class property, so every tile's rectangle and
+    // icon comes from lastIpcObject, which only these fetches fill. CompositorService issues
+    // none, so a window opened, moved, resized, floated or closed while the overview is on
+    // screen would draw at a stale rectangle, or at 100x100 with a generic icon and no
+    // address to click. toplevelsChanged is already one emission per action, and no fetch
+    // runs while the overview is closed.
+    Connections {
+        target: root.overviewOpen ? CompositorService : null
+        enabled: root.overviewOpen
+        function onToplevelsChanged() {
+            Hyprland.refreshToplevels();
+            Hyprland.refreshWorkspaces();
+            Hyprland.refreshMonitors();
+        }
+    }
+
     Rectangle {
         id: overviewBackground
         property real padding: 10

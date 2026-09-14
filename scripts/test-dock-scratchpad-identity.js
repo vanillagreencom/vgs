@@ -12,7 +12,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 // Use the shared comment-aware and string-aware brace reader to prevent truncated extraction.
-const { extractBlock } = require("./lib/qml-block.js");
+const { extractBlock, callInScope } = require("./lib/qml-block.js");
 
 const QML = path.join(__dirname, "..", "quickshell", "vshell", "Modules", "Dock", "DockAppButton.qml");
 const source = fs.readFileSync(QML, "utf8");
@@ -31,11 +31,6 @@ test("the extracted reads carry the fields the model relies on", () => {
             assert.ok(text.includes(needle), `the extracted ${label} must contain ${needle}`);
     }
 });
-
-// with models QML's unqualified component lookup without rewriting the extracted function bodies.
-function callInScope(body, root, scope, parameters, args) {
-    return new Function("root", "scope", ...parameters, `with (scope) { with (root) {\n${body}\n} }`)(root, scope, ...args);
-}
 
 // Build one Hyprland toplevel whose live workspace and last-fetched workspace can disagree.
 function hyprToplevel(wayland, live, fetched) {
@@ -62,14 +57,14 @@ const window = { appId: "foot" };
 
 test("the live workspace decides the scratchpad name, not the last fetched one", () => {
     for (const [live, fetched, expected, why] of [
-        ["special:term", "5", "term",
+        ["special:term", "development", "term",
             "a window moved into a scratchpad is a scratchpad before the next fetch"],
-        ["5", "special:term", "",
+        ["development", "special:term", "",
             "a window moved out of a scratchpad stops being one before the next fetch"],
         ["special:term", undefined, "term", "the live name alone names the scratchpad"],
-        ["5", undefined, "", "an ordinary live workspace is not a scratchpad"],
+        ["development", undefined, "", "an ordinary live workspace is not a scratchpad"],
         [null, "special:term", "term", "the last fetched name answers until workspace is populated"],
-        [null, "5", "", "the last fetched name of an ordinary workspace is not a scratchpad"],
+        [null, "development", "", "the last fetched name of an ordinary workspace is not a scratchpad"],
         [undefined, undefined, "", "a toplevel reporting no workspace at all is not a scratchpad"],
     ]) {
         const wayland = {};

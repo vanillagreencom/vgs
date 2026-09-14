@@ -12,7 +12,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 // Use the shared comment-aware and string-aware brace reader to prevent truncated extraction.
-const { extractBlock } = require("./lib/qml-block.js");
+const { extractBlock, callInScope } = require("./lib/qml-block.js");
 
 const QML = path.join(__dirname, "..", "quickshell", "vshell", "Services", "CompositorService.qml");
 const source = fs.readFileSync(QML, "utf8");
@@ -83,11 +83,6 @@ test("every extracted binding and handler carries the content the model relies o
 // with models QML's unqualified component lookup without rewriting the extracted function bodies.
 function call(body, root, parameters = [], args = []) {
     return new Function("root", ...parameters, `with (root) {\n${body}\n}`)(root, ...args);
-}
-
-// Layer child-object and root scopes so socket handlers write component state instead of a fixture shadow.
-function callInScope(body, root, scope) {
-    return new Function("root", "scope", `with (scope) { with (root) {\n${body}\n} }`)(root, scope);
 }
 
 const foot = { id: 7, app_id: "foot", is_focused: true };
