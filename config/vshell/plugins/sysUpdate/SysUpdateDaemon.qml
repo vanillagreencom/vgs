@@ -42,17 +42,38 @@ PluginDaemonComponent {
     readonly property string updateCommand: Paths.vshellCli
     property string pendingLaunchCommand: ""
 
-    Ref {
-        service: SystemUpdateService
+    // Holding this ref is what arms the backend's recurring refresh, so hold it
+    // only while a widget watches: with the widget on no bar refCount stays 0
+    // and the backend schedules no checkupdates, paru or mise run. Dropping to 0
+    // also clears SystemUpdateService's startup-check latch, so the next
+    // watching widget re-checks; that is deliberate, and it is what
+    // pollTimer's triggeredOnStart does on the CLI path.
+    Loader {
+        active: root.watched
+
+        sourceComponent: Component {
+            Ref {
+                service: SystemUpdateService
+            }
+        }
     }
 
-    // Imperative Timer control is out: pollTimer.restart() would overwrite the
-    // `running` binding below with a plain true, and the poll would then keep
-    // spawning a count per interval with no widget watching. The binding turns
-    // the poll back on by itself when the backend goes away, and
-    // triggeredOnStart counts at once.
+    // No imperative Timer control here. restart() and start() set the poll
+    // running past the gate below, and it stays set until that binding's
+    // expression next changes value, which with nothing watching may be never;
+    // only `running =` removes the binding outright. The binding turns the poll
+    // back on by itself when the backend goes away, and triggeredOnStart counts
+    // at once.
     onUseBackendChanged: {
-        if (root.useBackend)
+        if (root.watched && root.useBackend)
+            root._syncBackendState();
+    }
+
+    // The backend path has no triggeredOnStart of its own, and the Connections
+    // below were bound to null while nothing watched, so the first watching
+    // widget would otherwise render whatever state predated the release.
+    onWatchedChanged: {
+        if (root.watched)
             root._syncBackendState();
     }
 
@@ -232,7 +253,9 @@ PluginDaemonComponent {
     }
 
     Connections {
-        target: SystemUpdateService
+        // Null while nothing watches, so a backend broadcast rebuilds no package
+        // list and runs no filter pass for a daemon no widget is reading.
+        target: root.watched ? SystemUpdateService : null
         function onSysupdateAvailableChanged() { root._syncBackendState(); }
         function onAvailableUpdatesChanged() { root._syncBackendState(); }
         function onBackendsChanged() { root._syncBackendState(); }
@@ -275,8 +298,10 @@ PluginDaemonComponent {
                 recheckTimer.stop();
                 return;
             }
-            // Nothing reads the count while no widget watches; the poll's
-            // triggeredOnStart re-checks as soon as one does.
+            // Nothing reads the count while no widget watches. On the CLI path
+            // the poll's triggeredOnStart re-checks as soon as one does; with the
+            // backend available that poll never runs, so the next tick here is
+            // the recovery.
             if (root.watched)
                 root.manualRefresh();
         }

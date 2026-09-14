@@ -56,6 +56,14 @@ PluginComponent {
     }
     // END CONFIRM DECISION
 
+    // The daemon Instantiator is asynchronous, so a click can land before the
+    // instance registers, and a plugin reload reopens that window. The pill reads
+    // as unavailable in that state, which says nothing about the action just
+    // taken, so every dropped action reports.
+    function reportNoDaemon(title) {
+        PluginService.reportDaemonUnavailable(root.pluginId, title);
+    }
+
     function iconName() {
         if (!root.available)
             return "gpp_bad";
@@ -86,10 +94,10 @@ PluginComponent {
         // Check origin before changing state or opening the confirmation dialog.
         if (!root.isDirectActivation(origin))
             return;
-        // No daemon means nothing has probed the capability and no process can
-        // be started, so there is nothing to report and nothing to change.
-        if (!root.daemon)
+        if (!root.daemon) {
+            root.reportNoDaemon("Passwordless sudo change could not start");
             return;
+        }
         if (!root.available) {
             ToastService.showWarning("Passwordless sudo toggle unavailable", root.unavailableReason);
             root.daemon.probeStatus(true);
@@ -136,9 +144,24 @@ PluginComponent {
             if (!outcome.grant)
                 return;
             // The prompt is not modal to the machine: state can move while it is
-            // open, so re-check rather than trusting what opened the dialog. The
-            // daemon can also have gone with a plugin reload while it was up.
-            if (!root.daemon || root.daemon.busy || root.enabled)
+            // open, so re-check rather than trusting what opened the dialog.
+            // A plugin reload can also have taken the daemon while it was up,
+            // and a grant the user has already confirmed is never dropped in
+            // silence.
+            if (!root.daemon) {
+                root.reportNoDaemon("Passwordless sudo grant could not start");
+                return;
+            }
+            // Every gate toggle() applied is applied again here, availability
+            // included: the helper can have stopped being able to run between
+            // opening this dialog and confirming it, and a set it would refuse
+            // must not be sent.
+            if (!root.available) {
+                ToastService.showWarning("Passwordless sudo toggle unavailable", root.unavailableReason);
+                root.daemon.probeStatus(true);
+                return;
+            }
+            if (root.daemon.busy || root.enabled)
                 return;
             if (!root.canEnable) {
                 ToastService.showWarning("Cannot grant passwordless sudo", root.enableReason);

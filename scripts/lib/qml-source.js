@@ -131,6 +131,27 @@ module.exports = function qmlSource(source, fileLabel) {
         return structure.lastIndexOf(needle, from);
     }
 
+    // Every `Type {` object block in the file, in source order, each with a reader over its own
+    // text so binding lookups see only that object's top level. Matched in the code view, so a
+    // type named in a comment or inside a string is not one, and `Type{` is.
+    // `expected` is the count the caller declares. Without one, finding none means the extractor
+    // is broken rather than the file empty, which is what a bare loop over the result hides.
+    function objectBlocks(type, expected) {
+        const blocks = [];
+        const at = new RegExp(`\\b${type}\\s*\\{`, "g");
+        let hit;
+        while ((hit = at.exec(structure)) !== null) {
+            const text = blockFrom(hit.index, `${type} block`);
+            blocks.push({ text, q: module.exports(text, `${label} ${type} block`) });
+        }
+        if (expected === undefined)
+            assert.ok(blocks.length > 0, `${label}: found no ${type} blocks, so the extractor is broken`);
+        else
+            assert.equal(blocks.length, expected,
+                `${label}: expected ${expected} ${type} block(s), found ${blocks.length}`);
+        return blocks;
+    }
+
     // Find handlers at line starts in the structure view.
     function handlers(name) {
         const out = [];
@@ -185,7 +206,7 @@ module.exports = function qmlSource(source, fileLabel) {
         }
     }
 
-    return { blockFrom, body, binding, handlers, requires, indexOf, lastIndexOf, flat, stripComments };
+    return { blockFrom, body, binding, handlers, objectBlocks, requires, indexOf, lastIndexOf, flat, stripComments };
 };
 module.exports.flat = flat;
 module.exports.stripComments = stripComments;
@@ -302,6 +323,32 @@ property var decision: { if (false) { target: 10; } return 7; }
                 [['ch.issue = "could not run"', "one statement, not two halves"]]),
             "a pin satisfied by a SHAPE from one statement and a LITERAL from another must FAIL: " +
             "the statement it names is absent, which is the whole thing a pin claims");
+    }
+
+
+    {
+        const q = module.exports([
+            "// Timer { mentioned in a comment }",
+            'property string s: "Timer { in a string }"',
+            "Timer{",
+            "    id: tight",
+            "}",
+            "Timer  {",
+            "    id: spaced",
+            "}"
+        ].join("\n"), "objectBlocks fixture");
+        const blocks = q.objectBlocks("Timer");
+        assert.deepEqual(blocks.map(b => b.q.binding("id").value), ["tight", "spaced"],
+            "a type named only in a comment or a string is not an object block, and the space " +
+            "before the brace is optional: a guard that loops over these skips every assertion " +
+            "inside it when the extractor matches nothing, and still reports green");
+        q.objectBlocks("Timer", 2);
+        assert.throws(() => q.objectBlocks("Timer", 1), /expected 1 Timer block\(s\), found 2/,
+            "a declared count that the file does not meet must fail");
+        assert.throws(() => q.objectBlocks("Process"), /found no Process blocks/,
+            "and with no count declared, finding none is the extractor being broken");
+        assert.deepEqual(q.objectBlocks("Process", 0), [],
+            "a declared zero is how a caller bans a type outright");
     }
 
 

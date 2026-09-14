@@ -59,23 +59,42 @@ PluginComponent {
         return String(root.totalCount);
     }
 
-    function manualRefresh() {
-        if (root.daemon)
-            root.daemon.manualRefresh();
+    // The daemon Instantiator is asynchronous, so a click can land before the
+    // instance registers, and a plugin reload reopens that window. Say so rather
+    // than dropping the action: with no daemon the popout reads "Checking…"
+    // forever, so nothing else would tell the user the action went nowhere.
+    function reportNoDaemon(title) {
+        PluginService.reportDaemonUnavailable(root.pluginId, title);
     }
 
-    // Closing the popout belongs to the screen that opened it; the upgrade
-    // itself is one machine-wide action the daemon owns.
+    function manualRefresh() {
+        if (!root.daemon) {
+            root.reportNoDaemon("Update check could not start");
+            return;
+        }
+        root.daemon.manualRefresh();
+    }
+
+    // Closing the popout belongs to the screen that opened it; the upgrade itself
+    // is one machine-wide action the daemon owns. The guard runs first, so a
+    // click that reaches no daemon does not close the popout as though the
+    // upgrade had been accepted.
     function launch(mode, sourcePopout) {
+        if (!root.daemon) {
+            root.reportNoDaemon("Update could not start");
+            return;
+        }
         if (sourcePopout && sourcePopout.closePopout)
             sourcePopout.closePopout();
-        if (root.daemon)
-            root.daemon.launch(mode);
+        root.daemon.launch(mode);
     }
 
     function reviewOrphans() {
-        if (root.daemon)
-            root.daemon.reviewOrphans();
+        if (!root.daemon) {
+            root.reportNoDaemon("Orphan review could not start");
+            return;
+        }
+        root.daemon.reviewOrphans();
     }
 
     horizontalBarPill: Component {

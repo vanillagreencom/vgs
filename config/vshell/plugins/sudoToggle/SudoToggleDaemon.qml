@@ -177,12 +177,15 @@ PluginDaemonComponent {
 
     // Watch the flag file live. onLoaded => present (enabled),
     // onLoadFailed => absent (disabled). watchChanges catches edits while it
-    // exists; the poll timer covers create/delete from an absent state.
+    // exists; the poll timer covers create/delete from an absent state. The
+    // watch follows root.watched, so a shell with the widget on no bar keeps no
+    // inotify watch; the one read each view does when its path is first set
+    // stands, and is the whole of what an unwatched daemon costs.
     FileView {
         id: flagView
         path: root.flagPath
         blockLoading: false
-        watchChanges: true
+        watchChanges: root.watched
         printErrors: false
         onLoaded: {
             root._flagPresent = true;
@@ -198,7 +201,7 @@ PluginDaemonComponent {
         id: legacyFlagView
         path: root.legacyFlagPath
         blockLoading: false
-        watchChanges: true
+        watchChanges: root.watched
         printErrors: false
         onLoaded: {
             root._legacyFlagPresent = true;
