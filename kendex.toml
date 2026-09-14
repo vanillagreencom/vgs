@@ -380,6 +380,14 @@ harnesses = [
     "pi",
 ]
 
+[hooks.lane-mail-check]
+source = "kendex"
+harnesses = [
+    "claude",
+    "codex",
+    "pi",
+]
+
 [agent-skills]
 generalist = [
     "decider",
