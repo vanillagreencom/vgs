@@ -440,29 +440,55 @@ Singleton {
         });
     }
 
+    // Like refreshWallpapers: only the latest read commits, and a failed read keeps the previous list.
     function refreshAllWallpapers() {
         const readId = ++root._allWallpapersReadSeq;
         _run("vgs-theme-wallpapers-all", ["theme", "wallpapers", "--all", "--folder", wallpaperFolderPath, "--json"], function(output, exitCode) {
             if (readId !== root._allWallpapersReadSeq)
                 return;
+            if (exitCode !== 0) {
+                allWallpapersLoadFailed = true;
+                allWallpapersLoadError = lastError;
+                return;
+            }
             try {
-                if (exitCode !== 0)
-                    throw lastError;
                 allWallpapers = JSON.parse(output || "{}").wallpapers || [];
                 allWallpapersLoadFailed = false;
                 allWallpapersLoadError = "";
             } catch (e) {
                 allWallpapersLoadFailed = true;
-                allWallpapersLoadError = String(e);
+                allWallpapersLoadError = "Failed to parse wallpapers: " + e;
             }
         });
+    }
+
+    // The wording both wallpaper surfaces show for a source, "theme" or "all": the banner over a list a failed
+    // read retained, and the text for an empty list.
+    function staleNoticeFor(source) {
+        if (source !== "all")
+            return wallpapersStaleNotice;
+        return allWallpapersLoadFailed ? I18n.tr("Could not list wallpapers — showing the last list that loaded") : "";
+    }
+
+    function emptyTextFor(source) {
+        if (source === "all") {
+            if (allWallpapersLoadFailed)
+                return I18n.tr("Could not list wallpapers") + (allWallpapersLoadError ? "\n" + allWallpapersLoadError : "");
+            return I18n.tr("No images in %1 or any installed theme").arg(Paths.shortenHome(wallpaperFolderPath));
+        }
+        if (wallpapersLoadFailed)
+            return I18n.tr("Could not read this theme's wallpapers") + (wallpapersLoadError ? "\n" + wallpapersLoadError : "");
+        // Until the catalog answers, an empty set can be imagery that is not downloaded yet.
+        const catalogNotice = typeof VGSThemeCatalogService !== "undefined" ? VGSThemeCatalogService.stateNotice : "";
+        return catalogNotice || I18n.tr("This theme has no wallpapers");
     }
 
     // BEGIN WALLPAPER MEMBERSHIP DECISION
     // Keep this region free of root., Theme., I18n. and Qt. references: scripts/test-switcher-source.js extracts and executes it.
 
-    // Whether an All-view entry already belongs to the applied theme: it is one of that theme's own, or
-    // the theme's set holds a file of its name, which is what wallpaper-add copies it in as.
+    // Whether an All-view entry already belongs to the applied theme: it is one of that theme's own, or the
+    // theme's set holds a file of its name. wallpaper-add renames a copy whose name the set already holds, so
+    // such a copy stays unmarked, while an unrelated file of the same name is marked.
     function inThemeSet(entry, themeName, themeEntries) {
         if (!entry || !themeName)
             return false;
@@ -585,19 +611,29 @@ Singleton {
         }, 600000, true);
     }
 
-    function wallpaperAdd(path) {
+    // A surface outside Settings passes `toast`: nothing there hears applyCompleted, so the outcome is toasted
+    // here instead of announced, and a Settings tab that toasts applyCompleted cannot show it twice.
+    function wallpaperAdd(path, toast) {
         if (!path)
             return;
         const theme = currentTheme.name || "";
+        const report = (success, message) => {
+            if (!toast)
+                applyCompleted(success, message);
+            else if (success)
+                ToastService.showInfo(message);
+            else
+                ToastService.showError(I18n.tr("VGS wallpaper error"), message);
+        };
         _run("vgs-theme-wallpaper-add", ["theme", "wallpaper-add", path, "--json"].concat(theme ? ["--theme", theme] : []), function(output, exitCode, stderr) {
             if (exitCode !== 0) {
-                applyCompleted(false, stderr || output || ("Wallpaper add failed: " + path));
+                report(false, stderr || output || ("Wallpaper add failed: " + path));
                 return;
             }
             refreshWallpapers();
             refreshAllWallpapers();
             refreshBlueprints();
-            applyCompleted(true, "Added wallpaper to " + (currentTheme.name || "theme"));
+            report(true, "Added wallpaper to " + (theme || "theme"));
         });
     }
 

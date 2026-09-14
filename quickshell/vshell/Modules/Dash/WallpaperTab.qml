@@ -22,7 +22,7 @@ Item {
     property string source: SettingsData.wallpaperSource === "folder" ? "all" : "theme"
     readonly property var sources: ["theme", "all"]
     readonly property string appliedTheme: (VGSThemeService.currentTheme || {}).name || ""
-    readonly property string imageryCard: source === "theme" ? VGSThemeCatalogService.imageryCardFor(appliedTheme) : ""
+    readonly property var imageryCard: source === "theme" ? VGSThemeCatalogService.imageryCardFor(appliedTheme) : null
     // Index of the tile whose "…" actions are open; -1 = none.
     property int actionsIndex: -1
     // True while navigating with arrow keys; draws the focus ring.
@@ -50,12 +50,12 @@ Item {
     }
 
     function refresh() {
-        if (source === "all") {
-            VGSThemeService.refreshAllWallpapers();
-            return;
-        }
+        // The All view's check marks read the theme's set too.
         VGSThemeService.refreshWallpapers();
-        VGSThemeCatalogService.refresh();
+        if (source === "all")
+            VGSThemeService.refreshAllWallpapers();
+        else
+            VGSThemeCatalogService.refresh();
     }
 
     // Start the imagery card's download or update, then close Dash as the full-screen switcher closes.
@@ -118,7 +118,7 @@ Item {
         showHiddenFiles: true
         fileExtensions: ["*.jpg", "*.jpeg", "*.png", "*.bmp", "*.gif", "*.webp", "*.jxl", "*.avif", "*.heif"]
         onFileSelected: path => {
-            VGSThemeService.wallpaperAdd(path);
+            VGSThemeService.wallpaperAdd(path, true);
             close();
         }
     }
@@ -173,8 +173,8 @@ Item {
 
                 VgsButton {
                     height: 28
-                    visible: root.imageryCard === "update" || root.imageryCard === "updating"
-                    enabled: root.imageryCard === "update"
+                    visible: !!root.imageryCard && root.imageryCard.kind === "update"
+                    enabled: !!root.imageryCard && !root.imageryCard.running
                     iconName: "download"
                     text: VGSThemeCatalogService.imageryCardLabel(root.appliedTheme, root.imageryCard)
                     onClicked: root.fetchImagery()
@@ -194,8 +194,8 @@ Item {
         StyledText {
             width: parent.width
             wrapMode: Text.WordWrap
-            visible: root.source === "theme" && VGSThemeService.wallpapersStaleNotice !== "" && (root.entries || []).length > 0
-            text: VGSThemeService.wallpapersStaleNotice
+            visible: text !== "" && (root.entries || []).length > 0
+            text: VGSThemeService.staleNoticeFor(root.source)
             font.pixelSize: Theme.fontSizeSmall
             color: Theme.warning
         }
@@ -409,14 +409,7 @@ Item {
 
                 StyledText {
                     anchors.horizontalCenter: parent.horizontalCenter
-                    // An empty set after a failed read means no retained fallback, not a successful read with no wallpapers.
-                    text: {
-                        if (root.source === "all")
-                            return VGSThemeService.allWallpapersLoadFailed ? I18n.tr("Could not list wallpapers") + "\n" + VGSThemeService.allWallpapersLoadError : I18n.tr("No images in %1 or any installed theme").arg(Paths.shortenHome(VGSThemeService.wallpaperFolderPath));
-                        if (VGSThemeService.wallpapersLoadFailed)
-                            return I18n.tr("Could not read this theme's wallpapers") + (VGSThemeService.wallpapersLoadError ? "\n" + VGSThemeService.wallpapersLoadError : "");
-                        return I18n.tr("This theme has no wallpapers yet");
-                    }
+                    text: VGSThemeService.emptyTextFor(root.source)
                     horizontalAlignment: Text.AlignHCenter
                     wrapMode: Text.WordWrap
                     color: Theme.surfaceVariantText
@@ -433,8 +426,8 @@ Item {
 
                 VgsButton {
                     anchors.horizontalCenter: parent.horizontalCenter
-                    visible: root.imageryCard === "download" || root.imageryCard === "downloading"
-                    enabled: root.imageryCard === "download"
+                    visible: !!root.imageryCard && root.imageryCard.kind === "download"
+                    enabled: !!root.imageryCard && !root.imageryCard.running
                     height: 30
                     iconName: "download"
                     text: VGSThemeCatalogService.imageryCardLabel(root.appliedTheme, root.imageryCard)
@@ -506,7 +499,7 @@ Item {
                     iconName: "add_photo_alternate"
                     text: I18n.tr("Add to theme")
                     onClicked: {
-                        VGSThemeService.wallpaperAdd(root.actionsEntry.path);
+                        VGSThemeService.wallpaperAdd(root.actionsEntry.path, true);
                         root.actionsIndex = -1;
                     }
                 }

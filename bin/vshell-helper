@@ -1977,6 +1977,15 @@ def catalog_placed_wallpapers(name: str) -> Dict[str, str | None] | None:
     return dict(sorted(placed.items()))
 
 
+def catalog_imagery_installed(name: str) -> bool:
+    """Whether a catalog theme's wallpapers are on disk: its package ships them, or a catalog download placed them.
+
+    The catalog listing and the download's skip ask this one question. A wallpaper
+    `wallpaper-add` copied into the user directory is neither, so it never hides the
+    download it did not replace."""
+    return theme_dir_has_wallpapers(builtin_themes_dir() / name) or catalog_placed_wallpapers(name) is not None
+
+
 def theme_shipped_preview(name: str, packaged: str = "") -> str:
     """A theme's screenshot without rendering one: its own, else the shipped thumbnail.
 
@@ -2058,8 +2067,7 @@ def catalog_entries() -> List[Dict[str, Any]]:
             "background": (palette.get("extendedColors") or {}).get("background", ""),
             "foreground": (palette.get("extendedColors") or {}).get("foreground", ""),
             "imagerySize": int(raw.get("size") or 0),
-            "imageryInstalled": (theme_dir_has_wallpapers(builtin_themes_dir() / name)
-                                 or theme_dir_has_wallpapers(user_themes_dir() / name)),
+            "imageryInstalled": catalog_imagery_installed(name),
             # The download pins another archive than the catalog this package ships.
             "imageryUpdateAvailable": catalog_imagery_update_available(marker, raw),
             "builtin": (builtin_themes_dir() / name / "theme.json").is_file(),
@@ -2290,7 +2298,7 @@ def catalog_download_theme(entry: Dict[str, Any], base_urls: List[str], allow_lo
     # has nothing to download.
     if theme_dir_has_wallpapers(builtin_themes_dir() / name):
         return {"name": name, "status": "skipped", "reason": "already installed as a built-in theme"}
-    if not force and theme_dir_has_wallpapers(dest):
+    if not force and catalog_imagery_installed(name):
         return {"name": name, "status": "skipped", "reason": "already installed"}
     assets = _catalog_check_assets(name, entry.get("assets"))
     with _catalog_staged_archive(name, assets, base_urls, allow_local) as (staging, written, incoming):

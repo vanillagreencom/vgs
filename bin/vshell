@@ -410,7 +410,7 @@ Usage:
   vshell theme restyle [--brightness/--vibrancy/--contrast/--hue/--temperature N|--reset]
   vshell theme revert <name>
   vshell theme app-roles <app>|app-colors <app> [--set role=#hex ...|--reset]
-  vshell theme wallpapers [name]
+  vshell theme wallpapers [name] | --all [--folder <dir>]
   vshell theme wallpaper-add <path>|wallpaper-remove <file>|wallpaper-default <file> [--theme <name>]
   vshell theme mode <light|dark|toggle> [--transform]
   vshell theme pick [all|dark|light]

@@ -17,28 +17,18 @@ FullScreenSwitcher {
     showLabels: root.source === "all"
     layerNamespace: "vshell:wallpaper-switcher"
 
-    // An empty list after a failed read has no retained fallback. Report the wallpaper read's error instead of claiming the theme has no images.
-    emptyText: {
-        if (root.source === "all")
-            return VGSThemeService.allWallpapersLoadFailed ? I18n.tr("Could not list wallpapers") + "\n" + VGSThemeService.allWallpapersLoadError : I18n.tr("No wallpapers in your folder or any installed theme");
-        return VGSThemeService.wallpapersLoadFailed ? I18n.tr("Could not read this theme's wallpapers") + (VGSThemeService.wallpapersLoadError ? "\n" + VGSThemeService.wallpapersLoadError : "") : I18n.tr("This theme has no wallpapers");
-    }
-
-    // Share retained-list wording with Dash; after a failed theme change the paths can belong to the previous theme.
-    staleNotice: {
-        if (root.source === "all")
-            return VGSThemeService.allWallpapersLoadFailed ? I18n.tr("Could not list wallpapers — showing the last list that loaded") : "";
-        return VGSThemeService.wallpapersStaleNotice;
-    }
+    // The service owns the empty and retained-list wording for each source, so this switcher and Dash cannot disagree.
+    emptyText: VGSThemeService.emptyTextFor(root.source)
+    staleNotice: VGSThemeService.staleNoticeFor(root.source)
 
     readonly property var wallpaperEntries: VGSThemeService.themeWallpapers || []
     readonly property int screenCount: (Quickshell.screens || []).length
     // Reset apply scope to all monitors on each open so a previous local choice cannot silently carry over.
     property bool applyToAllMonitors: true
-    // "theme" or "all"; each open starts from SettingsData.wallpaperSource, as the Dash tab does.
+    // "theme" or "all". Each open starts from SettingsData.wallpaperSource; the Dash tab reads it only when it loads.
     property string source: "theme"
     readonly property string appliedTheme: (VGSThemeService.currentTheme || {}).name || ""
-    readonly property string imageryCard: VGSThemeCatalogService.imageryCardFor(root.appliedTheme)
+    readonly property var imageryCard: VGSThemeCatalogService.imageryCardFor(root.appliedTheme)
 
     // BEGIN WALLPAPER SCOPE DECISION
     // Scope decisions take explicit inputs rather than reading QML state.
@@ -73,21 +63,19 @@ FullScreenSwitcher {
     // BEGIN WALLPAPER SOURCE DECISION
     // Keep this region free of root., Theme., I18n. and Qt. references: scripts/test-switcher-source.js extracts and executes it.
 
-    // The Theme view's rail. Imagery not on disk leaves its card as the only entry; any other card follows
-    // the wallpapers, so an open seeds onto a wallpaper and a reflexive Enter never starts an update.
+    // The Theme view's rail. Imagery not on disk leaves its download card as the only entry; an update card
+    // follows the wallpapers, so an open seeds onto a wallpaper and a reflexive Enter never starts an update.
     function themeRail(wallpapers, card) {
-        const cards = card ? [{card: card, key: "imagery:" + card}] : [];
-        if (card === "download" || card === "downloading")
-            return cards;
-        return (wallpapers || []).concat(cards);
+        if (!card)
+            return wallpapers || [];
+        const entry = {card: card, key: "imagery:" + card.kind};
+        return card.kind === "download" ? [entry] : (wallpapers || []).concat([entry]);
     }
 
-    // What activating an entry does. A card never reaches set-wallpaper: "fetch" starts its download or
-    // update, and "none" leaves one already running alone.
+    // What activating an entry does. A card never reaches set-wallpaper: "fetch" hands it to the catalog, which
+    // starts nothing for a card whose command already runs.
     function activationRoute(item) {
-        if (!item.card)
-            return "wallpaper";
-        return item.card === "download" || item.card === "update" ? "fetch" : "none";
+        return item.card ? "fetch" : "wallpaper";
     }
     // END WALLPAPER SOURCE DECISION
 
@@ -125,11 +113,18 @@ FullScreenSwitcher {
     sourceToggle: sourcePill
     itemMenu: root.source === "all" && root.appliedTheme ? addToThemeMenu : null
 
+    // The All view's check marks read the theme's set, so every open refreshes it.
     function show() {
         VGSThemeService.refreshWallpapers();
-        VGSThemeService.refreshAllWallpapers();
-        VGSThemeCatalogService.refresh();
         open();
+    }
+
+    // Read only what the chosen view shows: the All list, or the catalog the Theme view's card comes from.
+    function refreshSource() {
+        if (root.source === "all")
+            VGSThemeService.refreshAllWallpapers();
+        else
+            VGSThemeCatalogService.refresh();
     }
 
     // Verify the single-screen assignment by reading it back; this path has no service completion signal.
@@ -172,6 +167,7 @@ FullScreenSwitcher {
         function onOpened() {
             root.applyToAllMonitors = true;
             root.source = SettingsData.wallpaperSource === "folder" ? "all" : "theme";
+            root.refreshSource();
         }
     }
 
@@ -256,7 +252,10 @@ FullScreenSwitcher {
         SegmentPill {
             labels: [I18n.tr("Theme"), I18n.tr("All")]
             activeIndex: root.source === "all" ? 1 : 0
-            onPicked: index => root.source = index === 1 ? "all" : "theme"
+            onPicked: index => {
+                root.source = index === 1 ? "all" : "theme";
+                root.refreshSource();
+            }
         }
     }
 
@@ -289,7 +288,7 @@ FullScreenSwitcher {
                 anchors.fill: parent
                 onClicked: {
                     if (!menu.inTheme)
-                        VGSThemeService.wallpaperAdd(root.menuItem.key);
+                        VGSThemeService.wallpaperAdd(root.menuItem.key, true);
                     root.menuItem = null;
                 }
             }

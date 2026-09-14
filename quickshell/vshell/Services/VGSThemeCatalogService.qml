@@ -74,44 +74,63 @@ Singleton {
     // BEGIN IMAGERY CARD DECISION
     // Keep this region free of root., Theme., I18n. and Qt. references: scripts/test-switcher-source.js extracts and executes it.
 
-    // The one card a wallpaper surface offers for a theme's imagery, from its catalog entry: "download" while
-    // the imagery is not on disk, "update" when the catalog pins a newer revision, "downloading" or "updating"
-    // while that runs, and "" for a theme the catalog does not carry or whose imagery is current.
+    // The one card a wallpaper surface offers for a theme's imagery, from its catalog entry, or null for a theme the
+    // catalog does not carry or whose imagery is current. `kind` is "download" while the imagery is not on disk and
+    // "update" when the catalog pins a different archive than the one downloaded; `running` is true while a command
+    // for the theme runs.
     function imageryCard(entry, pending) {
         if (!entry)
-            return "";
+            return null;
         if (!entry.imageryInstalled)
-            return pending ? "downloading" : "download";
-        if (pending)
-            return "updating";
-        return entry.imageryUpdateAvailable ? "update" : "";
+            return {kind: "download", running: !!pending};
+        if (entry.imageryUpdateAvailable || pending)
+            return {kind: "update", running: !!pending};
+        return null;
+    }
+
+    // The `theme catalog` verb a card runs: "install" for a download, "update" for an update, "" while one runs.
+    function cardOperation(card) {
+        if (!card || card.running)
+            return "";
+        return card.kind === "download" ? "install" : "update";
+    }
+
+    // The message a failed command's output carries: its first failed result's error, or "" when there is none to read.
+    function failureDetail(output) {
+        let data = null;
+        try {
+            data = JSON.parse(output || "");
+        } catch (error) {
+            return "";
+        }
+        const failed = ((data && data.results) || []).find(result => result && result.status === "failed");
+        return failed && failed.error ? String(failed.error) : "";
     }
     // END IMAGERY CARD DECISION
+
+    // What an empty Theme view says while this catalog cannot yet tell whether the theme has imagery to download.
+    readonly property string stateNotice: (loading && !available) ? I18n.tr("Reading the theme catalog…") : failureText
 
     function imageryCardFor(name) {
         return root.imageryCard(root.entryFor(name), root.isPending(name));
     }
 
     function imageryCardLabel(name, card) {
+        if (!card)
+            return "";
         const size = root.formatSize((root.entryFor(name) || {}).imagerySize);
-        if (card === "download")
-            return I18n.tr("Download wallpapers for %1 (%2)").arg(name).arg(size);
-        if (card === "update")
-            return I18n.tr("Update wallpapers for %1 (%2)").arg(name).arg(size);
-        if (card === "downloading")
-            return I18n.tr("Downloading wallpapers for %1").arg(name);
-        return I18n.tr("Updating wallpapers for %1").arg(name);
+        if (card.kind === "download")
+            return card.running ? I18n.tr("Downloading wallpapers for %1").arg(name) : I18n.tr("Download wallpapers for %1 (%2)").arg(name).arg(size);
+        return card.running ? I18n.tr("Updating wallpapers for %1").arg(name) : I18n.tr("Update wallpapers for %1 (%2)").arg(name).arg(size);
     }
 
     // Start a wallpaper surface's card with a start toast; _complete reports the finish or failure.
     function fetchImagery(name, card) {
-        if (card === "download")
-            root.install(name);
-        else if (card === "update")
-            root.updateImagery(name);
-        else
+        const verb = root.cardOperation(card);
+        if (!verb || root.isPending(name))
             return;
-        ToastService.showInfo(root.imageryCardLabel(name, card === "download" ? "downloading" : "updating"));
+        root._runImagery(verb, name);
+        ToastService.showInfo(root.imageryCardLabel(name, {kind: card.kind, running: true}));
     }
 
     // Run downloads as background tasks so they do not block Settings actions.
@@ -161,7 +180,7 @@ Singleton {
         if (typeof VGSThemeService !== "undefined")
             VGSThemeService.refreshBlueprints();
         if (exitCode !== 0) {
-            _complete(false, stderr || lastError || fallbackMessage);
+            _complete(false, root.failureDetail(output) || stderr || lastError || fallbackMessage);
             return null;
         }
         try {
@@ -172,54 +191,38 @@ Singleton {
         }
     }
 
-    function install(name) {
+    // Install and update share one run: the pending mark, the command, the catalog refresh, the thumbnail sweep and the report.
+    function _runImagery(verb, name) {
         if (!name || isPending(name))
             return;
         _setPending(name, true);
-        _run("vgs-theme-catalog-install-" + name, ["theme", "catalog", "install", name, "--json"], 900000,
+        const failed = verb === "install" ? I18n.tr("Download failed: %1").arg(name) : I18n.tr("Update failed: %1").arg(name);
+        _run("vgs-theme-catalog-" + verb + "-" + name, ["theme", "catalog", verb, name, "--json"], 900000,
              function (output, exitCode, stderr) {
                  _setPending(name, false);
-                 const data = _finishDownload(output, exitCode, stderr, "Download failed: " + name);
+                 const data = _finishDownload(output, exitCode, stderr, failed);
                  if (!data)
                      return;
                  const result = (data.results || [])[0] || {};
-                 // A new theme's wallpapers are missing but invisible from the
-                 // service, which only sees the CURRENT theme — without a sweep
-                 // its rail falls back to full-size sources until it is applied,
-                 // which is the prewarm `--all` promises. The request is only
-                 // READ by a wallpaper read, so it needs one to act on it.
-                 if (result.status === "installed" && typeof VGSThemeService !== "undefined") {
+                 const placed = result.status === (verb === "install" ? "installed" : "updated");
+                 // New wallpapers are missing but invisible from the service,
+                 // which only sees the CURRENT theme — without a sweep the
+                 // theme's rail falls back to full-size sources until it is
+                 // applied, which is the prewarm `--all` promises. The request
+                 // is only READ by a wallpaper read, so it needs one to act on it.
+                 if (placed && typeof VGSThemeService !== "undefined") {
                      VGSThemeService.requestThumbnailSweep();
                      VGSThemeService.refreshWallpapers();
                  }
-                 if (result.status === "installed")
-                     _complete(true, I18n.tr("Downloaded %1").arg(name));
+                 if (placed || result.status === "current")
+                     _complete(true, verb === "install" ? I18n.tr("Downloaded %1").arg(name) : I18n.tr("Updated wallpapers for %1").arg(name));
                  else
-                     _complete(false, result.error || result.reason || I18n.tr("Download failed: %1").arg(name));
+                     _complete(false, result.error || result.reason || failed);
              });
     }
 
-    // A wallpaper the user added to the theme is never touched: the helper's update keeps it.
-    function updateImagery(name) {
-        if (!name || isPending(name))
-            return;
-        _setPending(name, true);
-        _run("vgs-theme-catalog-update-" + name, ["theme", "catalog", "update", name, "--json"], 900000,
-             function (output, exitCode, stderr) {
-                 _setPending(name, false);
-                 const data = _finishDownload(output, exitCode, stderr, "Update failed: " + name);
-                 if (!data)
-                     return;
-                 const result = (data.results || [])[0] || {};
-                 if (result.status === "updated" && typeof VGSThemeService !== "undefined") {
-                     VGSThemeService.requestThumbnailSweep();
-                     VGSThemeService.refreshWallpapers();
-                 }
-                 if (result.status === "updated" || result.status === "current")
-                     _complete(true, I18n.tr("Updated wallpapers for %1").arg(name));
-                 else
-                     _complete(false, result.error || I18n.tr("Update failed: %1").arg(name));
-             });
+    function install(name) {
+        root._runImagery("install", name);
     }
 
     function installAll() {

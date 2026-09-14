@@ -170,7 +170,7 @@ test("the wallpaper modal wires the pill, the one flip signal, the per-open rese
             "visibility test could disagree with the route Enter takes", 1],
         ["onScopeFlipRequested: root.applyToAllMonitors = !root.applyToAllMonitors",
             "one flip handler for the one signal Tab and the click both drive", 1],
-        ["function onOpened() { root.applyToAllMonitors = true; root.source = SettingsData.wallpaperSource === \"folder\" ? \"all\" : \"theme\"; }",
+        ["function onOpened() { root.applyToAllMonitors = true; root.source = SettingsData.wallpaperSource === \"folder\" ? \"all\" : \"theme\"; root.refreshSource(); }",
             "every open aims at all monitors again: a scope chosen yesterday and silently still " +
             "aimed at one monitor is how a pick lands somewhere unexpected", 1],
         ["onClicked: if (!segment.active) pill.picked(segment.index)",

@@ -4488,6 +4488,44 @@ def test_theme_catalog_offers_a_builtin_theme_with_no_imagery():
     with_temp_home(scenario)
 
 
+def test_theme_catalog_wallpaper_add_keeps_the_download_offered():
+    """A wallpaper the user adds to a theme with no download is not the theme's imagery: the download stays offered and still lands."""
+    wallpaper = b"\xff\xd8\xff\xe0 demo wallpaper bytes\n"
+    blob = _theme_archive({"backgrounds/1-demo.jpg": wallpaper})
+
+    def scenario(tmp: Path):
+        builtin = tmp / "builtin"
+        (builtin / "demo").mkdir(parents=True)
+        (builtin / "demo" / "theme.json").write_text('{"name":"demo","mode":"dark","source":"curated"}\n')
+        (builtin / "demo" / "colors.toml").write_text('background = "#101010"\nforeground = "#eeeeee"\n')
+        archives = tmp / "releases"
+        _write_catalog(builtin, archives, "demo", blob)
+        own = tmp / "mine.jpg"
+        own.write_bytes(b"\xff\xd8 the user's own image\n")
+        original_builtin = helper.builtin_themes_dir
+        saved_base = os.environ.get("VGS_THEME_CATALOG_BASE_URL")
+        helper.builtin_themes_dir = lambda: builtin
+        os.environ["VGS_THEME_CATALOG_BASE_URL"] = "file://" + str(archives)
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                assert_equal(helper.cmd_theme(["wallpaper-add", str(own), "--theme", "demo"]), 0, "wallpaper-add exit status")
+            assert_equal(_catalog_entry("demo")["imageryInstalled"], False,
+                         "a wallpaper the user added leaves the theme's imagery reported not installed")
+            catalog = helper.load_theme_catalog()
+            base_urls, allow_local = helper.theme_catalog_base_urls(catalog)
+            result = helper.catalog_download_theme(helper.catalog_theme_entry(catalog, "demo"), base_urls, allow_local)
+            dest = helper.user_themes_dir() / "demo" / "backgrounds"
+            assert_equal((result["status"], (dest / "1-demo.jpg").read_bytes(), (dest / "mine.jpg").is_file(),
+                          _catalog_entry("demo")["imageryInstalled"]),
+                         ("installed", wallpaper, True, True),
+                         "the download places the archive beside the added wallpaper, then reports installed")
+        finally:
+            helper.builtin_themes_dir = original_builtin
+            _restore_env("VGS_THEME_CATALOG_BASE_URL", saved_base)
+
+    with_temp_home(scenario)
+
+
 def test_theme_catalog_update_keeps_the_users_wallpapers():
     """`theme catalog update` replaces only the wallpapers a download placed and the user left alone.
 
@@ -10588,6 +10626,7 @@ def main():
     test_terminal_wait_blocks_until_the_terminal_exits()
     test_preferred_terminal_is_tried_first()
     test_theme_catalog_offers_a_builtin_theme_with_no_imagery()
+    test_theme_catalog_wallpaper_add_keeps_the_download_offered()
     test_theme_catalog_update_keeps_the_users_wallpapers()
     test_theme_catalog_download_verifies_its_archive()
     test_theme_asset_publisher()
