@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-// Inspect how AiUsageWidget applies its shared decisions. These checks parse source
+// Inspect how AiUsageWidget and AiUsageDaemon apply their shared decisions. These checks parse source
 // and do not execute its fetch paths. Whitespace normalization permits line wrapping.
 
 "use strict";
@@ -18,6 +18,11 @@ const source = fs.readFileSync(WIDGET, "utf8");
 const { blockFrom, body, handlers, requires, indexOf, lastIndexOf, stripComments } =
     require("./lib/qml-source.js")(source, "AiUsageWidget.qml");
 
+// The daemon owns every fetch; the widget, one per screen, renders what it files.
+const daemonSource = fs.readFileSync(path.join(PLUGIN, "AiUsageDaemon.qml"), "utf8");
+const daemon = require("./lib/qml-source.js")(daemonSource, "AiUsageDaemon.qml");
+const daemonCode = stripComments(daemonSource);
+
 // Use comment-blanked text for bans and code structure for landmarks.
 // Required tokens must agree in both views at the same offset.
 const code = stripComments(source);
@@ -25,8 +30,8 @@ const code = stripComments(source);
 // Run helper self-tests before using the helpers against widget source.
 require("./lib/qml-source.js").selfTest();
 
-test("the shared source reader walks whole blocks and strips comments from the widget source", () => {
-    const walked = body("storeHeadline");
+test("the shared source reader walks whole blocks and strips comments from the daemon source", () => {
+    const walked = daemon.body("storeHeadline");
     assert.ok(walked.startsWith("{") && walked.endsWith("}"), "the walk returns a whole block");
     assert.ok(walked.includes("root.providerFiledAt = nextAt"), "the walk reaches the end of the block");
     assert.ok(!walked.includes("function noteHeadline"), "the walk stops at the block it was asked for");
@@ -37,7 +42,7 @@ test("the shared source reader walks whole blocks and strips comments from the w
 });
 
 test("storeHeadline files by key with a stamp and noteHeadline files under the payload's own provider", () => {
-    const store = body("storeHeadline");
+    const store = daemon.body("storeHeadline");
     requires(store, "storeHeadline()", [
         ["next[which] = data", "a headline is filed by key, never by branch"],
         ['if (which === "")', "an unidentifiable provider files nothing"],
@@ -48,12 +53,12 @@ test("storeHeadline files by key with a stamp and noteHeadline files under the p
             "keeps its filed payload instead of being dropped by a hand-written field list"]]);
     assert.ok(!/(claudeData|codexData|vercelData)\s*=/.test(store),
         "a per-provider branch is what let an unknown provider land under Claude");
-    assert.ok(body("noteHeadline").includes("logic.payloadProvider(data)"),
+    assert.ok(daemon.body("noteHeadline").includes("logic.payloadProvider(data)"),
         "the provider filed under is the payload's own, not the fetch's tag");
 });
 
 test("acceptPayload decodes against its own channel's tag and files by the payload's provider", () => {
-    const accept = body("acceptPayload");
+    const accept = daemon.body("acceptPayload");
     requires(accept, "acceptPayload()", [
         ["logic.decodePayload(ch.inFlight, txt)", "validated against ITS OWN channel's tag"],
         ["ch.issue = got.issue", "the reason is recorded on the channel that fetched it"],
@@ -69,7 +74,7 @@ test("acceptPayload decodes against its own channel's tag and files by the paylo
     ]);
 });
 
-const channel = blockFrom(indexOf("component FetchChannel:"), "FetchChannel");
+const channel = daemon.blockFrom(daemon.indexOf("component FetchChannel:"), "FetchChannel");
 test("FetchChannel owns its process, collectors and timers and settles on both halves", () => {
     requires(channel, "FetchChannel", [
         ["property Process proc: Process {", "the channel owns its process"],
@@ -104,16 +109,16 @@ test("FetchChannel owns its process, collectors and timers and settles on both h
 // Inspect everything outside the extracted channel block, using its opening-brace offset.
 // A component-keyword offset would remove the wrong span and leave part of the block behind.
 test("no per-channel process or collector is nameable outside the channel", () => {
-    const componentAt = indexOf("{", indexOf("component FetchChannel:"));
-    assert.equal(source.slice(componentAt, componentAt + channel.length), channel,
+    const componentAt = daemon.indexOf("{", daemon.indexOf("component FetchChannel:"));
+    assert.equal(daemonSource.slice(componentAt, componentAt + channel.length), channel,
         "the removed span is exactly the component block, starting at its own open brace");
-    const outside = source.slice(0, componentAt) + source.slice(componentAt + channel.length);
+    const outside = daemonSource.slice(0, componentAt) + daemonSource.slice(componentAt + channel.length);
     assert.ok(!/\b(usageProc|otherProc|usageOut|otherOut|usageErr|otherErr)\b/.test(stripComments(outside)),
         "per-channel processes and collectors are not nameable from outside the channel");
 });
 
 test("one channel per provider is built from the catalog, and none is named by hand", () => {
-    const instantiator = blockFrom(indexOf("Instantiator {"), "the channel Instantiator");
+    const instantiator = daemon.blockFrom(daemon.indexOf("Instantiator {"), "the channel Instantiator");
     requires(instantiator, "the channel Instantiator", [
         ["model: logic.providerOrder()",
             "channels come from the same catalog the slots and the filter come from, so a provider " +
@@ -121,12 +126,12 @@ test("one channel per provider is built from the catalog, and none is named by h
         ["delegate: FetchChannel {", "each entry gets its own channel"],
         ["want: modelData", "fetching the provider it was built for"]
     ]);
-    assert.ok(!/\bid:\s*(usageFetch|otherFetch|claudeFetch|codexFetch|vercelFetch)\b/.test(code),
+    assert.ok(!/\bid:\s*(usageFetch|otherFetch|claudeFetch|codexFetch|vercelFetch)\b/.test(daemonCode),
         "no channel is named for one provider by hand: that is how a provider gets added to the " +
         "catalog and silently never fetched");
-    assert.ok(!/\botherProvider\b/.test(code),
+    assert.ok(!/\botherProvider\b/.test(daemonCode),
         "and there is no 'the other provider' any more — every selected provider is fetched");
-    const refresh = body("refresh");
+    const refresh = daemon.body("refresh");
     requires(refresh, "refresh()", [
         ["for (let i = 0; i < channels.count; i++)", "a refresh visits every channel there is"],
         ["root.launch(ch)", "launching each through the shared decision"]
@@ -135,22 +140,22 @@ test("one channel per provider is built from the catalog, and none is named by h
 
 test("completeFetch and finishFetch settle once, on both halves, with a bounded flush wait", () => {
     // Either failure path can settle first; settlement must be idempotent.
-    assert.ok(body("finishFetch").includes('if (ch.inFlight === "")'),
+    assert.ok(daemon.body("finishFetch").includes('if (ch.inFlight === "")'),
         "an exit arriving after the watchdog settled must not report twice, nor settle a relaunch");
 
-    requires(body("completeFetch"), "completeFetch()", [
+    requires(daemon.body("completeFetch"), "completeFetch()", [
         ['if (ch.inFlight === "")', "a settled fetch is not completed twice"],
         ["if (!ch.outDone || !ch.exitDone)", "BOTH halves must have landed, in either order — the " +
             "tag has to outlive the payload path, which is what the payload is decoded against"],
         ["if (ch.exitDone) ch.flushTimer.restart()", "and only an exit that landed first waits, " +
             "on a bound, so a stream that never closes cannot hang the fetch"],
         ["root.settleFetch(ch)", "and the last half in settles"]]);
-    requires(body("finishFetch"), "the exit half of finishFetch()", [
+    requires(daemon.body("finishFetch"), "the exit half of finishFetch()", [
         ["ch.exitDone = true", "the exit records its half rather than settling on its own"]]);
 });
 
 test("failLaunch re-asks the arming rule, names the command and settles", () => {
-    requires(body("failLaunch"), "failLaunch()", [
+    requires(daemon.body("failLaunch"), "failLaunch()", [
         ["if (!logic.watchdogArms(ch.inFlight, ch.sawProcess))",
             "the arming rule is asked again at the moment of reporting — one function, so a fetch " +
             "that settled or a process that started while the timer waited is never a failed start"],
@@ -160,7 +165,7 @@ test("failLaunch re-asks the arming rule, names the command and settles", () => 
 });
 
 test("finishFetch names a signal death apart from a failure, captures stderr's last line and caps it", () => {
-    const finish = body("finishFetch");
+    const finish = daemon.body("finishFetch");
     requires(finish, "finishFetch()", [
         ["exitCode !== 0 || exitStatus !== 0",
             "a helper killed by a signal did not fail on its own terms; branching on the exit code " +
@@ -172,7 +177,7 @@ test("finishFetch names a signal death apart from a failure, captures stderr's l
         ["root.completeFetch(ch)", "and then asks whether BOTH halves have landed, rather than " +
             "settling on the exit alone"]]);
     // The provider tests enforce the supplied stderr limit. This assertion fixes the limit supplied by the widget.
-    const capMatch = code.match(/property int maxIssueChars: (\d+)/);
+    const capMatch = daemonCode.match(/property int maxIssueChars: (\d+)/);
     assert.ok(capMatch, "the reason's cap must be a named property, not a literal at the call site");
     const cap = Number(capMatch[1]);
     assert.ok(cap > 0 && cap <= 500,
@@ -181,7 +186,7 @@ test("finishFetch names a signal death apart from a failure, captures stderr's l
 });
 
 test("settleFetch relaunches through the shared predicate before clearing the tag and files through the ordering rule", () => {
-    const settle = body("settleFetch");
+    const settle = daemon.body("settleFetch");
     requires(settle, "settleFetch()", [
         // Use channel fields to avoid exchanging same-typed provider arguments.
         ["logic.shouldRelaunch(ch, root.maxFetchRetries)", "relaunch is the shared predicate's"],
@@ -212,7 +217,7 @@ test("settleFetch relaunches through the shared predicate before clearing the ta
 });
 
 test("the one exit handler lives on the channel's own process", () => {
-    const exits = handlers("onExited");
+    const exits = daemon.handlers("onExited");
     assert.equal(exits.length, 1, "the one exit handler lives on the channel's own process");
 });
 
@@ -328,11 +333,11 @@ test("every account renders through the one card, and nothing hand-draws a secon
 });
 
 test("provider identity is the logic's, and no surface spells a provider out", () => {
-    assert.ok(code.includes("model: logic.providerOrder()"),
+    assert.ok(daemonCode.includes("model: logic.providerOrder()"),
         "the channels are generated from the same order the slots and the filter use");
     for (const literal of ['"Claude"', '"Codex"', '"Vercel"', '"Vercel AI Gateway"', '"smart_toy"',
                            '"terminal"', '"change_history"'])
-        assert.ok(!code.includes(literal),
+        assert.ok(!code.includes(literal) && !daemonCode.includes(literal),
             `${literal} must live only in AiUsageLogic — a second copy in CODE is where a rename drifts`);
 
     // A child never takes the decision module through a property: `logic: logic` resolves the
@@ -380,8 +385,11 @@ test("both settings surfaces embed the same setup component", () => {
     }
     assert.ok(body("stampSources").includes('root.saveSetting("sourcesStamp", Date.now())'),
         "the stamp travels through the plugin service, which is what reaches bars on other screens");
-    assert.ok(code.includes("onSourcesStampChanged: root.refresh()"),
-        "and every widget instance refetches when it changes");
+    const stampHandlers = daemon.handlers("onSourcesStampChanged");
+    assert.equal(stampHandlers.length, 1,
+        "the daemon answers a changed stamp once for every screen, rather than each widget instance");
+    requires(stampHandlers[0], "the daemon's onSourcesStampChanged", [
+        ["root.refresh()", "and refetches when it changes"]]);
 });
 
 test("every provider mark ships beside the plugin and is colorisable", () => {
@@ -434,7 +442,7 @@ test("the setup page is mounted only while it is on screen", () => {
 });
 
 test("the poll interval scales with the accounts actually being visited", () => {
-    const timer = blockFrom(lastIndexOf("Timer {", indexOf("onTriggered: root.refresh()")), "pollTimer");
+    const timer = daemon.blockFrom(daemon.lastIndexOf("Timer {", daemon.indexOf("onTriggered: root.refresh()")), "pollTimer");
     assert.ok(timer.includes("logic.polledAccountCount(root.providerData)"),
         "polling visits accounts sequentially across every provider, so the floor counts all of " +
         "them. root.view.totalCount is the SELECTED providers' accounts, and refresh() launches " +
