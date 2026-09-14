@@ -45,7 +45,7 @@ NOT_A_SUITE_CHECK = {
     "gen-theme-catalog.py": "theme-catalog generator; its --check mode is invoked by scripts/check-package-assets.sh, its --check-assets-published by the ci.yml step 'Theme asset publication', and its --check-release-pin by scripts/check-release.sh",
     "capture-theme-previews.py": "theme preview tooling: capturing needs the live compositor and runs from the session-owning checkout; its --check mode is invoked by scripts/check-package-assets.sh",
     "publish-theme-assets.py": "release tooling: builds and uploads the per-theme imagery archives and writes themes/asset-lock.json, driven by the release path",
-    "sample-shell-memory.sh": "memory diagnostic: samples the live shell's /proc for hours to fill the session baseline in docs/architecture/memory.md; it measures one machine's session rather than judging the tree",
+    "sample-shell-memory.sh": "memory diagnostic whose sampling mode needs a live shell and runs for hours; its --report mode is a suite check, driven by scripts/test-sample-shell-memory.sh",
 }
 
 # Checks the suite runs but CI cannot, with the reason CI cannot run them.

@@ -248,7 +248,7 @@ fi
 
 
 
-instances_before="$(vgs_snapshot_instances)" && instances_before_status=0 || instances_before_status=$?
+instances_before="$(vgs_snapshot_instances "")" && instances_before_status=0 || instances_before_status=$?
 layers_before="$(vgs_snapshot_layers)" && layers_before_status=0 || layers_before_status=$?
 
 smoke_status=0
@@ -257,7 +257,7 @@ if [[ "$smoke_status" -ne 0 ]]; then
   fail "scripts/qml-smoke.sh exited $smoke_status"
 fi
 
-instances_after="$(vgs_snapshot_instances)" && instances_after_status=0 || instances_after_status=$?
+instances_after="$(vgs_snapshot_instances "")" && instances_after_status=0 || instances_after_status=$?
 layers_after="$(vgs_snapshot_layers)" && layers_after_status=0 || layers_after_status=$?
 
 vgs_compare_snapshots "VGS Quickshell instances" \

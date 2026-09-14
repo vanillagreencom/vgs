@@ -21,13 +21,13 @@ Class shares are read by matching the mapping name in `/proc/<pid>/smaps`. The s
 | JavaScript heap | `JSGCHeap` | no, it oscillates |
 | Compiled QML | `JITCode`, `JSVMStack` | negligible |
 | GPU driver | `nvidia`, `renderD`, `/dri/` | no |
-| Fonts and other files | everything else | no |
+| Fonts and other files | every other name, including Qt's remaining memfd mappings and the bracketed kernel ones | no |
 
 ## Boundaries
 
 - Quickshell links jemalloc, not the system allocator. `ldd /usr/bin/quickshell` names it. VGS sets no `MALLOC_CONF`, so jemalloc runs on its build defaults and VGS owns none of its tuning.
 - jemalloc purges retained pages lazily and only on activity in the arena that holds them. Resident size therefore reports live data plus retained data, and falls in steps rather than smoothly.
-- The kernel's transparent huge pages are enabled system-wide. Every retained region is rounded up to 2 MiB, so retained memory is amplified before it reaches resident size.
+- The kernel's transparent huge pages are enabled system-wide, so a retained region that is 2 MiB aligned and large enough is backed by huge pages and counts toward resident size in full. Part of retained memory is amplified this way, not all of it: the table below puts roughly half of anonymous memory in huge pages.
 - Resident size is not a leak measurement. The high-water mark in `/proc/<pid>/status` (`VmHWM`) is the number a session actually reached; the current value can be far below it.
 
 ## Invariants
@@ -40,7 +40,7 @@ Class shares are read by matching the mapping name in `/proc/<pid>/smaps`. The s
 
 ## Measured state
 
-One unbroken session on the owner's machine, read at 76 h of uptime, on the installed Quickshell 0.3.1 package, with three monitors and 43 threads. Re-derive these with the sampler; they describe one machine, not a contract.
+One unbroken session on the owner's machine, read at 76 h of uptime, on the installed Quickshell 0.3.1 package, with three monitors and 43 threads. The sampler re-derives every row; the high-water mark is its `hwm_kb` column, read from `/proc/<pid>/status`, and never the peak among logged samples, which starts when the operator starts sampling. These describe one machine, not a contract.
 
 | Reading | Value |
 |---|---|
@@ -86,7 +86,11 @@ scripts/sample-shell-memory.sh --hours 26        # log a session
 scripts/sample-shell-memory.sh --report FILE     # print the baseline
 ```
 
-The sampler resolves the process from `vshell.service`'s own main PID and refuses to guess when more than one candidate answers. `--report` prints resident size at 1 h, 8 h and 24 h of uptime, the peak and where it fell, and the rate between consecutive marks. Those marks need a session that starts while the sampler runs; a report over a log that begins mid-session says the marks were not reached.
+The sampler asks the instance registry `bin/vshell instances list` owns which process is the running shell, and refuses on any answer but exactly one. That listing is scoped to one shell entrypoint, so `--shell-path` addresses a shell launched from a different checkout than the one the sampler runs from.
+
+Every sample row carries the sampled process and its start time, so one session is told from the next that reuses its process id. Sampling refuses to append to a log whose last row names a different session, rather than extending someone else's series. `--report` reads only the newest session in a log and says how many rows and sessions it left out, and it refuses every mark and rate for a session whose uptime does not run forward.
+
+`--report` prints the process high-water mark beside the peak among logged samples, which is lower whenever sampling started after the peak. It prints one `mark=` line for each of 1 h, 8 h and 24 h of uptime and for the last sample. A mark the session never reached is `status=not-reached`. A mark it passed with no sample close enough to answer it is `status=no-sample-within`, so a mark is never filled from a sample hours away. Between each consecutive pair of marks that both exist it prints a `rate=` line naming the two uptimes it spans, and where that span is under 600 s it prints `status=span-under-floor` and no rate. Filling all three marks needs a session that starts while the sampler runs.
 
 ## What sampling cannot attribute
 
