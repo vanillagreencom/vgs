@@ -1,6 +1,6 @@
 # Helper CLI
 
-Covers: bin/, packaging/debian/control, packaging/gentoo/, packaging/void/template
+Covers: bin/, packaging/install-system.sh, packaging/arch/, packaging/debian/control, packaging/fedora/vgs-shell.spec, packaging/gentoo/, packaging/void/template, flake.nix
 
 The helper owns parsing, generation and privileged operations. `bin/vshell` dispatches to `bin/vshell-helper`, a stub that imports `bin/vshell_helper.py`, which loads the other `bin/vshell_*.py` modules.
 
