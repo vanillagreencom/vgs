@@ -56,6 +56,7 @@ packaging | scripts/check-prune-ppa.py
 -         | scripts/test-latest-transaction-queue.js
 -         | scripts/test-bundled-override.js
 -         | scripts/test-plugin-requirement-report.js
+-         | scripts/test-plugin-manifest-freshness.js
 -         | scripts/test-toast-actions.js
 -         | scripts/test-ai-usage-logic.js
 -         | scripts/test-ai-usage-entrypoint.js
