@@ -290,6 +290,11 @@ if [[ -s "$LOG" ]]; then
   # reports as 0.0 MiB/h. Refuse rather than extend someone else's series. The
   # shared prelude means a log whose header this cannot read is refused by name
   # here too, rather than comparing field zero against itself.
+  # -s says the file has bytes, not that they can be read. awk exits 2 on an
+  # unopenable input, the same status the prelude uses for a bad header, so
+  # without this the silent dispatch below swallows the permission failure.
+  [[ -r "$LOG" ]] ||
+    refuse 2 "unreadable-log=$LOG" "The existing log could not be read to check whose session it holds."
   guard_rc=0
   last_id="$(awk -F'\t' "$AWK_PRELUDE"'
                { id = session_key() }
@@ -354,14 +359,14 @@ sample_row() {
     }
   ' "/proc/$PID/smaps")" || return 1
   maps_after="$(grep -c . "/proc/$PID/maps")" || return 1
-  counted="${row%%	*}"
+  counted="${row%%$'\t'*}"
   # The shell maps and unmaps while this reads, so the two bracketing counts
   # differ legitimately by a few. Truncation is not a few: require the counted
   # mappings to reach the smaller bracket.
   floor="$maps_before"
   [[ "$maps_after" -lt "$floor" ]] && floor="$maps_after"
   [[ "$counted" -ge "$floor" ]] || return 1
-  printf '%s\n' "${row#*	}"
+  printf '%s\n' "${row#*$'\t'}"
 }
 
 deadline=0
@@ -372,12 +377,14 @@ fi
 printf 'sample-shell-memory: sampling=%s:%s interval_s=%s log=%s\n' \
   "$PID" "$SESSION" "$INTERVAL" "$LOG" >&2
 
-exited=0
+stopped=0
 while true; do
-  # A row that fails because the shell exited mid-read ends the loop, not the
-  # script: the closing report is the point of the run.
+  # A row that fails ends the loop, not the script: the closing report is the
+  # point of the run. Why it failed is decided below, not here, because the
+  # process exiting and a row that would not hold together are different events
+  # and reporting one as the other hides the real reason.
   if ! row="$(sample_row)"; then
-    exited=1
+    stopped=1
     break
   fi
   printf '%s\n' "$row" >>"$LOG"
@@ -386,12 +393,17 @@ while true; do
   fi
   sleep "$INTERVAL"
   if [[ ! -d "/proc/$PID" ]]; then
-    exited=1
+    stopped=1
     break
   fi
 done
 
-if [[ "$exited" == 1 ]]; then
-  printf 'sample-shell-memory: pid-exited=%s\n' "$PID" >&2
+if [[ "$stopped" == 1 ]]; then
+  if [[ ! -d "/proc/$PID" ]]; then
+    printf 'sample-shell-memory: pid-exited=%s\n' "$PID" >&2
+  else
+    printf 'sample-shell-memory: row-rejected=%s\n' "$PID" >&2
+    printf '  A sample could not be read whole while the process is still running; the log ends before it.\n' >&2
+  fi
 fi
 report_baseline "$LOG"

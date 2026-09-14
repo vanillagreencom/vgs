@@ -8,10 +8,15 @@
 # status. The controls at the end plant one defect per report rule and require
 # the case that rule owns to go red.
 #
-# Every copy of the script under test runs from $tmp/root/scripts so its own
-# repo_root resolution finds the library beside it. A copy run from a bare
-# directory dies in its preamble, which would make each control pass whatever it
-# planted. The unmutated control below is what keeps that from returning.
+# The sampling path is out of reach here: it resolves a pid through the instance
+# registry, so reaching it needs a running shell. Its own unreadable-log refusal
+# raises the same key this file pins on the report side, from the same call.
+#
+# Every copy of the script under test runs from a plain temporary directory with
+# no repository beside it. --report must work there: the sampler sources its
+# instance-registry library only on the sampling path. Staging a checkout-shaped
+# tree here would hand a copy that dependency back and no case would see the
+# source line return to the preamble, so the copies stay bare on purpose.
 set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -22,11 +27,7 @@ tmp="$(mktemp -d)" || {
 }
 trap 'rm -rf "${tmp:?}"' EXIT INT TERM
 
-# A checkout-shaped tree outside the repository, so a mutant resolves repo_root
-# to it and loads a real library rather than failing to start.
-mkdir -p "$tmp/root/scripts/lib"
-cp "$repo_root/scripts/lib/session-snapshot.sh" "$tmp/root/scripts/lib/"
-sampler="$tmp/root/scripts/sampler.sh"
+sampler="$tmp/sampler.sh"
 cp "$repo_root/scripts/sample-shell-memory.sh" "$sampler"
 chmod +x "$sampler"
 
@@ -83,6 +84,9 @@ build_fixture() {
     short) write_log "$2" 100 11 0 60 31 ;;
     # 481 samples a minute apart from 0 h: 1 h and 8 h land on real samples.
     spans-8h) write_log "$2" 100 11 0 60 481 ;;
+    # 25 h at the same spacing, so 24 h lands on a real sample too and both
+    # rates that end or begin there are produced.
+    spans-24h) write_log "$2" 100 11 0 60 1501 ;;
     # Starts at 76 h, so every mark is long past and no sample sits near one.
     late-start) write_log "$2" 100 11 273600 60 20 ;;
     # One session, sampled at 60 s to 3000 s, then again from 7200 s. The 1 h
@@ -142,6 +146,10 @@ a mark the session passed with no sample near it is not filled|late-start|out|ma
 a mark inside a gap in the log is not filled from the sample before it|hole|out|mark=1h status=no-sample-within tolerance_s=300|0
 a span under the rate floor carries no rate|under-floor|out|rate=1h..last status=span-under-floor|0
 a session the sampler joined late still gets a window rate|late-start|out|rate=window from_uptime_s=273600 to_uptime_s=274740 span_s=1140|0
+a log past 24 h fills the far mark from a real sample|spans-24h|out|mark=24h uptime_s=86400|0
+a log past 24 h rates the span into the far mark|spans-24h|out|rate=8h..24h from_uptime_s=28800 to_uptime_s=86400 span_s=57600|0
+a log past 24 h rates the span out of the far mark|spans-24h|out|rate=24h..last from_uptime_s=86400|0
+the report names the span of the session it picked|spans-8h|out|span=0..28800|0
 a two-session log reports the newest session alone|two-sessions|out|session=200:22 samples=481|0
 a two-session log names what it left out|two-sessions|out|excluded=1 rows=31|0
 uptime going backwards refuses every mark and rate|backwards|err|uptime-backwards=0 after=240 row=6|1
@@ -211,6 +219,24 @@ fi
     "the extractor read $head_count columns from the header, so it is broken rather than the script sparse"
 ok "the header and the row writer declare the same column count"
 
+# The property the sampler's header states: --report runs from a copy with no
+# repository beside it, because the instance-registry library is sourced only on
+# the sampling path. Every case above already runs from such a copy; this one
+# names the property so moving that source line back to the preamble fails here
+# with its own reason rather than only as collateral.
+bare="$tmp/bare/sampler.sh"
+mkdir -p "$tmp/bare"
+cp "$repo_root/scripts/sample-shell-memory.sh" "$bare"
+chmod +x "$bare"
+rm -f -- "${tmp:?}/log.tsv"
+build_fixture spans-8h "$tmp/log.tsv"
+run_report "$bare" "$tmp/log.tsv"
+[[ "$rc" == 0 ]] ||
+  fail "--report runs from a copy with no repository beside it" \
+    "expected exit 0 from a bare copy, got $rc (stderr: $err)"
+expect_contains "$out" "mark=1h uptime_s=3600" "--report runs from a copy with no repository beside it"
+ok "--report runs from a copy with no repository beside it"
+
 echo "=== argument refusals ==="
 
 arg_case() {
@@ -230,6 +256,7 @@ arg_case "a zero interval is refused with its value" "bad-interval=0" 2 --interv
 arg_case "a non-numeric hours is refused with its value" "bad-hours=soon" 2 --hours soon
 arg_case "an unreadable log is refused with its path" "unreadable-log=$tmp/missing.tsv" 2 --report "$tmp/missing.tsv"
 
+
 echo "=== must-fail controls ==="
 
 # Build a copy of the sampler beside a real library, apply one substitution, and
@@ -238,7 +265,7 @@ echo "=== must-fail controls ==="
 # non-zero for both so the callers below can say which.
 run_control() {
   local from="$1" to="$2" fixture="$3"
-  local mutant="$tmp/root/scripts/mutant.sh"
+  local mutant="$tmp/mutant.sh"
   cp "$sampler" "$mutant"
   if [[ -n "$from" ]]; then
     python3 - "$mutant" "$from" "$to" <<'PY' || return 2
@@ -322,6 +349,10 @@ control "removing the rate floor reddens the span-under-floor case" \
 control "shifting the header map reddens the column-by-name case" \
   'for (i = 1; i <= NF; i++) col[$i] = i' 'for (i = 1; i <= NF; i++) col[$i] = i + 1' \
   spans-8h out "mark=1h uptime_s=3600" 0
+
+control "drifting the 24 h target reddens the far-mark case" \
+  'idx[3] = at(24 * 3600)' 'idx[3] = at(25 * 3600)' \
+  spans-24h out "mark=24h uptime_s=86400" 0
 
 control "dropping the window rate reddens the joined-late case" \
   'raterow("window", 1, n)' '' \
