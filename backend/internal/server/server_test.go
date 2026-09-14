@@ -278,6 +278,51 @@ func TestSnapshotNeverReplacesAQueuedBroadcast(t *testing.T) {
 	}
 }
 
+// A frame that arrives while subscribe is reading the cache is newer than that
+// read, so the read must not be pushed behind it. loginctl is the service this
+// protects: its frames carry the lock flag, the shell clears its lock surface
+// on a falling edge, and it registers no refresh, so nothing is scheduled to
+// put a lock back that a stale snapshot undid.
+func TestSnapshotOvertakenDuringItsReadIsDropped(t *testing.T) {
+	srv, _ := startTestServer(t)
+	c := newIdleConn(t)
+
+	locked := map[string]any{"locked": true}
+	unlocked := map[string]any{"locked": false}
+	srv.RegisterSnapshot("loginctl", func() any {
+		// A logind Lock landing while subscribe reads the cache. By this point
+		// subscribe has already registered this connection, so the broadcast
+		// reaches its queue.
+		srv.Broadcast("loginctl", locked)
+		return unlocked
+	})
+
+	params, err := json.Marshal(map[string]any{"services": []string{"loginctl"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.handleSubscribe(c, &protocol.Request{Method: "subscribe", Params: params})
+
+	got := queuedEvents(t, c)
+	var sawLock bool
+	for _, frame := range got {
+		if frame[0] != "loginctl" {
+			continue
+		}
+		state := frame[1].(map[string]any)
+		if state["locked"] == true {
+			sawLock = true
+			continue
+		}
+		if sawLock {
+			t.Fatalf("an unlocked snapshot landed after the lock frame: %v; the shell would clear its lock surface with no authentication and nothing scheduled to put it back", got)
+		}
+	}
+	if !sawLock {
+		t.Fatalf("the lock frame never reached the queue: %v", got)
+	}
+}
+
 // A service with nothing read yet sends no frame at all. An empty state would
 // reach the shell as fact and blank a list the kicked refresh is about to fill.
 func TestSnapshotWithNoStateYetSendsNoFrame(t *testing.T) {

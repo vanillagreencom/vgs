@@ -29,6 +29,17 @@ type conn struct {
 
 	out *coalescingQueue[protocol.Response]
 
+	// seqMu guards the frame numbering, and is held across the enqueue beneath
+	// it so a conditional push cannot be overtaken between its check and its
+	// own enqueue.
+	seqMu sync.Mutex
+	// seq counts every frame enqueued on this connection, and lastByService
+	// records the number of the newest frame enqueued for each service. A
+	// caller that reads state and pushes it a moment later uses them to tell
+	// whether a newer frame for that service got there first.
+	seq           uint64
+	lastByService map[string]uint64
+
 	closeOnce sync.Once
 }
 
@@ -36,7 +47,12 @@ func newConn(uc *net.UnixConn, log *slog.Logger) *conn {
 	if log == nil {
 		log = slog.Default()
 	}
-	c := &conn{uc: uc, log: log, out: newCoalescingQueue[protocol.Response](outboundDepth)}
+	c := &conn{
+		uc:            uc,
+		log:           log,
+		out:           newCoalescingQueue[protocol.Response](outboundDepth),
+		lastByService: map[string]uint64{},
+	}
 	go c.writeLoop()
 	return c
 }
@@ -44,7 +60,9 @@ func newConn(uc *net.UnixConn, log *slog.Logger) *conn {
 // send queues a request response for the writer goroutine. A response carries
 // an id a caller is waiting on, so it never coalesces.
 func (c *conn) send(resp protocol.Response) {
-	c.enqueue("", resp)
+	c.seqMu.Lock()
+	defer c.seqMu.Unlock()
+	c.enqueueLocked("", "", resp)
 }
 
 // sendEvent queues a subscription push for service. When coalesce is set, a
@@ -53,20 +71,59 @@ func (c *conn) send(resp protocol.Response) {
 // backlog. It is set only for a service whose every broadcast carries the whole
 // of its state; see Server.CoalesceBroadcasts.
 func (c *conn) sendEvent(service string, data any, coalesce bool) {
-	key := ""
-	if coalesce {
-		key = service
-	}
-	c.enqueue(key, protocol.Response{Result: protocol.Event{Service: service, Data: data}})
+	c.seqMu.Lock()
+	defer c.seqMu.Unlock()
+	c.enqueueLocked(service, coalesceKey(service, coalesce), eventFrame(service, data))
 }
 
-func (c *conn) enqueue(key string, resp protocol.Response) {
+// mark returns the connection's current frame number, for a caller about to
+// read a service's state and push it afterwards.
+func (c *conn) mark() uint64 {
+	c.seqMu.Lock()
+	defer c.seqMu.Unlock()
+	return c.seq
+}
+
+// sendEventUnlessOvertaken queues a push for state read at mark, unless a frame for that
+// service reached this connection after the read began. Such a frame carries
+// state at least as new as the read, so pushing the read would put the older
+// state last on the wire; for a service whose frames carry an edge the shell
+// acts on, such as the lock flag, that older frame undoes the newer one.
+func (c *conn) sendEventUnlessOvertaken(service string, data any, coalesce bool, mark uint64) {
+	c.seqMu.Lock()
+	defer c.seqMu.Unlock()
+	if c.lastByService[service] > mark {
+		return
+	}
+	c.enqueueLocked(service, coalesceKey(service, coalesce), eventFrame(service, data))
+}
+
+func eventFrame(service string, data any) protocol.Response {
+	return protocol.Response{Result: protocol.Event{Service: service, Data: data}}
+}
+
+func coalesceKey(service string, coalesce bool) string {
+	if coalesce {
+		return service
+	}
+	return ""
+}
+
+// enqueueLocked adds one frame and numbers it. The caller holds seqMu, which is
+// what makes a check-then-push atomic against a concurrent broadcast.
+func (c *conn) enqueueLocked(service, key string, resp protocol.Response) {
 	switch _, outcome := c.out.push(key, resp); outcome {
-	case pushQueued, pushReplaced, pushClosed:
+	case pushQueued, pushReplaced:
+	case pushClosed:
 		return
 	case pushFull:
 		c.log.Warn("outbound queue full, dropping connection", "depth", outboundDepth)
 		c.close()
+		return
+	}
+	c.seq++
+	if service != "" {
+		c.lastByService[service] = c.seq
 	}
 }
 

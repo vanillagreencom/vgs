@@ -465,19 +465,20 @@ func (s *Server) handleSubscribe(c *conn, req *protocol.Request) {
 	for service, cov := range services {
 		// One read per service per subscribe: the value decides both whether a
 		// snapshot goes out and whether the service still needs a query.
+		mark := c.mark()
 		var state any
 		if cov.source.read != nil {
 			state = cov.source.read()
 		}
 		if cov.snapshot && state != nil {
-			// Never coalesced, whatever the service declares. The cache only
+			// Never coalesced, whatever the service declares: the cache only
 			// moves forward, so this read is no older than any frame queued
-			// before it began and appending can only add a same-or-newer frame
-			// at the end; replacing one in place would drop that queued frame
-			// outright. A record that lands between the read and this push is
-			// the one case where the appended frame is older, and that
-			// service's next broadcast corrects it.
-			c.sendEvent(service, state, false)
+			// before it began, and replacing such a frame in place would drop
+			// it outright. A frame that arrives after the read began is newer
+			// than the read, so the push is dropped instead; without that, a
+			// lock raised during the read would be undone by this frame, which
+			// for a service with no refresh nothing is scheduled to correct.
+			c.sendEventUnlessOvertaken(service, state, false, mark)
 		}
 		if cov.source.refresh == nil {
 			continue

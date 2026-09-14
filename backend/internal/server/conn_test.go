@@ -45,7 +45,13 @@ func newIdleConn(t *testing.T) *conn {
 	}
 	t.Cleanup(func() { a.uc.Close() })
 
-	return &conn{uc: a.uc, log: discardLogger(), out: newCoalescingQueue[protocol.Response](outboundDepth)}
+	// The same fields newConn sets, minus its writer goroutine.
+	return &conn{
+		uc:            a.uc,
+		log:           discardLogger(),
+		out:           newCoalescingQueue[protocol.Response](outboundDepth),
+		lastByService: map[string]uint64{},
+	}
 }
 
 // queuedEvents drains what the writer would put on the wire, as
