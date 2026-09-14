@@ -2,6 +2,8 @@ package cloudsync
 
 import (
 	"time"
+
+	"vshell/backend/internal/recovery"
 )
 
 // Trigger names recorded in history so the Activity view can say why a run
@@ -59,7 +61,7 @@ func (m *Manager) scheduleFolder(folder Folder) {
 	m.mu.Lock()
 	m.statusLocked(id).NextSyncUnix = time.Now().Add(delay).Unix()
 	m.timers[id] = time.AfterFunc(delay, func() {
-		m.runScheduled(id)
+		recovery.Run(m.log, "cloudsync.scheduledSync", func() { m.runScheduled(id) })
 	})
 	m.mu.Unlock()
 }
@@ -131,21 +133,23 @@ func (m *Manager) scheduleStartupSweep() {
 		return
 	}
 	m.startupTimer = time.AfterFunc(startupDelay, func() {
-		settings := m.store.snapshotSettings()
-		if settings.Paused {
-			return
-		}
-		for _, folder := range m.store.snapshotFolders() {
-			if folder.Paused || folder.Mode == ModeStream || folder.IntervalSeconds <= 0 {
-				continue
+		recovery.Run(m.log, "cloudsync.startupSweep", func() {
+			settings := m.store.snapshotSettings()
+			if settings.Paused {
+				return
 			}
-			if folder.Mode.NeedsResync() && !folder.ResyncDone {
-				continue
+			for _, folder := range m.store.snapshotFolders() {
+				if folder.Paused || folder.Mode == ModeStream || folder.IntervalSeconds <= 0 {
+					continue
+				}
+				if folder.Mode.NeedsResync() && !folder.ResyncDone {
+					continue
+				}
+				if err := m.startSync(folder.ID, syncOptions{Trigger: triggerStartup}); err != nil {
+					m.noteStartFailure(folder.ID, triggerStartup, err)
+				}
 			}
-			if err := m.startSync(folder.ID, syncOptions{Trigger: triggerStartup}); err != nil {
-				m.noteStartFailure(folder.ID, triggerStartup, err)
-			}
-		}
+		})
 	})
 	m.mu.Unlock()
 }

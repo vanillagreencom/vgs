@@ -12,6 +12,7 @@ import (
 
 	"github.com/godbus/dbus/v5"
 
+	"vshell/backend/internal/recovery"
 	"vshell/backend/internal/server"
 )
 
@@ -416,7 +417,7 @@ func (m *Manager) signalLoop() {
 			return
 		case sig := <-m.signals:
 			if sig != nil {
-				m.handleSignal(sig)
+				recovery.Run(m.log, "loginctl.signal", func() { m.handleSignal(sig) })
 			}
 		}
 	}
@@ -436,7 +437,9 @@ func (m *Manager) handleSignal(sig *dbus.Signal) {
 			if m.lockTimer != nil {
 				m.lockTimer.Stop()
 			}
-			m.lockTimer = time.AfterFunc(m.fallbackDelay, func() { m.releaseForCycle(id) })
+			m.lockTimer = time.AfterFunc(m.fallbackDelay, func() {
+				recovery.Run(m.log, "loginctl.lockFallback", func() { m.releaseForCycle(id) })
+			})
 			m.lockTimerMu.Unlock()
 		}
 	case dbusSessionInterface + ".Unlock":
@@ -496,7 +499,7 @@ func (m *Manager) handlePrepareForSleep(preparing bool) {
 		readyCh := m.newLockerReadyCh()
 		go func(id uint64, ch <-chan struct{}) {
 			<-ch
-			m.releaseForCycle(id)
+			recovery.Run(m.log, "loginctl.sleepRelease", func() { m.releaseForCycle(id) })
 		}(cycleID, readyCh)
 	} else {
 		m.finishSleepCycle()

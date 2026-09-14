@@ -8,9 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os/exec"
 	"strings"
 	"time"
+
+	"vshell/backend/internal/execbound"
+	"vshell/backend/internal/recovery"
 )
 
 // The ipn bus watcher detects tailscaled changes made outside VGS. It uses
@@ -112,7 +114,8 @@ func (m *Manager) superviseWatch() {
 			return
 		}
 		start := time.Now()
-		err := m.runWatch(m.watchCtx)
+		var err error
+		recovery.Run(m.log, "tailscale.watch", func() { err = m.runWatch(m.watchCtx) })
 		if m.watchCtx.Err() != nil {
 			return
 		}
@@ -149,29 +152,25 @@ func (m *Manager) runWatch(ctx context.Context) error {
 	// Invoke watch-ipn without flags. Notifications already include the state
 	// changes used here; unsupported flags would cause repeated startup failures.
 	stderr := &boundedBuffer{max: watchStderrCap}
-	cmd := exec.CommandContext(ctx, m.tailscale, "debug", "watch-ipn")
-	cmd.Stderr = stderr
-	stdout, err := cmd.StdoutPipe()
+	child, err := execbound.StartChild(ctx, execbound.ChildOptions{Stdout: true, Stderr: stderr},
+		m.tailscale, "debug", "watch-ipn")
 	if err != nil {
 		return err
 	}
-	if err := cmd.Start(); err != nil {
-		return err
-	}
+	stdout := child.Stdout()
 	m.setWatcherAlive(true)
 	// Clear child liveness on exit so status reads during restart backoff request
 	// polling.
 	defer m.setWatcherAlive(false)
 	readErr := m.readFrames(stdout, m.pulse)
 	if readErr != nil {
-		// A parse error does not stop an idle child. Kill it before Wait so malformed
-		// output cannot block supervision indefinitely.
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
-		}
+		// A parse error does not stop an idle child. Stop it before waiting so
+		// malformed output cannot block supervision indefinitely.
+		child.Stop()
 	}
 	_ = stdout.Close()
-	waitErr := cmd.Wait()
+	<-child.Done()
+	waitErr := child.Err()
 	if readErr != nil {
 		return readErr
 	}
@@ -254,7 +253,7 @@ func (m *Manager) pulse() {
 	if remainder := watchMinInterval - time.Since(m.lastPush); remainder > delay {
 		delay = remainder
 	}
-	m.pushTimer = time.AfterFunc(delay, m.pushStatus)
+	m.pushTimer = time.AfterFunc(delay, func() { recovery.Run(m.log, "tailscale.pushStatus", m.pushStatus) })
 }
 
 // pushStatus holds the watcher read slot through broadcast so watcher reads

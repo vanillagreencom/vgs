@@ -195,21 +195,22 @@ func wlCopy(log *slog.Logger, blob []byte, mime string) error {
 // requests a separate clipboard read; content is not sent through the watch
 // pipe.
 func watch(ctx context.Context, onEvent func()) error {
-	cmd := exec.CommandContext(ctx, "wl-paste", "--watch", "echo")
-	stdout, err := cmd.StdoutPipe()
+	var stderr bytes.Buffer
+	child, err := execbound.StartChild(ctx, execbound.ChildOptions{
+		Stdout: true,
+		Stderr: &boundedWriter{buf: &stderr, max: 4096},
+	}, "wl-paste", "--watch", "echo")
 	if err != nil {
 		return err
 	}
-	var stderr bytes.Buffer
-	cmd.Stderr = &boundedWriter{buf: &stderr, max: 4096}
-	if err := cmd.Start(); err != nil {
-		return err
-	}
+	stdout := child.Stdout()
+	defer stdout.Close()
 	sc := bufio.NewScanner(stdout)
 	for sc.Scan() {
 		onEvent()
 	}
-	err = cmd.Wait()
+	<-child.Done()
+	err = child.Err()
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}

@@ -18,14 +18,9 @@ ANALYZER = Path(__file__).with_suffix(".go")
 # These processes must outlive a single output read; each entry names why.
 ALLOWED_RAW_EXECS = {
     'backend/internal/services/clipboard/wayland.go::wlCopy exec.Command("wl-copy", args...)': "wl-copy serves the clipboard after the copy RPC returns.",
-    'backend/internal/services/clipboard/wayland.go::watch exec.CommandContext(ctx, "wl-paste", "--watch", "echo")': "wl-paste --watch is the backend clipboard watcher.",
     'backend/internal/services/cloudsync/rcd.go::start exec.Command(d.binary, "rcd", "--rc-addr", "127.0.0.1:"+strconv.Itoa(port), "--rc-web-gui=false", "--log-level", "NOTICE")': "rclone rcd is the cloudsync control daemon.",
     'backend/internal/services/cloudsync/remotes.go::beginOAuth exec.Command(m.binary, "authorize", providerType, "--auth-no-open-browser")': "rclone authorize owns the browser OAuth flow.",
-    'backend/internal/services/gamma/gamma.go::applyGammaLocked exec.Command(m.binary, "-t", strconv.Itoa(lowTemp), "-T", strconv.Itoa(highTemp), "-g", strconv.FormatFloat(state.Config.Gamma, \'f\', 3, 64))': "wlsunset is the Niri gamma adapter process.",
-    'backend/internal/services/gamma/gamma.go::applyGammaLocked exec.Command(m.binary, "--temperature", strconv.Itoa(state.CurrentTemp), "--gamma", strconv.Itoa(gammaPercent))': "hyprsunset is the Hyprland gamma adapter process.",
-    'backend/internal/services/networkmanager/networkmanager.go::monitor exec.CommandContext(ctx, "nmcli", "monitor")': "nmcli monitor is the NetworkManager watcher.",
     'backend/internal/services/sysupdate/sysupdate.go::handleUpgrade exec.Command(argv[0], argv[1:]...)': "the terminal updater is an interactive upgrade process.",
-    'backend/internal/services/tailscale/watch.go::runWatch exec.CommandContext(ctx, m.tailscale, "debug", "watch-ipn")': "tailscale debug watch-ipn is the ipn bus watcher.",
     'backend/internal/runner/runner.go::runQuickshell exec.Command("qs", append(baseArgs, qsArgs...)...)': "the runner owns the shell process lifetime.",
     'backend/internal/runner/supervise.go::superviseBackend exec.Command(exe, "serve")': "the runner supervises the backend serve child.",
 }

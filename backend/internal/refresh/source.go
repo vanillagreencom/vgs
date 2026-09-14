@@ -4,6 +4,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"vshell/backend/internal/recovery"
 )
 
 // Broadcaster is the part of the daemon a refreshed service publishes through.
@@ -117,7 +119,9 @@ func NewService[T any](srv Broadcaster, log *slog.Logger, service string, settle
 	s := &Service[T]{srv: srv, log: log, service: service, query: query}
 	// Nothing queried yet means no burst to collapse and no state to serve, so
 	// the first query runs at once rather than a settle window late.
-	s.loop = newLoop(settle, func() bool { return !s.hasIssued() }, s.refreshAndBroadcast)
+	s.loop = newLoop(settle, func() bool { return !s.hasIssued() }, func() {
+		recovery.Run(s.log, "refresh "+service, s.refreshAndBroadcast)
+	})
 	return s
 }
 

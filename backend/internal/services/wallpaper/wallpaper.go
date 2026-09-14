@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"vshell/backend/internal/recovery"
 	"vshell/backend/internal/refresh"
 	"vshell/backend/internal/server"
 )
@@ -100,7 +101,7 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	srv.RegisterSnapshot("wallpaper", func() any { return m.GetState() })
 
 	m.wg.Add(1)
-	go m.schedulerLoop()
+	go recovery.Run(m.log, "wallpaper.scheduler", m.schedulerLoop)
 
 	return m, nil
 }

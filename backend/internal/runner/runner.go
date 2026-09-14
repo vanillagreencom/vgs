@@ -39,6 +39,11 @@ func Run(opts Options) (int, error) {
 	// window is not the default (no-teardown) death.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	// SIGUSR1 restarts the backend without touching Quickshell. It is caught from
+	// the start, so a runner with no backend ignores it instead of exiting on
+	// the default action and taking Quickshell with it.
+	restartCh := make(chan os.Signal, 1)
+	signal.Notify(restartCh, syscall.SIGUSR1)
 
 	st, err := setupSocket(log)
 	if err != nil {
@@ -56,7 +61,7 @@ func Run(opts Options) (int, error) {
 	supervisorDone := make(chan struct{})
 	go func() {
 		defer close(supervisorDone)
-		superviseBackend(lnFile, st.socketPath, stopSupervisor, log, func() {
+		superviseBackend(lnFile, st.socketPath, stopSupervisor, restartCh, log, func() {
 			// Tear the socket down so clients get a clean connection failure
 			// (backend unavailable) instead of connects that queue forever in
 			// a backlog nobody will accept.

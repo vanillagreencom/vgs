@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"vshell/backend/internal/recovery"
 	"vshell/backend/internal/server"
 )
 
@@ -126,8 +127,11 @@ func (m *Manager) watchLoop(ctx context.Context) {
 		} else {
 			warnedBusy = false
 			started := time.Now()
-			err := watch(ctx, m.signalEvent)
-			release()
+			var err error
+			recovery.Run(m.log, "clipboard.watch", func() {
+				defer release()
+				err = watch(ctx, m.signalEvent)
+			})
 			if ctx.Err() != nil {
 				return
 			}
@@ -180,9 +184,11 @@ func (m *Manager) pollLoop(ctx context.Context) {
 				break drain
 			}
 		}
-		if err := m.pollOnce(); err != nil {
-			m.log.Warn("clipboard poll failed", "err", err)
-		}
+		recovery.Run(m.log, "clipboard.poll", func() {
+			if err := m.pollOnce(); err != nil {
+				m.log.Warn("clipboard poll failed", "err", err)
+			}
+		})
 	}
 }
 

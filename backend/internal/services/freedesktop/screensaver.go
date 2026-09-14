@@ -15,6 +15,7 @@ import (
 	"github.com/godbus/dbus/v5"
 	"github.com/godbus/dbus/v5/introspect"
 
+	"vshell/backend/internal/recovery"
 	"vshell/backend/internal/server"
 )
 
@@ -372,15 +373,17 @@ func (m *Manager) watchPeerDisconnects() error {
 	m.conn.Signal(signals)
 	go func() {
 		for sig := range signals {
-			if sig.Name != "org.freedesktop.DBus.NameOwnerChanged" || len(sig.Body) < 3 {
-				continue
-			}
-			name, _ := sig.Body[0].(string)
-			newOwner, _ := sig.Body[2].(string)
-			if name == "" || newOwner != "" {
-				continue
-			}
-			m.removeInhibitorsByPeer(name)
+			recovery.Run(m.log, "freedesktop.peerDisconnect", func() {
+				if sig.Name != "org.freedesktop.DBus.NameOwnerChanged" || len(sig.Body) < 3 {
+					return
+				}
+				name, _ := sig.Body[0].(string)
+				newOwner, _ := sig.Body[2].(string)
+				if name == "" || newOwner != "" {
+					return
+				}
+				m.removeInhibitorsByPeer(name)
+			})
 		}
 	}()
 	return nil
@@ -612,30 +615,32 @@ func (m *Manager) watchSettingsChanges() error {
 	m.conn.Signal(signals)
 	go func() {
 		for sig := range signals {
-			if sig.Name != "org.freedesktop.portal.Settings.SettingChanged" || len(sig.Body) < 3 {
-				continue
-			}
-			namespace, _ := sig.Body[0].(string)
-			key, _ := sig.Body[1].(string)
-			if namespace != "org.freedesktop.appearance" || key != "color-scheme" {
-				continue
-			}
-			variant, ok := sig.Body[2].(dbus.Variant)
-			if !ok {
-				continue
-			}
-			colorScheme, err := variantUint32(variant)
-			if err != nil {
-				continue
-			}
-			m.mu.Lock()
-			changed := !m.settings.Available || m.settings.ColorScheme != colorScheme
-			m.settings.Available = true
-			m.settings.ColorScheme = colorScheme
-			m.mu.Unlock()
-			if changed {
-				m.srv.Broadcast("freedesktop", m.GetState())
-			}
+			recovery.Run(m.log, "freedesktop.settingChanged", func() {
+				if sig.Name != "org.freedesktop.portal.Settings.SettingChanged" || len(sig.Body) < 3 {
+					return
+				}
+				namespace, _ := sig.Body[0].(string)
+				key, _ := sig.Body[1].(string)
+				if namespace != "org.freedesktop.appearance" || key != "color-scheme" {
+					return
+				}
+				variant, ok := sig.Body[2].(dbus.Variant)
+				if !ok {
+					return
+				}
+				colorScheme, err := variantUint32(variant)
+				if err != nil {
+					return
+				}
+				m.mu.Lock()
+				changed := !m.settings.Available || m.settings.ColorScheme != colorScheme
+				m.settings.Available = true
+				m.settings.ColorScheme = colorScheme
+				m.mu.Unlock()
+				if changed {
+					m.srv.Broadcast("freedesktop", m.GetState())
+				}
+			})
 		}
 	}()
 	return nil

@@ -12,6 +12,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"vshell/backend/internal/recovery"
 )
 
 const (
@@ -114,7 +116,7 @@ func (d *rcd) start() error {
 	d.done = done
 	d.mu.Unlock()
 
-	go d.wait(cmd, done)
+	go recovery.Run(nil, "cloudsync.rcdWait", func() { d.wait(cmd, done) })
 
 	version, err := d.awaitReady()
 	if err != nil {
@@ -204,9 +206,11 @@ func (d *rcd) wait(cmd *exec.Cmd, done chan struct{}) {
 		return
 	}
 	d.restartT = time.AfterFunc(backoff, func() {
-		if err := d.start(); err != nil && d.onDown != nil {
-			d.onDown(err.Error())
-		}
+		recovery.Run(nil, "cloudsync.rcdRestart", func() {
+			if err := d.start(); err != nil && d.onDown != nil {
+				d.onDown(err.Error())
+			}
+		})
 	})
 	d.mu.Unlock()
 }

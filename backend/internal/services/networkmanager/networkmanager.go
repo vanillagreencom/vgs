@@ -1002,19 +1002,9 @@ func (m *Manager) vpnActiveFrom(active []map[string]string) []vpnActive {
 
 func (m *Manager) monitor() {
 	for {
-		ctx, cancel := context.WithCancel(context.Background())
-		cmd := exec.CommandContext(ctx, "nmcli", "monitor")
-		stdout, err := cmd.StdoutPipe()
+		child, err := execbound.StartChild(context.Background(), execbound.ChildOptions{Stdout: true}, "nmcli", "monitor")
 		if err != nil {
-			// Without the monitor, live network updates are gone for the rest
-			// of the session; that must not be invisible.
-			m.log.Error("nmcli monitor pipe failed; live network updates disabled", "err", err)
-			cancel()
-			return
-		}
-		if err := cmd.Start(); err != nil {
 			m.log.Warn("nmcli monitor start failed; retrying in 15s", "err", err)
-			cancel()
 			select {
 			case <-m.stop:
 				return
@@ -1022,6 +1012,7 @@ func (m *Manager) monitor() {
 				continue
 			}
 		}
+		stdout := child.Stdout()
 		done := make(chan struct{})
 		go func() {
 			sc := bufio.NewScanner(stdout)
@@ -1030,16 +1021,19 @@ func (m *Manager) monitor() {
 			}
 			close(done)
 		}()
+		stopped := false
 		select {
 		case <-m.stop:
-			cancel()
-			_ = cmd.Wait()
-			return
+			stopped = true
 		case <-done:
-			cancel()
-			_ = cmd.Wait()
-			time.Sleep(2 * time.Second)
 		}
+		child.Stop()
+		<-done
+		stdout.Close()
+		if stopped {
+			return
+		}
+		time.Sleep(2 * time.Second)
 	}
 }
 

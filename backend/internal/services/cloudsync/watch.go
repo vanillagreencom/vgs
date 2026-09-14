@@ -10,6 +10,8 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/unix"
+
+	"vshell/backend/internal/recovery"
 )
 
 // watchDebounce waits for quiet writes before requesting sync. Tests can shorten
@@ -203,7 +205,7 @@ func (w *watcher) readLoop() {
 			w.degrade("", "real-time watching stopped: "+firstLine(err.Error()))
 			return
 		}
-		w.handleEvents(buf[:n])
+		recovery.Run(nil, "cloudsync.watchEvents", func() { w.handleEvents(buf[:n]) })
 	}
 }
 
@@ -301,16 +303,18 @@ func (w *watcher) markDirty(folderID string) {
 		return
 	}
 	w.timers[folderID] = time.AfterFunc(watchDebounce, func() {
-		w.mu.Lock()
-		delete(w.timers, folderID)
-		closed := w.closed
-		w.mu.Unlock()
-		if closed {
-			return
-		}
-		if w.onDirty != nil {
-			w.onDirty(folderID)
-		}
+		recovery.Run(nil, "cloudsync.watchDebounce", func() {
+			w.mu.Lock()
+			delete(w.timers, folderID)
+			closed := w.closed
+			w.mu.Unlock()
+			if closed {
+				return
+			}
+			if w.onDirty != nil {
+				w.onDirty(folderID)
+			}
+		})
 	})
 	w.mu.Unlock()
 }

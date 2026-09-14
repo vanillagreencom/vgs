@@ -12,6 +12,7 @@ import (
 
 	"github.com/godbus/dbus/v5"
 
+	"vshell/backend/internal/recovery"
 	"vshell/backend/internal/server"
 )
 
@@ -187,7 +188,7 @@ func (m *Manager) signalLoop() {
 			if sig == nil || sig.Name != login1Iface+"."+prepareMember || string(sig.Path) != login1Path {
 				continue
 			}
-			m.broadcast(sig)
+			recovery.Run(m.log, "dbusbridge.signal", func() { m.broadcast(sig) })
 		}
 	}
 }
