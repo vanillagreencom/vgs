@@ -13,13 +13,15 @@ import "MercuryFormat.js" as Fmt
 // and — on the second page — the settings for both.
 //
 // It owns no financial state. Every figure is a binding off the one snapshot
-// the widget holds, so this view and the bar pill cannot show different
+// the daemon holds, so this view and every bar pill cannot show different
 // numbers.
 PopoutComponent {
     id: root
 
-    // The MercuryWidget that owns the snapshot and runs the helper.
+    // The MercuryWidget this popout opened from: file picker and links.
     required property var widget
+    // The MercuryDaemon that owns the snapshot and runs the helper.
+    required property var daemon
 
     // 0 = accounts and activity, 1 = settings. The settings used to mean
     // leaving for the settings app; as a page they sit beside the figures in a
@@ -41,21 +43,21 @@ PopoutComponent {
     // reopens hours later on a shared display.
     property string revealedAccountId: ""
 
-    readonly property var accounts: root.widget.hasFigures ? root.widget.snapshot.accounts : []
-    readonly property var transactions: root.widget.hasFigures ? root.widget.snapshot.transactions : []
+    readonly property var accounts: root.daemon.hasFigures ? root.daemon.snapshot.accounts : []
+    readonly property var transactions: root.daemon.hasFigures ? root.daemon.snapshot.transactions : []
     readonly property int outstanding: Logic.outstandingReceipts(root.transactions, root.accounts)
 
-    headerText: (root.widget.hasFigures && root.widget.snapshot.orgName)
-        ? root.widget.snapshot.orgName : "Mercury"
+    headerText: (root.daemon.hasFigures && root.daemon.snapshot.orgName)
+        ? root.daemon.snapshot.orgName : "Mercury"
     detailsText: {
         if (root.onSettings)
             return I18n.tr("Settings");
-        if (root.widget.loading && !root.widget.hasFigures)
+        if (root.daemon.loading && !root.daemon.hasFigures)
             return I18n.tr("Loading…");
-        if (!root.widget.hasFigures)
+        if (!root.daemon.hasFigures)
             return "";
         const total = Fmt.moneyPopout(Logic.totalBalance(root.accounts));
-        return total + " · " + Fmt.daysLabel(root.widget.days);
+        return total + " · " + Fmt.daysLabel(root.daemon.days);
     }
     showCloseButton: true
     spacing: Theme.spacingS
@@ -63,8 +65,8 @@ PopoutComponent {
     // The shared header slot, not a hand-rolled button: PopoutComponent owns
     // where a refresh control lives and how it behaves while busy.
     refreshable: !root.onSettings
-    refreshBusy: root.widget.loading
-    onRefreshRequested: root.widget.refresh()
+    refreshBusy: root.daemon.loading
+    onRefreshRequested: root.daemon.refresh()
 
     configurable: true
     settingsBack: root.onSettings
@@ -81,7 +83,7 @@ PopoutComponent {
     readonly property bool popoutShowing: root.parentPopout ? root.parentPopout.shouldBeVisible : false
     onPopoutShowingChanged: {
         if (root.popoutShowing) {
-            root.widget.refreshIfStale();
+            root.daemon.refreshIfStale();
             return;
         }
         // Dismissed: forget both transient states, so the next open starts
@@ -89,7 +91,7 @@ PopoutComponent {
         root.revealedAccountId = "";
         root.page = 0;
     }
-    Component.onCompleted: root.widget.refreshIfStale()
+    Component.onCompleted: root.daemon.refreshIfStale()
 
     headerActions: Component {
         Row {
@@ -148,7 +150,7 @@ PopoutComponent {
                 // ---- what went wrong, above the figures it applies to ----
                 StyledRect {
                     width: parent.width
-                    visible: root.widget.snapshotError !== ""
+                    visible: root.daemon.snapshotError !== ""
                     height: visible ? errorRow.implicitHeight + Theme.spacingM * 2 : 0
                     radius: Theme.cornerRadius
                     color: Theme.withAlpha(Theme.error, 0.12)
@@ -170,7 +172,7 @@ PopoutComponent {
 
                         StyledText {
                             Layout.fillWidth: true
-                            text: root.widget.snapshotError
+                            text: root.daemon.snapshotError
                             font.pixelSize: Theme.fontSizeSmall
                             color: Theme.error
                             wrapMode: Text.WordWrap
@@ -203,7 +205,7 @@ PopoutComponent {
 
                 StyledText {
                     width: parent.width
-                    visible: root.widget.hasFigures && root.accounts.length === 0
+                    visible: root.daemon.hasFigures && root.accounts.length === 0
                     text: I18n.tr("This Mercury organisation has no accounts.")
                     font.pixelSize: Theme.fontSizeSmall
                     color: Theme.surfaceVariantText
@@ -250,8 +252,8 @@ PopoutComponent {
                             width: parent.width
                             transaction: modelData
                             accounts: root.accounts
-                            busy: root.widget.uploadingTxId === modelData.id
-                            locked: root.widget.uploadingTxId !== ""
+                            busy: root.daemon.uploadingTxId === modelData.id
+                            locked: root.daemon.uploadingTxId !== ""
 
                             onOpenRequested: url => root.widget.openUrl(url)
                             onAttachRequested: transactionId => root.widget.askForReceipt(transactionId)
@@ -261,8 +263,8 @@ PopoutComponent {
 
                 StyledText {
                     width: parent.width
-                    visible: root.widget.hasFigures && root.transactions.length === 0
-                    text: I18n.tr("Nothing in the %1.").arg(Fmt.daysLabel(root.widget.days))
+                    visible: root.daemon.hasFigures && root.transactions.length === 0
+                    text: I18n.tr("Nothing in the %1.").arg(Fmt.daysLabel(root.daemon.days))
                     font.pixelSize: Theme.fontSizeSmall
                     color: Theme.surfaceVariantText
                     wrapMode: Text.WordWrap
@@ -274,6 +276,7 @@ PopoutComponent {
                 x: pager.width
                 width: pager.width
                 widget: root.widget
+                daemon: root.daemon
             }
         }
     }

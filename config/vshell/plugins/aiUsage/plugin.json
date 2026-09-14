@@ -6,7 +6,10 @@
     "license": "MIT",
     "author": "VanillaGreen",
     "icon": "data_usage",
-    "component": "./AiUsageWidget.qml",
+    "components": {
+        "widget": "./AiUsageWidget.qml",
+        "daemon": "./AiUsageDaemon.qml"
+    },
     "settings": "./AiUsageSettings.qml",
     "requires_shell": ">=0.1.0",
     "permissions": [

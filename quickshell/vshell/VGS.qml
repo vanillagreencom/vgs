@@ -56,11 +56,19 @@ Item {
     Instantiator {
         id: daemonPluginInstantiator
         asynchronous: true
-        model: Object.keys(PluginService.pluginDaemonComponents)
+        // A daemon holds fetched state. A plain array model recreates every
+        // delegate when it is replaced; a ScriptModel adds and removes only the
+        // changed ids, so loading or unloading one daemon plugin leaves every
+        // other daemon instance alive. A new component under the same id keeps
+        // the entry and reloads only its Loader.
+        model: ScriptModel {
+            values: Object.keys(PluginService.pluginDaemonComponents)
+        }
 
         delegate: Loader {
             id: daemonLoader
-            property string pluginId: modelData
+            required property string modelData
+            readonly property string pluginId: modelData
             // Kept so teardown can unregister by identity: `item` is not
             // reliable during destruction, and a reload's late teardown must
             // not clear the replacement delegate's registration.

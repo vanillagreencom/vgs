@@ -20,6 +20,7 @@ Column {
     id: root
 
     required property var widget
+    required property var daemon
 
     width: parent.width
     spacing: Theme.spacingM
@@ -74,7 +75,7 @@ Column {
                 width: parent.width
                 label: I18n.tr("Activity window")
                 options: Opt.daysOptions()
-                current: String(root.widget.days)
+                current: String(root.daemon.days)
                 onPicked: value => root.save("days", value)
             }
 
@@ -102,7 +103,7 @@ Column {
                 width: parent.width
                 label: I18n.tr("Refresh")
                 options: Opt.refreshOptions()
-                current: String(Math.round(root.widget.refreshMs / 1000))
+                current: String(Math.round(root.daemon.refreshMs / 1000))
                 onPicked: value => root.save("refreshSeconds", value)
             }
         }
