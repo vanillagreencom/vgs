@@ -7,8 +7,6 @@
       "niri"
     ]
   },
-  "hook": [
-    "niri-colors-config",
-    "niri-reload"
-  ]
+  "hook": "niri-colors-config",
+  "reloadHook": "niri-reload"
 }

@@ -10,5 +10,5 @@
       "nvim"
     ]
   },
-  "hook": "nvim-reload"
+  "reloadHook": "nvim-reload"
 }
