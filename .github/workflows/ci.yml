@@ -247,6 +247,7 @@ jobs:
           scripts/test-brightness-scan-ordering.js
           scripts/test-backend-capabilities.js
           scripts/test-settings-navigation.js
+          scripts/test-store-write-coalescing.js
           scripts/test-wallpaper-thumbs.py
       - name: Fixture and capability regressions
         run: |

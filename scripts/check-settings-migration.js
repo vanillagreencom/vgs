@@ -634,7 +634,7 @@ assert(
 );
 assert(
   writableCheckBody.indexOf("settingsFile.setText") < 0,
-  "_onWritableCheckComplete must not write settings.json directly; saveSettings() is what keeps _selfWrite and the snapshot honest"
+  "_onWritableCheckComplete must not write settings.json directly; saveSettings() is what keeps the coalesced write, its echo check and the snapshot honest"
 );
 
 

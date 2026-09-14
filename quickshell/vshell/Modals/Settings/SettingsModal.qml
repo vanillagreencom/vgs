@@ -112,6 +112,8 @@ FloatingWindow {
 
     onVisibleChanged: {
         if (!visible) {
+            SettingsData.flushSettings();
+            SessionData.flushSettings();
             closingModal();
         } else {
             Qt.callLater(() => {

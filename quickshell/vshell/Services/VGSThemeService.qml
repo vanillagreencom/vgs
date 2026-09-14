@@ -156,6 +156,9 @@ Singleton {
     // COALESCES on and defaults to it — `_runApply` is the one caller that
     // wants them different.
     function _run(id, args, callback, timeoutMs, backgroundTask, procId) {
+        // Theme helpers read settings.json and session.json, and some write settings.json back.
+        SettingsData.flushSettings();
+        SessionData.flushSettings();
         const coalesceId = (procId === undefined) ? id : procId;
         if (!backgroundTask) {
             _pending[id] = true;
