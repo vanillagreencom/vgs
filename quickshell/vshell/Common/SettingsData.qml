@@ -1944,7 +1944,8 @@ Singleton {
         return !_loading && !_parseError && _hasLoaded;
     }
 
-    // Marks the store dirty; settingsWriteTimer performs the one write for a burst of setters.
+    // Marks the store dirty; settingsWriteTimer writes a burst of setters once, plus a second
+    // write only when a deferred hook changes the serialised text.
     function saveSettings() {
         if (!_canWrite())
             return;

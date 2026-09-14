@@ -4,9 +4,10 @@
 // SettingsSpec.set, and the QML bodies that schedule, flush and suppress echoes, each
 // evaluated with recording stubs.
 // A slider drag assigns a key once per position change. Each assignment must mark the store
-// dirty and queue helper-spawning hooks; one commit performs one write and then runs each
-// queued hook once, after the write, because the helpers read the persisted file. Code that
-// starts a helper reading the store files flushes the stores first.
+// dirty and queue helper-spawning hooks; one commit writes the batch once and then runs each
+// queued hook once, after the write, because the helpers read the persisted file. A second
+// write follows only when a hook changed the serialised text. Code that starts a helper
+// reading the store files flushes the stores first.
 
 "use strict";
 

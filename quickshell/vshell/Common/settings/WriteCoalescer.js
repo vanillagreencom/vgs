@@ -1,9 +1,10 @@
 .pragma library
 
 // Write coalescing for a JSON-backed store. A setter marks the store dirty and restarts
-// the store's one timer; the commit serialises once, writes once, then runs the hooks
-// queued since the previous commit. Hooks run after the write because the helpers they
-// start read the persisted file.
+// the store's one timer; the commit writes the batch once, then runs the hooks queued
+// since the previous commit, and writes a second time only when a hook changed the
+// serialised text. Hooks run after the first write because the helpers they start read
+// the persisted file.
 
 function create() {
     return {
