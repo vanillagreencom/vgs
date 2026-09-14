@@ -51,11 +51,13 @@ VGS theme packages listed below were ported from community Omarchy theme reposit
 | `vurple` | https://github.com/tahfizhabib/omarchy-vurple-theme | no LICENSE file |
 | `x-1632` | https://github.com/OldJobobo/omarchy-x-1632-theme | no LICENSE file |
 
-## Horizon palettes
+## Vendor ports
 
-| VGS theme | Palette source | License |
-|---|---|---|
-| `horizon` | [jolaleye/horizon-theme-vscode, dark globals](https://github.com/jolaleye/horizon-theme-vscode/blob/master/src/dark/globals.json) | [MIT, © 2018 Jonathan Olaleye](https://github.com/jolaleye/horizon-theme-vscode/blob/master/LICENSE) |
-| `horizon-light` | [jolaleye/horizon-theme-vscode, bright globals](https://github.com/jolaleye/horizon-theme-vscode/blob/master/src/bright/globals.json) | [MIT, © 2018 Jonathan Olaleye](https://github.com/jolaleye/horizon-theme-vscode/blob/master/LICENSE) |
+Each package ported under [D017](../docs/decisions/D017-vendor-port-upstream-values.md) names the upstream palette file and the upstream app files it was built from.
 
-Every colour in `colors.toml`, `terminal-colors.toml`, `ui-roles.toml` and `apps/btop.theme` is a value from the matching globals file, unchanged. `apps/vscode-theme.json` is copied verbatim from the same MIT source at v2.0.2: [the upstream dark theme file](https://github.com/jolaleye/horizon-theme-vscode/blob/master/themes/horizon.json) for `horizon` and [the upstream bright theme file](https://github.com/jolaleye/horizon-theme-vscode/blob/master/themes/horizon-bright.json) for `horizon-light`. Its `colors` and `tokenColors` are the upstream values; only the file is pretty-printed and its top-level `name` is the VGS theme name. `test_horizon_packages_use_only_upstream_colours` in `scripts/check-vshell-helper.py` checks both.
+| VGS theme | Palette file | App files | License |
+|---|---|---|---|
+| `horizon` | [jolaleye/horizon-theme-vscode, dark globals](https://github.com/jolaleye/horizon-theme-vscode/blob/v2.0.2/src/dark/globals.json) | `apps/vscode-theme.json`: [themes/horizon.json](https://github.com/jolaleye/horizon-theme-vscode/blob/v2.0.2/themes/horizon.json) at v2.0.2 | [MIT, © 2018 Jonathan Olaleye](https://github.com/jolaleye/horizon-theme-vscode/blob/v2.0.2/LICENSE) |
+| `horizon-light` | [jolaleye/horizon-theme-vscode, bright globals](https://github.com/jolaleye/horizon-theme-vscode/blob/v2.0.2/src/bright/globals.json) | `apps/vscode-theme.json`: [themes/horizon-bright.json](https://github.com/jolaleye/horizon-theme-vscode/blob/v2.0.2/themes/horizon-bright.json) at v2.0.2 | [MIT, © 2018 Jonathan Olaleye](https://github.com/jolaleye/horizon-theme-vscode/blob/v2.0.2/LICENSE) |
+
+Every colour in `colors.toml`, `terminal-colors.toml`, `ui-roles.toml` and `apps/btop.theme` is a value from the matching globals file, unchanged. `apps/vscode-theme.json` is copied verbatim from the same MIT source at v2.0.2: [the upstream dark theme file](https://github.com/jolaleye/horizon-theme-vscode/blob/v2.0.2/themes/horizon.json) for `horizon` and [the upstream bright theme file](https://github.com/jolaleye/horizon-theme-vscode/blob/v2.0.2/themes/horizon-bright.json) for `horizon-light`. Its `colors` and `tokenColors` are the upstream values; only the file is pretty-printed and its top-level `name` is the VGS theme name. `test_horizon_packages_use_only_upstream_colours` in `scripts/check-vshell-helper.py` checks both.
