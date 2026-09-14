@@ -1541,6 +1541,7 @@ EOF
     WAYLAND_DISPLAY="$nested_socket" \
     VSHELL_ROOT="$repo_root" \
     VSHELL_DISABLE_HOT_RELOAD=1 \
+    VSHELL_DISABLE_INSTANCE_GUARD=1 \
     "${dbus_wrapper[@]}" \
     timeout --signal=TERM --kill-after=5 "$nested_timeout" \
     qs --no-color -p "$repo_root/quickshell/vshell" >"$log" 2>&1; then
@@ -1711,7 +1712,7 @@ EOF
 
 
   if grep -q "refusing to start a duplicate shell" "$log"; then
-    fail "the duplicate-instance guard misfired inside the sandbox"
+    fail "the sandboxed shell refused itself as a duplicate: VSHELL_DISABLE_INSTANCE_GUARD did not reach it"
     return
   fi
   if [[ -n "$scan_error" ]]; then

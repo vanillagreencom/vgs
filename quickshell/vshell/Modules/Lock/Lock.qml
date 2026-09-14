@@ -18,13 +18,11 @@ Scope {
     property bool lockInitiatedLocally: false
     property bool customLockerSpawned: false
 
-    // active is false in the greeter and in a duplicate instance the instance guard has not cleared. Every path that arms WlSessionLock must check it: lock(), _adoptSessionLock(), spawnCustomLocker(). A property, not a Loader, because a Loader blocks reload matching.
+    // active is false in the greeter and in a shell that shell.qml refused as a duplicate. Every path that arms WlSessionLock must check it: lock(), _adoptSessionLock(), spawnCustomLocker(). A property, not a Loader, because a Loader blocks reload matching.
     // Persisted-state restoration re-adopts this process's existing lock and stays outside this gate.
     property bool active: true
     property bool _started: false
 
-    // shellAllowed flips false -> true when the guard resolves, so startup work
-    // cannot simply run in Component.onCompleted.
     function _start(): void {
         if (!active || _started)
             return;

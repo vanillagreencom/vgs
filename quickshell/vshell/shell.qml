@@ -27,87 +27,35 @@ ShellRoot {
     readonly property bool runGreeter: Quickshell.env("VSHELL_RUN_GREETER") === "1" || Quickshell.env("VSHELL_RUN_GREETER") === "true"
     readonly property bool disableHotReload: Quickshell.env("VSHELL_DISABLE_HOT_RELOAD") === "1" || Quickshell.env("VSHELL_DISABLE_HOT_RELOAD") === "true"
 
-    // Check for a provably older live peer before loading session-global resources.
-    // Unknown peer state permits startup; the deadline bounds the wait.
-    // Skip the probe on hot reload because the same process already owns those resources.
-    // Bias toward fresh: a false reload skips the guard, a false fresh only costs one probe.
-    readonly property bool isReload: {
-        const launched = Quickshell.launchTime;
-        if (!launched)
+    // The runner holds the session's single-instance lock and names itself in VGS_RUNNER_PID.
+    // Every process the shell starts inherits that variable, so only the runner's direct child draws.
+    // VSHELL_DISABLE_INSTANCE_GUARD admits an isolated sandbox that has no runner.
+    readonly property bool guardDisabled: runGreeter || Quickshell.env("VSHELL_DISABLE_INSTANCE_GUARD") === "1" || Quickshell.env("VSHELL_DISABLE_INSTANCE_GUARD") === "true"
+    readonly property bool shellAllowed: guardDisabled || launchedByRunner(ownStat.text(), Quickshell.env("VGS_RUNNER_PID") || "")
+
+    // stat is /proc/self/stat. The process name is parenthesised and may hold spaces or parentheses,
+    // so fields are read after the last ')': state, then the parent pid.
+    function launchedByRunner(stat: string, runnerPid: string): bool {
+        const nameEnd = stat.lastIndexOf(")");
+        if (nameEnd < 0)
             return false;
-        return Date.now() - launched.getTime() > 30000;
-    }
-    readonly property bool guardDisabled: runGreeter || isReload || Quickshell.env("VSHELL_DISABLE_INSTANCE_GUARD") === "1" || Quickshell.env("VSHELL_DISABLE_INSTANCE_GUARD") === "true"
-    property bool guardResolved: false
-    property bool guardDuplicate: false
-    readonly property bool shellAllowed: (guardDisabled || guardResolved) && !guardDuplicate
-
-    // Report each inconclusive guard outcome so it remains distinct from confirmed peer absence.
-    function failOpen(why: string): void {
-        if (guardResolved)
-            return;
-        console.warn("VGS: duplicate-instance guard inconclusive:", why, "- starting normally");
-        resolveGuard(false);
-    }
-
-    function resolveGuard(duplicate: bool): void {
-        if (guardResolved)
-            return;
-        guardDuplicate = duplicate;
-        guardResolved = true;
+        const fields = stat.slice(nameEnd + 1).trim().split(" ");
+        return fields[1] === runnerPid;
     }
 
     Component.onCompleted: {
         Quickshell.watchFiles = !disableHotReload;
+        if (!shellAllowed) {
+            console.error("VGS: refusing to start a duplicate shell: this process was not started by the vshell runner that holds the instance lock");
+            console.error("VGS: run scripts/qml-smoke.sh for QML validation, or set VSHELL_DISABLE_INSTANCE_GUARD=1 to override.");
+        }
     }
 
-    Process {
-        id: instanceGuard
-        running: !entrypoint.guardDisabled
-        // Paths owns the single definition of where bin/vshell lives; the guard
-        // must not carry a second copy of that rule.
-        command: [Paths.vshellCli, "instances", "guard", "--pid", String(Quickshell.processId), "--shell-id", Quickshell.shellId]
-
-        // Read the collector with the exit code so the guard evaluates one completed process result.
-        stdout: StdioCollector {
-            id: guardOutput
-        }
-
-        onExited: exitCode => {
-            if (exitCode !== 0) {
-                entrypoint.failOpen(`${Paths.vshellCli} instances guard exited ${exitCode}`);
-                return;
-            }
-            let verdict = null;
-            try {
-                verdict = JSON.parse(guardOutput.text);
-            } catch (error) {
-                entrypoint.failOpen("guard returned invalid JSON: " + error);
-                return;
-            }
-            if (!verdict) {
-                entrypoint.failOpen("guard returned an empty verdict");
-                return;
-            }
-            if (verdict.duplicate !== true) {
-                if (verdict.ok === false)
-                    entrypoint.failOpen("instance registry unavailable: " + (verdict.error || verdict.reason));
-                else
-                    entrypoint.resolveGuard(false);
-                return;
-            }
-            console.error("VGS: refusing to start a duplicate shell:", verdict.reason);
-            console.error("VGS: run scripts/qml-smoke.sh for QML validation, or set VSHELL_DISABLE_INSTANCE_GUARD=1 to override.");
-            entrypoint.resolveGuard(true);
-        }
-
-        // A failed start emits no exited signal. Handle its stopped state before the startup deadline.
-        // exited() fires before running goes false on Quickshell 0.3.0, so a completed run has already resolved when this fires.
-        onRunningChanged: {
-            if (running || entrypoint.guardDisabled)
-                return;
-            entrypoint.failOpen("could not run " + Paths.vshellCli);
-        }
+    // A binding that runs before this declaration still reads the whole file: blockAllReads loads on first read.
+    FileView {
+        id: ownStat
+        path: "/proc/self/stat"
+        blockAllReads: true
     }
 
     // Quickshell 0.3.0 leaves QQmlEngine's quit()/exit() signals unconnected
@@ -119,16 +67,8 @@ ShellRoot {
         interval: 1000
         repeat: true
         triggeredOnStart: true
-        running: entrypoint.guardDuplicate
+        running: !entrypoint.shellAllowed
         onTriggered: Quickshell.execDetached(["sh", "-c", `kill -TERM ${Quickshell.processId}`])
-    }
-
-    // The guard must never be able to hang startup: answer or not, the shell
-    // comes up.
-    Timer {
-        interval: 2000
-        running: !entrypoint.guardDisabled && !entrypoint.guardResolved
-        onTriggered: entrypoint.failOpen("no answer within 2s")
     }
 
     Loader {

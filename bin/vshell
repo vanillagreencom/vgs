@@ -280,12 +280,13 @@ case "${1:-run}" in
     ;;
   run)
     shift || true
-    "$helper" fonts apply --json >/dev/null 2>&1 || true
     if _ensure_backend; then
       exec "$backend_bin" run "$@"
     fi
-    echo "vshell: backend unavailable (need Go toolchain and $backend_src; see $backend_build_log), starting Quickshell directly" >&2
-    exec qs -c "$shell_name" "$@"
+    # Only the runner holds the single-instance lock, so this shell starts without it.
+    echo "vshell: backend unavailable (need Go toolchain and $backend_src; see $backend_build_log), starting Quickshell directly without the single-instance lock" >&2
+    "$helper" fonts apply --json >/dev/null 2>&1 &
+    VSHELL_DISABLE_INSTANCE_GUARD=1 exec qs -c "$shell_name" "$@"
     ;;
   backend)
     shift || true
@@ -403,7 +404,6 @@ Usage:
   vshell ipc call <target> <function> [args...]
   vshell lock recover [--unlock]
   vshell instances list [--json]
-  vshell instances guard --pid <pid> [--shell-id <id>]
   vshell restart|status|logs
   vshell theme init|current|list|apply|import-colors|extract-wallpaper|set-wallpaper
   vshell theme apply-colors [--set role=#hex ...] [--persist] [--name <theme>]

@@ -17,7 +17,7 @@ QML draws the shell and coordinates services. A service owns long-lived state; a
 
 ## Invariants
 
-- Instance detection yields only when a live peer is provably older. Unavailable evidence permits startup. See `vgs_instance_report` in `bin/vshell_helper.py` and `test_duplicate_shell_guard` in `scripts/check-vshell-helper.py`.
+- Only the runner's direct child draws the desktop shell. `shell.qml` reads its parent pid from `/proc/self/stat` and compares it with `VGS_RUNNER_PID`, because every process the shell starts inherits that variable. The greeter and `VSHELL_DISABLE_INSTANCE_GUARD=1` skip the check. A refused shell draws nothing and signals its own exit. `scripts/test-shell-runner-guard.js` checks the parent pid test; the runner's lock is in [backend.md](backend.md).
 - Brightness pins use connector names, not position-dependent display labels. `scripts/check-display-config-fixtures.js` checks the shared Settings, Control Center and focused-screen readers.
 - Display naming selectors share the state owner's identifier transition. It moves complete backend settings and pending edits before preview or profile extraction. `scripts/check-display-config-fixtures.js` checks both formats, collision refusal and cancellation.
 - Plugin-backed properties remain bindings. Setters persist through the plugin service; dependent work responds to its change notification. See the plugin service implementations under `Modules/Plugins/`.

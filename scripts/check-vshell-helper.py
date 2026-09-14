@@ -3652,8 +3652,8 @@ def test_launcher_search_unicode_ranges_and_preview():
         assert_equal(folder_hits[0]["completion"], "~/dev/", "folder completion preserves tilde path")
 
 
-def test_duplicate_shell_guard():
-    """A second VGS shell must yield; the session shell must never be unseated."""
+def test_instance_listing():
+    """The listing holds live shells of this entrypoint, oldest first, and reports an unreadable registry."""
     shell_path = str(REPO_ROOT / "quickshell" / "vshell" / "shell.qml")
     session = {
         "pid": 100,
@@ -3662,7 +3662,7 @@ def test_duplicate_shell_guard():
         "config_path": shell_path,
         "launch_time": "2026-08-01T10:00:00",
     }
-    duplicate = {
+    younger = {
         "pid": 200,
         "id": "bbb",
         "shell_id": "shell-1",
@@ -3684,103 +3684,26 @@ def test_duplicate_shell_guard():
     alive = {100, 200, 300}
     helper._vgs_peer_alive = lambda pid: pid in alive
     try:
-        helper.qs_list_instances = lambda: {"ok": True, "instances": []}
-        report = helper.vgs_instance_report(pid=200)
-        assert_equal(report["duplicate"], False, "no peers means no duplicate")
-        assert_equal(report["reason"], "sole instance", "sole-instance reason")
+        def listed(entries):
+            helper.qs_list_instances = lambda: {"ok": True, "instances": entries}
+            return [entry["pid"] for entry in helper.vgs_instance_report(shell_path)["instances"]]
 
-        helper.qs_list_instances = lambda: {"ok": True, "instances": [session, other_app]}
-        report = helper.vgs_instance_report(pid=200, shell_id="shell-1")
-        assert_equal(report["duplicate"], True, "unregistered younger shell yields")
-        assert_equal(report["owner"]["pid"], 100, "oldest instance owns the session")
-        assert_equal([entry["pid"] for entry in report["instances"]], [100],
-                     "unrelated Quickshell applications are never counted")
-
-        helper.qs_list_instances = lambda: {"ok": True, "instances": [session, duplicate]}
-        report = helper.vgs_instance_report(pid=100, shell_id="shell-1")
-        assert_equal(report["duplicate"], False, "session shell keeps ownership")
-        report = helper.vgs_instance_report(pid=200, shell_id="shell-1")
-        assert_equal(report["duplicate"], True, "registered younger shell yields")
-
-        alive = {200}
-        report = helper.vgs_instance_report(pid=200, shell_id="shell-1")
-        assert_equal(report["duplicate"], False, "dead peers are ignored")
+        assert_equal(listed([]), [], "an empty registry lists no shells")
+        assert_equal(listed([younger, other_app, session]), [100, 200],
+                     "shells of this entrypoint list oldest first; other Quickshell applications are never listed")
+        alive = {200, 300}
+        assert_equal(listed([younger, session]), [200], "a registry entry whose process is gone is not listed")
         alive = {100, 200, 300}
-
-        report = helper.vgs_instance_report(pid=200, config_path=shell_path)
-        assert_equal(report["duplicate"], True, "config-path match detects duplicates")
-
-        # A registry that reports no launch time for the session shell must not
-        # invert ownership: an unknown launch time is not proof of age, so the
-        # session shell keeps running rather than terminating itself.
-        undated_session = {**session, "launch_time": ""}
-        helper.qs_list_instances = lambda: {"ok": True, "instances": [undated_session, duplicate]}
-        report = helper.vgs_instance_report(pid=100, shell_id="shell-1")
-        assert_equal(report["duplicate"], False,
-                     "session shell with an unknown launch time never yields")
-        assert_equal(report["owner"]["pid"], 100, "session shell stays the owner")
-        report = helper.vgs_instance_report(pid=200, shell_id="shell-1")
-        assert_equal(report["duplicate"], False,
-                     "an unprovable peer age abstains instead of guessing")
-
-        # An undated *peer* must not unseat a dated shell either. With no kernel
-        # start times available for these synthetic pids, neither side can be
-        # proven older, so both abstain rather than guess.
-        undated_duplicate = {**duplicate, "launch_time": ""}
-        helper.qs_list_instances = lambda: {"ok": True, "instances": [session, undated_duplicate]}
-        report = helper.vgs_instance_report(pid=100, shell_id="shell-1")
-        assert_equal(report["duplicate"], False, "dated session shell keeps ownership")
-        report = helper.vgs_instance_report(pid=200, shell_id="shell-1")
-        assert_equal(report["duplicate"], False, "an undated pair abstains rather than guessing")
-
-        tied = {**duplicate, "launch_time": session["launch_time"]}
-        helper.qs_list_instances = lambda: {"ok": True, "instances": [session, tied]}
-        report = helper.vgs_instance_report(pid=200, shell_id="shell-1")
-        assert_equal(report["duplicate"], True, "tied launch times break by pid")
-        report = helper.vgs_instance_report(pid=100, shell_id="shell-1")
-        assert_equal(report["duplicate"], False, "lower pid wins a tie")
+        assert_equal(listed([{**session, "launch_time": ""}, younger]), [200, 100],
+                     "an entry with no launch time lists last")
 
         helper.qs_list_instances = lambda: {"ok": False, "error": "qs missing", "instances": []}
-        report = helper.vgs_instance_report(pid=200, shell_id="shell-1")
-        assert_equal(report["duplicate"], False, "unavailable registry fails open")
-        assert_equal(report["supported"], False, "unavailable registry is reported")
+        report = helper.vgs_instance_report(shell_path)
+        assert_equal(report["ok"], False, "an unreadable registry is reported")
+        assert_equal(report["error"], "qs missing", "the registry error is carried through")
     finally:
         helper.qs_list_instances = original_list
         helper._vgs_peer_alive = original_alive
-
-
-def test_duplicate_shell_guard_uses_kernel_start_times():
-    """Real process ages decide ownership even when the registry has no metadata."""
-    shell_path = str(REPO_ROOT / "quickshell" / "vshell" / "shell.qml")
-    first = subprocess.Popen(["sleep", "30"])
-    # Kernel start times are jiffy-resolution; make the ordering unambiguous.
-    time.sleep(0.2)
-    second = subprocess.Popen(["sleep", "30"])
-    original_list = helper.qs_list_instances
-    original_alive = helper._vgs_peer_alive
-    try:
-        entries = [
-            {"pid": pid, "id": str(pid), "shell_id": "shell-1",
-             "config_path": shell_path, "launch_time": ""}
-            for pid in (second.pid, first.pid)
-        ]
-        helper.qs_list_instances = lambda: {"ok": True, "instances": entries}
-        # Real pids with real kernel start times, but they are `sleep`, not
-        # Quickshell: the ordering under test is _proc_start_ticks, so only
-        # liveness is stubbed.
-        helper._vgs_peer_alive = lambda pid: pid in {first.pid, second.pid}
-
-        report = helper.vgs_instance_report(pid=first.pid, shell_id="shell-1")
-        assert_equal(report["duplicate"], False, "the older process keeps ownership")
-        report = helper.vgs_instance_report(pid=second.pid, shell_id="shell-1")
-        assert_equal(report["duplicate"], True, "the younger process yields")
-        assert_equal(report["owner"]["pid"], first.pid, "owner is the older process")
-    finally:
-        helper.qs_list_instances = original_list
-        helper._vgs_peer_alive = original_alive
-        for process in (first, second):
-            process.terminate()
-            process.wait(timeout=5)
 
 
 def test_launcher_folder_opener_agreement():
@@ -11484,8 +11407,7 @@ def main():
     test_launcher_search_unicode_ranges_and_preview()
     test_launcher_folder_opener_agreement()
     test_launcher_zoxide_results()
-    test_duplicate_shell_guard()
-    test_duplicate_shell_guard_uses_kernel_start_times()
+    test_instance_listing()
     test_sudo_toggle_dropin_lifecycle()
     test_sudo_toggle_status_reads_flag_mirror()
     test_sudo_toggle_status_reports_other_passwordless_sources()

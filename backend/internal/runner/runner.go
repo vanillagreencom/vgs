@@ -1,11 +1,14 @@
 // Package runner owns the backend listener and starts the backend daemon and
-// Quickshell as children. It keeps the listener open during supervised backend
-// restarts so connections can queue in the accept backlog. If secure socket
-// creation fails, it starts Quickshell without the backend. Normal shutdown
-// closes the listener, removes runtime files, and waits for children.
+// Quickshell as children. It holds the session's single-instance lock for its
+// whole life and refuses to start when another runner holds it. It keeps the
+// listener open during supervised backend restarts so connections can queue in
+// the accept backlog. If secure socket creation fails, it starts Quickshell
+// without the backend. Normal shutdown closes the listener, removes runtime
+// files, and waits for children.
 package runner
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net"
@@ -15,8 +18,12 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
+	"time"
+
+	"vshell/backend/internal/execbound"
 )
 
 // Options configures a runner invocation.
@@ -34,6 +41,15 @@ func Run(opts Options) (int, error) {
 	if log == nil {
 		log = slog.Default()
 	}
+
+	// Take the lock before touching any runtime file, so a refused runner leaves
+	// the running session's socket and state alone.
+	lock, err := acquireInstanceLock(os.Getenv("XDG_RUNTIME_DIR"), log)
+	if err != nil {
+		return 1, err
+	}
+	defer lock.Close()
+	os.Setenv(runnerPIDEnv, strconv.Itoa(os.Getpid()))
 
 	// Install signal handling before any setup so a SIGTERM in the startup
 	// window is not the default (no-teardown) death.
@@ -183,6 +199,7 @@ func runQuickshell(log *slog.Logger, sigCh chan os.Signal, qsArgs []string, sock
 	if err := cmd.Start(); err != nil {
 		return 1, fmt.Errorf("start quickshell: %w", err)
 	}
+	go applyFonts(log)
 
 	waitCh := make(chan error, 1)
 	go func() { waitCh <- cmd.Wait() }()
@@ -200,6 +217,27 @@ func runQuickshell(log *slog.Logger, sigCh chan os.Signal, qsArgs []string, sock
 			log.Info("quickshell exited", "err", err)
 		}
 		return exitCode(cmd), nil
+	}
+}
+
+// fontsApplyTimeout is the bound SettingsData.qml also gives its fonts apply.
+const fontsApplyTimeout = 30 * time.Second
+
+// applyFonts rewrites the managed font configuration once per runner, after
+// Quickshell has started, so the rewrite and its font cache rebuild run beside
+// shell startup instead of before it.
+func applyFonts(log *slog.Logger) {
+	root := os.Getenv("VSHELL_ROOT")
+	if root == "" {
+		log.Warn("fonts apply skipped: VSHELL_ROOT is not set")
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), fontsApplyTimeout)
+	defer cancel()
+	helper := filepath.Join(root, "bin", "vshell-helper")
+	res, err := execbound.Command(ctx, helper, "fonts", "apply", "--json").WithLogger(log).CombinedOutput()
+	if err != nil {
+		log.Warn("fonts apply failed", "err", err, "output", strings.TrimSpace(string(res.Out)))
 	}
 }
 
