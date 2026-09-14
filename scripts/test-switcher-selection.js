@@ -626,26 +626,28 @@ test("applyBlueprint and setWallpaper answer empty for nothing, mint per call an
             "failure for anything thrown after the parse succeeded", 1]]);
 });
 
-test("wallpaper slot ownership is keyed on the request for rollback, persist and clear", () => {
+test("wallpaper slot ownership is keyed on the request and governs the highlight alone", () => {
     const svc = q("VGSThemeService.qml");
     // Key wallpaper ownership by request. A background current-theme refresh can change the path
-    // without superseding the apply that must update SessionData.
+    // without superseding the apply whose pick the highlight must keep showing.
     svc.requires(svc.body("_ownsWallpaperSlot"), "_ownsWallpaperSlot()",
         [["return _wallpaperSlotOwner === requestId;",
-            "one ownership test, keyed on the request, used by both the rollback and the persist", 1]]);
+            "one ownership test, keyed on the request", 1]]);
     svc.requires(svc.body("_rollbackWallpaper"), "_rollbackWallpaper()",
         [["if (_ownsWallpaperSlot(requestId))",
-            "a late failure must only roll back while it still owns the slot, or it reverts a newer successful apply", 1]]);
+            "a refusal must only roll back while it still owns the slot, or it takes the highlight " +
+            "off a later pick that is still queued behind it", 1]]);
     svc.requires(svc.body("setWallpaper"), "setWallpaper()", [
         ["_wallpaperSlotOwner = requestId;",
             "the dispatching request claims the slot, which is what makes the test immune to a " +
             "background read rewriting selectedWallpaper", 1],
-        ['if (typeof SessionData !== "undefined" && _ownsWallpaperSlot(requestId)) SessionData.setWallpaper(path);',
-            "and a late SUCCESS must not persist its wallpaper over a newer one either — refresh() " +
-            "restores selectedWallpaper, not SessionData, so nothing else undoes it", 1]]);
+        ['if (typeof SessionData !== "undefined") SessionData.setWallpaper(path);',
+            "and the session write is NOT gated on that slot: applies land in dispatch order, so " +
+            "every success commits its own wallpaper and session.json holds the last one that did. " +
+            "scripts/test-theme-apply-queue.js executes what gating it costs", 1]]);
     svc.requires(svc.body("clearWallpaper"), "clearWallpaper()",
         [['_wallpaperSlotOwner = "";',
-            "clearing releases the slot, or an apply still in flight persists its wallpaper over the clear", 1]]);
+            "clearing releases the slot, or a refused apply rolls the highlight back off the clear", 1]]);
 });
 
 test("refreshWallpapers records whose list it retained", () => {

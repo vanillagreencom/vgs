@@ -124,17 +124,19 @@ Singleton {
     property int _applyRequestSeq: 0
     // The apply request that last claimed `selectedWallpaper`, or "" when none
     // does. Keyed on the REQUEST, never the path — see `_ownsWallpaperSlot`.
+    // It governs that optimistic UI value alone. The session write is not gated
+    // on it: every apply that succeeds commits its own wallpaper.
     property string _wallpaperSlotOwner: ""
 
     // The apply whose helper process is running, or "" when none is. Only one
     // APPLY runs at a time: two helper processes race each other for the helper's
-    // own mutation flock, so the LAST writer of theme.json can be the OLDER
-    // request while `_wallpaperSlotOwner` persists the newer one into
-    // session.json. The desktop then shows one image while the palette on screen
-    // was derived from another. Dispatch order is the only thing that fixes
-    // execution order. The slot reaches `_runApply` alone; every other mutating
-    // subcommand this service launches still races an apply for that flock, and
-    // so does one MethodTheme launches, which D019 records.
+    // own mutation flock, so whichever wins it second is the last to write both
+    // the helper's state and, through its own callback, `session.json`. Two picks
+    // in quick succession would then settle on whichever the kernel let finish
+    // last rather than the one the user chose last. Dispatch order is the only
+    // thing that fixes execution order. The slot reaches `_runApply` alone; every
+    // other mutating subcommand this service launches still races an apply for
+    // that flock, and so does one MethodTheme launches, which D019 records.
     property string _applyDispatched: ""
     // Applies waiting for that slot, oldest first. First in, first out rather
     // than superseding the waiting one: `applyFinished` carries success or
@@ -861,11 +863,15 @@ Singleton {
                 const warnings = data.warnings || data.apply?.warnings || [];
                 if (data.saved)
                     _persistAppliedTheme(data.name || (data.apply && data.apply.name));
-                // Same ownership test the rollback uses: a LATE success from an
-                // apply that no longer owns the slot must not persist its
-                // wallpaper over a newer one that already moved the desktop on.
-                // `refresh()` restores `selectedWallpaper`, not SessionData.
-                if (typeof SessionData !== "undefined" && _ownsWallpaperSlot(requestId))
+                // Every success commits, in dispatch order, so what `session.json`
+                // holds is the last apply that landed. The ownership test that
+                // used to gate this was written for OVERLAPPING applies, where a
+                // late reply from an older one could overwrite a newer; one apply
+                // at a time removed that premise, and the test then suppressed
+                // the write whenever a later pick was still queued, leaving the
+                // desktop on the image before this one while the palette came
+                // from this one.
+                if (typeof SessionData !== "undefined")
                     SessionData.setWallpaper(path);
                 _markGreeterThemeSyncPending();
                 refresh();
@@ -880,16 +886,20 @@ Singleton {
         return requestId;
     }
 
-    // True while `requestId` is still the apply that claimed `selectedWallpaper`.
-    // Both the rollback and the success-path persist test it, so no late reply
-    // writes over a newer apply, and a mid-apply `refreshCurrent` cannot void it.
+    // True while `requestId` is still the newest apply to have claimed
+    // `selectedWallpaper`. A request claims it when it is MADE, so a queued
+    // later pick owns the slot while an earlier one is still running: that is
+    // what stops the earlier one's failure rolling the highlight back off the
+    // pick the user has already moved to. A mid-apply `refreshCurrent` cannot
+    // void it either, since it is keyed on the request and never the path.
     function _ownsWallpaperSlot(requestId) {
         return _wallpaperSlotOwner === requestId;
     }
 
-    // Undoes one optimistic `setWallpaper` write, but only while that call still
-    // owns the slot: a LATE failure from an older overlapping call must not
-    // revert a newer apply that already succeeded and moved the desktop on.
+    // Undoes one optimistic `selectedWallpaper` write, but only while that call
+    // still owns the slot: a refusal must not take the highlight off a later
+    // pick that is still queued behind it. The desktop is untouched either way —
+    // `session.json` is written only by a success.
     function _rollbackWallpaper(requestId, previousWallpaper) {
         if (_ownsWallpaperSlot(requestId))
             selectedWallpaper = previousWallpaper;
@@ -1127,7 +1137,7 @@ Singleton {
 
     function clearWallpaper() {
         selectedWallpaper = "";
-        // Releases the slot: an in-flight apply must not persist over this clear.
+        // Releases the slot so nothing rolls the highlight back off the clear.
         _wallpaperSlotOwner = "";
         _run("vgs-theme-clear-wallpaper", ["theme", "clear-wallpaper", "--json"], function(output, exitCode, stderr) {
             if (exitCode !== 0) {

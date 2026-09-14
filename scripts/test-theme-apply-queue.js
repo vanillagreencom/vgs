@@ -138,3 +138,73 @@ test("a completion handler that throws still leaves the next apply running", () 
         "past the signals a throw would strand the queue behind a slot nothing frees, " +
         "killing every later apply for the life of the session");
 });
+
+// The wallpaper apply itself, so the session write can be observed where it is
+// made. Only the leaves are stubbed: `setWallpaper`, the slot helpers and the
+// queue are the shipped functions.
+const WALLPAPER_NAMES = ["setWallpaper", "_beginApply", "_ownsWallpaperSlot", "_rollbackWallpaper",
+    "_runApply", "_dispatchApply", "_finishApply"];
+const WALLPAPER_SIGNATURES = {
+    setWallpaper: "(path, extractColors, mode)",
+    _beginApply: "(label)",
+    _ownsWallpaperSlot: "(requestId)",
+    _rollbackWallpaper: "(requestId, previousWallpaper)",
+    _finishApply: "(requestId, success, message)"
+};
+
+function wallpaperServiceUnderTest() {
+    const committed = [];
+    const running = [];
+    const root = {
+        _pending: {},
+        _applyInFlight: {},
+        _applyRequestSeq: 0,
+        _wallpaperSlotOwner: "",
+        _applyDispatched: "",
+        _applyQueue: [],
+        selectedWallpaper: "",
+        lastError: "",
+        SessionData: { setWallpaper: path => committed.push(path) },
+        SettingsData: {},
+        _run(requestId, args, callback) {
+            running.push(exitCode => callback(exitCode === 0 ? "{}" : "", exitCode, ""));
+        },
+        _persistAppliedTheme() {},
+        _markGreeterThemeSyncPending() {},
+        refresh() {},
+        applyCompleted() {},
+        applyFinished() {}
+    };
+    for (const name of WALLPAPER_NAMES) {
+        const args = WALLPAPER_SIGNATURES[name] || "(requestId, args, callback)";
+        root[name] = new Function("root",
+            `with (root) { return function ${name}${args} ${service.body(name)} }`)(root);
+    }
+    return {
+        committed,
+        root,
+        pick: path => root.setWallpaper(path, false),
+        answer(success) {
+            const exit = running.shift();
+            assert.ok(exit, "no helper process was running to answer");
+            exit(success ? 0 : 1);
+        }
+    };
+}
+
+test("a wallpaper apply that succeeds commits its own wallpaper, queued pick or not", () => {
+    const svc = wallpaperServiceUnderTest();
+    svc.pick("/a.jpg");
+    svc.pick("/b.jpg");
+    svc.answer(true);
+    assert.deepEqual(svc.committed, ["/a.jpg"],
+        "the running apply succeeded, so session.json holds its wallpaper. Gating this on the " +
+        "wallpaper slot skips it whenever a later pick is already queued, and the desktop then " +
+        "keeps the image from before this apply while the palette on screen came from it");
+
+    svc.answer(false);
+    assert.deepEqual(svc.committed, ["/a.jpg"],
+        "a refused apply commits nothing, so the last wallpaper that landed is what stays");
+    assert.equal(svc.root.selectedWallpaper, "/a.jpg",
+        "and the highlight rolls back to it, since the refused pick still owned the slot");
+});
