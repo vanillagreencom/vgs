@@ -102,3 +102,47 @@ func TestCloseDuringTheSettleWindowCancelsTheRun(t *testing.T) {
 	case <-time.After(settle * 4):
 	}
 }
+
+// A select whose cases are both ready picks between them uniformly, so a kick
+// pending when Close lands takes the kick about half the time. The run must
+// still not go ahead: at logout that is one more nmcli, lpstat, hyprctl or
+// helper child per service, and for bluez a sweep of a D-Bus connection its own
+// Close is shutting.
+func TestNoRunStartsAfterClose(t *testing.T) {
+	for _, row := range []struct {
+		name  string
+		delay time.Duration
+	}{
+		{"no settle window", 0},
+		{"settle window already elapsed", time.Nanosecond},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			// Many iterations: one pass proves nothing when the branch that
+			// reaches the run is chosen at random.
+			for i := 0; i < 500; i++ {
+				l := &loop{
+					kick:  make(chan struct{}, 1),
+					stop:  make(chan struct{}),
+					delay: row.delay,
+				}
+				// A kick already pending and stop already closed, so both cases
+				// of the first select are ready.
+				l.kick <- struct{}{}
+				l.Close()
+
+				ran := false
+				l.loop(func() { ran = true })
+				if ran {
+					t.Fatalf("a run started after Close on iteration %d", i)
+				}
+			}
+		})
+	}
+}
+
+// Close runs on shutdown paths that can overlap, and it closes a channel.
+func TestCloseIsSafeToRepeat(t *testing.T) {
+	l := newLoop(0, nil, func() {})
+	l.Close()
+	l.Close()
+}

@@ -25,7 +25,13 @@ type loop struct {
 	// goes ahead immediately instead of settling first. It may be nil, which
 	// always settles.
 	skipSettle func() bool
-	once       sync.Once
+
+	// mu guards closed, which is the one thing that decides whether a run goes
+	// ahead. The selects below can find stop and their other case ready at the
+	// same moment, and Go picks between ready cases uniformly, so neither is a
+	// reliable stop on its own.
+	mu     sync.Mutex
+	closed bool
 }
 
 // newLoop starts the loop's goroutine. delay is the settle window between a
@@ -59,7 +65,19 @@ func (l *loop) Kick() {
 // call more than once, because a service's Close runs on shutdown paths that
 // can overlap.
 func (l *loop) Close() {
-	l.once.Do(func() { close(l.stop) })
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.closed {
+		return
+	}
+	l.closed = true
+	close(l.stop)
+}
+
+func (l *loop) isClosed() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.closed
 }
 
 func (l *loop) loop(run func()) {
@@ -75,6 +93,14 @@ func (l *loop) loop(run func()) {
 				return
 			case <-time.After(l.delay):
 			}
+		}
+		// The selects above only decide when to get here; either can pick its
+		// non-stop case while Close is landing. This is the single decision to
+		// run, and it takes the same lock Close does, so a Close that has
+		// returned is always seen here: the service's command is never forked
+		// after its Close.
+		if l.isClosed() {
+			return
 		}
 		run()
 	}
