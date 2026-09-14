@@ -221,23 +221,7 @@ Singleton {
                 delete knownManifests[path];
                 delete pathToPluginId[path];
             });
-            for (const pid in removedPluginIds) {
-                const wasBundled = _bundledPluginIds[pid] === true;
-                // Before promoting: a removed bundled manifest must stop
-                // marking the id always-available, or a same-id user package
-                // stays auto-enabled and undisableable for the process
-                // lifetime, and stays blocked from being promoted at all.
-                _refreshBundledId(pid);
-                if (availablePlugins[pid])
-                    continue;
-                // Wait for promotion to settle before reporting that a bundled id has no loaded owner.
-                promoteShadowedPlugin(pid, function (ok) {
-                    if (wasBundled && !ok)
-                        root._reportIdLeftEmpty(pid);
-                });
-            }
-            _updateAvailablePluginsList();
-            pluginListUpdated();
+            _settleReleasedIds(Object.keys(removedPluginIds));
         }
     }
 
@@ -404,7 +388,11 @@ Singleton {
                 fv.destroy();
             }
             onLoadFailed: err => {
-                root._reportRereadRefusal(absPath, I18n.tr("The manifest could not be opened."), String(err));
+                // A manifest that is gone is a removal, not a refused edit, and
+                // resyncAll's removal sweep owns that case. Report only a file
+                // that is on disk and still could not be read.
+                if (err !== FileViewError.FileNotFound)
+                    root._reportRereadRefusal(absPath, I18n.tr("The manifest could not be opened."), FileViewError.toString(err));
                 root.log.warn("manifest load failed", absPath, err);
                 fv.destroy();
             }
@@ -454,45 +442,86 @@ Singleton {
         return !!(plugin && plugin.surfaces && plugin.surfaces.includes(surface));
     }
 
+    // What has to happen once ids may have lost their owner, whether their
+    // manifests vanished from disk or the paths that held them now claim
+    // something else. The list refresh closes it: unregisterPluginByPath has
+    // already taken the records out of availablePlugins, and availablePluginsList
+    // is what the settings UI binds, so leaving it unwritten shows a row for a
+    // plugin that was just unloaded.
+    function _settleReleasedIds(pluginIds) {
+        pluginIds.forEach(function (pid) {
+            const wasBundled = root._bundledPluginIds[pid] === true;
+            // Before promoting: a released id must stop being marked
+            // always-available while no shipped manifest claims it, or a same-id
+            // user package stays auto-enabled and undisableable for the process
+            // lifetime, and stays blocked from being promoted at all.
+            root._refreshBundledId(pid);
+            if (root.availablePlugins[pid])
+                return;
+            // Wait for promotion to settle before reporting that a bundled id has no loaded owner.
+            root.promoteShadowedPlugin(pid, function (ok) {
+                if (wasBundled && !ok)
+                    root._reportIdLeftEmpty(pid);
+            });
+        });
+        _updateAvailablePluginsList();
+        pluginListUpdated();
+    }
+
     // A re-read can carry a different id than the path last claimed. The removal
     // sweep in resyncAll cannot reach the id the path is abandoning, because that
     // loop runs only for paths absent from disk and this path is still there.
-    // Release it here with the sequence that sweep owns, or a renamed package
-    // leaves its previous id registered and running with nothing claiming it.
+    // Release it here, or a renamed package leaves its previous id registered and
+    // running with nothing claiming it.
     function _releaseRenamedPath(absPath, incomingId) {
         const prevId = pathToPluginId[absPath];
         if (!prevId || prevId === incomingId)
             return;
         unregisterPluginByPath(absPath, prevId);
         delete pathToPluginId[absPath];
-        const wasBundled = _bundledPluginIds[prevId] === true;
-        // Before promoting: the vacated id must stop being marked
-        // always-available while no shipped manifest claims it.
-        _refreshBundledId(prevId);
-        if (availablePlugins[prevId])
-            return;
-        promoteShadowedPlugin(prevId, function (ok) {
-            if (wasBundled && !ok)
-                root._reportIdLeftEmpty(prevId);
-        });
+        _settleReleasedIds([prevId]);
     }
 
-    // A first read of an unknown path that fails leaves nothing running: the
-    // package never appears, and the log line is the whole story. A re-read of
-    // the path a registered package is running from is not that. The edit is
-    // refused while the previous read's package keeps working, so without a
-    // report the user sees a scan that did nothing and no reason for it.
+    // Report a refused read of a path that already carries a verdict, and name
+    // the path rather than whatever owns its id: a candidate blocked by a
+    // bundled-id collision shares the id with the module that owns it, and the
+    // user edited the file, not the module. pathToPluginId is written only once a
+    // manifest has parsed, so a first read of an unknown path still reports
+    // nothing, and no re-read entry point clears that map before issuing reads.
     function _reportRereadRefusal(absPath, reason, details) {
         const pluginId = pathToPluginId[absPath];
-        const owner = pluginId ? availablePlugins[pluginId] : null;
-        if (!owner || owner.manifestPath !== absPath)
+        if (!pluginId)
             return;
-        _setLoadError(pluginId, {
-            "title": reason,
-            "details": details || ""
-        });
-        log.error("edited manifest refused, the package keeps running from the previous read:", absPath, reason, details || "");
-        ToastService.showError(I18n.tr("Manifest refused: %1").arg(owner.name || pluginId), details ? (reason + "\n\n" + details) : reason, "", "plugin-manifest-" + pluginId);
+        // Attribute the error to the id only when this path is the record held
+        // under it. forceRescanPlugin drops the availablePlugins record before
+        // re-reading without unloading, so the loaded record answers for it.
+        const record = availablePlugins[pluginId] || loadedPlugins[pluginId] || null;
+        if (record && record.manifestPath === absPath) {
+            // Marked so a later read of this path can clear it. A startup-gate
+            // error under the same id is about a package that did compile and
+            // load, and a manifest read says nothing about that.
+            _setLoadError(pluginId, {
+                "title": reason,
+                "details": details || "",
+                "refusal": true
+            });
+        }
+        log.error("manifest refused, its previous record stands:", absPath, reason, details || "");
+        const body = details ? (absPath + "\n\n" + reason + "\n\n" + details) : (absPath + "\n\n" + reason);
+        ToastService.showError(I18n.tr("Plugin manifest refused"), body, "", "plugin-manifest-" + absPath);
+    }
+
+    // A manifest that parses answers the refusal recorded for its path. Clear
+    // only a refusal: every other load error under the id belongs to a package
+    // that got further than being read.
+    function _clearRefusalError(absPath) {
+        const pluginId = pathToPluginId[absPath];
+        if (!pluginId)
+            return;
+        const err = pluginLoadErrors[pluginId];
+        if (!err || err.refusal !== true)
+            return;
+        _clearLoadError(pluginId);
     }
 
     function _onManifestParsed(absPath, manifest, sourceTag, mtimeEpochMs) {
@@ -528,6 +557,7 @@ Singleton {
             return;
         }
 
+        _clearRefusalError(absPath);
         _releaseRenamedPath(absPath, manifest.id);
 
         const info = {};
@@ -620,10 +650,10 @@ Singleton {
             availablePlugins = newMap;
             pathToPluginId[absPath] = manifest.id;
             // A fresh record, so a demoted flag this path carried does not
-            // survive the re-read. That is deliberate: an explicit scan is how a
-            // user who repaired a demoted override has it judged again without
-            // restarting the shell. The demotion is re-earned below, because the
-            // override still has to pass its own startup gate to take the id.
+            // survive the re-read. That is deliberate: it is how a user who
+            // repaired a demoted override has it judged again without restarting
+            // the shell. The override still has to pass its own startup gate to
+            // take the id.
             knownManifests[absPath] = {
                 mtime: mtimeEpochMs,
                 source: sourceTag,
@@ -1016,9 +1046,10 @@ Singleton {
         // for colliding with it are ordinary plugins again — including one that
         // was demoted, whose reason for being refused was the shipped competitor
         // that has now gone. It gets promoted, runs its own startup gate like any
-        // plugin, and fails visibly if it is still broken. This is one of the two
-        // places a demotion is cleared; a re-read of the demoted manifest itself
-        // is the other, in the replace branch of _onManifestParsed.
+        // plugin, and fails visibly if it is still broken. A demotion lives in a
+        // manifest's knownManifests record, so any write or deletion of that
+        // record drops it; forceRescanPlugin deletes the record outright before
+        // re-reading.
         for (const path in knownManifests) {
             const meta = knownManifests[path];
             if (!meta || pathToPluginId[path] !== pluginId)
@@ -1699,8 +1730,9 @@ Singleton {
 
     // Report component load errors because these plugins supply visible product controls.
     onPluginLoadFailed: (pluginId, error) => {
-        // The startup-gate path records the error first and raises a richer
-        // toast of its own; do not replace it with this generic one.
+        // Every path that records a load error reports it itself: the startup
+        // gate with a richer toast, a refused manifest read with one naming the
+        // file. Do not replace either with this generic one.
         if (pluginLoadErrors[pluginId])
             return;
         const plugin = availablePlugins[pluginId];

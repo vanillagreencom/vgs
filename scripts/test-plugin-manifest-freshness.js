@@ -22,7 +22,10 @@ const source = fs.readFileSync(SERVICE, "utf8");
 
 const bodies = {
     resyncAll: extractBlock(source, "function resyncAll()"),
-    scanPlugins: extractBlock(source, "function scanPlugins()")
+    scanPlugins: extractBlock(source, "function scanPlugins()"),
+    // The per-id release tail, shared with the rename path below. Bound here as
+    // shipped so the removal sweep is tested through the same function.
+    settleReleasedIds: extractBlock(source, "function _settleReleasedIds(pluginIds)")
 };
 
 const USER_DIR = "/home/u/.config/vshell/plugins";
@@ -90,6 +93,7 @@ function service(entries, known) {
     };
 
     root.stubs = scope;
+    root._settleReleasedIds = ids => callInScope(bodies.settleReleasedIds, root, scope, ["pluginIds"], [ids]);
     // Return the manifest paths this resync actually read from disk.
     root.resync = () => {
         root.reads.length = 0;
@@ -181,7 +185,15 @@ const parsed = {
     setLoadError: extractBlock(source, "function _setLoadError(pluginId, err)"),
     isPluginLoaded: extractBlock(source, "function isPluginLoaded(pluginId)"),
     fvOnLoaded: extractBlock(source, "onLoaded:", source.indexOf("id: manifestFvComp")),
-    fvOnLoadFailed: extractBlock(source, "onLoadFailed: err =>", source.indexOf("id: manifestFvComp"))
+    fvOnLoadFailed: extractBlock(source, "onLoadFailed: err =>", source.indexOf("id: manifestFvComp")),
+    settleReleasedIds: extractBlock(source, "function _settleReleasedIds(pluginIds)"),
+    clearRefusalError: extractBlock(source, "function _clearRefusalError(absPath)"),
+    clearLoadError: extractBlock(source, "function _clearLoadError(pluginId)"),
+    refreshBundledId: extractBlock(source, "function _refreshBundledId(pluginId)"),
+    hasShippedManifest: extractBlock(source, "function _hasShippedManifest(pluginId)"),
+    updateAvailablePluginsList: extractBlock(source, "function _updateAvailablePluginsList()"),
+    knownPathsFor: extractBlock(source, "function _knownPathsFor(pluginId)"),
+    forceRescanPlugin: extractBlock(source, "function forceRescanPlugin(pluginId)")
 };
 
 // The override policy the shipped file already exports to Node for test-bundled-override.js.
@@ -217,21 +229,36 @@ function loader(registered) {
         _auditBundledRequirement: () => {},
         _reportBundledCollision: () => {},
         _cleanupPluginStateWriter: () => {},
-        _updateAvailablePluginsList: () => {},
-        pluginListUpdated: () => {},
+        pluginListUpdated: () => { root.listSignals++; },
         pluginUnloaded: () => {},
         _settlePromotion: () => {},
+        _reportedCollisions: {},
+        availablePluginsList: [],
+        listSignals: 0,
+        reads: [],
         runStartupGate: id => root.gated.push(id),
         _gateThenSwap: id => root.gated.push(id),
-        _refreshBundledId: () => {},
         _reportIdLeftEmpty: () => {},
-        promoteShadowedPlugin: id => root.promoted.push(id)
+        loadPluginManifestFile: (path, sourceTag) => root.reads.push(path),
+        // Record the claimed paths as they stand when promotion starts: a path
+        // still claiming the id it is abandoning would be re-read by the real
+        // promotion and could only expire on the promotion deadline.
+        promoteShadowedPlugin: id => root.promoted.push({ id, claimed: Object.keys(root.pathToPluginId) })
     };
 
     const scope = {
         I18n: { tr: text => ({ arg: value => text.replace("%1", value), toString: () => text }) },
         ToastService: { showError: (title, body) => root.toasts.push({ title: String(title), body: String(body) }) },
-        SettingsData: { getPluginSetting: (id, key, fallback) => fallback }
+        SettingsData: { getPluginSetting: (id, key, fallback) => fallback },
+        // Quickshell's FileViewError enum, in its shipped order.
+        FileViewError: {
+            Success: 0,
+            Unknown: 1,
+            FileNotFound: 2,
+            PermissionDenied: 3,
+            NotAFile: 4,
+            toString: value => ["Success", "Unknown", "FileNotFound", "PermissionDenied", "NotAFile"][value]
+        }
     };
 
     const bind = (name, body, parameters) => {
@@ -246,8 +273,16 @@ function loader(registered) {
     bind("_relinkLoadedRecord", parsed.relinkLoadedRecord, ["pluginId", "info", "absPath"]);
     bind("unloadPlugin", parsed.unloadPlugin, ["pluginId"]);
     bind("unregisterPluginByPath", parsed.unregisterPluginByPath, ["absPath", "pluginId"]);
+    bind("_updateAvailablePluginsList", parsed.updateAvailablePluginsList, []);
+    bind("_hasShippedManifest", parsed.hasShippedManifest, ["pluginId"]);
+    bind("_refreshBundledId", parsed.refreshBundledId, ["pluginId"]);
+    bind("_settleReleasedIds", parsed.settleReleasedIds, ["pluginIds"]);
     bind("_releaseRenamedPath", parsed.releaseRenamedPath, ["absPath", "incomingId"]);
+    bind("_clearLoadError", parsed.clearLoadError, ["pluginId"]);
+    bind("_clearRefusalError", parsed.clearRefusalError, ["absPath"]);
     bind("_reportRereadRefusal", parsed.reportRereadRefusal, ["absPath", "reason", "details"]);
+    bind("_knownPathsFor", parsed.knownPathsFor, ["pluginId"]);
+    bind("forceRescanPlugin", parsed.forceRescanPlugin, ["pluginId"]);
     bind("_bundledOverrideDecision", extractBlock(policy[1], "function _bundledOverrideDecision(input)"), ["input"]);
     bind("_declaresBundledOverride", extractBlock(policy[1], "function _declaresBundledOverride(manifest, pluginId)"), ["manifest", "pluginId"]);
     bind("_displacesLoadedPackage", extractBlock(policy[1], "function _displacesLoadedPackage(existing, incomingPath)"), ["existing", "incomingPath"]);
@@ -271,7 +306,14 @@ function loader(registered) {
     };
     root.fvLoadFailed = err => callInScope(parsed.fvOnLoadFailed, view, scope, ["err"], [err]);
 
+    // A path always claims an id once its manifest has parsed. Owning that id is
+    // separate: the block and reclaim branches leave a second path claiming an id
+    // whose record lives elsewhere, which is what a blocked duplicate looks like.
     for (const entry of registered) {
+        root.pathToPluginId[entry.path] = entry.id;
+        root.knownManifests[entry.path] = Object.assign({ source: entry.source }, entry.meta || {});
+        if (entry.owner === false)
+            continue;
         const record = {
             id: entry.id,
             name: entry.id,
@@ -283,12 +325,12 @@ function loader(registered) {
         };
         root.availablePlugins[entry.id] = record;
         root.loadedPlugins[entry.id] = record;
-        root.pathToPluginId[entry.path] = entry.id;
-        root.knownManifests[entry.path] = { source: entry.source };
         root.pluginWidgetComponents[entry.id] = { surface: "widget" };
         if (entry.bundledId)
             root._bundledPluginIds[entry.id] = true;
     }
+    root._updateAvailablePluginsList();
+    root.listSignals = 0;
     return root;
 }
 
@@ -313,15 +355,122 @@ test("a bundled id vacated by a rename is offered back to its other claimants", 
     // carrying overridesBundled, which the reclaim path refuses to take back and
     // which hides the disable control for an entry nothing claims.
     const svc = loader([
-        { id: "vgsMenu", path: USER, source: "user", bundledId: true, alwaysAvailable: true, overridesBundled: true }
+        { id: "vgsMenu", path: USER, source: "user", bundledId: true, alwaysAvailable: true, overridesBundled: true },
+        { id: "vgsMenu", path: BUNDLED, source: "bundled", owner: false }
     ]);
-    svc.knownManifests[BUNDLED] = { source: "bundled" };
-    svc.pathToPluginId[BUNDLED] = "vgsMenu";
 
     svc._onManifestParsed(USER, manifest({ id: "renamed", name: "Renamed" }), "user", 1);
 
     assert.equal("vgsMenu" in svc.availablePlugins, false, "the vacated bundled id must leave availablePlugins");
-    assert.deepEqual(svc.promoted, ["vgsMenu"], "the vacated bundled id must be offered to its shipped manifest");
+    assert.deepEqual(svc.promoted.map(p => p.id), ["vgsMenu"], "the vacated bundled id must be offered to its shipped manifest");
+    assert.equal(svc.promoted[0].claimed.includes(USER), false,
+        "the renamed path must have given up its old id before the promotion reads");
+});
+
+test("a rename into a bundled id with no override declaration refreshes the list Settings binds", () => {
+    // The block branch returns before the list refresh, so without one in the
+    // release the abandoned id stays in availablePluginsList after being unloaded:
+    // Settings shows a row whose enable toggle reaches loadPlugin's not-found branch.
+    const svc = loader([
+        { id: "mine", path: USER, source: "user" },
+        { id: "vgsMenu", path: BUNDLED, source: "bundled", bundledId: true, alwaysAvailable: true }
+    ]);
+
+    svc._onManifestParsed(USER, manifest({ id: "vgsMenu", name: "VGS Menu" }), "user", 1);
+
+    assert.equal("mine" in svc.availablePlugins, false, "the abandoned id must leave availablePlugins");
+    assert.deepEqual(svc.availablePluginsList.map(r => r.id), ["vgsMenu"],
+        "the abandoned id must leave the list the settings UI binds");
+    assert.ok(svc.listSignals > 0, "the release must announce the change");
+});
+
+// One fixture for the states a second claimant produces: the bundled module owns
+// the id at its own path while a user package claims the same id from another.
+function collision(meta) {
+    return loader([
+        { id: "vgsMenu", path: BUNDLED, source: "bundled", bundledId: true, alwaysAvailable: true },
+        { id: "vgsMenu", path: USER, source: "user", owner: false, meta: meta || { blocked: "bundled" } }
+    ]);
+}
+
+test("a refused read of a blocked duplicate is reported without blaming the module that owns the id", () => {
+    // This is the package the architecture doc tells the user to repair by adding
+    // an overrides declaration and scanning. A typo in it must reach the user, and
+    // must not record a parse error against the bundled module that is running.
+    const svc = collision();
+    svc._onManifestParsed(USER, { name: "Mine" }, "user", 1);
+
+    assert.equal(svc.toasts.length, 1, "the blocked duplicate's refusal must reach the user");
+    assert.ok(svc.toasts[0].body.includes(USER), "the report must name the refused file");
+    assert.deepEqual(svc.pluginLoadErrors, {}, "no error may be recorded against the owner of the id");
+    assert.equal(svc.availablePlugins.vgsMenu.manifestPath, BUNDLED, "the owner record must be untouched");
+});
+
+test("renaming a blocked duplicate leaves the running owner alone", () => {
+    // Promoting an id that still has a running owner deletes that owner's
+    // knownManifests record and re-reads it, tearing down and reloading a plugin
+    // because an unrelated shadow copy was renamed.
+    const svc = collision();
+    svc._onManifestParsed(USER, manifest({ id: "renamed", name: "Renamed" }), "user", 1);
+
+    assert.deepEqual(svc.promoted, [], "an id with a running owner must not be promoted");
+    assert.ok(svc.knownManifests[BUNDLED], "the running owner's manifest record must survive");
+    assert.equal(svc.availablePlugins.vgsMenu.loaded, true, "the running owner must stay loaded");
+});
+
+test("a vacated bundled id with no usable shipped manifest stops being always-available", () => {
+    // Left marked, the id keeps hiding the disable control through
+    // isAlwaysAvailablePlugin while nothing good on disk claims it.
+    const svc = loader([
+        { id: "vgsMenu", path: USER, source: "user", bundledId: true, alwaysAvailable: true, overridesBundled: true },
+        { id: "vgsMenu", path: BUNDLED, source: "bundled", owner: false, meta: { bad: true } }
+    ]);
+
+    svc._onManifestParsed(USER, manifest({ id: "renamed", name: "Renamed" }), "user", 1);
+
+    assert.equal("vgsMenu" in svc._bundledPluginIds, false,
+        "an id with no usable shipped manifest must stop being marked always-available");
+    assert.deepEqual(svc.promoted.map(p => p.id), ["vgsMenu"], "the vacated id must still be offered to its claimants");
+});
+
+test("a refusal on the rescan entry point is reported", () => {
+    // forceRescanPlugin drops the availablePlugins record before its reads and
+    // never unloads, so a predicate asking who currently owns the id answers no
+    // for every refusal a rescan produces while the package is still running.
+    const svc = loader([{ id: "mine", path: USER, source: "user" }]);
+    assert.equal(svc.forceRescanPlugin("mine"), true, "the rescan must find the manifest");
+    assert.deepEqual(svc.reads, [USER], "the rescan must re-read the manifest");
+
+    svc._onManifestParsed(USER, { name: "Mine" }, "user", 1);
+
+    assert.equal(svc.toasts.length, 1, "a refusal during a rescan must reach the user");
+    assert.ok(svc.pluginLoadErrors.mine, "the refusal must be recorded against the package being rescanned");
+});
+
+test("a manifest that parses answers the refusal recorded for its path", () => {
+    // Left standing, the record makes plugin status name a cause that no longer
+    // exists, and onPluginLoadFailed returns early for every later component load
+    // failure of that plugin, so the only report the user would have had is gone.
+    const svc = loader([{ id: "mine", path: USER, source: "user" }]);
+    svc._onManifestParsed(USER, { name: "Mine" }, "user", 1);
+    assert.ok(svc.pluginLoadErrors.mine, "the refusal must be recorded first");
+
+    svc._onManifestParsed(USER, manifest(), "user", 1);
+
+    assert.deepEqual(svc.pluginLoadErrors, {}, "a manifest that parses must clear the refusal");
+    assert.equal(svc.availablePlugins.mine.loaded, true, "the package must still be loaded");
+});
+
+test("a load error that is not a refusal survives a manifest that parses", () => {
+    // Clearing unconditionally would wipe a live startup-gate error, which is
+    // about a package that did compile and load.
+    const svc = loader([{ id: "mine", path: USER, source: "user" }]);
+    svc._setLoadError("mine", { title: "Startup check failed", details: "" });
+
+    svc._onManifestParsed(USER, manifest(), "user", 1);
+
+    assert.equal(svc.pluginLoadErrors.mine.title, "Startup check failed",
+        "a startup-gate error must survive a manifest read");
 });
 
 test("a re-read carrying the same id releases nothing", () => {
@@ -338,7 +487,7 @@ test("a re-read carrying the same id releases nothing", () => {
 // The first two rows run the shipped FileView handlers; the last two run the loader.
 const REFUSALS = [
     ["the file no longer parses", svc => svc.fvLoaded("{ not json"), "not valid JSON"],
-    ["the file could not be opened", svc => svc.fvLoadFailed("FileNotFound"), "could not be opened"],
+    ["the file is there but unreadable", svc => svc.fvLoadFailed(3), "could not be opened"],
     ["a required field was deleted", svc => svc._onManifestParsed(USER, { name: "Mine" }, "user", 1), "missing its id"],
     ["every component surface was removed", svc => svc._onManifestParsed(USER, manifest({ component: "", components: {} }), "user", 1), "no valid component surface"]
 ];
@@ -351,8 +500,18 @@ test("a re-read the loader cannot use reports the refusal and leaves the package
         assert.equal(svc.availablePlugins.mine.loaded, true, `${why}: the package must keep running`);
         assert.equal(svc.toasts.length, 1, `${why}: the refusal must reach the user`);
         assert.match(svc.toasts[0].body, new RegExp(expected), `${why}: the report must name the cause`);
-        assert.ok(svc.pluginLoadErrors.mine, `${why}: the refusal must be recorded for the IPC reader`);
+        assert.ok(svc.pluginLoadErrors.mine, `${why}: the refusal must be recorded`);
     }
+});
+
+test("a manifest that is gone is left to the removal sweep rather than reported", () => {
+    // The directory listing the watchers produce names a plugin.json whether or
+    // not the file is there, so a removed manifest reaches this read. Reporting it
+    // tells the user their edit was refused when they deleted the package.
+    const svc = loader([{ id: "mine", path: USER, source: "user" }]);
+    svc.fvLoadFailed(2);
+    assert.deepEqual(svc.toasts, [], "a missing manifest must raise no refusal");
+    assert.deepEqual(svc.pluginLoadErrors, {}, "a missing manifest must record no load error");
 });
 
 test("a first read of an unregistered path reports no refusal", () => {
