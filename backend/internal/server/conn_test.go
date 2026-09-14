@@ -1,21 +1,18 @@
 package server
 
 import (
-	"encoding/json"
 	"net"
 	"path/filepath"
 	"strconv"
-	"sync"
 	"testing"
 	"time"
 
 	"vshell/backend/internal/protocol"
 )
 
-// newQueueConn builds a conn over a real Unix socket without starting its
-// writer goroutine, so a test can inspect the outbound queue between an enqueue
-// and the write that would drain it.
-func newQueueConn(t *testing.T) *conn {
+// newIdleConn builds a conn over a real Unix socket without starting its writer
+// goroutine, so a test can inspect what the peer would receive.
+func newIdleConn(t *testing.T) *conn {
 	t.Helper()
 	sock := filepath.Join(t.TempDir(), "q.sock")
 	ln, err := net.Listen("unix", sock)
@@ -48,78 +45,81 @@ func newQueueConn(t *testing.T) *conn {
 	}
 	t.Cleanup(func() { a.uc.Close() })
 
-	c := &conn{uc: a.uc, log: discardLogger(), latest: map[string]*outFrame{}}
-	c.cond = sync.NewCond(&c.mu)
-	return c
+	return &conn{uc: a.uc, log: discardLogger(), out: newCoalescingQueue[protocol.Response](outboundDepth)}
 }
 
-// dataOf reads the event payload a queued frame would put on the wire.
-func dataOf(t *testing.T, f *outFrame) any {
+// queuedEvents drains what the writer would put on the wire, as
+// (service, data) pairs.
+func queuedEvents(t *testing.T, c *conn) [][2]any {
 	t.Helper()
-	ev, ok := f.resp.Result.(protocol.Event)
-	if !ok {
-		t.Fatalf("frame result is %T, want protocol.Event", f.resp.Result)
+	var out [][2]any
+	for c.out.len() > 0 {
+		resp, ok := c.out.pop()
+		if !ok {
+			break
+		}
+		ev, isEvent := resp.Result.(protocol.Event)
+		if !isEvent {
+			out = append(out, [2]any{"", resp.Result})
+			continue
+		}
+		out = append(out, [2]any{ev.Service, ev.Data})
 	}
-	return ev.Data
+	return out
 }
 
-func TestQueuedEventsCoalescePerService(t *testing.T) {
-	c := newQueueConn(t)
+func TestConnCoalescedEventsKeepOnlyTheNewest(t *testing.T) {
+	c := newIdleConn(t)
+	c.sendEvent("network", "first", true)
+	c.sendEvent("network", "second", true)
 
-	c.sendEvent("network", "first")
-	c.sendEvent("gamma", "gamma-only")
-	c.sendEvent("network", "second")
-	c.sendEvent("network", "third")
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if len(c.queue) != 2 {
-		t.Fatalf("queue depth = %d, want 2 (one frame per service)", len(c.queue))
+	got := queuedEvents(t, c)
+	if len(got) != 1 {
+		t.Fatalf("queued %d frames, want 1 for a coalesced service: %v", len(got), got)
 	}
-	if got := dataOf(t, c.queue[0]); got != "third" {
-		t.Fatalf("network frame carries %v, want the newest state %q", got, "third")
-	}
-	if c.queue[0].service != "network" {
-		t.Fatalf("first frame service = %q, want network to keep its queue position", c.queue[0].service)
-	}
-	if got := dataOf(t, c.queue[1]); got != "gamma-only" {
-		t.Fatalf("gamma frame carries %v, want %q", got, "gamma-only")
-	}
-}
-
-func TestQueuedResponsesNeverCoalesce(t *testing.T) {
-	c := newQueueConn(t)
-
-	c.send(protocol.Response{ID: json.RawMessage("1"), Result: "one"})
-	c.send(protocol.Response{ID: json.RawMessage("2"), Result: "two"})
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if len(c.queue) != 2 {
-		t.Fatalf("queue depth = %d, want 2: each id has a caller waiting on it", len(c.queue))
+	if got[0][1] != "second" {
+		t.Fatalf("queued payload = %v, want the newest state", got[0][1])
 	}
 }
 
-func TestOutboundOverflowClosesConnection(t *testing.T) {
-	c := newQueueConn(t)
+// An uncoalesced service carries distinct events under one name — a per-URL
+// open request, a per-device pairing prompt. Replacing one with another loses
+// it outright, with nothing to report it.
+func TestConnUncoalescedEventsAreAllKept(t *testing.T) {
+	c := newIdleConn(t)
+	c.sendEvent("browser.open_requested", "https://one.example", false)
+	c.sendEvent("browser.open_requested", "https://two.example", false)
 
+	got := queuedEvents(t, c)
+	if len(got) != 2 {
+		t.Fatalf("queued %d frames, want both open requests: %v", len(got), got)
+	}
+	if got[0][1] != "https://one.example" || got[1][1] != "https://two.example" {
+		t.Fatalf("queued payloads = %v, want both requests in order", got)
+	}
+}
+
+func TestConnResponsesNeverCoalesce(t *testing.T) {
+	c := newIdleConn(t)
+	c.send(protocol.Response{Result: "one"})
+	c.send(protocol.Response{Result: "two"})
+
+	if got := c.out.len(); got != 2 {
+		t.Fatalf("queued %d responses, want 2: each id has a caller waiting on it", got)
+	}
+}
+
+func TestConnOutboundOverflowClosesConnection(t *testing.T) {
+	c := newIdleConn(t)
 	for i := 0; i < outboundDepth; i++ {
-		c.sendEvent(serviceName(i), i)
+		c.sendEvent("svc-"+strconv.Itoa(i), i, false)
 	}
-	c.mu.Lock()
-	depth, closed := len(c.queue), c.closed
-	c.mu.Unlock()
-	if depth != outboundDepth || closed {
-		t.Fatalf("after %d distinct services: depth %d closed %v, want depth %d and open", outboundDepth, depth, closed, outboundDepth)
+	if got := c.out.len(); got != outboundDepth {
+		t.Fatalf("queued %d frames, want the bound %d", got, outboundDepth)
 	}
 
-	c.sendEvent(serviceName(outboundDepth), "overflow")
-	c.mu.Lock()
-	closed = c.closed
-	c.mu.Unlock()
-	if !closed {
-		t.Fatal("connection stayed open past the outbound queue bound; a peer that stopped reading must be dropped, not buffered without limit")
+	c.sendEvent("one-too-many", "overflow", false)
+	if _, outcome := c.out.push("probe", protocol.Response{}); outcome != pushClosed {
+		t.Fatal("connection stayed open past the outbound bound; a peer that stopped reading must be dropped, not buffered without limit")
 	}
 }
-
-func serviceName(i int) string { return "svc-" + strconv.Itoa(i) }

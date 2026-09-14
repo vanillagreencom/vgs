@@ -207,6 +207,8 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	srv.Register("cups", "cups.removePrinterFromClass", m.handleRemovePrinterFromClass)
 	srv.Register("cups", "cups.deleteClass", m.handleDeleteClass)
 	m.refreshes = refresh.NewLoop(refreshSettle, m.refreshAndBroadcast)
+	// Not declared to CoalesceBroadcasts: this service emits both a printer list
+	// and a bare changed marker under one name, so neither subsumes the other.
 	srv.RegisterSnapshot("cups", m.cachedPrinters)
 	srv.RegisterSnapshotRefresh("cups", m.refreshes.Kick)
 	return m, nil

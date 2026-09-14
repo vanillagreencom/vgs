@@ -28,6 +28,18 @@ const methodDepth = 64
 // JSON-serializable result or an error surfaced to the client.
 type HandlerFunc func(params json.RawMessage) (any, error)
 
+// LatestKeyFunc derives a keep-latest method's coalescing key from a call's raw
+// params. Two calls sharing a key address the same thing, so the newer subsumes
+// the older; two calls with different keys never replace one another.
+type LatestKeyFunc func(params json.RawMessage) string
+
+// methodEntry is one registered method. latestKey is nil for an ordinary
+// method, so a single lookup answers both what to run and how to queue it.
+type methodEntry struct {
+	handle    HandlerFunc
+	latestKey LatestKeyFunc
+}
+
 // subscription is one connection's requested service set. An empty set and the
 // "all" wildcard both cover every service.
 type subscription map[string]bool
@@ -51,11 +63,13 @@ type Server struct {
 	uid uint32
 
 	mu           sync.RWMutex
-	handlers     map[string]HandlerFunc
-	keepLatest   map[string]bool
+	handlers     map[string]*methodEntry
 	capabilities map[string]bool
 	snapshots    map[string]*snapshotSource
-	subscribers  map[*conn]subscription
+	// coalesced holds the services whose every broadcast carries the whole of
+	// that service's state, so an unread frame may be replaced by a newer one.
+	coalesced   map[string]bool
+	subscribers map[*conn]subscription
 
 	workersMu sync.Mutex
 	workers   map[string]*worker
@@ -71,22 +85,22 @@ func New(uid uint32, log *slog.Logger) *Server {
 	s := &Server{
 		log:          log,
 		uid:          uid,
-		handlers:     map[string]HandlerFunc{},
-		keepLatest:   map[string]bool{},
+		handlers:     map[string]*methodEntry{},
 		capabilities: map[string]bool{"core": true},
 		snapshots:    map[string]*snapshotSource{},
+		coalesced:    map[string]bool{},
 		subscribers:  map[*conn]subscription{},
 		workers:      map[string]*worker{},
 	}
-	s.handlers["ping"] = func(json.RawMessage) (any, error) {
+	s.handlers["ping"] = &methodEntry{handle: func(json.RawMessage) (any, error) {
 		return map[string]bool{"pong": true}, nil
-	}
-	s.handlers["getServerInfo"] = func(json.RawMessage) (any, error) {
+	}}
+	s.handlers["getServerInfo"] = &methodEntry{handle: func(json.RawMessage) (any, error) {
 		return s.info(), nil
-	}
+	}}
 	// "subscribe" is dispatched specially (it needs the connection); registering
-	// a placeholder keeps it visible in the advertised method list.
-	s.handlers["subscribe"] = nil
+	// a handler-less placeholder keeps it visible in the advertised method list.
+	s.handlers["subscribe"] = &methodEntry{}
 	return s
 }
 
@@ -94,27 +108,59 @@ func New(uid uint32, log *slog.Logger) *Server {
 func (s *Server) Register(capability, method string, h HandlerFunc) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.registerLocked(capability, method, h)
+	_ = s.registerLocked(capability, method, h)
 }
 
-// RegisterLatest adds a method whose calls are idempotent, meaning the newest
-// call subsumes every earlier one. While a call runs, a second waiting call is
-// replaced by the newest instead of queueing behind it, so dragging a slider
-// applies the value the user released on rather than replaying every value it
-// passed through. A replaced call is answered with a superseded error, never
-// dropped in silence.
-func (s *Server) RegisterLatest(capability, method string, h HandlerFunc) {
+// RegisterLatest adds a method whose calls are idempotent within a coalescing
+// key. While one call runs, a waiting call is replaced by a newer call with the
+// same key instead of queueing behind it, so dragging a slider applies the
+// value the user released on rather than replaying every value it passed
+// through. Calls with different keys never replace one another: key must
+// separate calls that address different things, such as one backlight from
+// another, or one display's write is lost to another display's.
+//
+// The slot is per key and per method, and it is shared by every connection, not
+// held per connection. A replaced call is answered with a superseded result,
+// never dropped in silence and never reported as a failure.
+func (s *Server) RegisterLatest(capability, method string, h HandlerFunc, key LatestKeyFunc) {
+	if key == nil {
+		// Without a key every call for this method would share one slot, which
+		// silently drops writes addressed elsewhere.
+		panic("RegisterLatest(" + method + "): a keep-latest method needs a coalescing key")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.registerLocked(capability, method, h)
-	s.keepLatest[method] = true
+	s.registerLocked(capability, method, h).latestKey = key
 }
 
-func (s *Server) registerLocked(capability, method string, h HandlerFunc) {
+// WholeStateKey is the coalescing key for a setter that writes one shared
+// thing, where the newest call subsumes every earlier one outright.
+func WholeStateKey(json.RawMessage) string { return "whole-state" }
+
+func (s *Server) registerLocked(capability, method string, h HandlerFunc) *methodEntry {
 	if capability != "" {
 		s.capabilities[capability] = true
 	}
-	s.handlers[method] = h
+	entry := &methodEntry{handle: h}
+	s.handlers[method] = entry
+	return entry
+}
+
+// CoalesceBroadcasts declares that every broadcast under service carries the
+// whole of that service's state, so a frame a slow reader has not taken yet may
+// be replaced by a newer one. Declare it only when that holds: a service that
+// broadcasts distinct events under one name — a per-device pairing prompt, a
+// per-URL open request, a per-subscription D-Bus signal — loses the earlier
+// event outright, with nothing to report it. A state carrying an edge the shell
+// acts on, such as a lock or a suspend flag, is not whole state either: the
+// edge is gone once a later frame overwrites it.
+func (s *Server) CoalesceBroadcasts(service string) {
+	if service == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.coalesced[service] = true
 }
 
 // AddCapability advertises a capability that is event-only or whose methods are
@@ -269,11 +315,10 @@ func (s *Server) dispatch(c *conn, req *protocol.Request) {
 	}
 
 	s.mu.RLock()
-	h, known := s.handlers[req.Method]
-	keepLatest := s.keepLatest[req.Method]
+	entry, known := s.handlers[req.Method]
 	s.mu.RUnlock()
 
-	if !known || h == nil {
+	if !known || entry.handle == nil {
 		c.send(protocol.Response{ID: req.ID, Error: "unknown method: " + req.Method})
 		return
 	}
@@ -287,50 +332,52 @@ func (s *Server) dispatch(c *conn, req *protocol.Request) {
 					c.send(protocol.Response{ID: req.ID, Error: "internal: handler panic"})
 				}
 			}()
-			result, err := h(req.Params)
+			result, err := entry.handle(req.Params)
 			if err != nil {
 				c.send(protocol.Response{ID: req.ID, Error: err.Error()})
 				return
 			}
 			c.send(protocol.Response{ID: req.ID, Result: result})
 		},
+		// A superseded call is answered as a success: a newer call for the same
+		// key took over the caller's intent, which is not a failure and must not
+		// be reported to the user as one.
 		superseded: func() {
-			c.send(protocol.Response{ID: req.ID, Error: "superseded: a newer " + req.Method + " call replaced this one"})
+			c.send(protocol.Response{ID: req.ID, Result: map[string]bool{"superseded": true}})
 		},
 	}
 
-	w := s.worker(req.Method, keepLatest)
-	if keepLatest {
-		if replaced, ok := w.offerLatest(job); ok {
-			replaced.superseded()
-		}
-		return
+	key := ""
+	if entry.latestKey != nil {
+		key = entry.latestKey(req.Params)
 	}
-	if !w.offer(job) {
+	replaced, outcome := s.worker(req.Method).offer(key, job)
+	switch outcome {
+	case pushQueued, pushClosed:
+	case pushReplaced:
+		replaced.superseded()
+	case pushFull:
 		// Blocking here would stall every other method on this socket, including
 		// the lock call that raises the lock screen.
 		c.send(protocol.Response{ID: req.ID, Error: "busy: " + req.Method + " has too many calls queued"})
 	}
 }
 
-// worker returns the method's FIFO worker, creating it on first use.
-func (s *Server) worker(method string, keepLatest bool) *worker {
+// worker returns the method's worker, creating it on first use.
+func (s *Server) worker(method string) *worker {
 	s.workersMu.Lock()
 	defer s.workersMu.Unlock()
-	w, ok := s.workers[method]
-	if ok {
+	if w, ok := s.workers[method]; ok {
 		return w
 	}
-	depth := methodDepth
-	if keepLatest {
-		// One waiting call is all a keep-latest method ever holds: the next
-		// arrival replaces it.
-		depth = 1
-	}
-	w = &worker{jobs: make(chan call, depth)}
+	w := &worker{queue: newCoalescingQueue[call](methodDepth)}
 	s.workers[method] = w
 	go func() {
-		for j := range w.jobs {
+		for {
+			j, ok := w.queue.pop()
+			if !ok {
+				return
+			}
 			s.runJob(method, j.run)
 		}
 	}()
@@ -338,45 +385,22 @@ func (s *Server) worker(method string, keepLatest bool) *worker {
 }
 
 // call is one queued method invocation. superseded answers the client when a
-// keep-latest method replaces this call with a newer one.
+// keep-latest method replaces this call with a newer one under the same key.
 type call struct {
 	run        func()
 	superseded func()
 }
 
-// worker serializes one method's calls on a single goroutine.
+// worker serializes one method's calls on a single goroutine. An ordinary
+// method passes an empty key, so every call queues; a keep-latest method passes
+// its coalescing key, so the newest call under that key replaces the one
+// waiting.
 type worker struct {
-	jobs chan call
-
-	// latestMu makes the take-then-replace in offerLatest atomic against other
-	// callers, so the one-slot queue cannot overflow.
-	latestMu sync.Mutex
+	queue *coalescingQueue[call]
 }
 
-// offer queues c and reports whether the method's queue had room.
-func (w *worker) offer(c call) bool {
-	select {
-	case w.jobs <- c:
-		return true
-	default:
-		return false
-	}
-}
-
-// offerLatest queues c in place of any call still waiting, returning the
-// replaced call so its client can be told it was superseded.
-func (w *worker) offerLatest(c call) (call, bool) {
-	w.latestMu.Lock()
-	defer w.latestMu.Unlock()
-	var replaced call
-	found := false
-	select {
-	case replaced = <-w.jobs:
-		found = true
-	default:
-	}
-	w.jobs <- c
-	return replaced, found
+func (w *worker) offer(key string, c call) (call, pushOutcome) {
+	return w.queue.push(key, c)
 }
 
 func (s *Server) runJob(method string, job func()) {
@@ -412,33 +436,41 @@ func (s *Server) handleSubscribe(c *conn, req *protocol.Request) {
 	s.mu.Lock()
 	prev, resubscribed := s.subscribers[c]
 	s.subscribers[c] = set
-	added := make(map[string]*snapshotSource, len(s.snapshots))
+	type covered struct {
+		source *snapshotSource
+		// snapshot is false for a service the previous subscription already
+		// covered: every popout open re-sends the whole set, and re-delivering a
+		// snapshot re-runs the shell's per-service setup on each open. The
+		// refresh still runs, so a service whose first query failed is retried
+		// rather than left silent for the life of the connection.
+		snapshot bool
+		coalesce bool
+	}
+	services := make(map[string]covered, len(s.snapshots))
 	for service, src := range s.snapshots {
 		if !set.covers(service) {
 			continue
 		}
-		// A repeat subscribe re-sends only what this connection does not already
-		// hold: every popout open re-sends the whole set, and re-delivering it
-		// re-runs the shell's per-service setup on each open.
-		if resubscribed && prev.covers(service) {
-			continue
+		services[service] = covered{
+			source:   src,
+			snapshot: !resubscribed || !prev.covers(service),
+			coalesce: s.coalesced[service],
 		}
-		added[service] = src
 	}
 	s.mu.Unlock()
 
 	c.send(protocol.Response{Result: protocol.Event{Service: "server", Data: s.info()}})
-	for service, src := range added {
-		if src.read == nil {
+	for service, cov := range services {
+		if !cov.snapshot || cov.source.read == nil {
 			continue
 		}
-		if data := src.read(); data != nil {
-			c.sendEvent(service, data)
+		if data := cov.source.read(); data != nil {
+			c.sendEvent(service, data, cov.coalesce)
 		}
 	}
-	for _, src := range added {
-		if src.refresh != nil {
-			src.refresh()
+	for _, cov := range services {
+		if cov.source.refresh != nil {
+			cov.source.refresh()
 		}
 	}
 }
@@ -452,9 +484,11 @@ func (s *Server) dropSubscriber(c *conn) {
 // Broadcast pushes an event to every connection subscribed to service (or to
 // "all"). It never waits on a peer: each connection owns a bounded queue and a
 // writer goroutine, so a stalled subscriber cannot delay the caller's event
-// loop.
+// loop. A frame coalesces with an unread one only for a service declared
+// through CoalesceBroadcasts; every other service keeps each frame.
 func (s *Server) Broadcast(service string, data any) {
 	s.mu.RLock()
+	coalesce := s.coalesced[service]
 	targets := make([]*conn, 0, len(s.subscribers))
 	for c, set := range s.subscribers {
 		if set.covers(service) {
@@ -463,7 +497,7 @@ func (s *Server) Broadcast(service string, data any) {
 	}
 	s.mu.RUnlock()
 	for _, c := range targets {
-		c.sendEvent(service, data)
+		c.sendEvent(service, data, coalesce)
 	}
 }
 

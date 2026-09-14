@@ -63,6 +63,7 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 
 	srv.Register("location", "location.getState", m.handleGetState)
 	srv.Register("location", "location.subscribe", m.handleSubscribe)
+	srv.CoalesceBroadcasts("location")
 	srv.RegisterSnapshot("location", func() any { return m.GetState() })
 
 	if stale(m.state) {

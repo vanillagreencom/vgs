@@ -27,8 +27,11 @@ CALLSITE_INTERNAL_RE = re.compile(r'\bsendRequest\(\s*"([a-zA-Z0-9._]+)"')
 CALLSITE_EXTERNAL_RE = re.compile(r'VGSBackendService\.sendRequest\(\s*"([a-zA-Z0-9._]+)"')
 APIGATE_RE = re.compile(r'\.apiVersion\s*(?:>=|>|<=|<|===|!==|==)\s*[0-9]+')
 # Literal Go route registrations; variable arguments need the patterns below.
-GO_SERVER_REGISTER_RE = re.compile(r'\.Register\(\s*"[^"]+"\s*,\s*"([a-zA-Z0-9._]+)"')
-GO_ROUTE_RE = re.compile(r'(?:register|Register|Handle|handle|route|Route)\(\s*"([a-zA-Z0-9._]+)"')
+# The server's method-registration family: Register and RegisterLatest both take
+# (capability, method). RegisterSnapshot and RegisterSnapshotRefresh are not in
+# it — their first argument is a service name, not a capability.
+GO_SERVER_REGISTER_RE = re.compile(r'\.Register(?:Latest)?\(\s*"[^"]+"\s*,\s*"([a-zA-Z0-9._]+)"')
+GO_ROUTE_RE = re.compile(r'(?:register|Register(?:Latest)?|Handle|handle|route|Route)\(\s*"([a-zA-Z0-9._]+)"')
 # Loop registrations: handler maps (`map[string]server.HandlerFunc{ "m": h, ... }`)
 # and method-name slices (`methods = []string{ "m", ... }`) whose entries are
 # passed to Register via a variable, invisible to the literal-argument regexes.

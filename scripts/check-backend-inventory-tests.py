@@ -110,6 +110,12 @@ def main() -> int:
             'package server\n\nfunc wire(srv *Server) { srv.Register("core", "bogus.method", nil) }\n',
             "UNDOCUMENTED method 'bogus.method'",
         ),
+        (
+            "undocumented method registered through RegisterLatest",
+            "backend/internal/server/server.go",
+            'package server\n\nfunc wire(srv *Server) { srv.RegisterLatest("core", "bogus.latest", nil, nil) }\n',
+            "UNDOCUMENTED method 'bogus.latest'",
+        ),
     ]
 
     # The other direction: a registration the shipped binary never carries.
@@ -118,6 +124,14 @@ def main() -> int:
             "Go test file registering an undocumented method",
             "backend/internal/server/server_test.go",
             'package server\n\nfunc wire(srv *Server) { srv.Register("core", "bogus.method", nil) }\n',
+        ),
+        (
+            "snapshot registration, whose first argument is a service not a capability",
+            "backend/internal/server/server.go",
+            'package server\n\nfunc wire(srv *Server) {\n'
+            '\tsrv.RegisterSnapshot("tailscale", nil)\n'
+            '\tsrv.RegisterSnapshotRefresh("tailscale", nil)\n'
+            '}\n',
         ),
     ]
 

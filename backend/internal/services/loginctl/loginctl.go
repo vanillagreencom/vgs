@@ -93,6 +93,9 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	srv.Register("loginctl", "loginctl.setSleepInhibitorEnabled", m.handleSetSleepInhibitorEnabled)
 	srv.Register("loginctl", "loginctl.lockerReady", m.handleLockerReady)
 	srv.Register("loginctl", "loginctl.subscribe", m.handleGetState)
+	// Not declared to CoalesceBroadcasts: Locked and PreparingForSleep are edges
+	// the shell acts on, so a later frame overwriting an unread one would lose
+	// the lock that raises the lock screen, or the warning before suspend.
 	srv.RegisterSnapshot("loginctl", func() any { return m.GetState() })
 	return m, nil
 }

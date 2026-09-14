@@ -66,17 +66,31 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	m := &Manager{srv: srv, helper: helper, timeout: timeout, waitDelay: waitDelay, log: log}
 	srv.Register("brightness", "brightness.getState", m.handleGetState)
 	srv.Register("brightness", "brightness.rescan", m.handleGetState)
-	srv.RegisterLatest("brightness", "brightness.setBrightness", m.handleSetBrightness)
+	// Keyed by device: a write to one display must never replace the waiting
+	// write to another, or a lock blackout leaves a display lit.
+	srv.RegisterLatest("brightness", "brightness.setBrightness", m.handleSetBrightness, deviceKey)
 	srv.Register("brightness", "brightness.increment", m.handleIncrement)
 	srv.Register("brightness", "brightness.decrement", m.handleDecrement)
 	srv.Register("brightness", "brightness.subscribe", m.handleGetState)
 	m.refreshes = refresh.NewLoop(refreshSettle, m.refreshAndBroadcast)
+	srv.CoalesceBroadcasts("brightness")
 	srv.RegisterSnapshot("brightness", m.cachedState)
 	srv.RegisterSnapshotRefresh("brightness", m.refreshes.Kick)
 	return m, nil
 }
 
 func (m *Manager) Close() { m.refreshes.Close() }
+
+// deviceKey is the coalescing key for a per-display setter. Params that do not
+// decode share the empty device the handler rejects, so a malformed call cannot
+// displace a real write to a named display.
+func deviceKey(params json.RawMessage) string {
+	var p setParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return ""
+	}
+	return p.Device
+}
 
 // cachedState returns the newest successful helper listing, or nil before the
 // first one completes. An empty device list would reach the shell as "no

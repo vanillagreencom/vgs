@@ -147,6 +147,7 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	srv.Register("cloudsync", "cloudsync.unmount", m.handleUnmount)
 	srv.Register("cloudsync", "cloudsync.emptyTrash", m.handleEmptyTrash)
 	srv.Register("cloudsync", "cloudsync.restartDaemon", m.handleRestartDaemon)
+	srv.CoalesceBroadcasts("cloudsync")
 	srv.RegisterSnapshot("cloudsync", func() any { return m.snapshot() })
 
 	// Starting the daemon can take a moment and must not delay shell startup.

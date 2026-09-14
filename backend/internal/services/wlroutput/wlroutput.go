@@ -148,6 +148,7 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	srv.Register("wlroutput", "wlroutput.applyConfiguration", rejectWrite)
 	srv.Register("wlroutput", "wlroutput.testConfiguration", rejectWrite)
 	m.refreshes = refresh.NewLoop(refreshSettle, m.refreshAndBroadcast)
+	srv.CoalesceBroadcasts("wlroutput")
 	srv.RegisterSnapshot("wlroutput", m.cachedState)
 	srv.RegisterSnapshotRefresh("wlroutput", m.refreshes.Kick)
 	return m, nil

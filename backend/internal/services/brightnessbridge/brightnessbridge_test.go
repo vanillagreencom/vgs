@@ -1,6 +1,7 @@
 package brightnessbridge
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -171,5 +172,28 @@ func TestCachedStateReturnsTheLastHelperRun(t *testing.T) {
 	}
 	if devices := got["devices"].([]any); len(devices) != 1 {
 		t.Fatalf("devices = %v, want the recorded helper run", devices)
+	}
+}
+
+// The keep-latest slot is keyed by this value, so a write to one display must
+// never share a key with a write to another.
+func TestDeviceKeySeparatesDisplays(t *testing.T) {
+	rows := []struct {
+		name   string
+		params string
+		want   string
+	}{
+		{"named display", `{"device":"eDP-1","percent":40}`, "eDP-1"},
+		{"another display", `{"device":"DP-2","percent":40}`, "DP-2"},
+		{"same display, another value", `{"device":"eDP-1","percent":90}`, "eDP-1"},
+		{"no device", `{"percent":40}`, ""},
+		{"malformed params", `not json`, ""},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			if got := deviceKey(json.RawMessage(row.params)); got != row.want {
+				t.Fatalf("deviceKey(%s) = %q, want %q", row.params, got, row.want)
+			}
+		})
 	}
 }

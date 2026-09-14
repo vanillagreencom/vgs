@@ -263,6 +263,117 @@ func TestSnapshotWithNoStateYetSendsNoFrame(t *testing.T) {
 	}
 }
 
+// subscribeIdleConn registers a conn whose writer is not running, so a test can
+// read what Broadcast left for a peer that has not drained the socket.
+func subscribeIdleConn(t *testing.T, srv *Server, services ...string) *conn {
+	t.Helper()
+	c := newIdleConn(t)
+	set := subscription{}
+	for _, service := range services {
+		set[service] = true
+	}
+	srv.mu.Lock()
+	srv.subscribers[c] = set
+	srv.mu.Unlock()
+	return c
+}
+
+// TestBroadcastKeepsEveryFrameForAnUndeclaredService pins the default. A
+// service that broadcasts distinct events under one name — mimeapps sends one
+// browser.open_requested per URL, dbusbridge one dbus frame per subscription id
+// — loses the earlier event outright if its frames coalesce.
+func TestBroadcastKeepsEveryFrameForAnUndeclaredService(t *testing.T) {
+	srv, _ := startTestServer(t)
+	c := subscribeIdleConn(t, srv, "browser.open_requested")
+
+	srv.Broadcast("browser.open_requested", "https://one.example")
+	srv.Broadcast("browser.open_requested", "https://two.example")
+
+	got := queuedEvents(t, c)
+	if len(got) != 2 {
+		t.Fatalf("queued %d frames, want both: a link the user opened must not be dropped silently: %v", len(got), got)
+	}
+	if got[0][1] != "https://one.example" || got[1][1] != "https://two.example" {
+		t.Fatalf("queued payloads = %v, want both requests in order", got)
+	}
+}
+
+func TestBroadcastCoalescesADeclaredService(t *testing.T) {
+	srv, _ := startTestServer(t)
+	srv.CoalesceBroadcasts("network")
+	c := subscribeIdleConn(t, srv, "network")
+
+	srv.Broadcast("network", "stale")
+	srv.Broadcast("network", "fresh")
+
+	got := queuedEvents(t, c)
+	if len(got) != 1 {
+		t.Fatalf("queued %d frames, want 1 for whole-state broadcasts: %v", len(got), got)
+	}
+	if got[0][1] != "fresh" {
+		t.Fatalf("queued payload = %v, want the newest state", got[0][1])
+	}
+}
+
+// A subscriber to "all", and one that names no service, are both shapes the
+// shell sends. Either arm of the subscription test could be dropped without a
+// named-service test noticing.
+func TestWildcardSubs(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		services []string
+	}{
+		{"all", []string{"all"}},
+		{"bare", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, dial := startTestServer(t)
+			conn := dial(t)
+			var params any
+			if tc.services != nil {
+				params = map[string]any{"services": tc.services}
+			}
+			conn.send(t, "subscribe", params)
+			_ = conn.read(t) // server frame
+			awaitSubscriber(t, srv)
+
+			srv.Broadcast("evdev", map[string]any{"capsLock": true})
+			ev := conn.read(t).Result.(map[string]any)
+			if ev["service"] != "evdev" {
+				t.Fatalf("frame service = %v, want the unrelated service to still arrive", ev["service"])
+			}
+		})
+	}
+}
+
+// A service whose first query failed holds no state and sends no snapshot. Its
+// refresh is the only thing that can fill it, so every subscribe must kick it,
+// not only the one that first covered the service.
+func TestResubscribeKicksRefreshForAlreadyCoveredServices(t *testing.T) {
+	srv, dial := startTestServer(t)
+	kicks := make(chan struct{}, 4)
+	srv.RegisterSnapshot("network", func() any { return nil })
+	srv.RegisterSnapshotRefresh("network", func() { kicks <- struct{}{} })
+
+	tc := dial(t)
+	tc.send(t, "subscribe", map[string]any{"services": []string{"network"}})
+	_ = tc.read(t) // server frame
+	awaitKick(t, kicks, "the first subscribe")
+
+	tc.send(t, "subscribe", map[string]any{"services": []string{"network"}})
+	_ = tc.read(t) // server frame
+	awaitKick(t, kicks, "a repeat subscribe covering the same service")
+}
+
+func awaitKick(t *testing.T, kicks <-chan struct{}, what string) {
+	t.Helper()
+	select {
+	case <-kicks:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("no refresh kick followed %s; a service whose first query failed would stay empty for the life of the connection", what)
+	}
+}
+
 func TestResubscribeSendsOnlyNewServices(t *testing.T) {
 	srv, dial := startTestServer(t)
 	srv.RegisterSnapshot("network", func() any { return "network-state" })
@@ -334,62 +445,130 @@ func TestSaturatedMethodRejectsAndLeavesOtherMethodsLive(t *testing.T) {
 	}
 }
 
-func TestKeepLatestSupersedesWaitingCall(t *testing.T) {
-	srv, dial := startTestServer(t)
-	release := make(chan struct{})
+// setterParams is the shape a keep-latest device setter is keyed on.
+type setterParams struct {
+	Device  string `json:"device"`
+	Percent int    `json:"percent"`
+}
+
+func setterDeviceKey(params json.RawMessage) string {
+	var p setterParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return ""
+	}
+	return p.Device
+}
+
+// blockingSetter registers a keep-latest method whose first call parks until
+// the returned channel is closed, and records every call that reached it.
+func blockingSetter(t *testing.T, srv *Server) (release chan struct{}, applied func() []setterParams) {
+	t.Helper()
+	release = make(chan struct{})
 	var mu sync.Mutex
-	var applied []string
+	var seen []setterParams
 	srv.RegisterLatest("brightness", "brightness.setBrightness", func(params json.RawMessage) (any, error) {
+		var p setterParams
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, err
+		}
 		mu.Lock()
-		first := len(applied) == 0
-		applied = append(applied, string(params))
+		first := len(seen) == 0
+		seen = append(seen, p)
 		mu.Unlock()
 		if first {
 			<-release
 		}
-		return string(params), nil
-	})
+		return p, nil
+	}, setterDeviceKey)
+	return release, func() []setterParams {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]setterParams(nil), seen...)
+	}
+}
 
-	tc := dial(t)
-	tc.sendID(t, "1", "brightness.setBrightness", map[string]any{"percent": 10})
-	// Wait for the first call to occupy the worker, so the next two contend for
-	// the single waiting slot.
+func awaitHandlerEntered(t *testing.T, applied func() []setterParams) {
+	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		mu.Lock()
-		started := len(applied) > 0
-		mu.Unlock()
-		if started {
-			break
+		if len(applied()) > 0 {
+			return
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	tc.sendID(t, "2", "brightness.setBrightness", map[string]any{"percent": 50})
-	tc.sendID(t, "3", "brightness.setBrightness", map[string]any{"percent": 90})
+	t.Fatal("the handler never started; the later calls would not contend for a waiting slot")
+}
+
+func TestKeepLatestSupersedesWaitingCallForTheSameKey(t *testing.T) {
+	srv, dial := startTestServer(t)
+	release, applied := blockingSetter(t, srv)
+
+	tc := dial(t)
+	tc.sendID(t, "1", "brightness.setBrightness", map[string]any{"device": "eDP-1", "percent": 10})
+	awaitHandlerEntered(t, applied)
+	tc.sendID(t, "2", "brightness.setBrightness", map[string]any{"device": "eDP-1", "percent": 50})
+	tc.sendID(t, "3", "brightness.setBrightness", map[string]any{"device": "eDP-1", "percent": 90})
 
 	superseded := tc.read(t)
 	if string(superseded.ID) != "2" {
 		t.Fatalf("superseded reply id = %s, want the replaced call 2", superseded.ID)
 	}
-	if !strings.HasPrefix(superseded.Error, "superseded: ") {
-		t.Fatalf("replaced call answered %q; a client waiting on that id must be told, not left hanging", superseded.Error)
+	// A superseded call is not a failure. Shipped clients toast an error frame,
+	// clear the device's state and rescan, so the reply must read as a success.
+	if superseded.Error != "" {
+		t.Fatalf("replaced call answered with error %q; supersession is not a failure", superseded.Error)
+	}
+	result, ok := superseded.Result.(map[string]any)
+	if !ok || result["superseded"] != true {
+		t.Fatalf("replaced call result = %v, want a success marked superseded", superseded.Result)
 	}
 
 	close(release)
 	seen := map[string]bool{}
 	for len(seen) < 2 {
-		resp := tc.read(t)
-		seen[string(resp.ID)] = true
+		seen[string(tc.read(t).ID)] = true
 	}
 	if !seen["1"] || !seen["3"] {
 		t.Fatalf("answered ids %v, want the running call 1 and the newest call 3", seen)
 	}
 
-	mu.Lock()
-	defer mu.Unlock()
-	for _, params := range applied {
-		if strings.Contains(params, "50") {
-			t.Fatalf("the superseded value still reached the device: %v", applied)
+	for _, p := range applied() {
+		if p.Percent == 50 {
+			t.Fatalf("the superseded value still reached the device: %v", applied())
+		}
+	}
+}
+
+// TestKeepLatestKeepsOneSlotPerKey pins the per-key slot. Keyed by method alone,
+// the write to the second display would evict the first display's waiting write
+// and that display would never be written at all.
+func TestKeepLatestKeepsOneSlotPerKey(t *testing.T) {
+	srv, dial := startTestServer(t)
+	release, applied := blockingSetter(t, srv)
+
+	tc := dial(t)
+	tc.sendID(t, "1", "brightness.setBrightness", map[string]any{"device": "eDP-1", "percent": 1})
+	awaitHandlerEntered(t, applied)
+
+	devices := []string{"DP-1", "DP-2", "HDMI-A-1"}
+	for i, device := range devices {
+		tc.sendID(t, strconv.Itoa(10+i), "brightness.setBrightness", map[string]any{"device": device, "percent": 1})
+	}
+
+	close(release)
+	for i := 0; i < len(devices)+1; i++ {
+		if resp := tc.read(t); resp.Error != "" {
+			t.Fatalf("call %s answered %q", resp.ID, resp.Error)
+		}
+	}
+
+	written := map[string]bool{}
+	for _, p := range applied() {
+		written[p.Device] = true
+	}
+	for _, device := range devices {
+		if !written[device] {
+			t.Fatalf("%s was never written: %v; on a lock blackout that display stays lit", device, applied())
 		}
 	}
 }

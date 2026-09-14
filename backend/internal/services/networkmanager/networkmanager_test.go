@@ -1,6 +1,9 @@
 package networkmanager
 
 import (
+	"encoding/json"
+	"io"
+	"log/slog"
 	"reflect"
 	"testing"
 )
@@ -58,5 +61,32 @@ func TestCachedStateReturnsTheLastSweep(t *testing.T) {
 	}
 	if st.NetworkStatus != "wifi" || st.WiFiSSID != "home" {
 		t.Fatalf("cached state = %+v, want the recorded sweep", st)
+	}
+}
+
+// An interactive connect that cannot read the network state must leave no
+// prompt behind: nothing broadcasts a token for it, so the entry would sit in
+// m.pending unreachable by a cancel for the life of the daemon.
+func TestInteractiveConnectRecordsNoPromptWhenTheSweepFails(t *testing.T) {
+	// An empty PATH makes every nmcli call fail, which is what a restarting
+	// NetworkManager looks like to this handler.
+	t.Setenv("PATH", t.TempDir())
+	m := &Manager{
+		log:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		pending:    map[string]pendingPrompt{},
+		preference: "auto",
+	}
+	params, err := json.Marshal(map[string]any{"ssid": "somenet", "interactive": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := m.handleWiFiConnect(params); err == nil {
+		t.Fatal("handleWiFiConnect returned no error with every nmcli call failing")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.pending) != 0 {
+		t.Fatalf("pending prompts = %v; no broadcast carried a token for them and no cancel can reach them", m.pending)
 	}
 }

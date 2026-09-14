@@ -119,13 +119,14 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	m.state = m.recalculate(defaultConfig(), time.Now())
 
 	srv.Register("gamma", "wayland.gamma.getState", m.handleGetState)
-	srv.RegisterLatest("gamma", "wayland.gamma.setTemperature", m.handleSetTemperature)
+	srv.RegisterLatest("gamma", "wayland.gamma.setTemperature", m.handleSetTemperature, server.WholeStateKey)
 	srv.Register("gamma", "wayland.gamma.setLocation", m.handleSetLocation)
 	srv.Register("gamma", "wayland.gamma.setManualTimes", m.handleSetManualTimes)
 	srv.Register("gamma", "wayland.gamma.setUseIPLocation", m.handleSetUseIPLocation)
 	srv.Register("gamma", "wayland.gamma.setGamma", m.handleSetGamma)
 	srv.Register("gamma", "wayland.gamma.setEnabled", m.handleSetEnabled)
 	srv.Register("gamma", "wayland.gamma.subscribe", m.handleGetState)
+	srv.CoalesceBroadcasts("gamma")
 	srv.RegisterSnapshot("gamma", func() any { return m.GetState() })
 	return m, nil
 }

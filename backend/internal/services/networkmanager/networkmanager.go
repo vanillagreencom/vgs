@@ -261,6 +261,8 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 		srv.Register("network", method, handler)
 	}
 	m.refreshes = refresh.NewLoop(refreshSettle, m.refreshAndBroadcast)
+	// "network.credentials" stays uncoalesced: each frame is one SSID's prompt.
+	srv.CoalesceBroadcasts("network")
 	srv.RegisterSnapshot("network", m.cachedState)
 	srv.RegisterSnapshotRefresh("network", m.broadcastSoon)
 	go m.monitor()
@@ -308,14 +310,17 @@ func (m *Manager) handleWiFiConnect(params json.RawMessage) (any, error) {
 		return nil, err
 	}
 	if p.Interactive && p.Password == "" && p.Username == "" {
-		token := tokenForSSID(p.SSID)
-		m.mu.Lock()
-		m.pending[token] = pendingPrompt{SSID: p.SSID, Device: p.Device, Hidden: p.Hidden}
-		m.mu.Unlock()
+		// The sweep runs before the prompt is recorded: a failed sweep returns
+		// here, and an entry written first would sit in m.pending with no
+		// broadcast to answer it and no token the client could cancel.
 		st, err := m.stateChecked()
 		if err != nil {
 			return nil, err
 		}
+		token := tokenForSSID(p.SSID)
+		m.mu.Lock()
+		m.pending[token] = pendingPrompt{SSID: p.SSID, Device: p.Device, Hidden: p.Hidden}
+		m.mu.Unlock()
 		fields := []string{"psk"}
 		if networkEnterprise(st.WiFiNetworks, p.SSID) {
 			fields = []string{"identity", "password"}

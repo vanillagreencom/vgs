@@ -145,6 +145,7 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	srv.Register("tailscale", "tailscale.setExitNode", m.handleSetExitNode)
 	srv.Register("tailscale", "tailscale.setAllowLanAccess", m.handleSetAllowLANAccess)
 	srv.Register("tailscale", "tailscale.setAcceptRoutes", m.handleSetAcceptRoutes)
+	srv.CoalesceBroadcasts("tailscale")
 	srv.RegisterSnapshot("tailscale", m.cachedState)
 	// pulse coalesces the read onto the watcher's own timer goroutine and
 	// broadcasts the result.

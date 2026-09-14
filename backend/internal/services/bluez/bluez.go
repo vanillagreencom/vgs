@@ -164,6 +164,8 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 		srv.Register("bluetooth", method, handler)
 	}
 	m.refreshes = refresh.NewLoop(refreshSettle, m.refreshAndBroadcast)
+	// "bluetooth.pairing" stays uncoalesced: each frame is one device's prompt.
+	srv.CoalesceBroadcasts("bluetooth")
 	srv.RegisterSnapshot("bluetooth", m.CachedState)
 	srv.RegisterSnapshotRefresh("bluetooth", m.broadcastSoon)
 	return m, nil
