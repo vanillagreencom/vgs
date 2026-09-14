@@ -10118,27 +10118,26 @@ def curated_revision_of(path: str | None) -> str:
 
 def test_a_save_never_pairs_its_palette_with_a_curated_file_it_did_not_judge():
     """A merge-style curated file is valid only for the palette it was picked
-    against, and the two halves of a rebuild can name different palettes: the
-    palette is the rebuild's own while the curated files are re-resolved from the
-    package on disk. They part when the package's definition is refreshed under an
-    applied theme with no re-apply, when `apply-colors --set` moves the applied
-    palette with no `--save`, and when a mode transform applies a palette the
-    package does not hold.
+    against, and the palette a save writes is not always the one the package on disk
+    holds. `materialize_theme_package` owns what happens to such a file and this
+    pins its rule at every route that reaches the writer: `set-wallpaper --save`,
+    `apply-colors --save`, `save-current`, a save over a package whose `theme.json`
+    an interrupted save left behind, and `theme regenerate`, which is handed part of
+    a package.
 
-    Three things then hold for such a file at once: the apply does not paint it and
-    names it instead, the save writes no record able to certify it, and its own
-    bytes stay where they are, because this package directory is the only copy a
-    download or a user-created theme has. The untouched rows say each parted row
-    measures the parting and not the rule itself.
+    Each row reads the revision the route's apply painted, the revision the reload
+    renders, whether the curated file's own bytes are still there, whether the
+    package's hand-written replacing file is still there, and what the save said on
+    stderr. The first is empty where the route runs no apply or paints no curated
+    file. The bytes column is the one that matters most: this package directory is
+    the only copy, as a download or a user-created theme has.
 
-    The other-mode row is the carry's exemption and the save's refusal in one: the
-    apply of a mode rebuild wants the counterpart file, and the save under that
-    same rebuild must still vouch for nothing it did not judge.
+    The untouched rows say each other row measures its own route and not the rule
+    itself, and one of them declares `source: generated`, the branch where role
+    derivation is not a fixed point and the palette comparison has to rebuild both
+    sides the same number of times.
 
-    The control rows remove one half each and the pair comes back: without the
-    palette agreement the save writes the refreshed file under the stale palette,
-    and without the save's own-package answer the prune deletes the file it must
-    keep.
+    The control row removes the palette agreement and the stale pair comes back.
     """
     def scenario(temp_home: Path):
         wallpaper = temp_home / "wall.png"
@@ -10161,12 +10160,15 @@ def test_a_save_never_pairs_its_palette_with_a_curated_file_it_did_not_judge():
 
         helper.apply_theme_obj = stub_apply
 
-        def run(argv):
-            with contextlib.redirect_stdout(io.StringIO()):
-                assert_equal(helper.cmd_theme(argv), 0, f"{' '.join(argv)} exit status")
+        def run(argv, errors=None):
+            with contextlib.redirect_stdout(io.StringIO()), \
+                 contextlib.redirect_stderr(errors or io.StringIO()):
+                status = helper.cmd_theme(argv)
+            assert_equal(status, 0, f"{' '.join(argv)} exit status")
 
-        def save_after(name: str, move: str, source: str, patched) -> tuple:
-            """Apply the package, move the palette one way, then `set-wallpaper --save`."""
+        def save_after(name: str, move: str, source: str, save_argv: list,
+                       then: list | None, patched) -> tuple:
+            """Apply the package, move the palette one way, then run the save route."""
             package = refreshed_curated_package(name, "#101010", "A", source=source)
             curated = package / "apps" / "claude-light.json"
             replacing = package / "apps" / "btop.theme"
@@ -10181,55 +10183,82 @@ def test_a_save_never_pairs_its_palette_with_a_curated_file_it_did_not_judge():
                 run(["apply-colors", "--name", name, "--set", "foreground=#303030"])
             if move == "mode":
                 stub_apply(helper.transformed_mode_blueprint(helper.find_theme(name), "dark", ""))
+            if move == "no-metadata":
+                (package / "theme.json").unlink()
             expected_bytes = curated.read_bytes()
             applied.clear()
+            errors = io.StringIO()
             with patched:
-                run(["set-wallpaper", str(wallpaper), "--save"])
-            carried = applied[-1].get("apps") or {}
+                run([arg.replace("<name>", name) for arg in save_argv], errors)
+            if then:
+                run([arg.replace("<name>", name) for arg in then])
+            carried = (applied[-1].get("apps") if applied else {}) or {}
             reloaded = (helper.load_theme_package(name) or {}).get("apps") or {}
             return (curated_revision_of(carried.get("claude-light.json")),
                     curated_revision_of(reloaded.get("claude-light.json")),
                     curated.is_file() and curated.read_bytes() == expected_bytes,
-                    replacing.read_text() == REFRESHED_REPLACING_CURATED)
+                    replacing.is_file() and replacing.read_text() == REFRESHED_REPLACING_CURATED,
+                    errors.getvalue().strip())
 
-        # The agreement the carry and the save share, and the save's own answer
-        # about the package it is writing. Each control row removes one.
+        wallpaper_save = ["set-wallpaper", str(wallpaper), "--save"]
+        parted_notice = ("save <name>: writing a palette claude-light.json was not "
+                         "picked against, so this save vouches for none of them")
         no_agreement = patch.object(helper, "applied_palette_parted", return_value=False)
-        not_own_package = patch.object(
-            helper, "save_curated_terms",
-            side_effect=lambda bp: helper.CuratedSaveTerms(False, True, []))
         try:
             # (what the row measures, the package, how the palette parts, the source
-            #  the package declares, the production answer this row removes,
-            #  (revision the apply paints, revision the reload renders,
-            #   the curated file's own bytes intact, the replacing file intact))
+            #  the package declares, the save route, a writer run after it, the
+            #  production answer this row removes,
+            #  (revision the apply paints, revision the reload renders, the curated
+            #   file's own bytes intact, the replacing file intact, save stderr))
             rows = [
-                ("an untouched package renders its own revision",
-                 "carryrest", "none", "curated", contextlib.nullcontext(),
-                 ("A", "A", True, True)),
+                ("an untouched package renders its own revision and says nothing",
+                 "carryrest", "none", "curated", wallpaper_save, None,
+                 contextlib.nullcontext(), ("A", "A", True, True, "")),
                 ("an untouched generated package renders its own revision",
-                 "carrygen", "none", "generated", contextlib.nullcontext(),
-                 ("A", "A", True, True)),
+                 "carrygen", "none", "generated", wallpaper_save, None,
+                 contextlib.nullcontext(), ("A", "A", True, True, "")),
                 ("a refreshed definition pairs with nothing and loses no bytes",
-                 "carrymoved", "refresh", "curated", contextlib.nullcontext(),
-                 ("", "", True, True)),
+                 "carrymoved", "refresh", "curated", wallpaper_save, None,
+                 contextlib.nullcontext(), ("", "", True, True, "")),
                 ("an unsaved colour edit pairs with nothing and loses no bytes",
-                 "carryedit", "edit", "curated", contextlib.nullcontext(),
-                 ("", "", True, True)),
-                ("a mode rebuild paints the counterpart file and saves none of it",
-                 "carrymode", "mode", "curated", contextlib.nullcontext(),
-                 ("A", "", True, True)),
+                 "carryedit", "edit", "curated", wallpaper_save, None,
+                 contextlib.nullcontext(), ("", "", True, True, "")),
+                ("a mode rebuild paints the counterpart file, saves none of it and says so",
+                 "carrymode", "mode", "curated", wallpaper_save, None,
+                 contextlib.nullcontext(), ("A", "", True, True, parted_notice)),
+                # A save route with no carry re-renders every enabled app file from
+                # the templates, so the package's hand-written replacing file goes.
+                # That is the pre-existing shape of those routes; the rule under test
+                # is the merge-style column beside it.
+                ("apply-colors --save under the theme's own name loses no bytes",
+                 "carryedited", "none", "curated",
+                 ["apply-colors", "--name", "<name>", "--set", "accent=#123456", "--save"], None,
+                 contextlib.nullcontext(), ("", "", True, False, "")),
+                ("save-current under the theme's own name loses no bytes",
+                 "carrysaved", "none", "curated",
+                 ["save-current", "--name", "<name>"], None,
+                 contextlib.nullcontext(), ("", "", True, False, "")),
+                ("a save over the package an interrupted save left loses no bytes",
+                 "carrynometa", "no-metadata", "curated", wallpaper_save, None,
+                 contextlib.nullcontext(), ("", "", True, False, "")),
+                # `regenerate` is handed one app's file, so it rewrites the replacing
+                # file it was asked for and must leave the record it was not asked
+                # about alone.
+                ("regenerate after a held-back record does not revive the file",
+                 "carryregen", "refresh", "curated", wallpaper_save,
+                 ["regenerate", "<name>", "--app", "btop", "--yes"],
+                 contextlib.nullcontext(), ("", "", True, False, "")),
                 ("without the palette agreement the stale pair comes back",
-                 "carrycontrol", "refresh", "curated", no_agreement,
-                 ("B", "B", True, True)),
-                ("without the save's own-package answer the prune takes the file",
-                 "carrydelete", "refresh", "curated", not_own_package,
-                 ("", "", False, True)),
+                 "carrycontrol", "refresh", "curated", wallpaper_save, None,
+                 no_agreement, ("B", "B", True, True, "")),
             ]
-            for label, name, move, source, patched, expected in rows:
-                assert_equal(save_after(name, move, source, patched), expected, label)
+            for label, name, move, source, save_argv, then, patched, expected in rows:
+                assert_equal(save_after(name, move, source, save_argv, then, patched),
+                             tuple(part.replace("<name>", name) if isinstance(part, str) else part
+                                   for part in expected),
+                             label)
 
-            # The apply names what it withheld, in the shape every other apply
+            # The apply names what the carry withheld, in the shape every other apply
             # warning takes, so the settings editor and the wallpaper picker show a
             # curated file gone quiet instead of swapping the bands in silence.
             refreshed_curated_package("carrywarn", "#101010", "A")
@@ -10741,8 +10770,8 @@ def test_declared_ui_roles_move_with_a_restyle_and_survive_a_save():
                 helper.theme_json_from_blueprint(dropped), name="digestroles")
             rebuilt.update({"package": True, "path": str(helper.user_themes_dir() / "digestroles")})
             assert_equal(helper.save_curated_terms(rebuilt),
-                         (True, False, ["claude-light.json"]),
-                         "the save spares a file the override alone dropped")
+                         (False, ["claude-light.json"]),
+                         "the save vouches for a file the override alone dropped")
 
             # Clear the override first, or the next row would pass on the
             # override's own drop and say nothing about the digest.

@@ -940,19 +940,17 @@ class InstalledLayout(unittest.TestCase):
     def saved_under_own_name(self, overrides: dict, edits: tuple = (), transform: str = "") -> tuple:
         """akane as a user-created package, optionally overridden, optionally colour-edited
         without `--save`, then saved the way `set-wallpaper --save` saves:
-        `carry_curated_apps` over a rebuild from the applied theme, which is the
-        only shipped call that reaches this exemption.
+        `carry_curated_apps` over a rebuild from the applied theme.
 
         A blueprint straight from `load_theme_package` is a shape production never
-        hands the save. `carry_curated_apps` copies `apps`, `package`, `path`,
-        `builtin` and `userDir` and nothing else, so a fixture that skips it tests
-        an exemption carried on a key the real caller drops, and passes while the
-        file is deleted in production.
+        hands the save, and `carry_curated_apps` copies `apps`, `package`, `path`,
+        `builtin` and `userDir` and nothing else, so a fixture that skips it measures
+        a blueprint no command builds.
 
         `edits` runs `apply_color_edits` with no `--save`, which is what moves the
         applied palette while leaving the package's `colors.toml` and its recorded
         digest untouched. The save then writes the edited palette over the package
-        the exemption asks about.
+        the override question asks about.
 
         `transform` runs `theme mode --transform <mode>` and a save ahead of all
         that, which rewrites the package from a transformed palette and so leaves
@@ -1011,28 +1009,24 @@ class InstalledLayout(unittest.TestCase):
         set, so what the first row measures is the exemption and not a difference
         in what the save was handed.
 
-        The third row says the exemption asks about the palette as well as the
-        override. `apply-colors` with no `--save` moves the applied palette while
+        The third row says the vouching question asks about the palette as well as
+        the override. `apply-colors` with no `--save` moves the applied palette while
         the package's `colors.toml` keeps the colours its recorded digest names, so
         the override question alone still reads the file as merely overridden.
         Certifying it there painted akane's diff bands at 1.05:1 and 1.06:1 against
-        the new background, and deleting it took the only copy this package has, so
-        the save does neither: the bytes stay and the record stays where it was, and
-        the file is out of the render while the saved palette is not the one it was
-        picked against.
+        the new background.
 
         The fourth row is `theme mode --transform` and a save, the shipped route to
-        a package declaring `source: generated`. The transform applies a palette
-        the package does not hold, so the save writes no merge-style file and
-        certifies none against it; the file's own bytes stay and the light render
-        falls back to generated bands, which miss a diff rule the curated file
-        closed. Role derivation adjusts contrast on that branch and so is not
-        idempotent there, which is why the palette comparison rebuilds both sides
-        the same number of times. The declared source is asserted in every row so
-        this one cannot quietly stop reaching the branch it is named for.
+        a package declaring `source: generated`. Role derivation adjusts contrast on
+        that branch and so is not idempotent there, which is why the palette
+        comparison rebuilds both sides the same number of times. The declared source
+        is asserted in every row so this one cannot quietly stop reaching the branch
+        it is named for. The light render there falls back to generated bands, which
+        miss a diff rule the curated file closed.
 
-        Every row asserts the file's own bytes are still on disk, because this
-        package directory is the only copy and no save may take it.
+        What becomes of the file on disk and of the record beside it is the rule
+        `materialize_theme_package` states; every row asserts the file's own bytes
+        because this package directory is the only copy.
         """
         self.assertEqual(
             (self.saved_under_own_name({"claude": {"background": "#0b0b0b"}}),
