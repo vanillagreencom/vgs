@@ -63,15 +63,6 @@ FullScreenSwitcher {
     // BEGIN WALLPAPER SOURCE DECISION
     // Keep this region free of root., Theme., I18n. and Qt. references: scripts/test-switcher-source.js extracts and executes it.
 
-    // The Theme view's rail. Imagery not on disk leaves its download card as the only entry; an update card
-    // follows the wallpapers, so an open seeds onto a wallpaper and a reflexive Enter never starts an update.
-    function themeRail(wallpapers, card) {
-        if (!card)
-            return wallpapers || [];
-        const entry = {card: card, key: "imagery:" + card.kind};
-        return card.kind === "download" ? [entry] : (wallpapers || []).concat([entry]);
-    }
-
     // What activating an entry does. A card never reaches set-wallpaper: "fetch" hands it to the catalog, which
     // starts nothing for a card whose command already runs.
     function activationRoute(item) {
@@ -102,7 +93,7 @@ FullScreenSwitcher {
                 }));
         if (all)
             return wallpapers;
-        return root.themeRail(wallpapers, root.imageryCard).map(item => item.card ? Object.assign({
+        return VGSThemeCatalogService.themeRail(wallpapers, root.imageryCard).map(item => item.card ? Object.assign({
                 image: "",
                 label: VGSThemeCatalogService.imageryCardLabel(root.appliedTheme, item.card)
             }, item) : item);

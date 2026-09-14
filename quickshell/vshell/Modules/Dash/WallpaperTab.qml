@@ -32,7 +32,7 @@ Item {
     // Share the Dash tab height to avoid resizing during a tab switch. The grid scrolls within it.
     implicitHeight: 410
 
-    readonly property var entries: source === "all" ? (VGSThemeService.allWallpapers || []) : (VGSThemeService.themeWallpapers || [])
+    readonly property var entries: source === "all" ? (VGSThemeService.allWallpapers || []) : VGSThemeCatalogService.themeRail(VGSThemeService.themeWallpapers || [], imageryCard).filter(entry => !entry.card)
     readonly property var actionsEntry: actionsIndex >= 0 && actionsIndex < (entries || []).length ? entries[actionsIndex] : null
 
     onActiveChanged: {

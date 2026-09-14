@@ -88,6 +88,16 @@ Singleton {
         return null;
     }
 
+    // What a Theme view lists for a card. Imagery not on disk leaves its download card as the only entry, on the
+    // switcher and in Dash; an update card follows the wallpapers, so an open seeds onto a wallpaper and a
+    // reflexive Enter never starts an update. Dash draws the card as a button and drops its entry.
+    function themeRail(wallpapers, card) {
+        if (!card)
+            return wallpapers || [];
+        const entry = {card: card, key: "imagery:" + card.kind};
+        return card.kind === "download" ? [entry] : (wallpapers || []).concat([entry]);
+    }
+
     // The `theme catalog` verb a card runs: "install" for a download, "update" for an update, "" while one runs.
     function cardOperation(card) {
         if (!card || card.running)

@@ -30,8 +30,8 @@ const sources = Object.fromEntries(Object.entries(FILES).map(([id, [, file]]) =>
 const readers = Object.fromEntries(Object.entries(FILES).map(([id, [label]]) => [id, qmlSource(sources[id], label)]));
 
 const REGIONS = [
-    ["modal", "WALLPAPER SOURCE DECISION", ["themeRail", "activationRoute"]],
-    ["catalog", "IMAGERY CARD DECISION", ["imageryCard", "cardOperation", "failureDetail"]],
+    ["modal", "WALLPAPER SOURCE DECISION", ["activationRoute"]],
+    ["catalog", "IMAGERY CARD DECISION", ["imageryCard", "cardOperation", "failureDetail", "themeRail"]],
     ["service", "WALLPAPER MEMBERSHIP DECISION", ["inThemeSet"]]
 ];
 const fns = {};
@@ -134,7 +134,7 @@ test("the switcher routes a card to the catalog and Add to theme to wallpaper-ad
         ['const route = root.activationRoute(item); if (route === "fetch") VGSThemeCatalogService.fetchImagery(root.appliedTheme, item.card); if (route !== "wallpaper") return;',
             "a card goes to the catalog and returns before either set-wallpaper route", 1],
         ["VGSThemeService.setWallpaper(", "set-wallpaper has one call site, below the card return", 1],
-        ["return root.themeRail(wallpapers, root.imageryCard)", "the Theme view is the extracted rail", 1],
+        ["return VGSThemeCatalogService.themeRail(wallpapers, root.imageryCard)", "the Theme view is the shared extracted rail", 1],
         ["sourceToggle: sourcePill", "the Theme / All pill is loaded under the captions", 1],
         ['activeIndex: root.source === "all" ? 1 : 0', "the source pill lights the segment naming the view on screen", 1],
         ['onPicked: index => { root.source = index === 1 ? "all" : "theme"; root.refreshSource(); }', "a pick selects the labelled source and reads its list", 1],
@@ -186,6 +186,9 @@ test("the Dash tab shares the card, the All list and Add to theme", () => {
         ['readonly property var imageryCard: source === "theme" ? VGSThemeCatalogService.imageryCardFor(appliedTheme) : null', "the card is the catalog's decision, under Theme only", 1],
         ["VGSThemeCatalogService.fetchImagery(appliedTheme, imageryCard);", "the card starts through the catalog", 1],
         ['source === "all" ? (VGSThemeService.allWallpapers || [])', "All browses the service's list", 1],
+        ["VGSThemeCatalogService.themeRail(VGSThemeService.themeWallpapers || [], imageryCard).filter(entry => !entry.card)",
+            "the Theme grid is the shared rail without its card, so a download card leaves the empty state and its button, " +
+            "even when the theme holds a wallpaper the user added", 1],
         ["if (mouse.button === Qt.RightButton) root.actionsIndex = tile.index;", "a right-click opens the tile's actions", 1],
         ["VGSThemeService.wallpaperAdd(root.actionsEntry.path, true);", "whose Add to theme toasts its outcome", 1],
         ["VGSThemeService.wallpaperAdd(path, true);", "and so does the Theme view's Add", 1]
