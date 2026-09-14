@@ -123,8 +123,9 @@ const ROWS = [
     ["mercury", "MercuryWidget.qml", "MercuryDaemon.qml", [
         ["onTriggered: { if (root.watched) root.refresh(); }",
             "a poll that comes due with no watching widget fetches nothing"],
-        ["if (root.watched) Qt.callLater(root.catchUp); else pollTimer.stop();",
-            "the first watching widget queues the catch-up fetch, and the poll stops when the last one stops"],
+        ["if (root.watched) { pollTimer.restart(); Qt.callLater(root.catchUp); } else { pollTimer.stop(); }",
+            "the first watching widget restarts the poll, which a snapshot too fresh to fetch would never " +
+            "restart, and queues the catch-up fetch; the poll stops when the last one stops"],
         ["function invalidate() { root.fetchedAt = 0; Qt.callLater(root.catchUp); }",
             "a settings change marks the figures stale and queues the same catch-up, so at shell " +
             "start the saved key stamp and the first watching widget make one bank API call"],

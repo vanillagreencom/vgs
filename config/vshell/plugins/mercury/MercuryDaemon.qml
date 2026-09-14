@@ -219,12 +219,16 @@ PluginDaemonComponent {
 
     // The first watching widget is the moment the figures matter again, so the
     // poll resumes and anything stale is re-read. This is also
-    // the first fetch after the shell starts.
+    // the first fetch after the shell starts. The poll restarts here, not only
+    // on a settle: a snapshot still inside staleMs starts no fetch, so nothing
+    // else would schedule the next poll.
     onWatchedChanged: {
-        if (root.watched)
+        if (root.watched) {
+            pollTimer.restart();
             Qt.callLater(root.catchUp);
-        else
+        } else {
             pollTimer.stop();
+        }
     }
 
     // A setting changed what the snapshot should hold. The figures count as
