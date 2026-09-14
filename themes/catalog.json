@@ -7,7 +7,7 @@
     "baseUrl": "https://github.com/vanillagreencom/vgs/releases/download"
   },
   "count": 81,
-  "totalSize": 1072749078,
+  "totalSize": 1072749156,
   "themes": [
     {
       "name": "akane",
@@ -4951,7 +4951,7 @@
       "background": "#d0d0c8",
       "foreground": "#242424",
       "accent": "#de6a41",
-      "size": 3973559,
+      "size": 3973637,
       "files": [
         {
           "path": "apps/btop.theme",
@@ -4990,16 +4990,16 @@
         },
         {
           "path": "theme.json",
-          "size": 110,
-          "sha256": "c2a90619f1cd653dddd786a86eb947a5c78f7ddd3721d37bdb72e8ed8c627c66"
+          "size": 295,
+          "sha256": "68d530420588c3f538459a3f416d3b8f8ea1bc81aa66b4fa7834d86d424f257c"
         }
       ],
       "assets": {
-        "release": "themes-v6",
-        "archive": "vgs-theme-thegreek-r4.tar.gz",
-        "rev": 4,
-        "size": 3973559,
-        "sha256": "0c9eb673fc93afe5cabf5d2884edab0806e14621d1fcd2770717829cc356653b"
+        "release": "themes-v14",
+        "archive": "vgs-theme-thegreek-r6.tar.gz",
+        "rev": 6,
+        "size": 3973637,
+        "sha256": "656bc4bcd6767addb4aa9cbd990744a20e52fb527e2057530deae6770bce1f99"
       }
     },
     {

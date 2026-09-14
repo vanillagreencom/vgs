@@ -683,12 +683,12 @@
       "published": true
     },
     "thegreek": {
-      "release": "themes-v6",
-      "archive": "vgs-theme-thegreek-r4.tar.gz",
-      "rev": 4,
-      "size": 3973559,
-      "sha256": "0c9eb673fc93afe5cabf5d2884edab0806e14621d1fcd2770717829cc356653b",
-      "definitions": "e26fa8828e906ab85aac3aabf5c417114818f9808d93a84e616319f29987e42f",
+      "release": "themes-v14",
+      "archive": "vgs-theme-thegreek-r6.tar.gz",
+      "rev": 6,
+      "size": 3973637,
+      "sha256": "656bc4bcd6767addb4aa9cbd990744a20e52fb527e2057530deae6770bce1f99",
+      "definitions": "f04f8d55dcd5671ee19d3cfc234a8ff547c402304328392b40e3a4722f00850b",
       "preview": "1a09da2ebc91c388f96a2e756a464f308ece1265f7e6017cafa9b04c07a5ca58",
       "published": true
     },
