@@ -86,51 +86,11 @@ function makeTimer() {
     };
 }
 
-function launch() {
-    const processes = [];
-    const timers = [];
-    const exitCodes = [];
-    const scope = {
-        root: {},
-        noTimeout: NO_TIMEOUT,
-        terminateGraceMs: GRACE_MS,
-        log: { warn: () => {} },
-        Qt: { callLater: fn => fn() },
-        procComp: {
-            createObject: (_parent, props) => {
-                const created = makeProcess(props);
-                processes.push(created);
-                return created;
-            },
-        },
-        debounceTimerComp: {
-            createObject: () => {
-                const created = makeTimer();
-                timers.push(created);
-                return created;
-            },
-        },
-        _procDebouncers: {
-            preview: {
-                timer: makeTimer(),
-                command: ["vshell", "theme", "preview", "--all", "--json"],
-                callback: (_out, code) => exitCodes.push(code),
-                timeoutMs: TIMEOUT_MS,
-                arming: 1,
-            },
-        },
-    };
-    // with models QML scope lookup, which needs a non-strict function.
-    // eslint-disable-next-line no-new-func
-    new Function("scope", "id", `with (scope) ${launchBody}`)(scope, "preview");
-    assert.equal(processes.length, 1, "one Process per launch");
-    assert.equal(timers.length, 1, "one timeout timer per launch");
-    return { process: processes[0], timer: timers[0], exitCodes };
-}
-
-// The whole singleton: runCommand arms a debouncer, the debouncer's Timer launches, and the
-// launch retires what it holds. Qt.callLater is a queue rather than an immediate call, which is
-// what puts a callback's own runCommand ahead of the release that follows it.
+// The whole singleton: runCommand arms a debouncer and the debouncer's Timer launches. In
+// maybeComplete the callback runs before the release is scheduled at all, so Qt.callLater being
+// a queue is not what lets a callback arm the id again first; it only decides when the release
+// compares. The arming number is what keeps that release from retiring the entry the callback
+// armed, or one built again after this run began.
 function makeShell() {
     const processes = [];
     const timers = [];
@@ -158,7 +118,9 @@ function makeShell() {
             },
         },
         _procDebouncers: {},
+        _armingSerial: 0,
     };
+    // with models QML scope lookup, which needs a non-strict function.
     // eslint-disable-next-line no-new-func
     const launchProc = new Function("scope", "id", `with (scope) ${launchBody}`);
     scope._launchProc = id => launchProc(scope, id);
@@ -180,8 +142,21 @@ function makeShell() {
     };
 }
 
-// One command from arming to the callback: the debounce Timer fires, the child exits, and
-// whatever the run deferred is then run.
+// The theme preview command, armed and launched: the run the timeout cases drive. Its deferred
+// release is left queued, which those cases neither reach nor assert on.
+function launch() {
+    const shell = makeShell();
+    const exitCodes = [];
+    shell.runCommand("preview", ["vshell", "theme", "preview", "--all", "--json"],
+        (_out, code) => exitCodes.push(code), 0, TIMEOUT_MS);
+    fire(shell.timers[0]);
+    assert.equal(shell.processes.length, 1, "one Process per launch");
+    assert.equal(shell.timers.length, 2, "a debounce Timer, then one timeout Timer per launch");
+    return { process: shell.processes[0], timer: shell.timers[1], exitCodes };
+}
+
+// One command from arming to its child's exit, which fires the callback. The caller decides when
+// the deferred release runs, because the state before it is what some cases assert on.
 function runOnce(shell, id, callback) {
     const debounceTimer = shell.timers.length;
     shell.runCommand(id, ["true"], callback, 0, TIMEOUT_MS);
@@ -291,4 +266,37 @@ test("a callback that asks for the same id again keeps the run it asked for", ()
     assert.deepEqual(answered, ["first", "second"], "so the second command is not dropped");
     assert.deepEqual(Object.keys(shell.entries), [], "and its own end retires the entry");
     assert.equal(debounce.destroyed, true, "with the Timer that launched it");
+});
+
+test("a run whose entry an overlapping run already retired retires nothing else", () => {
+    const shell = makeShell();
+    const answered = [];
+    // _launchProc leaves the entry in place, so arming the id during a run launches a second.
+    shell.runCommand("iconIndex", ["true"], () => answered.push("first"), 0, TIMEOUT_MS);
+    fire(shell.timers[0]);
+    shell.runCommand("iconIndex", ["true"], () => answered.push("second"), 0, TIMEOUT_MS);
+    fire(shell.timers[0]);
+    assert.equal(shell.processes.length, 2, "both runs of the id have a child");
+
+    // The run launched second finishes first and retires the entry both were launched from.
+    exit(shell.processes[1], 0);
+    shell.flush();
+    assert.deepEqual(Object.keys(shell.entries), [], "the entry is gone before the first run ends");
+
+    // A third call therefore builds a fresh entry, whose Timer is waiting to launch.
+    shell.runCommand("iconIndex", ["true"], () => answered.push("third"), 0, TIMEOUT_MS);
+    const waiting = shell.timers[shell.timers.length - 1];
+    assert.equal(waiting.running, true, "the fresh entry's Timer is waiting");
+
+    exit(shell.processes[0], 0);
+    shell.flush();
+    assert.deepEqual(Object.keys(shell.entries), ["iconIndex"],
+        "the first run must not retire an entry it was never launched from");
+    assert.equal(waiting.destroyed, false, "nor destroy the Timer that entry is waiting on");
+
+    fire(waiting);
+    exit(shell.processes[2], 0);
+    shell.flush();
+    assert.deepEqual(answered, ["second", "first", "third"], "so no command is silently dropped");
+    assert.deepEqual(Object.keys(shell.entries), [], "and the third run retires its own entry");
 });

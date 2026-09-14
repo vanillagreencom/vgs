@@ -19,6 +19,9 @@ Singleton {
     // and output from the live compositor.
     readonly property int terminateGraceMs: 10000
     property var _procDebouncers: ({})
+    // A real, not an int: this counts every arming the session ever makes, and a 32-bit int
+    // would wrap back onto numbers the map still holds.
+    property real _armingSerial: 0
 
     function runCommand(id, command, callback, debounceMs, timeoutMs) {
         const wait = (typeof debounceMs === "number" && debounceMs >= 0) ? debounceMs : defaultDebounceMs;
@@ -35,8 +38,7 @@ Singleton {
                 command: command,
                 callback: callback,
                 waitMs: wait,
-                timeoutMs: timeout,
-                arming: 0
+                timeoutMs: timeout
             };
         } else {
             _procDebouncers[procId].command = command;
@@ -46,11 +48,13 @@ Singleton {
         }
 
         const entry = _procDebouncers[procId];
-        // Every arming of this id takes its own number. The release that follows a run's
-        // callback compares it, because an id armed again keeps the same entry object and
-        // identity cannot tell the two apart. Releasing an entry armed again would destroy the
-        // timer that is waiting and drop the command it was waiting for.
-        entry.arming = entry.arming + 1;
+        // Every arming in the session takes its own number, so the release that follows a run's
+        // callback can name the request it launched. Neither the entry object nor a number
+        // counted inside it can do that: an id armed again keeps the same object, and an id
+        // whose entry was retired and built again starts any per-entry count over, so a retired
+        // request's number would match a waiting one and destroy its timer.
+        _armingSerial = _armingSerial + 1;
+        entry.arming = _armingSerial;
         entry.timer.interval = entry.waitMs;
         entry.timer.restart();
     }
@@ -194,8 +198,9 @@ Singleton {
             }
 
             // The entry and its Timer are held only to coalesce calls into one run, so the run's
-            // end retires them whatever the id. A callback that asks for the same id again arms
-            // the entry with a new number, and the comparison leaves that pending run alone.
+            // end retires them whatever the id. It retires only the request it launched: the id
+            // may by now hold a later arming, or an entry built again after an overlapping run
+            // retired this one, and destroying either would drop a command that is waiting.
             Qt.callLater(function () {
                 const current = _procDebouncers[id];
                 if (!current || current.arming !== launchedArming)
