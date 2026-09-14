@@ -2,6 +2,8 @@ package cloudsync
 
 import (
 	"time"
+
+	"vshell/backend/internal/recovery"
 )
 
 // Trigger names recorded in history so the Activity view can say why a run
@@ -58,9 +60,7 @@ func (m *Manager) scheduleFolder(folder Folder) {
 
 	m.mu.Lock()
 	m.statusLocked(id).NextSyncUnix = time.Now().Add(delay).Unix()
-	m.timers[id] = time.AfterFunc(delay, func() {
-		m.runScheduled(id)
-	})
+	m.timers[id] = recovery.AfterFunc(delay, m.log, "cloudsync.scheduledSync", func() { m.runScheduled(id) })
 	m.mu.Unlock()
 }
 
@@ -130,7 +130,7 @@ func (m *Manager) scheduleStartupSweep() {
 		m.mu.Unlock()
 		return
 	}
-	m.startupTimer = time.AfterFunc(startupDelay, func() {
+	m.startupTimer = recovery.AfterFunc(startupDelay, m.log, "cloudsync.startupSweep", func() {
 		settings := m.store.snapshotSettings()
 		if settings.Paused {
 			return

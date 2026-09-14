@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"vshell/backend/internal/recovery"
 	"vshell/backend/internal/server"
 )
 
@@ -67,11 +68,11 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	srv.RegisterSnapshot("location", func() any { return m.GetState() })
 
 	if stale(m.state) {
-		go func() {
+		go recovery.Run(m.log, "location.refresh", func() {
 			if _, err := m.refreshFromIP(); err != nil {
 				m.log.Warn("location lookup failed", "err", err)
 			}
-		}()
+		})
 	}
 
 	return m, nil

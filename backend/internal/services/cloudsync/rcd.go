@@ -12,6 +12,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"vshell/backend/internal/recovery"
 )
 
 const (
@@ -98,7 +100,9 @@ func (d *rcd) start() error {
 		"RCLONE_RC_USER="+user,
 		"RCLONE_RC_PASS="+pass,
 	)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// Pdeathsig ends it with a crashed backend; execbound.StartChild states the
+	// thread-lifetime condition it depends on.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGTERM}
 	// stdout/stderr are left unattached: rclone's rc log can contain remote
 	// paths, and nothing here parses it (the port is chosen by us, not read
 	// back from the log).
@@ -114,7 +118,7 @@ func (d *rcd) start() error {
 	d.done = done
 	d.mu.Unlock()
 
-	go d.wait(cmd, done)
+	go recovery.Run(nil, "cloudsync.rcdWait", func() { d.wait(cmd, done) })
 
 	version, err := d.awaitReady()
 	if err != nil {
@@ -203,7 +207,7 @@ func (d *rcd) wait(cmd *exec.Cmd, done chan struct{}) {
 		d.mu.Unlock()
 		return
 	}
-	d.restartT = time.AfterFunc(backoff, func() {
+	d.restartT = recovery.AfterFunc(backoff, nil, "cloudsync.rcdRestart", func() {
 		if err := d.start(); err != nil && d.onDown != nil {
 			d.onDown(err.Error())
 		}

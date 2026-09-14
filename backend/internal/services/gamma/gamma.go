@@ -1,6 +1,7 @@
 package gamma
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -8,11 +9,14 @@ import (
 	"math"
 	"net/http"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
 
 	"vshell/backend/internal/compositor"
+	"vshell/backend/internal/execbound"
+	"vshell/backend/internal/recovery"
 	"vshell/backend/internal/server"
 )
 
@@ -53,7 +57,7 @@ type Manager struct {
 
 	mu    sync.RWMutex
 	state State
-	cmd   *exec.Cmd
+	child *execbound.Child
 	// Last effective wlsunset inputs. Config-only changes such as manual
 	// sunrise/sunset must not flash the display by replacing an identical
 	// process several times in one settings reapply.
@@ -333,7 +337,7 @@ func (m *Manager) applyConfigLocked(cfg Config) (State, error) {
 		m.state.Running = false
 		return State{}, err
 	}
-	m.state.Running = cfg.Enabled && m.cmd != nil
+	m.state.Running = cfg.Enabled && m.child != nil
 	m.scheduleTransitionLocked(next)
 	return m.state, nil
 }
@@ -354,20 +358,29 @@ func (m *Manager) scheduleTransitionLocked(state State) {
 	if delay < time.Second {
 		delay = time.Second // never busy-loop on a boundary
 	}
-	m.transitionTimer = time.AfterFunc(delay, func() {
-		m.mu.Lock()
-		if m.closed || !m.state.Config.Enabled {
-			m.mu.Unlock()
-			return
-		}
-		next, err := m.applyConfigLocked(m.state.Config)
-		m.mu.Unlock()
-		if err != nil {
-			m.log.Warn("gamma transition re-apply failed", "err", err)
-			return
-		}
+	m.transitionTimer = recovery.AfterFunc(delay, m.log, "gamma.transition", m.applyTransition)
+}
+
+func (m *Manager) applyTransition() {
+	if next, ok := m.reapplyForTransition(); ok {
 		m.srv.Broadcast("gamma", next)
-	})
+	}
+}
+
+// reapplyForTransition unlocks through defer, so a panic in the re-apply does
+// not leave every later gamma call blocked on the state lock.
+func (m *Manager) reapplyForTransition() (State, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed || !m.state.Config.Enabled {
+		return State{}, false
+	}
+	next, err := m.applyConfigLocked(m.state.Config)
+	if err != nil {
+		m.log.Warn("gamma transition re-apply failed", "err", err)
+		return State{}, false
+	}
+	return next, true
 }
 
 // applyGammaLocked stops the adapter when disabled. Hyprland changes temperature
@@ -380,7 +393,7 @@ func (m *Manager) applyGammaLocked(state State) error {
 	}
 
 	if m.backend == "wlsunset" {
-		if m.cmd != nil && m.appliedTemp == state.CurrentTemp && m.appliedGamma == state.Config.Gamma {
+		if m.child != nil && m.appliedTemp == state.CurrentTemp && m.appliedGamma == state.Config.Gamma {
 			return nil
 		}
 		m.stopLocked()
@@ -391,18 +404,16 @@ func (m *Manager) applyGammaLocked(state State) error {
 		if highTemp > 10000 {
 			lowTemp, highTemp = 9999, 10000
 		}
-		cmd := exec.Command(m.binary,
+		err := m.startLocked(
 			"-t", strconv.Itoa(lowTemp),
 			"-T", strconv.Itoa(highTemp),
 			"-g", strconv.FormatFloat(state.Config.Gamma, 'f', 3, 64),
 		)
-		if err := cmd.Start(); err != nil {
+		if err != nil {
 			return fmt.Errorf("start wlsunset: %w", err)
 		}
-		m.cmd = cmd
 		m.appliedTemp = state.CurrentTemp
 		m.appliedGamma = state.Config.Gamma
-		go m.watchLocked(cmd)
 		return nil
 	}
 
@@ -410,16 +421,14 @@ func (m *Manager) applyGammaLocked(state State) error {
 	if gammaPercent <= 0 {
 		gammaPercent = 100
 	}
-	if m.cmd == nil {
-		cmd := exec.Command(m.binary,
+	if m.child == nil {
+		err := m.startLocked(
 			"--temperature", strconv.Itoa(state.CurrentTemp),
 			"--gamma", strconv.Itoa(gammaPercent),
 		)
-		if err := cmd.Start(); err != nil {
+		if err != nil {
 			return fmt.Errorf("start hyprsunset: %w", err)
 		}
-		m.cmd = cmd
-		go m.watchLocked(cmd)
 		return nil
 	}
 
@@ -429,16 +438,32 @@ func (m *Manager) applyGammaLocked(state State) error {
 	return m.hyprsunsetIPC("temperature", strconv.Itoa(state.CurrentTemp))
 }
 
-// watchLocked reports an unexpected gamma-adapter exit so a crashed process is
-// not shown as night-light-on. A later apply restarts it.
-func (m *Manager) watchLocked(cmd *exec.Cmd) {
-	err := cmd.Wait()
+// startLocked launches the gamma adapter with args after ending any instance
+// of the adapter program this backend did not start.
+func (m *Manager) startLocked(args ...string) error {
+	if err := terminateStrays(m.log, filepath.Base(m.binary), execbound.ChildStopGrace); err != nil {
+		return err
+	}
+	child, err := execbound.StartChild(context.Background(), execbound.ChildOptions{}, m.binary, args...)
+	if err != nil {
+		return err
+	}
+	m.child = child
+	go recovery.Run(m.log, "gamma.watch", func() { m.watch(child) })
+	return nil
+}
+
+// watch reports an unexpected gamma-adapter exit so a crashed process is not
+// shown as night-light-on. A later apply restarts it.
+func (m *Manager) watch(child *execbound.Child) {
+	<-child.Done()
+	err := child.Err()
 	m.mu.Lock()
 	// An exit from the active instance is unexpected. Report it so the UI does not
 	// show night light as running.
-	crashed := m.cmd == cmd
+	crashed := m.child == child
 	if crashed {
-		m.cmd = nil
+		m.child = nil
 		m.state.Running = false
 	}
 	state := m.state
@@ -498,13 +523,14 @@ func (m *Manager) fetchIPLocation() (float64, float64, error) {
 	return data.Lat, data.Lon, nil
 }
 
+// stopLocked ends the adapter and waits for it to exit, so a replacement never
+// runs alongside it.
 func (m *Manager) stopLocked() {
-	if m.cmd == nil || m.cmd.Process == nil {
-		m.cmd = nil
+	if m.child == nil {
 		return
 	}
-	_ = m.cmd.Process.Kill()
-	m.cmd = nil
+	m.child.Stop()
+	m.child = nil
 }
 
 func (m *Manager) recalculate(cfg Config, now time.Time) State {

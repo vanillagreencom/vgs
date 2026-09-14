@@ -160,6 +160,33 @@ func TestServiceKickRecordsAndBroadcasts(t *testing.T) {
 	}
 }
 
+// A query that panics must cost that run only: the loop keeps serving kicks, so
+// a fault in one service's parser does not leave its state frozen.
+func TestServiceKeepsRefreshingAfterAQueryPanics(t *testing.T) {
+	srv := &recorder{}
+	var mu sync.Mutex
+	calls := 0
+	svc := NewService[string](srv, discardLogger(), "svc", 0, func() (string, error) {
+		mu.Lock()
+		calls++
+		first := calls == 1
+		mu.Unlock()
+		if first {
+			panic("parser fault")
+		}
+		return "fresh", nil
+	})
+	t.Cleanup(svc.Close)
+
+	svc.Kick()
+	time.Sleep(idleWindow)
+	svc.Kick()
+
+	if got := srv.await(t, 1); got[0] != "fresh" {
+		t.Fatalf("broadcast payload = %v, want the query result from the run after the panic", got[0])
+	}
+}
+
 func TestServiceFailedRefreshBroadcastsNothing(t *testing.T) {
 	srv := &recorder{}
 	svc := NewService[string](srv, discardLogger(), "svc", 0, func() (string, error) {

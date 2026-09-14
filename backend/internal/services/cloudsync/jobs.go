@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"vshell/backend/internal/recovery"
 )
 
 const (
@@ -283,15 +285,17 @@ func (m *Manager) progressLoop() {
 		}
 		m.mu.Unlock()
 
-		for _, job := range jobs {
-			m.pollJob(job)
-		}
-		if time.Since(lastRecent) >= recentInterval {
-			m.refreshRecent()
-			lastRecent = time.Now()
-		}
-		m.recomputeGlobal()
-		m.broadcastThrottled()
+		recovery.Run(m.log, "cloudsync.progress", func() {
+			for _, job := range jobs {
+				m.pollJob(job)
+			}
+			if time.Since(lastRecent) >= recentInterval {
+				m.refreshRecent()
+				lastRecent = time.Now()
+			}
+			m.recomputeGlobal()
+			m.broadcastThrottled()
+		})
 	}
 }
 
