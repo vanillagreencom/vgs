@@ -24,6 +24,7 @@ ot_message() { # REASON FIELD=VALUE...
     items-missing) text='Specify a work item.' ;;
     tracker-invalid) text='The tracker must be linear or github.' ;;
     command-missing) text='Select a harness or a custom command.' ;;
+    cmd-unbalanced-quote) text='Put the brief in a file and reference it, or escape the quote.' ;;
     desktop-harness) text='Use the Codex Desktop thread tools for this harness.' ;;
     mode-override) text='The explicit GUI option overrides the detected tmux mode.' ;;
     verify-seconds-invalid) text='The verification timeout must be a positive integer in seconds.' ;;
@@ -58,6 +59,12 @@ ot_message() { # REASON FIELD=VALUE...
     claim-unrecorded) text='The previous claim is missing. The batch cannot select another account safely.' ;;
     item-owned) text='Another session owns this work item. Its worktree was skipped.' ;;
     worktree-failed) text='The worktree helper failed to create this item.' ;;
+    session-scan-failed) text='The harness session store could not be read.' ;;
+    session-resumed) text='The harness resumed the matching session.' ;;
+    wake-invalid) text='The wake option takes --harness claude, codex or pi, and no --cmd or --relaunch.' ;;
+    session-missing) text='No session of this harness names the item. Nothing was started.' ;;
+    wake-failed) text='The delivering command exited non-zero before the wake window closed. The lane was not woken; the log says why.' ;;
+    lane-woken) text='The line that reads the lane inbox is on its way to the session. The delivering command runs detached; its output goes to the log.' ;;
     summary) text='The launch batch is complete.' ;;
     *) printf 'open-terminal: message-invalid reason=%s\n' "$reason" >&2; return 2 ;;
   esac
@@ -116,8 +123,18 @@ Options:
                     a prompting mode stalls the lane at its first tool call.
   --relaunch        Replace a dead session on items that may already have a
                     worktree: an existing tree is reused instead of being read
-                    as another session's claim. A worktree under a lease held
-                    by a different owner is still skipped.
+                    as another session's claim. The newest matching Claude,
+                    Codex, or Pi session resumes natively. With no match the
+                    normal brief starts fresh. Foreign leases are still skipped.
+  --wake            Wake an idle lane in its existing worktree: resume its
+                    newest matching Claude or Codex session in print mode, or
+                    send to its live Pi session through pi-bridge, with one
+                    line telling it to read `lane-mail inbox`. No worktree is
+                    created, no window opens, and no session match is a
+                    refusal, never a fresh start. The turn runs detached; its
+                    output goes to tmp/lane-wake-ITEM.log in the worktree. A
+                    delivery that exits non-zero within its first 5 seconds
+                    is refused as wake-failed.
 
 On tmux lanes the launch is verified against the pane and the brief re-sent
 once if a first-run dialog consumed it ($ORCH_TMUX_VERIFY_SECS per pass,
@@ -165,6 +182,7 @@ parse_argv() {
   LANE_MAX_PCT=""
   LANE_ENV=""
   RELAUNCH=false
+  WAKE=false
   ITEMS=()
 
   while [[ $# -gt 0 ]]; do
@@ -186,6 +204,7 @@ parse_argv() {
       --launch-flags) need_val "$@"; LAUNCH_FLAGS="$2"; shift 2 ;;
       --launch-flags=*) LAUNCH_FLAGS="${1#--launch-flags=}"; need_val --launch-flags "$LAUNCH_FLAGS"; shift ;;
       --relaunch) RELAUNCH=true; shift ;;
+      --wake) WAKE=true; shift ;;
       # The bare word too, so the form a caller learned on a sibling orch CLI
       # answers here rather than reaching the loader. `help` is not a work item.
       --help | -h | help) usage; exit 0 ;;
@@ -242,6 +261,12 @@ LANE_MAX_PCT="${LANE_MAX_PCT:-${ORCH_LANE_MAX_PCT:-90}}"
 [[ "$TRACKER" == "linear" || "$TRACKER" == "github" ]] || { ot_message tracker-invalid "tracker=$TRACKER" >&2; exit 1; }
 [[ -n "$HARNESS" || -n "$CMD_TEMPLATE" ]] || { ot_message command-missing "options=--harness,--cmd" >&2; exit 1; }
 [[ "$HARNESS" != "codex-app" ]] || { ot_message desktop-harness "harness=$HARNESS" >&2; exit 1; }
+# A wake only ever resumes a session the harness already holds: a custom
+# command or a relaunch could start a fresh one.
+if [[ "$WAKE" == true && ( -n "$CMD_TEMPLATE" || "$RELAUNCH" == true || ! "$HARNESS" =~ ^(claude|codex|pi)$ ) ]]; then
+  ot_message wake-invalid "option=--wake" "harness=$HARNESS" "relaunch=$RELAUNCH" >&2
+  exit 1
+fi
 
 # ORCH_TMUX_VERIFY_SECS feeds a per-pass sleep loop (two passes per tmux
 # lane): a runaway value hangs every lane in the launch and a non-integer
@@ -439,8 +464,105 @@ resolve_repo() {
   printf '%s\n' "$resolved"
 }
 
-start_cmd() {
-  local item="$1" repo="$2"
+# Pi resolves a relative session directory from the process working directory,
+# which is the item worktree for the command this launcher emits.
+pi_relaunch_root() { # WORKTREE HOME
+  local cwd="$1" home="$2" agent_dir="${PI_CODING_AGENT_DIR:-$home/.pi/agent}" root="" settings setting="" setting_rc token expect_value=false override_found=false project_trusted=false trust_override=false decision="" trust_rc
+  local -a tokens=()
+  cwd="$(cd "$cwd" && pwd -P)" || return 2
+  case "$agent_dir" in "~") agent_dir="$home" ;; "~/"*) agent_dir="$home/${agent_dir#\~/}" ;; /*) ;; *) agent_dir="$cwd/$agent_dir" ;; esac
+  if [[ -n "$LAUNCH_FLAGS" ]]; then
+    read -r -a tokens <<<"$LAUNCH_FLAGS"
+    for token in ${tokens[@]+"${tokens[@]}"}; do
+      if [[ "$expect_value" == true ]]; then root="$token"; expect_value=false; override_found=true; continue; fi
+      case "$token" in
+        --session-dir) expect_value=true ;;
+        --session-dir=*) root="${token#*=}"; [[ -n "$root" ]] || return 2; override_found=true ;;
+        -a|--approve) project_trusted=true; trust_override=true ;;
+        -na|--no-approve) project_trusted=false; trust_override=true ;;
+      esac
+    done
+    [[ "$expect_value" == false ]] || return 2
+  fi
+  if [[ "$override_found" == false && -n "${PI_CODING_AGENT_SESSION_DIR:-}" ]]; then root="$PI_CODING_AGENT_SESSION_DIR"; override_found=true; fi
+  if [[ "$override_found" == false ]]; then
+    root="$agent_dir/sessions"
+    settings="$agent_dir/settings.json"
+    if [[ -e "$settings" ]]; then
+      [[ -f "$settings" && -r "$settings" ]] || return 2
+      setting_rc=0
+      setting="$(jq -er 'if type!="object" then error("settings") elif has("sessionDir") and (.sessionDir|type)!="string" then error("sessionDir") elif has("sessionDir") then .sessionDir else empty end' "$settings")" || setting_rc=$?
+      case "$setting_rc" in 0) if [[ -n "$setting" ]]; then root="$setting"; else root="$agent_dir/sessions"; fi ;; 4) ;; *) return 2 ;; esac
+    fi
+    settings="$cwd/.pi/settings.json"
+    if [[ -e "$settings" ]]; then
+      if [[ "$trust_override" == false ]]; then
+        [[ ! -r "$agent_dir/settings.json" ]] || project_trusted="$(jq -r 'if .defaultProjectTrust=="always" then "true" else "false" end' "$agent_dir/settings.json")" || return 2
+        if [[ -e "$agent_dir/trust.json" ]]; then
+          [[ -f "$agent_dir/trust.json" && -r "$agent_dir/trust.json" ]] || return 2
+          trust_rc=0
+          decision="$(jq -er --arg p "$cwd" 'if type!="object" or any(.[]; .!=true and .!=false and .!=null) then error("trust") else [to_entries[]|select(.value==true or .value==false)|select(.key as $k|$k=="/" or $k==$p or ($p|startswith($k+"/")))]|sort_by(.key|length)|last|if .value==true then "true" elif .value==false then "false" else empty end end' "$agent_dir/trust.json")" || trust_rc=$?
+          case "$trust_rc" in 0) project_trusted="$decision" ;; 4) ;; *) return 2 ;; esac
+        fi
+      fi
+      if [[ "$project_trusted" == true ]]; then
+        [[ -f "$settings" && -r "$settings" ]] || return 2
+        setting_rc=0
+        setting="$(jq -er 'if type!="object" then error("settings") elif has("sessionDir") and (.sessionDir|type)!="string" then error("sessionDir") elif has("sessionDir") then .sessionDir else empty end' "$settings")" || setting_rc=$?
+        case "$setting_rc" in 0) if [[ -n "$setting" ]]; then root="$setting"; else root="$agent_dir/sessions"; fi ;; 4) ;; *) return 2 ;; esac
+      fi
+    fi
+  fi
+  case "$root" in "~") root="$home" ;; "~/"*) root="$home/${root#\~/}" ;; /*) ;; *) root="$cwd/$root" ;; esac
+  printf '%s\n' "$root"
+}
+
+# Find the newest transcript whose harness kickoff names the item.
+find_relaunch_session() { # HARNESS ITEM WORKTREE
+  local harness="$1" item="$2" cwd="$3" home="${LANES_HOME:-$HOME}" config roots root inventory match_filter files file best="" best_root="" rc relative target
+  command -v jq >/dev/null 2>&1 || return 2
+  # Codex writes injected repository instructions as user response items. Its
+  # user_message event is the harness kickoff, so only that record identifies
+  # the work item. Claude Code and Pi keep their own first-message formats.
+  case "$harness" in
+    claude) roots="$home/.claude-shared/projects"; match_filter='[inputs|fromjson?|select(.type=="user")|.message.content]|first|tostring|test("(^|[^A-Za-z0-9])"+$i+"([^A-Za-z0-9]|$)")' ;;
+    codex)
+      config="${CODEX_HOME:-$home/.codex}"; [[ "${LANE_ENV%%=*}" != CODEX_HOME ]] || config="${LANE_ENV#*=}"
+      [[ -x "$LANES_CLI" ]] || return 2
+      inventory="$("$LANES_CLI" list --harness codex --json)" || return 2
+      roots="$(jq -er --arg d "$config" 'if type=="array" and all(.[]; (.config_dir|type)=="string") then ([.[]|.config_dir]+[$d]|unique[]|.+"/sessions") else error("inventory") end' <<<"$inventory")" || return 2
+      match_filter='[inputs|fromjson?|select(.type=="event_msg" and .payload.type=="user_message")|.payload.message]|first|tostring|test("(^|[^A-Za-z0-9])"+$i+"([^A-Za-z0-9]|$)")' ;;
+    pi) roots="$(pi_relaunch_root "$cwd" "$home")" || return 2; match_filter='[inputs|fromjson?|select(.type=="message" and .message.role=="user")|.message.content]|first|tostring|test("(^|[^A-Za-z0-9])"+$i+"([^A-Za-z0-9]|$)")' ;;
+  esac
+  [[ "$TRACKER" != github ]] || item="#$item"
+  while IFS= read -r root; do
+    [[ -n "$root" && -e "$root" ]] || continue
+    [[ -d "$root" && -r "$root" ]] || return 2
+    # A Claude child repeats its lead's kickoff below a subagents directory.
+    # Only direct project children are lead transcripts; other stores recurse.
+    if [[ "$harness" == claude ]]; then
+      files="$(find -H "$root" -mindepth 2 -maxdepth 2 -type f -name '*.jsonl' -print 2>/dev/null)" || return 2
+    else
+      files="$(find -H "$root" -type f -name '*.jsonl' -print 2>/dev/null)" || return 2
+    fi
+    while IFS= read -r file; do
+      [[ -n "$file" ]] || continue
+      if jq -Rne --arg i "$item" "$match_filter" "$file" >/dev/null 2>&1; then
+        [[ -n "$best" && ! "$file" -nt "$best" ]] || { best="$file"; best_root="$root"; }
+      else rc=$?; [[ "$rc" -eq 1 ]] || return 2; fi
+    done <<<"$files"
+  done <<<"$roots"
+  [[ -n "$best" ]] || return 1
+  if [[ "$harness" == codex && "$best_root" != "$config/sessions" ]]; then
+    relative="${best#"$best_root"/}"; target="$config/sessions/$relative"
+    if [[ -e "$target" ]]; then cmp -s -- "$best" "$target" || return 2
+    else mkdir -p -- "${target%/*}" || return 2; cp -p -- "$best" "$target" || return 2; fi
+    best="$target"
+  fi
+  printf '%s\n' "$best"
+}
+start_cmd() { # ITEM REPO [SESSION_FILE] [WAKE_DIR WAKE_KEY]
+  local item="$1" repo="$2" session_file="${3:-}" wake_dir="${4:-}" line="" exec=""
   if [[ -n "$CMD_TEMPLATE" ]]; then
     local out="${CMD_TEMPLATE//\{issue\}/$item}"
     out="${out//\{item\}/$item}"
@@ -472,6 +594,14 @@ start_cmd() {
       flags+="'$tok' "
     done
   fi
+  # The wake line obeys the same shell-inert rule as the codex arms above.
+  [[ -z "$wake_dir" ]] || { line=" 'Run .agents/skills/orch/scripts/lane-mail inbox --item $5 and act on every directive it prints.'"; exec="exec "; }
+  if [[ -n "$wake_dir" && "$HARNESS" == pi ]]; then printf 'pi-bridge send --cwd %q%s\n' "$wake_dir" "$line"; return; fi
+  if [[ -n "$session_file" ]]; then
+    case "$HARNESS" in claude) printf 'claude -n %q %s--resume %q%s\n' "$item" "$flags" "$(basename "$session_file" .jsonl)" "${line:+ -p$line}" ;;
+      codex) local id; id="$(jq -Rrn '[inputs|fromjson?|select(.type=="session_meta")|.payload.id]|first//empty' "$session_file")"; [[ -n "$id" ]] || return 1; printf 'codex %sresume %s%q%s\n' "$exec" "$flags" "$id" "$line" ;;
+      pi) printf 'pi %s--session %q\n' "$flags" "$session_file" ;; esac; return
+  fi
   case "$TRACKER:$HARNESS" in
     linear:claude)   printf "claude -n %q %s'/orch start %s'\n" "$item" "$flags" "$item" ;;
     linear:codex)    printf "codex %s'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for %s'\n" "$flags" "$item" ;;
@@ -483,6 +613,21 @@ start_cmd() {
     github:pi)       printf "pi %s'/skill:orch start github %s#%s'\n" "$flags" "$repo" "$item" ;;
     *) ot_message harness-unsupported "harness=$HARNESS" >&2; exit 1 ;;
   esac
+}
+
+# GUI launches use Bash, while tmux uses the pane shell. Their common rule is
+# that a backslash cannot escape a quote from inside single quotes.
+cmd_has_unbalanced_quote() {
+  local text="$1" quote="" char escaped=false i
+  for ((i = 0; i < ${#text}; i++)); do
+    char="${text:i:1}"
+    if [[ "$escaped" == true ]]; then escaped=false; continue; fi
+    if [[ "$quote" != "'" && "$char" == \\ ]]; then escaped=true; continue; fi
+    if [[ -z "$quote" && ( "$char" == "'" || "$char" == '"' ) ]]; then quote="$char"
+    elif [[ "$char" == "$quote" ]]; then quote=""
+    fi
+  done
+  [[ -n "$quote" ]]
 }
 
 # The composer of the main TUI, at column 0: the harness's prompt marker
@@ -739,7 +884,6 @@ open_tmux() {
 # and pane-aware tools in it act on the controller's server.
 open_gui() {
   local dir="$1" title="$2" cmd="$3" chosen=""
-  local -a scrub=(env -u CLAUDECODE -u TMUX -u TMUX_PANE)
   # The title is written from inside the launched shell, so it survives whichever
   # launcher runs: only the ghostty arm carries --title, and it is tried last.
   # The title is the item id, validated against GH_ISSUE_PATTERN before it
@@ -749,13 +893,13 @@ open_gui() {
   local -a launcher=()
   if [[ -n "${TERMINAL:-}" ]] && command -v "$TERMINAL" >/dev/null 2>&1; then
     chosen="$TERMINAL"
-    launcher=("${scrub[@]}" "$TERMINAL" -e bash -lc "$shell_cmd")
+    launcher=("$TERMINAL" -e bash -lc "$shell_cmd")
   elif command -v xdg-terminal-exec >/dev/null 2>&1; then
     chosen="xdg-terminal-exec"
-    launcher=("${scrub[@]}" xdg-terminal-exec bash -lc "$shell_cmd")
+    launcher=(xdg-terminal-exec bash -lc "$shell_cmd")
   elif command -v ghostty >/dev/null 2>&1; then
     chosen="ghostty"
-    launcher=("${scrub[@]}" ghostty --working-directory="$dir" --title="$title" -e bash -lc "$shell_cmd")
+    launcher=(ghostty --working-directory="$dir" --title="$title" -e bash -lc "$shell_cmd")
   else
     ot_message terminal-missing "setting=TERMINAL" >&2
     return 1
@@ -764,18 +908,47 @@ open_gui() {
   # carrying arguments — is otherwise substituted in silence.
   [[ -z "${TERMINAL:-}" || "$chosen" == "$TERMINAL" ]] ||
     ot_message terminal-fallback "requested=$TERMINAL" "selected=$chosen" "item=$title" >&2
-  # setsid puts the window in its own session so it outlives this script and
-  # its terminal. macOS ships none — it is util-linux — and with stderr
-  # already going to /dev/null the shell's `setsid: command not found` was
-  # swallowed, so the launch never happened and the line below still said it
-  # had. nohup is what every platform has: it detaches the child from the
-  # hangup this script's exit would otherwise deliver.
-  if command -v setsid >/dev/null 2>&1; then
-    setsid "${launcher[@]}" </dev/null >/dev/null 2>&1 &
-  else
-    nohup "${launcher[@]}" </dev/null >/dev/null 2>&1 &
-  fi
+  run_detached /dev/null "${launcher[@]}"
   ot_message terminal-opened "item=$title" "path=$dir"
+}
+
+# setsid puts the child in its own session so it outlives this script and its
+# terminal. macOS ships none — it is util-linux — and with stderr already
+# redirected the shell's `setsid: command not found` was swallowed, so the
+# launch never happened and the caller still said it had. nohup is what every
+# platform has: it detaches the child from the hangup this script's exit would
+# otherwise deliver. The environment is scrubbed: a child started from inside
+# tmux or Claude Code otherwise inherits TMUX, TMUX_PANE and CLAUDECODE, reads
+# as a tmux pane or a nested session, and pane-aware tools in it act on the
+# controller's server.
+run_detached() { # LOG COMMAND...
+  local log="$1"
+  shift
+  if command -v setsid >/dev/null 2>&1; then
+    setsid env -u CLAUDECODE -u TMUX -u TMUX_PANE "$@" </dev/null >>"$log" 2>&1 &
+  else
+    nohup env -u CLAUDECODE -u TMUX -u TMUX_PANE "$@" </dev/null >>"$log" 2>&1 &
+  fi
+}
+
+# A resumed turn can run for a long time, so it runs detached from the caller,
+# in the item's worktree, with its output in that worktree's tmp/. Its exit
+# status is read if it lands inside the window: pi-bridge returns once the
+# session takes the line, and a Claude or Codex start failure (a rejected flag,
+# an auth wall, an unresumable id) exits there too. The status comes from a
+# file the detached shell writes, because an exited child that nobody has
+# reaped still answers `kill -0`.
+open_wake() { # DIR TITLE CMD
+  local log="$1/tmp/lane-wake-$2.log" status="$1/tmp/lane-wake-$2.status" waited=0 rc=0
+  mkdir -p -- "$1/tmp" && rm -f -- "$status" || return 1
+  run_detached "$log" bash -c 'cd -- "$1" && eval "$3"; echo "$?" >"$2"' wake "$1" "$status" "$3"
+  while [[ ! -s "$status" ]] && (( waited < 10 )); do sleep 0.5; waited=$((waited + 1)); done
+  [[ ! -s "$status" ]] || rc="$(cat -- "$status")" || return 1
+  if [[ "$rc" != 0 ]]; then
+    ot_message wake-failed "item=$2" "harness=$HARNESS" "exit=$rc" "log=$log" >&2
+    return 1
+  fi
+  ot_message lane-woken "item=$2" "harness=$HARNESS" "log=$log"
 }
 
 repo="$(resolve_repo)"
@@ -850,6 +1023,8 @@ for raw in "${ITEMS[@]}"; do
       ot_message lane-selected "lane=$LANE_ENV"
     fi
   fi
+  cmd="$(start_cmd "$item" "$repo")"
+  cmd_has_unbalanced_quote "$cmd" && { ot_message cmd-unbalanced-quote "item=$item" >&2; exit 1; }
   # The worktree create is the ownership claim: exit 75 means another session
   # holds this item, which skips it without touching its siblings. Any other
   # failure is this item's alone — the batch continues so one broken item
@@ -865,8 +1040,12 @@ for raw in "${ITEMS[@]}"; do
     create_args+=(--reuse)
   fi
   create_rc=0
-  wt="$("$WORKTREE_CLI" create "${create_args[@]}")" || create_rc=$?
-  if [[ "$create_rc" -eq 75 ]]; then
+  if [[ "$WAKE" == true ]]; then wt="$("$WORKTREE_CLI" path "$wt_id")" || create_rc=$?
+  else wt="$("$WORKTREE_CLI" create "${create_args[@]}")" || create_rc=$?; fi
+  if [[ "$create_rc" -eq 0 && "$WAKE" == true ]] && ! launchable_dir "$wt" "$title"; then
+    failed=$((failed + 1))
+    continue
+  elif [[ "$create_rc" -eq 75 ]]; then
     ot_message item-owned "item=$item" "exit=75" >&2
     skipped=$((skipped + 1))
     continue
@@ -875,12 +1054,22 @@ for raw in "${ITEMS[@]}"; do
     failed=$((failed + 1))
     continue
   fi
-  cmd="$(start_cmd "$item" "$repo")"
+  session_file=""
+  wake_args=()
+  if [[ "$WAKE" == true ]]; then wake_args=("$wt" "$wt_id"); fi
+  # A Pi wake goes to the live session through pi-bridge and reads no store.
+  if [[ "$RELAUNCH" == true && -z "$CMD_TEMPLATE" && "$HARNESS" =~ ^(claude|codex|pi)$ || "$WAKE" == true && "$HARNESS" != pi ]]; then
+    resume_rc=0
+    session_file="$(find_relaunch_session "$HARNESS" "$item" "$wt")" || resume_rc=$?
+    [[ "$resume_rc" -le 1 ]] || { ot_message session-scan-failed "item=$item" "harness=$HARNESS" >&2; failed=$((failed + 1)); continue; }
+    [[ "$WAKE" != true || -n "$session_file" ]] || { ot_message session-missing "item=$item" "harness=$HARNESS" >&2; failed=$((failed + 1)); continue; }
+  fi
+  if ! cmd="$(start_cmd "$item" "$repo" "$session_file" ${wake_args[@]+"${wake_args[@]}"})"; then ot_message session-scan-failed "item=$item" "harness=$HARNESS" >&2; failed=$((failed + 1)); continue; fi
   # The brief the claude arms pass as the initial CLI prompt, restated for the
   # tmux delivery check (and its one re-send). Empty for other harnesses and
   # custom --cmd templates, which disables the check.
   brief=""
-  if [[ -z "$CMD_TEMPLATE" && "$HARNESS" == "claude" ]]; then
+  if [[ -z "$CMD_TEMPLATE" && "$HARNESS" == "claude" && -z "$session_file" ]]; then
     if [[ "$TRACKER" == "linear" ]]; then brief="/orch start $item"; else brief="/orch start github $repo#$item"; fi
   fi
   # The lane is recorded in the launched command itself, so `ps` and the tmux
@@ -891,11 +1080,14 @@ for raw in "${ITEMS[@]}"; do
   if [[ -n "$LANE_ENV" ]]; then
     cmd="env ${LANE_ENV%%=*}='${LANE_ENV#*=}' $cmd"
   fi
-  if [[ "$TERMINAL_MODE" == "tmux" ]]; then
+  if [[ "$WAKE" == true ]]; then
+    open_wake "$wt" "$title" "$cmd" || { failed=$((failed + 1)); continue; }
+  elif [[ "$TERMINAL_MODE" == "tmux" ]]; then
     open_tmux "$wt" "$title" "$cmd" "$brief" || { failed=$((failed + 1)); continue; }
   else
     open_gui "$wt" "$title" "$cmd" || { failed=$((failed + 1)); continue; }
   fi
+  [[ -z "$session_file" || "$WAKE" == true ]] || ot_message session-resumed "item=$item" "harness=$HARNESS" "transcript=$session_file"
   launched=$((launched + 1))
   # Recorded here, after the window exists: a lane picked for an item that
   # turned out to be owned elsewhere never carried a session.
