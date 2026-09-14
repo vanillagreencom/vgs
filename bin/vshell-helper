@@ -10245,7 +10245,7 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
     p_chrom.add_argument("--json", action="store_true")
     p_lint = sub.add_parser("lint")
     p_lint.add_argument("name", nargs="?", default="")
-    p_lint.add_argument("--all", action="store_true", help="lint every theme; exit 1 on any unlisted warning")
+    p_lint.add_argument("--all", action="store_true", help="lint every theme; exit 1 on any unlisted warning or package that does not load")
     p_lint.add_argument("--json", action="store_true")
     p_migrate = sub.add_parser("migrate")
     p_migrate.add_argument("name", nargs="?", default="")
@@ -10864,8 +10864,13 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
             print("ok" if ok else f"failed: {reason}")
         return 0 if ok else 1
     if args.cmd == "lint":
+        unloaded: List[str] = []
         if args.all:
             targets = list_themes()
+            # list_themes skips a package whose theme.json does not read, with only a
+            # stderr note; the gate counts it rather than passing without it.
+            loaded = {Path(bp.get("path", "")).name for bp in targets if bp.get("package")}
+            unloaded = [name for name in theme_package_names() if name not in loaded]
         else:
             if args.name:
                 bp = find_theme(args.name)
@@ -10882,10 +10887,13 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
             warnings = [w for w in results if not w["known"]]
             payloads.append({"name": bp.get("name"), "source": blueprint_source(bp), "warnings": warnings,
                              "count": len(warnings), "known": [w for w in results if w["known"]]})
-        count = sum(payload["count"] for payload in payloads)
+        count = sum(payload["count"] for payload in payloads) + len(unloaded)
         if args.json:
-            print(json.dumps({"themes": payloads, "count": count} if args.all else payloads[0], indent=2))
+            print(json.dumps({"themes": payloads, "unloaded": unloaded, "count": count} if args.all else payloads[0],
+                             indent=2))
         else:
+            for name in unloaded:
+                print(f"{name}: theme package did not load")
             for payload in payloads:
                 if payload["warnings"]:
                     print(f"{payload['name']} ({payload['source']}): {payload['count']} warning(s)")

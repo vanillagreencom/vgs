@@ -2256,7 +2256,9 @@ def test_lint_reports_listed_shortfalls_as_known():
 
 
 def test_lint_all_fails_only_on_an_unlisted_warning():
-    """`theme lint --all` exits 1 while any theme has an unlisted warning; one theme's lint still exits 0."""
+    """`theme lint --all` exits 1 while any theme has an unlisted warning or a package does not load.
+
+    One theme's lint still exits 0."""
     def scenario(temp_home: Path):
         builtin = temp_home / "builtin"
         for name, accent in (("steady", "#242424"), ("planted", "#de6a41")):
@@ -2272,25 +2274,38 @@ def test_lint_all_fails_only_on_an_unlisted_warning():
             (builtin / "planted" / "theme.json").write_text(json.dumps(
                 {"name": "planted", "mode": "light", "source": "curated", "contrastShortfalls": shortfalls}) + "\n")
             buffer = io.StringIO()
-            with contextlib.redirect_stdout(buffer):
+            with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(io.StringIO()):
                 status = helper.cmd_theme(argv)
-            return status, json.loads(buffer.getvalue())
+            return status, buffer.getvalue()
 
+        listed = [{"slot": "accent", "ratio": 2.17, "floor": 3}]
         original_builtin = helper.builtin_themes_dir
         helper.builtin_themes_dir = lambda: builtin
         try:
             for label, shortfalls, expected in (
-                ("unlisted", [], (1, 1, {"planted": ["accent"], "steady": []})),
-                ("listed at the measured ratio", [{"slot": "accent", "ratio": 2.17, "floor": 3}],
-                 (0, 0, {"planted": [], "steady": []})),
+                ("unlisted", [], (1, 1, [], {"planted": ["accent"], "steady": []})),
+                ("listed at the measured ratio", listed, (0, 0, [], {"planted": [], "steady": []})),
             ):
-                status, payload = lint(["lint", "--all", "--json"], shortfalls)
-                assert_equal((status, payload["count"],
+                status, out = lint(["lint", "--all", "--json"], shortfalls)
+                payload = json.loads(out)
+                assert_equal((status, payload["count"], payload["unloaded"],
                               {theme["name"]: [w["role"] for w in theme["warnings"]] for theme in payload["themes"]}),
                              expected, f"theme lint --all, planted shortfall {label}")
-            status, payload = lint(["lint", "planted", "--json"], [])
+            status, out = lint(["lint", "--all"], [])
+            assert_equal((status, sorted(line for line in out.splitlines() if not line.startswith("  - "))),
+                         (1, ["planted (curated): 1 warning(s)", "steady (curated): no warnings"]),
+                         "theme lint --all prints the report of every theme")
+            status, out = lint(["lint", "planted", "--json"], [])
+            payload = json.loads(out)
             assert_equal((status, payload["name"], payload["count"]), (0, "planted", 1),
                          "theme lint of one theme reports its unlisted warning and exits 0")
+            (builtin / "broken").mkdir()
+            (builtin / "broken" / "theme.json").write_text("{not json\n")
+            status, out = lint(["lint", "--all", "--json"], listed)
+            payload = json.loads(out)
+            assert_equal((status, payload["count"], payload["unloaded"], sorted(t["name"] for t in payload["themes"])),
+                         (1, 1, ["broken"], ["planted", "steady"]),
+                         "theme lint --all counts a package whose theme.json does not read")
         finally:
             helper.builtin_themes_dir = original_builtin
 
