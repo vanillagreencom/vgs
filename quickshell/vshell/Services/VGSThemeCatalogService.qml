@@ -11,8 +11,8 @@ Singleton {
     id: root
     readonly property var log: Log.scoped("VGSThemeCatalogService")
 
-    // [{name, mode, pair, source, colors, background, foreground, accent, size,
-    //   installed, builtin, downloaded, preview}]
+    // [{name, mode, pair, source, colors, background, foreground, imagerySize, imageryInstalled,
+    //   imageryUpdateAvailable, builtin, downloaded, downloadedRef, preview}]
     property var entries: []
     property bool loading: false
     property string catalogRef: ""
@@ -26,9 +26,9 @@ Singleton {
 
     readonly property bool busy: downloadingAll || Object.keys(pendingNames).length > 0
     readonly property bool available: (entries || []).length > 0
-    readonly property int installedCount: (entries || []).filter(e => e.installed).length
-    readonly property int downloadableCount: (entries || []).filter(e => !e.installed).length
-    readonly property real downloadableSize: (entries || []).reduce((sum, e) => e.installed ? sum : sum + (e.size || 0), 0)
+    readonly property int installedCount: (entries || []).filter(e => e.imageryInstalled).length
+    readonly property int downloadableCount: (entries || []).filter(e => !e.imageryInstalled).length
+    readonly property real downloadableSize: (entries || []).reduce((sum, e) => e.imageryInstalled ? sum : sum + (e.imagerySize || 0), 0)
 
     signal catalogLoaded
     signal operationCompleted(bool success, string message)

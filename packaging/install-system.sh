@@ -16,17 +16,29 @@ fi
 install -d "$lib" "$dest$prefix/bin" "$dest$prefix/lib/systemd/user"
 cp -a "$root/quickshell" "$root/config" "$root/third_party" "$lib/"
 install -d "$lib/themes"
-# Only the two bundled themes ship with their imagery. Every other theme is a
-# download: themes/catalog.json pins one release archive per theme.
-cp -a "$root/themes/bauhaus" "$root/themes/roseofdune" "$root/themes/targets" "$lib/themes/"
+# Every theme's definitions ship, so a package update refreshes each of them.
+# Wallpapers are a download, one release archive per theme pinned by
+# themes/catalog.json, except the default theme's, so a first boot has one.
+# scripts/check-package-assets.sh holds this tree to
+# `scripts/gen-theme-catalog.py --package-files`, which owns that split.
+default_theme=bauhaus
+for theme_json in "$root"/themes/*/theme.json; do
+  theme_dir="${theme_json%/theme.json}"
+  theme="${theme_dir##*/}"
+  cp -a "$root/themes/$theme" "$lib/themes/"
+  if [[ "$theme" != "$default_theme" ]]; then
+    rm -rf -- "${lib:?}/themes/${theme:?}/backgrounds"
+  fi
+done
+cp -a "$root/themes/targets" "$lib/themes/"
 install -Dm644 "$root/themes/BACKGROUNDS-ATTRIBUTION.md" "$lib/themes/BACKGROUNDS-ATTRIBUTION.md"
 install -Dm644 "$root/themes/THEMES-ATTRIBUTION.md" "$lib/themes/THEMES-ATTRIBUTION.md"
 # The catalog's archive checksums govern verification of downloaded themes.
 # themes/asset-lock.json is publish-time input for the catalog generator and
 # is deliberately not installed; the runtime reads the catalog alone.
 install -Dm644 "$root/themes/catalog.json" "$lib/themes/catalog.json"
-# Ship the 480 px thumbnails so the download browser can paint every
-# uninstalled theme on first open, with no network call.
+# Ship the 480 px thumbnails, derived from each theme's preview, for the
+# surfaces that paint a small tile.
 cp -a "$root/themes/thumbnails" "$lib/themes/"
 while IFS= read -r -d '' file; do
   [[ "$(basename "$file")" == "vshell-asdcontrol" ]] && continue

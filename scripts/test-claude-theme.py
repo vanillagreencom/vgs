@@ -185,19 +185,19 @@ def write_package(home: Path, dir_name: str, colors: str, mode: str = "dark",
 
 
 @contextlib.contextmanager
-def installed_layout(*builtin: str):
-    """A HOME plus a built-in themes directory holding only `builtin`.
+def installed_layout():
+    """A HOME plus a built-in themes directory holding what a package installs.
 
-    `packaging/install-system.sh` copies bauhaus, roseofdune and targets and
-    nothing else, so on a packaged install every other theme, the six this
-    branch curates included, exists only as a catalog download under HOME. A
-    fixture that leaves `builtin_themes_dir` pointed at this checkout tests the
-    one shape a real install never has, which is how a guard that could not fire
-    in production passed a suite of fifty cases.
+    `packaging/install-system.sh` installs every theme's definitions, so a
+    theme's wallpapers are all that reaches HOME as a catalog download. A
+    fixture that leaves `builtin_themes_dir` pointed at this checkout tests a
+    shape a real install never has, which is how a guard that could not fire in
+    production passed a suite of fifty cases.
     """
     root = Path(tempfile.mkdtemp())
-    for name in ("targets", *builtin):
-        shutil.copytree(REPO / "themes" / name, root / name)
+    shutil.copytree(REPO / "themes" / "targets", root / "targets")
+    for meta in (REPO / "themes").glob("*/theme.json"):
+        shutil.copytree(meta.parent, root / meta.parent.name, ignore=shutil.ignore_patterns("backgrounds"))
     original = helper.builtin_themes_dir
     helper.builtin_themes_dir = lambda: root
     try:
@@ -209,7 +209,7 @@ def installed_layout(*builtin: str):
 
 
 def download_package(name: str) -> Path:
-    """A catalogued theme published into HOME the way `catalog_download_theme` does.
+    """A theme's wallpapers placed into HOME the way `catalog_download_theme` places them.
 
     The marker comes from `catalog_marker_payload`, the downloader's own
     composer, so this fixture cannot drift into testing a marker production no
@@ -217,14 +217,14 @@ def download_package(name: str) -> Path:
     fixture stays green while the thing it stands in for changes shape.
     """
     dest = helper.user_themes_dir() / name
-    shutil.copytree(REPO / "themes" / name, dest)
-    unpacked = sorted(path.relative_to(dest).as_posix() for path in dest.rglob("*")
-                      if path.is_file() and path.name != helper.CATALOG_MARKER)
-    written = sum((dest / rel).stat().st_size for rel in unpacked)
+    wallpaper = dest / "backgrounds" / f"1-{name}.jpg"
+    wallpaper.parent.mkdir(parents=True)
+    wallpaper.write_bytes(b"\xff\xd8\xff wallpaper\n")
+    unpacked = [wallpaper.relative_to(dest).as_posix()]
     (dest / helper.CATALOG_MARKER).write_text(json.dumps(
         helper.catalog_marker_payload(
             name, dest, {"release": "themes-v5", "rev": 2, "sha256": "0" * 64},
-            unpacked, written, ref="v0.5.0"),
+            unpacked, wallpaper.stat().st_size, ref="v0.5.0"),
         indent=2) + "\n")
     return dest
 
@@ -887,9 +887,8 @@ class RestyledPackages(unittest.TestCase):
 class InstalledLayout(unittest.TestCase):
     """The curated-file rule as a packaged install reaches it.
 
-    Every case here runs with `builtin_themes_dir` holding only what
-    `install-system.sh` copies, because the six curated themes are catalog-only
-    there. The rule is one comparison: the palette about to be rendered against
+    Every case here runs with `builtin_themes_dir` holding what
+    `install-system.sh` installs. The rule is one comparison: the palette about to be rendered against
     the `curatedPalette` digest the package recorded for the palette its curated
     values were picked against.
     """
@@ -898,9 +897,9 @@ class InstalledLayout(unittest.TestCase):
         return rendered_file(blueprint, "light")[1]
 
     def test_a_pristine_download_keeps_its_curated_file_and_misses_no_rule(self):
-        """The download writes colors.toml into the user directory, so a rule that
-        asked where that file sat read every untouched download as edited and
-        dropped the file that closes akane's light diff bands."""
+        """A download places wallpapers in the user directory, so a rule that
+        asked whether that directory held anything read every untouched download
+        as edited and dropped the file that closes akane's light diff bands."""
         with installed_layout():
             download_package("akane")
             blueprint = helper.load_theme_package("akane")
@@ -910,9 +909,9 @@ class InstalledLayout(unittest.TestCase):
                 (True, True, True, []))
 
     def test_a_colour_edit_on_a_download_drops_the_curated_file(self):
-        """No built-in directory exists for a catalog-only theme, so a rule that
-        required one never fired here: the frozen bands stayed over the edited
-        colours and the light theme rendered them 1.03:1 off the background."""
+        """A colour edit beside downloaded wallpapers moves the palette the curated
+        file was picked for, so the frozen bands must not stay over the edited
+        colours, where the light theme rendered them 1.03:1 off the background."""
         with installed_layout():
             download_package("akane")
             with mock.patch.object(helper, "apply_theme_obj", return_value={}):
@@ -939,7 +938,7 @@ class InstalledLayout(unittest.TestCase):
                 (False, []))
 
     def saved_under_own_name(self, overrides: dict, edits: tuple = (), transform: str = "") -> tuple:
-        """akane downloaded, optionally overridden, optionally colour-edited
+        """akane as a user-created package, optionally overridden, optionally colour-edited
         without `--save`, then saved the way `set-wallpaper --save` saves:
         `carry_curated_apps` over a rebuild from the applied theme, which is the
         only shipped call that reaches this exemption.
@@ -969,7 +968,11 @@ class InstalledLayout(unittest.TestCase):
         which the fixture restores on exit.
         """
         with installed_layout():
-            dest = download_package("akane")
+            # A user-created package no built-in shadows holds the only copy of
+            # its curated file, which is what a prune can delete.
+            dest = helper.user_themes_dir() / "akane"
+            shutil.copytree(helper.builtin_themes_dir() / "akane", dest)
+            shutil.rmtree(helper.builtin_themes_dir() / "akane")
             write_applied_state(helper.load_theme_package("akane"))
             if transform:
                 write_applied_state(helper.transformed_mode_blueprint(
@@ -1225,15 +1228,15 @@ class InstalledLayout(unittest.TestCase):
 
     def test_a_theme_in_both_layers_loses_its_curated_values_on_a_save(self):
         """A theme can exist in both layers at once: shipped built in and also
-        present in the user directory, which is what a download of a built-in
-        theme leaves. The save then writes the user layer while the built-in layer
+        present in the user directory, which a copy of the package under its own
+        name leaves. The save then writes the user layer while the built-in layer
         keeps supplying its own curated file, so deleting in the destination
         cannot reach it and only the per-layer digest test can. No other case in
         this file builds that layout, which is why a version answering correctly
         on one layer alone still passed the whole suite.
         """
-        with installed_layout("akane") as home:
-            download_package("akane")
+        with installed_layout() as home:
+            shutil.copytree(helper.builtin_themes_dir() / "akane", helper.user_themes_dir() / "akane")
             self.assertTrue((helper.builtin_themes_dir() / "akane" / "apps"
                              / "claude-light.json").is_file())
             self.assertTrue((home / ".config" / "vshell" / "themes" / "akane" / "apps"

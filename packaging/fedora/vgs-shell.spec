@@ -159,10 +159,7 @@ EOF
 /usr/lib/vshell/LICENSE
 /usr/lib/vshell/VERSION
 %dir /usr/lib/vshell/themes
-/usr/lib/vshell/themes/bauhaus/
-/usr/lib/vshell/themes/roseofdune/
-/usr/lib/vshell/themes/targets/
-/usr/lib/vshell/themes/thumbnails/
+/usr/lib/vshell/themes/*/
 /usr/lib/vshell/themes/catalog.json
 /usr/lib/vshell/themes/BACKGROUNDS-ATTRIBUTION.md
 /usr/lib/vshell/themes/THEMES-ATTRIBUTION.md
