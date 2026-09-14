@@ -290,13 +290,14 @@ QtObject {
         try {
             return PluginService.pluginWidgetComponents[pluginId].createObject(null);
         } catch (e) {
-            root.log.warn("stale plugin component for", pluginId, "- reloading");
+            root.log.warn("stale plugin component for", pluginId, "- reloading:", e.message);
         }
         if (!PluginService.reloadPlugin(pluginId))
             return null;
         try {
             return PluginService.pluginWidgetComponents[pluginId].createObject(null);
         } catch (e) {
+            root.log.warn("reloaded plugin component still throws for", pluginId, "-", e.message);
             return null;
         }
     }

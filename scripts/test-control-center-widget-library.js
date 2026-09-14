@@ -39,11 +39,15 @@ const BASE = [
 const PLUGIN_IDS = ["cloudSync", "tailscale"];
 const ALL_OFFERED = ["wifi", "diskUsage", "plugin_cloudSync", "plugin_tailscale"];
 
-function widgetComponent(stale) {
+const STALE_ERROR = "stale component";
+const REBUILT_ERROR = "rebuilt component still throws";
+
+// `error` is the message createObject throws, or null for a working component.
+function widgetComponent(error) {
     return {
         createObject() {
-            if (stale)
-                throw new TypeError("stale component");
+            if (error)
+                throw new TypeError(error);
             return { ccWidgetIcon: "extension", destroy() {} };
         }
     };
@@ -55,7 +59,8 @@ function widgetComponent(stale) {
 function pluginService(reloads) {
     const service = {
         reloaded: [],
-        pluginWidgetComponents: Object.fromEntries(PLUGIN_IDS.map(id => [id, widgetComponent(id in reloads)])),
+        pluginWidgetComponents: Object.fromEntries(PLUGIN_IDS.map(id =>
+            [id, widgetComponent(id in reloads ? STALE_ERROR : null)])),
         getLoadedPlugins: () => PLUGIN_IDS.map(id => ({ id, name: id })),
         reloadPlugin(id) {
             service.reloaded.push(id);
@@ -63,7 +68,7 @@ function pluginService(reloads) {
             case "fresh":
             case "stale":
                 service.pluginWidgetComponents = Object.assign({}, service.pluginWidgetComponents,
-                    { [id]: widgetComponent(reloads[id] === "stale") });
+                    { [id]: widgetComponent(reloads[id] === "stale" ? REBUILT_ERROR : null) });
                 return true;
             case "fails":
                 return false;
@@ -150,19 +155,20 @@ test("the widget library probes plugin widgets once per edit-mode open", () => {
 });
 
 test("a stale plugin the probe reloads is offered in the same open, or named and left out", () => {
-    // [why, reloads, offered ids after one open, plugins reloaded, plugin id named by each warning]
+    // [why, reloads, offered ids after one open, plugins reloaded,
+    //  [plugin id, thrown message or undefined] named by each warning]
     for (const [why, reloads, offered, reloaded, warned] of [
         ["a reload that rebuilds a working component offers the plugin",
-            { tailscale: "fresh" }, ALL_OFFERED, ["tailscale"], ["tailscale"]],
+            { tailscale: "fresh" }, ALL_OFFERED, ["tailscale"], [["tailscale", STALE_ERROR]]],
         ["every stale plugin reloads once and each is offered",
             { cloudSync: "fresh", tailscale: "fresh" }, ALL_OFFERED, ["cloudSync", "tailscale"],
-            ["cloudSync", "tailscale"]],
+            [["cloudSync", STALE_ERROR], ["tailscale", STALE_ERROR]]],
         ["a rebuilt component that still throws leaves only that plugin out",
             { tailscale: "stale" }, ["wifi", "diskUsage", "plugin_cloudSync"], ["tailscale"],
-            ["tailscale", "tailscale"]],
+            [["tailscale", STALE_ERROR], ["tailscale", REBUILT_ERROR], ["tailscale", undefined]]],
         ["a failed reload leaves only that plugin out",
             { tailscale: "fails" }, ["wifi", "diskUsage", "plugin_cloudSync"], ["tailscale"],
-            ["tailscale", "tailscale"]]
+            [["tailscale", STALE_ERROR], ["tailscale", undefined]]]
     ]) {
         const world = popoutWorld(reloads);
         world.root.editMode = true;
@@ -171,6 +177,6 @@ test("a stale plugin the probe reloads is offered in the same open, or named and
         assert.equal(world.root.probes, 1, `${why}: probe count`);
         assert.deepEqual(available.map(w => w.id), offered, `${why}: offered widgets`);
         assert.deepEqual(world.service.reloaded, reloaded, `${why}: reloaded plugins`);
-        assert.deepEqual(world.widgetModel.warnings.map(args => args[1]), warned, `${why}: warnings`);
+        assert.deepEqual(world.widgetModel.warnings.map(args => [args[1], args[3]]), warned, `${why}: warnings`);
     }
 });
