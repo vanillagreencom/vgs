@@ -2255,6 +2255,65 @@ def test_lint_reports_listed_shortfalls_as_known():
     with_temp_home(scenario)
 
 
+def test_lint_all_fails_only_on_an_unlisted_warning():
+    """`theme lint --all` exits 1 while any theme has an unlisted warning; one theme's lint still exits 0."""
+    def scenario(temp_home: Path):
+        builtin = temp_home / "builtin"
+        for name, accent in (("steady", "#242424"), ("planted", "#de6a41")):
+            package = builtin / name
+            package.mkdir(parents=True)
+            colors = {f"color{i}": "#242424" for i in range(16)}
+            colors.update({"background": "#d0d0c8", "foreground": "#242424", "accent": accent, "cursor": "#242424",
+                           "selection_background": "#d0d0c8", "selection_foreground": "#242424"})
+            (package / "colors.toml").write_text("".join(f'{key} = "{value}"\n' for key, value in colors.items()))
+            (package / "theme.json").write_text(json.dumps({"name": name, "mode": "light", "source": "curated"}) + "\n")
+
+        def lint(argv, shortfalls):
+            (builtin / "planted" / "theme.json").write_text(json.dumps(
+                {"name": "planted", "mode": "light", "source": "curated", "contrastShortfalls": shortfalls}) + "\n")
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer):
+                status = helper.cmd_theme(argv)
+            return status, json.loads(buffer.getvalue())
+
+        original_builtin = helper.builtin_themes_dir
+        helper.builtin_themes_dir = lambda: builtin
+        try:
+            for label, shortfalls, expected in (
+                ("unlisted", [], (1, 1, {"planted": ["accent"], "steady": []})),
+                ("listed at the measured ratio", [{"slot": "accent", "ratio": 2.17, "floor": 3}],
+                 (0, 0, {"planted": [], "steady": []})),
+            ):
+                status, payload = lint(["lint", "--all", "--json"], shortfalls)
+                assert_equal((status, payload["count"],
+                              {theme["name"]: [w["role"] for w in theme["warnings"]] for theme in payload["themes"]}),
+                             expected, f"theme lint --all, planted shortfall {label}")
+            status, payload = lint(["lint", "planted", "--json"], [])
+            assert_equal((status, payload["name"], payload["count"]), (0, "planted", 1),
+                         "theme lint of one theme reports its unlisted warning and exits 0")
+        finally:
+            helper.builtin_themes_dir = original_builtin
+
+    with_temp_home(scenario)
+
+
+def test_every_shipped_theme_package_lints_clean():
+    """Every shipped package clears the lint floors or lists the shortfall in its theme.json."""
+    def scenario(_temp_home: Path):
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            status = helper.cmd_theme(["lint", "--all", "--json"])
+        payload = json.loads(buffer.getvalue())
+        assert_equal((status, {theme["name"]: theme["warnings"] for theme in payload["themes"] if theme["warnings"]}),
+                     (0, {}), "theme lint --all over the shipped packages")
+        shipped = sorted(path.parent.name for path in helper.builtin_themes_dir().glob("*/theme.json")
+                         if path.parent.name not in helper.RESERVED_THEME_SUBDIRS)
+        assert_equal(sorted(theme["name"] for theme in payload["themes"]), shipped,
+                     "theme lint --all lints every shipped package")
+
+    with_temp_home(scenario)
+
+
 def test_theme_list_reports_the_preview_and_the_thumbnail_apart():
     """`preview` is a full-size screenshot or empty, and the 480 px thumbnail is its own field.
 
@@ -10679,6 +10738,8 @@ def main():
     test_theme_init_applies_only_without_state()
     test_lint_checks_color0_in_light_mode_only()
     test_lint_reports_listed_shortfalls_as_known()
+    test_lint_all_fails_only_on_an_unlisted_warning()
+    test_every_shipped_theme_package_lints_clean()
     test_theme_list_reports_the_preview_and_the_thumbnail_apart()
     test_theme_list_reports_installed_wallpapers_and_the_star()
     test_hyprland_preview_native_lua()

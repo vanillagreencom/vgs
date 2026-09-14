@@ -10245,6 +10245,7 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
     p_chrom.add_argument("--json", action="store_true")
     p_lint = sub.add_parser("lint")
     p_lint.add_argument("name", nargs="?", default="")
+    p_lint.add_argument("--all", action="store_true", help="lint every theme; exit 1 on any unlisted warning")
     p_lint.add_argument("--json", action="store_true")
     p_migrate = sub.add_parser("migrate")
     p_migrate.add_argument("name", nargs="?", default="")
@@ -10863,33 +10864,41 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
             print("ok" if ok else f"failed: {reason}")
         return 0 if ok else 1
     if args.cmd == "lint":
-        if args.name:
-            bp = find_theme(args.name)
+        if args.all:
+            targets = list_themes()
         else:
-            # Default to the last applied blueprint so lint sees raw palette data.
-            bp = applied_blueprint() or find_theme(current_theme().get("name", ""))
-        if not bp:
-            eprint(f"Theme not found: {args.name or '(current)'}")
-            return 1
-        results = lint_blueprint(bp)
-        warnings = [w for w in results if not w["known"]]
-        known = [w for w in results if w["known"]]
-        payload = {"name": bp.get("name"), "source": blueprint_source(bp), "warnings": warnings, "count": len(warnings),
-                   "known": known}
+            if args.name:
+                bp = find_theme(args.name)
+            else:
+                # Default to the last applied blueprint so lint sees raw palette data.
+                bp = applied_blueprint() or find_theme(current_theme().get("name", ""))
+            if not bp:
+                eprint(f"Theme not found: {args.name or '(current)'}")
+                return 1
+            targets = [bp]
+        payloads = []
+        for bp in targets:
+            results = lint_blueprint(bp)
+            warnings = [w for w in results if not w["known"]]
+            payloads.append({"name": bp.get("name"), "source": blueprint_source(bp), "warnings": warnings,
+                             "count": len(warnings), "known": [w for w in results if w["known"]]})
+        count = sum(payload["count"] for payload in payloads)
         if args.json:
-            print(json.dumps(payload, indent=2))
-            return 0
-        if warnings:
-            print(f"{bp.get('name')} ({payload['source']}): {len(warnings)} warning(s)")
-            for w in warnings:
-                print(f"  - {w['message']}")
+            print(json.dumps({"themes": payloads, "count": count} if args.all else payloads[0], indent=2))
         else:
-            print(f"{bp.get('name')} ({payload['source']}): no warnings")
-        if known:
-            print(f"{len(known)} known upstream shortfall(s):")
-            for w in known:
-                print(f"  - {w['message']}")
-        return 0
+            for payload in payloads:
+                if payload["warnings"]:
+                    print(f"{payload['name']} ({payload['source']}): {payload['count']} warning(s)")
+                    for w in payload["warnings"]:
+                        print(f"  - {w['message']}")
+                else:
+                    print(f"{payload['name']} ({payload['source']}): no warnings")
+                if payload["known"]:
+                    print(f"{len(payload['known'])} known upstream shortfall(s):")
+                    for w in payload["known"]:
+                        print(f"  - {w['message']}")
+        # Only the every-theme lint is a gate; one theme's lint stays a report.
+        return 1 if args.all and count else 0
     if args.cmd == "migrate":
         if not args.name and not args.all:
             eprint("Usage: vshell theme migrate <name> | --all")

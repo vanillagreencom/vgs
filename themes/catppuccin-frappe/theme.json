@@ -3,5 +3,8 @@
   "mode": "dark",
   "pair": "catppuccin-latte",
   "source": "curated",
-  "wallpaper": "2-waves.png"
+  "wallpaper": "2-waves.png",
+  "contrastShortfalls": [
+    {"slot": "color8", "ratio": 2.23, "floor": 3}
+  ]
 }

@@ -3,5 +3,9 @@
   "mode": "dark",
   "pair": "",
   "source": "curated",
-  "wallpaper": "1-wallhaven-ympwkk.jpg"
+  "wallpaper": "1-wallhaven-ympwkk.jpg",
+  "contrastShortfalls": [
+    {"slot": "accent", "ratio": 1.63, "floor": 3},
+    {"slot": "color8", "ratio": 1.45, "floor": 3}
+  ]
 }
