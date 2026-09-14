@@ -302,19 +302,17 @@ func (w *watcher) markDirty(folderID string) {
 		w.mu.Unlock()
 		return
 	}
-	w.timers[folderID] = time.AfterFunc(watchDebounce, func() {
-		recovery.Run(nil, "cloudsync.watchDebounce", func() {
-			w.mu.Lock()
-			delete(w.timers, folderID)
-			closed := w.closed
-			w.mu.Unlock()
-			if closed {
-				return
-			}
-			if w.onDirty != nil {
-				w.onDirty(folderID)
-			}
-		})
+	w.timers[folderID] = recovery.AfterFunc(watchDebounce, nil, "cloudsync.watchDebounce", func() {
+		w.mu.Lock()
+		delete(w.timers, folderID)
+		closed := w.closed
+		w.mu.Unlock()
+		if closed {
+			return
+		}
+		if w.onDirty != nil {
+			w.onDirty(folderID)
+		}
 	})
 	w.mu.Unlock()
 }

@@ -158,6 +158,10 @@ func (m *Manager) runWatch(ctx context.Context) error {
 		return err
 	}
 	stdout := child.Stdout()
+	// Deferred so an unwind through this function leaves no watcher running
+	// beside the next one.
+	defer stdout.Close()
+	defer child.Stop()
 	m.setWatcherAlive(true)
 	// Clear child liveness on exit so status reads during restart backoff request
 	// polling.
@@ -253,7 +257,7 @@ func (m *Manager) pulse() {
 	if remainder := watchMinInterval - time.Since(m.lastPush); remainder > delay {
 		delay = remainder
 	}
-	m.pushTimer = time.AfterFunc(delay, func() { recovery.Run(m.log, "tailscale.pushStatus", m.pushStatus) })
+	m.pushTimer = recovery.AfterFunc(delay, m.log, "tailscale.pushStatus", m.pushStatus)
 }
 
 // pushStatus holds the watcher read slot through broadcast so watcher reads

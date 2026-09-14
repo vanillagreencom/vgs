@@ -1,11 +1,11 @@
 package gamma
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -86,29 +86,46 @@ func TestWlsunsetSkipsIdenticalProcessReplacement(t *testing.T) {
 	manager.mu.Unlock()
 }
 
-// startLoopFixture starts a looping script named name that the test did not
-// hand to the manager, and returns a channel closed when it exits.
-func startLoopFixture(t *testing.T, directory, name string) <-chan struct{} {
+// startLoopFixture starts a looping script named name, running prelude first,
+// outside the manager, and returns a channel closed when it exits. It returns
+// once the script has run prelude.
+func startLoopFixture(t *testing.T, directory, name, prelude string) <-chan struct{} {
 	t.Helper()
 	path := filepath.Join(directory, name)
-	if err := os.WriteFile(path, []byte("#!/bin/sh\nwhile :; do sleep 1; done\n"), 0o755); err != nil {
+	ready := path + ".ready"
+	script := "#!/bin/sh\n" + prelude + ": > '" + ready + "'\nwhile :; do sleep 1; done\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(path)
-	cmd.Env = []string{"PATH=/usr/bin:/bin"}
-	if err := cmd.Start(); err != nil {
+	child, err := execbound.StartChild(context.Background(), execbound.ChildOptions{}, path)
+	if err != nil {
 		t.Fatal(err)
 	}
-	exited := make(chan struct{})
-	go func() {
-		_ = cmd.Wait()
-		close(exited)
-	}()
-	t.Cleanup(func() {
-		_ = cmd.Process.Kill()
-		<-exited
-	})
-	return exited
+	t.Cleanup(child.Stop)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(ready); err == nil {
+			return child.Done()
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("fixture %s did not start", name)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestTerminateStraysKillsAnAdapterThatIgnoresTerm(t *testing.T) {
+	stray := startLoopFixture(t, t.TempDir(), "vgsgammadeaf", "trap '' TERM\n")
+
+	if err := terminateStrays(discardLogger(), "vgsgammadeaf", 200*time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case <-stray:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a stray adapter that ignores SIGTERM is still running")
+	}
 }
 
 // TestGammaStartEndsAStrayAdapter checks that launching the adapter first ends
@@ -116,8 +133,8 @@ func startLoopFixture(t *testing.T, directory, name string) <-chan struct{} {
 // programs running.
 func TestGammaStartEndsAStrayAdapter(t *testing.T) {
 	directory := t.TempDir()
-	stray := startLoopFixture(t, directory, "vgsgammastray")
-	unrelated := startLoopFixture(t, directory, "vgsgammakeep")
+	stray := startLoopFixture(t, directory, "vgsgammastray", "")
+	unrelated := startLoopFixture(t, directory, "vgsgammakeep", "")
 	binary := filepath.Join(directory, "vgsgammastray")
 	manager := &Manager{binary: binary, backend: "wlsunset", log: discardLogger()}
 	state := State{Config: Config{Enabled: true, Gamma: 1}, CurrentTemp: 4200}

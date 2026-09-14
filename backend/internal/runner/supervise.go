@@ -2,8 +2,10 @@ package runner
 
 import (
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -11,9 +13,9 @@ import (
 // supervisionLimits bound backend restarts. Restarts back off from
 // backoffInitial, doubling to backoffMax. breakerLimit exits inside
 // breakerWindow trip the breaker: the runner leaves the backend down for the
-// cool-down with the listener still open, then starts it again. The cool-down
-// starts at cooldownInitial and doubles on each trip to cooldownMax. A run that
-// outlives breakerWindow resets the backoff and the cool-down.
+// cool-down, then starts it again. The cool-down starts at cooldownInitial and
+// doubles on each trip to cooldownMax. A run that outlives breakerWindow resets
+// the backoff and the cool-down.
 type supervisionLimits struct {
 	backoffInitial  time.Duration
 	backoffMax      time.Duration
@@ -37,11 +39,11 @@ var defaultLimits = supervisionLimits{
 }
 
 // superviseBackend restarts the backend on the inherited listener until stop
-// closes. The caller owns lnFile and keeps the socket open through restarts and
-// cool-downs. A signal on restart replaces the backend at once. onGiveUp runs
-// only when the runner cannot resolve its own executable, so it can close the
-// socket rather than leave clients waiting on an unserved backlog.
-func superviseBackend(lnFile *os.File, socketPath string, stop <-chan struct{}, restart <-chan os.Signal, log *slog.Logger, onGiveUp func()) {
+// closes. The caller owns ln and lnFile and keeps the socket bound through
+// restarts and cool-downs. A signal on restart replaces the backend at once.
+// onGiveUp runs only when the runner cannot resolve its own executable, so it
+// can close the socket rather than leave clients waiting on an unserved backlog.
+func superviseBackend(ln *net.UnixListener, lnFile *os.File, socketPath string, stop <-chan struct{}, restart <-chan os.Signal, log *slog.Logger, onGiveUp func()) {
 	exe, err := os.Executable()
 	if err != nil {
 		log.Error("backend supervision unavailable: cannot resolve own executable", "err", err)
@@ -62,7 +64,7 @@ func superviseBackend(lnFile *os.File, socketPath string, stop <-chan struct{}, 
 		cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGTERM}
 		return cmd
 	}
-	supervise(command, defaultLimits, stop, restart, log)
+	supervise(command, ln, defaultLimits, stop, restart, log)
 }
 
 type backendOutcome int
@@ -76,8 +78,10 @@ const (
 // supervise starts a backend from command and restarts it until stop closes. A
 // signal on restart ends the running backend, or cuts short a pending backoff or
 // cool-down, and starts a fresh backend with the crash history cleared. A start
-// failure counts as an exit.
-func supervise(command func() *exec.Cmd, limits supervisionLimits, stop <-chan struct{}, restart <-chan os.Signal, log *slog.Logger) {
+// failure counts as an exit. During a cool-down the runner accepts and closes
+// every connection on ln, so a client sees the backend unavailable at once
+// instead of queueing requests that the next backend would run late.
+func supervise(command func() *exec.Cmd, ln *net.UnixListener, limits supervisionLimits, stop <-chan struct{}, restart <-chan os.Signal, log *slog.Logger) {
 	var exits []time.Time
 	backoff := limits.backoffInitial
 	cooldown := limits.cooldownInitial
@@ -117,12 +121,14 @@ func supervise(command func() *exec.Cmd, limits supervisionLimits, stop <-chan s
 		}
 		exits = append(pruneOld(exits, now.Add(-limits.breakerWindow)), now)
 		delay := backoff
+		endRefusing := func() {}
 		if len(exits) >= limits.breakerLimit {
-			log.Error("backend crash loop detected; holding it down for a cool-down with the socket open",
+			log.Error("backend crash loop detected; holding it down for a cool-down and closing connections until it restarts",
 				"exits", len(exits), "window", limits.breakerWindow, "cooldown", cooldown)
 			delay = cooldown
 			exits = nil
 			cooldown = min(cooldown*2, limits.cooldownMax)
+			endRefusing = refuseConnections(ln, log)
 		} else {
 			backoff = min(backoff*2, limits.backoffMax)
 		}
@@ -131,12 +137,43 @@ func supervise(command func() *exec.Cmd, limits supervisionLimits, stop <-chan s
 		select {
 		case <-stop:
 			timer.Stop()
+			endRefusing()
 			return
 		case <-restart:
 			timer.Stop()
+			endRefusing()
 			resetHistory()
 		case <-timer.C:
+			endRefusing()
 		}
+	}
+}
+
+// refuseConnections accepts and closes every connection on ln until the
+// returned function runs. That function ends the accept loop through a listener
+// deadline, waits for it, and clears the deadline, so the next backend is the
+// only acceptor once it starts.
+func refuseConnections(ln *net.UnixListener, log *slog.Logger) func() {
+	var ending atomic.Bool
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				if !ending.Load() {
+					log.Warn("closing connections during the cool-down stopped; clients may queue until the backend restarts", "err", err)
+				}
+				return
+			}
+			conn.Close()
+		}
+	}()
+	return func() {
+		ending.Store(true)
+		_ = ln.SetDeadline(time.Unix(1, 0))
+		<-done
+		_ = ln.SetDeadline(time.Time{})
 	}
 }
 

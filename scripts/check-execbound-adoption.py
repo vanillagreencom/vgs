@@ -23,6 +23,7 @@ ALLOWED_RAW_EXECS = {
     'backend/internal/services/sysupdate/sysupdate.go::handleUpgrade exec.Command(argv[0], argv[1:]...)': "the terminal updater is an interactive upgrade process.",
     'backend/internal/runner/runner.go::runQuickshell exec.Command("qs", append(baseArgs, qsArgs...)...)': "the runner owns the shell process lifetime.",
     'backend/internal/runner/supervise.go::superviseBackend exec.Command(exe, "serve")': "the runner supervises the backend serve child.",
+    'backend/internal/runner/supervise_test.go::command exec.Command("/bin/sh", "-c", script)': "the fixture stands in for the backend serve child that supervise starts, ends and restarts.",
 }
 
 

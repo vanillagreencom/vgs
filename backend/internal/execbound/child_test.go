@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -127,6 +128,25 @@ func TestChildStopsWhenItsContextEnds(t *testing.T) {
 		t.Fatalf("stdout carried %q after the child stopped; want EOF", lines.Text())
 	}
 	awaitAllGone(t, "context end", awaitPIDs(t, pids, 1))
+}
+
+// TestChildStdoutKeepsALineWrittenBeforeTheLeaderExits reads only after the
+// child is reaped, the order in which a watcher's final event must survive.
+func TestChildStdoutKeepsALineWrittenBeforeTheLeaderExits(t *testing.T) {
+	script, _ := childFixture(t, "echo last\n")
+	child, err := StartChild(context.Background(), ChildOptions{Stdout: true}, script)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout := child.Stdout()
+	defer stdout.Close()
+	awaitDone(t, child)
+
+	out, err := io.ReadAll(stdout)
+
+	if err != nil || string(out) != "last\n" {
+		t.Fatalf("stdout after the reap = (%q, %v), want %q then EOF", out, err, "last\n")
+	}
 }
 
 const childParentEnv = "EXECBOUND_CHILD_PARENT_PIDS"

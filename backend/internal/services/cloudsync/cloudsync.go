@@ -343,13 +343,11 @@ func (m *Manager) broadcastThrottled() {
 		m.mu.Unlock()
 		return
 	}
-	m.broadcastTimer = time.AfterFunc(broadcastInterval-since, func() {
-		recovery.Run(m.log, "cloudsync.broadcast", func() {
-			m.mu.Lock()
-			m.broadcastTimer = nil
-			m.mu.Unlock()
-			m.broadcastNow()
-		})
+	m.broadcastTimer = recovery.AfterFunc(broadcastInterval-since, m.log, "cloudsync.broadcast", func() {
+		m.mu.Lock()
+		m.broadcastTimer = nil
+		m.mu.Unlock()
+		m.broadcastNow()
 	})
 	m.mu.Unlock()
 }
@@ -429,14 +427,13 @@ func (m *Manager) schedulePrune() {
 		m.mu.Unlock()
 		return
 	}
-	m.pruneTimer = time.AfterFunc(trashPruneInterval, func() {
-		recovery.Run(m.log, "cloudsync.pruneTrash", func() {
-			days := m.store.snapshotSettings().TrashRetentionDays
-			if days > 0 {
-				m.store.pruneTrash(time.Now().AddDate(0, 0, -days).Unix())
-			}
-			m.schedulePrune()
-		})
+	m.pruneTimer = recovery.AfterFunc(trashPruneInterval, m.log, "cloudsync.pruneTrash", func() {
+		// Deferred so a panic in the prune still arms the next one.
+		defer m.schedulePrune()
+		days := m.store.snapshotSettings().TrashRetentionDays
+		if days > 0 {
+			m.store.pruneTrash(time.Now().AddDate(0, 0, -days).Unix())
+		}
 	})
 	m.mu.Unlock()
 }

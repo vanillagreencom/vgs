@@ -358,22 +358,29 @@ func (m *Manager) scheduleTransitionLocked(state State) {
 	if delay < time.Second {
 		delay = time.Second // never busy-loop on a boundary
 	}
-	m.transitionTimer = time.AfterFunc(delay, func() { recovery.Run(m.log, "gamma.transition", m.applyTransition) })
+	m.transitionTimer = recovery.AfterFunc(delay, m.log, "gamma.transition", m.applyTransition)
 }
 
 func (m *Manager) applyTransition() {
+	if next, ok := m.reapplyForTransition(); ok {
+		m.srv.Broadcast("gamma", next)
+	}
+}
+
+// reapplyForTransition unlocks through defer, so a panic in the re-apply does
+// not leave every later gamma call blocked on the state lock.
+func (m *Manager) reapplyForTransition() (State, bool) {
 	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.closed || !m.state.Config.Enabled {
-		m.mu.Unlock()
-		return
+		return State{}, false
 	}
 	next, err := m.applyConfigLocked(m.state.Config)
-	m.mu.Unlock()
 	if err != nil {
 		m.log.Warn("gamma transition re-apply failed", "err", err)
-		return
+		return State{}, false
 	}
-	m.srv.Broadcast("gamma", next)
+	return next, true
 }
 
 // applyGammaLocked stops the adapter when disabled. Hyprland changes temperature

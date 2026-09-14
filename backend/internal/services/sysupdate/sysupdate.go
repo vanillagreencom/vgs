@@ -636,7 +636,7 @@ func (m *Manager) scheduleNextLocked(now time.Time) {
 	if delay < 0 {
 		delay = 0
 	}
-	m.scheduleTimer = time.AfterFunc(delay, func() { recovery.Run(m.log, "sysupdate.scheduledRefresh", m.scheduledRefresh) })
+	m.scheduleTimer = recovery.AfterFunc(delay, m.log, "sysupdate.scheduledRefresh", m.scheduledRefresh)
 }
 
 func (m *Manager) stopScheduleLocked() {

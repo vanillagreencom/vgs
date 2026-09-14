@@ -6,6 +6,7 @@ package recovery
 import (
 	"log/slog"
 	"runtime/debug"
+	"time"
 )
 
 // Run calls fn and logs a panic from it instead of letting it unwind the
@@ -23,4 +24,10 @@ func Run(log *slog.Logger, where string, fn func()) {
 		}
 	}()
 	fn()
+}
+
+// AfterFunc waits for d and then calls fn through Run on its own goroutine, as
+// time.AfterFunc does.
+func AfterFunc(d time.Duration, log *slog.Logger, where string, fn func()) *time.Timer {
+	return time.AfterFunc(d, func() { Run(log, where, fn) })
 }

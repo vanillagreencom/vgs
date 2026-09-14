@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"vshell/backend/internal/execbound"
+	"vshell/backend/internal/recovery"
 	"vshell/backend/internal/refresh"
 	"vshell/backend/internal/server"
 )
@@ -1017,7 +1018,7 @@ func (m *Manager) monitor() {
 		go func() {
 			sc := bufio.NewScanner(stdout)
 			for sc.Scan() {
-				m.broadcastSoon()
+				recovery.Run(m.log, "networkmanager.monitorLine", m.broadcastSoon)
 			}
 			close(done)
 		}()

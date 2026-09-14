@@ -205,6 +205,9 @@ func watch(ctx context.Context, onEvent func()) error {
 	}
 	stdout := child.Stdout()
 	defer stdout.Close()
+	// Deferred so an unwind through this function leaves no watcher running
+	// beside the next one.
+	defer child.Stop()
 	sc := bufio.NewScanner(stdout)
 	for sc.Scan() {
 		onEvent()

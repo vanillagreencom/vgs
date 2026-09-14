@@ -437,9 +437,7 @@ func (m *Manager) handleSignal(sig *dbus.Signal) {
 			if m.lockTimer != nil {
 				m.lockTimer.Stop()
 			}
-			m.lockTimer = time.AfterFunc(m.fallbackDelay, func() {
-				recovery.Run(m.log, "loginctl.lockFallback", func() { m.releaseForCycle(id) })
-			})
+			m.lockTimer = recovery.AfterFunc(m.fallbackDelay, m.log, "loginctl.lockFallback", func() { m.releaseForCycle(id) })
 			m.lockTimerMu.Unlock()
 		}
 	case dbusSessionInterface + ".Unlock":

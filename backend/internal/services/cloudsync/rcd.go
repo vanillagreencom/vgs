@@ -100,7 +100,9 @@ func (d *rcd) start() error {
 		"RCLONE_RC_USER="+user,
 		"RCLONE_RC_PASS="+pass,
 	)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// Pdeathsig ends it with a crashed backend; execbound.StartChild states the
+	// thread-lifetime condition it depends on.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGTERM}
 	// stdout/stderr are left unattached: rclone's rc log can contain remote
 	// paths, and nothing here parses it (the port is chosen by us, not read
 	// back from the log).
@@ -205,12 +207,10 @@ func (d *rcd) wait(cmd *exec.Cmd, done chan struct{}) {
 		d.mu.Unlock()
 		return
 	}
-	d.restartT = time.AfterFunc(backoff, func() {
-		recovery.Run(nil, "cloudsync.rcdRestart", func() {
-			if err := d.start(); err != nil && d.onDown != nil {
-				d.onDown(err.Error())
-			}
-		})
+	d.restartT = recovery.AfterFunc(backoff, nil, "cloudsync.rcdRestart", func() {
+		if err := d.start(); err != nil && d.onDown != nil {
+			d.onDown(err.Error())
+		}
 	})
 	d.mu.Unlock()
 }
