@@ -1437,10 +1437,11 @@ CASES = (
     test_cli_wrapper_routes_the_commands,
 )
 
-# A stand-in first on PATH for every case: a helper call that escapes the case's
-# own fake records its argv here and fails, instead of reaching a host mise that
-# resolves every npm-backed tool over the network. CI has no mise, so there a
-# call that escapes would otherwise take the no-mise branch unseen.
+# A stand-in first on the PATH each case inherits: a helper call that escapes the
+# case's own fake records its argv here and fails, instead of reaching a host mise
+# that resolves every npm-backed tool over the network. CI has no mise, so there a
+# call that escapes would otherwise take the no-mise branch unseen. A case that
+# sets its own PATH drops the stand-in and must supply its own fake mise.
 TRIPWIRE_MISE = '#!/bin/sh\nprintf "%s\\n" "$*" >> {log}\nexit 97\n'
 
 
@@ -1452,7 +1453,7 @@ def main() -> int:
         (bin_dir / "mise").write_text(TRIPWIRE_MISE.format(log=shlex.quote(str(log))))
         (bin_dir / "mise").chmod(0o755)
         with mock.patch.dict(os.environ, {"PATH": os.pathsep.join((str(bin_dir), os.environ.get("PATH", "")))}):
-            assert_equal(shutil.which("mise"), str(bin_dir / "mise"), "the stand-in must be the mise every case resolves")
+            assert_equal(shutil.which("mise"), str(bin_dir / "mise"), "the stand-in must be the mise a case that keeps the inherited PATH resolves")
             for case in CASES:
                 case()
                 calls = log.read_text()
