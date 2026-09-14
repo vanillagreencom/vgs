@@ -13,8 +13,8 @@ PluginDaemonComponent {
     // Bumped whenever a provider's sources change, on any surface.
     readonly property real sourcesStamp: pluginData.sourcesStamp || 0
 
-    // With no bar showing the widget there is nothing to refresh: the poll
-    // fetches at once when a view appears.
+    // With no watching widget there is nothing to refresh: the poll fetches at
+    // once when a widget starts watching.
     onSourcesStampChanged: {
         if (root.watched)
             root.refresh();
@@ -304,8 +304,8 @@ PluginDaemonComponent {
         interval: Math.max(60 * Math.max(1, logic.polledAccountCount(root.providerData)),
                            root.refreshSeconds) * 1000
         repeat: true
-        // Poll only while a bar shows the widget, so the first view fetches at
-        // once. Start once the channels exist rather than at this timer's own
+        // Poll only while a widget watches, so the first watching widget fetches
+        // at once. Start once the channels exist rather than at this timer's own
         // completion: triggeredOnStart against an empty Instantiator would fetch
         // nothing and then wait out a whole refresh interval before trying again.
         running: channels.count > 0 && root.watched

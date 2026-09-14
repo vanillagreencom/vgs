@@ -9,8 +9,8 @@ QtObject {
 
     property var pluginService: null
     property string pluginId: ""
-    // False releases the hold but keeps `daemon`, for a widget that exists but
-    // is not on screen.
+    // False releases the hold but keeps `daemon`, for a widget whose visibility
+    // condition hides it.
     property bool watching: true
 
     readonly property var daemon: link.pluginService && link.pluginId !== ""

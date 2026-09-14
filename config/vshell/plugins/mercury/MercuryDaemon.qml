@@ -33,7 +33,7 @@ PluginDaemonComponent {
     // here and the daemon refetches rather than waiting out the poll. The stamp
     // is a time; the key never travels through plugin data.
     readonly property var keyChangedAt: pluginData.keyChangedAt ?? 0
-    onKeyChangedAtChanged: Qt.callLater(root.invalidate)
+    onKeyChangedAtChanged: root.invalidate()
 
     // How old the figures may be before opening the popout refetches them.
     // Short enough that the dropdown is never obviously wrong, long enough
@@ -75,7 +75,13 @@ PluginDaemonComponent {
     // snapshot for settings the user had already changed.
     property bool _refreshPending: false
 
+    // A setting changed what the snapshot should hold since the last fetch
+    // started, so the figures are stale whatever their age.
+    property bool _invalidated: false
+
     function refresh() {
+        // A parked request runs with the settings current when it drains.
+        root._invalidated = false;
         if (snapshotProc.running) {
             root._refreshPending = true;
             return;
@@ -90,7 +96,7 @@ PluginDaemonComponent {
     }
 
     function refreshIfStale() {
-        if (Logic.shouldRefresh(root.fetchedAt, Date.now(), root.snapshotError !== "", root.staleMs))
+        if (root._invalidated || Logic.shouldRefresh(root.fetchedAt, Date.now(), root.snapshotError !== "", root.staleMs))
             root.refresh();
     }
 
@@ -199,8 +205,9 @@ PluginDaemonComponent {
         repeat: false
         // Background polling is the setting the user chose, and the pill shows
         // a live balance, so this keeps running with the popout closed. It
-        // does NOT keep running while no bar has the pill on screen, because
-        // nothing is reading the answer.
+        // does NOT run while no widget watches, because nothing is reading the
+        // answer. A widget watches while its visibility condition shows it, so
+        // a pill on an auto-hidden bar still counts.
         running: false
         onTriggered: {
             if (root.watched)
@@ -208,23 +215,30 @@ PluginDaemonComponent {
         }
     }
 
-    // The first pill on screen is the moment the figures matter again, so the
-    // poll resumes and anything stale is re-read at once. This is also the
-    // first fetch after the shell starts.
-    onWatchedChanged: {
+    // A settings change and the first watching widget both reach refreshIfStale
+    // here, through Qt.callLater, which runs a queued function once however
+    // often it was queued. At shell start the saved key stamp and the first
+    // watching widget arrive together, and they must call the bank API once.
+    function catchUp() {
         if (root.watched)
             root.refreshIfStale();
+    }
+
+    // The first watching widget is the moment the figures matter again, so the
+    // poll resumes and anything stale or invalidated is re-read. This is also
+    // the first fetch after the shell starts.
+    onWatchedChanged: {
+        if (root.watched)
+            Qt.callLater(root.catchUp);
         else
             pollTimer.stop();
     }
 
-    // A setting changed what the snapshot should hold. Refetch while a pill is
-    // on screen; otherwise mark the figures stale for the next one.
+    // A setting changed what the snapshot should hold. The figures count as
+    // stale until the next fetch starts, which waits for a watching widget.
     function invalidate() {
-        if (root.watched)
-            root.refresh();
-        else
-            root.fetchedAt = 0;
+        root._invalidated = true;
+        Qt.callLater(root.catchUp);
     }
 
     onDaysChanged: root.invalidate()

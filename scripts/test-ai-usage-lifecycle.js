@@ -25,17 +25,14 @@ const { launchDecision, watchdogArms, shouldRelaunch, decodePayload } =
         ["launchDecision", "watchdogArms", "shouldRelaunch", "decodePayload"],
         "AiUsageLogic.qml");
 
-const source = fs.readFileSync(path.join(PLUGIN, "AiUsageWidget.qml"), "utf8");
-const { blockFrom, body, handlers, requires, indexOf, stripComments } =
-    require("./lib/qml-source.js")(source, "AiUsageWidget.qml");
-
 // The daemon owns every fetch; the widget, one per screen, renders what it files.
 const daemonSource = fs.readFileSync(path.join(PLUGIN, "AiUsageDaemon.qml"), "utf8");
-const daemon = require("./lib/qml-source.js")(daemonSource, "AiUsageDaemon.qml");
-const channel = daemon.blockFrom(daemon.indexOf("component FetchChannel:"), "FetchChannel");
+const { blockFrom, body, handlers, requires, indexOf, stripComments } =
+    require("./lib/qml-source.js")(daemonSource, "AiUsageDaemon.qml");
+const channel = blockFrom(indexOf("component FetchChannel:"), "FetchChannel");
 
 test("launch starts through the extracted decision and resets every per-fetch field first", () => {
-    const launch = daemon.body("launch");
+    const launch = body("launch");
     requires(launch, "launch()", [
         ["logic.launchDecision(ch.inFlight, ch.proc.running)",
             "whether a launch can start now is the extracted decision, not an inline guess"],
@@ -80,7 +77,7 @@ test("the runningChanged handler arms the watchdog before it drains a parked req
         ["onTriggered: root.failLaunch(chan)", "the watchdog routes a failed start into the failure path"]
     ]);
     // A stopped channel with a tag must retain a path to settlement before any early return.
-    const stops = daemon.handlers("onRunningChanged");
+    const stops = handlers("onRunningChanged");
     assert.equal(stops.length, 1, "one stop handler, on the channel's own process");
     assert.ok(stops[0].indexOf("watchdogArms") < stops[0].indexOf("chan.pending"),
         "the arming question is asked BEFORE the parked request is drained, or a parked request " +

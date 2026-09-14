@@ -58,11 +58,13 @@ PluginComponent {
     }
 
     // The plugin's daemon owns every fetch and the filed payloads. This widget,
-    // one per screen, renders them.
+    // one per screen, renders them, and holds the daemon only while its
+    // visibility condition shows it.
     PluginDaemonLink {
         id: daemonLink
         pluginService: root.pluginService
         pluginId: root.pluginId
+        watching: root.effectiveVisible
     }
     readonly property var daemon: daemonLink.daemon
     readonly property var providerData: root.daemon ? root.daemon.providerData : ({})
