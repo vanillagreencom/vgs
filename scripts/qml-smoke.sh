@@ -83,6 +83,8 @@ layers_before="$(vgs_snapshot_layers)" && layers_before_status=0 || layers_befor
 
 declare -a tracked_pgids=()
 declare -a scratch_dirs=()
+# Sandbox logs whose tails a failed run prints before cleanup deletes their directory.
+declare -a evidence_logs=()
 spawn_launcher_pid=""
 spawn_pgid=""
 
@@ -134,7 +136,7 @@ kill_pgid() {
 # An interrupt can inherit a successful status. Set failure explicitly.
 # shellcheck disable=SC2329  # invoked via the trap registrations below
 cleanup() {
-  local code=$? signal="${1:-}" pgid dir index
+  local code=$? signal="${1:-}" pgid dir index file
   trap - EXIT INT TERM HUP
   case "$signal" in
     INT) code=130 ;;
@@ -149,6 +151,14 @@ cleanup() {
       code=1
     fi
   done
+  # After the process groups stop writing, before the directories holding the logs go.
+  if [[ "$code" -ne 0 ]]; then
+    for file in "${evidence_logs[@]:-}"; do
+      [[ -n "$file" && -f "$file" ]] || continue
+      printf 'qml-smoke: last 60 lines of %s:\n' "$file" >&2
+      tail -n 60 -- "$file" >&2 || printf 'qml-smoke: could not read %s\n' "$file" >&2
+    done
+  fi
   for dir in "${scratch_dirs[@]:-}"; do
     [[ -n "$dir" && -d "$dir" ]] || continue
     # Services the sandbox's own D-Bus activated (dconf, gvfs) outlive the tracked process
@@ -580,13 +590,50 @@ assert_popout_geometry() {
   return 0
 }
 
+# Keyboard focus reaches a mapped surface through deferred steps: the focus flag, the
+# compositor grab, then the content item. Every argument after the label is the IPC call
+# answering the surface's focusStatus JSON. A status that parsed once stays the verdict when
+# a later call fails, so a withheld focus is never relabelled an unreadable one.
+# Return 0 once focused, 1 when focus never arrived, 3 when no status parsed, 4 if the shell exits.
+focus_wait_polls=50
+wait_surface_focused() {
+  local what="$1" reply="" parsed="" state
+  shift
+  for _ in $(seq 1 "$focus_wait_polls"); do
+    reply="$(sandbox_ipc "$@")"
+    state=0
+    python3 -c 'import json, sys
+try: data = json.loads(sys.argv[1])
+except ValueError: sys.exit(3)
+keys = ("shouldHaveFocus", "focusGrabActive", "contentActiveFocus")
+if not isinstance(data, dict) or any(not isinstance(data.get(key), bool) for key in keys): sys.exit(3)
+sys.exit(0 if all(data[key] for key in keys) else 1)' "$reply" || state=$?
+    [[ "$state" -eq 0 ]] && return 0
+    [[ "$state" -eq 1 ]] && parsed="$reply"
+    if ! kill -0 -- "-$qs_group" 2>/dev/null; then
+      fail "the sandbox shell exited while waiting for $what to take keyboard focus"
+      return 4
+    fi
+    sleep 0.2
+  done
+  if [[ -n "$parsed" ]]; then
+    fail "$what mapped but never took keyboard focus (last focusStatus reply: $parsed)"
+    return 1
+  fi
+  fail "could not read the keyboard focus status of $what (last reply: ${reply:-none}) - that is not evidence about its focus"
+  return 3
+}
+
 # Send Escape through virtual-keyboard input because window-targeted shortcuts cannot reach layers.
-# Status 0 means sent, 2 means wtype absent, and 1 means an invocation failure already reported.
+# Arguments after the label are the surface's focusStatus IPC call. One Escape per check: a
+# retried key would hide a real focus defect, so the key waits for focus instead.
+# Status 0 means sent, 2 means wtype absent, and 1 means a failure already reported (focus
+# never arrived, or wtype failed).
 send_escape() {
   local what="$1" rc=0
+  shift
   command -v wtype >/dev/null 2>&1 || return 2
-  # Focus is deferred after mapping; immediate keyboard input can arrive before content is listening.
-  sleep 1.5
+  wait_surface_focused "$what" "$@" || return 1
   "${sandbox_env[@]}" WAYLAND_DISPLAY="$nested_socket" wtype -k Escape >/dev/null 2>&1 || rc=$?
   if [[ "$rc" -ne 0 ]]; then
     fail "could not send Escape to $what - wtype exited $rc, so nothing was proven about its key handling"
@@ -638,7 +685,7 @@ popout_check() {
   assert_popout_geometry "$geometry" "$popout_plugin" || return 1
 
   esc_rc=0
-  send_escape "the '$popout_plugin' popout" || esc_rc=$?
+  send_escape "the '$popout_plugin' popout" widget focusStatus "$popout_plugin" || esc_rc=$?
   case "$esc_rc" in
     0)
       if ! wait_layer_state "$popout_namespace" 1; then
@@ -780,6 +827,15 @@ fail_switcher_mapped() {
   esac
 }
 
+# Print which nested surface held keyboard focus when a dismissal failed.
+print_sandbox_focus_state() {
+  local query
+  for query in activewindow layers; do
+    printf 'qml-smoke: nested hyprctl -i 0 %s -j:\n' "$query" >&2
+    "${sandbox_env[@]}" hyprctl -i 0 "$query" -j 1>&2 || printf 'qml-smoke: hyprctl %s exited %s\n' "$query" "$?" >&2
+  done
+}
+
 # Wait for absence without relabeling a query failure as failed dismissal.
 wait_switcher_unmapped() {
   local namespace="$1" what="$2" state=0
@@ -787,6 +843,7 @@ wait_switcher_unmapped() {
   [[ "$state" -eq 0 ]] && return 0
   if [[ "$state" -ne 2 ]]; then
     sandbox_layer_state "$namespace" >&2 || true
+    print_sandbox_focus_state
     fail "$what"
   fi
   return 1
@@ -900,9 +957,9 @@ switcher_escape_cycle() {
 
   switcher_open_and_map "$target" open "$namespace" "$darken" "$open_want" "'$target open' before the Escape check" || return 1
 
-  send_escape "the '$target' switcher" || esc_rc=$?
+  send_escape "the '$target' switcher" "$target" focusStatus || esc_rc=$?
   if [[ "$esc_rc" -ne 0 ]]; then
-    # The availability check excludes status 2; remaining errors come from a failed wtype invocation.
+    # The availability check excludes status 2; remaining errors are a focus wait or a wtype invocation, both reported.
     switcher_escape_checked=false
     return 1
   fi
@@ -1410,6 +1467,7 @@ hl.config({
 EOF
 
   log="$sandbox/qs.log"
+  evidence_logs+=("$log" "$sandbox/hyprland.log")
 
   # Clear inherited environment, then provide isolated backend, compositor, and session-bus endpoints.
   sandbox_env=(

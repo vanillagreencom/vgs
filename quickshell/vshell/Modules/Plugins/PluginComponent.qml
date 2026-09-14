@@ -67,6 +67,8 @@ Item {
     readonly property bool hasHorizontalPill: horizontalBarPill !== null
     readonly property bool hasVerticalPill: verticalBarPill !== null
     readonly property bool hasPopout: popoutContent !== null
+    // The widget IPC target reaches a bar widget's popout through this name.
+    readonly property var popoutTarget: hasPopout ? pluginPopout : null
     // Advertise whether hover runs an opted-in pill action or opens a popout.
     // Method presence alone cannot express this: every PluginComponent has triggerHoverPopout.
     readonly property bool respondsToHover: (pillClickAction && pillClickOnHover) || hasPopout

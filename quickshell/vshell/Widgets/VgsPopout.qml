@@ -61,8 +61,12 @@ Item {
         id: _transientSurfaceTracker
     }
 
+    // Read by the focusStatus IPC query, which waits for focus before sending keys.
+    readonly property bool focusGrabActive: focusGrab.active
+
     // Hyprland OnDemand grab: whitelist popout surfaces and bars so dismiss clicks still land.
     VgsFocusGrab {
+        id: focusGrab
         windows: {
             const list = [];
             if (root.contentWindow)

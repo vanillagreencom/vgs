@@ -40,6 +40,8 @@ slice assert_popout_geometry
 slice window_border_is_inset
 slice sandbox_ipc
 slice keep_host_rendering
+slice wait_surface_focused
+slice cleanup
 
 # Cut a one-line helper definition out of the smoke script. Same contract as slice: a helper
 # that no longer has this shape is a broken fixture, not a failed case.
@@ -502,7 +504,120 @@ case_ipc_call_cannot_hang() {
   ok "an unanswered IPC call fails within its bound instead of hanging the run"
 }
 
+declare -A FOCUS_REPLIES=(
+  [focused]='{"visible":true,"shouldHaveFocus":true,"focusGrabActive":true,"contentActiveFocus":true}'
+  [no-flag]='{"visible":true,"shouldHaveFocus":false,"focusGrabActive":true,"contentActiveFocus":true}'
+  [no-grab]='{"visible":true,"shouldHaveFocus":true,"focusGrabActive":false,"contentActiveFocus":true}'
+  [no-content]='{"visible":true,"shouldHaveFocus":true,"focusGrabActive":true,"contentActiveFocus":false}'
+  [missing-field]='{"visible":true,"shouldHaveFocus":true,"focusGrabActive":true}'
+  [ipc-failed]='IPC_CALL_FAILED(124) x focusStatus: no reply'
+)
+
+# Drive wait_surface_focused against a stub IPC that answers the listed replies in order and
+# repeats the last one. The shell is alive or gone; sleep is stubbed so a row costs no time.
+focus_wait() {
+  local replies="$1" alive="$2" key
+  : >"$tmp/focus.replies"
+  : >"$tmp/focus.calls"
+  for key in ${replies//|/ }; do
+    printf '%s\n' "${FOCUS_REPLIES[$key]}" >>"$tmp/focus.replies"
+  done
+  (
+    set +e
+    # shellcheck source=/dev/null
+    . "$tmp/fail.sh"
+    # shellcheck source=/dev/null
+    . "$tmp/wait_surface_focused.sh"
+    # shellcheck disable=SC2034  # read by the sliced function
+    status=0 focus_wait_polls=4 qs_group=1
+    # shellcheck disable=SC2317,SC2329  # called by the sliced function, not from here
+    sandbox_ipc() {
+      local n
+      printf '%s\n' "$*" >>"$tmp/focus.calls"
+      n="$(wc -l <"$tmp/focus.calls")"
+      sed -n "${n}p" "$tmp/focus.replies" | grep . || tail -n 1 "$tmp/focus.replies"
+    }
+    # shellcheck disable=SC2317,SC2329  # called by the sliced function, not from here
+    kill() { [[ "$alive" == alive ]]; }
+    # shellcheck disable=SC2317,SC2329  # called by the sliced function, not from here
+    sleep() { :; }
+    wait_surface_focused "the 'x' switcher" x focusStatus
+    printf 'rc=%s\n' "$?"
+  ) 2>&1
+}
+
+# label; replies in order joined by |; shell alive or gone; expected status; the cause the
+# FAIL line must carry, or - for no FAIL at all. One withheld step per row.
+FOCUS_WAITS="focus on the first poll sends at once;focused;alive;0;-
+focus that arrives after unfocused polls is waited for;no-content|no-grab|focused;alive;0;-
+a withheld focus flag names the focus cause;no-flag;alive;1;switcher mapped but never took keyboard focus
+a withheld compositor grab names the focus cause;no-grab;alive;1;switcher mapped but never took keyboard focus
+withheld content focus names the focus cause;no-content;alive;1;switcher mapped but never took keyboard focus
+an unfocused status stays the verdict when a later call fails;no-content|ipc-failed;alive;1;switcher mapped but never took keyboard focus
+an unanswered call is not a focus verdict;ipc-failed;alive;3;could not read the keyboard focus status
+a status missing a field is not a focus verdict;missing-field;alive;3;could not read the keyboard focus status
+a shell that exits ends the wait;no-content;gone;4;exited while waiting"
+
+case_focus_wait() {
+  local label replies alive want_rc want_cause out rows=0
+  while IFS=';' read -r label replies alive want_rc want_cause; do
+    [[ -n "$label" ]] || continue
+    rows=$((rows + 1))
+    out="$(focus_wait "$replies" "$alive")"
+    [[ "$out" == *"rc=$want_rc"* ]] ||
+      fail "focus wait" "$label: expected rc=$want_rc, got: $out"
+    [[ "$(head -n 1 "$tmp/focus.calls")" == "x focusStatus" ]] ||
+      fail "focus wait" "$label: expected the focusStatus call it was given, got '$(head -n 1 "$tmp/focus.calls")'"
+    if [[ "$want_cause" == - ]]; then
+      [[ "$out" != *"FAIL:"* ]] || fail "focus wait" "$label: expected no FAIL, got: $out"
+    else
+      [[ "$out" == *"FAIL: "*"$want_cause"* ]] ||
+        fail "focus wait" "$label: the FAIL line must carry '$want_cause', got: $out"
+    fi
+  done <<<"$FOCUS_WAITS"
+  [[ $rows -eq 9 ]] || fail "focus wait" "expected 9 table rows, drove $rows"
+  ok "Escape waits for the focus flag, the grab and the content focus, and a withheld step names its cause"
+}
+
+# Run the shipped cleanup on a sandbox holding a 70-line shell log and exit with the given
+# status. Its live-session guard and process groups are stubbed out: neither is under test.
+cleanup_with() {
+  local code="$1" dir="$tmp/sandbox"
+  rm -rf -- "$dir"
+  mkdir -p -- "$dir"
+  seq -f 'qs-line-%g' 1 70 >"$dir/qs.log"
+  printf 'hypr-line\n' >"$dir/hyprland.log"
+  (
+    set +e
+    # shellcheck source=/dev/null
+    . "$tmp/cleanup.sh"
+    # shellcheck disable=SC2034  # read by the sliced function
+    tracked_pgids=() scratch_dirs=("$dir") evidence_logs=("$dir/qs.log" "$dir/hyprland.log")
+    # shellcheck disable=SC2317,SC2329  # called by the sliced function, not from here
+    assert_live_session_untouched() { return 0; }
+    (exit "$code")
+    cleanup
+  ) 2>&1 || true
+}
+
+case_cleanup_keeps_evidence() {
+  local out
+  out="$(cleanup_with 1)"
+  [[ "$out" == *"qs-line-11"* && "$out" == *"qs-line-70"* && "$out" != *"qs-line-10"$'\n'* ]] ||
+    fail "cleanup keeps evidence" "a failed run must print exactly the last 60 shell log lines, got: $out"
+  [[ "$out" == *"hypr-line"* ]] ||
+    fail "cleanup keeps evidence" "a failed run must print the compositor log, got: $out"
+  [[ ! -d "$tmp/sandbox" ]] ||
+    fail "cleanup keeps evidence" "printing the logs must not keep the sandbox directory"
+  out="$(cleanup_with 0)"
+  [[ "$out" != *"last 60 lines"* ]] ||
+    fail "cleanup keeps evidence" "a passing run must print no log tails, got: $out"
+  ok "a failed run prints the sandbox log tails before cleanup deletes them, and a passing run does not"
+}
+
 CASES=(
+  case_focus_wait
+  case_cleanup_keeps_evidence
   case_remedies
   case_ipc_bounded_calls
   case_ipc_call_cannot_hang
