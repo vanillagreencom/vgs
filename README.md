@@ -36,7 +36,7 @@ Native packages are the recommended method. They install VGS system-wide and pro
 | NixOS, Home Manager | flake | [`flake.nix`](flake.nix) |
 | Other systemd distributions | release bundle | `curl -fsSL https://raw.githubusercontent.com/vanillagreencom/vgs/v0.5.0/install.sh \| bash` |
 
-On Arch, `vgs-shell` ships the `bauhaus` and `roseofdune` themes and the vendored icon themes. Every other theme downloads on demand from its own release archive, with a screenshot shown before you install it.
+On Arch, `vgs-shell` ships every theme with a full-size screenshot, the `bauhaus` wallpapers, and the vendored icon themes. Every other theme's wallpapers download on demand from its own release archive.
 
 For Home Manager, add the flake input and import the module:
 

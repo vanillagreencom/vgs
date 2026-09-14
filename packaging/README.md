@@ -14,7 +14,7 @@ The source installer starts the service unless given `--no-start`. Home Manager 
 
 ## Themes
 
-Every channel installs one theme set: the `bauhaus` and `roseofdune` themes, the download catalog, a thumbnail per catalogued theme, and the vendored icon themes. Every other theme downloads on demand from its own release archive.
+Every channel installs one theme set: every theme's definitions and full-size preview, the default `bauhaus` theme's wallpapers, the download catalog, a thumbnail per catalogued theme, and the vendored icon themes. Every other theme's wallpapers download on demand from its own release archive.
 
 ## Channels
 

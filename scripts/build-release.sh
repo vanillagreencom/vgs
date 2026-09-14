@@ -20,11 +20,10 @@ bundle="$stage/$name"
 mkdir -p "$bundle/bin" "$out"
 
 cp -a "$root/quickshell" "$root/config" "$root/systemd" "$root/third_party" "$bundle/"
-# install-system.sh installs from these, so the bundle carries every theme package whole.
+# The bundle carries exactly the theme package files install-system.sh keeps.
 mkdir -p "$bundle/themes"
-for theme_json in "$root"/themes/*/theme.json; do
-  cp -a "$(dirname -- "$theme_json")" "$bundle/themes/"
-done
+"$root/scripts/gen-theme-catalog.py" --package-files > "$stage/theme-files"
+tar -C "$root/themes" -cf - --files-from="$stage/theme-files" | tar -C "$bundle/themes" -xf -
 cp -a "$root/themes/targets" "$bundle/themes/"
 cp "$root/themes/catalog.json" "$root/themes"/*.md "$bundle/themes/"
 # install-system.sh installs the thumbnails too.

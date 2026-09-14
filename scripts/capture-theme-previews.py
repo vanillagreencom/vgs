@@ -61,18 +61,18 @@ def jpeg_size(data: bytes) -> Tuple[int, int] | None:
     return None
 
 
-def check(helper: Any, themes_dir: Path) -> int:
+def check(publisher: Any, themes_dir: Path) -> int:
     """Refuse a theme with no preview, one smaller than PREVIEW_SIZE, or a set over budget.
 
     One line per problem, each starting with a stable key.
     """
+    helper = publisher.helper()
     width, height = helper.PREVIEW_SIZE
     problems: List[str] = []
     total = 0
     count = 0
-    for meta in sorted(themes_dir.glob("*/theme.json")):
-        name = meta.parent.name
-        preview = meta.parent / helper.THEME_PREVIEW_FILE
+    for name in publisher.generator().theme_names(themes_dir):
+        preview = themes_dir / name / helper.THEME_PREVIEW_FILE
         if not preview.is_file():
             problems.append(f"preview-missing {name}")
             continue
@@ -132,7 +132,7 @@ def shipped_blueprint(helper: Any, asset_root: Path, overlay_root: Path, name: s
 def capture(publisher: Any, names: List[str], asset_root_arg: str) -> int:
     helper = publisher.helper()
     themes_dir = helper.builtin_themes_dir()
-    names = names or sorted(meta.parent.name for meta in themes_dir.glob("*/theme.json"))
+    names = names or publisher.generator().theme_names(themes_dir)
     asset_root = publisher.asset_root(asset_root_arg)
     publisher.require_pillow()
     # A stop signal unwinds, so the staging output and its window rule go too.
@@ -158,7 +158,7 @@ def capture(publisher: Any, names: List[str], asset_root_arg: str) -> int:
                     dest = themes_dir / name / helper.THEME_PREVIEW_FILE
                     encode_preview(publisher, shot.read_bytes(), dest)
                     print(f"{name}: {dest.stat().st_size} bytes")
-    return check(helper, themes_dir)
+    return check(publisher, themes_dir)
 
 
 def main(argv: List[str]) -> int:
@@ -171,8 +171,7 @@ def main(argv: List[str]) -> int:
     args = parser.parse_args(argv)
     publisher = load_publisher()
     if args.check:
-        helper = publisher.helper()
-        return check(helper, helper.builtin_themes_dir())
+        return check(publisher, publisher.helper().builtin_themes_dir())
     return capture(publisher, args.names, args.asset_root)
 
 

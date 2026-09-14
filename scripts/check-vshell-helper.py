@@ -2554,6 +2554,31 @@ end
 """
 
 
+def test_preview_stage_rule_tiles_the_capture_window():
+    """The staging rule tiles the nested window, whatever float rule the user's config gives its class.
+
+    A floated capture window takes the size a user rule names instead of the
+    staging output's, and the capture comes out smaller than PREVIEW_SIZE.
+    """
+    lua = shutil.which("lua")
+    if lua is None:
+        raise AssertionError("lua not installed: the preview staging Lua cannot run")
+    driver = r"""
+hl = { workspace_rule = function() end }
+function hl.window_rule(spec)
+  print(tostring(spec.float) .. " " .. tostring(spec.fullscreen_state) .. " " .. spec.workspace)
+  return { set_enabled = function() end }
+end
+assert((loadstring or load)(arg[1]))()
+"""
+    result = subprocess.run([lua, "-", helper.PREVIEW_STAGE_ON_LUA], input=driver, text=True,
+                            capture_output=True, timeout=10)
+    assert_equal((result.returncode, result.stdout.strip()), (0, "false 2 name:vgspreview silent"),
+                 f"the staging window rule under {lua}: {result.stderr.strip()}")
+    assert_equal(helper.PREVIEW_WINDOW_RULE_LEGACY_TILE.split(",")[0], "tile",
+                 "the pre-Lua staging rules tile the capture window too")
+
+
 def test_preview_stage_lua_keeps_one_live_rule():
     """A stage holds one live window rule, its teardown leaves none, and the next stage registers afresh."""
     lua = shutil.which("lua")
@@ -4293,9 +4318,11 @@ def test_theme_catalog_offers_a_builtin_theme_with_no_imagery():
 
             offered = _catalog_entry("demo")
             assert_equal((offered["builtin"], offered["imageryInstalled"], offered["downloaded"],
-                          offered["imagerySize"], offered["preview"]),
-                         (True, False, False, len(blob), str(preview)),
-                         "a built-in theme with no wallpapers is offered at its archive size, painted from its preview")
+                          offered["imageryUpdateAvailable"], offered["imagerySize"], offered["preview"],
+                          offered["background"], offered["foreground"]),
+                         (True, False, False, False, len(blob), str(preview), "#101010", "#eeeeee"),
+                         "a built-in theme with no wallpapers is offered at its archive size and in its package's "
+                         "colours, painted from its preview, with no update for a download it never had")
 
             # The user edited the theme's colours before downloading its wallpapers.
             dest = helper.user_themes_dir() / "demo"
@@ -4329,11 +4356,19 @@ def test_theme_catalog_offers_a_builtin_theme_with_no_imagery():
             again = helper.catalog_download_theme(entry, base_urls, allow_local)
             assert_equal(again["status"], "skipped", "installed wallpapers are not re-downloaded")
 
-            # A package update that pins another archive offers the new wallpapers.
+            # A package update that pins another archive offers the new wallpapers,
+            # and a forced download replaces the ones the earlier download placed.
             _write_catalog(builtin, archives, "demo", _theme_archive({"backgrounds/1-demo.jpg": b"newer\n"}), rev=2)
             assert_equal(_catalog_entry("demo")["imageryUpdateAvailable"], True,
                          "a catalog pinning another archive than the download reports an update")
+            newer = helper.catalog_theme_entry(helper.load_theme_catalog(), "demo")
+            helper.catalog_download_theme(newer, base_urls, allow_local, force=True)
+            assert_equal(((dest / "backgrounds" / "1-demo.jpg").read_bytes(), helper.catalog_marker("demo")["files"],
+                          _catalog_entry("demo")["imageryUpdateAvailable"]),
+                         (b"newer\n", ["backgrounds/1-demo.jpg"], False),
+                         "a forced download replaces the wallpapers an earlier download placed")
             _write_catalog(builtin, archives, "demo", blob)
+            helper.catalog_download_theme(entry, base_urls, allow_local, force=True)
 
             listed = _theme_list_entries()["demo"]
             assert_equal(listed["preview"], str(preview),
@@ -4365,18 +4400,24 @@ def test_theme_catalog_offers_a_builtin_theme_with_no_imagery():
                          (0, [helper.CATALOG_MARKER, "backgrounds/1-demo.jpg"], True),
                          "revert drops the overlay beside a download and keeps its wallpapers")
 
-            # A marker with no file list cannot tell the overlay from the download.
+            # A marker with no file list names no download, so the directory is a
+            # plain overlay: revert drops all of it and remove refuses it.
             marker_path = dest / helper.CATALOG_MARKER
             marker = json.loads(marker_path.read_text())
-            recorded = marker.pop("files")
+            marker.pop("files")
             marker_path.write_text(json.dumps(marker, indent=2) + "\n")
             legacy = helper.load_theme_package("demo")
-            assert_equal((legacy["modified"], legacy["catalogPristine"]), (True, False),
-                         "a marker with no file list cannot claim the download is untouched")
-            assert_equal(helper.cmd_theme(["revert", "demo"]), 1,
-                         "revert refuses a download whose marker lists no files")
-            marker["files"] = recorded
-            marker_path.write_text(json.dumps(marker, indent=2) + "\n")
+            assert_equal((legacy["modified"], legacy["catalogPristine"], legacy["catalogOwned"]), (True, False, False),
+                         "a marker with no file list names no download")
+            try:
+                helper.catalog_remove_theme("demo")
+                raise AssertionError("remove must refuse a marker with no file list")
+            except ValueError:
+                pass
+            with contextlib.redirect_stdout(io.StringIO()):
+                assert_equal((helper.cmd_theme(["revert", "demo"]), dest.exists()), (0, False),
+                             "revert drops a directory whose marker lists no files")
+            helper.catalog_download_theme(entry, base_urls, allow_local)
 
             # The two writers of a built-in theme's overlay leave the download reading as edited.
             for label, edit in (
@@ -4397,6 +4438,28 @@ def test_theme_catalog_offers_a_builtin_theme_with_no_imagery():
                 assert_equal((written.get("modified"), written.get("catalogPristine")),
                              (True, False),
                              f"{label} leaves the download reading as edited")
+
+            # A directory an earlier release downloaded whole lists its definitions
+            # too. Only its wallpapers count as the download, so the definitions
+            # read as a user overlay: revert drops them and keeps the wallpaper.
+            for rel, content in (("theme.json", '{"name":"demo","mode":"dark","source":"curated"}\n'),
+                                 ("colors.toml", 'background = "#303030"\nforeground = "#eeeeee"\n'),
+                                 ("apps/btop.theme", 'theme[main_bg]="#303030"\n')):
+                (dest / rel).parent.mkdir(parents=True, exist_ok=True)
+                (dest / rel).write_text(content)
+            whole = sorted(["theme.json", "colors.toml", "apps/btop.theme", "backgrounds/1-demo.jpg"])
+            marker_path.write_text(json.dumps(helper.catalog_marker_payload(
+                "demo", dest, entry["assets"], whole, 1, "v0.5.0"), indent=2) + "\n")
+            earlier = helper.load_theme_package("demo")
+            assert_equal((earlier["catalogPristine"], earlier["palette"]["extendedColors"]["background"]),
+                         (False, "#303030"), "a whole-package download reads as an edited overlay")
+            with contextlib.redirect_stdout(io.StringIO()):
+                assert_equal(helper.cmd_theme(["revert", "demo"]), 0, "revert exit status")
+            reverted = helper.load_theme_package("demo")
+            assert_equal((_user_files(dest), reverted["catalogPristine"],
+                          reverted["palette"]["extendedColors"]["background"]),
+                         ([helper.CATALOG_MARKER, "backgrounds/1-demo.jpg"], True, "#101010"),
+                         "revert drops the old definitions, keeps the wallpaper, and the built-in colour loads")
 
             # A wallpaper the user put there under the archive's name stays theirs.
             shutil.rmtree(dest)
@@ -4802,7 +4865,6 @@ def test_theme_asset_publisher():
             ("missing thumbnail", current, current, False, True),
             ("unchanged preview", current, current, True, False),
             ("replaced preview", replaced, current, True, True),
-            ("no preview at all", "", current, True, False),
         ):
             probe = thumbnail if present else (root / "absent.jpg")
             assert_equal(publisher.thumbnail_needs_rebuild(digest, recorded, probe), expected,
@@ -4990,6 +5052,9 @@ def test_theme_asset_publish_records_what_is_on_the_release():
             def is_imagery(self, rel):
                 return real.is_imagery(rel)
 
+            def theme_names(self, themes_dir=None):
+                return real.theme_names(themes_dir)
+
         real = _load_script("gen_theme_catalog_publish_probe", "gen-theme-catalog.py")
         release = _Release()
 
@@ -5021,6 +5086,19 @@ def test_theme_asset_publish_records_what_is_on_the_release():
             return json.loads(publisher.LOCK_PATH.read_text())["themes"]
 
         try:
+            # Every theme ships a preview, so a theme without one stops the run
+            # before anything is written or uploaded.
+            (themes / "bare").mkdir()
+            (themes / "bare" / "theme.json").write_text('{"name":"bare","mode":"dark"}\n')
+            try:
+                run(False)
+                raise AssertionError("a theme without a preview must stop the publish")
+            except SystemExit as exc:
+                assert_equal((str(exc).splitlines()[0], publisher.LOCK_PATH.exists(), release.assets),
+                             ("preview-missing bare", False, {}),
+                             "the refusal names the theme, and nothing is written or uploaded")
+            shutil.rmtree(themes / "bare")
+
             # A dry run pins the archive without claiming it is on a release.
             dry = run(False)["demo"]
             assert_equal((dry["published"], dry["rev"], dry["archive"], dry["release"]),
@@ -5044,6 +5122,7 @@ def test_theme_asset_publish_records_what_is_on_the_release():
             (themes / "extra" / "theme.json").write_text('{"name":"extra","mode":"dark"}\n')
             (tmp / "assets" / "extra" / "backgrounds").mkdir(parents=True)
             (tmp / "assets" / "extra" / "backgrounds" / "1.jpg").write_bytes(b"extra\n")
+            Image.new("RGB", (1280, 720), (40, 40, 40)).save(themes / "extra" / helper.THEME_PREVIEW_FILE, "JPEG")
 
             release.lookups = 0
             wet = run(True)["demo"]
@@ -5280,6 +5359,7 @@ def test_theme_preview_set_check():
         return buffer.getvalue()
 
     full = jpeg((width, height))
+    publisher = previews.load_publisher()
     original_budget = previews.PREVIEW_SET_BUDGET_BYTES
     with tempfile.TemporaryDirectory() as tmp:
         try:
@@ -5303,7 +5383,7 @@ def test_theme_preview_set_check():
                 previews.PREVIEW_SET_BUDGET_BYTES = budget
                 errors = io.StringIO()
                 with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(errors):
-                    status = previews.check(helper, themes)
+                    status = previews.check(publisher, themes)
                 keys = [line for line in errors.getvalue().splitlines() if line.startswith("preview-")]
                 assert_equal((status, keys), expected, f"preview set check: {label}")
         finally:
@@ -5313,7 +5393,7 @@ def test_theme_preview_set_check():
         png = io.BytesIO()
         Image.new("RGB", (width, height), (40, 120, 200)).save(png, "PNG")
         dest = Path(tmp) / "encoded" / helper.THEME_PREVIEW_FILE
-        previews.encode_preview(previews.load_publisher(), png.getvalue(), dest)
+        previews.encode_preview(publisher, png.getvalue(), dest)
         assert_equal(previews.jpeg_size(dest.read_bytes()), (width, height),
                      "a captured screenshot is encoded as a JPEG at its captured size")
 
@@ -10337,6 +10417,7 @@ def main():
     test_theme_asset_publication_gate()
     test_theme_catalog_generator()
     test_theme_preview_set_check()
+    test_preview_stage_rule_tiles_the_capture_window()
     test_theme_catalog_manifest_matches_the_repo()
     test_remote_desktop_reports_streaming_separately_from_listening()
     test_remote_desktop_start_creates_the_output_before_starting_the_unit()

@@ -11,7 +11,7 @@ Singleton {
     id: root
     readonly property var log: Log.scoped("VGSThemeCatalogService")
 
-    // [{name, mode, pair, source, imagerySize, imageryInstalled,
+    // [{name, mode, pair, source, colors, background, foreground, imagerySize, imageryInstalled,
     //   imageryUpdateAvailable, builtin, downloaded, downloadedRef, preview}]
     property var entries: []
     property bool loading: false

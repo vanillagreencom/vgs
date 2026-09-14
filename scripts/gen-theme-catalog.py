@@ -62,6 +62,11 @@ def load_helper() -> Any:
     return module
 
 
+def theme_names(themes_dir: Path | None = None) -> List[str]:
+    """Every theme package under `themes_dir` (default themes/): a directory holding theme.json, sorted."""
+    return sorted(meta.parent.name for meta in (themes_dir or THEMES_DIR).glob("*/theme.json"))
+
+
 def package_files(helper: Any) -> List[str]:
     """Every path under themes/ a theme package ships in the VGS package, sorted.
 
@@ -69,8 +74,8 @@ def package_files(helper: Any) -> List[str]:
     theme's, so a first boot has a wallpaper before anything is downloaded.
     """
     files = []
-    for meta in sorted(THEMES_DIR.glob("*/theme.json")):
-        theme_dir = meta.parent
+    for name in theme_names():
+        theme_dir = THEMES_DIR / name
         for path in sorted(theme_dir.rglob("*")):
             rel = path.relative_to(theme_dir).as_posix()
             if not path.is_file() or (is_imagery(rel) and theme_dir.name != helper.DEFAULT_THEME_NAME):
@@ -138,8 +143,8 @@ def build_catalog(ref: str) -> Dict[str, Any]:
     helper = load_helper()
     lock = load_lock()
     themes = []
-    for meta in sorted(THEMES_DIR.glob("*/theme.json")):
-        themes.append(theme_entry(helper, meta.parent, lock))
+    for name in theme_names():
+        themes.append(theme_entry(helper, THEMES_DIR / name, lock))
     return {
         "version": CATALOG_VERSION,
         "source": {

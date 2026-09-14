@@ -55,6 +55,17 @@ if ! grep -q "/config/vshell/icons/" "$tmp/archive.list"; then
   echo "check-release: the release bundle carries no config/vshell/icons, so a tarball install has no vendored icon themes" >&2
   exit 1
 fi
+# The bundle carries exactly the theme package files install-system.sh keeps,
+# as scripts/gen-theme-catalog.py lists them.
+sed -n -e '\|/themes/targets/|d' -e '\|/themes/thumbnails/|d' \
+  -e "s|^vgs-$version-linux-[^/]*/themes/\([^/]*/.*[^/]\)$|\1|p" "$tmp/archive.list" \
+  | LC_ALL=C sort > "$tmp/theme-files.have"
+"$root/scripts/gen-theme-catalog.py" --package-files | LC_ALL=C sort > "$tmp/theme-files.want"
+if ! theme_files_diff="$(diff "$tmp/theme-files.want" "$tmp/theme-files.have")"; then
+  echo "check-release: the release bundle's theme packages differ from scripts/gen-theme-catalog.py --package-files:" >&2
+  printf '%s\n' "$theme_files_diff" >&2
+  exit 1
+fi
 # Compare the thumbnail set with the catalogued themes. A nonempty archive can
 # still omit thumbnails, which leaves the download browser blank for those themes.
 sed -n 's|.*/themes/thumbnails/\(.*\)\.jpg$|\1|p' "$tmp/archive.list" | sort > "$tmp/thumbnails.have"

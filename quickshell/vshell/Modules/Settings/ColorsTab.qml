@@ -51,13 +51,12 @@ Item {
     ]
 
     readonly property var currentEntry: VGSThemeService.currentBlueprint
-    // A catalog download lands in the user directory too, so modified alone
-    // is true for one nobody has touched. The badge and the revert control
-    // both mean "the user changed this", and revert refuses a download.
+    // Downloaded wallpapers land in the user directory too, so modified alone
+    // is true for a download nobody has touched. The badge and the revert
+    // control both mean "the user changed this".
     readonly property bool userModified: currentEntry.modified === true && currentEntry.catalogPristine !== true
-    // Revert drops a built-in theme's user overlay, and refuses a catalog
-    // download outright whatever the pristine flag can infer about it. The
-    // control follows what the command enforces, not what the flag guesses.
+    // Revert drops a built-in theme's user overlay and keeps its downloaded
+    // wallpapers, so an untouched download has nothing to revert.
     readonly property bool revertable: currentEntry.modified === true && currentEntry.builtin === true && currentEntry.catalogPristine !== true
     property bool revertConfirmPending: false
     property bool syncingSliders: false

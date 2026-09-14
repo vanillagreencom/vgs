@@ -1942,13 +1942,31 @@ def catalog_owns(name: str) -> bool:
     The marker lives inside the theme package. A copy made by `theme duplicate`
     carries no marker, but a package copied by hand or by an older duplicate can.
     Ownership therefore has to be identity, not presence: the marker must name
-    this directory, which a copied marker never does.
+    this directory, which a copied marker never does. A marker with no file list
+    names no download either, since nothing then says which files it placed.
     """
     dest = user_themes_dir() / name
     marker = catalog_marker(name)
     if not marker:
         return False
-    return str(marker.get("name") or "") == name and str(marker.get("path") or "") == str(dest)
+    return (str(marker.get("name") or "") == name and str(marker.get("path") or "") == str(dest)
+            and isinstance(marker.get("files"), list))
+
+
+def catalog_placed_wallpapers(name: str) -> List[str] | None:
+    """The wallpapers a catalog download placed in the user directory, sorted, or None when it holds no download.
+
+    The one reader of the marker's file list. Only entries the imagery path rule
+    accepts count, so a directory an earlier release downloaded whole, whose list
+    also names its definitions, keeps those as a user overlay like any other.
+    """
+    if not catalog_owns(name):
+        return None
+    placed: List[str] = []
+    for rel in catalog_marker(name)["files"]:
+        with contextlib.suppress(ValueError):
+            placed.append(_catalog_check_relpath(str(rel)))
+    return sorted(placed)
 
 
 def theme_shipped_preview(name: str, packaged: str = "") -> str:
@@ -1987,16 +2005,14 @@ def catalog_pristine(name: str) -> bool:
     file, and the restyle adjustments and hidden backgrounds in `theme.json`.
     A wallpaper replaced in place under its downloaded name is not detected.
     """
-    if not catalog_owns(name):
-        return False
-    recorded = catalog_marker(name).get("files")
-    if not isinstance(recorded, list) or not recorded:
+    placed = catalog_placed_wallpapers(name)
+    if not placed:
         return False
     root = user_themes_dir() / name
     present = sorted(path.relative_to(root).as_posix()
                      for path in root.rglob("*")
                      if path.is_file() and path.name != CATALOG_MARKER)
-    return present == sorted(str(entry) for entry in recorded)
+    return present == placed
 
 
 def catalog_entries() -> List[Dict[str, Any]]:
@@ -2011,11 +2027,16 @@ def catalog_entries() -> List[Dict[str, Any]]:
         marker = catalog_marker(name) if catalog_owns(name) else {}
         pinned = raw.get("assets") if isinstance(raw.get("assets"), dict) else {}
         packaged = compose_theme_files(name).get(THEME_PREVIEW_FILE)
+        # The catalog file carries no colours; the theme's package does.
+        palette = (load_theme_package(name) or {}).get("palette") or {}
         entries.append({
             "name": name,
             "mode": raw.get("mode", "dark"),
             "pair": raw.get("pair", ""),
             "source": raw.get("source", "curated"),
+            "colors": palette.get("colors", []),
+            "background": (palette.get("extendedColors") or {}).get("background", ""),
+            "foreground": (palette.get("extendedColors") or {}).get("foreground", ""),
             "imagerySize": int(raw.get("size") or 0),
             "imageryInstalled": (theme_dir_has_wallpapers(builtin_themes_dir() / name)
                                  or theme_dir_has_wallpapers(user_themes_dir() / name)),
@@ -2113,8 +2134,7 @@ def catalog_download_theme(entry: Dict[str, Any], base_urls: List[str], allow_lo
         written, unpacked = _catalog_unpack(name, archive, staging)
         ref = str((load_theme_catalog().get("source") or {}).get("ref") or "")
         with theme_mutation_lock():
-            earlier = catalog_marker(name).get("files") if catalog_owns(name) else []
-            ours = set(earlier) if isinstance(earlier, list) else set()
+            ours = set(catalog_placed_wallpapers(name) or [])
             placed: List[str] = []
             for member in unpacked:
                 target = dest / member
@@ -2173,24 +2193,16 @@ def catalog_remove_theme(name: str) -> Dict[str, Any]:
     # A package copied by hand or by an older duplicate can carry a download
     # marker. Check the directory identity before removal so a user copy does
     # not count as a catalog download.
-    if not catalog_owns(clean):
+    placed = catalog_placed_wallpapers(clean)
+    if placed is None:
         if catalog_marker(clean):
-            raise ValueError(f"{clean} is a copy of a downloaded theme, not one the catalog installed")
+            raise ValueError(f"{clean} holds a download marker that names no download in this directory")
         raise ValueError(f"{clean} was not downloaded from the theme catalog")
     if current_theme_name() == clean:
         raise ValueError(f"{clean} is the current theme; apply another theme first")
-    recorded = catalog_marker(clean).get("files")
-    if not isinstance(recorded, list):
-        raise ValueError(f"{clean}: its download marker lists no files, so which wallpapers it placed is unknown")
-    # Only wallpapers are removed. A recorded path outside the imagery shape is
-    # left where it is, never followed.
-    imagery: List[str] = []
-    for rel in recorded:
-        with contextlib.suppress(ValueError):
-            imagery.append(_catalog_check_relpath(str(rel)))
     with theme_mutation_lock():
         try:
-            for rel in imagery:
+            for rel in placed:
                 with contextlib.suppress(FileNotFoundError):
                     (dest / rel).unlink()
             (dest / CATALOG_MARKER).unlink()
@@ -2204,6 +2216,27 @@ def catalog_remove_theme(name: str) -> Dict[str, Any]:
     # trigger a later thumbnail build.
     return {"name": clean, "status": "removed", "path": str(dest),
             "thumbsPruned": prune_wallpaper_thumbs_now()}
+
+
+def drop_theme_overlay(package: str) -> None:
+    """Delete a built-in theme's user overlay, keeping the wallpapers a download placed and its marker.
+
+    A revert cannot fetch those wallpapers back; removing them is `theme catalog remove`.
+    """
+    user_dir = user_themes_dir() / package
+    placed = catalog_placed_wallpapers(package)
+    if not user_dir.is_dir():
+        return
+    if not placed:
+        shutil.rmtree(user_dir, ignore_errors=True)
+        return
+    kept = {CATALOG_MARKER, *placed}
+    for path in sorted(user_dir.rglob("*"), reverse=True):
+        if path.is_dir() and not path.is_symlink():
+            with contextlib.suppress(OSError):
+                path.rmdir()
+        elif path.relative_to(user_dir).as_posix() not in kept:
+            path.unlink()
 
 
 def theme_wallpaper_entries(bp: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -6423,7 +6456,7 @@ PREVIEW_STAGE_ON_LUA = (
     'hl.workspace_rule({ workspace = "name:vgspreview", monitor = "' + PREVIEW_OUTPUT + '", default = true }) end '
     f'if {PREVIEW_WINDOW_RULE_HANDLE} == nil then '
     f'{PREVIEW_WINDOW_RULE_HANDLE} = hl.window_rule({{ match = {{ class = "^(aquamarine)$" }}, '
-    'workspace = "name:vgspreview silent", fullscreen_state = 2, '
+    'workspace = "name:vgspreview silent", float = false, fullscreen_state = 2, '
     'no_initial_focus = true, no_focus = true }) end'
 )
 PREVIEW_STAGE_OFF_LUA = (
@@ -6432,6 +6465,8 @@ PREVIEW_STAGE_OFF_LUA = (
 )
 PREVIEW_WINDOW_RULE_LEGACY = f"monitor {PREVIEW_OUTPUT}, class:^(aquamarine)$"
 PREVIEW_WINDOW_RULE_LEGACY_NOFOCUS = "nofocus, class:^(aquamarine)$"
+# A user rule that floats the class would otherwise size the capture window itself.
+PREVIEW_WINDOW_RULE_LEGACY_TILE = "tile, class:^(aquamarine)$"
 
 PREVIEW_SAMPLE_CODE = '''import QtQuick
 import Quickshell
@@ -7220,6 +7255,7 @@ def preview_stage():
                 # needs a config reload to clear it.
                 rule = run(["hyprctl", "keyword", "windowrulev2", PREVIEW_WINDOW_RULE_LEGACY])
                 run(["hyprctl", "keyword", "windowrulev2", PREVIEW_WINDOW_RULE_LEGACY_NOFOCUS])
+                run(["hyprctl", "keyword", "windowrulev2", PREVIEW_WINDOW_RULE_LEGACY_TILE])
                 rules_ok = legacy_rule = rule.returncode == 0 and "error" not in (rule.stdout or "").lower()
             if rules_ok and run(["hyprctl", "output", "create", "headless", PREVIEW_OUTPUT]).returncode == 0:
                 staged = True
@@ -10298,30 +10334,7 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
             if args.json:
                 print(json.dumps({"reverted": False, "name": bp.get("name"), "applied": False, "error": "not a built-in theme"}, indent=2))
             return 1
-        package = Path(str(bp.get("path"))).name
-        user_dir = user_themes_dir() / package
-        # Downloaded wallpapers share the user directory with the overlay. A
-        # revert drops the overlay and keeps them, since it cannot fetch them
-        # back; removing them is `theme catalog remove`.
-        downloaded = catalog_marker(package).get("files") if catalog_owns(package) else []
-        if not isinstance(downloaded, list):
-            message = (f"{bp.get('name')}: its download marker lists no files, so the overlay cannot be "
-                       f"told from the downloaded wallpapers")
-            eprint(message)
-            if args.json:
-                print(json.dumps({"reverted": False, "name": bp.get("name"), "applied": False,
-                                  "error": "download marker lists no files"}, indent=2))
-            return 1
-        if user_dir.is_dir() and downloaded:
-            kept = {CATALOG_MARKER, *(str(rel) for rel in downloaded)}
-            for path in sorted(user_dir.rglob("*"), reverse=True):
-                if path.is_dir() and not path.is_symlink():
-                    with contextlib.suppress(OSError):
-                        path.rmdir()
-                elif path.relative_to(user_dir).as_posix() not in kept:
-                    path.unlink()
-        elif user_dir.is_dir():
-            shutil.rmtree(user_dir, ignore_errors=True)
+        drop_theme_overlay(Path(str(bp.get("path"))).name)
         applied = False
         if str(bp.get("name")) == str(current_theme().get("name")):
             reverted = find_theme(args.name)

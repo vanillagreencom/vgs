@@ -85,10 +85,6 @@ def load_module(name: str, path: Path) -> Any:
     return module
 
 
-def theme_names() -> List[str]:
-    return sorted(meta.parent.name for meta in THEMES_DIR.glob("*/theme.json"))
-
-
 def load_lock() -> Dict[str, Any]:
     if not LOCK_PATH.is_file():
         return {"version": generator().LOCK_VERSION, "repo": generator().REPO_SLUG, "themes": {}}
@@ -212,13 +208,11 @@ def thumbnail_needs_rebuild(preview_digest: str, recorded: str, thumbnail: Path)
     """Whether the 480 px thumbnail has to be derived again.
 
     Bound to the preview's content, never to its timestamp. An mtime-preserving
-    copy into the asset root — `tar -x`, `cp -p`, `rsync -a`, a restored backup —
-    can put different pixels there under an older timestamp, and a timestamp rule
-    then paints the previous theme's screenshot until someone deletes the file by
-    hand. A missing thumbnail always rebuilds, which is how a lost one is recovered.
+    copy — `tar -x`, `cp -p`, `rsync -a`, a restored backup — can put different
+    pixels there under an older timestamp, and a timestamp rule then paints the
+    previous theme's screenshot until someone deletes the file by hand. A missing
+    thumbnail always rebuilds, which is how a lost one is recovered.
     """
-    if not preview_digest:
-        return False
     return not thumbnail.is_file() or recorded != preview_digest
 
 
@@ -316,7 +310,14 @@ def publish(args: argparse.Namespace) -> int:
     require_pillow()
     lock = load_lock()
     tag = next_release_tag(lock)
-    names = theme_names()
+    names = generator().theme_names(THEMES_DIR)
+    # Every shipped theme carries a preview, and its thumbnail is derived from
+    # it, so a theme without one stops the run before anything is uploaded.
+    unpreviewed = [name for name in names
+                   if not (THEMES_DIR / name / helper().THEME_PREVIEW_FILE).is_file()]
+    if unpreviewed:
+        raise SystemExit(f"preview-missing {' '.join(unpreviewed)}\n"
+                         f"Capture them with scripts/capture-theme-previews.py before publishing.")
 
     for stale in sorted(set(lock["themes"]) - set(names)):
         del lock["themes"][stale]
@@ -342,9 +343,8 @@ def publish(args: argparse.Namespace) -> int:
             digest = hashlib.sha256(blob).hexdigest()
             # Read once, so the digest recorded below describes the pixels the
             # thumbnail was derived from.
-            preview_path = THEMES_DIR / name / helper().THEME_PREVIEW_FILE
-            preview = preview_path.read_bytes() if preview_path.is_file() else None
-            preview_digest = hashlib.sha256(preview).hexdigest() if preview is not None else ""
+            preview = (THEMES_DIR / name / helper().THEME_PREVIEW_FILE).read_bytes()
+            preview_digest = hashlib.sha256(preview).hexdigest()
 
             # The thumbnail is derived from the theme's committed preview, and is
             # rebuilt whenever that content differs from the one it came from, or
@@ -353,8 +353,6 @@ def publish(args: argparse.Namespace) -> int:
             thumbnail = THUMBNAIL_DIR / f"{name}.jpg"
             if thumbnail_needs_rebuild(preview_digest, str(previous.get("preview") or ""), thumbnail):
                 write_thumbnail(preview, thumbnail)
-            elif not preview_digest and thumbnail.exists():
-                thumbnail.unlink()
 
             # Only a theme whose archive is both unchanged AND already on a
             # release is skipped. A dry run records the pin without publication,
