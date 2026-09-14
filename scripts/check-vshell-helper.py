@@ -822,8 +822,8 @@ _TARGET_CONFIG_KEYS = {"app", "template", "destination", "detect", "hook", "relo
 # to re-read a file its target wrote and is sent only when those bytes moved.
 # Every other hook asserts wiring no destination carries and runs on every apply
 # that reaches its target's commit. Moving a name between the two keys changes
-# what an apply does, so the split is held here rather than left to 25 files.
-# The reload half also holds the list docs/architecture/theme.md states in prose.
+# what an apply does, so the split is held here rather than left to each target's
+# own config.
 _RELOAD_HOOKS = {"btop-reload", "ghostty-reload", "gtk4-reload", "hypr-reload", "kitty-reload",
                  "niri-reload", "nvim-reload", "pywalfox-update", "shell-reload", "tmux-source"}
 _WIRING_HOOKS = {"btop-config", "chromium-policy", "claude-theme", "codex-theme", "fastfetch-logo",
@@ -891,10 +891,12 @@ def test_a_btop_selection_failure_is_reported_without_costing_the_rest():
 def test_every_target_config_declares_known_keys_only():
     """A key a target config misspells declares nothing and the apply drops it.
 
-    `reloadhook` or `reload_hook` in place of `reloadHook` leaves that target
-    sending no reload verb at all, with every other assertion in this file green,
-    because a name that never enters the declared set cannot be checked against
-    anything.
+    This is the gap the classification assertion cannot see. That one compares
+    derived sets against pinned sets, so a misspelled hook key reddens it only
+    while the dropped name is already pinned; a name it does not yet carry passes.
+    A misspelling of any other key is invisible to it entirely: a target writing
+    `curatedDestinaton` sends its curated artifact to the generated output's own
+    path, because that is what the apply falls back to when the key is absent.
     """
     unknown = []
     for path in sorted((REPO_ROOT / "themes" / "targets").glob("*/config.json")):
@@ -2400,21 +2402,38 @@ def test_theme_hooks_stay_out_of_the_login_session():
             return {"hook": hook, "ok": True}
 
         real_is_dir = helper.Path.is_dir
+        quits = []
+
+        def record_quit():
+            quits.append({"ok": True, "quit": True})
+            return quits[-1]
+
+        results = {}
         with tempfile.TemporaryDirectory() as generated:
             (Path(generated) / "icons.theme").write_text("vgs-probe-icons\n")
             with patch.object(helper, "_run_hook_cmd", side_effect=record), \
                     patch.object(helper.shutil, "which", return_value="/usr/bin/gsettings"), \
-                    patch.object(helper, "_quit_windowless_nautilus", return_value={"ok": True}), \
+                    patch.object(helper, "_quit_windowless_nautilus", side_effect=record_quit), \
                     patch.object(helper, "ensure_bundled_icon_themes", return_value=[]), \
                     patch.object(helper, "generated_dir", return_value=Path(generated)), \
                     patch.object(helper, "load_settings", return_value={}), \
                     patch.object(helper.Path, "is_dir", lambda self: self.name == "vgs-probe-icons" or real_is_dir(self)), \
                     patch.object(helper.time, "sleep"):
-                for hook in ("gtk-settings", "icon-theme"):
-                    helper.run_hook(hook, {"theme_type": "dark"}, {})
+                for hook in ("gtk-settings", "icon-theme", "gtk4-reload"):
+                    results[hook] = helper.run_hook(hook, {"theme_type": "dark"}, {})
         interface = ("gsettings", "set", "org.gnome.desktop.interface")
         assert_equal(written, [interface + ("gtk-theme",), interface + ("color-scheme",), interface + ("icon-theme",)],
                      "the settings hooks write gsettings from the login user's own home")
+        # Quitting the windowless Files service is gtk4-reload's whole payload:
+        # GTK4 reads gtk.css once per process and that file belongs to gtk4-vgs,
+        # so the quit is gated on its bytes rather than run beside the gsettings
+        # writes. Past the sandbox guard, which the loop above pins from the other
+        # side, a branch that stopped calling it would still report ok.
+        assert_equal(len(quits), 1, "exactly one hook quits the windowless Files service")
+        assert_equal(results["gtk4-reload"]["nautilus"], {"ok": True, "quit": True},
+                     "gtk4-reload reports what the quit returned")
+        assert_equal("nautilus" in results["gtk-settings"], False,
+                     "gtk-settings no longer carries the quit it was moved off")
 
 
 def test_vshell_blur_cli_contract():
