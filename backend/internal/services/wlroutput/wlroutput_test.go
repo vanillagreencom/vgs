@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"vshell/backend/internal/refresh"
 )
 
 func fakeOutputCommand(t *testing.T, directory, name string) string {
@@ -41,7 +43,7 @@ func TestNiriState(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	state, err := newManager(command, "niri", nil).state()
+	state, err := newManager(noBroadcast{}, command, "niri", nil).state.Query()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +65,7 @@ func TestNiriDisabledOutput(t *testing.T) {
 	if err := os.WriteFile(command, []byte("#!/bin/sh\nprintf '%s' '{\"HDMI-A-1\":{\"name\":\"HDMI-A-1\",\"modes\":[],\"current_mode\":null,\"logical\":null}}'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	state, err := newManager(command, "niri", nil).state()
+	state, err := newManager(noBroadcast{}, command, "niri", nil).state.Query()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,42 +74,49 @@ func TestNiriDisabledOutput(t *testing.T) {
 	}
 }
 
+type noBroadcast struct{}
+
+func (noBroadcast) Broadcast(string, any) {}
+
+func stubManager(t *testing.T, query func() (State, error)) *Manager {
+	t.Helper()
+	m := newManager(noBroadcast{}, "", "stub", nil)
+	m.query = query
+	m.state = refresh.NewService(noBroadcast{}, nil, "wlroutput", 0, func() (State, error) { return m.query() })
+	return m
+}
+
 // Before the first query there is nothing to report. An empty output list would
 // reach the shell as "no monitors" and blank the display settings page while
 // hyprctl has never run.
 func TestCachedStateBeforeFirstQueryReportsNothing(t *testing.T) {
-	m := newManager("", "hyprctl", nil)
-	if got := m.cachedState(); got != nil {
+	m := stubManager(t, func() (State, error) { return State{}, errStubQuery })
+	if got := m.state.Cached(); got != nil {
 		t.Fatalf("cached state before the first query = %v, want nothing to send", got)
+	}
+	if _, err := m.handleGetState(nil); err == nil {
+		t.Fatal("handleGetState returned no error for a failing query")
+	}
+	if got := m.state.Cached(); got != nil {
+		t.Fatalf("a failed query cached %v; an empty layout must not become truth", got)
 	}
 }
 
-// The cache is filled by the query path itself, so every caller of state warms
-// what the next subscribe reads.
-func TestQuerySuccessFillsTheCache(t *testing.T) {
-	m := newManager("", "stub", nil)
-	m.query = func() (State, error) {
+// A getState call warms what the next subscribe serves.
+func TestGetStateWarmsTheRegisteredSource(t *testing.T) {
+	m := stubManager(t, func() (State, error) {
 		return State{Outputs: []Output{{Name: "DP-1"}}, Serial: 4, Backend: "stub"}, nil
+	})
+	if _, err := m.handleGetState(nil); err != nil {
+		t.Fatalf("handleGetState: %v", err)
 	}
-	if _, err := m.state(); err != nil {
-		t.Fatalf("state: %v", err)
-	}
-	got, ok := m.cachedState().(State)
+	got, ok := m.state.Cached().(State)
 	if !ok {
-		t.Fatalf("cachedState returned %T, want State", m.cachedState())
+		t.Fatalf("cached value is %T, want State", m.state.Cached())
 	}
 	if len(got.Outputs) != 1 || got.Outputs[0].Name != "DP-1" {
 		t.Fatalf("cached outputs = %v, want the query result", got.Outputs)
 	}
 }
 
-func TestFailedQueryLeavesTheCacheEmpty(t *testing.T) {
-	m := newManager("", "stub", nil)
-	m.query = func() (State, error) { return State{}, errors.New("compositor unreachable") }
-	if _, err := m.state(); err == nil {
-		t.Fatal("state returned no error for a failing query")
-	}
-	if got := m.cachedState(); got != nil {
-		t.Fatalf("a failed query cached %v; an empty layout must not become the shell's truth", got)
-	}
-}
+var errStubQuery = errors.New("compositor unreachable")

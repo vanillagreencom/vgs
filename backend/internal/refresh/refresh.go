@@ -9,21 +9,21 @@ import (
 	"time"
 )
 
-// Loop runs one refresh at a time. Kick asks for a run; requests arriving while
+// loop runs one refresh at a time. Kick asks for a run; requests arriving while
 // one is already pending collapse into it. The zero value is not usable; use
-// NewLoop.
-type Loop struct {
+// newLoop.
+type loop struct {
 	kick  chan struct{}
 	stop  chan struct{}
 	delay time.Duration
 	once  sync.Once
 }
 
-// NewLoop starts the loop's goroutine. delay is the settle window between a
+// newLoop starts the loop's goroutine. delay is the settle window between a
 // kick and the run it triggers, which lets a burst of kicks collapse; a zero
 // delay runs immediately. run is called with no lock held and must return.
-func NewLoop(delay time.Duration, run func()) *Loop {
-	l := &Loop{
+func newLoop(delay time.Duration, run func()) *loop {
+	l := &loop{
 		kick:  make(chan struct{}, 1),
 		stop:  make(chan struct{}),
 		delay: delay,
@@ -34,7 +34,7 @@ func NewLoop(delay time.Duration, run func()) *Loop {
 
 // Kick requests a refresh. It never blocks: a request that arrives while one is
 // already pending is subsumed by it.
-func (l *Loop) Kick() {
+func (l *loop) Kick() {
 	select {
 	case l.kick <- struct{}{}:
 	default:
@@ -44,11 +44,11 @@ func (l *Loop) Kick() {
 // Close stops the loop. A refresh already running finishes. Close is safe to
 // call more than once, because a service's Close runs on shutdown paths that
 // can overlap.
-func (l *Loop) Close() {
+func (l *loop) Close() {
 	l.once.Do(func() { close(l.stop) })
 }
 
-func (l *Loop) loop(run func()) {
+func (l *loop) loop(run func()) {
 	for {
 		select {
 		case <-l.stop:

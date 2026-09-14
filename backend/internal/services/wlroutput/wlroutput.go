@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"vshell/backend/internal/compositor"
@@ -25,20 +24,14 @@ const timeout = 5 * time.Second
 const refreshSettle = 200 * time.Millisecond
 
 type Manager struct {
-	srv     *server.Server
 	command string
 	backend string
 	log     *slog.Logger
 
-	mu sync.Mutex
-	// lastState is the newest successful compositor query. Subscribe reads it
-	// instead of forking hyprctl on the subscribing connection.
-	lastState State
-	hasLast   bool
-
-	// refreshes runs the compositor query off the subscribe path and broadcasts
-	// its result.
-	refreshes *refresh.Loop
+	// state owns the newest successful compositor query and the goroutine that
+	// refreshes it. Subscribe reads it instead of forking hyprctl on the
+	// subscribing connection.
+	state *refresh.Service[State]
 
 	// query is the compositor's own output listing, bound once from the
 	// detected backend so the choice is not re-derived per call.
@@ -141,46 +134,21 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	m := newManager(command, backend, log)
-	m.srv = srv
+	m := newManager(srv, command, backend, log)
 	srv.Register("wlroutput", "wlroutput.getState", m.handleGetState)
 	srv.Register("wlroutput", "wlroutput.subscribe", m.handleGetState)
 	srv.Register("wlroutput", "wlroutput.applyConfiguration", rejectWrite)
 	srv.Register("wlroutput", "wlroutput.testConfiguration", rejectWrite)
-	m.refreshes = refresh.NewLoop(refreshSettle, m.refreshAndBroadcast)
 	srv.CoalesceBroadcasts("wlroutput")
-	srv.RegisterSnapshot("wlroutput", m.cachedState)
-	srv.RegisterSnapshotRefresh("wlroutput", m.refreshes.Kick)
+	srv.RegisterSnapshot("wlroutput", m.state.Cached)
+	srv.RegisterSnapshotRefresh("wlroutput", m.state.Kick)
 	return m, nil
 }
 
-func (m *Manager) Close() { m.refreshes.Close() }
-
-// cachedState returns the newest successful query, or nil before the first one
-// completes. An empty output list would reach the shell as "no monitors" and
-// blank the display page that the kicked refresh is about to fill.
-func (m *Manager) cachedState() any {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if !m.hasLast {
-		return nil
-	}
-	return m.lastState
-}
-
-func (m *Manager) refreshAndBroadcast() {
-	state, err := m.state()
-	if err != nil {
-		// Keep the subscribers' last-known layout instead of broadcasting an
-		// empty one as truth.
-		m.log.Warn("wlroutput state refresh failed, skipping broadcast", "err", err)
-		return
-	}
-	m.srv.Broadcast("wlroutput", state)
-}
+func (m *Manager) Close() { m.state.Close() }
 
 func (m *Manager) handleGetState(json.RawMessage) (any, error) {
-	return m.state()
+	return m.state.Query()
 }
 
 func rejectWrite(json.RawMessage) (any, error) {
@@ -189,27 +157,14 @@ func rejectWrite(json.RawMessage) (any, error) {
 
 // newManager binds the compositor's own output listing once, so the choice of
 // backend is not re-derived on every query.
-func newManager(command, backend string, log *slog.Logger) *Manager {
+func newManager(srv refresh.Broadcaster, command, backend string, log *slog.Logger) *Manager {
 	m := &Manager{command: command, backend: backend, log: log}
 	m.query = m.hyprlandState
 	if backend == "niri" {
 		m.query = m.niriState
 	}
+	m.state = refresh.NewService(srv, log, "wlroutput", refreshSettle, func() (State, error) { return m.query() })
 	return m
-}
-
-// state runs the compositor query and records a successful result, so every
-// caller warms what the next subscribe reads.
-func (m *Manager) state() (State, error) {
-	state, err := m.query()
-	if err != nil {
-		return state, err
-	}
-	m.mu.Lock()
-	m.lastState = state
-	m.hasLast = true
-	m.mu.Unlock()
-	return state, nil
 }
 
 func (m *Manager) hyprlandState() (State, error) {

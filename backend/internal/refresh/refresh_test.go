@@ -13,7 +13,7 @@ const idleWindow = 300 * time.Millisecond
 func TestKicksDuringARunCollapseIntoOne(t *testing.T) {
 	started := make(chan struct{}, 8)
 	proceed := make(chan struct{})
-	loop := NewLoop(0, func() {
+	loop := newLoop(0, func() {
 		started <- struct{}{}
 		<-proceed
 	})
@@ -39,7 +39,7 @@ func TestKicksDuringARunCollapseIntoOne(t *testing.T) {
 
 func TestCloseStopsFurtherRuns(t *testing.T) {
 	started := make(chan struct{}, 4)
-	loop := NewLoop(0, func() { started <- struct{}{} })
+	loop := newLoop(0, func() { started <- struct{}{} })
 
 	loop.Kick()
 	awaitRun(t, started, "kick before close")
@@ -59,7 +59,7 @@ func TestCloseStopsFurtherRuns(t *testing.T) {
 
 func TestDelayHoldsTheRunUntilTheWindowPasses(t *testing.T) {
 	started := make(chan struct{}, 4)
-	loop := NewLoop(150*time.Millisecond, func() { started <- struct{}{} })
+	loop := newLoop(150*time.Millisecond, func() { started <- struct{}{} })
 	t.Cleanup(loop.Close)
 
 	loop.Kick()
@@ -77,5 +77,28 @@ func awaitRun(t *testing.T, started <-chan struct{}, what string) {
 	case <-started:
 	case <-time.After(2 * time.Second):
 		t.Fatalf("no run followed %s", what)
+	}
+}
+
+// A Close that lands while a kick is settling must cancel that run. Otherwise
+// the service forks its external command after shutdown: bluez would sweep a
+// D-Bus connection its own Close is closing, and the others would fork nmcli,
+// the brightness helper, lpstat or hyprctl.
+func TestCloseDuringTheSettleWindowCancelsTheRun(t *testing.T) {
+	const settle = 300 * time.Millisecond
+	started := make(chan struct{}, 4)
+	loop := newLoop(settle, func() { started <- struct{}{} })
+
+	loop.Kick()
+	// Inside the settle window, so the run is pending and has not begun.
+	time.Sleep(settle / 6)
+	loop.Close()
+
+	// Watch well past the point the window would have elapsed, or a run that
+	// merely finishes its wait before starting would go unseen.
+	select {
+	case <-started:
+		t.Fatal("the settling run went ahead after Close; the service would fork its external command after shutdown")
+	case <-time.After(settle * 4):
 	}
 }

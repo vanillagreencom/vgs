@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"vshell/backend/internal/execbound"
+	"vshell/backend/internal/refresh"
 	"vshell/backend/internal/server"
 )
 
@@ -33,11 +34,12 @@ type Manager struct {
 	pushMissed bool
 	lastPush   time.Time
 
-	stateMu sync.Mutex
-	// lastState is the newest successful status read. Subscribe reads it
-	// instead of forking tailscale on the subscribing connection.
-	lastState State
-	hasLast   bool
+	// state holds the newest successful status read. Subscribe reads it instead
+	// of forking tailscale on the subscribing connection. This service does not
+	// use refresh.Service: its watcher in watch.go already owns the coalescing,
+	// with a single-flight slot and a minimum interval the shared loop has no
+	// notion of.
+	state refresh.Source[State]
 }
 
 type State struct {
@@ -146,7 +148,7 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	srv.Register("tailscale", "tailscale.setAllowLanAccess", m.handleSetAllowLANAccess)
 	srv.Register("tailscale", "tailscale.setAcceptRoutes", m.handleSetAcceptRoutes)
 	srv.CoalesceBroadcasts("tailscale")
-	srv.RegisterSnapshot("tailscale", m.cachedState)
+	srv.RegisterSnapshot("tailscale", m.state.Cached)
 	// pulse coalesces the read onto the watcher's own timer goroutine and
 	// broadcasts the result.
 	srv.RegisterSnapshotRefresh("tailscale", m.pulse)
@@ -235,18 +237,6 @@ func (m *Manager) handleSetAcceptRoutes(params json.RawMessage) (any, error) {
 	return m.handleRefresh(nil)
 }
 
-// cachedState returns the newest successful status read, or nil before the
-// first one completes. A disconnected state would reach the shell as fact and
-// show the tailnet as down while the kicked refresh is still reading it.
-func (m *Manager) cachedState() any {
-	m.stateMu.Lock()
-	defer m.stateMu.Unlock()
-	if !m.hasLast {
-		return nil
-	}
-	return m.lastState
-}
-
 func (m *Manager) status() (State, error) {
 	out, err := m.output("status", "--json")
 	if err != nil {
@@ -290,10 +280,7 @@ func (m *Manager) status() (State, error) {
 		state.AcceptRoutes = prefs.RouteAll
 		state.ExitNodeAllowLanAccess = prefs.ExitNodeAllowLANAccess
 	}
-	m.stateMu.Lock()
-	m.lastState = state
-	m.hasLast = true
-	m.stateMu.Unlock()
+	m.state.Record(state)
 	return state, nil
 }
 

@@ -544,13 +544,9 @@ func newWatchManager(t *testing.T, srv *server.Server, stub string) *Manager {
 	m := &Manager{srv: srv, log: discardLogger(), tailscale: stub}
 	m.watchCtx, m.watchStop = context.WithCancel(context.Background())
 	t.Cleanup(m.stopWatch)
-	srv.RegisterSnapshot("tailscale", func() any {
-		state, err := m.status()
-		if err != nil {
-			return map[string]any{"connected": false}
-		}
-		return state
-	})
+	// The shipped registration, so a subscribe assertion exercises the cached
+	// read the daemon actually serves rather than a stub that queries live.
+	srv.RegisterSnapshot("tailscale", m.state.Cached)
 	return m
 }
 

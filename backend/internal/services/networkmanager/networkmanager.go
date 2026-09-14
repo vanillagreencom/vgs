@@ -38,15 +38,13 @@ type Manager struct {
 	// read it back, so it is remembered here instead of hardcoding "auto" and
 	// resetting the UI selection on every broadcast.
 	preference string
-	// lastState is the newest successful sweep. Subscribe reads it instead of
-	// running the dozen nmcli queries on the subscribing connection.
-	lastState    networkState
-	hasLastState bool
-	stop         chan struct{}
+	stop       chan struct{}
 
-	// refreshes coalesces monitor events and subscribe kicks into single-flight
-	// state broadcasts.
-	refreshes *refresh.Loop
+	// state owns the newest successful sweep and the goroutine that refreshes
+	// it, coalescing monitor events and subscribe kicks into single-flight
+	// state broadcasts. Subscribe reads it instead of running the dozen nmcli
+	// queries on the subscribing connection.
+	state *refresh.Service[networkState]
 }
 
 type pendingPrompt struct {
@@ -226,6 +224,9 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 		return nil, fmt.Errorf("NetworkManager unavailable")
 	}
 	m := &Manager{srv: srv, log: log, pending: map[string]pendingPrompt{}, preference: "auto", stop: make(chan struct{})}
+	// Before the monitor goroutine, which calls broadcastSoon for every event
+	// nmcli reports.
+	m.state = refresh.NewService(srv, log, "network", refreshSettle, m.sweep)
 	for method, handler := range map[string]server.HandlerFunc{
 		"network.getState":                m.handleGetState,
 		"network.wifi.scan":               m.handleWiFiScan,
@@ -260,18 +261,17 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	} {
 		srv.Register("network", method, handler)
 	}
-	m.refreshes = refresh.NewLoop(refreshSettle, m.refreshAndBroadcast)
 	// "network.credentials" stays uncoalesced: each frame is one SSID's prompt.
 	srv.CoalesceBroadcasts("network")
-	srv.RegisterSnapshot("network", m.cachedState)
-	srv.RegisterSnapshotRefresh("network", m.broadcastSoon)
+	srv.RegisterSnapshot("network", m.state.Cached)
+	srv.RegisterSnapshotRefresh("network", m.state.Kick)
 	go m.monitor()
 	return m, nil
 }
 
 func (m *Manager) Close() {
 	close(m.stop)
-	m.refreshes.Close()
+	m.state.Close()
 }
 
 func (m *Manager) handleGetState(json.RawMessage) (any, error) {
@@ -814,24 +814,13 @@ func (m *Manager) handleVPNClearCredentials(params json.RawMessage) (any, error)
 	return ok("VPN credentials cleared"), nil
 }
 
-// state is the best-effort variant of stateChecked, for callers with no error
-// channel (snapshots, helper lookups); failures are logged inside the helpers.
-// cachedState returns the newest successful sweep, or nil before the first one
-// completes. An all-empty state would reach the shell as "disconnected, radio
-// off" while the kicked sweep is still running.
-func (m *Manager) cachedState() any {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if !m.hasLastState {
-		return nil
-	}
-	return m.lastState
-}
-
 // stateChecked returns an error when the core device query fails (NetworkManager
 // restarting, nmcli timing out) so callers do not treat an all-empty
-// "disconnected, radio off" state as truth.
-func (m *Manager) stateChecked() (networkState, error) {
+// "disconnected, radio off" state as truth. A success warms what the next
+// subscribe reads.
+func (m *Manager) stateChecked() (networkState, error) { return m.state.Query() }
+
+func (m *Manager) sweep() (networkState, error) {
 	deviceRows, devErr := nmRowsErr(m.log, []string{"DEVICE", "TYPE", "STATE", "CONNECTION"}, "device", "status")
 	devices := deviceRowMaps(deviceRows)
 	m.mu.Lock()
@@ -939,10 +928,6 @@ func (m *Manager) stateChecked() (networkState, error) {
 	if devErr != nil {
 		return st, fmt.Errorf("device status: %w", devErr)
 	}
-	m.mu.Lock()
-	m.lastState = st
-	m.hasLastState = true
-	m.mu.Unlock()
 	return st, nil
 }
 
@@ -1058,20 +1043,9 @@ func (m *Manager) monitor() {
 	}
 }
 
-// broadcastSoon asks for a state sweep. The refresh loop serializes those
+// broadcastSoon asks for a state sweep. The refresh service serializes those
 // sweeps and their broadcasts so two reads cannot publish out of order.
-func (m *Manager) broadcastSoon() { m.refreshes.Kick() }
-
-func (m *Manager) refreshAndBroadcast() {
-	st, err := m.stateChecked()
-	if err != nil {
-		// Keep the subscribers' last-known state instead of broadcasting
-		// an all-empty snapshot as truth.
-		m.log.Warn("network state refresh failed, skipping broadcast", "err", err)
-		return
-	}
-	m.srv.Broadcast("network", st)
-}
+func (m *Manager) broadcastSoon() { m.state.Kick() }
 
 // validateSSID rejects SSIDs that cannot be passed safely as positional nmcli
 // argv: SSIDs come from AP beacons (attacker-controlled radio data), and a

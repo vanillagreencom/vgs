@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
-	"sync"
 	"time"
 
 	"vshell/backend/internal/execbound"
@@ -37,15 +36,10 @@ type Manager struct {
 	waitDelay time.Duration
 	log       *slog.Logger
 
-	mu sync.Mutex
-	// lastState is the newest successful helper listing. Subscribe reads it
-	// instead of running the helper on the subscribing connection.
-	lastState any
-	hasLast   bool
-
-	// refreshes runs the helper off the subscribe path and broadcasts its
-	// result.
-	refreshes *refresh.Loop
+	// state owns the newest successful helper listing and the goroutine that
+	// refreshes it. Subscribe reads it instead of running the helper on the
+	// subscribing connection.
+	state *refresh.Service[any]
 }
 
 type setParams struct {
@@ -64,6 +58,7 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 		return nil, err
 	}
 	m := &Manager{srv: srv, helper: helper, timeout: timeout, waitDelay: waitDelay, log: log}
+	m.state = refresh.NewService(srv, log, "brightness", refreshSettle, m.sweep)
 	srv.Register("brightness", "brightness.getState", m.handleGetState)
 	srv.Register("brightness", "brightness.rescan", m.handleGetState)
 	// Keyed by device: a write to one display must never replace the waiting
@@ -72,14 +67,13 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	srv.Register("brightness", "brightness.increment", m.handleIncrement)
 	srv.Register("brightness", "brightness.decrement", m.handleDecrement)
 	srv.Register("brightness", "brightness.subscribe", m.handleGetState)
-	m.refreshes = refresh.NewLoop(refreshSettle, m.refreshAndBroadcast)
 	srv.CoalesceBroadcasts("brightness")
-	srv.RegisterSnapshot("brightness", m.cachedState)
-	srv.RegisterSnapshotRefresh("brightness", m.refreshes.Kick)
+	srv.RegisterSnapshot("brightness", m.state.Cached)
+	srv.RegisterSnapshotRefresh("brightness", m.state.Kick)
 	return m, nil
 }
 
-func (m *Manager) Close() { m.refreshes.Close() }
+func (m *Manager) Close() { m.state.Close() }
 
 // deviceKey is the coalescing key for a per-display setter. Params that do not
 // decode share the empty device the handler rejects, so a malformed call cannot
@@ -92,32 +86,8 @@ func deviceKey(params json.RawMessage) string {
 	return p.Device
 }
 
-// cachedState returns the newest successful helper listing, or nil before the
-// first one completes. An empty device list would reach the shell as "no
-// backlights" and hide the brightness control the kicked refresh is about to
-// populate.
-func (m *Manager) cachedState() any {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if !m.hasLast {
-		return nil
-	}
-	return m.lastState
-}
-
-func (m *Manager) refreshAndBroadcast() {
-	state, err := m.state()
-	if err != nil {
-		// Keep the subscribers' last-known devices instead of broadcasting an
-		// empty list as truth.
-		m.log.Warn("brightness refresh failed, skipping broadcast", "err", err)
-		return
-	}
-	m.srv.Broadcast("brightness", state)
-}
-
 func (m *Manager) handleGetState(json.RawMessage) (any, error) {
-	return m.state()
+	return m.state.Query()
 }
 
 func (m *Manager) handleSetBrightness(params json.RawMessage) (any, error) {
@@ -162,17 +132,7 @@ func (m *Manager) handleDecrement(params json.RawMessage) (any, error) {
 	return m.call("decrement", p.Device, strconv.Itoa(p.Step), "--json")
 }
 
-func (m *Manager) state() (any, error) {
-	state, err := m.call("list", "--json")
-	if err != nil {
-		return nil, err
-	}
-	m.mu.Lock()
-	m.lastState = state
-	m.hasLast = true
-	m.mu.Unlock()
-	return state, nil
-}
+func (m *Manager) sweep() (any, error) { return m.call("list", "--json") }
 
 func (m *Manager) call(args ...string) (any, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), m.timeout)

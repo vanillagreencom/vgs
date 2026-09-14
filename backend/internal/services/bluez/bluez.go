@@ -49,13 +49,12 @@ type Manager struct {
 	// Agent1.Cancel means "cancel the current request", never every pending
 	// one (concurrent pairings must not reject each other).
 	currentPrompt string
-	lastState     State
-	hasLastState  bool
 
 	stop chan struct{}
-	// refreshes coalesces D-Bus signal bursts (RSSI churn during discovery) and
-	// subscribe kicks into single-flight state broadcasts.
-	refreshes *refresh.Loop
+	// state owns the last successful sweep and the goroutine that refreshes it,
+	// coalescing D-Bus signal bursts (RSSI churn during discovery) and subscribe
+	// kicks into single-flight state broadcasts.
+	state *refresh.Service[State]
 }
 
 type State struct {
@@ -124,14 +123,7 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	if err != nil {
 		return nil, fmt.Errorf("connect system bus: %w", err)
 	}
-	m := &Manager{
-		srv:       srv,
-		log:       log,
-		conn:      conn,
-		pending:   map[string]chan promptReply{},
-		lastState: State{Devices: []Device{}, PairedDevices: []Device{}, ConnectedDevices: []Device{}},
-		stop:      make(chan struct{}),
-	}
+	m := newManager(srv, conn, log, nil)
 	adapter, err := m.findAdapter()
 	if err != nil {
 		conn.Close()
@@ -163,17 +155,38 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	} {
 		srv.Register("bluetooth", method, handler)
 	}
-	m.refreshes = refresh.NewLoop(refreshSettle, m.refreshAndBroadcast)
 	// "bluetooth.pairing" stays uncoalesced: each frame is one device's prompt.
 	srv.CoalesceBroadcasts("bluetooth")
-	srv.RegisterSnapshot("bluetooth", m.CachedState)
-	srv.RegisterSnapshotRefresh("bluetooth", m.broadcastSoon)
+	srv.RegisterSnapshot("bluetooth", m.state.Cached)
+	srv.RegisterSnapshotRefresh("bluetooth", m.state.Kick)
 	return m, nil
+}
+
+// newManager is the only way to build a Manager, so no Manager exists without
+// the refresh service its D-Bus signal goroutine kicks. watchSignals calls
+// broadcastSoon for every org.bluez property change, and bluetoothd emits one
+// within microseconds of the match being installed when an adapter or a paired
+// device is present; a Manager assembled field by field would have raced that
+// goroutine against the assignment. sweep overrides the object sweep, for tests
+// with no system bus; nil takes the real one.
+func newManager(srv *server.Server, conn *dbus.Conn, log *slog.Logger, sweep func() (State, error)) *Manager {
+	m := &Manager{
+		srv:     srv,
+		log:     log,
+		conn:    conn,
+		pending: map[string]chan promptReply{},
+		stop:    make(chan struct{}),
+	}
+	if sweep == nil {
+		sweep = m.sweep
+	}
+	m.state = refresh.NewService(srv, log, "bluetooth", refreshSettle, sweep)
+	return m
 }
 
 func (m *Manager) Close() {
 	close(m.stop)
-	m.refreshes.Close()
+	m.state.Close()
 	if m.conn == nil {
 		return
 	}
@@ -304,34 +317,11 @@ func (m *Manager) reinitialize() {
 	m.broadcastSoon()
 }
 
-// CachedState returns the newest successful object sweep, or nil before the
-// first one completes. Subscribe reads it instead of running GetManagedObjects
-// on the subscribing connection, and an unswept adapter must not reach the
-// shell as "powered off, no devices".
-func (m *Manager) CachedState() any {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if !m.hasLastState {
-		return nil
-	}
-	return m.lastState
-}
+// GetStateChecked runs the object sweep and records a success, so a method call
+// warms what the next subscribe reads.
+func (m *Manager) GetStateChecked() (State, error) { return m.state.Query() }
 
-// GetState is the best-effort variant of GetStateChecked, for callers with no
-// error channel (broadcast helpers): a transient D-Bus failure returns the last
-// known state instead of an empty powered-off one.
-func (m *Manager) GetState() State {
-	state, err := m.GetStateChecked()
-	if err != nil {
-		m.log.Warn("bluez state query failed, using last known state", "err", err)
-		m.mu.Lock()
-		state = m.lastState
-		m.mu.Unlock()
-	}
-	return state
-}
-
-func (m *Manager) GetStateChecked() (State, error) {
+func (m *Manager) sweep() (State, error) {
 	objects, err := m.managedObjects()
 	if err != nil {
 		return State{Devices: []Device{}, PairedDevices: []Device{}, ConnectedDevices: []Device{}}, err
@@ -369,10 +359,6 @@ func (m *Manager) GetStateChecked() (State, error) {
 			state.ConnectedDevices = append(state.ConnectedDevices, dev)
 		}
 	}
-	m.mu.Lock()
-	m.lastState = state
-	m.hasLastState = true
-	m.mu.Unlock()
 	return state, nil
 }
 
@@ -538,20 +524,9 @@ func (m *Manager) deviceFromParams(params json.RawMessage) (dbus.BusObject, erro
 	return m.conn.Object(bluezDest, path), nil
 }
 
-// broadcastSoon asks for a state sweep. The refresh loop serializes those
+// broadcastSoon asks for a state sweep. The refresh service serializes those
 // sweeps and their broadcasts so two reads cannot publish out of order.
-func (m *Manager) broadcastSoon() { m.refreshes.Kick() }
-
-func (m *Manager) refreshAndBroadcast() {
-	state, err := m.GetStateChecked()
-	if err != nil {
-		// Keep the subscribers' last-known state instead of broadcasting
-		// an empty powered-off snapshot as truth.
-		m.log.Warn("bluez state refresh failed, skipping broadcast", "err", err)
-		return
-	}
-	m.srv.Broadcast("bluetooth", state)
-}
+func (m *Manager) broadcastSoon() { m.state.Kick() }
 
 func validateDevicePath(value string) (dbus.ObjectPath, error) {
 	if value == "" || strings.ContainsAny(value, "\x00\r\n") {

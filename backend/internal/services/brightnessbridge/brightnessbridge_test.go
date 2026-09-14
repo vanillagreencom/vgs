@@ -2,6 +2,9 @@ package brightnessbridge
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -9,6 +12,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"vshell/backend/internal/refresh"
 )
 
 // writePipeHolderHelper starts a fake helper with a descendant that retains
@@ -154,24 +159,39 @@ func TestCallReturnsHelperOutput(t *testing.T) {
 	}
 }
 
+type noBroadcast struct{}
+
+func (noBroadcast) Broadcast(string, any) {}
+
+func newStubManager(sweep func() (any, error)) *Manager {
+	m := &Manager{log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	m.state = refresh.NewService(noBroadcast{}, m.log, "brightness", 0, sweep)
+	return m
+}
+
 // Before the first helper run there is nothing to report. An empty device list
 // would reach the shell as "no backlights" and hide the brightness control,
 // and this helper is the slowest query the daemon owns.
 func TestCachedStateBeforeFirstHelperRunReportsNothing(t *testing.T) {
-	m := &Manager{}
-	if got := m.cachedState(); got != nil {
+	m := newStubManager(func() (any, error) { return nil, errors.New("helper unavailable") })
+	if got := m.state.Cached(); got != nil {
 		t.Fatalf("cached state before the first helper run = %v, want nothing to send", got)
 	}
 }
 
-func TestCachedStateReturnsTheLastHelperRun(t *testing.T) {
-	m := &Manager{lastState: map[string]any{"devices": []any{"backlight"}}, hasLast: true}
-	got, ok := m.cachedState().(map[string]any)
+// A getState call warms what the next subscribe serves.
+func TestGetStateWarmsTheRegisteredSource(t *testing.T) {
+	want := map[string]any{"devices": []any{"backlight"}}
+	m := newStubManager(func() (any, error) { return want, nil })
+	if _, err := m.handleGetState(nil); err != nil {
+		t.Fatalf("handleGetState: %v", err)
+	}
+	got, ok := m.state.Cached().(map[string]any)
 	if !ok {
-		t.Fatalf("cachedState returned %T, want a map", m.cachedState())
+		t.Fatalf("cached value is %T, want a map", m.state.Cached())
 	}
 	if devices := got["devices"].([]any); len(devices) != 1 {
-		t.Fatalf("devices = %v, want the recorded helper run", devices)
+		t.Fatalf("cached devices = %v, want the recorded helper run", devices)
 	}
 }
 

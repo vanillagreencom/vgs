@@ -271,3 +271,35 @@ func TestOutputSalvagesResponseHeldByDescendant(t *testing.T) {
 		t.Fatalf("BackendState = %q, want %q", status.BackendState, "Running")
 	}
 }
+
+// Before the first status read there is nothing to report. A disconnected
+// state would reach the shell as fact and show the tailnet as down until the
+// watcher's first pulse lands.
+func TestCachedStateBeforeFirstStatusReportsNothing(t *testing.T) {
+	var m Manager
+	if got := m.state.Cached(); got != nil {
+		t.Fatalf("cached state before the first status read = %v, want nothing to send", got)
+	}
+}
+
+// status records into the source RegisterSnapshot serves, so the watcher's
+// pulse and any getStatus call both warm what the next subscribe reads.
+func TestStatusWarmsTheRegisteredSource(t *testing.T) {
+	dir := t.TempDir()
+	statusPath := filepath.Join(dir, "status.json")
+	writeFile(t, statusPath, statusFixture)
+	stub := filepath.Join(dir, "tailscale")
+	writeStub(t, stub, statusPath, "  exit 0\n")
+
+	m := &Manager{log: discardLogger(), tailscale: stub}
+	if _, err := m.status(); err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	got, ok := m.state.Cached().(State)
+	if !ok {
+		t.Fatalf("cached value is %T, want State", m.state.Cached())
+	}
+	if !got.Connected || got.BackendState != "Running" {
+		t.Fatalf("cached state = %+v, want the status read recorded", got)
+	}
+}

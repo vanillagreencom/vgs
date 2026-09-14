@@ -2,6 +2,9 @@ package cups
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -9,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"vshell/backend/internal/refresh"
 	"vshell/backend/internal/server"
 )
 
@@ -370,24 +374,42 @@ func argvLineMatches(line, want string) bool {
 	return filepath.Dir(page) == os.TempDir() && strings.HasPrefix(filepath.Base(page), "vshell-cups-test-")
 }
 
+type noBroadcast struct{}
+
+func (noBroadcast) Broadcast(string, any) {}
+
+func newStubManager(sweep func() (PrinterList, error)) *Manager {
+	m := &Manager{log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	m.state = refresh.NewService(noBroadcast{}, m.log, "cups", 0, sweep)
+	return m
+}
+
 // Before the first sweep there is nothing to report. An empty list would reach
 // the shell as "no printers configured" and blank the queue list while lpstat
 // has never run.
 func TestCachedPrintersBeforeFirstSweepReportsNothing(t *testing.T) {
-	m := &Manager{}
-	if got := m.cachedPrinters(); got != nil {
+	m := newStubManager(func() (PrinterList, error) {
+		return PrinterList{}, errors.New("lpstat unavailable")
+	})
+	if got := m.state.Cached(); got != nil {
 		t.Fatalf("cached printers before the first sweep = %v, want nothing to send", got)
 	}
 }
 
-func TestCachedPrintersReturnsTheLastSweep(t *testing.T) {
-	m := &Manager{lastPrinters: []Printer{{Name: "office"}}, hasLast: true}
-	got, ok := m.cachedPrinters().(map[string]any)
-	if !ok {
-		t.Fatalf("cachedPrinters returned %T, want a map", m.cachedPrinters())
+// A getPrinters call warms what the next subscribe serves. Before this, only
+// the refresh path recorded, so a cold start forked lpstat once per caller.
+func TestGetPrintersWarmsTheRegisteredSource(t *testing.T) {
+	m := newStubManager(func() (PrinterList, error) {
+		return PrinterList{Printers: []Printer{{Name: "office"}}}, nil
+	})
+	if _, err := m.printers(); err != nil {
+		t.Fatalf("printers: %v", err)
 	}
-	printers := got["printers"].([]Printer)
-	if len(printers) != 1 || printers[0].Name != "office" {
-		t.Fatalf("printers = %v, want the recorded sweep", printers)
+	list, ok := m.state.Cached().(PrinterList)
+	if !ok {
+		t.Fatalf("cached value is %T, want PrinterList", m.state.Cached())
+	}
+	if len(list.Printers) != 1 || list.Printers[0].Name != "office" {
+		t.Fatalf("cached printers = %v, want the recorded sweep", list.Printers)
 	}
 }
