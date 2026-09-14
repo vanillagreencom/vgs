@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"vshell/backend/internal/execbound"
+	"vshell/backend/internal/helperbin"
 )
 
 // Options configures a runner invocation.
@@ -44,12 +45,11 @@ func Run(opts Options) (int, error) {
 
 	// Take the lock before touching any runtime file, so a refused runner leaves
 	// the running session's socket and state alone.
-	lock, err := acquireInstanceLock(os.Getenv("XDG_RUNTIME_DIR"), log)
+	lock, err := claimInstance(os.Getenv("XDG_RUNTIME_DIR"), log)
 	if err != nil {
 		return 1, err
 	}
 	defer lock.Close()
-	os.Setenv(runnerPIDEnv, strconv.Itoa(os.Getpid()))
 
 	// Install signal handling before any setup so a SIGTERM in the startup
 	// window is not the default (no-teardown) death.
@@ -98,6 +98,20 @@ func Run(opts Options) (int, error) {
 	// Bind the listener before handing VGS_SOCKET to Quickshell so a connection can
 	// queue while the backend starts.
 	return runQuickshell(log, sigCh, opts.QSArgs, st.socketPath)
+}
+
+// claimInstance takes the instance lock and names this runner in
+// VGS_RUNNER_PID, which every child it starts inherits.
+func claimInstance(runtimeDir string, log *slog.Logger) (*os.File, error) {
+	lock, err := acquireInstanceLock(runtimeDir, log)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Setenv(runnerPIDEnv, strconv.Itoa(os.Getpid())); err != nil {
+		lock.Close()
+		return nil, fmt.Errorf("export %s: %w", runnerPIDEnv, err)
+	}
+	return lock, nil
 }
 
 func listenerFile(ln net.Listener) (*net.UnixListener, *os.File, error) {
@@ -227,14 +241,13 @@ const fontsApplyTimeout = 30 * time.Second
 // Quickshell has started, so the rewrite and its font cache rebuild run beside
 // shell startup instead of before it.
 func applyFonts(log *slog.Logger) {
-	root := os.Getenv("VSHELL_ROOT")
-	if root == "" {
-		log.Warn("fonts apply skipped: VSHELL_ROOT is not set")
+	helper, err := helperbin.Path()
+	if err != nil {
+		log.Warn("fonts apply skipped", "err", err)
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), fontsApplyTimeout)
 	defer cancel()
-	helper := filepath.Join(root, "bin", "vshell-helper")
 	res, err := execbound.Command(ctx, helper, "fonts", "apply", "--json").WithLogger(log).CombinedOutput()
 	if err != nil {
 		log.Warn("fonts apply failed", "err", err, "output", strings.TrimSpace(string(res.Out)))

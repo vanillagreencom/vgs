@@ -27,26 +27,33 @@ ShellRoot {
     readonly property bool runGreeter: Quickshell.env("VSHELL_RUN_GREETER") === "1" || Quickshell.env("VSHELL_RUN_GREETER") === "true"
     readonly property bool disableHotReload: Quickshell.env("VSHELL_DISABLE_HOT_RELOAD") === "1" || Quickshell.env("VSHELL_DISABLE_HOT_RELOAD") === "true"
 
-    // The runner holds the session's single-instance lock and names itself in VGS_RUNNER_PID.
-    // Every process the shell starts inherits that variable, so only the runner's direct child draws.
-    // VSHELL_DISABLE_INSTANCE_GUARD admits an isolated sandbox that has no runner.
+    // The process holding the session's instance lock names itself in VGS_RUNNER_PID: the runner, or flock in
+    // bin/vshell's no-backend fallback. Every process the shell starts inherits that variable, so only the
+    // holder's direct child draws. VSHELL_DISABLE_INSTANCE_GUARD admits an isolated sandbox with no lock holder;
+    // no launch path of vshell run sets it.
     readonly property bool guardDisabled: runGreeter || Quickshell.env("VSHELL_DISABLE_INSTANCE_GUARD") === "1" || Quickshell.env("VSHELL_DISABLE_INSTANCE_GUARD") === "true"
-    readonly property bool shellAllowed: guardDisabled || launchedByRunner(ownStat.text(), Quickshell.env("VGS_RUNNER_PID") || "")
+    readonly property string runnerPid: Quickshell.env("VGS_RUNNER_PID") || ""
+    readonly property string parentPid: parentPidOf(ownStat.text())
+    readonly property bool shellAllowed: guardDisabled || launchedByRunner(parentPid, runnerPid)
 
     // stat is /proc/self/stat. The process name is parenthesised and may hold spaces or parentheses,
-    // so fields are read after the last ')': state, then the parent pid.
-    function launchedByRunner(stat: string, runnerPid: string): bool {
+    // so fields are read after the last ')': state, then the parent pid. An unparseable read yields "".
+    function parentPidOf(stat: string): string {
         const nameEnd = stat.lastIndexOf(")");
         if (nameEnd < 0)
-            return false;
+            return "";
         const fields = stat.slice(nameEnd + 1).trim().split(" ");
-        return fields[1] === runnerPid;
+        return fields.length > 1 ? fields[1] : "";
+    }
+
+    function launchedByRunner(parentPid: string, runnerPid: string): bool {
+        return parentPid !== "" && parentPid === runnerPid;
     }
 
     Component.onCompleted: {
         Quickshell.watchFiles = !disableHotReload;
         if (!shellAllowed) {
-            console.error("VGS: refusing to start a duplicate shell: this process was not started by the vshell runner that holds the instance lock");
+            console.error(`VGS: refusing to start a duplicate shell: parent pid ${parentPid || "unreadable from /proc/self/stat"}, VGS_RUNNER_PID ${runnerPid || "unset"}`);
             console.error("VGS: run scripts/qml-smoke.sh for QML validation, or set VSHELL_DISABLE_INSTANCE_GUARD=1 to override.");
         }
     }

@@ -283,10 +283,22 @@ case "${1:-run}" in
     if _ensure_backend; then
       exec "$backend_bin" run "$@"
     fi
-    # Only the runner holds the single-instance lock, so this shell starts without it.
-    echo "vshell: backend unavailable (need Go toolchain and $backend_src; see $backend_build_log), starting Quickshell directly without the single-instance lock" >&2
-    "$helper" fonts apply --json >/dev/null 2>&1 &
-    VSHELL_DISABLE_INSTANCE_GUARD=1 exec qs -c "$shell_name" "$@"
+    # Without a backend, flock stands in for the runner: it holds the runner's
+    # instance lock and is Quickshell's parent, so shell.qml's parent check
+    # admits Quickshell and nothing Quickshell starts. The pre-check only words
+    # the refusal; flock -n still refuses a runner that starts in between.
+    [[ -n "${XDG_RUNTIME_DIR:-}" ]] || { echo "vshell: XDG_RUNTIME_DIR is not set; refusing to start without the instance lock" >&2; exit 1; }
+    instance_lock="$XDG_RUNTIME_DIR/vshell.lock"
+    if ! flock -n -- "$instance_lock" true; then
+      echo "vshell: instance lock $instance_lock is held by another VGS runner; refusing to start a second shell" >&2
+      exit 1
+    fi
+    # A refused runner names the holder from this record, as it does for a runner.
+    printf '%s\n' "$$" >"$instance_lock"
+    echo "vshell: backend unavailable (need Go toolchain and $backend_src; see $backend_build_log), starting Quickshell without the backend" >&2
+    # Detached, so the exec'd process never holds it as a zombie child.
+    ( "$helper" fonts apply --json >/dev/null 2>&1 & )
+    VGS_RUNNER_PID=$$ exec flock -n -o -- "$instance_lock" qs -c "$shell_name" "$@"
     ;;
   backend)
     shift || true
