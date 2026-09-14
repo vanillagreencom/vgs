@@ -287,6 +287,8 @@ jobs:
           # Exercise the validation runner itself, including its skip status.
           scripts/test-validate.sh
           scripts/test-qml-smoke.sh
+          # The sampler's --report mode reads a TSV fixture and needs no shell.
+          scripts/test-sample-shell-memory.sh
           scripts/test-validation-areas.sh
           scripts/test-validation-dump.sh
           scripts/test-validation-ci-coverage.sh

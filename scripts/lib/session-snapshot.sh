@@ -6,10 +6,16 @@
 repo_root="${repo_root:?scripts/lib/session-snapshot.sh: sourcing script must set repo_root first}"
 
 # One line per live VGS Quickshell instance: "<pid> <configPath>".
+# $1 is an optional shell entrypoint to scope the listing to. The listing is
+# checkout-scoped by default, so a caller addressing a shell launched from a
+# different checkout passes that checkout's quickshell/vshell/shell.qml.
+# shellcheck disable=SC2120  # the scope argument is optional; three callers take the default
 vgs_snapshot_instances() {
   local report rc=0
+  local -a scope=()
+  [[ -n "${1:-}" ]] && scope=(--config-path "$1")
   # Keep stderr because it explains why session safety could not be verified.
-  report="$("$repo_root/bin/vshell" instances list --json)" || rc=$?
+  report="$("$repo_root/bin/vshell" instances list --json "${scope[@]}")" || rc=$?
 
   [[ "$rc" == 2 ]] && return 2 # quickshell is not installed, so there is no registry here at all
   [[ "$rc" == 0 && -n "$report" ]] || return 1
