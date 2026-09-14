@@ -1416,7 +1416,9 @@ def package_layer_paths(name: str, filename: str) -> List[Path]:
 
     `theme.json`, `colors.toml`, `terminal-colors.toml`, `ui-roles.toml` and
     `app-colors.toml` are read through this. A user `theme.json`, `colors.toml`
-    or `app-colors.toml` always merges key by key; a user `terminal-colors.toml` or `ui-roles.toml` merges
+    or `app-colors.toml` always merges key by key, except the `theme.json`
+    `curatedPalette` record, which each layer keeps for the files it supplied; a
+    user `terminal-colors.toml` or `ui-roles.toml` merges
     only when `overlay_layer` reads its merge key, and otherwise replaces the
     built-in values whole. `write_user_layer` keeps a merging overlay to the keys
     whose value differs, so a package update still reaches every value the user
@@ -1424,6 +1426,14 @@ def package_layer_paths(name: str, filename: str) -> List[Path]:
     """
     return [root / filename for root in (builtin_themes_dir() / name, user_themes_dir() / name)
             if (root / filename).is_file()]
+
+
+def theme_json_layer(path: Path) -> Dict[str, Any]:
+    """One layer's `theme.json` at `path`. Raises when it does not read as an object."""
+    layer = json.loads(path.read_text())
+    if not isinstance(layer, dict):
+        raise ValueError(f"theme-json {path}: not an object")
+    return layer
 
 
 def package_meta(name: str) -> Dict[str, Any] | None:
@@ -1437,10 +1447,7 @@ def package_meta(name: str) -> Dict[str, Any] | None:
     meta: Dict[str, Any] = {}
     layers = package_layer_paths(name, "theme.json")
     for path in layers:
-        layer = json.loads(path.read_text())
-        if not isinstance(layer, dict):
-            raise ValueError(f"theme-json {path}: not an object")
-        meta.update(layer)
+        meta.update(theme_json_layer(path))
     meta.pop("curatedPalette", None)
     return meta if layers else None
 
@@ -1525,19 +1532,22 @@ def write_user_layer(name: str, filename: str, values: Dict[str, Any]) -> None:
     A `theme.json` has no replacing form either: a key the built-in file sets and
     `values` lack reads from the built-in file. Its `curatedPalette` is the user
     layer's own record, so `values` holding one writes it and `values` without one
-    keep the record the user file already holds. With no built-in file under it
-    the user file is written even when empty, since it is then the only
-    `theme.json` the package has.
+    keep the record the user file already holds. A record equal to the built-in
+    file's is dropped unless a user `apps/` file needs it, so an overlay that
+    copied the built-in record whole is removed once its last edit is undone.
+    With no built-in file under it the user file is written even when empty,
+    since it is then the only `theme.json` the package has.
 
     A file already holding the text is not rewritten, so a repeat call keeps its
     modification time and the preview cache keyed on it.
     """
     path, base = user_themes_dir() / name / filename, builtin_themes_dir() / name / filename
     if filename == "theme.json":
-        below = json.loads(base.read_text()) if base.is_file() else None
-        if below is not None and not isinstance(below, dict):
-            raise ValueError(f"theme-json {base}: not an object")
+        below = theme_json_layer(base) if base.is_file() else None
         record = values.get("curatedPalette") or layer_curated_palette(path.parent)
+        if (below is not None and record == below.get("curatedPalette")
+                and not any((path.parent / "apps").glob("*"))):
+            record = ""
         kept = {key: value for key, value in values.items()
                 if key != "curatedPalette" and (below is None or below.get(key) != value)}
         if record:
@@ -2014,10 +2024,8 @@ def catalog_pristine(name: str) -> bool:
     if present != sorted(str(entry) for entry in recorded):
         return False
     try:
-        meta = json.loads((root / "theme.json").read_text())
+        meta = theme_json_layer(root / "theme.json")
     except Exception:
-        return False
-    if not isinstance(meta, dict):
         return False
     return adjustments_all_zero(normalize_adjustments(meta.get("adjustments"))) \
         and not meta.get("hiddenBackgrounds")
@@ -2724,12 +2732,11 @@ def materialize_theme_package(bp: Dict[str, Any], apps: Dict[str, str] | None = 
         "curatedPalette": palette_digest(
             palette_identity(parse_colors_toml_text(colors_toml), mode, ui_roles=ui_roles)),
     }
-    # A package with no built-in theme.json under it keeps only the list written
-    # here, so a list left out stops lint from marking the shortfalls it names. A
-    # copy whose palette has moved keeps the list and lint reports each entry
+    # The save states the list even when empty, so a save under a built-in
+    # theme's name never inherits the built-in list through the merge. A copy
+    # whose palette has moved keeps the list and lint reports each entry
     # unmatched.
-    if bp.get("contrastShortfalls"):
-        meta["contrastShortfalls"] = bp["contrastShortfalls"]
+    meta["contrastShortfalls"] = bp.get("contrastShortfalls") or []
     overlays = {TERMINAL_COLORS_FILE: bp.get("terminalColors") or {}}
     # `ui_roles` came from `declared_ui_roles`, so a generated blueprint writes no
     # file here and records no declaration in the digest above. Those two answers
@@ -2759,12 +2766,16 @@ def materialize_theme_package(bp: Dict[str, Any], apps: Dict[str, str] | None = 
             else:
                 (root / filename).unlink(missing_ok=True)
     wallpaper = resolve_path(str(bp.get("palette", {}).get("wallpaper") or ""))
+    # Stated even when empty, so a save under a built-in theme's name never
+    # inherits the built-in default wallpaper through the merge.
+    meta["wallpaper"] = ""
     if wallpaper and Path(wallpaper).is_file():
         bg_dir = root / "backgrounds"
         bg_dir.mkdir(parents=True, exist_ok=True)
         dest = bg_dir / Path(wallpaper).name
         if not dest.exists() or not Path(wallpaper).samefile(dest):
             shutil.copy2(wallpaper, dest)
+        meta["wallpaper"] = dest.name
     # The recorded digest certifies the curated files this package carries, so a
     # merge-style file left behind from an earlier write would be certified
     # without ever having been judged against the palette now being written.
@@ -3539,10 +3550,10 @@ def layer_curated_palette(root: Path) -> str:
     two directories and each one vouches only for the files it supplied.
     """
     try:
-        meta = json.loads((root / "theme.json").read_text())
+        meta = theme_json_layer(root / "theme.json")
     except Exception:
         return ""
-    return str(meta.get("curatedPalette") or "") if isinstance(meta, dict) else ""
+    return str(meta.get("curatedPalette") or "")
 
 
 def package_layer_palettes(name: str) -> Dict[str, str]:
@@ -7773,8 +7784,9 @@ def app_role_view(app: str, bp: Dict[str, Any]) -> Dict[str, Any]:
 def set_theme_adjustments(pkg_dir_name: str, adj: Dict[str, int]) -> Dict[str, int]:
     """Store restyle adjustments in the overlay theme.json (omit when all zero).
 
-    `write_user_layer` drops the overlay theme.json when clearing leaves it
-    nothing the built-in file lacks, so the theme reads unmodified again.
+    `write_user_layer` drops the overlay theme.json when clearing leaves no key
+    differing from the built-in file and no record a user `apps/` file needs, so
+    the theme reads unmodified again.
     """
     adj = normalize_adjustments(adj)
     meta = read_theme_overlay_meta(pkg_dir_name)

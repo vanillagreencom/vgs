@@ -9031,7 +9031,7 @@ def test_wallpaper_and_save_keep_terminal_slots():
                 with contextlib.redirect_stdout(io.StringIO()):
                     assert_equal(helper.cmd_theme(argv), 0, f"{label} exit status")
                 assert_equal(read(), slots, f"{label} keeps the terminal slots")
-            # The saved theme.json masks the package's own, so it must repeat the list.
+            # A save states the list, so a package under another name keeps it.
             for saved in ("termfix-saved", "termfix-colors"):
                 assert_equal(json.loads((helper.user_themes_dir() / saved / "theme.json").read_text())
                              .get("contrastShortfalls"), shortfalls, f"{saved} keeps the contrast shortfall list")
@@ -9878,6 +9878,13 @@ def test_theme_overlays_merge_key_by_key():
             pair_cleared = user_meta()
             (user / "theme.json").write_text(json.dumps({"curatedPalette": "user-digest", "pair": "keyother"}) + "\n")
             set_pair("keylight")
+            own_record = user_meta()
+            (user / "apps").mkdir()
+            (user / "apps" / "claude-dark.json").write_text("{}\n")
+            (user / "theme.json").write_text(json.dumps({**builtin_meta, "pair": "keyother"}) + "\n")
+            set_pair("keylight")
+            record_for_apps = user_meta()
+            shutil.rmtree(user / "apps")
             # (what, actual, expected)
             meta_rows = [
                 ("a metadata edit stores only the key it set, and no built-in record",
@@ -9888,7 +9895,9 @@ def test_theme_overlays_merge_key_by_key():
                 ("the merged metadata carries no layer's curatedPalette",
                  "curatedPalette" in merged_after_update, False),
                 ("an edit back to the built-in value removes the overlay", pair_cleared, None),
-                ("an edit keeps the user layer's own record", user_meta(), {"curatedPalette": "user-digest"}),
+                ("an edit keeps the user layer's own record", own_record, {"curatedPalette": "user-digest"}),
+                ("a record equal to the built-in one stays while a user apps file needs it",
+                 record_for_apps, {"curatedPalette": "builtin-digest"}),
             ]
             for what, actual, expected in meta_rows:
                 assert_equal(actual, expected, what)
@@ -9917,7 +9926,7 @@ def test_theme_overlays_merge_key_by_key():
 
             # Whole-file overlays as the writers left them before the merge, and a
             # fork with no built-in layer under it.
-            (user / "theme.json").write_text(json.dumps({**builtin_meta, "hiddenBackgrounds": ["a.jpg"]}) + "\n")
+            (user / "theme.json").write_text(json.dumps({**builtin_meta, "pair": "keyother"}) + "\n")
             (user / "colors.toml").write_text(helper.flat_toml_text({**palette, "accent": "#123456"}))
             (user / helper.TERMINAL_COLORS_FILE).write_text(helper.flat_toml_text({"color1": "#aa0000"}))
             (user / "app-colors.toml").write_text(helper.app_overrides_toml_text(
@@ -9936,8 +9945,8 @@ def test_theme_overlays_merge_key_by_key():
                 assert_equal(helper.cmd_theme(["init", "--json"]), 0, "theme init exit status")
             # (what, actual, expected)
             rows = [
-                ("a theme.json overlay shrinks to its difference and keeps its layer record",
-                 user_meta(), {"hiddenBackgrounds": ["a.jpg"], "curatedPalette": "builtin-digest"}),
+                ("a theme.json overlay shrinks to its difference, without the copied built-in record",
+                 user_meta(), {"pair": "keyother"}),
                 ("the colours overlay shrinks to its difference", overlay("colors.toml"), {"accent": "#123456"}),
                 ("a terminal overlay equal to the built-in file is removed",
                  (user / helper.TERMINAL_COLORS_FILE).exists(), False),
@@ -9949,6 +9958,8 @@ def test_theme_overlays_merge_key_by_key():
             ]
             for what, actual, expected in rows:
                 assert_equal(actual, expected, what)
+            set_pair("keylight")
+            assert_equal(user_meta(), None, "undoing a shrunk overlay's last edit removes its theme.json")
 
             with contextlib.redirect_stdout(io.StringIO()):
                 assert_equal(helper.cmd_theme(["duplicate", "keyfix", "--as", "keycopy"]), 0, "duplicate exit status")
@@ -9972,6 +9983,20 @@ def test_theme_overlays_merge_key_by_key():
                          "a save under the built-in name stores its difference, so a built-in change reaches it")
             assert_equal(sorted(set(user_meta()) & {"name", "mode", "pair", "source"}), [],
                          "a save under the built-in name stores no metadata equal to the built-in file")
+            (package / "backgrounds").mkdir()
+            (package / "backgrounds" / "built.jpg").write_bytes(b"built")
+            (package / "theme.json").write_text(json.dumps(
+                {**builtin_meta, "wallpaper": "built.jpg",
+                 "contrastShortfalls": [{"slot": "color1", "ratio": 2.0, "floor": 3.0}]}) + "\n")
+            chosen = temp_home / "chosen.jpg"
+            chosen.write_bytes(b"chosen")
+            helper.save_theme_package(dict(base, contrastShortfalls=[],
+                                           palette={**base["palette"], "wallpaper": str(chosen)}), "keyfix")
+            resaved = helper.load_theme_package("keyfix")
+            assert_equal((Path(resaved["palette"]["wallpaper"]).name, resaved["contrastShortfalls"]),
+                         ("chosen.jpg", []),
+                         "a save under the built-in name keeps its own wallpaper and shortfall list")
+            (package / "theme.json").write_text(json.dumps(builtin_meta) + "\n")
             write_builtin()
             # (what, saved slots, the user terminal file's slots and whether they merge)
             save_rows = [
