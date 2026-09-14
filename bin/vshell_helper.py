@@ -8589,7 +8589,7 @@ def feature_status() -> Dict[str, Any]:
 
 QS_BINARIES = ("qs", "quickshell")
 # Sorts after every real ISO launch time, so an entry whose launch time the
-# registry did not report is treated as the youngest instance and yields.
+# registry did not report lists last.
 QS_UNKNOWN_LAUNCH_TIME = "~"
 
 
@@ -8624,9 +8624,8 @@ def _vgs_peer_alive(pid: int) -> bool:
     A registry entry only records the pid a shell had. After a hard kill the
     entry can outlive the process and the number can be reused by something
     unrelated, and a zombie keeps a readable /proc entry while owning no
-    surfaces. Either would make the session shell rule itself the duplicate and
-    terminate itself, so a peer is confirmed against the process actually
-    running under that pid.
+    surfaces. Either would list a shell that is not running, so an entry is
+    confirmed against the process actually running under that pid.
     """
     fields = _proc_stat_fields(pid)
     if not fields:
@@ -8711,9 +8710,7 @@ def _vgs_instance_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _vgs_instance_matches(entry: Dict[str, Any], shell_path: str, shell_id: str) -> bool:
-    if shell_id and entry["shellId"] == shell_id:
-        return True
+def _vgs_instance_matches(entry: Dict[str, Any], shell_path: str) -> bool:
     if not entry["configPath"]:
         return False
     return _resolve_path(entry["configPath"]) == shell_path
@@ -8723,107 +8720,25 @@ def _vgs_instance_order(entry: Dict[str, Any]) -> Tuple[str, int]:
     return (entry["launchTime"] or QS_UNKNOWN_LAUNCH_TIME, entry["pid"])
 
 
-def _proc_start_ticks(pid: int) -> Any:
-    """Return process start time in clock ticks since boot, or None if unreadable.
-    Use this instead of registry timestamps when both processes are readable."""
-    # starttime is field 22, i.e. index 19 once field 3 is index 0.
-    fields = _proc_stat_fields(pid)
-    if len(fields) < 20:
-        return None
-    try:
-        return int(fields[19])
-    except ValueError:
-        return None
+def vgs_instance_report(config_path: str = "") -> Dict[str, Any]:
+    """Inventory of live VGS shells launched from one entrypoint, oldest first.
 
-
-def _vgs_instance_precedes(peer: Dict[str, Any], own: Dict[str, Any], own_registered: bool) -> bool:
-    """Compare process start times, falling back to known registry launch times.
-    Missing launch times do not establish that a peer is older."""
-    peer_start = _proc_start_ticks(peer["pid"])
-    own_start = _proc_start_ticks(own["pid"])
-    if peer_start is not None and own_start is not None:
-        if peer_start != own_start:
-            return peer_start < own_start
-        return peer["pid"] < own["pid"]
-    if not peer["launchTime"]:
-        return False
-    if not own["launchTime"]:
-        # No entry of our own yet: we started moments ago, so anything already
-        # registered with a real launch time predates us. A *registered* shell
-        # with no launch time is a degraded registry, not a young shell.
-        return not own_registered
-    if peer["launchTime"] != own["launchTime"]:
-        return peer["launchTime"] < own["launchTime"]
-    return peer["pid"] < own["pid"]
-
-
-def vgs_instance_report(pid: int = 0, shell_id: str = "", config_path: str = "") -> Dict[str, Any]:
-    """Inventory of live VGS shells, plus a duplicate verdict for ``pid``.
-
-    The verdict is deliberately fail-open: when the registry cannot be read, or
-    when no peer can be *proven* older, the caller keeps running.  Only a shell
-    that a live peer demonstrably predates ever sees itself as the duplicate.
+    ``ok`` is false when the registry cannot be read; ``cliMissing`` separates a
+    host with no Quickshell CLI from a failed read.
     """
     shell_path = _resolve_path(config_path) if config_path else _resolve_path(str(vgs_shell_entry()))
     listing = qs_list_instances()
-    report: Dict[str, Any] = {
-        "ok": bool(listing["ok"]),
-        "supported": bool(listing["ok"]),
-        "shellPath": shell_path,
-        "shellId": shell_id,
-        "instances": [],
-        "self": None,
-        "owner": None,
-        "duplicate": False,
-        "reason": "",
-    }
+    report: Dict[str, Any] = {"ok": bool(listing["ok"]), "shellPath": shell_path, "instances": []}
     if not listing["ok"]:
         report["error"] = listing.get("error", "")
         report["cliMissing"] = bool(listing.get("cliMissing"))
-        report["reason"] = "instance registry unavailable"
         return report
-
-    matches = []
-    for raw in listing["instances"]:
-        entry = _vgs_instance_entry(raw)
-        if not _vgs_instance_matches(entry, shell_path, shell_id):
-            continue
-        if not _vgs_peer_alive(entry["pid"]):
-            continue
-        matches.append(entry)
+    matches = [
+        entry for entry in map(_vgs_instance_entry, listing["instances"])
+        if _vgs_instance_matches(entry, shell_path) and _vgs_peer_alive(entry["pid"])
+    ]
     matches.sort(key=_vgs_instance_order)
     report["instances"] = matches
-
-    if pid <= 0:
-        report["reason"] = "listing only"
-        return report
-
-    own = next((entry for entry in matches if entry["pid"] == pid), None)
-    own_registered = own is not None
-    if own is None:
-        own = {"pid": pid, "id": "", "shellId": shell_id, "configPath": shell_path,
-               "launchTime": ""}
-    report["self"] = own
-
-    peers = [entry for entry in matches if entry["pid"] != pid]
-    older = [entry for entry in peers if _vgs_instance_precedes(entry, own, own_registered)]
-    if older:
-        owner = min(older, key=_vgs_instance_order)
-        report["owner"] = owner
-        report["duplicate"] = True
-        report["reason"] = (
-            f"another VGS shell (pid {owner['pid']}) already owns this session; "
-            "use scripts/qml-smoke.sh for validation"
-        )
-        return report
-
-    report["owner"] = own
-    if any(not entry["launchTime"] for entry in peers):
-        report["reason"] = "peer launch time unknown; keeping this shell"
-    elif peers:
-        report["reason"] = "oldest instance"
-    else:
-        report["reason"] = "sole instance"
     return report
 
 
@@ -8833,21 +8748,11 @@ def cmd_instances(argv: List[str]) -> int:
     p_list = sub.add_parser("list", help="list live VGS Quickshell instances")
     p_list.add_argument("--json", action="store_true")
     p_list.add_argument("--config-path", default="")
-    p_guard = sub.add_parser("guard", help="duplicate-shell verdict for a pid")
-    p_guard.add_argument("--pid", type=int, required=True)
-    p_guard.add_argument("--shell-id", default="")
-    p_guard.add_argument("--config-path", default="")
-    p_guard.add_argument("--json", action="store_true")
     if not argv or argv[0].startswith("-"):
         argv = ["list", *(argv or [])]
     args = parser.parse_args(argv)
 
-    if args.cmd == "guard":
-        report = vgs_instance_report(args.pid, args.shell_id, args.config_path)
-        print(json.dumps(report))
-        return 0
-
-    report = vgs_instance_report(0, "", getattr(args, "config_path", ""))
+    report = vgs_instance_report(args.config_path)
     if args.json:
         print(json.dumps(report))
     if not report["ok"]:

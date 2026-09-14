@@ -18,6 +18,7 @@
 # Theme loading is outside this smoke's coverage.
 # The runtime check waits for bundled plugins and exercises user overrides.
 # Popouts and switchers are checked for mapping and dismissal.
+# The instance guard is checked with a stand-in runner parent: its child draws, a grandchild is refused.
 # wtype enables Escape-key dismissal checks.
 # VSHELL_SMOKE_ARTIFACT_DIR saves a Displays screenshot.
 # Live-session snapshots check process instances and excess layer surfaces; cleanup targets only process groups this run created.
@@ -1008,6 +1009,104 @@ switcher_check_body() {
   return 0
 }
 
+# shell.qml draws only as the direct child of the process named in VGS_RUNNER_PID. The main run
+# sets VSHELL_DISABLE_INSTANCE_GUARD, so these rows start the shell with the guard on under an sh
+# that stands in for the runner and records its own pid. The trailing exit keeps sh from exec'ing
+# qs, which would make qs's parent the process above sh. The rows carry no timeout wrapper:
+# timeout moves itself and qs into a process group of their own, out of kill_pgid's reach.
+# shellcheck disable=SC2016  # $$, $1 and $2 must expand in the stand-in sh
+guard_admit_script='echo $$ >"$2"; VGS_RUNNER_PID=$$; export VGS_RUNNER_PID; qs --no-color -p "$1"; exit $?'
+# $PPID is the process above the stand-in: an ancestor that is not qs's parent, as for any
+# process the shell itself starts.
+# shellcheck disable=SC2016  # $$, $PPID, $1 and $2 must expand in the stand-in sh
+guard_refuse_script='echo $$ >"$2"; VGS_RUNNER_PID=$PPID; export VGS_RUNNER_PID; qs --no-color -p "$1"; exit $?'
+guard_refusal_key="refusing to start a duplicate shell"
+
+guard_spawn() {
+  local label="$1" script="$2" guard_log="$3"
+  evidence_logs+=("$guard_log")
+  rm -f -- "${sandbox:?}/guard-$label.standin"
+  spawn_group "$sandbox/guard-$label.pgid" \
+    "${sandbox_env[@]}" \
+    HYPRLAND_INSTANCE_SIGNATURE="$nested_signature" \
+    WAYLAND_DISPLAY="$nested_socket" \
+    VSHELL_ROOT="$repo_root" \
+    VSHELL_DISABLE_HOT_RELOAD=1 \
+    "${dbus_wrapper[@]}" \
+    sh -c "$script" _ "$repo_root/quickshell/vshell" "$sandbox/guard-$label.standin" >"$guard_log" 2>&1
+}
+
+# Print the pid of the qs the row's stand-in started. Status 1 while it has not started.
+guard_qs_pid() {
+  local standin pid
+  standin="$(tr -d '[:space:]' <"$sandbox/guard-$1.standin" 2>/dev/null)" || return 1
+  [[ -n "$standin" ]] || return 1
+  pid="$(pgrep -P "$standin" -x qs)" || return 1
+  printf '%s\n' "$pid"
+}
+
+instance_guard_check() {
+  local guard_log launcher group qs_pid="" targets="" admitted=false exited=false
+
+  guard_log="$sandbox/guard-admit.log"
+  if ! guard_spawn admit "$guard_admit_script" "$guard_log"; then
+    fail "instance guard admit row: the shell under a stand-in runner failed to launch"
+    return 1
+  fi
+  launcher="$spawn_launcher_pid"
+  group="$spawn_pgid"
+  for _ in $(seq 1 $((nested_timeout * 2))); do
+    kill -0 -- "-$group" 2>/dev/null || break
+    # Ask this row's own qs by pid: another shell answering for the same config path is no evidence.
+    if [[ -n "$qs_pid" ]] || qs_pid="$(guard_qs_pid admit)"; then
+      targets="$(timeout --kill-after=5 "$sandbox_ipc_timeout" \
+        "${sandbox_env[@]}" qs ipc --pid "$qs_pid" show 2>/dev/null || true)"
+      if grep -q '^target ' <<<"$targets"; then
+        admitted=true
+        break
+      fi
+    fi
+    sleep 0.5
+  done
+  kill_pgid "$group"
+  wait "$launcher" 2>/dev/null || true
+  if grep -q "$guard_refusal_key" "$guard_log"; then
+    fail "instance guard admit row: the direct child of VGS_RUNNER_PID refused itself: $(grep -m 1 "$guard_refusal_key" "$guard_log")"
+    return 1
+  fi
+  if [[ "$admitted" != true ]]; then
+    fail "instance guard admit row: the direct child of VGS_RUNNER_PID never exposed its IPC targets (qs pid ${qs_pid:-never seen})"
+    return 1
+  fi
+
+  guard_log="$sandbox/guard-refuse.log"
+  if ! guard_spawn refuse "$guard_refuse_script" "$guard_log"; then
+    fail "instance guard refuse row: the shell under a non-parent VGS_RUNNER_PID failed to launch"
+    return 1
+  fi
+  launcher="$spawn_launcher_pid"
+  group="$spawn_pgid"
+  for _ in $(seq 1 $((nested_timeout * 2))); do
+    if ! kill -0 -- "-$group" 2>/dev/null; then
+      exited=true
+      break
+    fi
+    sleep 0.5
+  done
+  kill_pgid "$group"
+  wait "$launcher" 2>/dev/null || true
+  if ! grep -q "$guard_refusal_key" "$guard_log"; then
+    fail "instance guard refuse row: a shell whose parent is not VGS_RUNNER_PID logged no refusal"
+    return 1
+  fi
+  if [[ "$exited" != true ]]; then
+    fail "instance guard refuse row: the refused shell did not exit"
+    return 1
+  fi
+  note "instance guard check passed (the stand-in runner's child drew; a shell under a non-parent VGS_RUNNER_PID refused and exited)"
+  return 0
+}
+
 # Count markers emitted only by the override component. A load-success reply cannot identify its source.
 override_marker_count() {
   grep -c "VGS81-OVERRIDE-LOADED-$override_nonce" "$log" 2>/dev/null || true
@@ -1541,6 +1640,7 @@ EOF
     WAYLAND_DISPLAY="$nested_socket" \
     VSHELL_ROOT="$repo_root" \
     VSHELL_DISABLE_HOT_RELOAD=1 \
+    VSHELL_DISABLE_INSTANCE_GUARD=1 \
     "${dbus_wrapper[@]}" \
     timeout --signal=TERM --kill-after=5 "$nested_timeout" \
     qs --no-color -p "$repo_root/quickshell/vshell" >"$log" 2>&1; then
@@ -1671,6 +1771,9 @@ EOF
   exit_code=0
   wait "$qs_launcher" || exit_code=$?
 
+  # After the main shell is gone, so the admit row's IPC lookup can reach only its own shell.
+  instance_guard_check || true
+
   # Emit available diagnostics before verdicts so one failure does not hide another's evidence.
   # Missing live PipeWire and bus peers are expected sandbox environment gaps.
   local sandbox_noise='quickshell\.service\.pipewire|Failed to connect pipewire'
@@ -1711,7 +1814,7 @@ EOF
 
 
   if grep -q "refusing to start a duplicate shell" "$log"; then
-    fail "the duplicate-instance guard misfired inside the sandbox"
+    fail "the sandboxed shell refused itself as a duplicate: VSHELL_DISABLE_INSTANCE_GUARD did not reach it"
     return
   fi
   if [[ -n "$scan_error" ]]; then

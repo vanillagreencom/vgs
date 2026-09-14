@@ -6,13 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"time"
 
 	"vshell/backend/internal/execbound"
+	"vshell/backend/internal/helperbin"
 	"vshell/backend/internal/refresh"
 	"vshell/backend/internal/server"
 )
@@ -52,7 +51,7 @@ type stepParams struct {
 }
 
 func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
-	helper, err := helperPath()
+	helper, err := helperbin.Path()
 	if err != nil {
 		return nil, err
 	}
@@ -165,24 +164,4 @@ func (m *Manager) call(args ...string) (any, error) {
 		return nil, fmt.Errorf("decode brightness helper response: %w", err)
 	}
 	return result, nil
-}
-
-func helperPath() (string, error) {
-	if root := os.Getenv("VSHELL_ROOT"); root != "" {
-		path := filepath.Join(root, "bin", "vshell-helper")
-		if st, err := os.Stat(path); err == nil && !st.IsDir() {
-			return path, nil
-		}
-	}
-	exe, err := os.Executable()
-	if err == nil {
-		path := filepath.Join(filepath.Dir(filepath.Dir(filepath.Dir(exe))), "bin", "vshell-helper")
-		if st, err := os.Stat(path); err == nil && !st.IsDir() {
-			return path, nil
-		}
-	}
-	if path, err := exec.LookPath("vshell-helper"); err == nil {
-		return path, nil
-	}
-	return "", fmt.Errorf("vshell-helper not found")
 }
