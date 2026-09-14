@@ -20,8 +20,6 @@ PluginComponent {
     // no way to fix it from the UI.
     readonly property string pillMode: Opt.optionValue(Opt.pillModeOptions(), pluginData.pillMode, "full")
 
-    // The daemon polls while at least one pill is on screen. A visibility
-    // condition that turns this pill off releases its hold.
     PluginDaemonLink {
         id: daemonLink
         pluginService: root.pluginService

@@ -2,10 +2,9 @@
 
 // A bar widget is created once per screen, so a plugin that fetches keeps the fetch in its
 // daemon surface and the widget only reads it. This suite replays the link's hold on the
-// daemon against the daemon's own count, which decides whether the daemon polls; replays the
-// shell's edits to its daemon model, which decide whether a daemon and its fetched state
-// survive another plugin loading; and reads each fetching plugin's source for the split. The
-// rows list the plugins it covers.
+// daemon against the daemon's own count, which decides whether the daemon polls; reads the
+// wiring that connects the link, the count and the shell's daemon model; and reads each
+// fetching plugin's source for the split. The rows list the plugins it covers.
 
 "use strict";
 
@@ -26,12 +25,9 @@ guardChild();
 const { syncHold, dropHold } = evaluateMarked(
     fs.readFileSync(path.join(MODULES, "PluginDaemonLink.qml"), "utf8"), "DAEMON HOLD",
     ["syncHold", "dropHold"], "PluginDaemonLink.qml");
-const { claim, release, isWatched } = evaluateMarked(
-    fs.readFileSync(path.join(MODULES, "PluginDaemonComponent.qml"), "utf8"), "DAEMON COUNT",
+const componentText = fs.readFileSync(path.join(MODULES, "PluginDaemonComponent.qml"), "utf8");
+const { claim, release, isWatched } = evaluateMarked(componentText, "DAEMON COUNT",
     ["claim", "release", "isWatched"], "PluginDaemonComponent.qml");
-const { daemonModelEdits } = evaluateMarked(
-    fs.readFileSync(path.join(repoRoot, "quickshell", "vshell", "VGS.qml"), "utf8"), "DAEMON MODEL EDITS",
-    ["daemonModelEdits"], "VGS.qml");
 
 // A daemon counted by PluginDaemonComponent's own claim and release. The engine nulls a link's
 // `_held` when the held instance is destroyed; the "destroy" step does the same, and a
@@ -97,34 +93,24 @@ test("a link counts once on the daemon it watches, and moves or drops that count
     }
 });
 
-test("loading or unloading one daemon plugin leaves every other daemon's model row in place", () => {
-    // [why, model ids before, loaded ids, model ids after]
-    for (const [why, before, loaded, after] of [
-        ["another daemon plugin loading appends only its row",
-            ["vgsMenu", "mercury"], ["vgsMenu", "mercury", "aiUsage"], ["vgsMenu", "mercury", "aiUsage"]],
-        ["another daemon plugin unloading removes only its row",
-            ["vgsMenu", "aiUsage", "mercury"], ["vgsMenu", "mercury"], ["vgsMenu", "mercury"]],
-        ["the same ids in another key order edit nothing",
-            ["mercury", "aiUsage"], ["aiUsage", "mercury"], ["mercury", "aiUsage"]],
-        ["a daemon plugin unloading removes its own row", ["mercury", "aiUsage"], ["aiUsage"], ["aiUsage"]],
-        ["several removals at once each remove the row they name",
-            ["vgsMenu", "mercury", "aiUsage", "extra"], ["mercury"], ["mercury"]]
-    ]) {
-        // Rows are objects, so a kept row is provably the same row, the way a ListModel row
-        // keeps its Instantiator delegate.
-        const model = before.map(pluginId => ({ pluginId }));
-        const kept = new Map(model.map(row => [row.pluginId, row]));
-        const edits = daemonModelEdits(model.map(row => row.pluginId), loaded);
-        for (const index of edits.removals)
-            model.splice(index, 1);
-        for (const pluginId of edits.appends)
-            model.push({ pluginId });
-        assert.deepEqual(model.map(row => row.pluginId), after, why);
-        for (const row of model) {
-            if (before.includes(row.pluginId))
-                assert.equal(row, kept.get(row.pluginId), `${why}: ${row.pluginId} keeps its row`);
-        }
-    }
+test("the link calls the counted replay above, and the shell keeps each daemon across other loads", () => {
+    const component = qmlSource(componentText, "PluginDaemonComponent.qml");
+    const shellText = fs.readFileSync(path.join(repoRoot, "quickshell", "vshell", "VGS.qml"), "utf8");
+    const shell = qmlSource(shellText, "VGS.qml");
+    const instantiator = shell.blockFrom(
+        shell.lastIndexOf("Instantiator {", shell.indexOf("id: daemonPluginInstantiator")), "the daemon Instantiator");
+    // [block, where, token, why]
+    for (const [block, where, token, why] of [
+        [componentText, "PluginDaemonComponent.qml", "readonly property bool watched: root.isWatched(root.viewers)",
+            "watched follows the count, so a daemon with no watching link polls nothing"],
+        [component.body("claimView"), "claimView()", "root.claim(root);", "a link's claim adds to the count"],
+        [component.body("releaseView"), "releaseView()", "if (!root.release(root))",
+            "a link's release takes from the count"],
+        [instantiator, "the daemon Instantiator",
+            "model: ScriptModel { values: Object.keys(PluginService.pluginDaemonComponents) }",
+            "a plain array model recreates every daemon, and its fetched state, when any daemon plugin loads"]
+    ])
+        component.requires(block, where, [[token, why]]);
 });
 
 // [plugin, widget file, daemon file, [token, why] pairs the daemon must keep to fetch only while watched]
@@ -139,13 +125,11 @@ const ROWS = [
             "a poll that comes due with no watching widget fetches nothing"],
         ["if (root.watched) Qt.callLater(root.catchUp); else pollTimer.stop();",
             "the first watching widget queues the catch-up fetch, and the poll stops when the last one stops"],
-        ["function invalidate() { root._invalidated = true; Qt.callLater(root.catchUp); }",
-            "a settings change queues the same catch-up, so at shell start the saved key stamp and " +
-            "the first watching widget make one bank API call"],
+        ["function invalidate() { root.fetchedAt = 0; Qt.callLater(root.catchUp); }",
+            "a settings change marks the figures stale and queues the same catch-up, so at shell " +
+            "start the saved key stamp and the first watching widget make one bank API call"],
         ["function catchUp() { if (root.watched) root.refreshIfStale(); }",
-            "and the catch-up fetches nothing while no widget watches"],
-        ["if (root._invalidated || Logic.shouldRefresh(",
-            "an invalidated snapshot is re-read whatever its age"]]]
+            "and the catch-up fetches nothing while no widget watches"]]]
 ];
 
 test("each fetching plugin polls from its daemon, and its per-screen widget only reads it", () => {

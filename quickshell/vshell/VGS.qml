@@ -53,59 +53,22 @@ Item {
         });
     }
 
-    // The loaded daemon plugin ids, edited one id at a time. An Instantiator
-    // rebuilds every delegate when a plain array model is replaced, and a
-    // daemon holds fetched state, so loading or unloading one daemon plugin
-    // must leave every other daemon instance alive.
-    ListModel {
-        id: daemonPluginIds
-        Component.onCompleted: root.syncDaemonPluginIds()
-    }
-
-    // BEGIN DAEMON MODEL EDITS
-    // The edits that turn the model's ids into the loaded ids and touch no id
-    // in both. Removal indices run from the highest down, so each still names
-    // its row when it is removed.
-    function daemonModelEdits(current, loaded) {
-        const removals = [];
-        for (let i = current.length - 1; i >= 0; i--) {
-            if (loaded.indexOf(current[i]) < 0)
-                removals.push(i);
-        }
-        const appends = loaded.filter(id => current.indexOf(id) < 0);
-        return { removals: removals, appends: appends };
-    }
-    // END DAEMON MODEL EDITS
-
-    function syncDaemonPluginIds() {
-        const current = [];
-        for (let i = 0; i < daemonPluginIds.count; i++)
-            current.push(daemonPluginIds.get(i).pluginId);
-        const edits = root.daemonModelEdits(current, Object.keys(PluginService.pluginDaemonComponents));
-        for (const index of edits.removals)
-            daemonPluginIds.remove(index);
-        for (const id of edits.appends)
-            daemonPluginIds.append({ pluginId: id });
-    }
-
-    Connections {
-        target: PluginService
-        function onPluginDaemonComponentsChanged() {
-            root.syncDaemonPluginIds();
-        }
-    }
-
     Instantiator {
         id: daemonPluginInstantiator
         asynchronous: true
-        model: daemonPluginIds
+        // A daemon holds fetched state. A plain array model recreates every
+        // delegate when it is replaced; a ScriptModel adds and removes only the
+        // changed ids, so loading or unloading one daemon plugin leaves every
+        // other daemon instance alive. A new component under the same id keeps
+        // the entry and reloads only its Loader.
+        model: ScriptModel {
+            values: Object.keys(PluginService.pluginDaemonComponents)
+        }
 
         delegate: Loader {
             id: daemonLoader
-            // Set once from the row, so teardown still has it after the row is
-            // removed. A new component under the same id keeps the row and
-            // reloads only this Loader.
-            required property string pluginId
+            required property string modelData
+            readonly property string pluginId: modelData
             // Kept so teardown can unregister by identity: `item` is not
             // reliable during destruction, and a reload's late teardown must
             // not clear the replacement delegate's registration.

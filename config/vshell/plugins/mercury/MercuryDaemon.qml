@@ -75,13 +75,7 @@ PluginDaemonComponent {
     // snapshot for settings the user had already changed.
     property bool _refreshPending: false
 
-    // A setting changed what the snapshot should hold since the last fetch
-    // started, so the figures are stale whatever their age.
-    property bool _invalidated: false
-
     function refresh() {
-        // A parked request runs with the settings current when it drains.
-        root._invalidated = false;
         if (snapshotProc.running) {
             root._refreshPending = true;
             return;
@@ -96,7 +90,7 @@ PluginDaemonComponent {
     }
 
     function refreshIfStale() {
-        if (root._invalidated || Logic.shouldRefresh(root.fetchedAt, Date.now(), root.snapshotError !== "", root.staleMs))
+        if (Logic.shouldRefresh(root.fetchedAt, Date.now(), root.snapshotError !== "", root.staleMs))
             root.refresh();
     }
 
@@ -206,8 +200,7 @@ PluginDaemonComponent {
         // Background polling is the setting the user chose, and the pill shows
         // a live balance, so this keeps running with the popout closed. It
         // does NOT run while no widget watches, because nothing is reading the
-        // answer. A widget watches while its visibility condition shows it, so
-        // a pill on an auto-hidden bar still counts.
+        // answer.
         running: false
         onTriggered: {
             if (root.watched)
@@ -225,7 +218,7 @@ PluginDaemonComponent {
     }
 
     // The first watching widget is the moment the figures matter again, so the
-    // poll resumes and anything stale or invalidated is re-read. This is also
+    // poll resumes and anything stale is re-read. This is also
     // the first fetch after the shell starts.
     onWatchedChanged: {
         if (root.watched)
@@ -235,9 +228,9 @@ PluginDaemonComponent {
     }
 
     // A setting changed what the snapshot should hold. The figures count as
-    // stale until the next fetch starts, which waits for a watching widget.
+    // stale until a fetch succeeds, which waits for a watching widget.
     function invalidate() {
-        root._invalidated = true;
+        root.fetchedAt = 0;
         Qt.callLater(root.catchUp);
     }
 
