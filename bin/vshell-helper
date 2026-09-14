@@ -1414,9 +1414,9 @@ def compose_theme_files(name: str) -> Dict[str, Path]:
 def package_layer_paths(name: str, filename: str) -> List[Path]:
     """`filename` in each layer of package `name` that holds it, built-in first.
 
-    `colors.toml`, `terminal-colors.toml`, `ui-roles.toml` and `app-colors.toml`
-    are read through this. A user `colors.toml` or `app-colors.toml` always
-    merges key by key; a user `terminal-colors.toml` or `ui-roles.toml` merges
+    `theme.json`, `colors.toml`, `terminal-colors.toml`, `ui-roles.toml` and
+    `app-colors.toml` are read through this. A user `theme.json`, `colors.toml`
+    or `app-colors.toml` always merges key by key; a user `terminal-colors.toml` or `ui-roles.toml` merges
     only when `overlay_layer` reads its merge key, and otherwise replaces the
     built-in values whole. `write_user_layer` keeps a merging overlay to the keys
     whose value differs, so a package update still reaches every value the user
@@ -1424,6 +1424,25 @@ def package_layer_paths(name: str, filename: str) -> List[Path]:
     """
     return [root / filename for root in (builtin_themes_dir() / name, user_themes_dir() / name)
             if (root / filename).is_file()]
+
+
+def package_meta(name: str) -> Dict[str, Any] | None:
+    """The `theme.json` of package `name`, its layers merged key by key, or None
+    when no layer holds one. Raises on a layer that does not read as an object.
+
+    `curatedPalette` is left out: each layer's record vouches only for the files
+    that layer supplied, so `layer_curated_palette` reads it per layer and a
+    merged value would certify one layer's files with another's digest.
+    """
+    meta: Dict[str, Any] = {}
+    layers = package_layer_paths(name, "theme.json")
+    for path in layers:
+        layer = json.loads(path.read_text())
+        if not isinstance(layer, dict):
+            raise ValueError(f"theme-json {path}: not an object")
+        meta.update(layer)
+    meta.pop("curatedPalette", None)
+    return meta if layers else None
 
 
 def flat_toml_text(values: Dict[str, str]) -> str:
@@ -1503,11 +1522,28 @@ def write_user_layer(name: str, filename: str, values: Dict[str, Any]) -> None:
     no replacing form, since a role the built-in file alone sets reads the same
     as no override on a render.
 
+    A `theme.json` has no replacing form either: a key the built-in file sets and
+    `values` lack reads from the built-in file. Its `curatedPalette` is the user
+    layer's own record, so `values` holding one writes it and `values` without one
+    keep the record the user file already holds. With no built-in file under it
+    the user file is written even when empty, since it is then the only
+    `theme.json` the package has.
+
     A file already holding the text is not rewritten, so a repeat call keeps its
     modification time and the preview cache keyed on it.
     """
     path, base = user_themes_dir() / name / filename, builtin_themes_dir() / name / filename
-    if filename == "app-colors.toml":
+    if filename == "theme.json":
+        below = json.loads(base.read_text()) if base.is_file() else None
+        if below is not None and not isinstance(below, dict):
+            raise ValueError(f"theme-json {base}: not an object")
+        record = values.get("curatedPalette") or layer_curated_palette(path.parent)
+        kept = {key: value for key, value in values.items()
+                if key != "curatedPalette" and (below is None or below.get(key) != value)}
+        if record:
+            kept["curatedPalette"] = record
+        text = json.dumps(kept, indent=2) + "\n" if kept or below is None else ""
+    elif filename == "app-colors.toml":
         below_apps = theme_app_overrides_layer(base.parent)
         text = app_overrides_toml_text({
             app: {role: value for role, value in roles.items()
@@ -1588,6 +1624,7 @@ def shrink_theme_overlays() -> None:
         return filename, lambda name: package_overlay_values(name, filename), rewritable
 
     readers: Tuple[Tuple[str, Callable[[str], Dict[str, Any]], Callable[[Path], Any]], ...] = (
+        ("theme.json", package_meta, lambda path: json.loads(path.read_text())),
         ("colors.toml", package_colors_map, parse_colors_toml),
         *(overlay_readers(filename) for filename in OVERLAY_MASK_TEXT),
         ("app-colors.toml", theme_app_overrides, lambda path: tomllib.loads(path.read_text())),
@@ -1610,13 +1647,12 @@ def shrink_theme_overlays() -> None:
 
 def load_theme_package(name: str) -> Dict[str, Any] | None:
     files = compose_theme_files(name)
-    meta_path = files.get("theme.json")
-    if not meta_path:
-        return None
     try:
-        meta = json.loads(meta_path.read_text())
+        meta = package_meta(name)
     except Exception as exc:
         eprint(f"skip theme package {name}: {exc}")
+        return None
+    if meta is None:
         return None
     source = package_source(meta)
     hidden = {h for h in (meta.get("hiddenBackgrounds") or []) if isinstance(h, str)}
@@ -1676,7 +1712,7 @@ def load_theme_package(name: str) -> Dict[str, Any] | None:
         moved = apply_adjustments({**unadjusted_colors, **{f"terminal_{key}": value
                                    for key, value in bp["terminalColors"].items()}}, adjustments)
         bp["terminalColors"] = {key: moved[f"terminal_{key}"] for key in bp["terminalColors"]}
-    stamps = [meta_path.stat().st_mtime]
+    stamps = [path.stat().st_mtime for path in package_layer_paths(name, "theme.json")]
     if "colors.toml" in files:
         stamps.append(files["colors.toml"].stat().st_mtime)
     if TERMINAL_COLORS_FILE in files:
@@ -2241,19 +2277,10 @@ def prune_wallpaper_thumbs_now() -> int:
 
 
 def read_theme_overlay_meta(pkg_dir_name: str) -> Dict[str, Any]:
-    files = compose_theme_files(pkg_dir_name)
-    if "theme.json" not in files:
-        return {}
     try:
-        return json.loads(files["theme.json"].read_text())
+        return package_meta(pkg_dir_name) or {}
     except Exception:
         return {}
-
-
-def write_theme_overlay_meta(pkg_dir_name: str, meta: Dict[str, Any]) -> None:
-    # User overlay shadows the built-in theme.json file-level, so metadata edits
-    # never touch the repo copy.
-    write_file(user_themes_dir() / pkg_dir_name / "theme.json", json.dumps(meta, indent=2) + "\n")
 
 
 def colors_toml_from_blueprint(bp: Dict[str, Any]) -> str:
@@ -2511,13 +2538,10 @@ def override_dropped_curated(bp: Dict[str, Any]) -> List[str]:
     if not bp.get("package") or not source or source != package:
         return []
     files = compose_theme_files(package)
-    meta_path = files.get("theme.json")
-    if not meta_path:
-        return []
-    meta: Any = None
+    meta = None
     with contextlib.suppress(Exception):
-        meta = json.loads(meta_path.read_text())
-    if not isinstance(meta, dict):
+        meta = package_meta(package)
+    if meta is None:
         return []
     palette = package_palette(package_colors_map(package), meta,
                               package_declared_ui_roles(meta, package))
@@ -2558,7 +2582,7 @@ def duplicate_theme_package(package: str, dest_name: str, new_name: str) -> None
     """
     dest = user_themes_dir() / dest_name
     files = compose_theme_files(package)
-    meta = json.loads(files["theme.json"].read_text())
+    meta = package_meta(package) or {}
     colors = package_colors_map(package)
     palette = palette_identity(colors, str(meta.get("mode") or ""),
                                ui_roles=package_declared_ui_roles(meta, package))
@@ -2580,7 +2604,7 @@ def duplicate_theme_package(package: str, dest_name: str, new_name: str) -> None
         write_user_layer(dest_name, filename, values)
     meta["name"] = new_name
     meta["curatedPalette"] = palette_digest(palette)
-    write_file(dest / "theme.json", json.dumps(meta, indent=2) + "\n")
+    write_user_layer(dest_name, "theme.json", meta)
 
 
 def save_theme_package(bp: Dict[str, Any], name: str | None = None) -> Path:
@@ -2700,9 +2724,10 @@ def materialize_theme_package(bp: Dict[str, Any], apps: Dict[str, str] | None = 
         "curatedPalette": palette_digest(
             palette_identity(parse_colors_toml_text(colors_toml), mode, ui_roles=ui_roles)),
     }
-    # A user overlay's theme.json masks the built-in one whole, so a list left
-    # out here stops lint from marking the shortfalls it names. A copy whose
-    # palette has moved keeps the list and lint reports each entry unmatched.
+    # A package with no built-in theme.json under it keeps only the list written
+    # here, so a list left out stops lint from marking the shortfalls it names. A
+    # copy whose palette has moved keeps the list and lint reports each entry
+    # unmatched.
     if bp.get("contrastShortfalls"):
         meta["contrastShortfalls"] = bp["contrastShortfalls"]
     overlays = {TERMINAL_COLORS_FILE: bp.get("terminalColors") or {}}
@@ -2769,7 +2794,10 @@ def materialize_theme_package(bp: Dict[str, Any], apps: Dict[str, str] | None = 
     # interrupted save leaves a package with no theme.json: the loader skips it
     # and a user overlay falls back to the built-in record, so the worst case is
     # a save that did not happen rather than one certifying the wrong files.
-    write_file(root / "theme.json", json.dumps(meta, indent=2) + "\n")
+    if user:
+        write_user_layer(name, "theme.json", meta)
+    else:
+        write_file(root / "theme.json", json.dumps(meta, indent=2) + "\n")
     return root
 
 
@@ -7745,8 +7773,8 @@ def app_role_view(app: str, bp: Dict[str, Any]) -> Dict[str, Any]:
 def set_theme_adjustments(pkg_dir_name: str, adj: Dict[str, int]) -> Dict[str, int]:
     """Store restyle adjustments in the overlay theme.json (omit when all zero).
 
-    When clearing leaves the overlay metadata identical to the built-in, the
-    overlay theme.json is dropped so the theme reads unmodified again.
+    `write_user_layer` drops the overlay theme.json when clearing leaves it
+    nothing the built-in file lacks, so the theme reads unmodified again.
     """
     adj = normalize_adjustments(adj)
     meta = read_theme_overlay_meta(pkg_dir_name)
@@ -7754,16 +7782,7 @@ def set_theme_adjustments(pkg_dir_name: str, adj: Dict[str, int]) -> Dict[str, i
         meta.pop("adjustments", None)
     else:
         meta["adjustments"] = adj
-    builtin_meta_path = builtin_themes_dir() / pkg_dir_name / "theme.json"
-    user_meta_path = user_themes_dir() / pkg_dir_name / "theme.json"
-    if builtin_meta_path.is_file():
-        with contextlib.suppress(Exception):
-            builtin_meta = json.loads(builtin_meta_path.read_text())
-            if meta == builtin_meta:
-                if user_meta_path.exists():
-                    user_meta_path.unlink()
-                return adj
-    write_theme_overlay_meta(pkg_dir_name, meta)
+    write_user_layer(pkg_dir_name, "theme.json", meta)
     return adj
 
 
@@ -10229,7 +10248,7 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
         hidden = [h for h in (meta.get("hiddenBackgrounds") or []) if isinstance(h, str)]
         if dest.name in hidden:
             meta["hiddenBackgrounds"] = [h for h in hidden if h != dest.name]
-            write_theme_overlay_meta(pkg_dir_name, meta)
+            write_user_layer(pkg_dir_name, "theme.json", meta)
         result = {"success": True, "theme": bp.get("name"), "file": dest.name, "path": str(dest)}
         print(json.dumps(result, indent=2) if args.json else f"Added {dest.name} to {bp.get('name')}")
         return 0
@@ -10264,7 +10283,7 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
             meta.pop("wallpaper", None)
             meta_dirty = True
         if meta_dirty:
-            write_theme_overlay_meta(pkg_dir_name, meta)
+            write_user_layer(pkg_dir_name, "theme.json", meta)
         result["thumbsPruned"] = prune_wallpaper_thumbs_now()
         print(json.dumps(result, indent=2) if args.json else f"Removed {fname} from {bp.get('name')}")
         return 0
@@ -10281,7 +10300,7 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
         pkg_dir_name = Path(str(bp.get("path"))).name
         meta = read_theme_overlay_meta(pkg_dir_name)
         meta["wallpaper"] = fname
-        write_theme_overlay_meta(pkg_dir_name, meta)
+        write_user_layer(pkg_dir_name, "theme.json", meta)
         result = {"success": True, "theme": bp.get("name"), "default": fname}
         print(json.dumps(result, indent=2) if args.json else f"{bp.get('name')} default wallpaper: {fname}")
         return 0
@@ -10752,7 +10771,7 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
         pkg_dir_name = Path(str(bp.get("path"))).name
         meta = read_theme_overlay_meta(pkg_dir_name)
         meta["pair"] = args.pair
-        write_theme_overlay_meta(pkg_dir_name, meta)
+        write_user_layer(pkg_dir_name, "theme.json", meta)
         result = {"success": True, "name": bp.get("name"), "pair": args.pair}
         print(json.dumps(result, indent=2) if args.json else f"{bp.get('name')} pairs with {args.pair or '(none)'}")
         return 0

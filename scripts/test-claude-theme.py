@@ -1145,10 +1145,10 @@ class InstalledLayout(unittest.TestCase):
         """A package is two directories and each vouches only for the files it
         supplied. This curated file comes from the built-in layer, so the built-in
         `theme.json` answers for it however the overlay is written. Reading one
-        digest for the whole package instead lost it: `compose_theme_files`
-        composes at file level, an overlay written before this key existed shadows
-        the built-in record whole, and setting a default wallpaper wrote one of
-        those, so the six lost their hand-picked diff bands on upgrade. An overlay
+        digest for the whole package instead lost it: an overlay `theme.json`
+        written before this key existed records no digest, and setting a default
+        wallpaper wrote one of those, so the six lost their hand-picked diff bands
+        on upgrade. An overlay
         that supplies its own palette moves the effective digest, and then the
         built-in record no longer matches."""
         with temp_home() as home:

@@ -9857,6 +9857,43 @@ def test_theme_overlays_merge_key_by_key():
                          "an edit back to the built-in value drops the key; an ANSI name lands as colorN")
             write_builtin()
 
+            builtin_meta = {"name": "keyfix", "mode": "dark", "pair": "keylight", "source": "curated",
+                            "curatedPalette": "builtin-digest"}
+            (package / "theme.json").write_text(json.dumps(builtin_meta) + "\n")
+
+            def user_meta():
+                path = user / "theme.json"
+                return json.loads(path.read_text()) if path.exists() else None
+
+            def set_pair(pair):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    assert_equal(helper.cmd_theme(["set-pair", "keyfix", pair]), 0, "set-pair exit status")
+
+            set_pair("keyother")
+            stored_pair = user_meta()
+            (package / "theme.json").write_text(json.dumps({**builtin_meta, "source": "generated"}) + "\n")
+            merged_after_update = helper.package_meta("keyfix")
+            (package / "theme.json").write_text(json.dumps(builtin_meta) + "\n")
+            set_pair("keylight")
+            pair_cleared = user_meta()
+            (user / "theme.json").write_text(json.dumps({"curatedPalette": "user-digest", "pair": "keyother"}) + "\n")
+            set_pair("keylight")
+            # (what, actual, expected)
+            meta_rows = [
+                ("a metadata edit stores only the key it set, and no built-in record",
+                 stored_pair, {"pair": "keyother"}),
+                ("a built-in source change reaches a paired theme beside the user's pair",
+                 {key: merged_after_update[key] for key in ("pair", "source")},
+                 {"pair": "keyother", "source": "generated"}),
+                ("the merged metadata carries no layer's curatedPalette",
+                 "curatedPalette" in merged_after_update, False),
+                ("an edit back to the built-in value removes the overlay", pair_cleared, None),
+                ("an edit keeps the user layer's own record", user_meta(), {"curatedPalette": "user-digest"}),
+            ]
+            for what, actual, expected in meta_rows:
+                assert_equal(actual, expected, what)
+            (user / "theme.json").unlink()
+
             helper.write_user_layer("keyfix", "app-colors.toml", {"kitty": {"background": "#101010", "cursor": "#abcdef"}})
             assert_equal(helper.read_user_app_overrides("keyfix"), {"kitty": {"cursor": "#abcdef"}},
                          "an app override equal to the built-in role is not stored")
@@ -9880,6 +9917,7 @@ def test_theme_overlays_merge_key_by_key():
 
             # Whole-file overlays as the writers left them before the merge, and a
             # fork with no built-in layer under it.
+            (user / "theme.json").write_text(json.dumps({**builtin_meta, "hiddenBackgrounds": ["a.jpg"]}) + "\n")
             (user / "colors.toml").write_text(helper.flat_toml_text({**palette, "accent": "#123456"}))
             (user / helper.TERMINAL_COLORS_FILE).write_text(helper.flat_toml_text({"color1": "#aa0000"}))
             (user / "app-colors.toml").write_text(helper.app_overrides_toml_text(
@@ -9898,6 +9936,8 @@ def test_theme_overlays_merge_key_by_key():
                 assert_equal(helper.cmd_theme(["init", "--json"]), 0, "theme init exit status")
             # (what, actual, expected)
             rows = [
+                ("a theme.json overlay shrinks to its difference and keeps its layer record",
+                 user_meta(), {"hiddenBackgrounds": ["a.jpg"], "curatedPalette": "builtin-digest"}),
                 ("the colours overlay shrinks to its difference", overlay("colors.toml"), {"accent": "#123456"}),
                 ("a terminal overlay equal to the built-in file is removed",
                  (user / helper.TERMINAL_COLORS_FILE).exists(), False),
@@ -9930,6 +9970,8 @@ def test_theme_overlays_merge_key_by_key():
             write_builtin(colors={**palette, "color4": "#445566"})
             assert_equal((overlay("colors.toml"), loaded()[1]), ({"accent": "#123456"}, "#445566"),
                          "a save under the built-in name stores its difference, so a built-in change reaches it")
+            assert_equal(sorted(set(user_meta()) & {"name", "mode", "pair", "source"}), [],
+                         "a save under the built-in name stores no metadata equal to the built-in file")
             write_builtin()
             # (what, saved slots, the user terminal file's slots and whether they merge)
             save_rows = [
