@@ -61,8 +61,9 @@ Singleton {
         // rather than after the run is what stops a per-call id from growing the map: no code
         // after this point reads the id, so a call arriving now opens its own window on its own
         // entry and no finishing run can reach it. The Timer is destroyed through this captured
-        // reference and never a fresh lookup, which would find that new entry instead. The
-        // destroy is deferred because this runs inside that Timer's own triggered handler.
+        // reference and never a fresh lookup, which would find that new entry instead, and the
+        // destroy is deferred: the launch below keeps running inside that Timer's own triggered
+        // handler past this point.
         const launchedTimer = entry.timer;
         delete _procDebouncers[id];
         Qt.callLater(function () {

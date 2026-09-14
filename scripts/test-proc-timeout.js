@@ -4,8 +4,8 @@
 // Destroying a Quickshell Process SIGKILLs a child still running, so a timed-out command
 // keeps its Process until the child exits or the grace after its SIGTERM runs out. Theme
 // preview's teardown runs in that grace; nested smoke never times a command out.
-// A run also holds the debouncer entry that coalesced the calls into it, so what the run's
-// end retires, and what it must leave alone, is driven here too.
+// The launch retires the debouncer entry it launched from, so the cases below also drive when
+// the deferred destroy of that entry's Timer lands, and what a finishing run must not reach.
 
 "use strict";
 
@@ -274,17 +274,21 @@ for (const [what, id] of [["A named id", "iconIndex"], ["An id Proc mints"]]) {
 test("the launch retires the entry, before the run it launched ends", () => {
     const shell = makeShell();
     const answered = [];
-    shell.runCommand("iconIndex", ["true"], () => answered.push("done"), 0, TIMEOUT_MS);
+    const armed = armNewWindow(shell, "iconIndex", ["true"], () => answered.push("done"));
     assert.deepEqual(Object.keys(shell.entries), ["iconIndex"], "armed, waiting to launch");
-    fire(shell.timers[0]);
+    fire(armed);
     assert.equal(shell.processes.length, 1, "the run has started");
     assert.deepEqual(answered, [], "and has not ended");
     assert.deepEqual(Object.keys(shell.entries), [],
         "the entry is already gone, so nothing the run does later can reach it by id");
+    // The destroy of that Timer is deferred, so the launch leaves it standing and the queue
+    // takes it down. Without this half, a destroy that already happened reads the same after
+    // the flush as one the flush performed.
+    assert.equal(armed.destroyed, false, "the Timer this launch runs inside is not destroyed yet");
     exit(shell.processes[0], 0);
     shell.flush();
     assert.deepEqual(answered, ["done"], "the callback still gets what the launch captured");
-    assert.equal(shell.timers[0].destroyed, true, "and the launch's Timer is destroyed");
+    assert.equal(armed.destroyed, true, "and the queue destroys the launch's Timer");
 });
 
 test("calls inside one debounce window collapse into one run", () => {
