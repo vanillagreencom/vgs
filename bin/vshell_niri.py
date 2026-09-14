@@ -28,7 +28,7 @@ class NiriRuntime:
     home: Callable[[], Path]
     cfg_dir: Callable[[], Path]
     run: Callable[..., subprocess.CompletedProcess]
-    write_file: Callable[[Path, str], None]
+    write_file: Callable[[Path, str], bool]
     load_settings: Callable[[], Dict[str, Any]]
     coerce_int: Callable[..., int]
     optional_nonnegative_int: Callable[..., int | None]

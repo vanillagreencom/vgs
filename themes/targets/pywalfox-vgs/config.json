@@ -7,5 +7,5 @@
       "pywalfox"
     ]
   },
-  "hook": "pywalfox-update"
+  "reloadHook": "pywalfox-update"
 }

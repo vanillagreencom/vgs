@@ -8,5 +8,5 @@
       "ghostty"
     ]
   },
-  "hook": "ghostty-reload"
+  "reloadHook": "ghostty-reload"
 }

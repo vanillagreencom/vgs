@@ -8,5 +8,5 @@
       "tmux"
     ]
   },
-  "hook": "tmux-source"
+  "reloadHook": "tmux-source"
 }

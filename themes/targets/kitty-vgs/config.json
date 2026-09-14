@@ -8,8 +8,6 @@
       "kitty"
     ]
   },
-  "hook": [
-    "kitty-config",
-    "kitty-reload"
-  ]
+  "hook": "kitty-config",
+  "reloadHook": "kitty-reload"
 }
