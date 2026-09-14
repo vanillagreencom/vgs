@@ -26,6 +26,7 @@ const bodies = {
     // The per-path retract and the per-id settle, both shared with the read paths
     // below. Bound here as shipped so the sweep is tested through the same functions.
     retractManifest: extractBlock(source, "function _retractManifest(absPath)"),
+    clearRefusalError: extractBlock(source, "function _clearRefusalError(absPath)"),
     settleReleasedIds: extractBlock(source, "function _settleReleasedIds(pluginIds)")
 };
 
@@ -96,6 +97,10 @@ function service(entries, known) {
     root.stubs = scope;
     root._settleReleasedIds = ids => callInScope(bodies.settleReleasedIds, root, scope, ["pluginIds"], [ids]);
     root._retractManifest = absPath => callInScope(bodies.retractManifest, root, scope, ["absPath"], [absPath]);
+    // The retract clears a refusal before dropping the claim; this harness records
+    // no refusals, so the shipped clear is bound and finds nothing to do.
+    root.pluginLoadErrors = {};
+    root._clearRefusalError = absPath => callInScope(bodies.clearRefusalError, root, scope, ["absPath"], [absPath]);
     // Return the manifest paths this resync actually read from disk.
     root.resync = () => {
         root.reads.length = 0;
@@ -189,6 +194,7 @@ const parsed = {
     sourcePriority: extractBlock(source, "function _sourcePriority(sourceTag)"),
     setLoadError: extractBlock(source, "function _setLoadError(pluginId, err)"),
     isPluginLoaded: extractBlock(source, "function isPluginLoaded(pluginId)"),
+    isAlwaysAvailablePlugin: extractBlock(source, "function isAlwaysAvailablePlugin(pluginId)"),
     fvOnLoaded: extractBlock(source, "onLoaded:", source.indexOf("id: manifestFvComp")),
     fvOnLoadFailed: extractBlock(source, "onLoadFailed: err =>", source.indexOf("id: manifestFvComp")),
     settleReleasedIds: extractBlock(source, "function _settleReleasedIds(pluginIds)"),
@@ -216,6 +222,7 @@ function loader(registered) {
         toasts: [],
         promoted: [],
         gated: [],
+        gatedSwaps: [],
         pluginSurfaceKeys: ["widget", "desktop", "daemon", "launcher"],
         knownManifests: {},
         pathToPluginId: {},
@@ -242,7 +249,9 @@ function loader(registered) {
         listSignals: 0,
         reads: [],
         runStartupGate: id => root.gated.push(id),
-        _gateThenSwap: id => root.gated.push(id),
+        // The gated handoff records what is still loaded, so a row can tell it
+        // apart from a bare startup gate that has nothing to protect.
+        _gateThenSwap: (id, displaced) => root.gatedSwaps.push({ id, displaced: displaced ? displaced.manifestPath : "" }),
         _reportIdLeftEmpty: () => {},
         loadPluginManifestFile: (path, sourceTag) => root.reads.push(path),
         // Record the claimed paths as they stand when promotion starts: a path
@@ -281,6 +290,7 @@ function loader(registered) {
     bind("_sourcePriority", parsed.sourcePriority, ["sourceTag"]);
     bind("_setLoadError", parsed.setLoadError, ["pluginId", "err"]);
     bind("isPluginLoaded", parsed.isPluginLoaded, ["pluginId"]);
+    bind("isAlwaysAvailablePlugin", parsed.isAlwaysAvailablePlugin, ["pluginId"]);
     bind("_relinkLoadedRecord", parsed.relinkLoadedRecord, ["pluginId", "info", "absPath"]);
     bind("unloadPlugin", parsed.unloadPlugin, ["pluginId"]);
     bind("unregisterPluginByPath", parsed.unregisterPluginByPath, ["absPath", "pluginId"]);
@@ -561,6 +571,47 @@ test("a manifest found missing during a rescan tears the package down", () => {
     assert.equal("mine" in svc.pluginWidgetComponents, false, "the released package must give up its widget");
     assert.equal(svc.isPluginLoaded("mine"), false, "the released id must not read as loaded");
     assert.equal("mine" in svc.availablePlugins, false, "the released id must leave availablePlugins");
+});
+
+test("withdrawing an override declaration hands the bundled id back", () => {
+    // The re-read is blocked, but the old record still carries the authority the
+    // withdrawn declaration gave it. Left there, the shipped manifest's re-read
+    // finds a record the reclaim test refuses and loses on source priority, so it
+    // stays shadowed and the de-authorized package keeps the id with its disable
+    // control hidden. Recovery would be a shell restart.
+    const svc = loader([
+        { id: "vgsMenu", path: USER, source: "user", bundledId: true, alwaysAvailable: true, overridesBundled: true },
+        { id: "vgsMenu", path: BUNDLED, source: "bundled", owner: false }
+    ]);
+
+    svc._onManifestParsed(USER, manifest({ id: "vgsMenu", name: "VGS Menu" }), "user", 1);
+    assert.equal(svc.isAlwaysAvailablePlugin("vgsMenu"), false,
+        "a package whose declaration is withdrawn must stop reading as always-available");
+    assert.deepEqual(svc.promoted.map(p => p.id), ["vgsMenu"], "the shipped manifest must be offered the id");
+
+    // What that promotion does: read the shipped manifest again.
+    svc._onManifestParsed(BUNDLED, manifest({ id: "vgsMenu", name: "VGS Menu" }), "bundled", 1);
+
+    assert.equal(svc.availablePlugins.vgsMenu.manifestPath, BUNDLED, "the shipped manifest must take the id back");
+    assert.equal(svc.availablePlugins.vgsMenu.source, "bundled", "the shipped package must own the id");
+    assert.deepEqual(svc.gatedSwaps, [{ id: "vgsMenu", displaced: USER }],
+        "the handoff must stay gated on the package still loaded, not tear it down first");
+});
+
+test("a refusal does not outlive the path claim that anchors it", () => {
+    // Malformed scan, then delete, then reinstall. _clearRefusalError reaches the
+    // id through the path claim, so a refusal surviving the release can never be
+    // cleared: plugin status keeps reporting it for a repaired package, and
+    // onPluginLoadFailed returns early for every later failure of that plugin.
+    const svc = loader([{ id: "mine", path: USER, source: "user" }]);
+    svc._onManifestParsed(USER, { name: "Mine" }, "user", 1);
+    assert.ok(svc.pluginLoadErrors.mine, "the refusal must be recorded first");
+
+    svc._releaseManifestPath(USER);
+    svc._onManifestParsed(USER, manifest(), "user", 1);
+
+    assert.deepEqual(svc.pluginLoadErrors, {}, "a released path must leave no refusal behind");
+    assert.equal(svc.availablePlugins.mine.manifestPath, USER, "the reinstalled package must be registered");
 });
 
 test("a read that finds nothing at an unclaimed path releases nothing", () => {

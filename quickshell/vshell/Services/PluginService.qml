@@ -476,6 +476,10 @@ Singleton {
     // once for a batch.
     function _retractManifest(absPath) {
         const pluginId = pathToPluginId[absPath];
+        // Before the claim goes: _clearRefusalError reaches the id through it, so
+        // a refusal left standing here could never be cleared again, and would
+        // keep answering for the path after a reinstall repaired it.
+        _clearRefusalError(absPath);
         delete knownManifests[absPath];
         delete pathToPluginId[absPath];
         if (!pluginId)
@@ -656,7 +660,14 @@ Singleton {
             pathToPluginId[absPath] = manifest.id;
             _reportBundledCollision(manifest.id, sourceTag);
             if (existing && existing.manifestPath === absPath) {
-                // It owned the id before the bundled directory was known.
+                // This path owns the id and its manifest does not authorize that:
+                // it was read before the bundled directory was known, or the
+                // override declaration has just been withdrawn. Either way the
+                // record's authority is gone, and leaving it makes the shipped
+                // manifest's re-read find a record it cannot reclaim from, so the
+                // module stays shadowed and the package keeps the id undisableably.
+                existing.overridesBundled = false;
+                existing.alwaysAvailable = false;
                 // Promoting the shipped manifest re-enters this function for
                 // it, which takes the id back through the reclaim path below —
                 // gated, so the running package is not torn down first.
