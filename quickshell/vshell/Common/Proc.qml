@@ -19,9 +19,6 @@ Singleton {
     // and output from the live compositor.
     readonly property int terminateGraceMs: 10000
     property var _procDebouncers: ({})
-    // A real, not an int: this counts every arming the session ever makes, and a 32-bit int
-    // would wrap back onto numbers the map still holds.
-    property real _armingSerial: 0
 
     function runCommand(id, command, callback, debounceMs, timeoutMs) {
         const wait = (typeof debounceMs === "number" && debounceMs >= 0) ? debounceMs : defaultDebounceMs;
@@ -48,13 +45,6 @@ Singleton {
         }
 
         const entry = _procDebouncers[procId];
-        // Every arming in the session takes its own number, so the release that follows a run's
-        // callback can name the request it launched. Neither the entry object nor a number
-        // counted inside it can do that: an id armed again keeps the same object, and an id
-        // whose entry was retired and built again starts any per-entry count over, so a retired
-        // request's number would match a waiting one and destroy its timer.
-        _armingSerial = _armingSerial + 1;
-        entry.arming = _armingSerial;
         entry.timer.interval = entry.waitMs;
         entry.timer.restart();
     }
@@ -66,7 +56,20 @@ Singleton {
         const launchedCommand = entry.command;
         const launchedCallback = entry.callback;
         const launchedTimeoutMs = entry.timeoutMs;
-        const launchedArming = entry.arming;
+        // The entry and its Timer exist only to collapse the calls that arrive inside the
+        // debounce window into one run, and this launch closes that window. Retiring them here
+        // rather than after the run is what stops a per-call id from growing the map: no code
+        // after this point reads the id, so a call arriving now opens its own window on its own
+        // entry and no finishing run can reach it. The Timer is destroyed through this captured
+        // reference and never a fresh lookup, which would find that new entry instead. The
+        // destroy is deferred because this runs inside that Timer's own triggered handler.
+        const launchedTimer = entry.timer;
+        delete _procDebouncers[id];
+        Qt.callLater(function () {
+            try {
+                launchedTimer.destroy();
+            } catch (_) {}
+        });
         const proc = procComp.createObject(root, {
             command: launchedCommand
         });
@@ -196,20 +199,6 @@ Singleton {
             } else {
                 release();
             }
-
-            // The entry and its Timer are held only to coalesce calls into one run, so the run's
-            // end retires them whatever the id. It retires only the request it launched: the id
-            // may by now hold a later arming, or an entry built again after an overlapping run
-            // retired this one, and destroying either would drop a command that is waiting.
-            Qt.callLater(function () {
-                const current = _procDebouncers[id];
-                if (!current || current.arming !== launchedArming)
-                    return;
-                try {
-                    current.timer.destroy();
-                } catch (_) {}
-                delete _procDebouncers[id];
-            });
         }
 
         proc.running = true;

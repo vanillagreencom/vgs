@@ -86,11 +86,10 @@ function makeTimer() {
     };
 }
 
-// The whole singleton: runCommand arms a debouncer and the debouncer's Timer launches. In
-// maybeComplete the callback runs before the release is scheduled at all, so Qt.callLater being
-// a queue is not what lets a callback arm the id again first; it only decides when the release
-// compares. The arming number is what keeps that release from retiring the entry the callback
-// armed, or one built again after this run began.
+// The whole singleton: runCommand arms a debouncer, the debouncer's Timer launches, and the
+// launch retires the entry it launched from. Qt.callLater is a queue rather than an immediate
+// call because the launch defers destroying that Timer, which is the handler it is running in,
+// so the cases below choose when that destroy lands.
 function makeShell() {
     const processes = [];
     const timers = [];
@@ -118,7 +117,6 @@ function makeShell() {
             },
         },
         _procDebouncers: {},
-        _armingSerial: 0,
     };
     // with models QML scope lookup, which needs a non-strict function.
     // eslint-disable-next-line no-new-func
@@ -142,8 +140,8 @@ function makeShell() {
     };
 }
 
-// The theme preview command, armed and launched: the run the timeout cases drive. Its deferred
-// release is left queued, which those cases neither reach nor assert on.
+// The theme preview command, armed and launched: the run the timeout cases drive. The launch's
+// deferred Timer destroy is left queued, which those cases neither reach nor assert on.
 function launch() {
     const shell = makeShell();
     const exitCodes = [];
@@ -156,7 +154,8 @@ function launch() {
 }
 
 // One command from arming to its child's exit, which fires the callback. The caller decides when
-// the deferred release runs, because the state before it is what some cases assert on.
+// the launch's deferred Timer destroy runs, because the state before it is what some cases
+// assert on.
 function runOnce(shell, id, callback) {
     const debounceTimer = shell.timers.length;
     shell.runCommand(id, ["true"], callback, 0, TIMEOUT_MS);
@@ -222,17 +221,57 @@ test("a command that exits before its timeout is released at once", () => {
 
 // An id the caller names and one Proc mints for an unnamed call are one surface.
 for (const [what, id] of [["A named id", "iconIndex"], ["An id Proc mints"]]) {
-    test(`${what} leaves no debouncer behind once its run ends`, () => {
+    test(`${what} leaves no debouncer behind`, () => {
         const shell = makeShell();
         const exitCodes = [];
         runOnce(shell, id, (_out, code) => exitCodes.push(code));
         shell.flush();
         assert.deepEqual(exitCodes, [0], "the caller is answered");
-        assert.deepEqual(Object.keys(shell.entries), [], "the run's end retires its entry");
+        assert.deepEqual(Object.keys(shell.entries), [], "and no entry is left behind");
         assert.deepEqual(shell.timers.map(t => t.destroyed), [true, true],
-            "the debounce Timer and the timeout Timer both go with the run");
+            "nor the debounce Timer, nor the timeout Timer");
     });
 }
+
+test("the launch retires the entry, before the run it launched ends", () => {
+    const shell = makeShell();
+    const answered = [];
+    shell.runCommand("iconIndex", ["true"], () => answered.push("done"), 0, TIMEOUT_MS);
+    assert.deepEqual(Object.keys(shell.entries), ["iconIndex"], "armed, waiting to launch");
+    fire(shell.timers[0]);
+    assert.equal(shell.processes.length, 1, "the run has started");
+    assert.deepEqual(answered, [], "and has not ended");
+    assert.deepEqual(Object.keys(shell.entries), [],
+        "the entry is already gone, so nothing the run does later can reach it by id");
+    exit(shell.processes[0], 0);
+    shell.flush();
+    assert.deepEqual(answered, ["done"], "the callback still gets what the launch captured");
+    assert.equal(shell.timers[0].destroyed, true, "and the launch's Timer is destroyed");
+});
+
+test("calls inside one debounce window collapse into one run", () => {
+    const shell = makeShell();
+    const answered = [];
+    shell.runCommand("iconIndex", ["first"], () => answered.push("first"), 0, TIMEOUT_MS);
+    shell.runCommand("iconIndex", ["second"], () => answered.push("second"), 0, TIMEOUT_MS);
+    assert.equal(Object.keys(shell.entries).length, 1, "both calls share one entry");
+    assert.equal(shell.timers.length, 1, "and one debounce Timer");
+    fire(shell.timers[0]);
+    assert.equal(shell.processes.length, 1, "the window runs one command");
+    assert.deepEqual(shell.processes[0].command, ["second"], "the last call in the window");
+    exit(shell.processes[0], 0);
+    shell.flush();
+    assert.deepEqual(answered, ["second"], "and answers that call alone");
+
+    // The launch closed that window, so a later call is its own command, not a third caller
+    // joining a window that already ran.
+    shell.runCommand("iconIndex", ["third"], () => answered.push("third"), 0, TIMEOUT_MS);
+    assert.equal(Object.keys(shell.entries).length, 1, "which opens a window of its own");
+    fire(shell.entries["iconIndex"].timer);
+    exit(shell.processes[shell.processes.length - 1], 0);
+    shell.flush();
+    assert.deepEqual(answered, ["second", "third"], "and runs");
+});
 
 test("ids that differ per call do not accumulate", () => {
     const shell = makeShell();
@@ -246,7 +285,7 @@ test("ids that differ per call do not accumulate", () => {
         "and no Timer any of those runs created stays alive");
 });
 
-test("a callback that asks for the same id again keeps the run it asked for", () => {
+test("a callback that asks for the same id again gets its command", () => {
     const shell = makeShell();
     const answered = [];
     runOnce(shell, "iconIndex", () => {
@@ -254,49 +293,49 @@ test("a callback that asks for the same id again keeps the run it asked for", ()
         shell.runCommand("iconIndex", ["true"], () => answered.push("second"), 0, TIMEOUT_MS);
     });
     assert.deepEqual(answered, ["first"], "the callback ran and armed the same id again");
-    const debounce = shell.timers[0];
-    assert.equal(debounce.running, true, "which left its debounce Timer waiting");
+    const waiting = shell.entries["iconIndex"].timer;
+    assert.equal(waiting.running, true, "which opened a window of its own");
     shell.flush();
-    assert.deepEqual(Object.keys(shell.entries), ["iconIndex"], "the entry armed again survives");
-    assert.equal(debounce.destroyed, false, "and so does the Timer that is waiting");
-    assert.equal(debounce.running, true, "still waiting to launch");
-    fire(debounce);
-    exit(shell.processes[1], 0);
+    assert.deepEqual(Object.keys(shell.entries), ["iconIndex"], "the entry it armed survives");
+    assert.equal(waiting.destroyed, false, "and so does the Timer it is waiting on");
+    assert.equal(waiting.running, true, "still waiting to launch");
+    fire(waiting);
+    exit(shell.processes[shell.processes.length - 1], 0);
     shell.flush();
     assert.deepEqual(answered, ["first", "second"], "so the second command is not dropped");
-    assert.deepEqual(Object.keys(shell.entries), [], "and its own end retires the entry");
-    assert.equal(debounce.destroyed, true, "with the Timer that launched it");
+    assert.deepEqual(Object.keys(shell.entries), [], "and its own launch retired its entry");
+    assert.equal(waiting.destroyed, true, "with the Timer that launched it");
 });
 
-test("a run whose entry an overlapping run already retired retires nothing else", () => {
+test("a run that ends after another run of its id retires nothing", () => {
     const shell = makeShell();
     const answered = [];
-    // _launchProc leaves the entry in place, so arming the id during a run launches a second.
+    // A call after a launch opens a new window, so two runs of one id can be in flight.
     shell.runCommand("iconIndex", ["true"], () => answered.push("first"), 0, TIMEOUT_MS);
     fire(shell.timers[0]);
     shell.runCommand("iconIndex", ["true"], () => answered.push("second"), 0, TIMEOUT_MS);
-    fire(shell.timers[0]);
+    fire(shell.entries["iconIndex"].timer);
     assert.equal(shell.processes.length, 2, "both runs of the id have a child");
 
-    // The run launched second finishes first and retires the entry both were launched from.
+    // The run launched second exits and flushes first.
     exit(shell.processes[1], 0);
     shell.flush();
-    assert.deepEqual(Object.keys(shell.entries), [], "the entry is gone before the first run ends");
+    assert.deepEqual(Object.keys(shell.entries), [], "no entry is left for either run");
 
-    // A third call therefore builds a fresh entry, whose Timer is waiting to launch.
+    // A third call arms the id while the first run is still in flight.
     shell.runCommand("iconIndex", ["true"], () => answered.push("third"), 0, TIMEOUT_MS);
-    const waiting = shell.timers[shell.timers.length - 1];
-    assert.equal(waiting.running, true, "the fresh entry's Timer is waiting");
+    const waiting = shell.entries["iconIndex"].timer;
+    assert.equal(waiting.running, true, "its Timer is waiting to launch");
 
     exit(shell.processes[0], 0);
     shell.flush();
     assert.deepEqual(Object.keys(shell.entries), ["iconIndex"],
-        "the first run must not retire an entry it was never launched from");
+        "a run that ends must not retire an entry armed after it launched");
     assert.equal(waiting.destroyed, false, "nor destroy the Timer that entry is waiting on");
 
     fire(waiting);
+    assert.equal(shell.processes.length, 3, "so the third command reaches a child");
     exit(shell.processes[2], 0);
     shell.flush();
-    assert.deepEqual(answered, ["second", "first", "third"], "so no command is silently dropped");
-    assert.deepEqual(Object.keys(shell.entries), [], "and the third run retires its own entry");
+    assert.deepEqual(answered, ["second", "first", "third"], "and every command answers");
 });
