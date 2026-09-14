@@ -91,6 +91,7 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	srv.Register("clipboard", "clipboard.clearHistory", m.handleClearHistory)
 	srv.Register("clipboard", "clipboard.getConfig", m.handleGetConfig)
 	srv.Register("clipboard", "clipboard.setConfig", m.handleSetConfig)
+	srv.CoalesceBroadcasts("clipboard")
 	srv.RegisterSnapshot("clipboard", func() any { return m.snapshot.Load() })
 
 	ctx, cancel := context.WithCancel(context.Background())

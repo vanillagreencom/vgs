@@ -41,6 +41,7 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	m := &Manager{srv: srv, log: log, done: make(chan struct{}), state: state}
 	srv.Register("evdev", "evdev.getState", m.handleGetState)
 	srv.Register("evdev", "evdev.subscribe", m.handleGetState)
+	srv.CoalesceBroadcasts("evdev")
 	srv.RegisterSnapshot("evdev", m.snapshot)
 	m.wg.Add(1)
 	go m.poll()

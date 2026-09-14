@@ -170,12 +170,6 @@ Singleton {
     function applyPrinterSnapshot(data) {
         if (!data)
             return;
-        if (data.error) {
-            // Failed snapshot ({printers: [], error}): keep the last good list.
-            printersError = String(data.error);
-            log.warn("CUPS snapshot failed:", printersError);
-            return;
-        }
         if (!data.printers) {
             // Mutation broadcasts carry {changed: true} with no printer list.
             getState();

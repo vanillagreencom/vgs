@@ -27,8 +27,11 @@ CALLSITE_INTERNAL_RE = re.compile(r'\bsendRequest\(\s*"([a-zA-Z0-9._]+)"')
 CALLSITE_EXTERNAL_RE = re.compile(r'VGSBackendService\.sendRequest\(\s*"([a-zA-Z0-9._]+)"')
 APIGATE_RE = re.compile(r'\.apiVersion\s*(?:>=|>|<=|<|===|!==|==)\s*[0-9]+')
 # Literal Go route registrations; variable arguments need the patterns below.
-GO_SERVER_REGISTER_RE = re.compile(r'\.Register\(\s*"[^"]+"\s*,\s*"([a-zA-Z0-9._]+)"')
-GO_ROUTE_RE = re.compile(r'(?:register|Register|Handle|handle|route|Route)\(\s*"([a-zA-Z0-9._]+)"')
+# The server's method-registration family: Register and RegisterLatest both take
+# (capability, method). RegisterSnapshot and RegisterSnapshotRefresh are not in
+# it — their first argument is a service name, not a capability.
+GO_SERVER_REGISTER_RE = re.compile(r'\.Register(?:Latest)?\(\s*"[^"]+"\s*,\s*"([a-zA-Z0-9._]+)"')
+GO_ROUTE_RE = re.compile(r'(?:register|Register(?:Latest)?|Handle|handle|route|Route)\(\s*"([a-zA-Z0-9._]+)"')
 # Loop registrations: handler maps (`map[string]server.HandlerFunc{ "m": h, ... }`)
 # and method-name slices (`methods = []string{ "m", ... }`) whose entries are
 # passed to Register via a variable, invisible to the literal-argument regexes.
@@ -73,6 +76,10 @@ def collect_go_methods() -> dict[str, list[str]]:
     if not BACKEND_ROOT.is_dir():
         return methods
     for path in sorted(BACKEND_ROOT.rglob("*.go")):
+        # A _test.go file is compiled only into its test binary, so a method it
+        # registers can never reach a client and owes methods.json nothing.
+        if path.name.endswith("_test.go"):
+            continue
         rel = str(path.relative_to(REPO_ROOT))
         text = path.read_text(encoding="utf-8", errors="replace")
         for m in GO_SERVER_REGISTER_RE.findall(text):

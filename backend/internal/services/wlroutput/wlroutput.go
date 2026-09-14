@@ -13,15 +13,29 @@ import (
 
 	"vshell/backend/internal/compositor"
 	"vshell/backend/internal/execbound"
+	"vshell/backend/internal/refresh"
 	"vshell/backend/internal/server"
 )
 
 const timeout = 5 * time.Second
 
+// refreshSettle lets a run of subscribe frames collapse into one compositor
+// query.
+const refreshSettle = 200 * time.Millisecond
+
 type Manager struct {
 	command string
 	backend string
 	log     *slog.Logger
+
+	// state owns the newest successful compositor query and the goroutine that
+	// refreshes it. Subscribe reads it instead of forking hyprctl on the
+	// subscribing connection.
+	state *refresh.Service[State]
+
+	// query is the compositor's own output listing, bound once from the
+	// detected backend so the choice is not re-derived per call.
+	query func() (State, error)
 }
 
 type State struct {
@@ -120,36 +134,37 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	m := &Manager{command: command, backend: backend, log: log}
+	m := newManager(srv, command, backend, log)
 	srv.Register("wlroutput", "wlroutput.getState", m.handleGetState)
 	srv.Register("wlroutput", "wlroutput.subscribe", m.handleGetState)
 	srv.Register("wlroutput", "wlroutput.applyConfiguration", rejectWrite)
 	srv.Register("wlroutput", "wlroutput.testConfiguration", rejectWrite)
-	srv.RegisterSnapshot("wlroutput", func() any {
-		state, err := m.state()
-		if err != nil {
-			return map[string]any{"outputs": []any{}, "serial": 0, "backend": backend, "error": err.Error()}
-		}
-		return state
-	})
+	srv.CoalesceBroadcasts("wlroutput")
+	srv.RegisterSnapshot("wlroutput", m.state.Cached)
+	srv.RegisterSnapshotRefresh("wlroutput", m.state.Kick)
 	return m, nil
 }
 
-func (m *Manager) Close() {}
+func (m *Manager) Close() { m.state.Close() }
 
 func (m *Manager) handleGetState(json.RawMessage) (any, error) {
-	return m.state()
+	return m.state.Query()
 }
 
 func rejectWrite(json.RawMessage) (any, error) {
 	return nil, fmt.Errorf("wlroutput configuration writes are disabled; VGS display config owns compositor layout")
 }
 
-func (m *Manager) state() (State, error) {
-	if m.backend == "niri" {
-		return m.niriState()
+// newManager binds the compositor's own output listing once, so the choice of
+// backend is not re-derived on every query.
+func newManager(srv refresh.Broadcaster, command, backend string, log *slog.Logger) *Manager {
+	m := &Manager{command: command, backend: backend, log: log}
+	m.query = m.hyprlandState
+	if backend == "niri" {
+		m.query = m.niriState
 	}
-	return m.hyprlandState()
+	m.state = refresh.NewService(srv, log, "wlroutput", refreshSettle, func() (State, error) { return m.query() })
+	return m
 }
 
 func (m *Manager) hyprlandState() (State, error) {

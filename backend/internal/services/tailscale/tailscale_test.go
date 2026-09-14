@@ -271,3 +271,57 @@ func TestOutputSalvagesResponseHeldByDescendant(t *testing.T) {
 		t.Fatalf("BackendState = %q, want %q", status.BackendState, "Running")
 	}
 }
+
+// Before the first status read there is nothing to report. A disconnected
+// state would reach the shell as fact and show the tailnet as down until the
+// watcher's first pulse lands.
+func TestCachedStateBeforeFirstStatusReportsNothing(t *testing.T) {
+	var m Manager
+	if got := m.state.Cached(); got != nil {
+		t.Fatalf("cached state before the first status read = %v, want nothing to send", got)
+	}
+}
+
+// status records into the source RegisterSnapshot serves, so the watcher's
+// pulse and any getStatus call both warm what the next subscribe reads.
+func TestStatusWarmsTheRegisteredSource(t *testing.T) {
+	dir := t.TempDir()
+	statusPath := filepath.Join(dir, "status.json")
+	writeFile(t, statusPath, statusFixture)
+	stub := filepath.Join(dir, "tailscale")
+	writeStub(t, stub, statusPath, "  exit 0\n")
+
+	m := &Manager{log: discardLogger(), tailscale: stub}
+	if _, err := m.status(); err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	got, ok := m.state.Cached().(State)
+	if !ok {
+		t.Fatalf("cached value is %T, want State", m.state.Cached())
+	}
+	if !got.Connected || got.BackendState != "Running" {
+		t.Fatalf("cached state = %+v, want the status read recorded", got)
+	}
+}
+
+// Every site that publishes a status read goes through recordedState, so the
+// wire carries what the cache holds. A read that finished last would otherwise
+// put its older state on the wire, and the wire is what the shell applies.
+func TestRecordedStatePrefersTheNewestRead(t *testing.T) {
+	var m Manager
+	own := State{BackendState: "this caller's read"}
+
+	if got := m.recordedState(own); got.BackendState != own.BackendState {
+		t.Fatalf("recordedState = %q with nothing recorded, want the caller's own read", got.BackendState)
+	}
+
+	// Another caller's read lands first, as an overlapping status call does.
+	if _, err := m.state.Query(func() (State, error) {
+		return State{BackendState: "a later read"}, nil
+	}); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if got := m.recordedState(own); got.BackendState != "a later read" {
+		t.Fatalf("recordedState = %q; it must publish the recorded state, not the caller's own older read", got.BackendState)
+	}
+}

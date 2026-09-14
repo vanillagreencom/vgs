@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"vshell/backend/internal/execbound"
+	"vshell/backend/internal/refresh"
 	"vshell/backend/internal/server"
 )
 
@@ -22,6 +23,10 @@ const (
 	// holds the helper pipes rather than the backend pipes. execbound limits
 	// backend pipe reads if a descendant inherits them.
 	waitDelay = execbound.DefaultWaitDelay
+	// refreshSettle lets a run of subscribe frames collapse into one helper run.
+	// The helper enumerates every backlight and DDC display, which is the
+	// slowest snapshot this daemon owns.
+	refreshSettle = 250 * time.Millisecond
 )
 
 type Manager struct {
@@ -29,6 +34,11 @@ type Manager struct {
 	timeout   time.Duration
 	waitDelay time.Duration
 	log       *slog.Logger
+
+	// state owns the newest successful helper listing and the goroutine that
+	// refreshes it. Subscribe reads it instead of running the helper on the
+	// subscribing connection.
+	state *refresh.Service[any]
 }
 
 type setParams struct {
@@ -47,26 +57,36 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 		return nil, err
 	}
 	m := &Manager{helper: helper, timeout: timeout, waitDelay: waitDelay, log: log}
+	m.state = refresh.NewService(srv, log, "brightness", refreshSettle, m.sweep)
 	srv.Register("brightness", "brightness.getState", m.handleGetState)
 	srv.Register("brightness", "brightness.rescan", m.handleGetState)
-	srv.Register("brightness", "brightness.setBrightness", m.handleSetBrightness)
+	// Keyed by device: a write to one display must never replace the waiting
+	// write to another, or a lock blackout leaves a display lit.
+	srv.RegisterLatest("brightness", "brightness.setBrightness", m.handleSetBrightness, deviceKey)
 	srv.Register("brightness", "brightness.increment", m.handleIncrement)
 	srv.Register("brightness", "brightness.decrement", m.handleDecrement)
 	srv.Register("brightness", "brightness.subscribe", m.handleGetState)
-	srv.RegisterSnapshot("brightness", func() any {
-		state, err := m.state()
-		if err != nil {
-			return map[string]any{"devices": []any{}, "errors": []string{err.Error()}}
-		}
-		return state
-	})
+	srv.CoalesceBroadcasts("brightness")
+	srv.RegisterSnapshot("brightness", m.state.Cached)
+	srv.RegisterSnapshotRefresh("brightness", m.state.Kick)
 	return m, nil
 }
 
-func (m *Manager) Close() {}
+func (m *Manager) Close() { m.state.Close() }
+
+// deviceKey is the coalescing key for a per-display setter. Params that do not
+// decode share the empty device the handler rejects, so a malformed call cannot
+// displace a real write to a named display.
+func deviceKey(params json.RawMessage) string {
+	var p setParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return ""
+	}
+	return p.Device
+}
 
 func (m *Manager) handleGetState(json.RawMessage) (any, error) {
-	return m.state()
+	return m.state.Query()
 }
 
 func (m *Manager) handleSetBrightness(params json.RawMessage) (any, error) {
@@ -111,9 +131,7 @@ func (m *Manager) handleDecrement(params json.RawMessage) (any, error) {
 	return m.call("decrement", p.Device, strconv.Itoa(p.Step), "--json")
 }
 
-func (m *Manager) state() (any, error) {
-	return m.call("list", "--json")
-}
+func (m *Manager) sweep() (any, error) { return m.call("list", "--json") }
 
 func (m *Manager) call(args ...string) (any, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), m.timeout)

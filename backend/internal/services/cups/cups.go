@@ -18,10 +18,15 @@ import (
 	"time"
 
 	"vshell/backend/internal/execbound"
+	"vshell/backend/internal/refresh"
 	"vshell/backend/internal/server"
 )
 
 const timeout = 20 * time.Second
+
+// refreshSettle lets a run of subscribe frames, such as the one a popout sends
+// on every open, collapse into one lpstat sweep.
+const refreshSettle = 250 * time.Millisecond
 
 var (
 	nameRe        = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
@@ -53,6 +58,16 @@ type Manager struct {
 	srv  *server.Server
 	cmds map[string]string
 	log  *slog.Logger
+
+	// state owns the newest successful lpstat sweep and the goroutine that
+	// refreshes it. Subscribe reads it instead of forking lpstat on the
+	// subscribing connection.
+	state *refresh.Service[PrinterList]
+}
+
+// PrinterList is the cups service's whole state on the wire.
+type PrinterList struct {
+	Printers []Printer `json:"printers"`
 }
 
 type Printer struct {
@@ -167,6 +182,7 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 		}
 	}
 	m := &Manager{srv: srv, cmds: cmds, log: log}
+	m.state = refresh.NewService(srv, log, "cups", refreshSettle, m.sweep)
 	srv.Register("cups", "cups.getPrinters", m.handleGetPrinters)
 	srv.Register("cups", "cups.getJobs", m.handleGetJobs)
 	srv.Register("cups", "cups.pausePrinter", m.handlePausePrinter)
@@ -191,19 +207,26 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	srv.Register("cups", "cups.addPrinterToClass", m.handleAddPrinterToClass)
 	srv.Register("cups", "cups.removePrinterFromClass", m.handleRemovePrinterFromClass)
 	srv.Register("cups", "cups.deleteClass", m.handleDeleteClass)
-	srv.RegisterSnapshot("cups", func() any {
-		printers, err := m.printers()
-		if err != nil {
-			return map[string]any{"printers": []any{}, "error": err.Error()}
-		}
-		return map[string]any{"printers": printers}
-	})
+	// Not declared to CoalesceBroadcasts: this service emits both a printer list
+	// and a bare changed marker under one name, so neither subsumes the other.
+	srv.RegisterSnapshot("cups", m.state.Cached)
+	srv.RegisterSnapshotRefresh("cups", m.state.Kick)
 	return m, nil
 }
 
-func (m *Manager) Close() {}
+func (m *Manager) Close() { m.state.Close() }
 
 func (m *Manager) handleGetPrinters(json.RawMessage) (any, error) { return m.printers() }
+
+// printers runs the lpstat sweep and records a success, so a method call warms
+// what the next subscribe reads rather than leaving a cold cache behind.
+func (m *Manager) printers() ([]Printer, error) {
+	list, err := m.state.Query()
+	if err != nil {
+		return nil, err
+	}
+	return list.Printers, nil
+}
 
 func (m *Manager) handleGetJobs(params json.RawMessage) (any, error) {
 	var p printerParams
@@ -561,7 +584,15 @@ func (m *Manager) handleDeleteClass(params json.RawMessage) (any, error) {
 	return m.ok(m.run("lpadmin", "-x", p.ClassName))
 }
 
-func (m *Manager) printers() ([]Printer, error) {
+func (m *Manager) sweep() (PrinterList, error) {
+	printers, err := m.scanPrinters()
+	if err != nil {
+		return PrinterList{}, err
+	}
+	return PrinterList{Printers: printers}, nil
+}
+
+func (m *Manager) scanPrinters() ([]Printer, error) {
 	urisOut, err := m.outputAllowEmpty("lpstat", "-v")
 	if err != nil {
 		return nil, err

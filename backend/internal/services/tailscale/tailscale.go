@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"vshell/backend/internal/execbound"
+	"vshell/backend/internal/refresh"
 	"vshell/backend/internal/server"
 )
 
@@ -32,6 +33,13 @@ type Manager struct {
 	pushing    bool
 	pushMissed bool
 	lastPush   time.Time
+
+	// state holds the newest successful status read. Subscribe reads it instead
+	// of forking tailscale on the subscribing connection. This service does not
+	// use refresh.Service: its watcher in watch.go already owns the coalescing,
+	// with a single-flight slot and a minimum interval the shared loop has no
+	// notion of.
+	state refresh.Source[State]
 }
 
 type State struct {
@@ -139,13 +147,13 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	srv.Register("tailscale", "tailscale.setExitNode", m.handleSetExitNode)
 	srv.Register("tailscale", "tailscale.setAllowLanAccess", m.handleSetAllowLANAccess)
 	srv.Register("tailscale", "tailscale.setAcceptRoutes", m.handleSetAcceptRoutes)
-	srv.RegisterSnapshot("tailscale", func() any {
-		state, err := m.status()
-		if err != nil {
-			return map[string]any{"connected": false, "peers": []any{}, "error": err.Error()}
-		}
-		return state
-	})
+	// Not declared to CoalesceBroadcasts: handleConnect broadcasts an auth
+	// frame whose AuthURL no status frame carries, so a status frame replacing
+	// an unread auth frame drops the login link for every other subscriber.
+	srv.RegisterSnapshot("tailscale", m.state.Cached)
+	// pulse coalesces the read onto the watcher's own timer goroutine and
+	// broadcasts the result.
+	srv.RegisterSnapshotRefresh("tailscale", m.pulse)
 	// Event-only capability: it carries no method of its own, it tells the
 	// shell that this backend pushes tailscale updates instead of only
 	// answering them, so the shell can drop its re-fetch cadence to a bare
@@ -166,8 +174,20 @@ func (m *Manager) handleRefresh(json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	state = m.recordedState(state)
 	m.srv.Broadcast("tailscale", state)
 	return state, nil
+}
+
+// recordedState returns the newest status read, which is a later read's result
+// when two overlapped. Every site that publishes a read goes through it, so the
+// wire carries what the cache holds; otherwise a read that finished last would
+// put its older state on the wire, and the wire is what the shell applies.
+func (m *Manager) recordedState(read State) State {
+	if state, ok := m.state.Value(); ok {
+		return state
+	}
+	return read
 }
 
 func (m *Manager) handleConnect(json.RawMessage) (any, error) {
@@ -231,7 +251,12 @@ func (m *Manager) handleSetAcceptRoutes(params json.RawMessage) (any, error) {
 	return m.handleRefresh(nil)
 }
 
-func (m *Manager) status() (State, error) {
+// status runs the live read and records a success, so the watcher's pulse and
+// any getStatus call both warm what the next subscribe reads. Two reads can be
+// in flight at once, and Source keeps the newer result.
+func (m *Manager) status() (State, error) { return m.state.Query(m.readStatus) }
+
+func (m *Manager) readStatus() (State, error) {
 	out, err := m.output("status", "--json")
 	if err != nil {
 		return State{}, err
@@ -281,6 +306,8 @@ func (m *Manager) authState(authURL string) State {
 	state, err := m.status()
 	if err != nil {
 		state = State{BackendState: "NeedsLogin", Peers: []Peer{}, Health: []string{}}
+	} else {
+		state = m.recordedState(state)
 	}
 	state.AuthURL = authURL
 	if state.BackendState == "" {
