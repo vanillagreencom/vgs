@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"vshell/backend/internal/refresh"
 	"vshell/backend/internal/server"
 )
 
@@ -39,7 +40,9 @@ type State struct {
 
 type Manager struct {
 	log *slog.Logger
-	srv *server.Server
+	// srv is narrowed to what this service publishes through, so a test can
+	// read the frames the scheduler emits.
+	srv refresh.Broadcaster
 
 	mu         sync.RWMutex
 	config     Config
@@ -87,9 +90,13 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	m.state = State{Config: m.config}
 
 	srv.Register("wallpaper", "wallpaper.getState", m.handleGetState)
-	srv.Register("wallpaper", "wallpaper.setConfig", m.handleSetConfig)
+	srv.RegisterLatest("wallpaper", "wallpaper.setConfig", m.handleSetConfig, server.WholeStateKey)
 	srv.Register("wallpaper", "wallpaper.trigger", m.handleTrigger)
 	srv.Register("wallpaper", "wallpaper.subscribe", m.handleSubscribe)
+	// Not declared to CoalesceBroadcasts: a frame carries CycleSeq and Target,
+	// the per-monitor rotation the shell acts on once. The scheduler emits one
+	// frame per due monitor back to back, so replacing an unread one loses that
+	// monitor's rotation outright.
 	srv.RegisterSnapshot("wallpaper", func() any { return m.GetState() })
 
 	m.wg.Add(1)

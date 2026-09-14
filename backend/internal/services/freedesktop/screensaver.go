@@ -153,6 +153,8 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	srv.Register("freedesktop", "freedesktop.accounts.setIconFile", m.handleSetIconFile)
 	srv.Register("freedesktop", "freedesktop.settings.getColorScheme", m.handleGetColorScheme)
 	srv.Register("freedesktop", "freedesktop.settings.setIconTheme", m.handleSetIconTheme)
+	srv.CoalesceBroadcasts("freedesktop")
+	srv.CoalesceBroadcasts("freedesktop.screensaver")
 	srv.RegisterSnapshot("freedesktop", func() any { return m.GetState() })
 	srv.AddCapability("freedesktop")
 	srv.RegisterSnapshot("freedesktop.screensaver", func() any { return m.GetScreensaverState() })

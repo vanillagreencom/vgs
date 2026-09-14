@@ -156,6 +156,7 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	srv.Register("sysupdate", "sysupdate.setInterval", m.handleSetInterval)
 	srv.Register("sysupdate", "sysupdate.acquire", m.handleAcquire)
 	srv.Register("sysupdate", "sysupdate.release", m.handleRelease)
+	srv.CoalesceBroadcasts("sysupdate")
 	srv.RegisterSnapshot("sysupdate", m.snapshot)
 	return m, nil
 }

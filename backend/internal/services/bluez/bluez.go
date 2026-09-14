@@ -15,6 +15,7 @@ import (
 	"github.com/godbus/dbus/v5"
 	"github.com/godbus/dbus/v5/introspect"
 
+	"vshell/backend/internal/refresh"
 	"vshell/backend/internal/server"
 )
 
@@ -30,6 +31,10 @@ const (
 	agentCapability = "KeyboardDisplay"
 )
 
+// refreshSettle lets a burst of PropertiesChanged signals, or a run of
+// subscribe frames, collapse into one sweep.
+const refreshSettle = 200 * time.Millisecond
+
 type Manager struct {
 	srv *server.Server
 	log *slog.Logger
@@ -44,12 +49,12 @@ type Manager struct {
 	// Agent1.Cancel means "cancel the current request", never every pending
 	// one (concurrent pairings must not reject each other).
 	currentPrompt string
-	lastState     State
 
 	stop chan struct{}
-	// kick coalesces D-Bus signal bursts (RSSI churn during discovery) into
-	// single-flight state broadcasts; see broadcastLoop.
-	kick chan struct{}
+	// state owns the last successful sweep and the goroutine that refreshes it,
+	// coalescing D-Bus signal bursts (RSSI churn during discovery) and subscribe
+	// kicks into single-flight state broadcasts.
+	state *refresh.Service[State]
 }
 
 type State struct {
@@ -118,24 +123,27 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	if err != nil {
 		return nil, fmt.Errorf("connect system bus: %w", err)
 	}
-	m := &Manager{
-		srv:       srv,
-		log:       log,
-		conn:      conn,
-		pending:   map[string]chan promptReply{},
-		lastState: State{Devices: []Device{}, PairedDevices: []Device{}, ConnectedDevices: []Device{}},
-		stop:      make(chan struct{}),
-		kick:      make(chan struct{}, 1),
-	}
+	m := newManager(srv, conn, log, nil)
+	// newManager starts the refresh goroutine, so every path that gives up on
+	// this Manager has to release it as well as the bus. Releasing here rather
+	// than at each return means a later early return cannot leak either: on a
+	// machine with no adapter the goroutine would otherwise stay parked for the
+	// life of the daemon.
+	registered := false
+	defer func() {
+		if !registered {
+			m.state.Close()
+			conn.Close()
+		}
+	}()
+
 	adapter, err := m.findAdapter()
 	if err != nil {
-		conn.Close()
 		return nil, err
 	}
 	m.adapterPath = adapter
 	m.agent = &agent{manager: m}
 	if err := m.registerAgent(); err != nil {
-		conn.Close()
 		return nil, err
 	}
 	if err := m.watchSignals(); err != nil {
@@ -158,13 +166,39 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	} {
 		srv.Register("bluetooth", method, handler)
 	}
-	srv.RegisterSnapshot("bluetooth", func() any { return m.GetState() })
-	go m.broadcastLoop()
+	// "bluetooth.pairing" stays uncoalesced: each frame is one device's prompt.
+	srv.CoalesceBroadcasts("bluetooth")
+	srv.RegisterSnapshot("bluetooth", m.state.Cached)
+	srv.RegisterSnapshotRefresh("bluetooth", m.state.Kick)
+	registered = true
 	return m, nil
+}
+
+// newManager is the only way to build a Manager, so no Manager exists without
+// the refresh service its D-Bus signal goroutine kicks. watchSignals calls
+// broadcastSoon for every org.bluez property change, and bluetoothd emits one
+// within microseconds of the match being installed when an adapter or a paired
+// device is present; a Manager assembled field by field would have raced that
+// goroutine against the assignment. sweep overrides the object sweep, for tests
+// with no system bus; nil takes the real one.
+func newManager(srv *server.Server, conn *dbus.Conn, log *slog.Logger, sweep func() (State, error)) *Manager {
+	m := &Manager{
+		srv:     srv,
+		log:     log,
+		conn:    conn,
+		pending: map[string]chan promptReply{},
+		stop:    make(chan struct{}),
+	}
+	if sweep == nil {
+		sweep = m.sweep
+	}
+	m.state = refresh.NewService(srv, log, "bluetooth", refreshSettle, sweep)
+	return m
 }
 
 func (m *Manager) Close() {
 	close(m.stop)
+	m.state.Close()
 	if m.conn == nil {
 		return
 	}
@@ -295,21 +329,11 @@ func (m *Manager) reinitialize() {
 	m.broadcastSoon()
 }
 
-// GetState is the best-effort variant of GetStateChecked, for callers with no
-// error channel (snapshots, broadcast helpers): a transient D-Bus failure
-// returns the last known state instead of an empty powered-off one.
-func (m *Manager) GetState() State {
-	state, err := m.GetStateChecked()
-	if err != nil {
-		m.log.Warn("bluez state query failed, using last known state", "err", err)
-		m.mu.Lock()
-		state = m.lastState
-		m.mu.Unlock()
-	}
-	return state
-}
+// GetStateChecked runs the object sweep and records a success, so a method call
+// warms what the next subscribe reads.
+func (m *Manager) GetStateChecked() (State, error) { return m.state.Query() }
 
-func (m *Manager) GetStateChecked() (State, error) {
+func (m *Manager) sweep() (State, error) {
 	objects, err := m.managedObjects()
 	if err != nil {
 		return State{Devices: []Device{}, PairedDevices: []Device{}, ConnectedDevices: []Device{}}, err
@@ -347,9 +371,6 @@ func (m *Manager) GetStateChecked() (State, error) {
 			state.ConnectedDevices = append(state.ConnectedDevices, dev)
 		}
 	}
-	m.mu.Lock()
-	m.lastState = state
-	m.mu.Unlock()
 	return state, nil
 }
 
@@ -515,37 +536,9 @@ func (m *Manager) deviceFromParams(params json.RawMessage) (dbus.BusObject, erro
 	return m.conn.Object(bluezDest, path), nil
 }
 
-// broadcastSoon coalesces pending D-Bus events. broadcastLoop serializes its
-// state reads and broadcasts so those reads cannot complete out of order.
-func (m *Manager) broadcastSoon() {
-	select {
-	case m.kick <- struct{}{}:
-	default:
-	}
-}
-
-func (m *Manager) broadcastLoop() {
-	for {
-		select {
-		case <-m.stop:
-			return
-		case <-m.kick:
-		}
-		select {
-		case <-m.stop:
-			return
-		case <-time.After(200 * time.Millisecond):
-		}
-		state, err := m.GetStateChecked()
-		if err != nil {
-			// Keep the subscribers' last-known state instead of broadcasting
-			// an empty powered-off snapshot as truth.
-			m.log.Warn("bluez state refresh failed, skipping broadcast", "err", err)
-			continue
-		}
-		m.srv.Broadcast("bluetooth", state)
-	}
-}
+// broadcastSoon asks for a state sweep. The refresh service serializes those
+// sweeps and their broadcasts so two reads cannot publish out of order.
+func (m *Manager) broadcastSoon() { m.state.Kick() }
 
 func validateDevicePath(value string) (dbus.ObjectPath, error) {
 	if value == "" || strings.ContainsAny(value, "\x00\r\n") {
