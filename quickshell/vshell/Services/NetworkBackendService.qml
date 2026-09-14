@@ -218,16 +218,21 @@ Singleton {
     }
 
     // A lost backend must not leave stale wifi/ethernet/VPN state marked
-    // initialized; the next advertisement refetches it.
+    // initialized; the next advertisement refetches it. Auto-scan follows the
+    // same state rather than the moment addRef() ran: NetworkService can move
+    // references here before this service's networkAvailable binding updates.
     function syncNetworkState() {
         if (!networkAvailable) {
             stateInitialized = false;
+            stopAutoScan();
             return;
         }
         if (!stateInitialized) {
             stateInitialized = true;
             getState();
         }
+        if (refCount > 0)
+            startAutoScan();
     }
 
     function handleCredentialsRequest(data) {

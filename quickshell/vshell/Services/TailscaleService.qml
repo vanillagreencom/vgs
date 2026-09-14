@@ -19,19 +19,21 @@ Singleton {
         }
     }
 
+    // Returns whether it requested status, so a caller fetches at most once.
     function ensureSubscription() {
         if (refCount <= 0)
-            return;
+            return false;
         if (!VGSBackendService.isConnected)
-            return;
+            return false;
         if (VGSBackendService.activeSubscriptions.includes("tailscale"))
-            return;
+            return false;
         if (VGSBackendService.activeSubscriptions.includes("all"))
-            return;
+            return false;
         VGSBackendService.addSubscription("tailscale");
-        if (available) {
-            getStatus();
-        }
+        if (!available)
+            return false;
+        getStatus();
+        return true;
     }
 
     property bool connected: false
@@ -184,8 +186,8 @@ Singleton {
         syncAvailable();
         if (!backendPath)
             return;
-        getStatus();
-        ensureSubscription();
+        if (!ensureSubscription())
+            getStatus();
     }
 
     function syncAvailable() {

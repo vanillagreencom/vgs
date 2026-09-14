@@ -21,18 +21,21 @@ Singleton {
         }
     }
 
+    // Returns whether it requested state, so a caller fetches at most once.
     function ensureSubscription() {
         if (refCount <= 0)
-            return;
+            return false;
         if (!VGSBackendService.isConnected)
-            return;
+            return false;
         if (VGSBackendService.activeSubscriptions.includes("cloudsync"))
-            return;
+            return false;
         if (VGSBackendService.activeSubscriptions.includes("all"))
-            return;
+            return false;
         VGSBackendService.addSubscription("cloudsync");
-        if (available)
-            getState();
+        if (!available)
+            return false;
+        getState();
+        return true;
     }
 
     readonly property bool available: VGSBackendService.has("cloudsync")
@@ -281,11 +284,12 @@ Singleton {
             stateInitialized = false;
             return;
         }
+        const fetched = ensureSubscription();
         if (!stateInitialized) {
             stateInitialized = true;
-            getState();
+            if (!fetched)
+                getState();
         }
-        ensureSubscription();
     }
 
     // The shell reports backend state transitions through the user-enabled toasts.
