@@ -119,6 +119,7 @@ qml       | scripts/test-switcher-source.js
 qml       | scripts/test-thumb-sweep.js
 qml       | scripts/test-notification-history-trim.js
 qml       | scripts/test-theme-startup.js
+qml       | scripts/test-theme-apply-queue.js
 qml       | scripts/test-flatline-controls.js
 qml       | scripts/test-brightness-scan-ordering.js
 qml       | scripts/test-backend-capabilities.js

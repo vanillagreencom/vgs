@@ -89,8 +89,32 @@ def thumb_for(src: Path) -> Optional[Path]:
 def temp_path(out: Path) -> Path:
     """Return a temporary filename ending in .jpg.
     ImageMagick and ffmpeg select output format from the final extension.
+    The building process's pid sits in the name so a sweep that is killed before
+    its rename can be told from one still decoding; `temp_owner_pid` reads it.
     scripts/test-wallpaper-thumbs.py checks the extension placement."""
     return out.with_name(f".{out.stem}.{os.getpid()}.{time.time_ns()}.jpg")
+
+
+def temp_owner_pid(name: str) -> Optional[int]:
+    """The pid building `name`, or None when `temp_path` did not mint the name.
+    A cache key is a sha256 digest and carries no dot, so the shape is exact."""
+    parts = name.split(".")
+    if len(parts) != 5 or parts[0] != "" or parts[4] != "jpg" or not parts[2].isdigit():
+        return None
+    pid = int(parts[2])
+    return pid if pid > 0 else None
+
+
+def owner_running(pid: int) -> bool:
+    """Whether `pid` is still a live process. A process this user cannot signal
+    is live, so a wrong answer here always errs toward keeping the file."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 def build_one(src: Path) -> Optional[Path]:
@@ -175,28 +199,50 @@ def build_one(src: Path) -> Optional[Path]:
     return None
 
 
-def prune_orphans(paths: List[Path]) -> int:
-    """Drop cache entries no live wallpaper claims, building nothing. `paths`
-    must be the COMPLETE set, exactly as for build_all's prune — run over one
-    theme it would delete every other theme's thumbnails."""
-    wanted: set[str] = set()
-    for src in paths:
-        with contextlib.suppress(OSError):
-            wanted.add(thumb_name(src))
+def reclaimable(entry: Path, wanted: set[str]) -> bool:
+    """Whether a sweep may delete this cache entry.
+
+    A hidden name is a build in progress: the temp path keeps the .jpg suffix on
+    purpose (the rungs pick their format from it) and is absent from `wanted`, so
+    unlinking one mid-decode would break the rename that follows. A sweep the
+    shell kills mid-decode leaves that file behind with nothing left to rename
+    it, so the pid in the name is what separates the two. A pid the kernel has
+    since handed to another process reads as live and the file waits for the next
+    sweep, which is the safe direction: a live build never loses its temp file.
+    """
+    if not entry.name.endswith(".jpg") or not entry.is_file():
+        return False
+    if not entry.name.startswith("."):
+        return entry.name not in wanted
+    pid = temp_owner_pid(entry.name)
+    return pid is not None and not owner_running(pid)
+
+
+def _prune_to(wanted: set[str]) -> int:
+    """Delete every reclaimable cache entry outside `wanted`, building nothing.
+    `wanted` must be the keys of the COMPLETE wallpaper set: given one theme's
+    keys it deletes every other theme's thumbnails."""
     pruned = 0
     with contextlib.suppress(OSError):
         for entry in thumb_dir().iterdir():
-            # Hidden names are builds IN PROGRESS: a temp path keeps the .jpg
-            # suffix on purpose (the rungs pick their format from it) and is
-            # absent from `wanted`, so an unguarded sweep would unlink one
-            # mid-decode and break the rename that follows.
-            if (entry.is_file() and entry.name.endswith(".jpg")
-                    and not entry.name.startswith(".")
-                    and entry.name not in wanted):
+            if reclaimable(entry, wanted):
                 with contextlib.suppress(OSError):
                     entry.unlink()
                     pruned += 1
     return pruned
+
+
+def prune_orphans(paths: List[Path]) -> int:
+    """Drop cache entries no live wallpaper claims, for a caller that holds the
+    complete wallpaper set and no keys. A caller that has just derived the keys
+    passes them to `_prune_to` instead: a key mixes the source's size and mtime,
+    so deriving them twice lets a source rewritten in between resolve to a
+    different key here, and the entry the caller just built reads as an orphan."""
+    wanted: set[str] = set()
+    for src in paths:
+        with contextlib.suppress(OSError):
+            wanted.add(thumb_name(src))
+    return _prune_to(wanted)
 
 
 def build_all(paths: List[Path], prune: bool = False) -> Dict[str, Any]:
@@ -225,17 +271,6 @@ def build_all(paths: List[Path], prune: bool = False) -> Dict[str, Any]:
         else:
             built += 1
     if prune:
-        with contextlib.suppress(OSError):
-            for entry in thumb_dir().iterdir():
-                # Hidden names are builds IN PROGRESS: a temp path keeps the .jpg
-                # suffix on purpose (the rungs pick their format from it) and is
-                # absent from `wanted`, so an unguarded sweep would unlink one
-                # mid-decode and break the rename that follows.
-                if (entry.is_file() and entry.name.endswith(".jpg")
-                        and not entry.name.startswith(".")
-                        and entry.name not in wanted):
-                    with contextlib.suppress(OSError):
-                        entry.unlink()
-                        pruned += 1
+        pruned = _prune_to(wanted)
     return {"built": built, "reused": reused, "failed": failed,
             "pruned": pruned, "dir": str(thumb_dir())}

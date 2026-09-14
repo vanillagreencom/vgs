@@ -18,8 +18,8 @@ Two product calls are recorded here because they are behaviour, not mechanism: t
 - The write is synchronous and in-process — there is no helper call whose failure needs correlating, so `ThemeApplyReporter`'s machinery has nothing to correlate. A read-back answers the only failure it has (a refused write).
 - One setter, one behaviour: every surface that turns the mode on — switcher, dash button, Settings toggle, IPC — is seeded by construction, and there is no second enable path to keep in step.
 
-**Revisit When**: VGS-211 lands its wallpaper-mutation lock (this write is another mutation and should take the same lock), or a single-screen apply grows a need the service path has (color extraction, helper-side persistence).
+**Revisit When**: a single-screen apply grows a need the service path has (color extraction, helper-side persistence). It takes no mutation lock: [D019](D019-wallpaper-state-ownership.md) settles that this write reaches no helper, so there is nothing for a lock to order.
 
 **Verification**: `scripts/test-switcher-scope.js` — executes `applyRoute`, pins the guard order, the mode flip, the write and the read-back in `applyHere()`, and pins that `setPerMonitorWallpaper` seeds on the off-to-on edge BEFORE it flips the flag: all four maps (the two mode maps inside the `perModeWallpaper` guard), the cycling force-off, and `_mapWithMonitorValue`'s alias handling. Every pin has a planted mutant seen red.
 
-**References**: VGS-212, VGS-208 (PR #172), VGS-211.
+**References**: [D019](D019-wallpaper-state-ownership.md), VGS-212, VGS-208 (PR #172), VGS-211.

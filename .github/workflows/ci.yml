@@ -275,6 +275,7 @@ jobs:
           scripts/test-thumb-sweep.js
           scripts/test-notification-history-trim.js
           scripts/test-theme-startup.js
+          scripts/test-theme-apply-queue.js
           scripts/test-flatline-controls.js
           scripts/test-brightness-scan-ordering.js
           scripts/test-backend-capabilities.js

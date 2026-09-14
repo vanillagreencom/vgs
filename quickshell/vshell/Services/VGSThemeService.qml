@@ -109,8 +109,12 @@ Singleton {
     // applyCompleted also reports unrelated operations.
     signal applyFinished(string requestId, bool success, string message)
 
-    // Apply requests still running, keyed by a request id that is unique per
-    // CALL. Deliberately narrower than `busy`: `busy` counts every non-background
+    // Apply requests begun and not yet answered, keyed by a request id that is
+    // unique per CALL. Holds the request whose helper process is running and
+    // every request waiting in `_applyQueue`, which is what keeps a surface
+    // gated on `applyInFlight` — the Clear Wallpaper button among them — shut
+    // while a queued apply still has to run.
+    // Deliberately narrower than `busy`: `busy` counts every non-background
     // command, so gating a switcher's Enter on it blocks while an unrelated
     // `theme restyle` or per-app override from a settings tab runs, and unblocks
     // while the switcher's own background reads are still in flight.
@@ -120,10 +124,28 @@ Singleton {
     property int _applyRequestSeq: 0
     // The apply request that last claimed `selectedWallpaper`, or "" when none
     // does. Keyed on the REQUEST, never the path — see `_ownsWallpaperSlot`.
+    // It governs that optimistic UI value alone. The session write is not gated
+    // on it: every apply that succeeds commits its own wallpaper.
     property string _wallpaperSlotOwner: ""
 
+    // The apply whose helper process is running, or "" when none is. Only one
+    // APPLY runs at a time: two helper processes race each other for the helper's
+    // own mutation flock, so whichever wins it second is the last to write both
+    // the helper's state and, through its own callback, `session.json`. Two picks
+    // in quick succession would then settle on whichever the kernel let finish
+    // last rather than the one the user chose last. Dispatch order is the only
+    // thing that fixes execution order. The slot reaches `_runApply` alone; every
+    // other mutating subcommand this service launches still races an apply for
+    // that flock, and so does one MethodTheme launches, which D019 records.
+    property string _applyDispatched: ""
+    // Applies waiting for that slot, oldest first. First in, first out rather
+    // than superseding the waiting one: `applyFinished` carries success or
+    // failure and nothing else, and ThemeApplyReporter turns every non-success
+    // into an error toast, so a superseded apply has no honest outcome to send.
+    property var _applyQueue: []
+
     // `label` only makes the returned request id readable; it is NOT a Proc id
-    // — see `_runApply`. Every apply answers its own callback, so a token leaves
+    // — see `_dispatchApply`. Every apply answers its own callback, so a token leaves
     // `_applyInFlight` when its own `_finishApply` runs.
     function _beginApply(label) {
         _applyRequestSeq += 1;
@@ -145,6 +167,18 @@ Singleton {
         }
         if (_wallpaperSlotOwner === requestId)
             _wallpaperSlotOwner = "";
+        // Free the slot and start the next apply BEFORE the signals: a handler
+        // that throws returns into this frame, and past the emission it would
+        // strand the queue behind a slot nothing frees, leaving every later
+        // apply waiting forever.
+        if (_applyDispatched === requestId) {
+            _applyDispatched = "";
+            if (_applyQueue.length > 0) {
+                const waiting = _applyQueue[0];
+                _applyQueue = _applyQueue.slice(1);
+                _dispatchApply(waiting.requestId, waiting.args, waiting.callback);
+            }
+        }
         applyCompleted(success, message);
         applyFinished(requestId, success, message);
     }
@@ -165,8 +199,10 @@ Singleton {
     // backgroundTask: long-running helper calls (preview rendering) must not
     // count toward `busy`, or every Apply button goes dead for minutes.
     // `id` is this call's bookkeeping key in `_pending`; `procId` is the id Proc
-    // COALESCES on and defaults to it — `_runApply` is the one caller that
-    // wants them different.
+    // COALESCES on and defaults to it — `_dispatchApply` is the one caller that
+    // wants them different. Every other caller runs its subcommand here with no
+    // apply slot, so it takes the helper's mutation flock alongside an apply
+    // rather than behind it.
     function _run(id, args, callback, timeoutMs, backgroundTask, procId) {
         // Theme helpers read settings.json and session.json, and some write settings.json back.
         SettingsData.flushSettings();
@@ -192,15 +228,35 @@ Singleton {
         }, 0, timeoutMs || 120000);
     }
 
-    // An apply, run under its own request id and coalesced with nothing. Proc's
-    // debouncer folds same-id calls into ONE callback, and only within its window
-    // — applies run at interval 0, so it catches same-tick calls and nothing else,
-    // while two applies from separate key presses both launch and both answer. An
-    // EMPTY Proc id makes Proc mint a random, self-cleaning id, so every apply
+    // Take the apply slot, or wait for it. Two applies from separate key presses
+    // both launch and both answer, one after the other — see `_applyDispatched`
+    // for why they must not overlap.
+    function _runApply(requestId, args, callback) {
+        if (_applyDispatched !== "") {
+            _applyQueue = _applyQueue.concat([{requestId: requestId, args: args, callback: callback}]);
+            return;
+        }
+        _dispatchApply(requestId, args, callback);
+    }
+
+    // Hand one apply to the helper and hold the slot until its callback answers.
+    // The one place a launch can fail, and it always answers the request it took:
+    // the slot is already this request's when `_run` runs, so finishing it here
+    // frees the slot, clears its `_applyInFlight` token and starts the next
+    // waiter. A request that holds the slot with nothing to answer it is
+    // therefore unrepresentable, and a run of failing launches empties the queue
+    // instead of parking it. Every apply reaches the helper through here, the
+    // free-slot path included, so there is one recovery and not one per caller.
+    // An EMPTY Proc id makes Proc mint a random, self-cleaning id, so every apply
     // runs its own process into one `_finishApply`; a unique NAMED id would leak
     // a debouncer entry and Timer, reaped only for a random id.
-    function _runApply(requestId, args, callback) {
-        _run(requestId, args, callback, undefined, false, "");
+    function _dispatchApply(requestId, args, callback) {
+        _applyDispatched = requestId;
+        try {
+            _run(requestId, args, callback, undefined, false, "");
+        } catch (e) {
+            _finishApply(requestId, false, "Could not start the theme helper: " + e);
+        }
     }
 
     function refresh() {
@@ -807,11 +863,15 @@ Singleton {
                 const warnings = data.warnings || data.apply?.warnings || [];
                 if (data.saved)
                     _persistAppliedTheme(data.name || (data.apply && data.apply.name));
-                // Same ownership test the rollback uses: a LATE success from an
-                // apply that no longer owns the slot must not persist its
-                // wallpaper over a newer one that already moved the desktop on.
-                // `refresh()` restores `selectedWallpaper`, not SessionData.
-                if (typeof SessionData !== "undefined" && _ownsWallpaperSlot(requestId))
+                // Every success commits, in dispatch order, so what `session.json`
+                // holds is the last apply that landed. The ownership test that
+                // used to gate this was written for OVERLAPPING applies, where a
+                // late reply from an older one could overwrite a newer; one apply
+                // at a time removed that premise, and the test then suppressed
+                // the write whenever a later pick was still queued, leaving the
+                // desktop on the image before this one while the palette came
+                // from this one.
+                if (typeof SessionData !== "undefined")
                     SessionData.setWallpaper(path);
                 _markGreeterThemeSyncPending();
                 refresh();
@@ -826,16 +886,20 @@ Singleton {
         return requestId;
     }
 
-    // True while `requestId` is still the apply that claimed `selectedWallpaper`.
-    // Both the rollback and the success-path persist test it, so no late reply
-    // writes over a newer apply, and a mid-apply `refreshCurrent` cannot void it.
+    // True while `requestId` is still the newest apply to have claimed
+    // `selectedWallpaper`. A request claims it when it is MADE, so a queued
+    // later pick owns the slot while an earlier one is still running: that is
+    // what stops the earlier one's failure rolling the highlight back off the
+    // pick the user has already moved to. A mid-apply `refreshCurrent` cannot
+    // void it either, since it is keyed on the request and never the path.
     function _ownsWallpaperSlot(requestId) {
         return _wallpaperSlotOwner === requestId;
     }
 
-    // Undoes one optimistic `setWallpaper` write, but only while that call still
-    // owns the slot: a LATE failure from an older overlapping call must not
-    // revert a newer apply that already succeeded and moved the desktop on.
+    // Undoes one optimistic `selectedWallpaper` write, but only while that call
+    // still owns the slot: a refusal must not take the highlight off a later
+    // pick that is still queued behind it. The desktop is untouched either way —
+    // `session.json` is written only by a success.
     function _rollbackWallpaper(requestId, previousWallpaper) {
         if (_ownsWallpaperSlot(requestId))
             selectedWallpaper = previousWallpaper;
@@ -1073,7 +1137,7 @@ Singleton {
 
     function clearWallpaper() {
         selectedWallpaper = "";
-        // Releases the slot: an in-flight apply must not persist over this clear.
+        // Releases the slot so nothing rolls the highlight back off the clear.
         _wallpaperSlotOwner = "";
         _run("vgs-theme-clear-wallpaper", ["theme", "clear-wallpaper", "--json"], function(output, exitCode, stderr) {
             if (exitCode !== 0) {
