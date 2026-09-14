@@ -40,6 +40,9 @@ slice assert_popout_geometry
 slice window_border_is_inset
 slice sandbox_ipc
 slice keep_host_rendering
+slice wait_surface_focused
+slice send_escape
+slice cleanup
 
 # Cut a one-line helper definition out of the smoke script. Same contract as slice: a helper
 # that no longer has this shape is a broken fixture, not a failed case.
@@ -502,7 +505,191 @@ case_ipc_call_cannot_hang() {
   ok "an unanswered IPC call fails within its bound instead of hanging the run"
 }
 
+declare -A FOCUS_REPLIES=(
+  [focused]='{"visible":true,"focusWanted":true,"focusGrabActive":true,"contentActiveFocus":true}'
+  [no-flag]='{"visible":true,"focusWanted":false,"focusGrabActive":true,"contentActiveFocus":true}'
+  [no-grab]='{"visible":true,"focusWanted":true,"focusGrabActive":false,"contentActiveFocus":true}'
+  [no-content]='{"visible":true,"focusWanted":true,"focusGrabActive":true,"contentActiveFocus":false}'
+  [missing-field]='{"visible":true,"focusWanted":true,"focusGrabActive":true}'
+  [ipc-failed]='IPC_CALL_FAILED(124) x focusStatus: no reply'
+)
+
+# Drive wait_surface_focused against a stub IPC that answers the listed replies in order and
+# repeats the last one. The shell is alive or gone; sleep is stubbed so a row costs no time.
+focus_wait() {
+  local replies="$1" alive="$2" key
+  : >"$tmp/focus.replies"
+  : >"$tmp/focus.calls"
+  for key in ${replies//|/ }; do
+    printf '%s\n' "${FOCUS_REPLIES[$key]}" >>"$tmp/focus.replies"
+  done
+  (
+    set +e
+    # shellcheck source=/dev/null
+    . "$tmp/fail.sh"
+    # shellcheck source=/dev/null
+    . "$tmp/wait_surface_focused.sh"
+    # shellcheck disable=SC2034  # read by the sliced function
+    status=0 focus_wait_polls=4 qs_group=1
+    # shellcheck disable=SC2317,SC2329  # called by the sliced function, not from here
+    sandbox_ipc() {
+      local n
+      printf '%s\n' "$*" >>"$tmp/focus.calls"
+      n="$(wc -l <"$tmp/focus.calls")"
+      sed -n "${n}p" "$tmp/focus.replies" | grep . || tail -n 1 "$tmp/focus.replies"
+    }
+    # shellcheck disable=SC2317,SC2329  # called by the sliced function, not from here
+    kill() { [[ "$alive" == alive ]]; }
+    # shellcheck disable=SC2317,SC2329  # called by the sliced function, not from here
+    sleep() { :; }
+    wait_surface_focused "the 'x' switcher" x focusStatus
+    printf 'rc=%s\n' "$?"
+  ) 2>&1
+}
+
+# label; replies in order joined by |; shell alive or gone; expected status; the cause the
+# FAIL line must carry, or - for no FAIL at all. One withheld step per row.
+FOCUS_WAITS="focus on the first poll sends at once;focused;alive;0;-
+focus that arrives after unfocused polls is waited for;no-content|no-grab|focused;alive;0;-
+a withheld focus flag names the focus cause;no-flag;alive;1;switcher mapped but never took keyboard focus
+a withheld compositor grab names the focus cause;no-grab;alive;1;switcher mapped but never took keyboard focus
+withheld content focus names the focus cause;no-content;alive;1;switcher mapped but never took keyboard focus
+an unfocused status stays the verdict when a later call fails;no-content|ipc-failed;alive;1;switcher mapped but never took keyboard focus
+an unanswered call is not a focus verdict;ipc-failed;alive;3;could not read the keyboard focus status
+a status missing a field is not a focus verdict;missing-field;alive;3;could not read the keyboard focus status
+a shell that exits ends the wait;no-content;gone;4;exited while waiting"
+
+case_focus_wait() {
+  local label replies alive want_rc want_cause out rows=0
+  while IFS=';' read -r label replies alive want_rc want_cause; do
+    [[ -n "$label" ]] || continue
+    rows=$((rows + 1))
+    out="$(focus_wait "$replies" "$alive")"
+    [[ "$out" == *"rc=$want_rc"* ]] ||
+      fail "focus wait" "$label: expected rc=$want_rc, got: $out"
+    [[ "$(head -n 1 "$tmp/focus.calls")" == "x focusStatus" ]] ||
+      fail "focus wait" "$label: expected the focusStatus call it was given, got '$(head -n 1 "$tmp/focus.calls")'"
+    if [[ "$want_cause" == - ]]; then
+      [[ "$out" != *"FAIL:"* ]] || fail "focus wait" "$label: expected no FAIL, got: $out"
+    else
+      [[ "$out" == *"FAIL: "*"$want_cause"* ]] ||
+        fail "focus wait" "$label: the FAIL line must carry '$want_cause', got: $out"
+    fi
+  done <<<"$FOCUS_WAITS"
+  [[ $rows -eq 9 ]] || fail "focus wait" "expected 9 table rows, drove $rows"
+  ok "Escape waits for the focus flag, the grab and the content focus, and a withheld step names its cause"
+}
+
+# Drive send_escape with its focus wait stubbed to the given status and wtype present or
+# absent. Both stubs log their arguments in call order.
+send_escape_with() {
+  local wait_rc="$1" wtype="$2" bin="$tmp/escbin-$2"
+  mkdir -p -- "$bin"
+  if [[ "$wtype" == present ]]; then
+    # shellcheck disable=SC2016  # $* and $ESC_LOG must expand in the stub, not here
+    printf '#!/bin/sh\nprintf "wtype %%s\\n" "$*" >>"$ESC_LOG"\n' >"$bin/wtype"
+    chmod +x "$bin/wtype"
+  fi
+  : >"$tmp/esc.log"
+  (
+    set +e
+    # shellcheck source=/dev/null
+    . "$tmp/fail.sh"
+    # shellcheck source=/dev/null
+    . "$tmp/send_escape.sh"
+    export ESC_LOG="$tmp/esc.log"
+    # shellcheck disable=SC2034  # read by the sliced function
+    status=0 nested_socket=wayland-9 sandbox_env=(/usr/bin/env "PATH=$bin")
+    # shellcheck disable=SC2317,SC2329  # called by the sliced function, not from here
+    wait_surface_focused() { printf 'wait %s\n' "$*" >>"$ESC_LOG"; return "$wait_rc"; }
+    PATH="$bin"
+    send_escape "the 'x' switcher" x focusStatus
+    printf 'rc=%s\n' "$?"
+  ) 2>&1
+}
+
+# label; focus wait status; wtype present or absent; expected status; the logged calls in
+# order joined by |, or - for none.
+ESCAPES="focus that arrived sends one Escape after the wait;0;present;0;wait the 'x' switcher x focusStatus|wtype -k Escape
+focus that never arrived sends no Escape;1;present;1;wait the 'x' switcher x focusStatus
+an unreadable focus status sends no Escape;3;present;1;wait the 'x' switcher x focusStatus
+a shell that exited sends no Escape;4;present;1;wait the 'x' switcher x focusStatus
+no wtype reports its absence before any wait;0;absent;2;-"
+
+case_escape_waits_for_focus() {
+  local label wait_rc wtype want_rc want_calls out calls rows=0
+  while IFS=';' read -r label wait_rc wtype want_rc want_calls; do
+    [[ -n "$label" ]] || continue
+    rows=$((rows + 1))
+    out="$(send_escape_with "$wait_rc" "$wtype")"
+    calls="$(paste -sd '|' "$tmp/esc.log")"
+    [[ "$out" == *"rc=$want_rc"* ]] ||
+      fail "escape waits for focus" "$label: expected rc=$want_rc, got: $out"
+    [[ "$calls" == "${want_calls/#-/}" ]] ||
+      fail "escape waits for focus" "$label: expected calls '${want_calls/#-/}', got '$calls'"
+  done <<<"$ESCAPES"
+  [[ $rows -eq 5 ]] || fail "escape waits for focus" "expected 5 table rows, drove $rows"
+  ok "Escape is sent once and only after the focus wait succeeds"
+}
+
+# Run the shipped cleanup on a sandbox holding a 70-line shell log, entering with the given
+# status and a live-session check stubbed to the given status. No process groups are tracked.
+cleanup_with() {
+  local code="$1" live="$2" dir="$tmp/sandbox"
+  rm -rf -- "$dir"
+  mkdir -p -- "$dir"
+  seq -f 'qs-line-%g' 1 70 >"$dir/qs.log"
+  printf 'hypr-line\n' >"$dir/hyprland.log"
+  (
+    set +e
+    # shellcheck source=/dev/null
+    . "$tmp/cleanup.sh"
+    # shellcheck disable=SC2034  # read by the sliced function
+    tracked_pgids=() scratch_dirs=("$dir") evidence_logs=("$dir/qs.log" "$dir/hyprland.log")
+    # shellcheck disable=SC2317,SC2329  # called by the sliced function, not from here
+    assert_live_session_untouched() { return "$live"; }
+    (exit "$code")
+    cleanup
+    printf 'unreachable: cleanup returned\n'
+  ) 2>&1
+  printf 'rc=%s\n' "$?"
+}
+
+# label; entry status; live-session check status; expected exit status; tails printed or not.
+CLEANUPS="a failed check prints the log tails;1;0;1;printed
+a failed live-session check prints the log tails;0;1;1;printed
+a passing run prints no log tails;0;0;0;none"
+
+case_cleanup_keeps_evidence() {
+  local label code live want_rc tails out rows=0
+  while IFS=';' read -r label code live want_rc tails; do
+    [[ -n "$label" ]] || continue
+    rows=$((rows + 1))
+    out="$(cleanup_with "$code" "$live")"
+    [[ "$out" == *"rc=$want_rc"* ]] ||
+      fail "cleanup keeps evidence" "$label: expected rc=$want_rc, got: $out"
+    [[ ! -d "$tmp/sandbox" ]] ||
+      fail "cleanup keeps evidence" "$label: the sandbox directory must still be removed"
+    case "$tails" in
+      printed)
+        [[ "$out" == *"qs-line-11"* && "$out" == *"qs-line-70"* && "$out" != *"qs-line-10"$'\n'* && "$out" == *"hypr-line"* ]] ||
+          fail "cleanup keeps evidence" "$label: expected the last 60 shell log lines and the compositor log, got: $out"
+        ;;
+      none)
+        [[ "$out" != *"last 60 lines"* ]] ||
+          fail "cleanup keeps evidence" "$label: expected no log tails, got: $out"
+        ;;
+      *) fail "cleanup keeps evidence" "$label: unknown tails column: $tails" ;;
+    esac
+  done <<<"$CLEANUPS"
+  [[ $rows -eq 3 ]] || fail "cleanup keeps evidence" "expected 3 table rows, drove $rows"
+  ok "every non-zero exit, a failed live-session check included, prints the sandbox log tails before cleanup deletes them"
+}
+
 CASES=(
+  case_focus_wait
+  case_escape_waits_for_focus
+  case_cleanup_keeps_evidence
   case_remedies
   case_ipc_bounded_calls
   case_ipc_call_cannot_hang
