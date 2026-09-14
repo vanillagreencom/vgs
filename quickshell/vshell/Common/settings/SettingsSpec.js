@@ -16,7 +16,6 @@ function nonEmptyStringOr(def) {
 var SPEC = {
     currentThemeName: { def: "bauhaus", onChange: "applyStoredTheme" },
     currentThemeCategory: { def: "vgs" },
-    favoriteThemes: { def: [] },
     matugenScheme: { def: "scheme-tonal-spot", onChange: "regenSystemThemes" },
     matugenContrast: { def: 0, onChange: "regenSystemThemes" },
     matugenMode: { def: "auto" },

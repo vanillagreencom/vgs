@@ -6,7 +6,7 @@ import Quickshell
 import qs.Common
 import qs.Services
 
-// Expose the helper catalog for installed and downloadable themes. The helper owns downloads and checksum verification.
+// Expose the helper catalog to the wallpaper surfaces and the apply-time download offer. The helper owns downloads and checksum verification.
 Singleton {
     id: root
     readonly property var log: Log.scoped("VGSThemeCatalogService")
@@ -15,22 +15,22 @@ Singleton {
     //   imageryUpdateAvailable, builtin, downloaded, downloadedRef, preview}]
     property var entries: []
     property bool loading: false
-    property string catalogRef: ""
     property string lastError: ""
     // Why the catalog is empty, when it is empty for a reason the user can act
     // on. Empty string means "loaded fine".
     property string failureText: ""
-    // name -> true while a per-theme download/remove is in flight.
+    // name -> true while a per-theme download or update is in flight.
     property var pendingNames: ({})
-    property bool downloadingAll: false
+    // The theme an apply asked to offer, settled by the next catalog read.
+    property string _offerName: ""
 
-    readonly property bool busy: downloadingAll || Object.keys(pendingNames).length > 0
     readonly property bool available: (entries || []).length > 0
-    readonly property int installedCount: (entries || []).filter(e => e.imageryInstalled).length
-    readonly property int downloadableCount: (entries || []).filter(e => !e.imageryInstalled).length
-    readonly property real downloadableSize: (entries || []).reduce((sum, e) => e.imageryInstalled ? sum : sum + (e.imagerySize || 0), 0)
 
     signal catalogLoaded
+    // A download offer for an applied theme, with the archive size in bytes.
+    signal downloadOffered(string name, real size)
+
+    onCatalogLoaded: root._settleOffer()
 
     function isPending(name) {
         return !!(pendingNames && pendingNames[name]);
@@ -118,6 +118,25 @@ Singleton {
     }
     // END IMAGERY CARD DECISION
 
+    // BEGIN DOWNLOAD OFFER DECISION
+    // Keep this region free of root., Theme., I18n. and Qt. references: scripts/test-switcher-selection.js extracts and executes it.
+
+    // Whether an applied theme's catalog entry earns a download offer. The entry
+    // comes from a catalog read made after the apply, so a download that just
+    // finished reads as installed. Offline behaves as Not now. `applied` says the
+    // theme is still the applied one when the read returns: the user may have
+    // applied another meanwhile, and the offer must not name the previous theme.
+    function downloadOffer(entry, online, pending, applied) {
+        if (!entry || entry.imageryInstalled !== false || applied !== true)
+            return false;
+        return entry.imagerySize > 0 && !pending && online === true;
+    }
+    // END DOWNLOAD OFFER DECISION
+
+    // No reported network backend says nothing about connectivity, so only a
+    // backend that reports a disconnect counts as offline.
+    readonly property bool online: !NetworkService.networkAvailable || NetworkService.networkStatus !== "disconnected"
+
     // What an empty Theme view says while this catalog cannot yet tell whether the theme has imagery to download.
     readonly property string stateNotice: (loading && !available) ? I18n.tr("Reading the theme catalog…") : failureText
 
@@ -161,7 +180,7 @@ Singleton {
             loading = false;
             if (exitCode !== 0) {
                 // Includes the case where the CLI could not run at all (missing
-                // binary, timeout): say so instead of leaving an empty browser
+                // binary, timeout): say so instead of leaving an empty view
                 // that looks like a catalog with nothing in it.
                 entries = [];
                 failureText = stderr || lastError || (exitCode === 124
@@ -173,7 +192,6 @@ Singleton {
             try {
                 const data = JSON.parse(output || "{}");
                 entries = data.themes || [];
-                catalogRef = data.ref || "";
                 failureText = "";
                 catalogLoaded();
             } catch (e) {
@@ -183,6 +201,29 @@ Singleton {
                 catalogLoaded();
             }
         });
+    }
+
+    // Called once a theme the user picked has applied. `installed` is the theme
+    // list's answer, read before the apply: a theme it reports installed costs no
+    // catalog read. The read is the shared refresh, so the wallpaper surfaces see
+    // the same entries the offer decides on.
+    function offerDownload(name, installed) {
+        if (!name || installed !== false)
+            return;
+        _offerName = name;
+        refresh();
+    }
+
+    // Settle a pending offer once a catalog read lands. A failed read leaves no entry, so it offers nothing.
+    function _settleOffer() {
+        const name = _offerName;
+        _offerName = "";
+        if (!name)
+            return;
+        const entry = entryFor(name);
+        // currentTheme refreshes asynchronously; the applied name is set as the apply lands.
+        if (downloadOffer(entry, online, isPending(name), SettingsData.currentThemeName === name))
+            downloadOffered(name, entry.imagerySize);
     }
 
     function _finishDownload(output, exitCode, stderr, fallbackMessage) {
@@ -223,6 +264,11 @@ Singleton {
                  if (placed && typeof VGSThemeService !== "undefined") {
                      VGSThemeService.requestThumbnailSweep();
                      VGSThemeService.refreshWallpapers();
+                     // A theme applied before its download had no wallpaper, so the
+                     // theme still applied takes its downloaded one now. The applied
+                     // name is set as an apply lands, unlike currentTheme.
+                     if (verb === "install" && SettingsData.currentThemeName === name)
+                         VGSThemeService.applyBlueprint(name);
                  }
                  if (placed || result.status === "current")
                      _complete(true, verb === "install" ? I18n.tr("Downloaded %1").arg(name) : I18n.tr("Updated wallpapers for %1").arg(name));
@@ -233,53 +279,5 @@ Singleton {
 
     function install(name) {
         root._runImagery("install", name);
-    }
-
-    function installAll() {
-        if (downloadingAll)
-            return;
-        downloadingAll = true;
-        _run("vgs-theme-catalog-install-all", ["theme", "catalog", "install", "--all", "--json"], 7200000,
-             function (output, exitCode, stderr) {
-                 downloadingAll = false;
-                 const data = _finishDownload(output, exitCode, stderr, "Downloading all themes failed");
-                 // Request a thumbnail sweep even after a partial download run; successfully installed themes still need cache entries.
-                 if (typeof VGSThemeService !== "undefined") {
-                     VGSThemeService.requestThumbnailSweep();
-                     VGSThemeService.refreshWallpapers();
-                 }
-                 if (!data)
-                     return;
-                 const count = (data.installed || []).length;
-                 const failed = (data.results || []).filter(r => r.status === "failed");
-                 if (failed.length > 0) {
-                     _complete(false, I18n.tr("Downloaded %1 themes, %2 failed").arg(count).arg(failed.length));
-                     return;
-                 }
-                 _complete(true, I18n.tr("Downloaded %1 themes").arg(count));
-             });
-    }
-
-    function remove(name) {
-        if (!name || isPending(name))
-            return;
-        _setPending(name, true);
-        _run("vgs-theme-catalog-remove-" + name, ["theme", "catalog", "remove", name, "--json"], 120000,
-             function (output, exitCode, stderr) {
-                 _setPending(name, false);
-                 const data = _finishDownload(output, exitCode, stderr, "Remove failed: " + name);
-                 if (!data)
-                     return;
-                 const result = (data.results || [])[0] || {};
-                 if (result.status === "removed") {
-                     // The helper prunes the removed theme's thumbnails itself,
-                     // so this only refreshes shell state.
-                     if (typeof VGSThemeService !== "undefined")
-                         VGSThemeService.refreshWallpapers();
-                     _complete(true, I18n.tr("Removed %1").arg(name));
-                 }
-                 else
-                     _complete(false, result.error || I18n.tr("Remove failed: %1").arg(name));
-             });
     }
 }

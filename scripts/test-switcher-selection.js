@@ -23,6 +23,10 @@ const THEMES_TAB = path.join(repoRoot, "quickshell", "vshell", "Modules", "Setti
 const CAROUSEL = path.join(SWITCHER, "SwitcherCarousel.qml");
 const SLICE = path.join(SWITCHER, "SwitcherSlice.qml");
 const SHORTCUT_ROW = path.join(repoRoot, "quickshell", "vshell", "Modules", "Settings", "Widgets", "SwitcherShortcutRow.qml");
+const CATALOG_SERVICE = path.join(repoRoot, "quickshell", "vshell", "Services", "VGSThemeCatalogService.qml");
+const SHELL_ROOT = path.join(repoRoot, "quickshell", "vshell", "VGS.qml");
+const DASH_THEMES_TAB = path.join(repoRoot, "quickshell", "vshell", "Modules", "Dash", "ThemesTab.qml");
+const ICONS_TAB = path.join(repoRoot, "quickshell", "vshell", "Modules", "Settings", "IconsTab.qml");
 
 // Extracted code runs under qml-region process deadlines.
 const { evaluateMarked, regionOf, guardChild } = require("./lib/qml-region.js");
@@ -44,21 +48,51 @@ const themesTabSource = read(THEMES_TAB);
 const carouselSource = read(CAROUSEL);
 const sliceSource = read(SLICE);
 const shortcutRowSource = read(SHORTCUT_ROW);
+const catalogSource = read(CATALOG_SERVICE);
+const shellRootSource = read(SHELL_ROOT);
+const dashThemesTabSource = read(DASH_THEMES_TAB);
+const iconsTabSource = read(ICONS_TAB);
 
 const MARKER = "SWITCHER SELECTION DECISION";
+const OFFER_MARKER = "DOWNLOAD OFFER DECISION";
 
 const sel = evaluateMarked(baseSource, MARKER, [
     "wrapIndex", "clampIndex", "seedIndex", "shouldReseed", "enterOutcome",
     "latchesIntent", "navIndex", "wheelSteps", "preserveIndex"
 ], "FullScreenSwitcher.qml");
 
+const offer = evaluateMarked(catalogSource, OFFER_MARKER, ["downloadOffer"], "VGSThemeCatalogService.qml");
+
 // Keep extracted decisions independent of QML state.
-test("the marked decision region stays plain JavaScript", () => {
-    const region = qmlSource.stripComments(regionOf(baseSource, MARKER, "FullScreenSwitcher.qml"));
-    for (const forbidden of ["root.", "Theme.", "I18n.", "Qt."]) {
-        assert.ok(!region.includes(forbidden),
-            `the ${MARKER} block must not reference ${forbidden} — it has to stay plain ` +
-            "JavaScript, or the extraction is testing a different program");
+test("the marked decision regions stay plain JavaScript", () => {
+    for (const [source, marker, file] of [
+        [baseSource, MARKER, "FullScreenSwitcher.qml"],
+        [catalogSource, OFFER_MARKER, "VGSThemeCatalogService.qml"]
+    ]) {
+        const region = qmlSource.stripComments(regionOf(source, marker, file));
+        for (const forbidden of ["root.", "Theme.", "I18n.", "Qt."]) {
+            assert.ok(!region.includes(forbidden),
+                `${file}: the ${marker} block must not reference ${forbidden} — it has to stay plain ` +
+                "JavaScript, or the extraction is testing a different program");
+        }
+    }
+});
+
+test("downloadOffer offers the download only for a catalogued theme with no wallpapers, while online", () => {
+    const missing = { name: "demo", imageryInstalled: false, imagerySize: 4096 };
+    for (const [entry, online, pending, applied, expected, why] of [
+        [missing, true, false, true, true, "an applied theme with no wallpapers on disk and an archive to fetch is offered"],
+        [{ ...missing, imageryInstalled: true }, true, false, true, false, "a theme whose wallpapers are on disk is not offered"],
+        [{ name: "demo", imagerySize: 4096 }, true, false, true, false,
+            "an entry that does not say the wallpapers are missing is not offered: only an explicit false offers"],
+        [null, true, false, true, false, "a theme the catalog does not list has nothing to download"],
+        [{ ...missing, imagerySize: 0 }, true, false, true, false, "an entry with no archive size has no size to offer"],
+        [missing, true, true, true, false, "a download already running is not offered twice"],
+        [missing, false, false, true, false, "offline behaves as Not now"],
+        [missing, true, false, false, false,
+            "a theme the user replaced while the catalog read ran is not offered: the dialog would name the previous theme"]
+    ]) {
+        assert.strictEqual(offer.downloadOffer(entry, online, pending, applied), expected, why);
     }
 });
 
@@ -201,7 +235,11 @@ const sources = new Map([
     ["ThemesSettingsTab.qml", themesTabSource],
     ["SwitcherCarousel.qml", carouselSource],
     ["SwitcherSlice.qml", sliceSource],
-    ["SwitcherShortcutRow.qml", shortcutRowSource]
+    ["SwitcherShortcutRow.qml", shortcutRowSource],
+    ["VGSThemeCatalogService.qml", catalogSource],
+    ["VGS.qml", shellRootSource],
+    ["ThemesTab.qml", dashThemesTabSource],
+    ["IconsTab.qml", iconsTabSource]
 ]);
 
 const readers = new Map();
@@ -440,7 +478,7 @@ test("the reporter arms on the returned id and matches each reply to it before t
 // Subclasses must track the service call's returned ID. The wallpaper screen route is covered by the scope suite.
 test("each switcher tracks the service's returned id and gates Enter on applies in flight", () => {
     for (const [file, trackPin] of [
-        ["ThemeSwitcherModal.qml", "onApplied: item => applyReporter.track(VGSThemeService.applyBlueprint(item.key))"],
+        ["ThemeSwitcherModal.qml", "onApplied: item => applyReporter.track(VGSThemeService.applyBlueprint(item.key, true))"],
         ["WallpaperSwitcherModal.qml", "applyReporter.track(VGSThemeService.setWallpaper(item.key));"]
     ]) {
         q(file).requires(sources.get(file), file, [
@@ -630,10 +668,121 @@ test("bare applyCompleted emissions are counted so a new operation must go throu
     ]);
 });
 
-test("generateMissingPreviews releases its guard and a failed preview probe does not flag the list", () => {
+test("the download offer follows a successful user pick and Not now leaves the theme applied", () => {
+    const svc = q("VGSThemeService.qml");
+    const apply = svc.body("applyBlueprint");
+    svc.requires(apply, "applyBlueprint()", [
+        ['const themeWallpaper = SettingsData.wallpaperSource !== "folder";',
+            "one reading of the wallpaper policy serves the kept-wallpaper note, the wallpaper write and the offer", 1],
+        ["if (offersDownload === true && themeWallpaper) { const listed = (blueprints || []).find(bp => bp.name === appliedName); " +
+            "VGSThemeCatalogService.offerDownload(appliedName, listed ? listed.installed : undefined); }",
+            "only a user's pick asks, only while theme wallpapers are on, with the theme list's installed answer", 1]
+    ]);
+    // A pick the user makes asks; a re-apply the shell makes itself does not, or Not now is asked again.
+    for (const [file, pin, count, why] of [
+        ["ThemeSwitcherModal.qml", "applyReporter.track(VGSThemeService.applyBlueprint(item.key, true))", 1, "a switcher pick asks"],
+        ["ThemesTab.qml", "VGSThemeService.applyBlueprint(entry.name, true);", 2, "a Dash Enter and a Dash search accept ask"],
+        ["ThemesTab.qml", "VGSThemeService.applyBlueprint(themeRow.modelData.name, true);", 1, "a Dash row click asks"],
+        ["ThemesSettingsTab.qml", "onClicked: VGSThemeService.applyBlueprint(root.currentEntry.pair, true)", 1,
+            "the Settings pair switch asks"],
+        ["IconsTab.qml", "VGSThemeService.applyBlueprint(VGSThemeService.currentTheme.name);", 1,
+            "an icon setting change re-applies the current theme without asking"],
+        ["VGSThemeCatalogService.qml", "VGSThemeService.applyBlueprint(name);", 1,
+            "the re-apply after a finished download does not ask"]
+    ]) {
+        q(file).requires(body(file), file, [[pin, why, count]]);
+    }
+    mustPrecedeIn(apply, "applyBlueprint()", /if \(exitCode !== 0\)/, /offerDownload\(/,
+        "the offer is made inside the apply's completion, after a failed apply has returned, so it never runs before the colours land");
+    mustPrecedeIn(apply, "applyBlueprint()", /_persistAppliedTheme\(appliedName\);/, /offerDownload\(/,
+        "the applied theme is recorded before the offer, so the colour apply does not wait on it");
+
+    const catalog = q("VGSThemeCatalogService.qml");
+    const offerBody = catalog.body("offerDownload");
+    catalog.requires(offerBody, "offerDownload()", [
+        ["if (!name || installed !== false) return;",
+            "a theme the list reports installed costs no catalog read", 1],
+        ["_offerName = name; refresh();",
+            "the offer rides the shared catalog refresh, so the wallpaper surfaces and the offer read the same entries", 1]
+    ]);
+    catalog.requires(catalogSource, "VGSThemeCatalogService.qml", [
+        ["onCatalogLoaded: root._settleOffer()", "every catalog read that lands settles a pending offer", 1]
+    ]);
+    catalog.requires(catalog.body("refresh"), "refresh()", [
+        ["catalogLoaded();", "a read that fails or does not parse still settles the offer, with no entry, so it offers nothing", 3]
+    ]);
+    const settle = catalog.body("_settleOffer");
+    catalog.requires(settle, "_settleOffer()", [
+        ["const entry = entryFor(name);", "the decision reads the applied theme's entry from the refreshed catalog", 1],
+        ["if (downloadOffer(entry, online, isPending(name), SettingsData.currentThemeName === name)) downloadOffered(name, entry.imagerySize);",
+            "the dialog is raised on the extracted decision, with the archive size, only while the theme is still " +
+            "the applied one by the name an apply sets as it lands, not the asynchronously refreshed currentTheme", 1]
+    ]);
+    mustPrecedeIn(settle, "_settleOffer()", /_offerName = "";/, /downloadOffer\(/,
+        "the pending offer is cleared before it is decided, so a later refresh from a wallpaper surface cannot raise it again");
+
+    catalog.requires(catalog.body("install"), "install()", [
+        ['root._runImagery("install", name);',
+            "Download from the dialog runs the same install a wallpaper surface's card runs, reported once by _complete", 1]
+    ]);
+    const imagery = catalog.body("_runImagery");
+    catalog.requires(imagery, "_runImagery()", [
+        ['if (verb === "install" && SettingsData.currentThemeName === name) VGSThemeService.applyBlueprint(name);',
+            "a finished download re-applies the theme still applied, by the name an apply sets as it lands, so a " +
+            "stale currentTheme can neither skip the re-apply nor re-apply a theme the user replaced", 1]
+    ]);
+    assert.doesNotMatch(qmlSource.stripComments(catalogSource), /currentTheme\b/,
+        "VGSThemeCatalogService.qml: the offer and the re-apply read SettingsData.currentThemeName, never the asynchronously refreshed currentTheme");
+    mustPrecedeIn(imagery, "_runImagery()", /if \(!data\)\s*return;/, /VGSThemeService\.applyBlueprint\(name\)/,
+        "the re-apply follows the failed-run return, so a failed download re-applies nothing");
+    mustPrecedeIn(imagery, "_runImagery()", /if \(placed && typeof VGSThemeService/, /VGSThemeService\.applyBlueprint\(name\)/,
+        "the re-apply sits inside the placed branch, so a download that placed nothing re-applies nothing");
+    for (const [label, source] of [["VGS.qml", shellRootSource], ["VGSThemeCatalogService.qml", catalogSource]]) {
+        assert.doesNotMatch(qmlSource.stripComments(source), /operationCompleted|onOperationCompleted/,
+            `${label}: a catalog result is reported by _complete alone, so a second toast path would report it twice`);
+    }
+
+    const shell = q("VGS.qml");
+    const offered = shell.body("onDownloadOffered");
+    shell.requires(offered, "onDownloadOffered", [
+        ['cancelText: I18n.tr("Not now")', "the dialog's second choice is Not now", 1],
+        ["onConfirm: () => VGSThemeCatalogService.install(name)", "Download fetches the applied theme's wallpapers", 1]
+    ]);
+    assert.doesNotMatch(qmlSource.stripComments(offered), /onCancel|applyBlueprint|revert/,
+        "VGS.qml: Not now does nothing, so the theme stays applied with its colours");
+});
+
+test("the Dash star button stars through the helper and flips the listed entry before it answers", () => {
+    q("ThemesTab.qml").requires(body("ThemesTab.qml"), "ThemesTab.qml", [
+        ["onClicked: VGSThemeService.setStarred(themeRow.modelData.name, !themeRow.isStarred)",
+            "the star button flips the star it shows through the service", 1]
+    ]);
+    const svc = q("VGSThemeService.qml");
+    const star = svc.body("setStarred");
+    svc.requires(star, "setStarred()", [
+        ['["theme", starred ? "star" : "unstar", name, "--json"]', "a star runs theme star and an unstar theme unstar", 1],
+        ["_setListedStar(name, starred);", "the listed entry flips before the helper answers", 1],
+        ["if (exitCode !== 0) { _setListedStar(name, previous);",
+            "a refused star flips the entry back, on the refused path", 1],
+        ["refreshBlueprints();", "a stored star is confirmed by the list re-read", 1]
+    ]);
+    mustPrecedeIn(star, "setStarred()", /_setListedStar\(name, starred\);/, /_run\(/,
+        "the flip is shown before the helper runs, which with the list re-read takes seconds");
+    svc.requires(svc.body("_setListedStar"), "_setListedStar()", [
+        ["blueprints = (blueprints || []).map(bp => bp.name === name ? Object.assign({}, bp, { starred: starred }) : bp);",
+            "the list is reassigned rather than mutated, so every binding on it re-evaluates", 1]
+    ]);
+});
+
+test("generateMissingPreviews releases its guard, keys on the full-size preview, and a failed preview probe does not flag the list", () => {
     const svc = q("VGSThemeService.qml");
     svc.requires(svc.body("generateMissingPreviews"), "generateMissingPreviews()",
-        [["previewsGenerating = false;", "the preview-check branch must still release its single-flight guard"]]);
+        [["previewsGenerating = false;", "the preview-check branch must still release its single-flight guard"],
+        ["if (!bps.some(bp => !bp.preview))",
+            "the generator runs for every theme with no full-size preview; the helper reports the thumbnail apart, so a " +
+            "theme with only a thumbnail is rendered instead of skipped", 1]]);
+    assert.doesNotMatch(qmlSource.stripComments(svc.body("generateMissingPreviews")), /thumbnail/,
+        "VGSThemeService.qml: a thumbnail must not count as a preview for the generator");
     {
         const check = body("VGSThemeService.qml").split('"vgs-theme-preview-check"')[1] || "";
         const branch = check.slice(0, check.indexOf("blueprints = bps;"));
@@ -691,7 +840,12 @@ test("the carousel releases sliver sources outside the band and decodes the orig
         ["imageSource: slice.isSelected ? carousel.urlFor(slice.index) : \"\"",
             "the SELECTED slot reads urlFor — the ORIGINAL — never the thumbnail. The rail's " +
             "thumbnails are the sliver decode budget, so routing the full-size slot through them " +
-            "would cap the one image actually shown at 1536x864 and lose quality the user can see", 1],
+            "would cap the one image actually shown at a sliver's size and lose quality the user can see", 1],
+        ["readonly property int sliceDecodeWidth: Math.max(1, Math.round(carousel.sliceWidth * carousel.dpr))",
+            "a sliver decodes at the width it is drawn on this display, bound to the slice geometry " +
+            "rather than a delegate that grows while selected", 1],
+        ["readonly property int sliceDecodeHeight: Math.max(1, Math.round(carousel.sliceHeight * carousel.dpr))",
+            "and at the height it is drawn", 1],
         ["return carousel.fileUrl(entry.thumb || entry.image);",
             "an entry with no thumbnail falls back to its source. A cold, pruned or unwritable " +
             "cache must degrade to the pre-cache behaviour — slower — never to an empty tile", 1]

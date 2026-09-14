@@ -25,20 +25,19 @@ Item {
     // Share the Dash tab height to avoid resizing during a tab switch. The grid scrolls within it.
     implicitHeight: 410
 
-    // Sort favourites before the alphabetical remainder without changing order within either group.
+    // Sort starred themes before the alphabetical remainder without changing order within either group.
     readonly property var filteredThemes: {
         const list = VGSThemeService.blueprints || [];
-        const favorites = SettingsData.favoriteThemes || [];
         const query = searchQuery.trim().toLowerCase();
         return list.filter(bp => {
             if (modeFilter !== "all" && (bp.mode || "dark") !== modeFilter)
                 return false;
             return !query || (bp.name || "").toLowerCase().includes(query);
         }).sort((a, b) => {
-            const aFav = favorites.indexOf(a.name || "") >= 0;
-            const bFav = favorites.indexOf(b.name || "") >= 0;
-            if (aFav !== bFav)
-                return aFav ? -1 : 1;
+            const aStarred = a.starred === true;
+            const bStarred = b.starred === true;
+            if (aStarred !== bStarred)
+                return aStarred ? -1 : 1;
             return (a.name || "").localeCompare(b.name || "");
         });
     }
@@ -91,7 +90,7 @@ Item {
         if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
             const entry = filteredThemes[themeList.currentIndex];
             if (entry && !VGSThemeService.busy)
-                VGSThemeService.applyBlueprint(entry.name);
+                VGSThemeService.applyBlueprint(entry.name, true);
             return true;
         }
         return false;
@@ -123,7 +122,7 @@ Item {
                 onAccepted: {
                     const entry = root.filteredThemes[themeList.currentIndex];
                     if (entry && !VGSThemeService.busy)
-                        VGSThemeService.applyBlueprint(entry.name);
+                        VGSThemeService.applyBlueprint(entry.name, true);
                 }
             }
 
@@ -175,7 +174,7 @@ Item {
                 required property int index
 
                 readonly property bool isCurrent: (VGSThemeService.currentTheme.name || "") === modelData.name
-                readonly property bool isFavorite: SettingsData.isFavoriteTheme(modelData.name)
+                readonly property bool isStarred: modelData.starred === true
                 readonly property bool isLight: (modelData.mode || "dark") === "light"
                 readonly property bool isSelected: themeList.currentIndex === index
                 property bool actionsOpen: false
@@ -210,7 +209,7 @@ Item {
                     cursorShape: Qt.PointingHandCursor
                     onClicked: {
                         if (!themeRow.isCurrent && !VGSThemeService.busy)
-                            VGSThemeService.applyBlueprint(themeRow.modelData.name);
+                            VGSThemeService.applyBlueprint(themeRow.modelData.name, true);
                     }
                 }
 
@@ -290,7 +289,7 @@ Item {
                     }
 
                     Column {
-                        width: parent.width - previewFrame.width - swatchRow.width - favoriteButton.width - moreButton.width - Theme.spacingM * 4
+                        width: parent.width - previewFrame.width - swatchRow.width - starButton.width - moreButton.width - Theme.spacingM * 4
                         anchors.verticalCenter: parent.verticalCenter
                         spacing: 3
 
@@ -344,13 +343,13 @@ Item {
                     }
 
                     VgsActionButton {
-                        id: favoriteButton
+                        id: starButton
                         anchors.verticalCenter: parent.verticalCenter
                         iconName: "star"
-                        iconFilled: themeRow.isFavorite
-                        iconColor: themeRow.isFavorite ? Theme.warning : Theme.surfaceVariantText
-                        tooltipText: themeRow.isFavorite ? I18n.tr("Remove from favorites") : I18n.tr("Add to favorites")
-                        onClicked: SettingsData.toggleFavoriteTheme(themeRow.modelData.name)
+                        iconFilled: themeRow.isStarred
+                        iconColor: themeRow.isStarred ? Theme.warning : Theme.surfaceVariantText
+                        tooltipText: themeRow.isStarred ? I18n.tr("Unstar") : I18n.tr("Star")
+                        onClicked: VGSThemeService.setStarred(themeRow.modelData.name, !themeRow.isStarred)
                     }
 
                     VgsActionButton {

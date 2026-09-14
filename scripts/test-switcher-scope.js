@@ -17,6 +17,7 @@ const SWITCHER = path.join(repoRoot, "quickshell", "vshell", "Modals", "Switcher
 const BASE = path.join(SWITCHER, "FullScreenSwitcher.qml");
 const WALLPAPER_MODAL = path.join(SWITCHER, "WallpaperSwitcherModal.qml");
 const THEME_MODAL = path.join(SWITCHER, "ThemeSwitcherModal.qml");
+const SEGMENT_PILL = path.join(SWITCHER, "SwitcherSegmentPill.qml");
 const SESSION_DATA = path.join(repoRoot, "quickshell", "vshell", "Common", "SessionData.qml");
 
 // Extracted code runs under qml-region process deadlines.
@@ -33,20 +34,55 @@ const baseSource = read(BASE);
 const wallpaperSource = read(WALLPAPER_MODAL);
 const themeSource = read(THEME_MODAL);
 const sessionSource = read(SESSION_DATA);
+const pillSource = read(SEGMENT_PILL);
 
 const MARKER = "WALLPAPER SCOPE DECISION";
+const THEME_LIST_MARKER = "THEME LIST DECISION";
 
 const scope = evaluateMarked(wallpaperSource, MARKER, [
     "scopeChoiceExists", "scopeSeedKey", "applyRoute"
 ], "WallpaperSwitcherModal.qml");
 
+const themeList = evaluateMarked(themeSource, THEME_LIST_MARKER, ["themeItems"], "ThemeSwitcherModal.qml");
+
 // Keep extracted decisions independent of QML state.
-test("the marked decision region stays plain JavaScript", () => {
-    const region = qmlSource.stripComments(regionOf(wallpaperSource, MARKER, "WallpaperSwitcherModal.qml"));
-    for (const forbidden of ["root.", "Theme.", "I18n.", "Qt."]) {
-        assert.ok(!region.includes(forbidden),
-            `the ${MARKER} block must not reference ${forbidden} — it has to stay plain ` +
-            "JavaScript, or the extraction is testing a different program");
+test("the marked decision regions stay plain JavaScript", () => {
+    for (const [source, marker, file] of [
+        [wallpaperSource, MARKER, "WallpaperSwitcherModal.qml"],
+        [themeSource, THEME_LIST_MARKER, "ThemeSwitcherModal.qml"]
+    ]) {
+        const region = qmlSource.stripComments(regionOf(source, marker, file));
+        for (const forbidden of ["root.", "Theme.", "I18n.", "Qt."]) {
+            assert.ok(!region.includes(forbidden),
+                `${file}: the ${marker} block must not reference ${forbidden} — it has to stay plain ` +
+                "JavaScript, or the extraction is testing a different program");
+        }
+    }
+});
+
+test("themeItems lists every theme under All and only starred themes under Starred", () => {
+    const themes = [
+        { name: "plain", preview: "/p/plain.jpg", thumbnail: "/t/plain.jpg" },
+        { name: "starred", starred: true, preview: "", thumbnail: "/t/starred.jpg" },
+        { name: "", starred: true, preview: "/p/nameless.jpg" },
+        { name: "bare", starred: true }
+    ];
+    const keys = items => items.map(item => item.key);
+    for (const [list, starredOnly, expected, why] of [
+        [themes, false, ["plain", "starred", "bare"], "All lists every named theme, installed or not, starred or not"],
+        [themes, true, ["starred", "bare"], "Starred lists only the themes the helper reports starred"],
+        [[{ name: "maybe", starred: "true" }], true, [], "only a real true stars a theme"],
+        [null, false, [], "a list that has not arrived lists nothing rather than throwing"]
+    ]) {
+        assert.deepEqual(keys(themeList.themeItems(list, starredOnly)), expected, why);
+    }
+    for (const [name, image, why] of [
+        ["plain", "/p/plain.jpg", "a theme with a full-size preview paints it, never its thumbnail"],
+        ["starred", "/t/starred.jpg", "a theme with no preview yet paints its thumbnail as a placeholder"],
+        ["bare", "", "a theme with neither paints nothing"]
+    ]) {
+        const item = themeList.themeItems(themes, false).find(entry => entry.key === name);
+        assert.equal(item.image, image, why);
     }
 });
 
@@ -100,13 +136,15 @@ const readers = new Map([
     ["FullScreenSwitcher.qml", qmlSource(baseSource, "FullScreenSwitcher.qml")],
     ["WallpaperSwitcherModal.qml", qmlSource(wallpaperSource, "WallpaperSwitcherModal.qml")],
     ["ThemeSwitcherModal.qml", qmlSource(themeSource, "ThemeSwitcherModal.qml")],
-    ["SessionData.qml", qmlSource(sessionSource, "SessionData.qml")]
+    ["SessionData.qml", qmlSource(sessionSource, "SessionData.qml")],
+    ["SwitcherSegmentPill.qml", qmlSource(pillSource, "SwitcherSegmentPill.qml")]
 ]);
 const sources = new Map([
     ["FullScreenSwitcher.qml", baseSource],
     ["WallpaperSwitcherModal.qml", wallpaperSource],
     ["ThemeSwitcherModal.qml", themeSource],
-    ["SessionData.qml", sessionSource]
+    ["SessionData.qml", sessionSource],
+    ["SwitcherSegmentPill.qml", pillSource]
 ]);
 
 function q(file) {
@@ -173,16 +211,11 @@ test("the wallpaper modal wires the pill, the one flip signal, the per-open rese
         ["function onOpened() { root.applyToAllMonitors = true; root.source = SettingsData.wallpaperSource === \"folder\" ? \"all\" : \"theme\"; root.refreshSource(); }",
             "every open aims at all monitors again: a scope chosen yesterday and silently still " +
             "aimed at one monitor is how a pick lands somewhere unexpected", 1],
-        ["onClicked: if (!segment.active) pill.picked(segment.index)",
-            "a click SELECTS the segment under the cursor, and is a no-op on the active one: an " +
-            "unguarded whole-pill flip activated the OPPOSITE of the label the mouse user clicked to confirm", 1],
         ["activeIndex: root.applyToAllMonitors ? 0 : 1",
             "the scope pill lights the segment naming the scope Enter applies to", 1],
         ["onPicked: root.scopeFlipRequested()",
             "and a pick goes through the one signal Tab drives", 1],
-        ["MouseArea { anchors.fill: parent }",
-            "the pill carries a bare click absorber, or a near-miss on the capsule's padding falls " +
-            "through to the click-away MouseArea and dismisses the whole switcher", 1],
+        ["SwitcherSegmentPill {", "both pills are the one shared capsule, so the absorber and the segment guard hold for each", 2],
         ["const everywhere = (Quickshell.screens || []).map(screen => SessionData.getMonitorWallpaper(screen.name));",
             "the all-monitors seed polls every screen through the one accessor that answers per screen", 1],
         ['return root.scopeSeedKey(root.applyToAllMonitors, everywhere, shown, VGSThemeService.selectedWallpaper || "");',
@@ -240,10 +273,24 @@ test("applyHere checks the screen, flips the mode, writes, reads back and restor
 });
 
 test("the pill's click goes through the signal and the absorber precedes the segments", () => {
-    mustNot("WallpaperSwitcherModal.qml", /onClicked:\s*root\.applyToAllMonitors/,
-        "the pill's click must not write the scope directly — the signal is the one flip path, " +
-        "and a second writer is how Tab and the click drift apart");
-    mustPrecedeIn(wallpaperSource, "WallpaperSwitcherModal.qml",
+    for (const file of ["WallpaperSwitcherModal.qml", "ThemeSwitcherModal.qml", "SwitcherSegmentPill.qml"]) {
+        mustNot(file, /onClicked:\s*root\.(applyToAllMonitors|starredOnly)/,
+            "the pill's click must not write the scope directly — the signal is the one flip path, " +
+            "and a second writer is how Tab and the click drift apart");
+    }
+    mustNot("WallpaperSwitcherModal.qml", /component\s+\w*Pill\b/,
+        "the modal declares no pill of its own: a second capsule is a second copy of the absorber and the segment guard");
+    q("SwitcherSegmentPill.qml").requires(pillSource, "SwitcherSegmentPill.qml", [
+        ["onClicked: if (!segment.active) pill.picked(segment.index)",
+            "a click SELECTS the segment under the cursor, and is a no-op on the active one: an " +
+            "unguarded whole-pill flip activated the OPPOSITE of the label the mouse user clicked to confirm", 1],
+        ["readonly property bool active: pill.activeIndex === segment.index",
+            "a segment is active when it is the one the switcher binds", 1],
+        ["MouseArea { anchors.fill: parent }",
+            "the pill carries a bare click absorber, or a near-miss on the capsule's padding falls " +
+            "through to the click-away MouseArea and dismisses the whole switcher", 1]
+    ]);
+    mustPrecedeIn(pillSource, "SwitcherSegmentPill.qml",
         /MouseArea \{\s*anchors\.fill: parent\s*\}/, /Row \{\s*id: segments/,
         "the absorber is declared BEFORE the segments: siblings stack in declaration order, so an " +
         "absorber moved below the Row sits on top of the segment hit targets and eats every click");
@@ -332,8 +379,20 @@ test("_mapWithMonitorValue rebuilds the map, drops every key of the screen and c
     ]);
 });
 
-// The theme switcher has no per-monitor scope.
-test("the theme switcher has no scope toggle", () => {
-    mustNot("ThemeSwitcherModal.qml", /scopeToggle|applyToAllMonitors|scopeFlipRequested/,
-        "the theme switcher must not grow the scope toggle: themes have no per-monitor concept");
+// The theme switcher's toggle chooses All or Starred; themes have no per-monitor scope.
+test("the theme switcher wires the All / Starred pill to the extracted list", () => {
+    q("ThemeSwitcherModal.qml").requires(themeSource, "ThemeSwitcherModal.qml", [
+        ["items: root.themeItems(VGSThemeService.blueprints, root.starredOnly)",
+            "the carousel reads the extracted list over the toggle's state", 1],
+        ["scopeToggle: starPill", "the pill is always on the surface, so Tab flips All and Starred", 1],
+        ["onScopeFlipRequested: root.starredOnly = !root.starredOnly",
+            "one flip handler for the one signal Tab and the click both drive", 1],
+        ["activeIndex: root.starredOnly ? 1 : 0", "the pill shows the list the modal holds: All first", 1],
+        ["onPicked: root.scopeFlipRequested()", "a pill click goes through the same signal", 1]
+    ]);
+    mustNot("ThemeSwitcherModal.qml", /applyToAllMonitors/,
+        "themes have no per-monitor concept: the theme switcher's toggle chooses a list, not a monitor");
+    mustPrecedeIn(qmlSource(themeSource, "ThemeSwitcherModal.qml").blockFrom(themeSource.indexOf("emptyText:"), "emptyText"),
+        "ThemeSwitcherModal emptyText", /blueprintsLoadFailed/, /root\.starredOnly/,
+        "a failed read outranks an empty Starred list, or a read failure is reported as no starred themes");
 });

@@ -168,7 +168,6 @@ Singleton {
 
     property string currentThemeName: "bauhaus"
     property string currentThemeCategory: "vgs"
-    property var favoriteThemes: []
     property string matugenScheme: "scheme-tonal-spot"
     property real matugenContrast: 0
     property string matugenMode: "auto"
@@ -3194,25 +3193,6 @@ Singleton {
         saveSettings();
     }
 
-    function isFavoriteTheme(name) {
-        if (!name)
-            return false;
-        var list = favoriteThemes || [];
-        return list.indexOf(name) >= 0;
-    }
-
-    function toggleFavoriteTheme(name) {
-        if (!name)
-            return;
-        var list = favoriteThemes ? favoriteThemes.slice() : [];
-        var at = list.indexOf(name);
-        if (at >= 0)
-            list.splice(at, 1);
-        else
-            list.push(name);
-        favoriteThemes = list;
-        saveSettings();
-    }
 
     function removeMediaExcludePlayer(index) {
         var list = mediaExcludePlayers ? mediaExcludePlayers.slice() : [];
