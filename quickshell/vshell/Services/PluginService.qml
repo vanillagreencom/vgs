@@ -366,14 +366,19 @@ Singleton {
             property string sourceTag: ""
             property double mtimeEpochMs: 0
             onLoaded: {
+                let parseCompleted = false;
                 try {
                     let raw = text();
                     if (raw.charCodeAt(0) === 0xFEFF)
                         raw = raw.slice(1);
                     const manifest = JSON.parse(raw);
+                    parseCompleted = true;
                     root._onManifestParsed(absPath, manifest, sourceTag, mtimeEpochMs);
                 } catch (e) {
-                    root._reportRereadRefusal(absPath, I18n.tr("The manifest is not valid JSON."), e.message);
+                    // This catch covers the parse and the processing that follows
+                    // it. Naming the parse for a failure past it sends the author
+                    // to fix JSON syntax that is already correct.
+                    root._reportRereadRefusal(absPath, parseCompleted ? I18n.tr("The manifest could not be processed.") : I18n.tr("The manifest is not valid JSON."), e.message);
                     root.log.error("bad manifest", absPath, e.message);
                     root.knownManifests[absPath] = {
                         mtime: mtimeEpochMs,

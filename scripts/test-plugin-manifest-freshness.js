@@ -516,22 +516,36 @@ test("a re-read carrying the same id releases nothing", () => {
 // Each row is one way an edited manifest can be unusable, and what the loader must
 // say about it. The package keeps running from the previous read in every case.
 // The first two rows run the shipped FileView handlers; the last two run the loader.
+// A manifest that parses and then throws while the loader processes it: settings
+// is truthy and not a string, so the ./ test reaches startsWith on a number.
+const PROCESSING_TRAP = JSON.stringify(manifest({ settings: 1 }));
+
+// The fourth column is the neighbouring cause the report must not name. The two
+// rows that share the onLoaded catch each forbid the other's message; the rows
+// that reach no catch leave it empty.
 const REFUSALS = [
-    ["the file no longer parses", svc => svc.fvLoaded("{ not json"), "not valid JSON"],
+    ["the file no longer parses", svc => svc.fvLoaded("{ not json"), "not valid JSON", "could not be processed"],
+    ["the manifest parses but cannot be processed", svc => svc.fvLoaded(PROCESSING_TRAP), "could not be processed", "not valid JSON"],
     // The rendered enum name, not the bare number Quickshell passes the handler.
-    ["the file is there but unreadable", svc => svc.fvLoadFailed(3), "PermissionDenied"],
-    ["a required field was deleted", svc => svc._onManifestParsed(USER, { name: "Mine" }, "user", 1), "missing its id"],
-    ["every component surface was removed", svc => svc._onManifestParsed(USER, manifest({ component: "", components: {} }), "user", 1), "no valid component surface"]
+    ["the file is there but unreadable", svc => svc.fvLoadFailed(3), "PermissionDenied", ""],
+    ["a required field was deleted", svc => svc._onManifestParsed(USER, { name: "Mine" }, "user", 1), "missing its id", ""],
+    ["every component surface was removed", svc => svc._onManifestParsed(USER, manifest({ component: "", components: {} }), "user", 1), "no valid component surface", ""]
 ];
 
 test("a re-read the loader cannot use reports the refusal and leaves the package running", () => {
-    for (const [why, act, expected] of REFUSALS) {
+    for (const [why, act, expected, reject] of REFUSALS) {
         const svc = loader([{ id: "mine", path: USER, source: "user" }]);
         act(svc);
         assert.equal(svc.availablePlugins.mine.manifestPath, USER, `${why}: the owner record must survive`);
         assert.equal(svc.availablePlugins.mine.loaded, true, `${why}: the package must keep running`);
         assert.equal(svc.toasts.length, 1, `${why}: the refusal must reach the user`);
         assert.match(svc.toasts[0].body, new RegExp(expected), `${why}: the report must name the cause`);
+        if (reject) {
+            // A wrong cause is a wrong repair instruction: told the JSON is
+            // invalid, the author goes looking for syntax that is already correct.
+            assert.doesNotMatch(svc.toasts[0].body, new RegExp(reject),
+                `${why}: the report must not name the other failure this catch covers`);
+        }
         // ToastService throttles errors by title, so a title shared by two refusals
         // in one scan shows the user one broken file when two are broken.
         assert.match(svc.toasts[0].title, /mine$/, `${why}: the title must name the refused package`);
