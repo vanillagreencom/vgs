@@ -2654,6 +2654,83 @@ def test_current_theme_reads_without_applying():
     with_temp_home(scenario)
 
 
+def test_cache_prune_bounds_imagecache_and_drops_unreferenced_notification_images():
+    """`cache prune` deletes the oldest-written imagecache files past the size cap, and the
+    notification images no history entry names once they are past the save grace."""
+    def prune() -> tuple:
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            status = helper.cmd_cache(["prune"])
+        return status, (err.getvalue().splitlines() or [""])[0]
+
+    def put(path: Path, size: int, age_seconds: float) -> Path:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"x" * size)
+        stamp = time.time() - age_seconds
+        os.utime(path, (stamp, stamp))
+        return path
+
+    def scenario(temp_home: Path):
+        cache = temp_home / ".cache" / "vshell"
+        images = cache / "imagecache"
+        # (file, survives, why): the owned files total 1600 bytes against a 1000-byte cap.
+        image_rows = [
+            (put(images / "remote_0000000a", 400, 3000), False, "the oldest-written owned file goes first"),
+            (put(images / "0000000b@256x256.png", 400, 2000), False, "eviction continues until the rest fit the cap"),
+            (put(images / "remote_0000000c", 400, 1000), True, "a file that fits under the cap stays"),
+            (put(images / "0000000d@512x512.png", 400, 10), True, "the newest file stays"),
+            (put(images / "remote_0000000e.tmp", 4000, 5000), True, "a download still being written is not an owned name"),
+            (put(images / "notes.txt", 4000, 5000), True, "a file outside the hash scheme is neither counted nor deleted"),
+        ]
+        notif = cache / "notification_images"
+        history = cache / "notification_history.json"
+        # (file, image the history names for it or None, survives, why)
+        notif_rows = [
+            (put(notif / "notif_1000_1.png", 10, 3600), f"file://{notif}/notif_1000_1.png", True,
+             "an image a history entry names stays"),
+            (put(notif / "notif_1000_2.png", 10, 3600), "file:///var/home/other/.cache/vshell/notification_images/notif_1000_2.png",
+             True, "an entry names its image by file name, so another spelling of the cache root keeps it"),
+            (put(notif / "notif_1000_3.png", 10, 3600), None, False, "an image no entry names is deleted"),
+            (put(notif / "notif_1000_4.png", 10, 5), None, True, "an unnamed image inside the save grace stays"),
+            (put(notif / "keep.png", 10, 3600), None, True, "a file outside the notification image scheme stays"),
+        ]
+        named = [{"image": image} for _path, image, _survives, _why in notif_rows if image]
+        history.write_text(json.dumps({"notifications": [*named, {"image": "image://icon/app"}, {}]}))
+
+        with patch.object(helper, "IMAGECACHE_MAX_BYTES", 1000):
+            assert_equal(prune(), (0, ""), "cache prune exit status")
+        for path, survives, why in image_rows:
+            assert_equal(path.exists(), survives, why)
+        for path, _image, survives, why in notif_rows:
+            assert_equal(path.exists(), survives, why)
+
+        # (history text or None for no file, exit status, stderr key, why)
+        for text, status, key, why in [
+            (None, 0, "", "a missing history deletes no notification image"),
+            ("{not json", 1, f"notification-history-unreadable: {history}", "unparseable history deletes no notification image"),
+            (json.dumps({"notifications": 3}), 1, f"notification-history-unreadable: {history}",
+             "a history without an entry list deletes no notification image"),
+        ]:
+            stray = put(notif / "notif_2000_9.png", 10, 3600)
+            if text is None:
+                history.unlink(missing_ok=True)
+            else:
+                history.write_text(text)
+            assert_equal(prune(), (status, key), why)
+            assert_equal(stray.exists(), True, why)
+
+        cli = subprocess.run(
+            [str(REPO_ROOT / "bin" / "vshell"), "cache", "prune"],
+            check=False, capture_output=True, text=True,
+            env={"PATH": os.environ.get("PATH", ""), "HOME": str(temp_home)},
+        )
+        assert_equal((cli.returncode, (cli.stderr.splitlines() or [""])[0]),
+                     (1, f"notification-history-unreadable: {history}"),
+                     "the vshell CLI routes cache prune to the helper")
+
+    with_temp_home(scenario)
+
+
 def test_icon_index_picks_each_name_through_the_inherit_chain():
     """`icons index` maps each icon name to one file of the theme's inherit chain, and
     reuses its per-theme cache until a file in the chain changes."""
@@ -11385,6 +11462,7 @@ def main():
     test_current_theme_reads_without_applying()
     test_theme_init_applies_only_without_state()
     test_icon_index_picks_each_name_through_the_inherit_chain()
+    test_cache_prune_bounds_imagecache_and_drops_unreferenced_notification_images()
     test_lint_checks_color0_in_light_mode_only()
     test_lint_reports_listed_shortfalls_as_known()
     test_lint_all_fails_only_on_an_unlisted_warning()

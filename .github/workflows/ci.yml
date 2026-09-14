@@ -272,6 +272,7 @@ jobs:
           scripts/test-switcher-scope.js
           scripts/test-switcher-source.js
           scripts/test-thumb-sweep.js
+          scripts/test-notification-history-trim.js
           scripts/test-theme-startup.js
           scripts/test-flatline-controls.js
           scripts/test-brightness-scan-ordering.js
