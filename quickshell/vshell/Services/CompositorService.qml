@@ -116,18 +116,47 @@ Singleton {
         }
     }
 
+    // Hyprland announces one action under a v1 and a v2 name: activewindow/activewindowv2,
+    // workspace/workspacev2, focusedmon/focusedmonv2, movewindow/movewindowv2. Both lists
+    // below carry the v2 name alone, because matching the pair does the work twice.
+
+    // Quickshell refreshes HyprlandMonitor dedicated properties from the event stream but
+    // refetches lastIpcObject only on request. Dock scratchpad reveal reads
+    // monitor.lastIpcObject.specialWorkspace, which activespecial invalidates; hotplug and
+    // monitor focus change which monitor that read lands on.
+    readonly property var _hyprMonitorRefreshEvents: ["monitoradded", "monitorremoved", "focusedmonv2", "activespecial"]
+
+    // Events that change what filterCurrentWorkspace and filterCurrentDisplay return
+    // without changing ToplevelManager's list. Bar, dock and focused-app widgets rebuild
+    // imperatively from toplevelsChanged, so nothing else re-runs those filters on a
+    // workspace switch, a fullscreen toggle or a move between groups.
+    readonly property var _hyprToplevelViewEvents: ["openwindow", "closewindow", "movewindowv2", "workspacev2", "focusedmonv2", "activewindowv2", "changefloatingmode", "fullscreen", "moveintogroup", "moveoutofgroup", "activespecial"]
+
     Connections {
         target: root.isHyprland ? Hyprland : null
         enabled: root.isHyprland
         function onRawEvent(event) {
-            if (event.name === "openwindow" || event.name === "closewindow" || event.name === "movewindow" || event.name === "movewindowv2" || event.name === "workspace" || event.name === "workspacev2" || event.name === "focusedmon" || event.name === "focusedmonv2" || event.name === "activewindow" || event.name === "activewindowv2" || event.name === "changefloatingmode" || event.name === "fullscreen" || event.name === "moveintogroup" || event.name === "moveoutofgroup" || event.name === "activespecial") {
-                try {
-                    Hyprland.refreshToplevels();
-                    Hyprland.refreshMonitors();
-                } catch (e) {}
-                root.refreshToplevels();
-            }
+            if (root._hyprMonitorRefreshEvents.includes(event.name))
+                hyprMonitorRefreshTimer.restart();
+            if (root._hyprToplevelViewEvents.includes(event.name))
+                hyprToplevelViewTimer.restart();
         }
+    }
+
+    // One action still emits several matched events: a workspace switch emits workspacev2,
+    // activewindowv2 and focusedmonv2. Collapse them into one refresh per event-loop turn.
+    Timer {
+        id: hyprMonitorRefreshTimer
+        interval: 0
+        repeat: false
+        onTriggered: Hyprland.refreshMonitors()
+    }
+
+    Timer {
+        id: hyprToplevelViewTimer
+        interval: 0
+        repeat: false
+        onTriggered: root.refreshToplevels()
     }
 
     function refreshToplevels() {

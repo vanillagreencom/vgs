@@ -71,6 +71,8 @@ qml       | scripts/test-plugin-daemon-views.js
 -         | scripts/test-paste-target.js
 -         | scripts/test-paste-lifecycle.js
 -         | scripts/test-compositor-focus.js
+-         | scripts/test-compositor-events.js
+-         | scripts/test-dock-scratchpad-identity.js
 -         | scripts/check-paste-injection.py
 -         | scripts/test-label-taxonomy.py
 -         | scripts/test-settings-type.py

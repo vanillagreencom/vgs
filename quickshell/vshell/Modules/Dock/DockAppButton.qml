@@ -152,7 +152,10 @@ Item {
         const hyprToplevel = getHyprToplevelForWayland(waylandToplevel);
         if (!hyprToplevel)
             return "";
-        const wsName = String(hyprToplevel.lastIpcObject?.workspace?.name || hyprToplevel.workspace?.name || "");
+        // workspace is a dedicated property Quickshell tracks from the event stream.
+        // lastIpcObject keeps the name the window had when it was last fetched, so reading
+        // it first pins the badge to a stale workspace after the window moves.
+        const wsName = String(hyprToplevel.workspace?.name || hyprToplevel.lastIpcObject?.workspace?.name || "");
         if (!wsName.startsWith("special:"))
             return "";
         return wsName.slice("special:".length);
