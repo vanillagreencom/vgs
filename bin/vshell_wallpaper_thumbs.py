@@ -218,14 +218,21 @@ def reclaimable(entry: Path, wanted: set[str]) -> bool:
     return pid is not None and not owner_running(pid)
 
 
-def prune_orphans(paths: List[Path]) -> int:
+def prune_orphans(paths: List[Path], wanted: Optional[set[str]] = None) -> int:
     """Drop cache entries no live wallpaper claims, building nothing. `paths`
     must be the COMPLETE set, exactly as for build_all's prune — run over one
-    theme it would delete every other theme's thumbnails."""
-    wanted: set[str] = set()
-    for src in paths:
-        with contextlib.suppress(OSError):
-            wanted.add(thumb_name(src))
+    theme it would delete every other theme's thumbnails.
+
+    `wanted` is the keys those paths resolved to, for a caller that has just
+    derived them. A key mixes the source's size and mtime, so a source rewritten
+    between that caller's read and this one resolves to a different key here and
+    the entry it just built reads as an orphan and is deleted.
+    """
+    if wanted is None:
+        wanted = set()
+        for src in paths:
+            with contextlib.suppress(OSError):
+                wanted.add(thumb_name(src))
     pruned = 0
     with contextlib.suppress(OSError):
         for entry in thumb_dir().iterdir():
@@ -246,12 +253,14 @@ def build_all(paths: List[Path], prune: bool = False) -> Dict[str, Any]:
     # bounding retries needs the same key the cache is named for, and over an
     # all-theme sweep it cannot derive one for a theme it is not showing.
     failed: List[Dict[str, str]] = []
+    wanted: set[str] = set()
     for src in paths:
         try:
             name = thumb_name(src)
         except OSError:
             failed.append({"path": str(src), "key": ""})
             continue
+        wanted.add(name)
         existing = thumb_dir() / name
         if existing.is_file() and existing.stat().st_size > 0:
             reused += 1
@@ -260,6 +269,6 @@ def build_all(paths: List[Path], prune: bool = False) -> Dict[str, Any]:
         else:
             built += 1
     if prune:
-        pruned = prune_orphans(paths)
+        pruned = prune_orphans(paths, wanted)
     return {"built": built, "reused": reused, "failed": failed,
             "pruned": pruned, "dir": str(thumb_dir())}

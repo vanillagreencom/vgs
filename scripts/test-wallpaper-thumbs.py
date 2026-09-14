@@ -285,6 +285,28 @@ class CacheHousekeeping(ThumbCases):
                           live.read_bytes() == TINY_JPEG, orphan.exists()),
                          (1, 0, 1, True, False))
 
+    def test_a_source_rewritten_during_the_sweep_keeps_the_thumbnail_it_just_built(self):
+        """A catalog update or a user replacing a wallpaper moves the source's size
+        and mtime, both of which are in the cache key. Deriving the key a second
+        time at prune time would read the entry this run just built as an orphan
+        and delete it, while the same run reported it as built."""
+        self.configure(runner)
+
+        def build_then_rewrite(src: Path) -> Path:
+            out = thumbs.thumb_dir() / thumbs.thumb_name(src)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_bytes(TINY_JPEG)
+            src.write_bytes(src.read_bytes() + b"\0")
+            return out
+
+        self.patch(thumbs, "build_one", build_then_rewrite)
+        moving = self.fresh_dir() / "moving.jpg"
+        moving.write_bytes(TINY_JPEG)
+        result = thumbs.build_all([moving], prune=True)
+        landed = [f.name for f in thumbs.thumb_dir().iterdir() if not f.name.startswith(".")]
+        self.assertEqual((result["built"], result["pruned"], result["failed"], len(landed)),
+                         (1, 0, [], 1))
+
     def test_an_unwritable_cache_answers_like_a_miss_not_a_traceback(self):
         """The caller falls back to the original; an exception here kills the command."""
         blocked = self.fresh_dir() / "a-file"

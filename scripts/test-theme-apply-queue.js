@@ -3,6 +3,8 @@
 // Execute VGSThemeService's apply dispatch against a recording command runner.
 // Two helper processes race each other for the helper's own mutation flock, so
 // an apply may only reach the helper while no other apply is running there.
+// The slot reaches applyBlueprint and setWallpaper alone; every other mutating
+// theme subcommand still runs through a bare _run with no slot.
 
 "use strict";
 
@@ -17,10 +19,15 @@ const service = qmlSource(fs.readFileSync(SERVICE, "utf8"), "VGSThemeService.qml
 
 const bodies = ["_runApply", "_dispatchApply", "_finishApply"].map(name => [name, service.body(name)]);
 
+function signature(name) {
+    return name === "_finishApply" ? "(requestId, success, message)" : "(requestId, args, callback)";
+}
+
 // A service whose apply functions run with QML's unqualified lookup. `dispatched`
-// records the argv each helper process was actually launched with, in order; a
-// launched command answers only when the test finishes it, as a helper process
-// exits after the handler that started it has returned.
+// records the argv each helper process was launched with, in order. A launched
+// process answers only when the test answers it, as the shell sees a helper exit:
+// the callback the service was given is what calls _finishApply, so answering
+// travels the service's own completion path.
 function serviceUnderTest(onCompleted) {
     const dispatched = [];
     const running = [];
@@ -31,7 +38,7 @@ function serviceUnderTest(onCompleted) {
         _applyQueue: [],
         _run(requestId, args, callback) {
             dispatched.push(args.join(" "));
-            running.push(() => callback("{}", 0, ""));
+            running.push(exitCode => callback("{}", exitCode, ""));
         },
         applyCompleted(success, message) {
             if (onCompleted)
@@ -43,23 +50,23 @@ function serviceUnderTest(onCompleted) {
         root[name] = new Function("root", `with (root) { return function ${name}${signature(name)} ${body} }`)(root);
     return {
         dispatched,
-        // Answer the oldest launched process, as the shell sees its exit.
-        answer(requestId) {
-            const finish = running.shift();
-            assert.ok(finish, "no helper process was running to answer");
-            finish();
-            root._finishApply(requestId, true, "done");
+        root,
+        // Exit the oldest running helper process. Its own callback finishes the
+        // request, so the failure branch is reached the way the service reaches
+        // it: a non-zero helper exit.
+        answer(requestId, success = true) {
+            const exit = running.shift();
+            assert.ok(exit, "no helper process was running to answer");
+            exit(success ? 0 : 1);
         },
-        begin(requestId, args) {
+        // Book a request as applyBlueprint and setWallpaper do, then hand it to
+        // the slot with a callback that finishes it on exit.
+        begin(requestId, args, success = true) {
             root._applyInFlight[requestId] = true;
-            root._runApply(requestId, args, () => {});
-        },
-        root
+            root._runApply(requestId, args, (output, exitCode) =>
+                root._finishApply(requestId, exitCode === 0, exitCode === 0 ? "done" : "helper refused"));
+        }
     };
-}
-
-function signature(name) {
-    return name === "_finishApply" ? "(requestId, success, message)" : "(requestId, args, callback)";
 }
 
 test("one apply reaches the helper at a time, and the rest follow in request order", () => {
@@ -78,7 +85,11 @@ test("one apply reaches the helper at a time, and the rest follow in request ord
     assert.deepEqual(svc.dispatched, ["theme set-wallpaper a", "theme set-wallpaper b"],
         "the oldest waiting apply takes the freed slot");
 
-    svc.answer("second");
+    // A refused apply frees the slot exactly as a successful one does. The helper
+    // refuses on an unreadable wallpaper or a target it cannot write; if that
+    // outcome held the slot, every later pick would queue and never launch and
+    // both switchers would answer every Enter with "Still applying".
+    svc.answer("second", false);
     assert.deepEqual(svc.dispatched,
         ["theme set-wallpaper a", "theme set-wallpaper b", "theme apply c"],
         "requests reach the helper in the order they were made, so its last write is the last request");
@@ -86,6 +97,7 @@ test("one apply reaches the helper at a time, and the rest follow in request ord
     svc.answer("third");
     assert.equal(svc.root._applyDispatched, "", "the slot is free once nothing is running");
     assert.deepEqual(svc.root._applyQueue, [], "no request is left waiting");
+    assert.deepEqual(svc.root._applyInFlight, {}, "and every request has been answered");
 });
 
 test("a completion handler that throws still leaves the next apply running", () => {
@@ -98,4 +110,22 @@ test("a completion handler that throws still leaves the next apply running", () 
     assert.deepEqual(svc.dispatched, ["theme apply a", "theme apply b"],
         "past the signals a throw would strand the queue behind a slot nothing frees, " +
         "killing every later apply for the life of the session");
+});
+
+test("a hand-off that throws frees the slot and still answers the finished request", () => {
+    const svc = serviceUnderTest();
+    const announced = [];
+    svc.root.applyFinished = requestId => announced.push(requestId);
+    svc.begin("first", ["theme", "apply", "a"]);
+    svc.begin("second", ["theme", "apply", "b"]);
+    // Proc creates a Timer per launch and connects to it; a null object there
+    // throws out of the launch.
+    svc.root._run = () => {
+        throw new Error("Proc could not create the timer");
+    };
+    assert.throws(() => svc.answer("first"), /could not create the timer/);
+    assert.deepEqual(announced, ["first"],
+        "the request that finished is announced whatever the next launch does, or its caller waits forever");
+    assert.equal(svc.root._applyDispatched, "",
+        "and the slot stays free, or a launch that never happened kills every later apply");
 });
