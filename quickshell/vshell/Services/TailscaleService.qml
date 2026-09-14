@@ -46,7 +46,15 @@ Singleton {
     property string authUrl: ""
     property var healthWarnings: []
 
+    readonly property bool backendPath: VGSBackendService.has("tailscale")
+    // A connected backend whose inventory omits tailscale.
+    readonly property bool backendDeclined: VGSBackendService.backendAvailable && !backendPath
+    // Held through a backend reconnect so the widget can show the last answer
+    // as "Reconnecting…"; only an inventory without tailscale clears it.
     property bool available: false
+
+    onBackendPathChanged: syncBackendPath()
+    onBackendDeclinedChanged: syncBackendPath()
 
     // True after the backend has answered. Further reads still refresh state.
     property bool stateInitialized: false
@@ -57,7 +65,7 @@ Singleton {
     // given up keeps advertising it. An older backend sends no such field,
     // which reads as false — correct, since it never pushes either.
     property bool watcherActive: false
-    readonly property bool backendWatchCapable: VGSBackendService.capabilities.includes("tailscale.watch")
+    readonly property bool backendWatchCapable: VGSBackendService.has("tailscale.watch")
     readonly property bool backendWatches: backendWatchCapable && watcherActive
 
     // "NoState" and "Starting" are tailscaled still coming up, and an empty
@@ -136,13 +144,8 @@ Singleton {
 
     readonly property int onlinePeerCount: onlinePeers.length
 
-    readonly property string socketPath: Quickshell.env("VGS_SOCKET")
-
-    Component.onCompleted: {
-        if (socketPath && socketPath.length > 0) {
-            checkVGSCapabilities();
-        }
-    }
+    // A binding's first value emits no change signal, so completion applies it.
+    Component.onCompleted: syncBackendPath()
 
     Connections {
         target: VGSBackendService
@@ -154,7 +157,6 @@ Singleton {
                 // connection. haveCurrentState goes false until a response
                 // stamped with this generation arrives.
                 connectionGeneration++;
-                checkVGSCapabilities();
                 ensureSubscription();
                 refreshStatus();
             } else {
@@ -175,26 +177,18 @@ Singleton {
             root.log.debug("Subscription update received");
             updateState(data);
         }
-
-        function onCapabilitiesReceived() {
-            checkVGSCapabilities();
-        }
     }
 
-    function checkVGSCapabilities() {
-        if (!VGSBackendService.isConnected)
+    function syncBackendPath() {
+        if (backendDeclined) {
+            available = false;
             return;
-        if (VGSBackendService.capabilities.length === 0)
-            return;
-        const wasAvailable = available;
-        available = VGSBackendService.capabilities.includes("tailscale");
-
-        if (!available)
-            return;
-        if (!wasAvailable) {
-            getStatus();
-            ensureSubscription();
         }
+        if (!backendPath)
+            return;
+        available = true;
+        getStatus();
+        ensureSubscription();
     }
 
     function getStatus() {

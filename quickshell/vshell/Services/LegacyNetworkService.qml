@@ -243,6 +243,16 @@ Singleton {
         }
     }
 
+    // Stop the scanning activate() started once the backend path answers instead.
+    function deactivate() {
+        if (!isActive) {
+            return;
+        }
+        isActive = false;
+        log.info("Deactivating...");
+        stopAutoScan();
+    }
+
     function addRef() {
         refCount++;
         if (refCount === 1) {

@@ -35,8 +35,10 @@ Singleton {
             getState();
     }
 
-    property bool available: false
+    readonly property bool available: VGSBackendService.has("cloudsync")
     property bool stateInitialized: false
+
+    onAvailableChanged: syncBackendPath()
     property bool daemonRunning: false
     property string daemonError: ""
     property string rcloneVersion: ""
@@ -260,23 +262,8 @@ Singleton {
         return I18n.tr("This account could not be reached. Check your connection, then check it again.", "Guidance shown on an unreachable cloud account");
     }
 
-    readonly property string socketPath: Quickshell.env("VGS_SOCKET")
-
-    Component.onCompleted: {
-        if (socketPath && socketPath.length > 0)
-            checkVGSCapabilities();
-    }
-
-    Connections {
-        target: VGSBackendService
-
-        function onConnectionStateChanged() {
-            if (VGSBackendService.isConnected) {
-                checkVGSCapabilities();
-                ensureSubscription();
-            }
-        }
-    }
+    // A binding's first value emits no change signal, so completion applies it.
+    Component.onCompleted: syncBackendPath()
 
     Connections {
         target: VGSBackendService
@@ -285,27 +272,20 @@ Singleton {
         function onCloudSyncStateUpdate(data) {
             root.updateState(data);
         }
-
-        function onCapabilitiesReceived() {
-            root.checkVGSCapabilities();
-        }
     }
 
-    function checkVGSCapabilities() {
-        if (!VGSBackendService.isConnected)
+    // A lost backend must not leave state marked initialized; the next
+    // advertisement refetches it.
+    function syncBackendPath() {
+        if (!available) {
+            stateInitialized = false;
             return;
-        if (VGSBackendService.capabilities.length === 0)
-            return;
-        const wasAvailable = available;
-        available = VGSBackendService.capabilities.includes("cloudsync");
-        if (!available)
-            return;
+        }
         if (!stateInitialized) {
             stateInitialized = true;
             getState();
         }
-        if (!wasAvailable)
-            ensureSubscription();
+        ensureSubscription();
     }
 
     // The shell reports backend state transitions through the user-enabled toasts.

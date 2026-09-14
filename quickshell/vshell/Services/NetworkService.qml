@@ -95,88 +95,54 @@ Singleton {
     signal connectionChanged
     signal credentialsNeeded(string token, string ssid, string setting, var fields, var hints, string reason, string connType, string connName, string vpnService, var fieldsInfo)
 
-    property bool usingLegacy: false
-    property var activeService: null
+    // The path follows the advertised capability both ways: a backend restart
+    // drops to LegacyNetworkService and returns once network is advertised again.
+    readonly property bool backendPath: VGSBackendService.has("network")
+    readonly property var activeService: backendPath ? NetworkBackendService : LegacyNetworkService
+    readonly property bool usingLegacy: !backendPath
+    property var _appliedService: null
 
-    readonly property string socketPath: Quickshell.env("VGS_SOCKET")
+    onActiveServiceChanged: applyActiveService()
+    // A binding's first value emits no change signal, so completion applies it.
+    Component.onCompleted: applyActiveService()
 
-    Component.onCompleted: {
-        log.info("Initializing...");
-        if (!socketPath || socketPath.length === 0) {
-            log.info("VGS_SOCKET not set, using LegacyNetworkService");
-            useLegacyService();
-        } else {
-            log.debug("VGS_SOCKET found, waiting for capabilities...");
+    function applyActiveService() {
+        const previous = _appliedService;
+        if (previous === activeService)
+            return;
+        _appliedService = activeService;
+        log.info("Using", backendPath ? "NetworkBackendService" : "LegacyNetworkService");
+        if (usingLegacy)
+            LegacyNetworkService.activate();
+        // Open views keep their references across a switch; move them so
+        // auto-scan runs on the service that now answers.
+        const refs = previous ? previous.refCount : 0;
+        for (let i = 0; i < refs; i++) {
+            previous.removeRef();
+            activeService.addRef();
+        }
+        if (previous === LegacyNetworkService)
+            LegacyNetworkService.deactivate();
+    }
+
+    Connections {
+        target: root.activeService
+
+        function onNetworksUpdated() {
+            root.networksUpdated();
+        }
+
+        function onConnectionChanged() {
+            root.connectionChanged();
         }
     }
 
     Connections {
         target: NetworkBackendService
+        enabled: root.backendPath
 
-        function onNetworkAvailableChanged() {
-            if (!activeService && NetworkBackendService.networkAvailable) {
-                log.info("Network capability detected, using NetworkBackendService");
-                activeService = NetworkBackendService;
-                usingLegacy = false;
-                log.info("Switched to NetworkBackendService, networkAvailable:", networkAvailable);
-                connectSignals();
-            } else if (!activeService && !NetworkBackendService.networkAvailable && socketPath && socketPath.length > 0) {
-                log.info("Network capability not available in VGS, using LegacyNetworkService");
-                useLegacyService();
-            }
-        }
-    }
-
-    // The change handler above never fires when networkAvailable stays false
-    // (assigning false again emits no signal), so a backend without the
-    // network capability would leave activeService null forever. Decide as
-    // soon as the capability set arrives instead.
-    Connections {
-        target: VGSBackendService
-        enabled: !root.activeService
-
-        function onCapabilitiesReceived() {
-            if (!root.activeService && !VGSBackendService.capabilities.includes("network")) {
-                log.info("VGS backend connected without network capability, using LegacyNetworkService");
-                root.useLegacyService();
-            }
-        }
-    }
-
-    // Last-resort fallback: VGS_SOCKET is set but the backend never connects
-    // (build failed, daemon crashed on startup).
-    Timer {
-        interval: 8000
-        running: (root.socketPath || "").length > 0 && !root.activeService
-        onTriggered: {
-            if (!root.activeService) {
-                log.warn("VGS backend did not report network capability in time, using LegacyNetworkService");
-                root.useLegacyService();
-            }
-        }
-    }
-
-    function useLegacyService() {
-        activeService = LegacyNetworkService;
-        usingLegacy = true;
-        log.info("Switched to LegacyNetworkService, networkAvailable:", networkAvailable);
-        if (LegacyNetworkService.activate) {
-            LegacyNetworkService.activate();
-        }
-        connectSignals();
-    }
-
-    function connectSignals() {
-        if (activeService) {
-            if (activeService.networksUpdated) {
-                activeService.networksUpdated.connect(root.networksUpdated);
-            }
-            if (activeService.connectionChanged) {
-                activeService.connectionChanged.connect(root.connectionChanged);
-            }
-            if (activeService.credentialsNeeded) {
-                activeService.credentialsNeeded.connect(root.credentialsNeeded);
-            }
+        function onCredentialsNeeded(token, ssid, setting, fields, hints, reason, connType, connName, vpnService, fieldsInfo) {
+            root.credentialsNeeded(token, ssid, setting, fields, hints, reason, connType, connName, vpnService, fieldsInfo);
         }
     }
 

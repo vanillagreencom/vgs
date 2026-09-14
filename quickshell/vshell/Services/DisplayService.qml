@@ -12,7 +12,9 @@ Singleton {
     readonly property var log: Log.scoped("DisplayService")
 
     property bool brightnessAvailable: devices.length > 0
-    readonly property bool backendBrightnessAvailable: VGSBackendService.isConnected && VGSBackendService.capabilities.includes("brightness") && VGSBackendService.methods.includes("brightness.getState") && VGSBackendService.methods.includes("brightness.setBrightness")
+    readonly property bool backendBrightnessAvailable: VGSBackendService.has("brightness") && VGSBackendService.methods.includes("brightness.getState") && VGSBackendService.methods.includes("brightness.setBrightness")
+    readonly property bool gammaBackendPath: VGSBackendService.has("gamma") && VGSBackendService.methods.includes("wayland.gamma.getState")
+    onGammaBackendPathChanged: checkGammaControlAvailability()
     property var devices: []
     property var deviceBrightness: ({})
     property var deviceBrightnessUserSet: ({})
@@ -920,11 +922,7 @@ Singleton {
     }
 
     function checkGammaControlAvailability() {
-        if (!VGSBackendService.isConnected) {
-            return;
-        }
-
-        if (!VGSBackendService.capabilities.includes("gamma") || !VGSBackendService.methods.includes("wayland.gamma.getState")) {
+        if (!gammaBackendPath) {
             gammaControlAvailable = false;
             automationAvailable = false;
             return;
@@ -1137,9 +1135,8 @@ Singleton {
         nightModeEnabled = SessionData.nightModeEnabled;
         deviceBrightnessUserSet = Object.assign({}, SessionData.brightnessUserSetValues);
         rescanDevices();
-        if (VGSBackendService.isConnected) {
-            checkGammaControlAvailability();
-        }
+        // A binding's first value emits no change signal, so completion applies it.
+        checkGammaControlAvailability();
     }
 
     Timer {
@@ -1186,19 +1183,6 @@ Singleton {
 
     Connections {
         target: VGSBackendService
-
-        function onConnectionStateChanged() {
-            if (VGSBackendService.isConnected) {
-                checkGammaControlAvailability();
-            } else {
-                gammaControlAvailable = false;
-                automationAvailable = false;
-            }
-        }
-
-        function onCapabilitiesReceived() {
-            checkGammaControlAvailability();
-        }
 
         function onGammaStateUpdate(data) {
             root.gammaState = data;
