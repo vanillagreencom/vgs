@@ -6,7 +6,7 @@ All package/module names, socket/env/desktop identifiers, PID/session file names
 
 Explicitly **not** ported from upstream:
 
-- `matugen`, `themes.*`, `theme.auto`, and any theme/wallpaper generation model. VGS theming is owned by `bin/vshell-helper`, `VGSThemeService`, and `vshell theme`.
+- `matugen`, `themes.*`, `theme.auto`, and any theme/wallpaper generation model. VGS theming is owned by `bin/vshell_helper.py`, `VGSThemeService`, and `vshell theme`.
 - Upstream multi-compositor shell orchestration. VGS implements its Niri paths in VGS-owned QML and helper code instead of exposing upstream runtime names.
 
 Upstream is MIT-licensed; the retained license text and copyright (Copyright (c) 2025 Avenge Media LLC) live at `quickshell/vshell/LICENSE`, which covers this adaptation as well. See `docs/ATTRIBUTION.md` for the full lineage.

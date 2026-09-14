@@ -84,7 +84,7 @@ test("a backend-provided stamp is preserved, never overwritten", () => {
 // Read inside the cases: a module-scope read that throws would run before the after hook and
 // leave the executable fake backends behind.
 function cmdAiUsageSource() {
-    const helperSource = fs.readFileSync(path.join(repoRoot, "bin", "vshell-helper"), "utf8");
+    const helperSource = fs.readFileSync(path.join(repoRoot, "bin", "vshell_helper.py"), "utf8");
     // Blank comments before counting print and stamp calls so prose cannot satisfy emission checks.
     const helperCode = helperSource.split("\n").map(l => (/^\s*#/.test(l) ? "" : l)).join("\n");
     return helperCode.slice(

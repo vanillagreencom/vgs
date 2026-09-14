@@ -41,7 +41,7 @@
         "This manifest declares PRESENCE, not versions, and deliberately has no",
         "version-constraint syntax — see docs/decisions/D005-dependency-version-constraints.md.",
         "Where VGS needs more than presence, the check is a capability probe in",
-        "bin/vshell-helper's CAPABILITY_PROBES: it asks the installed command to do",
+        "bin/vshell_helper.py's CAPABILITY_PROBES: it asks the installed command to do",
         "the thing VGS depends on, and `vshell deps status` reports the failure as",
         "\"installed but unusable\". That is the real check; this note is context.",
         "",
@@ -174,7 +174,7 @@
     "launcher-search-fast": {
       "$comment": [
         "Launcher FILE and FOLDER search. Despite the name, fd is not an",
-        "optional accelerator: bin/vshell-helper keeps an os.walk fallback,",
+        "optional accelerator: bin/vshell_helper.py keeps an os.walk fallback,",
         "but the overview declines it and shows an install hint instead -- a",
         "full walk of the search roots per query, with nothing cached between",
         "them, cannot answer at typing speed. Missing fd/fdfind therefore",

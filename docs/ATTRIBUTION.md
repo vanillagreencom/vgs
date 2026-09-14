@@ -19,7 +19,7 @@ The fork is no longer wired to the upstream DMS runtime or greeter. VGS owns its
 
 ## Theme Engine Lineage
 
-Earlier VGS theme work was informed by Aether/matugen-style palette controls and by upstream shell app-theme toggles. The current implementation lives in `bin/vshell-helper`, `themes/`, and `themes/targets/`; it does not call Aether, download upstream assets, or write generated output to non-VGS paths.
+Earlier VGS theme work was informed by Aether/matugen-style palette controls and by upstream shell app-theme toggles. The current implementation lives in `bin/vshell_helper.py`, `themes/`, and `themes/targets/`; it does not call Aether, download upstream assets, or write generated output to non-VGS paths.
 
 ## Naming Boundary
 

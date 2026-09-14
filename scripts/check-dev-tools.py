@@ -28,7 +28,7 @@ sys.path.insert(0, str(REPO_ROOT / "bin"))
 
 
 def load_helper():
-    loader = importlib.machinery.SourceFileLoader("vshell_helper_devtools_check", str(REPO_ROOT / "bin" / "vshell-helper"))
+    loader = importlib.machinery.SourceFileLoader("vshell_helper_devtools_check", str(REPO_ROOT / "bin" / "vshell_helper.py"))
     spec = importlib.util.spec_from_loader(loader.name, loader)
     module = importlib.util.module_from_spec(spec)
     loader.exec_module(module)
@@ -1397,7 +1397,7 @@ def test_cli_wrapper_routes_the_commands():
     dispatch_line = next(line for line in wrapper.splitlines() if "|update|" in line and 'exec "$helper"' not in line)
     for name in ("mise", "agent", "dev-env"):
         assert f"|{name}|" in dispatch_line, f"bin/vshell must route {name} to the helper"
-    helper_text = (REPO_ROOT / "bin" / "vshell-helper").read_text()
+    helper_text = (REPO_ROOT / "bin" / "vshell_helper.py").read_text()
     for name in ("mise", "agent", "dev-env"):
         assert f'if cmd == "{name}": return _devtools().' in helper_text, f"helper must dispatch {name}"
 

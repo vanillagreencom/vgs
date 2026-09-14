@@ -50,6 +50,9 @@ fi
 # icon themes, so the one remaining install has to ship them.
 test -d "$core/usr/lib/vshell/config/vshell/icons"
 test -x "$core/usr/lib/vshell/bin/vshell-backend"
+# bin/vshell-helper is a stub that imports the helper body from the module beside it.
+test -x "$core/usr/lib/vshell/bin/vshell-helper"
+test -f "$core/usr/lib/vshell/bin/vshell_helper.py"
 # The screensaver needs packaged art because it cannot regenerate data into /usr.
 test -s "$core/usr/lib/vshell/config/vshell/branding/screensaver.txt"
 # Installs need a thumbnail for every catalogued theme, for the surfaces that

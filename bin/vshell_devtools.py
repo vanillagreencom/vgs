@@ -1,6 +1,6 @@
 """VGS coding agents and language environments, on top of vshell_mise.
 
-Imported by bin/vshell-helper, never run. configure() forwards the runtime to
+Imported by bin/vshell_helper.py, never run. configure() forwards the runtime to
 vshell_mise so one call wires both.
 """
 from __future__ import annotations

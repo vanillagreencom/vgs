@@ -9,4 +9,4 @@ The icon themes in this directory are the **Yaru** icon theme and its accent col
 
 Bundled variants: `Yaru`, `Yaru-dark`, `Yaru-blue`, `Yaru-blue-dark`, `Yaru-magenta`, `Yaru-olive`, `Yaru-purple`, `Yaru-red`, `Yaru-sage`, `Yaru-sage-dark`, `Yaru-wartybrown`, `Yaru-prussiangreen`.
 
-`bin/vshell-helper` (`ensure_bundled_icon_themes`) symlinks these into `~/.local/share/icons` on icon-theme apply / settings enumeration, unless a real system or user install of the same name already exists (which always wins).
+`bin/vshell_helper.py` (`ensure_bundled_icon_themes`) symlinks these into `~/.local/share/icons` on icon-theme apply / settings enumeration, unless a real system or user install of the same name already exists (which always wins).
