@@ -2734,11 +2734,36 @@ def rebuilt_palette_identity(bp: Dict[str, Any]) -> Dict[str, str]:
     through it moves the palette. On the akane package `theme mode --transform`
     plus a save leaves behind, the roles that move are the six bright ANSI slots.
     Two blueprints are therefore comparable only at equal rebuild depth, which is
-    what the call in `override_dropped_curated` arranges.
+    what `applied_palette_parted`, the one caller that compares an applied
+    blueprint against a package, arranges.
     """
     theme = theme_json_from_blueprint(bp)
     return {**{str(key): str(value) for key, value in (theme.get("colors") or {}).items()},
             "mode": str(theme.get("mode") or "")}
+
+
+def applied_palette_parted(bp: Dict[str, Any], package: Dict[str, Any]) -> bool:
+    """Whether the palette `bp` holds has parted from `package`'s own palette.
+
+    The one owner of that question, because two steps of the same save ask it of
+    the same pair: `carry_curated_apps` decides which revision's merge-style
+    curated files the save may take, and `override_dropped_curated` decides which
+    of them the prune may spare. Answered two ways, one step carries a file the
+    other refuses to vouch for.
+
+    Compared through `rebuilt_palette_identity`, so the two forms meet: a package
+    holds raw palette keys while a blueprint rebuilt out of `theme.json` holds
+    derived ones. `package` is given the one rebuild trip the applied side already
+    took at apply time, which equalises depth without normalising either side.
+
+    They part whenever a control moves the applied palette without writing
+    `colors.toml`, such as `apply-colors --set` with no `--save`, and whenever the
+    package directory is refreshed under an applied theme with no re-apply: a VGS
+    update that changes a built-in theme's definition, or a catalog install over a
+    downloaded theme.
+    """
+    return rebuilt_palette_identity(bp) != rebuilt_palette_identity(
+        blueprint_from_theme_json(theme_json_from_blueprint(package)))
 
 
 def override_dropped_curated(bp: Dict[str, Any]) -> List[str]:
@@ -2771,10 +2796,10 @@ def override_dropped_curated(bp: Dict[str, Any]) -> List[str]:
     - The save lands under the source package's own name. Under any other name
       the destination is a different package, and a merge-style file already
       sitting there was picked for colours this save never saw.
-    - The palette the save writes is still the source package's own, compared
-      through `rebuilt_palette_identity` at equal rebuild depth so the two forms
-      above meet. They part whenever a control moves the applied palette without
-      writing `colors.toml`: `theme apply-colors --set foreground=#101010` with
+    - The palette the save writes is still the source package's own, asked
+      through `applied_palette_parted`, which owns that comparison and states how
+      the two forms above meet. They part whenever a control moves the applied
+      palette without writing `colors.toml`: `theme apply-colors --set foreground=#101010` with
       no `--save`, then `set-wallpaper --save`. The package still matches the digest
       recorded beside it, so the drop question alone reads the file as merely
       overridden and spares it, while the save writes the edited palette and
@@ -2806,8 +2831,7 @@ def override_dropped_curated(bp: Dict[str, Any]) -> List[str]:
     # save never matched a copy of itself rebuilt a different number of times,
     # and the exemption it was owed was refused.
     pkg = palette_from_colors_map(palette, name=package, source=package_source(meta))
-    if rebuilt_palette_identity(bp) != rebuilt_palette_identity(
-            blueprint_from_theme_json(theme_json_from_blueprint(pkg))):
+    if applied_palette_parted(bp, pkg):
         return []
     curated = {Path(rel).name: str(p) for rel, p in files.items() if rel.startswith("apps/")}
     layers = package_layer_palettes(package)
@@ -8150,13 +8174,44 @@ def carry_curated_apps(bp: Dict[str, Any]) -> Dict[str, Any]:
     """Restore current-package sources to a matching palette-only blueprint.
     Wallpaper changes must retain curated app files and package identity;
     otherwise apply falls back to generated app themes. Mutate and return bp.
-    Leave non-matching names and non-package themes unchanged."""
+    Leave non-matching names and non-package themes unchanged.
+
+    The two halves of that restore answer from different places on purpose: the
+    palette and every carried value come from the applied blueprint, which
+    `with_current_terminal_slots` states answers first, while the curated files
+    come from `current_theme_obj`, which re-resolves the package so they reflect
+    disk state. The two part the moment the package directory is refreshed under
+    an applied theme with no re-apply, and a merge-style curated file taken from
+    the parted revision was picked against a palette this blueprint does not
+    hold. Carried on, the apply painted its bands over colours they were never
+    chosen for, and a save under the theme's own name wrote the stale applied
+    palette beside the refreshed file and recorded a `curatedPalette` digest over
+    that pair, which certified a pairing no writer ever judged and left a reload
+    keeping it.
+
+    So a parted revision hands over no merge-style file, and the save's prune then
+    removes any already in the destination. Only those files: a replacing curated
+    file is the whole output with no palette-derived value under it to disagree
+    with, and for a pointer-style target such as icons there is no template behind
+    it, so refusing one would leave the apply nothing to write. The package
+    identity keys carry either way. Which package this is has not changed, only
+    which revision, and `override_dropped_curated` reads those keys.
+
+    Asked under one mode, the same rule `with_current_terminal_slots` states for
+    the values it carries. A rebuild into the other mode is not the revision
+    question: its palette is a transform of the package's own rather than a
+    revision of it, and the counterpart mode's curated file is the file that
+    rebuild wants. `theme mode --transform` is the shipped route there, and
+    `transformed_mode_blueprint` owns it.
+    """
     if str(current_theme().get("name") or "") != str(bp.get("name") or ""):
         return bp
     cur = current_theme_obj()
     if not cur.get("package"):
         return bp
     apps = cur.get("apps") or {}
+    if apps and blueprint_mode(cur) == blueprint_mode(bp) and applied_palette_parted(bp, cur):
+        apps = {name: path for name, path in apps.items() if name not in CLAUDE_CURATED_FILES}
     if apps:
         bp["apps"] = apps
     for key in ("package", "path", "builtin", "userDir"):
