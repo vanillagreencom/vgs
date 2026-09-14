@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import qs.Common
+import qs.Widgets
 
 // Carousel geometry follows the Omarchy image picker: overlapping leaning slices surround a full selected preview.
 // Scale base proportions together and keep page changes immediate.
@@ -15,6 +16,8 @@ Item {
 
     signal picked(int index)
     signal activated
+    // A right-click on the entry at `index`, at `position` in carousel coordinates.
+    signal contextRequested(int index, point position)
 
     readonly property real baseRailWidth: 768 + 13 * 78 + 40
     // Avoid scale: Item owns that transform property, which would magnify the rail instead of sizing its geometry.
@@ -86,6 +89,7 @@ Item {
 
                 required property int index
 
+                readonly property var entry: (carousel.items || [])[index] || ({})
                 readonly property int relativeIndex: index - carousel.selectedIndex
                 readonly property bool isSelected: index === carousel.selectedIndex
                 readonly property bool nearby: Math.abs(relativeIndex) <= carousel.slicesPerSide
@@ -112,6 +116,7 @@ Item {
                 borderColor: isSelected ? Theme.primary : Theme.withAlpha(Theme.surfaceText, 0.28)
                 borderWidth: isSelected ? 3 : 1
                 onClicked: isSelected ? carousel.activated() : carousel.picked(index)
+                onContextClicked: (x, y) => carousel.contextRequested(index, carousel.mapFromItem(slice, x, y))
 
                 // Keep separate cache sizes for slices and the selected slot; selected lookahead uses the selected slot's cache key.
                 SwitcherStage {
@@ -131,6 +136,34 @@ Item {
                     sourceSize.width: carousel.sliceDecodeWidth
                     sourceSize.height: carousel.sliceDecodeHeight
                     source: slice.retained ? carousel.thumbUrlFor(slice.index) : ""
+                }
+
+                Rectangle {
+                    anchors.fill: parent
+                    visible: !!slice.entry.card
+                    color: Theme.surfaceContainer
+
+                    StyledText {
+                        anchors.fill: parent
+                        anchors.margins: carousel.skewOffset * 2
+                        visible: slice.isSelected
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                        wrapMode: Text.WordWrap
+                        text: slice.entry.label || ""
+                        font.pixelSize: Theme.fontSizeXLarge * Math.max(1, carousel.unit * 1.5)
+                        color: Theme.surfaceText
+                    }
+                }
+
+                VgsIcon {
+                    anchors.top: parent.top
+                    anchors.right: parent.right
+                    anchors.margins: carousel.skewOffset
+                    visible: slice.entry.marked === true
+                    name: "check_circle"
+                    size: 28 * carousel.unit
+                    color: Theme.primary
                 }
             }
         }

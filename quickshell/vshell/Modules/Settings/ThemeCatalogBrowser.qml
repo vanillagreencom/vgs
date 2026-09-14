@@ -94,16 +94,6 @@ FloatingWindow {
         id: removeConfirm
     }
 
-    Connections {
-        target: VGSThemeCatalogService
-        function onOperationCompleted(success, message) {
-            if (success)
-                ToastService.showInfo(message);
-            else
-                ToastService.showError(I18n.tr("Theme download"), message);
-        }
-    }
-
     VgsFloatingSurface {
         anchors.fill: parent
         targetWindow: root

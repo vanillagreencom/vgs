@@ -12,7 +12,8 @@ import qs.Widgets
 VgsModal {
     id: root
 
-    // [{image: absolute path, label: caption, key: apply id}]
+    // [{image: absolute path, label: caption, key: apply id}]; an entry with `card` and no image draws its label
+    // as the tile, and one with `marked` carries a check badge.
     property var items: []
     // Type-to-filter (theme switcher); the wallpaper switcher has no filter.
     property bool filterable: false
@@ -30,6 +31,12 @@ VgsModal {
     property Component scopeToggle: null
     // Scope changes do not latch selection intent; reseeding must still select the entry active in the new scope.
     signal scopeFlipRequested
+    // Optional control below the captions, loaded like scopeToggle but with no key of its own.
+    property Component sourceToggle: null
+    // Optional menu a right-click opens on an entry, drawn at menuPosition. It reads menuItem; null closes it.
+    property Component itemMenu: null
+    property var menuItem: null
+    property point menuPosition: Qt.point(0, 0)
 
     property string filterQuery: ""
     property int currentIndex: 0
@@ -265,6 +272,8 @@ VgsModal {
     }
 
     onVisibleItemsChanged: {
+        // A menu opened on an entry of the previous list must not act on this one.
+        menuItem = null;
         currentIndex = preserveIndex(visibleItems, selectedKey, currentIndex);
         reseedIfUntouched();
         holdCurrent();
@@ -275,9 +284,11 @@ VgsModal {
 
     function handleKey(event) {
         if (event.key === Qt.Key_Escape) {
-            // A filter is the first thing Esc takes back, so a mistyped term
-            // does not cost the whole browse.
-            if (root.filterable && root.filterQuery)
+            // An open entry menu, then a filter, is what Esc takes back first, so a
+            // mistyped term does not cost the whole browse.
+            if (root.menuItem)
+                root.menuItem = null;
+            else if (root.filterable && root.filterQuery)
                 root.updateFilter("");
             else
                 root.close();
@@ -346,6 +357,7 @@ VgsModal {
             root.userMoved = false;
             root.wheelAccumulator = 0;
             root.selectedKey = "";
+            root.menuItem = null;
             root.seedSelection();
         }
 
@@ -356,6 +368,7 @@ VgsModal {
             root.userMoved = false;
             root.wheelAccumulator = 0;
             root.selectedKey = "";
+            root.menuItem = null;
         }
     }
 
@@ -367,8 +380,9 @@ VgsModal {
 
             readonly property real gutter: Theme.spacingXL
             readonly property real availableWidth: width - gutter * 2
-            readonly property real availableHeight: height - gutter * 2 - captions.height - Theme.spacingL - scopeReserve
+            readonly property real availableHeight: height - gutter * 2 - captions.height - Theme.spacingL - scopeReserve - footerReserve
             readonly property real scopeReserve: scopeSlot.height > 0 ? scopeSlot.height + Theme.spacingL : 0
+            readonly property real footerReserve: footerSlot.height > 0 ? footerSlot.height + Theme.spacingL : 0
             // Scale captions from width, not railScale: caption height contributes to railScale and would create a binding loop.
             readonly property real captionScale: Math.max(1, Math.min(2, switcherContent.availableWidth / carousel.baseRailWidth))
             readonly property real railScale: {
@@ -410,7 +424,7 @@ VgsModal {
                 width: carousel.baseRailWidth * switcherContent.railScale
                 height: 475 * switcherContent.railScale
                 anchors.horizontalCenter: parent.horizontalCenter
-                y: (switcherContent.height - height - Theme.spacingL - captions.height + switcherContent.scopeReserve) / 2
+                y: (switcherContent.height - height - Theme.spacingL - captions.height - switcherContent.footerReserve + switcherContent.scopeReserve) / 2
                 visible: root.itemCount > 0
 
                 dpr: root.dpr
@@ -422,6 +436,12 @@ VgsModal {
                     root.holdCurrent();
                 }
                 onActivated: root.applyCurrent()
+                onContextRequested: (index, position) => {
+                    if (!root.itemMenu)
+                        return;
+                    root.menuItem = root.visibleItems[index];
+                    root.menuPosition = switcherContent.mapFromItem(carousel, position.x, position.y);
+                }
             }
 
             StyledText {
@@ -500,6 +520,29 @@ VgsModal {
                 anchors.bottomMargin: Theme.spacingL
                 sourceComponent: root.scopeToggle
                 // Size the pill directly: transforming NativeRendering text scales rasterized glyphs and blurs them.
+            }
+
+            Loader {
+                id: footerSlot
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.top: captions.bottom
+                anchors.topMargin: Theme.spacingL
+                sourceComponent: root.sourceToggle
+            }
+
+            // While an entry menu is open, a click anywhere outside it closes only the menu.
+            MouseArea {
+                anchors.fill: parent
+                visible: root.menuItem !== null
+
+                onClicked: root.menuItem = null
+
+                Loader {
+                    x: Math.max(0, Math.min(root.menuPosition.x, parent.width - width))
+                    y: Math.max(0, Math.min(root.menuPosition.y, parent.height - height))
+                    active: root.menuItem !== null
+                    sourceComponent: root.itemMenu
+                }
             }
         }
     }

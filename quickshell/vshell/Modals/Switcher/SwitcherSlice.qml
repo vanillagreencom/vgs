@@ -21,6 +21,7 @@ Item {
     default property alias tileContent: masked.data
 
     signal clicked
+    signal contextClicked(real x, real y)
 
     readonly property real _skew: Math.abs(skewOffset)
     readonly property real topLeftX: skewOffset >= 0 ? _skew : 0
@@ -119,6 +120,7 @@ Item {
     MouseArea {
         anchors.fill: parent
         cursorShape: Qt.PointingHandCursor
-        onClicked: slice.clicked()
+        acceptedButtons: Qt.LeftButton | Qt.RightButton
+        onClicked: mouse => mouse.button === Qt.RightButton ? slice.contextClicked(mouse.x, mouse.y) : slice.clicked()
     }
 }
