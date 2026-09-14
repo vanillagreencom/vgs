@@ -580,6 +580,14 @@ def test_theme_apply_runs_only_the_reload_hooks_whose_target_changed():
                          ["alpha-config", "alpha-reload", "beta-reload", "delta-reload",
                           "epsilon-config", "epsilon-reload", "gamma-config"],
                          "the first apply runs every hook of every target")
+            # kitty-vgs used to carry this order as data, hook: [kitty-config,
+            # kitty-reload]. It now comes from the commit loop alone: the include
+            # line has to be in kitty.conf before the SIGUSR1 that re-reads it,
+            # and the apply that moved the bytes is the only one that signals.
+            order = [entry["hook"] for entry in first["hooks"]]
+            for target in ("alpha", "epsilon"):
+                assert_equal(order.index(f"{target}-config") < order.index(f"{target}-reload"), True,
+                             f"{target} must assert its wiring before it tells its consumer to re-read")
 
             again = helper.apply_theme_obj(blueprint)
             assert_equal(again["changed"], [], "re-applying the same theme moves no bytes")
@@ -720,6 +728,9 @@ def test_theme_apply_commits_a_curated_target_as_one_unit():
                      "the target that could not render is named in one warning")
         assert_equal((home / ".epsilon").exists(), False,
                      "a target that could not render whole writes neither destination")
+        assert_equal(_hooks_of(result),
+                     ["alpha-config", "alpha-reload", "beta-reload", "delta-reload", "gamma-config"],
+                     "a target that never reached its commit sends neither of its hooks")
         assert_equal((home / ".alpha" / "colors").is_file(), True,
                      "every other target still lands")
 
@@ -737,6 +748,9 @@ def test_theme_apply_commits_a_curated_target_as_one_unit():
                      "the write that landed stays on disk")
         assert_equal("epsilon.conf" in result["curated"], True,
                      "a half-committed target still reports the curated file it installed")
+        assert_equal(_hooks_of(result),
+                     ["alpha-config", "alpha-reload", "beta-reload", "delta-reload", "gamma-config"],
+                     "a half-committed target sends neither its wiring hook nor its reload verb")
 
     for case in (shipped, stale_removed, stale_unremovable, template_missing, second_write_fails):
         with_temp_home(case)
@@ -779,7 +793,7 @@ def test_theme_apply_lands_every_other_target_when_one_target_fails():
         assert_equal(_hooks_of(result),
                      ["alpha-config", "alpha-reload", "epsilon-config", "epsilon-reload",
                       "gamma-config"],
-                     "a target that could not land sends neither of its hooks")
+                     "neither failed target sends the reload verb it declares")
         assert_equal(sorted({state for _hook, state in seen_state}), [True],
                      "the applied state must be on disk before the first hook runs")
 
@@ -799,29 +813,121 @@ def _dispatched_hook_names():
             and isinstance(node.comparators[0].value, str)}
 
 
-def test_every_hook_a_target_declares_reaches_a_dispatch_branch():
-    """A hook name run_hook cannot dispatch returns ok with reason 'unknown hook',
-    so the apply reports success while nothing themes that application.
+# Every key a shipped target may declare. A key outside this set is a typo that
+# declares nothing, so the apply silently drops whatever it was meant to say.
+_TARGET_CONFIG_KEYS = {"app", "template", "destination", "detect", "hook", "reloadHook",
+                       "curatedFile", "curatedDestination", "curatedMode", "curatedThemeFile",
+                       "modes", "modeVariants"}
+# The classification the apply acts on: a reload verb tells a running application
+# to re-read a file its target wrote and is sent only when those bytes moved.
+# Every other hook asserts wiring no destination carries and runs on every apply
+# that reaches its target's commit. Moving a name between the two keys changes
+# what an apply does, so the split is held here rather than left to 25 files.
+# The reload half also holds the list docs/architecture/theme.md states in prose.
+_RELOAD_HOOKS = {"btop-reload", "ghostty-reload", "gtk4-reload", "hypr-reload", "kitty-reload",
+                 "niri-reload", "nvim-reload", "pywalfox-update", "shell-reload", "tmux-source"}
+_WIRING_HOOKS = {"btop-config", "chromium-policy", "claude-theme", "codex-theme", "fastfetch-logo",
+                 "foot-config", "gemini-theme-select", "gtk-settings", "hermes-skin-select",
+                 "icon-theme", "kitty-config", "niri-colors-config", "obsidian-theme",
+                 "omp-theme-select", "opencode-theme-select", "pi-theme-link", "qt5ct-config",
+                 "qt6ct-config", "vscode-theme"}
 
-    A typo in either hook key of any themes/targets/*/config.json reaches it, and
-    splitting one target's hook across the two keys is when a name is retyped.
-    The declared names come through helper.declared_hooks, the apply's own reader,
-    rather than a second parser here.
+
+def _declared_target_hooks():
+    """Every shipped target's config, and the hook names under each key, read
+    through helper.declared_hooks rather than through a second parser here."""
+    configs = {}
+    for path in sorted((REPO_ROOT / "themes" / "targets").glob("*/config.json")):
+        configs[path.parent.name] = json.loads(path.read_text())
+    wiring = {name for cfg in configs.values() for name in helper.declared_hooks(cfg, "hook")}
+    reload_verbs = {name for cfg in configs.values() for name in helper.declared_hooks(cfg, "reloadHook")}
+    return configs, wiring, reload_verbs
+
+
+def _dispatched_hook_names():
+    """Every hook name run_hook dispatches, read from its own body so a name with
+    no dispatch branch cannot pass by appearing in a second list here."""
+    body = next(node for node in ast.parse(HELPER_PATH.read_text()).body
+                if isinstance(node, ast.FunctionDef) and node.name == "run_hook")
+    return {node.comparators[0].value for node in ast.walk(body)
+            if isinstance(node, ast.Compare) and isinstance(node.left, ast.Name)
+            and node.left.id == "hook" and len(node.ops) == 1
+            and isinstance(node.ops[0], ast.Eq)
+            and isinstance(node.comparators[0], ast.Constant)
+            and isinstance(node.comparators[0].value, str)}
+
+
+def test_a_btop_selection_failure_is_reported_without_costing_the_rest():
+    """btop-config carries its own hook result, so a failed selection makes the
+    apply partial instead of hiding behind the signal's status.
+
+    Installing ~/.config/btop/themes/vgs.theme does not select it, and before the
+    split a failed selection returned inside btop-reload's result, where the apply
+    read only the signal's ok and reported success.
+    """
+    def check(home):
+        settings = home / ".config" / "vshell" / "settings.json"
+        settings.parent.mkdir(parents=True, exist_ok=True)
+        # The toggle answers before detect_target, so the target renders on a
+        # machine with no btop installed.
+        settings.write_text(json.dumps({"themeApps": {"btop": True}}))
+        blueprint = helper.load_theme_package("tokyo-night")
+        with patch.object(helper, "ensure_btop_color_theme", return_value=False):
+            result = helper.apply_theme_obj(blueprint)
+        assert_equal(result["partial"], True, "a failed selection makes the apply partial")
+        assert_equal([w for w in result["warnings"] if w.startswith("btop-config:")],
+                     ["btop-config: btop color_theme select failed"],
+                     "the failed selection is named in its own warning")
+        assert_equal("btop-reload" in _hooks_of(result), True,
+                     "the target's reload verb still runs")
+        assert_equal((home / ".config" / "btop" / "themes" / "vgs.theme").is_file(), True,
+                     "the theme file the selection points at is still installed")
+        assert_equal((home / ".config" / "vshell" / "theme.json").is_file(), True,
+                     "every other target still lands")
+
+    with_temp_home(check)
+
+
+def test_every_target_config_declares_known_keys_only():
+    """A key a target config misspells declares nothing and the apply drops it.
+
+    `reloadhook` or `reload_hook` in place of `reloadHook` leaves that target
+    sending no reload verb at all, with every other assertion in this file green,
+    because a name that never enters the declared set cannot be checked against
+    anything.
+    """
+    unknown = []
+    for path in sorted((REPO_ROOT / "themes" / "targets").glob("*/config.json")):
+        for key in json.loads(path.read_text()):
+            if key not in _TARGET_CONFIG_KEYS:
+                unknown.append(f"{path.parent.name}: {key}")
+    assert_equal(unknown, [], "every key a shipped target declares must be one the apply reads")
+
+
+def test_every_target_hook_is_dispatched_and_classified():
+    """Each declared hook reaches a dispatch branch, and sits under the key that
+    matches what it does.
+
+    A name run_hook cannot dispatch returns ok with reason 'unknown hook', so the
+    apply reports success while nothing themes that application. Moving a wiring
+    hook into `reloadHook` is the other direction: that target stops asserting its
+    wiring on an apply that moves no bytes, which is the defect the two keys exist
+    to prevent, and it costs only a wasted signal the other way round.
     """
     dispatched = _dispatched_hook_names()
     assert_equal(("btop-reload" in dispatched, "not-a-hook" in dispatched), (True, False),
                  "the dispatch reader is broken: it must find run_hook's own branches, and only those")
-    declared = {}
-    for config in sorted((REPO_ROOT / "themes" / "targets").glob("*/config.json")):
-        cfg = json.loads(config.read_text())
-        for key in ("hook", "reloadHook"):
-            for name in helper.declared_hooks(cfg, key):
-                declared.setdefault(name, config.parent.name)
-    assert_equal(sorted(f"{declared[name]}: {name}" for name in declared
-                        if name not in dispatched), [],
+    configs, wiring, reload_verbs = _declared_target_hooks()
+    assert_equal(len(configs) >= 30, True,
+                 f"the target reader is broken: it found only {len(configs)} config(s)")
+    assert_equal(sorted((wiring | reload_verbs) - dispatched), [],
                  "every hook a shipped target declares must reach a dispatch branch")
-    assert_equal(len(declared) >= 20, True,
-                 f"the target reader is broken: it found only {len(declared)} declared hook(s)")
+    assert_equal(sorted(reload_verbs), sorted(_RELOAD_HOOKS),
+                 "the hooks declared under reloadHook, which is what an apply gates on its bytes")
+    assert_equal(sorted(wiring), sorted(_WIRING_HOOKS),
+                 "the hooks declared under hook, which run on every apply that reaches their target")
+    assert_equal(sorted(wiring & reload_verbs), [],
+                 "a hook name belongs to one key, not both")
 
 
 def test_the_shipped_wallpaper_templates_are_the_ones_the_documented_invariant_names():
@@ -2266,12 +2372,13 @@ def test_theme_hooks_stay_out_of_the_login_session():
                 # with no pid to signal, hypr-reload picks the newest live compositor
                 # instance, and shell-reload finds the running shell through the real
                 # uid's runtime directory. gtk-settings and icon-theme write the login
-                # user's dconf database over the session bus. None passes through a scan.
+                # user's dconf database over the session bus, and gtk4-reload quits the
+                # login session's Nautilus service on it. None passes through a scan.
                 trip = AssertionError("a sandboxed hook must not run a command")
                 with patch.object(helper, "_run_hook_cmd", side_effect=trip), \
                         patch.object(helper.subprocess, "run", side_effect=trip):
                     for hook in ("ghostty-reload", "hypr-reload", "shell-reload", "tmux-source", "nvim-reload",
-                                 "gtk-settings", "icon-theme"):
+                                 "gtk-settings", "gtk4-reload", "icon-theme"):
                         skipped = helper.run_hook(hook, {"background": "#123456"}, {})
                         assert_equal(skipped.get("skipped"), True, f"{hook} reports a skip under a sandbox HOME")
                         assert_equal(skipped.get("reason"), helper.SANDBOX_REFUSAL,
@@ -11217,7 +11324,9 @@ def main():
     test_theme_apply_runs_a_failed_hook_again_on_the_next_apply()
     test_theme_apply_commits_a_curated_target_as_one_unit()
     test_theme_apply_lands_every_other_target_when_one_target_fails()
-    test_every_hook_a_target_declares_reaches_a_dispatch_branch()
+    test_a_btop_selection_failure_is_reported_without_costing_the_rest()
+    test_every_target_config_declares_known_keys_only()
+    test_every_target_hook_is_dispatched_and_classified()
     test_the_shipped_wallpaper_templates_are_the_ones_the_documented_invariant_names()
     test_selection_hooks_refuse_a_home_the_test_did_not_create()
     test_agent_cli_themes_render_for_every_bundled_theme()

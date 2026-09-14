@@ -4665,6 +4665,13 @@ def run_hook(hook: Any, roles: Dict[str, str], bp: Dict[str, Any]) -> Dict[str, 
                 if sockets:
                     env["HYPRLAND_INSTANCE_SIGNATURE"] = sockets[0].parent.name
         return _run_hook_cmd(hook, ["hyprctl", "reload"], env=env, timeout=10)
+    if hook == "gtk4-reload":
+        # Nautilus answers on the login user's session bus whatever $HOME says.
+        if _sandboxed_home():
+            return {"hook": hook, "ok": True, "skipped": True, "reason": SANDBOX_REFUSAL}
+        # A quit failure never fails the hook: the stylesheet is already on disk
+        # and the quit is only a freshness nudge for the next Files window.
+        return {"hook": hook, "ok": True, "nautilus": _quit_windowless_nautilus()}
     if hook == "niri-reload":
         if not shutil.which("niri"):
             return {"hook": hook, "ok": True, "skipped": True, "reason": "niri not found"}
@@ -5620,10 +5627,7 @@ def apply_gtk_settings_hook(roles: Dict[str, str]) -> Dict[str, Any]:
     scheme_result = _run_hook_cmd("gtk-settings", scheme_cmd, timeout=5)
     if not scheme_result.get("ok"):
         failures.append(scheme_result.get("stderr") or scheme_result.get("error") or " ".join(scheme_cmd))
-    # A quit failure never fails the hook: the gsettings emit above already
-    # succeeded and the quit is only a freshness nudge for the next launch.
-    nautilus_result = _quit_windowless_nautilus()
-    return {"hook": "gtk-settings", "ok": not failures, "colorScheme": color_scheme, "gtkTheme": gtk_theme, "nautilus": nautilus_result, "error": "; ".join(failures)}
+    return {"hook": "gtk-settings", "ok": not failures, "colorScheme": color_scheme, "gtkTheme": gtk_theme, "error": "; ".join(failures)}
 
 
 FONT_HINTING = {"none", "slight", "medium", "full"}
@@ -6704,8 +6708,8 @@ def curated_file_text(path: Path, dest: Path, roles: Dict[str, str], app: str = 
 
 
 def declared_hooks(cfg: Dict[str, Any], key: str) -> List[Any]:
-    """A target's `hook` or `reloadHook` value as a list. Both keys ship in two
-    spellings, one hook name or a list of them."""
+    """A target's `hook` or `reloadHook` value as a list. Each key accepts one
+    hook name or a list of them."""
     value = cfg.get(key) or []
     return list(value) if isinstance(value, list) else [value]
 
@@ -6725,8 +6729,10 @@ class _TargetPlan(NamedTuple):
     wrote, so it is worth running only when those bytes moved. `hooks` asserts
     wiring no destination of this target carries — the icon-theme gsettings key,
     btop's selected `color_theme`, a VS Code variant installed since the last
-    apply — so it runs on every apply. Each such hook compares its own inputs
-    and returns without writing when the state is already right.
+    apply — so it runs on every apply that reaches this target's commit. Most
+    such hooks compare their own inputs and return without writing when the
+    state is already right; `icon-theme`, `gtk-settings` and `pi-theme-link`
+    re-assert their wiring unconditionally.
     """
     target: str
     writes: List[_TargetWrite]
@@ -6882,13 +6888,16 @@ def _apply_theme_obj_unlocked(bp: Dict[str, Any], only_app: str | None = None,
             # the shell is no longer showing.
             warn(f"{plan.target}: {exc}")
             continue
+        # Both lists sit after the commit, so a target that could not land sends
+        # neither: a file that is not on disk must claim no reload and no wiring.
+        # The order is the contract for a target declaring both — kitty writes its
+        # include line before the SIGUSR1 that makes kitty re-read it.
         hook_specs.extend(plan.hooks)
         # A reload verb tells a running application to re-read a file this target
         # wrote, so it is worth sending only when those bytes moved. A pick that
         # keeps the palette moves only the targets whose template names
         # {wallpaper}; an extracting pick re-derives the palette and moves them
-        # all. `hooks` above asserts wiring no destination carries, so it is not
-        # gated on anything.
+        # all.
         if target_changed:
             hook_specs.extend(plan.reload_hooks)
 
