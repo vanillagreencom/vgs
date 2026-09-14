@@ -99,7 +99,9 @@ Singleton {
 
     Connections {
         target: ToplevelManager.toplevels
-        function onValuesChanged() { root.refreshToplevels(); }
+        // Share the coalescing timer with the Hyprland fan-out. Opening a window reaches both
+        // producers, and a direct call here would rebuild every consumer a second time.
+        function onValuesChanged() { toplevelViewTimer.restart(); }
     }
 
     Connections {
@@ -116,18 +118,51 @@ Singleton {
         }
     }
 
+    // Hyprland announces one action under a v1 and a v2 name: activewindow/activewindowv2,
+    // workspace/workspacev2, focusedmon/focusedmonv2, movewindow/movewindowv2. Neither list
+    // below carries both names of a pair, because matching the pair does the work twice.
+
+    // Events after which a consumer reads a HyprlandMonitor field that Quickshell refetches
+    // only on request. Dock scratchpad reveal reads monitor.lastIpcObject.specialWorkspace,
+    // which activespecial invalidates; hotplug and monitor focus change which monitor that
+    // read lands on.
+    readonly property var _hyprMonitorRefreshEvents: ["monitoradded", "monitorremoved", "focusedmonv2", "activespecial"]
+
+    // Events after which the toplevel view must be rebuilt. Bar, dock and focused-app widgets
+    // rebuild imperatively from toplevelsChanged, and filterCurrentWorkspace resolves the
+    // active workspace per screen from Hyprland.monitors, so a hotplug that migrates
+    // workspaces stales the surviving bar's list without touching ToplevelManager.
+    readonly property var _hyprToplevelViewEvents: ["openwindow", "closewindow", "movewindowv2", "workspacev2", "focusedmonv2", "activewindowv2", "changefloatingmode", "fullscreen", "moveintogroup", "moveoutofgroup", "activespecial", "monitoradded", "monitorremoved"]
+
     Connections {
         target: root.isHyprland ? Hyprland : null
         enabled: root.isHyprland
         function onRawEvent(event) {
-            if (event.name === "openwindow" || event.name === "closewindow" || event.name === "movewindow" || event.name === "movewindowv2" || event.name === "workspace" || event.name === "workspacev2" || event.name === "focusedmon" || event.name === "focusedmonv2" || event.name === "activewindow" || event.name === "activewindowv2" || event.name === "changefloatingmode" || event.name === "fullscreen" || event.name === "moveintogroup" || event.name === "moveoutofgroup" || event.name === "activespecial") {
-                try {
-                    Hyprland.refreshToplevels();
-                    Hyprland.refreshMonitors();
-                } catch (e) {}
-                root.refreshToplevels();
-            }
+            if (root._hyprMonitorRefreshEvents.includes(event.name))
+                hyprMonitorRefreshTimer.restart();
+            if (root._hyprToplevelViewEvents.includes(event.name))
+                toplevelViewTimer.restart();
         }
+    }
+
+    // One action still emits several events from the same list, so each timer collapses its
+    // list to one refresh per event-loop turn. The actions are the table in the case named
+    // 'one user action costs one refresh of each kind'; an example here only drifts.
+    Timer {
+        id: hyprMonitorRefreshTimer
+        interval: 0
+        repeat: false
+        onTriggered: root.refreshMonitors()
+    }
+
+    // The Hyprland fan-out and ToplevelManager share this timer; ToplevelManager reaches it
+    // on every compositor. The two NiriService handlers above are not routed through it and
+    // rebuild directly, so the one-rebuild-per-action property holds on Hyprland only.
+    Timer {
+        id: toplevelViewTimer
+        interval: 0
+        repeat: false
+        onTriggered: root.refreshToplevels()
     }
 
     function refreshToplevels() {
