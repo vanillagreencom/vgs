@@ -10,8 +10,10 @@ Singleton {
     id: root
     readonly property var log: Log.scoped("NetworkBackendService")
 
-    property bool networkAvailable: false
+    readonly property bool networkAvailable: VGSBackendService.has("network")
     property string backend: ""
+
+    onNetworkAvailableChanged: syncNetworkState()
 
     property string networkStatus: "disconnected"
     property string primaryConnection: ""
@@ -177,7 +179,6 @@ Singleton {
     signal connectionChanged
     signal credentialsNeeded(string token, string ssid, string setting, var fields, var hints, string reason, string connType, string connName, string vpnService, var fieldsInfo)
 
-    readonly property string socketPath: Quickshell.env("VGS_SOCKET")
     readonly property bool supportsCredentials: VGSBackendService.methods.includes("network.credentials.submit") && VGSBackendService.methods.includes("network.credentials.cancel")
     readonly property bool supportsSavedWifiState: VGSBackendService.methods.includes("network.getState")
     readonly property bool supportsWifiAutoconnect: VGSBackendService.methods.includes("network.wifi.setAutoconnect")
@@ -193,9 +194,8 @@ Singleton {
     Component.onCompleted: {
         root.userPreference = SettingsData.networkPreference;
         lastConnectedVpnUuid = SessionData.vpnLastConnected || "";
-        if (socketPath && socketPath.length > 0) {
-            checkVGSCapabilities();
-        }
+        // A binding's first value emits no change signal, so completion applies it.
+        syncNetworkState();
     }
 
     Connections {
@@ -210,48 +210,29 @@ Singleton {
 
     Connections {
         target: VGSBackendService
-
-        function onConnectionStateChanged() {
-            if (VGSBackendService.isConnected) {
-                checkVGSCapabilities();
-            } else {
-                // A dead backend must not keep the UI on the backend path
-                // with stale wifi/ethernet/VPN state; reconnect re-runs the
-                // capability check and refetches state.
-                networkAvailable = false;
-                stateInitialized = false;
-            }
-        }
-    }
-
-    Connections {
-        target: VGSBackendService
         enabled: VGSBackendService.isConnected
-
-        function onCapabilitiesChanged() {
-            checkVGSCapabilities();
-        }
 
         function onCredentialsRequest(data) {
             handleCredentialsRequest(data);
         }
     }
 
-    function checkVGSCapabilities() {
-        if (!VGSBackendService.isConnected) {
+    // A lost backend must not leave stale wifi/ethernet/VPN state marked
+    // initialized; the next advertisement refetches it. Auto-scan follows the
+    // same state rather than the moment addRef() ran: NetworkService can move
+    // references here before this service's networkAvailable binding updates.
+    function syncNetworkState() {
+        if (!networkAvailable) {
+            stateInitialized = false;
+            stopAutoScan();
             return;
         }
-
-        if (VGSBackendService.capabilities.length === 0) {
-            return;
-        }
-
-        networkAvailable = VGSBackendService.capabilities.includes("network");
-
-        if (networkAvailable && !stateInitialized) {
+        if (!stateInitialized) {
             stateInitialized = true;
             getState();
         }
+        if (refCount > 0)
+            startAutoScan();
     }
 
     function handleCredentialsRequest(data) {

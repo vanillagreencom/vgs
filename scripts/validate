@@ -111,6 +111,7 @@ qml       | scripts/test-thumb-sweep.js
 qml       | scripts/test-theme-startup.js
 qml       | scripts/test-flatline-controls.js
 qml       | scripts/test-brightness-scan-ordering.js
+qml       | scripts/test-backend-capabilities.js
 qml       | scripts/test-settings-navigation.js
 helper    | scripts/test-wallpaper-thumbs.py
 helper    | python3 -m py_compile bin/vshell-helper

@@ -27,5 +27,5 @@
     { "prefixes": ["matugen."], "reason": "VGS has no matugen; palette work lives in bin/vshell-helper.", "action": "Never port." }
   ],
   "apiVersionGateBaseline": 0,
-  "apiVersionGateNote": "Raw numeric .apiVersion comparisons in QML are no longer allowed. Use capabilities.includes(...) / methods.includes(...) predicates. Named-constant gates (savedWifiStateApiVersion, expectedApiVersion) are excluded from this count."
+  "apiVersionGateNote": "Raw numeric .apiVersion comparisons in QML are no longer allowed. Use VGSBackendService.has(...) for capabilities and methods.includes(...) for methods. Named-constant gates (savedWifiStateApiVersion, expectedApiVersion) are excluded from this count."
 }

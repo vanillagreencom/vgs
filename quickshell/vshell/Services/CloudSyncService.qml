@@ -21,22 +21,27 @@ Singleton {
         }
     }
 
+    // Returns whether it requested state, so a caller fetches at most once.
     function ensureSubscription() {
         if (refCount <= 0)
-            return;
+            return false;
         if (!VGSBackendService.isConnected)
-            return;
+            return false;
         if (VGSBackendService.activeSubscriptions.includes("cloudsync"))
-            return;
+            return false;
         if (VGSBackendService.activeSubscriptions.includes("all"))
-            return;
+            return false;
         VGSBackendService.addSubscription("cloudsync");
-        if (available)
-            getState();
+        if (!available)
+            return false;
+        getState();
+        return true;
     }
 
-    property bool available: false
+    readonly property bool available: VGSBackendService.has("cloudsync")
     property bool stateInitialized: false
+
+    onAvailableChanged: syncBackendPath()
     property bool daemonRunning: false
     property string daemonError: ""
     property string rcloneVersion: ""
@@ -260,23 +265,8 @@ Singleton {
         return I18n.tr("This account could not be reached. Check your connection, then check it again.", "Guidance shown on an unreachable cloud account");
     }
 
-    readonly property string socketPath: Quickshell.env("VGS_SOCKET")
-
-    Component.onCompleted: {
-        if (socketPath && socketPath.length > 0)
-            checkVGSCapabilities();
-    }
-
-    Connections {
-        target: VGSBackendService
-
-        function onConnectionStateChanged() {
-            if (VGSBackendService.isConnected) {
-                checkVGSCapabilities();
-                ensureSubscription();
-            }
-        }
-    }
+    // A binding's first value emits no change signal, so completion applies it.
+    Component.onCompleted: syncBackendPath()
 
     Connections {
         target: VGSBackendService
@@ -285,27 +275,21 @@ Singleton {
         function onCloudSyncStateUpdate(data) {
             root.updateState(data);
         }
-
-        function onCapabilitiesReceived() {
-            root.checkVGSCapabilities();
-        }
     }
 
-    function checkVGSCapabilities() {
-        if (!VGSBackendService.isConnected)
+    // A lost backend must not leave state marked initialized; the next
+    // advertisement refetches it.
+    function syncBackendPath() {
+        if (!available) {
+            stateInitialized = false;
             return;
-        if (VGSBackendService.capabilities.length === 0)
-            return;
-        const wasAvailable = available;
-        available = VGSBackendService.capabilities.includes("cloudsync");
-        if (!available)
-            return;
+        }
+        const fetched = ensureSubscription();
         if (!stateInitialized) {
             stateInitialized = true;
-            getState();
+            if (!fetched)
+                getState();
         }
-        if (!wasAvailable)
-            ensureSubscription();
     }
 
     // The shell reports backend state transitions through the user-enabled toasts.
@@ -385,7 +369,13 @@ Singleton {
     // success, so the reply is only used for error reporting.
     function sendAction(method, params, callback) {
         if (!available) {
-            root.log.warn(method + " ignored: cloudsync capability unavailable");
+            const error = "cloudsync capability unavailable";
+            root.log.warn(method + " ignored: " + error);
+            ToastService.showError(I18n.tr("Cloud sync action failed", "Toast shown when a cloud sync write action is rejected"), error);
+            if (callback)
+                callback({
+                    "error": error
+                });
             return;
         }
         VGSBackendService.sendRequest(method, params, response => {

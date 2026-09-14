@@ -11,7 +11,7 @@ Singleton {
 
     property int refCount: 0
 
-    property bool sysupdateAvailable: false
+    readonly property bool sysupdateAvailable: VGSBackendService.has("sysupdate")
 
     property var availableUpdates: []
     property bool isChecking: false
@@ -34,18 +34,6 @@ Singleton {
 
     Connections {
         target: VGSBackendService
-        function onCapabilitiesReceived() {
-            root.checkCapabilities();
-        }
-        function onConnectionStateChanged() {
-            if (VGSBackendService.isConnected) {
-                root.checkCapabilities();
-            } else {
-                root.sysupdateAvailable = false;
-                root._startupCheckDone = false;
-            }
-            Qt.callLater(() => root._maybeStartupCheck());
-        }
         function onSysupdateStateUpdate(data) {
             root._applyState(data);
         }
@@ -61,25 +49,15 @@ Singleton {
         }
     }
 
-    Component.onCompleted: {
-        if (VGSBackendService.backendAvailable) {
-            checkCapabilities();
-        }
-        Qt.callLater(() => root._maybeStartupCheck());
-    }
+    // A binding's first value emits no change signal, so completion applies it.
+    Component.onCompleted: syncBackendPath()
 
-    function checkCapabilities() {
-        if (!VGSBackendService.capabilities || !Array.isArray(VGSBackendService.capabilities)) {
-            sysupdateAvailable = false;
-            Qt.callLater(() => root._maybeStartupCheck());
-            return;
-        }
-        const has = VGSBackendService.capabilities.includes("sysupdate");
-        if (has && !sysupdateAvailable) {
-            sysupdateAvailable = true;
+    // A lost backend re-arms the startup check for the next advertisement.
+    function syncBackendPath() {
+        if (sysupdateAvailable) {
             requestState();
-        } else if (!has) {
-            sysupdateAvailable = false;
+        } else {
+            _startupCheckDone = false;
         }
         Qt.callLater(() => root._maybeStartupCheck());
     }
@@ -211,7 +189,10 @@ Singleton {
         _syncAcquire();
         Qt.callLater(() => root._maybeStartupCheck());
     }
-    onSysupdateAvailableChanged: _syncAcquire()
+    onSysupdateAvailableChanged: {
+        _syncAcquire();
+        syncBackendPath();
+    }
 
     property bool _acquired: false
 

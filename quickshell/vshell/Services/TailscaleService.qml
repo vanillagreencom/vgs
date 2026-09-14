@@ -19,19 +19,21 @@ Singleton {
         }
     }
 
+    // Returns whether it requested status, so a caller fetches at most once.
     function ensureSubscription() {
         if (refCount <= 0)
-            return;
+            return false;
         if (!VGSBackendService.isConnected)
-            return;
+            return false;
         if (VGSBackendService.activeSubscriptions.includes("tailscale"))
-            return;
+            return false;
         if (VGSBackendService.activeSubscriptions.includes("all"))
-            return;
+            return false;
         VGSBackendService.addSubscription("tailscale");
-        if (available) {
-            getStatus();
-        }
+        if (!available)
+            return false;
+        getStatus();
+        return true;
     }
 
     property bool connected: false
@@ -46,7 +48,13 @@ Singleton {
     property string authUrl: ""
     property var healthWarnings: []
 
+    readonly property bool backendPath: VGSBackendService.has("tailscale")
+    // Held through a backend reconnect so the widget can show the last answer
+    // as "Reconnecting…"; only a connected backend's inventory without
+    // tailscale clears it.
     property bool available: false
+
+    onBackendPathChanged: syncBackendPath()
 
     // True after the backend has answered. Further reads still refresh state.
     property bool stateInitialized: false
@@ -57,7 +65,7 @@ Singleton {
     // given up keeps advertising it. An older backend sends no such field,
     // which reads as false — correct, since it never pushes either.
     property bool watcherActive: false
-    readonly property bool backendWatchCapable: VGSBackendService.capabilities.includes("tailscale.watch")
+    readonly property bool backendWatchCapable: VGSBackendService.has("tailscale.watch")
     readonly property bool backendWatches: backendWatchCapable && watcherActive
 
     // "NoState" and "Starting" are tailscaled still coming up, and an empty
@@ -136,27 +144,20 @@ Singleton {
 
     readonly property int onlinePeerCount: onlinePeers.length
 
-    readonly property string socketPath: Quickshell.env("VGS_SOCKET")
-
-    Component.onCompleted: {
-        if (socketPath && socketPath.length > 0) {
-            checkVGSCapabilities();
-        }
-    }
+    // A binding's first value emits no change signal, so completion applies it.
+    Component.onCompleted: syncBackendPath()
 
     Connections {
         target: VGSBackendService
 
         function onConnectionStateChanged() {
             if (VGSBackendService.isConnected) {
-                // Bump first: everything held from before the drop is a guess
-                // about a daemon nobody was watching, and must not satisfy this
-                // connection. haveCurrentState goes false until a response
-                // stamped with this generation arrives.
+                // Bump before the reconnected backend advertises tailscale and
+                // syncBackendPath fetches: everything held from before the drop
+                // is a guess about a daemon nobody was watching, and must not
+                // satisfy this connection. haveCurrentState goes false until a
+                // response stamped with this generation arrives.
                 connectionGeneration++;
-                checkVGSCapabilities();
-                ensureSubscription();
-                refreshStatus();
             } else {
                 // Nothing to clear: haveCurrentState already reads false while
                 // disconnected. The values are deliberately kept so the widget
@@ -164,6 +165,10 @@ Singleton {
                 // "Reconnecting…" rather than flashing empty.
                 watcherActive = false;
             }
+        }
+
+        function onBackendAvailableChanged() {
+            root.syncAvailable();
         }
     }
 
@@ -175,27 +180,32 @@ Singleton {
             root.log.debug("Subscription update received");
             updateState(data);
         }
-
-        function onCapabilitiesReceived() {
-            checkVGSCapabilities();
-        }
     }
 
-    function checkVGSCapabilities() {
-        if (!VGSBackendService.isConnected)
+    function syncBackendPath() {
+        syncAvailable();
+        if (!backendPath)
             return;
-        if (VGSBackendService.capabilities.length === 0)
-            return;
-        const wasAvailable = available;
-        available = VGSBackendService.capabilities.includes("tailscale");
-
-        if (!available)
-            return;
-        if (!wasAvailable) {
+        if (!ensureSubscription())
             getStatus();
-            ensureSubscription();
-        }
     }
+
+    function syncAvailable() {
+        available = tailscaleAvailable(available, VGSBackendService.isConnected, VGSBackendService.backendAvailable, backendPath);
+    }
+
+    // BEGIN TAILSCALE AVAILABILITY
+    // scripts/test-backend-capabilities.js evaluates the code between these markers in Node; every input is an argument.
+    // The socket drops its link before the backend clears its inventory, so a
+    // received inventory alone does not mean the backend declined tailscale.
+    function tailscaleAvailable(held, connected, inventoryReceived, advertised) {
+        if (advertised)
+            return true;
+        if (connected && inventoryReceived)
+            return false;
+        return held;
+    }
+    // END TAILSCALE AVAILABILITY
 
     function getStatus() {
         if (!available)
@@ -245,8 +255,13 @@ Singleton {
     }
 
     function refresh(callback) {
-        if (!available)
+        if (!available) {
+            if (callback)
+                callback({
+                    "error": "tailscale capability unavailable"
+                });
             return;
+        }
         VGSBackendService.sendRequest("tailscale.refresh", null, response => {
             if (callback)
                 callback(response);
@@ -256,8 +271,14 @@ Singleton {
     // sendAction issues a state-changing request. The backend refreshes and
     // broadcasts on success, so subscribers update without an extra getStatus.
     function sendAction(method, params, callback) {
-        if (!available)
+        if (!available) {
+            root.log.warn(method + " ignored: tailscale capability unavailable");
+            if (callback)
+                callback({
+                    "error": "tailscale capability unavailable"
+                });
             return;
+        }
         VGSBackendService.sendRequest(method, params, response => {
             if (response.result)
                 updateState(response.result);

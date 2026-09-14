@@ -29,10 +29,26 @@ Singleton {
     property bool isConnecting: false
     property bool subscribeConnected: false
 
-    // Feature availability is gated on advertised capabilities, not on the bare
-    // connection: the backend may be connected while only advertising a subset
-    // of services (e.g. "core"). UI must use these, not backendAvailable alone.
-    readonly property bool pluginsAvailable: isConnected && capabilities.includes("plugins")
+    // Capability presence is state, not an announcement: has(name) answers from
+    // the live connection and the advertised inventory, so a singleton built
+    // after the backend connected reads the same answer as one built before.
+    // New and converted consumers bind to it; some readers of capabilities are
+    // not yet converted. The backend may be connected while advertising only
+    // a subset of services (e.g. "core"), so UI must not gate a feature on
+    // isConnected or backendAvailable alone.
+    readonly property var capabilitySet: capabilitySetOf(isConnected, capabilities)
+    readonly property bool pluginsAvailable: has("plugins")
+
+    // BEGIN CAPABILITY SET
+    // scripts/test-backend-capabilities.js evaluates the code between these markers in Node; every input is an argument.
+    function capabilitySetOf(connected, advertised) {
+        return new Set(connected ? advertised : []);
+    }
+    // END CAPABILITY SET
+
+    function has(name) {
+        return capabilitySet.has(name);
+    }
 
     // Live backend socket, exported by the runner (`vshell run`). Empty when the
     // backend is disabled or unavailable; both sockets stay idle in that case so
@@ -89,7 +105,6 @@ Singleton {
     signal networkStateUpdate(var data)
     signal cupsStateUpdate(var data)
     signal loginctlStateUpdate(var data)
-    signal capabilitiesReceived
     signal credentialsRequest(var data)
     signal bluetoothPairingRequest(var data)
     signal wlrOutputStateUpdate(var data)
@@ -298,16 +313,17 @@ Singleton {
         }
 
         if (service === "server") {
-            // The server frame arrives on every (re)subscribe; only announce
-            // capabilities when they actually changed, otherwise every
-            // popout-driven resubscribe re-runs the listeners' setup calls.
+            // The server frame arrives on every (re)subscribe; log only when the
+            // inventory changed. Methods land before capabilities because
+            // consumers act on a has() flip synchronously and read the method
+            // list inside that handler.
             const wasAvailable = backendAvailable;
             const prevInventory = JSON.stringify(capabilities) + "|" + JSON.stringify(methods);
             apiVersion = data.apiVersion || 0;
             vgsApiVersion = data.vgsApiVersion || 0;
             cliVersion = data.cliVersion || "";
-            capabilities = data.capabilities || [];
             methods = data.methods || [];
+            capabilities = data.capabilities || [];
             backendAvailable = true;
             lastError = "";
 
@@ -319,7 +335,6 @@ Singleton {
             const newInventory = JSON.stringify(capabilities) + "|" + JSON.stringify(methods);
             if (!wasAvailable || newInventory !== prevInventory) {
                 log.info("Connected (API v" + apiVersion + ", VGS v" + vgsApiVersion + ", CLI " + cliVersion + ") -", JSON.stringify(capabilities));
-                capabilitiesReceived();
             }
         } else if (service === "network") {
             networkStateUpdate(data);

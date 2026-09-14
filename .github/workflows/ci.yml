@@ -245,6 +245,7 @@ jobs:
           scripts/test-theme-startup.js
           scripts/test-flatline-controls.js
           scripts/test-brightness-scan-ordering.js
+          scripts/test-backend-capabilities.js
           scripts/test-settings-navigation.js
           scripts/test-wallpaper-thumbs.py
       - name: Fixture and capability regressions
