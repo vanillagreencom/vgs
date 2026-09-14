@@ -1,6 +1,6 @@
 # Theme catalog
 
-Covers: themes/catalog.json, themes/asset-lock.json, scripts/gen-theme-catalog.py, scripts/publish-theme-assets.py, scripts/check-package-assets.sh, quickshell/vshell/Services/VGSThemeCatalogService.qml
+Covers: bin/vshell-helper, themes/catalog.json, themes/asset-lock.json, scripts/gen-theme-catalog.py, scripts/publish-theme-assets.py, scripts/check-package-assets.sh, quickshell/vshell/Services/VGSThemeCatalogService.qml
 
 The helper downloads a theme's wallpapers from its release archive, places them beside the user overlay, and updates them. Palette, overlay and preview contracts are in [theme.md](theme.md).
 
