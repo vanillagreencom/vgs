@@ -45,7 +45,7 @@ def make_fixture() -> Path:
         "PluginComponent { function refresh() { TailscaleService.refresh(null); } }",
     )
     write(
-        root / "config" / "vshell" / "plugins" / "sysUpdate" / "SysUpdateWidget.qml",
+        root / "config" / "vshell" / "plugins" / "sysUpdate" / "SysUpdateDaemon.qml",
         "PluginComponent { readonly property bool useBackend: true; Ref { service: SystemUpdateService } Timer { running: !root.useBackend } }",
     )
     return root
@@ -82,13 +82,13 @@ def main() -> int:
         ),
         (
             "missing sysupdate ref",
-            "config/vshell/plugins/sysUpdate/SysUpdateWidget.qml",
+            "config/vshell/plugins/sysUpdate/SysUpdateDaemon.qml",
             "PluginComponent { Timer { running: !root.useBackend } }",
             "bundled sysUpdate plugin must hold a SystemUpdateService ref",
         ),
         (
             "backend-present polling",
-            "config/vshell/plugins/sysUpdate/SysUpdateWidget.qml",
+            "config/vshell/plugins/sysUpdate/SysUpdateDaemon.qml",
             "PluginComponent { Ref { service: SystemUpdateService } Timer { running: true } }",
             "fallback poll timer must be disabled",
         ),

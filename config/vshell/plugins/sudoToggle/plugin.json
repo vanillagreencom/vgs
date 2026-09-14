@@ -6,7 +6,10 @@
     "license": "MIT",
     "author": "VanillaGreen",
     "icon": "gpp_maybe",
-    "component": "./SudoToggleWidget.qml",
+    "components": {
+        "widget": "./SudoToggleWidget.qml",
+        "daemon": "./SudoToggleDaemon.qml"
+    },
     "settings": "./SudoToggleSettings.qml",
     "requires_shell": ">=0.1.0",
     "permissions": [
