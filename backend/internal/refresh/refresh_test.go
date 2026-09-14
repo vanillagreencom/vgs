@@ -13,7 +13,7 @@ const idleWindow = 300 * time.Millisecond
 func TestKicksDuringARunCollapseIntoOne(t *testing.T) {
 	started := make(chan struct{}, 8)
 	proceed := make(chan struct{})
-	loop := newLoop(0, func() {
+	loop := newLoop(0, nil, func() {
 		started <- struct{}{}
 		<-proceed
 	})
@@ -39,7 +39,7 @@ func TestKicksDuringARunCollapseIntoOne(t *testing.T) {
 
 func TestCloseStopsFurtherRuns(t *testing.T) {
 	started := make(chan struct{}, 4)
-	loop := newLoop(0, func() { started <- struct{}{} })
+	loop := newLoop(0, nil, func() { started <- struct{}{} })
 
 	loop.Kick()
 	awaitRun(t, started, "kick before close")
@@ -59,7 +59,7 @@ func TestCloseStopsFurtherRuns(t *testing.T) {
 
 func TestDelayHoldsTheRunUntilTheWindowPasses(t *testing.T) {
 	started := make(chan struct{}, 4)
-	loop := newLoop(150*time.Millisecond, func() { started <- struct{}{} })
+	loop := newLoop(150*time.Millisecond, nil, func() { started <- struct{}{} })
 	t.Cleanup(loop.Close)
 
 	loop.Kick()
@@ -87,7 +87,7 @@ func awaitRun(t *testing.T, started <-chan struct{}, what string) {
 func TestCloseDuringTheSettleWindowCancelsTheRun(t *testing.T) {
 	const settle = 300 * time.Millisecond
 	started := make(chan struct{}, 4)
-	loop := newLoop(settle, func() { started <- struct{}{} })
+	loop := newLoop(settle, nil, func() { started <- struct{}{} })
 
 	loop.Kick()
 	// Inside the settle window, so the run is pending and has not begun.

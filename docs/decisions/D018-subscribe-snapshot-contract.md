@@ -8,7 +8,7 @@
 
 **Decision**: `RegisterSnapshot` returns last-known-good state and must not block. A service whose state comes from an external command registers that query with `RegisterSnapshotRefresh`. The kick must return without waiting and must run the query on the service's own goroutine. `backend/internal/refresh` owns the shared cache and loop that five services use; tailscale is the exception and coalesces onto its own watcher timer, which already holds a single-flight slot and a minimum interval the shared loop has no notion of. A service with no state yet returns `nil`, and subscribe sends no frame for it. A repeat subscribe re-sends snapshots only for services the previous subscription did not cover, and kicks the refresh only for a service that is newly covered or has nothing recorded yet, so a popout open re-queries nothing it already holds warm while a service whose first query failed is retried until one succeeds.
 
-Replacing a queued frame with a newer one is opt-in, per service, through `CoalesceBroadcasts`, and per coalescing key for a `RegisterLatest` setter. A key may only be declared where the newest value subsumes every earlier one under that key.
+Replacing a queued frame with a newer one is opt-in, per service, through `CoalesceBroadcasts`, and per coalescing key for a `RegisterLatest` setter. A key may only be declared where the newest value subsumes every earlier one under that key. A subscribe snapshot is appended rather than coalesced whatever the service declares, since a cached read is never newer than a frame already queued for that peer.
 
 **Rationale**:
 

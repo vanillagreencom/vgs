@@ -87,6 +87,10 @@ func (q *coalescingQueue[T]) pop() (T, bool) {
 		return none, false
 	}
 	entry := q.entries[0]
+	// Clear the slot before advancing: the backing array keeps the old element
+	// reachable otherwise, holding a written frame's payload, or a queued call's
+	// params, until an append reallocates.
+	q.entries[0] = nil
 	q.entries = q.entries[1:]
 	if q.waiting[entry.key] == entry {
 		delete(q.waiting, entry.key)

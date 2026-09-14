@@ -146,3 +146,21 @@ func TestQueueCloseReleasesAParkedConsumer(t *testing.T) {
 		t.Fatal("close left the consumer parked; its goroutine would never exit")
 	}
 }
+
+// Advancing the head leaves the vacated slot pointing at the entry unless it is
+// cleared, so a written frame's payload, or a queued call and its params, stays
+// reachable until an append reallocates the backing array.
+func TestQueuePopReleasesThePoppedEntry(t *testing.T) {
+	q := newCoalescingQueue[string](8)
+	q.push("", "first")
+	q.push("", "second")
+
+	// The pre-pop slice, whose index 0 is the slot pop advances past.
+	vacated := q.entries
+	if _, ok := q.pop(); !ok {
+		t.Fatal("pop reported no entry")
+	}
+	if vacated[0] != nil {
+		t.Fatalf("the popped slot still holds %+v; its payload stays reachable until the array reallocates", *vacated[0])
+	}
+}

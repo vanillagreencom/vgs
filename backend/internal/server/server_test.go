@@ -238,6 +238,47 @@ func TestSubscribeReadsCachedStateAndKicksRefresh(t *testing.T) {
 	}
 }
 
+// A subscribe snapshot is a cached read, so it is never newer than a frame
+// already queued for this peer. Pushing it under the service's coalescing key
+// would replace that queued frame in place and leave the older state last on
+// the wire, stale until the next real change.
+func TestSnapshotNeverReplacesAQueuedBroadcast(t *testing.T) {
+	srv, _ := startTestServer(t)
+	srv.CoalesceBroadcasts("network")
+	srv.RegisterSnapshot("network", func() any { return "cached, older" })
+
+	// A peer whose writer is not draining, holding the frame a Broadcast for
+	// this coalescing service leaves queued.
+	c := newIdleConn(t)
+	c.sendEvent("network", "broadcast, newer", true)
+
+	req := &protocol.Request{Method: "subscribe"}
+	params, err := json.Marshal(map[string]any{"services": []string{"network"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Params = params
+	srv.handleSubscribe(c, req)
+
+	got := queuedEvents(t, c)
+	if len(got) == 0 {
+		t.Fatal("nothing queued")
+	}
+	last := got[len(got)-1]
+	if last[0] != "network" || last[1] != "cached, older" {
+		t.Fatalf("last queued frame = %v; the snapshot must be appended after the broadcast, not put in its place", got)
+	}
+	var sawBroadcast bool
+	for _, frame := range got {
+		if frame[1] == "broadcast, newer" {
+			sawBroadcast = true
+		}
+	}
+	if !sawBroadcast {
+		t.Fatalf("the queued broadcast was overwritten by the older snapshot: %v", got)
+	}
+}
+
 // A service with nothing read yet sends no frame at all. An empty state would
 // reach the shell as fact and blank a list the kicked refresh is about to fill.
 func TestSnapshotWithNoStateYetSendsNoFrame(t *testing.T) {

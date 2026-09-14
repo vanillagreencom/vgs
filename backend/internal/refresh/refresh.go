@@ -1,7 +1,12 @@
-// Package refresh coalesces state-refresh requests onto one goroutine per
-// service. A service whose state comes from external commands runs those
-// commands here, off the caller's goroutine, so a burst of D-Bus signals or a
-// run of subscribe frames costs one query instead of one per request.
+// Package refresh holds a service's last-known-good state and the goroutine
+// that refreshes it. A kick coalesces onto that goroutine, so a burst of D-Bus
+// signals or a run of subscribe frames costs one query instead of one per
+// request.
+//
+// Only kicked refreshes run on that goroutine. Query runs on whichever
+// goroutine calls it, which is how a method handler warms the cache, so two
+// queries for one service can be in flight at once and can finish in the other
+// order. Source numbers them and keeps the newer result.
 package refresh
 
 import (
@@ -16,17 +21,26 @@ type loop struct {
 	kick  chan struct{}
 	stop  chan struct{}
 	delay time.Duration
-	once  sync.Once
+	// skipSettle decides, at the moment a kick wakes the loop, whether this run
+	// goes ahead immediately instead of settling first. It may be nil, which
+	// always settles.
+	skipSettle func() bool
+	once       sync.Once
 }
 
 // newLoop starts the loop's goroutine. delay is the settle window between a
 // kick and the run it triggers, which lets a burst of kicks collapse; a zero
-// delay runs immediately. run is called with no lock held and must return.
-func newLoop(delay time.Duration, run func()) *loop {
+// delay runs immediately. skipSettle, when it returns true as a kick wakes the
+// loop, spends that run at once instead: a burst that arrives during the run or
+// during the next window still collapses, so the window buys nothing on a run
+// that has nothing to collapse against. run is called with no lock held and
+// must return.
+func newLoop(delay time.Duration, skipSettle func() bool, run func()) *loop {
 	l := &loop{
-		kick:  make(chan struct{}, 1),
-		stop:  make(chan struct{}),
-		delay: delay,
+		kick:       make(chan struct{}, 1),
+		stop:       make(chan struct{}),
+		delay:      delay,
+		skipSettle: skipSettle,
 	}
 	go l.loop(run)
 	return l
@@ -55,7 +69,7 @@ func (l *loop) loop(run func()) {
 			return
 		case <-l.kick:
 		}
-		if l.delay > 0 {
+		if l.delay > 0 && (l.skipSettle == nil || !l.skipSettle()) {
 			select {
 			case <-l.stop:
 				return

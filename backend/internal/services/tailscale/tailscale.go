@@ -239,7 +239,12 @@ func (m *Manager) handleSetAcceptRoutes(params json.RawMessage) (any, error) {
 	return m.handleRefresh(nil)
 }
 
-func (m *Manager) status() (State, error) {
+// status runs the live read and records a success, so the watcher's pulse and
+// any getStatus call both warm what the next subscribe reads. Two reads can be
+// in flight at once, and Source keeps the newer result.
+func (m *Manager) status() (State, error) { return m.state.Query(m.readStatus) }
+
+func (m *Manager) readStatus() (State, error) {
 	out, err := m.output("status", "--json")
 	if err != nil {
 		return State{}, err
@@ -282,7 +287,6 @@ func (m *Manager) status() (State, error) {
 		state.AcceptRoutes = prefs.RouteAll
 		state.ExitNodeAllowLanAccess = prefs.ExitNodeAllowLANAccess
 	}
-	m.state.Record(state)
 	return state, nil
 }
 

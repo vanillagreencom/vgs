@@ -20,15 +20,46 @@ type Source[T any] struct {
 	mu       sync.Mutex
 	value    T
 	recorded bool
+	// issued numbers each query as it starts and held is the number of the one
+	// whose result is recorded. Queries run on whichever goroutine calls them,
+	// so two can be in flight at once and can finish in the other order; the
+	// numbers keep the cache moving forward instead of letting a sweep that
+	// started earlier overwrite a newer one.
+	issued uint64
+	held   uint64
 }
 
-// Record stores the result of a successful query. A failed query records
-// nothing, so the last-known-good state stands.
-func (s *Source[T]) Record(value T) {
+// Query runs query on the calling goroutine and records a success. A result
+// that a later-started query has already superseded is returned to its caller
+// and dropped from the cache. A failed query records nothing, so the
+// last-known-good state stands.
+func (s *Source[T]) Query(query func() (T, error)) (T, error) {
+	s.mu.Lock()
+	s.issued++
+	mine := s.issued
+	s.mu.Unlock()
+
+	value, err := query()
+	if err != nil {
+		return value, err
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.recorded && mine <= s.held {
+		return value, nil
+	}
 	s.value = value
 	s.recorded = true
+	s.held = mine
+	return value, nil
+}
+
+// hasRecorded reports whether any query has succeeded yet.
+func (s *Source[T]) hasRecorded() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.recorded
 }
 
 // Cached returns the newest recorded value, or nil before the first Record.
@@ -72,7 +103,9 @@ func NewService[T any](srv Broadcaster, log *slog.Logger, service string, settle
 		log = slog.Default()
 	}
 	s := &Service[T]{srv: srv, log: log, service: service, query: query}
-	s.loop = newLoop(settle, s.refreshAndBroadcast)
+	// Nothing recorded means no burst to collapse and no state to serve, so the
+	// first query runs at once rather than a settle window late.
+	s.loop = newLoop(settle, func() bool { return !s.hasRecorded() }, s.refreshAndBroadcast)
 	return s
 }
 
@@ -83,14 +116,7 @@ func (s *Service[T]) Kick() { s.loop.Kick() }
 // Query runs the live query on the calling goroutine and records a success, so
 // a method handler warms what the next subscribe reads. Never call it from the
 // subscribe path, where it would stall every other service behind it.
-func (s *Service[T]) Query() (T, error) {
-	value, err := s.query()
-	if err != nil {
-		return value, err
-	}
-	s.Record(value)
-	return value, nil
-}
+func (s *Service[T]) Query() (T, error) { return s.Source.Query(s.query) }
 
 // Close stops the refresh goroutine. A query already running finishes.
 func (s *Service[T]) Close() { s.loop.Close() }

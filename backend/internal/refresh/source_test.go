@@ -42,14 +42,81 @@ func (r *recorder) await(t *testing.T, want int) []any {
 	return nil
 }
 
-func TestSourceHoldsNothingBeforeItsFirstRecord(t *testing.T) {
+func TestSourceHoldsNothingBeforeItsFirstQuery(t *testing.T) {
 	var s Source[string]
 	if got := s.Cached(); got != nil {
-		t.Fatalf("Cached = %v before any record, want nothing to send", got)
+		t.Fatalf("Cached = %v before any query, want nothing to send", got)
 	}
-	s.Record("state")
+	if _, err := s.Query(func() (string, error) { return "state", nil }); err != nil {
+		t.Fatalf("Query: %v", err)
+	}
 	if got := s.Cached(); got != "state" {
 		t.Fatalf("Cached = %v, want the recorded value", got)
+	}
+}
+
+// Queries run on whichever goroutine calls them, so a service with several
+// method workers can have two sweeps in flight. A sweep that started earlier
+// and finished later must not overwrite the newer one, or the next subscribe
+// serves state from before the change that prompted it.
+func TestSourceKeepsTheLaterStartedQueryWhenTheyFinishOutOfOrder(t *testing.T) {
+	var s Source[string]
+	firstStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	done := make(chan struct{}, 2)
+
+	go func() {
+		_, _ = s.Query(func() (string, error) {
+			close(firstStarted)
+			<-releaseFirst
+			return "older sweep", nil
+		})
+		done <- struct{}{}
+	}()
+
+	<-firstStarted
+	// Starts second and finishes first.
+	if _, err := s.Query(func() (string, error) { return "newer sweep", nil }); err != nil {
+		t.Fatalf("second query: %v", err)
+	}
+	close(releaseFirst)
+	<-done
+
+	if got := s.Cached(); got != "newer sweep" {
+		t.Fatalf("Cached = %v; the sweep that started first overwrote the newer one", got)
+	}
+}
+
+// Its own caller still receives what its query returned; only the cache drops
+// the superseded value.
+func TestSourceReturnsASupersededResultToItsCaller(t *testing.T) {
+	var s Source[string]
+	firstStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	got := make(chan string, 1)
+
+	go func() {
+		value, _ := s.Query(func() (string, error) {
+			close(firstStarted)
+			<-releaseFirst
+			return "older sweep", nil
+		})
+		got <- value
+	}()
+
+	<-firstStarted
+	if _, err := s.Query(func() (string, error) { return "newer sweep", nil }); err != nil {
+		t.Fatalf("second query: %v", err)
+	}
+	close(releaseFirst)
+
+	select {
+	case value := <-got:
+		if value != "older sweep" {
+			t.Fatalf("superseded caller received %q, want its own query's result", value)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the superseded query never returned")
 	}
 }
 
@@ -104,5 +171,50 @@ func TestServiceFailedRefreshBroadcastsNothing(t *testing.T) {
 	time.Sleep(idleWindow)
 	if got := srv.all(); len(got) != 0 {
 		t.Fatalf("a failed refresh broadcast %v; subscribers must keep their last-known state", got)
+	}
+}
+
+// With nothing recorded there is no burst to collapse and no state to serve, so
+// the first kick runs at once. Waiting the settle window would put the first
+// frame the shell sees a window late on every shell start and reconnect.
+func TestServiceFirstKickRunsWithoutWaitingTheSettleWindow(t *testing.T) {
+	const settle = 2 * time.Second
+	started := make(chan struct{}, 4)
+	svc := NewService[string](&recorder{}, discardLogger(), "svc", settle, func() (string, error) {
+		started <- struct{}{}
+		return "fresh", nil
+	})
+	t.Cleanup(svc.Close)
+
+	svc.Kick()
+	select {
+	case <-started:
+	case <-time.After(settle / 2):
+		t.Fatal("the first kick waited the settle window; the shell sees its first state a window late on every start")
+	}
+}
+
+// Once state is recorded the window is back, so a burst of kicks collapses.
+func TestServiceSettlesOnceSomethingIsRecorded(t *testing.T) {
+	const settle = 400 * time.Millisecond
+	started := make(chan struct{}, 8)
+	svc := NewService[string](&recorder{}, discardLogger(), "svc", settle, func() (string, error) {
+		started <- struct{}{}
+		return "fresh", nil
+	})
+	t.Cleanup(svc.Close)
+
+	svc.Kick()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the first kick never ran")
+	}
+
+	svc.Kick()
+	select {
+	case <-started:
+		t.Fatal("a kick against recorded state ran before its settle window; a burst would no longer collapse")
+	case <-time.After(settle / 4):
 	}
 }

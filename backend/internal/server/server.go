@@ -448,7 +448,6 @@ func (s *Server) handleSubscribe(c *conn, req *protocol.Request) {
 		// refresh still runs, so a service whose first query failed is retried
 		// rather than left silent for the life of the connection.
 		snapshot bool
-		coalesce bool
 	}
 	services := make(map[string]covered, len(s.snapshots))
 	for service, src := range s.snapshots {
@@ -458,7 +457,6 @@ func (s *Server) handleSubscribe(c *conn, req *protocol.Request) {
 		services[service] = covered{
 			source:   src,
 			snapshot: !resubscribed || !prev.covers(service),
-			coalesce: s.coalesced[service],
 		}
 	}
 	s.mu.Unlock()
@@ -472,7 +470,11 @@ func (s *Server) handleSubscribe(c *conn, req *protocol.Request) {
 			state = cov.source.read()
 		}
 		if cov.snapshot && state != nil {
-			c.sendEvent(service, state, cov.coalesce)
+			// Never coalesced, whatever the service declares. A cached read is
+			// by construction no newer than a frame already queued, so this is
+			// appended; replacing one in place would put the older state last
+			// on the wire and leave the peer stale until the next real change.
+			c.sendEvent(service, state, false)
 		}
 		if cov.source.refresh == nil {
 			continue
