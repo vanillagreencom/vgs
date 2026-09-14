@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Runtime helper for VanillaGreen Shell commands, integration and theme generation."""
 from __future__ import annotations
 

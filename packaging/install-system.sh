@@ -41,8 +41,15 @@ install -Dm644 "$root/themes/catalog.json" "$lib/themes/catalog.json"
 # surfaces that paint a small tile.
 cp -a "$root/themes/thumbnails" "$lib/themes/"
 while IFS= read -r -d '' file; do
-  [[ "$(basename "$file")" == "vshell-asdcontrol" ]] && continue
-  install -Dm755 "$file" "$lib/bin/$(basename "$file")"
+  name="${file##*/}"
+  [[ "$name" == "vshell-asdcontrol" ]] && continue
+  # A bin/*.py file is a module the stubs import, never run by path. Leaving it
+  # non-executable keeps packaging steps that rewrite executables' shebangs off
+  # a source its checked-hash bytecode below is compiled from.
+  case "$name" in
+    *.py) install -Dm644 "$file" "$lib/bin/$name" ;;
+    *) install -Dm755 "$file" "$lib/bin/$name" ;;
+  esac
 done < <(find "$root/bin" -maxdepth 1 -type f -print0)
 # The helper stub imports its body from these modules, and a user cannot write
 # __pycache__ under the install tree, so without this every call recompiles

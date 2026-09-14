@@ -73,6 +73,13 @@ if flags != 0b11:
 recorded = marshal.loads(data[16:]).co_filename
 if recorded != installed:
     raise SystemExit(f"helper-bytecode-path {recorded}\nthe cache records a build path instead of the installed module")
+# Fedora's shebang mangling and Nix's patchShebangs rewrite executable files after
+# the install, which would change a module's bytes under its checked-hash cache.
+for module in sorted((Path(sys.argv[1]) / "usr/lib/vshell/bin").glob("*.py")):
+    if module.stat().st_mode & 0o111:
+        raise SystemExit(f"bin-module-executable {module}\nan installed module must not be executable")
+    if module.read_bytes().startswith(b"#!"):
+        raise SystemExit(f"bin-module-shebang {module}\nan installed module must carry no shebang")
 PY
 # The screensaver needs packaged art because it cannot regenerate data into /usr.
 test -s "$core/usr/lib/vshell/config/vshell/branding/screensaver.txt"
