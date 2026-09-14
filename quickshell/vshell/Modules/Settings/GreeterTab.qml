@@ -112,13 +112,21 @@ Item {
         }
     }
 
+    // Greeter sync copies settings.json and session.json from disk, so pending writes land first.
+    function flushStores() {
+        SettingsData.flushSettings();
+        SessionData.flushSettings();
+    }
+
     function syncNow() {
+        flushStores();
         syncStdout = "";
         syncStderr = "";
         syncProcess.running = true;
     }
 
     function syncInTerminal() {
+        flushStores();
         syncStdout = "";
         syncStderr = "";
         terminalSyncProcess.running = true;

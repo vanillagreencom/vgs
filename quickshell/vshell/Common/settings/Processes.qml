@@ -298,6 +298,8 @@ Singleton {
         authApplyTerminalFallbackStderr = "";
         authApplyTerminalFallbackFromPrecheck = false;
         authApplyRunning = true;
+        // auth sync reads settings.json from disk.
+        settingsRoot.flushSettings();
         authApplySudoProbeProcess.running = true;
     }
 

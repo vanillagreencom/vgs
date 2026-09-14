@@ -10,6 +10,7 @@ import qs.Common.settings
 import qs.Services
 import "settings/SettingsSpec.js" as Spec
 import "settings/SettingsStore.js" as Store
+import "settings/WriteCoalescer.js" as Coalescer
 import "settings/SurfaceGeometry.js" as SurfaceGeometry
 import "settings/BarWidgets.js" as BarWidgets
 
@@ -91,7 +92,6 @@ Singleton {
     property bool _hasLoaded: false
     property bool _isReadOnly: false
     property bool _hasUnsavedChanges: false
-    property bool _selfWrite: false
     property var _loadedSettingsSnapshot: null
     property var pluginSettings: ({})
     property var defaultPluginSettings: ({})
@@ -1714,18 +1714,25 @@ Singleton {
         saveSettings();
     }
 
-    readonly property var _hooks: ({
+    readonly property var _writes: Coalescer.create()
+
+    // The first map runs at assignment: in-memory state other bindings read at once.
+    // The second map runs from the coalesced commit: these start helpers or write compositor
+    // and toolkit config that read the persisted settings, and a drag would otherwise start
+    // one per position change.
+    readonly property var _hooks: Coalescer.deferHooks(_writes, {
             "applyStoredTheme": applyStoredTheme,
+            "updateBarConfigs": updateBarConfigs,
+            "markGreeterSyncPending": markGreeterSyncPending
+        }, {
             "regenSystemThemes": regenSystemThemes,
             "applySystemFonts": applySystemFonts,
             "updateCompositorLayout": updateCompositorLayout,
             "updateScratchpads": updateScratchpads,
             "applyStoredIconTheme": applyStoredIconTheme,
-            "updateBarConfigs": updateBarConfigs,
             "updateCompositorCursor": updateCompositorCursor,
             "scheduleAuthApply": scheduleAuthApply,
             "scheduleGreeterAutoLoginSync": scheduleGreeterAutoLoginSync,
-            "markGreeterSyncPending": markGreeterSyncPending,
             "runNotificationSoundHook": runNotificationSoundHook
         })
 
@@ -1933,13 +1940,25 @@ Singleton {
         }
     }
 
+    function _canWrite() {
+        return !_loading && !_parseError && _hasLoaded;
+    }
+
+    // Marks the store dirty; settingsWriteTimer performs the one write for a burst of setters.
     function saveSettings() {
-        if (_loading || _parseError || !_hasLoaded)
+        if (!_canWrite())
             return;
-        _selfWrite = true;
-        settingsFile.setText(JSON.stringify(Store.toJson(root), null, 2));
-        if (_isReadOnly)
-            _checkSettingsWritable();
+        Coalescer.markDirty(_writes);
+        settingsWriteTimer.restart();
+    }
+
+    function flushSettings() {
+        settingsWriteTimer.stop();
+        Coalescer.commit(_writes, _canWrite(), getCurrentSettingsJson, text => {
+            settingsFile.setText(text);
+            if (_isReadOnly)
+                _checkSettingsWritable();
+        });
     }
 
     function savePluginSettings() {
@@ -3549,6 +3568,22 @@ Singleton {
     property alias settingsFile: settingsFile
 
     Timer {
+        id: settingsWriteTimer
+        interval: 200
+        repeat: false
+        onTriggered: root.flushSettings()
+    }
+
+    Connections {
+        target: SessionService
+        function onSessionLocked() {
+            root.flushSettings();
+        }
+    }
+
+    Component.onDestruction: flushSettings()
+
+    Timer {
         id: settingsFileReloadDebounce
         interval: 50
         onTriggered: settingsFile.reload()
@@ -3563,21 +3598,18 @@ Singleton {
         blockWrites: true
         atomicWrites: true
         watchChanges: true
-        onFileChanged: {
-            if (_selfWrite) {
-                _selfWrite = false;
-                return;
-            }
-            settingsFileReloadDebounce.restart();
-        }
+        onFileChanged: settingsFileReloadDebounce.restart()
         onLoaded: {
             if (isGreeterMode)
+                return;
+            const txt = settingsFile.text();
+            // The watcher reports this store's own writes; only different text is an external edit.
+            if (Coalescer.isSelfEcho(_writes, txt))
                 return;
             const wasLoaded = _hasLoaded;
             _loading = true;
             _hasUnsavedChanges = false;
             try {
-                const txt = settingsFile.text();
                 if (!txt || !txt.trim()) {
                     _parseError = true;
                     return;
