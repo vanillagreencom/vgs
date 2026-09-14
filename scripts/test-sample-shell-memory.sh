@@ -367,18 +367,20 @@ build_mutant() {
 # `present` for a case that expects EXPECT in its stream, `absent` for one that
 # expects it to stay away. Either way the control requires the defect to move
 # the case, so a control that changes nothing fails.
+# ALIVE is the clause that proves THIS control's rule was reached, named per
+# control rather than shared. A token any refusal satisfies lets a mutation that
+# refuses before the rule runs pass without ever reaching it, so each control
+# names a clause its own fixture produces only by getting that far.
 report_control() {
-  local label="$1" want="$2" fixture="$3" stream="$4" expect="$5" status="$6"
-  shift 6
+  local label="$1" want="$2" alive="$3" fixture="$4" stream="$5" expect="$6" status="$7"
+  shift 7
   local mutant="$tmp/mutant.sh" rcm=0
   build_mutant "$mutant" "$@" || { fail "$label" "$UNPROVEN_MUTATION"; return; }
   local log="$tmp/log.tsv"
   rm -f -- "${tmp:?}/log.tsv"
   build_fixture "$fixture" "$log"
   run_report "$mutant" "$log"
-  # Every fixture here yields a session line from a script that ran; without one
-  # the copy died before reaching the report and judges nothing.
-  if [[ "$out" != *"session="* && "$err" != *"sample-shell-memory:"* ]]; then
+  if [[ "$out" != *"$alive"* && "$err" != *"$alive"* ]]; then
     fail "$label" "$UNPROVEN_MUTANT"
     return
   fi
@@ -437,45 +439,45 @@ unmutated_check() {
 unmutated_check
 
 report_control "removing the mark-reached test reddens the not-reached case" \
-  present short out "mark=1h status=not-reached" 0 \
+  present 'session=' short out "mark=1h status=not-reached" 0 \
   'if (u[n] < target) return -1' 'if (0) return -1'
 
 report_control "removing the mark tolerance reddens the gap case" \
-  present hole out "mark=1h status=no-sample-within tolerance_s=300" 0 \
+  present 'session=' hole out "mark=1h status=no-sample-within tolerance_s=300" 0 \
   'if (target - u[best] > tol) return -2' 'if (0) return -2'
 
 # shellcheck disable=SC2016  # awk source: $ is awk's field operator, not shell expansion
 report_control "merging sessions reddens the newest-session case" \
-  present two-sessions out "session=200:22 samples=481" 0 \
+  present 'session=' two-sessions out "session=200:22 samples=481" 0 \
   'function session_key() { return $(col["pid"]) ":" $(col["session"]) }' \
   'function session_key() { return "merged" }'
 
 report_control "removing the order test reddens the uptime-backwards case" \
-  present backwards err "uptime-backwards=0 after=240 row=6" 1 \
+  present 'session=' backwards err "uptime-backwards=0 after=240 row=6" 1 \
   'if (u[i] < u[i - 1]) {' 'if (0) {'
 
 report_control "removing the rate floor reddens the span-under-floor case" \
-  present under-floor out "rate=1h..last status=span-under-floor" 0 \
+  present 'session=' under-floor out "rate=1h..last status=span-under-floor" 0 \
   'if (d < floor) {' 'if (0) {'
 
 # shellcheck disable=SC2016  # awk source: $ is awk's field operator, not shell expansion
 report_control "shifting the header map reddens the column-by-name case" \
-  present spans-8h out "mark=1h uptime_s=3600" 0 \
+  present 'session=' spans-8h out "mark=1h uptime_s=3600" 0 \
   'for (i = 1; i <= NF; i++) col[$i] = i' 'for (i = 1; i <= NF; i++) col[$i] = i + 1'
 
 report_control "drifting the 24 h target reddens the far-mark case" \
-  present spans-24h out "mark=24h uptime_s=86400" 0 \
+  present 'session=' spans-24h out "mark=24h uptime_s=86400" 0 \
   'idx[3] = at(24 * 3600)' 'idx[3] = at(25 * 3600)'
 
 report_control "dropping the window rate reddens the joined-late case" \
-  present late-start out "rate=window from_uptime_s=273600" 0 \
+  present 'session=' late-start out "rate=window from_uptime_s=273600" 0 \
   'raterow("window", 1, n)' ''
 
 # Putting the prelude back on awk's own status makes a bad header also report a
 # cause that is not true, so the case asserting that second refusal stays away
 # is what this control must move.
 report_control "putting the prelude back on awk's status reddens the one-cause case" \
-  absent no-rss-column err "unreadable-log=" 2 \
+  absent 'header-missing-column=rss_kb' no-rss-column err "unreadable-log=" 2 \
   'refused = 3' 'refused = 2'
 
 # Stand in for the tab escape failing to expand: a pattern that cannot match
