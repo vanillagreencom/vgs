@@ -1718,8 +1718,8 @@ Singleton {
 
     // The first map runs at assignment: in-memory state other bindings read at once.
     // The second map runs from the coalesced commit: these start helpers or write compositor
-    // and toolkit config that read the persisted settings, and a drag would otherwise start
-    // one per position change.
+    // and toolkit config, each too costly to run once per drag position, and the helpers read
+    // the persisted settings.
     readonly property var _hooks: Coalescer.deferHooks(_writes, {
             "applyStoredTheme": applyStoredTheme,
             "updateBarConfigs": updateBarConfigs,
@@ -3604,7 +3604,8 @@ Singleton {
                 return;
             const txt = settingsFile.text();
             // The watcher reports this store's own writes; only different text is an external edit.
-            if (Coalescer.isSelfEcho(_writes, txt))
+            // A store in a parse error re-parses any text, so restoring the last write recovers it.
+            if (_hasLoaded && !_parseError && Coalescer.isSelfEcho(_writes, txt))
                 return;
             const wasLoaded = _hasLoaded;
             _loading = true;

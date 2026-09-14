@@ -50,22 +50,33 @@ function _queueing(state, name, fn) {
 }
 
 // Performs the pending write when `canWrite` holds, then runs the queued hooks in queue
-// order. A refused write is dropped, as an uncoalesced save would drop it; the hooks still
-// run because the assignments they follow already happened. Returns whether it wrote.
+// order. A hook that assigns a persisted key is written by a second write, made only when
+// the serialised text differs from the first. A refused write is dropped, as an
+// uncoalesced save would drop it; the hooks still run because the assignments they follow
+// already happened. Returns the number of writes.
 function commit(state, canWrite, serialize, write) {
-    var wrote = false;
+    var writes = 0;
     if (state.dirty && canWrite) {
         var text = serialize();
         state.lastWrittenText = text;
         write(text);
-        wrote = true;
+        writes++;
     }
     state.dirty = false;
     var hooks = state.hooks;
     state.hooks = [];
     for (var i = 0; i < hooks.length; i++)
         hooks[i].fn(hooks[i].root, hooks[i].key, hooks[i].oldValue);
-    return wrote;
+    if (hooks.length > 0 && canWrite) {
+        var after = serialize();
+        if (after !== state.lastWrittenText) {
+            state.lastWrittenText = after;
+            write(after);
+            writes++;
+        }
+        state.dirty = false;
+    }
+    return writes;
 }
 
 // A file watcher reporting text identical to this store's last write is that write's echo.

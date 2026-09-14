@@ -941,6 +941,8 @@ Singleton {
         // unspent in that case would arm a takeover that fires weeks later, on
         // whichever session the other daemon happens to become stoppable.
         SettingsData.set("notificationFirstRunTakeoverDone", true);
+        // Setter writes are coalesced; flush so the read-only check sees this write's result.
+        SettingsData.flushSettings();
         if (SettingsData._isReadOnly) {
             root.log.warn("first run: the one-shot could not be written to settings.json");
             root._reportUnrecordableFirstRun();
