@@ -388,10 +388,10 @@ Singleton {
                 fv.destroy();
             }
             onLoadFailed: err => {
-                // A manifest that is gone is a removal, not a refused edit, and
-                // resyncAll's removal sweep owns that case. Report only a file
-                // that is on disk and still could not be read.
-                if (err !== FileViewError.FileNotFound)
+                // A manifest that is gone is a removal, not a refused edit.
+                if (err === FileViewError.FileNotFound)
+                    root._releaseMissingManifest(absPath);
+                else
                     root._reportRereadRefusal(absPath, I18n.tr("The manifest could not be opened."), FileViewError.toString(err));
                 root.log.warn("manifest load failed", absPath, err);
                 fv.destroy();
@@ -468,6 +468,14 @@ Singleton {
         pluginListUpdated();
     }
 
+    // Give up a path's claim on an id. The caller has established that the claim
+    // is over; this is what has to follow it.
+    function _releaseClaimedPath(absPath, pluginId) {
+        unregisterPluginByPath(absPath, pluginId);
+        delete pathToPluginId[absPath];
+        _settleReleasedIds([pluginId]);
+    }
+
     // A re-read can carry a different id than the path last claimed. The removal
     // sweep in resyncAll cannot reach the id the path is abandoning, because that
     // loop runs only for paths absent from disk and this path is still there.
@@ -477,9 +485,22 @@ Singleton {
         const prevId = pathToPluginId[absPath];
         if (!prevId || prevId === incomingId)
             return;
-        unregisterPluginByPath(absPath, prevId);
-        delete pathToPluginId[absPath];
-        _settleReleasedIds([prevId]);
+        _releaseClaimedPath(absPath, prevId);
+    }
+
+    // The watchers list directories and snapshotModel names a plugin.json inside
+    // every one it finds, so a manifest deleted from a directory that survives is
+    // marked seen on every resync and the removal sweep never reaches it. Release
+    // it at the read that found it gone. This also covers forceRescanPlugin, whose
+    // reads run against a knownManifests record it has already deleted, and the
+    // uninstall race where the model still lists a directory just removed.
+    function _releaseMissingManifest(absPath) {
+        const pluginId = pathToPluginId[absPath];
+        if (!pluginId)
+            return;
+        // Unlike a rename, no read is coming to overwrite the record.
+        delete knownManifests[absPath];
+        _releaseClaimedPath(absPath, pluginId);
     }
 
     // Report a refused read of a path that already carries a verdict, and name
@@ -498,8 +519,8 @@ Singleton {
         const record = availablePlugins[pluginId] || loadedPlugins[pluginId] || null;
         if (record && record.manifestPath === absPath) {
             // Marked so a later read of this path can clear it. A startup-gate
-            // error under the same id is about a package that did compile and
-            // load, and a manifest read says nothing about that.
+            // error under the same id is about a package that got further than
+            // being read, and a manifest read says nothing about that.
             _setLoadError(pluginId, {
                 "title": reason,
                 "details": details || "",
@@ -508,7 +529,18 @@ Singleton {
         }
         log.error("manifest refused, its previous record stands:", absPath, reason, details || "");
         const body = details ? (absPath + "\n\n" + reason + "\n\n" + details) : (absPath + "\n\n" + reason);
-        ToastService.showError(I18n.tr("Plugin manifest refused"), body, "", "plugin-manifest-" + absPath);
+        // ToastService throttles errors by title, and drops a queued toast that
+        // shares a category. A title naming the package keeps two manifests
+        // refused in one scan apart under both rules; the category stays per
+        // path so neither refusal displaces the other in the queue.
+        ToastService.showError(I18n.tr("Plugin manifest refused: %1").arg(_manifestPackageName(absPath)), body, "", "plugin-manifest-" + absPath);
+    }
+
+    // The package's directory name, which is what the user sees in their plugins
+    // folder and is unique per manifest path where a plugin id is not.
+    function _manifestPackageName(absPath) {
+        const dir = absPath.substring(0, absPath.lastIndexOf('/'));
+        return dir.substring(dir.lastIndexOf('/') + 1) || absPath;
     }
 
     // A manifest that parses answers the refusal recorded for its path. Clear

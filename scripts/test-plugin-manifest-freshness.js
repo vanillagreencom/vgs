@@ -174,6 +174,9 @@ test("a manifest gone from disk is unregistered by a scan rather than re-read", 
 const parsed = {
     onManifestParsed: extractBlock(source, "function _onManifestParsed(absPath, manifest, sourceTag, mtimeEpochMs)"),
     releaseRenamedPath: extractBlock(source, "function _releaseRenamedPath(absPath, incomingId)"),
+    releaseClaimedPath: extractBlock(source, "function _releaseClaimedPath(absPath, pluginId)"),
+    releaseMissingManifest: extractBlock(source, "function _releaseMissingManifest(absPath)"),
+    manifestPackageName: extractBlock(source, "function _manifestPackageName(absPath)"),
     reportRereadRefusal: extractBlock(source, "function _reportRereadRefusal(absPath, reason, details)"),
     unregisterPluginByPath: extractBlock(source, "function unregisterPluginByPath(absPath, pluginId)"),
     unloadPlugin: extractBlock(source, "function unloadPlugin(pluginId)"),
@@ -248,7 +251,13 @@ function loader(registered) {
 
     const scope = {
         I18n: { tr: text => ({ arg: value => text.replace("%1", value), toString: () => text }) },
-        ToastService: { showError: (title, body) => root.toasts.push({ title: String(title), body: String(body) }) },
+        ToastService: {
+            showError: (title, body, command, category) => root.toasts.push({
+                title: String(title),
+                body: String(body),
+                category: String(category)
+            })
+        },
         SettingsData: { getPluginSetting: (id, key, fallback) => fallback },
         // Quickshell's FileViewError enum, in its shipped order.
         FileViewError: {
@@ -277,7 +286,10 @@ function loader(registered) {
     bind("_hasShippedManifest", parsed.hasShippedManifest, ["pluginId"]);
     bind("_refreshBundledId", parsed.refreshBundledId, ["pluginId"]);
     bind("_settleReleasedIds", parsed.settleReleasedIds, ["pluginIds"]);
+    bind("_manifestPackageName", parsed.manifestPackageName, ["absPath"]);
+    bind("_releaseClaimedPath", parsed.releaseClaimedPath, ["absPath", "pluginId"]);
     bind("_releaseRenamedPath", parsed.releaseRenamedPath, ["absPath", "incomingId"]);
+    bind("_releaseMissingManifest", parsed.releaseMissingManifest, ["absPath"]);
     bind("_clearLoadError", parsed.clearLoadError, ["pluginId"]);
     bind("_clearRefusalError", parsed.clearRefusalError, ["absPath"]);
     bind("_reportRereadRefusal", parsed.reportRereadRefusal, ["absPath", "reason", "details"]);
@@ -305,6 +317,11 @@ function loader(registered) {
         callInScope(parsed.fvOnLoaded, view, scope);
     };
     root.fvLoadFailed = err => callInScope(parsed.fvOnLoadFailed, view, scope, ["err"], [err]);
+    root.fvLoadFailedAt = (absPath, err) => {
+        const other = Object.assign({}, view, { absPath });
+        other.fv = other;
+        return callInScope(parsed.fvOnLoadFailed, other, scope, ["err"], [err]);
+    };
 
     // A path always claims an id once its manifest has parsed. Owning that id is
     // separate: the block and reclaim branches leave a second path claiming an id
@@ -402,6 +419,8 @@ test("a refused read of a blocked duplicate is reported without blaming the modu
 
     assert.equal(svc.toasts.length, 1, "the blocked duplicate's refusal must reach the user");
     assert.ok(svc.toasts[0].body.includes(USER), "the report must name the refused file");
+    assert.match(svc.toasts[0].title, /mine$/, "the title must name the refused package, not the module holding the id");
+    assert.equal(svc.toasts[0].category, "plugin-manifest-" + USER, "the category must be the refused path");
     assert.deepEqual(svc.pluginLoadErrors, {}, "no error may be recorded against the owner of the id");
     assert.equal(svc.availablePlugins.vgsMenu.manifestPath, BUNDLED, "the owner record must be untouched");
 });
@@ -482,12 +501,13 @@ test("a re-read carrying the same id releases nothing", () => {
     assert.equal(svc.availablePlugins.mine.loaded, true, "the running package must stay loaded");
 });
 
-// Each row is one way an edited manifest can be unusable, and the reason the loader
-// reports for it. The package keeps running from the previous read in every case.
+// Each row is one way an edited manifest can be unusable, and what the loader must
+// say about it. The package keeps running from the previous read in every case.
 // The first two rows run the shipped FileView handlers; the last two run the loader.
 const REFUSALS = [
     ["the file no longer parses", svc => svc.fvLoaded("{ not json"), "not valid JSON"],
-    ["the file is there but unreadable", svc => svc.fvLoadFailed(3), "could not be opened"],
+    // The rendered enum name, not the bare number Quickshell passes the handler.
+    ["the file is there but unreadable", svc => svc.fvLoadFailed(3), "PermissionDenied"],
     ["a required field was deleted", svc => svc._onManifestParsed(USER, { name: "Mine" }, "user", 1), "missing its id"],
     ["every component surface was removed", svc => svc._onManifestParsed(USER, manifest({ component: "", components: {} }), "user", 1), "no valid component surface"]
 ];
@@ -500,18 +520,41 @@ test("a re-read the loader cannot use reports the refusal and leaves the package
         assert.equal(svc.availablePlugins.mine.loaded, true, `${why}: the package must keep running`);
         assert.equal(svc.toasts.length, 1, `${why}: the refusal must reach the user`);
         assert.match(svc.toasts[0].body, new RegExp(expected), `${why}: the report must name the cause`);
+        // ToastService throttles errors by title, so a title shared by two refusals
+        // in one scan shows the user one broken file when two are broken.
+        assert.match(svc.toasts[0].title, /mine$/, `${why}: the title must name the refused package`);
+        assert.equal(svc.toasts[0].category, "plugin-manifest-" + USER,
+            `${why}: the category must be the refused path, so one refusal cannot drop another from the queue`);
         assert.ok(svc.pluginLoadErrors.mine, `${why}: the refusal must be recorded`);
     }
 });
 
-test("a manifest that is gone is left to the removal sweep rather than reported", () => {
-    // The directory listing the watchers produce names a plugin.json whether or
-    // not the file is there, so a removed manifest reaches this read. Reporting it
-    // tells the user their edit was refused when they deleted the package.
+test("a manifest found missing is released at the read", () => {
+    // The watchers list directories and snapshotModel names a plugin.json inside
+    // each one, so a manifest deleted from a surviving directory is marked seen on
+    // every resync and the removal sweep never reaches it. Left to that sweep, the
+    // package keeps running and keeps its Settings row with nothing on disk behind it.
     const svc = loader([{ id: "mine", path: USER, source: "user" }]);
     svc.fvLoadFailed(2);
-    assert.deepEqual(svc.toasts, [], "a missing manifest must raise no refusal");
+
+    assert.deepEqual(svc.toasts, [], "a missing manifest is a removal, not a refused edit");
     assert.deepEqual(svc.pluginLoadErrors, {}, "a missing manifest must record no load error");
+    assert.equal("mine" in svc.availablePlugins, false, "the released id must leave availablePlugins");
+    assert.deepEqual(svc.availablePluginsList, [], "the released id must leave the list the settings UI binds");
+    assert.equal(USER in svc.knownManifests, false, "the missing manifest must leave knownManifests");
+    assert.equal(USER in svc.pathToPluginId, false, "the missing manifest must give up its claim");
+});
+
+test("a read that finds nothing at an unclaimed path releases nothing", () => {
+    // A path with no verdict has no id to give up. Running the release for it
+    // offers an undefined id to the promotion machinery, which can only expire on
+    // the promotion deadline and then report an id left empty.
+    const svc = loader([{ id: "mine", path: USER, source: "user" }]);
+    svc.fvLoadFailedAt(BUNDLED, 2);
+
+    assert.deepEqual(svc.promoted, [], "an unclaimed path must start no promotion");
+    assert.equal(svc.listSignals, 0, "an unclaimed path must announce no change");
+    assert.equal(svc.availablePlugins.mine.loaded, true, "an unrelated path must not release a running package");
 });
 
 test("a first read of an unregistered path reports no refusal", () => {
