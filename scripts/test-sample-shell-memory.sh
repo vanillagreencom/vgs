@@ -8,9 +8,13 @@
 # status. The controls at the end plant one defect per report rule and require
 # the case that rule owns to go red.
 #
-# The sampling path is out of reach here: it resolves a pid through the instance
-# registry, so reaching it needs a running shell. Its own unreadable-log refusal
-# raises the same key this file pins on the report side, from the same call.
+# Only pid resolution is out of reach here: it reads the instance registry, so
+# it needs a running shell. Everything sample_row does is /proc reads against
+# whatever pid it holds, so the row builder is driven below against a process
+# this file spawns. The log-path refusals sit past pid resolution, so they are
+# untested here and were verified by hand against the live shell; their keys are
+# unwritable-log= for a path that cannot be written and unreadable-log= for a log
+# that cannot be read, the latter raised from a different call than the report's.
 #
 # Every copy of the script under test runs from a plain temporary directory with
 # no repository beside it. --report must work there: the sampler sources its
@@ -237,6 +241,58 @@ run_report "$bare" "$tmp/log.tsv"
 expect_contains "$out" "mark=1h uptime_s=3600" "--report runs from a copy with no repository beside it"
 ok "--report runs from a copy with no repository beside it"
 
+# Drive the row builder itself. sample_row needs no shell and no registry: it
+# reads /proc for whatever pid it holds. The two functions are lifted out of the
+# script under test rather than restated here, so a change to either is what
+# this case runs.
+row_builder="$tmp/row-builder.sh"
+extract_functions() {
+  awk '/^(stat_fields|sample_row)\(\) \{/ { keep = 1 } keep { print } /^\}$/ { keep = 0 }' "$1"
+}
+
+drive_sample_row() {
+  local script="$1"
+  local victim rc=0
+  sleep 120 &
+  victim=$!
+  # The subshell keeps PID, SESSION and CLK_TCK out of the suite's own scope and
+  # lets a failed row return without ending the run.
+  row="$(
+    set -euo pipefail
+    # A planted defect makes the copy complain here; that is the control's
+    # evidence, not a suite failure, so it stays out of the run's output.
+    exec 2>"$tmp/row-stderr"
+    extract_functions "$script" >"$row_builder"
+    # shellcheck source=/dev/null
+    source "$row_builder"
+    PID="$victim"
+    CLK_TCK="$(getconf CLK_TCK)"
+    mapfile -t f < <(stat_fields "$PID")
+    SESSION="${f[19]}"
+    export PID SESSION CLK_TCK
+    sample_row
+  )" || rc=$?
+  kill "$victim" 2>/dev/null || true
+  wait "$victim" 2>/dev/null || true
+  return "$rc"
+}
+
+label="the row builder reads a live process and writes one full row"
+rc=0
+drive_sample_row "$sampler" || rc=$?
+if [[ "$rc" != 0 ]]; then
+  fail "$label" "sample_row exited $rc against a process the test owns"
+else
+  # The row must carry exactly the columns the header names; the leading mapping
+  # count is stripped before the row is returned.
+  if ! row_fields="$(awk -F'\t' '{print NF; exit}' <<<"$row")"; then
+    row_fields="unreadable"
+  fi
+  [[ "$row_fields" == "$head_count" ]] ||
+    fail "$label" "row carries $row_fields fields, the header names $head_count"
+fi
+ok "$label"
+
 echo "=== argument refusals ==="
 
 arg_case() {
@@ -259,6 +315,21 @@ arg_case "an unreadable log is refused with its path" "unreadable-log=$tmp/missi
 
 echo "=== must-fail controls ==="
 
+# Apply one substitution to a copy of the script. Non-zero when the text is not
+# there exactly once, so a control whose anchor has drifted reports itself as
+# unproven rather than passing on a copy it never changed.
+mutate() {
+  python3 - "$1" "$2" "$3" <<'MUTATE_PY'
+import sys
+path, old, new = sys.argv[1], sys.argv[2], sys.argv[3]
+text = open(path).read()
+if text.count(old) != 1:
+    sys.exit(1)
+open(path, "w").write(text.replace(old, new))
+MUTATE_PY
+}
+
+
 # Build a copy of the sampler beside a real library, apply one substitution, and
 # report what --report then does. A mutation that does not apply, or a copy that
 # does not start, is a fixture defect rather than a verdict: run_control returns
@@ -268,14 +339,7 @@ run_control() {
   local mutant="$tmp/mutant.sh"
   cp "$sampler" "$mutant"
   if [[ -n "$from" ]]; then
-    python3 - "$mutant" "$from" "$to" <<'PY' || return 2
-import sys
-path, old, new = sys.argv[1], sys.argv[2], sys.argv[3]
-text = open(path).read()
-if text.count(old) != 1:
-    sys.exit(1)
-open(path, "w").write(text.replace(old, new))
-PY
+    mutate "$mutant" "$from" "$to" || return 2
   fi
   chmod +x "$mutant"
   local log="$tmp/log.tsv"
@@ -353,6 +417,59 @@ control "shifting the header map reddens the column-by-name case" \
 control "drifting the 24 h target reddens the far-mark case" \
   'idx[3] = at(24 * 3600)' 'idx[3] = at(25 * 3600)' \
   spans-24h out "mark=24h uptime_s=86400" 0
+
+# The row builder's own controls. Each runs a mutated copy through the same
+# driver, so a defect in the field splitting or the truncation floor shows up as
+# a row the case rejects rather than as a silent empty log.
+row_control() {
+  local label="$1"
+  shift
+  local mutant="$tmp/row-mutant.sh"
+  local rcm=0
+  cp "$sampler" "$mutant"
+  while [[ $# -ge 2 ]]; do
+    if ! mutate "$mutant" "$1" "$2"; then
+      fail "$label" "a mutation did not apply, so the rule is unproven"
+      return
+    fi
+    shift 2
+  done
+  drive_sample_row "$mutant" || rcm=$?
+  [[ "$rcm" != 0 ]] ||
+    fail "$label" "the defect did not redden its case: sample_row still exited 0"
+  [[ $case_failed -eq 0 ]] && printf '  ok    %s\n' "$label"
+  case_failed=0
+}
+
+# Stand in for the tab escape failing to expand: a pattern that cannot match
+# leaves the mapping count in the row, so the arithmetic test rejects every one.
+# shellcheck disable=SC2016  # bash source of the script under test, quoted verbatim as its anchor
+row_control "breaking the field split reddens the row-builder case" \
+  'counted="${row%%$'"'"'\t'"'"'*}"' 'counted="${row%%NO_SUCH_SEPARATOR*}"'
+
+# The truncation floor guards a short read, which cannot be staged against a
+# healthy process: /proc hands back the whole file. Making the counter
+# under-report stands in for the truncation, and with it the floor must reject
+# the row. This is the guarantee, so its control removes the floor rather than
+# the counter: with both gone the under-counted row is accepted and the case
+# goes green, which is what must not happen.
+row_control "an under-counted mapping read is rejected" \
+  'nmaps++; next' 'next'
+
+floor_label="removing the truncation floor reddens the under-counted case"
+floor_rc=0
+floor_mutant="$tmp/floor-mutant.sh"
+cp "$sampler" "$floor_mutant"
+# shellcheck disable=SC2016  # bash source of the script under test, quoted verbatim as its anchor
+if mutate "$floor_mutant" 'nmaps++; next' 'next' &&
+  mutate "$floor_mutant" '[[ "$counted" -ge "$floor" ]] || return 1' ':'; then
+  drive_sample_row "$floor_mutant" || floor_rc=$?
+  [[ "$floor_rc" == 0 ]] ||
+    fail "$floor_label" "the control could not show the floor was what rejected: exit $floor_rc"
+else
+  fail "$floor_label" "a mutation did not apply, so the rule is unproven"
+fi
+ok "$floor_label"
 
 control "dropping the window rate reddens the joined-late case" \
   'raterow("window", 1, n)' '' \

@@ -111,7 +111,9 @@ AWK_PRELUDE='
     if (missing != "") {
       printf "sample-shell-memory: header-missing-column=%s\n", missing > "/dev/stderr"
       print "  The log header must name every column this reads." > "/dev/stderr"
-      refused = 2
+      # 3, not 2: awk exits 2 on an input it cannot open, and a caller that
+      # cannot tell the two apart must either swallow one or invent a guard.
+      refused = 3
       exit refused
     }
     next
@@ -122,8 +124,11 @@ AWK_PRELUDE='
 # Report from a finished log. Reads nothing from the live process, so it works
 # after the sampled session has ended and needs no instance registry.
 report_baseline() {
-  local log="$1"
-  [[ -r "$log" ]] || refuse 2 "unreadable-log=$log" "The report reads an existing sample log."
+  local log="$1" rc=0
+  # -f as well as -r: a directory is readable and would reach awk as an input it
+  # cannot use.
+  [[ -f "$log" && -r "$log" ]] ||
+    refuse 2 "unreadable-log=$log" "The report reads an existing sample log."
   awk -F'\t' -v floor="$RATE_FLOOR_S" -v tol="$MARK_TOLERANCE_S" "$AWK_PRELUDE"'
     {
       # pid alone does not identify a session: the kernel reuses pids, and
@@ -221,7 +226,13 @@ report_baseline() {
         prevl = lab[i]; previ = idx[i]
       }
     }
-  ' "$log"
+  ' "$log" || rc=$?
+  case "$rc" in
+    0) return 0 ;;
+    3) exit 2 ;;                      # header refusal, named by the prelude
+    1) exit 1 ;;                      # no samples, or rows out of order
+    *) refuse 2 "unreadable-log=$log" "The report could not read this sample log." ;;
+  esac
 }
 
 if [[ -n "$REPORT" ]]; then
@@ -284,28 +295,38 @@ CLK_TCK="$(getconf CLK_TCK)"
 if [[ -z "$LOG" ]]; then
   LOG="${XDG_CACHE_HOME:-$HOME/.cache}/vshell/memory-samples.tsv"
 fi
-mkdir -p -- "$(dirname -- "$LOG")"
+# The log path is an argument, so every way it can be unusable is a bad
+# invocation and refuses with a key, not a raw redirection or mkdir error. The
+# read side is left to the append guard below, whose awk fails on an unreadable
+# file and refuses by name there.
+if ! log_dir="$(dirname -- "$LOG")"; then
+  refuse 2 "unwritable-log=$LOG" "Its directory name could not be resolved."
+fi
+mkdir -p -- "$log_dir" 2>/dev/null ||
+  refuse 2 "unwritable-log=$LOG" "Its directory $log_dir could not be created."
+[[ -w "$log_dir" ]] ||
+  refuse 2 "unwritable-log=$LOG" "Its directory $log_dir cannot be written to."
+if [[ -e "$LOG" ]]; then
+  [[ -f "$LOG" ]] ||
+    refuse 2 "unwritable-log=$LOG" "The log path exists and is not a regular file."
+  [[ -w "$LOG" ]] ||
+    refuse 2 "unwritable-log=$LOG" "The existing log cannot be appended to."
+fi
 if [[ -s "$LOG" ]]; then
   # Appending a second session's rows to a foreign log is how a 100 MiB/h leak
   # reports as 0.0 MiB/h. Refuse rather than extend someone else's series. The
   # shared prelude means a log whose header this cannot read is refused by name
   # here too, rather than comparing field zero against itself.
-  # -s says the file has bytes, not that they can be read. awk exits 2 on an
-  # unopenable input, the same status the prelude uses for a bad header, so
-  # without this the silent dispatch below swallows the permission failure.
-  [[ -r "$LOG" ]] ||
-    refuse 2 "unreadable-log=$LOG" "The existing log could not be read to check whose session it holds."
   guard_rc=0
   last_id="$(awk -F'\t' "$AWK_PRELUDE"'
                { id = session_key() }
                END { if (refused) exit refused; print id }' "$LOG")" || guard_rc=$?
-  # The prelude already named the bad column on stderr and chose the status, so
-  # re-state nothing here; any other failure has no diagnostic of its own.
-  if [[ "$guard_rc" == 2 ]]; then
-    exit 2
-  elif [[ "$guard_rc" != 0 ]]; then
-    refuse 2 "unreadable-log=$LOG" "The existing log could not be read to check whose session it holds."
-  fi
+  case "$guard_rc" in
+    0) ;;
+    3) exit 2 ;;                      # header refusal, named by the prelude
+    *) refuse 2 "unreadable-log=$LOG" \
+         "The existing log could not be read to check whose session it holds." ;;
+  esac
   [[ -z "$last_id" || "$last_id" == "$PID:$SESSION" ]] ||
     refuse 2 "foreign-log=$last_id this=$PID:$SESSION path=$LOG" \
       "Pass --log for a new file rather than extending another session's series."
