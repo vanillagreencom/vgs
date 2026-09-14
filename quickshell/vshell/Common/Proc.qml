@@ -24,12 +24,11 @@ Singleton {
         const wait = (typeof debounceMs === "number" && debounceMs >= 0) ? debounceMs : defaultDebounceMs;
         const timeout = (typeof timeoutMs === "number") ? timeoutMs : defaultTimeoutMs;
         let procId = id ? id : Math.random();
-        const isRandomId = !id;
 
         if (!_procDebouncers[procId]) {
             const t = debounceTimerComp.createObject(root);
             t.triggered.connect(function () {
-                _launchProc(procId, isRandomId);
+                _launchProc(procId);
             });
             _procDebouncers[procId] = {
                 timer: t,
@@ -37,7 +36,7 @@ Singleton {
                 callback: callback,
                 waitMs: wait,
                 timeoutMs: timeout,
-                isRandomId: isRandomId
+                arming: 0
             };
         } else {
             _procDebouncers[procId].command = command;
@@ -47,18 +46,23 @@ Singleton {
         }
 
         const entry = _procDebouncers[procId];
+        // Every arming of this id takes its own number. The release that follows a run's
+        // callback compares it, because an id armed again keeps the same entry object and
+        // identity cannot tell the two apart. Releasing an entry armed again would destroy the
+        // timer that is waiting and drop the command it was waiting for.
+        entry.arming = entry.arming + 1;
         entry.timer.interval = entry.waitMs;
         entry.timer.restart();
     }
 
-    function _launchProc(id, isRandomId) {
+    function _launchProc(id) {
         const entry = _procDebouncers[id];
         if (!entry)
             return;
         const launchedCommand = entry.command;
         const launchedCallback = entry.callback;
         const launchedTimeoutMs = entry.timeoutMs;
-        const launchedIsRandomId = entry.isRandomId;
+        const launchedArming = entry.arming;
         const proc = procComp.createObject(root, {
             command: launchedCommand
         });
@@ -189,16 +193,18 @@ Singleton {
                 release();
             }
 
-            if (isRandomId || launchedIsRandomId) {
-                Qt.callLater(function () {
-                    if (_procDebouncers[id]) {
-                        try {
-                            _procDebouncers[id].timer.destroy();
-                        } catch (_) {}
-                        delete _procDebouncers[id];
-                    }
-                });
-            }
+            // The entry and its Timer are held only to coalesce calls into one run, so the run's
+            // end retires them whatever the id. A callback that asks for the same id again arms
+            // the entry with a new number, and the comparison leaves that pending run alone.
+            Qt.callLater(function () {
+                const current = _procDebouncers[id];
+                if (!current || current.arming !== launchedArming)
+                    return;
+                try {
+                    current.timer.destroy();
+                } catch (_) {}
+                delete _procDebouncers[id];
+            });
         }
 
         proc.running = true;
