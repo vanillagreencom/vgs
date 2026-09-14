@@ -38,6 +38,18 @@ Item {
     required property var wallpaperSwitcherModal
     required property var themeSwitcherModal
 
+    // Keyboard focus reaches a surface after it maps, through deferred steps: the focus flag,
+    // the compositor grab, then the content item. A key sent before all three lands on nothing.
+    // A surface reports focusWanted, the flag its focus grab binds to.
+    function surfaceFocusStatus(surface) {
+        return JSON.stringify({
+            "visible": !!surface?.shouldBeVisible,
+            "focusWanted": !!surface?.focusWanted,
+            "focusGrabActive": !!surface?.focusGrabActive,
+            "contentActiveFocus": !!surface?.contentLoader?.item?.activeFocus
+        });
+    }
+
     function getPreferredBar(refPropertyName) {
         if (!root.barRepeater || root.barRepeater.count === 0)
             return null;
@@ -331,6 +343,10 @@ Item {
             return open();
         }
 
+        function focusStatus(): string {
+            return root.surfaceFocusStatus(root.wallpaperSwitcherModal);
+        }
+
         target: "wallpaper-switcher"
     }
 
@@ -351,6 +367,10 @@ Item {
                 return "THEME_SWITCHER_TOGGLE_SUCCESS";
             }
             return open();
+        }
+
+        function focusStatus(): string {
+            return root.surfaceFocusStatus(root.themeSwitcherModal);
         }
 
         target: "theme-switcher"
@@ -1370,6 +1390,23 @@ Item {
             if (widget.popoutTarget?.shouldBeVisible)
                 return "visible";
             return "hidden";
+        }
+
+        function focusStatus(widgetId: string): string {
+            if (!widgetId)
+                return "ERROR: No widget ID specified";
+
+            if (!BarWidgetService.hasWidget(widgetId))
+                return `WIDGET_NOT_FOUND: ${widgetId}`;
+
+            const widget = BarWidgetService.getWidgetOnFocusedScreen(widgetId);
+            if (!widget)
+                return `WIDGET_NOT_AVAILABLE: ${widgetId}`;
+
+            const popout = widget.popoutTarget;
+            if (!popout)
+                return `WIDGET_POPOUT_NOT_SUPPORTED: ${widgetId}`;
+            return root.surfaceFocusStatus(popout);
         }
 
         function reveal(widgetId: string): string {

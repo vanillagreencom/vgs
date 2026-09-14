@@ -61,8 +61,13 @@ Item {
         id: _transientSurfaceTracker
     }
 
+    // Reported by the focusStatus IPC query; qml-smoke waits on them before sending keys.
+    readonly property bool focusWanted: shouldBeVisible
+    readonly property bool focusGrabActive: focusGrab.active
+
     // Hyprland OnDemand grab: whitelist popout surfaces and bars so dismiss clicks still land.
     VgsFocusGrab {
+        id: focusGrab
         windows: {
             const list = [];
             if (root.contentWindow)
@@ -72,7 +77,7 @@ Item {
             const transientWindows = root.transientSurfaceTracker?.focusWindows ?? [];
             return list.concat(transientWindows).concat(KeyboardFocus.barWindows);
         }
-        wanted: KeyboardFocus.wantsGrab(root.shouldBeVisible, root.customKeyboardFocus)
+        wanted: KeyboardFocus.wantsGrab(root.focusWanted, root.customKeyboardFocus)
     }
 
     Loader {
