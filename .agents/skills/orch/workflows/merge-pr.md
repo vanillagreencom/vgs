@@ -292,7 +292,11 @@ Use the output as `MAIN_REPO_ROOT`.
    [MAIN_REPO_ROOT]/.agents/skills/linear/scripts/linear.sh sync --reconcile
    ```
 
-   The lane owns tracker completion; the overseer does not substitute for it. When `[ISSUE]` was extracted, read it from the synced cache. A completed state needs no write. A live state completes now:
+   The lane owns tracker completion; the overseer does not substitute for it.
+
+   Complete `[ISSUE]` only when its Done-when is on the default branch, not only because a merged PR carries its number, and give every remainder from a cut its own issue or bundle before completion.
+
+   When `[ISSUE]` was extracted, read it from the synced cache; a completed state needs no write, and for a live state run the completion command only after the default-branch Done-when check passes.
 
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/linear/scripts/linear.sh cache issues get [ISSUE]
@@ -417,7 +421,7 @@ Use the output as `MAIN_REPO_ROOT`.
 | Field | Value |
 |-------|-------|
 | Branch | [BRANCH_NAME] (deleted / kept) |
-| Issue Tracker | [ISSUE_ID] → Done (completed by the lane after merge) |
+| Issue Tracker | [ISSUE_ID] → Done / still open — [tracker result or cause from § 5 step 2] |
 | Container | [PARENT_ID] → Done / deferred — [pending ids, restorations, or cause] |
 | Base sync | local `[BASE_BRANCH]` → [NEW_SHA] |
 
