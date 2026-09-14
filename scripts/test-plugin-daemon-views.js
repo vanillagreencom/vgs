@@ -150,23 +150,27 @@ function reportsFor(world) {
 }
 
 test("a dropped action reports the case that decides what the user can do about it", () => {
-    // [why, world, expected availability, expected [level, body, has settings action] or null]
-    for (const [why, world, availability, expected] of [
+    // [why, world, expected availability, log levels, expected [level, body, has settings action]
+    // or null when the case raises no toast and the log line is its whole output]
+    for (const [why, world, availability, logLevels, expected] of [
         ["an instance is registered, so a report is a caller error and raises no toast",
-            { instances: { p: {} }, components: { p: {} } }, "registered", null],
+            { instances: { p: {} }, components: { p: {} } }, "registered", ["error"], null],
         ["loaded but not yet registered is the async window: wait, so a warning and no action",
             { instances: {}, components: { p: {} }, plugins: { p: { name: "Plugin P" } } }, "starting",
-            ["warning", "Plugin P is still starting. Try again in a moment.", false]],
+            ["warn"], ["warning", "Plugin P is still starting. Try again in a moment.", false]],
         ["not loaded at all is an error the user fixes in Plugins settings",
             { instances: {}, components: {}, plugins: { p: { name: "Plugin P" } } }, "notLoaded",
-            ["error", "The Plugin P plugin did not load.", true]],
+            ["error"], ["error", "The Plugin P plugin did not load.", true]],
         ["an unnamed plugin falls back to its id rather than reporting undefined",
             { instances: {}, components: {} }, "notLoaded",
-            ["error", "The p plugin did not load.", true]]
+            ["error"], ["error", "The p plugin did not load.", true]]
     ]) {
-        const { fns, toasts } = reportsFor(world);
+        const { fns, toasts, logs } = reportsFor(world);
         assert.equal(fns.daemonAvailability("p"), availability, why);
         fns.reportDaemonUnavailable("p", "Action could not start");
+        assert.deepEqual(logs.map(entry => entry[0]), logLevels,
+            `${why} — and leaves a trace at that level; the registered case raises no toast, so its ` +
+            "log line is the only thing that names the caller bug");
         if (expected === null) {
             assert.deepEqual(toasts, [], why);
             continue;
