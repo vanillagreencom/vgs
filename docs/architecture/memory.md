@@ -36,16 +36,16 @@ Class shares are read by matching the mapping name in `/proc/<pid>/smaps`. The s
 - Growth is on the main QML thread and the Wayland event threads. The scene-graph render threads are the CPU cost and not the growth, so a frame-rate or repaint change addresses neither.
 - The mapping count stays flat while memory grows. New bytes land inside extents jemalloc already holds, so a count of mappings is not a growth signal.
 - File descriptors and thread count stay flat. Neither is a growth signal.
-- A growth rate needs a window of at least 600 s. Per-minute deltas swing between negative and several megabytes, so a shorter window reports sampling noise. `--report` refuses to state a rate below that window.
+- A growth rate needs a window of at least 600 s. Per-minute deltas swing between negative and several megabytes, so a shorter window reports sampling noise. `--report` states one rate over the session span its log covers and one between each pair of marks, and reports `status=span-under-floor` in place of any rate whose span falls below that window.
 
 ## Measured state
 
-One unbroken session on the owner's machine, read at 76 h of uptime, on the installed Quickshell 0.3.1 package, with three monitors and 43 threads. The sampler re-derives every row; the high-water mark is its `hwm_kb` column, read from `/proc/<pid>/status`, and never the peak among logged samples, which starts when the operator starts sampling. These describe one machine, not a contract.
+One unbroken session on the owner's machine, read at 76 h of uptime, on the installed Quickshell 0.3.1 package, with three monitors and 43 threads. These describe one machine, not a contract. Only the high-water mark is expected to reproduce exactly, because it never decreases while the session runs; every other row moves as the session goes on. The sampler reads it from `/proc/<pid>/status` into its `hwm_kb` column and reports it separately from the peak among logged samples, which is lower whenever sampling started after the peak.
 
 | Reading | Value |
 |---|---|
 | Resident size | 1,466 MiB |
-| High-water mark (`VmHWM`) | 2,226 MiB |
+| High-water mark (`VmHWM`) | 2,225 MiB |
 | Anonymous | 1,163 MiB |
 | In transparent huge pages | 652 MiB |
 | JavaScript heap | 27 MiB |
@@ -62,7 +62,7 @@ Growth with the desktop untouched, from 36 minute-by-minute samples over 35 minu
 
 Per-minute deltas ran from -1.1 MiB to +5.2 MiB with a median of +1.3 MiB, and 2 of the 35 were negative. This is a trend and not a constant.
 
-The rate does not extrapolate. At even its slowest, 76 hours would reach far past the high-water mark of 2,226 MiB. Resident size instead peaked below that and fell back, which is what jemalloc's lazy purge produces. Growth over a session is a sawtooth, not a line.
+The rate does not extrapolate. At even its slowest, 76 hours would reach far past the high-water mark of 2,225 MiB. Resident size instead peaked below that and fell back, which is what jemalloc's lazy purge produces. Growth over a session is a sawtooth, not a line.
 
 Class attribution over a 20-minute window of eleven samples: anonymous memory grew 30.7 MiB and rose at every one of the ten steps, with no reversal. The JavaScript heap ended 0.9 MiB up, having held one exact value for eight samples, moved 2.4 MiB, then come most of the way back; font mappings did the same and returned to their starting value. GPU mappings did not move by one kilobyte. Compiled QML moved 36 KiB across the whole window.
 
@@ -90,7 +90,7 @@ The sampler asks the instance registry `bin/vshell instances list` owns which pr
 
 Every sample row carries the sampled process and its start time, so one session is told from the next that reuses its process id. Sampling refuses to append to a log whose last row names a different session, rather than extending someone else's series. `--report` reads only the newest session in a log and says how many rows and sessions it left out, and it refuses every mark and rate for a session whose uptime does not run forward.
 
-`--report` prints the process high-water mark beside the peak among logged samples, which is lower whenever sampling started after the peak. It prints one `mark=` line for each of 1 h, 8 h and 24 h of uptime and for the last sample. A mark the session never reached is `status=not-reached`. A mark it passed with no sample close enough to answer it is `status=no-sample-within`, so a mark is never filled from a sample hours away. Between each consecutive pair of marks that both exist it prints a `rate=` line naming the two uptimes it spans, and where that span is under 600 s it prints `status=span-under-floor` and no rate. Filling all three marks needs a session that starts while the sampler runs.
+`--report` prints the process high-water mark beside the peak among logged samples, which is lower whenever sampling started after the peak. It prints one `mark=` line for each of 1 h, 8 h and 24 h of uptime and for the last sample. A mark the session never reached is `status=not-reached`. A mark it passed with no sample close enough to answer it is `status=no-sample-within`, so a mark is never filled from a sample hours away. It prints a `rate=window` line over the whole span the log covers, then one `rate=` line between each consecutive pair of marks that both exist. Every rate names the two uptimes it spans, and where a span is under 600 s the line carries `status=span-under-floor` instead of a rate. The window rate is what a log of a session the sampler joined late still reports, since such a log fills only the last mark and one mark forms no pair. Filling all three marks needs a session that starts while the sampler runs.
 
 ## What sampling cannot attribute
 

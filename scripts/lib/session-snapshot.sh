@@ -9,6 +9,7 @@ repo_root="${repo_root:?scripts/lib/session-snapshot.sh: sourcing script must se
 # $1 is an optional shell entrypoint to scope the listing to. The listing is
 # checkout-scoped by default, so a caller addressing a shell launched from a
 # different checkout passes that checkout's quickshell/vshell/shell.qml.
+# shellcheck disable=SC2120  # the scope argument is optional; three callers take the default
 vgs_snapshot_instances() {
   local report rc=0
   local -a scope=()

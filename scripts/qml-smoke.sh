@@ -78,7 +78,7 @@ unmeasured() { printf 'qml-smoke: NOT MEASURED: %s\n' "$*" >&2; declare -g -a no
 source "$repo_root/scripts/lib/session-snapshot.sh"
 vgs_snapshot_prefix="qml-smoke: "
 
-instances_before="$(vgs_snapshot_instances "")" && instances_before_status=0 || instances_before_status=$?
+instances_before="$(vgs_snapshot_instances)" && instances_before_status=0 || instances_before_status=$?
 layers_before="$(vgs_snapshot_layers)" && layers_before_status=0 || layers_before_status=$?
 
 declare -a tracked_pgids=()
@@ -179,7 +179,7 @@ cleanup() {
 # shellcheck disable=SC2329  # called from cleanup(), which only the traps reach
 assert_live_session_untouched() {
   local ok=0 instances_after layers_after instances_after_status layers_after_status
-  instances_after="$(vgs_snapshot_instances "")" && instances_after_status=0 || instances_after_status=$?
+  instances_after="$(vgs_snapshot_instances)" && instances_after_status=0 || instances_after_status=$?
   layers_after="$(vgs_snapshot_layers)" && layers_after_status=0 || layers_after_status=$?
 
   if ! vgs_compare_snapshots "live VGS instances" \

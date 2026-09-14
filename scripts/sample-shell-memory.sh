@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Sample the live shell's memory read-only and report growth per class.
 #
-# Every read is /proc. Nothing here signals, restarts or drives the shell, so it
-# is safe to leave running across a whole session. It is a diagnostic tool, not a
-# validation check: scripts/validate exercises only its --report mode, through
+# Resolving which process is the shell reads the Quickshell instance registry
+# once, through bin/vshell instances list. Every sample after that is /proc
+# alone. Nothing here signals, restarts or drives the shell, so it is safe to
+# leave running across a whole session. It is a diagnostic tool, not a validation
+# check: scripts/validate exercises only its --report mode, which reads a TSV and
+# needs neither the registry nor a running shell, through
 # scripts/test-sample-shell-memory.sh.
 #
 #   scripts/sample-shell-memory.sh                 sample until interrupted
@@ -15,16 +18,15 @@
 #
 # Output protocol, pinned by scripts/test-sample-shell-memory.sh: every refusal
 # and every report line begins with a key=value field, English follows on its own
-# line. Refusals exit 2 for a bad invocation and 1 for a log that cannot be read
-# as one session. --report reads the header for its column positions, reports the
-# newest session in the log alone, and emits one mark= line for each of 1 h, 8 h,
-# 24 h of uptime and the last sample, then one rate= line for each consecutive
-# pair of marks that both exist and span at least the rate floor.
+# line. Refusals exit 2 for a bad invocation or an unusable header, and 1 for a
+# log that cannot be read as one session. --report reports the newest session in
+# the log alone and emits, for that session: one mark= line for each of 1 h, 8 h,
+# 24 h of uptime and the last sample; one rate=window line over the session's
+# whole logged span; and one rate= line for each consecutive pair of marks. Every
+# rate names the uptimes it spans and is gated on the rate floor.
 set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)" || exit 2
-# shellcheck source=scripts/lib/session-snapshot.sh
-source "$repo_root/scripts/lib/session-snapshot.sh"
 
 INTERVAL=60
 HOURS=0
@@ -36,8 +38,8 @@ SHELL_PATH="$repo_root/quickshell/vshell/shell.qml"
 # negative and several megabytes, so anything shorter reports sampling noise.
 RATE_FLOOR_S=600
 # A mark is filled only by a sample this close to it, so a mark is never answered
-# by a sample hours earlier. Widened to twice the log's own sampling gap when it
-# was taken at a coarser interval than this.
+# by a sample hours away. Fixed: a tolerance derived from the log's own spacing
+# grows without bound around a gap, which is exactly when it must not.
 MARK_TOLERANCE_S=300
 
 # Every refusal in one place. $1 is the key=value first line, the rest is English.
@@ -95,48 +97,54 @@ done
 COLUMNS_HEADER=$'epoch\tpid\tsession\tuptime_s\trss_kb\tanon_kb\tfile_kb\tswap_kb'
 COLUMNS_HEADER+=$'\tthp_kb\thwm_kb\tjsheap_kb\tjit_kb\tgpu_kb\tthreads\tfds\tmaps\tcpu_ticks'
 
+# Both readers of a log share this prelude, so neither can resolve a column name
+# the header does not carry. Composing the session key here keeps one definition
+# of what identifies a session. Each program's END must honour `refused`, because
+# awk runs END after exit and END would otherwise replace the status.
+# shellcheck disable=SC2016  # awk source: $ is awk's field operator, not shell expansion
+AWK_PRELUDE='
+  NR == 1 {
+    for (i = 1; i <= NF; i++) col[$i] = i
+    split("epoch pid session uptime_s rss_kb anon_kb thp_kb hwm_kb", need, " ")
+    for (i in need)
+      if (!(need[i] in col)) missing = missing (missing == "" ? "" : ",") need[i]
+    if (missing != "") {
+      printf "sample-shell-memory: header-missing-column=%s\n", missing > "/dev/stderr"
+      print "  The log header must name every column this reads." > "/dev/stderr"
+      refused = 2
+      exit refused
+    }
+    next
+  }
+  function session_key() { return $(col["pid"]) ":" $(col["session"]) }
+'
+
 # Report from a finished log. Reads nothing from the live process, so it works
-# after the sampled session has ended.
+# after the sampled session has ended and needs no instance registry.
 report_baseline() {
   local log="$1"
   [[ -r "$log" ]] || refuse 2 "unreadable-log=$log" "The report reads an existing sample log."
-  awk -F'\t' -v floor="$RATE_FLOOR_S" -v tol="$MARK_TOLERANCE_S" '
-    # Column positions come from the header, so a column added or moved in the
-    # writer becomes a named miss here rather than a mislabelled number.
-    NR == 1 {
-      for (i = 1; i <= NF; i++) col[$i] = i
-      split("epoch pid session uptime_s rss_kb anon_kb thp_kb", need, " ")
-      for (i in need)
-        if (!(need[i] in col)) missing = missing (missing == "" ? "" : ",") need[i]
-      if (missing != "") {
-        printf "sample-shell-memory: header-missing-column=%s\n", missing > "/dev/stderr"
-        print "  The log header must name every column the report reads." > "/dev/stderr"
-        # awk runs END after exit, and END would replace this status with its
-        # own. The flag makes END stand aside instead.
-        refused = 2
-        exit refused
-      }
-      next
-    }
+  awk -F'\t' -v floor="$RATE_FLOOR_S" -v tol="$MARK_TOLERANCE_S" "$AWK_PRELUDE"'
     {
       # pid alone does not identify a session: the kernel reuses pids, and
       # vshell.service restarts the shell. The start time separates them.
-      key = $(col["pid"]) ":" $(col["session"])
+      key = session_key()
       if (!(key in seen)) { seen[key] = 1; keys[++nk] = key }
       n = ++count[key]
       up[key, n] = $(col["uptime_s"]) + 0
       rss[key, n] = $(col["rss_kb"]) + 0
       anon[key, n] = $(col["anon_kb"]) + 0
       thp[key, n] = $(col["thp_kb"]) + 0
-      if ("hwm_kb" in col) hwm[key, n] = $(col["hwm_kb"]) + 0
+      hwm[key, n] = $(col["hwm_kb"]) + 0
       ep = $(col["epoch"]) + 0
       if (!(key in lastep) || ep > lastep[key]) lastep[key] = ep
       rows++
     }
     function mib(kb) { return sprintf("%.0f", kb / 1024) }
     # The latest sample at or before target, but only when the session actually
-    # reached the mark and a sample landed within tolerance of it. Without both
-    # tests a log ending at 0.5 h fills 1 h, 8 h and 24 h from one sample.
+    # reached the mark and a sample landed within the fixed tolerance of it.
+    # Without both tests a log ending at 0.5 h fills 1 h, 8 h and 24 h from one
+    # sample, and a log with a hole fills two marks from the sample beside it.
     function at(target,   i, best) {
       if (u[n] < target) return -1
       best = 0
@@ -152,16 +160,17 @@ report_baseline() {
       printf "mark=%s uptime_s=%d rss_mib=%s anon_mib=%s thp_mib=%s\n",
         label, u[idx], mib(r[idx]), mib(a[idx]), mib(t[idx])
     }
-    # A rate needs two real marks and a span no shorter than the floor. Naming
-    # the uptimes it spans keeps a label from implying a span it did not measure.
-    function raterow(la, ia, lb, ib,   d) {
+    # Naming the uptimes a rate spans keeps a label from implying a span it did
+    # not measure. A span under the floor reports the refusal rather than a
+    # number, at every label.
+    function raterow(label, ia, ib,   d) {
       d = u[ib] - u[ia]
       if (d < floor) {
-        printf "rate=%s..%s status=span-under-floor span_s=%d floor_s=%d\n", la, lb, d, floor
+        printf "rate=%s status=span-under-floor span_s=%d floor_s=%d\n", label, d, floor
         return
       }
-      printf "rate=%s..%s from_uptime_s=%d to_uptime_s=%d span_s=%d rss_mib_h=%.1f anon_mib_h=%.1f\n",
-        la, lb, u[ia], u[ib], d,
+      printf "rate=%s from_uptime_s=%d to_uptime_s=%d span_s=%d rss_mib_h=%.1f anon_mib_h=%.1f\n",
+        label, u[ia], u[ib], d,
         (r[ib] - r[ia]) / 1024 / (d / 3600), (a[ib] - a[ia]) / 1024 / (d / 3600)
     }
     END {
@@ -178,8 +187,7 @@ report_baseline() {
       n = count[pick]
       for (i = 1; i <= n; i++) {
         u[i] = up[pick, i]; r[i] = rss[pick, i]
-        a[i] = anon[pick, i]; t[i] = thp[pick, i]
-        h[i] = hwm[pick, i]
+        a[i] = anon[pick, i]; t[i] = thp[pick, i]; h[i] = hwm[pick, i]
       }
       printf "session=%s samples=%d\n", pick, n
       printf "excluded=%d rows=%d\n", nk - 1, rows - n
@@ -192,12 +200,6 @@ report_baseline() {
           print "  Refusing every mark and rate: the session rows are not in order." > "/dev/stderr"
           exit 1
         }
-      # A log taken at a coarser interval than the tolerance would never fill a
-      # mark, so widen the tolerance to twice its own sampling gap.
-      if (n > 1) {
-        gap = (u[n] - u[1]) / (n - 1)
-        if (2 * gap > tol) tol = 2 * gap
-      }
       printf "span=%d..%d\n", u[1], u[n]
       idx[1] = at(3600); idx[2] = at(8 * 3600); idx[3] = at(24 * 3600); idx[4] = n
       split("1h|8h|24h|last", lab, "|")
@@ -207,11 +209,15 @@ report_baseline() {
       # The logged peak is not VmHWM: sampling starts when the operator starts it
       # and can miss the high-water mark entirely. VmHWM is the hwm_kb column.
       printf "logged-peak=%s at_uptime_s=%d\n", mib(peak), u[pi]
-      if (h[n] > 0) printf "high-water=%s\n", mib(h[n])
+      printf "high-water=%s\n", mib(h[n])
+      # One rate over the session span the log actually covers. A session the
+      # sampler joined late fills only the last mark, so mark-to-mark rates alone
+      # would leave such a log with no rate at all.
+      raterow("window", 1, n)
       previ = 0
       for (i = 1; i <= 4; i++) {
         if (idx[i] < 0) continue
-        if (previ > 0) raterow(prevl, previ, lab[i], idx[i])
+        if (previ > 0) raterow(prevl ".." lab[i], previ, idx[i])
         prevl = lab[i]; previ = idx[i]
       }
     }
@@ -222,6 +228,11 @@ if [[ -n "$REPORT" ]]; then
   report_baseline "$REPORT"
   exit 0
 fi
+
+# Sampling needs the instance registry; the report above does not. Sourcing here
+# keeps --report runnable from a copy that has no repository beside it.
+# shellcheck source=scripts/lib/session-snapshot.sh
+source "$repo_root/scripts/lib/session-snapshot.sh"
 
 # /proc/<pid>/stat's comm field holds spaces and parens, so fields are counted
 # after the last ')': index 1 is field 3, so field 22 (starttime) is index 20 and
@@ -276,9 +287,18 @@ fi
 mkdir -p -- "$(dirname -- "$LOG")"
 if [[ -s "$LOG" ]]; then
   # Appending a second session's rows to a foreign log is how a 100 MiB/h leak
-  # reports as 0.0 MiB/h. Refuse rather than extend someone else's series.
-  if ! last_id="$(awk -F'\t' 'NR == 1 { for (i = 1; i <= NF; i++) c[$i] = i; next }
-                              { id = $(c["pid"]) ":" $(c["session"]) } END { print id }' "$LOG")"; then
+  # reports as 0.0 MiB/h. Refuse rather than extend someone else's series. The
+  # shared prelude means a log whose header this cannot read is refused by name
+  # here too, rather than comparing field zero against itself.
+  guard_rc=0
+  last_id="$(awk -F'\t' "$AWK_PRELUDE"'
+               { id = session_key() }
+               END { if (refused) exit refused; print id }' "$LOG")" || guard_rc=$?
+  # The prelude already named the bad column on stderr and chose the status, so
+  # re-state nothing here; any other failure has no diagnostic of its own.
+  if [[ "$guard_rc" == 2 ]]; then
+    exit 2
+  elif [[ "$guard_rc" != 0 ]]; then
     refuse 2 "unreadable-log=$LOG" "The existing log could not be read to check whose session it holds."
   fi
   [[ -z "$last_id" || "$last_id" == "$PID:$SESSION" ]] ||
@@ -293,14 +313,14 @@ fi
 # which is what the native heap grows into. Everything else Qt maps through a
 # memfd, and every bracketed kernel mapping, falls in the file column.
 sample_row() {
-  local cpu_ticks threads fds maps hwm uptime_s
+  local cpu_ticks threads fds maps_before maps_after hwm uptime_s row counted floor
   local -a f=()
   mapfile -t f < <(stat_fields "$PID")
   [[ ${#f[@]} -ge 20 ]] || return 1
   cpu_ticks=$((f[11] + f[12]))
   # Uptime from the same start time the identity column carries, so the two
   # cannot disagree. /proc/uptime is the system clock this is measured against.
-  uptime_s="$(awk -v st="${f[19]}" -v hz="$CLK_TCK" '{printf "%d", $1 - st / hz; exit}' /proc/uptime)"
+  uptime_s="$(awk -v st="${f[19]}" -v hz="$CLK_TCK" '{printf "%d", $1 - st / hz; exit}' /proc/uptime)" || return 1
   threads="$(awk '/^Threads:/ {print $2}' "/proc/$PID/status")" || return 1
   hwm="$(awk '/^VmHWM:/ {print $2}' "/proc/$PID/status")" || return 1
   # An unreadable descriptor directory writes an empty field. Reporting 0 there
@@ -310,10 +330,13 @@ sample_row() {
   else
     fds=""
   fi
-  maps="$(grep -c . "/proc/$PID/maps")" || return 1
-  awk -v ts="$(date +%s)" -v pid="$PID" -v sess="$SESSION" -v up="$uptime_s" \
-    -v cpu="$cpu_ticks" -v thr="$threads" -v hwm="$hwm" -v fds="$fds" -v maps="$maps" '
-    /^[0-9a-f]+-[0-9a-f]+ / { name = $6; next }
+  maps_before="$(grep -c . "/proc/$PID/maps")" || return 1
+  # The smaps read exits 0 on a truncated file, so a process dying partway
+  # through yields a plausible short row whose totals report a leak as
+  # shrinkage. The row carries its own mapping count for the check below.
+  row="$(awk -v ts="$(date +%s)" -v pid="$PID" -v sess="$SESSION" -v up="$uptime_s" \
+    -v cpu="$cpu_ticks" -v thr="$threads" -v hwm="$hwm" -v fds="$fds" '
+    /^[0-9a-f]+-[0-9a-f]+ / { name = $6; nmaps++; next }
     /^Rss:/ {
       rss += $2
       if (name == "") anon += $2
@@ -326,10 +349,19 @@ sample_row() {
     /^Swap:/ { swap += $2; next }
     /^AnonHugePages:/ { thp += $2; next }
     END {
-      printf "%d\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%d\t%d\n",
-        ts, pid, sess, up, rss, anon, file, swap, thp, hwm, js, jit, gpu, thr, fds, maps, cpu
+      printf "%d\t%d\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%d\t%d\n",
+        nmaps, ts, pid, sess, up, rss, anon, file, swap, thp, hwm, js, jit, gpu, thr, fds, nmaps, cpu
     }
-  ' "/proc/$PID/smaps"
+  ' "/proc/$PID/smaps")" || return 1
+  maps_after="$(grep -c . "/proc/$PID/maps")" || return 1
+  counted="${row%%	*}"
+  # The shell maps and unmaps while this reads, so the two bracketing counts
+  # differ legitimately by a few. Truncation is not a few: require the counted
+  # mappings to reach the smaller bracket.
+  floor="$maps_before"
+  [[ "$maps_after" -lt "$floor" ]] && floor="$maps_after"
+  [[ "$counted" -ge "$floor" ]] || return 1
+  printf '%s\n' "${row#*	}"
 }
 
 deadline=0
