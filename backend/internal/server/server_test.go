@@ -323,6 +323,44 @@ func TestSnapshotOvertakenDuringItsReadIsDropped(t *testing.T) {
 	}
 }
 
+// The same guard on the coalescing path. A broadcast for a declared service
+// replaces a frame already queued rather than adding one, so the queue does not
+// grow; the frame is still newer than a read that began before it, and the
+// snapshot must still be dropped.
+func TestSnapshotOvertakenByAReplacingFrameIsDropped(t *testing.T) {
+	srv, _ := startTestServer(t)
+	srv.CoalesceBroadcasts("network")
+
+	c := newIdleConn(t)
+	// A frame the next broadcast for this service will replace in place.
+	c.sendEvent("network", "already queued", true)
+
+	srv.RegisterSnapshot("network", func() any {
+		srv.Broadcast("network", "newer, replaces the queued frame")
+		return "cached, older"
+	})
+
+	params, err := json.Marshal(map[string]any{"services": []string{"network"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.handleSubscribe(c, &protocol.Request{Method: "subscribe", Params: params})
+
+	got := queuedEvents(t, c)
+	var sawNewer bool
+	for _, frame := range got {
+		if frame[1] == "cached, older" {
+			t.Fatalf("the older snapshot was queued behind a frame that replaced one: %v", got)
+		}
+		if frame[1] == "newer, replaces the queued frame" {
+			sawNewer = true
+		}
+	}
+	if !sawNewer {
+		t.Fatalf("the replacing broadcast never reached the queue, so this proves nothing: %v", got)
+	}
+}
+
 // A service with nothing read yet sends no frame at all. An empty state would
 // reach the shell as fact and blank a list the kicked refresh is about to fill.
 func TestSnapshotWithNoStateYetSendsNoFrame(t *testing.T) {
