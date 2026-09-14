@@ -21,11 +21,14 @@ const source = fs.readFileSync(QML, "utf8");
 // The fields the overview reads out of lastIpcObject, and nothing else carries them.
 const WINDOW_QML = path.join(__dirname, "..", "quickshell", "vshell", "Modules", "WorkspaceOverlays", "OverviewWindow.qml");
 const windowSource = fs.readFileSync(WINDOW_QML, "utf8");
+// The Loader that decides whether this widget can exist while the overview is closed.
+const OVERVIEW_QML = path.join(__dirname, "..", "quickshell", "vshell", "Modules", "WorkspaceOverlays", "HyprlandOverview.qml");
+const overviewSource = fs.readFileSync(OVERVIEW_QML, "utf8");
 
 const bodies = {
-    completed: extractBlock(source, "Component.onCompleted:"),
-    opened: extractBlock(source, "onOverviewOpenChanged:"),
+    refetch: extractBlock(source, "function refetchOverviewState()"),
     toplevelsChanged: extractBlock(source, "function onToplevelsChanged()"),
+    dragRelease: extractBlock(source, "onReleased:"),
 };
 
 const SUBSCRIPTION = extractBlock(source, "Connections {", source.indexOf("function onToplevelsChanged()") - 400);
@@ -46,7 +49,8 @@ test("the refetch subscription is armed only while the overview is on screen", (
 
 // with models QML's unqualified component lookup without rewriting the extracted handler bodies.
 function widget() {
-    const root = { calls: [], overviewOpen: false };
+    const root = { calls: [], overviewOpen: true };
+    root.refetchOverviewState = () => callInScope(bodies.refetch, root, scope);
     const scope = {
         Hyprland: {
             refreshToplevels: () => root.calls.push("refreshToplevels"),
@@ -71,20 +75,28 @@ test("a toplevel change while the overview is open refetches everything a tile d
         "every open-overview toplevel change must refetch the toplevels, workspaces and monitors");
 });
 
-test("construction refetches the same set", () => {
-    const calls = widget().run("completed");
-    for (const fetch of FETCHES)
-        assert.ok(calls.includes(fetch), `the construction producer must call ${fetch}`);
+test("one function owns the fetch set and every producer calls it", () => {
+    // A second copy drifts: the drag-release path used to fetch two of the three.
+    assert.deepEqual(widget().run("refetch"), FETCHES, "refetchOverviewState must issue the full set");
+    assert.match(source, /Component\.onCompleted:\s*refetchOverviewState\(\)/,
+        "construction must fetch through the shared function");
+    assert.ok(bodies.toplevelsChanged.includes("refetchOverviewState()"),
+        "the open-overview subscription must fetch through the shared function");
+    assert.ok(bodies.dragRelease.includes("refetchOverviewState()"),
+        "the drag-release path must fetch through the shared function");
+    for (const [label, body] of [["the subscription", bodies.toplevelsChanged], ["drag release", bodies.dragRelease]])
+        for (const fetch of FETCHES)
+            assert.ok(!body.includes(`Hyprland.${fetch}()`), `${label} must not call Hyprland.${fetch} directly`);
 });
 
-test("the open-state guard is what stops the closed overview fetching", () => {
-    // onOverviewOpenChanged fires in both directions; only the open direction may fetch.
-    const closing = widget();
-    closing.overviewOpen = false;
-    assert.deepEqual(closing.run("opened"), [], "closing the overview must issue no fetch");
-    const opening = widget();
-    opening.overviewOpen = true;
-    assert.deepEqual(opening.run("opened"), FETCHES, "opening the overview must issue the full fetch");
+test("the widget exists only while the overview is open, so it holds no open-state branch", () => {
+    // HyprlandOverview builds this widget from a Loader whose active is overviewOpen, and binds
+    // overviewOpen to the same value. A second producer keyed on that flag is unreachable or a
+    // duplicate fetch at every open; either way it is not carried.
+    assert.ok(!source.includes("onOverviewOpenChanged"),
+        "an overviewOpen change handler duplicates the construction producer");
+    assert.ok(overviewSource.includes("active: overviewScope.overviewOpen"),
+        "the premise is the Loader's active binding; re-check this case if that changes");
 });
 
 test("the extracted handlers assign on the component, not the global scope", () => {

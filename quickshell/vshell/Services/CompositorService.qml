@@ -145,8 +145,8 @@ Singleton {
         }
     }
 
-    // One action still emits several matched events: a workspace switch emits workspacev2,
-    // activewindowv2 and focusedmonv2. Collapse them into one refresh per event-loop turn.
+    // One action still emits several matched events: a workspace switch emits workspacev2 and
+    // activewindowv2. Collapse them into one refresh per event-loop turn.
     Timer {
         id: hyprMonitorRefreshTimer
         interval: 0
@@ -154,7 +154,9 @@ Singleton {
         onTriggered: root.refreshMonitors()
     }
 
-    // Not Hyprland-only: ToplevelManager reaches this on every compositor.
+    // The Hyprland fan-out and ToplevelManager share this timer; ToplevelManager reaches it
+    // on every compositor. The two NiriService handlers above are not routed through it and
+    // rebuild directly, so the one-rebuild-per-action property holds on Hyprland only.
     Timer {
         id: toplevelViewTimer
         interval: 0

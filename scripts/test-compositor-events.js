@@ -101,10 +101,15 @@ test("every timer this shell arms fires once per turn and nothing more", () => {
         assert.ok(body.trim(), `${id} must run something when it fires`);
         assert.match(declaration, /(^|\n)\s*interval:\s*0\s*(\n|$)/, `${id} must fire on the next turn, not after a delay`);
         assert.match(declaration, /(^|\n)\s*repeat:\s*false\s*(\n|$)/, `${id} must fire once, not on a loop`);
+        // triggeredOnStart runs onTriggered synchronously inside restart(), which is every
+        // matched event again rather than one per turn: the coalescing would be gone.
+        assert.doesNotMatch(declaration, /triggeredOnStart/, `${id} must not fire on restart, or the coalescing is gone`);
     }
 });
 
-test("both producers of the toplevel view share one coalescing timer", () => {
+test("the Hyprland fan-out and the Wayland list share one coalescing timer", () => {
+    // NiriService also produces rebuilds and is deliberately not routed here; this case is
+    // scoped to the two producers the model carries.
     const timerId = TIMERS.find(t => t.body.includes("refreshToplevels")).id;
     assert.ok(VALUES_CHANGED.includes(`${timerId}.restart()`),
         "the ToplevelManager handler must share the timer, or one window open rebuilds every consumer twice");
@@ -121,6 +126,20 @@ test("both producers of the toplevel view share one coalescing timer", () => {
 test("the extracted handler routes through both shipped event lists and the coalescing timers", () => {
     for (const needle of ["_hyprMonitorRefreshEvents", "_hyprToplevelViewEvents", ...TIMERS.map(t => t.id), "restart"])
         assert.ok(RAW_EVENT.includes(needle), `the extracted onRawEvent must contain ${needle}`);
+});
+
+test("each list's stated reason is still a read in the tree", () => {
+    // Both comments justify a list entry by naming a read. If a read goes, the entry is dead
+    // weight and the comment is false; this is the premise those entries rest on.
+    const compositor = fs.readFileSync(QML, "utf8");
+    assert.match(compositor, /_activeWorkspaceIdForScreen[\s\S]{0,400}Hyprland\.monitors/,
+        "the per-screen workspace filter must still resolve from Hyprland.monitors, or the hotplug entries do nothing");
+    const dock = fs.readFileSync(path.join(__dirname, "..", "quickshell", "vshell", "Modules", "Dock", "DockAppButton.qml"), "utf8");
+    assert.ok(dock.includes("lastIpcObject?.specialWorkspace?.name"),
+        "the dock must still read monitor.lastIpcObject.specialWorkspace, or activespecial need not refetch monitors");
+    for (const name of ["monitoradded", "monitorremoved"])
+        assert.ok(TOPLEVEL_EVENTS.includes(name), `${name} must be in the toplevel-view list for that filter to be re-run`);
+    assert.ok(MONITOR_EVENTS.includes("activespecial"), "activespecial must be in the monitor list for that dock read to be fresh");
 });
 
 test("no matched event name has a v2 twin that is also matched", () => {
