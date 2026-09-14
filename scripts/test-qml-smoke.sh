@@ -41,6 +41,7 @@ slice window_border_is_inset
 slice sandbox_ipc
 slice keep_host_rendering
 slice wait_surface_focused
+slice send_escape
 slice cleanup
 
 # Cut a one-line helper definition out of the smoke script. Same contract as slice: a helper
@@ -505,11 +506,11 @@ case_ipc_call_cannot_hang() {
 }
 
 declare -A FOCUS_REPLIES=(
-  [focused]='{"visible":true,"shouldHaveFocus":true,"focusGrabActive":true,"contentActiveFocus":true}'
-  [no-flag]='{"visible":true,"shouldHaveFocus":false,"focusGrabActive":true,"contentActiveFocus":true}'
-  [no-grab]='{"visible":true,"shouldHaveFocus":true,"focusGrabActive":false,"contentActiveFocus":true}'
-  [no-content]='{"visible":true,"shouldHaveFocus":true,"focusGrabActive":true,"contentActiveFocus":false}'
-  [missing-field]='{"visible":true,"shouldHaveFocus":true,"focusGrabActive":true}'
+  [focused]='{"visible":true,"focusWanted":true,"focusGrabActive":true,"contentActiveFocus":true}'
+  [no-flag]='{"visible":true,"focusWanted":false,"focusGrabActive":true,"contentActiveFocus":true}'
+  [no-grab]='{"visible":true,"focusWanted":true,"focusGrabActive":false,"contentActiveFocus":true}'
+  [no-content]='{"visible":true,"focusWanted":true,"focusGrabActive":true,"contentActiveFocus":false}'
+  [missing-field]='{"visible":true,"focusWanted":true,"focusGrabActive":true}'
   [ipc-failed]='IPC_CALL_FAILED(124) x focusStatus: no reply'
 )
 
@@ -579,6 +580,58 @@ case_focus_wait() {
   ok "Escape waits for the focus flag, the grab and the content focus, and a withheld step names its cause"
 }
 
+# Drive send_escape with its focus wait stubbed to the given status and wtype present or
+# absent. Both stubs log their arguments in call order.
+send_escape_with() {
+  local wait_rc="$1" wtype="$2" bin="$tmp/escbin-$2"
+  mkdir -p -- "$bin"
+  if [[ "$wtype" == present ]]; then
+    # shellcheck disable=SC2016  # $* and $ESC_LOG must expand in the stub, not here
+    printf '#!/bin/sh\nprintf "wtype %%s\\n" "$*" >>"$ESC_LOG"\n' >"$bin/wtype"
+    chmod +x "$bin/wtype"
+  fi
+  : >"$tmp/esc.log"
+  (
+    set +e
+    # shellcheck source=/dev/null
+    . "$tmp/fail.sh"
+    # shellcheck source=/dev/null
+    . "$tmp/send_escape.sh"
+    export ESC_LOG="$tmp/esc.log"
+    # shellcheck disable=SC2034  # read by the sliced function
+    status=0 nested_socket=wayland-9 sandbox_env=(/usr/bin/env "PATH=$bin")
+    # shellcheck disable=SC2317,SC2329  # called by the sliced function, not from here
+    wait_surface_focused() { printf 'wait %s\n' "$*" >>"$ESC_LOG"; return "$wait_rc"; }
+    PATH="$bin"
+    send_escape "the 'x' switcher" x focusStatus
+    printf 'rc=%s\n' "$?"
+  ) 2>&1
+}
+
+# label; focus wait status; wtype present or absent; expected status; the logged calls in
+# order joined by |, or - for none.
+ESCAPES="focus that arrived sends one Escape after the wait;0;present;0;wait the 'x' switcher x focusStatus|wtype -k Escape
+focus that never arrived sends no Escape;1;present;1;wait the 'x' switcher x focusStatus
+an unreadable focus status sends no Escape;3;present;1;wait the 'x' switcher x focusStatus
+a shell that exited sends no Escape;4;present;1;wait the 'x' switcher x focusStatus
+no wtype reports its absence before any wait;0;absent;2;-"
+
+case_escape_waits_for_focus() {
+  local label wait_rc wtype want_rc want_calls out calls rows=0
+  while IFS=';' read -r label wait_rc wtype want_rc want_calls; do
+    [[ -n "$label" ]] || continue
+    rows=$((rows + 1))
+    out="$(send_escape_with "$wait_rc" "$wtype")"
+    calls="$(paste -sd '|' "$tmp/esc.log")"
+    [[ "$out" == *"rc=$want_rc"* ]] ||
+      fail "escape waits for focus" "$label: expected rc=$want_rc, got: $out"
+    [[ "$calls" == "${want_calls/#-/}" ]] ||
+      fail "escape waits for focus" "$label: expected calls '${want_calls/#-/}', got '$calls'"
+  done <<<"$ESCAPES"
+  [[ $rows -eq 5 ]] || fail "escape waits for focus" "expected 5 table rows, drove $rows"
+  ok "Escape is sent once and only after the focus wait succeeds"
+}
+
 # Run the shipped cleanup on a sandbox holding a 70-line shell log and exit with the given
 # status. Its live-session guard and process groups are stubbed out: neither is under test.
 cleanup_with() {
@@ -617,6 +670,7 @@ case_cleanup_keeps_evidence() {
 
 CASES=(
   case_focus_wait
+  case_escape_waits_for_focus
   case_cleanup_keeps_evidence
   case_remedies
   case_ipc_bounded_calls

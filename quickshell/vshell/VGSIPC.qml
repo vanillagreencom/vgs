@@ -40,11 +40,11 @@ Item {
 
     // Keyboard focus reaches a surface after it maps, through deferred steps: the focus flag,
     // the compositor grab, then the content item. A key sent before all three lands on nothing.
-    // wantsFocus is the flag the surface binds its layer keyboard focus to.
-    function surfaceFocusStatus(surface, wantsFocus) {
+    // A surface reports focusWanted, the flag its focus grab binds to.
+    function surfaceFocusStatus(surface) {
         return JSON.stringify({
             "visible": !!surface?.shouldBeVisible,
-            "shouldHaveFocus": !!wantsFocus,
+            "focusWanted": !!surface?.focusWanted,
             "focusGrabActive": !!surface?.focusGrabActive,
             "contentActiveFocus": !!surface?.contentLoader?.item?.activeFocus
         });
@@ -344,7 +344,7 @@ Item {
         }
 
         function focusStatus(): string {
-            return root.surfaceFocusStatus(root.wallpaperSwitcherModal, root.wallpaperSwitcherModal.shouldHaveFocus);
+            return root.surfaceFocusStatus(root.wallpaperSwitcherModal);
         }
 
         target: "wallpaper-switcher"
@@ -370,7 +370,7 @@ Item {
         }
 
         function focusStatus(): string {
-            return root.surfaceFocusStatus(root.themeSwitcherModal, root.themeSwitcherModal.shouldHaveFocus);
+            return root.surfaceFocusStatus(root.themeSwitcherModal);
         }
 
         target: "theme-switcher"
@@ -1406,8 +1406,7 @@ Item {
             const popout = widget.popoutTarget;
             if (!popout)
                 return `WIDGET_POPOUT_NOT_SUPPORTED: ${widgetId}`;
-            // A popout binds its layer keyboard focus to its visibility.
-            return root.surfaceFocusStatus(popout, popout.shouldBeVisible);
+            return root.surfaceFocusStatus(popout);
         }
 
         function reveal(widgetId: string): string {

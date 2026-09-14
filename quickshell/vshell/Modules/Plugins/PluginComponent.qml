@@ -195,7 +195,7 @@ Item {
         opacity: root.effectiveVisible ? 1 : 0
         axis: root.axis
         section: root.section
-        popoutTarget: hasPopout ? pluginPopout : null
+        popoutTarget: root.popoutTarget
         parentScreen: root.parentScreen
         widgetThickness: root.widgetThickness
         barThickness: root.barThickness
@@ -238,7 +238,7 @@ Item {
         opacity: root.effectiveVisible ? 1 : 0
         axis: root.axis
         section: root.section
-        popoutTarget: hasPopout ? pluginPopout : null
+        popoutTarget: root.popoutTarget
         parentScreen: root.parentScreen
         widgetThickness: root.widgetThickness
         barThickness: root.barThickness

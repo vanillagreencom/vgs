@@ -61,7 +61,8 @@ Item {
         id: _transientSurfaceTracker
     }
 
-    // Read by the focusStatus IPC query, which waits for focus before sending keys.
+    // Reported by the focusStatus IPC query; qml-smoke waits on them before sending keys.
+    readonly property bool focusWanted: shouldBeVisible
     readonly property bool focusGrabActive: focusGrab.active
 
     // Hyprland OnDemand grab: whitelist popout surfaces and bars so dismiss clicks still land.
@@ -76,7 +77,7 @@ Item {
             const transientWindows = root.transientSurfaceTracker?.focusWindows ?? [];
             return list.concat(transientWindows).concat(KeyboardFocus.barWindows);
         }
-        wanted: KeyboardFocus.wantsGrab(root.shouldBeVisible, root.customKeyboardFocus)
+        wanted: KeyboardFocus.wantsGrab(root.focusWanted, root.customKeyboardFocus)
     }
 
     Loader {

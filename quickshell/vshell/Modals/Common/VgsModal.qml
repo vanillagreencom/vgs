@@ -68,14 +68,15 @@ Item {
         anchors.fill: parent
     }
 
-    // Read by the focusStatus IPC query, which waits for focus before sending keys.
+    // Reported by the focusStatus IPC query; qml-smoke waits on them before sending keys.
+    readonly property bool focusWanted: shouldHaveFocus
     readonly property bool focusGrabActive: focusGrab.active
 
     // Hyprland OnDemand grab delivers keyboard focus to the modal content surface.
     VgsFocusGrab {
         id: focusGrab
         windows: (root.contentWindow ? [root.contentWindow] : []).concat(root.transientSurfaceTracker?.focusWindows ?? [])
-        wanted: KeyboardFocus.wantsGrab(root.shouldHaveFocus, root.customKeyboardFocus)
+        wanted: KeyboardFocus.wantsGrab(root.focusWanted, root.customKeyboardFocus)
     }
 
     function open() {

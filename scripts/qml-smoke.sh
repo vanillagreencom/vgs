@@ -605,7 +605,7 @@ wait_surface_focused() {
     python3 -c 'import json, sys
 try: data = json.loads(sys.argv[1])
 except ValueError: sys.exit(3)
-keys = ("shouldHaveFocus", "focusGrabActive", "contentActiveFocus")
+keys = ("focusWanted", "focusGrabActive", "contentActiveFocus")
 if not isinstance(data, dict) or any(not isinstance(data.get(key), bool) for key in keys): sys.exit(3)
 sys.exit(0 if all(data[key] for key in keys) else 1)' "$reply" || state=$?
     [[ "$state" -eq 0 ]] && return 0
@@ -627,8 +627,8 @@ sys.exit(0 if all(data[key] for key in keys) else 1)' "$reply" || state=$?
 # Send Escape through virtual-keyboard input because window-targeted shortcuts cannot reach layers.
 # Arguments after the label are the surface's focusStatus IPC call. One Escape per check: a
 # retried key would hide a real focus defect, so the key waits for focus instead.
-# Status 0 means sent, 2 means wtype absent, and 1 means a failure already reported (focus
-# never arrived, or wtype failed).
+# Status 0 means sent, 2 means wtype absent, and 1 means a failure already reported (the
+# focus wait failed, or wtype failed).
 send_escape() {
   local what="$1" rc=0
   shift
@@ -827,7 +827,7 @@ fail_switcher_mapped() {
   esac
 }
 
-# Print which nested surface held keyboard focus when a dismissal failed.
+# Print the nested active toplevel and the mapped layers when a dismissal failed.
 print_sandbox_focus_state() {
   local query
   for query in activewindow layers; do
