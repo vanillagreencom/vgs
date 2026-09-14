@@ -24,9 +24,9 @@ FloatingWindow {
         return (VGSThemeCatalogService.entries || []).filter(entry => {
             if (modeFilter !== "all" && (entry.mode || "dark") !== modeFilter)
                 return false;
-            if (installFilter === "available" && entry.installed)
+            if (installFilter === "available" && entry.imageryInstalled)
                 return false;
-            if (installFilter === "installed" && !entry.installed)
+            if (installFilter === "installed" && !entry.imageryInstalled)
                 return false;
             return !query || (entry.name || "").toLowerCase().includes(query);
         });
@@ -287,7 +287,7 @@ FloatingWindow {
                         required property var modelData
 
                         readonly property bool pending: VGSThemeCatalogService.isPending(modelData.name)
-                            || VGSThemeCatalogService.downloadingAll && !modelData.installed
+                            || VGSThemeCatalogService.downloadingAll && !modelData.imageryInstalled
                         readonly property bool removable: modelData.downloaded === true
 
                         width: grid.cellWidth
@@ -336,7 +336,7 @@ FloatingWindow {
                                         anchors.top: parent.top
                                         anchors.right: parent.right
                                         anchors.margins: Theme.spacingXS
-                                        visible: cell.modelData.installed === true
+                                        visible: cell.modelData.imageryInstalled === true
                                         width: installedLabel.implicitWidth + Theme.spacingS * 2
                                         height: 20
                                         radius: 10
@@ -348,7 +348,7 @@ FloatingWindow {
                                         StyledText {
                                             id: installedLabel
                                             anchors.centerIn: parent
-                                            text: cell.modelData.builtin ? I18n.tr("Included") : I18n.tr("Installed")
+                                            text: I18n.tr("Installed")
                                             font.pixelSize: Theme.settingsFontSize - 1
                                             color: Theme.surfaceText
                                         }
@@ -379,7 +379,7 @@ FloatingWindow {
 
                                     StyledText {
                                         id: sizeLabel
-                                        text: VGSThemeCatalogService.formatSize(cell.modelData.size)
+                                        text: VGSThemeCatalogService.formatSize(cell.modelData.imagerySize)
                                         font.pixelSize: Theme.settingsFontSize
                                         color: Theme.surfaceVariantText
                                         anchors.verticalCenter: parent.verticalCenter
@@ -406,21 +406,21 @@ FloatingWindow {
                                 VgsButton {
                                     width: parent.width
                                     height: 30
-                                    variant: cell.modelData.installed ? "secondary" : "primary"
-                                    enabled: !cell.pending && (!cell.modelData.installed || cell.removable)
-                                    iconName: cell.modelData.installed ? (cell.removable ? "delete" : "check") : "download"
-                                    // "Included" means the package shipped it; a
-                                    // hand-made user theme of the same name is
-                                    // "Installed" and equally not removable here.
+                                    variant: cell.modelData.imageryInstalled ? "secondary" : "primary"
+                                    enabled: !cell.pending && (!cell.modelData.imageryInstalled || cell.removable)
+                                    iconName: cell.modelData.imageryInstalled ? (cell.removable ? "delete" : "check") : "download"
+                                    // Wallpapers the catalog did not place, the
+                                    // default theme's or ones added by hand, are
+                                    // "Installed" and not removable here.
                                     text: {
-                                        if (!cell.modelData.installed)
+                                        if (!cell.modelData.imageryInstalled)
                                             return I18n.tr("Download");
                                         if (cell.removable)
                                             return I18n.tr("Remove");
-                                        return cell.modelData.builtin ? I18n.tr("Included") : I18n.tr("Installed");
+                                        return I18n.tr("Installed");
                                     }
                                     onClicked: {
-                                        if (!cell.modelData.installed)
+                                        if (!cell.modelData.imageryInstalled)
                                             VGSThemeCatalogService.install(cell.modelData.name);
                                         else if (cell.removable)
                                             root.confirmRemove(cell.modelData.name);

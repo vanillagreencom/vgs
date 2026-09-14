@@ -1303,15 +1303,17 @@ def paired_blueprint(base: Dict[str, Any], target_mode: str,
 # --- Theme packages (v2 directory format) --------------------------------------
 #
 # A theme is a directory: theme.json (metadata), colors.toml (base palette),
-# backgrounds/ (wallpapers, first alphabetical = default), optional preview.png,
+# backgrounds/ (wallpapers, first alphabetical = default), preview.jpg,
 # and apps/ (curated per-app configs that win over template generation).
 # Built-ins live in themes/<name>/, user themes in ~/.config/vshell/themes/<name>/;
 # a user directory overlays the built-in one file-by-file (user file wins), except
 # the files `package_layer_paths` names, which merge key by key.
 
-# `thumbnails/` holds the shipped 480 px screenshots of themes that are not
-# installed (see the download catalog below); it is not a theme package.
+# `thumbnails/` holds the 480 px thumbnails derived from each theme's preview;
+# it is not a theme package.
 RESERVED_THEME_SUBDIRS = {"blueprints", "targets", "wallpapers", "thumbnails"}
+# The full-size screenshot every shipped theme package carries.
+THEME_PREVIEW_FILE = "preview.jpg"
 
 # Terminal-only ANSI slots. A slot carries two meanings at once: `colors.toml`
 # feeds the shell's derived roles and pi's interface as well as the terminal, so
@@ -1697,13 +1699,14 @@ def load_theme_package(name: str) -> Dict[str, Any] | None:
         {Path(rel).name: str(p) for rel, p in files.items() if rel.startswith("apps/")},
         colors, app_overrides, package_layer_palettes(name))
     bp["backgrounds"] = [str(p) for _rel, p in backgrounds]
-    bp["packagedPreview"] = str(files["preview.png"]) if "preview.png" in files else ""
+    bp["packagedPreview"] = str(files[THEME_PREVIEW_FILE]) if THEME_PREVIEW_FILE in files else ""
     bp["adjustments"] = adjustments
     # "Did the user change this package": what the modified badge and the revert
-    # control read. A catalog download lands in the same user directory, so it
-    # answers true here too, and catalogPristine says which kind it is: without
-    # that second flag an untouched download loses its shipped screenshot and
-    # goes to the preview generator on the first open after a cold cache.
+    # control read. Downloaded wallpapers land in the same user directory, so
+    # they answer true here too, and catalogPristine says which kind it is:
+    # without that second flag an untouched download loses its shipped
+    # screenshot and goes to the preview generator on the first open after a
+    # cold cache.
     bp["modified"] = builtin_dir.is_dir() and user_dir.is_dir() and any(p.is_file() for p in user_dir.rglob("*"))
     bp["catalogOwned"] = catalog_owns(name)
     bp["catalogPristine"] = catalog_pristine(name)
@@ -1742,15 +1745,13 @@ def resolve_theme_package(name: str) -> Dict[str, Any] | None:
     return bp
 
 
-# Theme catalog entries carry palettes, the package's definition-file list and
-# one release archive per theme for themes that may not be installed. Downloads
-# go to the user theme directory. Accept only manifest paths within the permitted
-# package layout, member names included. Verify the archive's size and sha256
-# before unpacking. HTTPS is required except for the test base-URL override.
-# Downloaded files are theme data.
+# Theme catalog entries pin one release archive per theme holding its wallpapers;
+# every theme's definitions ship in the package. Downloads go to the user theme
+# directory beside any overlay. Accept only archive members under backgrounds/.
+# Verify the archive's size and sha256 before unpacking. HTTPS is required except
+# for the test base-URL override. Downloaded files are theme data.
 
-CATALOG_ALLOWED_TOP_LEVEL = {"theme.json", "colors.toml", TERMINAL_COLORS_FILE, UI_ROLES_FILE, "preview.png"}
-CATALOG_ALLOWED_DIRS = ("apps/", "backgrounds/")
+CATALOG_ALLOWED_DIRS = ("backgrounds/",)
 CATALOG_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 CATALOG_RELEASE_RE = re.compile(r"^themes-v[0-9]+$")
 CATALOG_ARCHIVE_RE = re.compile(r"^vgs-theme-[A-Za-z0-9][A-Za-z0-9._-]*-r[0-9]+\.tar\.gz$")
@@ -1771,13 +1772,7 @@ def theme_thumbnails_dir() -> Path:
 
 
 def theme_thumbnail_path(name: str) -> str:
-    """The shipped 480 px screenshot for a theme, or "" when none ships.
-
-    Only the bundled themes keep a full-size preview.png in the tree; every
-    other theme's imagery lives in its release archive (D015). The thumbnail is
-    what a checkout, and an install that has not downloaded the theme, can show
-    without rendering anything.
-    """
+    """The shipped 480 px thumbnail of a theme's preview, or "" when none ships."""
     shipped = theme_thumbnails_dir() / f"{name}.jpg"
     return str(shipped) if shipped.is_file() else ""
 
@@ -1844,8 +1839,8 @@ def _catalog_check_relpath(rel: str) -> str:
         # test on the whole string would let `apps/.hidden` through.
         if not part or part.startswith("."):
             raise ValueError(f"unsafe catalog path component {part!r} in {rel!r}")
-    if rel not in CATALOG_ALLOWED_TOP_LEVEL and not rel.startswith(CATALOG_ALLOWED_DIRS):
-        raise ValueError(f"catalog path outside the theme package shape: {rel!r}")
+    if not rel.startswith(CATALOG_ALLOWED_DIRS):
+        raise ValueError(f"catalog path outside the theme imagery shape: {rel!r}")
     return rel
 
 
@@ -1947,21 +1942,39 @@ def catalog_owns(name: str) -> bool:
     The marker lives inside the theme package. A copy made by `theme duplicate`
     carries no marker, but a package copied by hand or by an older duplicate can.
     Ownership therefore has to be identity, not presence: the marker must name
-    this directory, which a copied marker never does.
+    this directory, which a copied marker never does. A marker with no file list
+    names no download either, since nothing then says which files it placed.
     """
     dest = user_themes_dir() / name
     marker = catalog_marker(name)
     if not marker:
         return False
-    return str(marker.get("name") or "") == name and str(marker.get("path") or "") == str(dest)
+    return (str(marker.get("name") or "") == name and str(marker.get("path") or "") == str(dest)
+            and isinstance(marker.get("files"), list))
+
+
+def catalog_placed_wallpapers(name: str) -> List[str] | None:
+    """The wallpapers a catalog download placed in the user directory, sorted, or None when it holds no download.
+
+    The one reader of the marker's file list. Only entries the imagery path rule
+    accepts count, so a directory an earlier release downloaded whole, whose list
+    also names its definitions, keeps those as a user overlay like any other.
+    """
+    if not catalog_owns(name):
+        return None
+    placed: List[str] = []
+    for rel in catalog_marker(name)["files"]:
+        with contextlib.suppress(ValueError):
+            placed.append(_catalog_check_relpath(str(rel)))
+    return sorted(placed)
 
 
 def theme_shipped_preview(name: str, packaged: str = "") -> str:
     """A theme's screenshot without rendering one: its own, else the shipped thumbnail.
 
     The one answer to "what can be painted for this theme with no work": the
-    package's full-size preview.png when it has one, and otherwise the 480 px
-    JPEG that ships for every catalogued theme. Both the catalog browser and
+    package's full-size preview.jpg when it has one, and otherwise the 480 px
+    thumbnail that ships for every catalogued theme. Both the catalog browser and
     `theme list --json` ask this question, and a second spelling of it would let
     one of them paint a screenshot the other says does not exist.
     """
@@ -1971,69 +1984,39 @@ def theme_shipped_preview(name: str, packaged: str = "") -> str:
 def theme_dir_has_wallpapers(package: Path) -> bool:
     """Whether a theme directory on disk holds wallpapers.
 
-    A theme whose imagery ships in its release archive (D015) keeps its
-    definitions in the repository and has no `backgrounds/` until it is
-    downloaded, so a `theme.json` on disk does not make the theme usable.
+    A theme whose wallpapers ship in its release archive (D015) has its
+    definitions in the package and no `backgrounds/` until they are
+    downloaded, so a `theme.json` on disk does not say the wallpapers are there.
     """
     return any(entry.is_file() for entry in (package / "backgrounds").glob("*"))
 
 
-def catalog_mark_edited(name: str) -> None:
-    """Record that the user has rewritten a file the download itself carried.
-
-    catalog_pristine compares the directory against the file list the marker
-    records, which cannot see an edit to a file the archive already supplied:
-    `colors.toml` and `apps/*` are both in that list. A writer that rewrites one
-    drops the list, so the directory stops reading as untouched from then on and
-    the modified badge and the revert control come back. A marker with no list
-    is the same answer a theme downloaded before the list existed already gets.
-    """
-    if not catalog_owns(name):
-        return
-    marker = catalog_marker(name)
-    if "files" not in marker:
-        return
-    marker.pop("files")
-    write_file(user_themes_dir() / name / CATALOG_MARKER, json.dumps(marker, indent=2) + "\n")
-
-
 def catalog_pristine(name: str) -> bool:
-    """Whether the user directory is a catalog download the user has not touched.
+    """Whether the user directory holds a catalog download and nothing else.
 
-    A downloaded theme for a built-in one lands in the user directory, where a
-    user overlay also lives, so `modified` alone cannot say which it is. That
-    matters twice over: a stale answer either hides the modified badge and the
-    revert control, or blanks a shipped screenshot that is still accurate.
+    Downloaded wallpapers land in the user directory, where a user overlay also
+    lives, so `modified` alone cannot say which it is. That matters twice over:
+    a stale answer either hides the modified badge and the revert control, or
+    blanks a shipped screenshot that is still accurate.
 
     The marker's file list is the reference point, because the marker itself
-    survives any edit. A file beside the downloaded set — `app-colors.toml`, a
-    duplicated wallpaper — is a user edit, and so are the restyle adjustments
-    and hidden backgrounds the shell writes into the package's `theme.json`.
-    An edit made in place to any other downloaded file is not detected: nothing
-    on disk records what those files held.
+    survives any edit. Every overlay write adds a file beside the downloaded
+    set: a colour edit's `colors.toml`, `app-colors.toml`, a recoloured app
+    file, and the restyle adjustments and hidden backgrounds in `theme.json`.
+    A wallpaper replaced in place under its downloaded name is not detected.
     """
-    if not catalog_owns(name):
-        return False
-    recorded = catalog_marker(name).get("files")
-    if not isinstance(recorded, list) or not recorded:
+    placed = catalog_placed_wallpapers(name)
+    if not placed:
         return False
     root = user_themes_dir() / name
     present = sorted(path.relative_to(root).as_posix()
                      for path in root.rglob("*")
                      if path.is_file() and path.name != CATALOG_MARKER)
-    if present != sorted(str(entry) for entry in recorded):
-        return False
-    try:
-        meta = theme_json_layer(root / "theme.json")
-    except Exception:
-        return False
-    return adjustments_all_zero(normalize_adjustments(meta.get("adjustments"))) \
-        and not meta.get("hiddenBackgrounds")
+    return present == placed
 
 
 def catalog_entries() -> List[Dict[str, Any]]:
     catalog = load_theme_catalog()
-    installed = set(theme_package_names())
     entries: List[Dict[str, Any]] = []
     for raw in catalog.get("themes") or []:
         if not isinstance(raw, dict):
@@ -2042,23 +2025,23 @@ def catalog_entries() -> List[Dict[str, Any]]:
         if not name:
             continue
         marker = catalog_marker(name) if catalog_owns(name) else {}
-        packaged = compose_theme_files(name).get("preview.png")
-        usable = name in installed and (theme_dir_has_wallpapers(builtin_themes_dir() / name)
-                                        or theme_dir_has_wallpapers(user_themes_dir() / name))
+        pinned = raw.get("assets") if isinstance(raw.get("assets"), dict) else {}
+        packaged = compose_theme_files(name).get(THEME_PREVIEW_FILE)
+        # The catalog file carries no colours; the theme's package does.
+        palette = (load_theme_package(name) or {}).get("palette") or {}
         entries.append({
             "name": name,
             "mode": raw.get("mode", "dark"),
             "pair": raw.get("pair", ""),
             "source": raw.get("source", "curated"),
-            "colors": raw.get("colors", []),
-            "background": raw.get("background", ""),
-            "foreground": raw.get("foreground", ""),
-            "accent": raw.get("accent", ""),
-            "size": int(raw.get("size") or 0),
-            # A theme with definitions and no wallpapers cannot be applied, so
-            # reporting it as installed would leave the browser offering nothing
-            # for the one theme the user cannot use.
-            "installed": usable,
+            "colors": palette.get("colors", []),
+            "background": (palette.get("extendedColors") or {}).get("background", ""),
+            "foreground": (palette.get("extendedColors") or {}).get("foreground", ""),
+            "imagerySize": int(raw.get("size") or 0),
+            "imageryInstalled": (theme_dir_has_wallpapers(builtin_themes_dir() / name)
+                                 or theme_dir_has_wallpapers(user_themes_dir() / name)),
+            # The download pins another archive than the catalog this package ships.
+            "imageryUpdateAvailable": bool(marker) and str(marker.get("sha256") or "") != str(pinned.get("sha256") or ""),
             "builtin": (builtin_themes_dir() / name / "theme.json").is_file(),
             "downloaded": bool(marker),
             "downloadedRef": str(marker.get("ref") or ""),
@@ -2095,9 +2078,9 @@ def _catalog_unpack(name: str, archive: Path, staging: Path) -> Tuple[int, List[
     The path list is the reference point for telling an untouched download from
     an edited one later; nothing else records what the archive carried.
 
-    Every member name goes through the same path rule the manifest uses, and only
-    regular files are written: a link or a device node in the archive is refused
-    rather than followed.
+    Every member name goes through the imagery path rule, and only regular files
+    are written: a link or a device node in the archive is refused rather than
+    followed.
     """
     written = 0
     unpacked: List[str] = []
@@ -2120,23 +2103,22 @@ def _catalog_unpack(name: str, archive: Path, staging: Path) -> Tuple[int, List[
 
 def catalog_download_theme(entry: Dict[str, Any], base_urls: List[str], allow_local: bool,
                            force: bool = False) -> Dict[str, Any]:
-    """Download a catalog theme and verify its files before publication.
-    Network transfer stays outside the theme mutation lock so theme changes
-    can proceed during downloads. The directory swap holds the lock."""
+    """Download a theme's wallpapers into its user directory, verified before they are placed.
+
+    The archive carries `backgrounds/*` only; the theme's definitions ship in the
+    package. Its files land beside whatever the user directory already holds, a
+    user overlay included, and a file already there under a name no earlier
+    download placed stays the user's. Network transfer stays outside the theme
+    mutation lock so theme changes can proceed during downloads; placing the
+    files and writing the marker hold it."""
     name = _catalog_check_name(str(entry.get("name") or ""))
     dest = user_themes_dir() / name
-    # A built-in theme keeps its definitions in the repository while its imagery
-    # ships in a release archive (D015), so theme.json alone is no reason to
-    # refuse: refuse only a built-in copy that already carries its wallpapers.
-    # Without this a source checkout can never obtain the imagery it does not
-    # hold, and every such theme paints the backdrop gradient for good.
+    # A package that carries its own wallpapers, the default theme's among them,
+    # has nothing to download.
     if theme_dir_has_wallpapers(builtin_themes_dir() / name):
         return {"name": name, "status": "skipped", "reason": "already installed as a built-in theme"}
-    if dest.exists():
-        if not force:
-            return {"name": name, "status": "skipped", "reason": "already installed"}
-        if not catalog_owns(name):
-            raise ValueError(f"{name} is a local theme, not a downloaded one; refusing to overwrite")
+    if not force and theme_dir_has_wallpapers(dest):
+        return {"name": name, "status": "skipped", "reason": "already installed"}
     assets = _catalog_check_assets(name, entry.get("assets"))
     if not base_urls:
         raise ValueError("theme catalog has no download source")
@@ -2150,35 +2132,24 @@ def catalog_download_theme(entry: Dict[str, Any], base_urls: List[str], allow_lo
         _catalog_fetch_verified(f"{name} ({rel})", rel, assets["size"], assets["sha256"],
                                 base_urls, allow_local, archive)
         written, unpacked = _catalog_unpack(name, archive, staging)
-        if not (staging / "theme.json").is_file():
-            raise ValueError(f"{name}: {assets['archive']} has no theme.json")
-        (staging / CATALOG_MARKER).write_text(json.dumps(
-            catalog_marker_payload(name, dest, assets, unpacked, written,
-                                   str((load_theme_catalog().get("source") or {}).get("ref") or "")),
-            indent=2) + "\n")
-        # Rename the installed theme aside before publishing its replacement.
-        # If publication is interrupted, the old directory remains under
-        # .catalog-replaced-* until cleanup removes it.
+        ref = str((load_theme_catalog().get("source") or {}).get("ref") or "")
         with theme_mutation_lock():
-            replaced: Path | None = None
-            if dest.exists():
-                replaced = dest.with_name(f".catalog-replaced-{name}-{os.getpid()}")
-                _catalog_discard(replaced)
-                dest.replace(replaced)
-            try:
-                staging.replace(dest)
-            except OSError:
-                if replaced is not None and not dest.exists():
-                    replaced.replace(dest)
-                raise
-            staging = None  # type: ignore[assignment]
-            if replaced is not None:
-                _catalog_discard(replaced)
+            ours = set(catalog_placed_wallpapers(name) or [])
+            placed: List[str] = []
+            for member in unpacked:
+                target = dest / member
+                if target.exists() and member not in ours:
+                    continue
+                target.parent.mkdir(parents=True, exist_ok=True)
+                (staging / member).replace(target)
+                placed.append(member)
+            # Written last, so the marker never names a file that is not in place.
+            write_file(dest / CATALOG_MARKER, json.dumps(
+                catalog_marker_payload(name, dest, assets, placed, written, ref), indent=2) + "\n")
     finally:
-        if staging is not None:
-            shutil.rmtree(staging, ignore_errors=True)
+        shutil.rmtree(staging, ignore_errors=True)
         # The cache holds in-flight downloads only, so the finished disk cost is
-        # exactly the theme tree.
+        # exactly the wallpapers.
         with contextlib.suppress(OSError):
             archive.unlink()
     return {"name": name, "status": "installed", "path": str(dest), "bytes": written}
@@ -2194,9 +2165,9 @@ def _catalog_discard(path: Path) -> None:
 
 
 def _catalog_clear_stale() -> None:
-    """Remove .catalog-* staging and replaced entries from the user theme directory.
-    Runs without the lock: only a directory swap reads these entries, and swaps
-    hold the theme mutation lock."""
+    """Remove .catalog-* staging entries from the user theme directory.
+    Runs without the lock: a download reads its own staging directory only, and
+    moves files out of it under the theme mutation lock."""
     root = user_themes_dir()
     if not root.is_dir():
         return
@@ -2216,34 +2187,56 @@ def current_theme_name() -> str:
 
 
 def catalog_remove_theme(name: str) -> Dict[str, Any]:
-    """Remove a downloaded theme. Never touches built-ins or hand-made user themes."""
+    """Remove a theme's downloaded wallpapers. Never touches built-ins, user files or an overlay."""
     clean = _catalog_check_name(name)
     dest = user_themes_dir() / clean
     # A package copied by hand or by an older duplicate can carry a download
     # marker. Check the directory identity before removal so a user copy does
     # not count as a catalog download.
-    if not catalog_owns(clean):
+    placed = catalog_placed_wallpapers(clean)
+    if placed is None:
         if catalog_marker(clean):
-            raise ValueError(f"{clean} is a copy of a downloaded theme, not one the catalog installed")
+            raise ValueError(f"{clean} holds a download marker that names no download in this directory")
         raise ValueError(f"{clean} was not downloaded from the theme catalog")
     if current_theme_name() == clean:
         raise ValueError(f"{clean} is the current theme; apply another theme first")
-    # Rename determines whether removal succeeded. A failed rename leaves the
-    # theme installed; a failed later deletion leaves a hidden cleanup entry.
-    trash = dest.with_name(f".catalog-removing-{clean}-{os.getpid()}")
-    _catalog_discard(trash)
     with theme_mutation_lock():
         try:
-            dest.replace(trash)
+            for rel in placed:
+                with contextlib.suppress(FileNotFoundError):
+                    (dest / rel).unlink()
+            (dest / CATALOG_MARKER).unlink()
         except OSError as exc:
             raise ValueError(f"could not remove {clean}: {exc}") from exc
-    _catalog_discard(trash)
-    if dest.exists():
-        raise ValueError(f"could not remove {clean}: {dest} still exists")
+        # A download that was all the user directory held leaves no empty directory.
+        for directory in (dest / "backgrounds", dest):
+            with contextlib.suppress(OSError):
+                directory.rmdir()
     # Prune thumbnails during CLI removal because a missing theme does not
     # trigger a later thumbnail build.
     return {"name": clean, "status": "removed", "path": str(dest),
             "thumbsPruned": prune_wallpaper_thumbs_now()}
+
+
+def drop_theme_overlay(package: str) -> None:
+    """Delete a built-in theme's user overlay, keeping the wallpapers a download placed and its marker.
+
+    A revert cannot fetch those wallpapers back; removing them is `theme catalog remove`.
+    """
+    user_dir = user_themes_dir() / package
+    placed = catalog_placed_wallpapers(package)
+    if not user_dir.is_dir():
+        return
+    if not placed:
+        shutil.rmtree(user_dir, ignore_errors=True)
+        return
+    kept = {CATALOG_MARKER, *placed}
+    for path in sorted(user_dir.rglob("*"), reverse=True):
+        if path.is_dir() and not path.is_symlink():
+            with contextlib.suppress(OSError):
+                path.rmdir()
+        elif path.relative_to(user_dir).as_posix() not in kept:
+            path.unlink()
 
 
 def theme_wallpaper_entries(bp: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -2453,7 +2446,7 @@ def package_palette(colors: Dict[str, str], meta: Dict[str, Any],
     package's palette still fits and the save's exemption has to ask the same
     question of the same palette. Two spellings of these steps agreed until the
     loader gained one the copy lacked, and the copy's answer is a refused
-    exemption, which prunes the only curated file a catalog download holds.
+    exemption, which prunes a curated file the package still fits.
 
     It takes the parsed colours rather than the package's files, so the loader
     can pass one `package_colors_map` result here and to its own unadjusted map
@@ -2502,8 +2495,8 @@ def override_dropped_curated(bp: Dict[str, Any]) -> List[str]:
     A per-app override is a reversible layer stored beside the palette, and no
     save writes it into `colors.toml`. The file it drops still fits the palette
     the save records and comes back the moment the override is cleared, so
-    pruning it deleted the only copy a catalog download or a user-created package
-    has and `theme app-colors claude --reset` could not bring it back.
+    pruning it deleted the only copy a user-created package has and
+    `theme app-colors claude --reset` could not bring it back.
 
     The question is asked here, against the package directory about to be written
     over, rather than read off a key the loader put on the blueprint. No shipped
@@ -6445,8 +6438,8 @@ def _apply_theme_obj_unlocked(bp: Dict[str, Any], only_app: str | None = None,
 # compositor inside a silent special workspace) runs themed app instances plus a
 # minimal Quickshell flyout, then grim captures the virtual output.
 
-PREVIEW_GENERATOR_VERSION = 7
-PREVIEW_SIZE = (1920, 1080)
+PREVIEW_GENERATOR_VERSION = 8
+PREVIEW_SIZE = (2560, 1440)
 PREVIEW_OUTPUT = "VGSPREVIEW"
 # Nested Hyprland windows use the aquamarine class. Stage them fullscreen
 # on a headless output with no_focus to limit pointer-driven focus changes.
@@ -6463,7 +6456,7 @@ PREVIEW_STAGE_ON_LUA = (
     'hl.workspace_rule({ workspace = "name:vgspreview", monitor = "' + PREVIEW_OUTPUT + '", default = true }) end '
     f'if {PREVIEW_WINDOW_RULE_HANDLE} == nil then '
     f'{PREVIEW_WINDOW_RULE_HANDLE} = hl.window_rule({{ match = {{ class = "^(aquamarine)$" }}, '
-    'workspace = "name:vgspreview silent", fullscreen_state = 2, '
+    'workspace = "name:vgspreview silent", float = false, fullscreen_state = 2, '
     'no_initial_focus = true, no_focus = true }) end'
 )
 PREVIEW_STAGE_OFF_LUA = (
@@ -6472,6 +6465,8 @@ PREVIEW_STAGE_OFF_LUA = (
 )
 PREVIEW_WINDOW_RULE_LEGACY = f"monitor {PREVIEW_OUTPUT}, class:^(aquamarine)$"
 PREVIEW_WINDOW_RULE_LEGACY_NOFOCUS = "nofocus, class:^(aquamarine)$"
+# A user rule that floats the class would otherwise size the capture window itself.
+PREVIEW_WINDOW_RULE_LEGACY_TILE = "tile, class:^(aquamarine)$"
 
 PREVIEW_SAMPLE_CODE = '''import QtQuick
 import Quickshell
@@ -7260,6 +7255,7 @@ def preview_stage():
                 # needs a config reload to clear it.
                 rule = run(["hyprctl", "keyword", "windowrulev2", PREVIEW_WINDOW_RULE_LEGACY])
                 run(["hyprctl", "keyword", "windowrulev2", PREVIEW_WINDOW_RULE_LEGACY_NOFOCUS])
+                run(["hyprctl", "keyword", "windowrulev2", PREVIEW_WINDOW_RULE_LEGACY_TILE])
                 rules_ok = legacy_rule = rule.returncode == 0 and "error" not in (rule.stdout or "").lower()
             if rules_ok and run(["hyprctl", "output", "create", "headless", PREVIEW_OUTPUT]).returncode == 0:
                 staged = True
@@ -7650,11 +7646,6 @@ def persist_color_edits(edits: List[str], name: str) -> Dict[str, Any]:
     overlay = user_themes_dir() / pkg_dir_name / "colors.toml"
     values = {**package_colors_map(pkg_dir_name),
               **{key: value for key, value in edit_map.items() if key in BASE_COLOR_KEYS}}
-    # Mark before the write. An interruption between the two leaves the file
-    # rewritten and the marker still listing it, so the theme reads as untouched
-    # and nothing says otherwise. Marking for a write that then fails costs one
-    # preview render on the next open.
-    catalog_mark_edited(pkg_dir_name)
     write_user_layer(pkg_dir_name, "colors.toml", values)
     refreshed = load_theme_package(pkg_dir_name) or target
     result = apply_theme_obj(refreshed)
@@ -10034,16 +10025,16 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
     p_dup.add_argument("name")
     p_dup.add_argument("--as", dest="new_name", default="", help="name for the copy (default: <name>-copy)")
     p_dup.add_argument("--json", action="store_true")
-    p_catalog = sub.add_parser("catalog", help="browse and download themes that are not installed")
+    p_catalog = sub.add_parser("catalog", help="download the wallpapers of themes that have none on disk")
     catalog_sub = p_catalog.add_subparsers(dest="catalog_cmd", required=True)
-    p_cat_list = catalog_sub.add_parser("list", help="every published theme with installed state")
+    p_cat_list = catalog_sub.add_parser("list", help="every published theme with its wallpaper state")
     p_cat_list.add_argument("--json", action="store_true")
-    p_cat_install = catalog_sub.add_parser("install", help="download themes into ~/.config/vshell/themes")
+    p_cat_install = catalog_sub.add_parser("install", help="download theme wallpapers into ~/.config/vshell/themes")
     p_cat_install.add_argument("names", nargs="*", default=[])
-    p_cat_install.add_argument("--all", action="store_true", help="download every theme that is not installed")
-    p_cat_install.add_argument("--force", action="store_true", help="re-download a previously downloaded theme")
+    p_cat_install.add_argument("--all", action="store_true", help="download the wallpapers of every theme that has none")
+    p_cat_install.add_argument("--force", action="store_true", help="re-download wallpapers that are already on disk")
     p_cat_install.add_argument("--json", action="store_true")
-    p_cat_remove = catalog_sub.add_parser("remove", help="remove a downloaded theme")
+    p_cat_remove = catalog_sub.add_parser("remove", help="remove a theme's downloaded wallpapers")
     p_cat_remove.add_argument("names", nargs="+")
     p_cat_remove.add_argument("--json", action="store_true")
     p_icons = sub.add_parser("icons", help="list installed icon themes and the current theme's icon set")
@@ -10095,11 +10086,10 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
                 pal = b.get("palette", {})
                 ext = pal.get("extendedColors") or {}
                 preview = blueprint_preview_path(b)
-                # A committed preview.png, or the 480 px thumbnail that ships
-                # beside a theme whose imagery lives in its release archive, is
-                # what makes a fresh install or checkout show screenshots
-                # without regenerating anything. Without the thumbnail arm every
-                # theme with definitions and no imagery reports no screenshot,
+                # A committed preview.jpg, or failing that the 480 px thumbnail
+                # that ships for every catalogued theme, is what makes a fresh
+                # install or checkout show screenshots without regenerating
+                # anything. Without them every theme reports no screenshot,
                 # and generateMissingPreviews() renders the whole set through a
                 # nested compositor on the first open after a cold preview
                 # cache. Both stop being truthful once the user restyles or
@@ -10344,21 +10334,7 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
             if args.json:
                 print(json.dumps({"reverted": False, "name": bp.get("name"), "applied": False, "error": "not a built-in theme"}, indent=2))
             return 1
-        package = Path(str(bp.get("path"))).name
-        # For a downloaded theme the user directory IS the download, so dropping
-        # it discards imagery this command cannot fetch back. Removing a
-        # download is `theme catalog remove`, which says so before it deletes.
-        if catalog_owns(package):
-            message = (f"{bp.get('name')} is a downloaded theme, not a user overlay; "
-                       f"use `vshell theme catalog remove {args.name}` instead")
-            eprint(message)
-            if args.json:
-                print(json.dumps({"reverted": False, "name": bp.get("name"), "applied": False,
-                                  "error": "downloaded theme"}, indent=2))
-            return 1
-        user_dir = user_themes_dir() / package
-        if user_dir.is_dir():
-            shutil.rmtree(user_dir, ignore_errors=True)
+        drop_theme_overlay(Path(str(bp.get("path"))).name)
         applied = False
         if str(bp.get("name")) == str(current_theme().get("name")):
             reverted = find_theme(args.name)
@@ -10543,8 +10519,6 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
 
         text = re.sub(r'#[0-9a-fA-F]{6}(?![0-9a-fA-F])', _recolor, text)
         overlay.parent.mkdir(parents=True, exist_ok=True)
-        # Mark before the write, for the reason persist_color_edits gives.
-        catalog_mark_edited(pkg_dir_name)
         write_file(overlay, text)
         applied = None
         refreshed = load_theme_package(pkg_dir_name) or bp
@@ -10842,21 +10816,21 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
                 print(json.dumps({
                     "themes": entries,
                     "count": len(entries),
-                    "installedCount": sum(1 for e in entries if e["installed"]),
-                    "totalSize": sum(e["size"] for e in entries),
+                    "installedCount": sum(1 for e in entries if e["imageryInstalled"]),
+                    "totalSize": sum(e["imagerySize"] for e in entries),
                     "ref": source.get("ref", ""),
                     "repo": source.get("repo", ""),
                 }, indent=2))
             else:
                 for entry in entries:
-                    print(f"{'*' if entry['installed'] else ' '} {entry['name']}")
+                    print(f"{'*' if entry['imageryInstalled'] else ' '} {entry['name']}")
             return 0
 
         base_urls, allow_local = theme_catalog_base_urls(catalog)
         if args.catalog_cmd == "install":
             names = list(args.names)
             if args.all:
-                names = [e["name"] for e in catalog_entries() if not e["installed"]]
+                names = [e["name"] for e in catalog_entries() if not e["imageryInstalled"]]
             if not names:
                 eprint("Nothing to download (pass theme names or --all)")
                 return 2

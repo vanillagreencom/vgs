@@ -32,7 +32,7 @@ grep -q '^	install = vgs-shell-git.install$' "$root/packaging/arch/vgs-shell-git
 test -f "$root/packaging/arch/vgs-shell-git/vgs-shell-git.install"
 
 # Every catalogued theme must name a theme-asset release that exists, and the
-# definitions the catalog describes must be committed under this release tag.
+# themes the catalog describes must be committed under this release tag.
 "$root/scripts/gen-theme-catalog.py" --check-release-pin "$version"
 
 "$root/scripts/gen-package-metadata.py"
@@ -53,6 +53,17 @@ grep -q "/packaging/install-system.sh$" "$tmp/archive.list"
 # The retired assets archive was the only carrier of the vendored icon themes.
 if ! grep -q "/config/vshell/icons/" "$tmp/archive.list"; then
   echo "check-release: the release bundle carries no config/vshell/icons, so a tarball install has no vendored icon themes" >&2
+  exit 1
+fi
+# The bundle carries exactly the theme package files install-system.sh keeps,
+# as scripts/gen-theme-catalog.py lists them.
+sed -n -e '\|/themes/targets/|d' -e '\|/themes/thumbnails/|d' \
+  -e "s|^vgs-$version-linux-[^/]*/themes/\([^/]*/.*[^/]\)$|\1|p" "$tmp/archive.list" \
+  | LC_ALL=C sort > "$tmp/theme-files.have"
+"$root/scripts/gen-theme-catalog.py" --package-files | LC_ALL=C sort > "$tmp/theme-files.want"
+if ! theme_files_diff="$(diff "$tmp/theme-files.want" "$tmp/theme-files.have")"; then
+  echo "check-release: the release bundle's theme packages differ from scripts/gen-theme-catalog.py --package-files:" >&2
+  printf '%s\n' "$theme_files_diff" >&2
   exit 1
 fi
 # Compare the thumbnail set with the catalogued themes. A nonempty archive can
@@ -81,6 +92,7 @@ DESTDIR="$tmp/tarball-install" VGS_BACKEND_BINARY="$bundle/bin/vshell-backend" \
   "$bundle/packaging/install-system.sh"
 test -f "$tmp/tarball-install/usr/lib/vshell/themes/bauhaus/theme.json"
 test -f "$tmp/tarball-install/usr/lib/vshell/themes/roseofdune/theme.json"
+test -f "$tmp/tarball-install/usr/lib/vshell/themes/tokyo-night/theme.json"
 test -d "$tmp/tarball-install/usr/lib/vshell/themes/targets"
 test -s "$tmp/tarball-install/usr/lib/vshell/themes/thumbnails/bauhaus.jpg"
 test -d "$tmp/tarball-install/usr/lib/vshell/config/vshell/icons"

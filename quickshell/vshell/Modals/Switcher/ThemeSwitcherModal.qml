@@ -38,7 +38,7 @@ FullScreenSwitcher {
 
     function show() {
         VGSThemeService.refresh();
-        // Generated themes have no committed preview.png; render the missing
+        // Generated themes have no committed preview.jpg; render the missing
         // ones in the background so the switcher is not a run of blank frames.
         VGSThemeService.generateMissingPreviews();
         open();

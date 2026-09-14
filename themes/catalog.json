@@ -7,88 +7,20 @@
     "baseUrl": "https://github.com/vanillagreencom/vgs/releases/download"
   },
   "count": 81,
-  "totalSize": 1072749156,
+  "totalSize": 1046158625,
   "themes": [
     {
       "name": "akane",
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#0e1e36",
-        "#d2495b",
-        "#be6f76",
-        "#f4b999",
-        "#574f72",
-        "#763c5d",
-        "#9279aa",
-        "#fa7e75",
-        "#4a2036",
-        "#fa7e75",
-        "#c85670",
-        "#f4b999",
-        "#9279aa",
-        "#be6f76",
-        "#c85670",
-        "#f4b999"
-      ],
-      "background": "#0e1e36",
-      "foreground": "#f4b999",
-      "accent": "#9279aa",
-      "size": 41994328,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 2046,
-          "sha256": "110cc76e90e37f7a560ef263d2302b311dbfed86a0c87edadb778487612c368f"
-        },
-        {
-          "path": "apps/chromium.theme",
-          "size": 9,
-          "sha256": "e8e4b79e0a4b70a294c2d06731071e58b6fca4973c4c5ccf0cbc3191467a44f5"
-        },
-        {
-          "path": "apps/claude-light.json",
-          "size": 218,
-          "sha256": "3924bb19af7627c76329007137333793fc459ea57089b94a4eadfb0bbde1059f"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 13,
-          "sha256": "328fd2519268a09cbcb45b3e8393f6abcc1739b9816bdc87bd4761d9d240f026"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 11043,
-          "sha256": "ca4c0c620414bfee7cadfdc2eb800906f30589eab1633ac945419dee9d8feb68"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 44666,
-          "sha256": "422f6df8d1fae9a0bb980d451f63d1639f958e00aec9d2a1d5c1ca23c7d34812"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "762dc95bc4f5d58c3dcae360a5b955da99bc0f60be67f362b20ff5e17033fada"
-        },
-        {
-          "path": "terminal-colors.toml",
-          "size": 370,
-          "sha256": "9c81254520a36d8d5ddb1eb632287b11151143702fa8bbc1386fabe2847cb29c"
-        },
-        {
-          "path": "theme.json",
-          "size": 197,
-          "sha256": "e3f94e246633ad59d4bf19f6cbb9df2d273929535f270104627afafbdfa94497"
-        }
-      ],
+      "size": 41617647,
       "assets": {
-        "release": "themes-v12",
-        "archive": "vgs-theme-akane-r5.tar.gz",
-        "rev": 5,
-        "size": 41994328,
-        "sha256": "4f97b2eeba0cd982098df8334bf8ea713e7dffb58a9d6f84598c993322129032"
+        "release": "themes-v15",
+        "archive": "vgs-theme-akane-r6.tar.gz",
+        "rev": 6,
+        "size": 41617647,
+        "sha256": "78c294931e377f589face7e77d296e9293dc71c56d588d267039989de3c6ece5"
       }
     },
     {
@@ -96,71 +28,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#1a0e0e",
-        "#b44a4a",
-        "#c05a5a",
-        "#d66b6b",
-        "#d66b6b",
-        "#d66b6b",
-        "#f48a8a",
-        "#f2e8e8",
-        "#2b1818",
-        "#c85c5c",
-        "#d97171",
-        "#e87f7f",
-        "#e59393",
-        "#f2a3a3",
-        "#f7b3b3",
-        "#fff1f1"
-      ],
-      "background": "#1b1112",
-      "foreground": "#f2e8e8",
-      "accent": "#b44a4a",
-      "size": 4303185,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 2217,
-          "sha256": "e05948b84cf3d0be43d5f899b8ba8a013efdbcd08f46de3f7daad2e5752a35b2"
-        },
-        {
-          "path": "apps/chromium.theme",
-          "size": 9,
-          "sha256": "277c9b5187aba5a0cb3c308cb4ac21c47be3bdc48bfc58b4c54b1a80e5d3216c"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 9,
-          "sha256": "1c2342215182a8e2880028e03e679fad194dbdfa5155b55daf8386390526cfbc"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 178,
-          "sha256": "58670a47cbd6c887cba256dbbe94a45316200f067bd4aaaf730b901a73e5d322"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 44670,
-          "sha256": "651c8631168fe3beb96f466972d65031d1bc4a722c4c5f5474656b200fbca991"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "90353c00f3ce52db698439d0a3c5205f9bb6ccc90269541bcf587684ead3558c"
-        },
-        {
-          "path": "theme.json",
-          "size": 114,
-          "sha256": "be85d559db2280edd5428aed7911cfbc80a86c2f1dc71fd77ea4871874b759f2"
-        }
-      ],
+      "size": 4035032,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-amberbyte-r1.tar.gz",
-        "rev": 1,
-        "size": 4303185,
-        "sha256": "38f6a4e16ba8e52ea6304d0f8434b6b8516c8e2eb1ad9c30655374d09c365b19"
+        "release": "themes-v15",
+        "archive": "vgs-theme-amberbyte-r2.tar.gz",
+        "rev": 2,
+        "size": 4035032,
+        "sha256": "2d76d3f7bf04eb81c0698bb93227fc16743bfa30d1d047a7691912575ce0c3d3"
       }
     },
     {
@@ -168,71 +42,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#111422",
-        "#e35535",
-        "#3cec85",
-        "#eacd61",
-        "#69c3ff",
-        "#f38cec",
-        "#22ecdb",
-        "#bcc1dc",
-        "#313b62",
-        "#ff4319",
-        "#29ff82",
-        "#ffd94c",
-        "#69c3ff",
-        "#ff80f6",
-        "#0fffeb",
-        "#ffffff"
-      ],
-      "background": "#111422",
-      "foreground": "#bcc1dc",
-      "accent": "#f38cec",
-      "size": 10892605,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1537,
-          "sha256": "8d8045705ef2acf3d93b7b92cf52f46bbfa0a18ef55b8c6ce0f2c3535fffb6eb"
-        },
-        {
-          "path": "apps/chromium.theme",
-          "size": 8,
-          "sha256": "9c0eb1bfbc7b96738990e5ad1154657774c455a7d5632c99dea5fa8026d9af2d"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 10,
-          "sha256": "75be55b00f24a3cfc708db729e9bca23765e8ef0991d6889fbb2fd4d29581209"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 1594,
-          "sha256": "f333a4e128a53b5b89e079c487d146e8927c282f3c11105c2dd1e3e31fd4e502"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 37349,
-          "sha256": "45ca097c24099462839c5f78ce639ab3138c776ee296fda00356c2d3754c517e"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "a4b8125f74de1f014bdedac893e3780ddcee7a1cc56f9d517dfed766841efc5f"
-        },
-        {
-          "path": "theme.json",
-          "size": 110,
-          "sha256": "974af8bb180b57e47a397b2e30b5f40f4e3312673ce2290fc50aed844a0e86b9"
-        }
-      ],
+      "size": 10569984,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-arc-blueberry-r1.tar.gz",
-        "rev": 1,
-        "size": 10892605,
-        "sha256": "a612249bbf2ba1332b971118f785b76b2969e02ae805a0de699e616313e40d05"
+        "release": "themes-v15",
+        "archive": "vgs-theme-arc-blueberry-r2.tar.gz",
+        "rev": 2,
+        "size": 10569984,
+        "sha256": "ff08370ea1f13a49b665e084f56627533722d01d6e8fe6836ede1ad287660df1"
       }
     },
     {
@@ -240,76 +56,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#0c060d",
-        "#6a5457",
-        "#b0413b",
-        "#dca23e",
-        "#3f57a1",
-        "#90788b",
-        "#3eafd3",
-        "#ccc2c2",
-        "#8e8787",
-        "#9f8589",
-        "#d4827d",
-        "#eccc94",
-        "#7b8ecb",
-        "#beb0bb",
-        "#91d1e6",
-        "#fafafa"
-      ],
-      "background": "#0c060d",
-      "foreground": "#fafafa",
-      "accent": "#0c060d",
-      "size": 5117780,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1535,
-          "sha256": "432f634c289d3e53178b1f07fabed6b51b586648d4b601b6bd8dd0cfefb8561a"
-        },
-        {
-          "path": "apps/chromium.theme",
-          "size": 8,
-          "sha256": "f96cb62abc0a652e4510e7d448a59e7901847b6b16fc2a3a6b8733b302e45eb4"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 13,
-          "sha256": "328fd2519268a09cbcb45b3e8393f6abcc1739b9816bdc87bd4761d9d240f026"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 1025,
-          "sha256": "854122d2bd716c0782434d7009251fe52c51b5b017c069819624834eb75db66e"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 44672,
-          "sha256": "a342fd05870327b7b6f75a9df5eb5df373c8e7521dbb59560f1718b964ba1e81"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "6bf72f532ae39aa7d80c421f704a166616e750bc39c0c026bccbc69c7f785809"
-        },
-        {
-          "path": "terminal-colors.toml",
-          "size": 481,
-          "sha256": "cf288fae77a9937808ff9b14bfc3e193fd3bc088835f423b32b7a902857df56f"
-        },
-        {
-          "path": "theme.json",
-          "size": 117,
-          "sha256": "7eee768007e4667739c91fd0070eeedeca46cf6a37cefd060fb4439340ab2996"
-        }
-      ],
+      "size": 4827513,
       "assets": {
-        "release": "themes-v6",
-        "archive": "vgs-theme-arc-raiders-r3.tar.gz",
-        "rev": 3,
-        "size": 5117780,
-        "sha256": "f00f90b7a5100971e98c82d0769a29fce60c8f3b288bfd505e53ca8054c32235"
+        "release": "themes-v15",
+        "archive": "vgs-theme-arc-raiders-r4.tar.gz",
+        "rev": 4,
+        "size": 4827513,
+        "sha256": "b49a6a3188e3ff6567aebd74d3a557b876481000a0c0f3cf88effc2e0caea317"
       }
     },
     {
@@ -317,76 +70,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#2d1b4e",
-        "#ff6ec7",
-        "#5ffbf1",
-        "#f9f871",
-        "#8b9aff",
-        "#f4a5ff",
-        "#5ffbf1",
-        "#ffffff",
-        "#543a6e",
-        "#ff9adc",
-        "#8ffef4",
-        "#fbf9a5",
-        "#b8c1ff",
-        "#ffc8ff",
-        "#8ffef4",
-        "#fef6ff"
-      ],
-      "background": "#1a0d2e",
-      "foreground": "#d4a5ff",
-      "accent": "#ff6ec7",
-      "size": 10616110,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1848,
-          "sha256": "cd755f309dc7da34ea1e9621fae97700a41f1c7df257359abcec8d72b140e5b9"
-        },
-        {
-          "path": "apps/chromium.theme",
-          "size": 9,
-          "sha256": "cdd0d5f2633861b8b555a6f2825452de5e0c960bfc58819330bc887223a2ebfb"
-        },
-        {
-          "path": "apps/claude-light.json",
-          "size": 218,
-          "sha256": "c33772fe4dd05c293268eb33135816583206e02c913292de5493efe67f04c631"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 13,
-          "sha256": "328fd2519268a09cbcb45b3e8393f6abcc1739b9816bdc87bd4761d9d240f026"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 2268,
-          "sha256": "9c0cc45a05d119fc1e82273dfaaf9855d191a871caf84617c8386a2703044eb6"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 44669,
-          "sha256": "6429325190c0dfc9e1143dd2e7c717cddc0d54a5575136ac89d23a6899171888"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "39190f020a7f125d13fd08eb1edfd761c5fd9d8a1d4f625d2a11da97bab5dcb7"
-        },
-        {
-          "path": "theme.json",
-          "size": 206,
-          "sha256": "48571bab2abb430862e6b463e694589142f43935bb6264ffe57900ffee0fe815"
-        }
-      ],
+      "size": 10242150,
       "assets": {
-        "release": "themes-v12",
-        "archive": "vgs-theme-archwave-r3.tar.gz",
-        "rev": 3,
-        "size": 10616110,
-        "sha256": "62777ad83ed6840abd63b35609204dacc251456760b50942d57b6203961f995a"
+        "release": "themes-v15",
+        "archive": "vgs-theme-archwave-r4.tar.gz",
+        "rev": 4,
+        "size": 10242150,
+        "sha256": "dab2a3faadd6d257202bff09cb9d08da8a87858fac85bc78f93157525abd66e2"
       }
     },
     {
@@ -394,71 +84,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#181c1f",
-        "#9b584d",
-        "#9f6769",
-        "#bb6d6c",
-        "#b97670",
-        "#9a8c8a",
-        "#da7a6f",
-        "#edbcb3",
-        "#b18d85",
-        "#ca887f",
-        "#c79d9f",
-        "#d7adad",
-        "#d7b2ae",
-        "#c4bcbb",
-        "#ecbeb9",
-        "#fdf9f8"
-      ],
-      "background": "#181c1f",
-      "foreground": "#fdf9f8",
-      "accent": "#ed333b",
-      "size": 16884790,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1535,
-          "sha256": "ce767d4bcdd043674fac0f2e8e9fdd949734d6c65e8c9ca75b526f6343168291"
-        },
-        {
-          "path": "apps/chromium.theme",
-          "size": 9,
-          "sha256": "837bb12314a0b162ba666cd25cd925643aa237d497d3601b967fb308d3fe507c"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 9,
-          "sha256": "1c2342215182a8e2880028e03e679fad194dbdfa5155b55daf8386390526cfbc"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 1025,
-          "sha256": "96a36476f050474543ae1cbf7860c3a752a1df5d4af109553cf67de1ea1cc7eb"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 44667,
-          "sha256": "ba11a7d9419c913358b48c00c25b6b0a5e93773b97fc38b006c2655098692e6d"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "f46f47b5ddd1f78b98b97c5de2709e1e3428a2656eaa63c9fdc9deb42de52c7e"
-        },
-        {
-          "path": "theme.json",
-          "size": 118,
-          "sha256": "9c8d82773106e2dc92ad9c8c7ceeb7057c265f609fcbad564fcc44499541def8"
-        }
-      ],
+      "size": 16501638,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-artzen-r1.tar.gz",
-        "rev": 1,
-        "size": 16884790,
-        "sha256": "34a8b0908cc558ee856d1213566be57647c5956742f06d7621eb47fdab6a0372"
+        "release": "themes-v15",
+        "archive": "vgs-theme-artzen-r2.tar.gz",
+        "rev": 2,
+        "size": 16501638,
+        "sha256": "861ea3f05beacca96a62cd77a0b7712361e135b113aae1c440fd7db9f79061b0"
       }
     },
     {
@@ -466,66 +98,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#1b1f29",
-        "#f06b73",
-        "#70bf56",
-        "#fdb04c",
-        "#4fbfff",
-        "#d0a1ff",
-        "#93e2c8",
-        "#c7c7c7",
-        "#686868",
-        "#f07178",
-        "#aad94c",
-        "#ffb454",
-        "#59c2ff",
-        "#d2a6ff",
-        "#95e6cb",
-        "#ffffff"
-      ],
-      "background": "#0b0e14",
-      "foreground": "#bfbdb6",
-      "accent": "#e6b450",
-      "size": 6443809,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1618,
-          "sha256": "8f9cf9e4b5de8379b0ecc5e0006600913d65c422467035efaf7a085563bfdd9a"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 11,
-          "sha256": "db03d23dd42fcc39900733c4324f884ec731ab6de6d0fdb85496a62c230a2554"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 132,
-          "sha256": "68d83bc4f3841926104c4ca7a092dddb832ce0674de42788cf34b2b0365a2317"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 25952,
-          "sha256": "76699d965bc6d3352402b381f3787e119b3adff1373c3fd958645a7b6614e712"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "22433117179d4bc95a8cff5e907bd1403b109b872ceb0e52452ef656d4109dc5"
-        },
-        {
-          "path": "theme.json",
-          "size": 110,
-          "sha256": "332e82d797e93fe1ba52f95db2bcea24a6b4bfe4f3cc5211d457f7d6cb6836e5"
-        }
-      ],
+      "size": 6221600,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-ayu-r1.tar.gz",
-        "rev": 1,
-        "size": 6443809,
-        "sha256": "b4d2511bf1af83201a2e5e54780e12bfecfab0a8c7a7e5275a030985c91ea980"
+        "release": "themes-v15",
+        "archive": "vgs-theme-ayu-r2.tar.gz",
+        "rev": 2,
+        "size": 6221600,
+        "sha256": "921de1b7d1e0c2445f28223ca5b22966c27012cb028ae8972d98b973ce3259ba"
       }
     },
     {
@@ -533,71 +112,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#161b22",
-        "#c0704f",
-        "#6f999c",
-        "#e7a46f",
-        "#5e738b",
-        "#8d758f",
-        "#759496",
-        "#eaeff5",
-        "#3a3f4c",
-        "#e06c55",
-        "#7b9b9f",
-        "#e0a568",
-        "#6c7c82",
-        "#a3ada7",
-        "#7b9b9f",
-        "#ffffff"
-      ],
-      "background": "#101318",
-      "foreground": "#eaeff5",
-      "accent": "#e37b66",
-      "size": 9967658,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 365,
-          "sha256": "f215971c2dd65274603d4646088af2b1db13384aa066c9a476b269b6950890f6"
-        },
-        {
-          "path": "apps/chromium.theme",
-          "size": 9,
-          "sha256": "ecca96880f9dc1a4889e7edb244ca26f007f309f4343a5efd93c03388b8c17a1"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 15,
-          "sha256": "5e15a608a3df99528f620dab86f74ca84129b6cd9e0abc2e7525d5fdc319d057"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 168,
-          "sha256": "28e4a6eddf08bfc519536f9d5a97200b9cbd27ed6fb07fe4a24d16359f961a76"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 9950,
-          "sha256": "1aa98dc7a2a3fd76e5780492bdbf5909dce0b0b39548a32bce48a31f833bcf24"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "fd21dca5baebf72d5074682ad0d9f67a00ccb7ec7368af9191dc373a21d9eb2e"
-        },
-        {
-          "path": "theme.json",
-          "size": 121,
-          "sha256": "dee1a5dbc65a5b332e23594e8bf6ae399598a3682d93542edf114e0bf195d639"
-        }
-      ],
+      "size": 9671614,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-bauhaus-r1.tar.gz",
-        "rev": 1,
-        "size": 9967658,
-        "sha256": "e13cf484d7ebc19b91f6fd48f2e2ac649bb3adbea74ebadb797c1afafefdb9c4"
+        "release": "themes-v15",
+        "archive": "vgs-theme-bauhaus-r2.tar.gz",
+        "rev": 2,
+        "size": 9671614,
+        "sha256": "50d3d4eb37244123aa0017c38d126d6f71216d1dc772b25b99a5a6d3633a02c1"
       }
     },
     {
@@ -605,76 +126,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#1a1515",
-        "#f07342",
-        "#959a6b",
-        "#e39c45",
-        "#756d94",
-        "#7b3d79",
-        "#ae3f82",
-        "#dcc9bc",
-        "#453636",
-        "#cf223e",
-        "#959a6b",
-        "#e39c45",
-        "#756d94",
-        "#7b3d79",
-        "#ae3f82",
-        "#ffe9c7"
-      ],
-      "background": "#1a1515",
-      "foreground": "#dcc9bc",
-      "accent": "#ae3f82",
-      "size": 21782916,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1792,
-          "sha256": "d22c34aaad9e771d2b27fae617775dd4aa33c79424e2a957984990dd94fcdb28"
-        },
-        {
-          "path": "apps/chromium.theme",
-          "size": 9,
-          "sha256": "11a84115d20c5ac49a776a9e704757285ea71c6343fdfbe89f8b60bea0574e2d"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 13,
-          "sha256": "328fd2519268a09cbcb45b3e8393f6abcc1739b9816bdc87bd4761d9d240f026"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 8208,
-          "sha256": "3c3d86717e7304871b5743102195308ca2835f3fab21e3c0d54b2208c89f5729"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 44675,
-          "sha256": "6ba244710f86a41a207ff2a92019a8ad536ba12fda15f5c2b94897b68b8290ec"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "b5266bb31de8c68f15b1ca442288cb8c1cfdb9e85f21afee77b5b116dc2c1acb"
-        },
-        {
-          "path": "terminal-colors.toml",
-          "size": 310,
-          "sha256": "123db9dcb3ee5f68124055df17b90e856720bb8607db07348d31a70b49de20cd"
-        },
-        {
-          "path": "theme.json",
-          "size": 126,
-          "sha256": "faab6236dfc979762028b00329303703153783e4d0dd5b1a0e92fa93198c8f02"
-        }
-      ],
+      "size": 21310082,
       "assets": {
-        "release": "themes-v6",
-        "archive": "vgs-theme-biscuit-de-mar-r2.tar.gz",
-        "rev": 2,
-        "size": 21782916,
-        "sha256": "4ab54e74c9fd4c655c74fc9d1405c540d098fde0fedb2107d52307d90a277109"
+        "release": "themes-v15",
+        "archive": "vgs-theme-biscuit-de-mar-r3.tar.gz",
+        "rev": 3,
+        "size": 21310082,
+        "sha256": "392fa88590492533c083b1a71849a052d00708a2f9da1c8dfd385fdb028b1a11"
       }
     },
     {
@@ -682,71 +140,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#121212",
-        "#450404",
-        "#630a0a",
-        "#cc7a7a",
-        "#ce5757",
-        "#c87777",
-        "#d48484",
-        "#d1c7c7",
-        "#b89494",
-        "#9c0909",
-        "#9f1d1d",
-        "#e7baba",
-        "#e96565",
-        "#e28585",
-        "#eb9696",
-        "#ded3d3"
-      ],
-      "background": "#121212",
-      "foreground": "#ded3d3",
-      "accent": "#940404",
-      "size": 13813527,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1535,
-          "sha256": "fa472a959d646f5965cb43d0dfcdefc2b7d2d95a3f1a1f0107914efb2c671f4e"
-        },
-        {
-          "path": "apps/chromium.theme",
-          "size": 9,
-          "sha256": "e02da2b72d23d24c9f70ce52e737485c2163e143a21331d2f23ee76aa900e572"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 9,
-          "sha256": "1c2342215182a8e2880028e03e679fad194dbdfa5155b55daf8386390526cfbc"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 1025,
-          "sha256": "80e74c639dee121523576c0d4581f7858662b02377597dcc0a1b8243f0befa2d"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 44670,
-          "sha256": "16838d33142a5fe9d90cf066199ee6e3683be81f48737f1b42de711e22e31459"
-        },
-        {
-          "path": "colors.toml",
-          "size": 661,
-          "sha256": "3e6af62bd3ae4c3c39040e14dc25f3d2fad0c20ddc3e2a8ab880aed8bf6fb647"
-        },
-        {
-          "path": "theme.json",
-          "size": 108,
-          "sha256": "7fd0691560a8abfb8701fc9c56a2f32b95b9c0b9e36fa1e6cf00ea934e20635b"
-        }
-      ],
+      "size": 13512448,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-brutalism-r1.tar.gz",
-        "rev": 1,
-        "size": 13813527,
-        "sha256": "7dd7d937161ad25115d685ca7217fbf9efae7238803d08416bf4d3937f2f0622"
+        "release": "themes-v15",
+        "archive": "vgs-theme-brutalism-r2.tar.gz",
+        "rev": 2,
+        "size": 13512448,
+        "sha256": "371985a2a70f8361ba69c13a670c682d150f113f3852468cd9fbb06c2545f1bd"
       }
     },
     {
@@ -754,66 +154,13 @@
       "mode": "dark",
       "pair": "catppuccin-latte",
       "source": "curated",
-      "colors": [
-        "#45475a",
-        "#f38ba8",
-        "#a6e3a1",
-        "#f9e2af",
-        "#89b4fa",
-        "#f5c2e7",
-        "#94e2d5",
-        "#bac2de",
-        "#585b70",
-        "#f38ba8",
-        "#a6e3a1",
-        "#f9e2af",
-        "#89b4fa",
-        "#f5c2e7",
-        "#94e2d5",
-        "#a6adc8"
-      ],
-      "background": "#1e1e2e",
-      "foreground": "#cdd6f4",
-      "accent": "#89b4fa",
-      "size": 12830181,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1643,
-          "sha256": "5346e76ccf69a1695584d0c731caf5bef78c1dc4799fa38274d60220a4d637d1"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 12,
-          "sha256": "fabce71aa1d6dff7a151d3ac1ce842c22ee11399e0279b311f97cfcfca30f7ad"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 190,
-          "sha256": "0ee64a9aed5158ceeebb5faa4616e8b4e7d31b8469ffba55e267cc7bd4b20052"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 74831,
-          "sha256": "ae9a2cd5944a185e5f45c8ff1408342b3ae5ebc317c8238db6fe5fb0402e3e48"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "bc36364a691198d7912dee2b3645c694b98ef868e57791bf8bcc9a03fbe80a34"
-        },
-        {
-          "path": "theme.json",
-          "size": 129,
-          "sha256": "25de8a0127aacd95c5fc949bbe7a491fcc37adebb9e751fe166645557eba1f04"
-        }
-      ],
+      "size": 12611113,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-catppuccin-r1.tar.gz",
-        "rev": 1,
-        "size": 12830181,
-        "sha256": "4d2e6a2c3dea2a702c3b07b26da16f5fa11f4e7bf133da2065e72952bb77582c"
+        "release": "themes-v15",
+        "archive": "vgs-theme-catppuccin-r2.tar.gz",
+        "rev": 2,
+        "size": 12611113,
+        "sha256": "56da71ac2e5666fcc0ad36cb1ec8fd40821d60e048ae99992321c35ec9059d5c"
       }
     },
     {
@@ -821,66 +168,13 @@
       "mode": "dark",
       "pair": "catppuccin-latte",
       "source": "curated",
-      "colors": [
-        "#51576d",
-        "#e78284",
-        "#a6d189",
-        "#e5c890",
-        "#8caaee",
-        "#f4b8e4",
-        "#81c8be",
-        "#b5bfe2",
-        "#626880",
-        "#e78284",
-        "#a6d189",
-        "#e5c890",
-        "#8caaee",
-        "#f4b8e4",
-        "#81c8be",
-        "#a5adce"
-      ],
-      "background": "#303446",
-      "foreground": "#c6d0f5",
-      "accent": "#ca9ee6",
-      "size": 15148524,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1642,
-          "sha256": "46d2f4b3ee8d89ab613f3e795a7a69cf0bd09e3abf112553640686cc5e7286ee"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 12,
-          "sha256": "fabce71aa1d6dff7a151d3ac1ce842c22ee11399e0279b311f97cfcfca30f7ad"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 212,
-          "sha256": "11ab7ca5ca5bee5d7b4ecab436444703e53a7be77d516981e0747054302c3935"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 74833,
-          "sha256": "630a590370ffd27e37b38c82f5bd595ee097e37a1bc444e6899fccdf1a5c9388"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "00c5eea681630838c49cb4e6e728fb9c4eaf2e53a1e8277eca3a97cdc04fae0a"
-        },
-        {
-          "path": "theme.json",
-          "size": 135,
-          "sha256": "4429616a230e96af872e158abc7de2ea6ae06f089147e1dd29f19c068fff3da7"
-        }
-      ],
+      "size": 14889202,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-catppuccin-frappe-r1.tar.gz",
-        "rev": 1,
-        "size": 15148524,
-        "sha256": "46c8227d8e0db804346f8bb5f86984c82ad4e30de1dd2fb106d378788d253196"
+        "release": "themes-v15",
+        "archive": "vgs-theme-catppuccin-frappe-r2.tar.gz",
+        "rev": 2,
+        "size": 14889202,
+        "sha256": "0517864c3c8295a2948f0814467d93a154bc5cfb7e4165ded266c38d852e9117"
       }
     },
     {
@@ -888,71 +182,13 @@
       "mode": "light",
       "pair": "catppuccin",
       "source": "curated",
-      "colors": [
-        "#bcc0cc",
-        "#d20f39",
-        "#40a02b",
-        "#df8e1d",
-        "#1e66f5",
-        "#ea76cb",
-        "#179299",
-        "#5c5f77",
-        "#acb0be",
-        "#d20f39",
-        "#40a02b",
-        "#df8e1d",
-        "#1e66f5",
-        "#ea76cb",
-        "#179299",
-        "#6c6f85"
-      ],
-      "background": "#eff1f5",
-      "foreground": "#4c4f69",
-      "accent": "#1e66f5",
-      "size": 2658408,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 2355,
-          "sha256": "86330725175ff07295039fe020ccb524edaf8430b698c9a66e05b076a81a9953"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 10,
-          "sha256": "75be55b00f24a3cfc708db729e9bca23765e8ef0991d6889fbb2fd4d29581209"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 210,
-          "sha256": "148f42cb6f1cbc2c1a0ad0f4ebf571fb2c98ea49e793281415132f116a54ece2"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 74832,
-          "sha256": "f819183a518e525fb7375d5a84b3c4a2e3b6074ebdd75c973c03944a92679c68"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "30b184bfab2630fe6f9a34aa4760e53794c196bad7ab984a8040c39d9a90833e"
-        },
-        {
-          "path": "terminal-colors.toml",
-          "size": 332,
-          "sha256": "072a52804d1a8ceb6324232414dc20bb073f2d450382a87e580859f54a1a6a61"
-        },
-        {
-          "path": "theme.json",
-          "size": 134,
-          "sha256": "e7ad5cd816b0105ffb5baeba6ecc4384ec2bb31804dbc088e5a7f6e75624504a"
-        }
-      ],
+      "size": 2421541,
       "assets": {
-        "release": "themes-v4",
-        "archive": "vgs-theme-catppuccin-latte-r3.tar.gz",
-        "rev": 3,
-        "size": 2658408,
-        "sha256": "8b7b7a00a8b25e2c7362d9cb121454db25c206a0828ab25b6b65b19751dcf75b"
+        "release": "themes-v15",
+        "archive": "vgs-theme-catppuccin-latte-r4.tar.gz",
+        "rev": 4,
+        "size": 2421541,
+        "sha256": "33b9899ed9be7f85c6df9618016dd56bcf3e17cded911f0cc5b7e2df8fcfdaa2"
       }
     },
     {
@@ -960,66 +196,13 @@
       "mode": "dark",
       "pair": "catppuccin-latte",
       "source": "curated",
-      "colors": [
-        "#494d64",
-        "#ed8796",
-        "#a6da95",
-        "#eed49f",
-        "#8aadf4",
-        "#f5bde6",
-        "#8bd5ca",
-        "#b8c0e0",
-        "#5b6078",
-        "#ed8796",
-        "#a6da95",
-        "#eed49f",
-        "#8aadf4",
-        "#f5bde6",
-        "#8bd5ca",
-        "#a5adcb"
-      ],
-      "background": "#24273a",
-      "foreground": "#cad3f5",
-      "accent": "#c6a0f6",
-      "size": 19915699,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1642,
-          "sha256": "083e847ef0b303dd9ba48de484460ad312aa5f42b3a3c5bc501ce0f6d6b5a2ca"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 12,
-          "sha256": "fabce71aa1d6dff7a151d3ac1ce842c22ee11399e0279b311f97cfcfca30f7ad"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 218,
-          "sha256": "43f953c1f43ed01729566ff7e9b0fe41c0d817b6a209496d8c52c6e92b3c0711"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 74835,
-          "sha256": "2b96b226a332da95c90c35325629c9abe51a7928c0322eae1afe27fec0420c8c"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "42e2ae11d4aaa12a235d0f3f6b1defc1a166192a821d431bfb61c6cae7bf0109"
-        },
-        {
-          "path": "theme.json",
-          "size": 141,
-          "sha256": "dc1f2d554e9bf3ca578a9758b48b7e810e7c9932d1756c7d466dc0651acad210"
-        }
-      ],
+      "size": 19683427,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-catppuccin-macchiato-r1.tar.gz",
-        "rev": 1,
-        "size": 19915699,
-        "sha256": "ed605c7bee63b601d8fdc9d626f6bd0f286f4776add6e19832a0981b133f1e2e"
+        "release": "themes-v15",
+        "archive": "vgs-theme-catppuccin-macchiato-r2.tar.gz",
+        "rev": 2,
+        "size": 19683427,
+        "sha256": "f29477e19799648a6259f748e03d630fd936c56ad0b97e0142b7f6f2ad7fa69c"
       }
     },
     {
@@ -1027,71 +210,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#11111b",
-        "#f38ba8",
-        "#a6e3a1",
-        "#f9e2af",
-        "#89b4fa",
-        "#cba6f7",
-        "#94e2d5",
-        "#cdd6f4",
-        "#585b70",
-        "#f38ba8",
-        "#a6e3a1",
-        "#fab387",
-        "#89b4fa",
-        "#cba6f7",
-        "#94e2d5",
-        "#a6adc8"
-      ],
-      "background": "#11111b",
-      "foreground": "#cdd6f4",
-      "accent": "#fab387",
-      "size": 19015247,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1201,
-          "sha256": "a121c30af60c5424367b6e018360e1363bd5ca76d5c1bdcaefa68d437ed7f558"
-        },
-        {
-          "path": "apps/chromium.theme",
-          "size": 10,
-          "sha256": "ec8b3f340624ded6b39edbce35452e1a2e925596cee495482c89421fe880630b"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 16,
-          "sha256": "ca63484665b94ba8a2b9fa5bb33f287d8fbe61f4c1ffd651672b5093f650d4cd"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 4902,
-          "sha256": "fbfe399dd2d3637935392e838ce12f842384657902ed0c44fdda15f7b451c265"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 44672,
-          "sha256": "c7b25c74dbfec4079390124392a53d29dd4750b62cf5e20f9f8d15631b6690c9"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "9b8659458e39316681758f877c59e1744c5211bd11e5ce87dadd863bf543849a"
-        },
-        {
-          "path": "theme.json",
-          "size": 117,
-          "sha256": "07324ea5e43888dae6b16dcabb1da71ca408780ce93521153e4eba1329456950"
-        }
-      ],
+      "size": 18637787,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-coppernight-r1.tar.gz",
-        "rev": 1,
-        "size": 19015247,
-        "sha256": "e0066f29f550dfa898fc24ffad1deee41ca2b5dc41c3ac1ed3dda4994e265046"
+        "release": "themes-v15",
+        "archive": "vgs-theme-coppernight-r2.tar.gz",
+        "rev": 2,
+        "size": 18637787,
+        "sha256": "c44d2af54170d9010b7d4af0d9365058be325e4d11a994746f6d56b1b818e227"
       }
     },
     {
@@ -1099,76 +224,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#040303",
-        "#f82a2a",
-        "#d1d2d1",
-        "#fef348",
-        "#aaacac",
-        "#f76e78",
-        "#babbbb",
-        "#f3f3f3",
-        "#7f6e6e",
-        "#ff7f7f",
-        "#ffffff",
-        "#fff9a3",
-        "#d8d9d9",
-        "#ffc2c7",
-        "#e8e9e9",
-        "#ffffff"
-      ],
-      "background": "#040303",
-      "foreground": "#ffffff",
-      "accent": "#aaacac",
-      "size": 25775378,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1535,
-          "sha256": "8d9c2c14e0499bdcadcfb860185457be2663013a6a7aea9706a63a031c47ce6b"
-        },
-        {
-          "path": "apps/chromium.theme",
-          "size": 6,
-          "sha256": "25959e70b994621fc65634a6d6c8e2eb96f3dd646419ff250db2c0743ac4eca4"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 9,
-          "sha256": "1c2342215182a8e2880028e03e679fad194dbdfa5155b55daf8386390526cfbc"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 1025,
-          "sha256": "a989171820e62f6dea08cf28f47a93b817d3bf3a6b3ccb9425a1a0ae3f10c228"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 44666,
-          "sha256": "06577cf9805dde953f4bddc621a673022aac1335184266748044871dad7bb10c"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "17d9fef5c4bdb4ff7fadba892390992b80990fc9058ab5913c3812680f9d572f"
-        },
-        {
-          "path": "terminal-colors.toml",
-          "size": 370,
-          "sha256": "ee5fb19a17ee1846d5d6f0fbac891c82a522cf1c5e7aeeb93e8438004be5d536"
-        },
-        {
-          "path": "theme.json",
-          "size": 106,
-          "sha256": "a907e541fed43a656f26fbbdb489ec99fb6f97890fcd816e81524a747aeb4f15"
-        }
-      ],
+      "size": 25395414,
       "assets": {
-        "release": "themes-v6",
-        "archive": "vgs-theme-cpunk-r3.tar.gz",
-        "rev": 3,
-        "size": 25775378,
-        "sha256": "26cdfcd30bfbe9615bffa2ed8430dd675d7e2861db3343e29de935cc2b43af4b"
+        "release": "themes-v15",
+        "archive": "vgs-theme-cpunk-r4.tar.gz",
+        "rev": 4,
+        "size": 25395414,
+        "sha256": "573d66f6f4703fbe0c8c588df39d3aec257c8e029ed2220ad1ce5ec22d1ce41c"
       }
     },
     {
@@ -1176,71 +238,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#0d0221",
-        "#ff2a6d",
-        "#05ffa1",
-        "#fffb96",
-        "#01cdfe",
-        "#b967ff",
-        "#05ffa1",
-        "#f9f9f9",
-        "#4c1a57",
-        "#ff6bcb",
-        "#2dffb4",
-        "#fff5b8",
-        "#52e5ff",
-        "#d291ff",
-        "#52fff7",
-        "#ffffff"
-      ],
-      "background": "#0d0221",
-      "foreground": "#f9f9f9",
-      "accent": "#ff2a6d",
-      "size": 14611253,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1826,
-          "sha256": "3176bcd7bb8b9e98e0dbe72d22aa23bd6fd7e28812105905e19a9b5a3fc64c75"
-        },
-        {
-          "path": "apps/chromium.theme",
-          "size": 9,
-          "sha256": "3035126a1c7b75470782fec8387ccfa9adc7b9033863bd843e046f919da93d1e"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 13,
-          "sha256": "328fd2519268a09cbcb45b3e8393f6abcc1739b9816bdc87bd4761d9d240f026"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 408,
-          "sha256": "37fea6a4870f251b119eb5a4bd33416796003e0d70b0a4da1abcc05746d4b73d"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 44669,
-          "sha256": "57aff068f21e6ce4be5caddce5f1e64775bc18fe1e534a4bf31b904ea9fca477"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "7e666f2711712c262871083491141d46438a133d19e4829467f7457aea88151f"
-        },
-        {
-          "path": "theme.json",
-          "size": 113,
-          "sha256": "fae03d4933afe48f77c63f5d43a7d97bd49b44106e604dd9c822411b6f9b94a6"
-        }
-      ],
+      "size": 14298944,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-delorean-r1.tar.gz",
-        "rev": 1,
-        "size": 14611253,
-        "sha256": "84000ea3ee514b934d53549bec3160c785de27e3455659ba515d4d4c7e28a04c"
+        "release": "themes-v15",
+        "archive": "vgs-theme-delorean-r2.tar.gz",
+        "rev": 2,
+        "size": 14298944,
+        "sha256": "1394275581c265b6c17014aa6aaf615a768bab1f6e7f3f28dccaea6a7a1da7c4"
       }
     },
     {
@@ -1248,66 +252,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#21222c",
-        "#ff5555",
-        "#50fa7b",
-        "#f1fa8c",
-        "#bd93f9",
-        "#ff79c6",
-        "#8be9fd",
-        "#f8f8f2",
-        "#6272a4",
-        "#ff6e6e",
-        "#69ff94",
-        "#ffffa5",
-        "#d6acff",
-        "#ff92df",
-        "#a4ffff",
-        "#ffffff"
-      ],
-      "background": "#282a36",
-      "foreground": "#f8f8f2",
-      "accent": "#bd93f9",
-      "size": 12597028,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1618,
-          "sha256": "1ab860165fc2e6db5636b640e6951e23fe892232abfabf4089f99d016b86c904"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 12,
-          "sha256": "fabce71aa1d6dff7a151d3ac1ce842c22ee11399e0279b311f97cfcfca30f7ad"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 137,
-          "sha256": "9bcb8a477ab21833daa0ce9452929eeeee8d2909fd5088ad195a2d5ec15aa1a7"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 39840,
-          "sha256": "a0e0dcd1c3426801f7dbdd92126a2c18ea024aaf4d7cc51b4d5a0a83ce5dce0c"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "066bf0c87e3d76b61b9440ce8bef024b3ff5a010973befffadfe30ff49a94eea"
-        },
-        {
-          "path": "theme.json",
-          "size": 118,
-          "sha256": "888e65fd3dab5e2550a949aea34a82b2ef0e7fac7cf5ae15ef517b6c3d1362bc"
-        }
-      ],
+      "size": 12375585,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-dracula-r1.tar.gz",
-        "rev": 1,
-        "size": 12597028,
-        "sha256": "f7bd5619e94a433571aa9242fb50eed7c8cfa320cbb51e86774290c69ce113b7"
+        "release": "themes-v15",
+        "archive": "vgs-theme-dracula-r2.tar.gz",
+        "rev": 2,
+        "size": 12375585,
+        "sha256": "013f20e7af051b02ed72c81824eff3d60a23f2213373eb1db31ac50c31c3e34c"
       }
     },
     {
@@ -1315,71 +266,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#21222c",
-        "#f9515d",
-        "#37f499",
-        "#e9f941",
-        "#9071f4",
-        "#f265b5",
-        "#04d1f9",
-        "#ebfafa",
-        "#7081d0",
-        "#f16c75",
-        "#69f8b3",
-        "#f1fc79",
-        "#a48cf2",
-        "#fd92ce",
-        "#66e4fd",
-        "#ffffff"
-      ],
-      "background": "#212337",
-      "foreground": "#ebfafa",
-      "accent": "#37f499",
-      "size": 12932094,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1759,
-          "sha256": "57c67cf77e5f9f03c335156743f710871926261435b2f9352da9427a18322ba7"
-        },
-        {
-          "path": "apps/chromium.theme",
-          "size": 9,
-          "sha256": "e2bb4968d0cb9bf1072cfbc786ec768f6bca1567d5567e03f1d5ca684b22fcbe"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 19,
-          "sha256": "96d20b1fd1db2dfba81d9a03eccafe3d6ec9dae123bb4476f48b3ed4914003d8"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 184,
-          "sha256": "27c3df1c870b7a75a508a487ea39789ca55f12a200dbcb1fd759e8f64d1ad28e"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 60153,
-          "sha256": "722dd85023fa650fc1882e886ebe23657970e51c54e4d9cd88eac8339fc964a4"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "b480be62043ed6c936ef0dd7c478efde1a19eefd9ec698054c97431036b69d8f"
-        },
-        {
-          "path": "theme.json",
-          "size": 120,
-          "sha256": "e9bc5d3eb2a5d2b4d9dbd33fbbb966b7536728e7b1b5c3e87306772cd6377377"
-        }
-      ],
+      "size": 12707832,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-eldritch-r1.tar.gz",
-        "rev": 1,
-        "size": 12932094,
-        "sha256": "0298a0be36927372d9abb4cdca404c7a38a10a0f3a738eb65b700b68f96fa792"
+        "release": "themes-v15",
+        "archive": "vgs-theme-eldritch-r2.tar.gz",
+        "rev": 2,
+        "size": 12707832,
+        "sha256": "3ae043dddd68a0b6e09e09baee265e9388c50322307c6872c60a273094c7b3a4"
       }
     },
     {
@@ -1387,71 +280,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#1a1a1a",
-        "#d45d4c",
-        "#9e8f70",
-        "#d9a066",
-        "#6c5b4c",
-        "#b57276",
-        "#a98274",
-        "#d1c0b0",
-        "#2a2a2a",
-        "#e87461",
-        "#b39c7c",
-        "#e3b97f",
-        "#7f6b5d",
-        "#c6898c",
-        "#ba9486",
-        "#f2e6d8"
-      ],
-      "background": "#1a1a1a",
-      "foreground": "#e5d6c6",
-      "accent": "#ff6f3c",
-      "size": 16718181,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1852,
-          "sha256": "5542d1a2917bcb214d80f43c33fca1fdfafd6107d252b37ad2a99cfbf3eda42e"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 9,
-          "sha256": "1c2342215182a8e2880028e03e679fad194dbdfa5155b55daf8386390526cfbc"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 4355,
-          "sha256": "205a530abbc032a4d65c521ccdeab0fa63f8e694140f9edb259a3f6f50375fe4"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 44672,
-          "sha256": "fdee6947e5855dfbdb2c5e4398b29a9946bca45ffd412a52bf5ed577cbb026db"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "2dd93d41338e990c963bebabe5445cafac4c87b5488510bd801197f5ba615f02"
-        },
-        {
-          "path": "terminal-colors.toml",
-          "size": 370,
-          "sha256": "6d27ca82bb4335b275e74c50179506c2199ff75a973fe4cc80aafac57170a21d"
-        },
-        {
-          "path": "theme.json",
-          "size": 116,
-          "sha256": "6e0e01ee8b92ca1c792a6494c5d02cb59155cc9d6243a71d9857e334d807560d"
-        }
-      ],
+      "size": 16328146,
       "assets": {
-        "release": "themes-v6",
-        "archive": "vgs-theme-ember-n-ash-r2.tar.gz",
-        "rev": 2,
-        "size": 16718181,
-        "sha256": "311fcae1f30180f10d2d37562f16225a3e97e79326bfb3bff2e893d540db8019"
+        "release": "themes-v15",
+        "archive": "vgs-theme-ember-n-ash-r3.tar.gz",
+        "rev": 3,
+        "size": 16328146,
+        "sha256": "7cbad2e2d7762263cb6685acbef8a87afa6aea57643a1ad5b775f9f86b9f91a0"
       }
     },
     {
@@ -1459,71 +294,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#3c486d",
-        "#ed5b5a",
-        "#92a593",
-        "#e9bb4f",
-        "#7d82d9",
-        "#c89dc1",
-        "#a3bfd1",
-        "#f99957",
-        "#6d7db6",
-        "#faaaa9",
-        "#c4cfc4",
-        "#f7dc9c",
-        "#c2c4f0",
-        "#ead7e7",
-        "#dfeaf0",
-        "#ffcead"
-      ],
-      "background": "#060b1e",
-      "foreground": "#ffcead",
-      "accent": "#7d82d9",
-      "size": 4890971,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1385,
-          "sha256": "b68cc423b20e8863f744e481dbc294e14f0d2b037003768e01ea402d89863a9b"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 10,
-          "sha256": "75be55b00f24a3cfc708db729e9bca23765e8ef0991d6889fbb2fd4d29581209"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 184,
-          "sha256": "1c0801a0516faa540f1c1527481e9ab319361046d696072af167f5f6635a303a"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 46370,
-          "sha256": "32105c002a232308cb614c6dacbc581810cb494fd30fa8b24793e7ee9318418f"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "3113ea5e9bd6f462a1d5ef30f87b2c837dbd0e960329f81cc8c6d50f08986c31"
-        },
-        {
-          "path": "terminal-colors.toml",
-          "size": 370,
-          "sha256": "0450aadf1bd65d9993f6535568ca07656f323660bfe44993fd8e43a3cef8de95"
-        },
-        {
-          "path": "theme.json",
-          "size": 111,
-          "sha256": "9366f4e763089c644b24c0d217fa83aea59e6a37d57bac5714eacb6ee3632c2f"
-        }
-      ],
+      "size": 4593837,
       "assets": {
-        "release": "themes-v13",
-        "archive": "vgs-theme-ethereal-r4.tar.gz",
-        "rev": 4,
-        "size": 4890971,
-        "sha256": "7e02bf30baf91e75124d0855f3cf865d70509f55313ef311703d22663b920109"
+        "release": "themes-v15",
+        "archive": "vgs-theme-ethereal-r5.tar.gz",
+        "rev": 5,
+        "size": 4593837,
+        "sha256": "39c5499b9ac6239b0a92aa7662b4627fad9e3c0a44e978627508923e0bcca3d4"
       }
     },
     {
@@ -1531,71 +308,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#1c1e26",
-        "#e95678",
-        "#29d398",
-        "#fab795",
-        "#26bbd9",
-        "#ee64ac",
-        "#59e3e3",
-        "#fadad1",
-        "#6c6f93",
-        "#ec6a88",
-        "#3fdaa4",
-        "#fbc3a7",
-        "#3fc4de",
-        "#f075b5",
-        "#6be4e6",
-        "#fadad1"
-      ],
-      "background": "#1c1e26",
-      "foreground": "#fadad1",
-      "accent": "#26bbd9",
-      "size": 18628470,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 4036,
-          "sha256": "c89c674b6babd5a3fe0ba49844d56e9ebf8a7c88a1114f54c32f30fea3f868f9"
-        },
-        {
-          "path": "apps/chromium.theme",
-          "size": 9,
-          "sha256": "a33323302cdbbfbf4663c641104efbb0a96399ce1f0f0666dfe24dcad19edff0"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 13,
-          "sha256": "328fd2519268a09cbcb45b3e8393f6abcc1739b9816bdc87bd4761d9d240f026"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 1025,
-          "sha256": "c703ec1eec5c11f442badad5f303e53ac20a6cad57d45bac6548f3892dc6c8c0"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 44674,
-          "sha256": "ea9657b897374794677848b6ec6106bdd601a3ef12910fec25a475f4b4ccdbe1"
-        },
-        {
-          "path": "colors.toml",
-          "size": 3160,
-          "sha256": "003d1e07cc7899b8267c860bb2ab97feb38ebeda3d973f50007a5607a549b865"
-        },
-        {
-          "path": "theme.json",
-          "size": 123,
-          "sha256": "b0069de4b88264a64bdab2aa2951c08ed97e6057e4a047eaae7e8c68010a0f03"
-        }
-      ],
+      "size": 18283164,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-event-horizon-r1.tar.gz",
-        "rev": 1,
-        "size": 18628470,
-        "sha256": "7454eb4a1bab617cacdd7af45ccc1928e8f7598d4bfcc0b4f6269d4ba0e5d3a0"
+        "release": "themes-v15",
+        "archive": "vgs-theme-event-horizon-r2.tar.gz",
+        "rev": 2,
+        "size": 18283164,
+        "sha256": "15b95d1eac5c9c91b868cbf30ed33b24d00b1e46a858fc409633d7dc3efb71e9"
       }
     },
     {
@@ -1603,66 +322,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#475258",
-        "#e67e80",
-        "#a7c080",
-        "#dbbc7f",
-        "#7fbbb3",
-        "#d699b6",
-        "#83c092",
-        "#d3c6aa",
-        "#475258",
-        "#e67e80",
-        "#a7c080",
-        "#dbbc7f",
-        "#7fbbb3",
-        "#d699b6",
-        "#83c092",
-        "#d3c6aa"
-      ],
-      "background": "#2d353b",
-      "foreground": "#d3c6aa",
-      "accent": "#7fbbb3",
-      "size": 951458,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1779,
-          "sha256": "460a323846ba4ba97ba30dab5f99eed13b7bfb74bc57f4d7cb6e8b24ad61f9ea"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 10,
-          "sha256": "b14b7a19287d12877cb46cc70a715fd25aae7ba475d3d1120392e7adadd23649"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 170,
-          "sha256": "6642d3cdcfc4c564913e6c57bd2f913022377aa9ec190cbb5eba57b7530896d7"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 76663,
-          "sha256": "523e58732dc72c1227d5749e73c34f9a255b90f33cd54e98e93b1722104856aa"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "258892d2ebba9a8c2f2d586e9cf7db07656a6f42be1ec0069d5f951bdffad53d"
-        },
-        {
-          "path": "theme.json",
-          "size": 116,
-          "sha256": "b93381f0cefdd5c582ff3b8c5ae00147ff9a17d34b6e9e9b676d39dfe75796ac"
-        }
-      ],
+      "size": 690394,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-everforest-r1.tar.gz",
-        "rev": 1,
-        "size": 951458,
-        "sha256": "86c4f6a006a34fed3444d6c046519a10d2d9a911b6cc4ac7b2190d923da72a86"
+        "release": "themes-v15",
+        "archive": "vgs-theme-everforest-r2.tar.gz",
+        "rev": 2,
+        "size": 690394,
+        "sha256": "cc4ee7757bb888a696a09e849147f07e92c06f10e0f61f37f2691b9e55f25233"
       }
     },
     {
@@ -1670,66 +336,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#0a1220",
-        "#e06b58",
-        "#889889",
-        "#b8b5a2",
-        "#b8b8b6",
-        "#e48b7a",
-        "#d0cac7",
-        "#f0f2f5",
-        "#555c65",
-        "#e06b58",
-        "#9eaca1",
-        "#c8c3b8",
-        "#cdcbc9",
-        "#f0a19a",
-        "#e3ddda",
-        "#f0f2f5"
-      ],
-      "background": "#0a1220",
-      "foreground": "#f0f2f5",
-      "accent": "#b8b8b6",
-      "size": 3129453,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1535,
-          "sha256": "677a2a51a939c2dc6fa26d303490faedf714765b1d6bcee8de7325f4b61560a4"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 9,
-          "sha256": "1c2342215182a8e2880028e03e679fad194dbdfa5155b55daf8386390526cfbc"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 1025,
-          "sha256": "13f4441d6e0cbf55a5de6120a555914e487be30cedbbf86e3e2e3fd61391e095"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 44669,
-          "sha256": "3e904612ac5cd444c241abaece0b744e569608e9ea423387cbb87edd106988e7"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "42bda508d6c14729a8d226221e8ef8351a7b688c1790bbf10f2c46d675f03e1c"
-        },
-        {
-          "path": "theme.json",
-          "size": 105,
-          "sha256": "b065e266a725363daeeb64f61d33a5afd85236e4d22b1dae751b0a706cb58f35"
-        }
-      ],
+      "size": 2853174,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-fireside-r1.tar.gz",
-        "rev": 1,
-        "size": 3129453,
-        "sha256": "701b18044631dc67edb398f0cd29bdc452f345f8dfe5001edda9a9bdb1814680"
+        "release": "themes-v15",
+        "archive": "vgs-theme-fireside-r2.tar.gz",
+        "rev": 2,
+        "size": 2853174,
+        "sha256": "052918c76ce82c65003d16b5860a74aa4ddcd88cd11c765e3ad5bc0d130b6c3b"
       }
     },
     {
@@ -1737,76 +350,13 @@
       "mode": "light",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#dad8ce",
-        "#d14d41",
-        "#879a39",
-        "#d0a215",
-        "#205ea6",
-        "#ce5d97",
-        "#3aa99f",
-        "#b7b5ac",
-        "#100f0f",
-        "#d14d41",
-        "#879a39",
-        "#d0a215",
-        "#4385be",
-        "#ce5d97",
-        "#3aa99f",
-        "#cecdc3"
-      ],
-      "background": "#fffcf0",
-      "foreground": "#100f0f",
-      "accent": "#205ea6",
-      "size": 1872430,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1284,
-          "sha256": "c6a5b9720265c4439d0764aa9a4a1deffe9f8070cfb2812e25eb31e3a23a3e8f"
-        },
-        {
-          "path": "apps/chromium.theme",
-          "size": 11,
-          "sha256": "9824f9ed9b5ffe8f6466152638205ce9b0d027e47260b502ee8dbd65932d7e1a"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 10,
-          "sha256": "75be55b00f24a3cfc708db729e9bca23765e8ef0991d6889fbb2fd4d29581209"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 174,
-          "sha256": "8a18e3af6ec774d90008afeddf29a10e599929911a02b17dd856102a40629ab6"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 15184,
-          "sha256": "c03e699d1d56f32e5ad2757833dc5e3dbe175bd45511a7d5b2f06b4747674490"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "af71fedc5e62b84a97e6d88bb8584917601286b22f2dfb25439ee4d86518d363"
-        },
-        {
-          "path": "terminal-colors.toml",
-          "size": 209,
-          "sha256": "9272392f41dbbeacb5e26a349c54554bd09bbf792deb05824356f0c43cf1a1a4"
-        },
-        {
-          "path": "theme.json",
-          "size": 114,
-          "sha256": "5adaa8679cb5a6b84666b66248b6adfbaba8b0648870c423b466d9f8828a79e9"
-        }
-      ],
+      "size": 1662588,
       "assets": {
-        "release": "themes-v4",
-        "archive": "vgs-theme-flexoki-light-r3.tar.gz",
-        "rev": 3,
-        "size": 1872430,
-        "sha256": "0e30c51b9af0b31ffb45d3bf76422aec72c44b6dd154dc32d6a9931891fc828c"
+        "release": "themes-v15",
+        "archive": "vgs-theme-flexoki-light-r4.tar.gz",
+        "rev": 4,
+        "size": 1662588,
+        "sha256": "07c8c0fe8bc1fad9930636787f9db871c289fe102437f9756964f024d814e4d4"
       }
     },
     {
@@ -1814,76 +364,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#313132",
-        "#d68679",
-        "#47ae83",
-        "#46b287",
-        "#849be3",
-        "#c086c6",
-        "#6ca48f",
-        "#8dffd5",
-        "#84838a",
-        "#ffa998",
-        "#63d89f",
-        "#61dca3",
-        "#a8beff",
-        "#eca6f8",
-        "#8bccb0",
-        "#7effcd"
-      ],
-      "background": "#313132",
-      "foreground": "#8dffd5",
-      "accent": "#849be3",
-      "size": 12165651,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 2518,
-          "sha256": "ef9909b980c94c4af45ed44b17bc7b8976a8c439555c29f12a0a246f150dee83"
-        },
-        {
-          "path": "apps/chromium.theme",
-          "size": 9,
-          "sha256": "8c2ad9de3b78c06a38b32ae134cd3ec8cf6accb3f562211b930e5b2f3a873af9"
-        },
-        {
-          "path": "apps/claude-light.json",
-          "size": 218,
-          "sha256": "597ed6a2457579764f59021be1bfe1b5973ac6af468f409aacea4c5083bc36c4"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 13,
-          "sha256": "328fd2519268a09cbcb45b3e8393f6abcc1739b9816bdc87bd4761d9d240f026"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 1025,
-          "sha256": "0c51f8df3de18529735f2a4361ea6981bd479a5ba3db6b66ccb34d7edf5e8909"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 44669,
-          "sha256": "b32014a9d251f0e9c47a8cc7705d116c2694138c1957828880cf34e7b209d6b1"
-        },
-        {
-          "path": "colors.toml",
-          "size": 578,
-          "sha256": "2bc4fbf749177db50e0c20651697f6a690e633ec8ad6fd5c26f38a2e0a5a5a6d"
-        },
-        {
-          "path": "theme.json",
-          "size": 206,
-          "sha256": "047de6b96c7136972c1f34d04df94d2aae5593e471212cfb2386e45598726e4a"
-        }
-      ],
+      "size": 11850789,
       "assets": {
-        "release": "themes-v13",
-        "archive": "vgs-theme-frankenstein-r4.tar.gz",
-        "rev": 4,
-        "size": 12165651,
-        "sha256": "5d23778652e2c35ee36fc3ecbdfbe94646cad58886619e9d41d14dc2cec33ca9"
+        "release": "themes-v15",
+        "archive": "vgs-theme-frankenstein-r5.tar.gz",
+        "rev": 5,
+        "size": 11850789,
+        "sha256": "67c0e9ea72718d7c360d3ab1473cb92da5698dc9b5a57608e47abde1c6f21034"
       }
     },
     {
@@ -1891,71 +378,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#070506",
-        "#b37580",
-        "#648ed0",
-        "#e095b5",
-        "#979fec",
-        "#cd9dcf",
-        "#7c93dd",
-        "#d9b6fd",
-        "#836f79",
-        "#d5aeb5",
-        "#a7c1e8",
-        "#f6dbe6",
-        "#e4e6fb",
-        "#eddaee",
-        "#c3cef2",
-        "#ffffff"
-      ],
-      "background": "#070506",
-      "foreground": "#ffffff",
-      "accent": "#979fec",
-      "size": 4537009,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1535,
-          "sha256": "8d2140ad6ab6137674ec83499817dc55f51613d6056757a636616c044de33408"
-        },
-        {
-          "path": "apps/chromium.theme",
-          "size": 10,
-          "sha256": "483b1f4e3f98251189efaf9f3934486416c14eca50b914f40acf5aba7f0753ac"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 13,
-          "sha256": "328fd2519268a09cbcb45b3e8393f6abcc1739b9816bdc87bd4761d9d240f026"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 1025,
-          "sha256": "c7e43de8038aad730c09ef157bba0170d20d1d69678a7d3311efa22cbcdaf6cd"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 44673,
-          "sha256": "9d32596707529983bbc074259d9e0ce1bca43a93a0738fa9faf414b956665f4d"
-        },
-        {
-          "path": "colors.toml",
-          "size": 661,
-          "sha256": "601b75977b55d4750ef3ebe640b3563cbd98df911a4fd405e684ee7dbd6680bd"
-        },
-        {
-          "path": "theme.json",
-          "size": 121,
-          "sha256": "c07193110c7aa8e7b20d6f99f5df64574c9e2d5cd29a6c6f1c053d1acb546648"
-        }
-      ],
+      "size": 4265351,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-ghost-pastel-r1.tar.gz",
-        "rev": 1,
-        "size": 4537009,
-        "sha256": "2cf9fedaebbd0bb7834596d204b8b146583dc2616b9547bd36045bca71e881c5"
+        "release": "themes-v15",
+        "archive": "vgs-theme-ghost-pastel-r2.tar.gz",
+        "rev": 2,
+        "size": 4265351,
+        "sha256": "50f916696ef668085c4265967a4c5ae56277a8d6118a0ab46a6ade5fd9a7afa8"
       }
     },
     {
@@ -1963,76 +392,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#171717",
-        "#aeab94",
-        "#f25623",
-        "#757864",
-        "#88a57d",
-        "#f56e0f",
-        "#7b837b",
-        "#a6ada6",
-        "#525252",
-        "#aeab94",
-        "#f25623",
-        "#757864",
-        "#88a57d",
-        "#f56e0f",
-        "#7b837b",
-        "#bcbfbc"
-      ],
-      "background": "#171717",
-      "foreground": "#ccd0cf",
-      "accent": "#f25623",
-      "size": 2321800,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 2518,
-          "sha256": "480303c84f0327c7cacf454ed57d2d077353fda08b93b37850dd047fea29f3dd"
-        },
-        {
-          "path": "apps/chromium.theme",
-          "size": 9,
-          "sha256": "987f02078d30bd20f160efc414f8d5e97962370f9fdb654ce974b89f61e766a9"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 10,
-          "sha256": "b14b7a19287d12877cb46cc70a715fd25aae7ba475d3d1120392e7adadd23649"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 1025,
-          "sha256": "6d4b5d7cdcd75e858552664462d43ec2ffa7acb9563706835e3599b9023bffaf"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 44671,
-          "sha256": "2a7d1c7f27de030d2cee56c60cc625f8f19c2c4777aa5e289be33afa572c111b"
-        },
-        {
-          "path": "colors.toml",
-          "size": 661,
-          "sha256": "3074e58656fc457b60ca3f8ab7653884adb18ec24a1147fad0d03c16be62f5b4"
-        },
-        {
-          "path": "terminal-colors.toml",
-          "size": 481,
-          "sha256": "47f7367cb1bf3e00a5fc118b7d68fe65b06f9567f74ccdaafb9fdb3f64bc6cd1"
-        },
-        {
-          "path": "theme.json",
-          "size": 109,
-          "sha256": "15b65b6d6e1638fccdfd8cb1a27ccf00e9fde5c543462d0d6dc73143d6c8aef9"
-        }
-      ],
+      "size": 2101318,
       "assets": {
-        "release": "themes-v6",
-        "archive": "vgs-theme-greek-noir-r3.tar.gz",
-        "rev": 3,
-        "size": 2321800,
-        "sha256": "845de5f3ed7931631335a3754bae470ad80933147cd8c3a01df0ca1e0babe981"
+        "release": "themes-v15",
+        "archive": "vgs-theme-greek-noir-r4.tar.gz",
+        "rev": 4,
+        "size": 2101318,
+        "sha256": "3fa474a61131d2438152d00d3014080ba1794a89860b8834e997cc39d87fa10e"
       }
     },
     {
@@ -2040,66 +406,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#3c3836",
-        "#ea6962",
-        "#a9b665",
-        "#d8a657",
-        "#7daea3",
-        "#d3869b",
-        "#89b482",
-        "#d4be98",
-        "#3c3836",
-        "#ea6962",
-        "#a9b665",
-        "#d8a657",
-        "#7daea3",
-        "#d3869b",
-        "#89b482",
-        "#d4be98"
-      ],
-      "background": "#282828",
-      "foreground": "#d4be98",
-      "accent": "#7daea3",
-      "size": 27237784,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 2342,
-          "sha256": "99114e42f0860ce7911a9c84b3a8cc887478d8675cf8c27742eeabeeed35c136"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 11,
-          "sha256": "db03d23dd42fcc39900733c4324f884ec731ab6de6d0fdb85496a62c230a2554"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 137,
-          "sha256": "e0fccdce19568171e2ad3ded9b52b422eecc6b690cdb4e6cc1da7de5bc6afd51"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 28867,
-          "sha256": "b6dc507a94d9d63b8e9cf4dd7f04ea9b3fb5d667b96bd4d6750cd466e5891a87"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "3555fb26fba119af8341ddea8f6baa834869136e2f4bdb7d9c192b4b1545e68f"
-        },
-        {
-          "path": "theme.json",
-          "size": 117,
-          "sha256": "db7162511f39d74e35588b94a22f9083e02bb3fec357a843cbb9fe55ff0ea6cf"
-        }
-      ],
+      "size": 26777568,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-gruvbox-r1.tar.gz",
-        "rev": 1,
-        "size": 27237784,
-        "sha256": "5ee5f2a140c708c66866265d47840356371fbc79ad0aa5a27e4b9095986a2b2b"
+        "release": "themes-v15",
+        "archive": "vgs-theme-gruvbox-r2.tar.gz",
+        "rev": 2,
+        "size": 26777568,
+        "sha256": "bdbcbf27be41f0c9196b9625b13fab484291ac0e5a7aece91ec3cf1d47b7dc2d"
       }
     },
     {
@@ -2107,66 +420,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#3c3836",
-        "#ea6962",
-        "#a9b665",
-        "#d8a657",
-        "#7daea3",
-        "#d3869b",
-        "#89b482",
-        "#d4be98",
-        "#3c3836",
-        "#ea6962",
-        "#a9b665",
-        "#d8a657",
-        "#7daea3",
-        "#d3869b",
-        "#89b482",
-        "#d4be98"
-      ],
-      "background": "#282828",
-      "foreground": "#d4be98",
-      "accent": "#7daea3",
-      "size": 49555851,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 2342,
-          "sha256": "99114e42f0860ce7911a9c84b3a8cc887478d8675cf8c27742eeabeeed35c136"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 19,
-          "sha256": "96d20b1fd1db2dfba81d9a03eccafe3d6ec9dae123bb4476f48b3ed4914003d8"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 137,
-          "sha256": "e0fccdce19568171e2ad3ded9b52b422eecc6b690cdb4e6cc1da7de5bc6afd51"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 44672,
-          "sha256": "089f7871176fe9484737b81986f234f4a15645d50a062502517a1381fb7afa77"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "3555fb26fba119af8341ddea8f6baa834869136e2f4bdb7d9c192b4b1545e68f"
-        },
-        {
-          "path": "theme.json",
-          "size": 119,
-          "sha256": "ef0b208813b827a23adb715aea6238e622dbb97af6614422dfffff32580479c0"
-        }
-      ],
+      "size": 49323048,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-gruvy-glass-r1.tar.gz",
-        "rev": 1,
-        "size": 49555851,
-        "sha256": "91f0fe16a9cbc3ee0c0173d66c14c47e0251db52c09660fd03db7a6b87cafc84"
+        "release": "themes-v15",
+        "archive": "vgs-theme-gruvy-glass-r2.tar.gz",
+        "rev": 2,
+        "size": 49323048,
+        "sha256": "6495b3ece656435e88b5b15961818f0ef0e85e87b4915fe8c0e10ffebe8a07fe"
       }
     },
     {
@@ -2174,71 +434,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#3e4058",
-        "#50f872",
-        "#4fe88f",
-        "#50f7d4",
-        "#829dd4",
-        "#86a7df",
-        "#7cf8f7",
-        "#85e1fb",
-        "#6a6e95",
-        "#85ff9d",
-        "#9cf7c2",
-        "#a4ffec",
-        "#c4d2ed",
-        "#cddbf4",
-        "#d1fffe",
-        "#ddf7ff"
-      ],
-      "background": "#0b0c16",
-      "foreground": "#ddf7ff",
-      "accent": "#82fb9c",
-      "size": 7549733,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1385,
-          "sha256": "3dd389ec82ae6d5742c7892590d122d4e70c7ec4a73c197227c6ea66e524baa3"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 10,
-          "sha256": "75be55b00f24a3cfc708db729e9bca23765e8ef0991d6889fbb2fd4d29581209"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 1025,
-          "sha256": "31a0e7b6be0cadfd0eb5d43dc08ef7945a37e867a7f3ea23649d88ea74364134"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 46371,
-          "sha256": "ab811a261e1926f5fe442798f6472ff73da3f6702331bb3b61c78c408a1a0fea"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "b2c32af3ecdb522a616fe9646f20a345842fa1b84d58d42f60dac34c507174fc"
-        },
-        {
-          "path": "terminal-colors.toml",
-          "size": 369,
-          "sha256": "f13edbead11c5e2947e2c0dd2ec5d44df496f518bee652c0194d1e042194e734"
-        },
-        {
-          "path": "theme.json",
-          "size": 117,
-          "sha256": "7cc1152d3d132eb662a33999d7173fb36b8fea547adde2c50781b89107335657"
-        }
-      ],
+      "size": 7243492,
       "assets": {
-        "release": "themes-v13",
-        "archive": "vgs-theme-hackerman-r4.tar.gz",
-        "rev": 4,
-        "size": 7549733,
-        "sha256": "e50dde2c0446ceb91b747854488e6dba8cea8ad85e5ec75877e06ad7218d223c"
+        "release": "themes-v15",
+        "archive": "vgs-theme-hackerman-r5.tar.gz",
+        "rev": 5,
+        "size": 7243492,
+        "sha256": "cb6f2b1c7fdd2a8950b9034734043663e78d96e46833668df9f0c5478c6037ee"
       }
     },
     {
@@ -2246,76 +448,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#1b1b1b",
-        "#f44336",
-        "#e75a50",
-        "#a99b7a",
-        "#e58980",
-        "#77838a",
-        "#6d6d6d",
-        "#e1ce98",
-        "#817f68",
-        "#e75a50",
-        "#77838a",
-        "#a99b7a",
-        "#e58980",
-        "#9ba2a6",
-        "#888888",
-        "#efebdc"
-      ],
-      "background": "#1b1b1b",
-      "foreground": "#efebdc",
-      "accent": "#e75a50",
-      "size": 8121740,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1536,
-          "sha256": "4c9ff376095896665dad073c915f506680d458ddbdf0aeb3d9a4871be9918be2"
-        },
-        {
-          "path": "apps/chromium.theme",
-          "size": 9,
-          "sha256": "3d2c786e923907afafe7200b9be6545c8c5219324bbb1d27ddb0ba37af24d385"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 11,
-          "sha256": "db03d23dd42fcc39900733c4324f884ec731ab6de6d0fdb85496a62c230a2554"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 1025,
-          "sha256": "6bf47bf09f13a3f66f17caf1d9dd2abc0f28b37bd514b38c67208f63406db786"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 44667,
-          "sha256": "dc2e1b9379d2a2b8ef81dd5c8aff32e47e93fd8906948c7e3ee91682fd16168e"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "fdfe2fa61059c70277c8eafdb65f4d235dbbeb504c6389398b81221663a86385"
-        },
-        {
-          "path": "terminal-colors.toml",
-          "size": 370,
-          "sha256": "72dbc4a8e42f71273a77a57c63c1b8bec70626ef59ae75cdf78864c94a9efbd5"
-        },
-        {
-          "path": "theme.json",
-          "size": 110,
-          "sha256": "3b638cfeed87b552ced63a916433bb33ba63ec19aeca1c20db006a13e851152c"
-        }
-      ],
+      "size": 7797459,
       "assets": {
-        "release": "themes-v6",
-        "archive": "vgs-theme-harbordark-r3.tar.gz",
-        "rev": 3,
-        "size": 8121740,
-        "sha256": "9afe5bb4653eee837896551c2ca54fc9be45189fd4863b9a17265f4d09000603"
+        "release": "themes-v15",
+        "archive": "vgs-theme-harbordark-r4.tar.gz",
+        "rev": 4,
+        "size": 7797459,
+        "sha256": "1322157ab7bcd02a6389fa9d791083796e5178d224211bbec2c46743269e434f"
       }
     },
     {
@@ -2323,71 +462,13 @@
       "mode": "dark",
       "pair": "horizon-light",
       "source": "curated",
-      "colors": [
-        "#232530",
-        "#e95678",
-        "#29d398",
-        "#fab795",
-        "#26bbd9",
-        "#ee64ac",
-        "#59e1e3",
-        "#bbbbbb",
-        "#6c6f93",
-        "#ec6a88",
-        "#3fdaa4",
-        "#fbc3a7",
-        "#3fc4de",
-        "#f075b5",
-        "#6be4e6",
-        "#d5d8da"
-      ],
-      "background": "#1c1e26",
-      "foreground": "#d5d8da",
-      "accent": "#fab795",
-      "size": 11154381,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 2075,
-          "sha256": "2f02588dbd1330df61a6ddae49c402412166b983cb97ee84352b08668f3f6bcf"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 12,
-          "sha256": "fabce71aa1d6dff7a151d3ac1ce842c22ee11399e0279b311f97cfcfca30f7ad"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 15155,
-          "sha256": "1c1fb9b6ba4e71800e88c940bb26753019e15a1a1f5e81959c534cdbaaa3556a"
-        },
-        {
-          "path": "colors.toml",
-          "size": 460,
-          "sha256": "5e2d6517bde0824b9aa1bc63b7169b19fbd5e7f306819b37a0f90e1b07a8742f"
-        },
-        {
-          "path": "terminal-colors.toml",
-          "size": 174,
-          "sha256": "d23df0d0936c2eb9f78110af97a769f9ab491cbc025c2c44a37d837139e18487"
-        },
-        {
-          "path": "theme.json",
-          "size": 139,
-          "sha256": "3ff898663e8a2ea3152eea6f2e295f6f3d1ef584827d200a74f918d0532b774a"
-        },
-        {
-          "path": "ui-roles.toml",
-          "size": 225,
-          "sha256": "dc4581f77635861da914c62ebf558a5d34eb987cde9a539f5e1d249141cff689"
-        }
-      ],
+      "size": 10069233,
       "assets": {
-        "release": "themes-v14",
-        "archive": "vgs-theme-horizon-r5.tar.gz",
-        "rev": 5,
-        "size": 11154381,
-        "sha256": "168ea3ec9cf4370018cdfc52460b24f3017a01e447b6d1cf15c060c554bc6873"
+        "release": "themes-v15",
+        "archive": "vgs-theme-horizon-r6.tar.gz",
+        "rev": 6,
+        "size": 10069233,
+        "sha256": "c7f861993ed685f06ad96d3ca23532c01577bcaf5313713cca026632f07df316"
       }
     },
     {
@@ -2395,71 +476,13 @@
       "mode": "light",
       "pair": "horizon",
       "source": "curated",
-      "colors": [
-        "#fdf0ed",
-        "#da103f",
-        "#1eb980",
-        "#af5427",
-        "#8a31b9",
-        "#e73665",
-        "#1d8991",
-        "#333333",
-        "#8a31b9",
-        "#dc3318",
-        "#07da8c",
-        "#f77d26",
-        "#8a31b9",
-        "#e84a72",
-        "#1eaeae",
-        "#333333"
-      ],
-      "background": "#fdf0ed",
-      "foreground": "#06060c",
-      "accent": "#da103f",
-      "size": 9817738,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 2075,
-          "sha256": "8e73ad788585ce299696793455331c071dbc617e7f923cf850abbdbc683b76e9"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 12,
-          "sha256": "fabce71aa1d6dff7a151d3ac1ce842c22ee11399e0279b311f97cfcfca30f7ad"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 15204,
-          "sha256": "241e7f942cc9239b6669c60312e25c44da169b36fae819ec4964b871eb740457"
-        },
-        {
-          "path": "colors.toml",
-          "size": 460,
-          "sha256": "b964f42f6d9ac27b277698f7a32d38f4677c74710a71047a1db8177a992f4a61"
-        },
-        {
-          "path": "terminal-colors.toml",
-          "size": 210,
-          "sha256": "f0f59d909b59dca81cda7d699f4cb9d962ed18f10a733baba6ca64ec11b8b478"
-        },
-        {
-          "path": "theme.json",
-          "size": 143,
-          "sha256": "0ea561ac39acccb55e19c84dfc366c6e6c8447c081bd338403e887e0c7fa94bc"
-        },
-        {
-          "path": "ui-roles.toml",
-          "size": 225,
-          "sha256": "b6809259e771f61391e2baa1e0e3050a493fbd09a72d43b20abe4e843ace2395"
-        }
-      ],
+      "size": 7572391,
       "assets": {
-        "release": "themes-v14",
-        "archive": "vgs-theme-horizon-light-r7.tar.gz",
-        "rev": 7,
-        "size": 9817738,
-        "sha256": "260528f1fc1d2685850a9b5126ad2f87fe9299bc1cf549f10570509e04416f51"
+        "release": "themes-v15",
+        "archive": "vgs-theme-horizon-light-r8.tar.gz",
+        "rev": 8,
+        "size": 7572391,
+        "sha256": "6753fe77f52f03b0d78b3b49234b06697f7c65f768f4630fdcc5f029689d6c2e"
       }
     },
     {
@@ -2467,71 +490,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#13131d",
-        "#ea90a8",
-        "#a6b2c7",
-        "#d18ba2",
-        "#7c7ca8",
-        "#9f859f",
-        "#919ab7",
-        "#a1a2a7",
-        "#434353",
-        "#f6bfce",
-        "#d1d9e4",
-        "#e3aebf",
-        "#bcbcd4",
-        "#bfadbf",
-        "#d2d7e3",
-        "#c8c8c8"
-      ],
-      "background": "#13131d",
-      "foreground": "#c8c8c8",
-      "accent": "#7c7ca8",
-      "size": 8108654,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1536,
-          "sha256": "8961d504c71b2897e6d81159464713e71fd1ee1b1997011054f2a98d893d7cc9"
-        },
-        {
-          "path": "apps/chromium.theme",
-          "size": 9,
-          "sha256": "58817c1e439d3b0e526273dbda8b3abe124e486deb2bac3c5f2b39f03db69a44"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 13,
-          "sha256": "328fd2519268a09cbcb45b3e8393f6abcc1739b9816bdc87bd4761d9d240f026"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 390,
-          "sha256": "754776f5db873b50d3675186686a90870019c5c4f1f504bca308d1342e3ef66c"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 44670,
-          "sha256": "bd3c7fc7e79b0778c6097e047269437ad2a529ee87289ba014c0afd460f00697"
-        },
-        {
-          "path": "colors.toml",
-          "size": 578,
-          "sha256": "27764f0b1ebd529dbd2eb4082bbae03cbca9501460ed4403c082e5f9c74c7bfe"
-        },
-        {
-          "path": "theme.json",
-          "size": 108,
-          "sha256": "07d463a69bb828726525bc9c72de24082a8f0fb71f4d1c16c7772530a551c944"
-        }
-      ],
+      "size": 7846301,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-inkypinky-r1.tar.gz",
-        "rev": 1,
-        "size": 8108654,
-        "sha256": "52316b00144d261fc4096770add1efb7c69c6a1fed661effb8a6fc9487b1dca8"
+        "release": "themes-v15",
+        "archive": "vgs-theme-inkypinky-r2.tar.gz",
+        "rev": 2,
+        "size": 7846301,
+        "sha256": "9b5f96bdd7d06728f9a4e3c93e6a82ff65b2b360114cab12799db51c00adc55b"
       }
     },
     {
@@ -2539,66 +504,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#090618",
-        "#c34043",
-        "#76946a",
-        "#c0a36e",
-        "#7e9cd8",
-        "#957fb8",
-        "#6a9589",
-        "#c8c093",
-        "#727169",
-        "#e82424",
-        "#98bb6c",
-        "#e6c384",
-        "#7fb4ca",
-        "#938aa9",
-        "#7aa89f",
-        "#dcd7ba"
-      ],
-      "background": "#1f1f28",
-      "foreground": "#dcd7ba",
-      "accent": "#7e9cd8",
-      "size": 4643548,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1963,
-          "sha256": "5e13d1706e72c7697ec17a0e2c64abace93b711065689120ebde03489b4d2061"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 10,
-          "sha256": "75be55b00f24a3cfc708db729e9bca23765e8ef0991d6889fbb2fd4d29581209"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 140,
-          "sha256": "46c4c4041dad76529dc7e6c07c6bd5073178f29ab7bbdc88cafde4ce298374f3"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 30590,
-          "sha256": "bb49e7a768f5318ebde4a7563b603c1b4a47fe7e2f568e62619f0121423697eb"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "7f7d629bbb96b41cc973e840fc5cfa655ff390273409ded02eed2c30219003ac"
-        },
-        {
-          "path": "theme.json",
-          "size": 113,
-          "sha256": "fa1be9ed059d8acb5728c685c9003d1dc505af0853195a3c7274ffc4e1668d94"
-        }
-      ],
+      "size": 4293718,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-kanagawa-r1.tar.gz",
-        "rev": 1,
-        "size": 4643548,
-        "sha256": "65c220fc8ea391df43ebd01b6ff9e1909eee229d5e17982a2b3f58b5faebf56d"
+        "release": "themes-v15",
+        "archive": "vgs-theme-kanagawa-r2.tar.gz",
+        "rev": 2,
+        "size": 4293718,
+        "sha256": "da021356ef50f27efff19739202f269a54e5103b07aff3d72445eef8eb186132"
       }
     },
     {
@@ -2606,71 +518,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#0d0c0c",
-        "#c4746e",
-        "#8a9a7b",
-        "#c4b28a",
-        "#8ba4b0",
-        "#a292a3",
-        "#8ea4a2",
-        "#c8c093",
-        "#a6a69c",
-        "#e46876",
-        "#87a987",
-        "#e6c384",
-        "#7fb4ca",
-        "#938aa9",
-        "#7aa89f",
-        "#c5c9c5"
-      ],
-      "background": "#181616",
-      "foreground": "#c5c9c5",
-      "accent": "#8ba4b0",
-      "size": 9442371,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1964,
-          "sha256": "7734cb252d5545663eec703c5e3bc0a72ad9ebd51eb9746bc683b7b89fa7e284"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 10,
-          "sha256": "75be55b00f24a3cfc708db729e9bca23765e8ef0991d6889fbb2fd4d29581209"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 147,
-          "sha256": "bc491e239cfd76bfab46006c11253f7baad45e277167bfc2ff608a5e98f556ed"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 24965,
-          "sha256": "557ef31c6c8cc47f64d34f36ad57c4e49a98114ae70a50d5cdd6a8fbfd8ee38e"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "e5bcfd5941ebb92444a5c88f952e6686750d6d24835ae2fbee677d0f650742eb"
-        },
-        {
-          "path": "terminal-colors.toml",
-          "size": 310,
-          "sha256": "623b399fb2a73c62c00e629f8a5bbd0a9e5bf6691e44d35d684c57a45bfd826c"
-        },
-        {
-          "path": "theme.json",
-          "size": 120,
-          "sha256": "6cceb9eeeb43846c38d1687d5cdd6366143f9e0308b1fa4d5ddc59b9105d900c"
-        }
-      ],
+      "size": 9091641,
       "assets": {
-        "release": "themes-v6",
-        "archive": "vgs-theme-kanagawa-dragon-r3.tar.gz",
-        "rev": 3,
-        "size": 9442371,
-        "sha256": "d9d2fca9e6165c475ec9c8b44e08046237307a92444d28a0ca222011c34c0534"
+        "release": "themes-v15",
+        "archive": "vgs-theme-kanagawa-dragon-r4.tar.gz",
+        "rev": 4,
+        "size": 9091641,
+        "sha256": "7d3b3a6f913bb7132ddcd885c71cb4b5d203cc2f371b8aba23d2ca5c2e933a29"
       }
     },
     {
@@ -2678,76 +532,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#2c2e27",
-        "#d9bc87",
-        "#d2dfc1",
-        "#dfdfb9",
-        "#c6d0b6",
-        "#cfc9af",
-        "#c1cead",
-        "#dde5ca",
-        "#a2a49a",
-        "#eedec3",
-        "#f6f9f3",
-        "#f8f8ee",
-        "#ebefe5",
-        "#eceae0",
-        "#e6ecdd",
-        "#fdfefd"
-      ],
-      "background": "#2c2e27",
-      "foreground": "#fdfefd",
-      "accent": "#c6d0b6",
-      "size": 7417555,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1535,
-          "sha256": "faaa2f4f4293b3b2365f6975fa7e57985fb9e1230931e575c854c25c3012cf09"
-        },
-        {
-          "path": "apps/chromium.theme",
-          "size": 9,
-          "sha256": "e78220fb88b759aa835d3ca40315dd9d8505da4f90d73c0e3ccdca9498eeb088"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 10,
-          "sha256": "b14b7a19287d12877cb46cc70a715fd25aae7ba475d3d1120392e7adadd23649"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 1025,
-          "sha256": "e72ba1beb7bdbb576d1a81e217476d3d0afc7900a4e80a3acf2eda343a4d0098"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 44669,
-          "sha256": "809e2f111578f32f00cd3a1b343e4162d25d55ec7f65e331a071ac58dcb7eb5d"
-        },
-        {
-          "path": "colors.toml",
-          "size": 661,
-          "sha256": "57550e943d52b8c3c44b1ce5f8a6d241af9a48b22f663559599981df67e2a30c"
-        },
-        {
-          "path": "terminal-colors.toml",
-          "size": 369,
-          "sha256": "7611abb0ed1c2210f5f239745d94b28c5f5ff9c0dfa5dc630ee60dd0cc805790"
-        },
-        {
-          "path": "theme.json",
-          "size": 107,
-          "sha256": "8eb9bde33467a462401b0c292931f8ebbdff3b304e6d98426749425ffccf4295"
-        }
-      ],
+      "size": 7093648,
       "assets": {
-        "release": "themes-v6",
-        "archive": "vgs-theme-kurayami-r2.tar.gz",
-        "rev": 2,
-        "size": 7417555,
-        "sha256": "66bb8ad554fc0dd9524c097504766d52575aa329cd460c1d472d5caecf34f859"
+        "release": "themes-v15",
+        "archive": "vgs-theme-kurayami-r3.tar.gz",
+        "rev": 3,
+        "size": 7093648,
+        "sha256": "e5631303e58f2b5d9fadbe7292ac268436556421a78de5c07024141822d6e623"
       }
     },
     {
@@ -2755,71 +546,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#0c0b0c",
-        "#c38b7b",
-        "#87a9b0",
-        "#6b5e73",
-        "#b59790",
-        "#c4d8e2",
-        "#a5a0b6",
-        "#cfd3cd",
-        "#584e51",
-        "#c38b7b",
-        "#87a9b0",
-        "#6b5e73",
-        "#b59790",
-        "#c4d8e2",
-        "#a5a0b6",
-        "#e2dddc"
-      ],
-      "background": "#0c0b0c",
-      "foreground": "#fafcfb",
-      "accent": "#b59790",
-      "size": 6613432,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1639,
-          "sha256": "7c555989a544f33b2f5e161bdc9eed034572699bc667e097261846f1419c7543"
-        },
-        {
-          "path": "apps/chromium.theme",
-          "size": 9,
-          "sha256": "bb13734f8fe8d831af27463172d00aeed96fed4a0841b4b0ef964064296fc964"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 12,
-          "sha256": "fabce71aa1d6dff7a151d3ac1ce842c22ee11399e0279b311f97cfcfca30f7ad"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 1025,
-          "sha256": "3bbfc731292db9e058dd13e86683b4f863a834918944efe4bea096d9fd39e5b2"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 70172,
-          "sha256": "e3c44f9bfd6b5b179a65c83aead37c667fa6e34f655f3d99c3351aa60ea5746d"
-        },
-        {
-          "path": "colors.toml",
-          "size": 586,
-          "sha256": "9dada0aba228e90a3b89bce019eea4434cbe4912d71df9aab3ca27a112f34284"
-        },
-        {
-          "path": "theme.json",
-          "size": 118,
-          "sha256": "faa7015a39fb7a2870e6a20cb0202bd90ebcd3224f981f815b215d6c6d9c3e5d"
-        }
-      ],
+      "size": 6352163,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-last-horizon-r1.tar.gz",
-        "rev": 1,
-        "size": 6613432,
-        "sha256": "d1fc3e8edc9e68ae09a7c8307baacf6a260c4a53ec64dd4c891bea4b622993aa"
+        "release": "themes-v15",
+        "archive": "vgs-theme-last-horizon-r2.tar.gz",
+        "rev": 2,
+        "size": 6352163,
+        "sha256": "0648a82559374b487286b8d1737d09b3a77d98e318cd8677065a3df0948a205d"
       }
     },
     {
@@ -2827,76 +560,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#292323",
-        "#a48484",
-        "#af8a79",
-        "#a88373",
-        "#a39eb8",
-        "#bea7bd",
-        "#b0b7c5",
-        "#dcd7d6",
-        "#877878",
-        "#ccb8b8",
-        "#be9c8e",
-        "#bd9c8f",
-        "#d5d2df",
-        "#e5dbe5",
-        "#e5e7ec",
-        "#dcd7d6"
-      ],
-      "background": "#292323",
-      "foreground": "#dcd7d6",
-      "accent": "#cb8c6d",
-      "size": 3519531,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 2147,
-          "sha256": "e92a32aff4a4b59797df963bcdd9abc5b5b2853824571df4f195c3677823f07e"
-        },
-        {
-          "path": "apps/chromium.theme",
-          "size": 9,
-          "sha256": "6e6af3a9a865a23cedb64872d9ec2688de83f4707491519b22f0287e9a280ab4"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 16,
-          "sha256": "ca63484665b94ba8a2b9fa5bb33f287d8fbe61f4c1ffd651672b5093f650d4cd"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 1025,
-          "sha256": "a41402bc451e35b77a7062f9e16ac229e67445a19b9910276289bf12534aa1ae"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 44669,
-          "sha256": "fc9b2dc33ffcfe243fcbe551429e65560963fafd20f1ab16f2bf7d2a14da630a"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "844d1a5f0bba1461752b3426bca55feeb2a978485d3520a1c5485361e2db8f2d"
-        },
-        {
-          "path": "terminal-colors.toml",
-          "size": 422,
-          "sha256": "10502d13ad47205f044835efe32f749c11c072065d34559232c4418cc0f54139"
-        },
-        {
-          "path": "theme.json",
-          "size": 107,
-          "sha256": "8efeef64eebbbb563ebd09695823ed20b147bcabdd8284e0c136d3bbb0231e64"
-        }
-      ],
+      "size": 3225395,
       "assets": {
-        "release": "themes-v6",
-        "archive": "vgs-theme-lowlight-r3.tar.gz",
-        "rev": 3,
-        "size": 3519531,
-        "sha256": "333d2896612048b79ccf69c88cb74b6c0795c695d3d56dcd0f3246376f3373fa"
+        "release": "themes-v15",
+        "archive": "vgs-theme-lowlight-r4.tar.gz",
+        "rev": 4,
+        "size": 3225395,
+        "sha256": "1acb0409c017327c1ebf0afddc7b99c2667477739f1049bfc795f44307682ddc"
       }
     },
     {
@@ -2904,71 +574,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#1b2d40",
-        "#4d86b0",
-        "#5e95bc",
-        "#6fa4c9",
-        "#6fb8e3",
-        "#8bc9eb",
-        "#b4e4f6",
-        "#d6e2ee",
-        "#304860",
-        "#73a6cb",
-        "#86b7d8",
-        "#9dcae5",
-        "#f2fcff",
-        "#b1d8ee",
-        "#d1eef8",
-        "#ffffff"
-      ],
-      "background": "#16242d",
-      "foreground": "#d6e2ee",
-      "accent": "#8bc9eb",
-      "size": 2132492,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1395,
-          "sha256": "3ca1ca402ee58f2892fa55fe005eff8f2fb20bd9ab7225709278c3d69e9e6051"
-        },
-        {
-          "path": "apps/chromium.theme",
-          "size": 9,
-          "sha256": "46f4ab433059089e17d95fdf0ad007e1c28edb9560a933424167fded80901482"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 10,
-          "sha256": "75be55b00f24a3cfc708db729e9bca23765e8ef0991d6889fbb2fd4d29581209"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 175,
-          "sha256": "04d465015e274a0104a40608af17cd4a44b0545e19dee2e1ccdd35e6617ed252"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 59690,
-          "sha256": "6e50141710bbdf9e1f9be5b270790819657f879af0c20fbfdb4419c6478a7f76"
-        },
-        {
-          "path": "colors.toml",
-          "size": 596,
-          "sha256": "131b1fb736fcfb23671a07ad96cb8828d6b4d581f8b24c28f1eadc89f84c72ea"
-        },
-        {
-          "path": "theme.json",
-          "size": 122,
-          "sha256": "7623b0159cc698e3c2a7a6779a8ebec489d1238c851df4f604477dd7952f7d59"
-        }
-      ],
+      "size": 1917601,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-lumon-r1.tar.gz",
-        "rev": 1,
-        "size": 2132492,
-        "sha256": "3e7cfba3fa4187bc2e6090091a935fc66d7b8e3398b38fea8804d45cc220f5f0"
+        "release": "themes-v15",
+        "archive": "vgs-theme-lumon-r2.tar.gz",
+        "rev": 2,
+        "size": 1917601,
+        "sha256": "4d74f0c4e1cc45e32c98c078d569b37372ea8b01a7e5b177e287ad3ac3f2e881"
       }
     },
     {
@@ -2976,71 +588,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#181c1f",
-        "#ea4a5a",
-        "#79b8ff",
-        "#ffdf5d",
-        "#ffdf5d",
-        "#f9826c",
-        "#79b8ff",
-        "#e1e4e8",
-        "#6a737d",
-        "#ea4a5a",
-        "#79b8ff",
-        "#ffdf5d",
-        "#79b8ff",
-        "#f9826c",
-        "#79b8ff",
-        "#e1e4e8"
-      ],
-      "background": "#181c1f",
-      "foreground": "#e1e4e8",
-      "accent": "#ffffff",
-      "size": 7206723,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1551,
-          "sha256": "5e9525ce8d47dbb8d716a2369968e3161474959092a07f5c43041034bbfc34cf"
-        },
-        {
-          "path": "apps/chromium.theme",
-          "size": 8,
-          "sha256": "60eca3df104cde0c15432646c1bf57d4ff4a1832f12c249c53056a78265dbb59"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 10,
-          "sha256": "75be55b00f24a3cfc708db729e9bca23765e8ef0991d6889fbb2fd4d29581209"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 12986,
-          "sha256": "264b8fb975dc16aa0f0037b24df78f6ff20c2dd5e7aff168a66477f34d62962e"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 44666,
-          "sha256": "30466e12a62606cd8333d3caa6aadaab14dbcf6c558817e8e3a296193f2548c2"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "755c164c66aa82b23f05dcbacf57a5ebb79a16cae8085d9e0e0e753dbe870bc7"
-        },
-        {
-          "path": "theme.json",
-          "size": 102,
-          "sha256": "285aecb0f4cc02a8191da9210cb4d5b521e4aa6e7259255d2ea5af99f8885218"
-        }
-      ],
+      "size": 6851697,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-lunar-r1.tar.gz",
-        "rev": 1,
-        "size": 7206723,
-        "sha256": "1aa6aaed041d89658e6e072d4ed1a5e999cdfa4eb6589857ec999246ff517d0b"
+        "release": "themes-v15",
+        "archive": "vgs-theme-lunar-r2.tar.gz",
+        "rev": 2,
+        "size": 6851697,
+        "sha256": "25e8a6cd0bf278027df8aadca0526c2738481a0acf959d73774a2625513ad18c"
       }
     },
     {
@@ -3048,71 +602,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#333333",
-        "#d35f5f",
-        "#ffc107",
-        "#b91c1c",
-        "#e68e0d",
-        "#d35f5f",
-        "#bebebe",
-        "#bebebe",
-        "#8a8a8d",
-        "#b91c1c",
-        "#ffc107",
-        "#b90a0a",
-        "#f59e0b",
-        "#b91c1c",
-        "#eaeaea",
-        "#ffffff"
-      ],
-      "background": "#121212",
-      "foreground": "#bebebe",
-      "accent": "#e68e0d",
-      "size": 7837306,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 2648,
-          "sha256": "e9ee6fb643852b378429fc382badef31180aac4cfdccf7201c6749d1999acda9"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 9,
-          "sha256": "1c2342215182a8e2880028e03e679fad194dbdfa5155b55daf8386390526cfbc"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 178,
-          "sha256": "58670a47cbd6c887cba256dbbe94a45316200f067bd4aaaf730b901a73e5d322"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 13171,
-          "sha256": "86b4056f5e7316536fee9af2a275f5423c3c777809a7963bc5bebee71c4d3e73"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "dbdd13a629aac86daa0f01ad03b66429d9e4b303758ea464c8bcc917a5601786"
-        },
-        {
-          "path": "terminal-colors.toml",
-          "size": 429,
-          "sha256": "73a4ce4f224ef6d215fdf8bc7d15ae2cd01327c5e38c00cb59ada7fa63ec1ab3"
-        },
-        {
-          "path": "theme.json",
-          "size": 119,
-          "sha256": "90db05b994591f16bee847a2c315a466c6706a50b6193515e4cadb30ffded287"
-        }
-      ],
+      "size": 7569118,
       "assets": {
-        "release": "themes-v6",
-        "archive": "vgs-theme-matte-black-r2.tar.gz",
-        "rev": 2,
-        "size": 7837306,
-        "sha256": "f0d7df43af6dc343c7cabb3f8c106965f99977a4bd887f49d95be43b4b7ad963"
+        "release": "themes-v15",
+        "archive": "vgs-theme-matte-black-r3.tar.gz",
+        "rev": 3,
+        "size": 7569118,
+        "sha256": "4b0dedc7004e90d6a970732e22c0004a174227f62f10881cd618c4b7a8e4cccf"
       }
     },
     {
@@ -3120,76 +616,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#1c1b19",
-        "#c5564a",
-        "#a89984",
-        "#ebdbb2",
-        "#908d88",
-        "#afa499",
-        "#d4bd99",
-        "#fbf1c7",
-        "#6b655c",
-        "#d94e38",
-        "#c2a571",
-        "#f7df97",
-        "#aaa090",
-        "#cbae8e",
-        "#e7c07c",
-        "#fff8e8"
-      ],
-      "background": "#1c1b19",
-      "foreground": "#f0e4c5",
-      "accent": "#706e6b",
-      "size": 7507708,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 2753,
-          "sha256": "05b035d0f4f6e6537d3d3da89e1ae90ea29df8b7d6d52f71712ed9251e4ca437"
-        },
-        {
-          "path": "apps/chromium.theme",
-          "size": 9,
-          "sha256": "525db6d0369829d91e9ed790ea154cb6992ce7028ea92de4e04254f455906309"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 10,
-          "sha256": "b14b7a19287d12877cb46cc70a715fd25aae7ba475d3d1120392e7adadd23649"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 311,
-          "sha256": "34f2b4e8d2754bc1ce55e7c39bec1162320c0fa97ee19fd0b418cab060282c5c"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 51124,
-          "sha256": "aaf5730e58421e3af3aa145c810b1a0451f67c4a762ea5c87ab326540a1a9daf"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "188802af75f1295862d9fcb9239ae9ef6742ea12dbf0903455bcc6a9ce25357a"
-        },
-        {
-          "path": "terminal-colors.toml",
-          "size": 370,
-          "sha256": "11791080e3d37f1ea9c5028950f4404fdc1df550e930ef95054008fd398ba6db"
-        },
-        {
-          "path": "theme.json",
-          "size": 110,
-          "sha256": "d9bcfaf388b3cd3a44f6faa06febeb30e9be0e68a62286e27230ea35625d8fe8"
-        }
-      ],
+      "size": 7157500,
       "assets": {
-        "release": "themes-v6",
-        "archive": "vgs-theme-mechanoonna-r3.tar.gz",
-        "rev": 3,
-        "size": 7507708,
-        "sha256": "16e66a471ddd6af5ee50b7dcbd7f54d829b1672369d5a20fed7a6afef68caca1"
+        "release": "themes-v15",
+        "archive": "vgs-theme-mechanoonna-r4.tar.gz",
+        "rev": 4,
+        "size": 7157500,
+        "sha256": "1528b18cea6474af64ee8d8a049b33278873f4e119ccf7e52b544c8678a400f5"
       }
     },
     {
@@ -3197,76 +630,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#222222",
-        "#685742",
-        "#5f875f",
-        "#b36d43",
-        "#78824b",
-        "#bb7744",
-        "#c9a554",
-        "#c2c2b0",
-        "#666666",
-        "#685742",
-        "#5f875f",
-        "#b36d43",
-        "#78824b",
-        "#bb7744",
-        "#c9a554",
-        "#d7c483"
-      ],
-      "background": "#222222",
-      "foreground": "#c2c2b0",
-      "accent": "#78824b",
-      "size": 13035604,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1386,
-          "sha256": "6fdc54783dc5546ae43b5ab92c304ef7e188c7311a76fb434774c6e05d1de882"
-        },
-        {
-          "path": "apps/chromium.theme",
-          "size": 9,
-          "sha256": "3fae8806f0a11943fdcffe6a2a1b369522078539a2d470cff8af0d2c8e864b44"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 16,
-          "sha256": "ca63484665b94ba8a2b9fa5bb33f287d8fbe61f4c1ffd651672b5093f650d4cd"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 159,
-          "sha256": "db133c18ab4533359b706d51cdaef15b397fc0ffa75b98cd6b82244c4279e952"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 55373,
-          "sha256": "7041c8ae11088dc33e5f820dbe7f64da6a1022f1e382a76b0bec9d9d77598c96"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "d45639b84d4aada17d29c771c3d940d54b2cb996265946d6b0b5cbf516572871"
-        },
-        {
-          "path": "terminal-colors.toml",
-          "size": 369,
-          "sha256": "54b23fb35481b9421500a58da2d5e77d5410cedfa118ce5fa72bfb8c2df4e7c8"
-        },
-        {
-          "path": "theme.json",
-          "size": 118,
-          "sha256": "8061b39cca8b5309e193320f78fae2591471c79b8c4300ba218b7a7d1248aa29"
-        }
-      ],
+      "size": 12801430,
       "assets": {
-        "release": "themes-v6",
-        "archive": "vgs-theme-miasma-r2.tar.gz",
-        "rev": 2,
-        "size": 13035604,
-        "sha256": "456efbeb565b4e2cd01bddab1abdfbe1936d883de909449e712175c5ba329f8e"
+        "release": "themes-v15",
+        "archive": "vgs-theme-miasma-r3.tar.gz",
+        "rev": 3,
+        "size": 12801430,
+        "sha256": "adb2ed9091069b6ed67102095830c4b192e7fe07479bc22935eeeb12eb70bd93"
       }
     },
     {
@@ -3274,71 +644,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#0a1220",
-        "#f25e86",
-        "#b2d977",
-        "#f2c063",
-        "#78dce8",
-        "#aba0f2",
-        "#f28b66",
-        "#f0f2f5",
-        "#555c65",
-        "#f25e86",
-        "#b2d977",
-        "#f2c063",
-        "#78dce8",
-        "#aba0f2",
-        "#f28b66",
-        "#f0f2f5"
-      ],
-      "background": "#0a1220",
-      "foreground": "#f0f2f5",
-      "accent": "#aba0f2",
-      "size": 4523201,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1535,
-          "sha256": "df90df40aebd25bd3c8d60d0b0bc055389ef7f4930254ce297d4d0c85686ac33"
-        },
-        {
-          "path": "apps/chromium.theme",
-          "size": 9,
-          "sha256": "14bfe9f6c1317a0cc72ab13861fee8ef3473f523f8ad1eb029bf340b0cae6ea8"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 13,
-          "sha256": "328fd2519268a09cbcb45b3e8393f6abcc1739b9816bdc87bd4761d9d240f026"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 1051,
-          "sha256": "20f7c8ff10345e8628f5f4294d143a36a5de618ac9154ed9b3c3859698dd07e3"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 44668,
-          "sha256": "3ee799d11b20fda8fe1bb3a41f27cab6f8297e94dbac0e1987e22b98a23aeac6"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "fb4973e85fc565dc45e33b4a3d8aeb8f0bd5c0cbc8775aa6624d7ded9ca90348"
-        },
-        {
-          "path": "theme.json",
-          "size": 104,
-          "sha256": "70ab4578bc84e90125bf6e7d8d832edca8ee8f2cb46595c314e03e346b2dbe5a"
-        }
-      ],
+      "size": 4310118,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-monokai-r1.tar.gz",
-        "rev": 1,
-        "size": 4523201,
-        "sha256": "fd8b285fca27ee4137edcbafe6f57b7f9b3cdd9454b456068f7e75fe8aac8916"
+        "release": "themes-v15",
+        "archive": "vgs-theme-monokai-r2.tar.gz",
+        "rev": 2,
+        "size": 4310118,
+        "sha256": "09d5b13fe946f9b78619857dd8706442f8466f93fae1ea98ff1d668fc0b00a38"
       }
     },
     {
@@ -3346,81 +658,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#2d2940",
-        "#c0685f",
-        "#965f81",
-        "#fca766",
-        "#7b79a4",
-        "#987195",
-        "#7c79a5",
-        "#6096fd",
-        "#684764",
-        "#ee897d",
-        "#bb90a1",
-        "#ffd46b",
-        "#a09bd3",
-        "#c192c0",
-        "#a19bd4",
-        "#00ffd2"
-      ],
-      "background": "#2d2940",
-      "foreground": "#6096fd",
-      "accent": "#7b79a4",
-      "size": 27140251,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 2518,
-          "sha256": "66735f8237800e7508a6c61e343a820168277863148427995e2ba11e9a3cebc9"
-        },
-        {
-          "path": "apps/chromium.theme",
-          "size": 9,
-          "sha256": "220934e34a3065d4294064061bb0e170a6c6534194e2a7377a0c9c17c73f0fc6"
-        },
-        {
-          "path": "apps/claude-light.json",
-          "size": 218,
-          "sha256": "eabaa0fdd7cf886448231bb4eaa4f1cdb050662d4978a199ac5891b7d68d0f80"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 12,
-          "sha256": "fabce71aa1d6dff7a151d3ac1ce842c22ee11399e0279b311f97cfcfca30f7ad"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 1025,
-          "sha256": "71ff9726ae792e406115a4d7980fedae629e523850c314478c4876bfffc186ab"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 44671,
-          "sha256": "8dfc9140d1bb7c655da3bdecb6557b9ac68d85492447985c784e3a72481f7a23"
-        },
-        {
-          "path": "colors.toml",
-          "size": 578,
-          "sha256": "3391143fb09e49478c67bf163684e09e3b509ceb1c3c561354d255b502a47522"
-        },
-        {
-          "path": "terminal-colors.toml",
-          "size": 370,
-          "sha256": "da103cd621d8a7d76b3f3ffb9e9fc33c99bd206e04871215427b565c69b8c5b8"
-        },
-        {
-          "path": "theme.json",
-          "size": 206,
-          "sha256": "31e226599cece46d84bfdf32151aa92e670899dbb0eaf3c2a9ec5ef0612a1f61"
-        }
-      ],
+      "size": 26577606,
       "assets": {
-        "release": "themes-v12",
-        "archive": "vgs-theme-moon-orbit-r3.tar.gz",
-        "rev": 3,
-        "size": 27140251,
-        "sha256": "2f2b4140ecf4cc1d66091e92178b08a069db43620deaf06f9bc0e847700d178e"
+        "release": "themes-v15",
+        "archive": "vgs-theme-moon-orbit-r4.tar.gz",
+        "rev": 4,
+        "size": 26577606,
+        "sha256": "628df0bc00fed3e78b2324c1f87f9924f64493be2498a6cd86bf4ad2c82f303e"
       }
     },
     {
@@ -3428,71 +672,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#1a1625",
-        "#ff5555",
-        "#6fb3a8",
-        "#eadda6",
-        "#5b8fb9",
-        "#bd93f9",
-        "#406e82",
-        "#e9e4f5",
-        "#4d4266",
-        "#ff79c6",
-        "#8bd0c1",
-        "#f1fa8c",
-        "#8be9fd",
-        "#ff79c6",
-        "#4c84a0",
-        "#ffffff"
-      ],
-      "background": "#1f1a2e",
-      "foreground": "#e9e4f5",
-      "accent": "#bd93f9",
-      "size": 12418602,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 365,
-          "sha256": "eb8599cbb5781a61abaf75b83adb6f4b7bf2d7838f95e65004f2bfba3d5e77e4"
-        },
-        {
-          "path": "apps/chromium.theme",
-          "size": 9,
-          "sha256": "056c864f44f504959b47077e1505e88d0425d300c7c30691a68feab2bf4af6db"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 12,
-          "sha256": "fabce71aa1d6dff7a151d3ac1ce842c22ee11399e0279b311f97cfcfca30f7ad"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 434,
-          "sha256": "f2338aaf4100d653e23fd4c2ce72705d3d12f6a2f5f24675eb4fb7a727a6868e"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 44675,
-          "sha256": "6cd8098b54bd61fa6fc6db31710f227da847e2659497073d94c7c7950ab71116"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "21996f9debe0a35f86500cc6dc958bee5bedbffad44844c32b19ea37de846f05"
-        },
-        {
-          "path": "theme.json",
-          "size": 129,
-          "sha256": "67639f08c2d0cfd38d9824cc73ce6175a50074d02a1be09018e54c0908d8d5ea"
-        }
-      ],
+      "size": 12111633,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-nagai-twilight-r1.tar.gz",
-        "rev": 1,
-        "size": 12418602,
-        "sha256": "5a20cfdbdc176f8f6b3b73453555a4f0cda3682b0434977fdbcb6bfb49d94cfc"
+        "release": "themes-v15",
+        "archive": "vgs-theme-nagai-twilight-r2.tar.gz",
+        "rev": 2,
+        "size": 12111633,
+        "sha256": "001cb076ea7728488a1ebc864ea23d521a0fdfa55632ec15a9396c1f0f3ed3d2"
       }
     },
     {
@@ -3500,76 +686,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#232529",
-        "#b18786",
-        "#98b398",
-        "#bab292",
-        "#9e9eb8",
-        "#bea7b7",
-        "#95a8b0",
-        "#d6d8dc",
-        "#787c87",
-        "#bb9391",
-        "#b39898",
-        "#bcb48f",
-        "#d2d2df",
-        "#e5dbe2",
-        "#98acb3",
-        "#dcd6d6"
-      ],
-      "background": "#232529",
-      "foreground": "#dcd6d6",
-      "accent": "#4c566a",
-      "size": 8741174,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1715,
-          "sha256": "a84645efbf2cc6932dfbf6ebdd6d3a44e0af6d713b7a6a3f92d6d1776dc8254d"
-        },
-        {
-          "path": "apps/chromium.theme",
-          "size": 9,
-          "sha256": "bc9da1439f06887031fa17e9270e598bc2f40286f3c853f36d5b63e43c98272a"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 19,
-          "sha256": "96d20b1fd1db2dfba81d9a03eccafe3d6ec9dae123bb4476f48b3ed4914003d8"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 1025,
-          "sha256": "019f15466b8b81deb0cf0b4a5f3f8d304c05415a7d742bcff0c9f6894928e571"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 44669,
-          "sha256": "4b5c07b1eca04ad9960147b2fa7856424b2dd31fe571d218766c9e04e579ed4c"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "730039e3f741741e302104bbea2f5d2fedbd2776117f4e91b3aff2f554bbf93a"
-        },
-        {
-          "path": "terminal-colors.toml",
-          "size": 318,
-          "sha256": "33f55c4c3e385bf4553d8b659f36189a1db7806610458f7e2cedd6439a34f95a"
-        },
-        {
-          "path": "theme.json",
-          "size": 113,
-          "sha256": "721a906b47fdb40cd07dac172501e3dedf125a145786b7dcbd91c1df9f92d61b"
-        }
-      ],
+      "size": 8473651,
       "assets": {
-        "release": "themes-v6",
-        "archive": "vgs-theme-nebulite-r2.tar.gz",
-        "rev": 2,
-        "size": 8741174,
-        "sha256": "d2f14a287d92f74b30d43bd9a62f52e6da508f0037ecc5604d71a5e79349b918"
+        "release": "themes-v15",
+        "archive": "vgs-theme-nebulite-r3.tar.gz",
+        "rev": 3,
+        "size": 8473651,
+        "sha256": "d6db82a3fd0d60c12eff8ee2969f70d3d2100d7e5647b6740194fbd657f03272"
       }
     },
     {
@@ -3577,56 +700,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#11112d",
-        "#fd4663",
-        "#9bfece",
-        "#fff59b",
-        "#a9aefe",
-        "#c4a7f7",
-        "#79e0d8",
-        "#c8c3e0",
-        "#3a3a70",
-        "#ff6b82",
-        "#b6ffe0",
-        "#fffab8",
-        "#c2c6ff",
-        "#d8c2ff",
-        "#9beee8",
-        "#ffffff"
-      ],
-      "background": "#070722",
-      "foreground": "#f3edf7",
-      "accent": "#fff59b",
-      "size": 23900904,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1696,
-          "sha256": "4fd7a244bc6b94fc998223a5f404bc3b0cf7075ed2679447c35abee88743a78b"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 12,
-          "sha256": "fabce71aa1d6dff7a151d3ac1ce842c22ee11399e0279b311f97cfcfca30f7ad"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "01a8d8ae7484af56ca09892b80020ba7aaa15cdcba60da56bf1d98d0b3d98f71"
-        },
-        {
-          "path": "theme.json",
-          "size": 123,
-          "sha256": "7a093ad61432340d80d9d1a23bc2e3ce798964576f08ca4682f2edf4f84850f0"
-        }
-      ],
+      "size": 23663492,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-noctalia-r1.tar.gz",
-        "rev": 1,
-        "size": 23900904,
-        "sha256": "67862afbd2a1f298d4d94bb5b01907cd7a36fe7ab6b58e4c0e2f7bbcf5e5691f"
+        "release": "themes-v15",
+        "archive": "vgs-theme-noctalia-r2.tar.gz",
+        "rev": 2,
+        "size": 23663492,
+        "sha256": "c3fb026b8528015bab4e097cd46b1f23b3098849bf33a0d2a73ffe3689ba5bc3"
       }
     },
     {
@@ -3634,66 +714,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#3b4252",
-        "#bf616a",
-        "#a3be8c",
-        "#ebcb8b",
-        "#81a1c1",
-        "#b48ead",
-        "#88c0d0",
-        "#e5e9f0",
-        "#4c566a",
-        "#bf616a",
-        "#a3be8c",
-        "#ebcb8b",
-        "#81a1c1",
-        "#b48ead",
-        "#8fbcbb",
-        "#eceff4"
-      ],
-      "background": "#2e3440",
-      "foreground": "#d8dee9",
-      "accent": "#81a1c1",
-      "size": 11844888,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 2312,
-          "sha256": "d4b43128675e091c5e191df246552e06dcaa738f38d80b8246e971e929241cbb"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 10,
-          "sha256": "75be55b00f24a3cfc708db729e9bca23765e8ef0991d6889fbb2fd4d29581209"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 156,
-          "sha256": "a54acbd5a365d6dba6d8998cb0e190d154dc280bcd05c314a663546535383f46"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 40927,
-          "sha256": "7e307e98bc3a90785a2630bdb8c2c94352e22f744c6629cdbf3e82329e04a236"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "9a09792bd3292f81fef68b233cc7838b26dc8643d5411bf9a1ca06b92c1eb8d7"
-        },
-        {
-          "path": "theme.json",
-          "size": 111,
-          "sha256": "974ad8f51184ad5e8a06efde0416eed05ded41aa00901bd44c1e31e7eabeba4a"
-        }
-      ],
+      "size": 11511835,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-nord-r1.tar.gz",
-        "rev": 1,
-        "size": 11844888,
-        "sha256": "a2fb823caed06e33d69c0bc2cae0a32da8ad5a03d7a89f913f63c316fb54688b"
+        "release": "themes-v15",
+        "archive": "vgs-theme-nord-r2.tar.gz",
+        "rev": 2,
+        "size": 11511835,
+        "sha256": "8ccd005c0b5c428c3d78e7ad632e49a0f407b2618c2997970869d6201d11eae2"
       }
     },
     {
@@ -3701,66 +728,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#23372b",
-        "#ff5345",
-        "#549e6a",
-        "#459451",
-        "#509475",
-        "#d2689c",
-        "#2dd5b7",
-        "#f6f5dd",
-        "#53685b",
-        "#db9f9c",
-        "#63b07a",
-        "#e5c736",
-        "#acd4cf",
-        "#75bbb3",
-        "#8cd3cb",
-        "#9eebb3"
-      ],
-      "background": "#111c18",
-      "foreground": "#c1c497",
-      "accent": "#509475",
-      "size": 8662888,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1313,
-          "sha256": "211389226ac8cfa4baa0b281a839eef70b59758143edd3384e4c8cbb1b786824"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 10,
-          "sha256": "b14b7a19287d12877cb46cc70a715fd25aae7ba475d3d1120392e7adadd23649"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 178,
-          "sha256": "b2a2d6cfc939459d04c5bea0ec5fa9052a56ed1a173f2be7c8788cc2cb0facd9"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 26253,
-          "sha256": "f8d082c22cdae68b482d34049ed09c83f017316e242832058c07c85466b5676a"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "1df70784ccce3048c26d4178b378ed2485854b6cde278be732ae9d1942c7ecd0"
-        },
-        {
-          "path": "theme.json",
-          "size": 119,
-          "sha256": "b5fc704e4be148db0bd14c1b55d5f5774f3d6503543c0b46f786dc4a78992ac3"
-        }
-      ],
+      "size": 8377770,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-osaka-jade-r1.tar.gz",
-        "rev": 1,
-        "size": 8662888,
-        "sha256": "3ba5751f9e6484ed9f5d689408ad6fde7f96d627647841a97c2f0109f74ef0a6"
+        "release": "themes-v15",
+        "archive": "vgs-theme-osaka-jade-r2.tar.gz",
+        "rev": 2,
+        "size": 8377770,
+        "sha256": "def77a5832dd7aa03667fff9b28257813cdf688fb44c717c02acbd09e60bbb4e"
       }
     },
     {
@@ -3768,76 +742,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#292b31",
-        "#dd5544",
-        "#76856a",
-        "#f3e9bd",
-        "#bda07f",
-        "#b7a593",
-        "#9b907f",
-        "#ffffff",
-        "#646466",
-        "#f28b7c",
-        "#a8b49d",
-        "#fff4d4",
-        "#d8c3a5",
-        "#b0a89d",
-        "#c7c0b5",
-        "#d6d1c9"
-      ],
-      "background": "#292b31",
-      "foreground": "#d6d1c9",
-      "accent": "#bda07f",
-      "size": 12228930,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1536,
-          "sha256": "adf2cf64d2ec46c59b41c10083c25f75e5785a288edb2e6e02a379646519245a"
-        },
-        {
-          "path": "apps/chromium.theme",
-          "size": 12,
-          "sha256": "ca9ce2f59736f7f503866957409cb8d47cc9e030bd68faf81c0e396cd006c35e"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 10,
-          "sha256": "b14b7a19287d12877cb46cc70a715fd25aae7ba475d3d1120392e7adadd23649"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 312,
-          "sha256": "c6509bd35f1e97e0e83c1ace07101a3aac9a9808d348311f97ae683c5d2a6b22"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 44667,
-          "sha256": "269799b7bc12467d12a884305f63fa2e2038ac4a2668bc1c071a382c5558d5f4"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "59f60059678f12ff68b54608f5948e7d02eb36bb59ff571c04bf6fc93fd2ebb6"
-        },
-        {
-          "path": "terminal-colors.toml",
-          "size": 370,
-          "sha256": "fc62e098b0173a31fbb67faa401b775a5e6c838725455798774e28b2f0bb4245"
-        },
-        {
-          "path": "theme.json",
-          "size": 105,
-          "sha256": "ecb942e7dca65a4ceb6ddfb1cc89421ab9bc21c20665c1b7df4c654be7b31073"
-        }
-      ],
+      "size": 11923554,
       "assets": {
-        "release": "themes-v6",
-        "archive": "vgs-theme-oxford-r3.tar.gz",
-        "rev": 3,
-        "size": 12228930,
-        "sha256": "9287e82924df87ccd0bfdf213d0b57f1b38a1c20602f4b923afaa039042aab2c"
+        "release": "themes-v15",
+        "archive": "vgs-theme-oxford-r4.tar.gz",
+        "rev": 4,
+        "size": 11923554,
+        "sha256": "388bd9125c71278852fe52622e91d55039a5efa81580cefe4c5d5e02f94b5328"
       }
     },
     {
@@ -3845,66 +756,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#1b1e28",
-        "#d0679d",
-        "#5de4c7",
-        "#fffac2",
-        "#89ddff",
-        "#d2a6ff",
-        "#add7ff",
-        "#ffffff",
-        "#6c6f93",
-        "#d0679d",
-        "#5de4c7",
-        "#fffac2",
-        "#89ddff",
-        "#d2a6ff",
-        "#add7ff",
-        "#ffffff"
-      ],
-      "background": "#1b1e28",
-      "foreground": "#a6accd",
-      "accent": "#add7ff",
-      "size": 6780631,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1792,
-          "sha256": "51424a01e1219ae615e71ab4883e93319a5738d2c20351e42c5ebb6f58636638"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 10,
-          "sha256": "75be55b00f24a3cfc708db729e9bca23765e8ef0991d6889fbb2fd4d29581209"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 2272,
-          "sha256": "524b54f728372e20fd5c8332ea213252b1458579cda5fed8b755638c78c2ac26"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 44667,
-          "sha256": "4b074bb30edc266bef008ec0f28a68ed46269a89312297a98691c2e2d7f03f87"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "0569fd55cb100e1439dd0391bf38d5538d62a6bcf96b2e249ec8536510726bad"
-        },
-        {
-          "path": "theme.json",
-          "size": 115,
-          "sha256": "cae69f8cc5e21ebd36ac9607a46535d625d2bc3ff621349432754a004917fc32"
-        }
-      ],
+      "size": 6526484,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-pmndrs-r1.tar.gz",
-        "rev": 1,
-        "size": 6780631,
-        "sha256": "fb8fd1a7c576d48490a89a0fcb7630f055dec9080f7ae0373ca7ee7ec745295c"
+        "release": "themes-v15",
+        "archive": "vgs-theme-pmndrs-r2.tar.gz",
+        "rev": 2,
+        "size": 6526484,
+        "sha256": "7d1f261259f5c0baa8279f39e4871e31a76527e140e1c8fec0c27c6b6c5788a0"
       }
     },
     {
@@ -3912,81 +770,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#1c1213",
-        "#c24f57",
-        "#806c61",
-        "#f28171",
-        "#684c59",
-        "#a63650",
-        "#6b6566",
-        "#a87569",
-        "#6d4745",
-        "#c24f57",
-        "#806c61",
-        "#f28171",
-        "#684c59",
-        "#a63650",
-        "#6b6566",
-        "#e3a68c"
-      ],
-      "background": "#1c1213",
-      "foreground": "#e3a68c",
-      "accent": "#684c59",
-      "size": 24704222,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1535,
-          "sha256": "f2daa96797c676a1d837e65417325ad254971369b7f4e719711fd5aa96ab5547"
-        },
-        {
-          "path": "apps/chromium.theme",
-          "size": 9,
-          "sha256": "e77d53ae94f938084727bfff67523627173ec0c70b712f4057cc281607b9bbd0"
-        },
-        {
-          "path": "apps/claude-light.json",
-          "size": 218,
-          "sha256": "93e2c13d7d26b5489f1f78d4f038c822c3e31f84ba33651ced675c75ad0b2705"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 9,
-          "sha256": "1c2342215182a8e2880028e03e679fad194dbdfa5155b55daf8386390526cfbc"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 1025,
-          "sha256": "a2c07c5a20e3752aca7322aa98aa63c7882422e9b11fcca3a52f5937a91ebcf7"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 44667,
-          "sha256": "23c08fef3f9cb3d84a0841bb095b8bb99511e3ab769e7b18d6900597761cc711"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "4ebb804383ed225c211272650b23deae348a979683949347d3bcc8aed71ca0a3"
-        },
-        {
-          "path": "terminal-colors.toml",
-          "size": 370,
-          "sha256": "d90cb59717fe66db1d9b27ef1b6bcfc87405c1114d045f15a8fb53661be4e82d"
-        },
-        {
-          "path": "theme.json",
-          "size": 200,
-          "sha256": "ae4b38739b26fdbb630f595c0567cc985466afc92d778d8325ff6f1cbd713984"
-        }
-      ],
+      "size": 24432023,
       "assets": {
-        "release": "themes-v12",
-        "archive": "vgs-theme-reddcs-r5.tar.gz",
-        "rev": 5,
-        "size": 24704222,
-        "sha256": "b5c3f3beaaadeaf7c548ddc477e4f7111de409acf50e8ce4bd3261dce87d9bd0"
+        "release": "themes-v15",
+        "archive": "vgs-theme-reddcs-r6.tar.gz",
+        "rev": 6,
+        "size": 24432023,
+        "sha256": "fff4115404ad98ad028afb7676b96bd312054a938c91a1ad630a6710464e91c8"
       }
     },
     {
@@ -3994,71 +784,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#00172e",
-        "#f85525",
-        "#028391",
-        "#e97b3c",
-        "#faa968",
-        "#3f8f8a",
-        "#8cbfb8",
-        "#a7c9c6",
-        "#134e5a",
-        "#f85525",
-        "#028391",
-        "#e97b3c",
-        "#faa968",
-        "#3f8f8a",
-        "#8cbfb8",
-        "#f6dcac"
-      ],
-      "background": "#00172e",
-      "foreground": "#f6dcac",
-      "accent": "#faa968",
-      "size": 41121538,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 2307,
-          "sha256": "980d7e0a74f57781278fb8130e042447208218ea490db04cad0b30162910f070"
-        },
-        {
-          "path": "apps/chromium.theme",
-          "size": 8,
-          "sha256": "3847b3632a2e28591cc46c44230247e54c89462d3dedecb1ea6bed9a44adf623"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 16,
-          "sha256": "ca63484665b94ba8a2b9fa5bb33f287d8fbe61f4c1ffd651672b5093f650d4cd"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 1112,
-          "sha256": "2827be6a851769fa25653377f3f7310a83f2bdd33d7fd006f7970be6d8cce1e5"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 44669,
-          "sha256": "d6ddf99e56cf24792f7c8269660b58c8928632945f00a0bbf9fd178a62deee99"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "91c5db6284926e4fcfc81c7e3a3de0c3738c586e4f836e02ca3bd901548d5b2e"
-        },
-        {
-          "path": "theme.json",
-          "size": 118,
-          "sha256": "6b326d69b266ffc50771a3d0d3fe76bf2dea245a7b150a3e8d842e69822da55c"
-        }
-      ],
+      "size": 40800216,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-retro-82-r1.tar.gz",
-        "rev": 1,
-        "size": 41121538,
-        "sha256": "a4f69d0ec0a31d8d0901202d5df359ed6f965b3e86a5dec8cb8952a9990f00a6"
+        "release": "themes-v15",
+        "archive": "vgs-theme-retro-82-r2.tar.gz",
+        "rev": 2,
+        "size": 40800216,
+        "sha256": "c7e212f511d66baac2a81483dcc6da8b72e134c2e4a0312948ea6c2a3de9fa23"
       }
     },
     {
@@ -4066,66 +798,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#1f2b4a",
-        "#e56b6f",
-        "#6ca994",
-        "#f4a261",
-        "#587ea8",
-        "#b479a3",
-        "#6dc2c5",
-        "#c7cce1",
-        "#4b5a80",
-        "#f47c7c",
-        "#82c3ab",
-        "#ffb77e",
-        "#7e9fca",
-        "#d091be",
-        "#85d8da",
-        "#d8e0f2"
-      ],
-      "background": "#101c38",
-      "foreground": "#d8e0f2",
-      "accent": "#587ea8",
-      "size": 4448597,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1535,
-          "sha256": "b0da90ccbc57824be925e852b8f3c9244f3e2dbbdeafe5baa84034de086dca74"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 10,
-          "sha256": "75be55b00f24a3cfc708db729e9bca23765e8ef0991d6889fbb2fd4d29581209"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 1025,
-          "sha256": "ff8858f6798f412697958cbafe609fa4b17766c85f422af67e531dc507a06f45"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 44668,
-          "sha256": "e415bdd0b15673bd6b2d835780e05374c2def6ce942c2cd0079a275e2e564c9a"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "61465def65e586eb841f39c9fb84fcb9019db50b1e0940cbc3ac85dfd02dcf74"
-        },
-        {
-          "path": "theme.json",
-          "size": 104,
-          "sha256": "b3de23980aaf91954bb9d564b80cac5a0fce93e0d91e4a4d3505b35901291eab"
-        }
-      ],
+      "size": 4173569,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-reverie-r1.tar.gz",
-        "rev": 1,
-        "size": 4448597,
-        "sha256": "a5965bd5b46acae6fe1988b770b31ae8e4c7e2e513aebcf8f250e0a7dc2e24a1"
+        "release": "themes-v15",
+        "archive": "vgs-theme-reverie-r2.tar.gz",
+        "rev": 2,
+        "size": 4173569,
+        "sha256": "91c1a87ed3128ea984ea2fc67bc73ac7b10e9943e8332bacf7333fc1a512b7d1"
       }
     },
     {
@@ -4133,66 +812,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#72696a",
-        "#fd6883",
-        "#adda78",
-        "#f9cc6c",
-        "#f38d70",
-        "#a8a9eb",
-        "#85dacc",
-        "#e6d9db",
-        "#948a8b",
-        "#ff8297",
-        "#c8e292",
-        "#fcd675",
-        "#f8a788",
-        "#bebffd",
-        "#9bf1e1",
-        "#f1e5e7"
-      ],
-      "background": "#2c2525",
-      "foreground": "#e6d9db",
-      "accent": "#f38d70",
-      "size": 6330503,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1452,
-          "sha256": "4581115dd42df20d7b5d9540e8def9529243377e0ff209fd1d1b8b8a07b8031a"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 11,
-          "sha256": "db03d23dd42fcc39900733c4324f884ec731ab6de6d0fdb85496a62c230a2554"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 931,
-          "sha256": "8da3e56a5309db39053a3ff88e24302e9fe8dd710e0f9437e19526c7dd8d5024"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 48188,
-          "sha256": "4004f3c51d2494645ebc0fada9b5f6a02f118cb0049151e5d9bbada5dc50ff84"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "f1e8d34b441f69e4a4f99e989609a7ae9bd58925abe234115c6964776fa9f43f"
-        },
-        {
-          "path": "theme.json",
-          "size": 112,
-          "sha256": "8c7cc0690ac7123db40e0d3180eec802f6a9a0043e2e60e1aaa43f7a25615065"
-        }
-      ],
+      "size": 6110685,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-ristretto-r1.tar.gz",
-        "rev": 1,
-        "size": 6330503,
-        "sha256": "28de716cbd83e2a8aea1f24a54266dfbedc73a7dac2bf6776e539b3a0ade4395"
+        "release": "themes-v15",
+        "archive": "vgs-theme-ristretto-r2.tar.gz",
+        "rev": 2,
+        "size": 6110685,
+        "sha256": "ea51fe10a11cb3e768d1d7279a5cd123028691d323d19f7058427f2fe62b8361"
       }
     },
     {
@@ -4200,76 +826,13 @@
       "mode": "light",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#f2e9e1",
-        "#b4637a",
-        "#286983",
-        "#ea9d34",
-        "#56949f",
-        "#907aa9",
-        "#d7827e",
-        "#575279",
-        "#9893a5",
-        "#b4637a",
-        "#286983",
-        "#ea9d34",
-        "#56949f",
-        "#907aa9",
-        "#d7827e",
-        "#575279"
-      ],
-      "background": "#faf4ed",
-      "foreground": "#575279",
-      "accent": "#56949f",
-      "size": 12646780,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1923,
-          "sha256": "3f6b0f9272cf1791aa8019b03ecfb3f92a77f7e2fbcaecdc1c2b9dd389b97ee6"
-        },
-        {
-          "path": "apps/chromium.theme",
-          "size": 12,
-          "sha256": "0d7b8f79194116ce9e9bc39dc442c8acc8a5ad6d9536efb26ec9cfbe01c9b334"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 10,
-          "sha256": "75be55b00f24a3cfc708db729e9bca23765e8ef0991d6889fbb2fd4d29581209"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 143,
-          "sha256": "f23562587b4b4f01d3e38096742a366129f38aac7be65ad96868711760d5634b"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 24477,
-          "sha256": "4293c89f0cf69a738cad1d6b7224aeafb78b5d3aa1ea38d9188caa507eff8a70"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "dcebf5ff66e2503d9ab7d818f7de923c704898539e9c3659ba4223bbffe35dba"
-        },
-        {
-          "path": "terminal-colors.toml",
-          "size": 384,
-          "sha256": "0629e2ad834d4f794754a94af21e338a70dd3c3bdccdb890e985703b780d09f1"
-        },
-        {
-          "path": "theme.json",
-          "size": 119,
-          "sha256": "9a307d8957bf4495ad16a5147450d9d1fc6538cfb1e48fc4ad6309cd1f56edeb"
-        }
-      ],
+      "size": 12394016,
       "assets": {
-        "release": "themes-v4",
-        "archive": "vgs-theme-rose-pine-r3.tar.gz",
-        "rev": 3,
-        "size": 12646780,
-        "sha256": "9e64d8e360523a1c33263edd700bf827c97d4b3d55ff07a6b2c1ec623444904f"
+        "release": "themes-v15",
+        "archive": "vgs-theme-rose-pine-r4.tar.gz",
+        "rev": 4,
+        "size": 12394016,
+        "sha256": "34b62272d46ad3639843f2ff763517690bb6ef5eae3862b0634f0cae128314bd"
       }
     },
     {
@@ -4277,66 +840,13 @@
       "mode": "dark",
       "pair": "rose-pine",
       "source": "curated",
-      "colors": [
-        "#26233a",
-        "#eb6f92",
-        "#31748f",
-        "#f6c177",
-        "#9ccfd8",
-        "#c4a7e7",
-        "#ebbcba",
-        "#e0def4",
-        "#6e6a86",
-        "#eb6f92",
-        "#31748f",
-        "#f6c177",
-        "#9ccfd8",
-        "#c4a7e7",
-        "#ebbcba",
-        "#e0def4"
-      ],
-      "background": "#191724",
-      "foreground": "#e0def4",
-      "accent": "#ebbcba",
-      "size": 16000408,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1923,
-          "sha256": "60cbdf3e435ed46363137b5b79c650294e0972c2445717116994ef50241bf9bd"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 13,
-          "sha256": "328fd2519268a09cbcb45b3e8393f6abcc1739b9816bdc87bd4761d9d240f026"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 143,
-          "sha256": "53eea9dadce671eb03ca97f5489a27cfb5d57868db88f0c19c9bef88a0e25397"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 24471,
-          "sha256": "2c9270ee0a307739257d6331b6314f4b862c5f5bac32b798211ba9ffc50d6b02"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "52055102d8b4869ade97a5ddbb28c7318bec444ec188b5573895536e12007d0a"
-        },
-        {
-          "path": "theme.json",
-          "size": 130,
-          "sha256": "f30d2f08e5be5ade6e3c822e946147093e4c26b9340decae6f9c8347b8b10b27"
-        }
-      ],
+      "size": 15770469,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-rose-pine-main-r1.tar.gz",
-        "rev": 1,
-        "size": 16000408,
-        "sha256": "f37bdcf5af0dc81240503270cce89276fd6e727e15af412fa952f84669c19fd7"
+        "release": "themes-v15",
+        "archive": "vgs-theme-rose-pine-main-r2.tar.gz",
+        "rev": 2,
+        "size": 15770469,
+        "sha256": "c811a9a66bbc9494505395d4376d7bea772bf54b5ee3acd404e6da45a7b93a10"
       }
     },
     {
@@ -4344,66 +854,13 @@
       "mode": "dark",
       "pair": "rose-pine",
       "source": "curated",
-      "colors": [
-        "#393552",
-        "#eb6f92",
-        "#3e8fb0",
-        "#f6c177",
-        "#9ccfd8",
-        "#c4a7e7",
-        "#ea9a97",
-        "#e0def4",
-        "#6e6a86",
-        "#eb6f92",
-        "#3e8fb0",
-        "#f6c177",
-        "#9ccfd8",
-        "#c4a7e7",
-        "#ea9a97",
-        "#e0def4"
-      ],
-      "background": "#232136",
-      "foreground": "#e0def4",
-      "accent": "#ea9a97",
-      "size": 21435802,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1618,
-          "sha256": "88db7dd9dd57a400837aab4a592a0133991e42b687c1c368522cd49486be1973"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 13,
-          "sha256": "328fd2519268a09cbcb45b3e8393f6abcc1739b9816bdc87bd4761d9d240f026"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 143,
-          "sha256": "dc55bbc42cd7a7d282e3e42298f4cb4aa79a5b111e806ab7c828251d5440123f"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 24476,
-          "sha256": "af64eee390a08e9f2830dbe9f3445f34d87f9a2720e515bdd6dc2c187ca8faff"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "0f7590051f06bc5edb1c24cf97cf104fef0f84a01f1b18352e25570f9fa9d2de"
-        },
-        {
-          "path": "theme.json",
-          "size": 130,
-          "sha256": "5558aefe32cdbda21c231ad3f46cadf018f18a43047a992636b3d86da6d24f17"
-        }
-      ],
+      "size": 21205503,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-rose-pine-moon-r1.tar.gz",
-        "rev": 1,
-        "size": 21435802,
-        "sha256": "33fb8a4371e5fb4f1a5b5fcf6ff6604c6f7c808695cc7c7677b74406dd96af07"
+        "release": "themes-v15",
+        "archive": "vgs-theme-rose-pine-moon-r2.tar.gz",
+        "rev": 2,
+        "size": 21205503,
+        "sha256": "a3cbae1a7c2cbd85fdd6c94aae0aabc325b368854e55b6160ea0c24d3af60ba0"
       }
     },
     {
@@ -4411,96 +868,13 @@
       "mode": "light",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#f5e6d3",
-        "#a02b16",
-        "#9e4f5b",
-        "#644535",
-        "#76634c",
-        "#78292e",
-        "#713a56",
-        "#a94a34",
-        "#c8ac86",
-        "#a02b16",
-        "#9e4f5b",
-        "#694c45",
-        "#76634c",
-        "#78292e",
-        "#713a56",
-        "#a94a34"
-      ],
-      "background": "#f5e6d3",
-      "foreground": "#35302a",
-      "accent": "#9e4f5b",
-      "size": 17331858,
-      "files": [
-        {
-          "path": "apps/alacritty.toml",
-          "size": 496,
-          "sha256": "99a8535f306a489c13f5e629823d504f3732a89244c9e3fdada8950880a8b2ee"
-        },
-        {
-          "path": "apps/btop.theme",
-          "size": 1498,
-          "sha256": "be74b4ebea0d5d47438a0c2e901de14cb9d2fe2c3cb9827d2e1e8e0c0b1e31ea"
-        },
-        {
-          "path": "apps/chromium.theme",
-          "size": 11,
-          "sha256": "0996fb963b4b51048b6a1ea94f8a3761713970a75d9553d52ea11dcf524dd83a"
-        },
-        {
-          "path": "apps/foot.ini",
-          "size": 886,
-          "sha256": "8de09877217a3a130e25b2750696362ab76bd877db4fd186ded7e0ae10e7677c"
-        },
-        {
-          "path": "apps/ghostty.conf",
-          "size": 453,
-          "sha256": "e541afb4b0ecaf79f95e9e8166e29d38a5723041d443ba2d70623a0c347dd389"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 13,
-          "sha256": "328fd2519268a09cbcb45b3e8393f6abcc1739b9816bdc87bd4761d9d240f026"
-        },
-        {
-          "path": "apps/kitty.conf",
-          "size": 716,
-          "sha256": "ca6a44dce96940e2da0b1f57691b7226d0e58e2a6dc6345da8329eead4e4651e"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 1025,
-          "sha256": "d49d55f846f163a9f0f106354e67a132ba9110e7f7b42445859c482e4c42532d"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 44672,
-          "sha256": "50c98fa268035a32dfc43497734549d6e0cfa0dc076775a5db620dc952481b44"
-        },
-        {
-          "path": "apps/wezterm.lua",
-          "size": 892,
-          "sha256": "fe5aea0af72de2f9e7b167fa06bb9ea709799faaf96a41407faa0447378a2d34"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "e0c1655d89a5bf56439efd312dbc62255b1e907f97948e581c9200881916aac3"
-        },
-        {
-          "path": "theme.json",
-          "size": 110,
-          "sha256": "4e77eadf426201cecebc435fdac147e9d11caa4ef7e1c584958059d57350ce76"
-        }
-      ],
+      "size": 16935484,
       "assets": {
-        "release": "themes-v2",
-        "archive": "vgs-theme-roseofdune-r2.tar.gz",
-        "rev": 2,
-        "size": 17331858,
-        "sha256": "7b5644ac751f6cd181441fc760120d74aad6b05c9db85ae70526b0ed607ec803"
+        "release": "themes-v15",
+        "archive": "vgs-theme-roseofdune-r3.tar.gz",
+        "rev": 3,
+        "size": 16935484,
+        "sha256": "e9e56c4359b28669885d3a537025decfd20c87104c65b299d9d209682beea873"
       }
     },
     {
@@ -4508,71 +882,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#05080a",
-        "#ff9fbc",
-        "#baf7b5",
-        "#fff6c3",
-        "#b2fff3",
-        "#dfbaff",
-        "#ffc79b",
-        "#f3ceff",
-        "#4b4c4d",
-        "#ffaecb",
-        "#baf7b5",
-        "#fff6c3",
-        "#b2fff3",
-        "#dfbaff",
-        "#ffc79b",
-        "#ffe1e1"
-      ],
-      "background": "#05080a",
-      "foreground": "#fff6ff",
-      "accent": "#b2fff3",
-      "size": 13675487,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 2595,
-          "sha256": "f9c6f77f8763fbc59485fd99bf9c0440ad3b0bae5614164441131a0605f0d5af"
-        },
-        {
-          "path": "apps/chromium.theme",
-          "size": 7,
-          "sha256": "32245959e3745e31ce8547ecc313322850aeab597902e9f2610b6b698498cee7"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 12,
-          "sha256": "fabce71aa1d6dff7a151d3ac1ce842c22ee11399e0279b311f97cfcfca30f7ad"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 1025,
-          "sha256": "483f81818ada9f87a8daf368d9b91a5b0ca2720cc0e414f9ade99ccd69247136"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 44665,
-          "sha256": "b2cb3c108412f80180fbaca22bb4a41e534dd9a19a568dc278afc9035bc1f9ce"
-        },
-        {
-          "path": "colors.toml",
-          "size": 578,
-          "sha256": "9b07228d6c3a9b15dced189818f33793ab0b791885578961999ead77e5e598ae"
-        },
-        {
-          "path": "theme.json",
-          "size": 104,
-          "sha256": "7076d308f23e1a145774c2a45b95f7145a84f821deb5eb5d6f6073d028878be7"
-        }
-      ],
+      "size": 13318129,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-saga-r1.tar.gz",
-        "rev": 1,
-        "size": 13675487,
-        "sha256": "f65ed3eac3af0a6f4dea08b319ea970af5513f07ad1deaa105d5ebf2a5053f7d"
+        "release": "themes-v15",
+        "archive": "vgs-theme-saga-r2.tar.gz",
+        "rev": 2,
+        "size": 13318129,
+        "sha256": "b88ea38c27a6e0e2703eaf2589b6ad1f2665d274d38717ddc5f9a9839d6dde03"
       }
     },
     {
@@ -4580,71 +896,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#060d1f",
-        "#e95c4b",
-        "#6488ea",
-        "#d5edeb",
-        "#f7c3c6",
-        "#85cec4",
-        "#fff6d2",
-        "#e1e9f5",
-        "#51688e",
-        "#ed7b6d",
-        "#819fee",
-        "#d7ebe9",
-        "#f2c8cb",
-        "#8cc7bf",
-        "#fef4d7",
-        "#c8cbd0"
-      ],
-      "background": "#060d1f",
-      "foreground": "#e0f7fa",
-      "accent": "#f7c3c6",
-      "size": 13606648,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 2141,
-          "sha256": "5b982e885de2eef4d74e98b10075a1d4c6ebe5863ca436073a151e677afd8218"
-        },
-        {
-          "path": "apps/chromium.theme",
-          "size": 9,
-          "sha256": "54f36c2dbd0b4505a2cdb812dbdca5b5de43513414eda4607646b89639b4f150"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 13,
-          "sha256": "328fd2519268a09cbcb45b3e8393f6abcc1739b9816bdc87bd4761d9d240f026"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 351,
-          "sha256": "314214b6ca999b634ac65c537c820a2bfa81f35da6ad6b44455854f570290722"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 44669,
-          "sha256": "90ccf5e1cf5acaa709a242e8f0193acc11d424bbeca2b022beb5f78a199d3e19"
-        },
-        {
-          "path": "colors.toml",
-          "size": 661,
-          "sha256": "891d2677a0355b62b091899908e0c5e40c1c33dd8badc63632f8f196f4a29604"
-        },
-        {
-          "path": "theme.json",
-          "size": 107,
-          "sha256": "804399ab534e9636ea93a254a4482ebb9464e2a25c99e90d73856a6b650b600f"
-        }
-      ],
+      "size": 13271510,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-sapphire-r1.tar.gz",
-        "rev": 1,
-        "size": 13606648,
-        "sha256": "dcd9774ca364c8dee67119a8b033547c73dd7dd485f382e894beb93ddff3d1d2"
+        "release": "themes-v15",
+        "archive": "vgs-theme-sapphire-r2.tar.gz",
+        "rev": 2,
+        "size": 13271510,
+        "sha256": "30c8041820e228e38dc2cff627c47b2dae5aa23ec4abbd87783ad1f595262ce4"
       }
     },
     {
@@ -4652,71 +910,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#1a1b1f",
-        "#7a92ae",
-        "#9eafc0",
-        "#a8b6c4",
-        "#7b8da3",
-        "#a6b1bf",
-        "#aabaca",
-        "#b8c4d0",
-        "#8a8c94",
-        "#b2c1d2",
-        "#d5dde5",
-        "#dee4ea",
-        "#b0bcca",
-        "#dbe0e6",
-        "#e2e8ee",
-        "#eff2f5"
-      ],
-      "background": "#1a1b1f",
-      "foreground": "#eff2f5",
-      "accent": "#7b8da3",
-      "size": 5960110,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1535,
-          "sha256": "0612943c56394a4f775ff15cf8a4697d41c526735717d77a4ab87e228916fb2a"
-        },
-        {
-          "path": "apps/chromium.theme",
-          "size": 9,
-          "sha256": "9cdfcdf989e1c3245596c2569f4ca9ac4c5c4f27f8fba231afd28cda1ffbff6b"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 10,
-          "sha256": "75be55b00f24a3cfc708db729e9bca23765e8ef0991d6889fbb2fd4d29581209"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 1025,
-          "sha256": "2c8c09d9209266d32a2dbe468c1ff301684f1087f9d04864602f74272bfc887b"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 44665,
-          "sha256": "9b995d31b50be02551f817d13e24d1b657ea7bc3815862c1c1b11d83fa593d11"
-        },
-        {
-          "path": "colors.toml",
-          "size": 661,
-          "sha256": "2ca1f0c65e33dc693b7a6239daaa3b07d33082731da27e0d0999c2e68de8c737"
-        },
-        {
-          "path": "theme.json",
-          "size": 109,
-          "sha256": "4d49460c1afcf0ce675c252960eab1fad54d8a744656bee182c8d8d1620de476"
-        }
-      ],
+      "size": 5725893,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-snow-r1.tar.gz",
-        "rev": 1,
-        "size": 5960110,
-        "sha256": "eeb5cf9e00aae2bcd4502e6e3e80443e74088cb8add137c0e5871c1fb69ac990"
+        "release": "themes-v15",
+        "archive": "vgs-theme-snow-r2.tar.gz",
+        "rev": 2,
+        "size": 5725893,
+        "sha256": "35e45f922aaeeb0718a531c4de0c6b4493a46461ca5f0a6f480e061d6d7ca70a"
       }
     },
     {
@@ -4724,66 +924,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#302a3a",
-        "#e87b97",
-        "#7cc9a0",
-        "#d9b464",
-        "#7ba5dd",
-        "#c48ad5",
-        "#57bfb5",
-        "#928da0",
-        "#4d465a",
-        "#f09aae",
-        "#96e0b8",
-        "#edc97a",
-        "#96bef0",
-        "#d8a0e8",
-        "#6dd8ce",
-        "#bdb8cb"
-      ],
-      "background": "#1a1721",
-      "foreground": "#d0cbd8",
-      "accent": "#e89bc1",
-      "size": 9439541,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1742,
-          "sha256": "a64748b52a037e431c34d49ae608f5e35e544eb1ace454149071c024d23561ac"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 12,
-          "sha256": "fabce71aa1d6dff7a151d3ac1ce842c22ee11399e0279b311f97cfcfca30f7ad"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 1025,
-          "sha256": "3d53445f2180ddbb1b97008e6a397ca3ad4a93f3d5182a1410dc459e8807c498"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 44665,
-          "sha256": "a497239e7b48600bf923eed96959520eafd0b9ef5bc7e4369958379567347e11"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "a0c3dffc0d4cd72a2e8e9be56ea18e097f39567bf3973d3c1e64e7b0e9b51114"
-        },
-        {
-          "path": "theme.json",
-          "size": 111,
-          "sha256": "7c072d82115d7bf07dd0fa1801e2e77c8c6dd5eaca2b41b87c50c7dee75963d6"
-        }
-      ],
+      "size": 9132712,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-soho-r1.tar.gz",
-        "rev": 1,
-        "size": 9439541,
-        "sha256": "4a6dfd739c3346e95e09573dfee5a85eb955c5b902f0dfd42158c751169e7413"
+        "release": "themes-v15",
+        "archive": "vgs-theme-soho-r2.tar.gz",
+        "rev": 2,
+        "size": 9132712,
+        "sha256": "4beba4dbe6170717a76c379934fa92112db176163d8a560d5cf527613b859022"
       }
     },
     {
@@ -4791,66 +938,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#101315",
-        "#565d60",
-        "#9fa5a9",
-        "#d9dbdc",
-        "#798186",
-        "#aeaeae",
-        "#707070",
-        "#cbc2be",
-        "#4b4e55",
-        "#de6145",
-        "#343d41",
-        "#c9c2b4",
-        "#5d6367",
-        "#9a9a9a",
-        "#707070",
-        "#a5aeb4"
-      ],
-      "background": "#101315",
-      "foreground": "#cacccc",
-      "accent": "#798186",
-      "size": 43462505,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1887,
-          "sha256": "893840002261331656b077de51845d50b47519e3af1dbe60790bb3709c6b34a8"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 15,
-          "sha256": "84d781a14b502a6430500d7c137db6a96663f2b4e772d4777243ed46bf15b87c"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 141,
-          "sha256": "7da5efb856c08263207361b94211dd7526d3f828324374c0f24dda562046ed76"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 44669,
-          "sha256": "0ba81cfe6104b925d2046e56324edd6b90c66907bcd356cf0c7211203ed9b610"
-        },
-        {
-          "path": "colors.toml",
-          "size": 586,
-          "sha256": "a788bfc159245dda703dd37853e81b0b3dd4f6ba9eaec0b6efd851a3f3796b6e"
-        },
-        {
-          "path": "theme.json",
-          "size": 112,
-          "sha256": "da3b05e6c537186d1f49901bc2b6da7d4bf49eb8792da9905486a8ab7aac6ef1"
-        }
-      ],
+      "size": 43064984,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-solitude-r1.tar.gz",
-        "rev": 1,
-        "size": 43462505,
-        "sha256": "623c6dddc82477643a649d98c72732f2a63d8827bb9c18d3c3ed1024528804c7"
+        "release": "themes-v15",
+        "archive": "vgs-theme-solitude-r2.tar.gz",
+        "rev": 2,
+        "size": 43064984,
+        "sha256": "3596fca487135c9e07f78e97d937890a8aa083e459453bafa01792db25ce0749"
       }
     },
     {
@@ -4858,71 +952,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#262335",
-        "#ff0040",
-        "#8f00ff",
-        "#f3e70f",
-        "#0080ff",
-        "#ff00ff",
-        "#03edf9",
-        "#ffffff",
-        "#614d85",
-        "#fe5442",
-        "#fe5442",
-        "#ffff66",
-        "#0080ff",
-        "#ff7edb",
-        "#03edf9",
-        "#ffffff"
-      ],
-      "background": "#240037",
-      "foreground": "#ffffff",
-      "accent": "#8f00ff",
-      "size": 19459318,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 2306,
-          "sha256": "edf830839bd215cb033b7166fad3459f0d55b6ccc3dc8a1823ed12615d8220c4"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 12,
-          "sha256": "fabce71aa1d6dff7a151d3ac1ce842c22ee11399e0279b311f97cfcfca30f7ad"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 154,
-          "sha256": "ef5165fcfc84c29d4bd1ee2b38d55f63c0d604f3b2a6b4fdfd74c260c7fd3f0e"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 22497,
-          "sha256": "cc2361fa174b34f5c8b17ecc6b7a3d64040677c50936bff2f955000ae84e999b"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "bbbc6716392f71672fe3fc7f621f63dc5cfea8833d818961ba8224d97e80feb2"
-        },
-        {
-          "path": "terminal-colors.toml",
-          "size": 318,
-          "sha256": "f2fa7311dbb6732c6bbc7a9a40908c52b7c8a4e399436df946d2166be27e20bc"
-        },
-        {
-          "path": "theme.json",
-          "size": 121,
-          "sha256": "5d3405f22954b86291b3334edaf3251e54f2a666e84f84ab6017f566fac9b3bd"
-        }
-      ],
+      "size": 19122755,
       "assets": {
-        "release": "themes-v6",
-        "archive": "vgs-theme-synthwave84-r2.tar.gz",
-        "rev": 2,
-        "size": 19459318,
-        "sha256": "756af5f0c660604881627d5449e1dd52376b8077698ed38a8a2d412462cccd3c"
+        "release": "themes-v15",
+        "archive": "vgs-theme-synthwave84-r3.tar.gz",
+        "rev": 3,
+        "size": 19122755,
+        "sha256": "4ed603cab6fb89ecc06433a4f62f2ed384c17fea285ecacee716740bc6592c09"
       }
     },
     {
@@ -4930,76 +966,13 @@
       "mode": "light",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#d0d0c8",
-        "#db0030",
-        "#2e3125",
-        "#51573b",
-        "#de6a41",
-        "#43432b",
-        "#6b1f2f",
-        "#383835",
-        "#6b7360",
-        "#db0030",
-        "#2e3125",
-        "#51573b",
-        "#de6a41",
-        "#43432b",
-        "#6b1f2f",
-        "#242424"
-      ],
-      "background": "#d0d0c8",
-      "foreground": "#242424",
-      "accent": "#de6a41",
-      "size": 3973637,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1536,
-          "sha256": "2727494ba775eaa85e27bdd8d6965a16087b9fb8f6540687edef6412f9ec4664"
-        },
-        {
-          "path": "apps/chromium.theme",
-          "size": 12,
-          "sha256": "b24c07434286e2f65afdc6cfd8dea5d315e8e85534ad02a9c6f6933174e77a66"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 10,
-          "sha256": "b14b7a19287d12877cb46cc70a715fd25aae7ba475d3d1120392e7adadd23649"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 1025,
-          "sha256": "80f132d5d5a2f168935146abcdabbaf3764c79b0695aeec38a1b10a2416d2e91"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 44667,
-          "sha256": "5e2d0b6f02f85a555dd8ea26c31a62b877d2563ab1fe8a00c73c75d3f670db51"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "5e843b999f4cfe3ddb3f2aadae4e61c6f4ca7b5a48f5824308487be9b75b8911"
-        },
-        {
-          "path": "terminal-colors.toml",
-          "size": 298,
-          "sha256": "0bee4750a4cdb86f71bf74dd3cf84210d528ce9d8c5045473a5634e8066f57e7"
-        },
-        {
-          "path": "theme.json",
-          "size": 295,
-          "sha256": "68d530420588c3f538459a3f416d3b8f8ea1bc81aa66b4fa7834d86d424f257c"
-        }
-      ],
+      "size": 3753953,
       "assets": {
-        "release": "themes-v14",
-        "archive": "vgs-theme-thegreek-r6.tar.gz",
-        "rev": 6,
-        "size": 3973637,
-        "sha256": "656bc4bcd6767addb4aa9cbd990744a20e52fb527e2057530deae6770bce1f99"
+        "release": "themes-v15",
+        "archive": "vgs-theme-thegreek-r7.tar.gz",
+        "rev": 7,
+        "size": 3753953,
+        "sha256": "39324502a13b65c3f23c472d3a60d9379787ca0b39189d21acfd4c9d49d58ef4"
       }
     },
     {
@@ -5007,66 +980,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#32344a",
-        "#f7768e",
-        "#9ece6a",
-        "#e0af68",
-        "#7aa2f7",
-        "#ad8ee6",
-        "#449dab",
-        "#787c99",
-        "#444b6a",
-        "#ff7a93",
-        "#b9f27c",
-        "#ff9e64",
-        "#7da6ff",
-        "#bb9af7",
-        "#0db9d7",
-        "#acb0d0"
-      ],
-      "background": "#1a1b26",
-      "foreground": "#a9b1d6",
-      "accent": "#7aa2f7",
-      "size": 15410705,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1765,
-          "sha256": "313c2186d059f2b1b17a658e52f0e4e1d28ffd74e702a71f7a80bd1ed5ddcb11"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 13,
-          "sha256": "328fd2519268a09cbcb45b3e8393f6abcc1739b9816bdc87bd4761d9d240f026"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 169,
-          "sha256": "c0cd0264591d71c687f3b39b3efe55af14a9e906c473e75c2b6c5f43a3823704"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 59768,
-          "sha256": "e08d77c898ead9ed129dc18ff4f841e2353477e69ccd6fa7d0610561c31da4d8"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "1551ea824b04fd77bdb999937e5367c10ded69b3ac027a82bfd926e8a77d2539"
-        },
-        {
-          "path": "theme.json",
-          "size": 118,
-          "sha256": "1493ae29b2b1d4d495eaa9ff005e65ceeb38eb8e005c0b8256a45815d4d5f4a2"
-        }
-      ],
+      "size": 15046592,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-tokyo-night-r1.tar.gz",
-        "rev": 1,
-        "size": 15410705,
-        "sha256": "586ae8082208fbc94a33aea6c49880313879165ca46c8fc80e684a9c77539fa6"
+        "release": "themes-v15",
+        "archive": "vgs-theme-tokyo-night-r2.tar.gz",
+        "rev": 2,
+        "size": 15046592,
+        "sha256": "5e050efb9721d29d76ae2bba83552af4a2910e0464b59b01ac21e6b865211ae7"
       }
     },
     {
@@ -5074,66 +994,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#1b1d2b",
-        "#ff757f",
-        "#c3e88d",
-        "#ffc777",
-        "#82aaff",
-        "#c099ff",
-        "#86e1fc",
-        "#828bb8",
-        "#444a73",
-        "#ff8d94",
-        "#c7fb6d",
-        "#ffd8ab",
-        "#9ab8ff",
-        "#caabff",
-        "#b2ebff",
-        "#c8d3f5"
-      ],
-      "background": "#222436",
-      "foreground": "#c8d3f5",
-      "accent": "#82aaff",
-      "size": 26064350,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1601,
-          "sha256": "49229bdf00217cd9f63762059c0f1872f08966920a9ce3997f032abe2e20f320"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 13,
-          "sha256": "328fd2519268a09cbcb45b3e8393f6abcc1739b9816bdc87bd4761d9d240f026"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 168,
-          "sha256": "812d4f1249ff68fea6e4acdd3c1f59c513bb45655002fa3d7fd88906e2951e37"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 49179,
-          "sha256": "a17af84c91dcdeed305407f8d1bd979fa0938d19e913b7504e3066a0af6dc896"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "627c6aac7718d9ad08341549a872273fc2f43d89c3c0a97591a9fa339473a931"
-        },
-        {
-          "path": "theme.json",
-          "size": 127,
-          "sha256": "ecd7ee77f4e70758248ae6d8dadd6c419b6c22b78e6126cda586e12bb6315f03"
-        }
-      ],
+      "size": 25819318,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-tokyo-night-moon-r1.tar.gz",
-        "rev": 1,
-        "size": 26064350,
-        "sha256": "9fe475391d954c3cc95c4b5c3f4c80df197b2cf04253160678643fe6ffed2156"
+        "release": "themes-v15",
+        "archive": "vgs-theme-tokyo-night-moon-r2.tar.gz",
+        "rev": 2,
+        "size": 25819318,
+        "sha256": "27654cfc508aacd7fcdb7a28573c0292829dcec74f90d833c9f4f1928edb843d"
       }
     },
     {
@@ -5141,66 +1008,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#1d202f",
-        "#f7768e",
-        "#9ece6a",
-        "#e0af68",
-        "#7aa2f7",
-        "#bb9af7",
-        "#7dcfff",
-        "#a9b1d6",
-        "#414868",
-        "#ff899d",
-        "#9fe044",
-        "#faba4a",
-        "#8db0ff",
-        "#c7a9ff",
-        "#a4daff",
-        "#c0caf5"
-      ],
-      "background": "#24283b",
-      "foreground": "#c0caf5",
-      "accent": "#7aa2f7",
-      "size": 21497076,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1602,
-          "sha256": "d6ccc502b0d248824f2737c4947ffcecea1264d67d8a4aaf4b3839fe484a533e"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 13,
-          "sha256": "328fd2519268a09cbcb45b3e8393f6abcc1739b9816bdc87bd4761d9d240f026"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 169,
-          "sha256": "a6b20a4ec7f0861612a534a1e8267b8f72e6bc133e25b522bd8b855e6cece48b"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 59937,
-          "sha256": "d190b57f2fa662233adc5c8f6e7aeac15330452a0569a2086b979b92b7ce6cea"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "02d9786bd7b75b7084d2bfba3cd388df46f51d8b256bbf6f562966bd059cce0e"
-        },
-        {
-          "path": "theme.json",
-          "size": 125,
-          "sha256": "e27b622fc782d67845da3bd35e18e73a71067ca960f4d6c80c59a9c7c64cbe8f"
-        }
-      ],
+      "size": 21213791,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-tokyo-night-storm-r1.tar.gz",
-        "rev": 1,
-        "size": 21497076,
-        "sha256": "ebe3783d77cee4d8f59e9bdb231d1044086052719395b16ee448e8ffc4747ac7"
+        "release": "themes-v15",
+        "archive": "vgs-theme-tokyo-night-storm-r2.tar.gz",
+        "rev": 2,
+        "size": 21213791,
+        "sha256": "fcaafa4eedee334a5229e0ebfd1b54f793eaef1830079027a11fee2e26a1fbc5"
       }
     },
     {
@@ -5208,76 +1022,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#1e2125",
-        "#976870",
-        "#b4756b",
-        "#c17a6a",
-        "#9b826b",
-        "#b48162",
-        "#706b82",
-        "#c5aeb9",
-        "#897981",
-        "#c1a4a9",
-        "#d6b4af",
-        "#dfbab2",
-        "#c4b5a8",
-        "#d5b8a7",
-        "#a5a1b2",
-        "#f0e9ec"
-      ],
-      "background": "#1e2125",
-      "foreground": "#f0e9ec",
-      "accent": "#b4756b",
-      "size": 1184544,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1535,
-          "sha256": "6e50d04d08200e08a1019214fe56d4f53a826474fa4cb2d957a55e4be51c3596"
-        },
-        {
-          "path": "apps/chromium.theme",
-          "size": 9,
-          "sha256": "131027c92a1fb82484d4c08ec9c262fe5a89877b07323f5e2e150d4b42ac56eb"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 16,
-          "sha256": "ca63484665b94ba8a2b9fa5bb33f287d8fbe61f4c1ffd651672b5093f650d4cd"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 131,
-          "sha256": "31d15cff3f1f07c844fa74d29e0ec7834130c3487230da38b9be471eac1ec82c"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 44666,
-          "sha256": "f93107f7f52437c29681034b7f7bb6d15d760f7395973ab2a865ae0315367566"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "5ba935495325d78f4a5e265e47d81ee709caf1ab2d41bd0436a13fc5871c3b1b"
-        },
-        {
-          "path": "terminal-colors.toml",
-          "size": 370,
-          "sha256": "5a409a8846a13370081fdb2961d218764e345592cd464cf94f6d8235176da5f7"
-        },
-        {
-          "path": "theme.json",
-          "size": 117,
-          "sha256": "704183d76aa76195afca5a257115a6caf04b20098b31975dd0e603eea53e5666"
-        }
-      ],
+      "size": 964520,
       "assets": {
-        "release": "themes-v6",
-        "archive": "vgs-theme-tycho-r3.tar.gz",
-        "rev": 3,
-        "size": 1184544,
-        "sha256": "b72180c61088994919e98cecc761950428c844a1abdffbe83c31706792f83075"
+        "release": "themes-v15",
+        "archive": "vgs-theme-tycho-r4.tar.gz",
+        "rev": 4,
+        "size": 964520,
+        "sha256": "c2baf2c150dfe2e97cb244c24af839c407b3a5de2ce510edcb05888c5730b985"
       }
     },
     {
@@ -5285,71 +1036,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#241d22",
-        "#a58386",
-        "#83c483",
-        "#c1ba86",
-        "#a3baca",
-        "#e19567",
-        "#a2c5d2",
-        "#f0ecc5",
-        "#998d96",
-        "#cdb7b9",
-        "#80c880",
-        "#b9ae6a",
-        "#bad6e3",
-        "#e7aa86",
-        "#c4dce5",
-        "#f0ecc5"
-      ],
-      "background": "#241d22",
-      "foreground": "#f0ecc5",
-      "accent": "#a3baca",
-      "size": 52077778,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1556,
-          "sha256": "e224e1f51445e9c3589d5d5933c8fe714b190ba1e15efe459d401dd9c7cfe60a"
-        },
-        {
-          "path": "apps/chromium.theme",
-          "size": 9,
-          "sha256": "f4d6bc64ef798e93bc6140a95a66b22e066fac03cc68e845a126c3f1080d9e03"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 16,
-          "sha256": "ca63484665b94ba8a2b9fa5bb33f287d8fbe61f4c1ffd651672b5093f650d4cd"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 1025,
-          "sha256": "861a9c8e1ee88512f2fb3c86cbf0ef8ca6d6ea91b139d5cd6e8ddb25ac2f822a"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 44669,
-          "sha256": "b087b2f0975a56248dee84f0e66677eba2594e902542c2a6a1a3182c15f0bb34"
-        },
-        {
-          "path": "colors.toml",
-          "size": 464,
-          "sha256": "13c1ecf078462274a8320c731f84c6bc231ecbb8b473ccfb99425a7d4e22fa46"
-        },
-        {
-          "path": "theme.json",
-          "size": 113,
-          "sha256": "2d95c9498b097e5bfd0862dad0cd64479e05e647942d85626bda9dfb2558ad8f"
-        }
-      ],
+      "size": 51814365,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-untitled-r1.tar.gz",
-        "rev": 1,
-        "size": 52077778,
-        "sha256": "69e36d060ffecaf43e967e1b1c75d14ef7ae51d1e710d8d28cac05f6b3686440"
+        "release": "themes-v15",
+        "archive": "vgs-theme-untitled-r2.tar.gz",
+        "rev": 2,
+        "size": 51814365,
+        "sha256": "70fd0d4f1a38eb25a4c2b758b90d702ff7f79bcc0339eaa5b4d1ab3976f8550e"
       }
     },
     {
@@ -5357,66 +1050,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#404040",
-        "#a4a4a4",
-        "#b6b6b6",
-        "#cecece",
-        "#8d8d8d",
-        "#9b9b9b",
-        "#b0b0b0",
-        "#ececec",
-        "#5c5c5c",
-        "#a4a4a4",
-        "#b6b6b6",
-        "#cecece",
-        "#8d8d8d",
-        "#9b9b9b",
-        "#b0b0b0",
-        "#ffffff"
-      ],
-      "background": "#000000",
-      "foreground": "#ffffff",
-      "accent": "#8d8d8d",
-      "size": 3189429,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1385,
-          "sha256": "d68f80da2c372aaa359c47bdc1234e4424bc0c4fb8f906f7b812939d7669cf7d"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 10,
-          "sha256": "ab9b30623362c6eb9ffc69339fd37e428aab4528018862cf7b33d7a611f53970"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 175,
-          "sha256": "eda425faff51bd85e3cee048679b86abfe5c87b28f6c12e5cb41e717ce7373ea"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 46376,
-          "sha256": "81dc1b7ff115bf1ea895f03590c1404907e5a3cf7fd4c9188b7d1b461396aff7"
-        },
-        {
-          "path": "colors.toml",
-          "size": 519,
-          "sha256": "06127de36dac33f35af196ba7cde244d63a489b1c5e8496f97d50cb33fa9ac6c"
-        },
-        {
-          "path": "theme.json",
-          "size": 116,
-          "sha256": "94e5fdcc84ad2f5e0d5288464918677bbba9187bd7796af29473eadb2931529d"
-        }
-      ],
+      "size": 3015998,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-vantablack-r1.tar.gz",
-        "rev": 1,
-        "size": 3189429,
-        "sha256": "8e2992b2cea63c69535bb513a59f504bbec10d688029b8e59c9bf5334ab4f68a"
+        "release": "themes-v15",
+        "archive": "vgs-theme-vantablack-r2.tar.gz",
+        "rev": 2,
+        "size": 3015998,
+        "sha256": "021af870f319ad8de7043a03d138cfa194dc9b3bc1ba5de8a434665b3e0b36cf"
       }
     },
     {
@@ -5424,76 +1064,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#110e0e",
-        "#e46767",
-        "#eec8aa",
-        "#e6c6b2",
-        "#e4676d",
-        "#e46867",
-        "#eec0aa",
-        "#fafaf9",
-        "#b09b9e",
-        "#e46767",
-        "#eeccaa",
-        "#e8c5b0",
-        "#e4676d",
-        "#e46867",
-        "#f0bfa8",
-        "#faf9f9"
-      ],
-      "background": "#110e0e",
-      "foreground": "#faf9f9",
-      "accent": "#e46867",
-      "size": 7327100,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1535,
-          "sha256": "f3fec11d4893ba2ba5b42a538ceeb78c6741edfb4cd9c65851533c666ad1929c"
-        },
-        {
-          "path": "apps/chromium.theme",
-          "size": 10,
-          "sha256": "15e9aee775bd9b3a7e3fbeda1ab833cceb7689e636524fba450611ab69f0a053"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 9,
-          "sha256": "1c2342215182a8e2880028e03e679fad194dbdfa5155b55daf8386390526cfbc"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 1025,
-          "sha256": "c781afcd21f7fd21ac2cd57d99947706adf2a8e9d7630efb12757dbb882452dc"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 44670,
-          "sha256": "aa32f6f63081eb4d19b77ffe7e1467a52e604b06b5efd3ca2f29234ebd222dec"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "58daacac486e0f7a67eed0fabe3b6209d44adcd69919dd5205e0d5d0ea61d9a9"
-        },
-        {
-          "path": "terminal-colors.toml",
-          "size": 370,
-          "sha256": "e83eb00089aaaa016bb5bbc234044afff92f13999f63d3413f472c53b9e9eab2"
-        },
-        {
-          "path": "theme.json",
-          "size": 114,
-          "sha256": "c11900cb2bb7f754570ae769d4f8c7b4552d8bd7722bd585a5f87bc3546273ed"
-        }
-      ],
+      "size": 7095423,
       "assets": {
-        "release": "themes-v6",
-        "archive": "vgs-theme-vengeance-r3.tar.gz",
-        "rev": 3,
-        "size": 7327100,
-        "sha256": "77c21abf74b8fd9c0039a4a1741415539993a0a0cdd6e786f8b4dc638eb74a7f"
+        "release": "themes-v15",
+        "archive": "vgs-theme-vengeance-r4.tar.gz",
+        "rev": 4,
+        "size": 7095423,
+        "sha256": "fe40ade653bb193e6485bf887c2ef826a914bbe0b12a531494d49bd78879e16b"
       }
     },
     {
@@ -5501,76 +1078,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#1a0f2e",
-        "#ff004d",
-        "#00ff88",
-        "#ffff00",
-        "#00a8ff",
-        "#ff6ec7",
-        "#00ffff",
-        "#ffffff",
-        "#4a3d5a",
-        "#ff1070",
-        "#50ff9f",
-        "#fff352",
-        "#52b2ff",
-        "#ff94d6",
-        "#7df9ff",
-        "#f8f8f2"
-      ],
-      "background": "#0a0a14",
-      "foreground": "#f793d9",
-      "accent": "#f793d9",
-      "size": 6516588,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1848,
-          "sha256": "973cdc04fd4ac4441f8ce84aa2bb26a343c903b0755f9f6704b3b346cad31cbd"
-        },
-        {
-          "path": "apps/chromium.theme",
-          "size": 9,
-          "sha256": "e8e4b79e0a4b70a294c2d06731071e58b6fca4973c4c5ccf0cbc3191467a44f5"
-        },
-        {
-          "path": "apps/claude-light.json",
-          "size": 218,
-          "sha256": "75d42e9358af0e1d9447fa15f83746f193ec9a4912cc73f038b7f1c56e83c2a2"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 13,
-          "sha256": "328fd2519268a09cbcb45b3e8393f6abcc1739b9816bdc87bd4761d9d240f026"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 163,
-          "sha256": "b50e01b804613c0f5efb4a3be60e2df47ab7e2513bbaacbcea74e974aaf9010f"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 44670,
-          "sha256": "aac1d6ec8348ae0810558c65e977828b99b50894f7dccca77a6191c29ca3aace"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "f19b74d904b32110f671abc214ddf3c2bbdc2dd315da6239a77fd4c081361217"
-        },
-        {
-          "path": "theme.json",
-          "size": 205,
-          "sha256": "72caee999113c75b64df57e8f972a742ad171b8930f6ea5ef14bde6dd957f12c"
-        }
-      ],
+      "size": 6202765,
       "assets": {
-        "release": "themes-v12",
-        "archive": "vgs-theme-vice-city-r3.tar.gz",
-        "rev": 3,
-        "size": 6516588,
-        "sha256": "73ad054f12bbf4a7e84d0ef3ac86e2f25b5b4f722edbaf768bdd468fb7f7da22"
+        "release": "themes-v15",
+        "archive": "vgs-theme-vice-city-r4.tar.gz",
+        "rev": 4,
+        "size": 6202765,
+        "sha256": "99a4be52d63231ff250bb70474677f425d410d80a9f192212aab903e018b2804"
       }
     },
     {
@@ -5578,71 +1092,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#382952",
-        "#f07178",
-        "#c2b8ff",
-        "#ddccff",
-        "#bb9af7",
-        "#b49ae6",
-        "#a6b8ff",
-        "#deccff",
-        "#6b578f",
-        "#ff8a95",
-        "#b3a8f7",
-        "#d1bff7",
-        "#cba6f8",
-        "#c4aaf0",
-        "#c2ccff",
-        "#c3aaf0"
-      ],
-      "background": "#05010c",
-      "foreground": "#ffffff",
-      "accent": "#bb9af7",
-      "size": 7518925,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 2010,
-          "sha256": "db8af90f158f00006a35424050fe1a2cfbf81af4b6fb03d219031d62965a1324"
-        },
-        {
-          "path": "apps/chromium.theme",
-          "size": 9,
-          "sha256": "cdbf1fcfa9ea0989202b71bdec1efe65a0864e015bd12c94855f3ed57515087e"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 12,
-          "sha256": "fabce71aa1d6dff7a151d3ac1ce842c22ee11399e0279b311f97cfcfca30f7ad"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 158,
-          "sha256": "3642a06c1dd144dd24b510f30e6c0387eb735a68c59118fbe271e0905872debf"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 44665,
-          "sha256": "c83125ac743cf84bc4b75e5ef7e80ae6d3c5e6973da4c86ccf28bd0fd8cd7b83"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "3bb7927ec3b9802717d7adef47bb54658cb1bf345d368c0a94357b1fa45f86bb"
-        },
-        {
-          "path": "theme.json",
-          "size": 103,
-          "sha256": "ebf5a704f2681e7e8ad813a0e91a8250255403ee23e9cc32bccdd04e5e845af3"
-        }
-      ],
+      "size": 7280156,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-void-r1.tar.gz",
-        "rev": 1,
-        "size": 7518925,
-        "sha256": "4e37ca5ceb98e289118c3154df0b4ba9c697af5d7930b5deeb1875dc65eb7d46"
+        "release": "themes-v15",
+        "archive": "vgs-theme-void-r2.tar.gz",
+        "rev": 2,
+        "size": 7280156,
+        "sha256": "793704c12a0229bbde7c11a3a227ca68c5db8cbfb8592e4621ce78c0fbbb3ef0"
       }
     },
     {
@@ -5650,71 +1106,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#050111",
-        "#9f34f3",
-        "#4efaff",
-        "#46d6fd",
-        "#7d7bdb",
-        "#ae7aeb",
-        "#39d4fe",
-        "#6dfeff",
-        "#2e2158",
-        "#c985fe",
-        "#aafdff",
-        "#a0ebff",
-        "#c2c1f1",
-        "#dec8f9",
-        "#94e8ff",
-        "#c9ffff"
-      ],
-      "background": "#050111",
-      "foreground": "#c9ffff",
-      "accent": "#450090",
-      "size": 6694057,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1535,
-          "sha256": "8e0fbd2e5d6ae1ac687a3f57c32d4f5adafa539e4456ba8a9ef48cfff951d1f9"
-        },
-        {
-          "path": "apps/chromium.theme",
-          "size": 9,
-          "sha256": "f895a3a147bcbf0de6d7b9d8a5b586e035a3eb910c3ccf2e07ce09a458bcb1b2"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 12,
-          "sha256": "fabce71aa1d6dff7a151d3ac1ce842c22ee11399e0279b311f97cfcfca30f7ad"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 1025,
-          "sha256": "6faf9528c60f05615529343b3994cf4765ed67d41b4e23a6d37efb58e817de53"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 44667,
-          "sha256": "fab40bf658b0aa8769a011d3ff08115763c85fa0de4bf4aea19df1aaa32ae6f4"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "bcaf098852c5a200bfe8b6450050869da4760d49800679350f45030053a9d5e0"
-        },
-        {
-          "path": "theme.json",
-          "size": 118,
-          "sha256": "5f32742d3f80c53413fb8e9d858eef0f85fbaa3b2e8558aa35124866e3154f9b"
-        }
-      ],
+      "size": 6435775,
       "assets": {
-        "release": "themes-v1",
-        "archive": "vgs-theme-vurple-r1.tar.gz",
-        "rev": 1,
-        "size": 6694057,
-        "sha256": "c30bb1f06c28418c648875abcbbac845e9f944ec0342f290bab7184d103a5714"
+        "release": "themes-v15",
+        "archive": "vgs-theme-vurple-r2.tar.gz",
+        "rev": 2,
+        "size": 6435775,
+        "sha256": "31ba327c6fe96cfdab0a22875606a326b71ca775442bd7f8fa91fa4d5ae43630"
       }
     },
     {
@@ -5722,71 +1120,13 @@
       "mode": "light",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#c0c0c0",
-        "#2a2a2a",
-        "#3a3a3a",
-        "#4a4a4a",
-        "#1a1a1a",
-        "#2e2e2e",
-        "#3e3e3e",
-        "#000000",
-        "#c0c0c0",
-        "#2a2a2a",
-        "#3a3a3a",
-        "#4a4a4a",
-        "#1a1a1a",
-        "#2e2e2e",
-        "#3e3e3e",
-        "#000000"
-      ],
-      "background": "#ffffff",
-      "foreground": "#000000",
-      "accent": "#6e6e6e",
-      "size": 2871181,
-      "files": [
-        {
-          "path": "apps/btop.theme",
-          "size": 1385,
-          "sha256": "5386bb22dd39741a9811249a28a59ae548108a8a7dbede45782cb90b2b3c1ecb"
-        },
-        {
-          "path": "apps/icons.theme",
-          "size": 5,
-          "sha256": "72adc8a0a17d587a9b588efd4c6fe669d566e72db6fe212384712f9a870a6a15"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 160,
-          "sha256": "db9ffb665365baa91092425d2573adc9950b7b6ab74466e9c9a16efaa1277d3e"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 36285,
-          "sha256": "031d6c0978a64e3324a7bc4bb8004b5d232732063dd2b3dce4fe731c085c3351"
-        },
-        {
-          "path": "colors.toml",
-          "size": 519,
-          "sha256": "491e12e27bbfd5096c650684c77c7e0f12d1c6d48ba251867c055e247a8f7113"
-        },
-        {
-          "path": "terminal-colors.toml",
-          "size": 386,
-          "sha256": "bf7b27b9d63890a734930a2fe59be11d48a6d5b8b477ccfb927c4fce4a945f34"
-        },
-        {
-          "path": "theme.json",
-          "size": 108,
-          "sha256": "25625d20f6ab80d7c5234abbbf69531122ac26701d7bee12c27f7bf65163c9d3"
-        }
-      ],
+      "size": 2682159,
       "assets": {
-        "release": "themes-v4",
-        "archive": "vgs-theme-white-r3.tar.gz",
-        "rev": 3,
-        "size": 2871181,
-        "sha256": "77775aeb260b593b668adabd81929e9b8b7ef3074b41db41fe38a89de8192a75"
+        "release": "themes-v15",
+        "archive": "vgs-theme-white-r4.tar.gz",
+        "rev": 4,
+        "size": 2682159,
+        "sha256": "1002f17dd541b915ce1bed27810aeaa8435e53418fd357ee81ef81cd1b62c427"
       }
     },
     {
@@ -5794,66 +1134,13 @@
       "mode": "dark",
       "pair": "",
       "source": "curated",
-      "colors": [
-        "#1b1b1d",
-        "#a07d7d",
-        "#8b8e76",
-        "#d6c8ba",
-        "#7f8da1",
-        "#8383c3",
-        "#7f99c1",
-        "#cbcac6",
-        "#8c8b86",
-        "#af8d8d",
-        "#9b9e85",
-        "#e2d7cc",
-        "#8f9cb0",
-        "#9696cf",
-        "#92a9cd",
-        "#e3e4e0"
-      ],
-      "background": "#2f3138",
-      "foreground": "#c7c6c1",
-      "accent": "#4a5a70",
-      "size": 19140906,
-      "files": [
-        {
-          "path": "apps/icons.theme",
-          "size": 10,
-          "sha256": "75be55b00f24a3cfc708db729e9bca23765e8ef0991d6889fbb2fd4d29581209"
-        },
-        {
-          "path": "apps/neovim.lua",
-          "size": 1025,
-          "sha256": "b94d84e17e6fec6d147d02ec10e2c5b3427eff7f1e46cfa4aed0c5e17b62d8e3"
-        },
-        {
-          "path": "apps/vscode-theme.json",
-          "size": 44667,
-          "sha256": "1c771c9f0a8e3d1916f1b5e70083b0d5939f11638cd9306d20874ff55062abd0"
-        },
-        {
-          "path": "colors.toml",
-          "size": 461,
-          "sha256": "a7edf3c1c94dd9324b37c0c3d32013536f02da931e4e8c15bf1c91384030c712"
-        },
-        {
-          "path": "terminal-colors.toml",
-          "size": 370,
-          "sha256": "8668aa0f3d61e028febe537143d66c498e793078ab2ef2a5f558d28bc36d11ce"
-        },
-        {
-          "path": "theme.json",
-          "size": 120,
-          "sha256": "33fc0af0658bff9f9b8eb777749a978e28677455c155e228babdad480fcda677"
-        }
-      ],
+      "size": 18757002,
       "assets": {
-        "release": "themes-v6",
-        "archive": "vgs-theme-x-1632-r3.tar.gz",
-        "rev": 3,
-        "size": 19140906,
-        "sha256": "1814f3f41c960926bb1e9d1d62e3683ead7602eca91dd4686c3efaeb5f5da340"
+        "release": "themes-v15",
+        "archive": "vgs-theme-x-1632-r4.tar.gz",
+        "rev": 4,
+        "size": 18757002,
+        "sha256": "47778666e96f7cc2a199a05975fcaf914c0728cd11bd0d00de950afcb49a9713"
       }
     }
   ]

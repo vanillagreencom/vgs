@@ -1,6 +1,6 @@
 # Theme engine
 
-Covers: themes/, bin/, quickshell/vshell/Services/, quickshell/vshell/Modules/Settings/
+Covers: themes/, bin/, quickshell/vshell/Services/, quickshell/vshell/Modules/Settings/, packaging/install-system.sh, packaging/fedora/vgs-shell.spec
 
 The helper derives palette roles and renders app targets. Theme packages own colour and wallpaper data; shell geometry remains a VGS setting. Agent CLI theme rendering and selection are in [agent-cli-themes.md](agent-cli-themes.md).
 
@@ -16,12 +16,13 @@ The helper derives palette roles and renders app targets. Theme packages own col
 - Generated target paths are VGS-named and are declared in each target's configuration. Review path changes against the consumers; no checker proves compatibility.
 - Enabling per-monitor wallpaper mode preserves each screen's current image and disables retained cycling. `scripts/test-switcher-scope.js` checks the transition.
 - Theme applies carry distinct request ids and failed reads retain an explicitly identified displayed result. `scripts/test-theme-requests.js` checks request handling.
-- A theme downloads as one archive from its `themes-vN` release, accepted only at the catalogued size and sha256, then unpacked member by member under the manifest path rule. `_catalog_fetch_verified` and `_catalog_unpack` in `bin/vshell-helper` own acceptance; `scripts/gen-theme-catalog.py` checks the generated catalog and the release pin.
-- The archive streams into `~/.cache/vshell/theme-assets/` in fixed chunks, hashed as it is written, so the verified bytes are the bytes the unpack step reads back and no install holds a whole archive in memory. It is deleted once the install finishes, so the cache holds in-flight downloads only. An installed theme is composed from local directories alone, so applying it makes no network call.
-- Each lock entry binds its archive to the definition files it packed. `scripts/gen-theme-catalog.py --check` refuses a catalog whose committed definitions differ from the pinned archive, and `--check-assets-published`, which CI runs, refuses a pin whose archive is not an asset of a release that exists.
-- An uninstalled theme paints from `themes/thumbnails/<name>.jpg`, which ships with the package that every install carries. `theme_shipped_preview` in the helper is the one answer to what can be painted without rendering. Both callers, the catalog browser through `catalog_entries` and `theme list --json`, pass the package's own `preview.png` when it has one, and both resolve the thumbnail through `theme_thumbnail_path`.
+- Every theme's definitions and `preview.jpg` ship in the package, and only the default theme's wallpapers do (D015). `is_imagery` in `scripts/gen-theme-catalog.py` owns that split; `scripts/check-package-assets.sh` holds the install to its `--package-files` list.
+- A theme's wallpapers download as one archive from its `themes-vN` release, accepted only at the catalogued size and sha256, then unpacked member by member under the imagery path rule. `_catalog_fetch_verified` and `_catalog_unpack` in `bin/vshell-helper` own acceptance; `scripts/gen-theme-catalog.py` checks the generated catalog and the release pin.
+- The archive streams into `~/.cache/vshell/theme-assets/` in fixed chunks, hashed as it is written, so the verified bytes are the bytes the unpack step reads back and no install holds a whole archive in memory. An installed theme is composed from local directories alone, so applying it makes no network call.
+- `scripts/gen-theme-catalog.py --check-assets-published`, which CI runs, refuses a pin whose archive is not an asset of a release that exists.
+- A theme paints from its package's `preview.jpg`, else `themes/thumbnails/<name>.jpg`. `theme_shipped_preview` in the helper is the one answer to what can be painted without rendering.
 - Reading the current theme never applies one. With no `theme.json` the helper answers with the file an apply of the default theme would write, rendered from the `vgs-shell` target without writing it, and `theme init`, which `VGSThemeService` runs at startup, is the explicit first-run apply. `test_current_theme_reads_without_applying` and `test_theme_init_applies_only_without_state` in `scripts/check-vshell-helper.py` check both; `scripts/test-theme-startup.js` checks that startup runs `theme init` before its first reads.
-- Download publication holds the mutation lock only around the directory swap. Removal requires matching download identity. See `catalog_download_theme` and `catalog_owns` in the helper.
+- A download places its files beside the user overlay under the mutation lock, never over a file it did not place. `theme catalog remove` deletes only the recorded wallpapers, and `theme revert` keeps them. Removal requires matching download identity. See `catalog_download_theme` and `catalog_owns` in the helper.
 
 ## Decisions
 
