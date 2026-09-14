@@ -15,6 +15,9 @@ Singleton {
     readonly property string home: Quickshell.env("HOME") || ""
     readonly property string recordingStateDir: (Quickshell.env("XDG_STATE_HOME") || (home + "/.local/state")) + "/vshell-screenrecord"
     readonly property string recordingStatusPath: recordingStateDir + "/status.json"
+    // Quickshell attaches a FileView watch to the file and its parent directory
+    // when the path is set; with the directory missing neither attaches.
+    property bool recordingStateDirReady: false
 
     property bool recordingActive: false
     property int recordingPid: 0
@@ -69,13 +72,14 @@ Singleton {
         ToastService.dismissCategory(countdownToastCategory);
     }
 
-    function refreshRecording() {
-        nowMs = Date.now();
-        recordingStatusView.reload();
-        // Status-file reads are enough while idle. Verify process liveness once
-        // per second only while recording, so a crashed recorder cannot leave a
-        // stale REC indicator behind.
-        if (recordingActive && !recordingStatusProcess.running)
+    function applyStatusFile(text) {
+        const wasActive = recordingActive;
+        parseRecordingStatus(text);
+        // The recorder script clears the file when its recorder exits, but a
+        // file left by an ended session still claims a recording. Ask the
+        // script once per recording that appears; its status command removes a
+        // stale file, and the watch reloads the removal.
+        if (!wasActive && recordingActive && !recordingStatusProcess.running)
             recordingStatusProcess.running = true;
     }
 
@@ -101,22 +105,40 @@ Singleton {
         onTriggered: root.endCountdown()
     }
 
+    // Drives only the elapsed-time display; state changes come from the watch.
     Timer {
+        id: elapsedTicker
         interval: 1000
         repeat: true
-        running: true
+        running: root.recordingActive
         triggeredOnStart: true
-        onTriggered: root.refreshRecording()
+        onTriggered: root.nowMs = Date.now()
+    }
+
+    Process {
+        id: recordingStateDirProcess
+        command: ["mkdir", "-p", root.recordingStateDir]
+        running: true
+        onExited: exitCode => {
+            if (exitCode === 0)
+                root.recordingStateDirReady = true;
+        }
+        // A failed start emits no exited, so the verdict is read here.
+        onRunningChanged: {
+            if (!running && !root.recordingStateDirReady)
+                Log.warn("CaptureService: could not create", root.recordingStateDir, "- recording state will not update");
+        }
     }
 
     FileView {
         id: recordingStatusView
-        path: root.recordingStatusPath
+        path: root.recordingStateDirReady ? root.recordingStatusPath : ""
         blockLoading: false
-        watchChanges: false
+        watchChanges: true
         printErrors: false
-        onLoaded: root.parseRecordingStatus(text())
-        onLoadFailed: root.parseRecordingStatus("")
+        onFileChanged: reload()
+        onLoaded: root.applyStatusFile(text())
+        onLoadFailed: root.applyStatusFile("")
     }
 
     Process {

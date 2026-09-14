@@ -27,7 +27,6 @@ PluginComponent {
 
     function stopRecording() {
         Quickshell.execDetached([Paths.vshellCli, "capture", "screenrecording", "stop"]);
-        CaptureService.refreshRecording();
     }
 
     function cancelCountdown() {

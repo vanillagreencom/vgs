@@ -127,7 +127,9 @@ write_status() {
   local source="$5"
   local started="$6"
 
-  cat >"$STATUS_FILE" <<EOF
+  # The shell watches this file, so it is replaced whole: a reader never sees a
+  # truncated file between the open and the last write.
+  cat >"$STATUS_FILE.tmp" <<EOF
 {
   "active": true,
   "pid": $pid,
@@ -138,6 +140,7 @@ write_status() {
   "startedAt": $(json_escape "$started")
 }
 EOF
+  mv -f "$STATUS_FILE.tmp" "$STATUS_FILE"
 }
 
 clear_status() {
@@ -174,6 +177,15 @@ recording_status() {
   rm -f "$PID_FILE" "$RAW_FILE" "$FINAL_FILE" "$THUMB_FILE"
   clear_status
   printf '{"active":false}\n'
+}
+
+# Clear the recording state once the recorder exits by any route, so a crashed
+# recorder cannot leave status.json claiming a recording. recording_status
+# clears only a pid that is no longer running, so a watcher that wakes after a
+# newer recording started leaves that recording alone.
+watch_recorder_exit() {
+  tail --pid="$1" -f /dev/null || printf 'recorder exit watch for pid %s failed\n' "$1" >&2
+  recording_status >/dev/null
 }
 
 postprocess() {
@@ -542,6 +554,9 @@ start_recording() {
   printf '%s\n' "$final" >"$FINAL_FILE"
   printf '%s\n' "$thumb" >"$THUMB_FILE"
   write_status "$pid" "$raw" "$final" "$thumb" "${source:-portal}" "$started"
+  # No inherited stdout: a caller collecting this script's output must see it
+  # close when the script exits, not when the recording ends.
+  watch_recorder_exit "$pid" </dev/null >/dev/null 2>>"$LOG_FILE" &
 
   sleep 0.4
   if ! kill -0 "$pid" 2>/dev/null; then

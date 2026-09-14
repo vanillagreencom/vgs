@@ -275,6 +275,7 @@ jobs:
           scripts/test-backend-capabilities.js
           scripts/test-settings-navigation.js
           scripts/test-store-write-coalescing.js
+          scripts/test-capture-status-watch.js
           scripts/test-wallpaper-thumbs.py
       - name: Fixture and capability regressions
         run: |
@@ -289,6 +290,8 @@ jobs:
           scripts/test-qml-smoke.sh
           # The sampler's --report mode reads a TSV fixture and needs no shell.
           scripts/test-sample-shell-memory.sh
+          # The recorder script runs against a stub recorder and needs no session.
+          scripts/test-screenrecording-status.sh
           scripts/test-validation-areas.sh
           scripts/test-validation-dump.sh
           scripts/test-validation-ci-coverage.sh

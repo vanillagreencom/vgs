@@ -97,6 +97,7 @@ go        | scripts/check-execbound-adoption-tests.py
 -         | scripts/test-smoke-surfaces.sh
 -         | scripts/test-validate.sh
 -         | scripts/test-sample-shell-memory.sh
+-         | scripts/test-screenrecording-status.sh
 -         | scripts/test-validation-inventory.sh
 -         | scripts/test-validation-areas.sh
 -         | scripts/test-validation-dump.sh
@@ -106,6 +107,7 @@ go        | scripts/check-execbound-adoption-tests.py
 -         | scripts/test-format-lint.sh
 -         | scripts/test-pill-hover-safety.js
 qml       | scripts/test-launcher-hover-latch.js
+qml       | scripts/test-capture-status-watch.js
 qml       | scripts/test-popout-dismiss-envelope.js
 qml       | scripts/test-switcher-selection.js
 qml       | scripts/test-switcher-scope.js
