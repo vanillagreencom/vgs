@@ -14,10 +14,14 @@ import (
 // newest subsumes the rest.
 //
 // A frame that is not whole state loses the earlier one outright, with nothing
-// to report it. Three declarations have already been made wrongly: a per-URL
-// open request, a per-device pairing prompt, and a per-monitor wallpaper
-// rotation. Adding or removing a declaration is an edit here as well as at the
-// call site, so it cannot be acquired by an audit that reads one file.
+// to report it. Two names were declared and then withdrawn once their producers
+// were read: a per-monitor wallpaper rotation, and a tailscale login URL no
+// status frame carries. Three others never carried a declaration at all, and
+// were coalesced by the earlier default that replaced every service's unread
+// frame: a per-URL open request, a per-device pairing prompt, and a
+// per-subscription D-Bus signal. Adding or removing a declaration is an edit
+// here as well as at the call site, so it cannot be acquired by an audit that
+// reads one file.
 var declaredCoalescing = map[string]struct {
 	file string
 	why  string
@@ -95,8 +99,8 @@ func TestDeclaredCoalescingSetMatchesItsOwner(t *testing.T) {
 }
 
 // TestEventShapedServicesAreNotDeclared names the services whose frames do not
-// subsume one another. Each was found by reading its producer, and one of them
-// was wrongly declared before.
+// subsume one another. Each was found by reading its producer, and two of them
+// carried a declaration here before.
 func TestEventShapedServicesAreNotDeclared(t *testing.T) {
 	found := scanDeclarations(t)
 	for _, row := range []struct {
