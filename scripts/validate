@@ -82,6 +82,7 @@ qml       | scripts/test-plugin-daemon-views.js
 -         | scripts/test-remote-desktop-state.js
 -         | scripts/test-idle-reload-snapshot.js
 -         | scripts/test-idle-lock-request.js
+-         | scripts/test-shell-runner-guard.js
 -         | scripts/test-proc-timeout.js
 helper    | scripts/check-vshell-helper.py
 helper    | scripts/check-keybinds-display.py

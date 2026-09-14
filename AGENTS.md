@@ -6,7 +6,7 @@ The runtime and CLI are named `vshell`; `vgs` conflicts with the LVM command.
 
 ## Never launch a second shell into the live session
 
-Never run `qs -c vshell` or `qs -p quickshell/vshell`: a second instance can leave the desktop black by competing for session resources. Never run `pkill quickshell`: other Quickshell applications share the seat. Use `scripts/validate qml` for isolated runtime validation. Recovery from stranded lock surfaces is `vshell ipc call lock forceReset`.
+Never run `qs -c vshell` or `qs -p quickshell/vshell`: a second instance can leave the desktop black by competing for session resources. `vshell run` locks `$XDG_RUNTIME_DIR/vshell.lock` before it starts Quickshell, through the runner or, without a backend, through `flock`, so a second `vshell run` exits with an error. `shell.qml` refuses to draw unless its parent process is the lock holder named in `VGS_RUNNER_PID`; only the sandbox in `scripts/qml-smoke.sh` sets `VSHELL_DISABLE_INSTANCE_GUARD=1`. Never run `pkill quickshell`: other Quickshell applications share the seat. Use `scripts/validate qml` for isolated runtime validation. Recovery from stranded lock surfaces is `vshell ipc call lock forceReset`.
 
 ## Validation
 

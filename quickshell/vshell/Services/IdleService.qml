@@ -167,7 +167,7 @@ Singleton {
                 return;
             }
             attempts++;
-            // Allow the duplicate-instance guard startup window before reporting that the lock component is unavailable.
+            // A request can arrive during startup before Lock registers; allow for that before reporting the lock component unavailable.
             if (attempts >= 16) {
                 stop();
                 root.log.error("lock request(s) from", root._pendingLockSources.join(", "),

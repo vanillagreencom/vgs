@@ -30,14 +30,6 @@ const intervalMatch = source.slice(timerIndex).match(/interval:\s*(\d+)/);
 assert.ok(intervalMatch, "the retry timer must declare an interval");
 const INTERVAL = Number(intervalMatch[1]);
 
-// The retry budget must outlast the duplicate-instance guard's startup wait.
-test("the retry window outlasts the duplicate-instance guard", () => {
-    assert.ok(
-        BOUND * INTERVAL >= 2000,
-        `retry window ${BOUND * INTERVAL}ms must outlast shell.qml's 2000ms guard fail-open`,
-    );
-});
-
 // with models QML component lookup. Keep source as a function parameter ahead of that scope.
 // The generated function requires non-strict mode, so this file uses CommonJS.
 function compile(body, scopeArg, ...params) {
