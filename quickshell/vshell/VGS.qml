@@ -469,6 +469,11 @@ Item {
         PolkitService.polkitAvailable;
         DisplayConfigState.hasOutputBackend;
         PortalService.systemColorScheme;
+
+        Proc.runCommand(null, [Paths.vshellCli, "cache", "prune"], (output, exitCode, stderr) => {
+            if (exitCode !== 0)
+                log.warn("vshell cache prune exited", exitCode, stderr);
+        });
     }
 
     Loader {

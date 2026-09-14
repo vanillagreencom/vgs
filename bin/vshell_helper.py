@@ -5341,6 +5341,112 @@ def cmd_icons(argv: List[str]) -> int:
     return 0
 
 
+# CachingImage and WallpaperThumbnailPreloader name a thumbnail `<hash>@<size>x<size>.png`,
+# and TrackArtService names a download `remote_<hash>`, each hash the eight-hex-digit djb2
+# they share. Any other name, such as a `.tmp` download still being written, is not pruned.
+_IMAGECACHE_NAME = re.compile(r"[0-9a-f]{8}@[0-9]+x[0-9]+\.png|remote_[0-9a-f]{8}")
+IMAGECACHE_MAX_BYTES = 64 * 1024 * 1024
+# NotificationService.getImageCachePath: `notif_<epoch ms>_<notification id>.png`.
+_NOTIFICATION_IMAGE_NAME = re.compile(r"notif_[0-9]+_[0-9]+\.png")
+# A popup saves its image before the debounced history write that names it lands, so a
+# fresh unreferenced image may still be about to gain its reference.
+NOTIFICATION_IMAGE_GRACE_SECONDS = 60
+
+
+def _owned_cache_files(directory: Path, name: "re.Pattern[str]") -> List[Tuple[Path, os.stat_result]]:
+    """Regular files directly in `directory` whose whole name matches `name`."""
+    owned: List[Tuple[Path, os.stat_result]] = []
+    try:
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                if not name.fullmatch(entry.name) or not entry.is_file(follow_symlinks=False):
+                    continue
+                try:
+                    owned.append((Path(entry.path), entry.stat(follow_symlinks=False)))
+                except FileNotFoundError:
+                    continue
+    except FileNotFoundError:
+        return []
+    return owned
+
+
+def _unlink_cache_file(path: Path) -> bool:
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def prune_imagecache(max_bytes: int) -> Tuple[int, int]:
+    """Delete imagecache files until the rest fit in `max_bytes`: every track art download
+    before any thumbnail, and the oldest-written first within each.
+
+    A cache hit writes nothing and `~/.cache` may be mounted noatime, so write time is the
+    only age every file carries, and a thumbnail in constant use carries the oldest one.
+    Thumbnails therefore outlast track art, which grows the cache with each track played.
+    Returns the files and bytes removed.
+    """
+    files = sorted(_owned_cache_files(cache_dir() / "imagecache", _IMAGECACHE_NAME),
+                   key=lambda item: (not item[0].name.startswith("remote_"), item[1].st_mtime_ns))
+    total = sum(stat_result.st_size for _, stat_result in files)
+    removed = removed_bytes = 0
+    for path, stat_result in files:
+        if total <= max_bytes:
+            break
+        total -= stat_result.st_size
+        if _unlink_cache_file(path):
+            removed += 1
+            removed_bytes += stat_result.st_size
+    return removed, removed_bytes
+
+
+def reconcile_notification_images(history_file: Path, now: float) -> int:
+    """Delete notification images no entry of `history_file` names, past the save grace.
+
+    An entry names its image by file name, so a history written under another spelling of
+    the cache root still keeps its images. A missing history deletes nothing. Raises
+    ValueError when the history cannot be read as a list of entries, before deleting anything.
+    """
+    try:
+        history = json.loads(history_file.read_text())
+    except FileNotFoundError:
+        return 0
+    entries = history.get("notifications") if isinstance(history, dict) else None
+    if not isinstance(entries, list) or not all(isinstance(item, dict) for item in entries):
+        raise ValueError("expected an object whose notifications field is a list of entries")
+    referenced = {
+        Path(image[len("file://"):]).name
+        for image in (item.get("image") for item in entries)
+        if isinstance(image, str) and image.startswith("file://")
+    }
+    removed = 0
+    for path, stat_result in _owned_cache_files(cache_dir() / "notification_images", _NOTIFICATION_IMAGE_NAME):
+        if path.name in referenced or now - stat_result.st_mtime < NOTIFICATION_IMAGE_GRACE_SECONDS:
+            continue
+        if _unlink_cache_file(path):
+            removed += 1
+    return removed
+
+
+def cmd_cache(argv: List[str]) -> int:
+    parser = argparse.ArgumentParser(prog="vshell cache")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("prune", help="bound the image cache and delete notification images the history no longer names")
+    parser.parse_args(argv)
+    files, size = prune_imagecache(IMAGECACHE_MAX_BYTES)
+    print(f"imagecache-pruned: {files} files {size} bytes")
+    history_file = cache_dir() / "notification_history.json"
+    try:
+        removed = reconcile_notification_images(history_file, time.time())
+    except ValueError as exc:
+        eprint(f"notification-history-unreadable: {history_file}")
+        eprint(f"No notification image was deleted: {exc}")
+        return 1
+    print(f"notification-images-pruned: {removed} files")
+    return 0
+
+
 def bundled_icons_dir() -> Path:
     return repo_root() / "config" / "vshell" / "icons"
 
@@ -19251,6 +19357,7 @@ def main() -> int:
         if cmd == "launcher-search": return cmd_launcher_search(argv)
         if cmd == "terminal": return cmd_terminal(argv)
         if cmd == "icons": return cmd_icons(argv)
+        if cmd == "cache": return cmd_cache(argv)
         eprint(f"Unknown VGS helper command: {cmd}")
         return 2
     except KeyboardInterrupt:

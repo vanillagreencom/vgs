@@ -154,13 +154,28 @@ Singleton {
             desktopEntry: wrapper.desktopEntry || "",
             url: _extractUrl(wrapper.htmlBody || wrapper.body || "")
         };
-        let newList = [data, ...historyList];
-        if (newList.length > SettingsData.notificationHistoryMaxCount) {
-            newList = newList.slice(0, SettingsData.notificationHistoryMaxCount);
-        }
-        historyList = newList;
+        const trimmed = trimHistory([data, ...historyList], SettingsData.notificationHistoryMaxCount);
+        for (const image of trimmed.orphanedImages)
+            _deleteCachedImage(image);
+        historyList = trimmed.kept;
         saveHistory();
     }
+
+    // BEGIN HISTORY TRIM DECISION
+    // Keep trim decisions independent of QML objects; every input is an argument. scripts/test-notification-history-trim.js evaluates the code between these markers in Node; nothing here may reference root, SettingsData, or Qt.
+
+    // Split a newest-first history at the count cap. A dropped entry's image has no other
+    // reference once no kept entry names it, so the caller deletes the images returned here.
+    function trimHistory(entries, maxCount) {
+        const kept = entries.length > maxCount ? entries.slice(0, maxCount) : entries;
+        const keptImages = new Set(kept.map(item => item.image));
+        const orphanedImages = entries.slice(kept.length).map(item => item.image).filter(image => image && !keptImages.has(image));
+        return {
+            kept: kept,
+            orphanedImages: orphanedImages
+        };
+    }
+    // END HISTORY TRIM DECISION
 
     function saveHistory() {
         historySaveTimer.restart();
