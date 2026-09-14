@@ -1,8 +1,8 @@
 # Helper CLI
 
-Covers: bin/
+Covers: bin/, packaging/install-system.sh, packaging/arch/, packaging/debian/control, packaging/fedora/vgs-shell.spec, packaging/gentoo/, packaging/void/template, flake.nix
 
-The helper owns parsing, generation and privileged operations. `bin/vshell` dispatches to `bin/vshell-helper`; the importable Python modules provide its Niri and colour support.
+The helper owns parsing, generation and privileged operations. `bin/vshell` dispatches to `bin/vshell-helper`, a stub that imports `bin/vshell_helper.py`, which loads the other `bin/vshell_*.py` modules.
 
 ## Boundaries
 
@@ -12,17 +12,18 @@ The helper owns parsing, generation and privileged operations. `bin/vshell` disp
 
 ## Invariants
 
+- `bin/vshell-helper` stays a stub, because CPython compiles the script it runs on every call and caches bytecode only for imported modules. A source checkout writes that cache on the first call after a change. An install tree is not writable by the user, so `packaging/install-system.sh` compiles the `bin/` modules as checked-hash bytecode, which stays valid when a packager resets file times. Those modules install without the executable bit and carry no shebang, so a packaging step that rewrites executables' shebangs, as Fedora's and Nix's do, cannot change a source after it is compiled. Every channel's build therefore needs `python3`, which the Debian, Fedora, Gentoo and Void recipes and `flake.nix` declare as a build dependency; Arch builds with its runtime `depends`, which name `python`. Running `bin/vshell_helper.py` directly also reaches `main` but compiles it every time, so a helper that runs itself as a new process, as the sudo re-exec, the display-apply watchdog and the preview session do, runs `helper_entrypoint`. Pillow and `urllib.request` load inside the functions that use them, since most calls use neither. `test_helper_import_loads_no_image_or_http_stack` and `test_helper_entrypoint_runs_the_helper` in `scripts/check-vshell-helper.py` check the imports and both entry paths; `test_greeter_runtime_helper_dependencies` runs the stub from the greeter's copied runtime, and `scripts/check-package-assets.sh` checks that the install ships the module and its bytecode.
 - The passwordless-sudo drop-in is validated before installation. Its user-readable mirror refuses symlink traversal. See `sudo_toggle_apply` and `sudo_toggle_write_flag`, tested by `scripts/check-vshell-helper.py`.
 - `sudo-toggle` requires an explicit requested state and refuses a stale direction. Grants require terminal confirmation; revocation can work without a terminal. See `sudo_toggle_set`, the helper tests and `scripts/test-sudo-toggle-confirm.js`.
 - Terminal selection belongs to `terminal_candidates` and `terminal_argv`. An unwrapped command must not be retried after a terminal exits. The terminal tests in `scripts/check-vshell-helper.py` cover these contracts.
 - Scratchpad removal releases the window instead of closing the application. Niri pads use persistent named workspaces; the toggle moves the window and restores focus. See `cmd_scratchpad`, `SCRATCHPAD_NIRI_ANCHORS` and the helper scratchpad tests.
-- A rejected scratchpad must not be launched or emitted into compositor configuration. See the validation paths in `bin/vshell-helper` and `scripts/check-vshell-niri.py`.
+- A rejected scratchpad must not be launched or emitted into compositor configuration. See the validation paths in `bin/vshell_helper.py` and `scripts/check-vshell-niri.py`.
 - Brightness scans must not publish stale results. Repeated failures quarantine scans; potentially blocking probes run in separate processes. See `scripts/check-brightness.py` and `scripts/test-brightness-scan-ordering.js`.
 - Hyprland display previews retain the previous generated fragment under a transaction lock. A separate helper restores it if confirmation does not arrive. Startup reads and new applies recover expired previews or previews from another compositor session under that same lock; internal snapshot reads never acquire it recursively. `test_display_output_controls` in `scripts/check-vshell-helper.py` checks recovery, rejection and confirmation.
 - Live display validation excludes saved offline outputs. Preserve-only names retain the helper's exact generated rules until the user forgets them. `test_display_output_controls` checks offline ICC retention and removal; `scripts/check-display-config-fixtures.js` checks live and saved-setup payloads.
 - The remote-desktop unit starts only after its capture output is verified. Cleanup requires VGS ownership tied to the compositor instance. The remote-desktop lifecycle tests in `scripts/check-vshell-helper.py` enforce this contract.
 - Unknown remote-desktop state must not clear a known streaming indicator. `scripts/test-remote-desktop-state.js` checks state handling; helper journal tests cover the bounded session read.
-- Catalog stubs replace only VGS-owned files and must not hide an existing external command. This covers every group in `config/vshell/dev-tools.json`, agents, apps and tools alike. See the stub installation code in `bin/vshell-helper`.
+- Catalog stubs replace only VGS-owned files and must not hide an existing external command. This covers every group in `config/vshell/dev-tools.json`, agents, apps and tools alike. See the stub installation code in `bin/vshell_helper.py`.
 - Removing a distribution package to resolve a duplicate command is a separate action the owner asks for, never a step inside an install. `entry_replace` refuses unless a package manager names an owner for the path, and stops without installing when the removal fails, so a machine is never left with neither copy. `test_row_actions_run_and_refuse` in `scripts/check-dev-tools.py` checks both refusals and the failed removal.
 - What a catalog install may put on PATH, and when VGS may change how a shell reaches an entry's command, is [D016](../decisions/D016-a-catalog-entry-owns-only-the-commands-it-declares.md).
 - System font families use fontconfig aliases and GTK/GSettings preferences. Hyprland text uses its existing generated layout fragment. `test_system_font_family_targets` and `test_apply_system_fonts_temp_home` in `scripts/check-vshell-helper.py` check these targets and reset ownership.

@@ -9,11 +9,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-try:
-    from PIL import Image, ImageOps
-except Exception:  # pragma: no cover - handled at runtime
-    Image = None  # type: ignore
-    ImageOps = None  # type: ignore
+
+def pil_image() -> Any:
+    """Pillow's `PIL.Image` module, or None when Pillow cannot be imported.
+
+    Imported on first use, not at module load: every helper call loads this
+    module and most of them decode no image.
+    """
+    try:
+        from PIL import Image
+    except Exception:  # pragma: no cover - handled at runtime
+        return None
+    return Image
 
 
 # Cache narrow wallpaper thumbnails for the switcher rail. Closing the modal
@@ -103,7 +110,11 @@ def build_one(src: Path) -> Optional[Path]:
         return None
     box = f"{WIDTH}x{HEIGHT}"
 
+    Image = pil_image()
+
     def with_pillow(tmp: Path) -> None:
+        from PIL import ImageOps
+
         # exif_transpose FIRST: the magick rung passes -auto-orient, and a
         # phone photo carrying an EXIF rotation would otherwise be resized
         # unrotated and saved without the tag — a thumbnail on its side, or

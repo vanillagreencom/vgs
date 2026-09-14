@@ -150,7 +150,7 @@ Singleton {
     }
 
     // Folder queries that start at a path are answered by the helper's own
-    // directory walk (bin/vshell-helper::_launcher_folder_path_hits), which runs
+    // directory walk (bin/vshell_helper.py::_launcher_folder_path_hits), which runs
     // before fd is consulted, so path completion must not be gated on fd. The
     // condition mirrors that branch, "~" and "/" alike, and both forms arrive
     // from the overview: the BARE "/" is the launcher's own file-search trigger

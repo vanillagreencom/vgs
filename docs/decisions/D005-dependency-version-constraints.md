@@ -6,7 +6,7 @@
 
 ## Context
 
-`config/vshell/dependencies.json` is the single source of truth for what VGS needs installed. It declares **presence only**: `feature_status()` in `bin/vshell-helper` answers each entry with `command_exists()`.
+`config/vshell/dependencies.json` is the single source of truth for what VGS needs installed. It declares **presence only**: `feature_status()` in `bin/vshell_helper.py` answers each entry with `command_exists()`.
 
 VGS-78 established one real version floor and wrote it into the manifest as a `$comment`:
 
@@ -33,7 +33,7 @@ Facts established before choosing (2026-08-08):
 
 **`dependencies.json` gains no version-constraint syntax.** It declares presence, and its `$comment` now says so explicitly and points at where the real check lives, rather than implying a constraint nothing enforces.
 
-**Where VGS needs more than presence, the check is a capability probe**, in `bin/vshell-helper`'s `CAPABILITY_PROBES` table: run the installed command and ask it to do the thing VGS actually depends on.
+**Where VGS needs more than presence, the check is a capability probe**, in `bin/vshell_helper.py`'s `CAPABILITY_PROBES` table: run the installed command and ask it to do the thing VGS actually depends on.
 
 ```python
 "jq": {
@@ -98,6 +98,6 @@ scripts/check-command-declarations.py
 
 - VGS-89 — the issue this decision resolves
 - VGS-78 — added the `$comment` this replaces, and established the jq 1.5 fact from `builtin.c` at tags `jq-1.4` / `jq-1.5` / `jq-1.6`
-- `bin/vshell-helper` — `CAPABILITY_PROBES`, `capability_probe_ok`, `_unusable_commands`
+- `bin/vshell_helper.py` — `CAPABILITY_PROBES`, `capability_probe_ok`, `_unusable_commands`
 - `config/vshell/dependencies.json` — `features.base.$comment`
 - [D001](D001-quickshell-0-3-0-upstream-defects.md) — why Quickshell is a pin rather than a minimum

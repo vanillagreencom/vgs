@@ -1,6 +1,6 @@
 """VGS system and tool updates: counting and running.
 
-Imported by bin/vshell-helper, never run. `vshell update run <mode>` is the
+Imported by bin/vshell_helper.py, never run. `vshell update run <mode>` is the
 only implementation of how each source upgrades; the backend daemon supervises
 it in a terminal and the bar widget spawns it when the daemon is absent.
 """

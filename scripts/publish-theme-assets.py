@@ -56,7 +56,7 @@ def generator() -> Any:
 def helper() -> Any:
     global HELPER
     if HELPER is None:
-        HELPER = load_module("vshell_helper_publish", REPO_ROOT / "bin" / "vshell-helper")
+        HELPER = load_module("vshell_helper_publish", REPO_ROOT / "bin" / "vshell_helper.py")
     return HELPER
 
 

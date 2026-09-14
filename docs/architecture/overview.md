@@ -17,7 +17,7 @@ Each resource has one owner. QML consumes the owner's state instead of starting 
 
 ## Boundaries
 
-- QML owns UI and orchestration. Parsing, template generation and privileged writes belong in the helper. Review this boundary against `bin/vshell-helper` and `quickshell/vshell/Services/VGSBackendService.qml`; no static check proves the whole boundary.
+- QML owns UI and orchestration. Parsing, template generation and privileged writes belong in the helper. Review this boundary against `bin/vshell_helper.py` and `quickshell/vshell/Services/VGSBackendService.qml`; no static check proves the whole boundary.
 - The Go daemon owns live system state. Theme generation stays in the helper, and display power stays in `Services/IdleService.qml`.
 - Theme packages own colours and app styling. Shell geometry stays in `Common/Theme.qml` and `Common/Appearance.qml`.
 - Shipped configuration is seed data. Mutable user state belongs outside the repository.

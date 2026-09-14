@@ -101,7 +101,7 @@ Checksum-verified bundles and source archives are published on [GitHub Releases]
 ## How it works
 
 - `vshell.service`, a systemd user service, runs the Quickshell configuration that draws every surface.
-- The QML shell asks the `vshell` CLI for anything privileged or generated. `bin/vshell-helper` does the heavy theme generation and template rendering.
+- The QML shell asks the `vshell` CLI for anything privileged or generated. `bin/vshell_helper.py` does the heavy theme generation and template rendering.
 - Applying a theme writes a colour file for each enabled target application and reloads the ones that support it.
 - `vshell ipc call <target> <function>` drives the shell from a keybind or a script. `vshell ipc call vshell-menu open` opens the menu.
 - VGS writes its generated compositor configuration under its own directory: `~/.config/niri/vgs/` on Niri, `~/.config/hypr/vgs/` on Hyprland. A generated file takes effect only once your top-level config includes it. On Niri, VGS adds that include itself and backs the file up first. On Hyprland, display setup adds its own include, and the layout and scratchpad pages show you the line to add.

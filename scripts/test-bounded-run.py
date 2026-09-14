@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Checks the bounded runner in bin/vshell-helper: `run(..., kill_group=True)`.
+"""Checks the bounded runner in bin/vshell_helper.py: `run(..., kill_group=True)`.
 
 A timeout must end the command's whole process group. mise runs one `npm view`
 per npm-backed tool; subprocess.run kills only the direct child, so every
@@ -42,7 +42,7 @@ exec sleep 300
 
 
 def load_helper():
-    loader = importlib.machinery.SourceFileLoader("vshell_helper_bounded_run_check", str(REPO_ROOT / "bin" / "vshell-helper"))
+    loader = importlib.machinery.SourceFileLoader("vshell_helper_bounded_run_check", str(REPO_ROOT / "bin" / "vshell_helper.py"))
     spec = importlib.util.spec_from_loader(loader.name, loader)
     module = importlib.util.module_from_spec(spec)
     loader.exec_module(module)

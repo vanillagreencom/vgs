@@ -7,6 +7,7 @@ revision=1
 # Run scripts/gen-package-metadata.py --write after changing either file.
 depends="quickshell jq python3 grim slurp hyprpicker wl-clipboard libnotify glib sudo"
 # END GENERATED REQUIRED DEPENDENCIES
+hostmakedepends="python3"
 # One notification daemon per session: org.freedesktop.Notifications is a
 # first-come, first-served bus name. Void packages swaync under its upstream
 # name, SwayNotificationCenter.

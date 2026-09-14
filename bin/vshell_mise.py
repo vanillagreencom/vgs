@@ -1,6 +1,6 @@
 """VGS mise stubs: the catalog, lazy launchers in ~/.local/bin, and mise JSON.
 
-Imported by bin/vshell-helper, never run. The helper hands over its runtime
+Imported by bin/vshell_helper.py, never run. The helper hands over its runtime
 (paths, process helpers, settings access, terminal spawning) through
 configure(), so this module stays free of the helper's globals.
 """

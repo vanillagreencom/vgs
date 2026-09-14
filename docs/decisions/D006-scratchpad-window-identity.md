@@ -2,7 +2,7 @@
 
 [← Decision Index](INDEX.md)
 
-**Date**: 2026-08-08 **Status**: Active **Research**: VGS-86 **Applies to**: `bin/vshell-helper` § Scratchpads, `quickshell/vshell/Modules/Settings/ScratchpadsTab.qml`, `docs/architecture/helper.md`
+**Date**: 2026-08-08 **Status**: Active **Research**: VGS-86 **Applies to**: `bin/vshell_helper.py` § Scratchpads, `quickshell/vshell/Modules/Settings/ScratchpadsTab.qml`, `docs/architecture/helper.md`
 
 > **Made by an agent, not the owner.** VGS-86 asked which of three identity mechanisms to adopt. The measured answer is that none of them covers enough ground to be a default, so this record states that, ships the two safe improvements, and lists what would reopen it.
 
@@ -41,7 +41,7 @@ Measured with the new `vshell scratchpad match`, against the live session:
 
 ### 3. …but VGS already knows the override is not general
 
-`TERMINAL_SPECS` in `bin/vshell-helper` is a hand-curated table of which terminals accept an app-id flag and which do not. It exists because the answer varies per application and cannot be derived:
+`TERMINAL_SPECS` in `bin/vshell_helper.py` is a hand-curated table of which terminals accept an app-id flag and which do not. It exists because the answer varies per application and cannot be derived:
 
 | Terminal | app-id flag |
 |---|---|

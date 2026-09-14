@@ -17,7 +17,7 @@
             pname = "vgs-shell";
             version = builtins.replaceStrings [ "\n" ] [ "" ] (builtins.readFile ./VERSION);
             src = self;
-            nativeBuildInputs = [ pkgs.go pkgs.makeWrapper ];
+            nativeBuildInputs = [ pkgs.go pkgs.makeWrapper pkgs.python3 ];
             buildPhase = ''
               runHook preBuild
               export HOME=$TMPDIR

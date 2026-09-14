@@ -145,7 +145,7 @@ def resolve(value):
 def peer_alive(pid):
     """True when `pid` is a live Quickshell process *right now*.
 
-    Faithful mirror of `bin/vshell-helper::_vgs_peer_alive` — keep the two in
+    Faithful mirror of `bin/vshell_helper.py::_vgs_peer_alive` — keep the two in
     step. `/proc/<pid>` merely existing is not liveness: a zombie keeps a
     readable entry while owning no surfaces, and after PID reuse the number
     belongs to something unrelated. Either would let a stale foreign entry fail

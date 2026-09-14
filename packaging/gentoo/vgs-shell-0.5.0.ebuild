@@ -33,7 +33,10 @@ RDEPEND="
 	!gui-apps/mako
 	!x11-misc/dunst
 "
-BDEPEND="dev-lang/go"
+BDEPEND="
+	${PYTHON_DEPS}
+	dev-lang/go
+"
 
 src_prepare() {
 	default

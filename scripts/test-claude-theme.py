@@ -29,7 +29,7 @@ os.environ["HOME"] = _SANDBOX_HOME
 
 def load_helper():
     loader = importlib.machinery.SourceFileLoader(
-        "vshell_helper_claude_theme", str(REPO / "bin" / "vshell-helper"))
+        "vshell_helper_claude_theme", str(REPO / "bin" / "vshell_helper.py"))
     spec = importlib.util.spec_from_loader(loader.name, loader)
     module = importlib.util.module_from_spec(spec)
     loader.exec_module(module)
@@ -507,7 +507,7 @@ class ModeCounterparts(unittest.TestCase):
         at module or class scope is attributed to no caller and passes; the helper
         has no such call site today, so widening the walk would buy nothing.
         """
-        source = ast.parse((REPO / "bin" / "vshell-helper").read_text())
+        source = ast.parse((REPO / "bin" / "vshell_helper.py").read_text())
         callers = {
             node.name for node in ast.walk(source)
             if isinstance(node, ast.FunctionDef)
