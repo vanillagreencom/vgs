@@ -2655,7 +2655,7 @@ def test_current_theme_reads_without_applying():
 
 
 def test_cache_prune_bounds_imagecache_and_drops_unreferenced_notification_images():
-    """`cache prune` deletes the oldest-written imagecache files past the size cap, and the
+    """`cache prune` deletes imagecache track art, then thumbnails, oldest-written first past the size cap, and the
     notification images no history entry names once they are past the save grace."""
     def prune() -> tuple:
         out, err = io.StringIO(), io.StringIO()
@@ -2673,12 +2673,15 @@ def test_cache_prune_bounds_imagecache_and_drops_unreferenced_notification_image
     def scenario(temp_home: Path):
         cache = temp_home / ".cache" / "vshell"
         images = cache / "imagecache"
-        # (file, survives, why): the owned files total 1600 bytes against a 1000-byte cap.
+        # (file, survives, why): the owned files total 1800 bytes against a 1000-byte cap.
         image_rows = [
-            (put(images / "remote_0000000a", 400, 3000), False, "the oldest-written owned file goes first"),
-            (put(images / "0000000b@256x256.png", 400, 2000), False, "eviction continues until the rest fit the cap"),
-            (put(images / "remote_0000000c", 400, 1000), True, "a file that fits under the cap stays"),
-            (put(images / "0000000d@512x512.png", 400, 10), True, "the newest file stays"),
+            (put(images / "remote_0000000a", 400, 2000), False, "track art goes first, the oldest-written first"),
+            (put(images / "remote_0000000c", 200, 1000), False, "every track art download goes before a thumbnail"),
+            (put(images / "0000000b@256x256.png", 400, 3000), False,
+             "once no track art is left, the oldest-written thumbnail goes"),
+            (put(images / "0000000f@256x256.png", 400, 2500), True,
+             "a thumbnail written before the deleted track art stays once the rest fit the cap"),
+            (put(images / "0000000d@512x512.png", 400, 10), True, "the newest thumbnail stays"),
             (put(images / "remote_0000000e.tmp", 4000, 5000), True, "a download still being written is not an owned name"),
             (put(images / "notes.txt", 4000, 5000), True, "a file outside the hash scheme is neither counted nor deleted"),
         ]

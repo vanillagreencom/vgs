@@ -5379,13 +5379,16 @@ def _unlink_cache_file(path: Path) -> bool:
 
 
 def prune_imagecache(max_bytes: int) -> Tuple[int, int]:
-    """Delete the oldest-written imagecache files until the rest fit in `max_bytes`.
+    """Delete imagecache files until the rest fit in `max_bytes`: every track art download
+    before any thumbnail, and the oldest-written first within each.
 
     A cache hit writes nothing and `~/.cache` may be mounted noatime, so write time is the
-    only age every file carries. Returns the files and bytes removed.
+    only age every file carries, and a thumbnail in constant use carries the oldest one.
+    Thumbnails therefore outlast track art, which grows the cache with each track played.
+    Returns the files and bytes removed.
     """
     files = sorted(_owned_cache_files(cache_dir() / "imagecache", _IMAGECACHE_NAME),
-                   key=lambda item: item[1].st_mtime_ns)
+                   key=lambda item: (not item[0].name.startswith("remote_"), item[1].st_mtime_ns))
     total = sum(stat_result.st_size for _, stat_result in files)
     removed = removed_bytes = 0
     for path, stat_result in files:

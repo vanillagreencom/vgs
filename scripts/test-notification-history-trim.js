@@ -3,6 +3,8 @@
 // NotificationService.addToHistory trims a newest-first history at the count cap and
 // deletes the cached images that only the dropped entries name. This suite evaluates
 // the marked split; the deletion call around it runs in QML and is not reached here.
+// VGS.qml runs `vshell cache prune` at load for the images no entry names; this suite
+// pins that call in source.
 
 "use strict";
 
@@ -13,6 +15,7 @@ const path = require("node:path");
 
 // Extracted code runs under qml-region process deadlines.
 const { evaluateMarked, guardChild } = require("./lib/qml-region.js");
+const qmlSource = require("./lib/qml-source.js");
 
 guardChild();
 
@@ -38,4 +41,13 @@ test("trimHistory keeps the newest entries and returns the images only dropped e
         assert.deepEqual(out.kept.map(item => item.id), keptIds, `kept: ${why}`);
         assert.deepEqual(out.orphanedImages, orphaned, `orphanedImages: ${why}`);
     }
+});
+
+const VGS_QML = path.join(__dirname, "..", "quickshell", "vshell", "VGS.qml");
+test("VGS.qml runs cache prune when it loads", () => {
+    const vgs = qmlSource(fs.readFileSync(VGS_QML, "utf8"), "VGS.qml");
+    vgs.requires(vgs.handlers("Component.onCompleted").join("\n"), "VGS.qml Component.onCompleted", [
+        ['Proc.runCommand(null, [Paths.vshellCli, "cache", "prune"]',
+            "without it the image cache and orphaned notification images grow without bound", 1],
+    ]);
 });
