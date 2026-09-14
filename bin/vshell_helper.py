@@ -5182,6 +5182,146 @@ def list_installed_icon_themes() -> List[str]:
     return sorted(names, key=str.lower)
 
 
+def icon_theme_base_dirs() -> List[Path]:
+    """Directories an icon theme can be installed under, in search order."""
+    data_home = Path(os.environ.get("XDG_DATA_HOME") or home() / ".local" / "share")
+    xdg = os.environ.get("XDG_DATA_DIRS", "").strip()
+    if xdg:
+        data_dirs = [Path(d) for d in xdg.split(":") if d] + [data_home]
+    else:
+        data_dirs = [Path("/usr/share"), Path("/usr/local/share"), data_home]
+    for flatpak in (data_home / "flatpak" / "exports" / "share", Path("/var/lib/flatpak/exports/share")):
+        if flatpak not in data_dirs:
+            data_dirs.append(flatpak)
+    return [d / "icons" for d in data_dirs] + [home() / ".icons"]
+
+
+def icon_theme_chain(theme: str, bases: List[Path]) -> List[Path]:
+    """Every installed directory of `theme`, of the themes it inherits breadth-first,
+    then of hicolor, which the icon theme specification makes the last fallback."""
+    order: List[str] = []
+    queue = [theme]
+    while queue:
+        name = queue.pop(0)
+        if not name or name in order:
+            continue
+        order.append(name)
+        index = next((b / name / "index.theme" for b in bases if (b / name / "index.theme").is_file()), None)
+        if index is None:
+            continue
+        inherits = re.search(r"^Inherits=(.*)$", index.read_text(errors="ignore"), re.M)
+        if inherits:
+            queue.extend(part.strip() for part in inherits.group(1).replace('"', "").split(","))
+    if "hicolor" not in order:
+        order.append("hicolor")
+    return [b / name for name in order for b in bases if (b / name).is_dir()]
+
+
+_ICON_SIZE_DIR = re.compile(r"/(\d+)(?:x\d+)?(?:@\d+x)?/")
+
+
+def _icon_path_score(relative: str, chain_position: int) -> int:
+    """Rank one candidate file for an icon name; the highest score wins.
+
+    The terms are ordered so each one outranks every term after it: the context
+    directory (an app icon over a category or action icon of the same name), the
+    position in the inherit chain, SVG over PNG, then the largest bitmap size.
+    `relative` starts with "/" and is the path inside its theme directory.
+    """
+    score = 0
+    if "/apps/" in relative:
+        score += 3_000_000_000
+    elif "/categories/" in relative:
+        score += 1_000_000_000
+    elif any(f"/{context}/" in relative for context in ("places", "devices", "mimetypes", "status", "actions")):
+        score += 100_000_000
+    score += max(0, 64 - chain_position) * 1_000_000
+    if relative.endswith(".svg"):
+        score += 100_000
+    if "/scalable/" in relative:
+        score += 1000
+    else:
+        size = _ICON_SIZE_DIR.search(relative)
+        if size:
+            score += min(int(size.group(1)), 999)
+    return score
+
+
+def build_icon_index(dirs: List[Path]) -> Dict[str, str]:
+    """Map every SVG and PNG icon name under `dirs` to its best-scoring file."""
+    best: Dict[str, Tuple[int, str]] = {}
+    for position, theme_dir in enumerate(dirs):
+        prefix = len(str(theme_dir))
+        for current, _subdirs, files in os.walk(theme_dir, followlinks=True):
+            relative_dir = current[prefix:] + "/"
+            for filename in files:
+                if not filename.endswith((".svg", ".png")):
+                    continue
+                name = filename[:-4]
+                score = _icon_path_score(relative_dir + filename, position)
+                if name not in best or score > best[name][0]:
+                    best[name] = (score, os.path.join(current, filename))
+    return {name: path for name, (_score, path) in best.items()}
+
+
+def _icon_index_fingerprint(dirs: List[Path]) -> List[List[Any]]:
+    """Modification times that move when an icon is added to or removed from `dirs`.
+
+    Icon themes keep their files two levels down, `<theme>/<size>/<context>`, so an
+    install or removal changes the mtime of a directory within those two levels, or of
+    index.theme. The chain's own directory list is part of it, so installing or
+    removing an inherited theme also invalidates the index.
+    """
+    def mtime(path: Path) -> int:
+        try:
+            return os.stat(path).st_mtime_ns
+        except FileNotFoundError:
+            return 0
+
+    stamps: List[List[Any]] = []
+    for theme_dir in dirs:
+        stamps.append([str(theme_dir), mtime(theme_dir), mtime(theme_dir / "index.theme")])
+        with os.scandir(theme_dir) as children:
+            level_one = sorted(entry.path for entry in children if entry.is_dir())
+        for child in level_one:
+            stamps.append([child, mtime(Path(child))])
+            with os.scandir(child) as grandchildren:
+                stamps.extend(sorted([entry.path, entry.stat().st_mtime_ns] for entry in grandchildren if entry.is_dir()))
+    return stamps
+
+
+def icon_index(theme: str) -> Dict[str, str]:
+    """The icon name-to-path map for `theme`, rebuilt only when its files changed."""
+    dirs = icon_theme_chain(theme, icon_theme_base_dirs())
+    fingerprint = _icon_index_fingerprint(dirs)
+    cache = cache_dir() / "icon-index" / f"{theme}.json"
+    try:
+        cached = json.loads(cache.read_text())
+    except (FileNotFoundError, ValueError):
+        cached = None
+    if isinstance(cached, dict) and cached.get("fingerprint") == fingerprint and isinstance(cached.get("icons"), dict):
+        return cached["icons"]
+    icons = build_icon_index(dirs)
+    write_file(cache, json.dumps({"fingerprint": fingerprint, "icons": icons}, separators=(",", ":")))
+    return icons
+
+
+def cmd_icons(argv: List[str]) -> int:
+    parser = argparse.ArgumentParser(prog="vshell icons")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    p_index = sub.add_parser("index", help="print an icon theme's name-to-path map as JSON, cached per theme")
+    p_index.add_argument("theme")
+    args = parser.parse_args(argv)
+    # The theme names a directory and the cache file, and settings.json, which a user
+    # can edit by hand, supplies it.
+    if "/" in args.theme or args.theme in {"", ".", ".."}:
+        eprint(f"icon-theme-name-invalid: {args.theme!r}")
+        eprint("An icon theme name is one directory name.")
+        return 2
+    print(json.dumps(icon_index(args.theme), separators=(",", ":")))
+    return 0
+
+
 def bundled_icons_dir() -> Path:
     return repo_root() / "config" / "vshell" / "icons"
 
@@ -19002,6 +19142,7 @@ def main() -> int:
         if cmd == "remote-desktop": return cmd_remote_desktop(argv)
         if cmd == "launcher-search": return cmd_launcher_search(argv)
         if cmd == "terminal": return cmd_terminal(argv)
+        if cmd == "icons": return cmd_icons(argv)
         eprint(f"Unknown VGS helper command: {cmd}")
         return 2
     except KeyboardInterrupt:

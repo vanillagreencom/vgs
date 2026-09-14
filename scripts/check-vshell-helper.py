@@ -2158,6 +2158,81 @@ def test_current_theme_reads_without_applying():
     with_temp_home(scenario)
 
 
+def test_icon_index_picks_each_name_through_the_inherit_chain():
+    """`icons index` maps each icon name to one file of the theme's inherit chain, and
+    reuses its per-theme cache until a file in the chain changes."""
+    def touch(path: Path, text: str = "") -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+
+    def index(theme: str) -> dict:
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            status = helper.cmd_icons(["index", theme])
+        assert_equal(status, 0, f"icons index {theme} exit status")
+        return json.loads(buffer.getvalue())
+
+    def scenario(temp_home: Path):
+        # The host's own themes stay in the search path, so every probe name is unique.
+        os.environ["XDG_DATA_DIRS"] = str(temp_home / "share")
+        os.environ.pop("XDG_DATA_HOME", None)
+        system = temp_home / "share" / "icons"
+        user = temp_home / ".local" / "share" / "icons"
+        touch(system / "Child" / "index.theme", "[Icon Theme]\nInherits=Parent\n")
+        touch(user / "Parent" / "index.theme", "[Icon Theme]\nInherits=\n")
+        # (name, winning file, losing files, what the winner shows)
+        rows = [
+            ("vgs-probe-chain", system / "Child/16x16/apps/vgs-probe-chain.png",
+             [user / "Parent/64x64/apps/vgs-probe-chain.svg"], "an earlier theme in the chain outranks format and size"),
+            ("vgs-probe-context", user / "Parent/16x16/apps/vgs-probe-context.png",
+             [system / "Child/scalable/actions/vgs-probe-context.svg"], "an app icon outranks an earlier theme's action icon"),
+            ("vgs-probe-format", system / "Child/16x16/apps/vgs-probe-format.svg",
+             [system / "Child/64x64/apps/vgs-probe-format.png"], "SVG outranks a larger PNG"),
+            ("vgs-probe-size", system / "Child/64x64/apps/vgs-probe-size.png",
+             [system / "Child/16x16/apps/vgs-probe-size.png"], "the larger PNG wins"),
+            ("vgs-probe-scalable", system / "Child/scalable/apps/vgs-probe-scalable.svg",
+             [system / "Child/48x48/apps/vgs-probe-scalable.svg"], "a scalable SVG outranks a sized one"),
+            ("vgs-probe-fallback", user / "hicolor/48x48/apps/vgs-probe-fallback.png",
+             [], "hicolor ends every chain without being inherited"),
+        ]
+        for _name, winner, losers, _claim in rows:
+            for path in [winner, *losers]:
+                touch(path)
+        touch(system / "Unrelated/48x48/apps/vgs-probe-unrelated.png")
+
+        result = index("Child")
+        for name, winner, _losers, claim in rows:
+            assert_equal(result.get(name), str(winner), claim)
+        assert_equal("vgs-probe-unrelated" in result, False, "a theme outside the chain is not indexed")
+
+        with patch.object(helper.os, "walk", side_effect=AssertionError("icon-index-rebuilt-unchanged")):
+            assert_equal(index("Child"), result, "an unchanged chain reads the cached index")
+
+        added_dir = system / "Child/48x48/apps"
+        touch(added_dir / "vgs-probe-added.png")
+        stamp = os.stat(added_dir)
+        os.utime(added_dir, ns=(stamp.st_atime_ns, stamp.st_mtime_ns + 1_000_000_000))
+        assert_equal(index("Child").get("vgs-probe-added"), str(added_dir / "vgs-probe-added.png"),
+                     "an icon added to the chain rebuilds the index")
+
+        cache_parent = helper.cache_dir()
+        for theme in ("..", "../escape", "a/b"):
+            err = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                status = helper.cmd_icons(["index", theme])
+            assert_equal((status, (err.getvalue().splitlines() or [""])[0]), (2, f"icon-theme-name-invalid: {theme!r}"),
+                         f"icons index refuses theme name {theme!r}")
+        assert_equal(sorted(p.name for p in cache_parent.iterdir()), ["icon-index"],
+                     "a refused theme name writes nothing beside the index cache")
+
+    saved = {n: os.environ.get(n) for n in ("XDG_DATA_DIRS", "XDG_DATA_HOME")}
+    try:
+        with_temp_home(scenario)
+    finally:
+        for name, value in saved.items():
+            _restore_env(name, value)
+
+
 def test_theme_init_applies_only_without_state():
     """`theme init` applies the default theme when no theme.json exists, and nothing otherwise."""
     def init():
@@ -10790,6 +10865,7 @@ def main():
     test_shell_only_theme_preview()
     test_current_theme_reads_without_applying()
     test_theme_init_applies_only_without_state()
+    test_icon_index_picks_each_name_through_the_inherit_chain()
     test_lint_checks_color0_in_light_mode_only()
     test_lint_reports_listed_shortfalls_as_known()
     test_lint_all_fails_only_on_an_unlisted_warning()
