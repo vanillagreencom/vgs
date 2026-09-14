@@ -485,24 +485,43 @@ def test_write_file_reports_whether_the_destination_moved():
         assert_equal(target.read_text(), "theme: other\n", "the content of a changed destination")
         assert_equal(target.stat().st_ino != before.st_ino, True,
                      "a changed destination must be replaced")
+        # The mode is applied whether or not the bytes moved. The docstring's own
+        # reason for the mode is a config holding another application's API keys,
+        # which a skipped write must not leave world-readable.
+        os.chmod(target, 0o644)
+        assert_equal(helper.write_file(target, "theme: other\n", 0o600), False,
+                     "matching bytes still report no byte change")
+        assert_equal(stat.S_IMODE(target.stat().st_mode), 0o600,
+                     "an unchanged destination still takes the requested mode")
 
     with_temp_home(check)
 
 
-# Three targets with a file of their own and one whose only output is its hook.
-# `app` is "shell" on each, which target_enabled admits without detection, so the
-# set is the same on a machine with no themed application installed at all.
+# The fixture's targets, one per branch of the apply's render and commit. `app`
+# is "shell" on each, which target_enabled admits without detection, so the set
+# is the same on a machine with no themed application installed at all.
 _APPLY_TARGETS = {
+    # A destination plus both hook kinds: the reload hook is gated on the bytes,
+    # the config hook is not.
     "alpha": {"app": "shell", "template": "alpha.txt", "destination": "~/.alpha/colors",
-              "hook": "alpha-hook"},
+              "hook": "alpha-config", "reloadHook": "alpha-reload"},
+    # A destination whose render never varies, so its reload hook must stop.
     "beta": {"app": "shell", "template": "beta.txt", "destination": "~/.beta/colors",
-             "hook": "beta-hook"},
-    "gamma": {"app": "shell", "hook": "gamma-hook"},
+             "reloadHook": "beta-reload"},
+    # No destination at all: the claude-vgs and fastfetch-vgs shape.
+    "gamma": {"app": "shell", "hook": "gamma-config"},
     "delta": {"app": "shell", "template": "delta.txt", "destination": "~/.delta/colors",
-              "hook": "delta-hook"},
+              "reloadHook": "delta-reload"},
+    # A curated artifact beside a generated file, the nvim-vgs shape. The only
+    # entry reaching the curated and stale-curated branches.
+    "epsilon": {"app": "shell", "template": "epsilon.txt", "destination": "~/.epsilon/colors",
+                "curatedFile": "epsilon.conf", "curatedDestination": "~/.epsilon/curated.conf",
+                "curatedMode": "additional",
+                "hook": "epsilon-config", "reloadHook": "epsilon-reload"},
 }
 _APPLY_TEMPLATES = {"alpha": "wallpaper {wallpaper}\n", "beta": "fixed\n",
-                    "delta": "wallpaper {wallpaper}\n"}
+                    "delta": "wallpaper {wallpaper}\n", "epsilon": "wallpaper {wallpaper}\n"}
+_EPSILON_CURATED = "curated = vgs\n"
 
 
 def _seed_apply_targets(root: Path, templates=None):
@@ -514,50 +533,213 @@ def _seed_apply_targets(root: Path, templates=None):
         (root / name / f"{name}.txt").write_text(text)
 
 
+def _apply_blueprint(home: Path, curated: bool):
+    """The fixture blueprint, carrying epsilon's curated file only when asked."""
+    blueprint = helper.load_theme_package("tokyo-night")
+    apps = dict(blueprint.get("apps") or {})
+    if curated:
+        source = home / "package" / "epsilon.conf"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text(_EPSILON_CURATED)
+        apps["epsilon.conf"] = str(source)
+    else:
+        apps.pop("epsilon.conf", None)
+    blueprint["apps"] = apps
+    return blueprint
+
+
 def _hooks_of(result):
     return sorted(entry.get("hook") for entry in result.get("hooks", []))
 
 
-def test_theme_apply_runs_only_the_hooks_whose_target_changed():
-    """A target whose rendered bytes match what is on disk tells no consumer to
-    reload, and a target whose whole output is its hook runs on every apply.
+def _dirs_of(paths):
+    return sorted(Path(path).parent.name for path in paths)
 
-    Every apply used to run every enabled target's hook. A wallpaper pick moves
-    only the shipped targets whose template names {wallpaper}, vgs-shell and
-    pywalfox-vgs, so every other hook reloaded its application for nothing.
+
+def test_theme_apply_runs_only_the_reload_hooks_whose_target_changed():
+    """A reload verb is sent only when the bytes the application re-reads moved.
+    Every other hook runs on every apply.
+
+    Every apply used to send every enabled target's reload verb. A wallpaper pick
+    that keeps the palette moves only the targets whose template names
+    {wallpaper}, so every other verb reloaded its application for nothing. The
+    inverse defect costs more: a hook that asserts wiring no destination carries,
+    such as the icon-theme gsettings key or a VS Code variant installed since the
+    last apply, must not be gated on bytes that never move.
     """
     def check(home):
         targets = home / "targets"
         _seed_apply_targets(targets)
-        blueprint = helper.load_theme_package("tokyo-night")
+        blueprint = _apply_blueprint(home, curated=False)
         with patch.object(helper, "targets_dir", lambda: targets):
             first = helper.apply_theme_obj(blueprint)
-            assert_equal(sorted(Path(path).parent.name for path in first["changed"]),
-                         [".alpha", ".beta", ".delta"], "the first apply writes every target")
-            assert_equal(_hooks_of(first), ["alpha-hook", "beta-hook", "delta-hook", "gamma-hook"],
-                         "the first apply runs every target's hook")
+            assert_equal(_dirs_of(first["changed"]),
+                         [".alpha", ".beta", ".delta", ".epsilon"],
+                         "the first apply writes every target")
+            assert_equal(_hooks_of(first),
+                         ["alpha-config", "alpha-reload", "beta-reload", "delta-reload",
+                          "epsilon-config", "epsilon-reload", "gamma-config"],
+                         "the first apply runs every hook of every target")
 
             again = helper.apply_theme_obj(blueprint)
             assert_equal(again["changed"], [], "re-applying the same theme moves no bytes")
-            assert_equal(sorted(Path(path).parent.name for path in again["rendered"]),
-                         [".alpha", ".beta", ".delta"],
+            assert_equal(_dirs_of(again["rendered"]),
+                         [".alpha", ".beta", ".delta", ".epsilon"],
                          "every destination is still rendered and confirmed")
-            assert_equal(_hooks_of(again), ["gamma-hook"],
-                         "only the target with no file of its own keeps running its hook")
+            assert_equal(_hooks_of(again), ["alpha-config", "epsilon-config", "gamma-config"],
+                         "an apply that moves nothing still asserts every target's wiring")
 
-            # The shape of a wallpaper pick: the targets naming {wallpaper}
-            # move and every other target renders the bytes already on disk.
+            # A pick that keeps the palette: only the targets naming {wallpaper}
+            # move. An extracting pick re-derives the palette and moves them all.
             moved = dict(blueprint)
             moved["palette"] = {**blueprint.get("palette", {}), "wallpaper": str(home / "wall.png")}
             third = helper.apply_theme_obj(moved)
-            assert_equal(sorted(Path(path).parent.name for path in third["changed"]),
-                         [".alpha", ".delta"], "only the targets naming the wallpaper move")
-            assert_equal(_hooks_of(third), ["alpha-hook", "delta-hook", "gamma-hook"],
-                         "the unchanged target's hook stays out of the apply")
+            assert_equal(_dirs_of(third["changed"]), [".alpha", ".delta", ".epsilon"],
+                         "only the targets naming the wallpaper move")
+            assert_equal(_hooks_of(third),
+                         ["alpha-config", "alpha-reload", "delta-reload", "epsilon-config",
+                          "epsilon-reload", "gamma-config"],
+                         "the unchanged target's reload verb stays out of the apply")
             assert_equal((home / ".beta" / "colors").read_text(), "fixed\n",
                          "the unchanged target keeps its file")
 
     with_temp_home(check)
+
+
+def test_theme_apply_runs_a_failed_hook_again_on_the_next_apply():
+    """A hook that failed runs again when the same theme is applied again.
+
+    Nothing records hook success, so re-applying the theme is the remedy the
+    failure warning invites. Gated on the destination bytes that remedy did
+    nothing: the failed hook wrote nothing, so the second apply saw identical
+    bytes and never called it again.
+    """
+    def check(home):
+        targets = home / "targets"
+        _seed_apply_targets(targets)
+        blueprint = _apply_blueprint(home, curated=False)
+        real_hook = helper.run_hook
+
+        def failing_epsilon(hook, roles, bp):
+            if hook == "epsilon-config":
+                return {"hook": hook, "ok": False, "error": "epsilon config write refused"}
+            return real_hook(hook, roles, bp)
+
+        with patch.object(helper, "targets_dir", lambda: targets):
+            helper.apply_theme_obj(blueprint)
+            with patch.object(helper, "run_hook", failing_epsilon):
+                failed = helper.apply_theme_obj(blueprint)
+            assert_equal(failed["partial"], True, "an apply with a failed hook is partial")
+            assert_equal([w for w in failed["warnings"] if w.startswith("epsilon-config:")],
+                         ["epsilon-config: epsilon config write refused"],
+                         "the failed hook is named in its own warning")
+            after = helper.apply_theme_obj(blueprint)
+            assert_equal(after["changed"], [], "the failed hook moved no destination bytes")
+            assert_equal("epsilon-config" in _hooks_of(after), True,
+                         "the next apply of the same theme must call the failed hook again")
+
+    with_temp_home(check)
+
+
+def test_theme_apply_commits_a_curated_target_as_one_unit():
+    """A curated artifact and the generated file beside it land together, and a
+    curated file this theme does not ship is removed so consumers fall back to
+    the generated output.
+
+    The removal is what enables that fallback, so a stale artifact that cannot be
+    removed must not also cost the generated write it exists to expose.
+    """
+    def shipped(home):
+        targets = home / "targets"
+        _seed_apply_targets(targets)
+        blueprint = _apply_blueprint(home, curated=True)
+        with patch.object(helper, "targets_dir", lambda: targets):
+            first = helper.apply_theme_obj(blueprint)
+            assert_equal(sorted(Path(path).name for path in first["changed"]
+                                if Path(path).parent.name == ".epsilon"),
+                         ["colors", "curated.conf"],
+                         "both of the curated target's destinations are written")
+            assert_equal((home / ".epsilon" / "curated.conf").read_text(), _EPSILON_CURATED,
+                         "the curated file lands verbatim")
+            assert_equal("epsilon.conf" in first["curated"], True,
+                         "the apply reports the curated file it installed")
+            assert_equal("epsilon-reload" in _hooks_of(first), True,
+                         "the first apply reloads the curated target")
+
+            again = helper.apply_theme_obj(blueprint)
+            assert_equal([path for path in again["changed"] if ".epsilon" in path], [],
+                         "re-applying the same theme moves neither of the target's files")
+            assert_equal("epsilon-reload" in _hooks_of(again), False,
+                         "an unchanged curated target sends no reload verb")
+
+    def stale_removed(home):
+        targets = home / "targets"
+        _seed_apply_targets(targets)
+        stale = home / ".epsilon" / "curated.conf"
+        stale.parent.mkdir(parents=True, exist_ok=True)
+        stale.write_text("curated = an older theme\n")
+        with patch.object(helper, "targets_dir", lambda: targets):
+            result = helper.apply_theme_obj(_apply_blueprint(home, curated=False))
+        assert_equal(stale.exists(), False, "a curated file this theme does not ship is removed")
+        assert_equal("epsilon-reload" in _hooks_of(result), True,
+                     "removing the artifact reloads the consumer onto the generated output")
+        assert_equal((home / ".epsilon" / "colors").is_file(), True,
+                     "the generated output the consumer falls back to is written")
+        # The removal alone, with the generated file already correct: nothing but
+        # the unlink can move this target, and the consumer still has to be told.
+        stale.write_text("curated = an older theme\n")
+        with patch.object(helper, "targets_dir", lambda: targets):
+            second = helper.apply_theme_obj(_apply_blueprint(home, curated=False))
+        assert_equal(second["changed"], [], "the generated files were already correct")
+        assert_equal(stale.exists(), False, "the artifact that reappeared is removed again")
+        assert_equal("epsilon-reload" in _hooks_of(second), True,
+                     "a removal with no write of its own still reloads the consumer")
+
+    def stale_unremovable(home):
+        targets = home / "targets"
+        _seed_apply_targets(targets)
+        # A directory at the curated path: unlink raises an OSError that is not
+        # FileNotFoundError, the read-only-mount and root-owned-file case.
+        (home / ".epsilon" / "curated.conf").mkdir(parents=True)
+        with patch.object(helper, "targets_dir", lambda: targets):
+            result = helper.apply_theme_obj(_apply_blueprint(home, curated=False))
+        assert_equal([w.split(":")[0] for w in result["warnings"]], ["epsilon"],
+                     "the target that kept its stale artifact is named in one warning")
+        assert_equal((home / ".epsilon" / "colors").is_file(), True,
+                     "a stale artifact that cannot be removed must not cost the generated write")
+
+    def template_missing(home):
+        targets = home / "targets"
+        # epsilon ships its curated file but no template, so the target renders
+        # nothing: the all-or-nothing guarantee the plan and commit split exists for.
+        _seed_apply_targets(targets, templates={name: text for name, text
+                                                in _APPLY_TEMPLATES.items() if name != "epsilon"})
+        with patch.object(helper, "targets_dir", lambda: targets):
+            result = helper.apply_theme_obj(_apply_blueprint(home, curated=True))
+        assert_equal([w.split(":")[0] for w in result["warnings"]], ["epsilon"],
+                     "the target that could not render is named in one warning")
+        assert_equal((home / ".epsilon").exists(), False,
+                     "a target that could not render whole writes neither destination")
+        assert_equal((home / ".alpha" / "colors").is_file(), True,
+                     "every other target still lands")
+
+    def second_write_fails(home):
+        targets = home / "targets"
+        _seed_apply_targets(targets)
+        # The curated artifact commits first and the generated file second, so a
+        # directory at the generated path fails the target half way through.
+        (home / ".epsilon" / "colors").mkdir(parents=True)
+        with patch.object(helper, "targets_dir", lambda: targets):
+            result = helper.apply_theme_obj(_apply_blueprint(home, curated=True))
+        assert_equal([w.split(":")[0] for w in result["warnings"]], ["epsilon"],
+                     "the half-committed target is named in one warning")
+        assert_equal((home / ".epsilon" / "curated.conf").read_text(), _EPSILON_CURATED,
+                     "the write that landed stays on disk")
+        assert_equal("epsilon.conf" in result["curated"], True,
+                     "a half-committed target still reports the curated file it installed")
+
+    for case in (shipped, stale_removed, stale_unremovable, template_missing, second_write_fails):
+        with_temp_home(case)
 
 
 def test_theme_apply_lands_every_other_target_when_one_target_fails():
@@ -574,10 +756,10 @@ def test_theme_apply_lands_every_other_target_when_one_target_fails():
         # delta's destination directory is a regular file, so its write fails at
         # the parent mkdir; beta's template is missing, so its render fails. One
         # failure per phase, and neither may cost the targets that work.
-        _seed_apply_targets(targets, templates={"alpha": "wallpaper {wallpaper}\n",
-                                                "delta": "wallpaper {wallpaper}\n"})
+        _seed_apply_targets(targets, templates={name: text for name, text
+                                                in _APPLY_TEMPLATES.items() if name != "beta"})
         (home / ".delta").write_text("not a directory\n")
-        blueprint = helper.load_theme_package("tokyo-night")
+        blueprint = _apply_blueprint(home, curated=False)
         seen_state = []
         real_hook = helper.run_hook
 
@@ -594,12 +776,74 @@ def test_theme_apply_lands_every_other_target_when_one_target_fails():
         assert_equal(named, ["beta", "delta"], "each failed target is named in its own warning")
         assert_equal((home / ".alpha" / "colors").is_file(), True,
                      "a target that works must still land")
-        assert_equal(_hooks_of(result), ["alpha-hook", "gamma-hook"],
-                     "only the targets that landed tell their consumer to reload")
-        assert_equal(sorted(seen_state), [("alpha-hook", True), ("gamma-hook", True)],
+        assert_equal(_hooks_of(result),
+                     ["alpha-config", "alpha-reload", "epsilon-config", "epsilon-reload",
+                      "gamma-config"],
+                     "a target that could not land sends neither of its hooks")
+        assert_equal(sorted({state for _hook, state in seen_state}), [True],
                      "the applied state must be on disk before the first hook runs")
 
     with_temp_home(check)
+
+
+def _dispatched_hook_names():
+    """Every hook name run_hook dispatches, read from its own body so a name with
+    no dispatch branch cannot pass by appearing in a second list here."""
+    body = next(node for node in ast.parse(HELPER_PATH.read_text()).body
+                if isinstance(node, ast.FunctionDef) and node.name == "run_hook")
+    return {node.comparators[0].value for node in ast.walk(body)
+            if isinstance(node, ast.Compare) and isinstance(node.left, ast.Name)
+            and node.left.id == "hook" and len(node.ops) == 1
+            and isinstance(node.ops[0], ast.Eq)
+            and isinstance(node.comparators[0], ast.Constant)
+            and isinstance(node.comparators[0].value, str)}
+
+
+def test_every_hook_a_target_declares_reaches_a_dispatch_branch():
+    """A hook name run_hook cannot dispatch returns ok with reason 'unknown hook',
+    so the apply reports success while nothing themes that application.
+
+    A typo in either hook key of any themes/targets/*/config.json reaches it, and
+    splitting one target's hook across the two keys is when a name is retyped.
+    The declared names come through helper.declared_hooks, the apply's own reader,
+    rather than a second parser here.
+    """
+    dispatched = _dispatched_hook_names()
+    assert_equal(("btop-reload" in dispatched, "not-a-hook" in dispatched), (True, False),
+                 "the dispatch reader is broken: it must find run_hook's own branches, and only those")
+    declared = {}
+    for config in sorted((REPO_ROOT / "themes" / "targets").glob("*/config.json")):
+        cfg = json.loads(config.read_text())
+        for key in ("hook", "reloadHook"):
+            for name in helper.declared_hooks(cfg, key):
+                declared.setdefault(name, config.parent.name)
+    assert_equal(sorted(f"{declared[name]}: {name}" for name in declared
+                        if name not in dispatched), [],
+                 "every hook a shipped target declares must reach a dispatch branch")
+    assert_equal(len(declared) >= 20, True,
+                 f"the target reader is broken: it found only {len(declared)} declared hook(s)")
+
+
+def test_the_shipped_wallpaper_templates_are_the_ones_the_documented_invariant_names():
+    """The shell reloads on a wallpaper pick because vgs-shell's template names
+    {wallpaper}. Nothing else makes it reload.
+
+    Before the gate every enabled target's hook ran regardless. Deleting the token
+    from themes/targets/vgs-shell/vgs-theme.json now stops the shell reloading
+    after a wallpaper change, with every synthetic case still green, so the set is
+    derived from the shipped targets rather than restated here.
+    """
+    naming = []
+    for config in sorted((REPO_ROOT / "themes" / "targets").glob("*/config.json")):
+        template = json.loads(config.read_text()).get("template")
+        if not template:
+            continue
+        path = config.parent / template
+        if "{wallpaper}" in path.read_text():
+            naming.append(str(path.relative_to(REPO_ROOT)))
+    assert_equal(naming, ["themes/targets/pywalfox-vgs/colors.json",
+                          "themes/targets/vgs-shell/vgs-theme.json"],
+                 "the shipped templates naming the wallpaper role")
 
 
 def test_selection_hooks_refuse_a_home_the_test_did_not_create():
@@ -10969,8 +11213,12 @@ def main():
     test_write_file_gives_the_temporary_file_the_requested_mode_before_writing()
     test_write_file_leaves_no_temporary_behind_when_the_write_fails()
     test_write_file_reports_whether_the_destination_moved()
-    test_theme_apply_runs_only_the_hooks_whose_target_changed()
+    test_theme_apply_runs_only_the_reload_hooks_whose_target_changed()
+    test_theme_apply_runs_a_failed_hook_again_on_the_next_apply()
+    test_theme_apply_commits_a_curated_target_as_one_unit()
     test_theme_apply_lands_every_other_target_when_one_target_fails()
+    test_every_hook_a_target_declares_reaches_a_dispatch_branch()
+    test_the_shipped_wallpaper_templates_are_the_ones_the_documented_invariant_names()
     test_selection_hooks_refuse_a_home_the_test_did_not_create()
     test_agent_cli_themes_render_for_every_bundled_theme()
     test_agent_cli_theme_targets_reach_the_apply_path()

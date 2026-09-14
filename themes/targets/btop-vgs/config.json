@@ -8,5 +8,6 @@
       "btop"
     ]
   },
-  "hook": "btop-reload"
+  "hook": "btop-config",
+  "reloadHook": "btop-reload"
 }

@@ -10,5 +10,5 @@
       "hyprctl"
     ]
   },
-  "hook": "hypr-reload"
+  "reloadHook": "hypr-reload"
 }

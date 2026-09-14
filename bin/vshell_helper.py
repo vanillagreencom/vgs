@@ -4184,8 +4184,9 @@ def write_file(path: Path, content: str, mode: int | None = None) -> bool:
     A destination already holding `content` is left alone and reports False, so a
     caller can tell a consumer to reload only the files that actually changed. A
     destination it cannot read reads as changed: bytes that cannot be compared
-    are bytes that must be written. Every caller passing `mode` takes that mode
-    from the destination's own `stat`, so a file left alone already carries it.
+    are bytes that must be written. A `mode` is applied either way, so
+    `write_file(path, content, mode)` means `path` holds `content` at `mode`
+    whether or not the bytes moved.
 
     With `mode`, the temporary file is created at that mode, so no copy of the
     content ever exists at a wider one — which matters for a config another app
@@ -4194,10 +4195,15 @@ def write_file(path: Path, content: str, mode: int | None = None) -> bool:
     temporary file takes the process umask, as every caller that does not name
     one has always had."""
     try:
-        if path.read_bytes() == content.encode():
-            return False
+        unchanged = path.read_bytes() == content.encode()
     except OSError:
-        pass
+        unchanged = False
+    if unchanged:
+        # A failure here raises rather than falling through to a rewrite, so a
+        # mode this call could not set is never reported as a write that set it.
+        if mode is not None and stat.S_IMODE(path.stat().st_mode) != mode:
+            os.chmod(path, mode)
+        return False
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}.{time.time_ns()}")
     try:
@@ -4738,12 +4744,18 @@ def run_hook(hook: Any, roles: Dict[str, str], bp: Dict[str, Any]) -> Dict[str, 
         return select_gemini_theme_hook()
     if hook == "kitty-reload":
         return signal_reload_hook("kitty-reload", "kitty", signal.SIGUSR1)
-    if hook == "btop-reload":
-        # Select the installed theme (else btop ignores vgs.theme), then reload.
+    if hook == "btop-config":
+        # btop keeps whatever color_theme btop.conf names, so installing
+        # themes/vgs.theme leaves the user on Default until this selects it.
+        # Separate from btop-reload because selecting is wiring the destination
+        # bytes do not carry, while the signal is only worth sending on a change.
         selected = ensure_btop_color_theme("vgs")
-        result = signal_reload_hook("btop-reload", "btop", signal.SIGUSR2)
-        result["colorThemeSelected"] = selected
+        result: Dict[str, Any] = {"hook": hook, "ok": selected, "colorThemeSelected": selected}
+        if not selected:
+            result["error"] = "btop color_theme select failed"
         return result
+    if hook == "btop-reload":
+        return signal_reload_hook("btop-reload", "btop", signal.SIGUSR2)
     if hook == "vscode-theme":
         return apply_vscode_theme_hook(roles, bp)
     if hook == "icon-theme":
@@ -5047,16 +5059,11 @@ def _install_vgs_vscode_extension(ext_dir: Path, theme_file: Path, mode: str,
     except Exception:
         manifest = {}
     manifest[slug] = {"label": name, "uiTheme": ui}
-    # Register bundled labels before VSCodium starts. Write only changed files
-    # to avoid causing an extension reload on every theme apply.
+    # Register bundled labels before VSCodium starts. write_file leaves a file
+    # already holding these bytes alone, so an apply that changes nothing does
+    # not make the editor reload its extensions.
     for b_slug, b_label, b_ui, b_content in bundled:
-        tf = themes_dir / f"{b_slug}.json"
-        try:
-            unchanged = tf.exists() and tf.read_text() == b_content
-        except OSError:
-            unchanged = False
-        if not unchanged:
-            write_file(tf, b_content)
+        write_file(themes_dir / f"{b_slug}.json", b_content)
         manifest[b_slug] = {"label": b_label, "uiTheme": b_ui}
     contributes: List[Dict[str, str]] = []
     seen = set()
@@ -6696,20 +6703,36 @@ def curated_file_text(path: Path, dest: Path, roles: Dict[str, str], app: str = 
     return text
 
 
+def declared_hooks(cfg: Dict[str, Any], key: str) -> List[Any]:
+    """A target's `hook` or `reloadHook` value as a list. Both keys ship in two
+    spellings, one hook name or a list of them."""
+    value = cfg.get(key) or []
+    return list(value) if isinstance(value, list) else [value]
+
+
+class _TargetWrite(NamedTuple):
+    """One file a target renders, and the curated name it came from, if any."""
+    dest: Path
+    content: str
+    curated: str
+
+
 class _TargetPlan(NamedTuple):
     """One theme target's output, rendered into memory before anything is committed.
 
-    `writes` is empty for a target whose whole output is its hook — `claude-vgs`
-    and `fastfetch-vgs` declare no destination — and for one whose curated file
-    this theme does not ship. Such a target has no bytes on disk to compare
-    against, so its hooks run on every apply; each of those hooks compares its
-    own inputs before it does any work.
+    `hooks` and `reload_hooks` are the target's two declared hook lists.
+    `reload_hooks` tells a running application to re-read a file this target
+    wrote, so it is worth running only when those bytes moved. `hooks` asserts
+    wiring no destination of this target carries — the icon-theme gsettings key,
+    btop's selected `color_theme`, a VS Code variant installed since the last
+    apply — so it runs on every apply. Each such hook compares its own inputs
+    and returns without writing when the state is already right.
     """
     target: str
-    writes: List[Tuple[Path, str]]
+    writes: List[_TargetWrite]
     stale_curated: Optional[Path]
-    curated_used: List[str]
     hooks: List[Any]
+    reload_hooks: List[Any]
 
 
 def apply_theme_obj(bp: Dict[str, Any], only_app: str | None = None,
@@ -6787,32 +6810,27 @@ def _apply_theme_obj_unlocked(bp: Dict[str, Any], only_app: str | None = None,
         base_role_map = roles if cfg_path.parent.name == "vgs-shell" else external_roles
         target_overrides = app_overrides.get(app_id) or {}
         target_role_map = render_roles(bp, base_role_map, target_overrides)
-        writes: List[Tuple[Path, str]] = []
-        used: List[str] = []
+        writes: List[_TargetWrite] = []
         stale_curated: Optional[Path] = None
         if curated_src and curated_dest:
-            writes.append((curated_dest, curated_file_text(
-                Path(curated_src), curated_dest, target_role_map)))
-            used.append(curated_name)
+            writes.append(_TargetWrite(curated_dest, curated_file_text(
+                Path(curated_src), curated_dest, target_role_map), curated_name))
         elif cfg.get("curatedDestination") and curated_dest:
             # No curated file in this theme: drop the stale curated artifact so
             # consumers fall back to the generated output.
             stale_curated = curated_dest
         if curated_theme_src and dest:
-            writes.append((dest, curated_file_text(
-                Path(curated_theme_src), dest, target_role_map, app_id)))
-            used.append(curated_theme_name)
+            writes.append(_TargetWrite(dest, curated_file_text(
+                Path(curated_theme_src), dest, target_role_map, app_id), curated_theme_name))
         if cfg.get("template") and dest and (not curated_src or additional) and not curated_theme_src:
             template = (cfg_path.parent / cfg["template"]).read_text()
             for pass_roles, pass_dest in target_render_passes(
                 cfg, target_role_map, dest, resolve_mode_maps, target_overrides
             ):
-                writes.append((pass_dest, render_template(
-                    template, pass_roles, f"{cfg_path.parent.name}/{cfg['template']}")))
-        # A target declares one hook or a list of them; both spellings ship.
-        hook_value = cfg.get("hook") or []
-        hooks = list(hook_value) if isinstance(hook_value, list) else [hook_value]
-        return _TargetPlan(cfg_path.parent.name, writes, stale_curated, used, hooks)
+                writes.append(_TargetWrite(pass_dest, render_template(
+                    template, pass_roles, f"{cfg_path.parent.name}/{cfg['template']}"), ""))
+        return _TargetPlan(cfg_path.parent.name, writes, stale_curated,
+                           declared_hooks(cfg, "hook"), declared_hooks(cfg, "reloadHook"))
 
     plans: List[_TargetPlan] = []
     for cfg_path in sorted(targets_dir().glob("*/config.json")):
@@ -6837,18 +6855,25 @@ def _apply_theme_obj_unlocked(bp: Dict[str, Any], only_app: str | None = None,
     # complete render: a broken template can no longer land half an apply.
     for plan in plans:
         target_changed = False
+        if plan.stale_curated is not None:
+            try:
+                plan.stale_curated.unlink()
+                target_changed = True
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                # The removal exists so consumers fall back to the generated
+                # output, so a curated artifact that cannot be removed must not
+                # also cost the generated write below.
+                warn(f"{plan.target}: {exc}")
         try:
-            if plan.stale_curated is not None:
-                try:
-                    plan.stale_curated.unlink()
+            for write in plan.writes:
+                if write_file(write.dest, write.content):
                     target_changed = True
-                except FileNotFoundError:
-                    pass
-            for dest, content in plan.writes:
-                if write_file(dest, content):
-                    target_changed = True
-                    changed.append(str(dest))
-                rendered.append(str(dest))
+                    changed.append(str(write.dest))
+                rendered.append(str(write.dest))
+                if write.curated:
+                    curated_used.append(write.curated)
         except OSError as exc:
             # The destination belongs to another application, so a read-only
             # mount or a root-owned config directory is that target's failure and
@@ -6857,12 +6882,15 @@ def _apply_theme_obj_unlocked(bp: Dict[str, Any], only_app: str | None = None,
             # the shell is no longer showing.
             warn(f"{plan.target}: {exc}")
             continue
-        curated_used.extend(plan.curated_used)
-        # Hook ownership is per target, so a target whose bytes did not move
-        # tells no consumer to reload. A wallpaper pick moves only the targets
-        # whose template names {wallpaper}; the rest render byte-identical files.
-        if target_changed or not plan.writes:
-            hook_specs.extend(plan.hooks)
+        hook_specs.extend(plan.hooks)
+        # A reload verb tells a running application to re-read a file this target
+        # wrote, so it is worth sending only when those bytes moved. A pick that
+        # keeps the palette moves only the targets whose template names
+        # {wallpaper}; an extracting pick re-derives the palette and moves them
+        # all. `hooks` above asserts wiring no destination carries, so it is not
+        # gated on anything.
+        if target_changed:
+            hook_specs.extend(plan.reload_hooks)
 
     if not only_app and not only_target:
         # Before the hooks: a hook that raises past its own handler must not leave
