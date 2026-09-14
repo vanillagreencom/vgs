@@ -14,6 +14,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"vshell/backend/internal/recovery"
 )
 
 // oauthTimeout gives the user time to complete a browser consent flow before we
@@ -355,7 +357,8 @@ func (m *Manager) refreshAccounts() {
 	// implement about at all. They are refreshed after the accounts are
 	// already visible, in parallel; a quota failure only means "no storage
 	// bar" and never marks the account unhealthy.
-	go m.refreshAccountDetails(m.accountNames())
+	names := m.accountNames()
+	go recovery.Run(m.log, "cloudsync.accountDetails", func() { m.refreshAccountDetails(names) })
 }
 
 // carryOverAccounts retains health, quota, and unreadable account identities
@@ -414,7 +417,7 @@ func (m *Manager) refreshAccountDetails(names []string) {
 		wg.Add(1)
 		go func(name string) {
 			defer wg.Done()
-			m.checkAccount(name)
+			recovery.Run(m.log, "cloudsync.checkAccount", func() { m.checkAccount(name) })
 		}(name)
 	}
 	wg.Wait()
@@ -497,11 +500,12 @@ func (m *Manager) scheduleAccountCheck() {
 	if m.accountTimer != nil {
 		m.accountTimer.Stop()
 	}
-	m.accountTimer = time.AfterFunc(accountCheckInterval, func() {
+	m.accountTimer = recovery.AfterFunc(accountCheckInterval, m.log, "cloudsync.accountCheck", func() {
+		// Deferred so a panic in the check still arms the next one.
+		defer m.scheduleAccountCheck()
 		if m.client.ready() {
 			m.refreshAccountDetails(m.accountNames())
 		}
-		m.scheduleAccountCheck()
 	})
 	m.mu.Unlock()
 }
@@ -785,7 +789,9 @@ func (m *Manager) beginOAuth(name, providerType string, parameters map[string]st
 			prefix+"CLIENT_SECRET="+clientSecret,
 		)
 	}
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// Pdeathsig ends it with a crashed backend; execbound.StartChild states the
+	// thread-lifetime condition it depends on.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGTERM}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		m.failOAuth(err.Error())
@@ -804,7 +810,7 @@ func (m *Manager) beginOAuth(name, providerType string, parameters map[string]st
 	session := &oauthSession{cmd: cmd, name: name, kind: providerType, params: parameters, reconnect: reconnect}
 	// A timeout must publish an error. User cancellation clears the sign-in state
 	// without one.
-	session.timer = time.AfterFunc(oauthTimeout, func() {
+	session.timer = recovery.AfterFunc(oauthTimeout, m.log, "cloudsync.oauthTimeout", func() {
 		m.abortOAuth(session, "sign-in timed out after 5 minutes; try again")
 	})
 	m.mu.Lock()
@@ -813,9 +819,9 @@ func (m *Manager) beginOAuth(name, providerType string, parameters map[string]st
 
 	tokens := make(chan string, 1)
 	session.scanners.Add(2)
-	go m.scanAuthorizeOutput(session, stdout, tokens)
-	go m.scanAuthorizeOutput(session, stderr, tokens)
-	go m.awaitOAuth(session, tokens)
+	go recovery.Run(m.log, "cloudsync.authorizeOutput", func() { m.scanAuthorizeOutput(session, stdout, tokens) })
+	go recovery.Run(m.log, "cloudsync.authorizeOutput", func() { m.scanAuthorizeOutput(session, stderr, tokens) })
+	go recovery.Run(m.log, "cloudsync.awaitOAuth", func() { m.awaitOAuth(session, tokens) })
 	return nil
 }
 

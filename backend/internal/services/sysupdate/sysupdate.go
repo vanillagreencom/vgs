@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"vshell/backend/internal/execbound"
+	"vshell/backend/internal/recovery"
 	"vshell/backend/internal/server"
 )
 
@@ -319,7 +320,7 @@ func (m *Manager) handleUpgrade(params json.RawMessage) (any, error) {
 	if err := cmd.Start(); err != nil {
 		return m.failUpgrade(gen, err.Error())
 	}
-	go m.waitUpgrade(cmd, gen)
+	go recovery.Run(m.log, "sysupdate.waitUpgrade", func() { m.waitUpgrade(cmd, gen) })
 	m.mu.Lock()
 	m.addLogLocked("terminal updater launched")
 	state = m.state
@@ -596,7 +597,7 @@ func (m *Manager) waitUpgrade(cmd *exec.Cmd, gen uint64) {
 	m.srv.Broadcast("sysupdate", state)
 	// Refresh the count after every upgrade exit because even a failed run can
 	// install some updates.
-	go func() { _, _ = m.refresh(true) }()
+	go recovery.Run(m.log, "sysupdate.refresh", func() { _, _ = m.refresh(true) })
 }
 
 func (m *Manager) scheduledRefresh() {
@@ -635,7 +636,7 @@ func (m *Manager) scheduleNextLocked(now time.Time) {
 	if delay < 0 {
 		delay = 0
 	}
-	m.scheduleTimer = time.AfterFunc(delay, m.scheduledRefresh)
+	m.scheduleTimer = recovery.AfterFunc(delay, m.log, "sysupdate.scheduledRefresh", m.scheduledRefresh)
 }
 
 func (m *Manager) stopScheduleLocked() {

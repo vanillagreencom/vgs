@@ -15,6 +15,7 @@ import (
 	"github.com/godbus/dbus/v5"
 	"github.com/godbus/dbus/v5/introspect"
 
+	"vshell/backend/internal/recovery"
 	"vshell/backend/internal/refresh"
 	"vshell/backend/internal/server"
 )
@@ -283,21 +284,24 @@ func (m *Manager) watchSignals() error {
 	m.conn.Signal(signals)
 	go func() {
 		for sig := range signals {
-			if sig == nil {
-				continue
+			if sig != nil {
+				recovery.Run(m.log, "bluez.signal", func() { m.handleBusSignal(sig) })
 			}
-			if sig.Name == "org.freedesktop.DBus.NameOwnerChanged" && len(sig.Body) == 3 {
-				name, _ := sig.Body[0].(string)
-				newOwner, _ := sig.Body[2].(string)
-				if name == bluezDest && newOwner != "" {
-					go m.reinitialize()
-				}
-				continue
-			}
-			m.broadcastSoon()
 		}
 	}()
 	return nil
+}
+
+func (m *Manager) handleBusSignal(sig *dbus.Signal) {
+	if sig.Name == "org.freedesktop.DBus.NameOwnerChanged" && len(sig.Body) == 3 {
+		name, _ := sig.Body[0].(string)
+		newOwner, _ := sig.Body[2].(string)
+		if name == bluezDest && newOwner != "" {
+			go recovery.Run(m.log, "bluez.reinitialize", m.reinitialize)
+		}
+		return
+	}
+	m.broadcastSoon()
 }
 
 // reinitialize re-discovers the adapter and re-registers the pairing agent

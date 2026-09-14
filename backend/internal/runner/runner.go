@@ -39,6 +39,11 @@ func Run(opts Options) (int, error) {
 	// window is not the default (no-teardown) death.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	// SIGUSR1 restarts the backend without touching Quickshell. It is caught from
+	// the start, so a runner with no backend ignores it instead of exiting on
+	// the default action and taking Quickshell with it.
+	restartCh := make(chan os.Signal, 1)
+	signal.Notify(restartCh, syscall.SIGUSR1)
 
 	st, err := setupSocket(log)
 	if err != nil {
@@ -47,7 +52,7 @@ func Run(opts Options) (int, error) {
 	}
 	defer st.teardown()
 
-	lnFile, err := listenerFile(st.ln)
+	ul, lnFile, err := listenerFile(st.ln)
 	if err != nil {
 		log.Warn("backend listener FD unavailable, starting Quickshell without backend", "err", err)
 		return runQuickshell(log, sigCh, opts.QSArgs, "")
@@ -56,10 +61,11 @@ func Run(opts Options) (int, error) {
 	supervisorDone := make(chan struct{})
 	go func() {
 		defer close(supervisorDone)
-		superviseBackend(lnFile, st.socketPath, stopSupervisor, log, func() {
-			// Tear the socket down so clients get a clean connection failure
-			// (backend unavailable) instead of connects that queue forever in
-			// a backlog nobody will accept.
+		superviseBackend(ul, lnFile, st.socketPath, stopSupervisor, restartCh, log, func() {
+			// Supervision cannot run at all, so tear the socket down: clients
+			// get a clean connection failure (backend unavailable) instead of
+			// connects that queue forever in a backlog nobody will accept. A
+			// cool-down keeps the socket and closes each connection instead.
 			st.ln.Close()
 			if !st.override {
 				_ = os.Remove(st.socketPath)
@@ -78,12 +84,13 @@ func Run(opts Options) (int, error) {
 	return runQuickshell(log, sigCh, opts.QSArgs, st.socketPath)
 }
 
-func listenerFile(ln net.Listener) (*os.File, error) {
+func listenerFile(ln net.Listener) (*net.UnixListener, *os.File, error) {
 	ul, ok := ln.(*net.UnixListener)
 	if !ok {
-		return nil, fmt.Errorf("listener is not a unix listener")
+		return nil, nil, fmt.Errorf("listener is not a unix listener")
 	}
-	return ul.File()
+	f, err := ul.File()
+	return ul, f, err
 }
 
 type socketState struct {

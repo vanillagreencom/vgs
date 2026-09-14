@@ -1,16 +1,17 @@
 package gamma
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"vshell/backend/internal/execbound"
 	"vshell/backend/internal/server"
 )
 
@@ -46,7 +47,9 @@ func TestGammaCommandForCompositor(t *testing.T) {
 
 func TestWlsunsetSkipsIdenticalProcessReplacement(t *testing.T) {
 	directory := t.TempDir()
-	binary := filepath.Join(directory, "wlsunset")
+	// The start scan ends processes by this name, so the fixture must not share
+	// a name with a gamma adapter the developer's session runs.
+	binary := filepath.Join(directory, "vgswlsunsetfix")
 	if err := os.WriteFile(binary, []byte("#!/bin/sh\nexec /usr/bin/sleep 30\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -61,12 +64,12 @@ func TestWlsunsetSkipsIdenticalProcessReplacement(t *testing.T) {
 		manager.mu.Unlock()
 		t.Fatal(err)
 	}
-	first := manager.cmd
+	first := manager.child
 	if err := manager.applyGammaLocked(state); err != nil {
 		manager.mu.Unlock()
 		t.Fatal(err)
 	}
-	if manager.cmd != first {
+	if manager.child != first {
 		manager.mu.Unlock()
 		t.Fatal("identical effective state replaced wlsunset")
 	}
@@ -75,12 +78,89 @@ func TestWlsunsetSkipsIdenticalProcessReplacement(t *testing.T) {
 		manager.mu.Unlock()
 		t.Fatal(err)
 	}
-	if manager.cmd == first {
+	if manager.child == first {
 		manager.mu.Unlock()
 		t.Fatal("changed effective temperature did not replace wlsunset")
 	}
 	manager.stopLocked()
 	manager.mu.Unlock()
+}
+
+// startLoopFixture starts a looping script named name, running prelude first,
+// outside the manager, and returns a channel closed when it exits. It returns
+// once the script has run prelude.
+func startLoopFixture(t *testing.T, directory, name, prelude string) <-chan struct{} {
+	t.Helper()
+	path := filepath.Join(directory, name)
+	ready := path + ".ready"
+	script := "#!/bin/sh\n" + prelude + ": > '" + ready + "'\nwhile :; do sleep 1; done\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	child, err := execbound.StartChild(context.Background(), execbound.ChildOptions{}, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(child.Stop)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(ready); err == nil {
+			return child.Done()
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("fixture %s did not start", name)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestTerminateStraysKillsAnAdapterThatIgnoresTerm(t *testing.T) {
+	stray := startLoopFixture(t, t.TempDir(), "vgsgammadeaf", "trap '' TERM\n")
+
+	if err := terminateStrays(discardLogger(), "vgsgammadeaf", 200*time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case <-stray:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a stray adapter that ignores SIGTERM is still running")
+	}
+}
+
+// TestGammaStartEndsAStrayAdapter checks that launching the adapter first ends
+// an instance of the same program the manager did not start, and leaves other
+// programs running.
+func TestGammaStartEndsAStrayAdapter(t *testing.T) {
+	directory := t.TempDir()
+	stray := startLoopFixture(t, directory, "vgsgammastray", "")
+	unrelated := startLoopFixture(t, directory, "vgsgammakeep", "")
+	binary := filepath.Join(directory, "vgsgammastray")
+	manager := &Manager{binary: binary, backend: "wlsunset", log: discardLogger()}
+	state := State{Config: Config{Enabled: true, Gamma: 1}, CurrentTemp: 4200}
+
+	manager.mu.Lock()
+	err := manager.applyGammaLocked(state)
+	started := manager.child != nil
+	manager.stopLocked()
+	manager.mu.Unlock()
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !started {
+		t.Fatal("applyGammaLocked returned no error but started no adapter")
+	}
+	select {
+	case <-stray:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a stray adapter instance is still running after the adapter started")
+	}
+	select {
+	case <-unrelated:
+		t.Fatal("the adapter start ended a process of another program")
+	default:
+	}
 }
 
 func TestHyprsunsetIPCTimesOutEachAttempt(t *testing.T) {
@@ -134,7 +214,7 @@ esac
 		srv:     server.New(uint32(os.Getuid()), discardLogger()),
 		backend: "hyprsunset",
 		hyprctl: hyprctl,
-		cmd:     &exec.Cmd{},
+		child:   &execbound.Child{},
 		state:   State{Config: cfg},
 	}
 

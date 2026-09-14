@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"vshell/backend/internal/protocol"
+	"vshell/backend/internal/recovery"
 	"vshell/backend/internal/registry"
 )
 
@@ -260,7 +261,8 @@ func (s *Server) Serve(ln net.Listener) error {
 			nc.Close()
 			continue
 		}
-		go s.handleConn(newConn(uc, s.log))
+		c := newConn(uc, s.log)
+		go recovery.Run(s.log, "connection", func() { s.handleConn(c) })
 	}
 }
 
@@ -282,9 +284,6 @@ func (s *Server) peerAllowed(uc *net.UnixConn) bool {
 
 func (s *Server) handleConn(c *conn) {
 	defer func() {
-		if r := recover(); r != nil {
-			s.log.Error("connection panic", "err", r)
-		}
 		s.dropSubscriber(c)
 		c.close()
 	}()
@@ -382,7 +381,7 @@ func (s *Server) worker(method string) *worker {
 			if !ok {
 				return
 			}
-			s.runJob(method, j.run)
+			recovery.Run(s.log, "method "+method, j.run)
 		}
 	}()
 	return w
@@ -405,15 +404,6 @@ type worker struct {
 
 func (w *worker) offer(key string, c call) (call, pushOutcome) {
 	return w.queue.push(key, c)
-}
-
-func (s *Server) runJob(method string, job func()) {
-	defer func() {
-		if r := recover(); r != nil {
-			s.log.Error("handler panic", "method", method, "err", r)
-		}
-	}()
-	job()
 }
 
 // subscribeParams ignores unknown service names so clients can request services

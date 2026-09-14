@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"vshell/backend/internal/recovery"
 	"vshell/backend/internal/server"
 )
 
@@ -104,7 +105,7 @@ func (m *Manager) poll() {
 		case <-m.done:
 			return
 		case <-ticker.C:
-			m.refresh()
+			recovery.Run(m.log, "evdev.refresh", func() { m.refresh() })
 		}
 	}
 }

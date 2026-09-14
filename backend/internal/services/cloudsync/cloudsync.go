@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"vshell/backend/internal/recovery"
 	"vshell/backend/internal/server"
 )
 
@@ -151,12 +152,12 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	srv.RegisterSnapshot("cloudsync", func() any { return m.snapshot() })
 
 	// Starting the daemon can take a moment and must not delay shell startup.
-	go func() {
+	go recovery.Run(m.log, "cloudsync.daemonStart", func() {
 		if err := m.daemon.start(); err != nil {
 			m.log.Warn("cloudsync could not start rclone control daemon", "err", err)
 			m.broadcastNow()
 		}
-	}()
+	})
 	m.schedulePrune()
 	m.scheduleAccountCheck()
 	return m, nil
@@ -342,7 +343,7 @@ func (m *Manager) broadcastThrottled() {
 		m.mu.Unlock()
 		return
 	}
-	m.broadcastTimer = time.AfterFunc(broadcastInterval-since, func() {
+	m.broadcastTimer = recovery.AfterFunc(broadcastInterval-since, m.log, "cloudsync.broadcast", func() {
 		m.mu.Lock()
 		m.broadcastTimer = nil
 		m.mu.Unlock()
@@ -426,12 +427,13 @@ func (m *Manager) schedulePrune() {
 		m.mu.Unlock()
 		return
 	}
-	m.pruneTimer = time.AfterFunc(trashPruneInterval, func() {
+	m.pruneTimer = recovery.AfterFunc(trashPruneInterval, m.log, "cloudsync.pruneTrash", func() {
+		// Deferred so a panic in the prune still arms the next one.
+		defer m.schedulePrune()
 		days := m.store.snapshotSettings().TrashRetentionDays
 		if days > 0 {
 			m.store.pruneTrash(time.Now().AddDate(0, 0, -days).Unix())
 		}
-		m.schedulePrune()
 	})
 	m.mu.Unlock()
 }
@@ -568,7 +570,7 @@ func (m *Manager) handleCheckRemote(params json.RawMessage) (any, error) {
 	m.mu.Unlock()
 	go func() {
 		defer m.tasks.Done()
-		_ = m.checkAccount(p.Name)
+		recovery.Run(m.log, "cloudsync.checkAccount", func() { _ = m.checkAccount(p.Name) })
 	}()
 	return m.snapshot(), nil
 }
