@@ -358,6 +358,12 @@ def publish(args: argparse.Namespace) -> int:
             # release is skipped. A dry run records the pin without publication,
             # so a later real run still uploads it.
             if previous.get("published") and previous.get("sha256") == digest:
+                # A preview can change while the wallpapers do not. The lock
+                # still has to name the preview this thumbnail came from, or
+                # every later run rebuilds it again.
+                if previous.get("preview") != preview_digest:
+                    previous["preview"] = preview_digest
+                    LOCK_PATH.write_text(render_lock(lock))
                 continue
             rev = int(previous.get("rev") or 0)
             if rev == 0 or previous.get("sha256") != digest:

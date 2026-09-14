@@ -5152,6 +5152,22 @@ def test_theme_asset_publish_records_what_is_on_the_release():
                          "unchanged published content uploads nothing and creates no release")
             assert_equal(release.lookups, 0, "a run that publishes nothing asks GitHub nothing")
 
+            # A preview re-captured with no wallpaper change uploads nothing, and
+            # the lock names the new preview, so the next run leaves its thumbnail alone.
+            Image.new("RGB", (1280, 720), (90, 20, 20)).save(preview, "JPEG")
+            recaptured = run(True)["demo"]
+            assert_equal((recaptured["rev"], recaptured["preview"], sorted(release.assets)),
+                         (1, hashlib.sha256(preview.read_bytes()).hexdigest(), ["themes-v1"]),
+                         "a preview-only change is recorded in the lock with no upload")
+            rebuilt = []
+            working_thumbnail = publisher.write_thumbnail
+            publisher.write_thumbnail = lambda data, dest: rebuilt.append(dest.name) or working_thumbnail(data, dest)
+            try:
+                run(True)
+            finally:
+                publisher.write_thumbnail = working_thumbnail
+            assert_equal(rebuilt, [], "a run after the recorded preview change rebuilds no thumbnail")
+
             # Changed content bumps by exactly one.
             (assets / "backgrounds" / "1-demo.jpg").write_bytes(b"different wallpaper\n")
             changed = run(True)["demo"]
