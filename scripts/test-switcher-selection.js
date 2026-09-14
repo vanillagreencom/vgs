@@ -568,8 +568,7 @@ test("_beginApply mints a per-call id and the dispatch books it uncoalesced with
     svc.requires(svc.body("_dispatchApply"), "_dispatchApply()", [
         ['_run(requestId, args, callback, undefined, false, "");',
             "an apply books itself under its unique request id and passes an EMPTY Proc id, so Proc " +
-            "mints a random self-cleaning id and nothing is coalesced. A NAMED id would leak one " +
-            "debouncer entry and Timer per apply — Proc reaps those only for a random id", 1]
+            "mints its own and no apply is ever coalesced with another", 1]
     ]);
     // Ordering is executed in scripts/test-theme-apply-queue.js; this pins the one launch site.
     svc.requires(svc.body("_runApply"), "_runApply()", [
