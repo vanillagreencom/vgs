@@ -96,6 +96,7 @@ go        | scripts/check-execbound-adoption-tests.py
 -         | scripts/check-vshell-ipc.sh
 -         | scripts/test-smoke-surfaces.sh
 -         | scripts/test-validate.sh
+-         | scripts/test-sample-shell-memory.sh
 -         | scripts/test-validation-inventory.sh
 -         | scripts/test-validation-areas.sh
 -         | scripts/test-validation-dump.sh

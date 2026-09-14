@@ -46,3 +46,4 @@ Each resource has one owner. QML consumes the owner's state instead of starting 
 - [helper.md](helper.md): privileged operations and helper integrations.
 - [backend.md](backend.md): backend methods, processes and watchers.
 - [cloud-sync.md](cloud-sync.md): file sync and rclone supervision.
+- [memory.md](memory.md): where the shell's resident memory sits, and how to sample a session.
