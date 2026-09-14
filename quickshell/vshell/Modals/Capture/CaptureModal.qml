@@ -95,7 +95,6 @@ VgsModal {
         captureType = 0;
         selectedSourceIndex = 0;
         dependencyProcess.running = true;
-        CaptureService.refreshRecording();
         open();
     }
 
