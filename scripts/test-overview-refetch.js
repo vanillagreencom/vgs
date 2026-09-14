@@ -95,8 +95,16 @@ test("the widget exists only while the overview is open, so it holds no open-sta
     // duplicate fetch at every open; either way it is not carried.
     assert.ok(!source.includes("onOverviewOpenChanged"),
         "an overviewOpen change handler duplicates the construction producer");
-    assert.ok(overviewSource.includes("active: overviewScope.overviewOpen"),
-        "the premise is the Loader's active binding; re-check this case if that changes");
+    // HyprlandOverview carries that active binding on two Loaders. Only the one whose
+    // sourceComponent is OverviewWidget is the premise, so read that block rather than the
+    // bare line: the outer per-screen loader's copy would otherwise satisfy this on its own.
+    const loader = extractBlock(overviewSource, "Loader {",
+        overviewSource.lastIndexOf("Loader {", overviewSource.indexOf("id: overviewLoader")));
+    assert.ok(loader.includes("id: overviewLoader"), "must have read the loader that carries that id");
+    assert.ok(loader.includes("sourceComponent: OverviewWidget"),
+        "overviewLoader must be the Loader that builds this widget");
+    assert.ok(loader.includes("active: overviewScope.overviewOpen"),
+        "the premise is that loader's own active binding; re-check this case if it changes");
 });
 
 test("the extracted handlers assign on the component, not the global scope", () => {

@@ -145,8 +145,9 @@ Singleton {
         }
     }
 
-    // One action still emits several matched events: a workspace switch emits workspacev2 and
-    // activewindowv2. Collapse them into one refresh per event-loop turn.
+    // One action still emits several events from the same list, so each timer collapses its
+    // list to one refresh per event-loop turn. The actions are the table in the case named
+    // 'one user action costs one refresh of each kind'; an example here only drifts.
     Timer {
         id: hyprMonitorRefreshTimer
         interval: 0
