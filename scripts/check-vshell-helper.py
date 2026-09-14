@@ -4557,27 +4557,51 @@ def test_theme_catalog_update_keeps_the_users_wallpapers():
                          "a list-shaped marker still lists its update and the update refuses it, touching no file")
 
             marker_path.write_text(json.dumps(downloaded))
-            assert_equal([(item["name"], item["installedRev"], item["latestRev"], item["digests"])
-                          for item in helper.catalog_updates()], [("demo", 1, 2, True)],
-                         "an owned download with digests lists its update")
-            result = helper.catalog_update_theme(entry, base_urls, allow_local)
-            recorded = helper.catalog_marker("demo")["files"]
-            for label, name, content, placed in (
-                ("a pristine wallpaper is replaced", "1-demo.jpg", b"r2 one\n", True),
-                ("a wallpaper the user edited is kept", "2-demo.jpg", b"user two\n", True),
-                ("a wallpaper removed through wallpaper-remove stays removed", "3-demo.jpg", None, True),
-                ("a pristine wallpaper the new archive drops is removed", "4-demo.jpg", None, False),
-                ("an edited wallpaper the new archive drops is kept", "5-demo.jpg", b"user five\n", True),
-                ("a wallpaper added through wallpaper-add is never touched", "6-demo.jpg", b"user six\n", False),
-                ("a wallpaper new in the archive is added", "7-demo.jpg", b"r2 seven\n", True),
+
+            def catalog_command(*argv: str) -> tuple:
+                buffer = io.StringIO()
+                with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(io.StringIO()):
+                    status = helper.cmd_theme(["catalog", *argv])
+                return status, json.loads(buffer.getvalue()) if "--json" in argv else None
+
+            listed_status, listed = catalog_command("updates", "--json")
+            assert_equal((listed_status, [(item["name"], item["installedRev"], item["latestRev"], item["digests"])
+                                          for item in listed["themes"]]),
+                         (0, [("demo", 1, 2, True)]), "an owned download with digests lists its update")
+            assert_equal(catalog_command("update")[0], 2, "an update with no names and no --all is a usage error")
+            status, updated = catalog_command("update", "--all", "--json")
+            assert_equal((status, updated["success"], updated["updated"]), (0, True, ["demo"]),
+                         "update --all updates the pending download")
+            result = updated["results"][0]
+            for label, name, content in (
+                ("a pristine wallpaper is replaced", "1-demo.jpg", b"r2 one\n"),
+                ("a wallpaper the user edited is kept", "2-demo.jpg", b"user two\n"),
+                ("a wallpaper removed through wallpaper-remove stays removed", "3-demo.jpg", None),
+                ("a pristine wallpaper the new archive drops is removed", "4-demo.jpg", None),
+                ("an edited wallpaper the new archive drops is kept", "5-demo.jpg", b"user five\n"),
+                ("a wallpaper added through wallpaper-add is never touched", "6-demo.jpg", b"user six\n"),
+                ("a wallpaper new in the archive is added", "7-demo.jpg", b"r2 seven\n"),
             ):
                 path = wallpapers / name
-                assert_equal((path.read_bytes() if path.exists() else None, f"backgrounds/{name}" in recorded),
-                             (content, placed), label)
+                assert_equal(path.read_bytes() if path.exists() else None, content, label)
+            digest = lambda blob: hashlib.sha256(blob).hexdigest()
+            assert_equal(helper.catalog_marker("demo")["files"], {
+                "backgrounds/1-demo.jpg": digest(second["backgrounds/1-demo.jpg"]),
+                "backgrounds/2-demo.jpg": digest(first["backgrounds/2-demo.jpg"]),
+                "backgrounds/3-demo.jpg": digest(first["backgrounds/3-demo.jpg"]),
+                "backgrounds/5-demo.jpg": digest(first["backgrounds/5-demo.jpg"]),
+                "backgrounds/7-demo.jpg": digest(second["backgrounds/7-demo.jpg"]),
+            }, "the marker records replaced and added wallpapers at the new digest and kept ones at the digest "
+               "they were placed with, and never records a removed or user-added file")
             assert_equal((result["status"], result["fromRev"], result["toRev"], helper.catalog_marker("demo")["rev"],
-                          helper.catalog_updates(), helper.catalog_update_theme(entry, base_urls, allow_local)["status"]),
-                         ("updated", 1, 2, 2, [], "current"),
+                          helper.catalog_updates()),
+                         ("updated", 1, 2, 2, []),
                          "the update records the new pin, so nothing is left to update")
+            status, again = catalog_command("update", "demo", "missing", "--json")
+            assert_equal((status, again["success"], again["updated"],
+                          [(item["name"], item["status"]) for item in again["results"]]),
+                         (1, False, [], [("demo", "current"), ("missing", "failed")]),
+                         "an update naming a theme outside the catalog fails with exit 1, and a current one stays current")
         finally:
             helper.builtin_themes_dir = original_builtin
             os.environ.pop("VGS_THEME_CATALOG_BASE_URL", None)
