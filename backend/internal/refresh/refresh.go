@@ -96,11 +96,21 @@ func (l *loop) loop(run func()) {
 		}
 		// The selects above only decide when to get here; either can pick its
 		// non-stop case while Close is landing. This is the single decision to
-		// run, and it takes the same lock Close does, so a Close that has
-		// returned is always seen here: the service's command is never forked
-		// after its Close.
+		// run, and it takes the same lock Close does, so a Close that returned
+		// before this check is always seen here. A Close landing after it
+		// finishes alongside the run it did not stop, which is a read-only
+		// sweep.
 		if l.isClosed() {
 			return
+		}
+		// Subsume a kick that arrived during the window. The run about to start
+		// reads the same state that kick was asking about, so leaving it
+		// buffered would spend a second sweep on it and the window would
+		// collapse nothing. A kick that arrives during the run stays buffered
+		// and gets its own follow-up.
+		select {
+		case <-l.kick:
+		default:
 		}
 		run()
 	}

@@ -146,3 +146,45 @@ func TestCloseIsSafeToRepeat(t *testing.T) {
 	l.Close()
 	l.Close()
 }
+
+// The window exists to collapse a burst. A kick that lands during it is asking
+// about the state the run about to start will read, so it must not buy a second
+// sweep: a BlueZ property burst or a run of nmcli monitor lines inside one
+// window would otherwise cost two.
+func TestKickDuringTheSettleWindowCollapses(t *testing.T) {
+	const settle = 300 * time.Millisecond
+	started := make(chan struct{}, 8)
+	loop := newLoop(settle, nil, func() { started <- struct{}{} })
+	t.Cleanup(loop.Close)
+
+	loop.Kick()
+	time.Sleep(settle / 3)
+	loop.Kick() // inside the window
+	awaitRun(t, started, "the first kick")
+
+	// A second run would follow one window later; watch well past that.
+	select {
+	case <-started:
+		t.Fatal("a kick inside the settle window bought a second sweep; the window collapses nothing")
+	case <-time.After(settle * 3):
+	}
+}
+
+// The other half of the same rule: a kick that arrives once the run is under
+// way asks about state that run has already read, so it gets its own follow-up.
+func TestKickDuringTheRunGetsItsOwnFollowUp(t *testing.T) {
+	started := make(chan struct{}, 8)
+	proceed := make(chan struct{})
+	loop := newLoop(0, nil, func() {
+		started <- struct{}{}
+		<-proceed
+	})
+	t.Cleanup(loop.Close)
+
+	loop.Kick()
+	awaitRun(t, started, "the first kick")
+	loop.Kick() // while the run holds the goroutine
+	proceed <- struct{}{}
+	awaitRun(t, started, "a kick that arrived during the run")
+	proceed <- struct{}{}
+}
