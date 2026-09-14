@@ -8,20 +8,21 @@ For each community-import package in `themes/THEMES-ATTRIBUTION.md`, do `colors.
 
 All 45 audited packages depart from their upstream in at least one colour-bearing file, so this audit adds no row to `themes/THEMES-ATTRIBUTION.md`. The 46th table row, `synthwave84`, is covered by [VGS-318](VGS-318-vendor-port-audit.md).
 
-Most files VGS copied from the upstream repositories match. `colors.toml` equals the upstream terminal palette at the closest upstream commit in 39 of 45 packages. `apps/btop.theme` is a verbatim upstream copy in all 44 packages that ship one, and `apps/chromium.theme` matches in all 38 that ship one. No audited package ships `ui-roles.toml`.
+Most files VGS copied from the upstream repositories match. `colors.toml` equals the upstream terminal palette at the closest upstream commit in 35 of 45 packages; keys no upstream terminal file sets are listed as unverified by role, not as matches. `apps/btop.theme` is a verbatim upstream copy in all 44 packages that ship one, and `apps/chromium.theme` matches in all 38 that ship one. No audited package ships `ui-roles.toml`.
 
-The departures are mostly files VGS wrote. `apps/vscode-theme.json` departs in 43 packages, the Aether Neovim spec in `apps/neovim.lua` in 25, the VGS-290 terminal overlays in 18, and the VGS-286 `apps/claude-light.json` in 6. Six `colors.toml` keys and the five hand-written `roseofdune` terminal files complete the list.
+The departures are mostly files VGS wrote. `apps/vscode-theme.json` departs in 43 packages, the Aether Neovim spec in `apps/neovim.lua` in 25, the VGS-290 terminal overlays in 18, and the VGS-286 `apps/claude-light.json` in 6. Ten `colors.toml` keys and the five hand-written `roseofdune` terminal files complete the list.
 
 23 upstream repositories have no licence file, and VGS ships a verbatim `btop.theme` from 22 of them. None of the ten unattributed packages is VGS-original: eight come from basecamp/omarchy, `bauhaus` from mwaltzer/omarchy-bauhaus-theme, and `noctalia` ports the Noctalia shell's default palette.
 
 ## Key Findings
 
-- All 43 departing VS Code files share one key set: 664 `colors` keys, 69 `tokenColors` entries and 24 `semanticTokenColors` keys. Each holds 5 to 32 values that appear in no file of its upstream repository. Only `mechanoonna` (the upstream's own theme file) and `arc-blueberry` (Bearded Theme 10.1.0) match.
+- All 43 departing VS Code files share one key set: 664 `colors` keys, 69 `tokenColors` entries and 24 `semanticTokenColors` keys. Each holds 12 to 74 values that appear in no file of its upstream repository. Only `mechanoonna` (the upstream's own theme file) and `arc-blueberry` (Bearded Theme 10.1.0) match.
 - In 23 packages the upstream publishes no VS Code theme, and in 14 more its `vscode.json` only names a Marketplace extension or a placeholder. D017 says the generated render stands in both cases. In the remaining 6, the upstream's own theme file differs from the VGS file in 199 to 875 keys.
-- The 25 packages that load `aether.nvim` pass 5 to 7 colours the upstream never published, under the keys `dark_bg`, `darker_bg`, `lighter_bg`, `dark_fg`, `light_fg`, `brown` and, in 2 packages, `selection_background`. The vendored `aether.nvim` tree itself equals bjarneo/aether.nvim `02af9ba`.
+- The 25 packages that load `aether.nvim` pass 5 to 7 colours the upstream never published, under the keys `dark_bg`, `darker_bg`, `lighter_bg`, `dark_fg`, `light_fg`, `brown`, and in 2 packages each `selection_background` and `accent`. The vendored `aether.nvim` tree itself equals bjarneo/aether.nvim `02af9ba`.
 - The 18 terminal overlays set 40 keys; 39 of those values appear in no upstream file. The four D017 examples are confirmed: `color2` is `#68985d` in `akane`, `#357e22` in `arc-raiders`, `#3dad1b` in `greek-noir` and `#4aa833` in `harbordark`.
 - The six `apps/claude-light.json` files hold 36 diff colours. None is in an upstream file, and no upstream ships a Claude Code theme.
-- Five `colors.toml` files set `selection_background` to a value in no upstream file. `roseofdune` sets `accent` to an upstream value that the upstream uses in another slot.
+- Ten `colors.toml` files hold a value the upstream does not publish for its slot. Four `selection_background` values and three `accent` values appear in no upstream file. `amberbyte`'s `selection_foreground` and `archwave`'s `selection_background` differ from every upstream terminal file that sets the slot. `roseofdune` sets `accent` to an upstream value that the upstream uses in another slot.
+- 17 packages set a `colors.toml` key that no upstream terminal file sets, to a value found in another upstream file. The audit cannot confirm the role, so it reports these keys as unverified by role.
 - The Horizon `apps/btop.theme` question needs an owner decision. Both Horizon btop files and the generated btop render hold only `colors.toml` values; each hand-written file differs from its render in 5 of 42 keys.
 - 31 of the 45 packages record `contrastShortfalls` on the VGS-328 branch. Their follow-ups may record a shortfall and may not change a colour to clear it.
 
@@ -39,50 +40,50 @@ Status words: **matches** (every colour value equals the upstream file for the s
 | Package | Closest commit | `colors.toml` | `terminal-colors.toml` | `apps/btop.theme` | `apps/chromium.theme` | `apps/neovim.lua` and vendored tree | `apps/vscode-theme.json` | Other colour files |
 |---|---|---|---|---|---|---|---|---|
 | `akane` | `8ab3d02` | matches | overlay (2 keys, 2 in no upstream file) | matches, verbatim | matches | values match; inline, no vendored tree | diverges (740) from `vscode-extension/themes/akane-color-theme.json` | `apps/claude-light.json`: no upstream file; 6 of 6 values in no upstream file |
-| `amberbyte` | `8ea68b3` | matches | not shipped | matches, verbatim | matches | values match; `matteblack.nvim` matches (VGS-318) | upstream names `TahaYVR.matteblack`; 14 values in no upstream file | none |
+| `amberbyte` | `8ea68b3` | diverges (1) | not shipped | matches, verbatim | matches | values match; `matteblack.nvim` matches (VGS-318) | upstream names `TahaYVR.matteblack`; 45 values in no upstream file | none |
 | `arc-blueberry` | `3476e99` | diverges (1) | not shipped | matches, verbatim | matches | values match; inline, no vendored tree | matches Open VSX BeardedBear.beardedtheme 10.1.0 | none |
-| `arc-raiders` | `f0cfc37` | matches | overlay (4 keys, 4 in no upstream file) | matches, verbatim | matches | diverges (5 values in no upstream file); `aether.nvim` matches bjarneo/aether.nvim `02af9ba` | no upstream file; 10 values in no upstream file | none |
-| `archwave` | `b3e6b81` | diverges (1) | not shipped | matches, verbatim | matches | values match; `tokyonight.nvim` matches, 2 non-colour script files differ (VGS-318) | no upstream file; 6 values in no upstream file | `apps/claude-light.json`: no upstream file; 6 of 6 values in no upstream file |
-| `artzen` | `d425535` | matches | not shipped | matches, verbatim | matches | diverges (6 values in no upstream file); `aether.nvim` matches bjarneo/aether.nvim `02af9ba` | no upstream file; 10 values in no upstream file | none |
-| `biscuit-de-mar` | `bdec74a` | matches | overlay (1 keys, 1 in no upstream file) | matches, verbatim | matches | values match; `biscuit.nvim` matches Biscuit-Theme/nvim `1307d87`; no licence file | upstream names `oldjobobo.biscuit-theme`; 6 values in no upstream file | none |
-| `brutalism` | `21c9887` | matches | not shipped | matches, verbatim | matches | diverges (6 values in no upstream file); `aether.nvim` matches bjarneo/aether.nvim `02af9ba` | no upstream file; 10 values in no upstream file | none |
-| `coppernight` | `5a2380a` | matches | not shipped | matches, verbatim | matches | values match; inline, no vendored tree | no upstream file; 5 values in no upstream file | none |
-| `cpunk` | `c4d726b` | matches | overlay (2 keys, 2 in no upstream file) | matches, verbatim | matches | diverges (5 values in no upstream file); `aether.nvim` matches bjarneo/aether.nvim `02af9ba` | no upstream file; 10 values in no upstream file | none |
-| `delorean` | `41de4ca` | matches | not shipped | matches, verbatim | matches | values match; `tokyonight.nvim` matches, 2 non-colour script files differ (VGS-318) | upstream names `Pustur.retrowave-theme`; 32 values in no upstream file | none |
-| `ember-n-ash` | `dcb94c8` | matches | overlay (2 keys, 2 in no upstream file) | matches, verbatim | not shipped | values match; inline, no vendored tree | no upstream file; 14 values in no upstream file | none |
-| `event-horizon` | `d0f689b` | matches | not shipped | matches, verbatim | matches | diverges (6 values in no upstream file); `aether.nvim` matches bjarneo/aether.nvim `02af9ba` | upstream names `mcagampan.dark-horizon`; 10 values in no upstream file | none |
-| `fireside` | `74b5633` | matches | not shipped | matches, verbatim | not shipped | diverges (5 values in no upstream file); `aether.nvim` matches bjarneo/aether.nvim `02af9ba` | no upstream file; 10 values in no upstream file | none |
+| `arc-raiders` | `f0cfc37` | matches | overlay (4 keys, 4 in no upstream file) | matches, verbatim | matches | diverges (5 values in no upstream file); `aether.nvim` matches bjarneo/aether.nvim `02af9ba` | no upstream file; 57 values in no upstream file | none |
+| `archwave` | `b3e6b81` | diverges (1) | not shipped | matches, verbatim | matches | values match; `tokyonight.nvim` matches, 2 non-colour script files differ (VGS-318) | no upstream file; 52 values in no upstream file | `apps/claude-light.json`: no upstream file; 6 of 6 values in no upstream file |
+| `artzen` | `d425535` | diverges (1) | not shipped | matches, verbatim | matches | diverges (7 values in no upstream file); `aether.nvim` matches bjarneo/aether.nvim `02af9ba` | no upstream file; 62 values in no upstream file | none |
+| `biscuit-de-mar` | `bdec74a` | matches | overlay (1 keys, 1 in no upstream file) | matches, verbatim | matches | values match; `biscuit.nvim` matches Biscuit-Theme/nvim `1307d87`; no licence file | upstream names `oldjobobo.biscuit-theme`; 57 values in no upstream file | none |
+| `brutalism` | `21c9887` | matches | not shipped | matches, verbatim | matches | diverges (6 values in no upstream file); `aether.nvim` matches bjarneo/aether.nvim `02af9ba` | no upstream file; 61 values in no upstream file | none |
+| `coppernight` | `5a2380a` | matches | not shipped | matches, verbatim | matches | values match; inline, no vendored tree | no upstream file; 55 values in no upstream file | none |
+| `cpunk` | `c4d726b` | matches | overlay (2 keys, 2 in no upstream file) | matches, verbatim | matches | diverges (5 values in no upstream file); `aether.nvim` matches bjarneo/aether.nvim `02af9ba` | no upstream file; 55 values in no upstream file | none |
+| `delorean` | `41de4ca` | matches | not shipped | matches, verbatim | matches | values match; `tokyonight.nvim` matches, 2 non-colour script files differ (VGS-318) | upstream names `Pustur.retrowave-theme`; 71 values in no upstream file | none |
+| `ember-n-ash` | `dcb94c8` | matches | overlay (2 keys, 2 in no upstream file) | matches, verbatim | not shipped | values match; inline, no vendored tree | no upstream file; 58 values in no upstream file | none |
+| `event-horizon` | `d0f689b` | matches | not shipped | matches, verbatim | matches | diverges (6 values in no upstream file); `aether.nvim` matches bjarneo/aether.nvim `02af9ba` | upstream names `mcagampan.dark-horizon`; 55 values in no upstream file | none |
+| `fireside` | `74b5633` | matches | not shipped | matches, verbatim | not shipped | diverges (5 values in no upstream file); `aether.nvim` matches bjarneo/aether.nvim `02af9ba` | no upstream file; 55 values in no upstream file | none |
 | `frankenstein` | `94f7995` | matches | not shipped | matches, verbatim | matches | diverges (5 values in no upstream file); `aether.nvim` matches bjarneo/aether.nvim `02af9ba` | diverges (199) from `vscode-extension/themes/aether-color-theme.json` | `apps/claude-light.json`: no upstream file; 6 of 6 values in no upstream file |
-| `ghost-pastel` | `d8e1b55` | matches | not shipped | matches, verbatim | matches | diverges (5 values in no upstream file); `aether.nvim` matches bjarneo/aether.nvim `02af9ba` | upstream names `rokage.ghost-pastel`; 10 values in no upstream file | none |
-| `greek-noir` | `4dde93c` | matches | overlay (4 keys, 4 in no upstream file) | matches, verbatim | matches | diverges (6 values in no upstream file); `aether.nvim` matches bjarneo/aether.nvim `02af9ba` | upstream names `hrose.amp-theme`; 10 values in no upstream file | none |
-| `gruvy-glass` | `1204ee7` | matches | not shipped | matches, verbatim | not shipped | values match; `gruvbox.nvim` matches, adds `doc/tags` (VGS-318) | upstream names `jdinhlife.gruvbox`; 15 values in no upstream file | none |
+| `ghost-pastel` | `d8e1b55` | matches | not shipped | matches, verbatim | matches | diverges (5 values in no upstream file); `aether.nvim` matches bjarneo/aether.nvim `02af9ba` | upstream names `rokage.ghost-pastel`; 55 values in no upstream file | none |
+| `greek-noir` | `4dde93c` | matches | overlay (4 keys, 4 in no upstream file) | matches, verbatim | matches | diverges (6 values in no upstream file); `aether.nvim` matches bjarneo/aether.nvim `02af9ba` | upstream names `hrose.amp-theme`; 54 values in no upstream file | none |
+| `gruvy-glass` | `1204ee7` | matches | not shipped | matches, verbatim | not shipped | values match; `gruvbox.nvim` matches, adds `doc/tags` (VGS-318) | upstream names `jdinhlife.gruvbox`; 53 values in no upstream file | none |
 | `harbordark` | `5203f4d` | matches | overlay (2 keys, 2 in no upstream file) | matches, verbatim | matches | diverges (5 values in no upstream file); `aether.nvim` matches bjarneo/aether.nvim `02af9ba` | diverges (536) from `vscode-extension/themes/harbordark-color-theme.json` | none |
-| `inkypinky` | `1e5e799` | matches | not shipped | matches, verbatim | matches | values match; `lake-dweller.nvim` matches yonatanperel/lake-dweller.nvim `67e0048` | upstream names `AlexDo.catppuccin-noir`; 13 values in no upstream file | none |
-| `kurayami` | `96a3250` | matches | overlay (2 keys, 2 in no upstream file) | matches, verbatim | matches | diverges (5 values in no upstream file); `aether.nvim` matches bjarneo/aether.nvim `02af9ba` | no upstream file; 10 values in no upstream file | none |
-| `lowlight` | `c685f81` | matches | overlay (3 keys, 3 in no upstream file) | matches, verbatim | matches | diverges (6 values in no upstream file); `aether.nvim` matches bjarneo/aether.nvim `02af9ba` | no upstream file; 10 values in no upstream file | none |
-| `lunar` | `a31285f` | matches | not shipped | matches, verbatim | matches | values match; inline, no vendored tree | upstream names `philiposborne.eva-plus-theme`; 7 values in no upstream file | none |
+| `inkypinky` | `1e5e799` | matches | not shipped | matches, verbatim | matches | values match; `lake-dweller.nvim` matches yonatanperel/lake-dweller.nvim `67e0048` | upstream names `AlexDo.catppuccin-noir`; 58 values in no upstream file | none |
+| `kurayami` | `96a3250` | matches | overlay (2 keys, 2 in no upstream file) | matches, verbatim | matches | diverges (5 values in no upstream file); `aether.nvim` matches bjarneo/aether.nvim `02af9ba` | no upstream file; 55 values in no upstream file | none |
+| `lowlight` | `c685f81` | matches | overlay (3 keys, 3 in no upstream file) | matches, verbatim | matches | diverges (6 values in no upstream file); `aether.nvim` matches bjarneo/aether.nvim `02af9ba` | no upstream file; 61 values in no upstream file | none |
+| `lunar` | `a31285f` | diverges (1) | not shipped | matches, verbatim | matches | values match; inline, no vendored tree | upstream names `philiposborne.eva-plus-theme`; 54 values in no upstream file | none |
 | `mechanoonna` | `9ec02da` | matches | overlay (2 keys, 2 in no upstream file) | matches, verbatim | matches | values match; `gruvbox-material` matches sainnhe/gruvbox-material `11d779b` | matches `vscode-extension/themes/mechanoonna-color-theme.json` | none |
-| `monokai` | `7a947e1` | matches | not shipped | matches, verbatim | matches | values match; `monokai-pro.nvim` matches loctvl842/monokai-pro.nvim `a68e38b` | no upstream file; 16 values in no upstream file | none |
-| `moon-orbit` | `60c4d32` | matches | overlay (2 keys, 2 in no upstream file) | matches, verbatim | matches | diverges (5 values in no upstream file); `aether.nvim` matches bjarneo/aether.nvim `02af9ba` | no upstream file; 10 values in no upstream file | `apps/claude-light.json`: no upstream file; 6 of 6 values in no upstream file |
-| `nagai-twilight` | `b101d8a` | matches | not shipped | matches, verbatim | matches | values match; `nagai-twilight.nvim` matches somerocketeer/nagai-twilight.nvim `e5692be` | upstream names `placeholder`; 6 values in no upstream file | none |
-| `nebulite` | `01fac1f` | diverges (1) | overlay (1 keys, 1 in no upstream file) | matches, verbatim | matches | diverges (7 values in no upstream file); `aether.nvim` matches bjarneo/aether.nvim `02af9ba` | no upstream file; 10 values in no upstream file | none |
-| `oxford` | `7025c18` | matches | overlay (2 keys, 2 in no upstream file) | matches, verbatim | matches | values match; `gruvbox-material` matches sainnhe/gruvbox-material `11d779b` | no upstream file; 15 values in no upstream file | none |
-| `pmndrs` | `b115d05` | matches | not shipped | matches, verbatim | not shipped | values match; `poimandres.nvim` matches olivercederborg/poimandres.nvim `a488957`; no licence file | no upstream file; 8 values in no upstream file | none |
-| `reddcs` | `9dd5db2` | matches | overlay (2 keys, 2 in no upstream file) | matches, verbatim | matches | diverges (6 values in no upstream file); `aether.nvim` matches bjarneo/aether.nvim `02af9ba` | no upstream file; 10 values in no upstream file | `apps/claude-light.json`: no upstream file; 6 of 6 values in no upstream file |
-| `reverie` | `b1e6e72` | matches | not shipped | matches, verbatim | not shipped | diverges (6 values in no upstream file); `aether.nvim` matches bjarneo/aether.nvim `02af9ba` | no upstream file; 10 values in no upstream file | none |
+| `monokai` | `7a947e1` | matches | not shipped | matches, verbatim | matches | values match; `monokai-pro.nvim` matches loctvl842/monokai-pro.nvim `a68e38b` | no upstream file; 64 values in no upstream file | none |
+| `moon-orbit` | `60c4d32` | matches | overlay (2 keys, 2 in no upstream file) | matches, verbatim | matches | diverges (5 values in no upstream file); `aether.nvim` matches bjarneo/aether.nvim `02af9ba` | no upstream file; 51 values in no upstream file | `apps/claude-light.json`: no upstream file; 6 of 6 values in no upstream file |
+| `nagai-twilight` | `b101d8a` | matches | not shipped | matches, verbatim | matches | values match; `nagai-twilight.nvim` matches somerocketeer/nagai-twilight.nvim `e5692be` | upstream names `placeholder`; 54 values in no upstream file | none |
+| `nebulite` | `01fac1f` | diverges (1) | overlay (1 keys, 1 in no upstream file) | matches, verbatim | matches | diverges (7 values in no upstream file); `aether.nvim` matches bjarneo/aether.nvim `02af9ba` | no upstream file; 55 values in no upstream file | none |
+| `oxford` | `7025c18` | matches | overlay (2 keys, 2 in no upstream file) | matches, verbatim | matches | values match; `gruvbox-material` matches sainnhe/gruvbox-material `11d779b` | no upstream file; 53 values in no upstream file | none |
+| `pmndrs` | `b115d05` | matches | not shipped | matches, verbatim | not shipped | values match; `poimandres.nvim` matches olivercederborg/poimandres.nvim `a488957`; no licence file | no upstream file; 59 values in no upstream file | none |
+| `reddcs` | `9dd5db2` | matches | overlay (2 keys, 2 in no upstream file) | matches, verbatim | matches | diverges (6 values in no upstream file); `aether.nvim` matches bjarneo/aether.nvim `02af9ba` | no upstream file; 55 values in no upstream file | `apps/claude-light.json`: no upstream file; 6 of 6 values in no upstream file |
+| `reverie` | `b1e6e72` | matches | not shipped | matches, verbatim | not shipped | diverges (6 values in no upstream file); `aether.nvim` matches bjarneo/aether.nvim `02af9ba` | no upstream file; 55 values in no upstream file | none |
 | `roseofdune` | `d6dc57d` | diverges (1) | not shipped | matches, verbatim | matches | diverges (6 values in no upstream file); `aether.nvim` matches bjarneo/aether.nvim `02af9ba` | diverges (813) from `vscode-extension/themes/roseofdune-color-theme.json` | `apps/alacritty.toml` 7 slots differ, 6 values in no upstream file; `apps/kitty.conf` 7 slots differ, 11 values in no upstream file; `apps/ghostty.conf` 7 slots differ, 6 values in no upstream file; `apps/foot.ini` no upstream file, 6 values in no upstream file; `apps/wezterm.lua` no upstream file, 12 values in no upstream file |
 | `saga` | `7af52aa` | matches | not shipped | matches, verbatim | matches | diverges (5 values in no upstream file); `aether.nvim` matches bjarneo/aether.nvim `02af9ba` | diverges (724) from `vscode-extension/themes/saga-color-theme.json` | none |
-| `sapphire` | `2084a56` | matches | not shipped | matches, verbatim | matches | values match; `nightfall.nvim` matches 2giosangmitom/nightfall.nvim `0382566` in every Lua file; 8 PNG files differ | upstream names `jzbakh.antigravity-arn-skin`; 21 values in no upstream file | none |
-| `snow` | `6cb2bea` | matches | not shipped | matches, verbatim | matches | diverges (6 values in no upstream file); `aether.nvim` matches bjarneo/aether.nvim `02af9ba` | no upstream file; 10 values in no upstream file | none |
-| `soho` | `1419aa2` | matches | not shipped | matches, verbatim | not shipped | diverges (6 values in no upstream file); `aether.nvim` matches bjarneo/aether.nvim `02af9ba` | upstream names `mvllow.rose-pine`; 10 values in no upstream file | none |
+| `sapphire` | `2084a56` | matches | not shipped | matches, verbatim | matches | values match; `nightfall.nvim` matches 2giosangmitom/nightfall.nvim `0382566` in every Lua file; 8 PNG files differ | upstream names `jzbakh.antigravity-arn-skin`; 62 values in no upstream file | none |
+| `snow` | `6cb2bea` | matches | not shipped | matches, verbatim | matches | diverges (6 values in no upstream file); `aether.nvim` matches bjarneo/aether.nvim `02af9ba` | no upstream file; 55 values in no upstream file | none |
+| `soho` | `1419aa2` | matches | not shipped | matches, verbatim | not shipped | diverges (6 values in no upstream file); `aether.nvim` matches bjarneo/aether.nvim `02af9ba` | upstream names `mvllow.rose-pine`; 61 values in no upstream file | none |
 | `thegreek` | `678f70c` | matches | overlay (3 keys, 2 in no upstream file) | matches, verbatim | matches | diverges (6 values in no upstream file); `aether.nvim` matches bjarneo/aether.nvim `02af9ba` | diverges (875) from `vscode-extension/themes/thegreek-color-theme.json` | none |
-| `tycho` | `8f759e7` | matches | overlay (2 keys, 2 in no upstream file) | matches, verbatim | matches | values match; `pixel.nvim` matches bjarneo/pixel.nvim `fd06541` | no upstream file; 6 values in no upstream file | none |
-| `untitled` | `cb49a53` | matches | not shipped | matches, verbatim | matches | diverges (5 values in no upstream file); `aether.nvim` matches bjarneo/aether.nvim `02af9ba` | upstream names `VueComputedTheme.styldev`; 10 values in no upstream file | none |
-| `vengeance` | `0738cca` | diverges (1) | overlay (2 keys, 2 in no upstream file) | matches, verbatim | matches | diverges (7 values in no upstream file); `aether.nvim` matches bjarneo/aether.nvim `02af9ba` | no upstream file; 10 values in no upstream file | none |
-| `vice-city` | `8c676d8` | diverges (1) | not shipped | matches, verbatim | matches | values match; `tokyonight.nvim` matches, 2 non-colour script files differ (VGS-318) | no upstream file; 24 values in no upstream file | `apps/claude-light.json`: no upstream file; 6 of 6 values in no upstream file |
-| `void` | `c1fc95a` | matches | not shipped | matches, verbatim | matches | values match; `catppuccin` matches (VGS-318) | upstream names `nataliefruitema.modern-purple-theme`; 18 values in no upstream file | none |
-| `vurple` | `fd4cb06` | matches | not shipped | matches, verbatim | matches | diverges (6 values in no upstream file); `aether.nvim` matches bjarneo/aether.nvim `02af9ba` | no upstream file; 18 values in no upstream file | none |
-| `x-1632` | `4537e9f` | matches | overlay (2 keys, 2 in no upstream file) | not shipped | not shipped | diverges (6 values in no upstream file); `aether.nvim` matches bjarneo/aether.nvim `02af9ba` | no upstream file; 10 values in no upstream file | none |
+| `tycho` | `8f759e7` | matches | overlay (2 keys, 2 in no upstream file) | matches, verbatim | matches | values match; `pixel.nvim` matches bjarneo/pixel.nvim `fd06541` | no upstream file; 50 values in no upstream file | none |
+| `untitled` | `cb49a53` | matches | not shipped | matches, verbatim | matches | diverges (5 values in no upstream file); `aether.nvim` matches bjarneo/aether.nvim `02af9ba` | upstream names `VueComputedTheme.styldev`; 35 values in no upstream file | none |
+| `vengeance` | `0738cca` | diverges (1) | overlay (2 keys, 2 in no upstream file) | matches, verbatim | matches | diverges (7 values in no upstream file); `aether.nvim` matches bjarneo/aether.nvim `02af9ba` | no upstream file; 58 values in no upstream file | none |
+| `vice-city` | `8c676d8` | diverges (1) | not shipped | matches, verbatim | matches | values match; `tokyonight.nvim` matches, 2 non-colour script files differ (VGS-318) | no upstream file; 74 values in no upstream file | `apps/claude-light.json`: no upstream file; 6 of 6 values in no upstream file |
+| `void` | `c1fc95a` | matches | not shipped | matches, verbatim | matches | values match; `catppuccin` matches (VGS-318) | upstream names `nataliefruitema.modern-purple-theme`; 63 values in no upstream file | none |
+| `vurple` | `fd4cb06` | diverges (1) | not shipped | matches, verbatim | matches | diverges (7 values in no upstream file); `aether.nvim` matches bjarneo/aether.nvim `02af9ba` | no upstream file; 63 values in no upstream file | none |
+| `x-1632` | `4537e9f` | matches | overlay (2 keys, 2 in no upstream file) | not shipped | not shipped | diverges (6 values in no upstream file); `aether.nvim` matches bjarneo/aether.nvim `02af9ba` | no upstream file; 61 values in no upstream file | none |
 
 ### D017's named departure classes
 
@@ -134,14 +135,14 @@ Status words: **matches** (every colour value equals the upstream file for the s
 | `saga` | `vscode-extension/themes/saga-color-theme.json` | [`7af52aa`](https://github.com/HANCORE-linux/omarchy-saga-theme/tree/7af52aae19d2dc7c3f27fa0981b57b8bba9313ea) | 724: 522, 31, 171 | 336, 20, 36 |
 | `thegreek` | `vscode-extension/themes/thegreek-color-theme.json` | [`678f70c`](https://github.com/HANCORE-linux/omarchy-thegreek-theme/tree/678f70c07a433a0522ed5aba260bbe0a0b42eb5e) | 875: 568, 24, 283 | 449, 74, 0 |
 
-The 43 VS Code files that share one key set carry 664 `colors` keys, the same set as Aether's VS Code template at bjarneo/aether [`5fb7839`](https://github.com/bjarneo/aether/tree/5fb7839be09e9a96514efbdc8a0a611cac673f80). Their 69 `tokenColors` entries and 24 `semanticTokenColors` keys match no version of that template: its history holds 81 and 36, 73 and 36, and 73 and 0. `arc-blueberry`'s file equals `extension/themes/bearded-theme-arc-blueberry.json` in [Open VSX BeardedBear.beardedtheme 10.1.0](https://open-vsx.org/extension/BeardedBear/beardedtheme/10.1.0) (SHA-256 `ecc92f2c469dce00`) on every key.
+The 43 VS Code files that share one key set carry 664 `colors` keys, the same set as Aether's VS Code template at bjarneo/aether [`5fb7839`](https://github.com/bjarneo/aether/tree/5fb7839be09e9a96514efbdc8a0a611cac673f80). Their 69 `tokenColors` entries and 24 `semanticTokenColors` keys match no version of that template: its history holds 81 and 36, 73 and 36, and 73 and 0. `arc-blueberry`'s file equals `extension/themes/bearded-theme-arc-blueberry.json` in [Open VSX BeardedBear.beardedtheme 10.1.0](https://open-vsx.org/extension/BeardedBear/beardedtheme/10.1.0) (SHA-256 `ecc92f2c469dce007b69fd3595889b10ea879fd6efce5a603131228900651330`) on every key.
 
-`apps/neovim.lua` values in no upstream file, all in Aether specs. The upstream specs pass `base00` to `base0F`; the VGS specs pass a named palette with these derived keys added:
+`apps/neovim.lua` values in no upstream file, all in Aether specs. The upstream specs pass `base00` to `base0F`; the VGS specs pass a named palette whose keys carry these values:
 
 | Package | Values in no upstream file | Keys carrying them |
 |---|---|---|
 | `arc-raiders` | 5 | `brown`, `dark_bg`, `dark_fg`, `darker_bg`, `lighter_bg` |
-| `artzen` | 6 | `brown`, `dark_bg`, `dark_fg`, `darker_bg`, `light_fg`, `lighter_bg` |
+| `artzen` | 7 | `accent`, `brown`, `dark_bg`, `dark_fg`, `darker_bg`, `light_fg`, `lighter_bg` |
 | `brutalism` | 6 | `brown`, `dark_bg`, `dark_fg`, `darker_bg`, `light_fg`, `lighter_bg` |
 | `cpunk` | 5 | `brown`, `dark_bg`, `dark_fg`, `darker_bg`, `lighter_bg` |
 | `event-horizon` | 6 | `brown`, `dark_bg`, `dark_fg`, `darker_bg`, `light_fg`, `lighter_bg` |
@@ -163,17 +164,45 @@ The 43 VS Code files that share one key set carry 664 `colors` keys, the same se
 | `thegreek` | 6 | `brown`, `dark_bg`, `dark_fg`, `darker_bg`, `light_fg`, `lighter_bg` |
 | `untitled` | 5 | `brown`, `dark_fg`, `darker_bg`, `light_fg`, `lighter_bg` |
 | `vengeance` | 7 | `brown`, `dark_bg`, `dark_fg`, `darker_bg`, `light_fg`, `lighter_bg`, `selection`, `selection_background` |
-| `vurple` | 6 | `brown`, `dark_bg`, `dark_fg`, `darker_bg`, `light_fg`, `lighter_bg` |
+| `vurple` | 7 | `accent`, `brown`, `dark_bg`, `dark_fg`, `darker_bg`, `light_fg`, `lighter_bg` |
 | `x-1632` | 6 | `brown`, `dark_bg`, `dark_fg`, `darker_bg`, `light_fg`, `lighter_bg` |
 
 `colors.toml`:
 
+- `amberbyte/colors.toml`: `selection_foreground` `#f2e8e8` (upstream `ghostty.conf` `#eaeaea`, `kitty.conf` `#121212`).
 - `arc-blueberry/colors.toml`: `selection_background` `#373a4b` (in no upstream file).
-- `archwave/colors.toml`: `selection_background` `#432e5c` (in no upstream file).
+- `archwave/colors.toml`: `selection_background` `#432e5c` (upstream `kitty.conf` `#2d1b4e`).
+- `artzen/colors.toml`: `accent` `#ed333b` (in no upstream file).
+- `lunar/colors.toml`: `accent` `#ffffff` (in no upstream file).
 - `nebulite/colors.toml`: `selection_background` `#4c4c4f` (in no upstream file).
 - `roseofdune/colors.toml`: `accent` `#9e4f5b` (upstream `#76634c`).
 - `vengeance/colors.toml`: `selection_background` `#444242` (in no upstream file).
 - `vice-city/colors.toml`: `selection_background` `#3e283f` (in no upstream file).
+- `vurple/colors.toml`: `accent` `#450090` (in no upstream file).
+
+`artzen`, `lunar` and `vurple` hold their accent upstream only inside an eight-digit Hyprland border value (`rgba(ed333bee)`, `rgba(ffffffaa)`, `rgba(450090ee)`). The comparison keeps eight-digit values whole, so these accents count as values in no upstream file.
+
+Keys unverified by role: no upstream terminal file sets the slot, and the value appears in another upstream file. They count neither as matches nor as differences.
+
+| Package | Keys unverified by role |
+|---|---|
+| `akane` | `accent` `#9279aa` |
+| `amberbyte` | `accent` `#b44a4a` |
+| `arc-blueberry` | `cursor` `#bcc1dc`, `selection_foreground` `#bcc1dc`, `accent` `#f38cec` |
+| `arc-raiders` | `selection_foreground` `#0c060d`, `selection_background` `#fafafa`, `accent` `#0c060d` |
+| `archwave` | `accent` `#ff6ec7` |
+| `artzen` | `selection_foreground` `#181c1f`, `selection_background` `#fdf9f8` |
+| `delorean` | `accent` `#ff2a6d` |
+| `ember-n-ash` | `accent` `#ff6f3c` |
+| `lowlight` | `selection_foreground` `#dcd7d6`, `selection_background` `#a39eb8`, `accent` `#cb8c6d` |
+| `lunar` | `selection_foreground` `#181c1f`, `selection_background` `#e1e4e8` |
+| `monokai` | `selection_foreground` `#0a1220`, `selection_background` `#f0f2f5`, `accent` `#aba0f2` |
+| `nagai-twilight` | `accent` `#bd93f9` |
+| `nebulite` | `selection_foreground` `#dcd6d6`, `accent` `#4c566a` |
+| `tycho` | `accent` `#b4756b` |
+| `vengeance` | `selection_foreground` `#faf9f9`, `accent` `#e46867` |
+| `vice-city` | `selection_foreground` `#f793d9`, `accent` `#f793d9` |
+| `vurple` | `selection_foreground` `#050111`, `selection_background` `#c9ffff` |
 
 `roseofdune`'s five terminal files were hand-written by `86d34784` to make the theme readable in Claude Code's light ANSI mode. `apps/alacritty.toml`, `apps/kitty.conf` and `apps/ghostty.conf` each differ from the upstream file of the same name in 7 slots (`color0`, `color2`, `color6`, `color7`, `color8`, `color10`, `color15`). The upstream publishes no foot or WezTerm file.
 
@@ -293,7 +322,7 @@ basecamp/omarchy HEAD was [`b679363`](https://github.com/basecamp/omarchy/tree/b
 - **Owner decision: may a VGS-written app file stand when every colour in it is an upstream value?** D017 says that where the upstream publishes no file for an app, the package ships none and the generated render stands. Each Horizon `apps/btop.theme` sets 42 keys, and every value is a `colors.toml` value, which `test_horizon_packages_use_only_upstream_colours` also checks against the upstream globals. The generated render, `themes/targets/btop-vgs/vgs.theme`, reads only `{background}`, `{foreground}`, `{accent}` and `{colorN}` slots, so for Horizon it would also hold only upstream values. Rendered from each Horizon `colors.toml`, it differs from the hand-written file in 5 of 42 keys: `hi_fg`, `meter_bg`, `proc_box`, `selected_bg` and `selected_fg` in `horizon`, and `graph_text`, `main_fg`, `proc_misc`, `selected_fg` and `title` in `horizon-light`.
   - **If yes**, D017 gains a bullet that permits such a file and names the check that proves every value upstream. The Horizon files stay. The role mapping in those 5 keys stays a VGS judgement, which D017's first bullet otherwise gives to the upstream.
   - **If no**, both Horizon `apps/btop.theme` files are removed and D017 is unchanged. btop keeps the same upstream value set under the template's mapping.
-  - **Community imports:** neither answer changes this audit's follow-ups. Every VGS-written file measured here holds at least 5 values in no upstream file, so none is in this class.
+  - **Community imports:** neither answer changes this audit's follow-ups. Every VGS-written file measured here holds at least one value in no upstream file, so none is in this class. The fewest is one, in the `biscuit-de-mar` and `nebulite` overlays.
 - **Closest commit or HEAD.** 12 upstreams changed after the closest commit. Taking HEAD as the upstream changes `akane` in 22 `colors.toml` keys and `biscuit-de-mar` in 13, and six upstreams no longer publish a 21-key terminal file at HEAD. The follow-ups name the closest commit, because that is the theme users have now; HEAD would be a re-port.
 - **Named extensions.** In 14 packages the upstream's `vscode.json` names a Marketplace extension or a placeholder. Most name a different theme; for example `amberbyte` names Matte Black and `soho` names Rosé Pine Moon. VGS-318 treated that case as no upstream file. The follow-ups do the same and offer the named extension's file only if the owner accepts it as the theme's own.
 - **Reconciliation instead of removal.** D017 allows a VGS-owned reconciliation that `docs/architecture/theme.md` names. The owner could name the diff-hue overlays and the Claude light diff tokens as reconciliations instead of removing them. The follow-ups remove them by default, because D017's Current state section lists them as departures pending this audit.
@@ -310,11 +339,11 @@ basecamp/omarchy HEAD was [`b679363`](https://github.com/basecamp/omarchy/tree/b
 `tmp/audit-issues-VGS-329.json` carries each proposal with its requirements, reach, labels and priority.
 
 1. `akane`: bring `terminal-colors.toml`, `apps/vscode-theme.json`, `apps/claude-light.json` to upstream values. Priority 3; labels `agent:generalist`, `bug`.
-2. `amberbyte`: bring `apps/vscode-theme.json` to upstream values. Priority 3; labels `agent:generalist`, `bug`.
+2. `amberbyte`: bring `colors.toml`, `apps/vscode-theme.json` to upstream values. Priority 3; labels `agent:generalist`, `bug`.
 3. `arc-blueberry`: bring `colors.toml` to upstream values. Priority 3; labels `agent:generalist`, `bug`.
 4. `arc-raiders`: bring `terminal-colors.toml`, `apps/neovim.lua`, `apps/vscode-theme.json` to upstream values. Priority 3; labels `agent:generalist`, `bug`.
 5. `archwave`: bring `colors.toml`, `apps/vscode-theme.json`, `apps/claude-light.json` to upstream values. Priority 3; labels `agent:generalist`, `bug`.
-6. `artzen`: bring `apps/neovim.lua`, `apps/vscode-theme.json` to upstream values. Priority 3; labels `agent:generalist`, `bug`.
+6. `artzen`: bring `colors.toml`, `apps/neovim.lua`, `apps/vscode-theme.json` to upstream values. Priority 3; labels `agent:generalist`, `bug`.
 7. `biscuit-de-mar`: bring `terminal-colors.toml`, `apps/vscode-theme.json` to upstream values. Priority 3; labels `agent:generalist`, `bug`.
 8. `brutalism`: bring `apps/neovim.lua`, `apps/vscode-theme.json` to upstream values. Priority 3; labels `agent:generalist`, `bug`.
 9. `coppernight`: bring `apps/vscode-theme.json` to upstream values. Priority 3; labels `agent:generalist`, `bug`.
@@ -331,7 +360,7 @@ basecamp/omarchy HEAD was [`b679363`](https://github.com/basecamp/omarchy/tree/b
 20. `inkypinky`: bring `apps/vscode-theme.json` to upstream values. Priority 3; labels `agent:generalist`, `bug`.
 21. `kurayami`: bring `terminal-colors.toml`, `apps/neovim.lua`, `apps/vscode-theme.json` to upstream values. Priority 3; labels `agent:generalist`, `bug`.
 22. `lowlight`: bring `terminal-colors.toml`, `apps/neovim.lua`, `apps/vscode-theme.json` to upstream values. Priority 3; labels `agent:generalist`, `bug`.
-23. `lunar`: bring `apps/vscode-theme.json` to upstream values. Priority 3; labels `agent:generalist`, `bug`.
+23. `lunar`: bring `colors.toml`, `apps/vscode-theme.json` to upstream values. Priority 3; labels `agent:generalist`, `bug`.
 24. `mechanoonna`: bring `terminal-colors.toml` to upstream values. Priority 3; labels `agent:generalist`, `bug`.
 25. `monokai`: bring `apps/vscode-theme.json` to upstream values. Priority 3; labels `agent:generalist`, `bug`.
 26. `moon-orbit`: bring `terminal-colors.toml`, `apps/neovim.lua`, `apps/vscode-theme.json`, `apps/claude-light.json` to upstream values. Priority 3; labels `agent:generalist`, `bug`.
@@ -352,7 +381,7 @@ basecamp/omarchy HEAD was [`b679363`](https://github.com/basecamp/omarchy/tree/b
 41. `vengeance`: bring `colors.toml`, `terminal-colors.toml`, `apps/neovim.lua`, `apps/vscode-theme.json` to upstream values. Priority 3; labels `agent:generalist`, `bug`.
 42. `vice-city`: bring `colors.toml`, `apps/vscode-theme.json`, `apps/claude-light.json` to upstream values. Priority 3; labels `agent:generalist`, `bug`.
 43. `void`: bring `apps/vscode-theme.json` to upstream values. Priority 3; labels `agent:generalist`, `bug`.
-44. `vurple`: bring `apps/neovim.lua`, `apps/vscode-theme.json` to upstream values. Priority 3; labels `agent:generalist`, `bug`.
+44. `vurple`: bring `colors.toml`, `apps/neovim.lua`, `apps/vscode-theme.json` to upstream values. Priority 3; labels `agent:generalist`, `bug`.
 45. `x-1632`: bring `terminal-colors.toml`, `apps/neovim.lua`, `apps/vscode-theme.json` to upstream values. Priority 3; labels `agent:generalist`, `bug`.
 46. Community themes redistribute files from repositories with no licence grant. Priority 2; labels `agent:generalist`, `security`, `owner-gated`.
 47. noctalia: hold only Noctalia's published palette under D017. Priority 3; labels `agent:generalist`, `bug`.
@@ -361,10 +390,10 @@ basecamp/omarchy HEAD was [`b679363`](https://github.com/basecamp/omarchy/tree/b
 ## Risks / Unknowns
 
 - The closest commit is inferred, not recorded. A package whose values held unchanged across several upstream commits pins the newest of them.
-- A `colors.toml` key the upstream terminal file does not set is checked only for membership in any upstream text file, so an upstream value in the wrong role passes.
+- A `colors.toml` key that no upstream terminal file sets cannot be checked by role. The 17 packages in the unverified-by-role table hold such keys, and a follow-up must confirm each role from the upstream's own usage.
 - VS Code files were compared key by key only against theme files inside the upstream repository and against Bearded Theme 10.1.0. No other Marketplace extension was downloaded.
 - The upstream clones omit blobs over 300 KB, and the reads do not fetch them. Images and videos were not read.
-- Colour extraction reads `#rrggbb` and `#rrggbbaa`, bare hex after `=`, whitespace or `(`, and `r,g,b` triples. Named colours are not read.
+- Colour extraction reads `#rrggbb` and `#rrggbbaa`, bare hex after `=`, whitespace or `(`, and `r,g,b` triples. Named colours are not read. Eight-digit values are kept whole, so an upstream `#rrggbbaa` never matches a six-digit value.
 - The VGS-328 shortfall counts come from its branch at `bf0dcc9e`, which is In Review and may change before it merges.
 
 ## Revisit Conditions
@@ -378,10 +407,10 @@ basecamp/omarchy HEAD was [`b679363`](https://github.com/basecamp/omarchy/tree/b
 - Mode: local repository comparison. No Exa research ran, so there is no provider sidecar. Open VSX answered eight extension lookups and supplied one package.
 - Clones, made on 2026-09-14 under the worktree's ignored `tmp/`: each community-import repository with `git clone --filter=blob:limit=300k --no-checkout`, and basecamp/omarchy, mwaltzer/omarchy-bauhaus-theme, noctalia-dev/noctalia-shell and bjarneo/aether the same way. Each Neovim plugin repository in the trees table was cloned with `--filter=blob:none`. Reads set `GIT_NO_LAZY_FETCH=1`.
 - Closest commit: every commit reachable from the upstream HEAD is scored against the package. The score is the `colors.toml` key differences, plus `apps/btop.theme` key differences, plus 1 for a differing `apps/chromium.theme`, plus the `apps/neovim.lua` values found in no upstream text file at that commit. The lowest score wins, newest on a tie.
-- `colors.toml`: the 21 terminal keys are compared with each upstream terminal file at the commit (`colors.toml`, `alacritty.toml` `[colors.*]`, `kitty.conf`, `ghostty.conf` `palette`), lowercased, and the file with the fewest differences is the reference. A key the reference does not set counts as a difference only when its value appears in no upstream text file. `accent` compares with the upstream `colors.toml` `accent` where one exists, otherwise by membership.
+- `colors.toml`: the 21 terminal keys are compared with each upstream terminal file at the commit (`colors.toml`, `alacritty.toml` `[colors.*]`, `kitty.conf`, `ghostty.conf` `palette`), lowercased, and the file with the fewest differences is the reference. A key the reference does not set is compared with every other upstream terminal file that sets that slot, and counts as a difference when none holds the same value. Where no upstream terminal file sets the slot, the key counts as a difference when its value appears in no upstream text file, and is reported as unverified by role otherwise. `accent` compares with the upstream `colors.toml` `accent` where one exists; otherwise the no-slot rule applies.
 - `terminal-colors.toml`: each key is reported with the reference file's value for that slot and with membership in the upstream colour set.
 - `apps/btop.theme`: every `theme[key]="value"` pair compares with the upstream `btop.theme`. `apps/chromium.theme`: the `r,g,b` text compares with the upstream file, whitespace removed.
-- `apps/neovim.lua`, `apps/claude-light.json`, `apps/vscode-theme.json` and `roseofdune`'s terminal files: each colour value is checked for membership in the set of colours from every upstream text file at the commit. An eight-digit value passes when its first six digits are in the set.
+- `apps/neovim.lua`, `apps/claude-light.json`, `apps/vscode-theme.json` and `roseofdune`'s terminal files: each colour value is checked for membership in the set of colours from every upstream text file at the commit. Values compare whole: an eight-digit value matches only the same eight digits.
 - `apps/vscode-theme.json`: both files parse as JSON with comments and trailing commas removed. The count is `colors` keys, `semanticTokenColors` keys and (scope, setting) pairs of `tokenColors` that change or exist on one side only, values lowercased. Upstream candidates are `*-color-theme.json`, `themes/*.json` and a `vscode.json` that holds `colors`, at every commit; the report names the commit with the fewest differences.
 - Vendored trees: in the plugin clone, `GIT_INDEX_FILE=<tmp> git --work-tree=config/vshell/nvim/colorschemes/<dir> add -A -f .` and `git write-tree` stage the tree, then `git diff-tree -r --no-renames --name-status <commit> <tree>` runs for every commit. The report names the commit with the fewest `M` plus `A` rows.
 - Horizon: `themes/targets/btop-vgs/vgs.theme` is rendered by substituting each `{key}` with the package's `colors.toml` value, then compared pair by pair with `apps/btop.theme`.
