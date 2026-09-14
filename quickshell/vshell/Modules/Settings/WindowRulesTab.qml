@@ -158,6 +158,16 @@ Item {
         }
     }
 
+    // The modal outlives every open, so connecting inside the three open paths below would
+    // leave one handler per open alive and re-read the rule list once per accumulated handler.
+    Connections {
+        target: PopoutService.windowRuleModalLoader?.item ?? null
+
+        function onRuleSubmitted() {
+            root.loadWindowRules();
+        }
+    }
+
     function loadWindowRules() {
         const compositor = CompositorService.compositor;
         if (compositor !== "niri" && compositor !== "hyprland" && compositor !== "mango") {
@@ -284,10 +294,8 @@ Item {
         if (!PopoutService.windowRuleModalLoader)
             return;
         PopoutService.windowRuleModalLoader.active = true;
-        if (PopoutService.windowRuleModalLoader.item) {
-            PopoutService.windowRuleModalLoader.item.onRuleSubmitted.connect(loadWindowRules);
+        if (PopoutService.windowRuleModalLoader.item)
             PopoutService.windowRuleModalLoader.item.show(window || null);
-        }
     }
 
     function editRule(rule) {
@@ -298,10 +306,8 @@ Item {
         if (!PopoutService.windowRuleModalLoader)
             return;
         PopoutService.windowRuleModalLoader.active = true;
-        if (PopoutService.windowRuleModalLoader.item) {
-            PopoutService.windowRuleModalLoader.item.onRuleSubmitted.connect(loadWindowRules);
+        if (PopoutService.windowRuleModalLoader.item)
             PopoutService.windowRuleModalLoader.item.showEdit(rule);
-        }
     }
 
     function copyRuleToVgs(rule) {
@@ -312,10 +318,8 @@ Item {
         if (!PopoutService.windowRuleModalLoader)
             return;
         PopoutService.windowRuleModalLoader.active = true;
-        if (PopoutService.windowRuleModalLoader.item) {
-            PopoutService.windowRuleModalLoader.item.onRuleSubmitted.connect(loadWindowRules);
+        if (PopoutService.windowRuleModalLoader.item)
             PopoutService.windowRuleModalLoader.item.showCopy(rule);
-        }
     }
 
     function showReadOnlyWarning() {
