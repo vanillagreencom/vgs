@@ -106,7 +106,6 @@ Nothing in VGS code accounts for the Wayland event threads' share. Those threads
 - `Services/IconThemeService.qml`: `_cache` holds one entry per distinct icon name resolved and is cleared only when the icon theme changes. Notification icons come from arbitrary applications, so the key set is open.
 - `Modules/ControlCenter/Models/WidgetModel.qml`: `getPluginWidgets()` instantiates every plugin widget to read one property, then destroys it. `Modules/ControlCenter/ControlCenterPopout.qml` calls it from the `availableWidgets` binding, which the running shell reports as a binding loop, so the instantiate-and-destroy cycle repeats while Control Center edit mode is open.
 - `Modules/ControlCenter/Components/DetailHost.qml` and `Modules/Settings/WindowRulesTab.qml`: each open connects a fresh closure to a long-lived object and never disconnects. The handler count grows with the number of opens, and every accumulated handler runs on each later signal.
-- `Services/NotificationService.qml`: count-based history eviction drops the entry without deleting the notification's cached image, so the image cache directory grows with lifetime notification volume. This is disk, not memory.
 - `Services/NotepadStorageService.qml`: `createEmptyFile` leaves its holder object parented to the singleton with no `destroy()`.
 
 ## Decisions

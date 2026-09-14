@@ -341,7 +341,7 @@ case "${1:-run}" in
   status)
     exec systemctl --user status vshell.service --no-pager
     ;;
-  theme|fonts|deps|notifications|remote-desktop|update|mise|agent|dev-env|app|ai-usage|ai|mercury|capture|screenshot|screenrecording|recording|ocr|cl|clipboard|dl|download|trash|color|keybinds|config|scratchpad|compositor|battery|blur|brightness|auth|greeter|sudo-toggle|launcher-search|terminal|instances|icons)
+  theme|fonts|deps|notifications|remote-desktop|update|mise|agent|dev-env|app|ai-usage|ai|mercury|capture|screenshot|screenrecording|recording|ocr|cl|clipboard|dl|download|trash|color|keybinds|config|scratchpad|compositor|battery|blur|brightness|auth|greeter|sudo-toggle|launcher-search|terminal|instances|icons|cache)
     exec "$helper" "$@"
     ;;
   screensaver)
@@ -421,6 +421,7 @@ Usage:
   vshell theme catalog list|updates|install <name>...|--all|update <name>...|--all|remove <name>...
   vshell theme regenerate <name> [--app <id>] [--yes]
   vshell icons index <theme>   (icon name-to-path map for an icon theme and its inherit chain)
+  vshell cache prune   (bound the image cache; delete notification images the history no longer names)
   vshell fonts status|apply|reset
   vshell deps status|check <feature>
   vshell notifications status|takeover|restore [--json]   (org.freedesktop.Notifications ownership)
