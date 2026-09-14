@@ -89,7 +89,7 @@ FullScreenSwitcher {
                     thumb: entry.thumb || "",
                     label: all ? entry.file + " · " + (entry.source === "folder" ? I18n.tr("My folder") : entry.source) : entry.file,
                     key: entry.path,
-                    marked: all && VGSThemeService.inThemeSet(entry, root.appliedTheme, root.wallpaperEntries)
+                    marked: all && VGSThemeService.inThemeSet(entry, root.appliedTheme, root.wallpaperEntries, VGSThemeService.themeWallpapersTheme)
                 }));
         if (all)
             return wallpapers;

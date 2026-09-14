@@ -231,7 +231,7 @@ Item {
                     }
                     return false;
                 }
-                readonly property bool inTheme: root.source === "all" && VGSThemeService.inThemeSet(modelData, root.appliedTheme, VGSThemeService.themeWallpapers)
+                readonly property bool inTheme: root.source === "all" && VGSThemeService.inThemeSet(modelData, root.appliedTheme, VGSThemeService.themeWallpapers, VGSThemeService.themeWallpapersTheme)
                 readonly property bool actionsOpen: root.actionsIndex === index
                 readonly property bool keyFocused: root.keyboardNav && grid.currentIndex === index
                 readonly property real tileRadius: Theme.cornerRadius
@@ -493,7 +493,7 @@ Item {
                 }
 
                 VgsButton {
-                    visible: root.source === "all" && root.actionsEntry !== null && !VGSThemeService.inThemeSet(root.actionsEntry, root.appliedTheme, VGSThemeService.themeWallpapers)
+                    visible: root.source === "all" && root.actionsEntry !== null && !VGSThemeService.inThemeSet(root.actionsEntry, root.appliedTheme, VGSThemeService.themeWallpapers, VGSThemeService.themeWallpapersTheme)
                     height: 28
                     variant: "secondary"
                     iconName: "add_photo_alternate"

@@ -118,14 +118,17 @@ test("activationRoute never sends a card to set-wallpaper", () => {
 
 test("inThemeSet marks the theme's own entries and files the theme already holds", () => {
     const own = [{ file: "added.jpg" }];
-    for (const [entry, theme, expected, why] of [
-        [{ source: "bauhaus", file: "x.jpg" }, "bauhaus", true, "an entry of the applied theme belongs to it"],
-        [{ source: "folder", file: "added.jpg" }, "bauhaus", true, "a folder image the theme holds a file of that name for is marked"],
-        [{ source: "folder", file: "new.jpg" }, "bauhaus", false, "a folder image the theme lacks is not"],
-        [{ source: "nord", file: "n.jpg" }, "bauhaus", false, "another theme's wallpaper is not"],
-        [{ source: "folder", file: "added.jpg" }, "", false, "with no applied theme nothing is marked, even a file the set holds"]
+    for (const [entry, theme, owner, expected, why] of [
+        [{ source: "bauhaus", file: "x.jpg" }, "bauhaus", "bauhaus", true, "an entry of the applied theme belongs to it"],
+        [{ source: "folder", file: "added.jpg" }, "bauhaus", "bauhaus", true, "a folder image the theme holds a file of that name for is marked"],
+        [{ source: "folder", file: "new.jpg" }, "bauhaus", "bauhaus", false, "a folder image the theme lacks is not"],
+        [{ source: "nord", file: "n.jpg" }, "bauhaus", "bauhaus", false, "another theme's wallpaper is not"],
+        [{ source: "folder", file: "added.jpg" }, "", "", false, "with no applied theme nothing is marked, even a file the set holds"],
+        [{ source: "folder", file: "added.jpg" }, "bauhaus", "nord", false,
+            "a set retained from the previously applied theme says nothing about the applied one"],
+        [{ source: "bauhaus", file: "x.jpg" }, "bauhaus", "nord", true, "the applied theme's own entry is marked whatever set is retained"]
     ])
-        assert.equal(fns.inThemeSet(entry, theme, own), expected, why);
+        assert.equal(fns.inThemeSet(entry, theme, own, owner), expected, why);
 });
 
 test("the switcher routes a card to the catalog and Add to theme to wallpaper-add", () => {
@@ -141,7 +144,7 @@ test("the switcher routes a card to the catalog and Add to theme to wallpaper-ad
         ['root.source = SettingsData.wallpaperSource === "folder" ? "all" : "theme"; root.refreshSource();', "each open starts from the shared source setting and reads its list", 1],
         ['itemMenu: root.source === "all" && root.appliedTheme ? addToThemeMenu : null', "the menu exists under All only", 1],
         ["if (!menu.inTheme) VGSThemeService.wallpaperAdd(root.menuItem.key, true);", "Add to theme adds the entry's path and toasts its outcome here", 1],
-        ["marked: all && VGSThemeService.inThemeSet(entry, root.appliedTheme, root.wallpaperEntries)", "the mark is the extracted membership", 1]
+        ["marked: all && VGSThemeService.inThemeSet(entry, root.appliedTheme, root.wallpaperEntries, VGSThemeService.themeWallpapersTheme)", "the mark is the extracted membership", 1]
     ]);
     const applied = modal.handlers("onApplied");
     assert.equal(applied.length, 1, "WallpaperSwitcherModal.qml declares one onApplied handler");
@@ -191,6 +194,10 @@ test("the Dash tab shares the card, the All list and Add to theme", () => {
             "even when the theme holds a wallpaper the user added", 1],
         ["if (mouse.button === Qt.RightButton) root.actionsIndex = tile.index;", "a right-click opens the tile's actions", 1],
         ["VGSThemeService.wallpaperAdd(root.actionsEntry.path, true);", "whose Add to theme toasts its outcome", 1],
+        ["VGSThemeService.inThemeSet(modelData, root.appliedTheme, VGSThemeService.themeWallpapers, VGSThemeService.themeWallpapersTheme)",
+            "the tile mark names whose set it compares against", 1],
+        ["!VGSThemeService.inThemeSet(root.actionsEntry, root.appliedTheme, VGSThemeService.themeWallpapers, VGSThemeService.themeWallpapersTheme)",
+            "and so does the Add to theme button it hides", 1],
         ["VGSThemeService.wallpaperAdd(path, true);", "and so does the Theme view's Add", 1]
     ]);
 });

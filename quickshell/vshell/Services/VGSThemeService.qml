@@ -489,11 +489,15 @@ Singleton {
     // Whether an All-view entry already belongs to the applied theme: it is one of that theme's own, or the
     // theme's set holds a file of its name. Membership is by file name, so a folder image stays marked while the
     // set holds any file of that name, and a copy wallpaper-add renamed is marked as the theme's own entry.
-    function inThemeSet(entry, themeName, themeEntries) {
+    // `entriesTheme` names whose set `themeEntries` is: a failed read retains the previous theme's list, and
+    // its file names say nothing about the applied theme.
+    function inThemeSet(entry, themeName, themeEntries, entriesTheme) {
         if (!entry || !themeName)
             return false;
         if (entry.source === themeName)
             return true;
+        if (entriesTheme !== themeName)
+            return false;
         return (themeEntries || []).some(own => own.file === entry.file);
     }
     // END WALLPAPER MEMBERSHIP DECISION
