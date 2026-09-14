@@ -23,8 +23,9 @@ const source = fs.readFileSync(SERVICE, "utf8");
 const bodies = {
     resyncAll: extractBlock(source, "function resyncAll()"),
     scanPlugins: extractBlock(source, "function scanPlugins()"),
-    // The per-id release tail, shared with the rename path below. Bound here as
-    // shipped so the removal sweep is tested through the same function.
+    // The per-path retract and the per-id settle, both shared with the read paths
+    // below. Bound here as shipped so the sweep is tested through the same functions.
+    retractManifest: extractBlock(source, "function _retractManifest(absPath)"),
     settleReleasedIds: extractBlock(source, "function _settleReleasedIds(pluginIds)")
 };
 
@@ -94,6 +95,7 @@ function service(entries, known) {
 
     root.stubs = scope;
     root._settleReleasedIds = ids => callInScope(bodies.settleReleasedIds, root, scope, ["pluginIds"], [ids]);
+    root._retractManifest = absPath => callInScope(bodies.retractManifest, root, scope, ["absPath"], [absPath]);
     // Return the manifest paths this resync actually read from disk.
     root.resync = () => {
         root.reads.length = 0;
@@ -174,8 +176,8 @@ test("a manifest gone from disk is unregistered by a scan rather than re-read", 
 const parsed = {
     onManifestParsed: extractBlock(source, "function _onManifestParsed(absPath, manifest, sourceTag, mtimeEpochMs)"),
     releaseRenamedPath: extractBlock(source, "function _releaseRenamedPath(absPath, incomingId)"),
-    releaseClaimedPath: extractBlock(source, "function _releaseClaimedPath(absPath, pluginId)"),
-    releaseMissingManifest: extractBlock(source, "function _releaseMissingManifest(absPath)"),
+    retractManifest: extractBlock(source, "function _retractManifest(absPath)"),
+    releaseManifestPath: extractBlock(source, "function _releaseManifestPath(absPath)"),
     manifestPackageName: extractBlock(source, "function _manifestPackageName(absPath)"),
     reportRereadRefusal: extractBlock(source, "function _reportRereadRefusal(absPath, reason, details)"),
     unregisterPluginByPath: extractBlock(source, "function unregisterPluginByPath(absPath, pluginId)"),
@@ -287,9 +289,9 @@ function loader(registered) {
     bind("_refreshBundledId", parsed.refreshBundledId, ["pluginId"]);
     bind("_settleReleasedIds", parsed.settleReleasedIds, ["pluginIds"]);
     bind("_manifestPackageName", parsed.manifestPackageName, ["absPath"]);
-    bind("_releaseClaimedPath", parsed.releaseClaimedPath, ["absPath", "pluginId"]);
+    bind("_retractManifest", parsed.retractManifest, ["absPath"]);
+    bind("_releaseManifestPath", parsed.releaseManifestPath, ["absPath"]);
     bind("_releaseRenamedPath", parsed.releaseRenamedPath, ["absPath", "incomingId"]);
-    bind("_releaseMissingManifest", parsed.releaseMissingManifest, ["absPath"]);
     bind("_clearLoadError", parsed.clearLoadError, ["pluginId"]);
     bind("_clearRefusalError", parsed.clearRefusalError, ["absPath"]);
     bind("_reportRereadRefusal", parsed.reportRereadRefusal, ["absPath", "reason", "details"]);
@@ -545,10 +547,25 @@ test("a manifest found missing is released at the read", () => {
     assert.equal(USER in svc.pathToPluginId, false, "the missing manifest must give up its claim");
 });
 
+test("a manifest found missing during a rescan tears the package down", () => {
+    // forceRescanPlugin drops the availablePlugins record before its reads and
+    // never unloads, so a release that asks only that map finds nothing to tear
+    // down. Nothing else reaches the package afterwards: the plugin IPC handler's
+    // rescan, reload, list and status all gate on availablePlugins, and the
+    // settings row the user could have disabled is gone with the list refresh.
+    const svc = loader([{ id: "mine", path: USER, source: "user" }]);
+    svc.forceRescanPlugin("mine");
+    svc.fvLoadFailed(2);
+
+    assert.equal("mine" in svc.loadedPlugins, false, "the released package must leave loadedPlugins");
+    assert.equal("mine" in svc.pluginWidgetComponents, false, "the released package must give up its widget");
+    assert.equal(svc.isPluginLoaded("mine"), false, "the released id must not read as loaded");
+    assert.equal("mine" in svc.availablePlugins, false, "the released id must leave availablePlugins");
+});
+
 test("a read that finds nothing at an unclaimed path releases nothing", () => {
-    // A path with no verdict has no id to give up. Running the release for it
-    // offers an undefined id to the promotion machinery, which can only expire on
-    // the promotion deadline and then report an id left empty.
+    // A path with no verdict has no id to give up, so running the release for it
+    // announces a plugin-list change for a path that claimed nothing.
     const svc = loader([{ id: "mine", path: USER, source: "user" }]);
     svc.fvLoadFailedAt(BUNDLED, 2);
 

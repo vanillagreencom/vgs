@@ -213,13 +213,9 @@ Singleton {
         }
         if (removed.length) {
             removed.forEach(function (path) {
-                const pid = pathToPluginId[path];
-                if (pid) {
+                const pid = root._retractManifest(path);
+                if (pid)
                     removedPluginIds[pid] = true;
-                    unregisterPluginByPath(path, pid);
-                }
-                delete knownManifests[path];
-                delete pathToPluginId[path];
             });
             _settleReleasedIds(Object.keys(removedPluginIds));
         }
@@ -388,9 +384,15 @@ Singleton {
                 fv.destroy();
             }
             onLoadFailed: err => {
-                // A manifest that is gone is a removal, not a refused edit.
+                // A manifest that is gone is a removal, not a refused edit. The
+                // watchers list directories and snapshotModel names a plugin.json
+                // inside every one it finds, so a manifest deleted from a
+                // directory that survives is marked seen on every resync and the
+                // removal sweep never reaches it. Release it at the read that
+                // found it gone, which also covers forceRescanPlugin, whose reads
+                // run against a knownManifests record it has already deleted.
                 if (err === FileViewError.FileNotFound)
-                    root._releaseMissingManifest(absPath);
+                    root._releaseManifestPath(absPath);
                 else
                     root._reportRereadRefusal(absPath, I18n.tr("The manifest could not be opened."), FileViewError.toString(err));
                 root.log.warn("manifest load failed", absPath, err);
@@ -468,11 +470,25 @@ Singleton {
         pluginListUpdated();
     }
 
-    // Give up a path's claim on an id. The caller has established that the claim
-    // is over; this is what has to follow it.
-    function _releaseClaimedPath(absPath, pluginId) {
-        unregisterPluginByPath(absPath, pluginId);
+    // Retract what a path had: its record, its claim, and the package it loaded.
+    // Returns the id it gave up, or the empty string if it claimed none. The id
+    // still has to be settled; the caller decides whether to do that per path or
+    // once for a batch.
+    function _retractManifest(absPath) {
+        const pluginId = pathToPluginId[absPath];
+        delete knownManifests[absPath];
         delete pathToPluginId[absPath];
+        if (!pluginId)
+            return "";
+        unregisterPluginByPath(absPath, pluginId);
+        return pluginId;
+    }
+
+    // Retract one path and settle the id alone.
+    function _releaseManifestPath(absPath) {
+        const pluginId = _retractManifest(absPath);
+        if (!pluginId)
+            return;
         _settleReleasedIds([pluginId]);
     }
 
@@ -480,27 +496,12 @@ Singleton {
     // sweep in resyncAll cannot reach the id the path is abandoning, because that
     // loop runs only for paths absent from disk and this path is still there.
     // Release it here, or a renamed package leaves its previous id registered and
-    // running with nothing claiming it.
+    // running with nothing claiming it. The record goes too, and the branch that
+    // follows this call writes the new one.
     function _releaseRenamedPath(absPath, incomingId) {
-        const prevId = pathToPluginId[absPath];
-        if (!prevId || prevId === incomingId)
+        if (pathToPluginId[absPath] === incomingId)
             return;
-        _releaseClaimedPath(absPath, prevId);
-    }
-
-    // The watchers list directories and snapshotModel names a plugin.json inside
-    // every one it finds, so a manifest deleted from a directory that survives is
-    // marked seen on every resync and the removal sweep never reaches it. Release
-    // it at the read that found it gone. This also covers forceRescanPlugin, whose
-    // reads run against a knownManifests record it has already deleted, and the
-    // uninstall race where the model still lists a directory just removed.
-    function _releaseMissingManifest(absPath) {
-        const pluginId = pathToPluginId[absPath];
-        if (!pluginId)
-            return;
-        // Unlike a rename, no read is coming to overwrite the record.
-        delete knownManifests[absPath];
-        _releaseClaimedPath(absPath, pluginId);
+        _releaseManifestPath(absPath);
     }
 
     // Report a refused read of a path that already carries a verdict, and name
@@ -536,11 +537,11 @@ Singleton {
         ToastService.showError(I18n.tr("Plugin manifest refused: %1").arg(_manifestPackageName(absPath)), body, "", "plugin-manifest-" + absPath);
     }
 
-    // The package's directory name, which is what the user sees in their plugins
-    // folder and is unique per manifest path where a plugin id is not.
+    // The package's directory name. The refusal title uses it because it tells
+    // apart manifests that share a plugin id.
     function _manifestPackageName(absPath) {
         const dir = absPath.substring(0, absPath.lastIndexOf('/'));
-        return dir.substring(dir.lastIndexOf('/') + 1) || absPath;
+        return dir.substring(dir.lastIndexOf('/') + 1);
     }
 
     // A manifest that parses answers the refusal recorded for its path. Clear
@@ -1106,15 +1107,22 @@ Singleton {
         return !plugin || plugin.alwaysAvailable === true;
     }
 
+    // forceRescanPlugin drops the availablePlugins record before its reads and
+    // never unloads, so with no record under the id the loaded one answers for the
+    // package. The manifestPath match keeps an unrelated path from unloading a
+    // running one: while a replacement gates, the two maps deliberately name
+    // different paths and the loaded package is the fallback the gate may restore.
     function unregisterPluginByPath(absPath, pluginId) {
-        const current = availablePlugins[pluginId];
-        if (current && current.manifestPath === absPath) {
-            if (current.loaded)
-                unloadPlugin(pluginId);
-            const newMap = Object.assign({}, availablePlugins);
-            delete newMap[pluginId];
-            availablePlugins = newMap;
-        }
+        const current = availablePlugins[pluginId] || loadedPlugins[pluginId];
+        if (!current || current.manifestPath !== absPath)
+            return;
+        if (current.loaded)
+            unloadPlugin(pluginId);
+        if (!availablePlugins[pluginId])
+            return;
+        const newMap = Object.assign({}, availablePlugins);
+        delete newMap[pluginId];
+        availablePlugins = newMap;
     }
 
     function loadPlugin(pluginId, bustCache) {
