@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-// Test fetch lifecycle decisions and their use in AiUsageWidget.qml.
+// Test fetch lifecycle decisions and their use in AiUsageDaemon.qml.
 // The extracted decision region runs under qml-region process deadlines.
 
 "use strict";
@@ -28,10 +28,14 @@ const { launchDecision, watchdogArms, shouldRelaunch, decodePayload } =
 const source = fs.readFileSync(path.join(PLUGIN, "AiUsageWidget.qml"), "utf8");
 const { blockFrom, body, handlers, requires, indexOf, stripComments } =
     require("./lib/qml-source.js")(source, "AiUsageWidget.qml");
-const channel = blockFrom(indexOf("component FetchChannel:"), "FetchChannel");
+
+// The daemon owns every fetch; the widget, one per screen, renders what it files.
+const daemonSource = fs.readFileSync(path.join(PLUGIN, "AiUsageDaemon.qml"), "utf8");
+const daemon = require("./lib/qml-source.js")(daemonSource, "AiUsageDaemon.qml");
+const channel = daemon.blockFrom(daemon.indexOf("component FetchChannel:"), "FetchChannel");
 
 test("launch starts through the extracted decision and resets every per-fetch field first", () => {
-    const launch = body("launch");
+    const launch = daemon.body("launch");
     requires(launch, "launch()", [
         ["logic.launchDecision(ch.inFlight, ch.proc.running)",
             "whether a launch can start now is the extracted decision, not an inline guess"],
@@ -76,7 +80,7 @@ test("the runningChanged handler arms the watchdog before it drains a parked req
         ["onTriggered: root.failLaunch(chan)", "the watchdog routes a failed start into the failure path"]
     ]);
     // A stopped channel with a tag must retain a path to settlement before any early return.
-    const stops = handlers("onRunningChanged");
+    const stops = daemon.handlers("onRunningChanged");
     assert.equal(stops.length, 1, "one stop handler, on the channel's own process");
     assert.ok(stops[0].indexOf("watchdogArms") < stops[0].indexOf("chan.pending"),
         "the arming question is asked BEFORE the parked request is drained, or a parked request " +
@@ -86,15 +90,15 @@ test("the runningChanged handler arms the watchdog before it drains a parked req
 // A channel fetches one provider for its whole life. There is no reset path and no
 // generation boundary to invalidate, which is what removed every switch-ordering hazard.
 test("a channel's provider is fixed for its life, so nothing invalidates a fetch in flight", () => {
-    assert.ok(!stripComments(source).includes("function clearProviderState"),
+    assert.ok(!stripComments(daemonSource).includes("function clearProviderState"),
         "a fetch channel is per provider now, so there is no selected-provider state to clear — " +
         "keeping the path would leave a way to invalidate a channel that cannot go stale");
     assert.ok(!/\breset\s*\(\s*\)/.test(stripComments(channel)),
         "and no channel reset, which existed only to abandon a fetch for a provider nobody wanted " +
         "any more — the case a per-provider channel does not have");
-    assert.equal((stripComments(source).match(/want:\s*modelData/g) || []).length, 1,
+    assert.equal((stripComments(daemonSource).match(/want:\s*modelData/g) || []).length, 1,
         "each channel takes its provider from the catalog once, at construction");
-    assert.ok(!/want\s*=/.test(stripComments(source)),
+    assert.ok(!/want\s*=/.test(stripComments(daemonSource)),
         "and nothing reassigns it afterwards: a payload can only ever be filed under the identity " +
         "the channel that asked for it was built with");
 });

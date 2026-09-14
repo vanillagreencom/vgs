@@ -6,7 +6,10 @@
     "license": "MIT",
     "author": "VanillaGreen",
     "icon": "payments",
-    "component": "./MercuryWidget.qml",
+    "components": {
+        "widget": "./MercuryWidget.qml",
+        "daemon": "./MercuryDaemon.qml"
+    },
     "settings": "./MercurySettings.qml",
     "requires_shell": ">=0.1.0",
     "permissions": [
