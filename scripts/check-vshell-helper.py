@@ -9470,7 +9470,6 @@ def test_declared_ui_roles_move_with_a_restyle_and_survive_a_save():
                                              DECLARED_UI_ROLES_TOML)
             (package / "apps").mkdir(exist_ok=True)
             (package / "apps" / "claude-light.json").write_text(json.dumps({"overrides": {}}) + "\n")
-            files = helper.compose_theme_files("digestroles")
             meta = json.loads((package / "theme.json").read_text())
             meta["curatedPalette"] = helper.palette_digest(helper.package_palette(
                 helper.package_colors_map("digestroles"), meta,
