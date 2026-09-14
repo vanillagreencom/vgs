@@ -218,21 +218,10 @@ def reclaimable(entry: Path, wanted: set[str]) -> bool:
     return pid is not None and not owner_running(pid)
 
 
-def prune_orphans(paths: List[Path], wanted: Optional[set[str]] = None) -> int:
-    """Drop cache entries no live wallpaper claims, building nothing. `paths`
-    must be the COMPLETE set, exactly as for build_all's prune — run over one
-    theme it would delete every other theme's thumbnails.
-
-    `wanted` is the keys those paths resolved to, for a caller that has just
-    derived them. A key mixes the source's size and mtime, so a source rewritten
-    between that caller's read and this one resolves to a different key here and
-    the entry it just built reads as an orphan and is deleted.
-    """
-    if wanted is None:
-        wanted = set()
-        for src in paths:
-            with contextlib.suppress(OSError):
-                wanted.add(thumb_name(src))
+def _prune_to(wanted: set[str]) -> int:
+    """Delete every reclaimable cache entry outside `wanted`, building nothing.
+    `wanted` must be the keys of the COMPLETE wallpaper set: given one theme's
+    keys it deletes every other theme's thumbnails."""
     pruned = 0
     with contextlib.suppress(OSError):
         for entry in thumb_dir().iterdir():
@@ -241,6 +230,19 @@ def prune_orphans(paths: List[Path], wanted: Optional[set[str]] = None) -> int:
                     entry.unlink()
                     pruned += 1
     return pruned
+
+
+def prune_orphans(paths: List[Path]) -> int:
+    """Drop cache entries no live wallpaper claims, for a caller that holds the
+    complete wallpaper set and no keys. A caller that has just derived the keys
+    passes them to `_prune_to` instead: a key mixes the source's size and mtime,
+    so deriving them twice lets a source rewritten in between resolve to a
+    different key here, and the entry the caller just built reads as an orphan."""
+    wanted: set[str] = set()
+    for src in paths:
+        with contextlib.suppress(OSError):
+            wanted.add(thumb_name(src))
+    return _prune_to(wanted)
 
 
 def build_all(paths: List[Path], prune: bool = False) -> Dict[str, Any]:
@@ -269,6 +271,6 @@ def build_all(paths: List[Path], prune: bool = False) -> Dict[str, Any]:
         else:
             built += 1
     if prune:
-        pruned = prune_orphans(paths, wanted)
+        pruned = _prune_to(wanted)
     return {"built": built, "reused": reused, "failed": failed,
             "pruned": pruned, "dir": str(thumb_dir())}

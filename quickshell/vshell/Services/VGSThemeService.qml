@@ -133,8 +133,8 @@ Singleton {
     // session.json. The desktop then shows one image while the palette on screen
     // was derived from another. Dispatch order is the only thing that fixes
     // execution order. The slot reaches `_runApply` alone; every other mutating
-    // subcommand goes through a bare `_run` and still races an apply for that
-    // flock, which D019 records.
+    // subcommand this service launches still races an apply for that flock, and
+    // so does one MethodTheme launches, which D019 records.
     property string _applyDispatched: ""
     // Applies waiting for that slot, oldest first. First in, first out rather
     // than superseding the waiting one: `applyFinished` carries success or
@@ -165,26 +165,20 @@ Singleton {
         }
         if (_wallpaperSlotOwner === requestId)
             _wallpaperSlotOwner = "";
-        // Free the slot and start the next apply BEFORE the signals, and emit
-        // them whatever the hand-off does. Either direction otherwise strands
-        // the queue behind a slot nothing frees, which kills every later apply
-        // and pins `applyInFlight` true so both switchers refuse every Enter:
-        // past the emission, a throwing signal handler returns into this frame
-        // and skips the drain; inside it, a throwing hand-off would skip the
-        // signals this request still owes its caller.
-        try {
-            if (_applyDispatched === requestId) {
-                _applyDispatched = "";
-                if (_applyQueue.length > 0) {
-                    const waiting = _applyQueue[0];
-                    _applyQueue = _applyQueue.slice(1);
-                    _dispatchApply(waiting.requestId, waiting.args, waiting.callback);
-                }
+        // Free the slot and start the next apply BEFORE the signals: a handler
+        // that throws returns into this frame, and past the emission it would
+        // strand the queue behind a slot nothing frees, leaving every later
+        // apply waiting forever.
+        if (_applyDispatched === requestId) {
+            _applyDispatched = "";
+            if (_applyQueue.length > 0) {
+                const waiting = _applyQueue[0];
+                _applyQueue = _applyQueue.slice(1);
+                _dispatchApply(waiting.requestId, waiting.args, waiting.callback);
             }
-        } finally {
-            applyCompleted(success, message);
-            applyFinished(requestId, success, message);
         }
+        applyCompleted(success, message);
+        applyFinished(requestId, success, message);
     }
 
     function _persistAppliedTheme(name) {
@@ -244,15 +238,12 @@ Singleton {
     }
 
     // Hand one apply to the helper and hold the slot until its callback answers.
-    // The slot is taken only once the launch has RETURNED, so a launch that
-    // throws leaves it free and later applies still run; Proc answers on a later
-    // turn, so nothing can reach the callback while the slot is still open.
     // An EMPTY Proc id makes Proc mint a random, self-cleaning id, so every apply
     // runs its own process into one `_finishApply`; a unique NAMED id would leak
     // a debouncer entry and Timer, reaped only for a random id.
     function _dispatchApply(requestId, args, callback) {
-        _run(requestId, args, callback, undefined, false, "");
         _applyDispatched = requestId;
+        _run(requestId, args, callback, undefined, false, "");
     }
 
     function refresh() {

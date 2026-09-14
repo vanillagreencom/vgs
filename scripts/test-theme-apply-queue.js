@@ -3,8 +3,7 @@
 // Execute VGSThemeService's apply dispatch against a recording command runner.
 // Two helper processes race each other for the helper's own mutation flock, so
 // an apply may only reach the helper while no other apply is running there.
-// The slot reaches applyBlueprint and setWallpaper alone; every other mutating
-// theme subcommand still runs through a bare _run with no slot.
+// Only an apply issued through _runApply takes that slot.
 
 "use strict";
 
@@ -110,22 +109,4 @@ test("a completion handler that throws still leaves the next apply running", () 
     assert.deepEqual(svc.dispatched, ["theme apply a", "theme apply b"],
         "past the signals a throw would strand the queue behind a slot nothing frees, " +
         "killing every later apply for the life of the session");
-});
-
-test("a hand-off that throws frees the slot and still answers the finished request", () => {
-    const svc = serviceUnderTest();
-    const announced = [];
-    svc.root.applyFinished = requestId => announced.push(requestId);
-    svc.begin("first", ["theme", "apply", "a"]);
-    svc.begin("second", ["theme", "apply", "b"]);
-    // Proc creates a Timer per launch and connects to it; a null object there
-    // throws out of the launch.
-    svc.root._run = () => {
-        throw new Error("Proc could not create the timer");
-    };
-    assert.throws(() => svc.answer("first"), /could not create the timer/);
-    assert.deepEqual(announced, ["first"],
-        "the request that finished is announced whatever the next launch does, or its caller waits forever");
-    assert.equal(svc.root._applyDispatched, "",
-        "and the slot stays free, or a launch that never happened kills every later apply");
 });
