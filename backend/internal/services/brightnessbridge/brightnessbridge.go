@@ -30,7 +30,6 @@ const (
 )
 
 type Manager struct {
-	srv       *server.Server
 	helper    string
 	timeout   time.Duration
 	waitDelay time.Duration
@@ -57,7 +56,7 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	m := &Manager{srv: srv, helper: helper, timeout: timeout, waitDelay: waitDelay, log: log}
+	m := &Manager{helper: helper, timeout: timeout, waitDelay: waitDelay, log: log}
 	m.state = refresh.NewService(srv, log, "brightness", refreshSettle, m.sweep)
 	srv.Register("brightness", "brightness.getState", m.handleGetState)
 	srv.Register("brightness", "brightness.rescan", m.handleGetState)

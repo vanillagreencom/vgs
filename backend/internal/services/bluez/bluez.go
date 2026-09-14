@@ -124,15 +124,26 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 		return nil, fmt.Errorf("connect system bus: %w", err)
 	}
 	m := newManager(srv, conn, log, nil)
+	// newManager starts the refresh goroutine, so every path that gives up on
+	// this Manager has to release it as well as the bus. Releasing here rather
+	// than at each return means a later early return cannot leak either: on a
+	// machine with no adapter the goroutine would otherwise stay parked for the
+	// life of the daemon.
+	registered := false
+	defer func() {
+		if !registered {
+			m.state.Close()
+			conn.Close()
+		}
+	}()
+
 	adapter, err := m.findAdapter()
 	if err != nil {
-		conn.Close()
 		return nil, err
 	}
 	m.adapterPath = adapter
 	m.agent = &agent{manager: m}
 	if err := m.registerAgent(); err != nil {
-		conn.Close()
 		return nil, err
 	}
 	if err := m.watchSignals(); err != nil {
@@ -159,6 +170,7 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	srv.CoalesceBroadcasts("bluetooth")
 	srv.RegisterSnapshot("bluetooth", m.state.Cached)
 	srv.RegisterSnapshotRefresh("bluetooth", m.state.Kick)
+	registered = true
 	return m, nil
 }
 

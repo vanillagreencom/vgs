@@ -365,6 +365,38 @@ func TestResubscribeKicksRefreshForAlreadyCoveredServices(t *testing.T) {
 	awaitKick(t, kicks, "a repeat subscribe covering the same service")
 }
 
+// A warm service the subscription did not change needs no query. Every popout
+// open and close re-sends the whole set, and re-running those queries is the
+// cost this contract exists to remove.
+func TestResubscribeDoesNotRequeryAWarmService(t *testing.T) {
+	srv, dial := startTestServer(t)
+	kicks := make(chan struct{}, 8)
+	srv.RegisterSnapshot("network", func() any { return "warm" })
+	srv.RegisterSnapshotRefresh("network", func() { kicks <- struct{}{} })
+
+	tc := dial(t)
+	tc.send(t, "subscribe", map[string]any{"services": []string{"network"}})
+	if got := tc.eventFor(t, "network"); got != "warm" {
+		t.Fatalf("first subscribe data = %v", got)
+	}
+	awaitKick(t, kicks, "the first subscribe")
+
+	tc.send(t, "subscribe", map[string]any{"services": []string{"network"}})
+	_ = tc.read(t) // server frame
+	// A later broadcast proves the second subscribe was fully handled, so an
+	// absent kick is a decision rather than a race with one still to come.
+	awaitSubscriber(t, srv)
+	srv.Broadcast("network", "later")
+	if got := tc.eventFor(t, "network"); got != "later" {
+		t.Fatalf("next frame = %v, want the broadcast", got)
+	}
+	select {
+	case <-kicks:
+		t.Fatal("a repeat subscribe re-ran the query for a service it already held warm")
+	default:
+	}
+}
+
 func awaitKick(t *testing.T, kicks <-chan struct{}, what string) {
 	t.Helper()
 	select {
@@ -536,6 +568,53 @@ func TestKeepLatestSupersedesWaitingCallForTheSameKey(t *testing.T) {
 		if p.Percent == 50 {
 			t.Fatalf("the superseded value still reached the device: %v", applied())
 		}
+	}
+}
+
+// WholeStateKey is the key both shipped whole-state setters use. An empty
+// return means never coalesce, which would drop them back to a 64-deep FIFO and
+// replay every value a temperature drag passed through.
+func TestWholeStateKeyIsOneNonEmptyKeyForEveryCall(t *testing.T) {
+	first := WholeStateKey(json.RawMessage(`{"low":3000,"high":6500}`))
+	second := WholeStateKey(json.RawMessage(`{"low":4500,"high":6500}`))
+	if first == "" {
+		t.Fatal("WholeStateKey returned the empty key, which never coalesces")
+	}
+	if first != second {
+		t.Fatalf("WholeStateKey gave %q and %q for two calls, want one shared key", first, second)
+	}
+}
+
+// The shipped key, end to end: a whole-state setter supersedes its waiting call
+// whatever params the two carry.
+func TestWholeStateSetterSupersedesWhateverTheParams(t *testing.T) {
+	srv, dial := startTestServer(t)
+	release := make(chan struct{})
+	entered := make(chan struct{}, 4)
+	srv.RegisterLatest("gamma", "wayland.gamma.setTemperature", func(params json.RawMessage) (any, error) {
+		entered <- struct{}{}
+		<-release
+		return string(params), nil
+	}, WholeStateKey)
+	t.Cleanup(func() { close(release) })
+
+	tc := dial(t)
+	tc.sendID(t, "1", "wayland.gamma.setTemperature", map[string]any{"low": 3000, "high": 6500})
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the handler never started")
+	}
+	tc.sendID(t, "2", "wayland.gamma.setTemperature", map[string]any{"low": 4000, "high": 6500})
+	tc.sendID(t, "3", "wayland.gamma.setTemperature", map[string]any{"low": 5000, "high": 6500})
+
+	superseded := tc.read(t)
+	if string(superseded.ID) != "2" {
+		t.Fatalf("superseded reply id = %s, want the replaced call 2; differing params must still share one key", superseded.ID)
+	}
+	result, ok := superseded.Result.(map[string]any)
+	if !ok || result["superseded"] != true {
+		t.Fatalf("replaced call result = %v, want a success marked superseded", superseded.Result)
 	}
 }
 

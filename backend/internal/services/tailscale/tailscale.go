@@ -147,7 +147,9 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	srv.Register("tailscale", "tailscale.setExitNode", m.handleSetExitNode)
 	srv.Register("tailscale", "tailscale.setAllowLanAccess", m.handleSetAllowLANAccess)
 	srv.Register("tailscale", "tailscale.setAcceptRoutes", m.handleSetAcceptRoutes)
-	srv.CoalesceBroadcasts("tailscale")
+	// Not declared to CoalesceBroadcasts: handleConnect broadcasts an auth
+	// frame whose AuthURL no status frame carries, so a status frame replacing
+	// an unread auth frame drops the login link for every other subscriber.
 	srv.RegisterSnapshot("tailscale", m.state.Cached)
 	// pulse coalesces the read onto the watcher's own timer goroutine and
 	// broadcasts the result.

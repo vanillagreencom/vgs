@@ -154,6 +154,10 @@ func (s *Server) registerLocked(capability, method string, h HandlerFunc) *metho
 // event outright, with nothing to report it. A state carrying an edge the shell
 // acts on, such as a lock or a suspend flag, is not whole state either: the
 // edge is gone once a later frame overwrites it.
+//
+// The declared set has an owner: backend/internal/services/coalescing_test.go
+// carries one row per declared service, so a new declaration is a deliberate
+// edit there as well as here.
 func (s *Server) CoalesceBroadcasts(service string) {
 	if service == "" {
 		return
@@ -461,17 +465,27 @@ func (s *Server) handleSubscribe(c *conn, req *protocol.Request) {
 
 	c.send(protocol.Response{Result: protocol.Event{Service: "server", Data: s.info()}})
 	for service, cov := range services {
-		if !cov.snapshot || cov.source.read == nil {
+		// One read per service per subscribe: the value decides both whether a
+		// snapshot goes out and whether the service still needs a query.
+		var state any
+		if cov.source.read != nil {
+			state = cov.source.read()
+		}
+		if cov.snapshot && state != nil {
+			c.sendEvent(service, state, cov.coalesce)
+		}
+		if cov.source.refresh == nil {
 			continue
 		}
-		if data := cov.source.read(); data != nil {
-			c.sendEvent(service, data, cov.coalesce)
+		// A service the subscription already covered with state in hand needs
+		// no query: every popout open re-sends the whole set, and re-running
+		// those queries is the cost this contract exists to remove. A service
+		// with nothing recorded is retried on every subscribe until one
+		// succeeds.
+		if !cov.snapshot && state != nil {
+			continue
 		}
-	}
-	for _, cov := range services {
-		if cov.source.refresh != nil {
-			cov.source.refresh()
-		}
+		cov.source.refresh()
 	}
 }
 
