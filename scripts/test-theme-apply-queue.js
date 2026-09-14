@@ -60,7 +60,7 @@ function serviceUnderTest(onCompleted) {
         },
         // Book a request as applyBlueprint and setWallpaper do, then hand it to
         // the slot with a callback that finishes it on exit.
-        begin(requestId, args, success = true) {
+        begin(requestId, args) {
             root._applyInFlight[requestId] = true;
             root._runApply(requestId, args, (output, exitCode) =>
                 root._finishApply(requestId, exitCode === 0, exitCode === 0 ? "done" : "helper refused"));
