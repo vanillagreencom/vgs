@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 // supervisionLimits bound backend restarts. Restarts back off from
@@ -154,6 +156,14 @@ func supervise(command func() *exec.Cmd, ln *net.UnixListener, limits supervisio
 // deadline, waits for it, and clears the deadline, so the next backend is the
 // only acceptor once it starts.
 func refuseConnections(ln *net.UnixListener, log *slog.Logger) func() {
+	// Each backend start hands the listener to the child, and os/exec puts the
+	// shared file description into blocking mode to do so. A backend that exits
+	// before reopening the listener leaves it blocking, and a blocking Accept
+	// ignores the deadline that ends this loop, so restore non-blocking mode first.
+	if err := setNonblock(ln); err != nil {
+		log.Warn("cannot close connections during the cool-down; clients may queue until the backend restarts", "err", err)
+		return func() {}
+	}
 	var ending atomic.Bool
 	done := make(chan struct{})
 	go func() {
@@ -175,6 +185,18 @@ func refuseConnections(ln *net.UnixListener, log *slog.Logger) func() {
 		<-done
 		_ = ln.SetDeadline(time.Time{})
 	}
+}
+
+func setNonblock(ln *net.UnixListener) error {
+	raw, err := ln.SyscallConn()
+	if err != nil {
+		return err
+	}
+	var setErr error
+	if err := raw.Control(func(fd uintptr) { setErr = unix.SetNonblock(int(fd), true) }); err != nil {
+		return err
+	}
+	return setErr
 }
 
 // awaitBackend waits for the started backend to exit, or ends it when stop

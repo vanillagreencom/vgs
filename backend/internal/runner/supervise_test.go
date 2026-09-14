@@ -138,9 +138,12 @@ type supervisorRun struct {
 	restart chan<- os.Signal
 	ln      *net.UnixListener
 	logs    *syncBuffer
+	// stop closes the stop channel once and reports whether supervise returned
+	// within supervisorBound.
+	stop func() bool
 }
 
-func runSupervisor(t *testing.T, command func() *exec.Cmd, limits supervisionLimits) supervisorRun {
+func newListener(t *testing.T) *net.UnixListener {
 	t.Helper()
 	// A short directory keeps the socket path inside the Unix address limit.
 	dir, err := os.MkdirTemp("", "vgs")
@@ -153,7 +156,16 @@ func runSupervisor(t *testing.T, command func() *exec.Cmd, limits supervisionLim
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { ln.Close() })
+	return ln
+}
 
+func runSupervisor(t *testing.T, command func() *exec.Cmd, limits supervisionLimits) supervisorRun {
+	t.Helper()
+	return runSupervisorOn(t, newListener(t), command, limits)
+}
+
+func runSupervisorOn(t *testing.T, ln *net.UnixListener, command func() *exec.Cmd, limits supervisionLimits) supervisorRun {
+	t.Helper()
 	stop := make(chan struct{})
 	restart := make(chan os.Signal, 1)
 	done := make(chan struct{})
@@ -162,15 +174,25 @@ func runSupervisor(t *testing.T, command func() *exec.Cmd, limits supervisionLim
 		supervise(command, ln, limits, stop, restart, slog.New(slog.NewTextHandler(logs, nil)))
 		close(done)
 	}()
+	var once sync.Once
+	returned := false
+	stopRun := func() bool {
+		once.Do(func() {
+			close(stop)
+			select {
+			case <-done:
+				returned = true
+			case <-time.After(supervisorBound):
+			}
+		})
+		return returned
+	}
 	t.Cleanup(func() {
-		close(stop)
-		select {
-		case <-done:
-		case <-time.After(supervisorBound):
+		if !stopRun() {
 			t.Error("supervisor did not return after stop")
 		}
 	})
-	return supervisorRun{restart: restart, ln: ln, logs: logs}
+	return supervisorRun{restart: restart, ln: ln, logs: logs, stop: stopRun}
 }
 
 // TestSupervisorCoolDownDoublesAndStartsAgain checks that a crash loop holds
@@ -270,5 +292,36 @@ func TestSupervisorClosesConnectionsDuringACoolDown(t *testing.T) {
 	if queued, err := run.ln.Accept(); err == nil {
 		queued.Close()
 		t.Fatal("the next backend could accept a connection made during the cool-down")
+	}
+}
+
+// TestSupervisorCoolDownEndsWithABlockingListener hands the listener to every
+// backend the way the runner does. Handing it over leaves the listener in
+// blocking mode when a backend exits without reopening it, and a restart and a
+// stop during the cool-down must still return.
+func TestSupervisorCoolDownEndsWithABlockingListener(t *testing.T) {
+	limits := testLimits()
+	limits.cooldownInitial = time.Hour
+	ln := newListener(t)
+	lnFile, err := ln.File()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { lnFile.Close() })
+	starts := newStartLog(t)
+	backend := starts.command("exit 1")
+	run := runSupervisorOn(t, ln, func() *exec.Cmd {
+		cmd := backend()
+		cmd.ExtraFiles = []*os.File{lnFile}
+		return cmd
+	}, limits)
+	run.logs.await(t, tripMessage, 1)
+
+	run.restart <- os.Interrupt
+	starts.await(t, limits.breakerLimit+1)
+	run.logs.await(t, tripMessage, 2)
+
+	if !run.stop() {
+		t.Fatal("supervisor did not return after stop during a cool-down")
 	}
 }

@@ -165,6 +165,10 @@ func (m *Manager) handleTrigger(params json.RawMessage) (any, error) {
 	return map[string]any{"success": true, "message": "wallpaper schedule reset"}, nil
 }
 
+// noScheduleWait is how long the scheduler waits with nothing scheduled, and
+// after a tick that panicked.
+const noScheduleWait = 24 * time.Hour
+
 func (m *Manager) schedulerLoop() {
 	defer m.wg.Done()
 
@@ -174,90 +178,8 @@ func (m *Manager) schedulerLoop() {
 	var timer *time.Timer
 
 	for {
-		wait := 24 * time.Hour
-		recovery.Run(m.log, "wallpaper.tick", func() {
-			now := time.Now()
-			config := m.getConfig()
-			active := activeSchedules(config)
-
-			for key := range schedules {
-				if _, ok := active[key]; !ok {
-					delete(schedules, key)
-				}
-			}
-
-			firesDirty := false
-			for key, cfg := range active {
-				s, ok := schedules[key]
-				switch {
-				case !ok:
-					s = &activeSchedule{cfg: cfg, nextFire: computeNext(now, cfg)}
-					schedules[key] = s
-					if cfg.Mode == "time" {
-						last := m.lastFires[key]
-						prev, valid := prevDailyTime(now, cfg.Time)
-						switch {
-						case last.IsZero():
-							m.lastFires[key] = now
-							firesDirty = true
-						case valid && last.Before(prev):
-							s.nextFire = now.Add(catchUpDelay)
-						}
-					}
-				case s.cfg != cfg || resets[key]:
-					s.cfg = cfg
-					s.nextFire = computeNext(now, cfg)
-				}
-				delete(resets, key)
-			}
-			// Resets aimed at schedules that are not active are meaningless; if
-			// they lingered they would spuriously reschedule the target the
-			// moment it is re-enabled.
-			clear(resets)
-
-			var dueKeys []string
-			for key, s := range schedules {
-				if !s.nextFire.After(now) {
-					dueKeys = append(dueKeys, key)
-					s.nextFire = computeNext(now, s.cfg)
-					if s.cfg.Mode == "time" {
-						m.lastFires[key] = now
-						firesDirty = true
-					}
-				}
-			}
-
-			if firesDirty {
-				// Keep disabled schedules for configured monitors so daily rotation can catch
-				// up when re-enabled. Remove only monitors absent from configuration.
-				known := map[string]bool{"": true}
-				for name := range config.Monitors {
-					known[name] = true
-				}
-				for key := range m.lastFires {
-					if !known[key] {
-						delete(m.lastFires, key)
-					}
-				}
-				m.saveLastFires()
-			}
-
-			next, hasNext := soonest(schedules)
-			if len(dueKeys) == 0 {
-				m.setState(config, next, seq, "")
-			}
-			for _, key := range dueKeys {
-				seq++
-				m.setState(config, next, seq, key)
-			}
-
-			if hasNext {
-				wait = time.Until(next)
-				if wait < time.Second {
-					wait = time.Second
-				}
-			}
-		})
+		wait := noScheduleWait
+		recovery.Run(m.log, "wallpaper.tick", func() { wait = m.tick(schedules, resets, &seq) })
 		if timer != nil {
 			timer.Stop()
 		}
@@ -275,6 +197,90 @@ func (m *Manager) schedulerLoop() {
 		case <-timer.C:
 		}
 	}
+}
+
+// tick reconciles schedules with the saved config, rotates every target that
+// is due, and returns how long the scheduler waits before the next tick.
+func (m *Manager) tick(schedules map[string]*activeSchedule, resets map[string]bool, seq *uint64) time.Duration {
+	now := time.Now()
+	config := m.getConfig()
+	active := activeSchedules(config)
+
+	for key := range schedules {
+		if _, ok := active[key]; !ok {
+			delete(schedules, key)
+		}
+	}
+
+	firesDirty := false
+	for key, cfg := range active {
+		s, ok := schedules[key]
+		switch {
+		case !ok:
+			s = &activeSchedule{cfg: cfg, nextFire: computeNext(now, cfg)}
+			schedules[key] = s
+			if cfg.Mode == "time" {
+				last := m.lastFires[key]
+				prev, valid := prevDailyTime(now, cfg.Time)
+				switch {
+				case last.IsZero():
+					m.lastFires[key] = now
+					firesDirty = true
+				case valid && last.Before(prev):
+					s.nextFire = now.Add(catchUpDelay)
+				}
+			}
+		case s.cfg != cfg || resets[key]:
+			s.cfg = cfg
+			s.nextFire = computeNext(now, cfg)
+		}
+		delete(resets, key)
+	}
+	// Resets aimed at schedules that are not active are meaningless; if
+	// they lingered they would spuriously reschedule the target the
+	// moment it is re-enabled.
+	clear(resets)
+
+	var dueKeys []string
+	for key, s := range schedules {
+		if !s.nextFire.After(now) {
+			dueKeys = append(dueKeys, key)
+			s.nextFire = computeNext(now, s.cfg)
+			if s.cfg.Mode == "time" {
+				m.lastFires[key] = now
+				firesDirty = true
+			}
+		}
+	}
+
+	if firesDirty {
+		// Keep disabled schedules for configured monitors so daily rotation can catch
+		// up when re-enabled. Remove only monitors absent from configuration.
+		known := map[string]bool{"": true}
+		for name := range config.Monitors {
+			known[name] = true
+		}
+		for key := range m.lastFires {
+			if !known[key] {
+				delete(m.lastFires, key)
+			}
+		}
+		m.saveLastFires()
+	}
+
+	next, hasNext := soonest(schedules)
+	if len(dueKeys) == 0 {
+		m.setState(config, next, *seq, "")
+	}
+	for _, key := range dueKeys {
+		*seq++
+		m.setState(config, next, *seq, key)
+	}
+
+	if !hasNext {
+		return noScheduleWait
+	}
+	return max(time.Until(next), time.Second)
 }
 
 func (m *Manager) setState(config Config, next time.Time, seq uint64, target string) {
