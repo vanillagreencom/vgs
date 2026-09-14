@@ -487,8 +487,8 @@ Singleton {
     // Keep this region free of root., Theme., I18n. and Qt. references: scripts/test-switcher-source.js extracts and executes it.
 
     // Whether an All-view entry already belongs to the applied theme: it is one of that theme's own, or the
-    // theme's set holds a file of its name. wallpaper-add renames a copy whose name the set already holds, so
-    // such a copy stays unmarked, while an unrelated file of the same name is marked.
+    // theme's set holds a file of its name. Membership is by file name, so a folder image stays marked while the
+    // set holds any file of that name, and a copy wallpaper-add renamed is marked as the theme's own entry.
     function inThemeSet(entry, themeName, themeEntries) {
         if (!entry || !themeName)
             return false;
