@@ -4336,7 +4336,8 @@ def test_theme_catalog_offers_a_builtin_theme_with_no_imagery():
             assert_equal((dest / "colors.toml").read_bytes(), overlay,
                          "a download leaves an existing overlay colors.toml untouched")
             assert_equal((_user_files(dest), helper.catalog_marker("demo")["files"]),
-                         ([helper.CATALOG_MARKER, "backgrounds/1-demo.jpg", "colors.toml"], ["backgrounds/1-demo.jpg"]),
+                         ([helper.CATALOG_MARKER, "backgrounds/1-demo.jpg", "colors.toml"],
+                          {"backgrounds/1-demo.jpg": hashlib.sha256(wallpaper).hexdigest()}),
                          "a download adds its wallpapers and its marker, and records only the wallpapers")
             (dest / "colors.toml").unlink()
 
@@ -4365,7 +4366,7 @@ def test_theme_catalog_offers_a_builtin_theme_with_no_imagery():
             helper.catalog_download_theme(newer, base_urls, allow_local, force=True)
             assert_equal(((dest / "backgrounds" / "1-demo.jpg").read_bytes(), helper.catalog_marker("demo")["files"],
                           _catalog_entry("demo")["imageryUpdateAvailable"]),
-                         (b"newer\n", ["backgrounds/1-demo.jpg"], False),
+                         (b"newer\n", {"backgrounds/1-demo.jpg": hashlib.sha256(b"newer\n").hexdigest()}, False),
                          "a forced download replaces the wallpapers an earlier download placed")
             _write_catalog(builtin, archives, "demo", blob)
             helper.catalog_download_theme(entry, base_urls, allow_local, force=True)
@@ -4447,6 +4448,7 @@ def test_theme_catalog_offers_a_builtin_theme_with_no_imagery():
                                  ("apps/btop.theme", 'theme[main_bg]="#303030"\n')):
                 (dest / rel).parent.mkdir(parents=True, exist_ok=True)
                 (dest / rel).write_text(content)
+            # The released helper wrote that record as a list, with no digests.
             whole = sorted(["theme.json", "colors.toml", "apps/btop.theme", "backgrounds/1-demo.jpg"])
             marker_path.write_text(json.dumps(helper.catalog_marker_payload(
                 "demo", dest, entry["assets"], whole, 1, "v0.5.0"), indent=2) + "\n")
@@ -4468,7 +4470,7 @@ def test_theme_catalog_offers_a_builtin_theme_with_no_imagery():
             forced = helper.catalog_download_theme(entry, base_urls, allow_local, force=True)
             assert_equal((forced["status"], (dest / "backgrounds" / "1-demo.jpg").read_bytes(),
                           helper.catalog_marker("demo")["files"]),
-                         ("installed", b"the user's own image\n", []),
+                         ("installed", b"the user's own image\n", {}),
                          "a download never replaces a file it did not place, nor records it")
 
             # A package carrying its own wallpapers, the default theme's, stays refused.
@@ -4479,6 +4481,127 @@ def test_theme_catalog_offers_a_builtin_theme_with_no_imagery():
             assert_equal((bundled["status"], bundled["reason"]),
                          ("skipped", "already installed as a built-in theme"),
                          "a built-in theme that carries its own wallpapers stays refused")
+        finally:
+            helper.builtin_themes_dir = original_builtin
+            os.environ.pop("VGS_THEME_CATALOG_BASE_URL", None)
+
+    with_temp_home(scenario)
+
+
+def test_theme_catalog_update_keeps_the_users_wallpapers():
+    """`theme catalog update` replaces only the wallpapers a download placed and the user left alone.
+
+    One update from r1 to r2 reaches every case; each row names one wallpaper
+    and the bytes and marker record the update must leave for it.
+    """
+    first = {"backgrounds/1-demo.jpg": b"r1 one\n", "backgrounds/2-demo.jpg": b"r1 two\n",
+             "backgrounds/3-demo.jpg": b"r1 three\n", "backgrounds/4-demo.jpg": b"r1 four\n",
+             "backgrounds/5-demo.jpg": b"r1 five\n"}
+    second = {"backgrounds/1-demo.jpg": b"r2 one\n", "backgrounds/2-demo.jpg": b"r2 two\n",
+              "backgrounds/3-demo.jpg": b"r2 three\n", "backgrounds/6-demo.jpg": b"r2 six\n",
+              "backgrounds/7-demo.jpg": b"r2 seven\n"}
+
+    def scenario(tmp: Path):
+        builtin = tmp / "builtin"
+        (builtin / "demo").mkdir(parents=True)
+        (builtin / "demo" / "theme.json").write_text('{"name":"demo","mode":"dark","source":"curated"}\n')
+        (builtin / "demo" / "colors.toml").write_text('background = "#101010"\nforeground = "#eeeeee"\n')
+        archives = tmp / "releases"
+        _write_catalog(builtin, archives, "demo", _theme_archive(first))
+
+        original_builtin = helper.builtin_themes_dir
+        helper.builtin_themes_dir = lambda: builtin
+        os.environ["VGS_THEME_CATALOG_BASE_URL"] = "file://" + str(archives)
+        try:
+            catalog = helper.load_theme_catalog()
+            base_urls, allow_local = helper.theme_catalog_base_urls(catalog)
+            helper.catalog_download_theme(helper.catalog_theme_entry(catalog, "demo"), base_urls, allow_local)
+            dest = helper.user_themes_dir() / "demo"
+            wallpapers = dest / "backgrounds"
+            (wallpapers / "2-demo.jpg").write_bytes(b"user two\n")
+            (wallpapers / "5-demo.jpg").write_bytes(b"user five\n")
+            added = tmp / "6-demo.jpg"
+            added.write_bytes(b"user six\n")
+            with contextlib.redirect_stdout(io.StringIO()):
+                assert_equal((helper.cmd_theme(["wallpaper-add", str(added), "--theme", "demo"]),
+                              helper.cmd_theme(["wallpaper-remove", "3-demo.jpg", "--theme", "demo"])),
+                             (0, 0), "wallpaper-add and wallpaper-remove exit status")
+
+            _write_catalog(builtin, archives, "demo", _theme_archive(second), release="themes-v2", rev=2)
+            entry = helper.catalog_theme_entry(helper.load_theme_catalog(), "demo")
+            marker_path = dest / helper.CATALOG_MARKER
+            downloaded = json.loads(marker_path.read_text())
+            before = {rel: (dest / rel).read_bytes() for rel in _user_files(dest)}
+
+            # A package copied here from elsewhere carries a marker naming another directory.
+            marker_path.write_text(json.dumps({**downloaded, "path": str(tmp / "elsewhere" / "demo")}))
+            try:
+                helper.catalog_update_theme(entry, base_urls, allow_local)
+                raise AssertionError("an update must refuse a fork")
+            except ValueError:
+                pass
+            assert_equal((helper.catalog_updates(), _catalog_entry("demo")["imageryUpdateAvailable"]), ([], False),
+                         "a fork reports no update")
+
+            # A marker the released helper wrote records its wallpapers as a list.
+            marker_path.write_text(json.dumps({**downloaded, "files": sorted(downloaded["files"])}))
+            listed = helper.catalog_updates()
+            try:
+                helper.catalog_update_theme(entry, base_urls, allow_local)
+                raise AssertionError("an update must refuse a marker with no digests")
+            except ValueError:
+                pass
+            assert_equal(([item["digests"] for item in listed],
+                          {rel: (dest / rel).read_bytes() for rel in _user_files(dest) if rel != helper.CATALOG_MARKER}),
+                         ([False], {rel: blob for rel, blob in before.items() if rel != helper.CATALOG_MARKER}),
+                         "a list-shaped marker still lists its update and the update refuses it, touching no file")
+
+            marker_path.write_text(json.dumps(downloaded))
+
+            def catalog_command(*argv: str) -> tuple:
+                buffer = io.StringIO()
+                with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(io.StringIO()):
+                    status = helper.cmd_theme(["catalog", *argv])
+                return status, json.loads(buffer.getvalue()) if "--json" in argv else None
+
+            listed_status, listed = catalog_command("updates", "--json")
+            assert_equal((listed_status, [(item["name"], item["installedRev"], item["latestRev"], item["digests"])
+                                          for item in listed["themes"]]),
+                         (0, [("demo", 1, 2, True)]), "an owned download with digests lists its update")
+            assert_equal(catalog_command("update")[0], 2, "an update with no names and no --all is a usage error")
+            status, updated = catalog_command("update", "--all", "--json")
+            assert_equal((status, updated["success"], updated["updated"]), (0, True, ["demo"]),
+                         "update --all updates the pending download")
+            result = updated["results"][0]
+            for label, name, content in (
+                ("a pristine wallpaper is replaced", "1-demo.jpg", b"r2 one\n"),
+                ("a wallpaper the user edited is kept", "2-demo.jpg", b"user two\n"),
+                ("a wallpaper removed through wallpaper-remove stays removed", "3-demo.jpg", None),
+                ("a pristine wallpaper the new archive drops is removed", "4-demo.jpg", None),
+                ("an edited wallpaper the new archive drops is kept", "5-demo.jpg", b"user five\n"),
+                ("a wallpaper added through wallpaper-add is never touched", "6-demo.jpg", b"user six\n"),
+                ("a wallpaper new in the archive is added", "7-demo.jpg", b"r2 seven\n"),
+            ):
+                path = wallpapers / name
+                assert_equal(path.read_bytes() if path.exists() else None, content, label)
+            digest = lambda blob: hashlib.sha256(blob).hexdigest()
+            assert_equal(helper.catalog_marker("demo")["files"], {
+                "backgrounds/1-demo.jpg": digest(second["backgrounds/1-demo.jpg"]),
+                "backgrounds/2-demo.jpg": digest(first["backgrounds/2-demo.jpg"]),
+                "backgrounds/3-demo.jpg": digest(first["backgrounds/3-demo.jpg"]),
+                "backgrounds/5-demo.jpg": digest(first["backgrounds/5-demo.jpg"]),
+                "backgrounds/7-demo.jpg": digest(second["backgrounds/7-demo.jpg"]),
+            }, "the marker records replaced and added wallpapers at the new digest and kept ones at the digest "
+               "they were placed with, and never records a removed or user-added file")
+            assert_equal((result["status"], result["fromRev"], result["toRev"], helper.catalog_marker("demo")["rev"],
+                          helper.catalog_updates()),
+                         ("updated", 1, 2, 2, []),
+                         "the update records the new pin, so nothing is left to update")
+            status, again = catalog_command("update", "demo", "missing", "--json")
+            assert_equal((status, again["success"], again["updated"],
+                          [(item["name"], item["status"]) for item in again["results"]]),
+                         (1, False, [], [("demo", "current"), ("missing", "failed")]),
+                         "an update naming a theme outside the catalog fails with exit 1, and a current one stays current")
         finally:
             helper.builtin_themes_dir = original_builtin
             os.environ.pop("VGS_THEME_CATALOG_BASE_URL", None)
@@ -10314,6 +10437,7 @@ def main():
     # Catalog transfer must leave the theme lock available for applies and restyles.
     # The download locks only the placement of the files it verified.
     for catalog_argv in (["catalog", "install", "ayu"], ["catalog", "install", "--all"],
+                         ["catalog", "update", "ayu"], ["catalog", "update", "--all"],
                          ["catalog", "remove", "ayu"], ["catalog", "list"]):
         assert_equal(helper._theme_command_mutates(catalog_argv), False,
                      f"`theme {' '.join(catalog_argv)}` must not hold the theme lock for its whole run")
@@ -10426,6 +10550,7 @@ def main():
     test_terminal_wait_blocks_until_the_terminal_exits()
     test_preferred_terminal_is_tried_first()
     test_theme_catalog_offers_a_builtin_theme_with_no_imagery()
+    test_theme_catalog_update_keeps_the_users_wallpapers()
     test_theme_catalog_download_verifies_its_archive()
     test_theme_asset_publisher()
     test_theme_asset_publish_records_what_is_on_the_release()

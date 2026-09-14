@@ -1,0 +1,18 @@
+# Theme catalog
+
+Covers: bin/vshell-helper, themes/catalog.json, themes/asset-lock.json, scripts/gen-theme-catalog.py, scripts/publish-theme-assets.py, scripts/check-package-assets.sh, quickshell/vshell/Services/VGSThemeCatalogService.qml
+
+The helper downloads a theme's wallpapers from its release archive, places them beside the user overlay, and updates them. Palette, overlay and preview contracts are in [theme.md](theme.md).
+
+## Invariants
+
+- Every theme's definitions and `preview.jpg` ship in the package, and only the default theme's wallpapers do (D015). `is_imagery` in `scripts/gen-theme-catalog.py` owns that split; `scripts/check-package-assets.sh` holds the install to its `--package-files` list.
+- A theme's wallpapers download as one archive from its `themes-vN` release, accepted only at the catalogued size and sha256, then unpacked member by member under the imagery path rule. `_catalog_fetch_verified` and `_catalog_unpack` in `bin/vshell-helper` own acceptance; `scripts/gen-theme-catalog.py` checks the generated catalog and the release pin.
+- The archive streams into `~/.cache/vshell/theme-assets/` in fixed chunks, hashed as it is written, so the verified bytes are the bytes the unpack step reads back and no install holds a whole archive in memory. An installed theme is composed from local directories alone, so applying it makes no network call.
+- `scripts/gen-theme-catalog.py --check-assets-published`, which CI runs, refuses a pin whose archive is not an asset of a release that exists.
+- A download places its files beside the user overlay under the mutation lock, never over a file it did not place. `theme catalog remove` deletes only the recorded wallpapers, and `theme revert` keeps them. Removal requires matching download identity. See `catalog_download_theme` and `catalog_owns` in the helper.
+- A download's marker records the sha256 each wallpaper held when placed; `catalog_placed_wallpapers` is its one reader and reads a list-shaped marker, as the released helper wrote it, as placed paths with no digests. `theme catalog updates` lists, offline, each owned download whose pin differs from the shipped `themes/catalog.json`, judged by `catalog_imagery_update_available`, which also sets `imageryUpdateAvailable`. `theme catalog update` places the new archive through `_catalog_place`, the placement a download uses: it replaces or removes a placed wallpaper only while its bytes match the recorded digest, keeps one the user edited or deleted, and never touches a file the marker did not place, such as one `wallpaper-add` copied in. It never renames the directory aside, writes the marker last, and refuses a marker with no digests before any transfer. `test_theme_catalog_update_keeps_the_users_wallpapers` in `scripts/check-vshell-helper.py` checks the per-wallpaper replace, keep, remove, never-touch and add, the digests the marker records, the refusal of a fork and of a list-shaped marker, and the commands' exit status; nothing checks the rename-aside or the marker order.
+
+## Decisions
+
+[D015](../decisions/D015-theme-imagery-release-assets.md).
