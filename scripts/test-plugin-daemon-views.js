@@ -93,7 +93,7 @@ test("a link counts once on the daemon it watches, and moves or drops that count
     }
 });
 
-test("the link calls the counted replay above, and the shell keeps each daemon across other loads", () => {
+test("the link routes its count through the replayed claim and release, and the shell's daemon Instantiator is a ScriptModel keyed by plugin id", () => {
     const component = qmlSource(componentText, "PluginDaemonComponent.qml");
     const shellText = fs.readFileSync(path.join(repoRoot, "quickshell", "vshell", "VGS.qml"), "utf8");
     const shell = qmlSource(shellText, "VGS.qml");
