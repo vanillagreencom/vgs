@@ -1,7 +1,5 @@
 import QtQuick
 import QtQuick.Controls
-import Quickshell
-import Quickshell.Io
 import qs.Common
 import qs.Services
 import qs.Widgets
@@ -10,49 +8,44 @@ import qs.Modules.Plugins
 PluginComponent {
     id: root
 
-    property int refreshSeconds: parseInt(pluginData.refreshSeconds) || 1800
+    // The plugin's daemon owns the count poll, the update launch and the
+    // counted state. This widget, one per screen, renders them.
+    PluginDaemonLink {
+        id: daemonLink
+        pluginService: root.pluginService
+        pluginId: root.pluginId
+        watching: root.effectiveVisible
+    }
+    readonly property var daemon: daemonLink.daemon
 
-    property bool loading: true
-    property int repoCount: 0
-    property int aurCount: 0
-    property int toolsCount: 0
-    // mise is installed: the backend advertises a tools backend, or the CLI
-    // count named a tools source.
-    property bool toolsAvailable: false
-    // The mise probe failed while the repo count succeeded; shown instead of a
-    // false "0 tools".
-    property string toolsError: ""
-    property var packages: []
-    property string errorText: ""
-    property int orphanCount: 0
-    property var orphans: []
-    property bool showOrphans: false
-    readonly property int totalCount: root.repoCount + root.aurCount + root.toolsCount
-    readonly property bool useBackend: SystemUpdateService.sysupdateAvailable
-
-    property string cliSourceLabel: "checkupdates + paru -Qua"
+    // Until the daemon Instantiator registers the instance there is no count
+    // yet, which is the same state as a check still running.
+    readonly property bool loading: root.daemon ? root.daemon.loading : true
+    readonly property int repoCount: root.daemon ? root.daemon.repoCount : 0
+    readonly property int aurCount: root.daemon ? root.daemon.aurCount : 0
+    readonly property int toolsCount: root.daemon ? root.daemon.toolsCount : 0
+    readonly property bool toolsAvailable: root.daemon ? root.daemon.toolsAvailable : false
+    readonly property string toolsError: root.daemon ? root.daemon.toolsError : ""
+    readonly property var packages: root.daemon ? root.daemon.packages : []
+    readonly property string errorText: root.daemon ? root.daemon.errorText : ""
+    readonly property int orphanCount: root.daemon ? root.daemon.orphanCount : 0
+    readonly property var orphans: root.daemon ? root.daemon.orphans : []
+    readonly property int totalCount: root.daemon ? root.daemon.totalCount : 0
+    readonly property bool useBackend: root.daemon ? root.daemon.useBackend : false
+    readonly property bool allClear: root.daemon ? root.daemon.allClear : false
+    readonly property bool refreshBusy: root.daemon ? root.daemon.refreshBusy : true
 
     // Hide the source row until a data source is known. It is the only thing
     // left in that footer: the refresh control moved to the shared header slot
     // and the "last checked" stamp beside it went with it.
-    readonly property string sourceLabel: root.useBackend
-        ? ((SystemUpdateService.backends || []).map(b => b.displayName).filter(Boolean).join(", "))
-        : root.cliSourceLabel
+    readonly property string sourceLabel: root.daemon ? root.daemon.sourceLabel : ""
 
-    readonly property string home: Quickshell.env("HOME") || ""
-    readonly property string updateCommand: Paths.vshellCli
-    property string pendingLaunchCommand: ""
-
-    Ref {
-        service: SystemUpdateService
-    }
-
-    onUseBackendChanged: {
-        if (root.useBackend) {
-            root._syncBackendState();
-        } else {
-            pollTimer.restart();
-        }
+    // Which sheet the popout shows. Per screen, because it follows what the
+    // person looking at that bar clicked.
+    property bool showOrphans: false
+    onOrphanCountChanged: {
+        if (root.orphanCount === 0)
+            root.showOrphans = false;
     }
 
     // Use state color for pill text while retaining the bar icon color.
@@ -66,236 +59,23 @@ PluginComponent {
         return String(root.totalCount);
     }
 
-    function refresh() {
-        if (root.useBackend) {
-            root._syncBackendState();
-            return;
-        }
-        if (countProc.running)
-            return;
-        countProc.running = true;
-    }
-
-    // User-initiated refresh from the popout button. For the backend path this
-    // forces an actual re-check; the CLI path reuses refresh().
     function manualRefresh() {
-        if (root.useBackend) {
-            if (SystemUpdateService.isChecking || SystemUpdateService.isUpgrading)
-                return;
-            SystemUpdateService.checkForUpdates();
-            return;
-        }
-        root.refresh();
+        if (root.daemon)
+            root.daemon.manualRefresh();
     }
 
-    // Nothing to install anywhere, and every source answered. A failed tools
-    // check is an unknown rather than a clear result, so it is not allClear:
-    // the upgrade buttons stay in that case.
-    readonly property bool allClear: !root.loading
-        && root.errorText.length === 0
-        && root.toolsError.length === 0
-        && root.totalCount === 0
-
-    readonly property bool refreshBusy: root.useBackend
-        ? (SystemUpdateService.isChecking || SystemUpdateService.isUpgrading)
-        : (root.loading || countProc.running)
-
-    function defaultCommandForMode(mode) {
-        return "{vshell} update run " + mode;
-    }
-
-    function commandForMode(mode) {
-        if (mode === "system")
-            return String(pluginData.systemUpdateCommand || defaultCommandForMode("system")).trim();
-        if (mode === "aur")
-            return String(pluginData.aurUpdateCommand || defaultCommandForMode("aur")).trim();
-        if (mode === "tools")
-            return String(pluginData.toolsUpdateCommand || defaultCommandForMode("tools")).trim();
-        if (mode === "all")
-            return String(pluginData.allUpdateCommand || defaultCommandForMode("all")).trim();
-        return "";
-    }
-
-    function expandCommand(command) {
-        return String(command || "").replace(/\{home\}/g, root.home).replace(/\{vshell\}/g, root.updateCommand);
-    }
-
-    function terminalArgv(command) {
-        // Pass the configured command through an environment argument so sh -c
-        // always has a script and $0. vshell terminal owns terminal selection.
-        return [
-            root.updateCommand, "terminal", "exec", "--tui", "--",
-            "env", "VSHELL_UPDATE_COMMAND=" + command,
-            "sh", "-lc", "eval \"$VSHELL_UPDATE_COMMAND\"", "vshell-update"
-        ];
-    }
-
+    // Closing the popout belongs to the screen that opened it; the upgrade
+    // itself is one machine-wide action the daemon owns.
     function launch(mode, sourcePopout) {
-        const command = commandForMode(mode);
-        if (!command.length) {
-            ToastService.showWarning("Update command missing", "Set a command in Settings → Bar → Widgets → System Updates.");
-            return;
-        }
         if (sourcePopout && sourcePopout.closePopout)
             sourcePopout.closePopout();
-        // A button on its default runs through the backend, which supervises
-        // the terminal and re-counts when it exits. A custom command is an
-        // explicit widget contract that may encode local sequencing (repo-only
-        // pacman followed by an audited AUR workflow); it keeps the detached
-        // launch and the bounded re-check instead.
-        if (root.useBackend && command === defaultCommandForMode(mode)) {
-            SystemUpdateService.upgrade(mode, response => {
-                if (response && response.error)
-                    ToastService.showError("Update failed to start", String(response.error));
-            });
-            return;
-        }
-        pendingLaunchCommand = command;
-        launchTimer.restart();
-    }
-
-    Timer {
-        id: launchTimer
-        interval: 75
-        repeat: false
-        onTriggered: {
-            if (!root.pendingLaunchCommand.length)
-                return;
-            const command = root.expandCommand(root.pendingLaunchCommand);
-            root.pendingLaunchCommand = "";
-            Quickshell.execDetached(root.terminalArgv(command));
-            // A detached upgrade has no observed exit. Re-check on a bounded schedule.
-            root._retryElapsedMs = 0;
-            recheckTimer.restart();
-        }
-    }
-
-    Process {
-        id: countProc
-        command: [root.updateCommand, "update", "count", "--json"]
-        running: false
-        stdout: StdioCollector {
-            id: countOut
-            onStreamFinished: root.parseOutput(countOut.text)
-        }
-    }
-
-    function parseOutput(txt) {
-        if (root.useBackend)
-            return;
-        root.loading = false;
-        try {
-            const d = JSON.parse((txt || "").trim());
-            if (d.ok === false) {
-                root.errorText = d.error || "update backend unavailable";
-                root.repoCount = 0;
-                root.aurCount = 0;
-                root.toolsCount = 0;
-                root.packages = [];
-                root.orphanCount = 0;
-                root.orphans = [];
-                return;
-            }
-            root.errorText = "";
-            root.repoCount = d.repo || 0;
-            root.aurCount = d.aur || 0;
-            root.toolsCount = d.tools || 0;
-            root.toolsAvailable = !!(d.source && d.source.tools);
-            root.toolsError = String(d.toolsError || "");
-            root.packages = d.packages || [];
-            root.orphanCount = d.orphanCount || 0;
-            root.orphans = d.orphans || [];
-            if (d.source && d.source.repo && d.source.aur)
-                root.cliSourceLabel = d.source.repo + " + " + d.source.aur;
-            // Stop on a clean zero even if the count was already zero and its change
-            // signal does not fire.
-            if (recheckTimer.running && root.errorText.length === 0 && root.totalCount === 0)
-                recheckTimer.stop();
-        } catch (e) {
-            root.repoCount = 0;
-            root.aurCount = 0;
-            root.toolsCount = 0;
-            root.packages = [];
-            root.errorText = "parse error";
-            root.orphanCount = 0;
-            root.orphans = [];
-        }
-        if (root.orphanCount === 0)
-            root.showOrphans = false;
-    }
-
-    function _syncBackendState() {
-        if (!root.useBackend)
-            return;
-        root.loading = SystemUpdateService.isChecking;
-        root.errorText = SystemUpdateService.hasError ? SystemUpdateService.errorMessage : "";
-        const pkgs = (SystemUpdateService.availableUpdates || []).map(p => ({
-            "name": p.name || "",
-            "src": p.repo === "aur" ? "aur" : (p.repo === "tools" ? "tools" : "system"),
-            "old": p.fromVersion || "",
-            "new": p.toVersion || ""
-        }));
-        root.packages = pkgs;
-        root.repoCount = pkgs.filter(p => p.src === "system").length;
-        root.aurCount = pkgs.filter(p => p.src === "aur").length;
-        root.toolsCount = pkgs.filter(p => p.src === "tools").length;
-        root.toolsAvailable = SystemUpdateService.hasBackend("mise");
-        root.toolsError = "";
-        root.orphanCount = 0;
-        root.orphans = [];
-        root.showOrphans = false;
-    }
-
-    Connections {
-        target: SystemUpdateService
-        function onSysupdateAvailableChanged() { root._syncBackendState(); }
-        function onAvailableUpdatesChanged() { root._syncBackendState(); }
-        function onBackendsChanged() { root._syncBackendState(); }
-        function onIsCheckingChanged() { root._syncBackendState(); }
-        function onHasErrorChanged() { root._syncBackendState(); }
-        function onErrorMessageChanged() { root._syncBackendState(); }
+        if (root.daemon)
+            root.daemon.launch(mode);
     }
 
     function reviewOrphans() {
-        const command = String(pluginData.orphanReviewCommand || "").trim();
-        if (!command.length)
-            return;
-        const names = (root.orphans || []).map(o => o.name).join(" ");
-        Quickshell.execDetached(["sh", "-lc", command.replace(/\{orphans\}/g, names)]);
-    }
-
-    Timer {
-        id: pollTimer
-        interval: Math.max(300, root.refreshSeconds) * 1000
-        repeat: true
-        running: !root.useBackend
-        triggeredOnStart: true
-        onTriggered: root.refresh()
-    }
-
-    // Detached upgrades have no observed exit. Bound retries with _retryMaxMs.
-    // Use manualRefresh because refresh can copy cached backend state.
-    property int _retryElapsedMs: 0
-    readonly property int _retryMaxMs: 600000
-
-    Timer {
-        id: recheckTimer
-        interval: 30000
-        repeat: true
-        onTriggered: {
-            root._retryElapsedMs += interval;
-            if (root._retryElapsedMs >= root._retryMaxMs) {
-                recheckTimer.stop();
-                return;
-            }
-            root.manualRefresh();
-        }
-    }
-
-    onTotalCountChanged: {
-        // An errored check can clear counts without establishing that work finished.
-        if (recheckTimer.running && root.errorText.length === 0 && root.totalCount === 0)
-            recheckTimer.stop();
+        if (root.daemon)
+            root.daemon.reviewOrphans();
     }
 
     horizontalBarPill: Component {

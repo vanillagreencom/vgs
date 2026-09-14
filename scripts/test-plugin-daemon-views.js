@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
-// A bar widget is created once per screen, so a plugin that fetches keeps the fetch in its
-// daemon surface and the widget only reads it. This suite replays the link's hold on the
+// A bar widget is created once per screen, so a plugin that fetches or polls keeps that work in
+// its daemon surface and the widget only reads it. This suite replays the link's hold on the
 // daemon against the daemon's own count, which decides whether the daemon polls; reads the
-// wiring that connects the link, the count and the shell's daemon model; and reads each
-// fetching plugin's source for the split. The rows list the plugins it covers.
+// wiring that connects the link, the count and the shell's daemon model; and reads each such
+// plugin's source for the split. The rows list the plugins it covers.
 
 "use strict";
 
@@ -113,7 +113,31 @@ test("the link routes its count through the replayed claim and release, and the 
         component.requires(block, where, [[token, why]]);
 });
 
-// [plugin, widget file, daemon file, [token, why] pairs the daemon must keep to fetch only while watched]
+// Every Timer block a file declares, located in code so a Timer named only in a comment
+// cannot stand in for one, and a brace inside a string cannot end a block early.
+function everyTimer(source) {
+    const blocks = [];
+    for (let at = source.indexOf("Timer {"); at !== -1; at = source.indexOf("Timer {", at + 1))
+        blocks.push(source.blockFrom(at, "a Timer"));
+    return blocks;
+}
+
+// The timers whose own `running:` binding reads root.watched, by id, read from the file under
+// test rather than from a second list here. A timer that gates inside onTriggered instead is
+// not one of these.
+function watchGatedTimerIds(source) {
+    const ids = [];
+    for (const raw of everyTimer(source)) {
+        const block = source.stripComments(raw);
+        const id = /\bid:\s*(\w+)/.exec(block);
+        const running = /\brunning:\s*(.*)/.exec(block);
+        if (id && running && running[1].includes("root.watched"))
+            ids.push(id[1]);
+    }
+    return ids;
+}
+
+// [plugin, widget file, daemon file, [token, why] pairs the daemon must keep to run only while watched]
 const ROWS = [
     ["aiUsage", "AiUsageWidget.qml", "AiUsageDaemon.qml", [
         ["running: channels.count > 0 && root.watched",
@@ -130,7 +154,23 @@ const ROWS = [
             "a settings change marks the figures stale and queues the same catch-up, so at shell " +
             "start the saved key stamp and the first watching widget make one bank API call"],
         ["function catchUp() { if (root.watched) root.refreshIfStale(); }",
-            "and the catch-up fetches nothing while no widget watches"]]]
+            "and the catch-up fetches nothing while no widget watches"]]],
+    ["sysUpdate", "SysUpdateWidget.qml", "SysUpdateDaemon.qml", [
+        ["running: !root.useBackend && root.watched",
+            "the count poll runs only while a widget watches, so a bar whose widget is hidden " +
+            "spawns no `vshell update count`"],
+        ["if (root.watched) root.manualRefresh();",
+            "and the bounded re-check after a detached upgrade spawns nothing when it comes due " +
+            "with no watching widget"]]],
+    ["sudoToggle", "SudoToggleWidget.qml", "SudoToggleDaemon.qml", [
+        ["running: root.watched",
+            "the 2.5 s flag poll runs only while a widget watches"],
+        ["function probeOnFirstWatch() { if (!root.watched || root._statusProbed) return; " +
+            "root._statusProbed = true; root.probeStatus(false); }",
+            "and the capability probe runs for the first watching widget, once per shell run, " +
+            "rather than once per screen at creation"],
+        ["onWatchedChanged: root.probeOnFirstWatch()",
+            "which is what arms that probe"]]]
 ];
 
 test("each fetching plugin polls from its daemon, and its per-screen widget only reads it", () => {
@@ -142,8 +182,17 @@ test("each fetching plugin polls from its daemon, and its per-screen widget only
 
         const widget = qmlSource(fs.readFileSync(path.join(dir, widgetFile), "utf8"), widgetFile);
         const widgetCode = widget.stripComments(fs.readFileSync(path.join(dir, widgetFile), "utf8"));
-        assert.ok(!/\b(Process|Timer)\s*\{|\bproperty\s+(Process|Timer)\b/.test(widgetCode),
-            `${widgetFile} is created once per screen and must own no Timer or Process`);
+        assert.ok(!/\bProcess\s*\{|\bproperty\s+Process\b/.test(widgetCode),
+            `${widgetFile} is created once per screen and must own no Process`);
+        // A hover delay started by a pointer on one screen is not the per-monitor defect; a
+        // timer that repeats is, and so is one armed at creation. Each Timer the widget keeps
+        // declares repeat: false, and no running or triggeredOnStart binding arms one.
+        for (const declared of everyTimer(widget))
+            widget.requires(declared, `${widgetFile}'s Timer`, [["repeat: false",
+                "a per-screen Timer must not repeat, which is the per-monitor poll itself"]]);
+        assert.ok(!/\brunning:|\btriggeredOnStart:/.test(widgetCode),
+            `${widgetFile} must arm no Timer or Process of its own: running and triggeredOnStart ` +
+            "start work on every screen without anyone asking for it");
         widget.requires(widget.blockFrom(widget.indexOf("PluginDaemonLink {"), "the daemon link"),
             `${widgetFile}'s PluginDaemonLink`, [
                 ["pluginService: root.pluginService", "the link finds the daemon through the plugin service"],
@@ -156,5 +205,15 @@ test("each fetching plugin polls from its daemon, and its per-screen widget only
         assert.ok(/^PluginDaemonComponent \{/m.test(daemon.stripComments(daemonText)),
             `${daemonFile} is a PluginDaemonComponent, which is what counts the links`);
         daemon.requires(daemonText, daemonFile, gated);
+        // A gate that is a `running:` binding is gone the moment anything assigns that timer's
+        // running: QML replaces the binding with the plain value, and the poll then spawns work
+        // with nothing watching. The pinned token above still reads as present, so ban the
+        // assignment as well.
+        const daemonFlat = qmlSource.flat(daemon.stripComments(daemonText));
+        for (const id of watchGatedTimerIds(daemon))
+            for (const arming of [`${id}.restart()`, `${id}.start()`, `${id}.running =`])
+                assert.ok(!daemonFlat.includes(arming),
+                    `${daemonFile} must not arm ${id} with ${arming}: its running binding is what ` +
+                    "holds the root.watched gate, and an assignment replaces it");
     }
 });

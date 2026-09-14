@@ -6,7 +6,10 @@
     "license": "MIT",
     "author": "VanillaGreen",
     "icon": "upgrade",
-    "component": "./SysUpdateWidget.qml",
+    "components": {
+        "widget": "./SysUpdateWidget.qml",
+        "daemon": "./SysUpdateDaemon.qml"
+    },
     "settings": "./SysUpdateSettings.qml",
     "requires_shell": ">=0.1.0",
     "permissions": [
