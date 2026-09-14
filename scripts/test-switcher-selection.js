@@ -80,17 +80,19 @@ test("the marked decision regions stay plain JavaScript", () => {
 
 test("downloadOffer offers the download only for a catalogued theme with no wallpapers, while online", () => {
     const missing = { name: "demo", imageryInstalled: false, imagerySize: 4096 };
-    for (const [entry, online, pending, expected, why] of [
-        [missing, true, false, true, "an applied theme with no wallpapers on disk and an archive to fetch is offered"],
-        [{ ...missing, imageryInstalled: true }, true, false, false, "a theme whose wallpapers are on disk is not offered"],
-        [{ name: "demo", imagerySize: 4096 }, true, false, false,
+    for (const [entry, online, pending, applied, expected, why] of [
+        [missing, true, false, true, true, "an applied theme with no wallpapers on disk and an archive to fetch is offered"],
+        [{ ...missing, imageryInstalled: true }, true, false, true, false, "a theme whose wallpapers are on disk is not offered"],
+        [{ name: "demo", imagerySize: 4096 }, true, false, true, false,
             "an entry that does not say the wallpapers are missing is not offered: only an explicit false offers"],
-        [null, true, false, false, "a theme the catalog does not list has nothing to download"],
-        [{ ...missing, imagerySize: 0 }, true, false, false, "an entry with no archive size has no size to offer"],
-        [missing, true, true, false, "a download already running is not offered twice"],
-        [missing, false, false, false, "offline behaves as Not now"]
+        [null, true, false, true, false, "a theme the catalog does not list has nothing to download"],
+        [{ ...missing, imagerySize: 0 }, true, false, true, false, "an entry with no archive size has no size to offer"],
+        [missing, true, true, true, false, "a download already running is not offered twice"],
+        [missing, false, false, true, false, "offline behaves as Not now"],
+        [missing, true, false, false, false,
+            "a theme the user replaced while the catalog read ran is not offered: the dialog would name the previous theme"]
     ]) {
-        assert.strictEqual(offer.downloadOffer(entry, online, pending), expected, why);
+        assert.strictEqual(offer.downloadOffer(entry, online, pending, applied), expected, why);
     }
 });
 
@@ -702,17 +704,21 @@ test("the download offer follows a successful user pick and Not now leaves the t
             "a theme the list reports installed costs no catalog read", 1],
         ["const entry = themes.find(theme => theme.name === name) || null;",
             "the decision reads the applied theme's entry from this read's own themes", 1],
-        ["if (downloadOffer(entry, online, isPending(name))) downloadOffered(name, entry.imagerySize);",
-            "the dialog is raised on the extracted decision, with the archive size", 1]
+        ["if (downloadOffer(entry, online, isPending(name), SettingsData.currentThemeName === name)) downloadOffered(name, entry.imagerySize);",
+            "the dialog is raised on the extracted decision, with the archive size, only while the theme is still " +
+            "the applied one by the name an apply sets as it lands, not the asynchronously refreshed currentTheme", 1]
     ]);
     mustPrecedeIn(offerBody, "offerDownload()", /themes = JSON\.parse/, /downloadOffer\(/,
         "the decision reads the catalog read made after the apply, so a finished download is not offered again");
 
     const install = catalog.body("install");
     catalog.requires(install, "install()", [
-        ["if ((VGSThemeService.currentTheme || {}).name === name) VGSThemeService.applyBlueprint(name);",
-            "a finished download re-applies the theme still on screen, so it takes its wallpaper", 1]
+        ["if (SettingsData.currentThemeName === name) VGSThemeService.applyBlueprint(name);",
+            "a finished download re-applies the theme still applied, by the name an apply sets as it lands, so a " +
+            "stale currentTheme can neither skip the re-apply nor re-apply a theme the user replaced", 1]
     ]);
+    assert.doesNotMatch(qmlSource.stripComments(catalogSource), /currentTheme\b/,
+        "VGSThemeCatalogService.qml: the offer and the re-apply read SettingsData.currentThemeName, never the asynchronously refreshed currentTheme");
     mustPrecedeIn(install, "install()", /if \(result\.status !== "installed"\)/, /VGSThemeService\.applyBlueprint\(name\)/,
         "the re-apply follows the failed-status return, so a failed download re-applies nothing");
 
