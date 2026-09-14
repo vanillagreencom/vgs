@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Unit tests for `vshell brightness` backend selection, device identity, udev
-rule generation, and the Apple/DDC/EDID parsers in bin/vshell-helper.
+rule generation, and the Apple/DDC/EDID parsers in bin/vshell_helper.py.
 
 These are pure-logic tests -- no hardware, no root, no external tools. Run:
 
@@ -17,7 +17,7 @@ REPO = Path(__file__).resolve().parents[1]
 
 
 def _load_helper():
-    path = REPO / "bin" / "vshell-helper"
+    path = REPO / "bin" / "vshell_helper.py"
     loader = importlib.machinery.SourceFileLoader("vshell_helper", str(path))
     spec = importlib.util.spec_from_loader("vshell_helper", loader)
     module = importlib.util.module_from_spec(spec)

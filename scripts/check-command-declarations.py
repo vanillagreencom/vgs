@@ -115,7 +115,7 @@ WHICH_RE = re.compile(r"""shutil\.which\(\s*["']([^"']+)["']""")
 
 # Capability probes execute commands whose argv heads live in a Python table (D005).
 # Read that table through the AST and reject missing or unsupported shapes.
-CAPABILITY_PROBE_FILE = REPO_ROOT / "bin" / "vshell-helper"
+CAPABILITY_PROBE_FILE = REPO_ROOT / "bin" / "vshell_helper.py"
 CAPABILITY_PROBE_TABLE = "CAPABILITY_PROBES"
 
 

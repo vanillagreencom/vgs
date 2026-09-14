@@ -7,4 +7,4 @@ excludeAgent: "cloud-agent"
 
 Quickshell leaves the Qt.quit() and Qt.exit() signals unconnected. These calls do not terminate the shell. Qt.resolvedUrl() is correct for QML asset URLs. Use Quickshell.shellDir when a subprocess needs a filesystem path. Process.exited precedes running becoming false. A command that fails to start emits no exited signal. Resolve helper calls through Paths.vshellCli.
 
-Parsing, generation and privileged writes belong in bin/vshell-helper. QML calls them through the vshell dispatcher.
+Parsing, generation and privileged writes belong in bin/vshell_helper.py. QML calls them through the vshell dispatcher.

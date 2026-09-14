@@ -15,7 +15,7 @@ QML draws the shell and coordinates services. A service owns long-lived state; a
 
 ## Invariants
 
-- Instance detection yields only when a live peer is provably older. Unavailable evidence permits startup. See `vgs_instance_report` in `bin/vshell-helper` and `test_duplicate_shell_guard` in `scripts/check-vshell-helper.py`.
+- Instance detection yields only when a live peer is provably older. Unavailable evidence permits startup. See `vgs_instance_report` in `bin/vshell_helper.py` and `test_duplicate_shell_guard` in `scripts/check-vshell-helper.py`.
 - Brightness pins use connector names, not position-dependent display labels. `scripts/check-display-config-fixtures.js` checks the shared Settings, Control Center and focused-screen readers.
 - Display naming selectors share the state owner's identifier transition. It moves complete backend settings and pending edits before preview or profile extraction. `scripts/check-display-config-fixtures.js` checks both formats, collision refusal and cancellation.
 - Plugin-backed properties remain bindings. Setters persist through the plugin service; dependent work responds to its change notification. See the plugin service implementations under `Modules/Plugins/`.

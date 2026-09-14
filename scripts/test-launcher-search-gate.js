@@ -18,7 +18,7 @@ const OVERVIEW = path.join(repoRoot, "quickshell", "vshell", "Modules", "Workspa
 const CONTROLLER = path.join(OVERVIEW, "Controller.qml");
 const RESULTS = path.join(OVERVIEW, "ResultsList.qml");
 const MENU = path.join(repoRoot, "config", "vshell", "plugins", "vgsMenu", "VGSMenu.qml");
-const HELPER = path.join(repoRoot, "bin", "vshell-helper");
+const HELPER = path.join(repoRoot, "bin", "vshell_helper.py");
 
 const appSearchSource = fs.readFileSync(APP_SEARCH, "utf8");
 const serviceSource = fs.readFileSync(SERVICE, "utf8");
@@ -132,7 +132,7 @@ function expectedActionScore(tier) {
 // an unrelated later statement to satisfy a missing failure branch.
 function pythonFunction(source, name) {
     const start = source.indexOf(`def ${name}(`);
-    assert.notEqual(start, -1, `bin/vshell-helper must define ${name}()`);
+    assert.notEqual(start, -1, `bin/vshell_helper.py must define ${name}()`);
     const end = source.indexOf("\ndef ", start + 1);
     return source.slice(start, end === -1 ? source.length : end);
 }

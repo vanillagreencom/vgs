@@ -33,7 +33,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-HELPER_PATH = REPO_ROOT / "bin" / "vshell-helper"
+HELPER_PATH = REPO_ROOT / "bin" / "vshell_helper.py"
 
 
 def load_helper():
@@ -1185,7 +1185,7 @@ def test_restyle_integer_sweeps():
 
 
 def test_fastfetch_portable_seed_and_logo_fallback():
-    original_image = helper.Image
+    original_pil_image = helper._wp_thumbs.pil_image
     original_which = helper.shutil.which
     original_run = helper.run
     old_xdg_home = os.environ.get("XDG_CONFIG_HOME")
@@ -1198,7 +1198,7 @@ def test_fastfetch_portable_seed_and_logo_fallback():
         wallpaper = temp_home / "wallpaper.png"
         wallpaper.write_bytes(b"image-bytes-fastfetch-can-decode")
 
-        helper.Image = None
+        helper._wp_thumbs.pil_image = lambda: None
         helper.shutil.which = lambda _name: None
         result = helper.apply_fastfetch_logo_hook({"wallpaper": str(wallpaper)})
         config = xdg_home / "fastfetch" / "config.jsonc"
@@ -1248,7 +1248,7 @@ def test_fastfetch_portable_seed_and_logo_fallback():
     try:
         with_temp_home(run_case)
     finally:
-        helper.Image = original_image
+        helper._wp_thumbs.pil_image = original_pil_image
         helper.shutil.which = original_which
         helper.run = original_run
         if old_xdg_home is None:
@@ -2799,6 +2799,45 @@ def test_greeter_primary_monitor_validation():
         (cache / "settings.json").write_text("{}")
         assert_equal(helper.greeter_primary_monitor(cache), "",
                      "automatic greeter primary monitor")
+
+
+def test_helper_import_loads_no_image_or_http_stack():
+    """Every helper call imports the helper module, and most decode no image and fetch nothing.
+
+    Pillow or urllib.request loaded at import would add its load time to every call.
+    """
+    probe = (
+        "import json, sys; sys.path.insert(0, sys.argv[1]); import vshell_helper; "
+        "print(json.dumps(sorted(name for name in ('PIL', 'urllib.request') if name in sys.modules)))"
+    )
+    with tempfile.TemporaryDirectory() as home:
+        result = subprocess.run(
+            [sys.executable, "-c", probe, str(REPO_ROOT / "bin")],
+            text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+            env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": home},
+        )
+    assert_equal((result.returncode, result.stdout.strip()), (0, "[]"),
+                 f"importing the helper module loads no Pillow or urllib.request: {result.stderr}")
+
+
+def test_helper_entrypoint_runs_the_helper():
+    """Both the stub and the module reach main when run as a script.
+
+    A run that loads the code and exits 0 would let a sudo re-exec report success
+    having changed nothing, whichever of the two paths a caller spawns.
+    """
+    rows = (
+        ("stub", helper.helper_entrypoint()),
+        ("module", HELPER_PATH),
+    )
+    for label, script in rows:
+        with tempfile.TemporaryDirectory() as home:
+            result = subprocess.run(
+                [sys.executable, str(script), "no-such-command"],
+                text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+                env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": home},
+            )
+        assert_equal(result.returncode, 2, f"the helper {label} refuses an unknown command: {result.stderr}")
 
 
 def test_greeter_runtime_helper_dependencies():
@@ -10762,6 +10801,8 @@ def main():
     test_theme_preview_stop_signal_tears_down_its_capture()
     test_preview_stage_lua_keeps_one_live_rule()
     test_greeter_primary_monitor_validation()
+    test_helper_import_loads_no_image_or_http_stack()
+    test_helper_entrypoint_runs_the_helper()
     test_greeter_runtime_helper_dependencies()
     test_greeter_sync_survives_a_missing_wallpaper()
     test_launcher_search_unicode_ranges_and_preview()

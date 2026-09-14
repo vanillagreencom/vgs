@@ -22,7 +22,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "bin"))
 import vshell_wallpaper_thumbs as thumbs  # noqa: E402
 
-HAS_PIL = thumbs.Image is not None
+HAS_PIL = thumbs.pil_image() is not None
 REAL_WHICH = shutil.which
 INSTALLED = [rung for rung, available in (
     ("pil", HAS_PIL),
@@ -143,7 +143,7 @@ class ThumbCases(unittest.TestCase):
         path when the tool is stubbed), so a later rung cannot conceal a failure."""
         self.configure(run)
         which = (lambda name: f"/usr/bin/{name}") if stub else REAL_WHICH
-        with mock.patch.object(thumbs, "Image", thumbs.Image if rung == "pil" else None), \
+        with mock.patch.object(thumbs, "pil_image", thumbs.pil_image if rung == "pil" else lambda: None), \
                 mock.patch.object(shutil, "which", lambda name: which(name) if name == rung else None):
             return thumbs.build_one(src or SRC)
 
@@ -190,7 +190,7 @@ class BuildLadder(ThumbCases):
         def no_codec(*args, **kwargs):
             raise OSError("cannot identify image file")
 
-        self.patch(thumbs.Image, "open", no_codec)
+        self.patch(thumbs.pil_image(), "open", no_codec)
         self.patch(shutil, "which", lambda name: "/usr/bin/magick" if name == "magick" else None)
         fell_through = thumbs.build_one(SRC)
         self.assertTrue(recorded, "the build claimed success without reaching the next rung")

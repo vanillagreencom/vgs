@@ -24,7 +24,7 @@
   ],
   "excluded": [
     { "prefixes": ["themes.", "theme.auto"], "reason": "VGS themes are helper-owned (VGSThemeService / vshell theme). The upstream theme model and theme automation are excluded.", "action": "Remove themes.* wrappers and the theme.auto subscription/signal from VGSBackendService (Phase 11 / opportunistic cleanup)." },
-    { "prefixes": ["matugen."], "reason": "VGS has no matugen; palette work lives in bin/vshell-helper.", "action": "Never port." }
+    { "prefixes": ["matugen."], "reason": "VGS has no matugen; palette work lives in bin/vshell_helper.py.", "action": "Never port." }
   ],
   "apiVersionGateBaseline": 0,
   "apiVersionGateNote": "Raw numeric .apiVersion comparisons in QML are no longer allowed. Use VGSBackendService.has(...) for capabilities and methods.includes(...) for methods. Named-constant gates (savedWifiStateApiVersion, expectedApiVersion) are excluded from this count."

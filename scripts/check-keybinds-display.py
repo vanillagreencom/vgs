@@ -19,7 +19,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-HELPER_PATH = REPO_ROOT / "bin" / "vshell-helper"
+HELPER_PATH = REPO_ROOT / "bin" / "vshell_helper.py"
 
 
 def load_helper():

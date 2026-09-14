@@ -128,6 +128,31 @@ jobs:
       - name: Document limits
         run: .agents/skills/doc-limits/scripts/doc-limits
 
+      # actionlint needs shellcheck to lint shell blocks. Install the pinned
+      # tools required by check-workflows.sh and check-format-lint.sh.
+      - name: Install actionlint, shellcheck and ruff (pinned)
+        if: steps.classify.outputs.harness_only != 'true'
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+        run: |
+          set -euo pipefail
+          SHELLCHECK_VERSION="$(sed -n 's/^SHELLCHECK_VERSION=//p' scripts/check-format-lint.sh)"
+          RUFF_VERSION="$(sed -n 's/^RUFF_VERSION=//p' scripts/check-format-lint.sh)"
+          if [ -z "$SHELLCHECK_VERSION" ] || [ -z "$RUFF_VERSION" ]; then
+            echo "::error::could not extract SHELLCHECK_VERSION/RUFF_VERSION from scripts/check-format-lint.sh — the single-source pins moved; fix the sed here in the same PR"
+            exit 1
+          fi
+          curl -fsSL -o "$RUNNER_TEMP/actionlint.tar.gz" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP" actionlint
+          curl -fsSL -o "$RUNNER_TEMP/shellcheck.tar.xz" \
+            "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          tar -xJf "$RUNNER_TEMP/shellcheck.tar.xz" -C "$RUNNER_TEMP" --strip-components=1 "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
+          curl -fsSL -o "$RUNNER_TEMP/ruff.tar.gz" \
+            "https://github.com/astral-sh/ruff/releases/download/${RUFF_VERSION}/ruff-x86_64-unknown-linux-gnu.tar.gz"
+          tar -xzf "$RUNNER_TEMP/ruff.tar.gz" -C "$RUNNER_TEMP" --strip-components=1 ruff-x86_64-unknown-linux-gnu/ruff
+          echo "$RUNNER_TEMP" >>"$GITHUB_PATH"
+
       # The pre-commit batch judges staged lines only. This run judges every
       # tracked file each enabled lane names, markdown references included;
       # byte-ceiling judges the files this change adds or grows against main.
@@ -313,7 +338,7 @@ jobs:
           scripts/test-bounded-run.py
           scripts/check-brightness.py
           scripts/test-claude-theme.py
-          python3 -m py_compile bin/vshell-helper
+          python3 -m py_compile bin/vshell-helper bin/vshell_helper.py
           python3 -m py_compile scripts/publish-theme-assets.py
           bash -n bin/vshell
 
@@ -351,30 +376,6 @@ jobs:
           go -C backend build ./...
           go -C backend vet ./...
           go -C backend test -race ./...
-      # actionlint needs shellcheck to lint shell blocks. Install the pinned
-      # tools required by check-workflows.sh and check-format-lint.sh.
-      - name: Install actionlint, shellcheck and ruff (pinned)
-        if: steps.classify.outputs.harness_only != 'true'
-        env:
-          ACTIONLINT_VERSION: 1.7.12
-        run: |
-          set -euo pipefail
-          SHELLCHECK_VERSION="$(sed -n 's/^SHELLCHECK_VERSION=//p' scripts/check-format-lint.sh)"
-          RUFF_VERSION="$(sed -n 's/^RUFF_VERSION=//p' scripts/check-format-lint.sh)"
-          if [ -z "$SHELLCHECK_VERSION" ] || [ -z "$RUFF_VERSION" ]; then
-            echo "::error::could not extract SHELLCHECK_VERSION/RUFF_VERSION from scripts/check-format-lint.sh — the single-source pins moved; fix the sed here in the same PR"
-            exit 1
-          fi
-          curl -fsSL -o "$RUNNER_TEMP/actionlint.tar.gz" \
-            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
-          tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP" actionlint
-          curl -fsSL -o "$RUNNER_TEMP/shellcheck.tar.xz" \
-            "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
-          tar -xJf "$RUNNER_TEMP/shellcheck.tar.xz" -C "$RUNNER_TEMP" --strip-components=1 "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
-          curl -fsSL -o "$RUNNER_TEMP/ruff.tar.gz" \
-            "https://github.com/astral-sh/ruff/releases/download/${RUFF_VERSION}/ruff-x86_64-unknown-linux-gnu.tar.gz"
-          tar -xzf "$RUNNER_TEMP/ruff.tar.gz" -C "$RUNNER_TEMP" --strip-components=1 ruff-x86_64-unknown-linux-gnu/ruff
-          echo "$RUNNER_TEMP" >>"$GITHUB_PATH"
 
       - name: Workflow lint (YAML and every `run:` block)
         if: steps.classify.outputs.harness_only != 'true'
