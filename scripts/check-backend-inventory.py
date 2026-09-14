@@ -171,7 +171,7 @@ def main() -> int:
         errors.append(
             f"raw apiVersion numeric gates increased to {len(gates)} "
             f"(baseline {baseline}). Gates must only shrink — convert to "
-            f"capabilities.includes(...) / methods.includes(...) predicates. "
+            f"VGSBackendService.has(...) for capabilities and methods.includes(...) for methods. "
             f"New gate sites:\n    "
             + "\n    ".join(f"{f}:{ln}" for f, ln in gates[baseline:])
         )

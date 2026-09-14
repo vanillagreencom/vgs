@@ -26,7 +26,8 @@ Singleton {
     property string inhibitReason: "Keep system awake"
     property string nvidiaCommand: ""
 
-    property bool loginctlAvailable: false
+    readonly property bool loginctlAvailable: VGSBackendService.has("loginctl")
+    readonly property bool prepareForSleepAvailable: VGSBackendService.has("dbus")
     property bool wtypeAvailable: false
     property string sessionId: ""
     property string sessionPath: ""
@@ -50,7 +51,8 @@ Singleton {
     property bool prepareForSleepSubscriptionPending: false
     property double lastResumeSignalTimestamp: 0
 
-    readonly property string socketPath: Quickshell.env("VGS_SOCKET")
+    onLoginctlAvailableChanged: syncLoginctl()
+    onPrepareForSleepAvailableChanged: syncPrepareForSleepSubscription()
 
     Timer {
         id: sessionInitTimer
@@ -62,15 +64,9 @@ Singleton {
             detectHibernateProcess.running = true;
             detectPrimeRunProcess.running = true;
             detectWtypeProcess.running = true;
-            if (!SettingsData.loginctlLockIntegration) {
-                log.debug("loginctl lock integration disabled by user");
-                return;
-            }
-            if (socketPath && socketPath.length > 0) {
-                checkVGSCapabilities();
-            } else {
-                log.debug("VGS_SOCKET not set");
-            }
+            // A binding's first value emits no change signal, so the init pass applies it.
+            syncLoginctl();
+            syncPrepareForSleepSubscription();
         }
     }
 
@@ -421,28 +417,7 @@ Singleton {
 
     Connections {
         target: VGSBackendService
-
-        function onConnectionStateChanged() {
-            if (VGSBackendService.isConnected) {
-                checkVGSCapabilities();
-            } else {
-                clearPrepareForSleepSubscriptionState();
-            }
-        }
-
-        function onCapabilitiesReceived() {
-            syncLockBeforeSuspend();
-            syncSleepInhibitor();
-        }
-    }
-
-    Connections {
-        target: VGSBackendService
         enabled: VGSBackendService.isConnected
-
-        function onCapabilitiesChanged() {
-            checkVGSCapabilities();
-        }
 
         function onDbusSignalReceived(subscriptionId, data) {
             if (subscriptionId !== prepareForSleepSubscriptionId) {
@@ -457,17 +432,11 @@ Singleton {
 
         function onLoginctlLockIntegrationChanged() {
             if (SettingsData.loginctlLockIntegration) {
-                if (socketPath && socketPath.length > 0 && loginctlAvailable) {
-                    if (!stateInitialized) {
-                        stateInitialized = true;
-                        getLoginctlState();
-                        syncLockBeforeSuspend();
-                    }
-                }
+                syncLoginctl();
             } else {
                 stateInitialized = false;
+                syncSleepInhibitor();
             }
-            syncSleepInhibitor();
         }
 
         function onLockBeforeSuspendChanged() {
@@ -487,31 +456,23 @@ Singleton {
         }
     }
 
-    function checkVGSCapabilities() {
-        if (!VGSBackendService.isConnected) {
+    // A lost backend must not leave loginctl state marked initialized; the next
+    // advertisement refetches it.
+    function syncLoginctl() {
+        if (!loginctlAvailable) {
+            stateInitialized = false;
             return;
         }
-
-        if (VGSBackendService.capabilities.length === 0) {
-            return;
+        if (SettingsData.loginctlLockIntegration && !stateInitialized) {
+            stateInitialized = true;
+            getLoginctlState();
         }
+        syncLockBeforeSuspend();
+        syncSleepInhibitor();
+    }
 
-        if (VGSBackendService.capabilities.includes("loginctl")) {
-            loginctlAvailable = true;
-            if (SettingsData.loginctlLockIntegration) {
-                if (!stateInitialized) {
-                    stateInitialized = true;
-                    getLoginctlState();
-                }
-                syncLockBeforeSuspend();
-                syncSleepInhibitor();
-            }
-        } else {
-            loginctlAvailable = false;
-            log.debug("loginctl capability not available in VGS");
-        }
-
-        if (VGSBackendService.capabilities.includes("dbus")) {
+    function syncPrepareForSleepSubscription() {
+        if (prepareForSleepAvailable) {
             ensurePrepareForSleepSubscription();
         } else {
             clearPrepareForSleepSubscriptionState();
@@ -524,7 +485,7 @@ Singleton {
     }
 
     function ensurePrepareForSleepSubscription() {
-        if (!VGSBackendService.isConnected || !VGSBackendService.capabilities.includes("dbus")) {
+        if (!prepareForSleepAvailable) {
             return;
         }
 

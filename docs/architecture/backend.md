@@ -14,6 +14,7 @@ The backend provides live system integration over a same-user local socket. Its 
 
 - Every registered Go method requires an inventory capability. Excluded methods must not be registered; excluded QML references require a removal action. `scripts/check-backend-inventory.py` checks this distinction.
 - QML uses advertised methods or capabilities and retains a fallback for unavailable features. `Services/VGSBackendService.qml` owns negotiation; the inventory check rejects raw version comparisons in its scanned callers.
+- Capability presence is state. `VGSBackendService.has(name)` answers from the live connection and advertised inventory, so a service built after the backend connected reads the same answer and flips both ways on a backend restart. New consumers bind to it, as the network, session, wallpaper cycling, display, cloud sync, system update and Tailscale services do; the remaining direct readers of `VGSBackendService.capabilities` are not yet converted. `scripts/test-backend-capabilities.js` tests that answer, the Tailscale availability hold and the network service switch.
 - The socket rejects other users and requires a runtime directory. See `backend/internal/server/` and its tests.
 - D-Bus access is limited to the registered subscription routes. The inventory and `backend/internal/services/dbusbridge/` define the permitted scope.
 - Daemon supervision has bounded restarts and preserves the listener while restarting. See `backend/internal/runner/` and its tests.

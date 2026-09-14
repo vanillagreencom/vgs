@@ -22,9 +22,17 @@ Singleton {
         return false;
     }
     readonly property bool shouldPauseCycling: fullscreenShowing || SessionService.locked
-    readonly property bool serverSchedulingAvailable: VGSBackendService.capabilities.includes("wallpaper")
+    readonly property bool serverSchedulingAvailable: VGSBackendService.has("wallpaper")
     property real lastCycleSeq: -1
     property var monitorProcesses: ({})
+
+    // A restarted backend holds no schedule and restarts its sequence.
+    onServerSchedulingAvailableChanged: {
+        lastCycleSeq = -1;
+        updateCyclingState();
+    }
+    // A binding's first value emits no change signal, so completion applies it.
+    Component.onCompleted: updateCyclingState()
 
     Connections {
         target: VGSBackendService
@@ -48,11 +56,6 @@ Singleton {
             } else {
                 cycleNextForMonitor(target);
             }
-        }
-
-        function onCapabilitiesReceived() {
-            lastCycleSeq = -1;
-            updateCyclingState();
         }
     }
 
