@@ -1443,6 +1443,7 @@ def load_theme_package(name: str) -> Dict[str, Any] | None:
     builtin_dir = builtin_themes_dir() / name
     user_dir = user_themes_dir() / name
     bp["pair"] = str(meta.get("pair") or "")
+    bp["contrastShortfalls"] = meta.get("contrastShortfalls") or []
     bp["package"] = True
     bp["builtin"] = builtin_dir.is_dir()
     bp["path"] = str(builtin_dir if builtin_dir.is_dir() else user_dir)
@@ -2570,6 +2571,11 @@ def materialize_theme_package(bp: Dict[str, Any], apps: Dict[str, str] | None = 
         "curatedPalette": palette_digest(
             palette_identity(parse_colors_toml_text(colors_toml), mode, ui_roles=ui_roles)),
     }
+    # A user overlay's theme.json masks the built-in one whole, so a list left
+    # out here stops lint from marking the shortfalls it names. A copy whose
+    # palette has moved keeps the list and lint reports each entry unmatched.
+    if bp.get("contrastShortfalls"):
+        meta["contrastShortfalls"] = bp["contrastShortfalls"]
     write_file(root / "colors.toml", colors_toml)
     write_overlay_toml(root, TERMINAL_COLORS_FILE, bp.get("terminalColors") or {}, user,
                        "No terminal slots: this overlay masks the built-in theme's.")
@@ -2650,7 +2656,11 @@ def blueprint_source(bp: Dict[str, Any]) -> str:
 
 def lint_blueprint(bp: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Contrast warnings for a theme palette. Reports, never rewrites —
-    the curated-theme counterpart of generated-theme contrast enforcement."""
+    the curated-theme counterpart of generated-theme contrast enforcement.
+
+    Every warning carries `known`: true when the package's `contrastShortfalls`
+    lists the same slot, measured ratio and floor, which is how a vendor port
+    that keeps its upstream colours names a shortfall it accepts."""
     pal = bp.get("palette", {})
     colors = [clean_hex(c, DEFAULT_COLORS[i] if i < len(DEFAULT_COLORS) else "#000000") for i, c in enumerate(pal.get("colors", []))]
     while len(colors) < 16:
@@ -2691,6 +2701,22 @@ def lint_blueprint(bp: Dict[str, Any]) -> List[Dict[str, Any]]:
         check(f"color0 ({ANSI_NAMES[0]})", terminal_black, bg, 7.0)
     for i in range(1, 16):
         check(f"color{i} ({ANSI_NAMES[i]})", colors[i], bg, 3.0)
+    for w in warnings:
+        w["known"] = False
+    # The raw slots are still judged; a listed entry only marks its warning. An
+    # entry that matches no measured warning is itself a warning, so a palette
+    # that moves cannot keep an excuse written for its old value.
+    shortfalls = bp.get("contrastShortfalls") or []
+    for entry in shortfalls if isinstance(shortfalls, list) else [shortfalls]:
+        match = next((w for w in warnings
+                      if isinstance(entry, dict) and "contrast" in w and not w["known"]
+                      and w["role"].split(" ", 1)[0] == entry.get("slot")
+                      and w["contrast"] == entry.get("ratio") and w["minimum"] == entry.get("floor")), None)
+        if match:
+            match["known"] = True
+        else:
+            warnings.append({"role": "contrastShortfalls", "known": False,
+                             "message": f"contrastShortfalls entry {json.dumps(entry)} matches no measured shortfall"})
     return warnings
 
 
@@ -7265,8 +7291,10 @@ def blueprint_from_current_theme(name: str | None = None, mode: str | None = Non
 
 def with_current_terminal_slots(bp: Dict[str, Any]) -> Dict[str, Any]:
     """Give a blueprint rebuilt from the applied theme's colours that theme's
-    terminal slots and declared UI roles, and its package's per-app overrides
-    through `with_current_app_overrides`.
+    terminal slots and declared UI roles, its package's `contrastShortfalls`, and
+    its package's per-app overrides through `with_current_app_overrides`. The
+    shortfall list comes from the package alone, since only a package's
+    theme.json declares one.
 
     Neither the shell's theme.json nor the palette inside theme-current.json
     holds them, so every rebuild from the current theme passes through here. A
@@ -7294,6 +7322,7 @@ def with_current_terminal_slots(bp: Dict[str, Any]) -> Dict[str, Any]:
         slots = slots or dict(package.get("terminalColors") or {})
         declared = declared or dict(package.get("uiRoles") or {})
     bp["terminalColors"] = slots
+    bp["contrastShortfalls"] = list((package or {}).get("contrastShortfalls") or [])
     # Declared roles answer from the same two sources under the same mode rule.
     # Without the carry a wallpaper change or a saved colour edit rebuilt the
     # theme without them and the save then deleted the package's own file. The
@@ -10432,16 +10461,24 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
         if not bp:
             eprint(f"Theme not found: {args.name or '(current)'}")
             return 1
-        warnings = lint_blueprint(bp)
-        payload = {"name": bp.get("name"), "source": blueprint_source(bp), "warnings": warnings, "count": len(warnings)}
+        results = lint_blueprint(bp)
+        warnings = [w for w in results if not w["known"]]
+        known = [w for w in results if w["known"]]
+        payload = {"name": bp.get("name"), "source": blueprint_source(bp), "warnings": warnings, "count": len(warnings),
+                   "known": known}
         if args.json:
             print(json.dumps(payload, indent=2))
-        elif warnings:
+            return 0
+        if warnings:
             print(f"{bp.get('name')} ({payload['source']}): {len(warnings)} warning(s)")
             for w in warnings:
                 print(f"  - {w['message']}")
         else:
             print(f"{bp.get('name')} ({payload['source']}): no warnings")
+        if known:
+            print(f"{len(known)} known upstream shortfall(s):")
+            for w in known:
+                print(f"  - {w['message']}")
         return 0
     if args.cmd == "migrate":
         if not args.name and not args.all:
