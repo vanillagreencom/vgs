@@ -8,14 +8,20 @@
 
 **Context**: A curated package can carry a palette (`colors.toml`), terminal slots (`terminal-colors.toml`), declared UI roles (`ui-roles.toml`) and curated app files under `apps/`. No rule said where their values come from. A Horizon port rendered its VS Code file from the generated template and derived tones for the tmux status bar and borders that Horizon never published, and the owner compared VS Code, tmux and the shell against the upstream Horizon palette and found them wrong.
 
-**Decision**: For a theme with an official upstream implementation, `colors.toml`, `terminal-colors.toml`, `ui-roles.toml` and every curated app file hold only values the upstream publishes.
+**Decision**: For a theme with an official upstream implementation, `colors.toml`, `terminal-colors.toml`, `ui-roles.toml` and every curated app file hold only values the upstream publishes. The rule governs colour values: a setting that names no colour, such as the icon theme name in `apps/icons.theme`, is outside it.
 
 - Each value maps to a role the way the upstream itself uses it. Where the upstream publishes a VS Code theme, that file decides which tone each surface, border and status element takes.
 - Formatting is free: key order, indentation, pretty-printing and the file's top-level theme name may change. Values may not.
 - A VGS-owned reconciliation is the only permitted difference, and `docs/architecture/theme.md` names each one. The VS Code terminal-slot overwrite, `augment_vscode_colors` in `bin/vshell-helper`, is one.
 - Where the upstream publishes no file for an app, the package ships none and the generated render stands. A hand-written file there would hold invented values.
 - Where no upstream value meets a lint floor, the package keeps the closest upstream value and names the shortfall in `theme.json` under `contrastShortfalls`, which `vshell theme lint` reports as known. VGS never substitutes a hex the upstream did not publish. `themes/thegreek/theme.json` shows the form.
-- `themes/THEMES-ATTRIBUTION.md` names, for each such package, the upstream palette file and the app files it was built from.
+- `themes/THEMES-ATTRIBUTION.md` names, for each package built under this decision, the upstream palette file and the app files it was built from.
+
+**Current state**: `horizon` and `horizon-light` are the packages built and attributed under this decision so far. VGS-318 audits the vendor ports, and the community imports listed in `themes/THEMES-ATTRIBUTION.md` are not yet audited. These departures on main are pending that audit, not permitted by this decision:
+
+- Each Horizon package's `apps/btop.theme`, mapped by hand from upstream palette values for an app the upstream publishes no file for.
+- The ANSI diff hues VGS-290 picked in the `terminal-colors.toml` of dark themes, such as `color2` in `themes/akane/terminal-colors.toml`.
+- The `apps/claude-light.json` files VGS-286 added to akane, archwave, frankenstein, moon-orbit, reddcs and vice-city.
 
 **Rationale**:
 
