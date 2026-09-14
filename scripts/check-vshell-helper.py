@@ -4488,6 +4488,44 @@ def test_theme_catalog_offers_a_builtin_theme_with_no_imagery():
     with_temp_home(scenario)
 
 
+def test_theme_catalog_wallpaper_add_keeps_the_download_offered():
+    """A wallpaper the user adds to a theme with no download is not the theme's imagery: the download stays offered and still lands."""
+    wallpaper = b"\xff\xd8\xff\xe0 demo wallpaper bytes\n"
+    blob = _theme_archive({"backgrounds/1-demo.jpg": wallpaper})
+
+    def scenario(tmp: Path):
+        builtin = tmp / "builtin"
+        (builtin / "demo").mkdir(parents=True)
+        (builtin / "demo" / "theme.json").write_text('{"name":"demo","mode":"dark","source":"curated"}\n')
+        (builtin / "demo" / "colors.toml").write_text('background = "#101010"\nforeground = "#eeeeee"\n')
+        archives = tmp / "releases"
+        _write_catalog(builtin, archives, "demo", blob)
+        own = tmp / "mine.jpg"
+        own.write_bytes(b"\xff\xd8 the user's own image\n")
+        original_builtin = helper.builtin_themes_dir
+        saved_base = os.environ.get("VGS_THEME_CATALOG_BASE_URL")
+        helper.builtin_themes_dir = lambda: builtin
+        os.environ["VGS_THEME_CATALOG_BASE_URL"] = "file://" + str(archives)
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                assert_equal(helper.cmd_theme(["wallpaper-add", str(own), "--theme", "demo"]), 0, "wallpaper-add exit status")
+            assert_equal(_catalog_entry("demo")["imageryInstalled"], False,
+                         "a wallpaper the user added leaves the theme's imagery reported not installed")
+            catalog = helper.load_theme_catalog()
+            base_urls, allow_local = helper.theme_catalog_base_urls(catalog)
+            result = helper.catalog_download_theme(helper.catalog_theme_entry(catalog, "demo"), base_urls, allow_local)
+            dest = helper.user_themes_dir() / "demo" / "backgrounds"
+            assert_equal((result["status"], (dest / "1-demo.jpg").read_bytes(), (dest / "mine.jpg").is_file(),
+                          _catalog_entry("demo")["imageryInstalled"]),
+                         ("installed", wallpaper, True, True),
+                         "the download places the archive beside the added wallpaper, then reports installed")
+        finally:
+            helper.builtin_themes_dir = original_builtin
+            _restore_env("VGS_THEME_CATALOG_BASE_URL", saved_base)
+
+    with_temp_home(scenario)
+
+
 def test_theme_catalog_update_keeps_the_users_wallpapers():
     """`theme catalog update` replaces only the wallpapers a download placed and the user left alone.
 
@@ -9229,6 +9267,43 @@ def test_wallpaper_and_save_keep_terminal_slots():
     with_temp_home(scenario)
 
 
+def test_wallpapers_all_lists_the_folder_then_every_theme():
+    """`theme wallpapers --all` is the All view's list: the folder's images first, then every
+    installed theme's set, each entry naming its source."""
+    def scenario(temp_home: Path):
+        builtin = temp_home / "builtin"
+        for name in ("beta", "alpha"):
+            package = builtin / name
+            (package / "backgrounds").mkdir(parents=True)
+            (package / "theme.json").write_text(json.dumps({"name": name, "mode": "dark", "source": "curated"}) + "\n")
+            (package / "colors.toml").write_text('background = "#101010"\nforeground = "#fafafa"\n')
+            (package / "backgrounds" / f"{name}.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+        folder = temp_home / "Pictures"
+        folder.mkdir()
+        (folder / "mine.JPG").write_bytes(b"\xff\xd8")
+        (folder / "notes.txt").write_text("not an image\n")
+        themes = [("alpha", "alpha.png"), ("beta", "beta.png")]
+        original_builtin = helper.builtin_themes_dir
+        helper.builtin_themes_dir = lambda: builtin
+        try:
+            # (folder argument, listed (source, file) pairs, why)
+            rows = [
+                (str(folder), [("folder", "mine.JPG")] + themes,
+                 "the folder's images come first under source folder, a non-image is skipped, then each theme by name"),
+                (str(temp_home / "absent"), themes, "a folder that does not exist lists no images and every theme still lists"),
+            ]
+            for folder_arg, expected, why in rows:
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    assert_equal(helper.cmd_theme(["wallpapers", "--all", "--folder", folder_arg, "--json"]), 0, f"{why}: exit status")
+                listed = [(entry["source"], entry["file"]) for entry in json.loads(out.getvalue())["wallpapers"]]
+                assert_equal(listed, expected, why)
+        finally:
+            helper.builtin_themes_dir = original_builtin
+
+    with_temp_home(scenario)
+
+
 # Every colour jolaleye/horizon-theme-vscode v2.0.2 publishes in its
 # `src/dark/globals.json` and `src/bright/globals.json` (syntax, ui and ansi).
 HORIZON_UPSTREAM_COLOURS = {
@@ -10478,6 +10553,7 @@ def main():
     test_dark_themes_draw_diffs_in_two_hues()
     test_horizon_packages_use_only_upstream_colours()
     test_wallpaper_and_save_keep_terminal_slots()
+    test_wallpapers_all_lists_the_folder_then_every_theme()
     test_declared_ui_roles_replace_the_derivation_without_a_contrast_rewrite()
     test_declared_ui_roles_move_with_a_restyle_and_survive_a_save()
     test_save_keeps_app_overrides()
@@ -10550,6 +10626,7 @@ def main():
     test_terminal_wait_blocks_until_the_terminal_exits()
     test_preferred_terminal_is_tried_first()
     test_theme_catalog_offers_a_builtin_theme_with_no_imagery()
+    test_theme_catalog_wallpaper_add_keeps_the_download_offered()
     test_theme_catalog_update_keeps_the_users_wallpapers()
     test_theme_catalog_download_verifies_its_archive()
     test_theme_asset_publisher()

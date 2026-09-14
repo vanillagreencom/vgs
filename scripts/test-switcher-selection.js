@@ -21,6 +21,7 @@ const SERVICE = path.join(repoRoot, "quickshell", "vshell", "Services", "VGSThem
 const WALLPAPER_TAB = path.join(repoRoot, "quickshell", "vshell", "Modules", "Settings", "WallpaperTab.qml");
 const THEMES_TAB = path.join(repoRoot, "quickshell", "vshell", "Modules", "Settings", "ThemesSettingsTab.qml");
 const CAROUSEL = path.join(SWITCHER, "SwitcherCarousel.qml");
+const SLICE = path.join(SWITCHER, "SwitcherSlice.qml");
 const SHORTCUT_ROW = path.join(repoRoot, "quickshell", "vshell", "Modules", "Settings", "Widgets", "SwitcherShortcutRow.qml");
 
 // Extracted code runs under qml-region process deadlines.
@@ -41,6 +42,7 @@ const serviceSource = read(SERVICE);
 const wallpaperTabSource = read(WALLPAPER_TAB);
 const themesTabSource = read(THEMES_TAB);
 const carouselSource = read(CAROUSEL);
+const sliceSource = read(SLICE);
 const shortcutRowSource = read(SHORTCUT_ROW);
 
 const MARKER = "SWITCHER SELECTION DECISION";
@@ -198,6 +200,7 @@ const sources = new Map([
     ["WallpaperTab.qml", wallpaperTabSource],
     ["ThemesSettingsTab.qml", themesTabSource],
     ["SwitcherCarousel.qml", carouselSource],
+    ["SwitcherSlice.qml", sliceSource],
     ["SwitcherShortcutRow.qml", shortcutRowSource]
 ]);
 
@@ -462,12 +465,23 @@ test("the switchers read the list failure from the read's own slot and the share
 
     // Keep retained-wallpaper wording in the service because both switcher and dash display that list.
     q("WallpaperSwitcherModal.qml").requires(wallpaperSource, "WallpaperSwitcherModal.qml", [
-        ["VGSThemeService.wallpapersLoadError",
-            "the failure detail must come from the read's own slot, not the shared lastError"],
-        ["staleNotice: VGSThemeService.wallpapersStaleNotice",
-            "one property owns the wording, or the switcher and the dash describe the same state differently", 1],
+        ["emptyText: VGSThemeService.emptyTextFor(root.source)",
+            "the empty text for either source comes from the service, beside the notice", 1],
+        ["staleNotice: VGSThemeService.staleNoticeFor(root.source)",
+            "one owner holds the wording for each source, or the switcher and the dash describe the same state differently", 1],
         [".filter(entry => !!entry.path)",
             "a pathless entry is the apply id as well as the image: setWallpaper refuses it and never answers", 1]
+    ]);
+    const svc = q("VGSThemeService.qml");
+    svc.requires(svc.body("emptyTextFor"), "emptyTextFor()", [
+        ['(wallpapersLoadError ? "\\n" + wallpapersLoadError : "")',
+            "the theme failure detail must come from the read's own slot, not the shared lastError", 1],
+        ['(allWallpapersLoadError ? "\\n" + allWallpapersLoadError : "")',
+            "and the All failure detail from its own", 1]
+    ]);
+    svc.requires(svc.body("staleNoticeFor"), "staleNoticeFor()", [
+        ["return wallpapersStaleNotice;", "the Theme view keeps the one retained-list notice", 1],
+        ["return allWallpapersLoadFailed ?", "and the All view's notice sits beside it", 1]
     ]);
 });
 test("the dash wallpaper tab shows the same stale notice", () => {
@@ -475,11 +489,11 @@ test("the dash wallpaper tab shows the same stale notice", () => {
     const tabSource = read(tabPath);
     const tab = qmlSource(tabSource, "WallpaperTab.qml");
     tab.requires(tabSource, "WallpaperTab.qml", [
-        ["text: VGSThemeService.wallpapersStaleNotice",
-            "the dash tab shows the SAME notice the switcher does: a retained list presented as the " +
-            "current theme's set is the failure mode round 3 closed on one surface and left open here", 1],
-        ["VGSThemeService.wallpapersLoadFailed",
-            "and an empty theme set after a FAILED read is not \"this theme has none\""]
+        ["text: VGSThemeService.staleNoticeFor(root.source)",
+            "the dash tab shows the SAME notice the switcher does, for either source: a retained list presented as the " +
+            "current set is the failure mode round 3 closed on one surface and left open here", 1],
+        ["text: VGSThemeService.emptyTextFor(root.source)",
+            "and an empty set after a FAILED read is not \"this theme has none\"", 1]
     ]);
 });
 
@@ -603,11 +617,11 @@ test("bare applyCompleted emissions are counted so a new operation must go throu
     const svc = q("VGSThemeService.qml");
     // Count bare applyCompleted emissions so added operations require explicit reporter coverage.
     // This count does not establish that every existing emission uses the tracked apply path.
-    const APPLY_COMPLETED_SITES = 44;
+    const APPLY_COMPLETED_SITES = 43;
     svc.requires(serviceSource, "VGSThemeService.qml", [
         ["applyCompleted(",
             `exactly ${APPLY_COMPLETED_SITES} mentions: one signal declaration, one emission inside ` +
-            "_finishApply, and 42 bare emissions across 19 operations that predate the correlated " +
+            "_finishApply, and 41 bare emissions across 19 operations that predate the correlated " +
             "signal. A NEW apply-like operation must emit through _finishApply and pass its request " +
             "id, not copy a neighbouring bare emission — that produces an operation a reporter can " +
             "start but whose reply never arrives. If you deliberately added or removed one, move " +
@@ -732,4 +746,41 @@ test("refreshWallpapers commits only the latest read, the failure branch include
     mustPrecedeIn(svcWallpapers, "refreshWallpapers()", /if \(readId !== root\._wallpapersReadSeq\)/,
         /wallpapersLoadFailed = true;/,
         "the generation check must come before ANY commit, including the failure branch");
+});
+
+test("refreshAllWallpapers commits only the latest read and a failed read keeps the list", () => {
+    const svc = q("VGSThemeService.qml");
+    const read = svc.body("refreshAllWallpapers");
+    svc.requires(read, "refreshAllWallpapers()", [
+        ["const readId = ++root._allWallpapersReadSeq;", "each read takes a generation token before dispatching", 1],
+        ["if (readId !== root._allWallpapersReadSeq) return;", "and a superseded read commits nothing", 1],
+        ["allWallpapers = ", "the list has one writer, the parsed success", 1]
+    ]);
+    mustPrecedeIn(read, "refreshAllWallpapers()", /if \(readId !== root\._allWallpapersReadSeq\)/,
+        /allWallpapersLoadFailed = true;/, "the generation check must come before any commit, the failure branch included");
+    mustPrecedeIn(read, "refreshAllWallpapers()", /if \(exitCode !== 0\)[\s\S]*?return;/, /allWallpapers = /,
+        "a failed command returns before the list writer, so the previous list stays");
+});
+
+test("the entry menu closes before the filter on Esc, on every list change, open and close, and needs a menu to open", () => {
+    const base = q("FullScreenSwitcher.qml");
+    base.requires(base.body("handleKey"), "handleKey()", [
+        ["if (root.menuItem) root.menuItem = null; else if (root.filterable && root.filterQuery)",
+            "Esc closes an open menu before it takes back the filter", 1]
+    ]);
+    mustPrecedeIn(base.body("handleKey"), "handleKey()", /root\.menuItem = null;/, /root\.updateFilter\(""\);/,
+        "the menu branch must come before the filter branch");
+    base.requires(base.body("onOpened"), "the base's per-open reset", [["root.menuItem = null;", "an open starts with no menu", 1]]);
+    base.requires(base.body("onDialogClosed"), "the base's per-close reset", [["root.menuItem = null;", "a close drops the menu", 1]]);
+    base.requires(handler("FullScreenSwitcher.qml", "onVisibleItemsChanged"), "onVisibleItemsChanged",
+        [["menuItem = null;", "a menu opened on the previous list must not act on this one", 1]]);
+    const context = handler("FullScreenSwitcher.qml", "onContextRequested");
+    base.requires(context, "onContextRequested", [["if (!root.itemMenu) return;", "a surface with no menu opens none", 1]]);
+    mustPrecedeIn(context, "onContextRequested", /if \(!root\.itemMenu\)/, /root\.menuItem = root\.visibleItems\[index\];/,
+        "the guard must come before the menu opens");
+    q("SwitcherSlice.qml").requires(sliceSource, "SwitcherSlice.qml", [
+        ["acceptedButtons: Qt.LeftButton | Qt.RightButton", "the slice hears the right button", 1],
+        ["onClicked: mouse => mouse.button === Qt.RightButton ? slice.contextClicked(mouse.x, mouse.y) : slice.clicked()",
+            "and a right-click asks for the menu while a left click keeps selecting", 1]
+    ]);
 });
