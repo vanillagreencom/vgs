@@ -577,6 +577,24 @@ Item {
         }
     }
 
+    ConfirmModal {
+        id: themeDownloadOffer
+    }
+
+    // The theme is already applied when this asks, so Not now has nothing to undo.
+    Connections {
+        target: VGSThemeCatalogService
+        function onDownloadOffered(name, size) {
+            themeDownloadOffer.showWithOptions({
+                title: I18n.tr("Download wallpapers?"),
+                message: I18n.tr("%1 is applied without its wallpapers. Download them (%2)?").arg(name).arg(VGSThemeCatalogService.formatSize(size)),
+                confirmText: I18n.tr("Download"),
+                cancelText: I18n.tr("Not now"),
+                onConfirm: () => VGSThemeCatalogService.install(name)
+            });
+        }
+    }
+
     LazyLoader {
         id: notificationCenterLoader
 

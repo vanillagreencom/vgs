@@ -168,68 +168,10 @@ FullScreenSwitcher {
     }
 
 
-    // A two-segment capsule. Clicking the inactive segment emits picked; the monitor scope and the source both use it.
-    component SegmentPill: Rectangle {
-        id: pill
-
-        property var labels: []
-        property int activeIndex: 0
-        signal picked(int index)
-
-        width: segments.width + Theme.spacingXXS * 2
-        height: segments.height + Theme.spacingXXS * 2
-        radius: height / 2
-        color: Theme.withAlpha(Theme.background, 0.45)
-        border.width: 1
-        border.color: Theme.withAlpha(Theme.surfaceText, 0.2)
-
-        // Consume clicks on the capsule's padding so near misses cannot fall through to click-away dismissal.
-        MouseArea {
-            anchors.fill: parent
-        }
-
-        Row {
-            id: segments
-            anchors.centerIn: parent
-
-            Repeater {
-                model: pill.labels
-
-                Rectangle {
-                    id: segment
-
-                    required property int index
-                    required property var modelData
-                    readonly property bool active: pill.activeIndex === segment.index
-
-                    width: segmentLabel.width + Theme.spacingM * 2
-                    height: segmentLabel.height + Theme.spacingXS * 2
-                    radius: height / 2
-                    color: segment.active ? Theme.withAlpha(Theme.surfaceText, 0.22) : "transparent"
-
-                    StyledText {
-                        id: segmentLabel
-                        anchors.centerIn: parent
-                        text: segment.modelData
-                        font.pixelSize: Theme.fontSizeLarge
-                        color: Theme.surfaceText
-                        opacity: segment.active ? 1 : 0.7
-                    }
-
-                    // Clicking selects the labeled segment; the active one is a no-op.
-                    MouseArea {
-                        anchors.fill: parent
-                        onClicked: if (!segment.active) pill.picked(segment.index)
-                    }
-                }
-            }
-        }
-    }
-
     Component {
         id: scopePill
 
-        SegmentPill {
+        SwitcherSegmentPill {
             labels: [I18n.tr("All monitors"), I18n.tr("This monitor")]
             activeIndex: root.applyToAllMonitors ? 0 : 1
             // Both segments flip through the one signal Tab drives.
@@ -240,7 +182,7 @@ FullScreenSwitcher {
     Component {
         id: sourcePill
 
-        SegmentPill {
+        SwitcherSegmentPill {
             labels: [I18n.tr("Theme"), I18n.tr("All")]
             activeIndex: root.source === "all" ? 1 : 0
             onPicked: index => {

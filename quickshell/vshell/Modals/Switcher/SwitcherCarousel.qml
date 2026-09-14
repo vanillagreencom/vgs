@@ -41,10 +41,10 @@ Item {
     // Build only the slices that the rail can display to limit decoded images.
     readonly property int slicesPerSide: Math.ceil(previewX / Math.max(1, itemStep)) + 1
 
-    // Cap slice decoding independently of display size; tall narrow crops would otherwise decode large images across the rail.
-    // The selected slot uses its own display-size budget.
-    readonly property int sliceDecodeWidth: 1536
-    readonly property int sliceDecodeHeight: 864
+    // Decode each slice at the size it is drawn on this display. Bound to the slice geometry, not to a delegate's
+    // width, which grows while a slice is selected and would re-decode a hidden image. The selected slot uses its own display-size budget.
+    readonly property int sliceDecodeWidth: Math.max(1, Math.round(carousel.sliceWidth * carousel.dpr))
+    readonly property int sliceDecodeHeight: Math.max(1, Math.round(carousel.sliceHeight * carousel.dpr))
 
     // Encode file-path segments so spaces, # and % remain valid without encoding directory separators. Paths.toFileUrl does not encode; do not substitute it.
     function fileUrl(path) {

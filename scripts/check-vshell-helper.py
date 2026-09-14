@@ -2254,20 +2254,22 @@ def test_lint_reports_listed_shortfalls_as_known():
     with_temp_home(scenario)
 
 
-def test_theme_list_falls_back_to_the_shipped_thumbnail():
-    """A theme with definitions and no preview.jpg reports its 480 px thumbnail.
+def test_theme_list_reports_the_preview_and_the_thumbnail_apart():
+    """`preview` is a full-size screenshot or empty, and the 480 px thumbnail is its own field.
 
-    Without this fallback such a theme reports no screenshot, and
-    VGSThemeService.generateMissingPreviews() renders it through a nested
-    compositor on the first open after a cold preview cache.
+    The full-screen switcher paints `preview` at full size and
+    VGSThemeService.generateMissingPreviews() renders every theme whose `preview`
+    is empty, so a thumbnail reported as the preview is painted blurred and never
+    rebuilt.
     """
     # name -> (has its own preview.jpg, extra theme.json fields, user overlay)
     packages = {
         "withshot": (True, {}, False),
         "noshot": (False, {}, False),
         "nothumb": (False, {}, False),
-        "restyled": (False, {"adjustments": {"brightness": 17}}, False),
-        "overlaid": (False, {}, True),
+        "restyled": (True, {"adjustments": {"brightness": 17}}, False),
+        "overlaid": (True, {}, True),
+        "rendered": (False, {}, False),
     }
 
     def scenario(temp_home: Path):
@@ -2294,29 +2296,93 @@ def test_theme_list_falls_back_to_the_shipped_thumbnail():
         original_builtin = helper.builtin_themes_dir
         helper.builtin_themes_dir = lambda: builtin
         try:
-            buffer = io.StringIO()
-            with contextlib.redirect_stdout(buffer):
-                status = helper.cmd_theme(["list", "--json"])
-            assert_equal(status, 0, "theme list --json exit status")
-            listed = {entry["name"]: entry["preview"]
-                      for entry in json.loads(buffer.getvalue())["blueprints"]}
+            previews = helper.theme_previews_dir()
+            previews.mkdir(parents=True)
+            rendered = helper.blueprint_preview_path(helper.find_theme("rendered"))
+            rendered.write_bytes(b"\x89PNG render\n")
+            orphan = previews / "rendered-000000000000.png"
+            orphan.write_bytes(b"\x89PNG stale render\n")
+            listed = _theme_list_entries()
         finally:
             helper.builtin_themes_dir = original_builtin
 
-        # A packaged screenshot wins; a theme without one falls back to the
-        # thumbnail beside it; a theme with neither reports none, which is what
-        # leaves the generator its own case. A restyled or overlaid theme no
-        # longer looks like either shipped screenshot, so it reports none too
-        # and the generator renders what the user is actually running.
-        for name, expected in (
-            ("withshot", str(builtin / "withshot" / helper.THEME_PREVIEW_FILE)),
-            ("noshot", str(thumbnails / "noshot.jpg")),
-            ("nothumb", ""),
-            ("restyled", ""),
-            ("overlaid", ""),
+        # A packaged screenshot is the preview; a matching cached render wins
+        # over having none. A restyled or overlaid theme no longer looks like
+        # its shipped screenshot, so it reports none and the generator renders
+        # what the user is running. Every theme with a shipped thumbnail reports
+        # it beside the preview, never in it.
+        for name, preview, thumbnail in (
+            ("withshot", str(builtin / "withshot" / helper.THEME_PREVIEW_FILE), str(thumbnails / "withshot.jpg")),
+            ("noshot", "", str(thumbnails / "noshot.jpg")),
+            ("nothumb", "", ""),
+            ("restyled", "", str(thumbnails / "restyled.jpg")),
+            ("overlaid", "", str(thumbnails / "overlaid.jpg")),
+            ("rendered", str(rendered), str(thumbnails / "rendered.jpg")),
         ):
-            assert_equal(listed.get(name), expected,
-                         f"theme list preview for {name}")
+            assert_equal((listed[name]["preview"], listed[name]["thumbnail"]), (preview, thumbnail),
+                         f"theme list preview and thumbnail for {name}")
+
+        # A list prunes the renders no listed theme's current hash names.
+        assert_equal((rendered.is_file(), orphan.exists()), (True, False),
+                     "theme list keeps the render a theme matches and removes an orphaned one")
+
+    with_temp_home(scenario)
+
+
+def test_theme_list_reports_installed_wallpapers_and_the_star():
+    """`installed` says wallpapers are on disk, and a star is stored without reading as an edit.
+
+    The switcher offers a download for a theme that is not installed, and lists
+    starred themes under Starred. A star that read as an edit would raise the
+    modified badge and drop the theme's shipped screenshot.
+    """
+    def scenario(temp_home: Path):
+        builtin = temp_home / "builtin"
+        for name, background in (("bare", False), ("pictured", True)):
+            package = builtin / name
+            package.mkdir(parents=True)
+            (package / "theme.json").write_text(json.dumps({"name": name, "mode": "dark", "source": "curated"}) + "\n")
+            (package / "colors.toml").write_text('background = "#101010"\nforeground = "#eeeeee"\n')
+            (package / helper.THEME_PREVIEW_FILE).write_bytes(b"\xff\xd8\xff screenshot\n")
+            if background:
+                (package / "backgrounds").mkdir()
+                (package / "backgrounds" / "1.jpg").write_bytes(b"\xff\xd8\xff wallpaper\n")
+        downloaded = helper.user_themes_dir() / "bare" / "backgrounds"
+
+        original_builtin = helper.builtin_themes_dir
+        helper.builtin_themes_dir = lambda: builtin
+        try:
+            listed = _theme_list_entries()
+            assert_equal((listed["bare"]["installed"], listed["pictured"]["installed"]), (False, True),
+                         "a definition-only theme is not installed and a theme with wallpapers is")
+            downloaded.mkdir(parents=True)
+            (downloaded / "1.jpg").write_bytes(b"\xff\xd8\xff downloaded\n")
+            assert_equal(_theme_list_entries()["bare"]["installed"], False,
+                         "a wallpaper copied into the user directory, with no download marker, does not install the theme")
+            shutil.rmtree(helper.user_themes_dir() / "bare")
+
+            overlay = helper.user_themes_dir() / "pictured"
+            shipped = str(builtin / "pictured" / helper.THEME_PREVIEW_FILE)
+            for verb, starred, overlay_files in (("star", True, ["theme.json"]), ("unstar", False, None)):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    assert_equal(helper.cmd_theme([verb, "pictured", "--json"]), 0, f"theme {verb} exit status")
+                entry = _theme_list_entries()["pictured"]
+                assert_equal((entry["starred"], entry["modified"], entry["preview"]), (starred, False, shipped),
+                             f"theme {verb} sets the star without reading as an edit")
+                assert_equal(_user_files(overlay) if overlay.is_dir() else None, overlay_files,
+                             f"theme {verb} leaves only the star in the overlay")
+
+            # Revert drops an edit and keeps the star.
+            with contextlib.redirect_stdout(io.StringIO()):
+                helper.cmd_theme(["star", "pictured"])
+            (overlay / "app-colors.toml").write_text('[btop]\nfg = "#ffffff"\n')
+            assert_equal(_theme_list_entries()["pictured"]["modified"], True, "an edit beside a star reads as an edit")
+            with contextlib.redirect_stdout(io.StringIO()):
+                assert_equal(helper.cmd_theme(["revert", "pictured"]), 0, "theme revert exit status")
+            entry = _theme_list_entries()["pictured"]
+            assert_equal((entry["starred"], entry["modified"]), (True, False), "revert keeps the star and drops the edit")
+        finally:
+            helper.builtin_themes_dir = original_builtin
 
     with_temp_home(scenario)
 
@@ -4372,8 +4438,8 @@ def test_theme_catalog_offers_a_builtin_theme_with_no_imagery():
             helper.catalog_download_theme(entry, base_urls, allow_local, force=True)
 
             listed = _theme_list_entries()["demo"]
-            assert_equal(listed["preview"], str(preview),
-                         "an untouched download keeps the preview the package ships")
+            assert_equal((listed["preview"], listed["installed"]), (str(preview), True),
+                         "an untouched download keeps the preview the package ships and installs the theme")
             # The settings tabs hide the modified badge and the Revert control on
             # modified && !catalogPristine.
             assert_equal((listed.get("modified"), listed.get("catalogPristine"), listed.get("catalogOwned")),
@@ -4670,14 +4736,13 @@ def test_theme_catalog_download_verifies_its_archive():
             entry = helper.catalog_theme_entry(catalog, "demo")
             cache = helper.theme_asset_cache_dir()
 
-            # An uninstalled theme paints from the shipped thumbnail, with no
-            # network call and nothing downloaded yet.
+            # A thumbnail is never reported as a preview, with or without wallpapers.
             thumbnail = builtin / "thumbnails" / "demo.jpg"
             thumbnail.parent.mkdir(parents=True)
             thumbnail.write_bytes(b"\xff\xd8\xff thumbnail bytes\n")
             before = _catalog_entry("demo")
-            assert_equal((before["imageryInstalled"], before["preview"]), (False, str(thumbnail)),
-                         "a theme with no preview and no wallpapers paints from its shipped thumbnail")
+            assert_equal((before["imageryInstalled"], before["preview"]), (False, ""),
+                         "a theme with no preview.jpg and no wallpapers reports no preview")
 
             result = helper.catalog_download_theme(entry, base_urls, allow_local)
             assert_equal(result["status"], "installed", "catalog download status")
@@ -10581,7 +10646,8 @@ def main():
     test_theme_init_applies_only_without_state()
     test_lint_checks_color0_in_light_mode_only()
     test_lint_reports_listed_shortfalls_as_known()
-    test_theme_list_falls_back_to_the_shipped_thumbnail()
+    test_theme_list_reports_the_preview_and_the_thumbnail_apart()
+    test_theme_list_reports_installed_wallpapers_and_the_star()
     test_hyprland_preview_native_lua()
     test_preview_stage_retires_its_window_rule()
     test_theme_preview_stop_signal_tears_down_its_capture()

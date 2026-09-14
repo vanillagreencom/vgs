@@ -311,6 +311,19 @@ Singleton {
         });
     }
 
+    // The star is stored in the theme's overlay by the helper; the list re-read shows it.
+    function setStarred(name, starred) {
+        if (!name)
+            return;
+        _run("vgs-theme-star", ["theme", starred ? "star" : "unstar", name, "--json"], function(output, exitCode, stderr) {
+            if (exitCode !== 0) {
+                ToastService.showError(I18n.tr("VGS theme error"), stderr || output || "Starring failed");
+                return;
+            }
+            refreshBlueprints();
+        });
+    }
+
     function deleteTheme(name) {
         if (!name)
             return;
@@ -718,6 +731,9 @@ Singleton {
                 // The wallpaper set is theme-scoped: without this, every surface
                 // reading `themeWallpapers` keeps the previous theme's list.
                 refreshWallpapers();
+                // Offered only after the colours landed, so the offer never holds up the apply.
+                const listed = (blueprints || []).find(bp => bp.name === appliedName);
+                VGSThemeCatalogService.offerDownload(appliedName, listed ? listed.installed : undefined);
                 message = lastMessage;
             } catch (e) {
                 _finishApply(requestId, false, "Theme applied but the shell could not finish updating: " + e);

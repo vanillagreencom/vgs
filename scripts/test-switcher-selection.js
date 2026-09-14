@@ -23,6 +23,8 @@ const THEMES_TAB = path.join(repoRoot, "quickshell", "vshell", "Modules", "Setti
 const CAROUSEL = path.join(SWITCHER, "SwitcherCarousel.qml");
 const SLICE = path.join(SWITCHER, "SwitcherSlice.qml");
 const SHORTCUT_ROW = path.join(repoRoot, "quickshell", "vshell", "Modules", "Settings", "Widgets", "SwitcherShortcutRow.qml");
+const CATALOG_SERVICE = path.join(repoRoot, "quickshell", "vshell", "Services", "VGSThemeCatalogService.qml");
+const SHELL_ROOT = path.join(repoRoot, "quickshell", "vshell", "VGS.qml");
 
 // Extracted code runs under qml-region process deadlines.
 const { evaluateMarked, regionOf, guardChild } = require("./lib/qml-region.js");
@@ -44,21 +46,47 @@ const themesTabSource = read(THEMES_TAB);
 const carouselSource = read(CAROUSEL);
 const sliceSource = read(SLICE);
 const shortcutRowSource = read(SHORTCUT_ROW);
+const catalogSource = read(CATALOG_SERVICE);
+const shellRootSource = read(SHELL_ROOT);
 
 const MARKER = "SWITCHER SELECTION DECISION";
+const OFFER_MARKER = "DOWNLOAD OFFER DECISION";
 
 const sel = evaluateMarked(baseSource, MARKER, [
     "wrapIndex", "clampIndex", "seedIndex", "shouldReseed", "enterOutcome",
     "latchesIntent", "navIndex", "wheelSteps", "preserveIndex"
 ], "FullScreenSwitcher.qml");
 
+const offer = evaluateMarked(catalogSource, OFFER_MARKER, ["downloadOffer"], "VGSThemeCatalogService.qml");
+
 // Keep extracted decisions independent of QML state.
-test("the marked decision region stays plain JavaScript", () => {
-    const region = qmlSource.stripComments(regionOf(baseSource, MARKER, "FullScreenSwitcher.qml"));
-    for (const forbidden of ["root.", "Theme.", "I18n.", "Qt."]) {
-        assert.ok(!region.includes(forbidden),
-            `the ${MARKER} block must not reference ${forbidden} — it has to stay plain ` +
-            "JavaScript, or the extraction is testing a different program");
+test("the marked decision regions stay plain JavaScript", () => {
+    for (const [source, marker, file] of [
+        [baseSource, MARKER, "FullScreenSwitcher.qml"],
+        [catalogSource, OFFER_MARKER, "VGSThemeCatalogService.qml"]
+    ]) {
+        const region = qmlSource.stripComments(regionOf(source, marker, file));
+        for (const forbidden of ["root.", "Theme.", "I18n.", "Qt."]) {
+            assert.ok(!region.includes(forbidden),
+                `${file}: the ${marker} block must not reference ${forbidden} — it has to stay plain ` +
+                "JavaScript, or the extraction is testing a different program");
+        }
+    }
+});
+
+test("downloadOffer offers the download only for a catalogued theme with no wallpapers, while online", () => {
+    const missing = { name: "demo", imageryInstalled: false, imagerySize: 4096 };
+    for (const [entry, online, pending, expected, why] of [
+        [missing, true, false, "offer", "an applied theme with no wallpapers on disk and an archive to fetch is offered"],
+        [{ ...missing, imageryInstalled: true }, true, false, "none", "a theme whose wallpapers are on disk is not offered"],
+        [{ name: "demo", imagerySize: 4096 }, true, false, "none",
+            "an entry that does not say the wallpapers are missing is not offered: only an explicit false offers"],
+        [null, true, false, "none", "a theme the catalog does not list has nothing to download"],
+        [{ ...missing, imagerySize: 0 }, true, false, "none", "an entry with no archive size has no size to offer"],
+        [missing, true, true, "none", "a download already running is not offered twice"],
+        [missing, false, false, "none", "offline behaves as Not now"]
+    ]) {
+        assert.equal(offer.downloadOffer(entry, online, pending), expected, why);
     }
 });
 
@@ -201,7 +229,9 @@ const sources = new Map([
     ["ThemesSettingsTab.qml", themesTabSource],
     ["SwitcherCarousel.qml", carouselSource],
     ["SwitcherSlice.qml", sliceSource],
-    ["SwitcherShortcutRow.qml", shortcutRowSource]
+    ["SwitcherShortcutRow.qml", shortcutRowSource],
+    ["VGSThemeCatalogService.qml", catalogSource],
+    ["VGS.qml", shellRootSource]
 ]);
 
 const readers = new Map();
@@ -630,10 +660,48 @@ test("bare applyCompleted emissions are counted so a new operation must go throu
     ]);
 });
 
-test("generateMissingPreviews releases its guard and a failed preview probe does not flag the list", () => {
+test("the download offer follows a successful apply and Not now leaves the theme applied", () => {
+    const svc = q("VGSThemeService.qml");
+    const apply = svc.body("applyBlueprint");
+    svc.requires(apply, "applyBlueprint()", [
+        ["VGSThemeCatalogService.offerDownload(appliedName, listed ? listed.installed : undefined);",
+            "every successful apply asks, with the theme list's installed answer", 1]
+    ]);
+    mustPrecedeIn(apply, "applyBlueprint()", /if \(exitCode !== 0\)/, /offerDownload\(/,
+        "the offer is made inside the apply's completion, after a failed apply has returned, so it never runs before the colours land");
+    mustPrecedeIn(apply, "applyBlueprint()", /_persistAppliedTheme\(appliedName\);/, /offerDownload\(/,
+        "the applied theme is recorded before the offer, so the colour apply does not wait on it");
+
+    const catalog = q("VGSThemeCatalogService.qml");
+    const offerBody = catalog.body("offerDownload");
+    catalog.requires(offerBody, "offerDownload()", [
+        ["if (!name || installed !== false) return;",
+            "a theme the list reports installed costs no catalog read", 1],
+        ['if (downloadOffer(entry, online, isPending(name)) === "offer") downloadOffered(name, entry.imagerySize);',
+            "the dialog is raised on the extracted decision, with the archive size", 1]
+    ]);
+    mustPrecedeIn(offerBody, "offerDownload()", /entries = JSON\.parse/, /downloadOffer\(/,
+        "the decision reads the catalog read made after the apply, so a finished download is not offered again");
+
+    const shell = q("VGS.qml");
+    const offered = shell.body("onDownloadOffered");
+    shell.requires(offered, "onDownloadOffered", [
+        ['cancelText: I18n.tr("Not now")', "the dialog's second choice is Not now", 1],
+        ["onConfirm: () => VGSThemeCatalogService.install(name)", "Download fetches the applied theme's wallpapers", 1]
+    ]);
+    assert.doesNotMatch(qmlSource.stripComments(offered), /onCancel|applyBlueprint|revert/,
+        "VGS.qml: Not now does nothing, so the theme stays applied with its colours");
+});
+
+test("generateMissingPreviews releases its guard, keys on the full-size preview, and a failed preview probe does not flag the list", () => {
     const svc = q("VGSThemeService.qml");
     svc.requires(svc.body("generateMissingPreviews"), "generateMissingPreviews()",
-        [["previewsGenerating = false;", "the preview-check branch must still release its single-flight guard"]]);
+        [["previewsGenerating = false;", "the preview-check branch must still release its single-flight guard"],
+        ["if (!bps.some(bp => !bp.preview))",
+            "the generator runs for every theme with no full-size preview; the helper reports the thumbnail apart, so a " +
+            "theme with only a thumbnail is rendered instead of skipped", 1]]);
+    assert.doesNotMatch(qmlSource.stripComments(svc.body("generateMissingPreviews")), /thumbnail/,
+        "VGSThemeService.qml: a thumbnail must not count as a preview for the generator");
     {
         const check = body("VGSThemeService.qml").split('"vgs-theme-preview-check"')[1] || "";
         const branch = check.slice(0, check.indexOf("blueprints = bps;"));
@@ -691,7 +759,12 @@ test("the carousel releases sliver sources outside the band and decodes the orig
         ["imageSource: slice.isSelected ? carousel.urlFor(slice.index) : \"\"",
             "the SELECTED slot reads urlFor — the ORIGINAL — never the thumbnail. The rail's " +
             "thumbnails are the sliver decode budget, so routing the full-size slot through them " +
-            "would cap the one image actually shown at 1536x864 and lose quality the user can see", 1],
+            "would cap the one image actually shown at a sliver's size and lose quality the user can see", 1],
+        ["readonly property int sliceDecodeWidth: Math.max(1, Math.round(carousel.sliceWidth * carousel.dpr))",
+            "a sliver decodes at the width it is drawn on this display, bound to the slice geometry " +
+            "rather than a delegate that grows while selected", 1],
+        ["readonly property int sliceDecodeHeight: Math.max(1, Math.round(carousel.sliceHeight * carousel.dpr))",
+            "and at the height it is drawn", 1],
         ["return carousel.fileUrl(entry.thumb || entry.image);",
             "an entry with no thumbnail falls back to its source. A cold, pruned or unwritable " +
             "cache must degrade to the pre-cache behaviour — slower — never to an empty tile", 1]

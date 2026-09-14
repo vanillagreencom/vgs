@@ -4,13 +4,16 @@ import QtQuick
 import qs.Common
 import qs.Services
 
-// Switch installed themes from VGSThemeService.blueprints, including user-generated themes.
-// The download catalog is not the installed-theme list.
+// Switch themes from VGSThemeService.blueprints, including user-generated themes.
+// Every theme is listed; the pill narrows the list to starred themes.
 FullScreenSwitcher {
     id: root
 
     filterable: true
     layerNamespace: "vshell:theme-switcher"
+
+    // Kept across opens: Starred is a standing choice of which themes to browse, not an apply target.
+    property bool starredOnly: false
 
     // Prioritize filter misses when entries are loaded. Otherwise use the blueprint read's own error, not the shared command error slot.
     emptyText: {
@@ -18,6 +21,8 @@ FullScreenSwitcher {
             return I18n.tr("No themes match");
         if (VGSThemeService.blueprintsLoadFailed)
             return I18n.tr("Could not read the installed themes") + (VGSThemeService.blueprintsLoadError ? "\n" + VGSThemeService.blueprintsLoadError : "");
+        if (root.starredOnly && (VGSThemeService.blueprints || []).length > 0)
+            return I18n.tr("No starred themes. Star one from the Themes tab in the Dash.");
         return I18n.tr("No themes installed");
     }
 
@@ -30,16 +35,30 @@ FullScreenSwitcher {
     // Gate on active applies; service busy also counts unrelated work.
     canApply: !applyReporter.anyApplyInFlight
 
-    items: (VGSThemeService.blueprints || []).filter(bp => !!bp.name).map(bp => ({
-                image: bp.preview || "",
-                label: bp.name,
-                key: bp.name
-            }))
+    // BEGIN THEME LIST DECISION
+    // Keep this region free of root., Theme., I18n. and Qt. references: scripts/test-switcher-scope.js extracts and executes it.
+
+    // The carousel entries for a theme list. The full-size preview is what the
+    // selected frame paints; the 480 px thumbnail stands in only while a theme
+    // has no preview yet, and generateMissingPreviews() renders one for it.
+    function themeItems(blueprints, starredOnly) {
+        return (blueprints || []).filter(bp => !!bp.name && (!starredOnly || bp.starred === true)).map(bp => ({
+                    image: bp.preview || bp.thumbnail || "",
+                    label: bp.name,
+                    key: bp.name
+                }));
+    }
+    // END THEME LIST DECISION
+
+    items: root.themeItems(VGSThemeService.blueprints, root.starredOnly)
+
+    scopeToggle: starPill
+    onScopeFlipRequested: root.starredOnly = !root.starredOnly
 
     function show() {
         VGSThemeService.refresh();
-        // Generated themes have no committed preview.jpg; render the missing
-        // ones in the background so the switcher is not a run of blank frames.
+        // Render every theme with no full-size preview in the background so the
+        // switcher is not a run of blank or placeholder frames.
         VGSThemeService.generateMissingPreviews();
         open();
     }
@@ -50,4 +69,14 @@ FullScreenSwitcher {
     }
 
     onApplied: item => applyReporter.track(VGSThemeService.applyBlueprint(item.key))
+
+    Component {
+        id: starPill
+
+        SwitcherSegmentPill {
+            labels: [I18n.tr("All"), I18n.tr("Starred")]
+            activeIndex: root.starredOnly ? 1 : 0
+            onPicked: root.scopeFlipRequested()
+        }
+    }
 }
