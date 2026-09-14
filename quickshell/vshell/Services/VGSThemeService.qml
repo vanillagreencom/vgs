@@ -238,12 +238,23 @@ Singleton {
     }
 
     // Hand one apply to the helper and hold the slot until its callback answers.
+    // The one place a launch can fail, and it always answers the request it took:
+    // the slot is already this request's when `_run` runs, so finishing it here
+    // frees the slot, clears its `_applyInFlight` token and starts the next
+    // waiter. A request that holds the slot with nothing to answer it is
+    // therefore unrepresentable, and a run of failing launches empties the queue
+    // instead of parking it. Every apply reaches the helper through here, the
+    // free-slot path included, so there is one recovery and not one per caller.
     // An EMPTY Proc id makes Proc mint a random, self-cleaning id, so every apply
     // runs its own process into one `_finishApply`; a unique NAMED id would leak
     // a debouncer entry and Timer, reaped only for a random id.
     function _dispatchApply(requestId, args, callback) {
         _applyDispatched = requestId;
-        _run(requestId, args, callback, undefined, false, "");
+        try {
+            _run(requestId, args, callback, undefined, false, "");
+        } catch (e) {
+            _finishApply(requestId, false, "Could not start the theme helper: " + e);
+        }
     }
 
     function refresh() {

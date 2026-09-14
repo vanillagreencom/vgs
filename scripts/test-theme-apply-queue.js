@@ -99,6 +99,34 @@ test("one apply reaches the helper at a time, and the rest follow in request ord
     assert.deepEqual(svc.root._applyInFlight, {}, "and every request has been answered");
 });
 
+test("a launch that throws answers its own request and keeps the queue moving", () => {
+    const svc = serviceUnderTest();
+    const announced = [];
+    svc.root.applyFinished = (requestId, success) => announced.push([requestId, success]);
+    svc.begin("first", ["theme", "apply", "a"]);
+    svc.begin("second", ["theme", "apply", "b"]);
+    // A third waiter is what separates answering the failed launch from draining
+    // past it: the launch site owns the slot when it fails, so finishing there
+    // frees it and starts this one. A launch site that took the slot only after
+    // a successful launch would hold no slot to free and leave this one waiting.
+    svc.begin("third", ["theme", "apply", "c"]);
+    // Proc creates a Timer per launch and connects to it; a null object there
+    // throws out of the launch.
+    svc.root._run = () => {
+        throw new Error("Proc could not create the timer");
+    };
+    svc.answer("first");
+    assert.deepEqual(announced, [["third", false], ["second", false], ["first", true]],
+        "each request is answered where it failed, innermost first, so no caller is left waiting");
+    assert.equal(svc.root._applyDispatched, "",
+        "the slot is free, or a request that never launched keeps it for the session");
+    assert.deepEqual(svc.root._applyQueue, [],
+        "and a run of failing launches empties the queue instead of parking it");
+    assert.deepEqual(svc.root._applyInFlight, {},
+        "with no token left booked, or applyInFlight pins true and both switchers " +
+        "refuse every Enter while the Clear Wallpaper button stays disabled");
+});
+
 test("a completion handler that throws still leaves the next apply running", () => {
     const svc = serviceUnderTest(() => {
         throw new Error("a settings tab handler threw");
