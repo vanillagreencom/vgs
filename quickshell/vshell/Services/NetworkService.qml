@@ -108,22 +108,30 @@ Singleton {
 
     function applyActiveService() {
         const previous = _appliedService;
-        if (previous === activeService)
-            return;
         _appliedService = activeService;
-        log.info("Using", backendPath ? "NetworkBackendService" : "LegacyNetworkService");
-        if (usingLegacy)
-            LegacyNetworkService.activate();
-        // Open views keep their references across a switch; move them so
-        // auto-scan runs on the service that now answers.
+        log.info("Using", activeService === LegacyNetworkService ? "LegacyNetworkService" : "NetworkBackendService");
+        switchActiveService(previous, activeService, LegacyNetworkService);
+    }
+
+    // BEGIN ACTIVE SERVICE SWITCH
+    // scripts/test-backend-capabilities.js evaluates the code between these markers in Node; every input is an argument.
+    // Decide from the services handed in: sibling bindings on backendPath
+    // update in no guaranteed order. Open views keep their references across
+    // a switch; move them so auto-scan runs on the service that now answers.
+    function switchActiveService(previous, next, legacy) {
+        if (previous === next)
+            return;
+        if (next === legacy)
+            legacy.activate();
         const refs = previous ? previous.refCount : 0;
         for (let i = 0; i < refs; i++) {
             previous.removeRef();
-            activeService.addRef();
+            next.addRef();
         }
-        if (previous === LegacyNetworkService)
-            LegacyNetworkService.deactivate();
+        if (previous === legacy)
+            legacy.deactivate();
     }
+    // END ACTIVE SERVICE SWITCH
 
     Connections {
         target: root.activeService

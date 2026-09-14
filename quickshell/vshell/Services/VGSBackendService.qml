@@ -32,7 +32,8 @@ Singleton {
     // Capability presence is state, not an announcement: has(name) answers from
     // the live connection and the advertised inventory, so a singleton built
     // after the backend connected reads the same answer as one built before.
-    // Consumers bind to it. The backend may be connected while advertising only
+    // New and converted consumers bind to it; some readers of capabilities are
+    // not yet converted. The backend may be connected while advertising only
     // a subset of services (e.g. "core"), so UI must not gate a feature on
     // isConnected or backendAvailable alone.
     readonly property var capabilitySet: capabilitySetOf(isConnected, capabilities)

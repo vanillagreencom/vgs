@@ -365,7 +365,13 @@ Singleton {
     // success, so the reply is only used for error reporting.
     function sendAction(method, params, callback) {
         if (!available) {
-            root.log.warn(method + " ignored: cloudsync capability unavailable");
+            const error = "cloudsync capability unavailable";
+            root.log.warn(method + " ignored: " + error);
+            ToastService.showError(I18n.tr("Cloud sync action failed", "Toast shown when a cloud sync write action is rejected"), error);
+            if (callback)
+                callback({
+                    "error": error
+                });
             return;
         }
         VGSBackendService.sendRequest(method, params, response => {

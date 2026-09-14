@@ -432,17 +432,11 @@ Singleton {
 
         function onLoginctlLockIntegrationChanged() {
             if (SettingsData.loginctlLockIntegration) {
-                if (loginctlAvailable) {
-                    if (!stateInitialized) {
-                        stateInitialized = true;
-                        getLoginctlState();
-                        syncLockBeforeSuspend();
-                    }
-                }
+                syncLoginctl();
             } else {
                 stateInitialized = false;
+                syncSleepInhibitor();
             }
-            syncSleepInhibitor();
         }
 
         function onLockBeforeSuspendChanged() {
