@@ -44,6 +44,11 @@ while IFS= read -r -d '' file; do
   [[ "$(basename "$file")" == "vshell-asdcontrol" ]] && continue
   install -Dm755 "$file" "$lib/bin/$(basename "$file")"
 done < <(find "$root/bin" -maxdepth 1 -type f -print0)
+# The helper stub imports its body from these modules, and a user cannot write
+# __pycache__ under the install tree, so without this every call recompiles
+# them. A checked-hash cache stays valid when a packager resets file times, and
+# -s/-p record the installed path rather than DESTDIR.
+python3 -m compileall -q -l --invalidation-mode checked-hash -s "$dest" -p / "$lib/bin"
 install -Dm644 "$root/README.md" "$root/LICENSE" "$root/VERSION" -t "$lib"
 install -Dm755 "${VGS_BACKEND_BINARY:?set VGS_BACKEND_BINARY}" "$lib/bin/vshell-backend"
 if [[ -n "${VGS_ASDCONTROL_BINARY:-}" ]]; then

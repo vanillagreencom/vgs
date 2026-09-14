@@ -12,7 +12,7 @@
 
 - Each value maps to a role the way the upstream itself uses it. Where the upstream publishes a VS Code theme, that file decides which tone each surface, border and status element takes.
 - Formatting is free: key order, indentation, pretty-printing and the file's top-level theme name may change. Values may not.
-- A VGS-owned reconciliation is the only permitted difference, and `docs/architecture/theme.md` names each one. The VS Code terminal-slot overwrite, `augment_vscode_colors` in `bin/vshell-helper`, is one.
+- A VGS-owned reconciliation is the only permitted difference, and `docs/architecture/theme.md` names each one. The VS Code terminal-slot overwrite, `augment_vscode_colors` in `bin/vshell_helper.py`, is one.
 - Where the upstream publishes no file for an app, the package ships none and the generated render stands. A hand-written file there would hold invented values.
 - Where no upstream value meets a lint floor, the package keeps the closest upstream value and names the shortfall in `theme.json` under `contrastShortfalls`, which `vshell theme lint` reports as known. VGS never substitutes a hex the upstream did not publish. `themes/thegreek/theme.json` shows the form.
 - `themes/THEMES-ATTRIBUTION.md` names, for each package built under this decision, the upstream palette file and the app files it was built from.

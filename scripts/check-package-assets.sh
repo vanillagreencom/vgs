@@ -53,6 +53,27 @@ test -x "$core/usr/lib/vshell/bin/vshell-backend"
 # bin/vshell-helper is a stub that imports the helper body from the module beside it.
 test -x "$core/usr/lib/vshell/bin/vshell-helper"
 test -f "$core/usr/lib/vshell/bin/vshell_helper.py"
+# A user cannot write the bytecode cache under the install tree, so the install
+# compiles it. It must be checked-hash, which survives a packager's reset file
+# times, and record the installed path, not DESTDIR.
+python3 - "$core" <<'PY'
+import importlib.util
+import marshal
+import sys
+from pathlib import Path
+
+installed = "/usr/lib/vshell/bin/vshell_helper.py"
+cache = Path(importlib.util.cache_from_source(sys.argv[1] + installed))
+if not cache.is_file():
+    raise SystemExit(f"helper-bytecode-missing {cache}\npackaging/install-system.sh did not compile the installed helper module")
+data = cache.read_bytes()
+flags = int.from_bytes(data[4:8], "little")
+if flags != 0b11:
+    raise SystemExit(f"helper-bytecode-not-checked-hash flags={flags}\na timestamp cache goes stale when a packager resets file times")
+recorded = marshal.loads(data[16:]).co_filename
+if recorded != installed:
+    raise SystemExit(f"helper-bytecode-path {recorded}\nthe cache records a build path instead of the installed module")
+PY
 # The screensaver needs packaged art because it cannot regenerate data into /usr.
 test -s "$core/usr/lib/vshell/config/vshell/branding/screensaver.txt"
 # Installs need a thumbnail for every catalogued theme, for the surfaces that

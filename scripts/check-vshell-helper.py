@@ -2821,18 +2821,23 @@ def test_helper_import_loads_no_image_or_http_stack():
 
 
 def test_helper_entrypoint_runs_the_helper():
-    """The path a helper re-runs itself through reaches main.
+    """Both the stub and the module reach main when run as a script.
 
-    The helper module has no `__main__` block, so running the module itself exits 0
-    having done nothing, and a sudo re-exec through it would report success.
+    A run that loads the code and exits 0 would let a sudo re-exec report success
+    having changed nothing, whichever of the two paths a caller spawns.
     """
-    with tempfile.TemporaryDirectory() as home:
-        result = subprocess.run(
-            [sys.executable, str(helper.helper_entrypoint()), "no-such-command"],
-            text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
-            env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": home},
-        )
-    assert_equal(result.returncode, 2, f"the helper entrypoint refuses an unknown command: {result.stderr}")
+    rows = (
+        ("stub", helper.helper_entrypoint()),
+        ("module", HELPER_PATH),
+    )
+    for label, script in rows:
+        with tempfile.TemporaryDirectory() as home:
+            result = subprocess.run(
+                [sys.executable, str(script), "no-such-command"],
+                text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+                env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": home},
+            )
+        assert_equal(result.returncode, 2, f"the helper {label} refuses an unknown command: {result.stderr}")
 
 
 def test_greeter_runtime_helper_dependencies():

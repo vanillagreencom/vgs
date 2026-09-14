@@ -246,7 +246,7 @@ PluginComponent {
         stderr: StdioCollector {
             onStreamFinished: root._toggleStderr = text || ""
         }
-        // Exit codes are defined in bin/vshell-helper next to each other:
+        // Exit codes are defined in bin/vshell_helper.py next to each other:
         // 3 = displayed state was stale, nothing changed; 4 = the terminal for
         // the prompt never came up. They must not be reported as each other.
         readonly property int exitStale: 3
