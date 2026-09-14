@@ -3,5 +3,9 @@
   "mode": "dark",
   "pair": "",
   "source": "curated",
-  "wallpaper": "1-bg5.jpg"
+  "wallpaper": "1-bg5.jpg",
+  "contrastShortfalls": [
+    {"slot": "selection_foreground", "ratio": 1.63, "floor": 4.5},
+    {"slot": "color8", "ratio": 2.4, "floor": 3}
+  ]
 }

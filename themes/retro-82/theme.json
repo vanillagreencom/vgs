@@ -3,5 +3,8 @@
   "mode": "dark",
   "pair": "",
   "source": "curated",
-  "wallpaper": "1-in-the-groove.jpg"
+  "wallpaper": "1-in-the-groove.jpg",
+  "contrastShortfalls": [
+    {"slot": "color8", "ratio": 1.95, "floor": 3}
+  ]
 }

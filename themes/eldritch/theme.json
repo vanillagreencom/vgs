@@ -3,5 +3,8 @@
   "mode": "dark",
   "pair": "",
   "source": "curated",
-  "wallpaper": "1-eldritch-aurora.png"
+  "wallpaper": "1-eldritch-aurora.png",
+  "contrastShortfalls": [
+    {"slot": "selection_foreground", "ratio": 4.15, "floor": 4.5}
+  ]
 }
