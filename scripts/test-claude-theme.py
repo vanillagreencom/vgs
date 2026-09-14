@@ -1021,8 +1021,11 @@ class InstalledLayout(unittest.TestCase):
         that branch and so is not idempotent there, which is why the palette
         comparison rebuilds both sides the same number of times. The declared source
         is asserted in every row so this one cannot quietly stop reaching the branch
-        it is named for. The light render there falls back to generated bands, which
-        miss a diff rule the curated file closed.
+        it is named for. The transform's own save certifies nothing, having parted
+        from the record; the save after it writes the palette the package now holds,
+        so the record is refreshed and the file is certified again, which
+        `materialize_theme_package` states as the cost of keeping a record fresh for
+        a write that moved nothing.
 
         What becomes of the file on disk and of the record beside it is the rule
         `materialize_theme_package` states; every row asserts the file's own bytes
@@ -1036,9 +1039,7 @@ class InstalledLayout(unittest.TestCase):
              self.saved_under_own_name({"claude": {"background": "#0b0b0b"}},
                                        transform="light")),
             (("curated", True, True, []), ("curated", True, True, []),
-             ("generated", True, False, []),
-             ("generated", True, False,
-              ["diff bands #bd9d82 and #cf967e: 18.2 degrees and 0.004 lightness apart"])))
+             ("generated", True, False, []), ("generated", True, True, [])))
 
     def test_a_save_under_another_name_grants_the_override_no_exemption(self):
         """The exemption asks about the package the save is writing over. Under a

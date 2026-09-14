@@ -10119,11 +10119,13 @@ def curated_revision_of(path: str | None) -> str:
 def test_a_save_never_pairs_its_palette_with_a_curated_file_it_did_not_judge():
     """A merge-style curated file is valid only for the palette it was picked
     against, and the palette a save writes is not always the one the package on disk
-    holds. `materialize_theme_package` owns what happens to such a file and this
-    pins its rule at every route that reaches the writer: `set-wallpaper --save`,
-    `apply-colors --save`, `save-current`, a save over a package whose `theme.json`
-    an interrupted save left behind, and `theme regenerate`, which is handed part of
-    a package.
+    holds. `materialize_theme_package` owns what happens to such a file, and the rows
+    below pin its two decisions at four of the routes that reach it: `set-wallpaper
+    --save`, including over a package whose `theme.json` an interrupted save left
+    behind, `apply-colors --save`, `save-current`, and `theme regenerate`, which is
+    handed part of a package. `theme import-colors` and `extract-wallpaper --save`
+    reach the same writer and have no row here; the decisions it makes read the
+    destination and not the caller.
 
     Each row reads the revision the route's apply painted, the revision the reload
     renders, whether the curated file's own bytes are still there, whether the
@@ -10234,20 +10236,34 @@ def test_a_save_never_pairs_its_palette_with_a_curated_file_it_did_not_judge():
                  "carryedited", "none", "curated",
                  ["apply-colors", "--name", "<name>", "--set", "accent=#123456", "--save"], None,
                  contextlib.nullcontext(), ("", "", True, False, "")),
-                ("save-current under the theme's own name loses no bytes",
+                # `save-current` writes the applied theme's own palette back into its
+                # own package, so nothing parted and the file stays certified.
+                ("save-current under the theme's own name keeps its file rendering",
                  "carrysaved", "none", "curated",
                  ["save-current", "--name", "<name>"], None,
-                 contextlib.nullcontext(), ("", "", True, False, "")),
+                 contextlib.nullcontext(), ("", "A", True, False, "")),
                 ("a save over the package an interrupted save left loses no bytes",
                  "carrynometa", "no-metadata", "curated", wallpaper_save, None,
                  contextlib.nullcontext(), ("", "", True, False, "")),
-                # `regenerate` is handed one app's file, so it rewrites the replacing
-                # file it was asked for and must leave the record it was not asked
-                # about alone.
-                ("regenerate after a held-back record does not revive the file",
+                # `regenerate` is handed one app's file and moves no palette, so it
+                # records the digest of what it wrote. On an untouched package that
+                # keeps a certified curated file certified, which is the point: it
+                # rewrites `colors.toml` from a blueprint stating derived roles the
+                # package left implicit, so a held-back record would drop the file
+                # from the renders after it. The second row is the cost of that: the
+                # record a parted save held back does not survive a regenerate, and
+                # the file comes back certified against the palette that save wrote.
+                ("regenerate on an untouched package keeps its file rendering",
+                 "carryregenrest", "none", "curated",
+                 ["regenerate", "<name>", "--app", "btop", "--yes"], None,
+                 contextlib.nullcontext(),
+                 ("", "A", True, False,
+                  "note: <name> is curated; regenerating replaces curated files "
+                  "with palette renders")),
+                ("regenerate records the palette it wrote over a held-back record",
                  "carryregen", "refresh", "curated", wallpaper_save,
                  ["regenerate", "<name>", "--app", "btop", "--yes"],
-                 contextlib.nullcontext(), ("", "", True, False, "")),
+                 contextlib.nullcontext(), ("", "B", True, False, "")),
                 ("without the palette agreement the stale pair comes back",
                  "carrycontrol", "refresh", "curated", wallpaper_save, None,
                  no_agreement, ("B", "B", True, True, "")),
@@ -10258,8 +10274,8 @@ def test_a_save_never_pairs_its_palette_with_a_curated_file_it_did_not_judge():
                                    for part in expected),
                              label)
 
-            # The apply names what the carry withheld, in the shape every other apply
-            # warning takes, so the settings editor and the wallpaper picker show a
+            # The apply names what the carry withheld, in the shape the inert
+            # declarations warning uses, so the settings editor and the picker show a
             # curated file gone quiet instead of swapping the bands in silence.
             refreshed_curated_package("carrywarn", "#101010", "A")
             stub_apply(helper.load_theme_package("carrywarn"))
@@ -10772,6 +10788,17 @@ def test_declared_ui_roles_move_with_a_restyle_and_survive_a_save():
             assert_equal(helper.save_curated_terms(rebuilt),
                          (False, ["claude-light.json"]),
                          "the save vouches for a file the override alone dropped")
+            # A package whose theme.json does not read says nothing about what its
+            # curated files were picked against, so the save hands in none of them
+            # and vouches for none.
+            unreadable = helper.user_themes_dir() / "digestroles" / "theme.json"
+            readable = unreadable.read_text()
+            unreadable.write_text("{ not json")
+            try:
+                assert_equal(helper.save_curated_terms(rebuilt), (True, []),
+                             "a package whose metadata does not read is parted with nothing vouched")
+            finally:
+                unreadable.write_text(readable)
 
             # Clear the override first, or the next row would pass on the
             # override's own drop and say nothing about the digest.
