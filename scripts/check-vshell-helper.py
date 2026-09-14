@@ -9229,6 +9229,43 @@ def test_wallpaper_and_save_keep_terminal_slots():
     with_temp_home(scenario)
 
 
+def test_wallpapers_all_lists_the_folder_then_every_theme():
+    """`theme wallpapers --all` is the All view's list: the folder's images first, then every
+    installed theme's set, each entry naming its source."""
+    def scenario(temp_home: Path):
+        builtin = temp_home / "builtin"
+        for name in ("beta", "alpha"):
+            package = builtin / name
+            (package / "backgrounds").mkdir(parents=True)
+            (package / "theme.json").write_text(json.dumps({"name": name, "mode": "dark", "source": "curated"}) + "\n")
+            (package / "colors.toml").write_text('background = "#101010"\nforeground = "#fafafa"\n')
+            (package / "backgrounds" / f"{name}.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+        folder = temp_home / "Pictures"
+        folder.mkdir()
+        (folder / "mine.JPG").write_bytes(b"\xff\xd8")
+        (folder / "notes.txt").write_text("not an image\n")
+        themes = [("alpha", "alpha.png"), ("beta", "beta.png")]
+        original_builtin = helper.builtin_themes_dir
+        helper.builtin_themes_dir = lambda: builtin
+        try:
+            # (folder argument, listed (source, file) pairs, why)
+            rows = [
+                (str(folder), [("folder", "mine.JPG")] + themes,
+                 "the folder's images come first under source folder, a non-image is skipped, then each theme by name"),
+                (str(temp_home / "absent"), themes, "a folder that does not exist lists no images and every theme still lists"),
+            ]
+            for folder_arg, expected, why in rows:
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    assert_equal(helper.cmd_theme(["wallpapers", "--all", "--folder", folder_arg, "--json"]), 0, f"{why}: exit status")
+                listed = [(entry["source"], entry["file"]) for entry in json.loads(out.getvalue())["wallpapers"]]
+                assert_equal(listed, expected, why)
+        finally:
+            helper.builtin_themes_dir = original_builtin
+
+    with_temp_home(scenario)
+
+
 # Every colour jolaleye/horizon-theme-vscode v2.0.2 publishes in its
 # `src/dark/globals.json` and `src/bright/globals.json` (syntax, ui and ansi).
 HORIZON_UPSTREAM_COLOURS = {
@@ -10478,6 +10515,7 @@ def main():
     test_dark_themes_draw_diffs_in_two_hues()
     test_horizon_packages_use_only_upstream_colours()
     test_wallpaper_and_save_keep_terminal_slots()
+    test_wallpapers_all_lists_the_folder_then_every_theme()
     test_declared_ui_roles_replace_the_derivation_without_a_contrast_rewrite()
     test_declared_ui_roles_move_with_a_restyle_and_survive_a_save()
     test_save_keeps_app_overrides()

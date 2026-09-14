@@ -84,6 +84,18 @@ Singleton {
     property var themeApps: []
     // Composed wallpaper set of the current theme: [{file, path, origin, default}]
     property var themeWallpapers: []
+    // What the All view browses: the wallpaper folder's images, then every installed theme's set, each
+    // entry's `source` naming "folder" or its theme. A failed read keeps the previous list, as themeWallpapers does.
+    property var allWallpapers: []
+    property bool allWallpapersLoadFailed: false
+    property string allWallpapersLoadError: ""
+    property int _allWallpapersReadSeq: 0
+    readonly property string wallpaperFolderPath: {
+        const configured = (SettingsData.wallpaperFolder || "").trim();
+        if (configured)
+            return configured.startsWith("~") ? Paths.strip(Paths.home) + configured.substring(1) : configured;
+        return Paths.strip(Paths.home) + "/Pictures/Wallpapers";
+    }
     // Per-app template roles keyed by app id: [{role, value, overridden}]
     property var appRoles: ({})
 
@@ -428,6 +440,38 @@ Singleton {
         });
     }
 
+    function refreshAllWallpapers() {
+        const readId = ++root._allWallpapersReadSeq;
+        _run("vgs-theme-wallpapers-all", ["theme", "wallpapers", "--all", "--folder", wallpaperFolderPath, "--json"], function(output, exitCode) {
+            if (readId !== root._allWallpapersReadSeq)
+                return;
+            try {
+                if (exitCode !== 0)
+                    throw lastError;
+                allWallpapers = JSON.parse(output || "{}").wallpapers || [];
+                allWallpapersLoadFailed = false;
+                allWallpapersLoadError = "";
+            } catch (e) {
+                allWallpapersLoadFailed = true;
+                allWallpapersLoadError = String(e);
+            }
+        });
+    }
+
+    // BEGIN WALLPAPER MEMBERSHIP DECISION
+    // Keep this region free of root., Theme., I18n. and Qt. references: scripts/test-switcher-source.js extracts and executes it.
+
+    // Whether an All-view entry already belongs to the applied theme: it is one of that theme's own, or
+    // the theme's set holds a file of its name, which is what wallpaper-add copies it in as.
+    function inThemeSet(entry, themeName, themeEntries) {
+        if (!entry || !themeName)
+            return false;
+        if (entry.source === themeName)
+            return true;
+        return (themeEntries || []).some(own => own.file === entry.file);
+    }
+    // END WALLPAPER MEMBERSHIP DECISION
+
     // Sweep missing thumbnails in the background after publishing the list.
     // The all-themes scope also permits pruning entries absent from the complete wallpaper set.
     property bool _thumbSweepInFlight: false
@@ -544,12 +588,14 @@ Singleton {
     function wallpaperAdd(path) {
         if (!path)
             return;
-        _run("vgs-theme-wallpaper-add", ["theme", "wallpaper-add", path, "--json"], function(output, exitCode, stderr) {
+        const theme = currentTheme.name || "";
+        _run("vgs-theme-wallpaper-add", ["theme", "wallpaper-add", path, "--json"].concat(theme ? ["--theme", theme] : []), function(output, exitCode, stderr) {
             if (exitCode !== 0) {
                 applyCompleted(false, stderr || output || ("Wallpaper add failed: " + path));
                 return;
             }
             refreshWallpapers();
+            refreshAllWallpapers();
             refreshBlueprints();
             applyCompleted(true, "Added wallpaper to " + (currentTheme.name || "theme"));
         });

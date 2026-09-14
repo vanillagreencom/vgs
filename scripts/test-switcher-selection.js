@@ -464,7 +464,7 @@ test("the switchers read the list failure from the read's own slot and the share
     q("WallpaperSwitcherModal.qml").requires(wallpaperSource, "WallpaperSwitcherModal.qml", [
         ["VGSThemeService.wallpapersLoadError",
             "the failure detail must come from the read's own slot, not the shared lastError"],
-        ["staleNotice: VGSThemeService.wallpapersStaleNotice",
+        ["return VGSThemeService.wallpapersStaleNotice;",
             "one property owns the wording, or the switcher and the dash describe the same state differently", 1],
         [".filter(entry => !!entry.path)",
             "a pathless entry is the apply id as well as the image: setWallpaper refuses it and never answers", 1]

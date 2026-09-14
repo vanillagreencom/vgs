@@ -6,26 +6,39 @@ import qs.Common
 import qs.Services
 import qs.Widgets
 
-// Switch wallpapers from the active theme's set. The user-folder picker remains in Dash/settings.
+// Switch wallpapers from the active theme's set (Theme) or from the wallpaper folder and every installed theme (All).
+// Under Theme, a catalog theme whose imagery is missing or outdated offers one card that downloads or updates it.
 // With several monitors, choose all outputs or this output; each open starts with all outputs selected.
 FullScreenSwitcher {
     id: root
 
     filterable: false
 
-    showLabels: false
+    showLabels: root.source === "all"
     layerNamespace: "vshell:wallpaper-switcher"
 
     // An empty list after a failed read has no retained fallback. Report the wallpaper read's error instead of claiming the theme has no images.
-    emptyText: VGSThemeService.wallpapersLoadFailed ? I18n.tr("Could not read this theme's wallpapers") + (VGSThemeService.wallpapersLoadError ? "\n" + VGSThemeService.wallpapersLoadError : "") : I18n.tr("This theme has no wallpapers")
+    emptyText: {
+        if (root.source === "all")
+            return VGSThemeService.allWallpapersLoadFailed ? I18n.tr("Could not list wallpapers") + "\n" + VGSThemeService.allWallpapersLoadError : I18n.tr("No wallpapers in your folder or any installed theme");
+        return VGSThemeService.wallpapersLoadFailed ? I18n.tr("Could not read this theme's wallpapers") + (VGSThemeService.wallpapersLoadError ? "\n" + VGSThemeService.wallpapersLoadError : "") : I18n.tr("This theme has no wallpapers");
+    }
 
     // Share retained-list wording with Dash; after a failed theme change the paths can belong to the previous theme.
-    staleNotice: VGSThemeService.wallpapersStaleNotice
+    staleNotice: {
+        if (root.source === "all")
+            return VGSThemeService.allWallpapersLoadFailed ? I18n.tr("Could not list wallpapers — showing the last list that loaded") : "";
+        return VGSThemeService.wallpapersStaleNotice;
+    }
 
     readonly property var wallpaperEntries: VGSThemeService.themeWallpapers || []
     readonly property int screenCount: (Quickshell.screens || []).length
     // Reset apply scope to all monitors on each open so a previous local choice cannot silently carry over.
     property bool applyToAllMonitors: true
+    // "theme" or "all"; each open starts from SettingsData.wallpaperSource, as the Dash tab does.
+    property string source: "theme"
+    readonly property string appliedTheme: (VGSThemeService.currentTheme || {}).name || ""
+    readonly property string imageryCard: VGSThemeCatalogService.imageryCardFor(root.appliedTheme)
 
     // BEGIN WALLPAPER SCOPE DECISION
     // Scope decisions take explicit inputs rather than reading QML state.
@@ -57,6 +70,27 @@ FullScreenSwitcher {
     }
     // END WALLPAPER SCOPE DECISION
 
+    // BEGIN WALLPAPER SOURCE DECISION
+    // Keep this region free of root., Theme., I18n. and Qt. references: scripts/test-switcher-source.js extracts and executes it.
+
+    // The Theme view's rail. Imagery not on disk leaves its card as the only entry; any other card follows
+    // the wallpapers, so an open seeds onto a wallpaper and a reflexive Enter never starts an update.
+    function themeRail(wallpapers, card) {
+        const cards = card ? [{card: card, key: "imagery:" + card}] : [];
+        if (card === "download" || card === "downloading")
+            return cards;
+        return (wallpapers || []).concat(cards);
+    }
+
+    // What activating an entry does. A card never reaches set-wallpaper: "fetch" starts its download or
+    // update, and "none" leaves one already running alone.
+    function activationRoute(item) {
+        if (!item.card)
+            return "wallpaper";
+        return item.card === "download" || item.card === "update" ? "fetch" : "none";
+    }
+    // END WALLPAPER SOURCE DECISION
+
     // Read current wallpapers from SessionData because cycling can bypass the theme service.
     // Use the service's optimistic value only as fallback; scopeSeedKey selects the relevant monitor answers.
     activeKey: {
@@ -69,18 +103,32 @@ FullScreenSwitcher {
     canApply: !applyReporter.anyApplyInFlight
 
     // Filter pathless entries because an empty apply id is refused without a completion reply.
-    items: root.wallpaperEntries.filter(entry => !!entry.path).map(entry => ({
-                image: entry.path,
-                thumb: entry.thumb || "",
-                label: entry.file,
-                key: entry.path
-            }))
+    items: {
+        const all = root.source === "all";
+        const wallpapers = (all ? (VGSThemeService.allWallpapers || []) : root.wallpaperEntries).filter(entry => !!entry.path).map(entry => ({
+                    image: entry.path,
+                    thumb: entry.thumb || "",
+                    label: all ? entry.file + " · " + (entry.source === "folder" ? I18n.tr("My folder") : entry.source) : entry.file,
+                    key: entry.path,
+                    marked: all && VGSThemeService.inThemeSet(entry, root.appliedTheme, root.wallpaperEntries)
+                }));
+        if (all)
+            return wallpapers;
+        return root.themeRail(wallpapers, root.imageryCard).map(item => item.card ? Object.assign({
+                image: "",
+                label: VGSThemeCatalogService.imageryCardLabel(root.appliedTheme, item.card)
+            }, item) : item);
+    }
 
     scopeToggle: root.scopeChoiceExists(root.screenCount) ? scopePill : null
     onScopeFlipRequested: root.applyToAllMonitors = !root.applyToAllMonitors
+    sourceToggle: sourcePill
+    itemMenu: root.source === "all" && root.appliedTheme ? addToThemeMenu : null
 
     function show() {
         VGSThemeService.refreshWallpapers();
+        VGSThemeService.refreshAllWallpapers();
+        VGSThemeCatalogService.refresh();
         open();
     }
 
@@ -106,6 +154,11 @@ FullScreenSwitcher {
     }
 
     onApplied: item => {
+        const route = root.activationRoute(item);
+        if (route === "fetch")
+            VGSThemeCatalogService.fetchImagery(root.appliedTheme, item.card);
+        if (route !== "wallpaper")
+            return;
         if (root.applyRoute(root.applyToAllMonitors, root.screenCount) === "screen")
             root.applyHere(item.key);
         else
@@ -118,6 +171,7 @@ FullScreenSwitcher {
 
         function onOpened() {
             root.applyToAllMonitors = true;
+            root.source = SettingsData.wallpaperSource === "folder" ? "all" : "theme";
         }
     }
 
@@ -127,57 +181,116 @@ FullScreenSwitcher {
     }
 
 
+    // A two-segment capsule. Clicking the inactive segment emits picked; the monitor scope and the source both use it.
+    component SegmentPill: Rectangle {
+        id: pill
+
+        property var labels: []
+        property int activeIndex: 0
+        signal picked(int index)
+
+        width: segments.width + Theme.spacingXXS * 2
+        height: segments.height + Theme.spacingXXS * 2
+        radius: height / 2
+        color: Theme.withAlpha(Theme.background, 0.45)
+        border.width: 1
+        border.color: Theme.withAlpha(Theme.surfaceText, 0.2)
+
+        // Consume clicks on the capsule's padding so near misses cannot fall through to click-away dismissal.
+        MouseArea {
+            anchors.fill: parent
+        }
+
+        Row {
+            id: segments
+            anchors.centerIn: parent
+
+            Repeater {
+                model: pill.labels
+
+                Rectangle {
+                    id: segment
+
+                    required property int index
+                    required property var modelData
+                    readonly property bool active: pill.activeIndex === segment.index
+
+                    width: segmentLabel.width + Theme.spacingM * 2
+                    height: segmentLabel.height + Theme.spacingXS * 2
+                    radius: height / 2
+                    color: segment.active ? Theme.withAlpha(Theme.surfaceText, 0.22) : "transparent"
+
+                    StyledText {
+                        id: segmentLabel
+                        anchors.centerIn: parent
+                        text: segment.modelData
+                        font.pixelSize: Theme.fontSizeLarge
+                        color: Theme.surfaceText
+                        opacity: segment.active ? 1 : 0.7
+                    }
+
+                    // Clicking selects the labeled segment; the active one is a no-op.
+                    MouseArea {
+                        anchors.fill: parent
+                        onClicked: if (!segment.active) pill.picked(segment.index)
+                    }
+                }
+            }
+        }
+    }
+
     Component {
         id: scopePill
 
+        SegmentPill {
+            labels: [I18n.tr("All monitors"), I18n.tr("This monitor")]
+            activeIndex: root.applyToAllMonitors ? 0 : 1
+            // Both segments flip through the one signal Tab drives.
+            onPicked: root.scopeFlipRequested()
+        }
+    }
+
+    Component {
+        id: sourcePill
+
+        SegmentPill {
+            labels: [I18n.tr("Theme"), I18n.tr("All")]
+            activeIndex: root.source === "all" ? 1 : 0
+            onPicked: index => root.source = index === 1 ? "all" : "theme"
+        }
+    }
+
+    // Under All, a right-click offers Add to theme; an entry already in the applied theme says so instead.
+    Component {
+        id: addToThemeMenu
+
         Rectangle {
-            width: segments.width + Theme.spacingXXS * 2
-            height: segments.height + Theme.spacingXXS * 2
-            radius: height / 2
-            color: Theme.withAlpha(Theme.background, 0.45)
+            id: menu
+
+            readonly property bool inTheme: (root.menuItem || {}).marked === true
+
+            width: menuLabel.width + Theme.spacingM * 2
+            height: menuLabel.height + Theme.spacingS * 2
+            radius: Theme.cornerRadius
+            color: Theme.surfaceContainer
             border.width: 1
             border.color: Theme.withAlpha(Theme.surfaceText, 0.2)
 
-            // Consume clicks on scope-control padding so near misses cannot fall through to click-away dismissal.
-            MouseArea {
-                anchors.fill: parent
+            StyledText {
+                id: menuLabel
+                anchors.centerIn: parent
+                text: menu.inTheme ? I18n.tr("Already in %1").arg(root.appliedTheme) : I18n.tr("Add to theme")
+                font.pixelSize: Theme.fontSizeLarge
+                color: Theme.surfaceText
+                opacity: menu.inTheme ? 0.6 : 1
             }
 
-            Row {
-                id: segments
-                anchors.centerIn: parent
-
-                Repeater {
-
-                    model: [I18n.tr("All monitors"), I18n.tr("This monitor")]
-
-                    Rectangle {
-                        id: segment
-
-                        required property int index
-                        required property var modelData
-                        readonly property bool active: root.applyToAllMonitors === (segment.index === 0)
-
-                        width: segmentLabel.width + Theme.spacingM * 2
-                        height: segmentLabel.height + Theme.spacingXS * 2
-                        radius: height / 2
-                        color: segment.active ? Theme.withAlpha(Theme.surfaceText, 0.22) : "transparent"
-
-                        StyledText {
-                            id: segmentLabel
-                            anchors.centerIn: parent
-                            text: segment.modelData
-                            font.pixelSize: Theme.fontSizeLarge
-                            color: Theme.surfaceText
-                            opacity: segment.active ? 1 : 0.7
-                        }
-
-                        // Clicking selects the labeled scope. Emit the shared toggle signal only when that selection changes.
-                        MouseArea {
-                            anchors.fill: parent
-                            onClicked: if (!segment.active) root.scopeFlipRequested()
-                        }
-                    }
+            MouseArea {
+                anchors.fill: parent
+                onClicked: {
+                    if (!menu.inTheme)
+                        VGSThemeService.wallpaperAdd(root.menuItem.key);
+                    root.menuItem = null;
                 }
             }
         }

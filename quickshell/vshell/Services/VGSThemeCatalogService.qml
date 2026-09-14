@@ -31,7 +31,6 @@ Singleton {
     readonly property real downloadableSize: (entries || []).reduce((sum, e) => e.imageryInstalled ? sum : sum + (e.imagerySize || 0), 0)
 
     signal catalogLoaded
-    signal operationCompleted(bool success, string message)
 
     function isPending(name) {
         return !!(pendingNames && pendingNames[name]);
@@ -62,6 +61,57 @@ Singleton {
                 return list[i];
         }
         return null;
+    }
+
+    // Every catalog operation reports its outcome here, once, whichever surface started it.
+    function _complete(success, message) {
+        if (success)
+            ToastService.showInfo(message);
+        else
+            ToastService.showError(I18n.tr("Theme download"), message);
+    }
+
+    // BEGIN IMAGERY CARD DECISION
+    // Keep this region free of root., Theme., I18n. and Qt. references: scripts/test-switcher-source.js extracts and executes it.
+
+    // The one card a wallpaper surface offers for a theme's imagery, from its catalog entry: "download" while
+    // the imagery is not on disk, "update" when the catalog pins a newer revision, "downloading" or "updating"
+    // while that runs, and "" for a theme the catalog does not carry or whose imagery is current.
+    function imageryCard(entry, pending) {
+        if (!entry)
+            return "";
+        if (!entry.imageryInstalled)
+            return pending ? "downloading" : "download";
+        if (pending)
+            return "updating";
+        return entry.imageryUpdateAvailable ? "update" : "";
+    }
+    // END IMAGERY CARD DECISION
+
+    function imageryCardFor(name) {
+        return root.imageryCard(root.entryFor(name), root.isPending(name));
+    }
+
+    function imageryCardLabel(name, card) {
+        const size = root.formatSize((root.entryFor(name) || {}).imagerySize);
+        if (card === "download")
+            return I18n.tr("Download wallpapers for %1 (%2)").arg(name).arg(size);
+        if (card === "update")
+            return I18n.tr("Update wallpapers for %1 (%2)").arg(name).arg(size);
+        if (card === "downloading")
+            return I18n.tr("Downloading wallpapers for %1").arg(name);
+        return I18n.tr("Updating wallpapers for %1").arg(name);
+    }
+
+    // Start a wallpaper surface's card with a start toast; _complete reports the finish or failure.
+    function fetchImagery(name, card) {
+        if (card === "download")
+            root.install(name);
+        else if (card === "update")
+            root.updateImagery(name);
+        else
+            return;
+        ToastService.showInfo(root.imageryCardLabel(name, card === "download" ? "downloading" : "updating"));
     }
 
     // Run downloads as background tasks so they do not block Settings actions.
@@ -111,13 +161,13 @@ Singleton {
         if (typeof VGSThemeService !== "undefined")
             VGSThemeService.refreshBlueprints();
         if (exitCode !== 0) {
-            operationCompleted(false, stderr || lastError || fallbackMessage);
+            _complete(false, stderr || lastError || fallbackMessage);
             return null;
         }
         try {
             return JSON.parse(output || "{}");
         } catch (e) {
-            operationCompleted(false, "Failed to parse download result: " + e);
+            _complete(false, "Failed to parse download result: " + e);
             return null;
         }
     }
@@ -143,9 +193,32 @@ Singleton {
                      VGSThemeService.refreshWallpapers();
                  }
                  if (result.status === "installed")
-                     operationCompleted(true, I18n.tr("Downloaded %1").arg(name));
+                     _complete(true, I18n.tr("Downloaded %1").arg(name));
                  else
-                     operationCompleted(false, result.error || result.reason || I18n.tr("Download failed: %1").arg(name));
+                     _complete(false, result.error || result.reason || I18n.tr("Download failed: %1").arg(name));
+             });
+    }
+
+    // A wallpaper the user added to the theme is never touched: the helper's update keeps it.
+    function updateImagery(name) {
+        if (!name || isPending(name))
+            return;
+        _setPending(name, true);
+        _run("vgs-theme-catalog-update-" + name, ["theme", "catalog", "update", name, "--json"], 900000,
+             function (output, exitCode, stderr) {
+                 _setPending(name, false);
+                 const data = _finishDownload(output, exitCode, stderr, "Update failed: " + name);
+                 if (!data)
+                     return;
+                 const result = (data.results || [])[0] || {};
+                 if (result.status === "updated" && typeof VGSThemeService !== "undefined") {
+                     VGSThemeService.requestThumbnailSweep();
+                     VGSThemeService.refreshWallpapers();
+                 }
+                 if (result.status === "updated" || result.status === "current")
+                     _complete(true, I18n.tr("Updated wallpapers for %1").arg(name));
+                 else
+                     _complete(false, result.error || I18n.tr("Update failed: %1").arg(name));
              });
     }
 
@@ -167,10 +240,10 @@ Singleton {
                  const count = (data.installed || []).length;
                  const failed = (data.results || []).filter(r => r.status === "failed");
                  if (failed.length > 0) {
-                     operationCompleted(false, I18n.tr("Downloaded %1 themes, %2 failed").arg(count).arg(failed.length));
+                     _complete(false, I18n.tr("Downloaded %1 themes, %2 failed").arg(count).arg(failed.length));
                      return;
                  }
-                 operationCompleted(true, I18n.tr("Downloaded %1 themes").arg(count));
+                 _complete(true, I18n.tr("Downloaded %1 themes").arg(count));
              });
     }
 
@@ -190,10 +263,10 @@ Singleton {
                      // so this only refreshes shell state.
                      if (typeof VGSThemeService !== "undefined")
                          VGSThemeService.refreshWallpapers();
-                     operationCompleted(true, I18n.tr("Removed %1").arg(name));
+                     _complete(true, I18n.tr("Removed %1").arg(name));
                  }
                  else
-                     operationCompleted(false, result.error || I18n.tr("Remove failed: %1").arg(name));
+                     _complete(false, result.error || I18n.tr("Remove failed: %1").arg(name));
              });
     }
 }

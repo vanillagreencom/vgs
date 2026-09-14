@@ -170,13 +170,16 @@ test("the wallpaper modal wires the pill, the one flip signal, the per-open rese
             "visibility test could disagree with the route Enter takes", 1],
         ["onScopeFlipRequested: root.applyToAllMonitors = !root.applyToAllMonitors",
             "one flip handler for the one signal Tab and the click both drive", 1],
-        ["function onOpened() { root.applyToAllMonitors = true; }",
+        ["function onOpened() { root.applyToAllMonitors = true; root.source = SettingsData.wallpaperSource === \"folder\" ? \"all\" : \"theme\"; }",
             "every open aims at all monitors again: a scope chosen yesterday and silently still " +
             "aimed at one monitor is how a pick lands somewhere unexpected", 1],
-        ["onClicked: if (!segment.active) root.scopeFlipRequested()",
-            "a click SELECTS the segment under the cursor — through the one signal Tab drives, and " +
-            "a no-op on the active one: an unguarded whole-pill flip activated the OPPOSITE of the " +
-            "label the mouse user clicked to confirm", 1],
+        ["onClicked: if (!segment.active) pill.picked(segment.index)",
+            "a click SELECTS the segment under the cursor, and is a no-op on the active one: an " +
+            "unguarded whole-pill flip activated the OPPOSITE of the label the mouse user clicked to confirm", 1],
+        ["activeIndex: root.applyToAllMonitors ? 0 : 1",
+            "the scope pill lights the segment naming the scope Enter applies to", 1],
+        ["onPicked: root.scopeFlipRequested()",
+            "and a pick goes through the one signal Tab drives", 1],
         ["MouseArea { anchors.fill: parent }",
             "the pill carries a bare click absorber, or a near-miss on the capsule's padding falls " +
             "through to the click-away MouseArea and dismisses the whole switcher", 1],

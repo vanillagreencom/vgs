@@ -18,9 +18,11 @@ Item {
     property var targetScreen: null
     property var parentPopout: null
 
-    property string source: SettingsData.wallpaperSource === "folder" ? "folder" : "theme"
-    readonly property var sources: ["theme", "folder"]
-    property var folderEntries: []
+    // "theme" browses the applied theme's set; "all" the wallpaper folder and every installed theme.
+    property string source: SettingsData.wallpaperSource === "folder" ? "all" : "theme"
+    readonly property var sources: ["theme", "all"]
+    readonly property string appliedTheme: (VGSThemeService.currentTheme || {}).name || ""
+    readonly property string imageryCard: source === "theme" ? VGSThemeCatalogService.imageryCardFor(appliedTheme) : ""
     // Index of the tile whose "…" actions are open; -1 = none.
     property int actionsIndex: -1
     // True while navigating with arrow keys; draws the focus ring.
@@ -30,14 +32,7 @@ Item {
     // Share the Dash tab height to avoid resizing during a tab switch. The grid scrolls within it.
     implicitHeight: 410
 
-    readonly property string effectiveFolder: {
-        const configured = (SettingsData.wallpaperFolder || "").trim();
-        if (configured)
-            return configured.startsWith("~") ? Paths.strip(Paths.home) + configured.substring(1) : configured;
-        return Paths.strip(Paths.home) + "/Pictures/Wallpapers";
-    }
-
-    readonly property var entries: source === "folder" ? folderEntries : (VGSThemeService.themeWallpapers || [])
+    readonly property var entries: source === "all" ? (VGSThemeService.allWallpapers || []) : (VGSThemeService.themeWallpapers || [])
     readonly property var actionsEntry: actionsIndex >= 0 && actionsIndex < (entries || []).length ? entries[actionsIndex] : null
 
     onActiveChanged: {
@@ -55,23 +50,19 @@ Item {
     }
 
     function refresh() {
-        if (source === "folder")
-            listFolder();
-        else
-            VGSThemeService.refreshWallpapers();
+        if (source === "all") {
+            VGSThemeService.refreshAllWallpapers();
+            return;
+        }
+        VGSThemeService.refreshWallpapers();
+        VGSThemeCatalogService.refresh();
     }
 
-    function listFolder() {
-        const dir = effectiveFolder;
-        Proc.runCommand("wallpaperFolderScan", ["sh", "-c", `find -L "$1" -maxdepth 1 -type f \\( -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.png" -o -iname "*.bmp" -o -iname "*.gif" -o -iname "*.webp" -o -iname "*.jxl" -o -iname "*.avif" -o -iname "*.heif" \\) 2>/dev/null | sort`, "scan", dir], function(output, code) {
-            const files = (output || "").trim().split("\n").filter(f => f.length > 0);
-            root.folderEntries = files.map(path => ({
-                file: path.substring(path.lastIndexOf("/") + 1),
-                path: path,
-                origin: "folder",
-                default: false
-            }));
-        });
+    // Start the imagery card's download or update, then close Dash as the full-screen switcher closes.
+    function fetchImagery() {
+        VGSThemeCatalogService.fetchImagery(appliedTheme, imageryCard);
+        if (parentPopout)
+            parentPopout.dashVisible = false;
     }
 
     function applyEntry(entry) {
@@ -141,7 +132,7 @@ Item {
         onFileSelected: path => {
             SettingsData.set("wallpaperFolder", path.substring(0, path.lastIndexOf("/")));
             close();
-            root.listFolder();
+            VGSThemeService.refreshAllWallpapers();
         }
     }
 
@@ -162,7 +153,7 @@ Item {
                 width: 230
                 chipHeight: 28
                 showCounts: false
-                model: [I18n.tr("Theme set"), I18n.tr("My folder")]
+                model: [I18n.tr("Theme"), I18n.tr("All")]
                 currentIndex: root.sources.indexOf(root.source)
                 onSelectionChanged: index => root.source = root.sources[index] || "theme"
             }
@@ -174,10 +165,19 @@ Item {
 
                 VgsButton {
                     height: 28
-                    visible: root.source === "folder"
+                    visible: root.source === "all"
                     iconName: "folder_open"
                     text: I18n.tr("Change folder")
                     onClicked: folderPickBrowser.open()
+                }
+
+                VgsButton {
+                    height: 28
+                    visible: root.imageryCard === "update" || root.imageryCard === "updating"
+                    enabled: root.imageryCard === "update"
+                    iconName: "download"
+                    text: VGSThemeCatalogService.imageryCardLabel(root.appliedTheme, root.imageryCard)
+                    onClicked: root.fetchImagery()
                 }
 
                 VgsButton {
@@ -231,6 +231,7 @@ Item {
                     }
                     return false;
                 }
+                readonly property bool inTheme: root.source === "all" && VGSThemeService.inThemeSet(modelData, root.appliedTheme, VGSThemeService.themeWallpapers)
                 readonly property bool actionsOpen: root.actionsIndex === index
                 readonly property bool keyFocused: root.keyboardNav && grid.currentIndex === index
                 readonly property real tileRadius: Theme.cornerRadius
@@ -288,13 +289,47 @@ Item {
                         }
                     }
 
+                    // A right-click opens the tile's actions, which carry Add to theme under All.
                     MouseArea {
                         anchors.fill: parent
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: {
+                        acceptedButtons: Qt.LeftButton | Qt.RightButton
+                        onClicked: mouse => {
                             root.keyboardNav = false;
-                            root.applyEntry(tile.modelData);
+                            if (mouse.button === Qt.RightButton)
+                                root.actionsIndex = tile.index;
+                            else
+                                root.applyEntry(tile.modelData);
                         }
+                    }
+
+                    Rectangle {
+                        anchors.bottom: parent.bottom
+                        anchors.left: parent.left
+                        anchors.margins: Theme.spacingXS
+                        width: sourceLabel.implicitWidth + Theme.spacingS * 2
+                        height: 20
+                        radius: 10
+                        color: Qt.rgba(0, 0, 0, 0.55)
+                        visible: root.source === "all"
+
+                        StyledText {
+                            id: sourceLabel
+                            anchors.centerIn: parent
+                            text: tile.modelData.source === "folder" ? I18n.tr("My folder") : (tile.modelData.source || "")
+                            font.pixelSize: Theme.fontSizeSmall
+                            color: "#ffffff"
+                        }
+                    }
+
+                    VgsIcon {
+                        anchors.top: parent.top
+                        anchors.left: parent.left
+                        anchors.margins: Theme.spacingXS
+                        visible: tile.inTheme
+                        name: "check_circle"
+                        size: 18
+                        color: Theme.primary
                     }
 
                     Rectangle {
@@ -376,8 +411,8 @@ Item {
                     anchors.horizontalCenter: parent.horizontalCenter
                     // An empty set after a failed read means no retained fallback, not a successful read with no wallpapers.
                     text: {
-                        if (root.source === "folder")
-                            return I18n.tr("No images in ") + Paths.shortenHome(root.effectiveFolder);
+                        if (root.source === "all")
+                            return VGSThemeService.allWallpapersLoadFailed ? I18n.tr("Could not list wallpapers") + "\n" + VGSThemeService.allWallpapersLoadError : I18n.tr("No images in %1 or any installed theme").arg(Paths.shortenHome(VGSThemeService.wallpaperFolderPath));
                         if (VGSThemeService.wallpapersLoadFailed)
                             return I18n.tr("Could not read this theme's wallpapers") + (VGSThemeService.wallpapersLoadError ? "\n" + VGSThemeService.wallpapersLoadError : "");
                         return I18n.tr("This theme has no wallpapers yet");
@@ -390,10 +425,20 @@ Item {
 
                 VgsButton {
                     anchors.horizontalCenter: parent.horizontalCenter
-                    visible: root.source === "folder"
+                    visible: root.source === "all"
                     height: 30
                     text: I18n.tr("Choose folder")
                     onClicked: folderPickBrowser.open()
+                }
+
+                VgsButton {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    visible: root.imageryCard === "download" || root.imageryCard === "downloading"
+                    enabled: root.imageryCard === "download"
+                    height: 30
+                    iconName: "download"
+                    text: VGSThemeCatalogService.imageryCardLabel(root.appliedTheme, root.imageryCard)
+                    onClicked: root.fetchImagery()
                 }
             }
         }
@@ -455,7 +500,7 @@ Item {
                 }
 
                 VgsButton {
-                    visible: root.source === "folder"
+                    visible: root.source === "all" && root.actionsEntry !== null && !VGSThemeService.inThemeSet(root.actionsEntry, root.appliedTheme, VGSThemeService.themeWallpapers)
                     height: 28
                     variant: "secondary"
                     iconName: "add_photo_alternate"

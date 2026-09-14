@@ -2408,6 +2408,26 @@ def theme_wallpaper_entries(bp: Dict[str, Any]) -> List[Dict[str, Any]]:
     return entries
 
 
+WALLPAPER_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".jxl", ".avif", ".heif"}
+
+
+def all_wallpaper_entries(folder: str) -> List[Dict[str, Any]]:
+    """The images directly inside `folder`, then every installed theme's wallpaper set.
+    Each entry's `source` is "folder" or the name of the theme it belongs to. A folder
+    that does not exist lists no images; an unreadable one raises."""
+    entries: List[Dict[str, Any]] = []
+    root = Path(folder).expanduser() if folder else None
+    if root is not None and root.is_dir():
+        for p in sorted(root.iterdir()):
+            if p.suffix.lower() in WALLPAPER_IMAGE_SUFFIXES and p.is_file():
+                thumb = _wp_thumbs.thumb_for(p)
+                entries.append({"file": p.name, "path": str(p), "thumb": str(thumb) if thumb else "",
+                                "thumbKey": _wp_thumbs.thumb_key(p), "source": "folder"})
+    for bp in sorted((t for t in list_themes() if t.get("package")), key=lambda t: str(t.get("name") or "")):
+        entries.extend(dict(entry, source=str(bp.get("name") or "")) for entry in theme_wallpaper_entries(bp))
+    return entries
+
+
 def prune_wallpaper_thumbs_now() -> int:
     """Remove thumbnails no installed wallpaper claims.
     Deletion paths must call this because no missing wallpaper remains to
@@ -10099,6 +10119,8 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
     p_thumbs.add_argument("--json", action="store_true")
     p_wps = sub.add_parser("wallpapers")
     p_wps.add_argument("name", nargs="?", default="", help="theme name (default: current)")
+    p_wps.add_argument("--all", action="store_true", help="every installed theme's wallpapers, after --folder's images")
+    p_wps.add_argument("--folder", default="", help="with --all, the folder whose images come first")
     p_wps.add_argument("--json", action="store_true")
     p_wp_add = sub.add_parser("wallpaper-add")
     p_wp_add.add_argument("path")
@@ -10367,6 +10389,14 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
             print(f"thumbnails: {result['built']} built, {result['reused']} reused, "
                   f"{len(result['failed'])} failed, {result['pruned']} pruned -> {result['dir']}")
         return 1 if result["failed"] and not result["built"] and not result["reused"] else 0
+    if args.cmd == "wallpapers" and args.all:
+        entries = all_wallpaper_entries(args.folder)
+        if args.json:
+            print(json.dumps({"wallpapers": entries, "count": len(entries)}, indent=2))
+        else:
+            for e in entries:
+                print(f"{e['source']:<24} {e['file']}")
+        return 0
     if args.cmd == "wallpapers":
         bp = resolve_theme_package(args.name)
         if not bp:
