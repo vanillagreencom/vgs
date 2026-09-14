@@ -10,6 +10,8 @@ import io
 import json
 import os
 import re
+import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -349,7 +351,8 @@ def test_an_entry_without_this_machines_architecture_is_not_offered():
         mise.platform.machine = lambda: "aarch64"
         on_arm = {e["id"] for e in mise.launchable(catalog)}
         stubs_arm = {s["command"] for s in mise.mise_catalog_stubs()}
-        listed_arm = mise.mise_list()
+        with mock.patch.object(mise.RT, "run", lambda cmd, check=False, **kw: subprocess.CompletedProcess(cmd, 0, stdout="{}", stderr="")):
+            listed_arm = mise.mise_list()
     finally:
         mise.platform.machine = original
 
@@ -519,8 +522,10 @@ def test_apps_get_stubs_and_their_own_list():
     assert "[matching_regex=" in stubs["cmux"]["package"], "cmux names the asset its platform matcher cannot pick"
 
     original_versions = devtools.mise_installs
+    original_outdated = devtools.mise_outdated
     original_state = devtools.mise_stub_state
     devtools.mise_installs = lambda: ({}, "")
+    devtools.mise_outdated = lambda: ([], "")
     devtools.mise_stub_state = lambda path: "absent"
     mise.platform.machine = lambda: "x86_64"
     try:
@@ -530,6 +535,7 @@ def test_apps_get_stubs_and_their_own_list():
         expected_apps = [e["id"] for e in catalog["apps"] if mise.buildable_here(e)]
     finally:
         devtools.mise_installs = original_versions
+        devtools.mise_outdated = original_outdated
         devtools.mise_stub_state = original_state
         mise.platform.machine = original
     agent_ids = [a["id"] for a in listed["agents"]]
@@ -606,10 +612,12 @@ def test_a_settings_row_carries_the_streams_it_can_offer():
     """The Developer tab draws a dropdown from the row alone. Without the ids
     and the current one, a tool with two streams renders as if it had one."""
     original_versions = devtools.mise_installs
+    original_outdated = devtools.mise_outdated
     original_state = devtools.mise_stub_state
     original_settings = mise.RT.load_settings
     original_machine = mise.platform.machine
     devtools.mise_installs = lambda: ({}, "")
+    devtools.mise_outdated = lambda: ([], "")
     devtools.mise_stub_state = lambda path: "absent"
     mise.platform.machine = lambda: "x86_64"
     mise.RT.load_settings = lambda: {"devToolChannels": {"t3code": "nightly"}}
@@ -630,6 +638,7 @@ def test_a_settings_row_carries_the_streams_it_can_offer():
         assert_equal(rows["claude"]["channel"], "", "and names no channel")
     finally:
         devtools.mise_installs = original_versions
+        devtools.mise_outdated = original_outdated
         devtools.mise_stub_state = original_state
         mise.RT.load_settings = original_settings
         mise.platform.machine = original_machine
@@ -1393,39 +1402,64 @@ def test_cli_wrapper_routes_the_commands():
         assert f'if cmd == "{name}": return _devtools().' in helper_text, f"helper must dispatch {name}"
 
 
+CASES = (
+    test_stub_template_and_foreign_files,
+    test_a_stub_over_an_install_with_no_executable_never_runs_itself,
+    test_outdated_parsing_and_update_steps,
+    test_a_mise_id_reduces_to_the_tool_name,
+    test_update_run_and_count_carry_tools,
+    test_os_release_resolves_through_id_like,
+    test_first_launch_asks_before_installing,
+    test_an_entry_without_this_machines_architecture_is_not_offered,
+    test_a_package_is_looked_up_under_the_id_mise_files_it_by,
+    test_an_owner_installed_app_launches_its_public_command,
+    test_an_interpreter_pin_reaches_the_build_and_no_further,
+    test_a_windowed_app_launches_without_a_terminal,
+    test_apps_get_stubs_and_their_own_list,
+    test_a_channel_picks_the_release_stream_a_tool_installs_from,
+    test_a_settings_row_carries_the_streams_it_can_offer,
+    test_a_channel_the_catalog_dropped_falls_back_to_the_default,
+    test_setting_a_channel_records_it_and_rewrites_the_stub,
+    test_the_settings_tab_runs_the_channel_command,
+    test_env_remove_keeps_shared_tools,
+    test_distro_owned_env_is_hands_off,
+    test_mise_installs_reads_declaration_and_active_version,
+    test_install_origin_names_what_provides_a_command,
+    test_row_actions_run_and_refuse,
+    test_the_settings_tab_can_act_on_every_row,
+    test_a_row_carries_the_release_it_is_waiting_for,
+    test_a_package_kept_off_path_runs_by_absolute_path,
+    test_an_exec_stub_runs_the_file_under_the_install_root,
+    test_an_install_may_not_export_a_command_the_entry_does_not_own,
+    test_every_launcher_is_settled_before_its_option_is_recorded,
+    test_catalog_entries_cover_the_tools_section,
+    test_catalog_is_consistent,
+    test_cli_wrapper_routes_the_commands,
+)
+
+# A stand-in first on the PATH each case inherits: a helper call that escapes the
+# case's own fake records its argv here and fails, instead of reaching a host mise
+# that resolves every npm-backed tool over the network. CI has no mise, so there a
+# call that escapes would otherwise take the no-mise branch unseen. A case that
+# sets its own PATH drops the stand-in and must supply its own fake mise.
+TRIPWIRE_MISE = '#!/bin/sh\nprintf "%s\\n" "$*" >> {log}\nexit 97\n'
+
+
 def main() -> int:
-    test_stub_template_and_foreign_files()
-    test_a_stub_over_an_install_with_no_executable_never_runs_itself()
-    test_outdated_parsing_and_update_steps()
-    test_a_mise_id_reduces_to_the_tool_name()
-    test_update_run_and_count_carry_tools()
-    test_os_release_resolves_through_id_like()
-    test_first_launch_asks_before_installing()
-    test_an_entry_without_this_machines_architecture_is_not_offered()
-    test_a_package_is_looked_up_under_the_id_mise_files_it_by()
-    test_an_owner_installed_app_launches_its_public_command()
-    test_an_interpreter_pin_reaches_the_build_and_no_further()
-    test_a_windowed_app_launches_without_a_terminal()
-    test_apps_get_stubs_and_their_own_list()
-    test_a_channel_picks_the_release_stream_a_tool_installs_from()
-    test_a_settings_row_carries_the_streams_it_can_offer()
-    test_a_channel_the_catalog_dropped_falls_back_to_the_default()
-    test_setting_a_channel_records_it_and_rewrites_the_stub()
-    test_the_settings_tab_runs_the_channel_command()
-    test_env_remove_keeps_shared_tools()
-    test_distro_owned_env_is_hands_off()
-    test_mise_installs_reads_declaration_and_active_version()
-    test_install_origin_names_what_provides_a_command()
-    test_row_actions_run_and_refuse()
-    test_the_settings_tab_can_act_on_every_row()
-    test_a_row_carries_the_release_it_is_waiting_for()
-    test_a_package_kept_off_path_runs_by_absolute_path()
-    test_an_exec_stub_runs_the_file_under_the_install_root()
-    test_an_install_may_not_export_a_command_the_entry_does_not_own()
-    test_every_launcher_is_settled_before_its_option_is_recorded()
-    test_catalog_entries_cover_the_tools_section()
-    test_catalog_is_consistent()
-    test_cli_wrapper_routes_the_commands()
+    with tempfile.TemporaryDirectory() as tmp:
+        bin_dir, log = Path(tmp) / "bin", Path(tmp) / "mise-calls"
+        bin_dir.mkdir()
+        log.touch()
+        (bin_dir / "mise").write_text(TRIPWIRE_MISE.format(log=shlex.quote(str(log))))
+        (bin_dir / "mise").chmod(0o755)
+        with mock.patch.dict(os.environ, {"PATH": os.pathsep.join((str(bin_dir), os.environ.get("PATH", "")))}):
+            assert_equal(shutil.which("mise"), str(bin_dir / "mise"), "the stand-in must be the mise a case that keeps the inherited PATH resolves")
+            for case in CASES:
+                case()
+                calls = log.read_text()
+                if calls:
+                    raise AssertionError(f"mise-reached: {case.__name__}\n{calls}"
+                                         "replace the mise runner in this case, or put a fake mise first on its PATH")
     print("check-dev-tools: ok")
     return 0
 
