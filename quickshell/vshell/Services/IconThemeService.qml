@@ -18,15 +18,27 @@ Singleton {
     }
 
     // Icon name to file path for managedTheme, from `vshell icons index`. It is
-    // replaced whole, once per theme, so every resolve() binding re-evaluates once
+    // replaced whole on each load, so every resolve() binding re-evaluates once
     // when the index lands rather than once per icon.
     property var _index: ({})
 
-    onManagedThemeChanged: _load()
+    onManagedThemeChanged: {
+        _index = ({});
+        _load();
+    }
     Component.onCompleted: _load()
 
+    // An app installed during the session can bring icons the loaded index lacks.
+    // The current index stays in place until the reloaded one lands.
+    Connections {
+        target: DesktopEntries
+        function onApplicationsChanged() {
+            root._load();
+        }
+    }
+
+    // Proc debounces calls that share the "iconIndex" id into one helper run.
     function _load() {
-        _index = ({});
         if (!managedTheme)
             return;
         const theme = managedTheme;

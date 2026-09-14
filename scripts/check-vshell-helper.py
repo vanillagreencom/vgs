@@ -2204,6 +2204,11 @@ def test_icon_index_picks_each_name_through_the_inherit_chain():
         for name, winner, _losers, claim in rows:
             assert_equal(result.get(name), str(winner), claim)
         assert_equal("vgs-probe-unrelated" in result, False, "a theme outside the chain is not indexed")
+        # Two candidates that tie leave the winner to the walk's directory order, which
+        # differs per filesystem, so the size rule is pinned on the ranking itself.
+        assert_equal(helper._icon_path_score("/64x64/apps/vgs-probe-size.png", 0)
+                     > helper._icon_path_score("/16x16/apps/vgs-probe-size.png", 0), True,
+                     "the larger PNG outranks a smaller one at the same chain position")
 
         with patch.object(helper.os, "walk", side_effect=AssertionError("icon-index-rebuilt-unchanged")):
             assert_equal(index("Child"), result, "an unchanged chain reads the cached index")
@@ -2224,6 +2229,15 @@ def test_icon_index_picks_each_name_through_the_inherit_chain():
                          f"icons index refuses theme name {theme!r}")
         assert_equal(sorted(p.name for p in cache_parent.iterdir()), ["icon-index"],
                      "a refused theme name writes nothing beside the index cache")
+
+        cli = subprocess.run(
+            [str(REPO_ROOT / "bin" / "vshell"), "icons", "index", "Child"],
+            check=False, capture_output=True, text=True,
+            env={"PATH": os.environ.get("PATH", ""), "HOME": str(temp_home), "XDG_DATA_DIRS": str(temp_home / "share")},
+        )
+        assert_equal(cli.returncode, 0, f"vshell icons index exit status: {cli.stderr.strip()}")
+        assert_equal(json.loads(cli.stdout).get("vgs-probe-chain"), str(system / "Child/16x16/apps/vgs-probe-chain.png"),
+                     "the vshell CLI routes icons index to the helper")
 
     saved = {n: os.environ.get(n) for n in ("XDG_DATA_DIRS", "XDG_DATA_HOME")}
     try:

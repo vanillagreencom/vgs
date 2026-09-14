@@ -5220,36 +5220,30 @@ def icon_theme_chain(theme: str, bases: List[Path]) -> List[Path]:
 _ICON_SIZE_DIR = re.compile(r"/(\d+)(?:x\d+)?(?:@\d+x)?/")
 
 
-def _icon_path_score(relative: str, chain_position: int) -> int:
-    """Rank one candidate file for an icon name; the highest score wins.
+def _icon_path_score(relative: str, chain_position: int) -> Tuple[int, int, bool, bool, int]:
+    """Rank one candidate file for an icon name; the highest tuple wins.
 
-    The terms are ordered so each one outranks every term after it: the context
-    directory (an app icon over a category or action icon of the same name), the
-    position in the inherit chain, SVG over PNG, then the largest bitmap size.
+    In order: the context directory (an app icon over a category or action icon of
+    the same name), the earlier position in the inherit chain, SVG over PNG, a
+    scalable directory over a sized one, then the largest bitmap size.
     `relative` starts with "/" and is the path inside its theme directory.
     """
-    score = 0
     if "/apps/" in relative:
-        score += 3_000_000_000
+        context_rank = 3
     elif "/categories/" in relative:
-        score += 1_000_000_000
+        context_rank = 2
     elif any(f"/{context}/" in relative for context in ("places", "devices", "mimetypes", "status", "actions")):
-        score += 100_000_000
-    score += max(0, 64 - chain_position) * 1_000_000
-    if relative.endswith(".svg"):
-        score += 100_000
-    if "/scalable/" in relative:
-        score += 1000
+        context_rank = 1
     else:
-        size = _ICON_SIZE_DIR.search(relative)
-        if size:
-            score += min(int(size.group(1)), 999)
-    return score
+        context_rank = 0
+    scalable = "/scalable/" in relative
+    size = None if scalable else _ICON_SIZE_DIR.search(relative)
+    return (context_rank, -chain_position, relative.endswith(".svg"), scalable, int(size.group(1)) if size else 0)
 
 
 def build_icon_index(dirs: List[Path]) -> Dict[str, str]:
     """Map every SVG and PNG icon name under `dirs` to its best-scoring file."""
-    best: Dict[str, Tuple[int, str]] = {}
+    best: Dict[str, Tuple[Tuple[int, int, bool, bool, int], str]] = {}
     for position, theme_dir in enumerate(dirs):
         prefix = len(str(theme_dir))
         for current, _subdirs, files in os.walk(theme_dir, followlinks=True):
@@ -5295,10 +5289,7 @@ def icon_index(theme: str) -> Dict[str, str]:
     dirs = icon_theme_chain(theme, icon_theme_base_dirs())
     fingerprint = _icon_index_fingerprint(dirs)
     cache = cache_dir() / "icon-index" / f"{theme}.json"
-    try:
-        cached = json.loads(cache.read_text())
-    except (FileNotFoundError, ValueError):
-        cached = None
+    cached = load_json_file(cache)
     if isinstance(cached, dict) and cached.get("fingerprint") == fingerprint and isinstance(cached.get("icons"), dict):
         return cached["icons"]
     icons = build_icon_index(dirs)
