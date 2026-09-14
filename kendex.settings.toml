@@ -14,6 +14,12 @@ GIT_HOST_CLI = ".agents/skills/github/scripts/github.sh"
 LINEAR_FORMAT = "safe"
 ORCH_STATE_DIR = "tmp"
 
+# Extra test-path globs branch-size-check adds to its built-in test rule, which
+# names none of them. The Node suites `scripts/validate` runs, and the helpers
+# under `scripts/lib` they import, are validation code; counting their added
+# lines as production growth spends a branch's stated allowance on its tests.
+ORCH_SIZE_TEST_PATHS = "scripts/test-*.js scripts/lib/*.js"
+
 # File-size thresholds come from the shipped path classes. No DOC_LIMITS_*
 # key here: a repeated default goes stale when the class changes.
 
