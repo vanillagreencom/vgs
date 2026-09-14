@@ -800,19 +800,6 @@ def test_theme_apply_lands_every_other_target_when_one_target_fails():
     with_temp_home(check)
 
 
-def _dispatched_hook_names():
-    """Every hook name run_hook dispatches, read from its own body so a name with
-    no dispatch branch cannot pass by appearing in a second list here."""
-    body = next(node for node in ast.parse(HELPER_PATH.read_text()).body
-                if isinstance(node, ast.FunctionDef) and node.name == "run_hook")
-    return {node.comparators[0].value for node in ast.walk(body)
-            if isinstance(node, ast.Compare) and isinstance(node.left, ast.Name)
-            and node.left.id == "hook" and len(node.ops) == 1
-            and isinstance(node.ops[0], ast.Eq)
-            and isinstance(node.comparators[0], ast.Constant)
-            and isinstance(node.comparators[0].value, str)}
-
-
 # Every key a shipped target may declare. A key outside this set is a typo that
 # declares nothing, so the apply silently drops whatever it was meant to say.
 _TARGET_CONFIG_KEYS = {"app", "template", "destination", "detect", "hook", "reloadHook",
