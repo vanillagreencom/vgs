@@ -28,6 +28,12 @@ Singleton {
 
     property var knownManifests: ({})
     property var pathToPluginId: ({})
+    // A path in knownManifests records that the file was read, not what it now
+    // holds. Editing a plugin.json in place leaves the path unchanged, so a
+    // watcher-driven resync would keep the first read's verdict for the life of
+    // the process. An explicit scan raises this, and the next resync re-reads
+    // every manifest present on disk so the edit is judged again.
+    property bool _rereadKnownManifests: false
     // Ids seen from the bundled directory, whether or not a higher-priority
     // source currently owns them. Gates the always-available invariant.
     property var _bundledPluginIds: ({})
@@ -179,12 +185,16 @@ Singleton {
         const bundledList = snapshotModel(bundledWatcher, "bundled");
         const sysList = snapshotModel(systemWatcher, "system");
         const seenPaths = {};
+        // Consume the request here: one explicit scan re-reads once, and the
+        // directory events that follow it stay a path-set diff that reads no file.
+        const reread = _rereadKnownManifests;
+        _rereadKnownManifests = false;
 
         function consider(entry) {
             const key = entry.path;
             seenPaths[key] = true;
             const prev = knownManifests[key];
-            if (!prev) {
+            if (!prev || reread) {
                 loadPluginManifestFile(entry.path, entry.source, Date.now());
             }
         }
@@ -1786,7 +1796,11 @@ Singleton {
         delete _stateWriters[pluginId];
     }
 
+    // Re-read every manifest on disk, not only paths this process has not seen.
+    // Every caller is an explicit user action: the Scan button, an install or an
+    // uninstall settling, and the plugin-scan scan IPC call.
     function scanPlugins() {
+        root._rereadKnownManifests = true;
         const userUrl = Paths.toFileUrl(root.pluginDirectory);
         const bundledUrl = Paths.toFileUrl(root.bundledPluginDirectory);
         const systemUrl = Paths.toFileUrl(root.systemPluginDirectory);
