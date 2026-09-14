@@ -58,7 +58,7 @@ Item {
     // Revert drops a built-in theme's user overlay, and refuses a catalog
     // download outright whatever the pristine flag can infer about it. The
     // control follows what the command enforces, not what the flag guesses.
-    readonly property bool revertable: currentEntry.modified === true && currentEntry.builtin === true && currentEntry.catalogOwned !== true
+    readonly property bool revertable: currentEntry.modified === true && currentEntry.builtin === true && currentEntry.catalogPristine !== true
     property bool revertConfirmPending: false
     property bool syncingSliders: false
 

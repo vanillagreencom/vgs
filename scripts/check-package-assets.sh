@@ -26,18 +26,34 @@ for distro in generator["DISTROS"]:
 PY
 
 DESTDIR="$core" VGS_BACKEND_BINARY=/bin/true "$root/packaging/install-system.sh"
-test -f "$core/usr/lib/vshell/themes/bauhaus/theme.json"
-test -f "$core/usr/lib/vshell/themes/roseofdune/theme.json"
 test -d "$core/usr/lib/vshell/themes/targets"
-test ! -e "$core/usr/lib/vshell/themes/tokyo-night"
+# Every theme package installs its definitions and its preview, and no
+# wallpapers except the default theme's. scripts/gen-theme-catalog.py owns that
+# split, so the installed packages are compared with its listing both ways.
+"$root/scripts/gen-theme-catalog.py" --package-files | LC_ALL=C sort > "$tmp/package-files.want"
+# The listing is the reference, so a listing that lost the other themes or
+# kept their wallpapers would pass the comparison below with it.
+grep -qxF 'tokyo-night/theme.json' "$tmp/package-files.want"
+grep -q '^bauhaus/backgrounds/' "$tmp/package-files.want"
+if grep -q '^roseofdune/backgrounds/' "$tmp/package-files.want"; then
+  echo "scripts/gen-theme-catalog.py --package-files lists roseofdune's wallpapers, which only the default theme ships" >&2
+  exit 1
+fi
+find "$core/usr/lib/vshell/themes" -mindepth 2 -type f -printf '%P\n' \
+  | grep -v -e '^targets/' -e '^thumbnails/' | LC_ALL=C sort > "$tmp/package-files.have"
+if ! package_diff="$(diff "$tmp/package-files.want" "$tmp/package-files.have")"; then
+  echo "packaging/install-system.sh: the installed theme packages differ from scripts/gen-theme-catalog.py --package-files:" >&2
+  printf '%s\n' "$package_diff" >&2
+  exit 1
+fi
 # The retired vgs-shell-assets package was the only carrier of the vendored
 # icon themes, so the one remaining install has to ship them.
 test -d "$core/usr/lib/vshell/config/vshell/icons"
 test -x "$core/usr/lib/vshell/bin/vshell-backend"
 # The screensaver needs packaged art because it cannot regenerate data into /usr.
 test -s "$core/usr/lib/vshell/config/vshell/branding/screensaver.txt"
-# Installs need a thumbnail for every catalogued theme, installed or not,
-# so the download browser paints them without a network call.
+# Installs need a thumbnail for every catalogued theme, for the surfaces that
+# paint a small tile.
 test -s "$core/usr/lib/vshell/themes/catalog.json"
 test -s "$core/usr/lib/vshell/themes/thumbnails/tokyo-night.jpg"
 test -s "$core/usr/lib/vshell/themes/thumbnails/bauhaus.jpg"
@@ -104,7 +120,10 @@ packaging/void/template|replaces|vgs-shell-assets|^replaces="(.*[[:space:]])?vgs
 RECIPES
 test "$unowned" -eq 0
 
-# Catalog checksums must match theme contents or downloads fail verification.
+# Every theme ships its full-size preview within the repository's size budget.
+"$root/scripts/capture-theme-previews.py" --check
+
+# The catalog must describe the tree and pin one imagery archive per theme.
 "$root/scripts/gen-theme-catalog.py" --check
 
 echo "package asset checks passed"

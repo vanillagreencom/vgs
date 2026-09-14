@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
 """Generate the theme download catalog from the tree and themes/asset-lock.json.
 
-Definition files (theme.json, colors.toml, terminal-colors.toml, ui-roles.toml, apps/*) are read and hashed from the
-working tree. A theme's imagery is not in the tree: scripts/publish-theme-assets.py
-publishes one archive per theme to a themes-vN release and records its size and
-sha256 in themes/asset-lock.json, which this script reads. --check therefore runs
-in a checkout with no wallpapers present.
+A theme's definitions (theme.json, colors.toml, terminal-colors.toml,
+ui-roles.toml, apps/*, preview.jpg) ship in the VGS package. Its wallpapers do
+not: scripts/publish-theme-assets.py publishes one archive of `backgrounds/*` per
+theme to a themes-vN release and records its size and sha256 in
+themes/asset-lock.json, which this script reads. --check therefore runs in a
+checkout with no wallpapers present.
 
-Run with --write after theme changes. check-package-assets.sh runs --check.
+Run with --write after theme changes. check-package-assets.sh runs --check, and
+compares what packaging/install-system.sh installs with --package-files.
 """
 from __future__ import annotations
 
 import argparse
-import hashlib
 import importlib.machinery
 import importlib.util
 import json
@@ -29,17 +30,21 @@ LOCK_PATH = THEMES_DIR / "asset-lock.json"
 REPO_SLUG = "vanillagreencom/vgs"
 RELEASE_BASE_URL = f"https://github.com/{REPO_SLUG}/releases/download"
 CATALOG_VERSION = 2
-# Imagery is published in the theme's release archive, never hashed from the tree.
-ASSET_SUBPATHS = ("backgrounds", "preview.png")
-
-# Use the installer path validator so generated entries have accepted paths.
+# The lock shape scripts/publish-theme-assets.py writes: one imagery-only
+# archive per theme. An older lock pins archives that also carry definitions,
+# which the download path refuses member by member.
+LOCK_VERSION = 2
+# A theme's wallpapers are published in its release archive; everything else in
+# the package ships in the VGS package.
+ASSET_SUBPATHS = ("backgrounds",)
 
 
 def is_imagery(rel: str) -> bool:
     """Whether a theme-package path is imagery the release archive carries.
 
     The one owner of the imagery-versus-definition split; scripts/publish-theme-assets.py
-    imports it rather than restating the rule.
+    imports it rather than restating the rule, and scripts/check-package-assets.sh
+    holds packaging/install-system.sh to it through --package-files.
     """
     return rel.split("/", 1)[0] in ASSET_SUBPATHS
 
@@ -57,51 +62,21 @@ def load_helper() -> Any:
     return module
 
 
-def catalog_relpaths(helper: Any, theme_dir: Path) -> List[str]:
-    """Definition files of a theme package, per the installer's path rule.
+def package_files(helper: Any) -> List[str]:
+    """Every path under themes/ a theme package ships in the VGS package, sorted.
 
-    Files the installer would refuse are only skipped when they are *outside* the
-    downloadable shape (stray notes, editor droppings). A file that is inside
-    `apps/` but unrepresentable — nested deeper than the installer accepts, or a
-    dotfile — fails generation instead of silently shipping a theme that
-    downloads incompletely. Imagery is skipped here because the release archive,
-    not this manifest, carries it.
+    A theme's definitions always ship. Its imagery does not, except the default
+    theme's, so a first boot has a wallpaper before anything is downloaded.
     """
-    rels = []
-    for path in sorted(theme_dir.rglob("*")):
-        if not path.is_file():
-            continue
-        rel = path.relative_to(theme_dir).as_posix()
-        if is_imagery(rel):
-            continue
-        try:
-            rels.append(helper._catalog_check_relpath(rel))
-        except ValueError as exc:
-            if rel.split("/")[0] == "apps" or rel in {"theme.json", "colors.toml",
-                                                       helper.TERMINAL_COLORS_FILE, helper.UI_ROLES_FILE}:
-                raise SystemExit(f"{theme_dir.name}: {exc}") from exc
-    return rels
-
-
-def sha256_of(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def definitions_digest(files: List[Dict[str, Any]]) -> str:
-    """One digest over the definition manifest an archive was built from.
-
-    The publisher records this for the files it packed; the generator recomputes
-    it from the tree. They disagree exactly when a committed definition file has
-    changed since the archive was published, which is the drift a per-file
-    checksum in the catalog would otherwise advertise and nothing would verify.
-    """
-    payload = "".join(f"{spec['path']}\0{spec['sha256']}\n"
-                      for spec in sorted(files, key=lambda spec: spec["path"]))
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    files = []
+    for meta in sorted(THEMES_DIR.glob("*/theme.json")):
+        theme_dir = meta.parent
+        for path in sorted(theme_dir.rglob("*")):
+            rel = path.relative_to(theme_dir).as_posix()
+            if not path.is_file() or (is_imagery(rel) and theme_dir.name != helper.DEFAULT_THEME_NAME):
+                continue
+            files.append(f"{theme_dir.name}/{rel}")
+    return files
 
 
 def load_lock() -> Dict[str, Any]:
@@ -111,6 +86,9 @@ def load_lock() -> Dict[str, Any]:
     themes = data.get("themes") if isinstance(data, dict) else None
     if not isinstance(themes, dict):
         raise SystemExit(f"{LOCK_PATH} is not a theme asset lock")
+    if data.get("version") != LOCK_VERSION:
+        raise SystemExit(f"{LOCK_PATH} is lock version {data.get('version')}, not {LOCK_VERSION}; "
+                         f"republish every theme with scripts/publish-theme-assets.py")
     return themes
 
 
@@ -119,8 +97,7 @@ def asset_entry(lock: Dict[str, Any], name: str) -> Dict[str, Any]:
     if not isinstance(entry, dict):
         raise SystemExit(f"{name}: no entry in {LOCK_PATH}; publish its imagery first "
                          f"(scripts/publish-theme-assets.py)")
-    missing = [key for key in ("release", "archive", "rev", "size", "sha256", "definitions")
-               if not entry.get(key)]
+    missing = [key for key in ("release", "archive", "rev", "size", "sha256") if not entry.get(key)]
     if missing:
         raise SystemExit(f"{name}: {LOCK_PATH} entry is missing {', '.join(missing)}")
     return {
@@ -145,35 +122,14 @@ def theme_entry(helper: Any, theme_dir: Path, lock: Dict[str, Any]) -> Dict[str,
     if meta.get("mode") in {"dark", "light"}:
         colors["mode"] = meta["mode"]
     bp = helper.palette_from_colors_map(colors, name=name, wallpaper="", source=source)
-    palette = bp.get("palette", {})
-    ext = palette.get("extendedColors") or {}
-
-    files = []
-    for rel in catalog_relpaths(helper, theme_dir):
-        path = theme_dir / rel
-        files.append({"path": rel, "size": path.stat().st_size, "sha256": sha256_of(path)})
     assets = asset_entry(lock, name)
-    # The archive carries these same definition files. A catalog that advertises
-    # one set while pinning an archive built from another silently installs the
-    # old definitions, so generation refuses rather than emitting it.
-    pinned = str((lock.get(name) or {}).get("definitions") or "")
-    if definitions_digest(files) != pinned:
-        raise SystemExit(
-            f"{name}: the committed theme definitions differ from the ones in "
-            f"{assets['archive']}; republish that theme with scripts/publish-theme-assets.py")
-
     return {
         "name": name,
-        "mode": palette.get("mode", "dark"),
+        "mode": bp.get("palette", {}).get("mode", "dark"),
         "pair": str(meta.get("pair") or ""),
         "source": source,
-        "colors": palette.get("colors", []),
-        "background": ext.get("background", ""),
-        "foreground": ext.get("foreground", ""),
-        "accent": ext.get("accent", ""),
-        # The bytes a download transfers: one archive carrying the whole package.
+        # The bytes a download transfers: one archive carrying the theme's wallpapers.
         "size": assets["size"],
-        "files": files,
         "assets": assets,
     }
 
@@ -296,7 +252,13 @@ def main(argv: List[str]) -> int:
                         help="release gate: ref must be vVERSION, themes/ committed, asset archives published")
     parser.add_argument("--check-assets-published", action="store_true",
                         help="fail if any catalogued archive is not an asset of a release that exists")
+    parser.add_argument("--package-files", action="store_true",
+                        help="print the paths under themes/ the theme packages ship in the VGS package")
     args = parser.parse_args(argv)
+
+    if args.package_files:
+        sys.stdout.write("".join(f"{rel}\n" for rel in package_files(load_helper())))
+        return 0
 
     if args.check_release_pin or args.check_assets_published:
         if not CATALOG_PATH.is_file():

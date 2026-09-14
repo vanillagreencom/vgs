@@ -12,13 +12,15 @@ Fedora uses `Suggests` to avoid installing optional compositors and login manage
 
 ## Themes and catalog
 
-`install-system.sh` installs one theme set, the same on every channel: the `bauhaus` and `roseofdune` themes with their imagery, the `targets` templates, the download catalog, one thumbnail per catalogued theme, and the vendored icon themes. `scripts/check-package-assets.sh` and `scripts/check-release.sh` check package and archive contents.
+`install-system.sh` installs one theme set, the same on every channel: every theme's definitions and full-size preview, the default `bauhaus` theme's wallpapers, the `targets` templates, the download catalog, one thumbnail per catalogued theme, and the vendored icon themes. `scripts/check-package-assets.sh` and `scripts/check-release.sh` check package and archive contents.
 
-`scripts/gen-theme-catalog.py` owns catalog generation and release-pin checks; `scripts/publish-theme-assets.py` owns the per-theme imagery archives and `themes/asset-lock.json`.
+`scripts/gen-theme-catalog.py` owns catalog generation, release-pin checks and the list of files a theme package ships; `scripts/publish-theme-assets.py` owns the per-theme wallpaper archives, `themes/asset-lock.json` and the thumbnails; `scripts/capture-theme-previews.py` owns the committed `preview.jpg` files.
 
 ### Publishing theme imagery
 
-The repository holds no imagery for the other 77 themes, so `publish-theme-assets.py` reads an asset working directory **outside** the checkout, laid out as `<name>/{backgrounds/,preview.png}`. Point `--asset-root` or `VGS_THEME_ASSET_ROOT` at it; the default is `../vgs-theme-assets`. `scripts/publish-theme-assets.py --pull` rebuilds that directory from the published `themes-vN` releases, which is what keeps the releases the copy of record rather than one maintainer's disk. Run `--pull` before editing imagery on a machine that has never published.
+The repository holds no wallpapers for most themes, so `publish-theme-assets.py` reads an asset working directory **outside** the checkout, laid out as `<name>/backgrounds/`. Point `--asset-root` or `VGS_THEME_ASSET_ROOT` at it; the default is `../vgs-theme-assets`. `scripts/publish-theme-assets.py --pull` rebuilds that directory from the published `themes-vN` releases, which is what keeps the releases the copy of record rather than one maintainer's disk. Run `--pull` before editing imagery on a machine that has never published.
+
+A changed theme needs a new preview before it publishes, because the publish derives the thumbnail from `themes/<name>/preview.jpg`. `scripts/capture-theme-previews.py [NAME]...` renders each named theme, or every theme, over the asset working directory's wallpapers. It starts nested Hyprland sessions, so run it from the checkout that owns the desktop session.
 
 ## Signing
 

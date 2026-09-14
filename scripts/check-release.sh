@@ -32,7 +32,7 @@ grep -q '^	install = vgs-shell-git.install$' "$root/packaging/arch/vgs-shell-git
 test -f "$root/packaging/arch/vgs-shell-git/vgs-shell-git.install"
 
 # Every catalogued theme must name a theme-asset release that exists, and the
-# definitions the catalog describes must be committed under this release tag.
+# themes the catalog describes must be committed under this release tag.
 "$root/scripts/gen-theme-catalog.py" --check-release-pin "$version"
 
 "$root/scripts/gen-package-metadata.py"
@@ -81,6 +81,7 @@ DESTDIR="$tmp/tarball-install" VGS_BACKEND_BINARY="$bundle/bin/vshell-backend" \
   "$bundle/packaging/install-system.sh"
 test -f "$tmp/tarball-install/usr/lib/vshell/themes/bauhaus/theme.json"
 test -f "$tmp/tarball-install/usr/lib/vshell/themes/roseofdune/theme.json"
+test -f "$tmp/tarball-install/usr/lib/vshell/themes/tokyo-night/theme.json"
 test -d "$tmp/tarball-install/usr/lib/vshell/themes/targets"
 test -s "$tmp/tarball-install/usr/lib/vshell/themes/thumbnails/bauhaus.jpg"
 test -d "$tmp/tarball-install/usr/lib/vshell/config/vshell/icons"

@@ -2,7 +2,7 @@
 
 [← Decision Index](INDEX.md)
 
-**Date**: 2026-09-09 **Status**: Active **Research**: —
+**Date**: 2026-09-09, amended 2026-09-13 **Status**: Active **Research**: —
 
 **Applies to**: `themes/`, `scripts/gen-theme-catalog.py`, `bin/vshell-helper` theme-catalog functions, `packaging/`, `.github/workflows/release.yml`
 
@@ -97,6 +97,23 @@ The rewrite is executed separately, once, against a fresh clone, after the delet
 | `scripts/publish-aur.sh:36,43,52`, `.github/workflows/publish-aur.yml:22,30,98,105` | Two packages instead of three. |
 | `.github/workflows/release.yml:35-48,51` | The `assets` job and its `needs` entry go. |
 | `scripts/check-aur-sync.py:31`, `scripts/check-validation-inventory.py:39` | Their `vgs-shell-assets` and `build-assets.sh` rows go. |
+
+## Amendment (2026-09-13): definitions and previews ship in the package; archives carry wallpapers only
+
+The owner decided on 2026-09-13 that every theme's definitions ship in the base VGS package and a release archive carries only that theme's wallpapers. The marketplace browser is retired. A package update then refreshes every definition, and applying a theme needs no download first.
+
+**Evidence**, measured at `ab553529`: `themes/` holds 81 theme packages. Their definitions total 3.9 MB and the 480-pixel thumbnails 1.5 MB, while `themes/catalog.json` reports a `totalSize` of 1,072,743,760 bytes over 81 archives. `packaging/install-system.sh` copied two of the 81 themes, so every other theme needed a download before first use.
+
+This amendment supersedes these parts of the decision:
+
+- **§1, archive contents.** An archive holds `backgrounds/*` and nothing else, and both earlier lists of definition files it carried no longer apply. `is_imagery` in `scripts/gen-theme-catalog.py` is the one owner of the split, and `CATALOG_ALLOWED_DIRS` in `bin/vshell-helper` admits `backgrounds/` alone, so a download refuses an archive member that is a definition or a preview.
+- **§2, catalog inputs.** A catalog entry carries `name`, `mode`, `pair`, `source`, `size` and `assets`. The per-file `files[]` list, the colours and the lock's `definitions` digest are gone, because nothing reads them once definitions ship in the package. The lock is version 2, and generation refuses any other version, since an earlier lock pins archives that carry definitions. `scripts/gen-theme-catalog.py --package-files` lists what a theme package ships in the VGS package: every definition file and preview, and the default theme's wallpapers so a first boot has one. `scripts/check-package-assets.sh` compares the installed tree with that list.
+- **§3, previews.** The 480-pixel thumbnail was sized on the catalog browser alone. Every theme now ships a full-size `themes/<name>/preview.jpg`, captured at the helper's `PREVIEW_SIZE` of 2560×1440 by `scripts/capture-theme-previews.py` and encoded as JPEG at quality 90. `scripts/capture-theme-previews.py --check` refuses a missing or smaller preview and a set over 64 MiB. The thumbnail stays, derived at publish time from the committed preview rather than from an archive. The earlier departure that took full-size previews out of the repository is reversed.
+- **§4, installed location.** A download places its wallpapers in `~/.config/vshell/themes/<name>/` beside any user overlay, and never replaces a file it did not place. `theme catalog remove` deletes only the wallpapers the marker records, and `theme revert` keeps them while dropping the overlay. `theme catalog install` remains the command that reaches the network.
+- **§6, history rewrite.** The rewrite that VGS-280 executes filters `themes/*/backgrounds/*` and `themes/*/preview.png`. The shipped previews are `preview.jpg` and match neither glob, so they survive the rewrite.
+- **§7, the one theme set.** `packaging/install-system.sh` installs every theme package and only the default theme's wallpapers. No distro recipe changes, because every recipe already calls that script.
+
+The catalog pins imagery-only archives once every theme is republished with `scripts/publish-theme-assets.py`, which also derives each thumbnail from the committed preview. Until then, `scripts/gen-theme-catalog.py --check` fails on the lock version.
 
 ## Rationale
 

@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Build, publish and pin the per-theme imagery archives.
+"""Build, publish and pin the per-theme wallpaper archives.
 
-Theme imagery lives outside the repository, in an asset working directory laid
-out as ``<name>/{backgrounds/,preview.png}`` (see D015). This script packs each
-theme's files into one reproducible archive, uploads the archives whose content
+A theme's wallpapers live outside the repository, in an asset working directory
+laid out as ``<name>/backgrounds/`` (see D015). Its definitions and its full-size
+``preview.jpg`` ship in the VGS package instead. This script packs each theme's
+wallpapers into one reproducible archive, uploads the archives whose content
 changed to the next ``themes-vN`` GitHub release, records what it published in
-``themes/asset-lock.json``, derives the browser thumbnails, and regenerates
-``themes/catalog.json``.
+``themes/asset-lock.json``, derives the 480 px thumbnails from the committed
+previews, and regenerates ``themes/catalog.json``.
 
 ``--pull`` rebuilds the asset working directory from the published releases, so
 the releases rather than a maintainer's disk are the copy of record.
@@ -34,7 +35,6 @@ THEMES_DIR = REPO_ROOT / "themes"
 LOCK_PATH = THEMES_DIR / "asset-lock.json"
 THUMBNAIL_DIR = THEMES_DIR / "thumbnails"
 RELEASE_TAG_RE = re.compile(r"^themes-v(\d+)$")
-LOCK_VERSION = 1
 # The browser paints catalog tiles at 480 px (ThemeCatalogBrowser.qml), so the
 # thumbnail is the exact resolution it needs and never a downscale at paint time.
 THUMBNAIL_WIDTH = 480
@@ -42,7 +42,7 @@ THUMBNAIL_QUALITY = 82
 DOWNLOAD_TIMEOUT = 300
 
 # scripts/gen-theme-catalog.py owns the imagery-versus-definition split, the
-# definition digest and the gh release reader; this script calls them.
+# lock version and the gh release reader; this script calls them.
 GENERATOR = None
 
 
@@ -91,7 +91,7 @@ def theme_names() -> List[str]:
 
 def load_lock() -> Dict[str, Any]:
     if not LOCK_PATH.is_file():
-        return {"version": LOCK_VERSION, "repo": generator().REPO_SLUG, "themes": {}}
+        return {"version": generator().LOCK_VERSION, "repo": generator().REPO_SLUG, "themes": {}}
     data = json.loads(LOCK_PATH.read_text())
     if not isinstance(data, dict) or not isinstance(data.get("themes"), dict):
         raise SystemExit(f"{LOCK_PATH} is not a theme asset lock")
@@ -99,7 +99,7 @@ def load_lock() -> Dict[str, Any]:
 
 
 def render_lock(lock: Dict[str, Any]) -> str:
-    ordered: Dict[str, Any] = {"version": LOCK_VERSION, "repo": generator().REPO_SLUG}
+    ordered: Dict[str, Any] = {"version": generator().LOCK_VERSION, "repo": generator().REPO_SLUG}
     if lock.get("publishing"):
         ordered["publishing"] = str(lock["publishing"])
     ordered["themes"] = {name: lock["themes"][name] for name in sorted(lock["themes"])}
@@ -146,10 +146,9 @@ def next_release_tag(lock: Dict[str, Any]) -> str:
 def imagery_relpaths(assets: Path) -> List[str]:
     """The imagery a theme's archive carries, per the installer's path rule.
 
-    Mirrors the generator's rule for definition files: a stray note beside the
-    wallpapers is skipped, while an unrepresentable path *inside* the imagery
-    fails the build rather than shipping an archive whose members the download
-    path would refuse on extraction.
+    A stray note beside the wallpapers is skipped, while an unrepresentable path
+    *inside* the imagery fails the build rather than shipping an archive whose
+    members the download path would refuse on extraction.
     """
     rels = []
     for path in sorted(assets.rglob("*")):
@@ -166,48 +165,26 @@ def imagery_relpaths(assets: Path) -> List[str]:
 
 
 def package_members(name: str, assets: Path) -> List[Tuple[str, Path]]:
-    """Every file the archive carries: the tree's definitions plus the working directory's imagery."""
-    theme_dir = THEMES_DIR / name
-    members: Dict[str, Path] = {
-        rel: theme_dir / rel for rel in generator().catalog_relpaths(helper(), theme_dir)}
-    members.update({rel: assets / rel for rel in imagery_relpaths(assets)})
-    if "theme.json" not in members:
-        raise SystemExit(f"{name}: no theme.json to publish")
-    return sorted(members.items())
+    """Every file the archive carries: the theme's wallpapers in the asset working directory."""
+    members = [(rel, assets / rel) for rel in imagery_relpaths(assets)]
+    if not members:
+        raise SystemExit(f"{name}: no wallpapers under {assets / 'backgrounds'} to publish")
+    return members
 
 
-def definitions_pin(packed: Dict[str, bytes]) -> str:
-    """The digest scripts/gen-theme-catalog.py recomputes from the tree.
+def build_archive(members: List[Tuple[str, Path]]) -> bytes:
+    """Pack the members into a byte-reproducible gzipped tar.
 
-    Derived from the bytes build_archive packed, never from a fresh read of the
-    tree. Recording it binds the published archive to the exact definition files
-    it carries, so a later edit to one of them cannot pass generation unnoticed
-    — and a read of its own would reopen that same hole for an edit made while
-    the run was uploading.
-    """
-    gen = generator()
-    return gen.definitions_digest([
-        {"path": rel, "sha256": hashlib.sha256(data).hexdigest()}
-        for rel, data in sorted(packed.items()) if not gen.is_imagery(rel)])
-
-
-def build_archive(members: List[Tuple[str, Path]]) -> Tuple[bytes, Dict[str, bytes]]:
-    """Pack the members into a byte-reproducible gzipped tar, and return what it packed.
-
-    Every member is read exactly once, and the returned bytes are that read.
-    Everything about this archive is a function of them: the definition digest,
-    the screenshot digest, and the browser thumbnail. No consumer takes a path,
-    so none can describe or display content the release does not carry.
+    Every member is read exactly once, so the size and sha256 the lock records
+    describe the bytes that were packed, not a file edited while the run uploads.
 
     Identical content must produce identical bytes: the archive's own sha256 is
     what tells the publisher whether a theme's imagery changed at all.
     """
-    packed_members: Dict[str, bytes] = {}
     raw = io.BytesIO()
     with tarfile.open(fileobj=raw, mode="w", format=tarfile.PAX_FORMAT) as tar:
         for rel, path in members:
             data = path.read_bytes()
-            packed_members[rel] = data
             info = tarfile.TarInfo(rel)
             info.size = len(data)
             info.mtime = 0
@@ -219,7 +196,7 @@ def build_archive(members: List[Tuple[str, Path]]) -> Tuple[bytes, Dict[str, byt
     packed = io.BytesIO()
     with gzip.GzipFile(fileobj=packed, mode="wb", compresslevel=9, mtime=0) as zipped:
         zipped.write(raw.getvalue())
-    return packed.getvalue(), packed_members
+    return packed.getvalue()
 
 
 def require_pillow() -> Any:
@@ -246,7 +223,7 @@ def thumbnail_needs_rebuild(preview_digest: str, recorded: str, thumbnail: Path)
 
 
 def write_thumbnail(preview: bytes, dest: Path) -> None:
-    """Derive the browser thumbnail from the screenshot bytes the archive carries."""
+    """Derive the 480 px thumbnail from the full-size preview's bytes."""
     Image = require_pillow()
 
     with Image.open(io.BytesIO(preview)) as image:
@@ -361,19 +338,18 @@ def publish(args: argparse.Namespace) -> int:
             if not assets.is_dir():
                 raise SystemExit(f"{name}: no imagery under {assets}; run --pull first")
             previous = lock["themes"].get(name) or {}
-            members = package_members(name, assets)
-            # One read per file. Everything recorded below describes these bytes
-            # and not the tree as it stands afterwards, so an edit made while the
-            # run uploads cannot be pinned as published.
-            blob, packed_members = build_archive(members)
+            blob = build_archive(package_members(name, assets))
             digest = hashlib.sha256(blob).hexdigest()
-            preview = packed_members.get("preview.png")
+            # Read once, so the digest recorded below describes the pixels the
+            # thumbnail was derived from.
+            preview_path = THEMES_DIR / name / helper().THEME_PREVIEW_FILE
+            preview = preview_path.read_bytes() if preview_path.is_file() else None
             preview_digest = hashlib.sha256(preview).hexdigest() if preview is not None else ""
 
-            # The thumbnail is derived from the screenshot the archive carries,
-            # and is rebuilt whenever that content differs from the one it came
-            # from, or the file is gone. Tying it to the archive digest would
-            # leave a deleted thumbnail unrecoverable while two gates require one.
+            # The thumbnail is derived from the theme's committed preview, and is
+            # rebuilt whenever that content differs from the one it came from, or
+            # the file is gone. Tying it to the archive digest would leave a
+            # deleted thumbnail unrecoverable while two gates require one.
             thumbnail = THUMBNAIL_DIR / f"{name}.jpg"
             if thumbnail_needs_rebuild(preview_digest, str(previous.get("preview") or ""), thumbnail):
                 write_thumbnail(preview, thumbnail)
@@ -409,7 +385,6 @@ def publish(args: argparse.Namespace) -> int:
                 "rev": rev,
                 "size": len(blob),
                 "sha256": digest,
-                "definitions": definitions_pin(packed_members),
                 "preview": preview_digest,
                 "published": bool(args.upload),
             }
