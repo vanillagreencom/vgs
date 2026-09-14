@@ -41,6 +41,7 @@ function makeProcess(props) {
         alive: false,
         signals: [],
         destroyed: false,
+        destroys: 0,
         stdout: { text: "", streamFinished: signal() },
         stderr: { text: "", streamFinished: signal() },
         exited: signal(),
@@ -48,6 +49,7 @@ function makeProcess(props) {
             if (this.alive)
                 this.signals.push("SIGKILL");
             this.destroyed = true;
+            this.destroys += 1;
         },
     };
     Object.defineProperty(process, "running", {
@@ -69,6 +71,7 @@ function makeTimer() {
         interval: 0,
         running: false,
         destroyed: false,
+        destroys: 0,
         triggered: signal(),
         start() {
             this.running = true;
@@ -82,6 +85,7 @@ function makeTimer() {
         destroy() {
             this.running = false;
             this.destroyed = true;
+            this.destroys += 1;
         },
     };
 }
@@ -150,18 +154,37 @@ function launch() {
     fire(shell.timers[0]);
     assert.equal(shell.processes.length, 1, "one Process per launch");
     assert.equal(shell.timers.length, 2, "a debounce Timer, then one timeout Timer per launch");
-    return { process: shell.processes[0], timer: shell.timers[1], exitCodes };
+    return { shell, process: shell.processes[0], timer: shell.timers[1], exitCodes };
+}
+
+// Arm an id and hand back the debounce Timer that arming created. The caller then holds the
+// object, so pinning it needs neither a lookup in the map nor the entry's field names. Only a
+// call that opens a window of its own creates a Timer: one joining a window already open creates
+// none, and this refuses rather than handing back some earlier run's timeout Timer.
+function armNewWindow(shell, id, command, callback) {
+    const before = shell.timers.length;
+    shell.runCommand(id, command, callback, 0, TIMEOUT_MS);
+    assert.equal(shell.timers.length, before + 1, "this call must open a window of its own");
+    return shell.timers[before];
 }
 
 // One command from arming to its child's exit, which fires the callback. The caller decides when
 // the launch's deferred Timer destroy runs, because the state before it is what some cases
 // assert on.
 function runOnce(shell, id, callback) {
-    const debounceTimer = shell.timers.length;
-    shell.runCommand(id, ["true"], callback, 0, TIMEOUT_MS);
+    const debounceTimer = armNewWindow(shell, id, ["true"], callback);
     assert.equal(Object.keys(shell.entries).length, 1, "arming holds exactly one entry");
-    fire(shell.timers[debounceTimer]);
+    fire(debounceTimer);
     exit(shell.processes[shell.processes.length - 1], 0);
+}
+
+// maybeComplete runs again when a late signal follows a timeout, and the timeout path reaches
+// release() from the grace and from the child's own exit. Nothing a run holds may go twice.
+function assertNoDoubleDestroy(shell) {
+    for (const [what, objects] of [["Timer", shell.timers], ["Process", shell.processes]])
+        for (const object of objects)
+            assert.ok(object.destroys <= 1,
+                `a ${what} was destroyed ${object.destroys} times, so a release ran again`);
 }
 
 // A one-shot Timer that has run its interval.
@@ -198,6 +221,7 @@ test("a timed-out child that exits on SIGTERM is never killed", () => {
     assert.deepEqual(run.process.signals, ["SIGTERM"], "a child that stopped in the grace gets no SIGKILL");
     assert.equal(run.timer.destroyed, true, "the timer goes with the Process");
     assert.deepEqual(run.exitCodes, [124], "the caller is answered once");
+    assertNoDoubleDestroy(run.shell);
 });
 
 test("a timed-out child that ignores SIGTERM is killed when the grace runs out", () => {
@@ -208,6 +232,7 @@ test("a timed-out child that ignores SIGTERM is killed when the grace runs out",
     assert.deepEqual(run.process.signals, ["SIGTERM", "SIGKILL"], "destroying the Process kills the child");
     assert.equal(run.timer.destroyed, true, "the timer goes with the Process");
     assert.deepEqual(run.exitCodes, [124], "the caller is answered once");
+    assertNoDoubleDestroy(run.shell);
 });
 
 test("a command that exits before its timeout is released at once", () => {
@@ -217,6 +242,19 @@ test("a command that exits before its timeout is released at once", () => {
     assert.equal(run.process.destroyed, true, "an exited child's Process is released");
     assert.deepEqual(run.process.signals, [], "a child that exited on its own is sent nothing");
     assert.equal(run.timer.running, false, "no grace follows a normal exit");
+    assertNoDoubleDestroy(run.shell);
+});
+
+test("a child that exits after the grace killed it is released only once", () => {
+    const run = launch();
+    timeOut(run);
+    fire(run.timer);
+    // The SIGKILL the grace's end sent still produces an exit, which reaches a run that
+    // release() already tore down.
+    exit(run.process, 137);
+    assert.deepEqual(run.exitCodes, [124], "the caller is answered once");
+    assert.deepEqual(run.process.signals, ["SIGTERM", "SIGKILL"], "and the child is signalled no more");
+    assertNoDoubleDestroy(run.shell);
 });
 
 // An id the caller names and one Proc mints for an unnamed call are one surface.
@@ -252,11 +290,11 @@ test("the launch retires the entry, before the run it launched ends", () => {
 test("calls inside one debounce window collapse into one run", () => {
     const shell = makeShell();
     const answered = [];
-    shell.runCommand("iconIndex", ["first"], () => answered.push("first"), 0, TIMEOUT_MS);
+    const opened = armNewWindow(shell, "iconIndex", ["first"], () => answered.push("first"));
     shell.runCommand("iconIndex", ["second"], () => answered.push("second"), 0, TIMEOUT_MS);
     assert.equal(Object.keys(shell.entries).length, 1, "both calls share one entry");
-    assert.equal(shell.timers.length, 1, "and one debounce Timer");
-    fire(shell.timers[0]);
+    assert.equal(shell.timers.length, 1, "and the one Timer the first call armed");
+    fire(opened);
     assert.equal(shell.processes.length, 1, "the window runs one command");
     assert.deepEqual(shell.processes[0].command, ["second"], "the last call in the window");
     exit(shell.processes[0], 0);
@@ -265,9 +303,9 @@ test("calls inside one debounce window collapse into one run", () => {
 
     // The launch closed that window, so a later call is its own command, not a third caller
     // joining a window that already ran.
-    shell.runCommand("iconIndex", ["third"], () => answered.push("third"), 0, TIMEOUT_MS);
+    const reopened = armNewWindow(shell, "iconIndex", ["third"], () => answered.push("third"));
     assert.equal(Object.keys(shell.entries).length, 1, "which opens a window of its own");
-    fire(shell.entries["iconIndex"].timer);
+    fire(reopened);
     exit(shell.processes[shell.processes.length - 1], 0);
     shell.flush();
     assert.deepEqual(answered, ["second", "third"], "and runs");
@@ -288,12 +326,12 @@ test("ids that differ per call do not accumulate", () => {
 test("a callback that asks for the same id again gets its command", () => {
     const shell = makeShell();
     const answered = [];
+    let waiting = null;
     runOnce(shell, "iconIndex", () => {
         answered.push("first");
-        shell.runCommand("iconIndex", ["true"], () => answered.push("second"), 0, TIMEOUT_MS);
+        waiting = armNewWindow(shell, "iconIndex", ["true"], () => answered.push("second"));
     });
     assert.deepEqual(answered, ["first"], "the callback ran and armed the same id again");
-    const waiting = shell.entries["iconIndex"].timer;
     assert.equal(waiting.running, true, "which opened a window of its own");
     shell.flush();
     assert.deepEqual(Object.keys(shell.entries), ["iconIndex"], "the entry it armed survives");
@@ -311,10 +349,8 @@ test("a run that ends after another run of its id retires nothing", () => {
     const shell = makeShell();
     const answered = [];
     // A call after a launch opens a new window, so two runs of one id can be in flight.
-    shell.runCommand("iconIndex", ["true"], () => answered.push("first"), 0, TIMEOUT_MS);
-    fire(shell.timers[0]);
-    shell.runCommand("iconIndex", ["true"], () => answered.push("second"), 0, TIMEOUT_MS);
-    fire(shell.entries["iconIndex"].timer);
+    fire(armNewWindow(shell, "iconIndex", ["true"], () => answered.push("first")));
+    fire(armNewWindow(shell, "iconIndex", ["true"], () => answered.push("second")));
     assert.equal(shell.processes.length, 2, "both runs of the id have a child");
 
     // The run launched second exits and flushes first.
@@ -323,8 +359,7 @@ test("a run that ends after another run of its id retires nothing", () => {
     assert.deepEqual(Object.keys(shell.entries), [], "no entry is left for either run");
 
     // A third call arms the id while the first run is still in flight.
-    shell.runCommand("iconIndex", ["true"], () => answered.push("third"), 0, TIMEOUT_MS);
-    const waiting = shell.entries["iconIndex"].timer;
+    const waiting = armNewWindow(shell, "iconIndex", ["true"], () => answered.push("third"));
     assert.equal(waiting.running, true, "its Timer is waiting to launch");
 
     exit(shell.processes[0], 0);
