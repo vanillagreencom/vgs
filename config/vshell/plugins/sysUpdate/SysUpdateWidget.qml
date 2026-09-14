@@ -59,14 +59,6 @@ PluginComponent {
         return String(root.totalCount);
     }
 
-    // The daemon Instantiator is asynchronous, so a click can land before the
-    // instance registers, and a plugin reload reopens that window. Say so rather
-    // than dropping the action: with no daemon the popout reads "Checking…"
-    // forever, so nothing else would tell the user the action went nowhere.
-    function reportNoDaemon(title) {
-        PluginService.reportDaemonUnavailable(root.pluginId, title);
-    }
-
     function manualRefresh() {
         if (!root.daemon) {
             root.reportNoDaemon("Update check could not start");

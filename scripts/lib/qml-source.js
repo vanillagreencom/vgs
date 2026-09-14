@@ -96,6 +96,15 @@ function codeOnly(text) {
     return blankRanges(blankRanges(text, ranges.comments, false), ranges.strings, true);
 }
 
+// One owner for "where does this token appear in QML CODE". Comments are blanked and string
+// contents kept, so a token named only in a comment is not an occurrence while a token inside a
+// string literal — root.daemon.runSet("on") — still is. Offsets index the block unchanged, so two
+// lookups can be ordered against each other. Returns -1 when absent, like indexOf.
+// An ordering guard must never read a raw block: this codebase comments every guard, so a
+// refactor that deletes one and leaves its explanation behind would satisfy the check for the
+// code it removed.
+const codeIndexOf = (block, token) => stripComments(block).indexOf(token);
+
 module.exports = function qmlSource(source, fileLabel) {
     const label = fileLabel || "the source";
 
@@ -210,6 +219,7 @@ module.exports = function qmlSource(source, fileLabel) {
 };
 module.exports.flat = flat;
 module.exports.stripComments = stripComments;
+module.exports.codeIndexOf = codeIndexOf;
 // Test source-reading helpers before a caller relies on their assertions.
 module.exports.selfTest = function selfTest() {
     // The fixture tests a double slash as literal text; no URL syntax is required.
@@ -323,6 +333,19 @@ property var decision: { if (false) { target: 10; } return 7; }
                 [['ch.issue = "could not run"', "one statement, not two halves"]]),
             "a pin satisfied by a SHAPE from one statement and a LITERAL from another must FAIL: " +
             "the statement it names is absent, which is the whole thing a pin claims");
+    }
+
+
+    {
+        assert.equal(codeIndexOf("// if (!root.available) used to be here\nkeepMe();", "!root.available"), -1,
+            "a token named only in a comment is NOT an occurrence: an ordering guard that reads a " +
+            "raw block stays green after the guard it pins is deleted and its comment left behind");
+        const inString = 'run("root.daemon.runSet(\\"on\\")");';
+        assert.equal(codeIndexOf(inString, "root.daemon.runSet"), inString.indexOf("root.daemon.runSet"),
+            "a token inside a string literal still is one, at its own offset, which the code-only " +
+            "view would drop and take the grant locator with it");
+        assert.equal(codeIndexOf("// pad\nreal();", "real();"), "// pad\nreal();".indexOf("real();"),
+            "offsets index the block unchanged, so two lookups can be ordered against each other");
     }
 
 

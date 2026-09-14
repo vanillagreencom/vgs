@@ -44,10 +44,7 @@ PluginDaemonComponent {
 
     // Holding this ref is what arms the backend's recurring refresh, so hold it
     // only while a widget watches: with the widget on no bar refCount stays 0
-    // and the backend schedules no checkupdates, paru or mise run. Dropping to 0
-    // also clears SystemUpdateService's startup-check latch, so the next
-    // watching widget re-checks; that is deliberate, and it is what
-    // pollTimer's triggeredOnStart does on the CLI path.
+    // and the backend schedules no checkupdates, paru or mise run.
     Loader {
         active: root.watched
 

@@ -113,6 +113,95 @@ test("the link routes its count through the replayed claim and release, and the 
         component.requires(block, where, [[token, why]]);
 });
 
+// Drive PluginService's reporters as JavaScript against stubs, the way this suite already
+// replays DAEMON HOLD and DAEMON COUNT. What a dropped action produces for the user is the whole
+// of what the guards above deliver, and the three cases carry three different recoveries.
+function reportsFor(world) {
+    const toasts = [];
+    const stub = {
+        getPluginInstance: id => world.instances[id] || null,
+        pluginDaemonComponents: world.components,
+        availablePlugins: world.plugins || {},
+        appLauncherPluginId: world.appLauncherPluginId || "vgsMenu",
+        log: { error() {}, warn() {} },
+        I18n: { tr: text => Object.assign(new String(text), { arg: v => String(text).replace("%1", v) }) },
+        ToastService: {
+            showWarning: (title, body, command, category, action) =>
+                toasts.push({ level: "warning", title: String(title), body: String(body), category, action }),
+            showError: (title, body, command, category, action) =>
+                toasts.push({ level: "error", title: String(title), body: String(body), category, action })
+        }
+    };
+    for (const [name, value] of Object.entries(stub))
+        globalThis[name] = value;
+    const fns = evaluateMarked(fs.readFileSync(
+        path.join(repoRoot, "quickshell", "vshell", "Services", "PluginService.qml"), "utf8"),
+    "DAEMON AVAILABILITY",
+    ["daemonAvailability", "reportDaemonUnavailable", "_reportAppLauncherUnavailable"],
+    "PluginService.qml");
+    globalThis.root = fns;
+    return { fns, toasts };
+}
+
+test("a dropped action reports the case that decides what the user can do about it", () => {
+    // [why, world, expected availability, expected [level, body, has settings action] or null]
+    for (const [why, world, availability, expected] of [
+        ["an instance is registered, so a report is a caller error and raises no toast",
+            { instances: { p: {} }, components: { p: {} } }, "registered", null],
+        ["loaded but not yet registered is the async window: wait, so a warning and no action",
+            { instances: {}, components: { p: {} }, plugins: { p: { name: "Plugin P" } } }, "starting",
+            ["warning", "Plugin P is still starting. Try again in a moment.", false]],
+        ["not loaded at all is an error the user fixes in Plugins settings",
+            { instances: {}, components: {}, plugins: { p: { name: "Plugin P" } } }, "notLoaded",
+            ["error", "The Plugin P plugin did not load.", true]],
+        ["an unnamed plugin falls back to its id rather than reporting undefined",
+            { instances: {}, components: {} }, "notLoaded",
+            ["error", "The p plugin did not load.", true]]
+    ]) {
+        const { fns, toasts } = reportsFor(world);
+        assert.equal(fns.daemonAvailability("p"), availability, why);
+        fns.reportDaemonUnavailable("p", "Action could not start");
+        if (expected === null) {
+            assert.deepEqual(toasts, [], why);
+            continue;
+        }
+        const [level, body, hasAction] = expected;
+        assert.equal(toasts.length, 1, why);
+        assert.equal(toasts[0].level, level, why);
+        assert.equal(toasts[0].body, body, why);
+        assert.equal(toasts[0].title, "Action could not start", why);
+        assert.equal(toasts[0].category, "daemon-unavailable-p", why);
+        assert.equal(toasts[0].action !== null && toasts[0].action !== undefined, hasAction, why);
+        if (hasAction)
+            assert.deepEqual(
+                { label: String(toasts[0].action.label), settingsTab: toasts[0].action.settingsTab },
+                { label: "Open Plugins settings", settingsTab: "plugins" },
+                "the error names the one place the user can load the plugin");
+    }
+});
+
+test("the app launcher keeps only its registered-without-a-callable-open arm and delegates the rest", () => {
+    // [why, world, expected [level, body, category]]
+    for (const [why, world, expected] of [
+        ["a registered launcher with no callable open is the launcher's own case and keeps its message",
+            { instances: { vgsMenu: {} }, components: { vgsMenu: {} } },
+            ["error", "The vgsMenu plugin registered without a launcher to open.", "app-launcher-unavailable"]],
+        ["a launcher still starting reports through the general reporter, which adds the recovery",
+            { instances: {}, components: { vgsMenu: {} }, plugins: { vgsMenu: { name: "VGS Menu" } } },
+            ["warning", "VGS Menu is still starting. Try again in a moment.", "daemon-unavailable-vgsMenu"]],
+        ["and a launcher that never loaded gets the same error and settings action as any daemon",
+            { instances: {}, components: {}, plugins: { vgsMenu: { name: "VGS Menu" } } },
+            ["error", "The VGS Menu plugin did not load.", "daemon-unavailable-vgsMenu"]]
+    ]) {
+        const { fns, toasts } = reportsFor(world);
+        fns._reportAppLauncherUnavailable();
+        const [level, body, category] = expected;
+        assert.equal(toasts.length, 1, why);
+        assert.deepEqual([toasts[0].level, toasts[0].body, toasts[0].category, toasts[0].title],
+            [level, body, category, "App launcher unavailable"], why);
+    }
+});
+
 // The daemon timers whose own `running:` binding reads root.watched, by id, read from the file
 // under test. Flattened first, so a binding wrapped across lines still resolves; the value is
 // taken up to the next property, not to the end of the line. Every row declares the ids it
@@ -134,9 +223,8 @@ function watchGatedTimerIds(source) {
 // - widgetTimers: how many Timer blocks the per-screen widget may declare. A hover delay a
 //   pointer starts on one screen is not the per-monitor defect; a timer that repeats or arms
 //   itself is, so each declared Timer must carry repeat: false and arm nothing.
-// - entryPoints: [function, the effect its guard must precede] for each widget function that
-//   routes a user action through the daemon. The Instantiator is asynchronous and a reload
-//   reopens the same window, so each must report a click that reaches no instance.
+// - entryPoints: [function, the effect its guard must precede] this row requires to guard on a
+//   missing instance and report the drop.
 // - watchGated: the daemon timers whose running binding holds the root.watched gate.
 // - gated: [token, why] the daemon must keep so it runs only while a widget watches.
 const ROWS = [
@@ -191,8 +279,8 @@ const ROWS = [
         gated: [
             ["running: root.watched",
                 "the 2.5 s flag poll runs only while a widget watches"],
-            ["watchChanges: root.watched", 2,
-                "and neither flag file keeps an inotify watch while nothing watches"],
+            ["watchChanges: root.watched",
+                "and neither flag file keeps an inotify watch while nothing watches", 2],
             ["function probeOnFirstWatch() { if (!root.watched || root._statusProbed) return; " +
                 "root._statusProbed = true; root.probeStatus(false); }",
                 "the capability probe runs for the first watching widget, once per shell run, " +
@@ -201,6 +289,23 @@ const ROWS = [
                 "which is what arms that probe"]]
     }
 ];
+
+test("the base component owns reportNoDaemon, and it forwards to the plugin service", () => {
+    const base = qmlSource(fs.readFileSync(path.join(MODULES, "PluginComponent.qml"), "utf8"),
+        "PluginComponent.qml");
+    base.requires(base.body("reportNoDaemon"), "PluginComponent's reportNoDaemon()", [
+        ["pluginService.reportDaemonUnavailable(pluginId, title)",
+            "forwarding is the whole function: without it every widget's guard reports nothing"],
+        ["console.error(",
+            "and a widget with no plugin service says so rather than returning in silence"]]);
+    const copies = fs.readdirSync(PLUGINS, { recursive: true, withFileTypes: true }).filter(f =>
+        f.isFile() && f.name.endsWith(".qml")
+        && /\bfunction reportNoDaemon\b/.test(qmlSource.stripComments(
+            fs.readFileSync(path.join(f.parentPath || f.path, f.name), "utf8"))));
+    assert.deepEqual(copies.map(f => f.name), [],
+        "a plugin that declares its own copy is a second spelling of the base's function, and the " +
+        "next daemon-backed widget copies it a third time");
+});
 
 test("ROWS covers every bundled plugin that ships both a widget and a daemon surface", () => {
     const declared = fs.readdirSync(PLUGINS).filter(id => {
@@ -242,15 +347,14 @@ test("each polling plugin runs from its daemon, and its per-screen widget only r
         // effect, or the popout closes as though the upgrade had been accepted.
         for (const [fn, effect] of entryPoints) {
             const body = widget.body(fn);
-            const guard = body.indexOf("if (!root.daemon)");
+            const guard = qmlSource.codeIndexOf(body, "if (!root.daemon)");
             assert.notEqual(guard, -1, `${widgetFile}'s ${fn}() must guard on a missing daemon instance`);
-            const stripped = widget.stripComments(body);
-            assert.ok(stripped.indexOf("root.reportNoDaemon(") > guard,
+            assert.ok(qmlSource.codeIndexOf(body, "root.reportNoDaemon(") > guard,
                 `${widgetFile}'s ${fn}() must report the dropped action inside that guard, not return in silence`);
-            assert.ok(guard < stripped.indexOf("root.daemon."),
+            assert.ok(guard < qmlSource.codeIndexOf(body, "root.daemon."),
                 `${widgetFile}'s ${fn}() must guard before it calls into the daemon`);
             if (effect !== null)
-                assert.ok(guard < stripped.indexOf(effect),
+                assert.ok(guard < qmlSource.codeIndexOf(body, effect),
                     `${widgetFile}'s ${fn}() must guard before ${effect}, or a click that reaches no ` +
                     "daemon still has a visible effect and reads as accepted");
         }
@@ -266,8 +370,7 @@ test("each polling plugin runs from its daemon, and its per-screen widget only r
         const daemon = qmlSource(daemonText, daemonFile);
         assert.ok(/^PluginDaemonComponent \{/m.test(daemon.stripComments(daemonText)),
             `${daemonFile} is a PluginDaemonComponent, which is what counts the links`);
-        daemon.requires(daemonText, daemonFile,
-            gated.map(([token, a, b]) => typeof a === "number" ? [token, b, a] : [token, a]));
+        daemon.requires(daemonText, daemonFile, gated);
 
         // A gate that is a `running:` binding is not removed by restart() or start(): those set
         // running past the gate, and it stays set until that binding's expression next changes

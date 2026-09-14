@@ -10,6 +10,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const qmlSource = require("./lib/qml-source.js");
 
 const repoRoot = path.join(__dirname, "..");
 const WIDGET = path.join(
@@ -117,7 +118,6 @@ test("the pointer gesture is gone and only the modal's confirmed signal starts a
 // nothing while the title above claims only the modal's confirmed signal starts one.
 
 test("every grant call site sits behind the availability gates, and no file outside the plugin can name the grant primitive", () => {
-    const qmlSource = require("./lib/qml-source.js");
     const daemonSource = fs.readFileSync(DAEMON, "utf8");
     const widget = qmlSource(source, "SudoToggleWidget.qml");
 
@@ -134,25 +134,25 @@ test("every grant call site sits behind the availability gates, and no file outs
         [widget.blockFrom(widget.indexOf("onConfirmed:"), "the modal's confirmed handler"),
             "SudoGrantConfirmModal.onConfirmed"]
     ]) {
-        const grant = block.indexOf('root.daemon.runSet("on")');
+        const grant = qmlSource.codeIndexOf(block, 'root.daemon.runSet("on")');
         assert.notEqual(grant, -1, `${where} must hold one grant call site`);
         for (const gate of ["!root.available", "!root.canEnable", "!root.daemon"]) {
-            const at = block.indexOf(gate);
+            const at = qmlSource.codeIndexOf(block, gate);
             assert.notEqual(at, -1, `${where} must check ${gate} before granting`);
             assert.ok(at < grant, `${where} checks ${gate} only after granting, so the gate is not one`);
         }
         // A grant the user has already confirmed in a security dialog is never dropped in
         // silence: the pill reads unavailable with no daemon, which says nothing about the
         // confirmation just given.
-        assert.ok(block.indexOf("root.reportNoDaemon(") > block.indexOf("!root.daemon"),
+        assert.ok(qmlSource.codeIndexOf(block, "root.reportNoDaemon(") > qmlSource.codeIndexOf(block, "!root.daemon"),
             `${where} must report a grant it cannot run, inside the missing-daemon guard`);
     }
 
     // toggle() reaches its grant only through grantDecision, whose "grant" answer needs a click
     // origin and the stored opt-out; every other origin returns "ignore" above.
-    const decisionAt = widget.body("toggle").indexOf("root.grantDecision(origin");
+    const decisionAt = qmlSource.codeIndexOf(widget.body("toggle"), "root.grantDecision(origin");
     assert.notEqual(decisionAt, -1, "toggle() must route through grantDecision");
-    assert.ok(decisionAt < widget.body("toggle").indexOf('root.daemon.runSet("on")'),
+    assert.ok(decisionAt < qmlSource.codeIndexOf(widget.body("toggle"), 'root.daemon.runSet("on")'),
         "toggle() must reach its grant only after grantDecision has answered");
 
     const allowed = ["SudoToggleWidget.qml", "SudoToggleDaemon.qml"];

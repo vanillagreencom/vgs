@@ -56,14 +56,6 @@ PluginComponent {
     }
     // END CONFIRM DECISION
 
-    // The daemon Instantiator is asynchronous, so a click can land before the
-    // instance registers, and a plugin reload reopens that window. The pill reads
-    // as unavailable in that state, which says nothing about the action just
-    // taken, so every dropped action reports.
-    function reportNoDaemon(title) {
-        PluginService.reportDaemonUnavailable(root.pluginId, title);
-    }
-
     function iconName() {
         if (!root.available)
             return "gpp_bad";

@@ -1551,6 +1551,9 @@ Singleton {
     // reads rather than re-deriving: the daemon Instantiator is asynchronous, so
     // an action can land after the component loads and before the instance
     // registers, and a reload reopens the same window.
+    // Keep these decisions free of QML APIs beyond stubbable singletons:
+    // scripts/test-plugin-daemon-views.js extracts the marked block and runs it as JavaScript.
+    // BEGIN DAEMON AVAILABILITY
     function daemonAvailability(pluginId) {
         // getPluginInstance, not daemonInstances alone: a launcher surface
         // registers under pluginInstances and is just as registered.
@@ -1585,23 +1588,17 @@ Singleton {
 
     function _reportAppLauncherUnavailable() {
         _appLauncherOpenPending = false;
-        // Distinguish missing, unloaded, and unregistered launcher instances so the error points to the applicable recovery.
+        // The launcher alone can be registered and still unusable: it needs a callable open()
+        // or toggle(), which nothing else reading daemonAvailability requires. Every other case
+        // is what the general reporter already says, so it says it.
         if (root.daemonAvailability(appLauncherPluginId) === "registered") {
             log.error("app launcher unavailable:", appLauncherPluginId, "registered an instance with no callable open()/toggle()");
             ToastService.showError(I18n.tr("App launcher unavailable"), I18n.tr("The %1 plugin registered without a launcher to open.").arg(appLauncherPluginId), "", "app-launcher-unavailable");
             return;
         }
-        if (root.daemonAvailability(appLauncherPluginId) === "starting") {
-            log.error("app launcher unavailable:", appLauncherPluginId, "loaded but never registered an instance");
-            ToastService.showError(I18n.tr("App launcher unavailable"), I18n.tr("The %1 launcher did not finish starting.").arg(appLauncherPluginId), "", "app-launcher-unavailable");
-            return;
-        }
-        log.error("app launcher unavailable:", appLauncherPluginId, "is not loaded");
-        ToastService.showError(I18n.tr("App launcher unavailable"), I18n.tr("The %1 plugin did not load.").arg(appLauncherPluginId), "", "app-launcher-unavailable", ({
-            label: I18n.tr("Open Plugins settings"),
-            settingsTab: "plugins"
-        }));
+        root.reportDaemonUnavailable(appLauncherPluginId, I18n.tr("App launcher unavailable"));
     }
+    // END DAEMON AVAILABILITY
 
     onDaemonInstancesChanged: {
         if (!_appLauncherOpenPending || !daemonInstances[appLauncherPluginId])
