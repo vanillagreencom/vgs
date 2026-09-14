@@ -287,6 +287,7 @@ func (m *Manager) pushStatus() {
 		m.log.Warn("tailscale status read after ipn event failed", "err", err)
 		return
 	}
+	state = m.recordedState(state)
 	m.log.Debug("tailscale ipn event", "backendState", state.BackendState, "connected", state.Connected)
 	m.srv.Broadcast("tailscale", state)
 }

@@ -55,24 +55,36 @@ func (s *Source[T]) Query(query func() (T, error)) (T, error) {
 	return value, nil
 }
 
-// hasRecorded reports whether any query has succeeded yet.
-func (s *Source[T]) hasRecorded() bool {
+// hasIssued reports whether any query has started. The very first query of a
+// service's life has nothing to debounce against, but every later one does,
+// including a retry after a failure: keying this on success instead would leave
+// a service whose query keeps failing running its external command on every
+// kick, with no settle window at all.
+func (s *Source[T]) hasIssued() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.recorded
+	return s.issued > 0
 }
 
-// Cached returns the newest recorded value, or nil before the first Record.
-// Nil means the service has nothing to report yet and subscribe sends no frame
-// for it: an empty state would reach the shell as fact and blank a list the
-// kicked refresh is about to fill.
-func (s *Source[T]) Cached() any {
+// Value returns the newest recorded value and whether any query has recorded
+// one. It is the typed form of Cached, for a caller that needs the value back
+// as T rather than as a snapshot payload.
+func (s *Source[T]) Value() (T, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !s.recorded {
+	return s.value, s.recorded
+}
+
+// Cached returns the newest recorded value, or nil before the first successful
+// query. Nil means the service has nothing to report yet and subscribe sends no
+// frame for it: an empty state would reach the shell as fact and blank a list
+// the kicked refresh is about to fill.
+func (s *Source[T]) Cached() any {
+	value, recorded := s.Value()
+	if !recorded {
 		return nil
 	}
-	return s.value
+	return value
 }
 
 // Service couples a service's live query to one refresh goroutine and to the
@@ -103,9 +115,9 @@ func NewService[T any](srv Broadcaster, log *slog.Logger, service string, settle
 		log = slog.Default()
 	}
 	s := &Service[T]{srv: srv, log: log, service: service, query: query}
-	// Nothing recorded means no burst to collapse and no state to serve, so the
-	// first query runs at once rather than a settle window late.
-	s.loop = newLoop(settle, func() bool { return !s.hasRecorded() }, s.refreshAndBroadcast)
+	// Nothing queried yet means no burst to collapse and no state to serve, so
+	// the first query runs at once rather than a settle window late.
+	s.loop = newLoop(settle, func() bool { return !s.hasIssued() }, s.refreshAndBroadcast)
 	return s
 }
 
@@ -122,12 +134,20 @@ func (s *Service[T]) Query() (T, error) { return s.Source.Query(s.query) }
 func (s *Service[T]) Close() { s.loop.Close() }
 
 func (s *Service[T]) refreshAndBroadcast() {
-	value, err := s.Query()
-	if err != nil {
+	if _, err := s.Query(); err != nil {
 		// Keep the subscribers' last-known state rather than publishing an
 		// empty one as truth.
 		s.log.Warn("state refresh failed, skipping broadcast", "service", s.service, "err", err)
 		return
 	}
-	s.srv.Broadcast(s.service, value)
+	// The recorded state, not what this query returned: a query that a
+	// later-started one superseded still publishes, and must publish the newer
+	// state, or the cache and the wire disagree and the wire is what the shell
+	// applies. The winning query may have been a handler that broadcasts
+	// nothing, so this one still sends.
+	state := s.Cached()
+	if state == nil {
+		return
+	}
+	s.srv.Broadcast(s.service, state)
 }

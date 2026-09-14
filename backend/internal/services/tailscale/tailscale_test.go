@@ -303,3 +303,25 @@ func TestStatusWarmsTheRegisteredSource(t *testing.T) {
 		t.Fatalf("cached state = %+v, want the status read recorded", got)
 	}
 }
+
+// Every site that publishes a status read goes through recordedState, so the
+// wire carries what the cache holds. A read that finished last would otherwise
+// put its older state on the wire, and the wire is what the shell applies.
+func TestRecordedStatePrefersTheNewestRead(t *testing.T) {
+	var m Manager
+	own := State{BackendState: "this caller's read"}
+
+	if got := m.recordedState(own); got.BackendState != own.BackendState {
+		t.Fatalf("recordedState = %q with nothing recorded, want the caller's own read", got.BackendState)
+	}
+
+	// Another caller's read lands first, as an overlapping status call does.
+	if _, err := m.state.Query(func() (State, error) {
+		return State{BackendState: "a later read"}, nil
+	}); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if got := m.recordedState(own); got.BackendState != "a later read" {
+		t.Fatalf("recordedState = %q; it must publish the recorded state, not the caller's own older read", got.BackendState)
+	}
+}

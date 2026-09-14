@@ -174,8 +174,20 @@ func (m *Manager) handleRefresh(json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	state = m.recordedState(state)
 	m.srv.Broadcast("tailscale", state)
 	return state, nil
+}
+
+// recordedState returns the newest status read, which is a later read's result
+// when two overlapped. Every site that publishes a read goes through it, so the
+// wire carries what the cache holds; otherwise a read that finished last would
+// put its older state on the wire, and the wire is what the shell applies.
+func (m *Manager) recordedState(read State) State {
+	if state, ok := m.state.Value(); ok {
+		return state
+	}
+	return read
 }
 
 func (m *Manager) handleConnect(json.RawMessage) (any, error) {
@@ -294,6 +306,8 @@ func (m *Manager) authState(authURL string) State {
 	state, err := m.status()
 	if err != nil {
 		state = State{BackendState: "NeedsLogin", Peers: []Peer{}, Health: []string{}}
+	} else {
+		state = m.recordedState(state)
 	}
 	state.AuthURL = authURL
 	if state.BackendState == "" {

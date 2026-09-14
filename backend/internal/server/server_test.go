@@ -238,10 +238,11 @@ func TestSubscribeReadsCachedStateAndKicksRefresh(t *testing.T) {
 	}
 }
 
-// A subscribe snapshot is a cached read, so it is never newer than a frame
-// already queued for this peer. Pushing it under the service's coalescing key
-// would replace that queued frame in place and leave the older state last on
-// the wire, stale until the next real change.
+// A subscribe snapshot is appended, never put in a queued frame's place.
+// Pushing it under the service's coalescing key would overwrite that frame and
+// drop its state outright. Which of the two ends up last is not the property:
+// the cache only moves forward, so outside the narrow window between the read
+// and the push the appended frame is the same or newer anyway.
 func TestSnapshotNeverReplacesAQueuedBroadcast(t *testing.T) {
 	srv, _ := startTestServer(t)
 	srv.CoalesceBroadcasts("network")
@@ -260,22 +261,20 @@ func TestSnapshotNeverReplacesAQueuedBroadcast(t *testing.T) {
 	req.Params = params
 	srv.handleSubscribe(c, req)
 
-	got := queuedEvents(t, c)
-	if len(got) == 0 {
-		t.Fatal("nothing queued")
-	}
-	last := got[len(got)-1]
-	if last[0] != "network" || last[1] != "cached, older" {
-		t.Fatalf("last queued frame = %v; the snapshot must be appended after the broadcast, not put in its place", got)
-	}
-	var sawBroadcast bool
-	for _, frame := range got {
-		if frame[1] == "broadcast, newer" {
+	var sawBroadcast, sawSnapshot bool
+	for _, frame := range queuedEvents(t, c) {
+		switch frame[1] {
+		case "broadcast, newer":
 			sawBroadcast = true
+		case "cached, older":
+			sawSnapshot = true
 		}
 	}
 	if !sawBroadcast {
-		t.Fatalf("the queued broadcast was overwritten by the older snapshot: %v", got)
+		t.Fatal("the queued broadcast was overwritten by the snapshot; its state is gone from the wire")
+	}
+	if !sawSnapshot {
+		t.Fatal("the snapshot never reached the queue")
 	}
 }
 

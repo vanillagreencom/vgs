@@ -218,3 +218,68 @@ func TestServiceSettlesOnceSomethingIsRecorded(t *testing.T) {
 	case <-time.After(settle / 4):
 	}
 }
+
+// The wire must carry what the cache holds. A refresh sweep that started first
+// and finished last is dropped from the cache, but it still broadcasts, and
+// broadcasting its own older result would put that on the wire as the last
+// frame the shell applies.
+func TestServiceBroadcastsTheRecordedStateNotASupersededOne(t *testing.T) {
+	srv := &recorder{}
+	refreshStarted := make(chan struct{})
+	releaseRefresh := make(chan struct{})
+	svc := NewService[string](srv, discardLogger(), "svc", 0, func() (string, error) {
+		close(refreshStarted)
+		<-releaseRefresh
+		return "older sweep", nil
+	})
+	t.Cleanup(svc.Close)
+
+	svc.Kick()
+	<-refreshStarted
+	// A handler query that starts second and finishes first, as a method worker
+	// running beside the refresh loop does.
+	if _, err := svc.Source.Query(func() (string, error) { return "newer sweep", nil }); err != nil {
+		t.Fatalf("handler query: %v", err)
+	}
+	close(releaseRefresh)
+
+	frames := srv.await(t, 1)
+	for _, frame := range frames {
+		if frame == "older sweep" {
+			t.Fatalf("a superseded sweep published its own result: %v", frames)
+		}
+	}
+	if frames[len(frames)-1] != "newer sweep" {
+		t.Fatalf("broadcast %v, want the recorded state", frames)
+	}
+	if got := svc.Cached(); got != frames[len(frames)-1] {
+		t.Fatalf("the wire carried %v while the cache holds %v", frames[len(frames)-1], got)
+	}
+}
+
+// A query that keeps failing records nothing. Keying the skip on success would
+// leave the settle window off forever, so every kick would fork the service's
+// external command while the panel stays empty.
+func TestServiceSettlesAfterAFailingQuery(t *testing.T) {
+	const settle = 400 * time.Millisecond
+	started := make(chan struct{}, 64)
+	svc := NewService[string](&recorder{}, discardLogger(), "svc", settle, func() (string, error) {
+		started <- struct{}{}
+		return "", errors.New("command unreachable")
+	})
+	t.Cleanup(svc.Close)
+
+	svc.Kick()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the first kick never ran")
+	}
+
+	svc.Kick()
+	select {
+	case <-started:
+		t.Fatal("a kick after a failed query ran with no settle window; a burst would fork the command on every kick")
+	case <-time.After(settle / 4):
+	}
+}

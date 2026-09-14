@@ -470,10 +470,13 @@ func (s *Server) handleSubscribe(c *conn, req *protocol.Request) {
 			state = cov.source.read()
 		}
 		if cov.snapshot && state != nil {
-			// Never coalesced, whatever the service declares. A cached read is
-			// by construction no newer than a frame already queued, so this is
-			// appended; replacing one in place would put the older state last
-			// on the wire and leave the peer stale until the next real change.
+			// Never coalesced, whatever the service declares. The cache only
+			// moves forward, so this read is no older than any frame queued
+			// before it began and appending can only add a same-or-newer frame
+			// at the end; replacing one in place would drop that queued frame
+			// outright. A record that lands between the read and this push is
+			// the one case where the appended frame is older, and that
+			// service's next broadcast corrects it.
 			c.sendEvent(service, state, false)
 		}
 		if cov.source.refresh == nil {
