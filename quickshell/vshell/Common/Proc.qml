@@ -24,20 +24,18 @@ Singleton {
         const wait = (typeof debounceMs === "number" && debounceMs >= 0) ? debounceMs : defaultDebounceMs;
         const timeout = (typeof timeoutMs === "number") ? timeoutMs : defaultTimeoutMs;
         let procId = id ? id : Math.random();
-        const isRandomId = !id;
 
         if (!_procDebouncers[procId]) {
             const t = debounceTimerComp.createObject(root);
             t.triggered.connect(function () {
-                _launchProc(procId, isRandomId);
+                _launchProc(procId);
             });
             _procDebouncers[procId] = {
                 timer: t,
                 command: command,
                 callback: callback,
                 waitMs: wait,
-                timeoutMs: timeout,
-                isRandomId: isRandomId
+                timeoutMs: timeout
             };
         } else {
             _procDebouncers[procId].command = command;
@@ -51,14 +49,28 @@ Singleton {
         entry.timer.restart();
     }
 
-    function _launchProc(id, isRandomId) {
+    function _launchProc(id) {
         const entry = _procDebouncers[id];
         if (!entry)
             return;
         const launchedCommand = entry.command;
         const launchedCallback = entry.callback;
         const launchedTimeoutMs = entry.timeoutMs;
-        const launchedIsRandomId = entry.isRandomId;
+        // The entry and its Timer exist only to collapse the calls that arrive inside the
+        // debounce window into one run, and this launch closes that window. Retiring them here
+        // rather than after the run is what stops a per-call id from growing the map: no code
+        // after this point reads the id, so a call arriving now opens its own window on its own
+        // entry and no finishing run can reach it. The Timer is destroyed through this captured
+        // reference and never a fresh lookup, which would find that new entry instead, and the
+        // destroy is deferred: the launch below keeps running inside that Timer's own triggered
+        // handler past this point.
+        const launchedTimer = entry.timer;
+        delete _procDebouncers[id];
+        Qt.callLater(function () {
+            try {
+                launchedTimer.destroy();
+            } catch (_) {}
+        });
         const proc = procComp.createObject(root, {
             command: launchedCommand
         });
@@ -187,17 +199,6 @@ Singleton {
                 timeoutTimer.start();
             } else {
                 release();
-            }
-
-            if (isRandomId || launchedIsRandomId) {
-                Qt.callLater(function () {
-                    if (_procDebouncers[id]) {
-                        try {
-                            _procDebouncers[id].timer.destroy();
-                        } catch (_) {}
-                        delete _procDebouncers[id];
-                    }
-                });
             }
         }
 

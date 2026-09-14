@@ -247,9 +247,8 @@ Singleton {
     // therefore unrepresentable, and a run of failing launches empties the queue
     // instead of parking it. Every apply reaches the helper through here, the
     // free-slot path included, so there is one recovery and not one per caller.
-    // An EMPTY Proc id makes Proc mint a random, self-cleaning id, so every apply
-    // runs its own process into one `_finishApply`; a unique NAMED id would leak
-    // a debouncer entry and Timer, reaped only for a random id.
+    // An EMPTY Proc id makes Proc mint its own, so no apply is ever coalesced with
+    // another and every apply runs its own process into one `_finishApply`.
     function _dispatchApply(requestId, args, callback) {
         _applyDispatched = requestId;
         try {
