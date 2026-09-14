@@ -21,9 +21,29 @@ import (
 // maxLine limits the memory accepted for one JSON message.
 const maxLine = 16 << 20 // 16 MiB
 
+// methodDepth bounds the calls one method may hold waiting for its worker.
+const methodDepth = 64
+
 // HandlerFunc handles one method call. It receives raw params and returns a
 // JSON-serializable result or an error surfaced to the client.
 type HandlerFunc func(params json.RawMessage) (any, error)
+
+// subscription is one connection's requested service set. An empty set and the
+// "all" wildcard both cover every service.
+type subscription map[string]bool
+
+func (sub subscription) covers(service string) bool {
+	return len(sub) == 0 || sub["all"] || sub[service]
+}
+
+// snapshotSource is a service's subscribe-time state. read returns
+// last-known-good state without blocking. refresh, when set, asks the service's
+// own goroutine to re-run the live query behind that state; the result reaches
+// subscribers through Broadcast.
+type snapshotSource struct {
+	read    func() any
+	refresh func()
+}
 
 // Server is a running daemon. The zero value is not usable; use New.
 type Server struct {
@@ -32,17 +52,13 @@ type Server struct {
 
 	mu           sync.RWMutex
 	handlers     map[string]HandlerFunc
+	keepLatest   map[string]bool
 	capabilities map[string]bool
-	snapshots    map[string]func() any
-	subscribers  map[*conn]map[string]bool
+	snapshots    map[string]*snapshotSource
+	subscribers  map[*conn]subscription
 
 	workersMu sync.Mutex
-	workers   map[string]chan func()
-
-	// sendQueue orders broadcast delivery and computes subscription snapshots at
-	// dispatch. Queue order keeps each snapshot after broadcasts submitted ahead of
-	// it.
-	sendQueue chan func()
+	workers   map[string]*worker
 }
 
 // New creates a Server that only accepts peers whose credentials match uid.
@@ -56,17 +72,12 @@ func New(uid uint32, log *slog.Logger) *Server {
 		log:          log,
 		uid:          uid,
 		handlers:     map[string]HandlerFunc{},
+		keepLatest:   map[string]bool{},
 		capabilities: map[string]bool{"core": true},
-		snapshots:    map[string]func() any{},
-		subscribers:  map[*conn]map[string]bool{},
-		workers:      map[string]chan func(){},
-		sendQueue:    make(chan func(), 256),
+		snapshots:    map[string]*snapshotSource{},
+		subscribers:  map[*conn]subscription{},
+		workers:      map[string]*worker{},
 	}
-	go func() {
-		for job := range s.sendQueue {
-			job()
-		}
-	}()
 	s.handlers["ping"] = func(json.RawMessage) (any, error) {
 		return map[string]bool{"pong": true}, nil
 	}
@@ -83,6 +94,23 @@ func New(uid uint32, log *slog.Logger) *Server {
 func (s *Server) Register(capability, method string, h HandlerFunc) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.registerLocked(capability, method, h)
+}
+
+// RegisterLatest adds a method whose calls are idempotent, meaning the newest
+// call subsumes every earlier one. While a call runs, a second waiting call is
+// replaced by the newest instead of queueing behind it, so dragging a slider
+// applies the value the user released on rather than replaying every value it
+// passed through. A replaced call is answered with a superseded error, never
+// dropped in silence.
+func (s *Server) RegisterLatest(capability, method string, h HandlerFunc) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.registerLocked(capability, method, h)
+	s.keepLatest[method] = true
+}
+
+func (s *Server) registerLocked(capability, method string, h HandlerFunc) {
 	if capability != "" {
 		s.capabilities[capability] = true
 	}
@@ -100,15 +128,43 @@ func (s *Server) AddCapability(capability string) {
 	s.capabilities[capability] = true
 }
 
-// RegisterSnapshot adds current state emitted immediately after subscribe.
-// Unknown requested services remain tolerated; snapshots are best-effort.
+// RegisterSnapshot adds the state emitted immediately after subscribe. snapshot
+// must return the service's last-known-good state without blocking: it runs on
+// the subscribing connection's read goroutine, where a live query would hold
+// every other service's snapshot behind it. A service whose state comes from an
+// external command registers the query itself with RegisterSnapshotRefresh.
+//
+// A nil return means the service has no state yet, and sends no frame. An empty
+// state would otherwise reach the shell as fact and blank a list that the
+// refresh is about to fill.
 func (s *Server) RegisterSnapshot(service string, snapshot func() any) {
 	if service == "" || snapshot == nil {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.snapshots[service] = snapshot
+	s.snapshotLocked(service).read = snapshot
+}
+
+// RegisterSnapshotRefresh adds the kick that subscribe uses to ask a service to
+// re-run its live query on its own goroutine. refresh must return without
+// waiting for that query.
+func (s *Server) RegisterSnapshotRefresh(service string, refresh func()) {
+	if service == "" || refresh == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.snapshotLocked(service).refresh = refresh
+}
+
+func (s *Server) snapshotLocked(service string) *snapshotSource {
+	src, ok := s.snapshots[service]
+	if !ok {
+		src = &snapshotSource{}
+		s.snapshots[service] = src
+	}
+	return src
 }
 
 // Capabilities returns the advertised capability names, sorted.
@@ -214,48 +270,113 @@ func (s *Server) dispatch(c *conn, req *protocol.Request) {
 
 	s.mu.RLock()
 	h, known := s.handlers[req.Method]
+	keepLatest := s.keepLatest[req.Method]
 	s.mu.RUnlock()
 
 	if !known || h == nil {
 		c.send(protocol.Response{ID: req.ID, Error: "unknown method: " + req.Method})
 		return
 	}
-	// Each method has a worker so a slow handler does not hold the read goroutine.
-	// Calls to the same method stay in order. A full method queue can still block
-	// the connection read loop.
-	s.enqueue(req.Method, func() {
-		defer func() {
-			if r := recover(); r != nil {
-				s.log.Error("handler panic", "method", req.Method, "err", r)
-				c.send(protocol.Response{ID: req.ID, Error: "internal: handler panic"})
+	// Each method has a worker so a slow handler does not hold the read
+	// goroutine, and calls to the same method stay in order.
+	job := call{
+		run: func() {
+			defer func() {
+				if r := recover(); r != nil {
+					s.log.Error("handler panic", "method", req.Method, "err", r)
+					c.send(protocol.Response{ID: req.ID, Error: "internal: handler panic"})
+				}
+			}()
+			result, err := h(req.Params)
+			if err != nil {
+				c.send(protocol.Response{ID: req.ID, Error: err.Error()})
+				return
 			}
-		}()
-		result, err := h(req.Params)
-		if err != nil {
-			c.send(protocol.Response{ID: req.ID, Error: err.Error()})
-			return
+			c.send(protocol.Response{ID: req.ID, Result: result})
+		},
+		superseded: func() {
+			c.send(protocol.Response{ID: req.ID, Error: "superseded: a newer " + req.Method + " call replaced this one"})
+		},
+	}
+
+	w := s.worker(req.Method, keepLatest)
+	if keepLatest {
+		if replaced, ok := w.offerLatest(job); ok {
+			replaced.superseded()
 		}
-		c.send(protocol.Response{ID: req.ID, Result: result})
-	})
+		return
+	}
+	if !w.offer(job) {
+		// Blocking here would stall every other method on this socket, including
+		// the lock call that raises the lock screen.
+		c.send(protocol.Response{ID: req.ID, Error: "busy: " + req.Method + " has too many calls queued"})
+	}
 }
 
-// enqueue runs job on the method's FIFO worker, creating it on first use. The
-// send blocks (backpressuring the connection's read loop) if a method somehow
-// accumulates a full queue of outstanding calls.
-func (s *Server) enqueue(method string, job func()) {
+// worker returns the method's FIFO worker, creating it on first use.
+func (s *Server) worker(method string, keepLatest bool) *worker {
 	s.workersMu.Lock()
-	ch, ok := s.workers[method]
-	if !ok {
-		ch = make(chan func(), 64)
-		s.workers[method] = ch
-		go func() {
-			for j := range ch {
-				s.runJob(method, j)
-			}
-		}()
+	defer s.workersMu.Unlock()
+	w, ok := s.workers[method]
+	if ok {
+		return w
 	}
-	s.workersMu.Unlock()
-	ch <- job
+	depth := methodDepth
+	if keepLatest {
+		// One waiting call is all a keep-latest method ever holds: the next
+		// arrival replaces it.
+		depth = 1
+	}
+	w = &worker{jobs: make(chan call, depth)}
+	s.workers[method] = w
+	go func() {
+		for j := range w.jobs {
+			s.runJob(method, j.run)
+		}
+	}()
+	return w
+}
+
+// call is one queued method invocation. superseded answers the client when a
+// keep-latest method replaces this call with a newer one.
+type call struct {
+	run        func()
+	superseded func()
+}
+
+// worker serializes one method's calls on a single goroutine.
+type worker struct {
+	jobs chan call
+
+	// latestMu makes the take-then-replace in offerLatest atomic against other
+	// callers, so the one-slot queue cannot overflow.
+	latestMu sync.Mutex
+}
+
+// offer queues c and reports whether the method's queue had room.
+func (w *worker) offer(c call) bool {
+	select {
+	case w.jobs <- c:
+		return true
+	default:
+		return false
+	}
+}
+
+// offerLatest queues c in place of any call still waiting, returning the
+// replaced call so its client can be told it was superseded.
+func (w *worker) offerLatest(c call) (call, bool) {
+	w.latestMu.Lock()
+	defer w.latestMu.Unlock()
+	var replaced call
+	found := false
+	select {
+	case replaced = <-w.jobs:
+		found = true
+	default:
+	}
+	w.jobs <- c
+	return replaced, found
 }
 
 func (s *Server) runJob(method string, job func()) {
@@ -283,29 +404,41 @@ func (s *Server) handleSubscribe(c *conn, req *protocol.Request) {
 		}
 	}
 
-	set := map[string]bool{}
+	set := subscription{}
 	for _, svc := range p.Services {
 		set[svc] = true
 	}
+
 	s.mu.Lock()
+	prev, resubscribed := s.subscribers[c]
 	s.subscribers[c] = set
+	added := make(map[string]*snapshotSource, len(s.snapshots))
+	for service, src := range s.snapshots {
+		if !set.covers(service) {
+			continue
+		}
+		// A repeat subscribe re-sends only what this connection does not already
+		// hold: every popout open re-sends the whole set, and re-delivering it
+		// re-runs the shell's per-service setup on each open.
+		if resubscribed && prev.covers(service) {
+			continue
+		}
+		added[service] = src
+	}
 	s.mu.Unlock()
 
-	// Compute subscription snapshots in the send queue so earlier queued broadcasts
-	// cannot follow them.
-	s.sendQueue <- func() {
-		c.send(protocol.Response{Result: protocol.Event{Service: "server", Data: s.info()}})
-
-		s.mu.RLock()
-		snapshots := make(map[string]func() any, len(s.snapshots))
-		for service, snapshot := range s.snapshots {
-			if set[service] || set["all"] || len(set) == 0 {
-				snapshots[service] = snapshot
-			}
+	c.send(protocol.Response{Result: protocol.Event{Service: "server", Data: s.info()}})
+	for service, src := range added {
+		if src.read == nil {
+			continue
 		}
-		s.mu.RUnlock()
-		for service, snapshot := range snapshots {
-			c.send(protocol.Response{Result: protocol.Event{Service: service, Data: snapshot()}})
+		if data := src.read(); data != nil {
+			c.sendEvent(service, data)
+		}
+	}
+	for _, src := range added {
+		if src.refresh != nil {
+			src.refresh()
 		}
 	}
 }
@@ -317,22 +450,20 @@ func (s *Server) dropSubscriber(c *conn) {
 }
 
 // Broadcast pushes an event to every connection subscribed to service (or to
-// "all"). Services call this as their state changes; delivery is asynchronous
-// through the ordered send queue.
+// "all"). It never waits on a peer: each connection owns a bounded queue and a
+// writer goroutine, so a stalled subscriber cannot delay the caller's event
+// loop.
 func (s *Server) Broadcast(service string, data any) {
-	s.sendQueue <- func() {
-		ev := protocol.Response{Result: protocol.Event{Service: service, Data: data}}
-		s.mu.RLock()
-		targets := make([]*conn, 0, len(s.subscribers))
-		for c, set := range s.subscribers {
-			if set[service] || set["all"] || len(set) == 0 {
-				targets = append(targets, c)
-			}
+	s.mu.RLock()
+	targets := make([]*conn, 0, len(s.subscribers))
+	for c, set := range s.subscribers {
+		if set.covers(service) {
+			targets = append(targets, c)
 		}
-		s.mu.RUnlock()
-		for _, c := range targets {
-			c.send(ev)
-		}
+	}
+	s.mu.RUnlock()
+	for _, c := range targets {
+		c.sendEvent(service, data)
 	}
 }
 

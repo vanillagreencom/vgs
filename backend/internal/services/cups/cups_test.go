@@ -369,3 +369,25 @@ func argvLineMatches(line, want string) bool {
 	}
 	return filepath.Dir(page) == os.TempDir() && strings.HasPrefix(filepath.Base(page), "vshell-cups-test-")
 }
+
+// Before the first sweep there is nothing to report. An empty list would reach
+// the shell as "no printers configured" and blank the queue list while lpstat
+// has never run.
+func TestCachedPrintersBeforeFirstSweepReportsNothing(t *testing.T) {
+	m := &Manager{}
+	if got := m.cachedPrinters(); got != nil {
+		t.Fatalf("cached printers before the first sweep = %v, want nothing to send", got)
+	}
+}
+
+func TestCachedPrintersReturnsTheLastSweep(t *testing.T) {
+	m := &Manager{lastPrinters: []Printer{{Name: "office"}}, hasLast: true}
+	got, ok := m.cachedPrinters().(map[string]any)
+	if !ok {
+		t.Fatalf("cachedPrinters returned %T, want a map", m.cachedPrinters())
+	}
+	printers := got["printers"].([]Printer)
+	if len(printers) != 1 || printers[0].Name != "office" {
+		t.Fatalf("printers = %v, want the recorded sweep", printers)
+	}
+}

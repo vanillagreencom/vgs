@@ -15,6 +15,7 @@ import (
 	"github.com/godbus/dbus/v5"
 	"github.com/godbus/dbus/v5/introspect"
 
+	"vshell/backend/internal/refresh"
 	"vshell/backend/internal/server"
 )
 
@@ -29,6 +30,10 @@ const (
 	agentPath       = "/com/vanillagreen/vshell/bluez/agent"
 	agentCapability = "KeyboardDisplay"
 )
+
+// refreshSettle lets a burst of PropertiesChanged signals, or a run of
+// subscribe frames, collapse into one sweep.
+const refreshSettle = 200 * time.Millisecond
 
 type Manager struct {
 	srv *server.Server
@@ -45,11 +50,12 @@ type Manager struct {
 	// one (concurrent pairings must not reject each other).
 	currentPrompt string
 	lastState     State
+	hasLastState  bool
 
 	stop chan struct{}
-	// kick coalesces D-Bus signal bursts (RSSI churn during discovery) into
-	// single-flight state broadcasts; see broadcastLoop.
-	kick chan struct{}
+	// refreshes coalesces D-Bus signal bursts (RSSI churn during discovery) and
+	// subscribe kicks into single-flight state broadcasts.
+	refreshes *refresh.Loop
 }
 
 type State struct {
@@ -125,7 +131,6 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 		pending:   map[string]chan promptReply{},
 		lastState: State{Devices: []Device{}, PairedDevices: []Device{}, ConnectedDevices: []Device{}},
 		stop:      make(chan struct{}),
-		kick:      make(chan struct{}, 1),
 	}
 	adapter, err := m.findAdapter()
 	if err != nil {
@@ -158,13 +163,15 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	} {
 		srv.Register("bluetooth", method, handler)
 	}
-	srv.RegisterSnapshot("bluetooth", func() any { return m.GetState() })
-	go m.broadcastLoop()
+	m.refreshes = refresh.NewLoop(refreshSettle, m.refreshAndBroadcast)
+	srv.RegisterSnapshot("bluetooth", m.CachedState)
+	srv.RegisterSnapshotRefresh("bluetooth", m.broadcastSoon)
 	return m, nil
 }
 
 func (m *Manager) Close() {
 	close(m.stop)
+	m.refreshes.Close()
 	if m.conn == nil {
 		return
 	}
@@ -295,9 +302,22 @@ func (m *Manager) reinitialize() {
 	m.broadcastSoon()
 }
 
+// CachedState returns the newest successful object sweep, or nil before the
+// first one completes. Subscribe reads it instead of running GetManagedObjects
+// on the subscribing connection, and an unswept adapter must not reach the
+// shell as "powered off, no devices".
+func (m *Manager) CachedState() any {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.hasLastState {
+		return nil
+	}
+	return m.lastState
+}
+
 // GetState is the best-effort variant of GetStateChecked, for callers with no
-// error channel (snapshots, broadcast helpers): a transient D-Bus failure
-// returns the last known state instead of an empty powered-off one.
+// error channel (broadcast helpers): a transient D-Bus failure returns the last
+// known state instead of an empty powered-off one.
 func (m *Manager) GetState() State {
 	state, err := m.GetStateChecked()
 	if err != nil {
@@ -349,6 +369,7 @@ func (m *Manager) GetStateChecked() (State, error) {
 	}
 	m.mu.Lock()
 	m.lastState = state
+	m.hasLastState = true
 	m.mu.Unlock()
 	return state, nil
 }
@@ -515,36 +536,19 @@ func (m *Manager) deviceFromParams(params json.RawMessage) (dbus.BusObject, erro
 	return m.conn.Object(bluezDest, path), nil
 }
 
-// broadcastSoon coalesces pending D-Bus events. broadcastLoop serializes its
-// state reads and broadcasts so those reads cannot complete out of order.
-func (m *Manager) broadcastSoon() {
-	select {
-	case m.kick <- struct{}{}:
-	default:
-	}
-}
+// broadcastSoon asks for a state sweep. The refresh loop serializes those
+// sweeps and their broadcasts so two reads cannot publish out of order.
+func (m *Manager) broadcastSoon() { m.refreshes.Kick() }
 
-func (m *Manager) broadcastLoop() {
-	for {
-		select {
-		case <-m.stop:
-			return
-		case <-m.kick:
-		}
-		select {
-		case <-m.stop:
-			return
-		case <-time.After(200 * time.Millisecond):
-		}
-		state, err := m.GetStateChecked()
-		if err != nil {
-			// Keep the subscribers' last-known state instead of broadcasting
-			// an empty powered-off snapshot as truth.
-			m.log.Warn("bluez state refresh failed, skipping broadcast", "err", err)
-			continue
-		}
-		m.srv.Broadcast("bluetooth", state)
+func (m *Manager) refreshAndBroadcast() {
+	state, err := m.GetStateChecked()
+	if err != nil {
+		// Keep the subscribers' last-known state instead of broadcasting
+		// an empty powered-off snapshot as truth.
+		m.log.Warn("bluez state refresh failed, skipping broadcast", "err", err)
+		return
 	}
+	m.srv.Broadcast("bluetooth", state)
 }
 
 func validateDevicePath(value string) (dbus.ObjectPath, error) {

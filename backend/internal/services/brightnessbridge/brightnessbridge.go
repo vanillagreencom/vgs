@@ -10,9 +10,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"time"
 
 	"vshell/backend/internal/execbound"
+	"vshell/backend/internal/refresh"
 	"vshell/backend/internal/server"
 )
 
@@ -22,13 +24,28 @@ const (
 	// holds the helper pipes rather than the backend pipes. execbound limits
 	// backend pipe reads if a descendant inherits them.
 	waitDelay = execbound.DefaultWaitDelay
+	// refreshSettle lets a run of subscribe frames collapse into one helper run.
+	// The helper enumerates every backlight and DDC display, which is the
+	// slowest snapshot this daemon owns.
+	refreshSettle = 250 * time.Millisecond
 )
 
 type Manager struct {
+	srv       *server.Server
 	helper    string
 	timeout   time.Duration
 	waitDelay time.Duration
 	log       *slog.Logger
+
+	mu sync.Mutex
+	// lastState is the newest successful helper listing. Subscribe reads it
+	// instead of running the helper on the subscribing connection.
+	lastState any
+	hasLast   bool
+
+	// refreshes runs the helper off the subscribe path and broadcasts its
+	// result.
+	refreshes *refresh.Loop
 }
 
 type setParams struct {
@@ -46,24 +63,44 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	m := &Manager{helper: helper, timeout: timeout, waitDelay: waitDelay, log: log}
+	m := &Manager{srv: srv, helper: helper, timeout: timeout, waitDelay: waitDelay, log: log}
 	srv.Register("brightness", "brightness.getState", m.handleGetState)
 	srv.Register("brightness", "brightness.rescan", m.handleGetState)
-	srv.Register("brightness", "brightness.setBrightness", m.handleSetBrightness)
+	srv.RegisterLatest("brightness", "brightness.setBrightness", m.handleSetBrightness)
 	srv.Register("brightness", "brightness.increment", m.handleIncrement)
 	srv.Register("brightness", "brightness.decrement", m.handleDecrement)
 	srv.Register("brightness", "brightness.subscribe", m.handleGetState)
-	srv.RegisterSnapshot("brightness", func() any {
-		state, err := m.state()
-		if err != nil {
-			return map[string]any{"devices": []any{}, "errors": []string{err.Error()}}
-		}
-		return state
-	})
+	m.refreshes = refresh.NewLoop(refreshSettle, m.refreshAndBroadcast)
+	srv.RegisterSnapshot("brightness", m.cachedState)
+	srv.RegisterSnapshotRefresh("brightness", m.refreshes.Kick)
 	return m, nil
 }
 
-func (m *Manager) Close() {}
+func (m *Manager) Close() { m.refreshes.Close() }
+
+// cachedState returns the newest successful helper listing, or nil before the
+// first one completes. An empty device list would reach the shell as "no
+// backlights" and hide the brightness control the kicked refresh is about to
+// populate.
+func (m *Manager) cachedState() any {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.hasLast {
+		return nil
+	}
+	return m.lastState
+}
+
+func (m *Manager) refreshAndBroadcast() {
+	state, err := m.state()
+	if err != nil {
+		// Keep the subscribers' last-known devices instead of broadcasting an
+		// empty list as truth.
+		m.log.Warn("brightness refresh failed, skipping broadcast", "err", err)
+		return
+	}
+	m.srv.Broadcast("brightness", state)
+}
 
 func (m *Manager) handleGetState(json.RawMessage) (any, error) {
 	return m.state()
@@ -112,7 +149,15 @@ func (m *Manager) handleDecrement(params json.RawMessage) (any, error) {
 }
 
 func (m *Manager) state() (any, error) {
-	return m.call("list", "--json")
+	state, err := m.call("list", "--json")
+	if err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	m.lastState = state
+	m.hasLast = true
+	m.mu.Unlock()
+	return state, nil
 }
 
 func (m *Manager) call(args ...string) (any, error) {

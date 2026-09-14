@@ -15,13 +15,19 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"vshell/backend/internal/execbound"
+	"vshell/backend/internal/refresh"
 	"vshell/backend/internal/server"
 )
 
 const timeout = 20 * time.Second
+
+// refreshSettle lets a run of subscribe frames, such as the one a popout sends
+// on every open, collapse into one lpstat sweep.
+const refreshSettle = 250 * time.Millisecond
 
 var (
 	nameRe        = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
@@ -53,6 +59,15 @@ type Manager struct {
 	srv  *server.Server
 	cmds map[string]string
 	log  *slog.Logger
+
+	mu sync.Mutex
+	// lastPrinters is the newest successful lpstat sweep. Subscribe reads it
+	// instead of forking lpstat on the subscribing connection.
+	lastPrinters []Printer
+	hasLast      bool
+
+	// refreshes runs the lpstat sweep off the subscribe path and broadcasts it.
+	refreshes *refresh.Loop
 }
 
 type Printer struct {
@@ -191,17 +206,40 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	srv.Register("cups", "cups.addPrinterToClass", m.handleAddPrinterToClass)
 	srv.Register("cups", "cups.removePrinterFromClass", m.handleRemovePrinterFromClass)
 	srv.Register("cups", "cups.deleteClass", m.handleDeleteClass)
-	srv.RegisterSnapshot("cups", func() any {
-		printers, err := m.printers()
-		if err != nil {
-			return map[string]any{"printers": []any{}, "error": err.Error()}
-		}
-		return map[string]any{"printers": printers}
-	})
+	m.refreshes = refresh.NewLoop(refreshSettle, m.refreshAndBroadcast)
+	srv.RegisterSnapshot("cups", m.cachedPrinters)
+	srv.RegisterSnapshotRefresh("cups", m.refreshes.Kick)
 	return m, nil
 }
 
-func (m *Manager) Close() {}
+func (m *Manager) Close() { m.refreshes.Close() }
+
+// cachedPrinters returns the newest successful sweep, or nil before the first
+// one completes. An empty list would reach the shell as "no printers" and blank
+// the queue list that the kicked refresh is about to fill.
+func (m *Manager) cachedPrinters() any {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.hasLast {
+		return nil
+	}
+	return map[string]any{"printers": m.lastPrinters}
+}
+
+func (m *Manager) refreshAndBroadcast() {
+	printers, err := m.printers()
+	if err != nil {
+		// Keep the subscribers' last-known list instead of broadcasting an
+		// empty one as truth.
+		m.log.Warn("cups printer refresh failed, skipping broadcast", "err", err)
+		return
+	}
+	m.mu.Lock()
+	m.lastPrinters = printers
+	m.hasLast = true
+	m.mu.Unlock()
+	m.srv.Broadcast("cups", map[string]any{"printers": printers})
+}
 
 func (m *Manager) handleGetPrinters(json.RawMessage) (any, error) { return m.printers() }
 

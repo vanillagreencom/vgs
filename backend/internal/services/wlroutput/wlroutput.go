@@ -9,19 +9,40 @@ import (
 	"os/exec"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"vshell/backend/internal/compositor"
 	"vshell/backend/internal/execbound"
+	"vshell/backend/internal/refresh"
 	"vshell/backend/internal/server"
 )
 
 const timeout = 5 * time.Second
 
+// refreshSettle lets a run of subscribe frames collapse into one compositor
+// query.
+const refreshSettle = 200 * time.Millisecond
+
 type Manager struct {
+	srv     *server.Server
 	command string
 	backend string
 	log     *slog.Logger
+
+	mu sync.Mutex
+	// lastState is the newest successful compositor query. Subscribe reads it
+	// instead of forking hyprctl on the subscribing connection.
+	lastState State
+	hasLast   bool
+
+	// refreshes runs the compositor query off the subscribe path and broadcasts
+	// its result.
+	refreshes *refresh.Loop
+
+	// query is the compositor's own output listing, bound once from the
+	// detected backend so the choice is not re-derived per call.
+	query func() (State, error)
 }
 
 type State struct {
@@ -120,22 +141,42 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	m := &Manager{command: command, backend: backend, log: log}
+	m := newManager(command, backend, log)
+	m.srv = srv
 	srv.Register("wlroutput", "wlroutput.getState", m.handleGetState)
 	srv.Register("wlroutput", "wlroutput.subscribe", m.handleGetState)
 	srv.Register("wlroutput", "wlroutput.applyConfiguration", rejectWrite)
 	srv.Register("wlroutput", "wlroutput.testConfiguration", rejectWrite)
-	srv.RegisterSnapshot("wlroutput", func() any {
-		state, err := m.state()
-		if err != nil {
-			return map[string]any{"outputs": []any{}, "serial": 0, "backend": backend, "error": err.Error()}
-		}
-		return state
-	})
+	m.refreshes = refresh.NewLoop(refreshSettle, m.refreshAndBroadcast)
+	srv.RegisterSnapshot("wlroutput", m.cachedState)
+	srv.RegisterSnapshotRefresh("wlroutput", m.refreshes.Kick)
 	return m, nil
 }
 
-func (m *Manager) Close() {}
+func (m *Manager) Close() { m.refreshes.Close() }
+
+// cachedState returns the newest successful query, or nil before the first one
+// completes. An empty output list would reach the shell as "no monitors" and
+// blank the display page that the kicked refresh is about to fill.
+func (m *Manager) cachedState() any {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.hasLast {
+		return nil
+	}
+	return m.lastState
+}
+
+func (m *Manager) refreshAndBroadcast() {
+	state, err := m.state()
+	if err != nil {
+		// Keep the subscribers' last-known layout instead of broadcasting an
+		// empty one as truth.
+		m.log.Warn("wlroutput state refresh failed, skipping broadcast", "err", err)
+		return
+	}
+	m.srv.Broadcast("wlroutput", state)
+}
 
 func (m *Manager) handleGetState(json.RawMessage) (any, error) {
 	return m.state()
@@ -145,11 +186,29 @@ func rejectWrite(json.RawMessage) (any, error) {
 	return nil, fmt.Errorf("wlroutput configuration writes are disabled; VGS display config owns compositor layout")
 }
 
-func (m *Manager) state() (State, error) {
-	if m.backend == "niri" {
-		return m.niriState()
+// newManager binds the compositor's own output listing once, so the choice of
+// backend is not re-derived on every query.
+func newManager(command, backend string, log *slog.Logger) *Manager {
+	m := &Manager{command: command, backend: backend, log: log}
+	m.query = m.hyprlandState
+	if backend == "niri" {
+		m.query = m.niriState
 	}
-	return m.hyprlandState()
+	return m
+}
+
+// state runs the compositor query and records a successful result, so every
+// caller warms what the next subscribe reads.
+func (m *Manager) state() (State, error) {
+	state, err := m.query()
+	if err != nil {
+		return state, err
+	}
+	m.mu.Lock()
+	m.lastState = state
+	m.hasLast = true
+	m.mu.Unlock()
+	return state, nil
 }
 
 func (m *Manager) hyprlandState() (State, error) {

@@ -37,3 +37,26 @@ func TestMergeSavedWiFi(t *testing.T) {
 		t.Fatalf("Office should be out of range: %#v", got[1])
 	}
 }
+
+// Before the first sweep there is no state to report. An all-empty one would
+// reach the shell as "disconnected, radio off" while NetworkManager is merely
+// restarting.
+func TestCachedStateBeforeFirstSweepReportsNothing(t *testing.T) {
+	m := &Manager{preference: "auto"}
+	if got := m.cachedState(); got != nil {
+		t.Fatalf("cached state before the first sweep = %+v, want nothing to send", got)
+	}
+}
+
+func TestCachedStateReturnsTheLastSweep(t *testing.T) {
+	m := &Manager{preference: "auto"}
+	m.lastState = networkState{NetworkStatus: "wifi", WiFiSSID: "home"}
+	m.hasLastState = true
+	st, ok := m.cachedState().(networkState)
+	if !ok {
+		t.Fatalf("cached state is %T, want networkState", m.cachedState())
+	}
+	if st.NetworkStatus != "wifi" || st.WiFiSSID != "home" {
+		t.Fatalf("cached state = %+v, want the recorded sweep", st)
+	}
+}

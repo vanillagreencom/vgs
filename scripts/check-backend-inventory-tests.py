@@ -104,6 +104,21 @@ def main() -> int:
             'Singleton { function f(line) { log.debug("Request socket <<", line) } }',
             "must not log raw backend frames",
         ),
+        (
+            "shipped Go file registering an undocumented method",
+            "backend/internal/server/server.go",
+            'package server\n\nfunc wire(srv *Server) { srv.Register("core", "bogus.method", nil) }\n',
+            "UNDOCUMENTED method 'bogus.method'",
+        ),
+    ]
+
+    # The other direction: a registration the shipped binary never carries.
+    passing_cases = [
+        (
+            "Go test file registering an undocumented method",
+            "backend/internal/server/server_test.go",
+            'package server\n\nfunc wire(srv *Server) { srv.Register("core", "bogus.method", nil) }\n',
+        ),
     ]
 
     root = make_fixture()
@@ -114,6 +129,13 @@ def main() -> int:
             try:
                 write(case_root / rel, contents)
                 assert_fails(case_root, expected)
+            finally:
+                shutil.rmtree(case_root)
+        for _, rel, contents in passing_cases:
+            case_root = make_fixture()
+            try:
+                write(case_root / rel, contents)
+                assert_passes(case_root)
             finally:
                 shutil.rmtree(case_root)
     finally:

@@ -32,6 +32,12 @@ type Manager struct {
 	pushing    bool
 	pushMissed bool
 	lastPush   time.Time
+
+	stateMu sync.Mutex
+	// lastState is the newest successful status read. Subscribe reads it
+	// instead of forking tailscale on the subscribing connection.
+	lastState State
+	hasLast   bool
 }
 
 type State struct {
@@ -139,13 +145,10 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	srv.Register("tailscale", "tailscale.setExitNode", m.handleSetExitNode)
 	srv.Register("tailscale", "tailscale.setAllowLanAccess", m.handleSetAllowLANAccess)
 	srv.Register("tailscale", "tailscale.setAcceptRoutes", m.handleSetAcceptRoutes)
-	srv.RegisterSnapshot("tailscale", func() any {
-		state, err := m.status()
-		if err != nil {
-			return map[string]any{"connected": false, "peers": []any{}, "error": err.Error()}
-		}
-		return state
-	})
+	srv.RegisterSnapshot("tailscale", m.cachedState)
+	// pulse coalesces the read onto the watcher's own timer goroutine and
+	// broadcasts the result.
+	srv.RegisterSnapshotRefresh("tailscale", m.pulse)
 	// Event-only capability: it carries no method of its own, it tells the
 	// shell that this backend pushes tailscale updates instead of only
 	// answering them, so the shell can drop its re-fetch cadence to a bare
@@ -231,6 +234,18 @@ func (m *Manager) handleSetAcceptRoutes(params json.RawMessage) (any, error) {
 	return m.handleRefresh(nil)
 }
 
+// cachedState returns the newest successful status read, or nil before the
+// first one completes. A disconnected state would reach the shell as fact and
+// show the tailnet as down while the kicked refresh is still reading it.
+func (m *Manager) cachedState() any {
+	m.stateMu.Lock()
+	defer m.stateMu.Unlock()
+	if !m.hasLast {
+		return nil
+	}
+	return m.lastState
+}
+
 func (m *Manager) status() (State, error) {
 	out, err := m.output("status", "--json")
 	if err != nil {
@@ -274,6 +289,10 @@ func (m *Manager) status() (State, error) {
 		state.AcceptRoutes = prefs.RouteAll
 		state.ExitNodeAllowLanAccess = prefs.ExitNodeAllowLANAccess
 	}
+	m.stateMu.Lock()
+	m.lastState = state
+	m.hasLast = true
+	m.stateMu.Unlock()
 	return state, nil
 }
 

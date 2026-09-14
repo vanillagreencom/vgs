@@ -87,7 +87,7 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	m.state = State{Config: m.config}
 
 	srv.Register("wallpaper", "wallpaper.getState", m.handleGetState)
-	srv.Register("wallpaper", "wallpaper.setConfig", m.handleSetConfig)
+	srv.RegisterLatest("wallpaper", "wallpaper.setConfig", m.handleSetConfig)
 	srv.Register("wallpaper", "wallpaper.trigger", m.handleTrigger)
 	srv.Register("wallpaper", "wallpaper.subscribe", m.handleSubscribe)
 	srv.RegisterSnapshot("wallpaper", func() any { return m.GetState() })

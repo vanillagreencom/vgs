@@ -18,10 +18,15 @@ import (
 	"time"
 
 	"vshell/backend/internal/execbound"
+	"vshell/backend/internal/refresh"
 	"vshell/backend/internal/server"
 )
 
 const commandTimeout = 20 * time.Second
+
+// refreshSettle lets a burst of nmcli monitor lines, or a run of subscribe
+// frames, collapse into one sweep.
+const refreshSettle = 250 * time.Millisecond
 
 type Manager struct {
 	srv *server.Server
@@ -33,10 +38,15 @@ type Manager struct {
 	// read it back, so it is remembered here instead of hardcoding "auto" and
 	// resetting the UI selection on every broadcast.
 	preference string
-	stop       chan struct{}
-	// kick coalesces monitor events into single-flight state broadcasts; see
-	// broadcastLoop.
-	kick chan struct{}
+	// lastState is the newest successful sweep. Subscribe reads it instead of
+	// running the dozen nmcli queries on the subscribing connection.
+	lastState    networkState
+	hasLastState bool
+	stop         chan struct{}
+
+	// refreshes coalesces monitor events and subscribe kicks into single-flight
+	// state broadcasts.
+	refreshes *refresh.Loop
 }
 
 type pendingPrompt struct {
@@ -215,7 +225,7 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 		}
 		return nil, fmt.Errorf("NetworkManager unavailable")
 	}
-	m := &Manager{srv: srv, log: log, pending: map[string]pendingPrompt{}, preference: "auto", stop: make(chan struct{}), kick: make(chan struct{}, 1)}
+	m := &Manager{srv: srv, log: log, pending: map[string]pendingPrompt{}, preference: "auto", stop: make(chan struct{})}
 	for method, handler := range map[string]server.HandlerFunc{
 		"network.getState":                m.handleGetState,
 		"network.wifi.scan":               m.handleWiFiScan,
@@ -250,14 +260,16 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 	} {
 		srv.Register("network", method, handler)
 	}
-	srv.RegisterSnapshot("network", func() any { return m.state() })
+	m.refreshes = refresh.NewLoop(refreshSettle, m.refreshAndBroadcast)
+	srv.RegisterSnapshot("network", m.cachedState)
+	srv.RegisterSnapshotRefresh("network", m.broadcastSoon)
 	go m.monitor()
-	go m.broadcastLoop()
 	return m, nil
 }
 
 func (m *Manager) Close() {
 	close(m.stop)
+	m.refreshes.Close()
 }
 
 func (m *Manager) handleGetState(json.RawMessage) (any, error) {
@@ -265,7 +277,11 @@ func (m *Manager) handleGetState(json.RawMessage) (any, error) {
 }
 
 func (m *Manager) handleWiFiNetworks(json.RawMessage) (any, error) {
-	return m.state().WiFiNetworks, nil
+	st, err := m.stateChecked()
+	if err != nil {
+		return nil, err
+	}
+	return st.WiFiNetworks, nil
 }
 
 func (m *Manager) handleWiFiScan(params json.RawMessage) (any, error) {
@@ -296,8 +312,12 @@ func (m *Manager) handleWiFiConnect(params json.RawMessage) (any, error) {
 		m.mu.Lock()
 		m.pending[token] = pendingPrompt{SSID: p.SSID, Device: p.Device, Hidden: p.Hidden}
 		m.mu.Unlock()
+		st, err := m.stateChecked()
+		if err != nil {
+			return nil, err
+		}
 		fields := []string{"psk"}
-		if networkEnterprise(m.state().WiFiNetworks, p.SSID) {
+		if networkEnterprise(st.WiFiNetworks, p.SSID) {
 			fields = []string{"identity", "password"}
 		}
 		m.srv.Broadcast("network.credentials", map[string]any{
@@ -356,7 +376,9 @@ func (m *Manager) handleWiFiDisconnect(params json.RawMessage) (any, error) {
 		if _, err := runNMCLI(m.log, "device", "disconnect", p.Device); err != nil {
 			return nil, err
 		}
-	} else if dev := m.state().WiFiDevice; dev != "" {
+	} else if st, err := m.stateChecked(); err != nil {
+		return nil, err
+	} else if dev := st.WiFiDevice; dev != "" {
 		if _, err := runNMCLI(m.log, "device", "disconnect", dev); err != nil {
 			return nil, err
 		}
@@ -493,7 +515,9 @@ func (m *Manager) handleEthernetDisconnect(params json.RawMessage) (any, error) 
 		if _, err := runNMCLI(m.log, "device", "disconnect", p.Device); err != nil {
 			return nil, err
 		}
-	} else if dev := m.state().EthernetDevice; dev != "" {
+	} else if st, err := m.stateChecked(); err != nil {
+		return nil, err
+	} else if dev := st.EthernetDevice; dev != "" {
 		if _, err := runNMCLI(m.log, "device", "disconnect", dev); err != nil {
 			return nil, err
 		}
@@ -565,7 +589,10 @@ func (m *Manager) handleNetworkInfo(params json.RawMessage) (any, error) {
 func (m *Manager) handleEthernetInfo(params json.RawMessage) (any, error) {
 	var p uuidParams
 	_ = json.Unmarshal(params, &p)
-	st := m.state()
+	st, err := m.stateChecked()
+	if err != nil {
+		return nil, err
+	}
 	dev := st.EthernetDevice
 	for _, c := range st.WiredConnections {
 		if c.UUID == p.UUID && c.IsActive && st.EthernetDevice != "" {
@@ -784,9 +811,16 @@ func (m *Manager) handleVPNClearCredentials(params json.RawMessage) (any, error)
 
 // state is the best-effort variant of stateChecked, for callers with no error
 // channel (snapshots, helper lookups); failures are logged inside the helpers.
-func (m *Manager) state() networkState {
-	st, _ := m.stateChecked()
-	return st
+// cachedState returns the newest successful sweep, or nil before the first one
+// completes. An all-empty state would reach the shell as "disconnected, radio
+// off" while the kicked sweep is still running.
+func (m *Manager) cachedState() any {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.hasLastState {
+		return nil
+	}
+	return m.lastState
 }
 
 // stateChecked returns an error when the core device query fails (NetworkManager
@@ -900,6 +934,10 @@ func (m *Manager) stateChecked() (networkState, error) {
 	if devErr != nil {
 		return st, fmt.Errorf("device status: %w", devErr)
 	}
+	m.mu.Lock()
+	m.lastState = st
+	m.hasLastState = true
+	m.mu.Unlock()
 	return st, nil
 }
 
@@ -1015,36 +1053,19 @@ func (m *Manager) monitor() {
 	}
 }
 
-// broadcastSoon coalesces pending monitor events. broadcastLoop serializes its
-// state reads and broadcasts so those reads cannot complete out of order.
-func (m *Manager) broadcastSoon() {
-	select {
-	case m.kick <- struct{}{}:
-	default:
-	}
-}
+// broadcastSoon asks for a state sweep. The refresh loop serializes those
+// sweeps and their broadcasts so two reads cannot publish out of order.
+func (m *Manager) broadcastSoon() { m.refreshes.Kick() }
 
-func (m *Manager) broadcastLoop() {
-	for {
-		select {
-		case <-m.stop:
-			return
-		case <-m.kick:
-		}
-		select {
-		case <-m.stop:
-			return
-		case <-time.After(250 * time.Millisecond):
-		}
-		st, err := m.stateChecked()
-		if err != nil {
-			// Keep the subscribers' last-known state instead of broadcasting
-			// an all-empty snapshot as truth.
-			m.log.Warn("network state refresh failed, skipping broadcast", "err", err)
-			continue
-		}
-		m.srv.Broadcast("network", st)
+func (m *Manager) refreshAndBroadcast() {
+	st, err := m.stateChecked()
+	if err != nil {
+		// Keep the subscribers' last-known state instead of broadcasting
+		// an all-empty snapshot as truth.
+		m.log.Warn("network state refresh failed, skipping broadcast", "err", err)
+		return
 	}
+	m.srv.Broadcast("network", st)
 }
 
 // validateSSID rejects SSIDs that cannot be passed safely as positional nmcli

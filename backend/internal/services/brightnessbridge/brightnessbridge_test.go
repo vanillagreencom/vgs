@@ -152,3 +152,24 @@ func TestCallReturnsHelperOutput(t *testing.T) {
 		t.Fatalf("expected devices key in %v", obj)
 	}
 }
+
+// Before the first helper run there is nothing to report. An empty device list
+// would reach the shell as "no backlights" and hide the brightness control,
+// and this helper is the slowest query the daemon owns.
+func TestCachedStateBeforeFirstHelperRunReportsNothing(t *testing.T) {
+	m := &Manager{}
+	if got := m.cachedState(); got != nil {
+		t.Fatalf("cached state before the first helper run = %v, want nothing to send", got)
+	}
+}
+
+func TestCachedStateReturnsTheLastHelperRun(t *testing.T) {
+	m := &Manager{lastState: map[string]any{"devices": []any{"backlight"}}, hasLast: true}
+	got, ok := m.cachedState().(map[string]any)
+	if !ok {
+		t.Fatalf("cachedState returned %T, want a map", m.cachedState())
+	}
+	if devices := got["devices"].([]any); len(devices) != 1 {
+		t.Fatalf("devices = %v, want the recorded helper run", devices)
+	}
+}

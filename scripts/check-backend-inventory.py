@@ -73,6 +73,10 @@ def collect_go_methods() -> dict[str, list[str]]:
     if not BACKEND_ROOT.is_dir():
         return methods
     for path in sorted(BACKEND_ROOT.rglob("*.go")):
+        # A _test.go file is compiled only into its test binary, so a method it
+        # registers can never reach a client and owes methods.json nothing.
+        if path.name.endswith("_test.go"):
+            continue
         rel = str(path.relative_to(REPO_ROOT))
         text = path.read_text(encoding="utf-8", errors="replace")
         for m in GO_SERVER_REGISTER_RE.findall(text):
