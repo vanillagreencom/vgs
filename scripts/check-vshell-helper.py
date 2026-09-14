@@ -9948,14 +9948,22 @@ def test_theme_overlays_merge_key_by_key():
             helper.save_theme_package(dict(helper.load_theme_package("keyfix"),
                                            uiRoles={"outline": "#445566", "statusBg": "#303030"}), "keyfix")
             (package / helper.UI_ROLES_FILE).write_text('outline = "#667788"\nstatusBg = "#343434"\n')
-            declared = helper.load_theme_package("keyfix")["uiRoles"]
-            # (what, role, loaded value)
+            errors = io.StringIO()
+            with contextlib.redirect_stderr(errors):
+                declared = helper.load_theme_package("keyfix")["uiRoles"]
+            user_roles = helper.overlay_layer(user / helper.UI_ROLES_FILE, helper.UI_ROLES_FILE)
+            # (what, actual, expected)
             role_rows = [
-                ("a built-in declared role the overlay did not set reaches the loaded package", "outline", "#667788"),
-                ("an overlay-declared role survives a built-in change to that role", "statusBg", "#303030"),
+                ("a built-in declared role the overlay did not set reaches the loaded package",
+                 declared.get("outline"), "#667788"),
+                ("an overlay-declared role survives a built-in change to that role",
+                 declared.get("statusBg"), "#303030"),
+                ("a merging ui-roles overlay loads without a warning", errors.getvalue(), ""),
+                ("a merging ui-roles overlay names no unreadable key, so shrink can rewrite it",
+                 (user_roles.merges, user_roles.unreadable), (True, [])),
             ]
-            for what, role, expected in role_rows:
-                assert_equal(declared.get(role), expected, what)
+            for what, actual, expected in role_rows:
+                assert_equal(actual, expected, what)
             (package / helper.UI_ROLES_FILE).unlink()
 
             other = builtin / "keyother"

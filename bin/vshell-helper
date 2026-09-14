@@ -1415,9 +1415,12 @@ def package_layer_paths(name: str, filename: str) -> List[Path]:
     """`filename` in each layer of package `name` that holds it, built-in first.
 
     `colors.toml`, `terminal-colors.toml`, `ui-roles.toml` and `app-colors.toml`
-    are read through this and merged key by key, so a user overlay holds only the keys the user
-    set and a package update still reaches every value they did not. A whole
-    file in the overlay would freeze every key at the version the user edited.
+    are read through this. A user `colors.toml` or `app-colors.toml` always
+    merges key by key; a user `terminal-colors.toml` or `ui-roles.toml` merges
+    only when `overlay_layer` reads its merge key, and otherwise replaces the
+    built-in values whole. `write_user_layer` keeps a merging overlay to the keys
+    whose value differs, so a package update still reaches every value the user
+    did not set.
     """
     return [root / filename for root in (builtin_themes_dir() / name, user_themes_dir() / name)
             if (root / filename).is_file()]
@@ -1428,10 +1431,11 @@ def flat_toml_text(values: Dict[str, str]) -> str:
     return "".join(f'{key} = "{value}"\n' for key, value in values.items())
 
 
-# The key whose line opens a user-layer `terminal-colors.toml` or `ui-roles.toml`
-# that merges key by key over the built-in file. A file without it replaces the
-# built-in file's keys whole, so a file a user or a catalog download wrote whole,
-# and the comment-only file that masks the built-in keys, keep that meaning.
+# A user-layer `terminal-colors.toml` or `ui-roles.toml` holding a top-level
+# `merge = true` merges key by key over the built-in file; `write_user_layer`
+# writes that key as the first line. A file without it replaces the built-in
+# file's keys whole, so a file a user or a catalog download wrote whole, and the
+# comment-only file that masks the built-in keys, keep that meaning.
 OVERLAY_MERGE_KEY = "merge"
 OVERLAY_MERGE_LINE = f"{OVERLAY_MERGE_KEY} = true\n"
 # The files that merge or replace, each with the body a user layer writes to
@@ -7585,20 +7589,6 @@ def parse_color_edits(edits: List[str]) -> Dict[str, str]:
             idx = int(key[5:])
             if 0 <= idx < len(ANSI_NAMES):
                 out[ANSI_NAMES[idx]] = parsed
-    return out
-
-
-def theme_base_colors(bp: Dict[str, Any]) -> Dict[str, str]:
-    """Return the normalized base palette before restyle adjustments for editing."""
-    base_map = package_colors_map(Path(str(bp.get("path"))).name)
-    if blueprint_mode(bp) in {"dark", "light"}:
-        base_map["mode"] = blueprint_mode(bp)
-    base_bp = palette_from_colors_map(base_map, name=str(bp.get("name") or ""), wallpaper="", source=blueprint_source(bp))
-    ext = base_bp["palette"]["extendedColors"]
-    out: Dict[str, str] = dict(ext)
-    for i, c in enumerate(base_bp["palette"]["colors"]):
-        out[f"color{i}"] = c
-        out[ANSI_NAMES[i]] = c
     return out
 
 
