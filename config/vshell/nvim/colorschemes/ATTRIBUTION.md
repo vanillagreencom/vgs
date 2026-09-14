@@ -27,7 +27,7 @@ Third-party Neovim colorscheme plugins vendored verbatim so VGS themes have no e
 | `neovim-ayu` | [Shatur/neovim-ayu](https://github.com/Shatur/neovim-ayu) | COPYING |
 | `nightfall.nvim` | [2giosangmitom/nightfall.nvim](https://github.com/2giosangmitom/nightfall.nvim) | LICENSE |
 | `nightfox.nvim` | [EdenEast/nightfox.nvim](https://github.com/EdenEast/nightfox.nvim) | LICENSE |
-| `catppuccin` | [catppuccin/nvim](https://github.com/catppuccin/nvim) | — |
+| `catppuccin` | [catppuccin/nvim](https://github.com/catppuccin/nvim) | LICENSE.md |
 | `pixel.nvim` | [bjarneo/pixel.nvim](https://github.com/bjarneo/pixel.nvim) | LICENSE |
 | `retro-82.nvim` | [OldJobobo/retro-82.nvim](https://github.com/OldJobobo/retro-82.nvim) | LICENSE |
 | `rose-pine` | [rose-pine/neovim](https://github.com/rose-pine/neovim) | LICENSE |
