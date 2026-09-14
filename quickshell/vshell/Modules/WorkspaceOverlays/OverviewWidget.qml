@@ -146,17 +146,32 @@ Item {
     implicitWidth: overviewBackground.implicitWidth + Theme.spacingL * 2
     implicitHeight: overviewBackground.implicitHeight + Theme.spacingL * 2
 
-    Component.onCompleted: {
+    // HyprlandToplevel carries no geometry or class property, so every tile's rectangle and
+    // icon comes from lastIpcObject, which only Hyprland.refreshToplevels() fills. The
+    // CompositorService fan-out issues no toplevel fetch, so the overview fetches its own.
+    // One widget exists per screen and all three fetches hit shared singleton state, but
+    // HyprlandIpc guards each on an in-flight flag, so N monitors still cost one round trip
+    // per endpoint. Verified in quickshell 0.3.1: HyprlandIpc::refreshToplevels,
+    // refreshWorkspaces and refreshMonitors each return early while their request is out.
+    function refetchOverviewState() {
         Hyprland.refreshToplevels();
         Hyprland.refreshWorkspaces();
         Hyprland.refreshMonitors();
     }
 
-    onOverviewOpenChanged: {
-        if (overviewOpen) {
-            Hyprland.refreshToplevels();
-            Hyprland.refreshWorkspaces();
-            Hyprland.refreshMonitors();
+    // The Loader that builds this widget is active only while the overview is open, so this
+    // runs once per open and overviewOpen is already true here.
+    Component.onCompleted: refetchOverviewState()
+
+    // Without this, a window opened, moved, resized, floated or closed while the overview is
+    // on screen draws at its stale rectangle, or at 100x100 with a generic icon and no
+    // address to click. CompositorService.toplevelsChanged is already one emission per action
+    // on Hyprland, and the widget does not exist while the overview is closed.
+    Connections {
+        target: root.overviewOpen ? CompositorService : null
+        enabled: root.overviewOpen
+        function onToplevelsChanged() {
+            root.refetchOverviewState();
         }
     }
 
@@ -376,8 +391,7 @@ Item {
                             if (targetWorkspace !== -1 && targetWorkspace !== windowData?.workspace.id) {
                                 HyprlandService.moveToWorkspace(targetWorkspace, windowData?.address, false);
                                 Qt.callLater(() => {
-                                    Hyprland.refreshToplevels();
-                                    Hyprland.refreshWorkspaces();
+                                    root.refetchOverviewState();
                                     Qt.callLater(() => {
                                         window.x = window.initX;
                                         window.y = window.initY;

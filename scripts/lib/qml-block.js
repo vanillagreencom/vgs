@@ -101,4 +101,23 @@ function skipTemplate(text, i) {
     throw new Error("unterminated template literal");
 }
 
-module.exports = { extractBlock };
+/**
+ * Evaluate an extracted QML body with QML's unqualified lookup modelled by two scopes.
+ *
+ * Layering `scope` outside `root` lets a handler read sibling components and singletons by
+ * bare name while writing component state on `root`, the way the shipped file does. `with`
+ * assigns to an object only for a property it already has, so a name absent from both
+ * objects leaks to the global scope: assert against that in the suite.
+ *
+ * @param {string} body        an extracted block body
+ * @param {object} root        the component the body belongs to
+ * @param {object} scope       siblings and singletons the body reads by bare name
+ * @param {string[]} parameters the body's parameter names, in order
+ * @param {any[]} args          values for those parameters
+ * @returns {any} whatever the body returns
+ */
+function callInScope(body, root, scope = {}, parameters = [], args = []) {
+    return new Function("root", "scope", ...parameters, `with (scope) { with (root) {\n${body}\n} }`)(root, scope, ...args);
+}
+
+module.exports = { extractBlock, callInScope };
