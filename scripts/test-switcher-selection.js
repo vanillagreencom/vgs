@@ -702,25 +702,45 @@ test("the download offer follows a successful user pick and Not now leaves the t
     catalog.requires(offerBody, "offerDownload()", [
         ["if (!name || installed !== false) return;",
             "a theme the list reports installed costs no catalog read", 1],
-        ["const entry = themes.find(theme => theme.name === name) || null;",
-            "the decision reads the applied theme's entry from this read's own themes", 1],
+        ["_offerName = name; refresh();",
+            "the offer rides the shared catalog refresh, so the wallpaper surfaces and the offer read the same entries", 1]
+    ]);
+    catalog.requires(catalogSource, "VGSThemeCatalogService.qml", [
+        ["onCatalogLoaded: root._settleOffer()", "every catalog read that lands settles a pending offer", 1]
+    ]);
+    catalog.requires(catalog.body("refresh"), "refresh()", [
+        ["catalogLoaded();", "a read that fails or does not parse still settles the offer, with no entry, so it offers nothing", 3]
+    ]);
+    const settle = catalog.body("_settleOffer");
+    catalog.requires(settle, "_settleOffer()", [
+        ["const entry = entryFor(name);", "the decision reads the applied theme's entry from the refreshed catalog", 1],
         ["if (downloadOffer(entry, online, isPending(name), SettingsData.currentThemeName === name)) downloadOffered(name, entry.imagerySize);",
             "the dialog is raised on the extracted decision, with the archive size, only while the theme is still " +
             "the applied one by the name an apply sets as it lands, not the asynchronously refreshed currentTheme", 1]
     ]);
-    mustPrecedeIn(offerBody, "offerDownload()", /themes = JSON\.parse/, /downloadOffer\(/,
-        "the decision reads the catalog read made after the apply, so a finished download is not offered again");
+    mustPrecedeIn(settle, "_settleOffer()", /_offerName = "";/, /downloadOffer\(/,
+        "the pending offer is cleared before it is decided, so a later refresh from a wallpaper surface cannot raise it again");
 
-    const install = catalog.body("install");
-    catalog.requires(install, "install()", [
-        ["if (SettingsData.currentThemeName === name) VGSThemeService.applyBlueprint(name);",
+    catalog.requires(catalog.body("install"), "install()", [
+        ['root._runImagery("install", name);',
+            "Download from the dialog runs the same install a wallpaper surface's card runs, reported once by _complete", 1]
+    ]);
+    const imagery = catalog.body("_runImagery");
+    catalog.requires(imagery, "_runImagery()", [
+        ['if (verb === "install" && SettingsData.currentThemeName === name) VGSThemeService.applyBlueprint(name);',
             "a finished download re-applies the theme still applied, by the name an apply sets as it lands, so a " +
             "stale currentTheme can neither skip the re-apply nor re-apply a theme the user replaced", 1]
     ]);
     assert.doesNotMatch(qmlSource.stripComments(catalogSource), /currentTheme\b/,
         "VGSThemeCatalogService.qml: the offer and the re-apply read SettingsData.currentThemeName, never the asynchronously refreshed currentTheme");
-    mustPrecedeIn(install, "install()", /if \(result\.status !== "installed"\)/, /VGSThemeService\.applyBlueprint\(name\)/,
-        "the re-apply follows the failed-status return, so a failed download re-applies nothing");
+    mustPrecedeIn(imagery, "_runImagery()", /if \(!data\)\s*return;/, /VGSThemeService\.applyBlueprint\(name\)/,
+        "the re-apply follows the failed-run return, so a failed download re-applies nothing");
+    mustPrecedeIn(imagery, "_runImagery()", /if \(placed && typeof VGSThemeService/, /VGSThemeService\.applyBlueprint\(name\)/,
+        "the re-apply sits inside the placed branch, so a download that placed nothing re-applies nothing");
+    for (const [label, source] of [["VGS.qml", shellRootSource], ["VGSThemeCatalogService.qml", catalogSource]]) {
+        assert.doesNotMatch(qmlSource.stripComments(source), /operationCompleted|onOperationCompleted/,
+            `${label}: a catalog result is reported by _complete alone, so a second toast path would report it twice`);
+    }
 
     const shell = q("VGS.qml");
     const offered = shell.body("onDownloadOffered");
