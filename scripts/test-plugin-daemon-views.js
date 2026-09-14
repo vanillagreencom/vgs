@@ -222,6 +222,8 @@ test("the app launcher keeps the two cases only it has, and delegates the one it
 // under test. Flattened first, so a binding wrapped across lines still resolves; the value is
 // taken up to the next property, not to the end of the line. Every row declares the ids it
 // expects, because a loop over an empty result asserts nothing and still reports green.
+const daemonSource = (dir, file) => qmlSource(fs.readFileSync(path.join(dir, file), "utf8"), file);
+
 function watchGatedTimerIds(source) {
     const ids = [];
     for (const { text, q } of source.objectBlocks("Timer")) {
@@ -239,8 +241,8 @@ function watchGatedTimerIds(source) {
 // - widgetTimers: how many Timer blocks the per-screen widget may declare. A hover delay a
 //   pointer starts on one screen is not the per-monitor defect; a timer that repeats or arms
 //   itself is, so each declared Timer must carry repeat: false and arm nothing.
-// - entryPoints: [function, the effect its guard must precede] this row requires to guard on a
-//   missing instance and report the drop.
+// - entryPoints: [function, the effect its guard must precede, the acceptance check that effect
+//   waits on] this row requires to guard on a missing instance and report the drop.
 // - watchGated: the daemon timers whose running binding holds the root.watched gate.
 // - gated: [token, why] the daemon must keep so it runs only while a widget watches.
 const ROWS = [
@@ -271,7 +273,10 @@ const ROWS = [
                 "and the catch-up fetches nothing while no widget watches"]]
     },
     {
-        plugin: "sysUpdate", entryPoints: [["launch", "closePopout"], ["manualRefresh", null], ["reviewOrphans", null]], widget: "SysUpdateWidget.qml", daemon: "SysUpdateDaemon.qml",
+        plugin: "sysUpdate",
+        entryPoints: [["launch", "closePopout", "if (!root.daemon.launch(mode)) return;"],
+            ["manualRefresh", null], ["reviewOrphans", null]],
+        widget: "SysUpdateWidget.qml", daemon: "SysUpdateDaemon.qml",
         widgetTimers: 0, watchGated: ["pollTimer"],
         gated: [
             ["running: !root.useBackend && root.watched",
@@ -361,7 +366,7 @@ test("each polling plugin runs from its daemon, and its per-screen widget only r
         // "Checking…" forever and the sudo pill reads unavailable, so nothing else tells the
         // user the click went nowhere. The guard also runs before the action's own visible
         // effect, or the popout closes as though the upgrade had been accepted.
-        for (const [fn, effect] of entryPoints) {
+        for (const [fn, effect, accepts] of entryPoints) {
             const body = widget.body(fn);
             const guard = qmlSource.codeIndexOf(body, "if (!root.daemon)");
             assert.notEqual(guard, -1, `${widgetFile}'s ${fn}() must guard on a missing daemon instance`);
@@ -373,6 +378,21 @@ test("each polling plugin runs from its daemon, and its per-screen widget only r
                 assert.ok(guard < qmlSource.codeIndexOf(body, effect),
                     `${widgetFile}'s ${fn}() must guard before ${effect}, or a click that reaches no ` +
                     "daemon still has a visible effect and reads as accepted");
+            if (!accepts)
+                continue;
+            // The daemon owns the command and is the only thing that can refuse one, so the
+            // effect waits on its answer. Closing the popout first says the upgrade started and
+            // lets the refusal arrive behind it contradicting that.
+            const daemon = daemonSource(dir, daemonFile);
+            widget.requires(body, `${widgetFile}'s ${fn}()`, [[accepts,
+                `the daemon's answer decides whether ${effect} runs`]]);
+            assert.ok(qmlSource.codeIndexOf(body, `!root.daemon.${fn}(`) < qmlSource.codeIndexOf(body, effect),
+                `${widgetFile}'s ${fn}() must take that answer before ${effect}`);
+            daemon.requires(daemon.body(fn), `${daemonFile}'s ${fn}()`, [
+                ["return false;", "the daemon refuses a request it cannot run", 1],
+                ["return true;", "and answers for each path it dispatches on, the backend upgrade " +
+                    "and the detached launch: a path that answers nothing leaves the popout open " +
+                    "after a launch that did start", 2]]);
         }
 
         widget.requires(widget.blockFrom(widget.indexOf("PluginDaemonLink {"), "the daemon link"),

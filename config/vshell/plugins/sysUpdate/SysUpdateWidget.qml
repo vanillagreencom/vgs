@@ -76,9 +76,12 @@ PluginComponent {
             root.reportNoDaemon("Update could not start");
             return;
         }
+        // The popout closes on acceptance only. A refused command must not leave it shut as
+        // though the upgrade had started, with a warning arriving behind it saying otherwise.
+        if (!root.daemon.launch(mode))
+            return;
         if (sourcePopout && sourcePopout.closePopout)
             sourcePopout.closePopout();
-        root.daemon.launch(mode);
     }
 
     function reviewOrphans() {

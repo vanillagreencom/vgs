@@ -138,11 +138,14 @@ PluginDaemonComponent {
         ];
     }
 
+    // Answers whether the request was accepted, so a caller's popout closes only when something
+    // is actually starting. A whitespace-only command saved from the settings field is truthy and
+    // trims to empty here, which is a refusal, not a launch.
     function launch(mode) {
         const command = commandForMode(mode);
         if (!command.length) {
             ToastService.showWarning("Update command missing", "Set a command in Settings → Bar → Widgets → System Updates.");
-            return;
+            return false;
         }
         // A button on its default runs through the backend, which supervises
         // the terminal and re-counts when it exits. A custom command is an
@@ -154,10 +157,11 @@ PluginDaemonComponent {
                 if (response && response.error)
                     ToastService.showError("Update failed to start", String(response.error));
             });
-            return;
+            return true;
         }
         pendingLaunchCommand = command;
         launchTimer.restart();
+        return true;
     }
 
     Timer {
