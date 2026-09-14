@@ -151,6 +151,8 @@ cleanup() {
       code=1
     fi
   done
+  # Before the log tails: its verdict decides whether they print. It reads only the live session.
+  assert_live_session_untouched || code=1
   # After the process groups stop writing, before the directories holding the logs go.
   if [[ "$code" -ne 0 ]]; then
     for file in "${evidence_logs[@]:-}"; do
@@ -171,7 +173,6 @@ cleanup() {
     # The last pass keeps its diagnostic: a directory that still survives is a real leak.
     [[ ! -d "$dir" ]] || rm -rf -- "$dir" || code=1
   done
-  assert_live_session_untouched || code=1
   exit "$code"
 }
 

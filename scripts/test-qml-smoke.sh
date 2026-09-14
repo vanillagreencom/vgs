@@ -632,10 +632,10 @@ case_escape_waits_for_focus() {
   ok "Escape is sent once and only after the focus wait succeeds"
 }
 
-# Run the shipped cleanup on a sandbox holding a 70-line shell log and exit with the given
-# status. Its live-session guard and process groups are stubbed out: neither is under test.
+# Run the shipped cleanup on a sandbox holding a 70-line shell log, entering with the given
+# status and a live-session check stubbed to the given status. No process groups are tracked.
 cleanup_with() {
-  local code="$1" dir="$tmp/sandbox"
+  local code="$1" live="$2" dir="$tmp/sandbox"
   rm -rf -- "$dir"
   mkdir -p -- "$dir"
   seq -f 'qs-line-%g' 1 70 >"$dir/qs.log"
@@ -647,25 +647,43 @@ cleanup_with() {
     # shellcheck disable=SC2034  # read by the sliced function
     tracked_pgids=() scratch_dirs=("$dir") evidence_logs=("$dir/qs.log" "$dir/hyprland.log")
     # shellcheck disable=SC2317,SC2329  # called by the sliced function, not from here
-    assert_live_session_untouched() { return 0; }
+    assert_live_session_untouched() { return "$live"; }
     (exit "$code")
     cleanup
-  ) 2>&1 || true
+    printf 'unreachable: cleanup returned\n'
+  ) 2>&1
+  printf 'rc=%s\n' "$?"
 }
 
+# label; entry status; live-session check status; expected exit status; tails printed or not.
+CLEANUPS="a failed check prints the log tails;1;0;1;printed
+a failed live-session check prints the log tails;0;1;1;printed
+a passing run prints no log tails;0;0;0;none"
+
 case_cleanup_keeps_evidence() {
-  local out
-  out="$(cleanup_with 1)"
-  [[ "$out" == *"qs-line-11"* && "$out" == *"qs-line-70"* && "$out" != *"qs-line-10"$'\n'* ]] ||
-    fail "cleanup keeps evidence" "a failed run must print exactly the last 60 shell log lines, got: $out"
-  [[ "$out" == *"hypr-line"* ]] ||
-    fail "cleanup keeps evidence" "a failed run must print the compositor log, got: $out"
-  [[ ! -d "$tmp/sandbox" ]] ||
-    fail "cleanup keeps evidence" "printing the logs must not keep the sandbox directory"
-  out="$(cleanup_with 0)"
-  [[ "$out" != *"last 60 lines"* ]] ||
-    fail "cleanup keeps evidence" "a passing run must print no log tails, got: $out"
-  ok "a failed run prints the sandbox log tails before cleanup deletes them, and a passing run does not"
+  local label code live want_rc tails out rows=0
+  while IFS=';' read -r label code live want_rc tails; do
+    [[ -n "$label" ]] || continue
+    rows=$((rows + 1))
+    out="$(cleanup_with "$code" "$live")"
+    [[ "$out" == *"rc=$want_rc"* ]] ||
+      fail "cleanup keeps evidence" "$label: expected rc=$want_rc, got: $out"
+    [[ ! -d "$tmp/sandbox" ]] ||
+      fail "cleanup keeps evidence" "$label: the sandbox directory must still be removed"
+    case "$tails" in
+      printed)
+        [[ "$out" == *"qs-line-11"* && "$out" == *"qs-line-70"* && "$out" != *"qs-line-10"$'\n'* && "$out" == *"hypr-line"* ]] ||
+          fail "cleanup keeps evidence" "$label: expected the last 60 shell log lines and the compositor log, got: $out"
+        ;;
+      none)
+        [[ "$out" != *"last 60 lines"* ]] ||
+          fail "cleanup keeps evidence" "$label: expected no log tails, got: $out"
+        ;;
+      *) fail "cleanup keeps evidence" "$label: unknown tails column: $tails" ;;
+    esac
+  done <<<"$CLEANUPS"
+  [[ $rows -eq 3 ]] || fail "cleanup keeps evidence" "expected 3 table rows, drove $rows"
+  ok "every non-zero exit, a failed live-session check included, prints the sandbox log tails before cleanup deletes them"
 }
 
 CASES=(
