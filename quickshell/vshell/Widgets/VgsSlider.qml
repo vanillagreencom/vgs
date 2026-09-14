@@ -235,6 +235,9 @@ Item {
                             slider.isDragging = false;
                             sliderMouseArea.isDragging = false;
                             slider.sliderDragFinished(slider.value);
+                            // A drag coalesces its store writes; its end persists them now.
+                            SettingsData.flushSettings();
+                            SessionData.flushSettings();
                         }
                     }
                     onPositionChanged: mouse => {

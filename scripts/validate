@@ -113,6 +113,7 @@ qml       | scripts/test-flatline-controls.js
 qml       | scripts/test-brightness-scan-ordering.js
 qml       | scripts/test-backend-capabilities.js
 qml       | scripts/test-settings-navigation.js
+qml       | scripts/test-store-write-coalescing.js
 helper    | scripts/test-wallpaper-thumbs.py
 helper    | python3 -m py_compile bin/vshell-helper
 helper    | python3 -m py_compile scripts/publish-theme-assets.py

@@ -9,6 +9,7 @@ import qs.Common
 import qs.Services
 import "settings/SessionSpec.js" as Spec
 import "settings/SessionStore.js" as Store
+import "settings/WriteCoalescer.js" as Coalescer
 
 Singleton {
     id: root
@@ -99,6 +100,9 @@ Singleton {
 
     Connections {
         target: SessionService
+        function onSessionLocked() {
+            root.flushSettings();
+        }
         function onSessionResumed() {
             root.suppressOSD = true;
             osdSuppressTimer.restart();
@@ -370,13 +374,37 @@ Singleton {
         _armDndExpireTimer();
     }
 
-    function saveSettings() {
-        if (isGreeterMode || _parseError || !_hasLoaded)
-            return;
-        settingsFile.setText(getCurrentSessionJson());
-        if (_isReadOnly)
-            _checkSessionWritable();
+    readonly property var _writes: Coalescer.create()
+
+    function _canWrite() {
+        return !isGreeterMode && !_parseError && _hasLoaded;
     }
+
+    // Marks the store dirty; sessionWriteTimer performs the one write for a burst of setters.
+    function saveSettings() {
+        if (!_canWrite())
+            return;
+        Coalescer.markDirty(_writes);
+        sessionWriteTimer.restart();
+    }
+
+    function flushSettings() {
+        sessionWriteTimer.stop();
+        Coalescer.commit(_writes, _canWrite(), getCurrentSessionJson, text => {
+            settingsFile.setText(text);
+            if (_isReadOnly)
+                _checkSessionWritable();
+        });
+    }
+
+    Timer {
+        id: sessionWriteTimer
+        interval: 200
+        repeat: false
+        onTriggered: root.flushSettings()
+    }
+
+    Component.onDestruction: flushSettings()
 
     function set(key, value) {
         Spec.set(root, key, value, saveSettings, _hooks);
