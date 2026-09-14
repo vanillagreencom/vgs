@@ -155,13 +155,16 @@ test("every grant call site sits behind the availability gates, and no file outs
     assert.ok(decisionAt < qmlSource.codeIndexOf(widget.body("toggle"), 'root.daemon.runSet("on")'),
         "toggle() must reach its grant only after grantDecision has answered");
 
-    const allowed = ["SudoToggleWidget.qml", "SudoToggleDaemon.qml"];
     const offenders = [];
     for (const dir of [path.join(repoRoot, "config", "vshell"), path.join(repoRoot, "quickshell")])
         for (const file of fs.readdirSync(dir, { recursive: true, withFileTypes: true })) {
-            if (!file.isFile() || !/\.(qml|js)$/.test(file.name) || allowed.includes(file.name))
+            if (!file.isFile() || !/\.(qml|js)$/.test(file.name))
                 continue;
             const full = path.join(file.parentPath || file.path, file.name);
+            // Resolved path, not basename: a second file anywhere in either tree carrying one of
+            // these two names would otherwise be skipped, and this is the guard on the grant.
+            if (full === WIDGET || full === DAEMON)
+                continue;
             if (/\brunSet\s*\(/.test(qmlSource.stripComments(fs.readFileSync(full, "utf8"))))
                 offenders.push(path.relative(repoRoot, full));
         }
