@@ -1902,7 +1902,7 @@ def _catalog_fetch_verified(label: str, rel: str, size: int, digest: str,
 
 
 def catalog_marker_payload(name: str, dest: Path, assets: Dict[str, Any],
-                           files: List[str], written: int, ref: str = "") -> Dict[str, Any]:
+                           files: Dict[str, str], written: int, ref: str = "") -> Dict[str, Any]:
     """Everything a downloaded theme's marker records.
 
     The one owner of the marker's shape, so a test fixture standing in for a
@@ -1918,8 +1918,10 @@ def catalog_marker_payload(name: str, dest: Path, assets: Dict[str, Any],
         "rev": assets.get("rev", 0),
         "sha256": assets.get("sha256", ""),
         "bytes": written,
-        # What the archive carried, so a later read can tell this directory
-        # apart from the same directory after the user has edited it.
+        # The wallpapers the download placed and the sha256 each held when
+        # placed, so a later read can tell this directory apart from the same
+        # directory after the user has edited it, and an update can tell which
+        # wallpapers it may replace.
         "files": files,
         "installedAt": int(time.time()),
     }
@@ -1942,7 +1944,7 @@ def catalog_owns(name: str) -> bool:
     The marker lives inside the theme package. A copy made by `theme duplicate`
     carries no marker, but a package copied by hand or by an older duplicate can.
     Ownership therefore has to be identity, not presence: the marker must name
-    this directory, which a copied marker never does. A marker with no file list
+    this directory, which a copied marker never does. A marker with no file record
     names no download either, since nothing then says which files it placed.
     """
     dest = user_themes_dir() / name
@@ -1950,23 +1952,29 @@ def catalog_owns(name: str) -> bool:
     if not marker:
         return False
     return (str(marker.get("name") or "") == name and str(marker.get("path") or "") == str(dest)
-            and isinstance(marker.get("files"), list))
+            and isinstance(marker.get("files"), (dict, list)))
 
 
-def catalog_placed_wallpapers(name: str) -> List[str] | None:
-    """The wallpapers a catalog download placed in the user directory, sorted, or None when it holds no download.
+def catalog_placed_wallpapers(name: str) -> Dict[str, str | None] | None:
+    """The wallpapers a catalog download placed in the user directory, each with the sha256 it was placed with.
 
-    The one reader of the marker's file list. Only entries the imagery path rule
-    accepts count, so a directory an earlier release downloaded whole, whose list
-    also names its definitions, keeps those as a user overlay like any other.
+    None when the directory holds no download. The one reader of the marker's
+    file record. A marker the released helper wrote records the paths as a list
+    with no digests; those paths still read as placed, each with the digest
+    None, which an update refuses to judge. Only entries the imagery path rule
+    accepts count, so a directory an earlier release downloaded whole, whose
+    record also names its definitions, keeps those as a user overlay like any
+    other.
     """
     if not catalog_owns(name):
         return None
-    placed: List[str] = []
-    for rel in catalog_marker(name)["files"]:
+    files = catalog_marker(name)["files"]
+    record = files if isinstance(files, dict) else dict.fromkeys(files)
+    placed: Dict[str, str | None] = {}
+    for rel, digest in record.items():
         with contextlib.suppress(ValueError):
-            placed.append(_catalog_check_relpath(str(rel)))
-    return sorted(placed)
+            placed[_catalog_check_relpath(str(rel))] = None if digest is None else str(digest)
+    return dict(sorted(placed.items()))
 
 
 def theme_shipped_preview(name: str, packaged: str = "") -> str:
@@ -1999,11 +2007,13 @@ def catalog_pristine(name: str) -> bool:
     a stale answer either hides the modified badge and the revert control, or
     blanks a shipped screenshot that is still accurate.
 
-    The marker's file list is the reference point, because the marker itself
+    The marker's file record is the reference point, because the marker itself
     survives any edit. Every overlay write adds a file beside the downloaded
     set: a colour edit's `colors.toml`, `app-colors.toml`, a recoloured app
     file, and the restyle adjustments and hidden backgrounds in `theme.json`.
-    A wallpaper replaced in place under its downloaded name is not detected.
+    A wallpaper replaced in place under its downloaded name is not detected:
+    the recorded digests are not re-hashed here, since this runs for every
+    theme a list reads.
     """
     placed = catalog_placed_wallpapers(name)
     if not placed:
@@ -2012,7 +2022,18 @@ def catalog_pristine(name: str) -> bool:
     present = sorted(path.relative_to(root).as_posix()
                      for path in root.rglob("*")
                      if path.is_file() and path.name != CATALOG_MARKER)
-    return present == placed
+    return present == sorted(placed)
+
+
+def catalog_imagery_update_available(marker: Dict[str, Any], raw: Dict[str, Any]) -> bool:
+    """Whether a catalog entry pins another archive than the owned download `marker` records.
+
+    The one judge of an available update. The caller passes the marker only for
+    a directory catalog_owns, so a fork, whose marker names another directory,
+    and a theme with no download pass an empty one and never report an update.
+    """
+    pinned = raw.get("assets") if isinstance(raw.get("assets"), dict) else {}
+    return bool(marker) and str(marker.get("sha256") or "") != str(pinned.get("sha256") or "")
 
 
 def catalog_entries() -> List[Dict[str, Any]]:
@@ -2025,7 +2046,6 @@ def catalog_entries() -> List[Dict[str, Any]]:
         if not name:
             continue
         marker = catalog_marker(name) if catalog_owns(name) else {}
-        pinned = raw.get("assets") if isinstance(raw.get("assets"), dict) else {}
         packaged = compose_theme_files(name).get(THEME_PREVIEW_FILE)
         # The catalog file carries no colours; the theme's package does.
         palette = (load_theme_package(name) or {}).get("palette") or {}
@@ -2041,7 +2061,7 @@ def catalog_entries() -> List[Dict[str, Any]]:
             "imageryInstalled": (theme_dir_has_wallpapers(builtin_themes_dir() / name)
                                  or theme_dir_has_wallpapers(user_themes_dir() / name)),
             # The download pins another archive than the catalog this package ships.
-            "imageryUpdateAvailable": bool(marker) and str(marker.get("sha256") or "") != str(pinned.get("sha256") or ""),
+            "imageryUpdateAvailable": catalog_imagery_update_available(marker, raw),
             "builtin": (builtin_themes_dir() / name / "theme.json").is_file(),
             "downloaded": bool(marker),
             "downloadedRef": str(marker.get("ref") or ""),
@@ -2071,19 +2091,29 @@ def _catalog_check_assets(name: str, raw: Any) -> Dict[str, Any]:
             "rev": int(assets.get("rev") or 0)}
 
 
-def _catalog_unpack(name: str, archive: Path, staging: Path) -> Tuple[int, List[str]]:
+def _catalog_file_digest(path: Path) -> str:
+    """The sha256 of one file on disk, read in chunks: the per-wallpaper digest a marker records."""
+    running = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(CATALOG_CHUNK_BYTES), b""):
+            running.update(chunk)
+    return running.hexdigest()
+
+
+def _catalog_unpack(name: str, archive: Path, staging: Path) -> Tuple[int, Dict[str, str]]:
     """Unpack a verified theme archive into the staging directory.
 
-    Returns the bytes written and the relative paths written, sorted.
-    The path list is the reference point for telling an untouched download from
-    an edited one later; nothing else records what the archive carried.
+    Returns the bytes written and the sha256 of each relative path written,
+    sorted by path. The digests are taken from the bytes that land on disk and
+    are the reference point for telling an untouched wallpaper from an edited
+    one later; nothing else records what the archive carried.
 
     Every member name goes through the imagery path rule, and only regular files
     are written: a link or a device node in the archive is refused rather than
     followed.
     """
     written = 0
-    unpacked: List[str] = []
+    unpacked: Dict[str, str] = {}
     with tarfile.open(archive, mode="r:gz") as tar:
         for member in tar.getmembers():
             rel = _catalog_check_relpath(member.name)
@@ -2097,8 +2127,151 @@ def _catalog_unpack(name: str, archive: Path, staging: Path) -> Tuple[int, List[
             with target.open("wb") as handle:
                 shutil.copyfileobj(source, handle)
             written += target.stat().st_size
-            unpacked.append(rel)
-    return written, sorted(unpacked)
+            unpacked[rel] = _catalog_file_digest(target)
+    return written, dict(sorted(unpacked.items()))
+
+
+@contextlib.contextmanager
+def _catalog_staged_archive(name: str, assets: Dict[str, Any], base_urls: List[str],
+                            allow_local: bool) -> Iterable[Tuple[Path, int, Dict[str, str]]]:
+    """A theme archive fetched at its catalogued pin and unpacked into a staging directory.
+
+    Yields the staging directory, the bytes unpacked and each file's sha256.
+    The one owner of what install and update share: the verified transfer, the
+    unpack and the cleanup, all outside the theme mutation lock. The staging
+    directory and the cached archive are removed on exit, so the cache holds
+    in-flight downloads only and the finished disk cost is exactly the
+    wallpapers.
+    """
+    if not base_urls:
+        raise ValueError("theme catalog has no download source")
+    ensure_dirs()
+    _catalog_clear_stale()
+    archive = theme_asset_cache_dir() / f"{assets['sha256']}.tar.gz"
+    staging = Path(tempfile.mkdtemp(prefix=f".catalog-{name}-", dir=str(user_themes_dir())))
+    try:
+        rel = f"{assets['release']}/{assets['archive']}"
+        _catalog_fetch_verified(f"{name} ({rel})", rel, assets["size"], assets["sha256"],
+                                base_urls, allow_local, archive)
+        written, digests = _catalog_unpack(name, archive, staging)
+        yield staging, written, digests
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+        with contextlib.suppress(OSError):
+            archive.unlink()
+
+
+def _catalog_place(name: str, staging: Path, assets: Dict[str, Any], written: int,
+                   placed: Dict[str, str | None], incoming: Dict[str, str],
+                   keep_edited: bool) -> Dict[str, List[str]]:
+    """Move an unpacked archive's wallpapers into the user directory and write the marker last.
+
+    The caller holds theme_mutation_lock and passes `placed` as read under it,
+    so an edit that lands during the transfer is judged by the bytes it left.
+    A file the marker did not place stays the user's. A placed file is
+    replaced; with `keep_edited`, which an update passes, only while its bytes
+    still match the digest it was placed with, a placed file the user deleted
+    stays deleted, and a placed file the new archive no longer carries is
+    removed under the same match. A file already holding the archive's bytes
+    does not move, which is also what an interrupted update run again finds for
+    the files it had moved. Files move one at a time and the directory is never
+    renamed aside. A placed file the update keeps stays recorded at the digest
+    it was placed with, so the next update still reads it as edited.
+    """
+    dest = user_themes_dir() / name
+    plan: Dict[str, List[str]] = {"replaced": [], "added": [], "kept": [], "removed": []}
+    for rel, digest in incoming.items():
+        target = dest / rel
+        if not target.exists():
+            plan["kept" if keep_edited and rel in placed else "added"].append(rel)
+            continue
+        current = _catalog_file_digest(target) if target.is_file() else ""
+        if current == digest:
+            continue
+        if rel in placed and not (keep_edited and current != placed[rel]):
+            plan["replaced"].append(rel)
+        else:
+            plan["kept"].append(rel)
+    if keep_edited:
+        for rel, digest in placed.items():
+            target = dest / rel
+            if rel in incoming or not target.exists():
+                continue
+            pristine = target.is_file() and _catalog_file_digest(target) == digest
+            plan["removed" if pristine else "kept"].append(rel)
+    for rel in plan["replaced"] + plan["added"]:
+        (dest / rel).parent.mkdir(parents=True, exist_ok=True)
+        (staging / rel).replace(dest / rel)
+    for rel in plan["removed"]:
+        (dest / rel).unlink()
+    recorded = {rel: digest for rel, digest in incoming.items() if rel not in plan["kept"]}
+    recorded.update({rel: placed[rel] for rel in plan["kept"] if rel in placed})
+    ref = str((load_theme_catalog().get("source") or {}).get("ref") or "")
+    write_file(dest / CATALOG_MARKER, json.dumps(catalog_marker_payload(
+        name, dest, assets, dict(sorted(recorded.items())), written, ref), indent=2) + "\n")
+    return {key: sorted(paths) for key, paths in plan.items()}
+
+
+def _catalog_require_digests(name: str, placed: Dict[str, str | None]) -> None:
+    """Refuse to update a download whose marker records no digests, as the released helper wrote it.
+
+    Nothing then tells a wallpaper the download placed from one the user
+    replaced under its name.
+    """
+    if any(digest is None for digest in placed.values()):
+        raise ValueError(f"{name}: its download marker records no file digests, so an update cannot tell the "
+                         f"user's wallpapers from the download's; `vshell theme catalog install --force {name}` "
+                         "downloads them again")
+
+
+def catalog_updates() -> List[Dict[str, Any]]:
+    """Every download the shipped catalog pins another archive for, read offline.
+
+    `digests` is False for a marker the released helper wrote, which
+    catalog_update_theme refuses.
+    """
+    pending: List[Dict[str, Any]] = []
+    for raw in load_theme_catalog().get("themes") or []:
+        if not isinstance(raw, dict) or not raw.get("name"):
+            continue
+        name = str(raw["name"])
+        placed = catalog_placed_wallpapers(name)
+        marker = catalog_marker(name) if placed is not None else {}
+        if placed is None or not catalog_imagery_update_available(marker, raw):
+            continue
+        pending.append({"name": name, "installedRev": int(marker.get("rev") or 0),
+                        "latestRev": int((raw.get("assets") or {}).get("rev") or 0),
+                        "digests": all(digest is not None for digest in placed.values())})
+    return sorted(pending, key=lambda item: item["name"])
+
+
+def catalog_update_theme(entry: Dict[str, Any], base_urls: List[str], allow_local: bool) -> Dict[str, Any]:
+    """Bring a download's wallpapers to the archive the shipped catalog pins, keeping every one the user changed.
+
+    The shipped `themes/catalog.json` is the source of truth. The transfer runs
+    outside the theme mutation lock, as a download's does, and _catalog_place
+    judges and moves the files under it. A marker with no digests is refused
+    before any transfer and again under the lock, leaving every file and the
+    marker as they were.
+    """
+    name = _catalog_check_name(str(entry.get("name") or ""))
+    placed = catalog_placed_wallpapers(name)
+    if placed is None:
+        raise ValueError(f"{name} holds no wallpapers downloaded from the theme catalog")
+    marker = catalog_marker(name)
+    revs = {"fromRev": int(marker.get("rev") or 0), "toRev": int((entry.get("assets") or {}).get("rev") or 0)}
+    if not catalog_imagery_update_available(marker, entry):
+        return {"name": name, "status": "current", **revs}
+    _catalog_require_digests(name, placed)
+    assets = _catalog_check_assets(name, entry.get("assets"))
+    with _catalog_staged_archive(name, assets, base_urls, allow_local) as (staging, written, incoming):
+        with theme_mutation_lock():
+            placed = catalog_placed_wallpapers(name)
+            if placed is None:
+                raise ValueError(f"{name} holds no wallpapers downloaded from the theme catalog")
+            _catalog_require_digests(name, placed)
+            plan = _catalog_place(name, staging, assets, written, placed, incoming, keep_edited=True)
+    return {"name": name, "status": "updated", **revs, "files": plan}
 
 
 def catalog_download_theme(entry: Dict[str, Any], base_urls: List[str], allow_local: bool,
@@ -2120,38 +2293,10 @@ def catalog_download_theme(entry: Dict[str, Any], base_urls: List[str], allow_lo
     if not force and theme_dir_has_wallpapers(dest):
         return {"name": name, "status": "skipped", "reason": "already installed"}
     assets = _catalog_check_assets(name, entry.get("assets"))
-    if not base_urls:
-        raise ValueError("theme catalog has no download source")
-
-    ensure_dirs()
-    _catalog_clear_stale()
-    archive = theme_asset_cache_dir() / f"{assets['sha256']}.tar.gz"
-    staging = Path(tempfile.mkdtemp(prefix=f".catalog-{name}-", dir=str(user_themes_dir())))
-    try:
-        rel = f"{assets['release']}/{assets['archive']}"
-        _catalog_fetch_verified(f"{name} ({rel})", rel, assets["size"], assets["sha256"],
-                                base_urls, allow_local, archive)
-        written, unpacked = _catalog_unpack(name, archive, staging)
-        ref = str((load_theme_catalog().get("source") or {}).get("ref") or "")
+    with _catalog_staged_archive(name, assets, base_urls, allow_local) as (staging, written, incoming):
         with theme_mutation_lock():
-            ours = set(catalog_placed_wallpapers(name) or [])
-            placed: List[str] = []
-            for member in unpacked:
-                target = dest / member
-                if target.exists() and member not in ours:
-                    continue
-                target.parent.mkdir(parents=True, exist_ok=True)
-                (staging / member).replace(target)
-                placed.append(member)
-            # Written last, so the marker never names a file that is not in place.
-            write_file(dest / CATALOG_MARKER, json.dumps(
-                catalog_marker_payload(name, dest, assets, placed, written, ref), indent=2) + "\n")
-    finally:
-        shutil.rmtree(staging, ignore_errors=True)
-        # The cache holds in-flight downloads only, so the finished disk cost is
-        # exactly the wallpapers.
-        with contextlib.suppress(OSError):
-            archive.unlink()
+            _catalog_place(name, staging, assets, written, catalog_placed_wallpapers(name) or {}, incoming,
+                           keep_edited=False)
     return {"name": name, "status": "installed", "path": str(dest), "bytes": written}
 
 
@@ -10034,6 +10179,12 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
     p_cat_install.add_argument("--all", action="store_true", help="download the wallpapers of every theme that has none")
     p_cat_install.add_argument("--force", action="store_true", help="re-download wallpapers that are already on disk")
     p_cat_install.add_argument("--json", action="store_true")
+    p_cat_updates = catalog_sub.add_parser("updates", help="downloads the shipped catalog pins a newer archive for")
+    p_cat_updates.add_argument("--json", action="store_true")
+    p_cat_update = catalog_sub.add_parser("update", help="update downloaded wallpapers, keeping the ones the user changed")
+    p_cat_update.add_argument("names", nargs="*", default=[])
+    p_cat_update.add_argument("--all", action="store_true", help="update every download that has an update")
+    p_cat_update.add_argument("--json", action="store_true")
     p_cat_remove = catalog_sub.add_parser("remove", help="remove a theme's downloaded wallpapers")
     p_cat_remove.add_argument("names", nargs="+")
     p_cat_remove.add_argument("--json", action="store_true")
@@ -10825,8 +10976,42 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
                 for entry in entries:
                     print(f"{'*' if entry['imageryInstalled'] else ' '} {entry['name']}")
             return 0
+        if args.catalog_cmd == "updates":
+            pending = catalog_updates()
+            if args.json:
+                print(json.dumps({"themes": pending, "count": len(pending)}, indent=2))
+            else:
+                for item in pending:
+                    note = "" if item["digests"] else " (no file digests; reinstall with install --force)"
+                    print(f"{item['name']}: r{item['installedRev']} -> r{item['latestRev']}{note}")
+            return 0
 
         base_urls, allow_local = theme_catalog_base_urls(catalog)
+        if args.catalog_cmd == "update":
+            names = [item["name"] for item in catalog_updates()] if args.all else list(args.names)
+            if not names and not args.all:
+                eprint("Nothing to update (pass theme names or --all)")
+                return 2
+            updates: List[Dict[str, Any]] = []
+            failures = 0
+            for name in names:
+                entry = catalog_theme_entry(catalog, name)
+                try:
+                    if not entry:
+                        raise ValueError("not in the theme catalog")
+                    updates.append(catalog_update_theme(entry, base_urls, allow_local))
+                except Exception as exc:
+                    updates.append({"name": name, "status": "failed", "error": str(exc)})
+                    failures += 1
+            if args.json:
+                print(json.dumps({"success": failures == 0, "results": updates,
+                                  "updated": [r["name"] for r in updates if r["status"] == "updated"]}, indent=2))
+            else:
+                for result in updates:
+                    kept = (result.get("files") or {}).get("kept") or []
+                    detail = result.get("error") or (f"kept {', '.join(kept)}" if kept else "")
+                    print(f"{result['name']}: {result['status']}" + (f" ({detail})" if detail else ""))
+            return 0 if failures == 0 else 1
         if args.catalog_cmd == "install":
             names = list(args.names)
             if args.all:
