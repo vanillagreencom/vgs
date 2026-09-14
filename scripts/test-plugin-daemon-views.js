@@ -118,12 +118,18 @@ test("the link routes its count through the replayed claim and release, and the 
 // of what the guards above deliver, and the three cases carry three different recoveries.
 function reportsFor(world) {
     const toasts = [];
+    const logs = [];
     const stub = {
         getPluginInstance: id => world.instances[id] || null,
         pluginDaemonComponents: world.components,
         availablePlugins: world.plugins || {},
         appLauncherPluginId: world.appLauncherPluginId || "vgsMenu",
-        log: { error() {}, warn() {} },
+        // Recorded, not discarded: a launcher that never registers must leave an error-level
+        // trace, and a severity downgrade is invisible to a no-op stub.
+        log: {
+            error: (...parts) => logs.push(["error", parts.join(" ")]),
+            warn: (...parts) => logs.push(["warn", parts.join(" ")])
+        },
         I18n: { tr: text => Object.assign(new String(text), { arg: v => String(text).replace("%1", v) }) },
         ToastService: {
             showWarning: (title, body, command, category, action) =>
@@ -140,7 +146,7 @@ function reportsFor(world) {
     ["daemonAvailability", "reportDaemonUnavailable", "_reportAppLauncherUnavailable"],
     "PluginService.qml");
     globalThis.root = fns;
-    return { fns, toasts };
+    return { fns, toasts, logs };
 }
 
 test("a dropped action reports the case that decides what the user can do about it", () => {
@@ -180,25 +186,31 @@ test("a dropped action reports the case that decides what the user can do about 
     }
 });
 
-test("the app launcher keeps only its registered-without-a-callable-open arm and delegates the rest", () => {
-    // [why, world, expected [level, body, category]]
+test("the app launcher keeps the two cases only it has, and delegates the one it shares", () => {
+    // The only caller that reaches the starting arm is appLauncherRegistrationTimeout, which has
+    // already waited its window out, so both launcher arms are errors. The general reporter's
+    // "try again in a moment" is right for a widget guard that has waited for nothing and wrong
+    // here: following it re-arms the same deadline and produces the same message forever.
+    // [why, world, expected [toast level, body, category, log level]]
     for (const [why, world, expected] of [
         ["a registered launcher with no callable open is the launcher's own case and keeps its message",
             { instances: { vgsMenu: {} }, components: { vgsMenu: {} } },
-            ["error", "The vgsMenu plugin registered without a launcher to open.", "app-launcher-unavailable"]],
-        ["a launcher still starting reports through the general reporter, which adds the recovery",
+            ["error", "The vgsMenu plugin registered without a launcher to open.", "app-launcher-unavailable", "error"]],
+        ["a launcher that never registered is a failure, not an invitation to retry",
             { instances: {}, components: { vgsMenu: {} }, plugins: { vgsMenu: { name: "VGS Menu" } } },
-            ["warning", "VGS Menu is still starting. Try again in a moment.", "daemon-unavailable-vgsMenu"]],
+            ["error", "The vgsMenu launcher did not finish starting.", "app-launcher-unavailable", "error"]],
         ["and a launcher that never loaded gets the same error and settings action as any daemon",
             { instances: {}, components: {}, plugins: { vgsMenu: { name: "VGS Menu" } } },
-            ["error", "The VGS Menu plugin did not load.", "daemon-unavailable-vgsMenu"]]
+            ["error", "The VGS Menu plugin did not load.", "daemon-unavailable-vgsMenu", "error"]]
     ]) {
-        const { fns, toasts } = reportsFor(world);
+        const { fns, toasts, logs } = reportsFor(world);
         fns._reportAppLauncherUnavailable();
-        const [level, body, category] = expected;
+        const [level, body, category, logLevel] = expected;
         assert.equal(toasts.length, 1, why);
         assert.deepEqual([toasts[0].level, toasts[0].body, toasts[0].category, toasts[0].title],
             [level, body, category, "App launcher unavailable"], why);
+        assert.deepEqual(logs.map(entry => entry[0]), [logLevel],
+            `${why} — and leaves a trace at that level, or a launcher that never registers is silent in the log`);
     }
 });
 

@@ -1588,12 +1588,20 @@ Singleton {
 
     function _reportAppLauncherUnavailable() {
         _appLauncherOpenPending = false;
-        // The launcher alone can be registered and still unusable: it needs a callable open()
-        // or toggle(), which nothing else reading daemonAvailability requires. Every other case
-        // is what the general reporter already says, so it says it.
-        if (root.daemonAvailability(appLauncherPluginId) === "registered") {
+        const why = root.daemonAvailability(appLauncherPluginId);
+        // Two cases are the launcher's own. Registered but unusable needs a callable open() or
+        // toggle(), which nothing else reading daemonAvailability requires. Still starting
+        // reaches here only from appLauncherRegistrationTimeout, which has already waited the
+        // window out, so it is an error: "try again in a moment" would loop on a state that
+        // never resolves. Only notLoaded says what the general reporter says.
+        if (why === "registered") {
             log.error("app launcher unavailable:", appLauncherPluginId, "registered an instance with no callable open()/toggle()");
             ToastService.showError(I18n.tr("App launcher unavailable"), I18n.tr("The %1 plugin registered without a launcher to open.").arg(appLauncherPluginId), "", "app-launcher-unavailable");
+            return;
+        }
+        if (why === "starting") {
+            log.error("app launcher unavailable:", appLauncherPluginId, "loaded but never registered an instance");
+            ToastService.showError(I18n.tr("App launcher unavailable"), I18n.tr("The %1 launcher did not finish starting.").arg(appLauncherPluginId), "", "app-launcher-unavailable");
             return;
         }
         root.reportDaemonUnavailable(appLauncherPluginId, I18n.tr("App launcher unavailable"));
