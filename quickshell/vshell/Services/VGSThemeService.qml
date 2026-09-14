@@ -122,8 +122,21 @@ Singleton {
     // does. Keyed on the REQUEST, never the path — see `_ownsWallpaperSlot`.
     property string _wallpaperSlotOwner: ""
 
+    // The apply whose helper process is running, or "" when none is. Only one
+    // runs at a time: two helper processes race each other for the helper's own
+    // mutation flock, so the LAST writer of theme.json can be the OLDER request
+    // while `_wallpaperSlotOwner` persists the newer one into session.json. The
+    // desktop then shows one image while the palette on screen was derived from
+    // another. Dispatch order is the only thing that fixes execution order.
+    property string _applyDispatched: ""
+    // Applies waiting for that slot, oldest first. First in, first out rather
+    // than superseding the waiting one: `applyFinished` carries success or
+    // failure and nothing else, and ThemeApplyReporter turns every non-success
+    // into an error toast, so a superseded apply has no honest outcome to send.
+    property var _applyQueue: []
+
     // `label` only makes the returned request id readable; it is NOT a Proc id
-    // — see `_runApply`. Every apply answers its own callback, so a token leaves
+    // — see `_dispatchApply`. Every apply answers its own callback, so a token leaves
     // `_applyInFlight` when its own `_finishApply` runs.
     function _beginApply(label) {
         _applyRequestSeq += 1;
@@ -145,6 +158,18 @@ Singleton {
         }
         if (_wallpaperSlotOwner === requestId)
             _wallpaperSlotOwner = "";
+        // Free the slot and start the next apply BEFORE the signals: a handler
+        // that throws returns into this frame, and past the emission it would
+        // strand the queue behind a slot nothing frees, leaving every later
+        // apply waiting forever.
+        if (_applyDispatched === requestId) {
+            _applyDispatched = "";
+            if (_applyQueue.length > 0) {
+                const waiting = _applyQueue[0];
+                _applyQueue = _applyQueue.slice(1);
+                _dispatchApply(waiting.requestId, waiting.args, waiting.callback);
+            }
+        }
         applyCompleted(success, message);
         applyFinished(requestId, success, message);
     }
@@ -192,14 +217,23 @@ Singleton {
         }, 0, timeoutMs || 120000);
     }
 
-    // An apply, run under its own request id and coalesced with nothing. Proc's
-    // debouncer folds same-id calls into ONE callback, and only within its window
-    // — applies run at interval 0, so it catches same-tick calls and nothing else,
-    // while two applies from separate key presses both launch and both answer. An
-    // EMPTY Proc id makes Proc mint a random, self-cleaning id, so every apply
+    // Take the apply slot, or wait for it. Two applies from separate key presses
+    // both launch and both answer, one after the other — see `_applyDispatched`
+    // for why they must not overlap.
+    function _runApply(requestId, args, callback) {
+        if (_applyDispatched !== "") {
+            _applyQueue = _applyQueue.concat([{requestId: requestId, args: args, callback: callback}]);
+            return;
+        }
+        _dispatchApply(requestId, args, callback);
+    }
+
+    // Hand one apply to the helper and hold the slot until its callback answers.
+    // An EMPTY Proc id makes Proc mint a random, self-cleaning id, so every apply
     // runs its own process into one `_finishApply`; a unique NAMED id would leak
     // a debouncer entry and Timer, reaped only for a random id.
-    function _runApply(requestId, args, callback) {
+    function _dispatchApply(requestId, args, callback) {
+        _applyDispatched = requestId;
         _run(requestId, args, callback, undefined, false, "");
     }
 

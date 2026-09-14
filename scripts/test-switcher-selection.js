@@ -552,7 +552,7 @@ test("the service correlates completion by request id and counts applies in flig
     ]);
 });
 
-test("_beginApply mints a per-call id and _runApply books it uncoalesced with no supersession", () => {
+test("_beginApply mints a per-call id and the dispatch books it uncoalesced with no supersession", () => {
     const svc = q("VGSThemeService.qml");
     svc.requires(svc.body("_beginApply"), "_beginApply()", [
         ["_applyRequestSeq += 1;",
@@ -565,11 +565,16 @@ test("_beginApply mints a per-call id and _runApply books it uncoalesced with no
 
     // Each apply needs its own callback. Coalescing command IDs within one event-loop turn
     // can leave a still-running request without a reporter for its failure.
-    svc.requires(svc.body("_runApply"), "_runApply()", [
+    svc.requires(svc.body("_dispatchApply"), "_dispatchApply()", [
         ['_run(requestId, args, callback, undefined, false, "");',
             "an apply books itself under its unique request id and passes an EMPTY Proc id, so Proc " +
             "mints a random self-cleaning id and nothing is coalesced. A NAMED id would leak one " +
             "debouncer entry and Timer per apply — Proc reaps those only for a random id", 1]
+    ]);
+    // Ordering is executed in scripts/test-theme-apply-queue.js; this pins the one launch site.
+    svc.requires(svc.body("_runApply"), "_runApply()", [
+        ["_dispatchApply(requestId, args, callback);",
+            "an apply with a free slot launches at once, and every launch goes through that one site", 1]
     ]);
     mustNot("VGSThemeService.qml", /[Aa]pplySuperseded|_applyOwner/,
         "no supersession mechanism: it rested on the premise that a newer request on the same id " +

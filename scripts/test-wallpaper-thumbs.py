@@ -10,6 +10,7 @@ Each pruning case includes a live entry so deleting everything cannot pass.
 from __future__ import annotations
 
 import base64
+import os
 import shutil
 import subprocess
 import sys
@@ -59,6 +60,15 @@ def stub_runner(recorded: list[list[str]]):
         dest.write_bytes(TINY_JPEG)
         return subprocess.CompletedProcess(cmd, 0, "", "")
     return run
+
+
+def a_reaped_pid() -> int:
+    """A pid with no process behind it: a child run to completion and reaped.
+    The kernel allocates upward, so reuse before the assertion needs a wrap of
+    the whole pid space in the same test."""
+    child = subprocess.Popen([sys.executable, "-c", ""], env={})
+    child.wait()
+    return child.pid
 
 
 def runner(cmd, **kwargs):
@@ -249,15 +259,24 @@ class BuildLadder(ThumbCases):
 
 
 class CacheHousekeeping(ThumbCases):
-    def test_pruning_drops_the_orphan_and_keeps_the_live_and_in_progress_entries(self):
-        """An in-progress temp file is deliberately absent from wanted; unlinking it
-        would fail the rename that follows and lose the thumbnail."""
-        live, orphan = self.cache_with_live_and_orphan()
-        in_progress = thumbs.thumb_dir() / ".abc123.4321.999.jpg"
-        in_progress.write_bytes(b"partial")
-        pruned = thumbs.prune_orphans([SRC])
-        self.assertEqual((pruned, live.exists(), in_progress.exists(), orphan.exists()),
-                         (1, True, True, False))
+    def test_pruning_keeps_a_live_build_and_reclaims_one_whose_process_is_gone(self):
+        """An in-progress temp file is deliberately absent from wanted; unlinking a
+        live one would fail the rename that follows and lose the thumbnail. The
+        shell kills its sweep on every restart, so a temp file whose builder is
+        gone has nothing left to rename it and must not accumulate forever."""
+        for owner, kept, why in (
+            (os.getpid(), True, "a build still decoding renames this file next"),
+            (a_reaped_pid(), False, "a killed sweep leaves this behind for good"),
+            ("notapid", True, "a name temp_path never minted is not the sweep's to delete"),
+        ):
+            with self.subTest(owner=owner):
+                live, orphan = self.cache_with_live_and_orphan()
+                temp = thumbs.thumb_dir() / f".abc123.{owner}.999.jpg"
+                temp.write_bytes(b"partial")
+                pruned = thumbs.prune_orphans([SRC])
+                self.assertEqual(
+                    (pruned, live.exists(), temp.exists(), orphan.exists()),
+                    (1 if kept else 2, True, kept, False), why)
 
     def test_build_all_prunes_the_orphan_and_reuses_the_live_thumbnail(self):
         live, orphan = self.cache_with_live_and_orphan()
