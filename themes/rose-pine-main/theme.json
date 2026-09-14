@@ -3,5 +3,8 @@
   "mode": "dark",
   "pair": "rose-pine",
   "source": "curated",
-  "wallpaper": "1-rpd-plants.jpg"
+  "wallpaper": "1-rpd-plants.jpg",
+  "contrastShortfalls": [
+    {"slot": "cursor", "ratio": 2.25, "floor": 3}
+  ]
 }

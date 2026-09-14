@@ -3,5 +3,8 @@
   "mode": "dark",
   "pair": "",
   "source": "curated",
-  "wallpaper": "1-1-synthwave-84.jpg"
+  "wallpaper": "1-1-synthwave-84.jpg",
+  "contrastShortfalls": [
+    {"slot": "color8", "ratio": 2.57, "floor": 3}
+  ]
 }

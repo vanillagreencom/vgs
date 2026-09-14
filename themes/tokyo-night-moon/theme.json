@@ -3,5 +3,8 @@
   "mode": "dark",
   "pair": "",
   "source": "curated",
-  "wallpaper": "3-milad-fakurian.jpg"
+  "wallpaper": "3-milad-fakurian.jpg",
+  "contrastShortfalls": [
+    {"slot": "color8", "ratio": 1.8, "floor": 3}
+  ]
 }

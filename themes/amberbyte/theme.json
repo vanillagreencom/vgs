@@ -3,5 +3,8 @@
   "mode": "dark",
   "pair": "",
   "source": "curated",
-  "wallpaper": "3-wh-l329jr.jpg"
+  "wallpaper": "3-wh-l329jr.jpg",
+  "contrastShortfalls": [
+    {"slot": "color8", "ratio": 1.1, "floor": 3}
+  ]
 }

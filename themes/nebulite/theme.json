@@ -3,5 +3,8 @@
   "mode": "dark",
   "pair": "",
   "source": "curated",
-  "wallpaper": "3-wh-4ddk8g.jpg"
+  "wallpaper": "3-wh-4ddk8g.jpg",
+  "contrastShortfalls": [
+    {"slot": "accent", "ratio": 2.08, "floor": 3}
+  ]
 }
