@@ -209,7 +209,9 @@ def main() -> int:
                 f"but still contains {needle!r}."
             )
 
-    sysupdate_plugin = qml_text("config/vshell/plugins/sysUpdate/SysUpdateWidget.qml")
+    # The count poll and the service ref live in the shell-owned daemon surface, not in the
+    # per-screen widget (docs/architecture/plugins.md).
+    sysupdate_plugin = qml_text("config/vshell/plugins/sysUpdate/SysUpdateDaemon.qml")
     if "Ref {" not in sysupdate_plugin or "service: SystemUpdateService" not in sysupdate_plugin:
         errors.append("bundled sysUpdate plugin must hold a SystemUpdateService ref.")
     if "running: !root.useBackend" not in sysupdate_plugin:

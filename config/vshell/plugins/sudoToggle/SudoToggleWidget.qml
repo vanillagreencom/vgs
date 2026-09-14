@@ -1,6 +1,4 @@
 import QtQuick
-import Quickshell
-import Quickshell.Io
 import qs.Common
 import qs.Modals
 import qs.Services
@@ -10,42 +8,27 @@ import qs.Modules.Plugins
 PluginComponent {
     id: root
 
-    // The helper mirrors its privileged sudoers drop-in to a user-readable flag.
-    // The mirror can be stale, so requests carry the displayed direction.
-    // The helper refuses and resynchronizes when the real state disagrees.
-    property bool enabled: false
+    // The plugin's daemon owns the status probe, the flag watch and the set
+    // process. This widget, one per screen, renders that state and raises the
+    // confirmation the person on this screen answers.
+    PluginDaemonLink {
+        id: daemonLink
+        pluginService: root.pluginService
+        pluginId: root.pluginId
+        watching: root.effectiveVisible
+    }
+    readonly property var daemon: daemonLink.daemon
 
-    // Only grants need a terminal. Keep revocation available without one, and
-    // treat the feature as unavailable until the capability probe answers.
-    property bool available: false
-    property string unavailableReason: "checking…"
-    // sudo currently runs without prompting for some other reason (an admin
-    // NOPASSWD rule, a live credential cache). Reported so the widget does not
-    // claim "disabled" on a machine that is already passwordless.
-    property bool sudoNonInteractive: false
-    // Whether sudo has been asked at all yet. The startup probe deliberately
-    // does not run `sudo -n true` — for a non-sudoer that logs a security event
-    // and mails root on every login, for a widget they never touched — so this
-    // stays false until the user actually interacts with the control.
-    property bool sudoProbeDone: false
-    // Granting additionally needs a terminal to prompt in. Revoking never does,
-    // so this must never gate the control as a whole.
-    property bool canEnable: true
-    property string enableReason: ""
-    property string _toggleStderr: ""
-    property string _pendingState: "off"
-    property bool _flagPresent: false
-    property bool _legacyFlagPresent: false
-
-    readonly property string flagPath: (Quickshell.env("HOME") || "") + "/.local/state/vshell/sudo-passwordless-toggle"
-    readonly property string legacyFlagPath: (Quickshell.env("HOME") || "") + "/.local/state/sudo-passwordless-toggle"
-
-    // Grants have no expiry. An existing NOPASSWD rule or credential cache can
-    // remove the terminal authentication prompt, so retain explicit confirmation.
-
-    // The drop-in the helper will write, from `sudo-toggle status --json`. Shown
-    // in the modal so the rule is inspectable and removable outside the shell.
-    property string dropinPath: ""
+    // Until the daemon Instantiator registers the instance nothing has probed
+    // the capability, which is the same state as a probe still running.
+    readonly property bool enabled: root.daemon ? root.daemon.enabled : false
+    readonly property bool available: root.daemon ? root.daemon.available : false
+    readonly property string unavailableReason: root.daemon ? root.daemon.unavailableReason : "checking…"
+    readonly property bool sudoNonInteractive: root.daemon ? root.daemon.sudoNonInteractive : false
+    readonly property bool sudoProbeDone: root.daemon ? root.daemon.sudoProbeDone : false
+    readonly property bool canEnable: root.daemon ? root.daemon.canEnable : true
+    readonly property string enableReason: root.daemon ? root.daemon.enableReason : ""
+    readonly property string dropinPath: root.daemon ? root.daemon.dropinPath : ""
 
     // Keep these decisions free of QML APIs: scripts/test-sudo-toggle-confirm.js extracts the marked block and runs it as JavaScript.
     // BEGIN CONFIRM DECISION
@@ -103,12 +86,16 @@ PluginComponent {
         // Check origin before changing state or opening the confirmation dialog.
         if (!root.isDirectActivation(origin))
             return;
-        if (!root.available) {
-            ToastService.showWarning("Passwordless sudo toggle unavailable", root.unavailableReason);
-            root._probeStatus(true);
+        if (!root.daemon) {
+            root.reportNoDaemon("Passwordless sudo change could not start");
             return;
         }
-        if (setProc.running)
+        if (!root.available) {
+            ToastService.showWarning("Passwordless sudo toggle unavailable", root.unavailableReason);
+            root.daemon.probeStatus(true);
+            return;
+        }
+        if (root.daemon.busy)
             return;
 
         const decision = root.grantDecision(origin, root.enabled, SettingsData.sudoToggleSkipGrantConfirm);
@@ -117,13 +104,13 @@ PluginComponent {
 
         if (decision === "revoke") {
             // Revocation needs neither confirmation nor a terminal.
-            root._runSet("off");
+            root.daemon.runSet("off");
             return;
         }
 
         if (!root.canEnable) {
             ToastService.showWarning("Cannot grant passwordless sudo", root.enableReason);
-            root._probeStatus(true);
+            root.daemon.probeStatus(true);
             return;
         }
 
@@ -134,7 +121,7 @@ PluginComponent {
                 grantConfirm.promptFor(root.dropinPath);
             return;
         }
-        root._runSet("on");
+        root.daemon.runSet("on");
     }
 
     // Only a confirmed grant can persist confirmation suppression.
@@ -150,188 +137,31 @@ PluginComponent {
                 return;
             // The prompt is not modal to the machine: state can move while it is
             // open, so re-check rather than trusting what opened the dialog.
-            if (setProc.running || root.enabled)
+            // A plugin reload can also have taken the daemon while it was up,
+            // and a grant the user has already confirmed is never dropped in
+            // silence.
+            if (!root.daemon) {
+                root.reportNoDaemon("Passwordless sudo grant could not start");
+                return;
+            }
+            // Every gate toggle() applied is applied again here, availability
+            // included: the helper can have stopped being able to run between
+            // opening this dialog and confirming it, and a set it would refuse
+            // must not be sent.
+            if (!root.available) {
+                ToastService.showWarning("Passwordless sudo toggle unavailable", root.unavailableReason);
+                root.daemon.probeStatus(true);
+                return;
+            }
+            if (root.daemon.busy || root.enabled)
                 return;
             if (!root.canEnable) {
                 ToastService.showWarning("Cannot grant passwordless sudo", root.enableReason);
-                root._probeStatus(true);
+                root.daemon.probeStatus(true);
                 return;
             }
-            root._runSet("on");
+            root.daemon.runSet("on");
         }
-    }
-
-    // Ask sudo whether it prompts, only when the user has shown interest.
-    function _probeStatus(withSudoProbe) {
-        if (statusProc.running)
-            return;
-        root._pendingSudoProbe = withSudoProbe === true;
-        statusProc.running = true;
-    }
-
-    function _runSet(state) {
-        root._pendingState = state;
-        setProc.running = true;
-        stateNudge.restart();
-    }
-
-    // Accept both flag locations until the helper migrates an existing install.
-    function _refreshFromFlags() {
-        root.enabled = root._flagPresent || root._legacyFlagPresent;
-    }
-
-    // Availability probe. `status` exits non-zero when the toggle cannot run,
-    // and reports why, so the widget never has to guess. The startup run omits
-    // the sudo probe; a probing run happens only on interaction.
-    property bool _pendingSudoProbe: false
-
-    Process {
-        id: statusProc
-        command: root._pendingSudoProbe
-            ? [Paths.vshellCli, "sudo-toggle", "status", "--json"]
-            : [Paths.vshellCli, "sudo-toggle", "status", "--json", "--no-sudo-probe"]
-        running: true
-        stdout: StdioCollector {
-            id: statusOut
-            onStreamFinished: {
-                statusWatchdog.stop();
-                try {
-                    const status = JSON.parse(statusOut.text);
-                    root.available = status.available === true;
-                    root.unavailableReason = status.reason || "unknown reason";
-                    root.enabled = status.enabled === true;
-                    root.canEnable = status.canEnable !== false;
-                    root.enableReason = status.enableReason || "";
-                    root.dropinPath = status.dropin || "";
-                    // Only trust a false when sudo was actually asked; the
-                    // startup run does not ask.
-                    if (root._pendingSudoProbe || status.sudoNonInteractive === true) {
-                        root.sudoNonInteractive = status.sudoNonInteractive === true;
-                        root.sudoProbeDone = true;
-                    }
-                } catch (e) {
-                    root.available = false;
-                    root.unavailableReason = "could not read `vshell sudo-toggle status`";
-                }
-            }
-        }
-        onRunningChanged: if (running) statusWatchdog.restart()
-        onExited: exitCode => {
-            statusWatchdog.stop();
-            if (exitCode !== 0) {
-                root.available = false;
-                if (root.unavailableReason === "" || root.unavailableReason === "checking…")
-                    root.unavailableReason = "`vshell sudo-toggle status` exited " + exitCode;
-            }
-        }
-    }
-
-    // A failed process start delivers no exit; bound the initial checking state.
-    Timer {
-        id: statusWatchdog
-        interval: 10000
-        repeat: false
-        onTriggered: {
-            root.available = false;
-            root.unavailableReason = "`vshell sudo-toggle status` did not respond";
-        }
-    }
-
-    // Send an explicit direction. The helper runs grants in a terminal so
-    // sudo can prompt for authentication.
-    Process {
-        id: setProc
-        command: [Paths.vshellCli, "sudo-toggle", "set", root._pendingState]
-        running: false
-        stderr: StdioCollector {
-            onStreamFinished: root._toggleStderr = text || ""
-        }
-        // Exit codes are defined in bin/vshell_helper.py next to each other:
-        // 3 = displayed state was stale, nothing changed; 4 = the terminal for
-        // the prompt never came up. They must not be reported as each other.
-        readonly property int exitStale: 3
-        readonly property int exitTerminalFailed: 4
-
-        onExited: exitCode => {
-            const detail = (root._toggleStderr || "").trim();
-            if (exitCode === setProc.exitStale) {
-                ToastService.showWarning("Passwordless sudo state was out of date", detail || "Nothing changed; the shell has re-read the current state.");
-                root._probeStatus(false);
-            } else if (exitCode === setProc.exitTerminalFailed) {
-                ToastService.showError("Could not open a terminal", detail || "The password prompt needs a terminal; set $TERMINAL or install one.");
-                root._probeStatus(false);
-            } else if (exitCode !== 0) {
-                ToastService.showError("Passwordless sudo change failed", detail || ("vshell sudo-toggle exited " + exitCode));
-                root._probeStatus(false);
-            }
-            root._toggleStderr = "";
-        }
-    }
-
-    // Watch the flag file live. onLoaded => present (enabled),
-    // onLoadFailed => absent (disabled). watchChanges catches edits while it
-    // exists; the poll timer covers create/delete from an absent state.
-    FileView {
-        id: flagView
-        path: root.flagPath
-        blockLoading: false
-        watchChanges: true
-        printErrors: false
-        onLoaded: {
-            root._flagPresent = true;
-            root._refreshFromFlags();
-        }
-        onLoadFailed: {
-            root._flagPresent = false;
-            root._refreshFromFlags();
-        }
-    }
-
-    FileView {
-        id: legacyFlagView
-        path: root.legacyFlagPath
-        blockLoading: false
-        watchChanges: true
-        printErrors: false
-        onLoaded: {
-            root._legacyFlagPresent = true;
-            root._refreshFromFlags();
-        }
-        onLoadFailed: {
-            root._legacyFlagPresent = false;
-            root._refreshFromFlags();
-        }
-    }
-
-    Timer {
-        id: pollTimer
-        interval: 2500
-        repeat: true
-        running: true
-        triggeredOnStart: true
-        onTriggered: {
-            flagView.reload();
-            legacyFlagView.reload();
-        }
-    }
-
-    // Re-check after toggling so the displayed flag can follow the helper result.
-    Timer {
-        id: stateNudge
-        interval: 600
-        repeat: true
-        triggeredOnStart: false
-        property int ticks: 0
-        onTriggered: {
-            flagView.reload();
-            legacyFlagView.reload();
-            ticks++;
-            if (ticks >= 6) {
-                ticks = 0;
-                stop();
-            }
-        }
-        onRunningChanged: if (running) ticks = 0
     }
 
     // Use a persistent layer tooltip so showing it does not take hover from the pill.
@@ -342,6 +172,8 @@ PluginComponent {
         targetScreen: root.parentScreen
     }
 
+    // Started by a pointer entering this screen's pill, and never by itself: a
+    // hover delay is per screen because the pointer is.
     Timer {
         id: tipDelay
         interval: 250
@@ -352,8 +184,8 @@ PluginComponent {
     function _requestTip(item) {
         root._hoverItem = item;
         tipDelay.restart();
-        if (!root.sudoProbeDone && root.available && !root.enabled)
-            root._probeStatus(true);
+        if (root.daemon && !root.sudoProbeDone && root.available && !root.enabled)
+            root.daemon.probeStatus(true);
     }
 
     function _cancelTip() {

@@ -99,6 +99,17 @@ Item {
         }
     }
 
+    // A widget whose plugin ships a daemon surface routes its user actions through that
+    // instance, which the Instantiator registers asynchronously. Report an action the widget
+    // could not hand over rather than dropping it in silence.
+    function reportNoDaemon(title) {
+        if (!pluginService) {
+            console.error("PluginComponent: " + pluginId + " dropped " + title + " with no plugin service");
+            return;
+        }
+        pluginService.reportDaemonUnavailable(pluginId, title);
+    }
+
     function loadPluginData() {
         if (!pluginService || !pluginId) {
             pluginData = {};

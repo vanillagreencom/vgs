@@ -10,6 +10,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const qmlSource = require("./lib/qml-source.js");
 
 const repoRoot = path.join(__dirname, "..");
 const WIDGET = path.join(
@@ -23,6 +24,10 @@ const SETTINGS_SPEC = path.join(
     repoRoot, "quickshell", "vshell", "Common", "settings", "SettingsSpec.js"
 );
 const SETTINGS_DATA = path.join(repoRoot, "quickshell", "vshell", "Common", "SettingsData.qml");
+
+const DAEMON = path.join(
+    repoRoot, "config", "vshell", "plugins", "sudoToggle", "SudoToggleDaemon.qml"
+);
 
 const source = fs.readFileSync(WIDGET, "utf8");
 const modalSource = fs.readFileSync(MODAL, "utf8");
@@ -104,6 +109,68 @@ test("the pointer gesture is gone and only the modal's confirmed signal starts a
         "the widget must raise the confirmation modal");
     assert.ok(/onConfirmed:/.test(source),
         "only the modal's confirmed signal may start a grant");
+});
+
+// The grant primitive is SudoToggleDaemon.runSet, a public function on an instance the shell
+// registers in PluginService.daemonInstances, so any QML in the shell or in a loaded plugin can
+// reach it. Nothing in the tree does, and these assertions are what keeps that true: a grant
+// reached without isDirectActivation, the availability gates and the modal would otherwise redden
+// nothing while the title above claims only the modal's confirmed signal starts one.
+
+test("every grant call site sits behind the availability gates, and no file outside the plugin can name the grant primitive", () => {
+    const daemonSource = fs.readFileSync(DAEMON, "utf8");
+    const widget = qmlSource(source, "SudoToggleWidget.qml");
+
+    assert.equal(qmlSource.stripComments(daemonSource).match(/\brunSet\s*\(/g).length, 1,
+        "the daemon declares the primitive and never calls it: a self-call would be a grant path " +
+        "that never passed the widget's gates");
+    widget.requires(source, "SudoToggleWidget.qml", [
+        ['root.daemon.runSet("on")', "a grant runs from the widget", 2],
+        ['root.daemon.runSet("off")', "and a revocation, which is never confirmed, exactly once", 1]]);
+
+    // [block, where] — the two grant sites, each read as its own body.
+    for (const [block, where] of [
+        [widget.body("toggle"), "toggle()"],
+        [widget.blockFrom(widget.indexOf("onConfirmed:"), "the modal's confirmed handler"),
+            "SudoGrantConfirmModal.onConfirmed"]
+    ]) {
+        const grant = qmlSource.codeIndexOf(block, 'root.daemon.runSet("on")');
+        assert.notEqual(grant, -1, `${where} must hold one grant call site`);
+        for (const gate of ["!root.available", "!root.canEnable", "!root.daemon"]) {
+            const at = qmlSource.codeIndexOf(block, gate);
+            assert.notEqual(at, -1, `${where} must check ${gate} before granting`);
+            assert.ok(at < grant, `${where} checks ${gate} only after granting, so the gate is not one`);
+        }
+        // A grant the user has already confirmed in a security dialog is never dropped in
+        // silence: the pill reads unavailable with no daemon, which says nothing about the
+        // confirmation just given.
+        assert.ok(qmlSource.codeIndexOf(block, "root.reportNoDaemon(") > qmlSource.codeIndexOf(block, "!root.daemon"),
+            `${where} must report a grant it cannot run, inside the missing-daemon guard`);
+    }
+
+    // toggle() reaches its grant only through grantDecision, whose "grant" answer needs a click
+    // origin and the stored opt-out; every other origin returns "ignore" above.
+    const decisionAt = qmlSource.codeIndexOf(widget.body("toggle"), "root.grantDecision(origin");
+    assert.notEqual(decisionAt, -1, "toggle() must route through grantDecision");
+    assert.ok(decisionAt < qmlSource.codeIndexOf(widget.body("toggle"), 'root.daemon.runSet("on")'),
+        "toggle() must reach its grant only after grantDecision has answered");
+
+    const offenders = [];
+    for (const dir of [path.join(repoRoot, "config", "vshell"), path.join(repoRoot, "quickshell")])
+        for (const file of fs.readdirSync(dir, { recursive: true, withFileTypes: true })) {
+            if (!file.isFile() || !/\.(qml|js)$/.test(file.name))
+                continue;
+            const full = path.join(file.parentPath || file.path, file.name);
+            // Resolved path, not basename: a second file anywhere in either tree carrying one of
+            // these two names would otherwise be skipped, and this is the guard on the grant.
+            if (full === WIDGET || full === DAEMON)
+                continue;
+            if (/\brunSet\s*\(/.test(qmlSource.stripComments(fs.readFileSync(full, "utf8"))))
+                offenders.push(path.relative(repoRoot, full));
+        }
+    assert.deepEqual(offenders, [],
+        "only the sudoToggle plugin may name the grant primitive; any other caller reaches a " +
+        "permanent NOPASSWD rule without the click origin, the availability gates or the modal");
 });
 
 test("the modal defaults to Cancel, starts the opt-out unticked, declines on background and Escape, and states the rule is permanent", () => {

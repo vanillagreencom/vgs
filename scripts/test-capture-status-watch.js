@@ -20,17 +20,9 @@ const qmlSource = require("./lib/qml-source.js");
 const CAPTURE_QML = path.join(__dirname, "..", "quickshell", "vshell", "Services", "CaptureService.qml");
 const qml = qmlSource(fs.readFileSync(CAPTURE_QML, "utf8"), "CaptureService.qml");
 
-// Every `Type {` object block in the file, in source order, each with a reader
-// over its own text so binding lookups see only that object's top level.
-function objectBlocks(type) {
-    const blocks = [];
-    for (let at = qml.indexOf(`${type} {`); at !== -1; at = qml.indexOf(`${type} {`, at + 1)) {
-        const text = qml.blockFrom(at, `${type} block`);
-        blocks.push({ text, q: qmlSource(text, `CaptureService.qml ${type} block`) });
-    }
-    assert.ok(blocks.length > 0, `found no ${type} blocks: the extractor is broken`);
-    return blocks;
-}
+// Object-block enumeration is qml-source's; scripts/test-plugin-daemon-views.js reads the same
+// verb through it, and it carries the non-empty assertion a broken extractor needs.
+const objectBlocks = type => qml.objectBlocks(type);
 
 const value = (block, name) => block.q.binding(name).value;
 
