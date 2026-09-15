@@ -17,6 +17,7 @@ import os
 import plistlib
 import pwd
 import signal
+import site
 import re
 import shutil
 import socket
@@ -28,6 +29,7 @@ import tarfile
 import tempfile
 import time
 import traceback
+import zlib
 from unittest.mock import patch
 from pathlib import Path
 
@@ -2995,35 +2997,37 @@ def test_every_shipped_theme_package_lints_clean():
 
 
 def test_theme_list_reports_the_preview_and_the_thumbnail_apart():
-    """`preview` is a full-size screenshot or empty, and the 480 px thumbnail is its own field.
+    """`preview` is the shipped screenshot or a drawn palette card, and the thumbnail is its own field.
 
-    The full-screen switcher paints `preview` at full size and
-    VGSThemeService.generateMissingPreviews() renders every theme whose `preview`
-    is empty, so a thumbnail reported as the preview is painted blurred and never
-    rebuilt.
+    Every theme surface paints `preview`, and nothing in the shell renders one, so
+    a theme the list reports no preview for shows "No preview" wherever it appears.
     """
-    # name -> (has its own preview.jpg, extra theme.json fields, user overlay)
+    # Every band of noshot's card is its own colour, so a decoded pixel names its band.
+    card_palette = {"background": "#102030", "foreground": "#e0d0c0", "accent": "#c04080",
+                    **{f"color{i}": f"#{i * 16 + 8:02x}{255 - i * 16:02x}80" for i in range(16)}}
+    # name -> (has its own preview.jpg, extra theme.json fields, user overlay, colors.toml)
     packages = {
-        "withshot": (True, {}, False),
-        "noshot": (False, {}, False),
-        "nothumb": (False, {}, False),
-        "restyled": (True, {"adjustments": {"brightness": 17}}, False),
-        "overlaid": (True, {}, True),
-        "rendered": (False, {}, False),
+        "withshot": (True, {}, False, {"background": "#101010", "foreground": "#eeeeee"}),
+        "noshot": (False, {}, False, card_palette),
+        "nothumb": (False, {}, False, {"background": "#202020", "foreground": "#eeeeee"}),
+        "restyled": (True, {"adjustments": {"brightness": 17}}, False, {"background": "#101010", "foreground": "#eeeeee"}),
+        "overlaid": (True, {}, True, {"background": "#101010", "foreground": "#eeeeee"}),
     }
+
+    def colors_toml(colors: dict) -> str:
+        return "".join(f'{key} = "{value}"\n' for key, value in colors.items())
 
     def scenario(temp_home: Path):
         builtin = temp_home / "builtin"
         thumbnails = builtin / "thumbnails"
         thumbnails.mkdir(parents=True)
-        for name, (packaged, extra, overlaid) in packages.items():
+        for name, (packaged, extra, overlaid, colors) in packages.items():
             package = builtin / name
             package.mkdir()
             meta = {"name": name, "mode": "dark", "source": "curated"}
             meta.update(extra)
             (package / "theme.json").write_text(json.dumps(meta) + "\n")
-            (package / "colors.toml").write_text(
-                'background = "#101010"\nforeground = "#eeeeee"\n')
+            (package / "colors.toml").write_text(colors_toml(colors))
             if packaged:
                 (package / helper.THEME_PREVIEW_FILE).write_bytes(b"\xff\xd8\xff screenshot\n")
             if name != "nothumb":
@@ -3032,46 +3036,78 @@ def test_theme_list_reports_the_preview_and_the_thumbnail_apart():
                 overlay = helper.user_themes_dir() / name
                 overlay.mkdir(parents=True)
                 (overlay / "app-colors.toml").write_text("[btop]\nfg = \"#ffffff\"\n")
+        # A theme the user saved: a package only the user directory holds.
+        saved = helper.user_themes_dir() / "saved"
+        saved.mkdir(parents=True)
+        (saved / "theme.json").write_text(json.dumps({"name": "saved", "mode": "dark", "source": "generated"}) + "\n")
+        (saved / "colors.toml").write_text('background = "#303030"\nforeground = "#eeeeee"\n')
 
-        original_builtin = helper.builtin_themes_dir
-        helper.builtin_themes_dir = lambda: builtin
-        try:
-            previews = helper.theme_previews_dir()
-            previews.mkdir(parents=True)
-            rendered = helper.blueprint_preview_path(helper.find_theme("rendered"))
-            rendered.write_bytes(b"\x89PNG render\n")
-            orphan = previews / "rendered-000000000000.png"
-            orphan.write_bytes(b"\x89PNG stale render\n")
-            # A generator holding the preview lock may be writing a render whose
-            # hash the list has not seen, so a list meanwhile prunes nothing.
-            with (previews / ".lock").open("a+") as held:
-                fcntl.flock(held.fileno(), fcntl.LOCK_EX)
-                _theme_list_entries()
-                assert_equal(orphan.exists(), True, "theme list prunes no render while the preview lock is held")
-                fcntl.flock(held.fileno(), fcntl.LOCK_UN)
-            listed = _theme_list_entries()
-        finally:
-            helper.builtin_themes_dir = original_builtin
+        previews = helper.theme_previews_dir()
+        previews.mkdir(parents=True)
+        orphan = previews / "noshot-000000000000.png"
+        orphan.write_bytes(b"\x89PNG stale card\n")
 
-        # A packaged screenshot is the preview; a matching cached render wins
-        # over having none. A restyled or overlaid theme no longer looks like
-        # its shipped screenshot, so it reports none and the generator renders
-        # what the user is running. Every theme with a shipped thumbnail reports
-        # it beside the preview, never in it.
+        def list_with_no_tool() -> dict:
+            original_builtin = helper.builtin_themes_dir
+            helper.builtin_themes_dir = lambda: builtin
+            saved_path = os.environ.get("PATH")
+            try:
+                # No tool on PATH and no Pillow: the card needs neither.
+                os.environ["PATH"] = str(temp_home / "empty-path")
+                with patch.dict(sys.modules, {"PIL": None, "PIL.Image": None}):
+                    return _theme_list_entries()
+            finally:
+                helper.builtin_themes_dir = original_builtin
+                _restore_env("PATH", saved_path)
+
+        listed = list_with_no_tool()
+
+        # A packaged screenshot is the preview, edited or not. A theme with none
+        # gets a card drawn from its palette. The thumbnail is reported beside
+        # the preview, never in it.
+        cards = {name: listed[name]["preview"] for name in ("noshot", "nothumb", "saved")}
         for name, preview, thumbnail in (
             ("withshot", str(builtin / "withshot" / helper.THEME_PREVIEW_FILE), str(thumbnails / "withshot.jpg")),
-            ("noshot", "", str(thumbnails / "noshot.jpg")),
-            ("nothumb", "", ""),
-            ("restyled", "", str(thumbnails / "restyled.jpg")),
-            ("overlaid", "", str(thumbnails / "overlaid.jpg")),
-            ("rendered", str(rendered), str(thumbnails / "rendered.jpg")),
+            ("restyled", str(builtin / "restyled" / helper.THEME_PREVIEW_FILE), str(thumbnails / "restyled.jpg")),
+            ("overlaid", str(builtin / "overlaid" / helper.THEME_PREVIEW_FILE), str(thumbnails / "overlaid.jpg")),
+            ("noshot", cards["noshot"], str(thumbnails / "noshot.jpg")),
+            ("nothumb", cards["nothumb"], ""),
+            ("saved", cards["saved"], ""),
         ):
             assert_equal((listed[name]["preview"], listed[name]["thumbnail"]), (preview, thumbnail),
                          f"theme list preview and thumbnail for {name}")
+        for name, card in cards.items():
+            assert_equal((Path(card).parent, helper.png_size(Path(card))), (previews, helper.PALETTE_CARD_SIZE),
+                         f"{name} paints a palette card drawn with no tool")
 
-        # A list prunes the renders no listed theme's current hash names.
-        assert_equal((rendered.is_file(), orphan.exists()), (True, False),
-                     "theme list keeps the render a theme matches and removes an orphaned one")
+        # A list prunes the cards no listed theme names.
+        assert_equal((all(Path(card).is_file() for card in cards.values()), orphan.exists()), (True, False),
+                     "theme list keeps every listed card and removes an orphaned one")
+
+        # Decoded with zlib alone, the card is one filter-0 byte and RGB triples per scanline.
+        png = Path(cards["noshot"]).read_bytes()
+        idat, pos = b"", 8
+        while pos < len(png):
+            length = int.from_bytes(png[pos:pos + 4], "big")
+            if png[pos + 4:pos + 8] == b"IDAT":
+                idat += png[pos + 8:pos + 8 + length]
+            pos += 12 + length
+        raw = zlib.decompress(idat)
+        width, height = helper.PALETTE_CARD_SIZE
+        stride = 1 + width * 3
+        assert_equal((len(raw), {raw[y * stride] for y in range(height)}), (height * stride, {0}),
+                     "the noshot card decodes to unfiltered RGB scanlines")
+        for band, x, y, key in (("background", 4, 4, "background"), ("foreground bar", 40, 50, "foreground"),
+                                ("accent bar", 40, 74, "accent"), ("first swatch", 40, 130, "color0"),
+                                ("ninth swatch", 40, 230, "color8")):
+            offset = y * stride + 1 + x * 3
+            assert_equal("#" + raw[offset:offset + 3].hex(), card_palette[key], f"the noshot card paints its {band}")
+
+        # A colour edit draws a new card, and the next list prunes the old one.
+        (builtin / "noshot" / "colors.toml").write_text(colors_toml({**card_palette, "background": "#302010"}))
+        redrawn = list_with_no_tool()["noshot"]["preview"]
+        assert_equal((redrawn != cards["noshot"], Path(redrawn).is_file(), Path(cards["noshot"]).exists()),
+                     (True, True, False), "a colour edit draws a new noshot card and prunes the old one")
 
     with_temp_home(scenario)
 
@@ -3266,7 +3302,7 @@ def test_preview_stage_retires_its_window_rule():
             assert_equal(remove in teardown, True, f"{label}: the teardown must remove the staging output")
 
 
-# A parent compositor for `theme preview`: logs each argv as a JSON line and answers the
+# A parent compositor for a preview capture: logs each argv as a JSON line and answers the
 # staging requests. Its one monitor is the staging output with a bar strip reserved, so
 # the stage does not wait out preview_stage_reserved.
 PREVIEW_STOP_HYPRCTL = """
@@ -3286,8 +3322,8 @@ elif args[-1:] == ["-j"]:
 
 
 def test_theme_preview_stop_signal_tears_down_its_capture():
-    """SIGTERM during a capture, the shell's request timeout and a vshell.service stop,
-    ends the nested Hyprland, retires the staging rule and removes the staging output."""
+    """SIGTERM during scripts/capture-theme-previews.py ends the nested Hyprland, retires
+    the staging rule and removes the staging output from the maintainer's compositor."""
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         stubs = root / "bin"
@@ -3314,6 +3350,8 @@ def test_theme_preview_stop_signal_tears_down_its_capture():
         env.update({
             "PATH": f"{stubs}{os.pathsep}{env.get('PATH', '')}",
             "HOME": str(home),
+            # The user site derives from HOME; keep the caller's, where CI installs Pillow.
+            "PYTHONUSERBASE": site.getuserbase(),
             "XDG_CONFIG_HOME": str(home / ".config"),
             "TMPDIR": str(preview_tmp),
             # No real session answers this, should a real hyprctl ever run.
@@ -3323,7 +3361,7 @@ def test_theme_preview_stop_signal_tears_down_its_capture():
             "PREVIEW_OUTPUT": helper.PREVIEW_OUTPUT,
         })
         preview = subprocess.Popen(
-            [sys.executable, str(HELPER_PATH), "theme", "preview", "bauhaus", "--force", "--json"],
+            [sys.executable, str(REPO_ROOT / "scripts" / "capture-theme-previews.py"), "bauhaus"],
             env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
         pid = None
@@ -5189,8 +5227,8 @@ def test_theme_catalog_offers_a_builtin_theme_with_no_imagery():
                 (dest / rel).write_text(content + "\n")
                 edited = _theme_list_entries()["demo"]
                 assert_equal((edited.get("modified"), edited.get("catalogPristine"), edited["preview"]),
-                             (True, False, ""),
-                             f"{label} beside a download is a user edit, so the generator renders a preview")
+                             (True, False, str(preview)),
+                             f"{label} beside a download is a user edit that keeps the preview the package ships")
                 (dest / rel).unlink()
 
             # Revert drops the overlay and keeps the wallpapers it cannot fetch back.
@@ -5707,8 +5745,6 @@ def test_theme_catalog_download_verifies_its_archive():
 
             # Downloads must not hold the theme lock while bytes move; applies and restyles
             # need that same lock.
-            import fcntl
-
             lock_free_during_transfer = []
             original_fetch = helper._catalog_fetch_verified
 
@@ -10876,15 +10912,6 @@ def test_declared_ui_roles_replace_the_derivation_without_a_contrast_rewrite():
                          "a generated palette reports no shortfall for a file it does not read")
             assert_equal(len([line for line in gen_applied["warnings"] if "is not read" in line]), 1,
                          "it names the unread file instead")
-
-            # The preview renders from target_roles, so a declaration moves the
-            # cached screenshot and has to move its key.
-            if helper.blueprint_preview_hash(packages["vendorroles"]) == helper.blueprint_preview_hash(
-                    packages["plainroles"]):
-                raise AssertionError("the preview key does not cover the declared roles")
-            assert_equal(helper.blueprint_preview_hash(packages["genroles"]),
-                         helper.blueprint_preview_hash(packages["genplainroles"]),
-                         "a package whose declarations are not read keeps the undeclared preview")
         finally:
             helper.builtin_themes_dir = original_builtin
 
@@ -11668,29 +11695,6 @@ def test_terminal_app_overrides_show_on_their_editor_row():
     with_temp_home(scenario)
 
 
-def test_preview_key_covers_terminal_slots():
-    """A generated preview draws its terminal from the theme's terminal slots, so
-    the cache key must move when only those slots change, or the theme browser
-    keeps a tile painted with the old ones."""
-
-    def scenario(_temp_home: Path):
-        blueprint = helper.load_theme_package("white")
-        if not blueprint or not blueprint.get("terminalColors"):
-            raise AssertionError("white must ship terminal slots for this fixture")
-        base = helper.blueprint_preview_hash(blueprint)
-        # (label, the blueprint the key is taken from, whether the key must equal the base)
-        rows = [
-            ("nothing changed", dict(blueprint), True),
-            ("the terminal slots dropped", dict(blueprint, terminalColors={}), False),
-            ("one terminal slot changed",
-             dict(blueprint, terminalColors={**blueprint["terminalColors"], "color0": "#123456"}), False),
-        ]
-        for label, variant, same in rows:
-            assert_equal(helper.blueprint_preview_hash(variant) == base, same, label)
-
-    with_temp_home(scenario)
-
-
 def test_restyle_moves_terminal_slots():
     """Restyle Palette adjustments transform the palette, so a theme's explicit
     terminal slots must move with it: a slot the file holds lands where the
@@ -11796,7 +11800,6 @@ def main():
     test_theme_overlays_merge_key_by_key()
     test_unsaved_applied_theme_keeps_terminal_slots()
     test_terminal_app_overrides_show_on_their_editor_row()
-    test_preview_key_covers_terminal_slots()
     test_restyle_moves_terminal_slots()
     test_restyle_integer_sweeps()
     test_fastfetch_portable_seed_and_logo_fallback()

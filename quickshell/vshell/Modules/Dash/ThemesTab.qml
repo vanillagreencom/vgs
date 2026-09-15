@@ -53,7 +53,6 @@ Item {
         // binding, so resetting searchQuery alone leaves the stale text visible.
         searchField.text = "";
         VGSThemeService.refresh();
-        VGSThemeService.generateMissingPreviews();
         // Deferred so it runs after the dash's own open-focus handling settles.
         Qt.callLater(focusSearch);
     }
@@ -261,13 +260,6 @@ Item {
                         }
 
 
-                        VgsSpinner {
-                            anchors.centerIn: parent
-                            size: 26
-                            color: themeRow.modelData.foreground || Theme.primary
-                            visible: themeRow.modelData.preview === "" && VGSThemeService.previewsGenerating
-                        }
-
                         Rectangle {
                             anchors.centerIn: parent
                             width: applyLabel.implicitWidth + Theme.spacingM * 2
@@ -379,16 +371,6 @@ Item {
                                 return;
                             VGSThemeService.setPair(current, themeRow.modelData.name);
                             VGSThemeService.setPair(themeRow.modelData.name, current);
-                            themeRow.actionsOpen = false;
-                        }
-                    }
-
-                    VgsButton {
-                        height: 28
-                        text: I18n.tr("New preview")
-                        enabled: !VGSThemeService.previewsGenerating
-                        onClicked: {
-                            VGSThemeService.regeneratePreview(themeRow.modelData.name);
                             themeRow.actionsOpen = false;
                         }
                     }

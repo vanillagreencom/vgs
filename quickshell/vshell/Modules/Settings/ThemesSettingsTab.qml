@@ -69,29 +69,12 @@ Item {
         return "file://" + path.split('/').map(s => encodeURIComponent(s)).join('/');
     }
 
-    // Render missing previews after the fresh list lands; one deferred attempt
-    // prevents a failing generator from retry-looping.
-    property bool _previewKickDone: false
-
-    Component.onCompleted: {
-        VGSThemeService.refresh();
-        VGSThemeService.generateMissingPreviews();
-    }
+    Component.onCompleted: VGSThemeService.refresh()
 
     Timer {
         id: revertConfirmTimer
         interval: 4000
         onTriggered: root.revertConfirmPending = false
-    }
-
-    Connections {
-        target: VGSThemeService
-        function onBlueprintsLoaded() {
-            if (root._previewKickDone)
-                return;
-            root._previewKickDone = true;
-            VGSThemeService.generateMissingPreviews();
-        }
     }
 
     Connections {
@@ -153,24 +136,12 @@ Item {
                             cache: false
                         }
 
-                        Column {
+                        StyledText {
                             anchors.centerIn: parent
-                            spacing: Theme.spacingXS
                             visible: (root.currentEntry.preview || "") === ""
-
-                            VgsSpinner {
-                                anchors.horizontalCenter: parent.horizontalCenter
-                                size: 22
-                                visible: VGSThemeService.previewsGenerating
-                                running: VGSThemeService.previewsGenerating
-                            }
-
-                            StyledText {
-                                anchors.horizontalCenter: parent.horizontalCenter
-                                text: VGSThemeService.previewsGenerating ? I18n.tr("Rendering…") : I18n.tr("No preview")
-                                font.pixelSize: Theme.settingsFontSize
-                                color: Theme.surfaceVariantText
-                            }
+                            text: I18n.tr("No preview")
+                            font.pixelSize: Theme.settingsFontSize
+                            color: Theme.surfaceVariantText
                         }
                     }
 

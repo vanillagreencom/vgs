@@ -14,9 +14,7 @@ Singleton {
     property int defaultDebounceMs: 50
     property int defaultTimeoutMs: 10000
     // How long a timed-out command has, after its SIGTERM, to exit before its Process
-    // is destroyed, which SIGKILLs it. Theme preview needs this time for its teardown:
-    // it waits up to 5 s for its nested Hyprland to exit, then removes the staging rule
-    // and output from the live compositor.
+    // is destroyed, which SIGKILLs it: the window a child has to run its own teardown.
     readonly property int terminateGraceMs: 10000
     property var _procDebouncers: ({})
 

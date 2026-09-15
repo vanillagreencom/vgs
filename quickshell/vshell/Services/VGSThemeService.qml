@@ -196,7 +196,7 @@ Singleton {
         SettingsData.set("greeterSyncPending", true);
     }
 
-    // backgroundTask: long-running helper calls (preview rendering) must not
+    // backgroundTask: long-running helper calls (theme init, the thumbnail sweep) must not
     // count toward `busy`, or every Apply button goes dead for minutes.
     // `id` is this call's bookkeeping key in `_pending`; `procId` is the id Proc
     // COALESCES on and defaults to it — `_dispatchApply` is the one caller that
@@ -425,21 +425,6 @@ Singleton {
                 applyCompleted(false, "Failed to parse duplicate result: " + e);
             }
         });
-    }
-
-    function regeneratePreview(name) {
-        if (!name || previewsGenerating)
-            return;
-        previewsGenerating = true;
-        _run("vgs-theme-preview-one", ["theme", "preview", name, "--force", "--json"], function(output, exitCode) {
-            previewsGenerating = false;
-            if (exitCode !== 0) {
-                applyCompleted(false, lastError || ("Preview generation failed: " + name));
-                return;
-            }
-            refreshBlueprints();
-            applyCompleted(true, "Preview regenerated for " + name);
-        }, 600000, true);
     }
 
     function refreshCurrent() {
@@ -1205,53 +1190,6 @@ Singleton {
             _markGreeterThemeSyncPending();
             refresh();
             applyCompleted(true, "Wallpaper cleared");
-        });
-    }
-
-    property bool previewsGenerating: false
-
-    function generateMissingPreviews() {
-        if (previewsGenerating)
-            return;
-        // Claim the slot BEFORE any async work: preview generation stages a
-        // nested-compositor VGSPREVIEW output, and two overlapping runs crash
-        // quickshell ("removal for monitor VGSPREVIEW which was not previously
-        // tracked" -> fatal Wayland error). Callers fire this from both
-        // Component.onCompleted and onActiveChanged, so the guard must be set
-        // synchronously to guarantee single-flight.
-        previewsGenerating = true;
-        // Refresh preview paths after edits without changing blueprintsLoadFailed.
-        // That flag belongs to the list read; a preview-probe failure does not invalidate a displayed theme list.
-        _run("vgs-theme-preview-check", ["theme", "list", "--json"], function(output, exitCode) {
-            if (exitCode !== 0) {
-                log.warn("Preview check failed, previews not refreshed:", lastError);
-                previewsGenerating = false;
-                return;
-            }
-            let bps;
-            try {
-                bps = JSON.parse(output || "{}").blueprints || [];
-            } catch (e) {
-                log.warn("Preview check returned unparseable blueprints:", e);
-                previewsGenerating = false;
-                return;
-            }
-            blueprints = bps;
-            blueprintsLoadFailed = false;
-            blueprintsLoadError = "";
-            blueprintsLoaded();
-            if (!bps.some(bp => !bp.preview)) {
-                previewsGenerating = false;
-                return;
-            }
-            // One helper invocation renders every missing preview under a single
-            // hidden nested compositor rule; cached entries are skipped inside.
-            _run("vgs-theme-preview-all", ["theme", "preview", "--all", "--json"], function(o, ec) {
-                previewsGenerating = false;
-                if (ec !== 0)
-                    log.warn("Theme preview generation failed:", lastError);
-                refreshBlueprints();
-            }, 600000, true);
         });
     }
 

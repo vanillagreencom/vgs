@@ -427,7 +427,6 @@ Usage:
   vshell theme wallpaper-delete <path> [--folder <dir>] [--applied <path> ...]
   vshell theme mode <light|dark|toggle> [--transform]
   vshell theme pick [all|dark|light]
-  vshell theme preview [name|--all] [--force]
   vshell theme lint [name|--all]
   vshell theme migrate <name>|--all
   vshell theme apps [--enable <app>|--disable <app>]
