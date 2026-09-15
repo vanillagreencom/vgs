@@ -24,7 +24,7 @@ const SOURCE = fs.readFileSync(TAB_QML, "utf8");
 const Q = qmlSource(SOURCE, "IconsTab.qml");
 
 const M = evaluateMarked(SOURCE, "ICON PICKER MODEL",
-    ["iconPickerState", "appliedSetName", "iconSetClaim"], "IconsTab.qml");
+    ["iconPickerState", "appliedSetName", "iconSetClaim", "setLine"], "IconsTab.qml");
 
 // The body of the `vshell theme icons --json` callback, run against the tab's own
 // properties. Proc hands it captured stdout, the exit status and captured stderr.
@@ -151,11 +151,10 @@ test("a payload the tab can read clears the failure and fills the list", () => {
     assert.deepEqual(warned, [], "a good read logs nothing");
 });
 
-test("a reply that outlives the tab writes nothing", () => {
+test("a reply that outlives the tab returns before its writes", () => {
     // Settings destroys a tab when the user leaves its page and Proc answers afterwards;
     // a destroyed root reads as null there. `with (null)` throws in this harness, so the
-    // guard is pinned as code here and its behaviour by scripts/qml-smoke.sh --settings,
-    // which reddens with a TypeError from this callback when the guard is removed.
+    // guard is pinned here as source text and its behaviour is not asserted.
     Q.requires(CALLBACK, "IconsTab.qml the icon list callback",
         [["if (!root)", "a reply reaching a destroyed tab returns before every write below"]]);
 });
@@ -163,4 +162,51 @@ test("a reply that outlives the tab writes nothing", () => {
 test("picking a set does not re-read the list", () => {
     Q.requires(Q.body("useFixed"), "IconsTab.qml useFixed()",
         [["refresh()", "a pick moves the mark through the delegate; re-reading rebuilds every tile with identical data", 0]]);
+});
+
+test("a claim becomes words in exactly one way", () => {
+    // The two strings the card hands in, as the component builds them for a set named
+    // "Papirus" and for the desktop's own set.
+    const NAMED = "Currently applied: Papirus";
+    const UNNAMED = "Currently applied: the desktop's own icon set";
+    const SUFFIX = "not installed on this system.";
+    // [why, claim, sentence, warns]
+    for (const [why, claim, text, warn] of [
+        ["no name draws no line at all", "absent", "", false],
+        ["the desktop's own set is named as such, never by the settings sentinel", "default", UNNAMED, false],
+        ["a set no list has checked is stated and nothing more", "unchecked", NAMED, false],
+        ["a set the list carries is stated and nothing more", "installed", NAMED, false],
+        ["only a set the read checked and did not find carries the suffix", "missing", NAMED + " — " + SUFFIX, true],
+    ]) {
+        assert.deepEqual(M.setLine(claim, NAMED, UNNAMED, SUFFIX), { text, warn }, why);
+        if (claim === "default")
+            assert.ok(!M.setLine(claim, NAMED, UNNAMED, SUFFIX).text.includes("System Default"),
+                "the desktop default never reaches the card as the settings sentinel");
+    }
+});
+
+test("a card line draws what the region decided and nothing of its own", () => {
+    const component = qmlSource(Q.blockFrom(Q.indexOf("component SetLine:"), "the SetLine component"),
+        "IconsTab.qml SetLine");
+    // [binding, value]
+    for (const [name, value] of [
+        ["text", "line.text"],
+        ["visible", 'line.text !== ""'],
+        ["color", "line.warn ? Theme.warning : Theme.surfaceVariantText"],
+    ])
+        assert.equal(component.binding(name).value, value,
+            `SetLine.${name} must read the region's answer, so no line can word or colour itself`);
+
+    const flow = Q.objectBlocks("Flow", 1)[0];
+    assert.equal(flow.q.binding("visible").value, 'root.pickerState === ""',
+        "the tile grid is drawn only where iconPickerState says tiles are drawn");
+
+    // Each line's relevance is the name it hands in, so the component keeps deciding
+    // when a line is drawn. The component declaration carries a type, so only the two
+    // instances match here.
+    const lines = Q.objectBlocks("SetLine", 2);
+    assert.equal(lines[0].q.binding("setName").value, "root.appliedIcon",
+        "the first line is about the set the shell draws");
+    assert.equal(lines[1].q.binding("setName").value, 'root.followTheme ? "" : root.themeIcon',
+        "under Follow theme the theme's set is the applied set, which the line above names; a second line would state it twice");
 });

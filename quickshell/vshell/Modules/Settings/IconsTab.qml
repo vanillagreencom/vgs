@@ -56,8 +56,7 @@ Item {
     }
 
     // What the card may say about one icon set name, `sets` being the list a read
-    // produced. Every SetLine asks this and asks nothing else, so no line on this page
-    // states an identity or an installed status the read does not establish.
+    // produced. Every SetLine asks this and asks nothing else.
     function iconSetClaim(readState, sets, name) {
         if (!name)
             return "absent";  // nothing to state, so the line is not drawn
@@ -67,26 +66,33 @@ Item {
             return "unchecked";  // a named set with no list to check it against
         return sets.some(set => set.name === name) ? "installed" : "missing";
     }
+
+    // The line a claim draws: its sentence, and whether it warns. `named`, `unnamed` and
+    // `notInstalled` arrive translated. Every SetLine's text, warning and visibility read
+    // this answer, so a claim becomes words only here.
+    function setLine(claim, named, unnamed, notInstalled) {
+        if (claim === "absent")
+            return { text: "", warn: false };
+        if (claim === "default")
+            return { text: unnamed, warn: false };
+        if (claim === "missing")
+            return { text: named + " — " + notInstalled, warn: true };
+        return { text: named, warn: false };
+    }
     // END ICON PICKER MODEL
 
-    // One card line about an icon set: `label` carries a %1 for the set's name, and the
-    // line adds what iconSetClaim allows and no more.
+    // One card line about an icon set. `label` carries a %1 for the set's name; every
+    // other decision is the region's.
     component SetLine: StyledText {
         required property string label
         required property string setName
-        readonly property string claim: root.iconSetClaim(root.readState, root.iconSets, setName)
+        readonly property var line: root.setLine(root.iconSetClaim(root.readState, root.iconSets, setName), label.arg(setName), label.arg(I18n.tr("the desktop's own icon set")), I18n.tr("not installed on this system."))
 
         width: parent.width
         wrapMode: Text.WordWrap
-        visible: claim !== "absent"
-        text: {
-            if (claim === "default")
-                return label.arg(I18n.tr("the desktop's own icon set"));
-            if (claim === "missing")
-                return label.arg(setName) + " — " + I18n.tr("not installed on this system.");
-            return label.arg(setName);
-        }
-        color: claim === "missing" ? Theme.warning : Theme.surfaceVariantText
+        visible: line.text !== ""
+        text: line.text
+        color: line.warn ? Theme.warning : Theme.surfaceVariantText
         font.pixelSize: Theme.settingsFontSize
     }
 
@@ -195,10 +201,10 @@ Item {
                 }
 
                 // What the theme would pick, while the user's own choice overrides it.
+                // Under Follow theme the applied line above already names it.
                 SetLine {
                     label: I18n.tr("This theme's icon set: %1")
-                    setName: root.themeIcon
-                    visible: !root.followTheme && claim !== "absent"
+                    setName: root.followTheme ? "" : root.themeIcon
                 }
 
                 // The picker's stand-in: one line saying why there is nothing to pick.
