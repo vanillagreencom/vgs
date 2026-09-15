@@ -30,17 +30,31 @@ assert.equal("onChange" in spec.SPEC.locale, false,
     "the locale key must run no hook of its own: a hook is a second selection policy running after " +
     "the property change that on_CandidatesChanged already answers");
 
-// The other half of one owner: no file outside I18n.qml may drive selection itself. Read in the
-// code view, so a member named only in a comment is not a caller.
-for (const [file, where] of [
-    ["SessionData.qml", path.join(COMMON, "SessionData.qml")],
-    ["LocaleTab.qml", path.join(COMMON, "..", "Modules", "Settings", "LocaleTab.qml")]
-]) {
+// The other half of one owner: no QML file but I18n.qml may drive selection itself. Every QML file
+// under the shell is read, not a list of the callers that once existed, so a third one is caught
+// too. Read in the code view, so a member named only in a comment is not a caller.
+const SHELL = path.join(COMMON, "..");
+const OWNER = path.join(COMMON, "I18n.qml");
+
+function qmlFilesUnder(dir) {
+    return fs.readdirSync(dir, { withFileTypes: true }).flatMap(entry => {
+        const where = path.join(dir, entry.name);
+        if (entry.isDirectory())
+            return qmlFilesUnder(where);
+        return entry.name.endsWith(".qml") && where !== OWNER ? [where] : [];
+    });
+}
+
+const shellQml = qmlFilesUnder(SHELL);
+assert.ok(shellQml.length > 100,
+    `found only ${shellQml.length} QML files under ${SHELL}, so the walk is broken rather than the ` +
+    "shell small: a walk that finds nothing passes every assertion below");
+for (const where of shellQml) {
     const source = fs.readFileSync(where, "utf8");
     for (const member of ["I18n._pickTranslation", "I18n.useLocale"])
         assert.equal(qmlSource.codeIndexOf(source, member), -1,
-            `${file} must reach locale selection by writing SessionData.locale, not by calling ` +
-            `${member}: a second caller is a second policy, which is what this round removed`);
+            `${path.relative(SHELL, where)} must reach locale selection by writing ` +
+            `SessionData.locale, not by calling ${member}: a second caller is a second policy`);
 }
 
 const statusHandlers = i18n.objectBlocks("FolderListModel", 1)[0].q.handlers("onStatusChanged");
