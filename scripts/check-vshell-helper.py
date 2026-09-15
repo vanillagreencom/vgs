@@ -11547,6 +11547,70 @@ def test_theme_overlays_merge_key_by_key():
     with_temp_home(scenario)
 
 
+def test_package_colours_normalize_once_over_the_merged_layers():
+    """A package's `colors.toml` layers merge under the keys their files wrote and
+    the merged map normalizes once. Normalizing per layer answered per layer, and
+    `normalize_color_map` fills an absent `background` from `selection_background`
+    and an absent `foreground` from `selection_foreground`: an overlay that edits
+    only the selection slots omits both keys, because `write_user_layer` drops
+    what equals the built-in file, so its synthesized values overwrote the
+    built-in layer's real background and foreground on every read of the package.
+    """
+    builtin_colors = {"background": "#fafafa", "foreground": "#101010",
+                      "accent": "#8c1f4a", "cursor": "#101010",
+                      "selection_background": "#d0d0d0", "selection_foreground": "#101010"}
+    edited = {**builtin_colors, "selection_background": "#3769f1",
+              "selection_foreground": "#fafafa"}
+
+    def scenario(temp_home: Path):
+        builtin = temp_home / "builtin"
+        package = builtin / "mergefix"
+        package.mkdir(parents=True)
+        (package / "colors.toml").write_text(helper.flat_toml_text(builtin_colors))
+        original_builtin = helper.builtin_themes_dir
+        helper.builtin_themes_dir = lambda: builtin
+        user = helper.user_themes_dir() / "mergefix"
+        try:
+            helper.write_user_layer("mergefix", "colors.toml", edited)
+            stored = helper.parse_colors_toml(user / "colors.toml",
+                                              kind=helper.ColorsRead.PALETTE_LAYER)
+            merged = helper.package_colors_map("mergefix")
+            helper.write_user_layer("mergefix", "colors.toml",
+                                    {**edited, "background": "#202020"})
+            stated = helper.package_colors_map("mergefix")["background"]
+            # (what, actual, expected)
+            rows = [
+                ("a save of edited selection slots stores no background or foreground",
+                 sorted(stored), ["selection_background", "selection_foreground"]),
+                ("the merged map keeps the built-in layer's background and foreground",
+                 (merged["background"], merged["foreground"]), ("#fafafa", "#101010")),
+                ("the merged map takes the overlay's selection slots",
+                 (merged["selection_background"], merged["selection_foreground"]),
+                 ("#3769f1", "#fafafa")),
+                ("the merged map is the palette the save meant",
+                 merged, helper.normalize_color_map(edited)),
+                ("an overlay that states background replaces the built-in value",
+                 stated, "#202020"),
+            ]
+            for what, actual, expected in rows:
+                assert_equal(actual, expected, what)
+
+            # Normalization still runs, once, over the merge: a package whose
+            # layers between them state no background gets one synthesized.
+            (user / "colors.toml").unlink()
+            (package / "colors.toml").write_text(helper.flat_toml_text(
+                {key: value for key, value in builtin_colors.items()
+                 if key not in {"background", "foreground"}}))
+            synthesized = helper.package_colors_map("mergefix")
+            assert_equal((synthesized.get("background"), synthesized.get("foreground")),
+                         ("#d0d0d0", "#101010"),
+                         "a merged map stating no background takes one from the selection slots")
+        finally:
+            helper.builtin_themes_dir = original_builtin
+
+    with_temp_home(scenario)
+
+
 def test_unsaved_applied_theme_keeps_terminal_slots():
     """`apply-colors --name X` without `--save` applies a theme no package carries,
     so its terminal slots survive only in theme-current.json. The next wallpaper
@@ -11798,6 +11862,7 @@ def main():
     test_declared_ui_roles_move_with_a_restyle_and_survive_a_save()
     test_save_keeps_app_overrides()
     test_theme_overlays_merge_key_by_key()
+    test_package_colours_normalize_once_over_the_merged_layers()
     test_unsaved_applied_theme_keeps_terminal_slots()
     test_terminal_app_overrides_show_on_their_editor_row()
     test_restyle_moves_terminal_slots()

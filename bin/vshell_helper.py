@@ -6,6 +6,7 @@ import ast
 import base64
 import colorsys
 import contextlib
+import enum
 import errno
 import fcntl
 import glob
@@ -826,18 +827,41 @@ def recognized_color_count(data: Dict[str, str]) -> int:
     return len([k for k in normalized if k in COLOR_KEYS and k not in {"theme_type", "mode", "variant", "scheme"}])
 
 
-def parse_colors_toml(path: Path, allow_empty: bool = False, normalize: bool = True,
+class ColorsRead(enum.Enum):
+    """What a colours parse is reading, which decides the key names it returns,
+    whether the loose matugen-style fallback runs, and what it counts as a colour
+    before refusing the file.
+
+    `PALETTE` is a whole palette in one file, returned under the palette slots
+    `normalize_color_map` emits. `PALETTE_LAYER` is one layer of a package's
+    palette, returned under the keys the file itself wrote, so its caller merges
+    every layer and normalizes the merged map once: normalizing per layer lets an
+    overlay that omits a key contribute a value synthesized from its neighbours
+    over the layer below that states the key outright. `ROLES` is a
+    `ui-roles.toml`, keyed by role names `normalize_color_map` drops, and
+    hand-written rather than matugen output, so it takes the strict TOML pass
+    alone.
+    """
+
+    PALETTE = enum.auto()
+    PALETTE_LAYER = enum.auto()
+    ROLES = enum.auto()
+
+
+def parse_colors_toml(path: Path, allow_empty: bool = False,
+                      kind: ColorsRead = ColorsRead.PALETTE,
                       discarded: List[str] | None = None) -> Dict[str, str]:
     """Read a colours file. `allow_empty` accepts a file holding no colours, which
     a terminal-colors.toml overlay uses to mean no terminal slots."""
     if not path.exists():
         raise ValueError(f"colors file not found: {path}")
     return parse_colors_toml_text(path.read_text(errors="ignore"), str(path), allow_empty,
-                                  normalize, discarded)
+                                  kind, discarded)
 
 
 def parse_colors_toml_text(raw_text: str, label: str = "colors.toml",
-                           allow_empty: bool = False, normalize: bool = True,
+                           allow_empty: bool = False,
+                           kind: ColorsRead = ColorsRead.PALETTE,
                            discarded: List[str] | None = None) -> Dict[str, str]:
     """The colours a `colors.toml` body holds, for a caller holding the text.
 
@@ -845,11 +869,9 @@ def parse_colors_toml_text(raw_text: str, label: str = "colors.toml",
     map of what it is about to write reads it with the same parser the loader
     will use rather than a second one that could drift from it.
 
-    `normalize` off returns the hex map under the keys the file itself wrote, for
-    a file keyed by role names instead of palette slots: `normalize_color_map`
-    emits only `COLOR_KEYS` and drops every role name there is. One parser
-    either way, so `ui-roles.toml` reads through this TOML pass and this loose
-    matugen-style fallback rather than a second spelling of them.
+    `kind` names what is being read; `ColorsRead` holds what each one returns.
+    One parser for all three, so `ui-roles.toml` and a package's colour layer
+    read through this TOML pass rather than a second spelling of it.
 
     `discarded`, when given, collects the keys an assignment named and this
     produced no value for. A caller that means to honour every key its file
@@ -857,8 +879,8 @@ def parse_colors_toml_text(raw_text: str, label: str = "colors.toml",
     three-digit `#fff`, an eight-digit `#rrggbbaa` or a CSS colour name leaves
     without a trace, so `ui-roles.toml` reported nothing and the derivation
     painted the grey the file exists to remove. It is filled by the strict pass,
-    which is the only pass a `normalize`-off read runs, so a key is named there
-    or honoured there and never both.
+    which is the only pass a `ROLES` read runs, so a key is named there or
+    honoured there and never both.
     """
 
     def discard(key: str) -> None:
@@ -894,9 +916,9 @@ def parse_colors_toml_text(raw_text: str, label: str = "colors.toml",
     # eight-digit `#rrggbbaa` came back through it truncated while the strict
     # pass above had already named the key as unreadable, and one declaration was
     # honoured or refused depending on whether an unrelated key happened to
-    # parse. `ui-roles.toml`, the one file read with `normalize` off, is
-    # hand-written and never matugen output, so it takes the strict pass alone.
-    if not out and normalize:
+    # parse. `ui-roles.toml` is hand-written and never matugen output, so it
+    # takes the strict pass alone.
+    if not out and kind is not ColorsRead.ROLES:
         for raw in raw_text.splitlines():
             m = re.match(r"^\s*([A-Za-z0-9_\-.]+)\s*=\s*['\"]?((?:#)?[0-9A-Fa-f]{6})['\"]?", raw)
             if m:
@@ -907,8 +929,18 @@ def parse_colors_toml_text(raw_text: str, label: str = "colors.toml",
                 out[sm.group(1)] = sm.group(2).lower()
                 continue
 
-    normalized = normalize_color_map(out) if normalize else dict(out)
-    recognized = recognized_color_count(normalized) if normalize else len(normalized)
+    # A layer counts the colours its keys resolve to, not the keys it wrote, so a
+    # layer holding nothing a palette can use is refused with the same diagnostic
+    # whether or not its caller normalizes here.
+    if kind is ColorsRead.PALETTE:
+        normalized = normalize_color_map(out)
+        recognized = recognized_color_count(normalized)
+    elif kind is ColorsRead.PALETTE_LAYER:
+        normalized, recognized = dict(out), recognized_color_count(out)
+    elif kind is ColorsRead.ROLES:
+        normalized, recognized = dict(out), len(out)
+    else:
+        raise ValueError(f"colors-read {kind!r}: no parse defined for this read")
     if recognized == 0 and not (allow_empty and toml_error is None):
         detail = f": {toml_error}" if toml_error else ""
         raise ValueError(f"no recognized colors in {label}{detail}")
@@ -1510,8 +1542,8 @@ def overlay_layer(path: Path, filename: str) -> OverlayLayer:
         return OverlayLayer(slots, merges, [], [])
     if filename == UI_ROLES_FILE:
         discarded: List[str] = []
-        declared = parse_colors_toml_text(text, str(path), allow_empty=True, normalize=False,
-                                          discarded=discarded)
+        declared = parse_colors_toml_text(text, str(path), allow_empty=True,
+                                          kind=ColorsRead.ROLES, discarded=discarded)
         return OverlayLayer({role: declared[role] for role in sorted(DECLARABLE_UI_ROLES) if role in declared},
                             merges, sorted(set(discarded) - {OVERLAY_MERGE_KEY}),
                             sorted(set(declared) - DECLARABLE_UI_ROLES))
@@ -2768,14 +2800,24 @@ def package_colors_map(name: str) -> Dict[str, str]:
     `name` key of a `theme.json` that need not carry one and printed an empty
     name when it did not. A layer that does not read contributes no colours and
     the other layer still does.
+
+    The layers merge under the keys their files wrote and the merged map is
+    normalized once, so the question of what the package's colours are has one
+    owner reading every layer at once. Normalizing per layer answered it per
+    layer, where `normalize_color_map` fills an absent `background` from
+    `selection_background` and an absent `foreground` from `selection_foreground`:
+    `write_user_layer` drops the keys equal to the built-in file's, so a user
+    overlay of a built-in theme routinely omits both, and the overlay's
+    synthesized values then overwrote the built-in layer's real ones on every
+    apply, save, lint and listing.
     """
     colors: Dict[str, str] = {}
     for path in package_layer_paths(name, "colors.toml"):
         try:
-            colors.update(parse_colors_toml(path))
+            colors.update(parse_colors_toml(path, kind=ColorsRead.PALETTE_LAYER))
         except Exception as exc:
             eprint(f"theme package {name}: {exc}")
-    return colors
+    return normalize_color_map(colors)
 
 
 def declared_ui_roles(bp: Dict[str, Any]) -> Dict[str, str]:
