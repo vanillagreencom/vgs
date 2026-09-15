@@ -58,7 +58,10 @@ test -d "$core/usr/lib/vshell/config/vshell/icons"
   | LC_ALL=C sort > "$tmp/icon-sets.have"
 # The reference is the repository tree, so an empty listing would compare equal
 # to an install that shipped nothing.
-grep -qxF 'Yaru-purple/index.theme' "$tmp/icon-sets.want"
+if ! grep -qxF 'Yaru-purple/index.theme' "$tmp/icon-sets.want"; then
+  echo "config/vshell/icons lists no Yaru-purple/index.theme, so the icon set comparison below has no reference" >&2
+  exit 1
+fi
 if ! icon_diff="$(diff "$tmp/icon-sets.want" "$tmp/icon-sets.have")"; then
   echo "packaging/install-system.sh: the installed icon sets differ from config/vshell/icons:" >&2
   printf '%s\n' "$icon_diff" >&2

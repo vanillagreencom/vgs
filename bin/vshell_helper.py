@@ -5518,8 +5518,8 @@ def list_installed_icon_themes() -> List[str]:
     icon Directories), for the Icons settings picker. Excludes the hicolor
     fallback base and cursor-only themes.
 
-    icon_theme_base_dirs() is the one owner of where an icon theme can live, so the
-    picker lists exactly the sets the shell's own icon lookup can resolve."""
+    icon_theme_base_dirs() is the one owner of where an icon theme can live, so every
+    set this lists is one the shell's own icon lookup reaches."""
     ensure_bundled_icon_themes()
     names: set[str] = set()
     for d in icon_theme_base_dirs():
@@ -5545,12 +5545,12 @@ def icon_theme_user_dir() -> Path:
     """The user-writable icon directory. ensure_bundled_icon_themes() links the
     bundled sets into it, and it is one of icon_theme_base_dirs(), so a linked set
     always reaches both the picker and the shell's icon lookup."""
-    return Path(os.environ.get("XDG_DATA_HOME") or home() / ".local" / "share") / "icons"
+    return _xdg_data_home() / "icons"
 
 
 def icon_theme_base_dirs() -> List[Path]:
     """Directories an icon theme can be installed under, in search order."""
-    data_home = icon_theme_user_dir().parent
+    data_home = _xdg_data_home()
     xdg = os.environ.get("XDG_DATA_DIRS", "").strip()
     if xdg:
         data_dirs = [Path(d) for d in xdg.split(":") if d] + [data_home]
@@ -5607,9 +5607,8 @@ def _icon_path_score(relative: str, chain_position: int) -> Tuple[int, int, bool
     return (context_rank, -chain_position, relative.endswith(".svg"), scalable, int(size.group(1)) if size else 0)
 
 
-def build_icon_index(dirs: List[Path], names: Optional[Set[str]] = None) -> Dict[str, str]:
-    """Map every SVG and PNG icon name under `dirs` to its best-scoring file, or only
-    the names in `names` when one is given."""
+def build_icon_index(dirs: List[Path]) -> Dict[str, str]:
+    """Map every SVG and PNG icon name under `dirs` to its best-scoring file."""
     best: Dict[str, Tuple[Tuple[int, int, bool, bool, int], str]] = {}
     for position, theme_dir in enumerate(dirs):
         prefix = len(str(theme_dir))
@@ -5619,8 +5618,6 @@ def build_icon_index(dirs: List[Path], names: Optional[Set[str]] = None) -> Dict
                 if not filename.endswith((".svg", ".png")):
                     continue
                 name = filename[:-4]
-                if names is not None and name not in names:
-                    continue
                 score = _icon_path_score(relative_dir + filename, position)
                 if name not in best or score > best[name][0]:
                     best[name] = (score, os.path.join(current, filename))
@@ -5653,22 +5650,6 @@ def _icon_index_fingerprint(dirs: List[Path]) -> List[List[Any]]:
     return stamps
 
 
-# The icons the Icons settings picker draws as a sample of a set: a folder, a file
-# manager, a terminal and a settings icon. Yaru paints the folder, the file manager and
-# the settings icon in its accent colour, so the sample separates the shipped accents.
-ICON_PREVIEW_SAMPLES = ("folder", "system-file-manager", "utilities-terminal", "preferences-desktop")
-
-
-def icon_theme_samples(theme: str) -> List[str]:
-    """Absolute paths of ICON_PREVIEW_SAMPLES in `theme`, in that order.
-
-    The paths are scored by the same rule the full index uses, so a sample is the file
-    the shell would draw for that name. A name the theme's inherit chain lacks is
-    omitted, which leaves the picker a shorter sample rather than a broken image."""
-    found = build_icon_index(icon_theme_chain(theme, icon_theme_base_dirs()), set(ICON_PREVIEW_SAMPLES))
-    return [found[name] for name in ICON_PREVIEW_SAMPLES if name in found]
-
-
 def icon_index(theme: str) -> Dict[str, str]:
     """The icon name-to-path map for `theme`, rebuilt only when its files changed."""
     dirs = icon_theme_chain(theme, icon_theme_base_dirs())
@@ -5680,6 +5661,38 @@ def icon_index(theme: str) -> Dict[str, str]:
     icons = build_icon_index(dirs)
     write_file(cache, json.dumps({"fingerprint": fingerprint, "icons": icons}, separators=(",", ":")))
     return icons
+
+
+# The icons the Icons settings picker draws as a sample of a set: a folder, a file
+# manager, a terminal and a settings icon. Yaru paints the folder, the file manager and
+# the settings icon in its accent colour, so the sample separates the shipped accents.
+ICON_PREVIEW_SAMPLES = ("folder", "system-file-manager", "utilities-terminal", "preferences-desktop")
+
+
+def icon_theme_samples(theme: str) -> List[str]:
+    """Absolute paths of ICON_PREVIEW_SAMPLES in `theme`, in that order.
+
+    The paths come out of icon_index(), so a sample is the file the shell would draw
+    for that name and a second read of the same set costs a fingerprint check rather
+    than another walk of its inherit chain. A name the chain lacks is omitted, which
+    leaves the picker a shorter sample rather than a broken image."""
+    found = icon_index(theme)
+    return [found[name] for name in ICON_PREVIEW_SAMPLES if name in found]
+
+
+def _icon_theme_samples_or_none(theme: str) -> List[str]:
+    """icon_theme_samples for one set of the picker's list, or no sample at all.
+
+    list_installed_icon_themes skips a theme directory it cannot read, so the list can
+    name a set whose inherit chain reaches an index.theme that is unreadable or a
+    directory that is not listable. One such set costs its own sample, not the whole
+    list: the picker keeps its tile and draws no icons on it."""
+    try:
+        return icon_theme_samples(theme)
+    except OSError as exc:
+        eprint(f"icon-theme-samples-unreadable: {theme}")
+        eprint(f"The picker draws this set without a sample: {exc}")
+        return []
 
 
 def cmd_icons(argv: List[str]) -> int:
@@ -11794,7 +11807,7 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
         if pointer.exists():
             theme_icon = pointer.read_text().strip()
         result = {
-            "sets": [{"name": name, "samples": icon_theme_samples(name)} for name in installed],
+            "sets": [{"name": name, "samples": _icon_theme_samples_or_none(name)} for name in installed],
             "themeIcon": theme_icon,
             "themeIconInstalled": theme_icon in installed,
         }
