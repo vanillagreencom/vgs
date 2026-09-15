@@ -10940,7 +10940,7 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
     p_wp_del.add_argument("--json", action="store_true")
     p_wp_repair = sub.add_parser(
         "wallpaper-repair",
-        help="answer, for each path, the wallpaper this installation holds for it")
+        help="answer with the wallpaper this installation holds for each path that needs repairing")
     p_wp_repair.add_argument("paths", nargs="*")
     p_wp_repair.add_argument("--json", action="store_true")
     p_wp_def = sub.add_parser("wallpaper-default")

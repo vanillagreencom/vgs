@@ -354,11 +354,25 @@ Singleton {
                 try {
                     root._applyWallpaperRepairs(JSON.parse(text || "{}").repaired);
                 } catch (e) {
-                    // A repair that cannot be read leaves the session as it loaded,
-                    // which is what the shell showed before this ran.
+                    // A repair that cannot be read leaves every key naming what it
+                    // loaded, which on the path this exists for is a file that is not
+                    // there, so this line is the only trace the recovery did not happen.
                     root.log.warn("Could not read the wallpaper repair:", e.message);
                 }
             }
+        }
+        // A non-zero exit says nothing through stdout: an empty answer parses as {} and
+        // takes the early return in _applyWallpaperRepairs. Nothing here fails the load;
+        // the session keeps what it loaded either way. Collection can trail the exit, so
+        // the code is logged whether or not a message came with it.
+        stderr: StdioCollector {
+            id: wallpaperRepairStderr
+        }
+        onExited: function (exitCode) {
+            if (exitCode === 0)
+                return;
+            const detail = (wallpaperRepairStderr.text || "").trim().split("\n")[0];
+            root.log.warn("The wallpaper repair exited", exitCode, detail ? "- " + detail : "");
         }
     }
 

@@ -23,6 +23,7 @@ const path = require("node:path");
 
 const { evaluateMarked, regionOf, guardChild } = require("./lib/qml-region.js");
 const { loadLibrary } = require("./lib/qml-library.js");
+const { callInScope } = require("./lib/qml-block.js");
 const qmlSource = require("./lib/qml-source.js");
 
 guardChild();
@@ -150,29 +151,58 @@ test("every marked session key is recorded as a reference and loaded as a path",
 // bin/vshell_helper.py decides what each path repairs to, because deciding means
 // asking the filesystem; scripts/test-wallpaper-refs.py holds that side. Here the
 // helper's answer is a fixture, and what is under test is that the shell asks about
-// every value it holds and writes each answer back to its own key.
+// every value it holds, writes each answer back to its own key, and keeps the other
+// route to the same state off it.
 const GONE = "/home/u/dev/vgs-273-removed/themes/tokyo-night/backgrounds/";
 const HERE = `${ROOTS.repo}/themes/tokyo-night/backgrounds/`;
 const stale = file => GONE + file;
+// The three whole-session keys name files no per-monitor map carries, so a repair that
+// collects from the maps alone leaves them naming the removed worktree. A user who never
+// enabled per-monitor mode holds these three and nothing else.
+const GLOBAL = {
+    wallpaperPath: "4-tran.jpg",
+    wallpaperPathLight: "5-sierra.png",
+    wallpaperPathDark: "6-dunes.jpg"
+};
+const PER_MONITOR = ["1-milad.jpg", "2-waves.png", "3-fakurian.jpg"];
 const helperAnswer = Object.fromEntries(
-    ["1-milad.jpg", "2-waves.png", "3-fakurian.jpg"].map(f => [stale(f), HERE + f]));
+    PER_MONITOR.concat(Object.values(GLOBAL)).map(f => [stale(f), HERE + f]));
 
 function staleSession() {
     return {
         sessionConfigVersion: 3,
-        wallpaperPath: stale("1-milad.jpg"),
-        wallpaperPathLight: stale("2-waves.png"),
-        wallpaperPathDark: stale("1-milad.jpg"),
+        wallpaperPath: stale(GLOBAL.wallpaperPath),
+        wallpaperPathLight: stale(GLOBAL.wallpaperPathLight),
+        wallpaperPathDark: stale(GLOBAL.wallpaperPathDark),
         monitorWallpapers: { "DP-1": stale("1-milad.jpg"), "DP-2": stale("2-waves.png"), "DP-5": stale("3-fakurian.jpg") },
         monitorWallpapersLight: { "DP-1": stale("2-waves.png"), "DP-2": OUTSIDE.path },
         monitorWallpapersDark: { "DP-1": stale("1-milad.jpg"), "DP-2": stale("2-waves.png"), "DP-5": stale("3-fakurian.jpg") }
     };
 }
 
+const REPAIRED = {
+    wallpaperPath: HERE + GLOBAL.wallpaperPath,
+    wallpaperPathLight: HERE + GLOBAL.wallpaperPathLight,
+    wallpaperPathDark: HERE + GLOBAL.wallpaperPathDark,
+    monitorWallpapers: { "DP-1": HERE + "1-milad.jpg", "DP-2": HERE + "2-waves.png", "DP-5": HERE + "3-fakurian.jpg" },
+    monitorWallpapersLight: { "DP-1": HERE + "2-waves.png", "DP-2": OUTSIDE.path },
+    monitorWallpapersDark: { "DP-1": HERE + "1-milad.jpg", "DP-2": HERE + "2-waves.png", "DP-5": HERE + "3-fakurian.jpg" }
+};
+
+test("the fixture keeps the whole-session keys off every per-monitor map", () => {
+    const session = staleSession();
+    const inMaps = new Set(["monitorWallpapers", "monitorWallpapersLight", "monitorWallpapersDark"]
+        .flatMap(key => Object.values(session[key])));
+    for (const key of Object.keys(GLOBAL))
+        assert.ok(!inMaps.has(session[key]),
+            `${key} must name a file no map carries, or collecting from the maps alone satisfies ` +
+            "every row below and the key arm is never tested");
+});
+
 test("a session that pinned a removed checkout asks about every value it holds", () => {
     const asked = Store.refValues(staleSession());
     for (const path of Object.keys(helperAnswer))
-        assert.ok(asked.includes(path), `${path} must be asked about; it is on a monitor that shows nothing`);
+        assert.ok(asked.includes(path), `${path} must be asked about; it is a wallpaper that shows nothing`);
     assert.ok(asked.includes(OUTSIDE.path), "a picture outside VGS is asked about too; the helper declines it");
     assert.equal(asked.length, new Set(asked).size, "each path is asked about once");
 });
@@ -184,17 +214,14 @@ test("each monitor and each mode keeps its own repaired wallpaper", () => {
     const session = staleSession();
     assert.equal(Store.mapRefs(session, value => helperAnswer[value] || value), true,
         "the repair must report that it moved values, or nothing is saved");
-    assert.equal(session.wallpaperPath, HERE + "1-milad.jpg");
-    assert.equal(session.wallpaperPathLight, HERE + "2-waves.png", "the light mode keeps its own image");
-    assert.equal(session.wallpaperPathDark, HERE + "1-milad.jpg", "and the dark mode its own");
-    assert.deepEqual(session.monitorWallpapers, {
-        "DP-1": HERE + "1-milad.jpg", "DP-2": HERE + "2-waves.png", "DP-5": HERE + "3-fakurian.jpg"
-    }, "three monitors, three distinct images, which is the recorded symptom");
-    assert.deepEqual(session.monitorWallpapersLight, { "DP-1": HERE + "2-waves.png", "DP-2": OUTSIDE.path },
+    assert.equal(session.wallpaperPath, REPAIRED.wallpaperPath);
+    assert.equal(session.wallpaperPathLight, REPAIRED.wallpaperPathLight, "the light mode keeps its own image");
+    assert.equal(session.wallpaperPathDark, REPAIRED.wallpaperPathDark, "and the dark mode its own");
+    assert.deepEqual(session.monitorWallpapers, REPAIRED.monitorWallpapers,
+        "three monitors, three distinct images, which is the recorded symptom");
+    assert.deepEqual(session.monitorWallpapersLight, REPAIRED.monitorWallpapersLight,
         "the light per-monitor map is repaired too, and the picture outside VGS is left alone");
-    assert.deepEqual(session.monitorWallpapersDark, {
-        "DP-1": HERE + "1-milad.jpg", "DP-2": HERE + "2-waves.png", "DP-5": HERE + "3-fakurian.jpg"
-    });
+    assert.deepEqual(session.monitorWallpapersDark, REPAIRED.monitorWallpapersDark);
 });
 
 test("a session with nothing to repair reports no move", () => {
@@ -203,17 +230,182 @@ test("a session with nothing to repair reports no move", () => {
         "an answer that moves nothing must not mark the session dirty and rewrite the file");
 });
 
-test("the session asks the helper and writes the answer back per key", () => {
-    const session = qmlSource.stripComments(readQml("Common/SessionData.qml"));
-    assert.ok(session.includes("Store.refValues(root)"), "SessionData must ask about the values it holds");
-    assert.ok(/Store\.mapRefs\(root, [^)]*\)/.test(session), "and write the answers back per key");
-    assert.ok(session.includes('"theme", "wallpaper-repair", "--json"'),
+// Both shell-side routes to the same state, executed from the shipped bodies against one
+// store: SessionData's per-key repair, and MethodTheme's watcher, which re-reads theme.json
+// and syncs the session through setWallpaper. `theme init` rewrites theme.json itself, so
+// the watcher sees the repair and a terminal apply as the same file change; VGSThemeService's
+// startup handler is what tells it which one it saw.
+const sessionQ = qmlSource(readQml("Common/SessionData.qml"), "SessionData.qml");
+const themeQ = qmlSource(readQml("Common/MethodTheme.qml"), "MethodTheme.qml");
+const serviceQ = qmlSource(readQml("Services/VGSThemeService.qml"), "VGSThemeService.qml");
+const SCREENS = [{ name: "DP-1" }, { name: "DP-2" }, { name: "DP-5" }];
+const VSHELL_CLI = "/usr/bin/vshell";
+
+function shell(session, recordedRef) {
+    const seen = { saves: 0, setWallpaper: [], commands: [] };
+
+    const store = Object.assign({
+        perMonitorWallpaper: true,
+        perModeWallpaper: true,
+        isLightMode: false,
+        isGreeterMode: false,
+        _parseError: false,
+        _hasLoaded: true,
+        log: { info() {}, warn() {} }
+    }, session);
+    store.root = store;
+    const scope = {
+        Store,
+        Paths: { vshellCli: VSHELL_CLI },
+        Quickshell: { screens: SCREENS },
+        wallpaperRepairProcess: { command: [], running: false }
+    };
+    const run = (name, params, args) => callInScope(sessionQ.body(name), store, scope, params, args);
+    store.saveSettings = () => {
+        seen.saves += 1;
+    };
+    // Stands in for the shipped per-screen setter, which reaches these same three maps.
+    store.setMonitorWallpaper = (name, image) => {
+        const mode = store.isLightMode ? "monitorWallpapersLight" : "monitorWallpapersDark";
+        store.monitorWallpapers = Object.assign({}, store.monitorWallpapers, { [name]: image });
+        store[mode] = Object.assign({}, store[mode], { [name]: image });
+        store.saveSettings();
+    };
+    store._canWrite = () => run("_canWrite", [], []);
+    store._propagateToAllMonitors = image => run("_propagateToAllMonitors", ["imagePath"], [image]);
+    store.setWallpaper = image => {
+        seen.setWallpaper.push(image);
+        return run("setWallpaper", ["imagePath"], [image]);
+    };
+    store._applyWallpaperRepairs = repaired => run("_applyWallpaperRepairs", ["repaired"], [repaired]);
+    store._repairWallpapers = () => {
+        run("_repairWallpapers", [], []);
+        if (scope.wallpaperRepairProcess.running)
+            seen.commands.push(scope.wallpaperRepairProcess.command);
+    };
+
+    const theme = {
+        log: { warn() {} },
+        methodThemeJson: {},
+        currentTheme: "",
+        colorsFileLoadFailed: false,
+        _themeInitRunning: false,
+        _heldThemeWallpaper: "",
+        recorded: recordedRef
+    };
+    theme.root = theme;
+    const themeScope = {
+        themeFileView: { text: () => JSON.stringify({ name: "tokyo-night", wallpaper: theme.recorded }) },
+        Paths: { resolveRef: toPath },
+        SessionData: store,
+        SettingsData: { wallpaperSource: "theme" }
+    };
+    const themeRun = (name, params, args) => callInScope(themeQ.body(name), theme, themeScope, params, args);
+    theme._syncSessionWallpaper = value => themeRun("_syncSessionWallpaper", ["themeWallpaper"], [value]);
+    theme.themeInitStarted = () => themeRun("themeInitStarted", [], []);
+    theme.themeInitFinished = outcome => themeRun("themeInitFinished", ["outcome"], [outcome]);
+    theme.parseTheme = () => themeRun("parseTheme", [], []);
+
+    const handlers = serviceQ.handlers("Component.onCompleted");
+    assert.equal(handlers.length, 1, "VGSThemeService.qml must define one Component.onCompleted handler");
+    const service = { log: { warn() {} }, Theme: theme, refresh() {}, answer: null };
+    service._themeInitOutcome = (output, exitCode) =>
+        callInScope(serviceQ.body("_themeInitOutcome"), service, {}, ["output", "exitCode"], [output, exitCode]);
+    service._run = (id, args, callback) => {
+        service.answer = callback;
+    };
+    service.start = () => new Function("root", `with (root) {\n${handlers[0]}\n}`)(service);
+
+    return { seen, store, theme, service };
+}
+
+const initAnswer = repaired => JSON.stringify({ applied: false, name: "tokyo-night", repaired });
+
+test("a repair that rewrote theme.json never reaches the session's setter", () => {
+    // Both routes against one store, in the order that loses. `theme init` rewrites
+    // theme.json partway through its own run, so the watcher re-reads and parseTheme
+    // runs before the helper answers. A sync there writes its one image to every
+    // monitor, and the per-key repair then finds nothing to move, because the paths
+    // its answer is keyed by are the ones the sync replaced.
+    const sh = shell(staleSession(), toRef(HERE + "1-milad.jpg"));
+    sh.service.start();
+    sh.theme.parseTheme();
+    assert.deepEqual(sh.seen.setWallpaper, [],
+        "the sync must be held while theme init runs: this file change may be its repair");
+    sh.service.answer(initAnswer(["theme.json", "theme-current.json"]), 0, "");
+    assert.deepEqual(sh.seen.setWallpaper, [],
+        "and dropped on an answer naming theme.json, or the per-key repair has nothing left to move");
+
+    sh.store._applyWallpaperRepairs(helperAnswer);
+    for (const key of Object.keys(REPAIRED))
+        assert.deepEqual(sh.store[key], REPAIRED[key],
+            `${key} must survive startup: three monitors and both modes keep their own image`);
+    assert.equal(sh.seen.saves, 1, "and the repair is written once, so it survives the next start too");
+});
+
+test("a theme apply during startup still reaches every monitor", () => {
+    const sh = shell(staleSession(), toRef(HERE + "1-milad.jpg"));
+    sh.service.start();
+    sh.theme.parseTheme();
+    sh.service.answer(initAnswer([]), 0, "");
+    assert.deepEqual(sh.seen.setWallpaper, [HERE + "1-milad.jpg"],
+        "an init that repaired nothing releases the held sync, so `vshell theme apply` from a " +
+        "terminal changes the background as it always has");
+    assert.deepEqual(sh.store.monitorWallpapers,
+        { "DP-1": HERE + "1-milad.jpg", "DP-2": HERE + "1-milad.jpg", "DP-5": HERE + "1-milad.jpg" },
+        "and under per-monitor mode it reaches every screen, which is what an apply means there");
+});
+
+test("a theme init whose answer cannot be read holds the sync", () => {
+    const sh = shell(staleSession(), toRef(HERE + "1-milad.jpg"));
+    sh.service.start();
+    sh.theme.parseTheme();
+    sh.service.answer("", 1, "vshell: theme init failed");
+    assert.deepEqual(sh.seen.setWallpaper, [],
+        "an answer that does not say whether a repair ran must not release a write that reaches " +
+        "every monitor and that session.json cannot be repaired back from");
+});
+
+test("a theme.json change outside a theme init syncs straight away", () => {
+    const sh = shell(staleSession(), toRef(HERE + "1-milad.jpg"));
+    sh.theme.parseTheme();
+    assert.deepEqual(sh.seen.setWallpaper, [HERE + "1-milad.jpg"],
+        "nothing is held once init has answered, or a later terminal apply would never reach the session");
+});
+
+test("the repair asks the helper about every value it holds, and not for the greeter", () => {
+    const sh = shell(staleSession(), "");
+    sh.store._repairWallpapers();
+    assert.equal(sh.seen.commands.length, 1, "the repair must launch one helper call");
+    assert.deepEqual(sh.seen.commands[0].slice(0, 4), [VSHELL_CLI, "theme", "wallpaper-repair", "--json"],
         "through the helper, which owns the rule because it tests the filesystem");
-    assert.ok(session.includes("_repairWallpapers();"), "and must run on load, or nothing recovers");
-    const repair = session.slice(session.indexOf("function _applyWallpaperRepairs"));
-    assert.ok(!/setWallpaper\(|setMonitorWallpaper\(/.test(repair.slice(0, repair.indexOf("Process {"))),
-        "the repair must not go through a setter: setWallpaper carries one image to every " +
-        "monitor and writes the active mode alone, losing what the repair restored");
+    assert.deepEqual(sh.seen.commands[0].slice(4).sort(), Store.refValues(staleSession()).sort(),
+        "and must hand it every value the store holds");
+
+    const greeter = shell(staleSession(), "");
+    greeter.store.isGreeterMode = true;
+    greeter.store._repairWallpapers();
+    assert.deepEqual(greeter.seen.commands, [],
+        "the greeter has no session to write back, so the repair must not launch a process there");
+});
+
+test("a repair that moved a value is written to disk", () => {
+    const sh = shell(staleSession(), "");
+    sh.store._applyWallpaperRepairs(helperAnswer);
+    assert.equal(sh.seen.saves, 1,
+        "without the save the session keeps the removed checkout's paths, the helper is asked again " +
+        "on every start, and the stale values return once this installation stops holding the package");
+
+    const unmoved = shell(staleSession(), "");
+    unmoved.store._applyWallpaperRepairs({});
+    assert.equal(unmoved.seen.saves, 0, "an empty answer must not rewrite session.json");
+});
+
+test("the session runs the repair when it loads", () => {
+    const source = qmlSource.stripComments(readQml("Common/SessionData.qml"));
+    assert.equal(source.split("_repairWallpapers();").length - 1, 1,
+        "loadSettings must run the repair from exactly one place, or a session that pinned a " +
+        "removed checkout never recovers");
 });
 
 test("the store refuses to map without a mapper", () => {

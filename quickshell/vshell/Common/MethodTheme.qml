@@ -1388,6 +1388,48 @@ Singleton {
     }
 
 
+    // `theme init` rewrites theme.json itself when `repair_theme_state` can recover the
+    // wallpaper it records, and the watcher below sees that rewrite as an ordinary file
+    // change. Telling it from a terminal apply is what these two calls carry: a repair
+    // must not reach `SessionData.setWallpaper`, which writes its one image to every
+    // connected monitor and to the active mode, replacing the per-monitor and per-mode
+    // values `SessionData._repairWallpapers` exists to restore. `VGSThemeService` owns
+    // both calls and runs `theme init` at startup.
+    property bool _themeInitRunning: false
+    property string _heldThemeWallpaper: ""
+
+    function themeInitStarted() {
+        root._themeInitRunning = true;
+        root._heldThemeWallpaper = "";
+    }
+
+    // `clean` releases the held sync: no file was repaired, so the change came from an
+    // apply. `unreadable` releases nothing, because the sync it would run replaces every
+    // monitor's wallpaper and session.json then no longer names the files a repair needs;
+    // holding it costs the session this theme's wallpaper until the next apply.
+    function themeInitFinished(outcome) {
+        root._themeInitRunning = false;
+        const held = root._heldThemeWallpaper;
+        root._heldThemeWallpaper = "";
+        switch (outcome) {
+        case "clean":
+            root._syncSessionWallpaper(held);
+            return;
+        case "repaired":
+        case "unreadable":
+            return;
+        default:
+            root.log.warn("theme init outcome is none of clean, repaired, unreadable:", outcome);
+        }
+    }
+
+    function _syncSessionWallpaper(themeWallpaper) {
+        if (themeWallpaper && typeof SessionData !== "undefined"
+                && SessionData.wallpaperPath !== themeWallpaper
+                && (typeof SettingsData === "undefined" || SettingsData.wallpaperSource !== "folder"))
+            SessionData.setWallpaper(themeWallpaper);
+    }
+
     FileView {
         id: themeFileView
         path: root.themePath
@@ -1408,17 +1450,14 @@ Singleton {
                 // wallpaperSource=folder decouples the wallpaper from theme applies.
                 // The file records a portable reference, so this is where it becomes
                 // the path on this machine; SessionData holds resolved paths alone.
-                // `theme init` rewrites this file when the helper can repair what it
-                // names, and the watcher above re-reads it, which is how a terminal
-                // apply and a repaired file reach the session by the same route.
-                // Per-monitor and per-mode values are not carried here: setWallpaper
-                // writes one image to every monitor and the active mode alone, so
-                // SessionData._repairWallpapers restores those per key instead.
+                // While `theme init` runs, this change may be its repair rather than an
+                // apply, and the two are the same file change: hold the sync until the
+                // answer says which, per the calls above.
                 const themeWallpaper = Paths.resolveRef(root.methodThemeJson.wallpaper || "");
-                if (themeWallpaper && typeof SessionData !== "undefined"
-                        && SessionData.wallpaperPath !== themeWallpaper
-                        && (typeof SettingsData === "undefined" || SettingsData.wallpaperSource !== "folder"))
-                    SessionData.setWallpaper(themeWallpaper);
+                if (root._themeInitRunning)
+                    root._heldThemeWallpaper = themeWallpaper;
+                else
+                    root._syncSessionWallpaper(themeWallpaper);
                 root.colorsFileLoadFailed = false;
             } catch (e) {
                 root.colorsFileLoadFailed = true;
