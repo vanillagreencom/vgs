@@ -24,7 +24,7 @@ const SOURCE = fs.readFileSync(TAB_QML, "utf8");
 const Q = qmlSource(SOURCE, "IconsTab.qml");
 
 const M = evaluateMarked(SOURCE, "ICON PICKER MODEL",
-    ["iconPickerState", "appliedSetName", "iconSetClaim", "setLine", "canPickFixed"], "IconsTab.qml");
+    ["iconPickerState", "appliedSetName", "iconSetClaim", "setLine", "fixedPickTarget", "iconSourceRowShown"], "IconsTab.qml");
 
 const TILE_QML = path.join(__dirname, "..", "quickshell", "vshell", "Modules", "Settings", "Widgets", "IconSetTile.qml");
 const TILE = qmlSource(fs.readFileSync(TILE_QML, "utf8"), "IconSetTile.qml");
@@ -80,6 +80,9 @@ test("the set the shell draws is named only where the tab can establish it", () 
         ["the user's own setting names the set whatever the read did", "failed", false, "", "Papirus", "Papirus"],
         ["the user's own setting names the set before the first read", "pending", false, "", "Papirus", "Papirus"],
         ["under Follow theme the theme names the set", "ok", true, "Yaru-purple", "System Default", "Yaru-purple"],
+        // SettingsData.iconTheme resolves the per-mode pair, so a light session hands in
+        // the light set and the card names what the shell is drawing.
+        ["a per-mode light session names its light set", "ok", false, "", "Yaru-blue", "Yaru-blue"],
         // themes/targets/icons-vgs/config.json skips its target where gsettings is not on
         // PATH, and applying a theme that ships no apps/icons.theme deletes the pointer.
         ["a theme that names no set leaves the desktop's own", "ok", true, "", "System Default", "System Default"],
@@ -219,8 +222,13 @@ test("a card line draws what the region decided and nothing of its own", () => {
     // when a line is drawn. The component declaration carries a type, so only the two
     // instances match here.
     const source = Q.objectBlocks("SettingsChoiceRow", 1)[0];
-    assert.equal(source.q.binding("visible").value, "root.canPickFixed(root.pickerState)",
-        "the Icon source row is drawn only where canPickFixed says a set can be applied");
+    assert.equal(source.q.binding("visible").value, "root.iconSourceRowShown(root.followTheme, root.fixedTarget)",
+        "the Icon source row is drawn only where the region says an option would act");
+    assert.equal(Q.binding("appliedIcon").value,
+        "appliedSetName(readState, followTheme, themeIcon, SettingsData.iconTheme)",
+        "the card names the set the shell is drawing, which SettingsData.iconTheme resolves per mode, not the stored dark name");
+    assert.equal(Q.binding("fixedTarget").value, "fixedPickTarget(pickerState, SettingsData.iconTheme, iconSets)",
+        "the fixed option applies the set the region names, so the row never offers one it cannot apply");
 
     const lines = Q.objectBlocks("SetLine", 2);
     assert.equal(lines[0].q.binding("setName").value, "root.appliedIcon",
@@ -229,16 +237,33 @@ test("a card line draws what the region decided and nothing of its own", () => {
         "under Follow theme the theme's set is the applied set, which the line above names; a second line would state it twice");
 });
 
-test("the Icon source row is offered only where a set can be applied", () => {
-    // [why, picker state, offered]
-    for (const [why, pickerState, offered] of [
-        ["before the first list arrives there is no set to apply", "loading", false],
-        ["a failed read leaves no set to apply", "error", false],
-        ["nothing installed leaves no set to apply", "empty", false],
-        ["the theme owns the choice, and the user can take it", "follow-theme", true],
-        ["the user owns the choice already", "", true],
+test("the fixed option offers only a set it can actually apply", () => {
+    // [why, picker state, applied set, sets, the set the option would apply]
+    for (const [why, pickerState, applied, sets, target] of [
+        ["the set the user already owns needs no list at all", "error", "Papirus", [], "Papirus"],
+        ["and is kept over the list's first set", "", "Papirus", SETS, "Papirus"],
+        ["with the theme in charge the first installed set is the way in", "follow-theme", "System Default", SETS, "Yaru-purple"],
+        ["before the first list arrives there is nothing to apply", "loading", "System Default", [], ""],
+        ["a failed read leaves nothing to apply", "error", "System Default", [], ""],
+        ["nothing installed leaves nothing to apply", "empty", "System Default", [], ""],
+        // A failed refresh after a good one leaves the previous list in place while the
+        // tiles are hidden; picking out of a list the tab no longer trusts is refused.
+        ["a list kept from before a failed read is not one to pick from", "error", "System Default", SETS, ""],
     ])
-        assert.equal(M.canPickFixed(pickerState), offered, why);
+        assert.equal(M.fixedPickTarget(pickerState, applied, sets), target, why);
+});
+
+test("the way back to Follow theme survives a failed read", () => {
+    // [why, follow theme, the set the fixed option would apply, the row is drawn]
+    for (const [why, followTheme, target, shown] of [
+        // useFollowTheme hands the choice to the theme and reads no list, so a user on a
+        // fixed set keeps the way back however the read went.
+        ["a user on a fixed set keeps the way back with nothing to apply", false, "", true],
+        ["and keeps it with a set to apply", false, "Papirus", true],
+        ["with the theme in charge and a set to apply, the row offers the switch", true, "Yaru-purple", true],
+        ["only here would neither option change anything", true, "", false],
+    ])
+        assert.equal(M.iconSourceRowShown(followTheme, target), shown, why);
 });
 
 test("every way of activating a tile raises the same signal", () => {

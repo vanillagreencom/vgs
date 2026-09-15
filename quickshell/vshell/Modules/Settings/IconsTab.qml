@@ -23,7 +23,10 @@ Item {
     readonly property bool followTheme: SettingsData.iconThemeDark === "System Default" && !SettingsData.iconThemePerMode
 
     readonly property string pickerState: iconPickerState(readState, followTheme, iconSets.length)
-    readonly property string appliedIcon: appliedSetName(readState, followTheme, themeIcon, SettingsData.iconThemeDark)
+    // SettingsData.iconTheme is resolveIconTheme(), the one rule for which of the stored
+    // names the shell is drawing, so a per-mode light session names its light set here.
+    readonly property string appliedIcon: appliedSetName(readState, followTheme, themeIcon, SettingsData.iconTheme)
+    readonly property string fixedTarget: fixedPickTarget(pickerState, SettingsData.iconTheme, iconSets)
 
     // BEGIN ICON PICKER MODEL
     // Keep this region free of root., Theme., I18n. and Qt. references: scripts/test-icon-picker.js extracts and executes it.
@@ -81,11 +84,23 @@ Item {
         return { text: copy.named, warn: false };
     }
 
-    // Whether the card can hand the icon set choice to the user. Only the two states
-    // with a list in hand can; in the rest there is no set to apply, so the source row
-    // is not drawn at all rather than offered as a control that silently refuses.
-    function canPickFixed(pickerState) {
-        return pickerState === "" || pickerState === "follow-theme";
+    // The set "Always use these" would apply: the one the user already owns when they own
+    // one, otherwise the first of a list in hand, which only the two states carrying a
+    // list have. Empty when neither is available, so that option has nothing to act on.
+    function fixedPickTarget(pickerState, appliedIcon, sets) {
+        if (appliedIcon && appliedIcon !== "System Default")
+            return appliedIcon;
+        if (pickerState !== "" && pickerState !== "follow-theme")
+            return "";
+        return (sets[0] || {}).name || "";
+    }
+
+    // Whether the Icon source row is drawn. Follow theme needs no list, so it acts
+    // whenever the user is not already on it and stays reachable through a failed read.
+    // Only where Follow theme is already selected and no set can be applied would
+    // neither option change anything, and there the row is not drawn.
+    function iconSourceRowShown(followTheme, fixedTarget) {
+        return !followTheme || fixedTarget !== "";
     }
     // END ICON PICKER MODEL
 
@@ -188,7 +203,7 @@ Item {
                 }
 
                 SettingsChoiceRow {
-                    visible: root.canPickFixed(root.pickerState)
+                    visible: root.iconSourceRowShown(root.followTheme, root.fixedTarget)
                     text: I18n.tr("Icon source")
                     model: [I18n.tr("Follow theme"), I18n.tr("Always use these")]
                     currentIndex: root.followTheme ? 0 : 1
@@ -198,7 +213,7 @@ Item {
                         if (index === 0)
                             root.useFollowTheme();
                         else
-                            root.useFixed(SettingsData.iconThemeDark !== "System Default" ? SettingsData.iconThemeDark : root.iconSets[0].name);
+                            root.useFixed(root.fixedTarget);
                     }
                 }
 
