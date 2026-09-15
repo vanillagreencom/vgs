@@ -181,6 +181,9 @@ ORCH_OVERSEER_LANES = "3"
 # tier ladder: top Claude tier, top Codex tier, then the second tier of each.
 ORCH_OVERSEER_PREFERENCE = "claude:1:high,codex:1:high,claude:2:high,codex:2:high"
 
+# Execute the audit's accepted creations and cancellations without a question.
+PM_CREATE_AUTONOMY = "auto"
+
 # Substrings marking a review row's body as the reviewer's own errored-run
 # attestation — such a row is NOT-EVIDENCE, never a blocker, never carried.
 # Matched at the start of the body only (first line); a review quoting a

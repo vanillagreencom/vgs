@@ -388,6 +388,10 @@ harnesses = [
     "pi",
 ]
 
+[hooks.code-quality-load-check]
+source = "kendex"
+harnesses = ["claude"]
+
 [agent-skills]
 generalist = [
     "decider",
