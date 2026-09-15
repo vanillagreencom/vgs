@@ -26,7 +26,6 @@ Singleton {
 
     readonly property url translationsFolder: Qt.resolvedUrl("../translations/poexports")
 
-    readonly property alias folder: dir.folder
     property var presentLocales: ({
             "en": Qt.locale("en")
         })
@@ -35,6 +34,23 @@ Singleton {
 
     property url _selectedPath: ""
 
+    // True once a Ready transition has read the folder listing.
+    property bool _localesRead: false
+
+    // The locale the last fallback was reported for, cleared when a translation file loads. A
+    // requested locale is never empty, so the initial value differs from every real one and the
+    // first fallback is reported.
+    property string _lastFallbackLocale: ""
+
+    // Selection has one owner, and it follows its own input rather than the folder model, so every
+    // writer of the setting reaches it: settings/SessionStore.js parse() assigns the property on a
+    // disk load and settings/SessionSpec.js set() assigns it on a settings write, neither through a
+    // path of its own.
+    on_CandidatesChanged: {
+        if (_localesRead)
+            _pickTranslation();
+    }
+
     FolderListModel {
         id: dir
         folder: root.translationsFolder
@@ -42,7 +58,13 @@ Singleton {
         showDirs: false
         showDotAndDotDot: false
 
-        onStatusChanged: if (status === FolderListModel.Ready) {
+        // The model re-reaches Ready for the life of the session, and a repeat re-ran selection and
+        // re-reported the fallback every time. The listing is read once; a locale chosen later
+        // re-selects through on_CandidatesChanged instead.
+        onStatusChanged: {
+            if (status !== FolderListModel.Ready || root._localesRead)
+                return;
+            root._localesRead = true;
             root._loadPresentLocales();
             root._pickTranslation();
         }
@@ -56,16 +78,17 @@ Singleton {
             try {
                 root.translations = JSON.parse(text());
                 root.translationsLoaded = true;
+                root._lastFallbackLocale = "";
                 log.info(`I18n: Loaded translations for '${root._resolvedLocale}' (${Object.keys(root.translations).length} contexts)`);
             } catch (e) {
                 log.warn(`I18n: Error parsing '${root._resolvedLocale}':`, e, "- falling back to English");
-                root._fallbackToEnglish();
+                root._fallbackToEnglish(root._resolvedLocale);
             }
         }
 
         onLoadFailed: error => {
             log.warn(`I18n: Failed to load '${root._resolvedLocale}' (${error}), ` + "falling back to English");
-            root._fallbackToEnglish();
+            root._fallbackToEnglish(root._resolvedLocale);
         }
     }
 
@@ -76,9 +99,6 @@ Singleton {
     }
 
     function _loadPresentLocales() {
-        if (Object.keys(presentLocales).length > 1) {
-            return;
-        }
         for (let i = 0; i < dir.count; i++) {
             const name = dir.get(i, "fileName");
             if (name && name.endsWith(".json")) {
@@ -88,33 +108,60 @@ Singleton {
         }
     }
 
+    // English is served from the built-in strings, so it names no file to load.
+    function _pathFor(tag) {
+        return tag.startsWith("en") ? "" : translationsFolder + "/" + tag + ".json";
+    }
+
     function _pickTranslation() {
         for (let i = 0; i < _candidates.length; i++) {
             const cand = _candidates[i];
             if (presentLocales[cand] === undefined)
                 continue;
-            _resolvedLocale = cand;
-            useLocale(cand, cand.startsWith("en") ? "" : translationsFolder + "/" + cand + ".json");
+            useLocale(cand, _pathFor(cand));
             return;
         }
 
-        _resolvedLocale = "en";
-        _fallbackToEnglish();
+        // A locale the user chose is attempted even when the listing does not name it, because the
+        // listing is read once and can be stale, and a miss reports itself through onLoadFailed.
+        // A system locale is not attempted: an unsupported one would report a failed load on every
+        // boot, which is what falling back to English answers instead.
+        const chosen = SessionData.locale;
+        if (chosen) {
+            useLocale(chosen, _pathFor(chosen));
+            return;
+        }
+
+        _fallbackToEnglish(_rawLocale);
     }
 
     function useLocale(localeTag, fileUrl) {
-        _resolvedLocale = localeTag || "en";
+        const tag = localeTag || "en";
+        // Re-entering with the request already in effect would clear the translations for the rest
+        // of the session: the FileView above reloads only when its path changes, and this assigns
+        // the path it already holds. It sets no watchChanges and nothing calls reload().
+        if (tag === _resolvedLocale && String(_selectedPath) === String(fileUrl))
+            return;
+        _resolvedLocale = tag;
         _selectedPath = fileUrl;
         translationsLoaded = false;
         translations = ({});
         log.info(`I18n: Using locale '${localeTag}' from ${fileUrl}`);
     }
 
-    function _fallbackToEnglish() {
+    function _fallbackToEnglish(requested) {
+        _resolvedLocale = "en";
         _selectedPath = "";
         translationsLoaded = false;
-        translations = ({});
-        log.warn("Falling back to built-in English strings");
+        // Assigning translations emits its change signal whatever the value, and BlurService and
+        // SettingsSearchService act on that signal: a Hyprland blur reapply and a settings-search
+        // cache rebuild. Replace the object only when it holds something.
+        if (Object.keys(translations).length > 0)
+            translations = ({});
+        if (_lastFallbackLocale === requested)
+            return;
+        _lastFallbackLocale = requested;
+        log.warn(`Falling back to built-in English strings (requested '${requested}', candidates ${_candidates.join(", ") || "none"}, ${dir.count} file(s) in ${translationsFolder})`);
     }
 
     function tr(term, context) {
