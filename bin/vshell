@@ -424,6 +424,7 @@ Usage:
   vshell theme app-roles <app>|app-colors <app> [--set role=#hex ...|--reset]
   vshell theme wallpapers [name] | --all [--folder <dir>]
   vshell theme wallpaper-add <path>|wallpaper-remove <file>|wallpaper-default <file> [--theme <name>]
+  vshell theme wallpaper-delete <path> [--folder <dir>] [--applied <path> ...]
   vshell theme mode <light|dark|toggle> [--transform]
   vshell theme pick [all|dark|light]
   vshell theme preview [name|--all] [--force]

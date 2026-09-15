@@ -568,17 +568,29 @@ Singleton {
     // theme's set holds a file of its name. Membership is by file name, so a folder image stays marked while the
     // set holds any file of that name, and a copy wallpaper-add renamed is marked as the theme's own entry.
     // `entriesTheme` names whose set `themeEntries` is: a failed read retains the previous theme's list, and
-    // its file names say nothing about the applied theme.
+    // its file names say nothing about the applied theme. An entry the user removed from the applied theme's set
+    // is still listed under that theme and belongs to it no longer.
     function inThemeSet(entry, themeName, themeEntries, entriesTheme) {
         if (!entry || !themeName)
             return false;
         if (entry.source === themeName)
-            return true;
+            return entry.removed !== true;
         if (entriesTheme !== themeName)
             return false;
         return (themeEntries || []).some(own => own.file === entry.file);
     }
+
+    // The caption an All-view entry carries: the set it comes from, `folderLabel` for the wallpaper folder, and
+    // never its file name, so the All view reads like the Theme view.
+    function sourceTag(entry, folderLabel) {
+        return entry.source === "folder" ? folderLabel : String(entry.source || "");
+    }
     // END WALLPAPER MEMBERSHIP DECISION
+
+    // The All-view caption both wallpaper surfaces draw for an entry.
+    function sourceTagFor(entry) {
+        return root.sourceTag(entry, I18n.tr("My folder"));
+    }
 
     // Sweep missing thumbnails in the background after publishing the list.
     // The all-themes scope also permits pruning entries absent from the complete wallpaper set.
@@ -703,10 +715,8 @@ Singleton {
         const report = (success, message) => {
             if (!toast)
                 applyCompleted(success, message);
-            else if (success)
-                ToastService.showInfo(message);
             else
-                ToastService.showError(I18n.tr("VGS wallpaper error"), message);
+                root._toastWallpaperOutcome(success, message);
         };
         _run("vgs-theme-wallpaper-add", ["theme", "wallpaper-add", path, "--json"].concat(theme ? ["--theme", theme] : []), function(output, exitCode, stderr) {
             if (exitCode !== 0) {
@@ -720,18 +730,45 @@ Singleton {
         });
     }
 
+    // Toast a wallpaper action's outcome on the surface that started it; nothing outside Settings hears applyCompleted.
+    function _toastWallpaperOutcome(success, message) {
+        if (success)
+            ToastService.showInfo(message);
+        else
+            ToastService.showError(I18n.tr("VGS wallpaper error"), message);
+    }
+
+    // Take a wallpaper out of the applied theme's set. The file stays on disk and in the All list, unmarked.
     function wallpaperRemove(file) {
         if (!file)
             return;
         _run("vgs-theme-wallpaper-remove", ["theme", "wallpaper-remove", file, "--json"], function(output, exitCode, stderr) {
             if (exitCode !== 0) {
-                applyCompleted(false, stderr || output || ("Wallpaper remove failed: " + file));
+                root._toastWallpaperOutcome(false, stderr || output || ("Wallpaper remove failed: " + file));
+                return;
+            }
+            refreshWallpapers();
+            refreshAllWallpapers();
+            refreshBlueprints();
+            root._toastWallpaperOutcome(true, "Removed " + file + " from " + (currentTheme.name || "theme"));
+        });
+    }
+
+    // Delete a wallpaper file from disk. The helper refuses one any monitor shows, as SessionData reports it.
+    function wallpaperDelete(path) {
+        if (!path)
+            return;
+        const applied = (Quickshell.screens || []).map(screen => SessionData.getMonitorWallpaper(screen.name)).filter(shown => !!shown).reduce((args, shown) => args.concat(["--applied", shown]), []);
+        _run("vgs-theme-wallpaper-delete", ["theme", "wallpaper-delete", path, "--folder", wallpaperFolderPath, "--json"].concat(applied), function(output, exitCode, stderr) {
+            if (exitCode !== 0) {
+                root._toastWallpaperOutcome(false, stderr || output || ("Wallpaper delete failed: " + path));
                 return;
             }
             root.requestThumbnailSweep();
             refreshWallpapers();
+            refreshAllWallpapers();
             refreshBlueprints();
-            applyCompleted(true, "Removed " + file + " from " + (currentTheme.name || "theme"));
+            root._toastWallpaperOutcome(true, "Deleted " + path.substring(path.lastIndexOf("/") + 1));
         });
     }
 

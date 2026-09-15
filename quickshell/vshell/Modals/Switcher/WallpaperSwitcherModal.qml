@@ -87,7 +87,8 @@ FullScreenSwitcher {
         const wallpapers = (all ? (VGSThemeService.allWallpapers || []) : root.wallpaperEntries).filter(entry => !!entry.path).map(entry => ({
                     image: entry.path,
                     thumb: entry.thumb || "",
-                    label: all ? entry.file + " · " + (entry.source === "folder" ? I18n.tr("My folder") : entry.source) : entry.file,
+                    label: all ? VGSThemeService.sourceTagFor(entry) : entry.file,
+                    file: entry.file,
                     key: entry.path,
                     marked: all && VGSThemeService.inThemeSet(entry, root.appliedTheme, root.wallpaperEntries, VGSThemeService.themeWallpapersTheme)
                 }));
@@ -102,12 +103,19 @@ FullScreenSwitcher {
     scopeToggle: root.scopeChoiceExists(root.screenCount) ? scopePill : null
     onScopeFlipRequested: root.applyToAllMonitors = !root.applyToAllMonitors
     sourceToggle: sourcePill
-    itemMenu: root.source === "all" && root.appliedTheme ? addToThemeMenu : null
+    onSourceFlipRequested: root.showSource(root.source === "all" ? "theme" : "all")
+    itemMenu: wallpaperMenu
 
     // The All view's check marks read the theme's set, so every open refreshes it.
     function show() {
         VGSThemeService.refreshWallpapers();
         open();
+    }
+
+    // Show `next`, "theme" or "all", and read its list.
+    function showSource(next) {
+        root.source = next;
+        root.refreshSource();
     }
 
     // Read only what the chosen view shows: the All list, or the catalog the Theme view's card comes from.
@@ -185,44 +193,85 @@ FullScreenSwitcher {
         SwitcherSegmentPill {
             labels: [I18n.tr("Theme"), I18n.tr("All")]
             activeIndex: root.source === "all" ? 1 : 0
-            onPicked: index => {
-                root.source = index === 1 ? "all" : "theme";
-                root.refreshSource();
-            }
+            onPicked: index => root.showSource(index === 1 ? "all" : "theme")
         }
     }
 
-    // Under All, a right-click offers Add to theme; an entry already in the applied theme says so instead.
+    // A right-click offers Remove from theme under Theme, and Add to theme under All, where an entry already in the
+    // applied theme says so instead. Both views offer Delete wallpaper, which names the file and asks once more.
     Component {
-        id: addToThemeMenu
+        id: wallpaperMenu
 
         Rectangle {
             id: menu
 
-            readonly property bool inTheme: (root.menuItem || {}).marked === true
+            readonly property var entry: root.menuItem || ({})
+            // The wallpaper Delete wallpaper asked about. The question holds only while the menu is on that entry.
+            property string confirmKey: ""
+            readonly property bool confirming: menu.confirmKey !== "" && menu.confirmKey === menu.entry.key
+            // [{text, action}]; a row whose action is "" only closes the menu.
+            readonly property var rows: {
+                if (menu.confirming)
+                    return [{text: I18n.tr("Delete %1?").arg(menu.entry.file), action: ""}, {text: I18n.tr("Delete"), action: "delete"}, {text: I18n.tr("Cancel"), action: ""}];
+                const list = [];
+                if (root.appliedTheme && root.source === "all")
+                    list.push(menu.entry.marked === true ? {text: I18n.tr("Already in %1").arg(root.appliedTheme), action: ""} : {text: I18n.tr("Add to theme"), action: "add"});
+                if (root.appliedTheme && root.source !== "all")
+                    list.push({text: I18n.tr("Remove from theme"), action: "remove"});
+                list.push({text: I18n.tr("Delete wallpaper"), action: "confirm"});
+                return list;
+            }
 
-            width: menuLabel.width + Theme.spacingM * 2
-            height: menuLabel.height + Theme.spacingS * 2
+            function act(action) {
+                if (action === "confirm") {
+                    menu.confirmKey = menu.entry.key;
+                    return;
+                }
+                if (action === "add")
+                    VGSThemeService.wallpaperAdd(menu.entry.key, true);
+                else if (action === "remove")
+                    VGSThemeService.wallpaperRemove(menu.entry.file);
+                else if (action === "delete")
+                    VGSThemeService.wallpaperDelete(menu.entry.key);
+                root.menuItem = null;
+            }
+
+            width: menuColumn.width + Theme.spacingS * 2
+            height: menuColumn.height + Theme.spacingS * 2
             radius: Theme.cornerRadius
             color: Theme.surfaceContainer
             border.width: 1
             border.color: Theme.withAlpha(Theme.surfaceText, 0.2)
 
-            StyledText {
-                id: menuLabel
+            Column {
+                id: menuColumn
                 anchors.centerIn: parent
-                text: menu.inTheme ? I18n.tr("Already in %1").arg(root.appliedTheme) : I18n.tr("Add to theme")
-                font.pixelSize: Theme.fontSizeLarge
-                color: Theme.surfaceText
-                opacity: menu.inTheme ? 0.6 : 1
-            }
 
-            MouseArea {
-                anchors.fill: parent
-                onClicked: {
-                    if (!menu.inTheme)
-                        VGSThemeService.wallpaperAdd(root.menuItem.key, true);
-                    root.menuItem = null;
+                Repeater {
+                    model: menu.rows
+
+                    Item {
+                        id: row
+
+                        required property var modelData
+
+                        width: rowLabel.implicitWidth + Theme.spacingM * 2
+                        height: rowLabel.implicitHeight + Theme.spacingS * 2
+
+                        StyledText {
+                            id: rowLabel
+                            anchors.centerIn: parent
+                            text: row.modelData.text
+                            font.pixelSize: Theme.fontSizeLarge
+                            color: row.modelData.action === "delete" ? Theme.error : Theme.surfaceText
+                            opacity: row.modelData.action ? 1 : 0.6
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            onClicked: menu.act(row.modelData.action)
+                        }
+                    }
                 }
             }
         }

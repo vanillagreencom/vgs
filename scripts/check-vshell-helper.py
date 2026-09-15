@@ -5326,6 +5326,118 @@ def test_theme_catalog_wallpaper_add_keeps_the_download_offered():
     with_temp_home(scenario)
 
 
+def _theme_command_json(*argv: str) -> tuple:
+    """A `theme` subcommand's exit status and, on success, its --json output."""
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(io.StringIO()):
+        status = helper.cmd_theme([*argv, "--json"])
+    return status, json.loads(buffer.getvalue()) if status == 0 else None
+
+
+def test_theme_wallpaper_remove_keeps_the_file_and_the_download_installed():
+    """`wallpaper-remove` takes downloaded wallpapers out of a theme's set and deletes nothing.
+
+    The set it leaves is the user's: the imagery still reads installed, so no
+    download card and no apply-time offer returns, a forced download restores
+    neither removed file, `wallpapers --all` lists both as removed, and
+    `wallpaper-add` on one puts it back without copying it.
+    """
+    archive = {f"backgrounds/{n}-demo.jpg": f"demo {n}\n".encode() for n in range(1, 5)}
+
+    def scenario(tmp: Path):
+        builtin = tmp / "builtin"
+        (builtin / "demo").mkdir(parents=True)
+        (builtin / "demo" / "theme.json").write_text('{"name":"demo","mode":"dark","source":"curated"}\n')
+        (builtin / "demo" / "colors.toml").write_text('background = "#101010"\nforeground = "#eeeeee"\n')
+        archives = tmp / "releases"
+        _write_catalog(builtin, archives, "demo", _theme_archive(archive))
+        original_builtin = helper.builtin_themes_dir
+        saved_base = os.environ.get("VGS_THEME_CATALOG_BASE_URL")
+        helper.builtin_themes_dir = lambda: builtin
+        os.environ["VGS_THEME_CATALOG_BASE_URL"] = "file://" + str(archives)
+        try:
+            catalog = helper.load_theme_catalog()
+            base_urls, allow_local = helper.theme_catalog_base_urls(catalog)
+            entry = helper.catalog_theme_entry(catalog, "demo")
+            helper.catalog_download_theme(entry, base_urls, allow_local)
+            wallpapers = helper.user_themes_dir() / "demo" / "backgrounds"
+
+            def theme_set() -> list:
+                return [item["file"] for item in _theme_command_json("wallpapers", "demo")[1]["wallpapers"]]
+
+            assert_equal([_theme_command_json("wallpaper-remove", name, "--theme", "demo")[0]
+                          for name in ("1-demo.jpg", "3-demo.jpg")], [0, 0], "wallpaper-remove exit status")
+            listed = _theme_command_json("wallpapers", "--all", "--folder", str(tmp / "no-folder"))[1]["wallpapers"]
+            for label, actual, expected in (
+                ("removal deletes no file", sorted(p.name for p in wallpapers.iterdir()),
+                 ["1-demo.jpg", "2-demo.jpg", "3-demo.jpg", "4-demo.jpg"]),
+                ("the theme's set lists what the user kept", theme_set(), ["2-demo.jpg", "4-demo.jpg"]),
+                ("wallpapers --all lists the removed files after the set, marked removed",
+                 [(item["file"], item.get("removed", False)) for item in listed if item["source"] == "demo"],
+                 [("2-demo.jpg", False), ("4-demo.jpg", False), ("1-demo.jpg", True), ("3-demo.jpg", True)]),
+                ("the catalog offers no download or update card for the kept set",
+                 (_catalog_entry("demo")["imageryInstalled"], _catalog_entry("demo")["imageryUpdateAvailable"]), (True, False)),
+                ("theme list reports the imagery installed, so an apply offers no download",
+                 _theme_list_entries()["demo"]["installed"], True),
+            ):
+                assert_equal(actual, expected, label)
+            forced = helper.catalog_download_theme(entry, base_urls, allow_local, force=True)
+            assert_equal((forced["status"], theme_set()), ("installed", ["2-demo.jpg", "4-demo.jpg"]),
+                         "a deliberate download restores nothing the user removed")
+            added = _theme_command_json("wallpaper-add", str(wallpapers / "1-demo.jpg"), "--theme", "demo")[0]
+            assert_equal((added, theme_set(), len(list(wallpapers.iterdir()))), (0, ["1-demo.jpg", "2-demo.jpg", "4-demo.jpg"], 4),
+                         "adding a removed file back puts it in the set without a copy")
+        finally:
+            helper.builtin_themes_dir = original_builtin
+            _restore_env("VGS_THEME_CATALOG_BASE_URL", saved_base)
+
+    with_temp_home(scenario)
+
+
+def test_theme_wallpaper_delete_removes_the_file_and_its_set_names():
+    """`wallpaper-delete` deletes one wallpaper inside the wallpaper folder or a user theme's backgrounds.
+
+    It drops the hidden and default names the theme holds for the file, and
+    refuses a file outside those roots and a wallpaper the shell reports on
+    screen, deleting nothing.
+    """
+    def scenario(tmp: Path):
+        package = helper.user_themes_dir() / "mine"
+        wallpapers = package / "backgrounds"
+        wallpapers.mkdir(parents=True)
+        (package / "theme.json").write_text(json.dumps({"name": "mine", "mode": "dark", "source": "curated",
+                                                        "hiddenBackgrounds": ["gone.jpg", "kept.jpg"], "wallpaper": "gone.jpg"}))
+        (package / "colors.toml").write_text('background = "#101010"\nforeground = "#eeeeee"\n')
+        for name in ("gone.jpg", "kept.jpg", "shown.jpg"):
+            (wallpapers / name).write_bytes(b"theme wallpaper\n")
+        folder = tmp / "Pictures"
+        folder.mkdir()
+        (folder / "loose.png").write_bytes(b"folder image\n")
+        outside = tmp / "elsewhere.jpg"
+        outside.write_bytes(b"not a wallpaper root\n")
+        shown = ["--applied", str(wallpapers / "shown.jpg")]
+
+        def delete(path: Path, *extra: str) -> tuple:
+            return _theme_command_json("wallpaper-delete", str(path), "--folder", str(folder), *extra)
+
+        for label, path, extra in (
+            ("a file outside the wallpaper folder and the user theme directories is refused", outside, shown),
+            ("a wallpaper a monitor shows is refused", wallpapers / "shown.jpg", shown),
+        ):
+            assert_equal((delete(path, *extra)[0], path.is_file()), (1, True), label)
+        status, result = delete(wallpapers / "gone.jpg", *shown)
+        meta = json.loads((package / "theme.json").read_text())
+        assert_equal((status, (wallpapers / "gone.jpg").exists(), result["deleted"], result["themes"],
+                      meta.get("hiddenBackgrounds"), "wallpaper" in meta),
+                     (0, False, str(wallpapers.resolve() / "gone.jpg"), ["mine"], ["kept.jpg"], False),
+                     "a theme's wallpaper is deleted with the hidden and default names its theme held for it")
+        status, result = delete(folder / "loose.png", *shown)
+        assert_equal((status, (folder / "loose.png").exists(), result["themes"]), (0, False, []),
+                     "an image in the wallpaper folder is deleted and names no theme")
+
+    with_temp_home(scenario)
+
+
 def test_theme_catalog_update_keeps_the_users_wallpapers():
     """`theme catalog update` replaces only the wallpapers a download placed and the user left alone.
 
@@ -5414,7 +5526,7 @@ def test_theme_catalog_update_keeps_the_users_wallpapers():
             for label, name, content in (
                 ("a pristine wallpaper is replaced", "1-demo.jpg", b"r2 one\n"),
                 ("a wallpaper the user edited is kept", "2-demo.jpg", b"user two\n"),
-                ("a wallpaper removed through wallpaper-remove stays removed", "3-demo.jpg", None),
+                ("a pristine wallpaper removed from the set through wallpaper-remove is still replaced", "3-demo.jpg", b"r2 three\n"),
                 ("a pristine wallpaper the new archive drops is removed", "4-demo.jpg", None),
                 ("an edited wallpaper the new archive drops is kept", "5-demo.jpg", b"user five\n"),
                 ("a wallpaper added through wallpaper-add is never touched", "6-demo.jpg", b"user six\n"),
@@ -5426,11 +5538,13 @@ def test_theme_catalog_update_keeps_the_users_wallpapers():
             assert_equal(helper.catalog_marker("demo")["files"], {
                 "backgrounds/1-demo.jpg": digest(second["backgrounds/1-demo.jpg"]),
                 "backgrounds/2-demo.jpg": digest(first["backgrounds/2-demo.jpg"]),
-                "backgrounds/3-demo.jpg": digest(first["backgrounds/3-demo.jpg"]),
+                "backgrounds/3-demo.jpg": digest(second["backgrounds/3-demo.jpg"]),
                 "backgrounds/5-demo.jpg": digest(first["backgrounds/5-demo.jpg"]),
                 "backgrounds/7-demo.jpg": digest(second["backgrounds/7-demo.jpg"]),
             }, "the marker records replaced and added wallpapers at the new digest and kept ones at the digest "
-               "they were placed with, and never records a removed or user-added file")
+               "they were placed with, and never records a pristine file the archive dropped or a user-added file")
+            assert_equal("3-demo.jpg" in [Path(p).name for p in helper.load_theme_package("demo")["backgrounds"]], False,
+                         "the update restores nothing the user removed from the set")
             assert_equal((result["status"], result["fromRev"], result["toRev"], helper.catalog_marker("demo")["rev"],
                           helper.catalog_updates()),
                          ("updated", 1, 2, 2, []),
@@ -11705,6 +11819,8 @@ def main():
     test_preferred_terminal_is_tried_first()
     test_theme_catalog_offers_a_builtin_theme_with_no_imagery()
     test_theme_catalog_wallpaper_add_keeps_the_download_offered()
+    test_theme_wallpaper_remove_keeps_the_file_and_the_download_installed()
+    test_theme_wallpaper_delete_removes_the_file_and_its_set_names()
     test_theme_catalog_update_keeps_the_users_wallpapers()
     test_theme_catalog_download_verifies_its_archive()
     test_theme_asset_publisher()

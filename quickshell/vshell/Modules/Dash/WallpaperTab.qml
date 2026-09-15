@@ -25,6 +25,9 @@ Item {
     readonly property var imageryCard: source === "theme" ? VGSThemeCatalogService.imageryCardFor(appliedTheme) : null
     // Index of the tile whose "…" actions are open; -1 = none.
     property int actionsIndex: -1
+    // The wallpaper Delete wallpaper asked about. The action bar asks to confirm only while it is open on that entry.
+    property string deletePath: ""
+    readonly property bool confirmingDelete: actionsEntry !== null && deletePath !== "" && deletePath === actionsEntry.path
     // True while navigating with arrow keys; draws the focus ring.
     property bool keyboardNav: false
 
@@ -42,6 +45,8 @@ Item {
             refresh();
         }
     }
+
+    onActionsIndexChanged: deletePath = ""
 
     onSourceChanged: {
         grid.currentIndex = -1;
@@ -289,7 +294,8 @@ Item {
                         }
                     }
 
-                    // A right-click opens the tile's actions, which carry Add to theme under All.
+                    // A right-click opens the tile's actions: Remove from theme under Theme, Add to theme under All,
+                    // and Delete wallpaper under both.
                     MouseArea {
                         anchors.fill: parent
                         cursorShape: Qt.PointingHandCursor
@@ -316,7 +322,7 @@ Item {
                         StyledText {
                             id: sourceLabel
                             anchors.centerIn: parent
-                            text: tile.modelData.source === "folder" ? I18n.tr("My folder") : (tile.modelData.source || "")
+                            text: VGSThemeService.sourceTagFor(tile.modelData)
                             font.pixelSize: Theme.fontSizeSmall
                             color: "#ffffff"
                         }
@@ -439,13 +445,14 @@ Item {
         Item {
             id: actionBar
             width: parent.width
-            height: actionFlow.implicitHeight
+            height: root.confirmingDelete ? deleteConfirm.implicitHeight : actionFlow.implicitHeight
             visible: root.actionsEntry !== null
 
             Flow {
                 id: actionFlow
                 width: parent.width
                 spacing: Theme.spacingS
+                visible: !root.confirmingDelete
 
                 VgsButton {
                     visible: root.source === "theme" && root.actionsEntry !== null && root.actionsEntry.default !== true
@@ -520,13 +527,58 @@ Item {
                     visible: root.source === "theme"
                     height: 28
                     variant: "secondary"
-                    textColor: Theme.error
-                    iconName: "delete"
-                    text: I18n.tr("Remove")
+                    iconName: "remove_circle_outline"
+                    text: I18n.tr("Remove from theme")
                     onClicked: {
                         VGSThemeService.wallpaperRemove(root.actionsEntry.file);
                         root.actionsIndex = -1;
                     }
+                }
+
+                VgsButton {
+                    height: 28
+                    variant: "secondary"
+                    textColor: Theme.error
+                    iconName: "delete"
+                    text: I18n.tr("Delete wallpaper")
+                    onClicked: root.deletePath = root.actionsEntry.path
+                }
+            }
+
+            // Delete wallpaper names the file and asks once more; Cancel returns to the actions.
+            Row {
+                id: deleteConfirm
+                spacing: Theme.spacingS
+                visible: root.confirmingDelete
+
+                StyledText {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Math.min(implicitWidth, actionBar.width - confirmDeleteButton.width - cancelDeleteButton.width - Theme.spacingS * 2)
+                    elide: Text.ElideMiddle
+                    text: I18n.tr("Delete %1?").arg(root.actionsEntry ? root.actionsEntry.file : "")
+                    font.pixelSize: Theme.fontSizeMedium
+                    color: Theme.surfaceText
+                }
+
+                VgsButton {
+                    id: confirmDeleteButton
+                    height: 28
+                    variant: "secondary"
+                    textColor: Theme.error
+                    iconName: "delete"
+                    text: I18n.tr("Delete")
+                    onClicked: {
+                        VGSThemeService.wallpaperDelete(root.actionsEntry.path);
+                        root.actionsIndex = -1;
+                    }
+                }
+
+                VgsButton {
+                    id: cancelDeleteButton
+                    height: 28
+                    variant: "secondary"
+                    text: I18n.tr("Cancel")
+                    onClicked: root.deletePath = ""
                 }
             }
         }

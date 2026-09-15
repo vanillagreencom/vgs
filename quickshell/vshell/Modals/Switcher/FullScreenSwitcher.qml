@@ -13,7 +13,7 @@ VgsModal {
     id: root
 
     // [{image: absolute path, label: caption, key: apply id}]; an entry with `card` and no image draws its label
-    // as the tile, and one with `marked` carries a check badge.
+    // as the tile and opens no entry menu, and one with `marked` carries a check badge.
     property var items: []
     // Type-to-filter (theme switcher); the wallpaper switcher has no filter.
     property bool filterable: false
@@ -27,12 +27,14 @@ VgsModal {
     property bool canApply: true
     // Report a failed refresh while retaining a usable list; the empty-state message is only for an empty list.
     property string staleNotice: ""
-    // Optional scope control above the rail. Its presence also assigns Tab to scope selection instead of paging.
+    // Optional scope control above the rail. Its presence assigns Tab to scope selection instead of paging, and W
+    // too while not filterable.
     property Component scopeToggle: null
     // Scope changes do not latch selection intent; reseeding must still select the entry active in the new scope.
     signal scopeFlipRequested
-    // Optional control below the captions, loaded like scopeToggle but with no key of its own.
+    // Optional control below the captions, loaded like scopeToggle. Its presence assigns S while not filterable.
     property Component sourceToggle: null
+    signal sourceFlipRequested
     // Optional menu a right-click opens on an entry, drawn at menuPosition. It reads menuItem; null closes it.
     property Component itemMenu: null
     property var menuItem: null
@@ -148,6 +150,22 @@ VgsModal {
         return clampIndex(index, entries.length);
     }
 
+    // What a home-row letter does: "back" and "forward" page like Left and Right, "scope" and "source" flip the
+    // pill that is loaded, and "" does nothing. A filterable switcher types every letter into its filter instead.
+    function letterAction(letter, filterable, hasScope, hasSource) {
+        if (filterable)
+            return "";
+        if (letter === "a")
+            return "back";
+        if (letter === "d")
+            return "forward";
+        if (letter === "w")
+            return hasScope ? "scope" : "";
+        if (letter === "s")
+            return hasSource ? "source" : "";
+        return "";
+    }
+
     // Return whole wheel steps and the fractional remainder. Preserve sub-notch movement for the next event.
     function wheelSteps(accumulated, notch) {
         if (!notch || notch <= 0)
@@ -231,6 +249,21 @@ VgsModal {
             return false;
         const code = event.text.charCodeAt(0);
         return code >= 32 && code !== 127;
+    }
+
+    // The home-row letter a key names, or "" for any other key. Ctrl, Alt and Meta chords stay with other shortcuts.
+    function homeRowLetter(event) {
+        if (event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier))
+            return "";
+        if (event.key === Qt.Key_A)
+            return "a";
+        if (event.key === Qt.Key_D)
+            return "d";
+        if (event.key === Qt.Key_W)
+            return "w";
+        if (event.key === Qt.Key_S)
+            return "s";
+        return "";
     }
 
     function seedSelection() {
@@ -321,6 +354,19 @@ VgsModal {
         }
         if (event.key === Qt.Key_End) {
             root.navigate("last", 0);
+            return true;
+        }
+        const letter = root.letterAction(root.homeRowLetter(event), root.filterable, !!root.scopeToggle, !!root.sourceToggle);
+        if (letter === "back" || letter === "forward") {
+            root.step(letter === "back" ? -1 : 1);
+            return true;
+        }
+        if (letter === "scope") {
+            root.scopeFlipRequested();
+            return true;
+        }
+        if (letter === "source") {
+            root.sourceFlipRequested();
             return true;
         }
         if (root.typesFilter(event)) {
@@ -437,7 +483,7 @@ VgsModal {
                 }
                 onActivated: root.applyCurrent()
                 onContextRequested: (index, position) => {
-                    if (!root.itemMenu)
+                    if (!root.itemMenu || root.visibleItems[index].card)
                         return;
                     root.menuItem = root.visibleItems[index];
                     root.menuPosition = switcherContent.mapFromItem(carousel, position.x, position.y);

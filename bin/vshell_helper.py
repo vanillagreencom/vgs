@@ -1703,6 +1703,9 @@ def load_theme_package(name: str) -> Dict[str, Any] | None:
         {Path(rel).name: str(p) for rel, p in files.items() if rel.startswith("apps/")},
         colors, app_overrides, package_layer_palettes(name))
     bp["backgrounds"] = [str(p) for _rel, p in backgrounds]
+    # The files `wallpaper-remove` hid from the set, still on disk: `wallpapers --all` lists them.
+    bp["removedBackgrounds"] = sorted(str(p) for rel, p in files.items()
+                                      if rel.startswith("backgrounds/") and Path(rel).name in hidden)
     bp["packagedPreview"] = str(files[THEME_PREVIEW_FILE]) if THEME_PREVIEW_FILE in files else ""
     bp["adjustments"] = adjustments
     # "Did the user change this package": what the modified badge and the revert
@@ -2439,13 +2442,14 @@ def drop_theme_overlay(package: str) -> None:
         write_user_layer(package, "theme.json", {**read_theme_overlay_meta(package), **bookkeeping})
 
 
-def theme_wallpaper_entries(bp: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Composed, hidden-filtered wallpaper set with per-entry origin and default flag."""
+def theme_wallpaper_entries(bp: Dict[str, Any], removed: bool = False) -> List[Dict[str, Any]]:
+    """Composed, hidden-filtered wallpaper set with per-entry origin and default flag.
+    With `removed`, the files `wallpaper-remove` hid from that set instead."""
     pkg_dir_name = Path(str(bp.get("path"))).name
     builtin_root = builtin_themes_dir() / pkg_dir_name
     default_path = str((bp.get("palette") or {}).get("wallpaper", ""))
     entries: List[Dict[str, Any]] = []
-    for path in bp.get("backgrounds") or []:
+    for path in bp.get("removedBackgrounds" if removed else "backgrounds") or []:
         p = Path(path)
         # Thumbnail lookup must not decode wallpaper images while listing them.
         # An empty lookup lets the rail read the original image.
@@ -2467,7 +2471,8 @@ WALLPAPER_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".
 
 
 def all_wallpaper_entries(folder: str) -> List[Dict[str, Any]]:
-    """The images directly inside `folder`, then every installed theme's wallpaper set.
+    """The images directly inside `folder`, then every installed theme's wallpaper set followed by
+    the files removed from that set, each of those carrying `removed`.
     Each entry's `source` is "folder" or the name of the theme it belongs to. A folder
     that does not exist lists no images; an unreadable one raises."""
     entries: List[Dict[str, Any]] = []
@@ -2479,22 +2484,71 @@ def all_wallpaper_entries(folder: str) -> List[Dict[str, Any]]:
                 entries.append({"file": p.name, "path": str(p), "thumb": str(thumb) if thumb else "",
                                 "thumbKey": _wp_thumbs.thumb_key(p), "source": "folder"})
     for bp in sorted((t for t in list_themes() if t.get("package")), key=lambda t: str(t.get("name") or "")):
-        entries.extend(dict(entry, source=str(bp.get("name") or "")) for entry in theme_wallpaper_entries(bp))
+        source = str(bp.get("name") or "")
+        entries.extend(dict(entry, source=source) for entry in theme_wallpaper_entries(bp))
+        entries.extend(dict(entry, source=source, removed=True) for entry in theme_wallpaper_entries(bp, removed=True))
     return entries
+
+
+def installed_wallpaper_paths() -> List[Path]:
+    """Every installed theme's wallpapers once each, the files removed from a set included since
+    `wallpapers --all` still lists them: the complete set thumbnails are built for and pruned against."""
+    live: List[Path] = []
+    seen: set = set()
+    for pkg in list_themes():
+        for path in (pkg.get("backgrounds") or []) + (pkg.get("removedBackgrounds") or []):
+            if path not in seen:
+                seen.add(path)
+                live.append(Path(path))
+    return live
 
 
 def prune_wallpaper_thumbs_now() -> int:
     """Remove thumbnails no installed wallpaper claims.
     Deletion paths must call this because no missing wallpaper remains to
     trigger a later thumbnail build."""
-    live: List[Path] = []
-    seen: set = set()
-    for pkg in list_themes():
-        for path in pkg.get("backgrounds") or []:
-            if path not in seen:
-                seen.add(path)
-                live.append(Path(path))
-    return _wp_thumbs.prune_orphans(live)
+    return _wp_thumbs.prune_orphans(installed_wallpaper_paths())
+
+
+def delete_wallpaper(path: str, folder: str, applied: List[str]) -> Dict[str, Any]:
+    """Delete one wallpaper file from disk and report what it removed.
+
+    Only an image directly inside the wallpaper `folder` or inside a user theme
+    directory's `backgrounds/` is deleted, so a packaged wallpaper is refused too.
+    `applied` is what the shell reports each monitor shows (D019), and a file it
+    names is refused. A theme's set lists the files in its own `backgrounds/`, so
+    a deleted file leaves that set with it; the set's hidden and default names for
+    it go too unless the package ships a file of that name, which they still name.
+    Raises ValueError for a refusal.
+    """
+    given = Path(path).expanduser()
+    target = given.parent.resolve() / given.name
+    if target.suffix.lower() not in WALLPAPER_IMAGE_SUFFIXES or not target.is_file():
+        raise ValueError(f"Not a wallpaper file: {path}")
+    if target in {Path(p).expanduser().parent.resolve() / Path(p).name for p in applied if p}:
+        raise ValueError(f"{target.name} is on screen; apply another wallpaper before deleting it")
+    in_folder = bool(folder) and target.parent == Path(folder).expanduser().resolve()
+    in_theme = target.parent.name == "backgrounds" and target.parent.parent.parent == user_themes_dir().resolve()
+    if not (in_folder or in_theme):
+        raise ValueError(f"{target} is outside the wallpaper folder and the user theme directories")
+    target.unlink()
+    themes: List[str] = []
+    if in_theme:
+        owner = target.parent.parent.name
+        themes.append(owner)
+        meta = read_theme_overlay_meta(owner)
+        hidden = [h for h in (meta.get("hiddenBackgrounds") or []) if isinstance(h, str)]
+        named = target.name in hidden or str(meta.get("wallpaper") or "") == target.name
+        if named and not (builtin_themes_dir() / owner / "backgrounds" / target.name).is_file():
+            remaining = [h for h in hidden if h != target.name]
+            if remaining:
+                meta["hiddenBackgrounds"] = remaining
+            else:
+                meta.pop("hiddenBackgrounds", None)
+            if str(meta.get("wallpaper") or "") == target.name:
+                meta.pop("wallpaper", None)
+            write_user_layer(owner, "theme.json", meta)
+    return {"success": True, "deleted": str(target), "themes": themes, "thumbsPruned": prune_wallpaper_thumbs_now()}
 
 
 def read_theme_overlay_meta(pkg_dir_name: str) -> Dict[str, Any]:
@@ -10530,6 +10584,7 @@ _THEME_MUTATING_COMMANDS = {
     "unstar",
     "wallpaper-add",
     "wallpaper-default",
+    "wallpaper-delete",
     "wallpaper-remove",
 }
 
@@ -10648,6 +10703,12 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
     p_wp_rm.add_argument("file")
     p_wp_rm.add_argument("--theme", default="", help="theme name (default: current)")
     p_wp_rm.add_argument("--json", action="store_true")
+    p_wp_del = sub.add_parser("wallpaper-delete")
+    p_wp_del.add_argument("path")
+    p_wp_del.add_argument("--folder", default="", help="the wallpaper folder, whose images may be deleted")
+    p_wp_del.add_argument("--applied", action="append", default=[], metavar="PATH",
+                          help="a wallpaper on screen, which is refused; repeat per monitor")
+    p_wp_del.add_argument("--json", action="store_true")
     p_wp_def = sub.add_parser("wallpaper-default")
     p_wp_def.add_argument("file")
     p_wp_def.add_argument("--theme", default="", help="theme name (default: current)")
@@ -10898,13 +10959,7 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
         return 0
     if args.cmd == "wallpaper-thumbs":
         if args.all:
-            paths = []
-            seen = set()
-            for pkg in list_themes():
-                for path in pkg.get("backgrounds") or []:
-                    if path not in seen:
-                        seen.add(path)
-                        paths.append(Path(path))
+            paths = installed_wallpaper_paths()
         else:
             bp = resolve_theme_package(args.name)
             if not bp:
@@ -10951,13 +11006,17 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
             return 1
         pkg_dir_name = Path(str(bp.get("path"))).name
         dest_dir = user_themes_dir() / pkg_dir_name / "backgrounds"
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        dest = dest_dir / src.name
-        counter = 1
-        while dest.exists():
-            dest = dest_dir / f"{src.stem}-{counter}{src.suffix}"
-            counter += 1
-        shutil.copy2(src, dest)
+        if src.parent.resolve() in {dest_dir.resolve(), (builtin_themes_dir() / pkg_dir_name / "backgrounds").resolve()}:
+            # A file the theme already holds, which wallpaper-remove hid: adding it back unhides it and copies nothing.
+            dest = src
+        else:
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            dest = dest_dir / src.name
+            counter = 1
+            while dest.exists():
+                dest = dest_dir / f"{src.stem}-{counter}{src.suffix}"
+                counter += 1
+            shutil.copy2(src, dest)
         meta = read_theme_overlay_meta(pkg_dir_name)
         hidden = [h for h in (meta.get("hiddenBackgrounds") or []) if isinstance(h, str)]
         if dest.name in hidden:
@@ -10973,33 +11032,27 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
             return 1
         fname = Path(args.file).name
         pkg_dir_name = Path(str(bp.get("path"))).name
-        user_file = user_themes_dir() / pkg_dir_name / "backgrounds" / fname
-        builtin_file = builtin_themes_dir() / pkg_dir_name / "backgrounds" / fname
-        result: Dict[str, Any] = {"success": False, "theme": bp.get("name"), "file": fname}
-        meta = read_theme_overlay_meta(pkg_dir_name)
-        meta_dirty = False
-        if user_file.is_file():
-            user_file.unlink()
-            result["removed"] = str(user_file)
-            result["success"] = True
-        if builtin_file.is_file():
-            hidden = [h for h in (meta.get("hiddenBackgrounds") or []) if isinstance(h, str)]
-            if fname not in hidden:
-                hidden.append(fname)
-                meta["hiddenBackgrounds"] = sorted(hidden)
-                meta_dirty = True
-            result["hidden"] = fname
-            result["success"] = True
-        if not result["success"]:
+        # Removal hides the file by name and deletes nothing, so it stays on disk and in `wallpapers --all`;
+        # wallpaper-delete deletes. A catalog download's marker is untouched, so its imagery still reads installed.
+        if not any((root / pkg_dir_name / "backgrounds" / fname).is_file() for root in (user_themes_dir(), builtin_themes_dir())):
             eprint(f"Wallpaper not found in {bp.get('name')}: {fname}")
             return 1
+        meta = read_theme_overlay_meta(pkg_dir_name)
+        hidden = {h for h in (meta.get("hiddenBackgrounds") or []) if isinstance(h, str)}
+        meta["hiddenBackgrounds"] = sorted(hidden | {fname})
         if str(meta.get("wallpaper") or "") == fname:
             meta.pop("wallpaper", None)
-            meta_dirty = True
-        if meta_dirty:
-            write_user_layer(pkg_dir_name, "theme.json", meta)
-        result["thumbsPruned"] = prune_wallpaper_thumbs_now()
+        write_user_layer(pkg_dir_name, "theme.json", meta)
+        result = {"success": True, "theme": bp.get("name"), "file": fname, "hidden": fname}
         print(json.dumps(result, indent=2) if args.json else f"Removed {fname} from {bp.get('name')}")
+        return 0
+    if args.cmd == "wallpaper-delete":
+        try:
+            result = delete_wallpaper(args.path, args.folder, args.applied)
+        except (OSError, ValueError) as exc:
+            eprint(str(exc))
+            return 1
+        print(json.dumps(result, indent=2) if args.json else f"Deleted {result['deleted']}")
         return 0
     if args.cmd == "wallpaper-default":
         bp = resolve_theme_package(args.theme)
