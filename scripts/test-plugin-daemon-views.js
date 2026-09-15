@@ -273,6 +273,15 @@ const ROWS = [
                 "and the catch-up fetches nothing while no widget watches"]]
     },
     {
+        plugin: "fleet", entryPoints: [["runAction", null], ["manualRefresh", null]],
+        widget: "FleetWidget.qml", daemon: "FleetDaemon.qml",
+        widgetTimers: 0, watchGated: ["pollTimer"],
+        gated: [
+            ["running: root.watched",
+                "the status poll runs only while a widget watches, so a shell with the pill on no bar " +
+                "runs no `lane-host-daytona status`"]]
+    },
+    {
         plugin: "sysUpdate",
         entryPoints: [["launch", "closePopout", "if (!root.daemon.launch(mode)) return;"],
             ["manualRefresh", null], ["reviewOrphans", null]],
