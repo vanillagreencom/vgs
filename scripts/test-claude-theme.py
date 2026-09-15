@@ -940,19 +940,17 @@ class InstalledLayout(unittest.TestCase):
     def saved_under_own_name(self, overrides: dict, edits: tuple = (), transform: str = "") -> tuple:
         """akane as a user-created package, optionally overridden, optionally colour-edited
         without `--save`, then saved the way `set-wallpaper --save` saves:
-        `carry_curated_apps` over a rebuild from the applied theme, which is the
-        only shipped call that reaches this exemption.
+        `carry_curated_apps` over a rebuild from the applied theme.
 
         A blueprint straight from `load_theme_package` is a shape production never
-        hands the save. `carry_curated_apps` copies `apps`, `package`, `path`,
-        `builtin` and `userDir` and nothing else, so a fixture that skips it tests
-        an exemption carried on a key the real caller drops, and passes while the
-        file is deleted in production.
+        hands the save, and `carry_curated_apps` copies `apps`, `package`, `path`,
+        `builtin` and `userDir` and nothing else, so a fixture that skips it measures
+        a blueprint no command builds.
 
         `edits` runs `apply_color_edits` with no `--save`, which is what moves the
         applied palette while leaving the package's `colors.toml` and its recorded
         digest untouched. The save then writes the edited palette over the package
-        the exemption asks about.
+        the override question asks about.
 
         `transform` runs `theme mode --transform <mode>` and a save ahead of all
         that, which rewrites the package from a transformed palette and so leaves
@@ -961,11 +959,11 @@ class InstalledLayout(unittest.TestCase):
         itself only when both sides of the comparison are rebuilt the same number
         of times.
 
-        Returns the package's declared source, whether the save left the file on
-        disk, whether the loader takes it back once the override is cleared, and
-        that reload's light shortfalls. Every read happens inside the layout,
-        because the render resolves akane through `builtin_themes_dir` and `home`,
-        which the fixture restores on exit.
+        Returns the package's declared source, whether the file's own bytes are
+        still on disk untouched, whether the loader takes it back once the override
+        is cleared, and that reload's light shortfalls. Every read happens inside
+        the layout, because the render resolves akane through `builtin_themes_dir`
+        and `home`, which the fixture restores on exit.
         """
         with installed_layout():
             # A user-created package no built-in shadows holds the only copy of
@@ -973,6 +971,9 @@ class InstalledLayout(unittest.TestCase):
             dest = helper.user_themes_dir() / "akane"
             shutil.copytree(helper.builtin_themes_dir() / "akane", dest)
             shutil.rmtree(helper.builtin_themes_dir() / "akane")
+            # The bytes a save must not touch: this directory is now the only copy.
+            curated = dest / "apps" / "claude-light.json"
+            original = curated.read_bytes()
             write_applied_state(helper.load_theme_package("akane"))
             if transform:
                 write_applied_state(helper.transformed_mode_blueprint(
@@ -984,11 +985,11 @@ class InstalledLayout(unittest.TestCase):
                 with mock.patch.object(helper, "apply_theme_obj", side_effect=write_applied_state):
                     helper.apply_color_edits(list(edits), "akane")
             self.set_wallpaper_save()
-            on_disk = {path.name for path in (dest / "apps").iterdir()}
+            intact = curated.is_file() and curated.read_bytes() == original
             helper.write_user_layer("akane", "app-colors.toml", {})
             cleared = helper.load_theme_package("akane")
             return (json.loads((dest / "theme.json").read_text()).get("source"),
-                    "claude-light.json" in on_disk, "claude-light.json" in cleared["apps"],
+                    intact, "claude-light.json" in cleared["apps"],
                     self.light(cleared))
 
     def set_wallpaper_save(self) -> None:
@@ -1008,24 +1009,26 @@ class InstalledLayout(unittest.TestCase):
         set, so what the first row measures is the exemption and not a difference
         in what the save was handed.
 
-        The third row is the must-fail control that the prune reaches this file at
-        all, and the one that says the exemption asks about the palette as well as
-        the override. `apply-colors` with no `--save` moves the applied palette
-        while the package's `colors.toml` keeps the colours its recorded digest
-        names, so the override question alone still reads the file as merely
-        overridden. Sparing it there let the save certify colours the file was
-        never picked for, and the reload painted akane's diff bands at 1.05:1 and
-        1.06:1 against the new background.
+        The third row says the vouching question asks about the palette as well as
+        the override. `apply-colors` with no `--save` moves the applied palette while
+        the package's `colors.toml` keeps the colours its recorded digest names, so
+        the override question alone still reads the file as merely overridden.
+        Certifying it there painted akane's diff bands at 1.05:1 and 1.06:1 against
+        the new background.
 
-        The fourth row is the same first row over a package that declares
-        `source: generated`, which `theme mode --transform` plus a save is the
-        shipped way to reach. Role derivation adjusts contrast on that branch and
-        so is not idempotent there: one more trip through it moves the six bright
-        ANSI slots, so comparing the package against a copy of itself rebuilt a
-        different number of times never matched. The exemption was refused and the
-        save deleted the file the first row proves it must keep. The declared
-        source is asserted in every row so this one cannot quietly stop reaching
-        the branch it is named for.
+        The fourth row is `theme mode --transform` and a save, the shipped route to
+        a package declaring `source: generated`. Role derivation adjusts contrast on
+        that branch and so is not idempotent there, which is why the palette
+        comparison rebuilds both sides the same number of times. The declared source
+        is asserted in every row so this one cannot quietly stop reaching the branch
+        it is named for. The transform's own save certifies nothing, having parted
+        from the record, and the save after it finds the file unvouched and holds the
+        record again, so the light render falls back to generated bands that miss a
+        diff rule the curated file closed.
+
+        What becomes of the file on disk and of the record beside it is the rule
+        `materialize_theme_package` states; every row asserts the file's own bytes
+        because this package directory is the only copy.
         """
         self.assertEqual(
             (self.saved_under_own_name({"claude": {"background": "#0b0b0b"}}),
@@ -1035,7 +1038,9 @@ class InstalledLayout(unittest.TestCase):
              self.saved_under_own_name({"claude": {"background": "#0b0b0b"}},
                                        transform="light")),
             (("curated", True, True, []), ("curated", True, True, []),
-             ("generated", False, False, []), ("generated", True, True, [])))
+             ("generated", True, False, []),
+             ("generated", True, False,
+              ["diff bands #bd9d82 and #cf967e: 18.2 degrees and 0.004 lightness apart"])))
 
     def test_a_save_under_another_name_grants_the_override_no_exemption(self):
         """The exemption asks about the package the save is writing over. Under a
@@ -1308,27 +1313,40 @@ class InstalledLayout(unittest.TestCase):
 
     def test_an_interrupted_save_publishes_no_digest_for_files_it_left(self):
         """theme.json carries the digest that certifies the package's contents, so
-        it is written after the cleanup rather than before it. Written first, a
-        save killed between the metadata and the prune left the stale merge-style
-        file on disk already vouched for by the new palette, which is the state
-        the digest exists to prevent. Written last, the interrupted package has
-        no user theme.json at all, so the loader falls back to the built-in
-        record and certifies nothing that this save did not finish.
+        it is written after the files rather than before them. Written first, a save
+        killed before the apps/ writes left the new digest standing over the
+        previous write's merge-style file, which is the state the digest exists to
+        prevent. Written last, the interrupted package keeps the record it had, so
+        it certifies nothing this save did not finish.
+
+        The save lands under another theme's name, which is where the order can be
+        told apart: the destination's own merge-style file holds different bytes and
+        its record names a different palette, so an interruption between the two
+        writes is the state the order exists to prevent. A save under a theme's own
+        name copies that theme's file back over itself and either publishes the same
+        record or holds it back, and so says nothing about the order.
         """
+        def refuse_curated_write(path, *args, **kwargs):
+            if path.parent.name == "apps":
+                raise OSError("interrupted")
+            return original_write(path, *args, **kwargs)
+
+        original_write = helper.write_file
+        other = RestyledPackages.COLORS.replace('background = "#0E1E36"',
+                                                'background = "#241038"')
         with temp_home() as home:
-            root = write_package(home, "probe", RestyledPackages.COLORS,
-                                 apps=RestyledPackages.APPS)
-            before = json.loads((root / "theme.json").read_text())["curatedPalette"]
+            write_package(home, "probe", RestyledPackages.COLORS,
+                          apps=RestyledPackages.APPS)
+            dest = write_package(home, "dest", other, apps={
+                "claude-dark.json": json.dumps({"overrides": {"claude": "#fedcba"}}),
+                "icons.theme": "[Icon Theme]\nName=dest\n"})
+            before = json.loads((dest / "theme.json").read_text())["curatedPalette"]
             blueprint = helper.load_theme_package("probe")
-            edited = dict(helper.parse_colors_toml_text(RestyledPackages.COLORS),
-                          foreground="#101010")
-            moved = dict(blueprint, palette=helper.palette_from_colors_map(
-                edited, name="probe", wallpaper="")["palette"])
-            with mock.patch.object(helper.Path, "unlink",
-                                   side_effect=OSError("interrupted")):
+            self.assertIn("claude-dark.json", blueprint["apps"])
+            with mock.patch.object(helper, "write_file", side_effect=refuse_curated_write):
                 with self.assertRaises(OSError):
-                    helper.save_theme_package(moved, name="probe")
-            after = json.loads((root / "theme.json").read_text())["curatedPalette"]
+                    helper.save_theme_package(blueprint, name="dest")
+            after = json.loads((dest / "theme.json").read_text())["curatedPalette"]
         self.assertEqual(after, before)
 
     def test_a_package_recording_no_palette_drops_its_merge_style_file(self):
