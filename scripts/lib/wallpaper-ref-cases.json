@@ -1,10 +1,12 @@
 {
-  "why": "The one statement of the durable-wallpaper reference rule. bin/vshell_helper.py owns it as portable_ref and resolve_path; quickshell/vshell/Common/Paths.qml mirrors it for session.json, which the shell writes without the helper. scripts/check-vshell-helper.py and scripts/test-wallpaper-refs.js each run their own side against these rows, so the two implementations cannot drift apart without one of them going red.",
+  "why": "The one statement of the durable-wallpaper reference rule. bin/vshell_helper.py owns it as portable_ref, recovered_package_ref and resolve_path; quickshell/vshell/Common/Paths.qml mirrors it for session.json, which the shell writes without the helper. scripts/test-wallpaper-refs.py and scripts/test-wallpaper-refs.js each run their own side against these rows, so the two implementations cannot drift apart without one of them going red.",
   "roots": {
     "repo": "/home/u/dev/.worktrees/vshell/vgs-273",
+    "config": "/home/u/.config/vshell",
     "userThemes": "/home/u/.config/vshell/themes",
     "home": "/home/u"
   },
+  "refWhy": "Recording: portable_ref, and resolved as the round trip back through resolve_path. One containment test, so a path this installation does not own is recorded as it stands.",
   "ref": [
     {
       "why": "a built-in package's background under the running root becomes a rooted reference",
@@ -25,13 +27,19 @@
       "resolved": "/home/u/.config/vshell/themes/catppuccin/backgrounds/2-waves.png"
     },
     {
-      "why": "a package background recorded by a checkout that is gone is re-rooted on this installation",
+      "why": "a path another installation wrote is recorded as it stands; repairing it is the read side's job",
       "path": "/home/u/dev/vshell/themes/tokyo-night-moon/backgrounds/3-fakurian.jpg",
-      "ref": "${VSHELL_ROOT}/themes/tokyo-night-moon/backgrounds/3-fakurian.jpg",
-      "resolved": "/home/u/dev/.worktrees/vshell/vgs-273/themes/tokyo-night-moon/backgrounds/3-fakurian.jpg"
+      "ref": "/home/u/dev/vshell/themes/tokyo-night-moon/backgrounds/3-fakurian.jpg",
+      "resolved": "/home/u/dev/vshell/themes/tokyo-night-moon/backgrounds/3-fakurian.jpg"
     },
     {
-      "why": "a picture the user chose outside VGS names no package and is left alone",
+      "why": "a directory outside VGS shaped like a package is recorded as it stands, so a picked wallpaper that loads keeps loading",
+      "path": "/mnt/nas/wallpapers/themes/space/backgrounds/nebula.png",
+      "ref": "/mnt/nas/wallpapers/themes/space/backgrounds/nebula.png",
+      "resolved": "/mnt/nas/wallpapers/themes/space/backgrounds/nebula.png"
+    },
+    {
+      "why": "a picture the user chose outside VGS is left alone",
       "path": "/home/u/Pictures/Wallpapers/anime-girl.png",
       "ref": "/home/u/Pictures/Wallpapers/anime-girl.png",
       "resolved": "/home/u/Pictures/Wallpapers/anime-girl.png"
@@ -49,7 +57,7 @@
       "resolved": "#1e1e2e"
     },
     {
-      "why": "a reference already in reference form is recorded unchanged",
+      "why": "a reference already in reference form is recorded unchanged and still resolves",
       "path": "${VSHELL_ROOT}/themes/tokyo-night/backgrounds/1-milad.jpg",
       "ref": "${VSHELL_ROOT}/themes/tokyo-night/backgrounds/1-milad.jpg",
       "resolved": "/home/u/dev/.worktrees/vshell/vgs-273/themes/tokyo-night/backgrounds/1-milad.jpg"
@@ -61,6 +69,7 @@
       "resolved": ""
     }
   ],
+  "resolveWhy": "The resolver alone: resolve_path, on every reference form durable state carries.",
   "resolve": [
     {
       "why": "a rooted reference resolves against the root the shell is running from",
@@ -81,6 +90,39 @@
       "why": "no reference resolves to no path",
       "ref": "",
       "path": ""
+    }
+  ],
+  "recoverWhy": "Reading: resolved_wallpaper, which repairs a package background another installation recorded before resolving. A path under either of this installation's roots is never repaired.",
+  "recover": [
+    {
+      "why": "a package background recorded by a checkout that is gone names this installation's copy",
+      "path": "/home/u/dev/vshell/themes/tokyo-night-moon/backgrounds/3-fakurian.jpg",
+      "recovered": "/home/u/dev/.worktrees/vshell/vgs-273/themes/tokyo-night-moon/backgrounds/3-fakurian.jpg"
+    },
+    {
+      "why": "a user package is this installation's own and is never repaired",
+      "path": "/home/u/.config/vshell/themes/catppuccin/backgrounds/2-waves.png",
+      "recovered": "/home/u/.config/vshell/themes/catppuccin/backgrounds/2-waves.png"
+    },
+    {
+      "why": "a background already under the running root is never repaired",
+      "path": "/home/u/dev/.worktrees/vshell/vgs-273/themes/tokyo-night/backgrounds/1-milad.jpg",
+      "recovered": "/home/u/dev/.worktrees/vshell/vgs-273/themes/tokyo-night/backgrounds/1-milad.jpg"
+    },
+    {
+      "why": "a rooted reference needs no repair and resolves",
+      "path": "${VSHELL_ROOT}/themes/tokyo-night/backgrounds/1-milad.jpg",
+      "recovered": "/home/u/dev/.worktrees/vshell/vgs-273/themes/tokyo-night/backgrounds/1-milad.jpg"
+    },
+    {
+      "why": "a picture outside VGS naming no package is left alone",
+      "path": "/home/u/Pictures/Wallpapers/anime-girl.png",
+      "recovered": "/home/u/Pictures/Wallpapers/anime-girl.png"
+    },
+    {
+      "why": "no wallpaper reads back as nothing",
+      "path": "",
+      "recovered": ""
     }
   ]
 }

@@ -3,13 +3,17 @@
 // The shell's half of the durable wallpaper reference.
 //
 // session.json is the one durable wallpaper file the shell writes without the helper,
-// so Common/Paths.qml mirrors `portable_ref` and `resolve_path` from bin/vshell_helper.py
-// and Common/settings/SessionStore.js applies the mirror to every key SessionSpec.js
-// marks. Without it a theme applied from a checkout pins that directory into the
-// session, and removing it leaves every monitor with a wallpaper that will not load.
+// so Common/Paths.qml mirrors `portable_ref`, `recovered_package_ref` and `resolve_path`
+// from bin/vshell_helper.py, and Common/settings/SessionStore.js applies the mirror to
+// every key SessionSpec.js marks. Without it a theme applied from a checkout pins that
+// directory into the session, and removing it leaves every monitor with a wallpaper
+// that will not load.
 //
 // The rows come from lib/wallpaper-ref-cases.json, which scripts/test-wallpaper-refs.py
 // also runs against the helper: one statement of the rule, two runtimes.
+//
+// The whole composition lives in the extracted region, roots included, so what runs here
+// is what the shell runs rather than a local rebuild of it.
 
 "use strict";
 
@@ -26,26 +30,25 @@ guardChild();
 qmlSource.selfTest();
 
 const repoRoot = path.join(__dirname, "..");
-const PATHS_QML = path.join(repoRoot, "quickshell", "vshell", "Common", "Paths.qml");
-const pathsSource = fs.readFileSync(PATHS_QML, "utf8");
+const readQml = rel => fs.readFileSync(path.join(repoRoot, "quickshell", "vshell", rel), "utf8");
+const pathsSource = readQml("Common/Paths.qml");
 const CASES = JSON.parse(fs.readFileSync(path.join(__dirname, "lib", "wallpaper-ref-cases.json"), "utf8"));
 const ROOTS = CASES.roots;
 const TOKEN = "${VSHELL_ROOT}";
 
 const MARKER = "WALLPAPER REFERENCE DECISION";
-const refs = evaluateMarked(pathsSource, MARKER, ["wallpaperRefFrom", "resolveRefFrom"], "Paths.qml");
+const refs = evaluateMarked(pathsSource, MARKER, [
+    "refRootsFrom", "wallpaperRefIn", "recoveredPackageRefIn", "expandTildeIn", "resolveRefIn", "resolveWallpaperIn"
+], "Paths.qml");
 
 const Store = loadLibrary("Common/settings/SessionStore.js", ["parse", "toJson"]);
 
-const toRef = path => refs.wallpaperRefFrom(path, ROOTS.repo, ROOTS.userThemes, TOKEN);
-// Paths.resolveRef composes the region with expandTilde, which owns the home form.
-const toPath = ref => {
-    const rooted = refs.resolveRefFrom(ref, ROOTS.repo, TOKEN);
-    return rooted.startsWith("~") ? ROOTS.home + rooted.substring(1) : rooted;
-};
-// Paths.resolveWallpaper: normalise, then resolve. This is what SessionData passes
-// to Store.parse, so a record written by an installation that is gone recovers.
-const loadPath = value => toPath(toRef(value));
+// Built by the shipped function from the same four values Paths.refRoots binds, so a
+// mistake in how a root is derived is inside the tested region.
+const roots = refs.refRootsFrom(ROOTS.repo, ROOTS.config, ROOTS.home, TOKEN);
+const toRef = value => refs.wallpaperRefIn(value, roots);
+const toPath = value => refs.resolveRefIn(value, roots);
+const loadPath = value => refs.resolveWallpaperIn(value, roots);
 
 test("the marked decision region stays plain JavaScript", () => {
     const region = qmlSource.stripComments(regionOf(pathsSource, MARKER, "Paths.qml"));
@@ -56,13 +59,37 @@ test("the marked decision region stays plain JavaScript", () => {
     }
 });
 
-test("the token the region resolves is the one Paths declares", () => {
-    assert.ok(qmlSource.stripComments(pathsSource).includes(`readonly property string rootToken: "${TOKEN}"`),
-        `Paths.qml must declare rootToken as ${TOKEN}, the token bin/vshell_helper.py writes and reads; ` +
-        "a different spelling leaves every rooted reference unresolvable");
+test("the shipped wrappers bind the region to what the shell knows about itself", () => {
+    // All that sits outside the region is which four values are handed in. Everything
+    // the rule does with them is executed by the rows below.
+    const source = qmlSource.stripComments(pathsSource);
+    for (const [line, why] of [
+        ['readonly property string rootToken: "${VSHELL_ROOT}"',
+            "the token bin/vshell_helper.py writes and reads"],
+        ["readonly property var refRoots: refRootsFrom(repoRoot, strip(config), strip(home), rootToken)",
+            "the four values the rule is stated against"],
+        ["return wallpaperRefIn(path, root.refRoots);", "recording"],
+        ["return resolveWallpaperIn(value, root.refRoots);", "reading"],
+        ["return expandTildeIn(path, strip(root.home));", "the one owner of the tilde form"]
+    ]) {
+        assert.ok(source.includes(line), `Paths.qml must carry, for ${why}:\n  ${line}`);
+    }
 });
 
-test("a wallpaper path is recorded and read back as the case table states", () => {
+test("the roots are derived from what the shell knows about itself", () => {
+    // The table states the config directory and the user package directory
+    // separately; the shipped function must get the second out of the first, since
+    // a roots object that names the wrong directory sends a user's own package
+    // background down the repair arm and no row above would notice.
+    assert.equal(roots.repo, ROOTS.repo, "the running root is passed through");
+    assert.equal(roots.userThemes, ROOTS.userThemes,
+        `the user's theme packages live under ${ROOTS.config}, so refRootsFrom must derive ` +
+        `${ROOTS.userThemes} from it`);
+    assert.equal(roots.home, ROOTS.home, "the home is passed through");
+    assert.equal(roots.token, TOKEN, "the token is passed through");
+});
+
+test("recording keeps what this installation does not own", () => {
     for (const row of CASES.ref) {
         assert.equal(toRef(row.path), row.ref, `${row.path}: ${row.why}`);
         assert.equal(toPath(toRef(row.path)), row.resolved, `${row.path}: ${row.why} (read back)`);
@@ -74,70 +101,111 @@ test("every reference form resolves to the path on this machine", () => {
         assert.equal(toPath(row.ref), row.path, `${row.ref}: ${row.why}`);
 });
 
-test("every session load and save carries the mapping", () => {
-    // The whole mechanism is off if one call site forgets its argument, and the
-    // store cannot tell: the counts come from the file, not from a list here.
-    const session = qmlSource.stripComments(
-        fs.readFileSync(path.join(repoRoot, "quickshell", "vshell", "Common", "SessionData.qml"), "utf8"));
-    for (const [call, mapper] of [["Store.parse(", "Paths.resolveWallpaper"], ["Store.toJson(", "Paths.wallpaperRef"]]) {
-        const sites = session.split(call).length - 1;
-        assert.ok(sites > 0, `SessionData.qml must call ${call}`);
-        assert.equal(session.split(`${call}root, obj, ${mapper})`).length - 1
-            + session.split(`${call}root, ${mapper})`).length - 1, sites,
-            `every ${call}) in SessionData.qml must pass ${mapper}; a call that omits it reads or ` +
-            "writes session.json with the reference rule switched off for that path");
-    }
+test("reading repairs only a package neither root holds", () => {
+    for (const row of CASES.recover)
+        assert.equal(loadPath(row.path), row.recovered, `${row.path}: ${row.why}`);
 });
 
-test("a theme.json apply from a terminal reaches the session as a path", () => {
-    // MethodTheme is the shell's only reader of the helper's theme.json, which
-    // records a reference; SessionData holds resolved paths alone.
-    const theme = qmlSource.stripComments(
-        fs.readFileSync(path.join(repoRoot, "quickshell", "vshell", "Common", "MethodTheme.qml"), "utf8"));
-    assert.ok(/Paths\.resolveWallpaper\(root\.methodThemeJson\.wallpaper[^)]*\)/.test(theme),
-        "MethodTheme.qml must resolve theme.json's wallpaper reference before handing it to " +
-        "SessionData, or `vshell theme apply` from a terminal stores an unresolvable token");
-    assert.ok(!/setWallpaper\(root\.methodThemeJson\.wallpaper\)/.test(theme),
-        "the raw reference must not reach SessionData.setWallpaper");
+// One row per direction, chosen so the mapping changes the value: a package background
+// under the running root, whose reference differs from its path.
+const PACKAGE = CASES.ref[0];
+// A picture outside VGS, which both directions must leave alone.
+const OUTSIDE = CASES.ref.find(row => row.path.startsWith(`${ROOTS.home}/Pictures/`));
+// Recorded by an installation that is gone: the reported failure.
+const STALE = CASES.recover[0];
+
+test("the fixtures this suite maps with actually move", () => {
+    assert.notEqual(PACKAGE.ref, PACKAGE.path,
+        "the package row must change under the mapping, or every assertion using it holds " +
+        "whether the mapping ran or not");
+    assert.equal(OUTSIDE.ref, OUTSIDE.path, "the outside row must be one the mapping leaves alone");
+    assert.notEqual(STALE.recovered, STALE.path, "the stale row must be one reading repairs");
 });
 
-test("a session round trip records references and loads paths", () => {
-    const pkg = CASES.ref[0];
-    const outside = CASES.ref.find(row => row.path.startsWith("/home") && row.ref === row.path);
+test("every marked session key is recorded as a reference and loaded as a path", () => {
     const store = {
         sessionConfigVersion: 3,
-        wallpaperPath: pkg.path,
-        wallpaperPathLight: outside.path,
-        monitorWallpapers: { "DP-1": pkg.path, "DP-2": outside.path },
+        wallpaperPath: PACKAGE.path,
+        wallpaperPathLight: PACKAGE.path,
+        wallpaperPathDark: PACKAGE.path,
+        monitorWallpapers: { "DP-1": PACKAGE.path, "DP-2": OUTSIDE.path },
+        monitorWallpapersLight: { "DP-1": PACKAGE.path },
+        monitorWallpapersDark: { "DP-1": PACKAGE.path, "DP-2": OUTSIDE.path },
         wallpaperTransition: "fade"
     };
     const written = Store.toJson(store, toRef);
-    assert.equal(written.wallpaperPath, pkg.ref, "the shown wallpaper is written as a reference");
-    assert.equal(written.wallpaperPathLight, outside.ref, "a picture outside VGS is written unchanged");
-    assert.deepEqual(written.monitorWallpapers, { "DP-1": pkg.ref, "DP-2": outside.ref },
-        "each monitor's entry is written as a reference of its own");
+    for (const key of ["wallpaperPath", "wallpaperPathLight", "wallpaperPathDark"])
+        assert.equal(written[key], PACKAGE.ref, `${key} must be written as a reference`);
+    for (const key of ["monitorWallpapers", "monitorWallpapersDark"])
+        assert.deepEqual(written[key], { "DP-1": PACKAGE.ref, "DP-2": OUTSIDE.path },
+            `${key} must map each monitor's entry on its own, and leave a picture outside VGS alone`);
+    assert.deepEqual(written.monitorWallpapersLight, { "DP-1": PACKAGE.ref },
+        "monitorWallpapersLight must map its entries too");
     assert.equal(written.wallpaperTransition, "fade",
         "a key carrying neither flag is written as it stands, so the mapping reaches paths alone");
 
     const loaded = { sessionConfigVersion: 3 };
     Store.parse(loaded, written, loadPath);
-    assert.equal(loaded.wallpaperPath, pkg.resolved, "the shell holds the path on this machine");
-    assert.deepEqual(loaded.monitorWallpapers, { "DP-1": pkg.resolved, "DP-2": outside.resolved },
-        "every monitor's entry is resolved, which is what a restart after a removed checkout needs");
+    for (const key of ["wallpaperPath", "wallpaperPathLight", "wallpaperPathDark"])
+        assert.equal(loaded[key], PACKAGE.resolved, `${key} must be held as the path on this machine`);
+    for (const key of ["monitorWallpapers", "monitorWallpapersDark"])
+        assert.deepEqual(loaded[key], { "DP-1": PACKAGE.resolved, "DP-2": OUTSIDE.path },
+            `${key} must be resolved entry by entry`);
+    assert.deepEqual(loaded.monitorWallpapersLight, { "DP-1": PACKAGE.resolved },
+        "monitorWallpapersLight must be resolved too");
 });
 
 test("a session that pinned a removed checkout loads the wallpaper this installation has", () => {
-    // The reported failure: session.json naming a worktree that no longer exists.
-    const stale = CASES.ref.find(row => row.ref !== row.path && row.resolved !== row.path);
     const loaded = { sessionConfigVersion: 3 };
-    Store.parse(loaded, { monitorWallpapers: { "DP-1": stale.path } }, loadPath);
-    assert.equal(loaded.monitorWallpapers["DP-1"], stale.resolved,
-        `${stale.path} was recorded by a checkout that is gone; the monitor must show the same ` +
-        "package background out of this installation instead of failing to load");
+    Store.parse(loaded, {
+        wallpaperPath: STALE.path,
+        wallpaperPathLight: STALE.path,
+        wallpaperPathDark: STALE.path,
+        monitorWallpapers: { "DP-1": STALE.path },
+        monitorWallpapersLight: { "DP-1": STALE.path },
+        monitorWallpapersDark: { "DP-1": STALE.path }
+    }, loadPath);
+    for (const key of ["wallpaperPath", "wallpaperPathLight", "wallpaperPathDark"])
+        assert.equal(loaded[key], STALE.recovered,
+            `${STALE.path} was recorded by a checkout that is gone; ${key} must name the same ` +
+            "package background out of this installation instead of failing to load");
+    for (const key of ["monitorWallpapers", "monitorWallpapersLight", "monitorWallpapersDark"])
+        assert.deepEqual(loaded[key], { "DP-1": STALE.recovered },
+            `${key} must repair each monitor's entry, which is the reported failure`);
 });
 
-test("the store leaves every value alone without a mapping", () => {
-    const written = Store.toJson({ sessionConfigVersion: 3, wallpaperPath: CASES.ref[0].path });
-    assert.equal(written.wallpaperPath, CASES.ref[0].path,
-        "the mapping is the caller's; a caller that passes none gets the raw store");
+test("the store refuses to map without a mapper", () => {
+    // Fails loudly rather than persisting absolute paths: that is what makes the
+    // wrapper pair in SessionData the only way to reach the store.
+    assert.throws(() => Store.toJson({ sessionConfigVersion: 3, wallpaperPath: PACKAGE.path }),
+        TypeError, "a caller that omits the mapper must throw, not write the raw store");
+});
+
+test("one wrapper pair is the session's only way into the store", () => {
+    const session = qmlSource.stripComments(readQml("Common/SessionData.qml"));
+    for (const [call, body] of [
+        ["Store.parse(", "Store.parse(root, obj, Paths.resolveWallpaper);"],
+        ["Store.toJson(", "Store.toJson(root, Paths.wallpaperRef);"]
+    ]) {
+        assert.equal(session.split(call).length - 1, 1,
+            `SessionData.qml must reach ${call}) from exactly one place, so the mapping has one ` +
+            "site to get right");
+        assert.ok(session.includes(body), `that one place must be:\n  ${body}`);
+    }
+    for (const wrapper of ["_parseSession(obj);", "_sessionJson()"])
+        assert.ok(session.includes(wrapper), `SessionData.qml must call ${wrapper}`);
+});
+
+test("a theme.json apply from a terminal reaches the session as a path", () => {
+    // MethodTheme is the shell's only reader of the helper's theme.json, which records
+    // a reference; SessionData holds resolved paths alone.
+    const theme = qmlSource.stripComments(readQml("Common/MethodTheme.qml"));
+    assert.ok(theme.includes('const themeWallpaper = Paths.resolveWallpaper(root.methodThemeJson.wallpaper || "");'),
+        "MethodTheme.qml must resolve theme.json's wallpaper reference");
+    assert.ok(theme.includes("SessionData.setWallpaper(themeWallpaper);"),
+        "the resolved value, not the raw reference, is what must reach SessionData.setWallpaper, " +
+        "or `vshell theme apply` from a terminal stores a token the wallpaper loader cannot open");
+    assert.equal(theme.split("SessionData.setWallpaper(").length - 1, 1,
+        "MethodTheme.qml must hand the session exactly one wallpaper, so the assertion above " +
+        "covers every call");
 });

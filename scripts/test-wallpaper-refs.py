@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """The helper's half of the durable wallpaper reference.
 
-`bin/vshell_helper.py` owns the rule: `portable_ref` writes it and `resolve_path`
-reads it. A theme applied from a checkout must leave no absolute path into that
-checkout in `theme-current.json` or in the shell's `theme.json`, or removing the
-directory costs every monitor its wallpaper on the next restart.
+`bin/vshell_helper.py` owns the rule: `portable_ref` records, `recovered_package_ref`
+repairs what another installation recorded, and `resolve_path` reads. A theme applied
+from a checkout must leave no absolute path into that checkout in `theme-current.json`
+or in the shell's `theme.json`, or removing the directory costs every monitor its
+wallpaper on the next restart.
 
 The rows come from `lib/wallpaper-ref-cases.json`, which `test-wallpaper-refs.js`
 also runs against `Common/Paths.qml`: one statement of the rule, two runtimes.
@@ -14,6 +15,7 @@ from __future__ import annotations
 import importlib.machinery
 import importlib.util
 import json
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -49,7 +51,7 @@ def fake_roots():
     )
 
 
-def test_portable_ref_records_every_case_the_table_names():
+def test_portable_ref_records_what_this_installation_owns_and_nothing_else():
     repo, user_themes, home = fake_roots()
     with repo, user_themes, home:
         for row in CASES["ref"]:
@@ -59,6 +61,16 @@ def test_portable_ref_records_every_case_the_table_names():
             assert back == row["resolved"], (
                 f"resolve_path(portable_ref({row['path']!r})): {row['why']}: "
                 f"expected {row['resolved']!r}, got {back!r}")
+
+
+def test_reading_repairs_only_a_package_neither_root_holds():
+    repo, user_themes, home = fake_roots()
+    with repo, user_themes, home:
+        for row in CASES["recover"]:
+            got = helper.resolved_wallpaper(row["path"])
+            assert got == row["recovered"], (
+                f"resolved_wallpaper({row['path']!r}): {row['why']}: "
+                f"expected {row['recovered']!r}, got {got!r}")
 
 
 def test_resolve_path_reads_every_reference_form_the_table_names():
@@ -116,6 +128,76 @@ def test_an_applied_theme_records_a_reference_and_reads_back_the_path():
                 "applied theme keeps the same wallpaper")
 
 
+def test_the_default_theme_answers_with_a_path_before_any_apply():
+    """A fresh install has no theme.json, so `current_theme` renders the default.
+
+    That render runs the same `{wallpaper.ref}` template, so without resolving it
+    `vshell theme current` and every in-process caller get a token instead of a path.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = Path(tmp) / "config" / "vshell"
+        cfg.mkdir(parents=True)
+        # The real root, because the render reads the shipped target template and the
+        # default theme package; only the home this writes into is thrown away.
+        with patch.object(helper, "home", lambda: Path(tmp)), patch.object(helper, "cfg_dir", lambda: cfg):
+            wallpaper = helper.current_theme()["wallpaper"]
+        assert helper.VSHELL_ROOT_TOKEN not in wallpaper, (
+            f"the default theme's wallpaper must reach a caller as a path, got {wallpaper!r}")
+        assert wallpaper.startswith(str(REPO_ROOT) + "/"), (
+            f"the default theme's background sits under this installation, got {wallpaper!r}")
+
+
+def test_the_greeter_copy_carries_paths_and_covers_every_wallpaper_key():
+    """The greeter resolves a reference against its own staged runtime.
+
+    `sync_greeter_runtime` copies `quickshell/vshell` and the runtime bin files into
+    the cache and no `themes/`, while `bin/vshell` sets VSHELL_ROOT to that runtime,
+    so a rooted reference in the copied files names nothing and the login screen
+    shows no wallpaper. The copy therefore carries resolved paths.
+
+    The key set is pinned against `SessionSpec.js`, which owns it: the flags there
+    are what the shell maps, and this list is what the greeter copy resolves.
+    """
+    spec = (REPO_ROOT / "quickshell" / "vshell" / "Common" / "settings" / "SessionSpec.js").read_text()
+    flagged = {match.group(1) for match in
+               re.finditer(r"^\s*(\w+):\s*\{.*\b(?:ref|refMap):\s*true", spec, re.MULTILINE)}
+    assert flagged == set(helper.SESSION_WALLPAPER_KEYS), (
+        "SESSION_WALLPAPER_KEYS must name exactly the keys SessionSpec.js marks ref or refMap; "
+        f"the spec marks {sorted(flagged)} and the helper lists {sorted(helper.SESSION_WALLPAPER_KEYS)}")
+
+    package = CASES["ref"][0]
+    stale = CASES["recover"][0]
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = Path(tmp) / "config" / "vshell"
+        state = Path(tmp) / "state" / "vshell"
+        cfg.mkdir(parents=True)
+        state.mkdir(parents=True)
+        (cfg / "theme.json").write_text(json.dumps({"name": "t", "wallpaper": package["ref"], "colors": {}}))
+        (state / "session.json").write_text(json.dumps({
+            "wallpaperPath": package["ref"],
+            "wallpaperPathLight": package["ref"],
+            "wallpaperPathDark": stale["path"],
+            "monitorWallpapers": {"DP-1": package["ref"]},
+            "monitorWallpapersLight": {"DP-1": package["ref"]},
+            "monitorWallpapersDark": {"DP-1": stale["path"]},
+        }))
+        repo, user_themes, home = fake_roots()
+        with repo, user_themes, home, \
+                patch.object(helper, "cfg_dir", lambda: cfg), patch.object(helper, "state_dir", lambda: state):
+            theme = helper.current_theme_json()
+            session = helper.current_session_json(theme)
+        assert helper.VSHELL_ROOT_TOKEN not in json.dumps(theme), (
+            "the greeter's theme.json copy must carry no token; the greeter's own root has no themes/")
+        assert helper.VSHELL_ROOT_TOKEN not in json.dumps(session), (
+            "the greeter's session.json copy must carry no token, for the same reason")
+        for key in helper.SESSION_WALLPAPER_KEYS:
+            value = session[key]
+            for got in ([value] if isinstance(value, str) else list(value.values())):
+                assert got in (package["resolved"], stale["recovered"]), (
+                    f"{key} reached the greeter copy as {got!r}, which is neither the resolved "
+                    "package background nor the repaired one")
+
+
 def test_state_written_by_an_installation_that_is_gone_recovers():
     """The reported failure: durable state naming a worktree that no longer exists.
 
@@ -123,7 +205,7 @@ def test_state_written_by_an_installation_that_is_gone_recovers():
     into a directory that has been removed. Each reader must answer with the same
     package background out of this installation.
     """
-    stale = next(row for row in CASES["ref"] if row["ref"] != row["path"] and row["resolved"] != row["path"])
+    stale = CASES["recover"][0]
     with tempfile.TemporaryDirectory() as tmp:
         cfg = Path(tmp) / "config" / "vshell"
         cfg.mkdir(parents=True)
@@ -131,10 +213,10 @@ def test_state_written_by_an_installation_that_is_gone_recovers():
         (cfg / "theme.json").write_text(json.dumps({"name": "t", "wallpaper": stale["path"], "colors": {}}))
         repo, user_themes, home = fake_roots()
         with repo, user_themes, home, patch.object(helper, "cfg_dir", lambda: cfg):
-            assert helper.applied_blueprint()["palette"]["wallpaper"] == stale["resolved"], (
+            assert helper.applied_blueprint()["palette"]["wallpaper"] == stale["recovered"], (
                 "theme-current.json holding a removed checkout's path must still name this "
                 "installation's copy of the same package background")
-            assert helper.current_theme()["wallpaper"] == stale["resolved"], (
+            assert helper.current_theme()["wallpaper"] == stale["recovered"], (
                 "the shell's theme.json must recover the same way")
 
 

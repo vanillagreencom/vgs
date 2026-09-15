@@ -266,7 +266,7 @@ Singleton {
                 }
             }
 
-            Store.parse(root, obj, Paths.resolveWallpaper);
+            _parseSession(obj);
             _applyDndExpirySanity();
 
             _loadedSessionSnapshot = getCurrentSessionJson();
@@ -309,8 +309,19 @@ Singleton {
         return current !== _loadedSessionSnapshot;
     }
 
+    // The one place the wallpaper reference rule is supplied to the store, in each
+    // direction. Every load and every save goes through these, so the mapping
+    // cannot be forgotten at a call site: the store takes no default.
+    function _parseSession(obj) {
+        Store.parse(root, obj, Paths.resolveWallpaper);
+    }
+
+    function _sessionJson() {
+        return Store.toJson(root, Paths.wallpaperRef);
+    }
+
     function getCurrentSessionJson() {
-        return JSON.stringify(Store.toJson(root, Paths.wallpaperRef), null, 2);
+        return JSON.stringify(_sessionJson(), null, 2);
     }
 
     function parseSettings(content) {
@@ -345,7 +356,7 @@ Singleton {
                 }
             }
 
-            Store.parse(root, obj, Paths.resolveWallpaper);
+            _parseSession(obj);
             _applyDndExpirySanity();
 
             _loadedSessionSnapshot = getCurrentSessionJson();

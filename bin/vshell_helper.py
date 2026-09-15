@@ -45,8 +45,9 @@ import vshell_theme_color as _theme_color
 import vshell_wallpaper_thumbs as _wp_thumbs
 
 HEX_RE = re.compile(r"^#?[0-9a-fA-F]{6}$")
-# The one token durable theme state roots a path on, and the tail that identifies a
-# theme package's background wherever it was recorded. Both belong to `portable_ref`.
+# The one token durable theme state roots a path on, written by `portable_ref` and
+# read by `resolve_path`, and the tail that identifies a theme package's background
+# wherever it was recorded, which `recovered_package_ref` alone matches on.
 VSHELL_ROOT_TOKEN = "${VSHELL_ROOT}"
 PACKAGE_BACKGROUND_RE = re.compile(r"/themes/([^/]+)/backgrounds/([^/]+)$")
 TEMPLATE_RE = re.compile(r"\{([A-Za-z0-9_]+)(?:\.(strip|rgb|ref))?\}")
@@ -106,6 +107,14 @@ DEFAULT_COLORS = [
     "#32344a", "#f7768e", "#9ece6a", "#e0af68", "#7aa2f7", "#ad8ee6", "#449dab", "#787c99",
     "#444b6a", "#ff7a93", "#b9f27c", "#ff9e64", "#7da6ff", "#bb9af7", "#0db9d7", "#acb0d0",
 ]
+# The session.json keys holding a wallpaper path, for the greeter copy alone.
+# quickshell/vshell/Common/settings/SessionSpec.js owns the set through its `ref`
+# and `refMap` flags; test_the_greeter_copy_resolves_every_wallpaper_key pins the
+# two against each other.
+SESSION_WALLPAPER_KEYS = (
+    "wallpaperPath", "wallpaperPathLight", "wallpaperPathDark",
+    "monitorWallpapers", "monitorWallpapersLight", "monitorWallpapersDark",
+)
 GREETER_RUNTIME_BIN_FILES = {
     "vshell": 0o750,
     "vshell-helper": 0o750,
@@ -376,17 +385,14 @@ def portable_ref(value: str | None) -> str:
     a package background pins it: remove the checkout and every durable file still
     names it, which is a wallpaper that no longer loads on any monitor.
 
-    Three arms, in order. A path inside this installation's root becomes a rooted
-    reference. A path inside the user's theme packages is already durable and is
-    left alone, since that directory does not move with the shell. A path that
-    ends in a package background's own tail, `themes/<package>/backgrounds/<file>`,
-    but sits under neither root was recorded by another installation, and is
-    re-rooted on this one; nothing else emits a path of that shape, since the two
-    producers of package backgrounds, `load_theme_package` and `theme wallpapers`,
-    both read out of those two roots.
-
-    Everything else passes through, which covers a wallpaper outside VGS entirely
-    and the colour literal `SessionData.setWallpaperColor` records in the same field.
+    Recording is one containment test. A path inside this installation's root is the
+    one this installation can name portably, and becomes a rooted reference.
+    Everything else passes through unchanged: a user theme package under
+    `~/.config/vshell/themes`, which does not move with the shell, a wallpaper
+    outside VGS entirely, and the colour literal `SessionData.setWallpaperColor`
+    records in the same field. Repairing a path this installation does not own is
+    `recovered_package_ref`, on the read side, where a value that turns out to name
+    nothing costs a wallpaper rather than replacing one that loads.
 
     `Common/Paths.qml` mirrors this for `session.json`, which the shell alone
     writes. `scripts/lib/wallpaper-ref-cases.json` is the one case table both
@@ -397,7 +403,31 @@ def portable_ref(value: str | None) -> str:
     root = str(repo_root())
     if value.startswith(root + "/"):
         return VSHELL_ROOT_TOKEN + value[len(root):]
-    if value.startswith(str(user_themes_dir()) + "/"):
+    return value
+
+
+def recovered_package_ref(value: str | None) -> str:
+    """A theme package background another installation recorded, re-rooted on this one.
+
+    Read-side only. A path ending in a package background's own tail,
+    `themes/<package>/backgrounds/<file>`, that lies under neither this
+    installation's root nor the user's own packages was written by an installation
+    that is gone, which is the state a shell run from a removed checkout leaves
+    behind. Re-rooting it is what makes that session show the same image again
+    instead of nothing.
+
+    The test is on the path's shape, not on the file, because `Common/Paths.qml`
+    runs the same rule and the shell has no synchronous way to ask the filesystem.
+    So a directory outside VGS whose last three segments happen to be
+    `themes/<x>/backgrounds/<y>` is re-rooted too. Nothing VGS ships emits a path of
+    that shape from outside those two roots: `load_theme_package` and
+    `theme wallpapers` both read out of them, and the wallpaper folder is listed
+    flat. Recording never applies this, so a value reaching it was already read back
+    from durable state.
+    """
+    if not value or not value.startswith("/"):
+        return value or ""
+    if value.startswith(str(repo_root()) + "/") or value.startswith(str(user_themes_dir()) + "/"):
         return value
     tail = PACKAGE_BACKGROUND_RE.search(value)
     if tail:
@@ -408,13 +438,11 @@ def portable_ref(value: str | None) -> str:
 def resolved_wallpaper(value: str | None) -> str:
     """A wallpaper as a reader gets it, out of whatever durable state recorded it.
 
-    Normalising through `portable_ref` before resolving is what recovers a record an
-    installation that is gone wrote: its third arm re-roots a package background on
-    this installation, so state written before references existed loads the same
-    image rather than nothing. A reference already in that form passes the
-    normalisation unchanged.
+    Recovering before resolving is what makes state written before references
+    existed load the same image rather than nothing. A reference already in rooted
+    form passes `recovered_package_ref` unchanged, since it is not an absolute path.
     """
-    return resolve_path(portable_ref(value))
+    return resolve_path(recovered_package_ref(value))
 
 
 def expand_dest(value: str) -> Path:
@@ -7410,9 +7438,9 @@ def _apply_theme_obj_unlocked(bp: Dict[str, Any], only_app: str | None = None,
         hook_specs.extend(plan.hooks)
         # A reload verb tells a running application to re-read a file this target
         # wrote, so it is worth sending only when those bytes moved. A pick that
-        # keeps the palette moves only the targets whose template names
-        # {wallpaper}; an extracting pick re-derives the palette and moves them
-        # all.
+        # keeps the palette moves only the targets whose template names the
+        # wallpaper role, in any of its forms; an extracting pick re-derives the
+        # palette and moves them all.
         if target_changed:
             hook_specs.extend(plan.reload_hooks)
 
@@ -8365,8 +8393,9 @@ def resolved_shell_theme(theme: Dict[str, Any]) -> Dict[str, Any]:
 
     The shell's target template renders `{wallpaper.ref}`, so the file holds a
     `portable_ref` and never an absolute path into the directory the applying shell
-    ran from. Every reader of that file passes through here, so what a caller sees is
-    the path on this machine now, a file an earlier version wrote absolutely included.
+    ran from. Every reader of that file's wallpaper passes through here, so what a
+    caller sees is the path on this machine now, a file an earlier version wrote
+    absolutely included. `current_theme_name` reads the name alone and does not.
     """
     if not theme.get("wallpaper"):
         return theme
@@ -16115,19 +16144,37 @@ def load_required_json_file(path: Path) -> Dict[str, Any]:
 
 
 def current_theme_json() -> Dict[str, Any]:
+    """The applied theme's shell state for the greeter's copy of it.
+
+    Resolved, unlike the file on disk. The greeter runs out of the cache directory,
+    where `bin/vshell` sets `VSHELL_ROOT` to the staged runtime and `sync_greeter_runtime`
+    copies no `themes/`, so a rooted reference there names nothing and the login
+    screen shows no wallpaper. The cache is rebuilt by `greeter sync` and does not
+    outlive an install, so absolute paths are the durable form for it.
+    """
     path = cfg_dir() / "theme.json"
     if path.exists():
-        return load_required_json_file(path)
+        return resolved_shell_theme(load_required_json_file(path))
     return current_theme()
 
 
 def current_session_json(theme: Dict[str, Any]) -> Dict[str, Any]:
+    """The desktop session's wallpaper state for the greeter's copy of it.
+
+    Every wallpaper value is resolved for the reason `current_theme_json` states.
+    """
     path = state_dir() / "session.json"
     data = load_json_file(path)
     if not data:
         data = {"wallpaperPath": theme.get("wallpaper", "")}
     elif "wallpaperPath" not in data and theme.get("wallpaper"):
         data["wallpaperPath"] = theme.get("wallpaper")
+    for key in SESSION_WALLPAPER_KEYS:
+        value = data.get(key)
+        if isinstance(value, str):
+            data[key] = resolved_wallpaper(value)
+        elif isinstance(value, dict):
+            data[key] = {screen: resolved_wallpaper(str(path_value)) for screen, path_value in value.items()}
     return data
 
 
