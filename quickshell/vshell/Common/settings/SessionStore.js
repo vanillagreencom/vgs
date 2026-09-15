@@ -3,7 +3,7 @@
     .import "./SessionSpec.js" as SpecModule
 
 // Apply `mapRef` to a `ref` key's value or to every value of a `refMap` key.
-// SessionData's _parseSession passes Paths.resolveWallpaper on the way in and its
+// SessionData's _parseSession passes Paths.resolveRef on the way in and its
 // _sessionJson passes Paths.wallpaperRef on the way out, so the store itself stays
 // free of QML and of the path rule. `mapRef` has no default: a caller that omits it
 // throws on the first marked key rather than quietly persisting an absolute path.

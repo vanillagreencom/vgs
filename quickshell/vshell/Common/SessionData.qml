@@ -313,7 +313,7 @@ Singleton {
     // direction. Every load and every save goes through these, so the mapping
     // cannot be forgotten at a call site: the store takes no default.
     function _parseSession(obj) {
-        Store.parse(root, obj, Paths.resolveWallpaper);
+        Store.parse(root, obj, Paths.resolveRef);
     }
 
     function _sessionJson() {

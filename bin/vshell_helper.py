@@ -109,8 +109,7 @@ DEFAULT_COLORS = [
 ]
 # The session.json keys holding a wallpaper path, for the greeter copy alone.
 # quickshell/vshell/Common/settings/SessionSpec.js owns the set through its `ref`
-# and `refMap` flags; test_the_greeter_copy_resolves_every_wallpaper_key pins the
-# two against each other.
+# and `refMap` flags; scripts/test-wallpaper-refs.py pins the two against each other.
 SESSION_WALLPAPER_KEYS = (
     "wallpaperPath", "wallpaperPathLight", "wallpaperPathDark",
     "monitorWallpapers", "monitorWallpapersLight", "monitorWallpapersDark",
@@ -409,30 +408,24 @@ def portable_ref(value: str | None) -> str:
 def recovered_package_ref(value: str | None) -> str:
     """A theme package background another installation recorded, re-rooted on this one.
 
-    Read-side only. A path ending in a package background's own tail,
-    `themes/<package>/backgrounds/<file>`, that lies under neither this
-    installation's root nor the user's own packages was written by an installation
-    that is gone, which is the state a shell run from a removed checkout leaves
-    behind. Re-rooting it is what makes that session show the same image again
-    instead of nothing.
-
-    The test is on the path's shape, not on the file, because `Common/Paths.qml`
-    runs the same rule and the shell has no synchronous way to ask the filesystem.
-    So a directory outside VGS whose last three segments happen to be
-    `themes/<x>/backgrounds/<y>` is re-rooted too. Nothing VGS ships emits a path of
-    that shape from outside those two roots: `load_theme_package` and
-    `theme wallpapers` both read out of them, and the wallpaper folder is listed
-    flat. Recording never applies this, so a value reaching it was already read back
-    from durable state.
+    Emits a path only when the file it names is present here, which is why this is
+    the rule's one owner: `Common/Paths.qml` cannot ask the filesystem synchronously
+    and so carries no repair. A path already inside the user's packages answers as it
+    stands, since the copy it names is the one the user chose and the running root may
+    hold a package of the same name. `docs/architecture/wallpaper.md` states the rule.
     """
     if not value or not value.startswith("/"):
         return value or ""
-    if value.startswith(str(repo_root()) + "/") or value.startswith(str(user_themes_dir()) + "/"):
+    if value.startswith(str(user_themes_dir()) + "/"):
         return value
     tail = PACKAGE_BACKGROUND_RE.search(value)
-    if tail:
-        return VSHELL_ROOT_TOKEN + "/themes/" + tail.group(1) + "/backgrounds/" + tail.group(2)
-    return value
+    if not tail:
+        return value
+    relative = f"themes/{tail.group(1)}/backgrounds/{tail.group(2)}"
+    if (repo_root() / relative).is_file():
+        return VSHELL_ROOT_TOKEN + "/" + relative
+    user_copy = user_themes_dir() / tail.group(1) / "backgrounds" / tail.group(2)
+    return str(user_copy) if user_copy.is_file() else value
 
 
 def resolved_wallpaper(value: str | None) -> str:
@@ -16144,13 +16137,10 @@ def load_required_json_file(path: Path) -> Dict[str, Any]:
 
 
 def current_theme_json() -> Dict[str, Any]:
-    """The applied theme's shell state for the greeter's copy of it.
+    """The applied theme's shell state for the greeter's copy of it, resolved.
 
-    Resolved, unlike the file on disk. The greeter runs out of the cache directory,
-    where `bin/vshell` sets `VSHELL_ROOT` to the staged runtime and `sync_greeter_runtime`
-    copies no `themes/`, so a rooted reference there names nothing and the login
-    screen shows no wallpaper. The cache is rebuilt by `greeter sync` and does not
-    outlive an install, so absolute paths are the durable form for it.
+    A reference resolves against the greeter's staged runtime, which holds no
+    packages; `docs/architecture/wallpaper.md` states why the copy carries paths.
     """
     path = cfg_dir() / "theme.json"
     if path.exists():
@@ -16159,10 +16149,8 @@ def current_theme_json() -> Dict[str, Any]:
 
 
 def current_session_json(theme: Dict[str, Any]) -> Dict[str, Any]:
-    """The desktop session's wallpaper state for the greeter's copy of it.
-
-    Every wallpaper value is resolved for the reason `current_theme_json` states.
-    """
+    """The desktop session's wallpaper state for the greeter's copy of it, resolved
+    for the reason `current_theme_json` states."""
     path = state_dir() / "session.json"
     data = load_json_file(path)
     if not data:

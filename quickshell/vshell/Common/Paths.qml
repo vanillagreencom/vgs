@@ -31,11 +31,13 @@ Singleton {
     readonly property string rootToken: "${VSHELL_ROOT}"
 
     // BEGIN WALLPAPER REFERENCE DECISION
-    // Mirrors `portable_ref`, `recovered_package_ref` and `resolve_path` in
-    // bin/vshell_helper.py, which owns the rule; session.json is the one durable
-    // wallpaper file the shell writes without the helper, and its writer runs on a
-    // coalesced timer no subprocess can sit inside.
-    // scripts/lib/wallpaper-ref-cases.json is the single case table both run.
+    // Recording and resolving, mirroring `portable_ref` and `resolve_path` in
+    // bin/vshell_helper.py, because session.json is written on a coalesced timer no
+    // subprocess can sit inside. Repairing a background another installation
+    // recorded is not here: `recovered_package_ref` in the helper owns it, and it
+    // tests the filesystem, which this cannot do synchronously.
+    // docs/architecture/wallpaper.md states the rule.
+    // scripts/lib/wallpaper-ref-cases.json is the case table both runtimes run.
     // Keep this region free of root., Theme., I18n. and Qt. references: scripts/test-wallpaper-refs.js extracts and executes it.
 
     // The directories the rule is stated against, derived once from what the shell
@@ -57,23 +59,6 @@ Singleton {
         return path;
     }
 
-    // A package background another installation recorded, re-rooted on this one.
-    // Read-side only: a path under neither root ending in a package background's
-    // own tail was written by an installation that is gone, and re-rooting it is
-    // what makes that session show the same image again. The test is on the path's
-    // shape because the shell cannot ask the filesystem synchronously; nothing VGS
-    // ships emits that shape from outside the two roots.
-    function recoveredPackageRefIn(path, roots) {
-        if (!path || !path.startsWith("/"))
-            return path || "";
-        if (path.startsWith(roots.repo + "/") || path.startsWith(roots.userThemes + "/"))
-            return path;
-        const tail = path.match(/\/themes\/([^/]+)\/backgrounds\/([^/]+)$/);
-        if (tail)
-            return roots.token + "/themes/" + tail[1] + "/backgrounds/" + tail[2];
-        return path;
-    }
-
     // The `~` form the helper writes into a target's destination. One owner: the
     // `expandTilde` below is this function with the shell's own home.
     function expandTildeIn(path, homeDir) {
@@ -92,11 +77,6 @@ Singleton {
         return expandTildeIn(ref, roots.home);
     }
 
-    // A wallpaper as the shell holds it, out of whatever durable state recorded it.
-    // `resolved_wallpaper` is the helper's counterpart.
-    function resolveWallpaperIn(value, roots) {
-        return resolveRefIn(recoveredPackageRefIn(value, roots), roots);
-    }
     // END WALLPAPER REFERENCE DECISION
 
     readonly property var refRoots: refRootsFrom(repoRoot, strip(config), strip(home), rootToken)
@@ -105,8 +85,8 @@ Singleton {
         return wallpaperRefIn(path, root.refRoots);
     }
 
-    function resolveWallpaper(value: string): string {
-        return resolveWallpaperIn(value, root.refRoots);
+    function resolveRef(ref: string): string {
+        return resolveRefIn(ref, root.refRoots);
     }
 
     readonly property url imagecache: `${cache}/imagecache`
