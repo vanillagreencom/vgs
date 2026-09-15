@@ -204,11 +204,17 @@ Item {
         BluetoothDetail {
             id: bluetoothDetail
             onShowCodecSelector: function (device) {
-                if (root.bluetoothCodecSelector) {
+                if (root.bluetoothCodecSelector)
                     root.bluetoothCodecSelector.show(device);
-                    root.bluetoothCodecSelector.codecSelected.connect(function (deviceAddress, codecName) {
-                        bluetoothDetail.updateDeviceCodecDisplay(deviceAddress, codecName);
-                    });
+            }
+
+            // The selector outlives every open, so connecting inside the handler above would
+            // leave one closure per open alive and run them all on the next selection.
+            Connections {
+                target: root.bluetoothCodecSelector
+
+                function onCodecSelected(deviceAddress, codecName) {
+                    bluetoothDetail.updateDeviceCodecDisplay(deviceAddress, codecName);
                 }
             }
         }
