@@ -17,6 +17,7 @@ import os
 import plistlib
 import pwd
 import signal
+import site
 import re
 import shutil
 import socket
@@ -3349,6 +3350,8 @@ def test_theme_preview_stop_signal_tears_down_its_capture():
         env.update({
             "PATH": f"{stubs}{os.pathsep}{env.get('PATH', '')}",
             "HOME": str(home),
+            # The user site derives from HOME; keep the caller's, where CI installs Pillow.
+            "PYTHONUSERBASE": site.getuserbase(),
             "XDG_CONFIG_HOME": str(home / ".config"),
             "TMPDIR": str(preview_tmp),
             # No real session answers this, should a real hyprctl ever run.
