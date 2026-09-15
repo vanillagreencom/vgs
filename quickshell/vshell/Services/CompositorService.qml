@@ -99,22 +99,24 @@ Singleton {
 
     Connections {
         target: ToplevelManager.toplevels
-        // Share the coalescing timer with the Hyprland fan-out. Opening a window reaches both
-        // producers, and a direct call here would rebuild every consumer a second time.
+        // Share the coalescing timer with the compositor fan-outs. Opening a window reaches
+        // several producers, and a direct call here would rebuild every consumer again.
         function onValuesChanged() { toplevelViewTimer.restart(); }
     }
 
     Connections {
         target: NiriService
+        // Remembered focus is read by lastFocusedAppId without waiting for a rebuild, so it
+        // stays synchronous; only the consumer rebuild is deferred to the shared timer.
         function onWindowsChanged() {
             if (root.isNiri) {
                 root.rememberNiriFocus();
-                root.refreshToplevels();
+                toplevelViewTimer.restart();
             }
         }
         function onAllWorkspacesChanged() {
             if (root.isNiri)
-                root.refreshToplevels();
+                toplevelViewTimer.restart();
         }
     }
 
@@ -155,9 +157,10 @@ Singleton {
         onTriggered: root.refreshMonitors()
     }
 
-    // The Hyprland fan-out and ToplevelManager share this timer; ToplevelManager reaches it
-    // on every compositor. The two NiriService handlers above are not routed through it and
-    // rebuild directly, so the one-rebuild-per-action property holds on Hyprland only.
+    // Every signal-driven producer of the toplevel view shares this timer: the Hyprland fan-out,
+    // the two NiriService handlers, and ToplevelManager, which reaches it on every compositor.
+    // Component.onCompleted and _applyCompositor seed the view directly instead, because a seed
+    // answers a read that is already waiting rather than coalescing a burst of events.
     Timer {
         id: toplevelViewTimer
         interval: 0
