@@ -701,11 +701,11 @@ test("bare applyCompleted emissions are counted so a new operation must go throu
     const svc = q("VGSThemeService.qml");
     // Count bare applyCompleted emissions so added operations require explicit reporter coverage.
     // This count does not establish that every existing emission uses the tracked apply path.
-    const APPLY_COMPLETED_SITES = 41;
+    const APPLY_COMPLETED_SITES = 39;
     svc.requires(serviceSource, "VGSThemeService.qml", [
         ["applyCompleted(",
             `exactly ${APPLY_COMPLETED_SITES} mentions: one signal declaration, one emission inside ` +
-            "_finishApply, and 39 bare emissions across 18 operations that predate the correlated " +
+            "_finishApply, and 37 bare emissions across 17 operations that predate the correlated " +
             "signal. A NEW apply-like operation must emit through _finishApply and pass its request " +
             "id, not copy a neighbouring bare emission — that produces an operation a reporter can " +
             "start but whose reply never arrives. If you deliberately added or removed one, move " +
