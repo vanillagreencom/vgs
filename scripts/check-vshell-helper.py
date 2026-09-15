@@ -2883,8 +2883,9 @@ def test_icon_picker_lists_every_base_dir_and_samples_each_set():
         for name in bundled:
             assert_equal(len(samples[name]), len(helper.ICON_PREVIEW_SAMPLES),
                          f"the bundled set {name} resolves every sample icon")
-        assert_equal((result["themeIcon"], result["themeIconInstalled"]), ("Yaru-purple", True),
-                     "the theme's own set is named and reported installed")
+        assert_equal(result["themeIcon"], "Yaru-purple", "the theme's own set is named")
+        assert_equal(sorted(result), ["sets", "themeIcon"],
+                     "the picker reads one list and one name; whether the theme's set is installed is the tab's to judge from that list")
 
         # One set whose inherit chain reaches an index.theme this process cannot read,
         # the class list_installed_icon_themes already skips for the listed theme itself:

@@ -11809,7 +11809,6 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
         result = {
             "sets": [{"name": name, "samples": _icon_theme_samples_or_none(name)} for name in installed],
             "themeIcon": theme_icon,
-            "themeIconInstalled": theme_icon in installed,
         }
         print(json.dumps(result, indent=2) if args.json else "\n".join(installed))
         return 0

@@ -15,41 +15,24 @@ Item {
     // plus the theme's named set.
     property var iconSets: []
     property string themeIcon: ""
-    property bool themeIconInstalled: false
     // How the last `vshell theme icons --json` call ended: "pending" before its first
     // reply, "failed" with the reason in loadError, "ok" once a list landed.
     property string readState: "pending"
     property string loadError: ""
 
     readonly property bool followTheme: SettingsData.iconThemeDark === "System Default" && !SettingsData.iconThemePerMode
-    readonly property string effectiveIcon: followTheme ? (themeIcon || "System Default") : SettingsData.iconThemeDark
 
-    readonly property var tiles: iconSetTiles(iconSets)
-    readonly property string pickerState: iconPickerState(readState, followTheme, tiles.length)
-    readonly property string appliedState: appliedSetState(readState, tiles, effectiveIcon)
+    readonly property string pickerState: iconPickerState(readState, followTheme, iconSets.length)
+    readonly property string appliedIcon: appliedSetName(readState, followTheme, themeIcon, SettingsData.iconThemeDark)
 
     // BEGIN ICON PICKER MODEL
     // Keep this region free of root., Theme., I18n. and Qt. references: scripts/test-icon-picker.js extracts and executes it.
 
-    // One tile per installed icon set. `sets` is the `sets` list of
-    // `vshell theme icons --json`: a name and the absolute paths of the sample icons
-    // the helper resolved through that set's own inherit chain. The delegate marks the
-    // applied set, so picking one moves the mark without rebuilding the tiles.
-    function iconSetTiles(sets) {
-        return (sets || []).filter(set => !!set.name).map(set => ({
-                    name: set.name,
-                    samples: (set.samples || []).filter(path => !!path)
-                }));
-    }
-
-    // Why the picker draws no tiles: "loading" before the set list has been read,
-    // "error" when reading it failed, "empty" when it was read and holds none,
-    // "follow-theme" while the active theme owns the choice, "" when the tiles are
-    // drawn. The tab replaces the tiles with one line of copy for each state that has
-    // something to say, so it never draws a control that does nothing and never reports
-    // an installed set as absent because the list is not in hand. Nothing installed
-    // outranks the theme owning the choice: with no tile to apply, the user needs the
-    // install advice whichever source is selected.
+    // Why the picker draws no tiles. The tab draws one line of copy in their place for
+    // each state that has something to say, so it never draws a control that does
+    // nothing; "loading" says nothing, the read being too short to be worth reporting.
+    // Nothing installed outranks the theme owning the choice: with no tile to apply,
+    // the user needs the install advice whichever source is selected.
     function iconPickerState(readState, followTheme, tileCount) {
         if (readState === "pending")
             return "loading";
@@ -62,16 +45,50 @@ Item {
         return "";
     }
 
-    // What is known about the set the shell draws now: "missing" when the set list was
-    // read and does not carry it, "applied" when the list carries it, "unknown" while
-    // there is no list. Without a list, the tab states the set and claims nothing about
-    // whether it is installed.
-    function appliedSetState(readState, tiles, applied) {
+    // The set the shell draws, or "" when the card cannot establish which it is. Under
+    // Follow theme the theme names it, and that name arrives with the set list.
+    function appliedSetName(readState, followTheme, themeIcon, fixedIcon) {
+        if (!followTheme)
+            return fixedIcon;
         if (readState !== "ok")
-            return "unknown";
-        return tiles.some(tile => tile.name === applied) ? "applied" : "missing";
+            return "";
+        return themeIcon || "System Default";
+    }
+
+    // What the card may say about one icon set name, `sets` being the list a read
+    // produced. Every SetLine asks this and asks nothing else, so no line on this page
+    // states an identity or an installed status the read does not establish.
+    function iconSetClaim(readState, sets, name) {
+        if (!name)
+            return "absent";  // nothing to state, so the line is not drawn
+        if (name === "System Default")
+            return "default";  // the desktop's own set, which is not a set that can be missing
+        if (readState !== "ok")
+            return "unchecked";  // a named set with no list to check it against
+        return sets.some(set => set.name === name) ? "installed" : "missing";
     }
     // END ICON PICKER MODEL
+
+    // One card line about an icon set: `label` carries a %1 for the set's name, and the
+    // line adds what iconSetClaim allows and no more.
+    component SetLine: StyledText {
+        required property string label
+        required property string setName
+        readonly property string claim: root.iconSetClaim(root.readState, root.iconSets, setName)
+
+        width: parent.width
+        wrapMode: Text.WordWrap
+        visible: claim !== "absent"
+        text: {
+            if (claim === "default")
+                return label.arg(I18n.tr("the desktop's own icon set"));
+            if (claim === "missing")
+                return label.arg(setName) + " — " + I18n.tr("not installed on this system.");
+            return label.arg(setName);
+        }
+        color: claim === "missing" ? Theme.warning : Theme.surfaceVariantText
+        font.pixelSize: Theme.settingsFontSize
+    }
 
     function refresh() {
         Proc.runCommand("vgs-icons-list", [Paths.vshellCli, "theme", "icons", "--json"], function (output, exitCode, errorOutput) {
@@ -91,7 +108,6 @@ Item {
                 const data = JSON.parse(output || "{}");
                 root.iconSets = data.sets || [];
                 root.themeIcon = data.themeIcon || "";
-                root.themeIconInstalled = data.themeIconInstalled === true;
                 root.loadError = "";
                 root.readState = "ok";
             } catch (e) {
@@ -166,40 +182,23 @@ Item {
                             return;
                         if (index === 0)
                             root.useFollowTheme();
-                        else if (root.tiles.length > 0)
-                            root.useFixed(SettingsData.iconThemeDark !== "System Default" ? SettingsData.iconThemeDark : root.tiles[0].name);
+                        else if (root.iconSets.length > 0)
+                            root.useFixed(SettingsData.iconThemeDark !== "System Default" ? SettingsData.iconThemeDark : root.iconSets[0].name);
                     }
                 }
 
 
-                // What the shell draws now. Visible in every state, so a failed helper
-                // call and a set that is no longer installed both still name it.
-                StyledText {
-                    width: parent.width
-                    wrapMode: Text.WordWrap
-                    text: {
-                        const base = I18n.tr("Currently applied: %1").arg(root.effectiveIcon);
-                        if (root.appliedState === "missing")
-                            return base + " — " + I18n.tr("not installed on this system, so icons stay unchanged.");
-                        return base;
-                    }
-                    color: root.appliedState === "missing" ? Theme.warning : Theme.surfaceVariantText
-                    font.pixelSize: Theme.settingsFontSize
+                // What the shell draws now.
+                SetLine {
+                    label: I18n.tr("Currently applied: %1")
+                    setName: root.appliedIcon
                 }
 
                 // What the theme would pick, while the user's own choice overrides it.
-                StyledText {
-                    width: parent.width
-                    wrapMode: Text.WordWrap
-                    visible: root.themeIcon !== "" && !root.followTheme
-                    text: {
-                        const base = I18n.tr("This theme's icon set: %1").arg(root.themeIcon);
-                        if (!root.themeIconInstalled)
-                            return base + " — " + I18n.tr("not installed on this system.");
-                        return base;
-                    }
-                    color: !root.themeIconInstalled ? Theme.warning : Theme.surfaceVariantText
-                    font.pixelSize: Theme.settingsFontSize
+                SetLine {
+                    label: I18n.tr("This theme's icon set: %1")
+                    setName: root.themeIcon
+                    visible: !root.followTheme && claim !== "absent"
                 }
 
                 // The picker's stand-in: one line saying why there is nothing to pick.
@@ -226,13 +225,13 @@ Item {
                     spacing: Theme.spacingS
 
                     Repeater {
-                        model: root.tiles
+                        model: root.iconSets
 
                         IconSetTile {
                             required property var modelData
                             setName: modelData.name
                             samples: modelData.samples
-                            applied: modelData.name === root.effectiveIcon
+                            applied: modelData.name === root.appliedIcon
                             onActivated: root.useFixed(modelData.name)
                         }
                     }
