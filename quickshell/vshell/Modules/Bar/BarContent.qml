@@ -128,8 +128,11 @@ Item {
                 ];
             }
 
+            // Quickshell rewrites a workspace's lastIpcObject only on an explicit fetch and
+            // tracks ws.monitor from the event stream, so the dedicated property is the one
+            // that names the screen a workspace sits on after it is moved between monitors.
             const monitorWorkspaces = workspaces.filter(ws => {
-                return ws.lastIpcObject && ws.lastIpcObject.monitor === screenName && ws.id > -1;
+                return ws.monitor?.name === screenName && ws.id > -1;
             });
 
             if (monitorWorkspaces.length === 0) {
