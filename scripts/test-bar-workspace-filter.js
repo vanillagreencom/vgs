@@ -43,13 +43,15 @@ function workspace(id, name, live, fetched) {
     return { id, name, monitor: live === null ? null : { name: live }, lastIpcObject: { monitor: fetched } };
 }
 
-// A two-monitor desktop after the user moved workspace 2 from DP-1 to DP-2 with no refetch since.
+// A two-monitor desktop after the user moved workspace 12 from DP-1 to DP-2 with no refetch since.
+// No workspace here carries id 1, which is the id both filters give their empty-screen
+// placeholder: a row expecting the placeholder must not be satisfiable by a real workspace.
 const WORLD = [
-    workspace(1, "1", "DP-1", "DP-1"),
-    workspace(2, "2", "DP-2", "DP-1"),
-    workspace(3, "3", "DP-2", "DP-2"),
+    workspace(11, "11", "DP-1", "DP-1"),
+    workspace(12, "12", "DP-2", "DP-1"),
+    workspace(13, "13", "DP-2", "DP-2"),
     // Quickshell nulls the binding when a monitor is removed, leaving the fetched name behind.
-    workspace(4, "4", null, "DP-1"),
+    workspace(14, "14", null, "DP-1"),
     // A special workspace is never a row on any screen.
     workspace(-99, "special:term", "DP-1", "DP-1"),
 ];
@@ -68,7 +70,7 @@ function switcher(workspaces, screenName, followFocus = false) {
         SettingsData: { workspaceFollowFocus: followFocus, showOccupiedWorkspacesOnly: false },
         Hyprland: { workspaces: { values: workspaces }, toplevels: { values: [] } },
     };
-    const component = { screenName, currentWorkspace: 1 };
+    const component = { screenName, currentWorkspace: 11 };
     component.hyprlandWorkspaceOrder = (a, b) => callInScope(bodies.order, component, scope, ["a", "b"], [a, b]);
     return callInScope(bodies.switcher, component, scope);
 }
@@ -79,37 +81,27 @@ const ids = list => list.map(ws => ws.id);
 
 test("a workspace moved between monitors changes screens before the next fetch", () => {
     for (const [label, run] of FILTERS) {
-        assert.deepEqual(ids(run(WORLD, "DP-1")), [1],
+        assert.deepEqual(ids(run(WORLD, "DP-1")), [11],
             `${label}: the moved workspace must leave its old screen without waiting for a refetch`);
-        assert.deepEqual(ids(run(WORLD, "DP-2")), [2, 3],
+        assert.deepEqual(ids(run(WORLD, "DP-2")), [12, 13],
             `${label}: the moved workspace must reach its new screen without waiting for a refetch`);
-    }
-});
-
-test("a workspace with no monitor and a special workspace are on no screen", () => {
-    for (const [label, run] of FILTERS) {
-        for (const screen of ["DP-1", "DP-2"]) {
-            const shown = ids(run(WORLD, screen));
-            assert.ok(!shown.includes(4), `${label}: a workspace whose monitor was removed must not sit on ${screen}`);
-            assert.ok(!shown.includes(-99), `${label}: a special workspace must not sit on ${screen}`);
-        }
     }
 });
 
 test("a screen with no workspaces of its own falls back to one placeholder", () => {
     for (const [label, run] of FILTERS)
         assert.deepEqual(ids(run(WORLD, "DP-3")), [1],
-            `${label}: an empty screen draws one placeholder rather than another screen's workspaces`);
+            `${label}: an empty screen draws the id-1 placeholder, not a workspace belonging to another screen`);
 });
 
 test("following focus ignores the screen entirely", () => {
     // The inverse of the per-screen branch: with follow-focus on, or before the bar knows its
     // screen, every ordinary workspace is listed wherever its monitor says it lives.
     for (const [label, run] of FILTERS) {
-        assert.deepEqual(ids(run(WORLD, "DP-1", true)).filter(id => id > 0), [1, 2, 3, 4],
-            `${label}: follow-focus lists every ordinary workspace, not one screen's`);
-        assert.deepEqual(ids(run(WORLD, "", false)).filter(id => id > 0), [1, 2, 3, 4],
-            `${label}: an unknown screen lists every ordinary workspace`);
+        assert.deepEqual(ids(run(WORLD, "DP-1", true)), [11, 12, 13, 14],
+            `${label}: follow-focus lists every ordinary workspace and no special one, not one screen's`);
+        assert.deepEqual(ids(run(WORLD, "", false)), [11, 12, 13, 14],
+            `${label}: an unknown screen lists every ordinary workspace and no special one`);
     }
 });
 
