@@ -701,11 +701,11 @@ test("bare applyCompleted emissions are counted so a new operation must go throu
     const svc = q("VGSThemeService.qml");
     // Count bare applyCompleted emissions so added operations require explicit reporter coverage.
     // This count does not establish that every existing emission uses the tracked apply path.
-    const APPLY_COMPLETED_SITES = 41;
+    const APPLY_COMPLETED_SITES = 39;
     svc.requires(serviceSource, "VGSThemeService.qml", [
         ["applyCompleted(",
             `exactly ${APPLY_COMPLETED_SITES} mentions: one signal declaration, one emission inside ` +
-            "_finishApply, and 39 bare emissions across 18 operations that predate the correlated " +
+            "_finishApply, and 37 bare emissions across 17 operations that predate the correlated " +
             "signal. A NEW apply-like operation must emit through _finishApply and pass its request " +
             "id, not copy a neighbouring bare emission — that produces an operation a reporter can " +
             "start but whose reply never arrives. If you deliberately added or removed one, move " +
@@ -820,21 +820,24 @@ test("the Dash star button stars through the helper and flips the listed entry b
     ]);
 });
 
-test("generateMissingPreviews releases its guard, keys on the full-size preview, and a failed preview probe does not flag the list", () => {
-    const svc = q("VGSThemeService.qml");
-    svc.requires(svc.body("generateMissingPreviews"), "generateMissingPreviews()",
-        [["previewsGenerating = false;", "the preview-check branch must still release its single-flight guard"],
-        ["if (!bps.some(bp => !bp.preview))",
-            "the generator runs for every theme with no full-size preview; the helper reports the thumbnail apart, so a " +
-            "theme with only a thumbnail is rendered instead of skipped", 1]]);
-    assert.doesNotMatch(qmlSource.stripComments(svc.body("generateMissingPreviews")), /thumbnail/,
-        "VGSThemeService.qml: a thumbnail must not count as a preview for the generator");
-    {
-        const check = body("VGSThemeService.qml").split('"vgs-theme-preview-check"')[1] || "";
-        const branch = check.slice(0, check.indexOf("blueprints = bps;"));
-        assert.ok(!branch.includes("blueprintsLoadFailed = true"),
-            "VGSThemeService.qml: a failed PREVIEW probe must not set blueprintsLoadFailed — that flag is how a surface " +
-            "says the theme LIST could not be read, and setting it here reported a read failure over a loaded list");
+test("the settings card and the Dash row paint the listed preview field and run no preview command", () => {
+    q("ThemesSettingsTab.qml").requires(themesTabSource, "ThemesSettingsTab.qml", [
+        ["readonly property var currentEntry: VGSThemeService.currentBlueprint",
+            "the card's entry is the listed theme the Dash row and the switcher read", 1],
+        ['source: root.currentEntry.preview ? "file://" + root.currentEntry.preview : ""',
+            "the Current Theme card paints the listed preview field", 1]
+    ]);
+    q("VGSThemeService.qml").requires(body("VGSThemeService.qml"), "VGSThemeService.qml", [
+        ["if (list[i].name === name)\n                return list[i];",
+            "currentBlueprint is the entry theme list --json reported for the current theme", 1]
+    ]);
+    q("ThemesTab.qml").requires(dashThemesTabSource, "ThemesTab.qml", [
+        ['source: themeRow.modelData.preview ? "file://" + themeRow.modelData.preview : ""',
+            "the Dash row paints the same listed preview field", 1]
+    ]);
+    for (const file of ["ThemesSettingsTab.qml", "ThemesTab.qml", "ThemeSwitcherModal.qml", "VGSThemeService.qml"]) {
+        assert.doesNotMatch(qmlSource.stripComments(body(file)), /"preview"|generateMissingPreviews|previewsGenerating/,
+            `${file}: the helper's list reports every preview, so no surface starts a preview command or waits on one`);
     }
 });
 

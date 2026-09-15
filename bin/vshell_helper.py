@@ -28,6 +28,7 @@ import time
 import tempfile
 import urllib.parse
 import tomllib
+import zlib
 import mimetypes
 import xml.etree.ElementTree as ET
 from collections import Counter
@@ -1710,10 +1711,7 @@ def load_theme_package(name: str) -> Dict[str, Any] | None:
     bp["adjustments"] = adjustments
     # "Did the user change this package": what the modified badge and the revert
     # control read. Downloaded wallpapers land in the same user directory, so
-    # they answer true here too, and catalogPristine says which kind it is:
-    # without that second flag an untouched download loses its shipped
-    # screenshot and goes to the preview generator on the first open after a
-    # cold cache.
+    # they answer true here too, and catalogPristine says which kind it is.
     bp["modified"] = builtin_dir.is_dir() and bool(user_layer_files(name))
     bp["starred"] = meta.get("starred") is True
     bp["catalogOwned"] = catalog_owns(name)
@@ -1996,24 +1994,78 @@ def catalog_imagery_installed(name: str) -> bool:
     return theme_dir_has_wallpapers(builtin_themes_dir() / name) or catalog_placed_wallpapers(name) is not None
 
 
-class ShippedPreview(NamedTuple):
-    """What can be painted for a theme with no rendering."""
-    # The package's full-size preview.jpg, or "" when the package has none.
-    preview: str
-    # The shipped 480 px thumbnail, or "" when none ships. A placeholder only:
-    # the full-screen switcher lays its selected frame out far wider than 480 px.
-    thumbnail: str
+# The card a theme with no shipped screenshot shows: its background, a foreground
+# and an accent bar, and its 16 colours as two rows of swatches. Encoded here with
+# zlib alone, so every install under either compositor draws it with no tool.
+PALETTE_CARD_SIZE = (640, 360)
+PALETTE_CARD_VERSION = 1
 
 
-def theme_shipped_preview(name: str, packaged: str = "") -> ShippedPreview:
-    """A theme's shipped screenshot and its thumbnail, as separate answers.
+def palette_card_colors(bp: Dict[str, Any]) -> List[str]:
+    """Background, foreground, accent and the 16 colours the card paints, or [] with no palette."""
+    pal = bp.get("palette") or {}
+    colors = pal.get("colors") or []
+    if len(colors) < 16:
+        return []
+    ext = pal.get("extendedColors") or {}
+    return [clean_hex(ext.get("background"), colors[0]), clean_hex(ext.get("foreground"), colors[7]),
+            clean_hex(ext.get("accent"), colors[4]), *(clean_hex(c, "#000000") for c in colors[:16])]
 
-    The one answer to "what can be painted for this theme with no work". The
-    thumbnail never stands in for the preview: a surface that paints a full-size
-    frame reads `preview`, and an empty `preview` is what sends a theme to the
-    preview generator.
+
+def encode_palette_card(colors: List[str]) -> bytes:
+    """An RGB PNG of the card for `palette_card_colors` output."""
+    width, height = PALETTE_CARD_SIZE
+    background, foreground, accent, *swatches = (bytes.fromhex(c[1:7]) for c in colors)
+    swatch_w, gap, left = 64, 8, 36
+
+    def scanline(spans: List[Tuple[int, int, bytes]]) -> bytes:
+        line = bytearray(background * width)
+        for x0, x1, pixel in spans:
+            line[x0 * 3:x1 * 3] = pixel * (x1 - x0)
+        return b"\x00" + bytes(line)
+
+    def swatch_row(row: List[bytes]) -> bytes:
+        return scanline([(left + i * (swatch_w + gap), left + i * (swatch_w + gap) + swatch_w, px)
+                         for i, px in enumerate(row)])
+
+    # (first row, row past the band, scanline)
+    bands = [(48, 60, scanline([(left, left + 240, foreground)])),
+             (72, 84, scanline([(left, left + 160, accent)])),
+             (120, 208, swatch_row(swatches[:8])),
+             (224, 312, swatch_row(swatches[8:]))]
+    blank = scanline([])
+    raw = b"".join(next((line for y0, y1, line in bands if y0 <= y < y1), blank) for y in range(height))
+
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        return len(data).to_bytes(4, "big") + tag + data + zlib.crc32(tag + data).to_bytes(4, "big")
+
+    header = width.to_bytes(4, "big") + height.to_bytes(4, "big") + bytes([8, 2, 0, 0, 0])
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b"")
+
+
+def theme_preview(bp: Dict[str, Any]) -> str:
+    """The full-size image every theme surface paints for `bp`.
+
+    The package's shipped preview.jpg wins, edited or not, so a restyled or
+    overlaid theme keeps its base screenshot. A theme with none gets its palette
+    card, drawn once per palette into the preview cache. "" only when the theme
+    carries no palette. The shipped 480 px thumbnail never stands in for the
+    preview: the full-screen switcher lays its selected frame out far wider.
     """
-    return ShippedPreview(packaged, theme_thumbnail_path(name))
+    shipped = bp.get("packagedPreview", "")
+    if shipped:
+        return shipped
+    colors = palette_card_colors(bp)
+    if not colors:
+        return ""
+    key = hashlib.sha256(json.dumps([colors, PALETTE_CARD_VERSION]).encode()).hexdigest()[:12]
+    card = theme_previews_dir() / f"{blueprint_safe_name(bp)}-{key}.png"
+    if not card.is_file():
+        card.parent.mkdir(parents=True, exist_ok=True)
+        partial = card.with_name(f".{card.name}.{os.getpid()}")
+        partial.write_bytes(encode_palette_card(colors))
+        os.replace(partial, card)
+    return str(card)
 
 
 def theme_dir_has_wallpapers(package: Path) -> bool:
@@ -2114,8 +2166,7 @@ def catalog_entries() -> List[Dict[str, Any]]:
             "builtin": (builtin_themes_dir() / name / "theme.json").is_file(),
             "downloaded": bool(marker),
             "downloadedRef": str(marker.get("ref") or ""),
-            "preview": theme_shipped_preview(
-                name, str(packaged) if packaged and packaged.is_file() else "").preview,
+            "preview": str(packaged) if packaged and packaged.is_file() else "",
         })
     entries.sort(key=lambda e: e["name"])
     return entries
@@ -2587,12 +2638,11 @@ def set_theme_starred(pkg_dir_name: str, starred: bool) -> None:
 
 
 def prune_theme_previews(live: Set[str]) -> int:
-    """Remove cached preview renders whose file name `live` does not hold.
+    """Remove cached palette cards whose file name `live` does not hold.
 
-    `live` holds the `blueprint_preview_path` name of every listed theme. A render
-    is keyed on its theme's palette, wallpaper and app files, so every edit
-    leaves the previous render behind, and nothing else removes it. The caller
-    holds `preview_lock`, so a generator cannot be writing a render meanwhile.
+    `live` holds the card name of every listed theme that paints one. A card is
+    keyed on its theme's colours, so every palette edit leaves the previous card
+    behind, and nothing else removes it.
     """
     removed = 0
     for path in theme_previews_dir().glob("*.png"):
@@ -7245,11 +7295,13 @@ def _apply_theme_obj_unlocked(bp: Dict[str, Any], only_app: str | None = None,
 
 # --- Theme preview screenshots -------------------------------------------------
 #
-# Previews are real screenshots: a nested Hyprland session (hidden on the parent
-# compositor inside a silent special workspace) runs themed app instances plus a
-# minimal Quickshell flyout, then grim captures the virtual output.
+# The preview.jpg every theme package ships is a real screenshot, captured by
+# scripts/capture-theme-previews.py from the checkout that owns a Hyprland session:
+# a nested Hyprland session (hidden on the parent compositor inside a silent
+# special workspace) runs themed app instances plus a minimal Quickshell flyout,
+# then grim captures the virtual output. No runtime path captures; a theme with
+# no shipped screenshot paints the palette card `theme_preview` draws.
 
-PREVIEW_GENERATOR_VERSION = 8
 PREVIEW_SIZE = (2560, 1440)
 PREVIEW_OUTPUT = "VGSPREVIEW"
 # Nested Hyprland windows use the aquamarine class. Stage them fullscreen
@@ -7494,31 +7546,6 @@ def preview_wallpaper(bp: Dict[str, Any]) -> str:
     except Exception:
         wp = ""
     return wp if wp and Path(wp).exists() else ""
-
-
-def blueprint_preview_hash(bp: Dict[str, Any]) -> str:
-    # Curated apps/ file mtimes participate so hand-tuning refreshes screenshots.
-    apps_state = {}
-    for name, path in sorted((bp.get("apps") or {}).items()):
-        with contextlib.suppress(OSError):
-            apps_state[name] = int(Path(path).stat().st_mtime)
-    inputs: Dict[str, Any] = {"palette": bp.get("palette", {}), "wallpaper": preview_wallpaper(bp), "apps": apps_state, "v": PREVIEW_GENERATOR_VERSION}
-    # The preview's terminal draws its terminal slots, so they move the key too.
-    # Added only when present, so a theme without them keeps its cached preview.
-    if bp.get("terminalColors"):
-        inputs["terminal"] = bp["terminalColors"]
-    # The preview renders from `target_roles`, so a declared surface, outline,
-    # muted or statusBg changes the screenshot. Present-only for the same reason
-    # as the slots above: a theme that declares nothing keeps its cached preview.
-    declared = declared_ui_roles(bp)
-    if declared:
-        inputs["uiRoles"] = declared
-    payload = json.dumps(inputs, sort_keys=True)
-    return hashlib.sha256(payload.encode()).hexdigest()[:12]
-
-
-def blueprint_preview_path(bp: Dict[str, Any]) -> Path:
-    return theme_previews_dir() / f"{blueprint_safe_name(bp)}-{blueprint_preview_hash(bp)}.png"
 
 
 def preview_gtk_theme(mode: str) -> str:
@@ -7985,14 +8012,6 @@ def capture_theme_preview(bp: Dict[str, Any], out_path: Path, canvas: Tuple[int,
             tail = "\n".join(log_path.read_text().splitlines()[-6:]) if log_path.exists() else ""
             return {"success": False, "error": f"preview session produced no screenshot ({tail or 'no log'})"}
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        # Only this theme's own older hashes. A plain `<name>-*.png` glob also
-        # matches every theme whose name extends this one (catppuccin wiping
-        # catppuccin-frappe, tokyo-night wiping tokyo-night-moon, …), so the
-        # suffix has to be pinned to the hash shape.
-        stale_re = re.compile(rf"^{re.escape(blueprint_safe_name(bp))}-[0-9a-f]{{12}}\.png$")
-        for stale in out_path.parent.glob("*.png"):
-            if stale != out_path and stale_re.match(stale.name):
-                stale.unlink(missing_ok=True)
         shutil.move(str(shot), out_path)
         return {"success": True, "preview": str(out_path)}
     finally:
@@ -8116,51 +8135,6 @@ def preview_stage():
 
 def _exit_on_sigterm(signum: int, _frame: Any) -> None:
     raise SystemExit(128 + signum)
-
-
-def cmd_theme_preview(args: argparse.Namespace) -> int:
-    # The shell stops a preview with SIGTERM when its request times out, and holds off
-    # SIGKILL for Proc.terminateGraceMs; a vshell.service stop sends SIGTERM too. The
-    # default action ends the process without unwinding, leaving the staging rule to park
-    # every later nested Hyprland window on a workspace no monitor shows; as an exit, it
-    # runs every teardown on the way out.
-    signal.signal(signal.SIGTERM, _exit_on_sigterm)
-    with preview_lock() as locked:
-        if not locked:
-            msg = "another preview generation is already running"
-            print(json.dumps({"success": False, "error": msg}, indent=2) if args.json else msg)
-            return 1
-        if args.all:
-            targets = list_themes()
-        else:
-            name = args.name or current_theme().get("name", "")
-            bp = find_theme(name)
-            if not bp:
-                eprint(f"Blueprint not found: {name}")
-                return 1
-            targets = [bp]
-        results = []
-        with preview_stage() as (staged, reassert_stage):
-            if not staged:
-                eprint("preview staging unavailable; the capture session will be visible")
-            for bp in targets:
-                out_path = blueprint_preview_path(bp)
-                if out_path.exists() and not args.force:
-                    results.append({"success": True, "name": bp.get("name"), "preview": str(out_path), "cached": True})
-                    continue
-                reassert_stage()
-                result = generate_theme_preview(bp, out_path)
-                result["name"] = bp.get("name")
-                results.append(result)
-                if not result.get("success"):
-                    eprint(f"preview failed for {bp.get('name')}: {result.get('error')}")
-    ok = all(r.get("success") for r in results)
-    if args.json:
-        print(json.dumps({"success": ok, "previews": results}, indent=2))
-    else:
-        for r in results:
-            print(f"{r.get('name')}: {r.get('preview') or r.get('error')}")
-    return 0 if ok else 1
 
 
 @contextlib.contextmanager
@@ -10734,11 +10708,6 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
     p_pick = sub.add_parser("pick")
     p_pick.add_argument("mode", nargs="?", default="all", choices=["all", "dark", "light"])
     p_pick.add_argument("--json", action="store_true")
-    p_preview = sub.add_parser("preview")
-    p_preview.add_argument("name", nargs="?", default="")
-    p_preview.add_argument("--force", action="store_true")
-    p_preview.add_argument("--all", action="store_true", help="generate previews for every blueprint")
-    p_preview.add_argument("--json", action="store_true")
     p_capture = sub.add_parser("preview-capture")
     p_capture.add_argument("--dir", required=True)
     p_capture.add_argument("--windows", type=int, default=3)
@@ -10854,21 +10823,9 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
             for b in bps:
                 pal = b.get("palette", {})
                 ext = pal.get("extendedColors") or {}
-                preview = blueprint_preview_path(b)
-                live_previews.add(preview.name)
-                # The committed preview.jpg is what makes a fresh install or
-                # checkout show full-size screenshots without regenerating
-                # anything. It stops being truthful once the user restyles or
-                # overlays the theme, so in that case report no preview and let
-                # generateMissingPreviews() render one. An untouched catalog
-                # download is the shipped theme rather than an edit of it, so
-                # its screenshot still describes what the user sees. The
-                # thumbnail is reported beside it as a placeholder only.
-                shipped = theme_shipped_preview(
-                    str(b.get("name") or ""), b.get("packagedPreview", ""))
-                edited = (b.get("modified") and not b.get("catalogPristine")) or \
-                    not adjustments_all_zero(normalize_adjustments(b.get("adjustments")))
-                shipped_preview = "" if edited else shipped.preview
+                preview = theme_preview(b)
+                if preview and Path(preview).parent == theme_previews_dir():
+                    live_previews.add(Path(preview).name)
                 package_dir = Path(str(b.get("path") or "")).name if b.get("package") else ""
                 entries.append({
                     "name": b.get("name"),
@@ -10885,8 +10842,8 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
                     "mode": blueprint_mode(b),
                     "pair": b.get("pair", ""),
                     "builtin": b.get("builtin", False),
-                    "preview": str(preview) if preview.exists() else shipped_preview,
-                    "thumbnail": shipped.thumbnail,
+                    "preview": preview,
+                    "thumbnail": theme_thumbnail_path(str(b.get("name") or "")),
                     # A legacy v1 blueprint has no package directory to hold wallpapers.
                     "installed": bool(package_dir) and catalog_imagery_installed(package_dir),
                     "starred": bool(b.get("starred")),
@@ -10897,11 +10854,7 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
                     "appOverrides": b.get("appOverrides") or {},
                     "timestamp": b.get("timestamp", 0),
                 })
-            # Skipped while a generator holds the lock: it may be writing a
-            # render for a theme whose hash this list has not seen.
-            with preview_lock() as locked:
-                if locked:
-                    prune_theme_previews(live_previews)
+            prune_theme_previews(live_previews)
             print(json.dumps({"blueprints": entries, "count": len(entries)}, indent=2))
         else:
             print("\n".join(str(b.get("name")) for b in bps))
@@ -11344,8 +11297,6 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
             result["error"] = picker.get("stderr") or picker.get("error") or "theme picker IPC unavailable"
         print(json.dumps(result, indent=2) if args.json else ("Theme picker opened" if opened else str(result["error"])))
         return 0 if opened else 1
-    if args.cmd == "preview":
-        return cmd_theme_preview(args)
     if args.cmd == "preview-capture":
         return cmd_theme_preview_capture(args)
     if args.cmd == "chromium-policy":
