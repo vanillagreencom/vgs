@@ -59,6 +59,16 @@ function handlerBody(declaration, id) {
 // The second producer of the toplevel view. A direct call here rebuilt every consumer twice
 // for one window open, so this handler shares the timer and the test must run the shipped body.
 const VALUES_CHANGED = extractBlock(source, "function onValuesChanged()", source.indexOf("target: ToplevelManager.toplevels"));
+
+// The Niri producers. NiriService reassigns windows several times inside one Niri event, and a
+// window opening on a new workspace reaches the workspace handler as well, so these bodies run
+// here rather than a stand-in written in this file.
+const NIRI_AT = source.indexOf("target: NiriService");
+const NIRI_HANDLERS = {
+    windows: extractBlock(source, "function onWindowsChanged()", NIRI_AT),
+    workspaces: extractBlock(source, "function onAllWorkspacesChanged()", NIRI_AT),
+};
+
 const TIMERS = ["hyprMonitorRefreshTimer", "toplevelViewTimer"].map(timerBlock);
 
 // Model the zero-interval Timer: restart re-arms a pending trigger, and a turn fires it once.
@@ -67,10 +77,11 @@ function timer(fire) {
     return { pending: false, restart() { this.pending = true; }, fire() { this.pending = false; fire(); } };
 }
 
-function shell() {
-    const root = { calls: [], _hyprMonitorRefreshEvents: MONITOR_EVENTS, _hyprToplevelViewEvents: TOPLEVEL_EVENTS };
+function shell({ niri = false } = {}) {
+    const root = { calls: [], isNiri: niri, _hyprMonitorRefreshEvents: MONITOR_EVENTS, _hyprToplevelViewEvents: TOPLEVEL_EVENTS };
     root.refreshToplevels = () => root.calls.push("toplevelsChanged");
     root.refreshMonitors = () => root.calls.push("refreshMonitors");
+    root.rememberNiriFocus = () => root.calls.push("rememberNiriFocus");
     const scope = {
         Hyprland: {
             refreshMonitors: () => root.calls.push("Hyprland.refreshMonitors"),
@@ -83,10 +94,15 @@ function shell() {
 
     // Deliver one socket batch: every producer this action reaches, then one event-loop turn.
     // wayland: true adds the ToplevelManager producer, which a window open or close reaches too.
+    // niri names the NiriService handlers the action reaches, in the order Niri emits them.
     root.action = (...names) => root.deliver({}, ...names);
-    root.deliver = ({ wayland = false }, ...names) => {
+    root.deliver = ({ wayland = false, niri = [] }, ...names) => {
         for (const name of names)
             callInScope(RAW_EVENT, root, scope, ["event"], [{ name }]);
+        for (const which of niri) {
+            assert.ok(which in NIRI_HANDLERS, `${which} is not a NiriService handler this model carries`);
+            callInScope(NIRI_HANDLERS[which], root, scope);
+        }
         if (wayland)
             callInScope(VALUES_CHANGED, root, scope);
         for (const { id } of TIMERS)
@@ -107,12 +123,14 @@ test("every timer this shell arms fires once per turn and nothing more", () => {
     }
 });
 
-test("the Hyprland fan-out and the Wayland list share one coalescing timer", () => {
-    // NiriService also produces rebuilds and is deliberately not routed here; this case is
-    // scoped to the two producers the model carries.
+test("every toplevel-view producer shares one coalescing timer", () => {
     const timerId = TIMERS.find(t => t.body.includes("refreshToplevels")).id;
-    assert.ok(VALUES_CHANGED.includes(`${timerId}.restart()`),
-        "the ToplevelManager handler must share the timer, or one window open rebuilds every consumer twice");
+    for (const [label, body] of [["ToplevelManager", VALUES_CHANGED], ...Object.entries(NIRI_HANDLERS)]) {
+        assert.ok(body.includes(`${timerId}.restart()`),
+            `the ${label} handler must share the timer, or one window open rebuilds every consumer twice`);
+        assert.ok(!body.includes("refreshToplevels("),
+            `the ${label} handler must not rebuild directly, which is the call the timer replaced`);
+    }
     assert.deepEqual(shell().deliver({ wayland: true }), ["toplevelsChanged"],
         "the Wayland list alone rebuilds once");
 
@@ -121,6 +139,31 @@ test("the Hyprland fan-out and the Wayland list share one coalescing timer", () 
         assert.deepEqual(shell().deliver({ wayland: true }, name), ["toplevelsChanged"],
             `${name} reaches both producers and must still rebuild every consumer once`);
     }
+});
+
+test("one Niri window action costs one rebuild and remembers focus synchronously", () => {
+    // Niri emits no Hyprland raw event, so a window open reaches the NiriService windows handler
+    // and the ToplevelManager list. NiriService reassigns windows several times inside one Niri
+    // event, and a window opening on a new workspace reaches the workspace handler as well.
+    for (const [action, batch, expected] of [
+        ["window open or close", { wayland: true, niri: ["windows"] },
+            ["rememberNiriFocus", "toplevelsChanged"]],
+        ["window open with a repeated windows assignment", { wayland: true, niri: ["windows", "windows"] },
+            ["rememberNiriFocus", "rememberNiriFocus", "toplevelsChanged"]],
+        ["window open on a new workspace", { wayland: true, niri: ["windows", "workspaces"] },
+            ["rememberNiriFocus", "toplevelsChanged"]],
+        ["workspace switch, which leaves the Wayland list alone", { niri: ["workspaces"] },
+            ["toplevelsChanged"]],
+    ]) {
+        assert.deepEqual(shell({ niri: true }).deliver(batch), expected,
+            `${action}: every consumer rebuilds once, after each remembered focus`);
+    }
+});
+
+test("the Niri handlers do nothing on another compositor", () => {
+    // The isNiri guard is what keeps a stray NiriService signal off the Hyprland toplevel view.
+    assert.deepEqual(shell().deliver({ niri: ["windows", "workspaces"] }), [],
+        "a NiriService signal must neither remember focus nor rebuild when the compositor is not Niri");
 });
 
 test("the extracted handler routes through both shipped event lists and the coalescing timers", () => {

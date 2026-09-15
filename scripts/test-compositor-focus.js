@@ -137,7 +137,11 @@ function shell(overrides = {}) {
     root.construct = () => call(bodies.completed, root);
     root.detected = (name) => call(bodies.applyCompositor, root, ["name"], [name]);
     root.focusChanged = () => call(bodies.activeToplevelChanged, root);
-    root.windowsChanged = () => call(bodies.windowsChanged, root);
+    // The handler defers the consumer rebuild to the shared timer and keeps the focus bookkeeping
+    // synchronous. Record the arming here; scripts/test-compositor-events.js runs the timer body.
+    root.windowsChanged = () => callInScope(bodies.windowsChanged, root, {
+        toplevelViewTimer: { restart: () => root.calls.push("toplevelViewTimer.restart") },
+    });
 
     // Model this as a binding so reads observe detection changes.
     Object.defineProperty(root, "focusSource", { get: () => call(`return (${FOCUS_SOURCE});`, root) });
@@ -564,7 +568,7 @@ test("failed detection does not consult Niri's list", () => {
     assert.equal(root.lastFocusedAppId(), "", "not even a remembered one");
 });
 
-test("Niri focus bookkeeping runs only on Niri and refreshes the toplevel list", () => {
+test("Niri focus bookkeeping runs only on Niri and arms the shared rebuild timer", () => {
 
     const root = shell({ NiriService: { windows: [foot] } });
     root.windowsChanged();
@@ -573,7 +577,8 @@ test("Niri focus bookkeeping runs only on Niri and refreshes the toplevel list",
     root.isNiri = true;
     root.windowsChanged();
     assert.equal(root._lastFocusedNiriWindowId, foot.id, "every Niri window change updates the remembered focus");
-    assert.deepEqual(root.calls, ["refreshToplevels"], "and refreshes the toplevel list");
+    assert.deepEqual(root.calls, ["toplevelViewTimer.restart"],
+        "and arms the shared timer instead of rebuilding every consumer on the spot");
 });
 test("extracted handlers assign on the component, not the global scope", () => {
     // with assigns to an object only for an existing property. Assert against accidental global writes.
