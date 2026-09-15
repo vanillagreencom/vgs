@@ -45,7 +45,12 @@ import vshell_theme_color as _theme_color
 import vshell_wallpaper_thumbs as _wp_thumbs
 
 HEX_RE = re.compile(r"^#?[0-9a-fA-F]{6}$")
-TEMPLATE_RE = re.compile(r"\{([A-Za-z0-9_]+)(?:\.(strip|rgb))?\}")
+# The one token durable theme state roots a path on, written by `portable_ref` and
+# read by `resolve_path`, and the tail that identifies a theme package's background
+# wherever it was recorded, which `recovered_package_ref` alone matches on.
+VSHELL_ROOT_TOKEN = "${VSHELL_ROOT}"
+PACKAGE_BACKGROUND_RE = re.compile(r"/themes/([^/]+)/backgrounds/([^/]+)$")
+TEMPLATE_RE = re.compile(r"\{([A-Za-z0-9_]+)(?:\.(strip|rgb|ref))?\}")
 ANSI_NAMES = [
     "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
     "bright_black", "bright_red", "bright_green", "bright_yellow", "bright_blue", "bright_magenta", "bright_cyan", "bright_white",
@@ -102,6 +107,13 @@ DEFAULT_COLORS = [
     "#32344a", "#f7768e", "#9ece6a", "#e0af68", "#7aa2f7", "#ad8ee6", "#449dab", "#787c99",
     "#444b6a", "#ff7a93", "#b9f27c", "#ff9e64", "#7da6ff", "#bb9af7", "#0db9d7", "#acb0d0",
 ]
+# The session.json keys holding a wallpaper path, for the greeter copy alone.
+# quickshell/vshell/Common/settings/SessionSpec.js owns the set through its `ref`
+# and `refMap` flags; scripts/test-wallpaper-refs.py pins the two against each other.
+SESSION_WALLPAPER_KEYS = (
+    "wallpaperPath", "wallpaperPathLight", "wallpaperPathDark",
+    "monitorWallpapers", "monitorWallpapersLight", "monitorWallpapersDark",
+)
 GREETER_RUNTIME_BIN_FILES = {
     "vshell": 0o750,
     "vshell-helper": 0o750,
@@ -356,11 +368,77 @@ APPLE_TB_NAMES: Dict[str, str] = {
 def resolve_path(value: str | None) -> str:
     if not value:
         return ""
-    value = value.replace("${VSHELL_ROOT}", str(repo_root()))
+    value = value.replace(VSHELL_ROOT_TOKEN, str(repo_root()))
     value = os.path.expandvars(value)
     if value.startswith("~"):
         value = str(home()) + value[1:]
     return value
+
+
+def portable_ref(value: str | None) -> str:
+    """`value` as durable theme state records it: rooted on `${VSHELL_ROOT}` rather
+    than on the directory the shell happened to run from when the theme was applied.
+
+    `resolve_path` is the inverse. A shell started from a checkout or a worktree
+    reads its built-in theme packages out of that directory, so an absolute path to
+    a package background pins it: remove the checkout and every durable file still
+    names it, which is a wallpaper that no longer loads on any monitor.
+
+    Recording is one containment test. A path inside this installation's root is the
+    one this installation can name portably, and becomes a rooted reference.
+    Everything else passes through unchanged: a user theme package under
+    `~/.config/vshell/themes`, which does not move with the shell, a wallpaper
+    outside VGS entirely, and the colour literal `SessionData.setWallpaperColor`
+    records in the same field. Repairing a path this installation does not own is
+    `recovered_package_ref`, on the read side, where a value that turns out to name
+    nothing costs a wallpaper rather than replacing one that loads.
+
+    `Common/Paths.qml` mirrors this for `session.json`, which the shell alone
+    writes. `scripts/lib/wallpaper-ref-cases.json` is the one statement of the rule;
+    its `ref` and `resolve` sections are what the JavaScript suite runs.
+    """
+    if not value or not value.startswith("/"):
+        return value or ""
+    root = str(repo_root())
+    if value.startswith(root + "/"):
+        return VSHELL_ROOT_TOKEN + value[len(root):]
+    return value
+
+
+def recovered_package_ref(value: str | None) -> str:
+    """A theme package background another installation recorded, re-rooted on this one.
+
+    Emits a path only when the file it names is present here, which is why this is
+    the rule's one owner: `Common/Paths.qml` cannot ask the filesystem synchronously
+    and so carries no repair. A path already inside the user's packages answers as it
+    stands, since the copy it names is the one the user chose. Every other absolute
+    path with a package background's tail is looked for under the running root and
+    then under the user's packages, and answers with the first that holds it; a path
+    under the running root whose own file is gone can therefore answer with the
+    user's copy. `docs/architecture/wallpaper.md` states the rule.
+    """
+    if not value or not value.startswith("/"):
+        return value or ""
+    if value.startswith(str(user_themes_dir()) + "/"):
+        return value
+    tail = PACKAGE_BACKGROUND_RE.search(value)
+    if not tail:
+        return value
+    relative = f"themes/{tail.group(1)}/backgrounds/{tail.group(2)}"
+    if (repo_root() / relative).is_file():
+        return VSHELL_ROOT_TOKEN + "/" + relative
+    user_copy = user_themes_dir() / tail.group(1) / "backgrounds" / tail.group(2)
+    return str(user_copy) if user_copy.is_file() else value
+
+
+def resolved_wallpaper(value: str | None) -> str:
+    """A wallpaper as a reader gets it, out of whatever durable state recorded it.
+
+    Recovering before resolving is what makes state written before references
+    existed load the same image rather than nothing. A reference already in rooted
+    form passes `recovered_package_ref` unchanged, since it is not an absolute path.
+    """
+    return resolve_path(recovered_package_ref(value))
 
 
 def expand_dest(value: str) -> Path:
@@ -4490,6 +4568,10 @@ def render_template(text: str, roles: Dict[str, str], source: str) -> str:
     `#{pane_id}`, and passes through. A token naming a role the map lacks is a
     render path that skipped `render_roles`: written out, it leaves literal
     placeholder text in the app's config, so it raises instead.
+
+    The `ref` modifier writes a `portable_ref` rather than the role's own value,
+    and only the shell's own target asks for it. Every other target renders a
+    config another application reads, which resolves no VGS token.
     """
     def repl(match: re.Match[str]) -> str:
         name = match.group(1)
@@ -4499,6 +4581,8 @@ def render_template(text: str, roles: Dict[str, str], source: str) -> str:
                 raise ValueError(f"template-role-missing {source} {{{name}}}")
             return match.group(0)
         value = roles.get(name, "")
+        if modifier == "ref":
+            return portable_ref(value)
         if modifier == "strip":
             return strip_hash(value)
         if modifier == "rgb":
@@ -6968,12 +7052,20 @@ def applied_blueprint() -> Dict[str, Any] | None:
     Unlike `current_theme_obj`, this resolves no package, so it still answers for
     a theme applied under a name no package carries. A file that is missing or
     unreadable answers None; every caller has a second source.
+
+    The palette's wallpaper comes back absolute, so callers see the same value
+    `apply_theme_obj` was handed: `applied_theme_state` records the reference form
+    and `resolved_wallpaper` reads it, recovering a record an installation that is
+    gone wrote.
     """
     current_bp_path = cfg_dir() / "theme-current.json"
     if current_bp_path.exists():
         with contextlib.suppress(Exception):
             bp = json.loads(current_bp_path.read_text())
             if isinstance(bp, dict):
+                palette = bp.get("palette")
+                if isinstance(palette, dict) and palette.get("wallpaper"):
+                    bp["palette"] = {**palette, "wallpaper": resolved_wallpaper(str(palette["wallpaper"]))}
                 return bp
     return None
 
@@ -7234,6 +7326,11 @@ def applied_theme_state(bp: Dict[str, Any]) -> Dict[str, Any]:
     rebuild withheld is not applied state either: `WITHHELD_CURATED_KEY` answers
     for the apply that carried it, and the next rebuild asks the question again.
 
+    The palette's input wallpaper is the one path that survives, and it is recorded
+    as a `portable_ref` for the same reason the keys above are dropped: it names a
+    file inside a theme package, and an absolute path to one outlives the directory
+    that held it. `applied_blueprint` resolves it back.
+
     One owner, so a fixture seeding an applied theme writes the file the apply
     writes. `path` and `package` are the keys `save_curated_terms` gates
     on, so a seeded state richer than the real one hides a refused exemption.
@@ -7242,6 +7339,9 @@ def applied_theme_state(bp: Dict[str, Any]) -> Dict[str, Any]:
     for key in ("path", "builtin", "userDir", "backgrounds", "packagedPreview",
                 WITHHELD_CURATED_KEY):
         current.pop(key, None)
+    palette = current.get("palette")
+    if isinstance(palette, dict) and palette.get("wallpaper"):
+        current["palette"] = {**palette, "wallpaper": portable_ref(str(palette["wallpaper"]))}
     current["appliedAt"] = int(time.time() * 1000)
     return current
 
@@ -7374,9 +7474,9 @@ def _apply_theme_obj_unlocked(bp: Dict[str, Any], only_app: str | None = None,
         hook_specs.extend(plan.hooks)
         # A reload verb tells a running application to re-read a file this target
         # wrote, so it is worth sending only when those bytes moved. A pick that
-        # keeps the palette moves only the targets whose template names
-        # {wallpaper}; an extracting pick re-derives the palette and moves them
-        # all.
+        # keeps the palette moves only the targets whose template names the
+        # wallpaper role, in any of its forms; an extracting pick re-derives the
+        # palette and moves them all.
         if target_changed:
             hook_specs.extend(plan.reload_hooks)
 
@@ -8324,6 +8424,55 @@ def default_theme_blueprint() -> Dict[str, Any]:
     return find_theme(DEFAULT_THEME_NAME) or {"name": DEFAULT_THEME_NAME, "palette": {"colors": DEFAULT_COLORS, "mode": "dark", "extendedColors": {}}}
 
 
+def resolved_shell_theme(theme: Dict[str, Any]) -> Dict[str, Any]:
+    """`~/.config/vshell/theme.json` with its wallpaper reference resolved.
+
+    The shell's target template renders `{wallpaper.ref}`, so the file holds a
+    `portable_ref` and never an absolute path into the directory the applying shell
+    ran from. Every reader of that file's wallpaper passes through here, so what a
+    caller sees is the path on this machine now, a file an earlier version wrote
+    absolutely included. `current_theme_name` reads the name alone and does not.
+    """
+    if not theme.get("wallpaper"):
+        return theme
+    return {**theme, "wallpaper": resolved_wallpaper(str(theme["wallpaper"]))}
+
+
+def repair_theme_state() -> List[str]:
+    """Rewrite this helper's own durable files whose wallpaper this installation can
+    repair, and report which ones moved.
+
+    `current_theme` and `applied_blueprint` repair what they return, but a reader that
+    opens the file itself sees the bytes: `MethodTheme`'s watcher is such a reader, and
+    without this a session that pinned a removed checkout keeps naming it forever.
+    `theme init` runs this, and the shell runs `theme init` on every start.
+
+    A file whose wallpaper `recovered_package_ref` declines is left alone, so this
+    writes nothing on the ordinary start where every path already resolves.
+    """
+    moved: List[str] = []
+    for path, read_key in ((cfg_dir() / "theme.json", None), (cfg_dir() / "theme-current.json", "palette")):
+        try:
+            data = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        holder = data.get(read_key) if read_key else data
+        if not isinstance(holder, dict):
+            continue
+        recorded = str(holder.get("wallpaper") or "")
+        repaired = portable_ref(resolved_wallpaper(recorded))
+        if not recorded or repaired == recorded:
+            continue
+        holder["wallpaper"] = repaired
+        try:
+            write_file(path, json.dumps(data, indent=2) + "\n")
+        except OSError as exc:
+            eprint(f"{path.name}: {exc}")
+            continue
+        moved.append(path.name)
+    return moved
+
+
 def current_theme() -> Dict[str, Any]:
     """The applied theme's shell state, read-only.
 
@@ -8334,8 +8483,9 @@ def current_theme() -> Dict[str, Any]:
     """
     theme_file = cfg_dir() / "theme.json"
     if theme_file.exists():
-        return json.loads(theme_file.read_text())
-    return json.loads(render_target_template("vgs-shell", "vgs-theme.json", target_roles(default_theme_blueprint())))
+        return resolved_shell_theme(json.loads(theme_file.read_text()))
+    return resolved_shell_theme(json.loads(
+        render_target_template("vgs-shell", "vgs-theme.json", target_roles(default_theme_blueprint()))))
 
 
 def blueprint_from_theme_json(theme: Dict[str, Any], name: str | None = None, mode: str | None = None, wallpaper: str | None = None) -> Dict[str, Any]:
@@ -10828,6 +10978,11 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
     p_wp_del.add_argument("--applied", action="append", default=[], metavar="PATH",
                           help="an image the session or lock screen still names, which is refused; repeat per image")
     p_wp_del.add_argument("--json", action="store_true")
+    p_wp_repair = sub.add_parser(
+        "wallpaper-repair",
+        help="answer with the wallpaper this installation holds for each path that needs repairing")
+    p_wp_repair.add_argument("paths", nargs="*")
+    p_wp_repair.add_argument("--json", action="store_true")
     p_wp_def = sub.add_parser("wallpaper-default")
     p_wp_def.add_argument("file")
     p_wp_def.add_argument("--theme", default="", help="theme name (default: current)")
@@ -10924,9 +11079,12 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
         applied = not (cfg_dir() / "theme.json").exists()
         if applied:
             apply_theme_obj(default_theme_blueprint())
+        # After the apply, so a fresh install writes its own state before this reads
+        # it, and before the name below, which is what the shell waits on.
+        repaired = repair_theme_state()
         name = str(current_theme().get("name") or "")
         if args.json:
-            print(json.dumps({"applied": applied, "name": name}, indent=2))
+            print(json.dumps({"applied": applied, "name": name, "repaired": repaired}, indent=2))
         else:
             print(name)
         return 0
@@ -11149,6 +11307,15 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
             eprint(str(exc))
             return 1
         print(json.dumps(result, indent=2) if args.json else f"Deleted {result['deleted']}")
+        return 0
+    if args.cmd == "wallpaper-repair":
+        # The shell owns session.json and this owns the rule, so the answer crosses
+        # the boundary rather than the write: SessionData applies it per key, which
+        # keeps each monitor's and each mode's own value.
+        repaired = {path: resolved_wallpaper(path) for path in args.paths}
+        moved = {path: value for path, value in repaired.items() if value != path}
+        print(json.dumps({"repaired": moved}, indent=2) if args.json
+              else "\n".join(f"{path}\t{value}" for path, value in moved.items()))
         return 0
     if args.cmd == "wallpaper-default":
         bp = resolve_theme_package(args.theme)
@@ -16064,19 +16231,32 @@ def load_required_json_file(path: Path) -> Dict[str, Any]:
 
 
 def current_theme_json() -> Dict[str, Any]:
+    """The applied theme's shell state for the greeter's copy of it, resolved.
+
+    A reference resolves against the greeter's staged runtime, which holds no
+    packages; `docs/architecture/wallpaper.md` states why the copy carries paths.
+    """
     path = cfg_dir() / "theme.json"
     if path.exists():
-        return load_required_json_file(path)
+        return resolved_shell_theme(load_required_json_file(path))
     return current_theme()
 
 
 def current_session_json(theme: Dict[str, Any]) -> Dict[str, Any]:
+    """The desktop session's wallpaper state for the greeter's copy of it, resolved
+    for the reason `current_theme_json` states."""
     path = state_dir() / "session.json"
     data = load_json_file(path)
     if not data:
         data = {"wallpaperPath": theme.get("wallpaper", "")}
     elif "wallpaperPath" not in data and theme.get("wallpaper"):
         data["wallpaperPath"] = theme.get("wallpaper")
+    for key in SESSION_WALLPAPER_KEYS:
+        value = data.get(key)
+        if isinstance(value, str):
+            data[key] = resolved_wallpaper(value)
+        elif isinstance(value, dict):
+            data[key] = {screen: resolved_wallpaper(str(path_value)) for screen, path_value in value.items()}
     return data
 
 

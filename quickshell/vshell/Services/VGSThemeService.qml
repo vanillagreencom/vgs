@@ -1206,12 +1206,46 @@ Singleton {
         });
     }
 
+    // Which theme.json change `Theme`'s watcher saw while this ran. `repaired` names the
+    // files `repair_theme_state` rewrote. An answer this cannot read is `unreadable`
+    // rather than `clean`, because `clean` releases a session write that reaches every
+    // monitor and that session.json cannot be repaired back from.
+    function _themeInitOutcome(output, exitCode) {
+        if (exitCode !== 0)
+            return "unreadable";
+        try {
+            const repaired = JSON.parse(output || "{}").repaired;
+            if (!Array.isArray(repaired)) {
+                log.warn("theme init answered without a repaired list");
+                return "unreadable";
+            }
+            return repaired.indexOf("theme.json") === -1 ? "clean" : "repaired";
+        } catch (e) {
+            log.warn("Could not read the theme init answer:", e.message);
+            return "unreadable";
+        }
+    }
+
     // Reading the current theme never applies one, so a first run with no
     // theme.json needs this explicit step before the reads. The reads run
-    // whatever init answers. scripts/test-theme-startup.js executes this handler.
+    // whatever init answers. init also repairs theme.json, which reaches `Theme`
+    // as a file change partway through this run, so the arm is taken before the
+    // launch. scripts/test-theme-startup.js executes this handler.
     Component.onCompleted: {
-        _run("vgs-theme-init", ["theme", "init", "--json"], function() {
+        Theme.themeInitStarted();
+        try {
+            _run("vgs-theme-init", ["theme", "init", "--json"], function(output, exitCode) {
+                Theme.themeInitFinished(_themeInitOutcome(output, exitCode));
+                refresh();
+            }, 120000, true);
+        } catch (e) {
+            // What this covers is a synchronous failure before the run is armed, which
+            // answers no callback; an arm nothing clears holds the theme sync for the
+            // rest of the session. A run that is armed and never starts belongs to
+            // Common/Proc.qml's timeout, which answers the callback itself.
+            log.warn("Could not start theme init:", e);
+            Theme.themeInitFinished("unreadable");
             refresh();
-        }, 120000, true);
+        }
     }
 }

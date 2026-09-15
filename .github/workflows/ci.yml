@@ -279,6 +279,7 @@ jobs:
           scripts/test-switcher-scope.js
           scripts/test-switcher-source.js
           scripts/test-thumb-sweep.js
+          scripts/test-wallpaper-refs.js
           scripts/test-notification-history-trim.js
           scripts/test-theme-startup.js
           scripts/test-theme-apply-queue.js
@@ -290,6 +291,7 @@ jobs:
           scripts/test-open-connect-lifetime.js
           scripts/test-capture-status-watch.js
           scripts/test-wallpaper-thumbs.py
+          scripts/test-wallpaper-refs.py
       - name: Fixture and capability regressions
         run: |
           scripts/check-display-config-fixtures.js

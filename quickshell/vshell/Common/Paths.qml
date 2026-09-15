@@ -26,6 +26,69 @@ Singleton {
     readonly property string repoRoot: Quickshell.env("VSHELL_ROOT") || (Quickshell.shellDir + "/../..")
     readonly property string vshellCli: repoRoot + "/bin/vshell"
 
+    // The token durable theme state roots a wallpaper path on, spelled as
+    // bin/vshell_helper.py writes and reads it.
+    readonly property string rootToken: "${VSHELL_ROOT}"
+
+    // BEGIN WALLPAPER REFERENCE DECISION
+    // Recording and resolving, mirroring `portable_ref` and `resolve_path` in
+    // bin/vshell_helper.py, because session.json is written on a coalesced timer no
+    // subprocess can sit inside. Repairing a background another installation
+    // recorded is not here: `recovered_package_ref` in the helper owns it, and it
+    // tests the filesystem, which this cannot do synchronously.
+    // docs/architecture/wallpaper.md states the rule.
+    // scripts/lib/wallpaper-ref-cases.json is the case table both runtimes run.
+    // Keep this region free of root., Theme., I18n. and Qt. references: scripts/test-wallpaper-refs.js extracts and executes it.
+
+    // The directories the rule is stated against, derived once from what the shell
+    // knows about itself. Deriving them here rather than at each use site is what
+    // lets the test drive the same composition the shell runs.
+    function refRootsFrom(repo, configDir, homeDir, token) {
+        return { repo: repo, userThemes: configDir + "/themes", home: homeDir, token: token };
+    }
+
+    // A wallpaper path as durable state records it: one containment test. A path
+    // inside this installation's root becomes a rooted reference and everything
+    // else passes through, a user theme package and a picture outside VGS alike,
+    // as does the colour literal setWallpaperColor stores in the same field.
+    function wallpaperRefIn(path, roots) {
+        if (!path || !path.startsWith("/"))
+            return path || "";
+        if (path.startsWith(roots.repo + "/"))
+            return roots.token + path.substring(roots.repo.length);
+        return path;
+    }
+
+    // The `~` form the helper writes into a target's destination. One owner: the
+    // `expandTilde` below is this function with the shell's own home.
+    function expandTildeIn(path, homeDir) {
+        if (!path || !path.startsWith("~"))
+            return path || "";
+        return homeDir + path.substring(1);
+    }
+
+    // A reference as the path on this machine now. A rooted reference never also
+    // carries a `~`, so the two forms are separate arms.
+    function resolveRefIn(ref, roots) {
+        if (!ref)
+            return "";
+        if (ref.startsWith(roots.token))
+            return roots.repo + ref.substring(roots.token.length);
+        return expandTildeIn(ref, roots.home);
+    }
+
+    // END WALLPAPER REFERENCE DECISION
+
+    readonly property var refRoots: refRootsFrom(repoRoot, strip(config), strip(home), rootToken)
+
+    function wallpaperRef(path: string): string {
+        return wallpaperRefIn(path, root.refRoots);
+    }
+
+    function resolveRef(ref: string): string {
+        return resolveRefIn(ref, root.refRoots);
+    }
+
     readonly property url imagecache: `${cache}/imagecache`
 
     function stringify(path: url): string {
@@ -33,9 +96,7 @@ Singleton {
     }
 
     function expandTilde(path: string): string {
-        if (!path.startsWith("~"))
-            return path;
-        return strip(root.home) + path.substring(1);
+        return expandTildeIn(path, strip(root.home));
     }
 
     function shortenHome(path: string): string {

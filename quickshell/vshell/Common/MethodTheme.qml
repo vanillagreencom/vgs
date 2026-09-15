@@ -1388,6 +1388,49 @@ Singleton {
     }
 
 
+    // `theme init` rewrites theme.json itself when `repair_theme_state` can recover the
+    // wallpaper it records, and the watcher below sees that rewrite as an ordinary file
+    // change. Telling it from a terminal apply is what these two calls carry: a repair
+    // must not reach `SessionData.setWallpaper`, which writes its one image to every
+    // connected monitor and to the active mode, replacing the per-monitor and per-mode
+    // values `SessionData._repairWallpapers` exists to restore. `VGSThemeService` owns
+    // both calls and runs `theme init` at startup.
+    property bool _themeInitRunning: false
+    property string _heldThemeWallpaper: ""
+
+    function themeInitStarted() {
+        root._themeInitRunning = true;
+        root._heldThemeWallpaper = "";
+    }
+
+    // `VGSThemeService._themeInitOutcome` owns which outcome an init answer carries, and
+    // what it turns on is a rewrite of theme.json; this acts on the outcome. `unreadable`
+    // releases nothing, because the sync it would run replaces every monitor's wallpaper
+    // and session.json then no longer names the files a repair needs; holding it costs
+    // the session this theme's wallpaper until the next apply.
+    function themeInitFinished(outcome) {
+        root._themeInitRunning = false;
+        const held = root._heldThemeWallpaper;
+        root._heldThemeWallpaper = "";
+        switch (outcome) {
+        case "clean":
+            root._syncSessionWallpaper(held);
+            return;
+        case "repaired":
+        case "unreadable":
+            return;
+        default:
+            root.log.warn("theme init outcome is none of clean, repaired, unreadable:", outcome);
+        }
+    }
+
+    function _syncSessionWallpaper(themeWallpaper) {
+        if (themeWallpaper && typeof SessionData !== "undefined"
+                && SessionData.wallpaperPath !== themeWallpaper
+                && (typeof SettingsData === "undefined" || SettingsData.wallpaperSource !== "folder"))
+            SessionData.setWallpaper(themeWallpaper);
+    }
+
     FileView {
         id: themeFileView
         path: root.themePath
@@ -1406,10 +1449,16 @@ Singleton {
                 // CLI applies only touch theme.json; keep the session wallpaper in sync
                 // so `vshell theme apply` changes the background like UI applies do.
                 // wallpaperSource=folder decouples the wallpaper from theme applies.
-                if (root.methodThemeJson.wallpaper && typeof SessionData !== "undefined"
-                        && SessionData.wallpaperPath !== root.methodThemeJson.wallpaper
-                        && (typeof SettingsData === "undefined" || SettingsData.wallpaperSource !== "folder"))
-                    SessionData.setWallpaper(root.methodThemeJson.wallpaper);
+                // The file records a portable reference, so this is where it becomes
+                // the path on this machine; SessionData holds resolved paths alone.
+                // While `theme init` runs, this change may be its repair rather than an
+                // apply, and the two are the same file change: hold the sync until the
+                // answer says which, per the calls above.
+                const themeWallpaper = Paths.resolveRef(root.methodThemeJson.wallpaper || "");
+                if (root._themeInitRunning)
+                    root._heldThemeWallpaper = themeWallpaper;
+                else
+                    root._syncSessionWallpaper(themeWallpaper);
                 root.colorsFileLoadFailed = false;
             } catch (e) {
                 root.colorsFileLoadFailed = true;
