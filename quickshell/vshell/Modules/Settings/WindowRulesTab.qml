@@ -160,8 +160,12 @@ Item {
 
     // The modal outlives every open, so connecting inside the three open paths below would
     // leave one handler per open alive and re-read the rule list once per accumulated handler.
+    // The tab keeps its loader alive once visited, and the modal also opens from IPC, so a
+    // submission reaching a tab the user is not looking at would spawn the list helper and could
+    // raise a toast the user cannot attribute. onPageActiveChanged re-reads the list on return.
     Connections {
         target: PopoutService.windowRuleModalLoader?.item ?? null
+        enabled: root.pageActive
 
         function onRuleSubmitted() {
             root.loadWindowRules();
@@ -286,7 +290,9 @@ Item {
         });
     }
 
-    function openRuleModal(window) {
+    // The refusal, the loader activation and the item guard every open path shares. `present`
+    // receives the loaded modal and is the only part each path decides for itself.
+    function _openModal(present) {
         if (readOnly) {
             showReadOnlyWarning();
             return;
@@ -295,31 +301,19 @@ Item {
             return;
         PopoutService.windowRuleModalLoader.active = true;
         if (PopoutService.windowRuleModalLoader.item)
-            PopoutService.windowRuleModalLoader.item.show(window || null);
+            present(PopoutService.windowRuleModalLoader.item);
+    }
+
+    function openRuleModal(window) {
+        _openModal(item => item.show(window || null));
     }
 
     function editRule(rule) {
-        if (readOnly) {
-            showReadOnlyWarning();
-            return;
-        }
-        if (!PopoutService.windowRuleModalLoader)
-            return;
-        PopoutService.windowRuleModalLoader.active = true;
-        if (PopoutService.windowRuleModalLoader.item)
-            PopoutService.windowRuleModalLoader.item.showEdit(rule);
+        _openModal(item => item.showEdit(rule));
     }
 
     function copyRuleToVgs(rule) {
-        if (readOnly) {
-            showReadOnlyWarning();
-            return;
-        }
-        if (!PopoutService.windowRuleModalLoader)
-            return;
-        PopoutService.windowRuleModalLoader.active = true;
-        if (PopoutService.windowRuleModalLoader.item)
-            PopoutService.windowRuleModalLoader.item.showCopy(rule);
+        _openModal(item => item.showCopy(rule));
     }
 
     function showReadOnlyWarning() {

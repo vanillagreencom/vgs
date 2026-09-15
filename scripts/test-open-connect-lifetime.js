@@ -3,8 +3,12 @@
 // Drive the shipped open paths of the Bluetooth codec selector and the window-rule modal against
 // modelled long-lived targets. Both targets outlive every open, so a connection made inside an
 // open path stays registered after the popout closes and a later emission runs one handler per
-// open. Each case opens repeatedly and then emits once: the effect must run exactly once,
-// whatever the number of opens.
+// open. The accumulation cases open repeatedly and then emit once: the effect must run exactly
+// once, whatever the number of opens. Two further cases pin the ends of that range — an emission
+// before any open has happened, and a read-only compositor that opens and connects nothing.
+//
+// The model also reads each element's `enabled` binding, so a connection the shipped file declares
+// but disables is not counted as a live one.
 
 "use strict";
 
@@ -62,27 +66,39 @@ function signal() {
 const TARGET_EXPRESSION =
     /^[A-Za-z_$][A-Za-z0-9_$]*(?:\s*(?:\?\.|\.)\s*[A-Za-z_$][A-Za-z0-9_$]*)*(?:\s*\?\?\s*null)?$/;
 
+// Read one binding of a Connections element as an evaluator. An absent binding takes `fallback`,
+// which is how Qt reads an omitted `enabled`. A present one must be a property path: evaluating a
+// Connections binding needs no calls, no indexing and no literals.
+function bindingReader(block, label, name, fallback) {
+    if (block.q.indexOf(`${name}:`) === -1)
+        return () => fallback;
+    const expression = block.q.binding(name).value;
+    assert.match(expression, TARGET_EXPRESSION,
+        `${label}: refusing to evaluate Connections ${name} ${JSON.stringify(expression)}`);
+    // eslint-disable-next-line no-new-func -- with() models QML scope lookup, which needs non-strict
+    const read = new Function("scope", `with (scope) return (${expression});`);
+    return scope => read(scope);
+}
+
 // Model the one Connections element in `file` that handles `signalName`. Qt holds a single
-// connection per element and moves it when the target binding re-evaluates, so this element is
-// the whole of what the file connects declaratively to that signal. The returned retarget()
-// re-reads the binding and moves that connection; it runs at creation and again whenever the
-// model changes a property the binding reads. It returns the object now bound.
+// connection per element, drops it while `enabled` reads false, and moves it when the `target`
+// binding re-evaluates, so this element is the whole of what the file connects declaratively to
+// that signal. The returned retarget() re-reads both bindings and moves that connection; it runs
+// at creation and again whenever the model changes a property either binding reads. It returns
+// the object now connected, or null when nothing is.
 function connectionsElement(q, label, scope, signalName, signalOf) {
     const chosen = q.objectBlocks("Connections")
         .filter(block => block.q.indexOf(`function ${signalName}(`) !== -1);
     assert.equal(chosen.length, 1,
         `${label} must hold exactly one Connections element handling ${signalName}, found ` +
         `${chosen.length} — without it every open connects a handler of its own`);
-    const expression = chosen[0].q.binding("target").value;
-    assert.match(expression, TARGET_EXPRESSION,
-        `${label}: refusing to evaluate Connections target ${JSON.stringify(expression)}`);
-    // eslint-disable-next-line no-new-func -- with() models QML scope lookup, which needs non-strict
-    const read = new Function("scope", `with (scope) return (${expression});`);
+    const readTarget = bindingReader(chosen[0], label, "target", null);
+    const readEnabled = bindingReader(chosen[0], label, "enabled", true);
     const run = shippedFunction(chosen[0].text, chosen[0].q, `${label} ${signalName}`, signalName);
     const handler = (...args) => run(scope, ...args);
     let bound = null;
     return function retarget() {
-        const next = read(scope) ?? null;
+        const next = readEnabled(scope) ? readTarget(scope) ?? null : null;
         if (next === bound)
             return bound;
         if (bound)
@@ -124,8 +140,10 @@ function makeCodecHost() {
 }
 
 // The window-rule modal lives in a LazyLoader outside the settings tab. The loader creates its
-// item on the first open and keeps it, so the item outlives every later open too.
-function makeRulesTab() {
+// item on the first open and keeps it, so the item outlives every later open too. The tab's own
+// loader keeps it alive once visited, so `pageActive` — bound by SettingsContent to whether this
+// tab is the one on screen — is the only thing that says the user is looking at it.
+function makeRulesTab(pageActive = true) {
     // QML reaches one signal under both spellings: `ruleSubmitted` and the handler property
     // `onRuleSubmitted`. Connecting through either registers on the same signal.
     const modal = { ruleSubmitted: signal(), calls: [] };
@@ -144,7 +162,7 @@ function makeRulesTab() {
             if (!value || loader.item)
                 return;
             loader.item = modal;
-            assert.equal(retarget(), modal, "the connection follows the loader's item");
+            retarget();
         },
     });
     const warnings = [];
@@ -152,15 +170,21 @@ function makeRulesTab() {
     const countLoad = () => loads.push(true);
     const scope = {
         readOnly: false,
+        pageActive: pageActive,
         PopoutService: { windowRuleModalLoader: loader },
         showReadOnlyWarning: () => warnings.push(true),
         loadWindowRules: countLoad,
-        root: { loadWindowRules: countLoad },
     };
+    scope.root = scope;
     const retarget = connectionsElement(
         windowRulesTab, "WindowRulesTab.qml", scope, "onRuleSubmitted",
         target => target.ruleSubmitted);
     assert.equal(retarget(), null, "an inactive loader has no item to connect to yet");
+    // _openModal holds the guard and the activation the three public paths share, so the model
+    // runs the shipped helper rather than a second copy of what it does.
+    scope._openModal = present =>
+        shippedFunction(windowRulesTabText, windowRulesTab, "WindowRulesTab.qml", "_openModal")(
+            scope, present);
     const open = {};
     for (const name of ["openRuleModal", "editRule", "copyRuleToVgs"]) {
         const fn = shippedFunction(windowRulesTabText, windowRulesTab, "WindowRulesTab.qml", name);
@@ -171,8 +195,15 @@ function makeRulesTab() {
         loads,
         warnings,
         open,
+        connectedCount: () => modal.ruleSubmitted.count,
         setReadOnly: value => {
             scope.readOnly = value;
+        },
+        // SettingsContent binds pageActive to whether this tab is on screen; the element's
+        // enabled binding reads it, so Qt drops and restores the connection with it.
+        setPageActive: value => {
+            scope.pageActive = value;
+            retarget();
         },
     };
 }
@@ -224,6 +255,29 @@ test("the three open paths share one registration rather than one each", () => {
     tab.loads.length = 0;
     tab.modal.ruleSubmitted.emit();
     assert.equal(tab.loads.length, 1, "one submission re-reads the rule list once");
+});
+
+test("a submission reaching a tab the user is not on re-reads nothing", () => {
+    const tab = makeRulesTab();
+    tab.open.editRule({ id: 1 });
+    tab.setPageActive(false);
+    assert.equal(tab.connectedCount(), 0,
+        "a tab the user left is not connected; the rule modal also opens from IPC, and a " +
+        "submission would otherwise spawn the list helper and could raise a toast off-screen");
+    tab.loads.length = 0;
+    tab.modal.ruleSubmitted.emit();
+    assert.equal(tab.loads.length, 0, "so nothing re-reads the rule list");
+    // onPageActiveChanged re-reads the list on return, so the gate costs no freshness.
+    tab.setPageActive(true);
+    assert.equal(tab.connectedCount(), 1, "returning to the tab connects it again, once");
+});
+
+test("a tab the user is on is connected for real, not declared and disabled", () => {
+    const tab = makeRulesTab();
+    tab.open.editRule({ id: 1 });
+    assert.equal(tab.connectedCount(), 1, "the element the tab declares is a live connection");
+    tab.modal.ruleSubmitted.emit();
+    assert.equal(tab.loads.length, 1, "and a submission re-reads the rule list");
 });
 
 test("a read-only compositor warns, opens nothing, and connects nothing", () => {
