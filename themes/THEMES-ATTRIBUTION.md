@@ -51,6 +51,8 @@ VGS theme packages listed below were ported from community Omarchy theme reposit
 | `vurple` | https://github.com/tahfizhabib/omarchy-vurple-theme | no LICENSE file |
 | `x-1632` | https://github.com/OldJobobo/omarchy-x-1632-theme | no LICENSE file |
 
+`synthwave84` is the exception to the palette sentence above. Its `colors.toml` and `apps/vscode-theme.json` hold the values [RobbOwen.synthwave-vscode 0.1.20](https://open-vsx.org/extension/RobbOwen/synthwave-vscode/0.1.20) publishes, under [D017](../docs/decisions/D017-vendor-port-upstream-values.md), and that extension is MIT. Its `terminal-colors.toml` holds one green the upstream publishes nowhere. `test_aligned_vendor_ports_take_the_upstream_terminal_palette` in `scripts/check-vshell-helper.py` checks the palette against the VS Code file the package ships.
+
 ## Vendor ports
 
 Each package ported under [D017](../docs/decisions/D017-vendor-port-upstream-values.md) names the upstream palette file and the upstream app files it was built from.

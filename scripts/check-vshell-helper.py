@@ -11123,6 +11123,107 @@ def test_horizon_packages_use_only_upstream_colours():
                 raise AssertionError(f"{name}: a changed token colour must move the VS Code theme digest")
 
 
+# Vendor ports whose colors.toml has been aligned with the upstream terminal
+# values, under D017, from the verbatim upstream VS Code file the package itself
+# ships. A package joins the list when its alignment lands.
+UPSTREAM_TERMINAL_PACKAGES = ("synthwave84",)
+# colors.toml keys and the VS Code workbench key each takes its value from,
+# outside the sixteen ANSI slots VSCODE_ANSI_KEYS already spells.
+UPSTREAM_TERMINAL_KEYS = {
+    "foreground": "terminal.foreground",
+    "background": "terminal.background",
+    "cursor": "terminalCursor.foreground",
+    "selection_foreground": "terminal.selectionForeground",
+    "selection_background": "terminal.selectionBackground",
+}
+
+
+def upstream_terminal_comparison(package: Path) -> tuple[list[str], list[str]]:
+    """The colors.toml keys checked against `package`'s upstream VS Code file, and
+    the mismatches among them as `key vgs upstream`.
+
+    `apps/vscode-theme.json` is the upstream file, copied verbatim, so its
+    `terminal.*` and `terminalCursor.*` entries are the vendor's own terminal
+    palette. A key the upstream leaves unset is not checked: the owner's ruling
+    lets VGS write a value the vendor publishes nowhere. Neither is one whose
+    upstream value carries an alpha channel, which `themes/AGENTS.md` forbids
+    colors.toml from holding at all."""
+    colors = helper.parse_colors_toml(package / "colors.toml")
+    upstream = json.loads(helper._strip_jsonc(
+        (package / "apps" / "vscode-theme.json").read_text()))["colors"]
+    mapped = dict(UPSTREAM_TERMINAL_KEYS)
+    mapped.update({f"color{slot}": key for slot, key in enumerate(helper.VSCODE_ANSI_KEYS)})
+    checked, mismatches = [], []
+    for key, workbench in sorted(mapped.items()):
+        value = upstream.get(workbench)
+        if not isinstance(value, str) or not helper.HEX_RE.match(value):
+            continue
+        checked.append(key)
+        ours = colors.get(key, "")
+        if ours.lower() != value.lower():
+            mismatches.append(f"{key} {ours} {value.lower()}")
+    return checked, mismatches
+
+
+def test_aligned_vendor_ports_take_the_upstream_terminal_palette():
+    """An aligned vendor port's colors.toml equals the terminal palette its own
+    verbatim upstream VS Code file publishes, on every key that file sets.
+
+    Each package is also checked as a copy carrying one planted defect, which the
+    comparison must name: a changed VGS slot, a changed VGS cursor, a changed
+    upstream slot, and an upstream slot whose alpha channel is dropped, which
+    brings a previously unchecked key into the comparison."""
+    for name in UPSTREAM_TERMINAL_PACKAGES:
+        package = helper.builtin_themes_dir() / name
+        checked, mismatches = upstream_terminal_comparison(package)
+        # Under-inclusion: the upstream file sets a terminal palette this wide.
+        # Over-inclusion: its selection background is `#ffffff20`, which the
+        # alpha rule drops, so a comparison holding it reads alpha as a colour.
+        if len(checked) < 14 or not {"cursor", "color2", "color10"} <= set(checked):
+            raise AssertionError(f"{name}: the upstream terminal reader is broken; it checked {checked}")
+        if "selection_background" in checked:
+            raise AssertionError(f"{name}: an alpha upstream value must not be checked")
+        assert_equal(mismatches, [], f"{name}: colors.toml is the upstream terminal palette")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            planted = Path(tmp) / name
+            shutil.copytree(package, planted)
+            theme_file = planted / "apps" / "vscode-theme.json"
+            colors_file = planted / "colors.toml"
+            original_theme = theme_file.read_text()
+            original_colors = colors_file.read_text()
+
+            def plant_upstream(workbench: str, value: str) -> None:
+                data = json.loads(helper._strip_jsonc(original_theme))
+                if workbench not in data["colors"]:
+                    raise AssertionError(f"{name}: upstream sets no {workbench} to plant")
+                data["colors"][workbench] = value
+                theme_file.write_text(json.dumps(data, indent=4))
+
+            def plant_palette(line: str, replacement: str) -> None:
+                if original_colors.count(line) != 1:
+                    raise AssertionError(f"{name}: colors.toml holds no single {line} to plant")
+                colors_file.write_text(original_colors.replace(line, replacement))
+
+            # (what the defect changes, how, what the comparison must report)
+            rows = [
+                ("a VGS slot", lambda: plant_palette('color2 = "#72f1b8"', 'color2 = "#8f00ff"'),
+                 ["color2 #8f00ff #72f1b8"]),
+                ("a VGS cursor", lambda: plant_palette('cursor = "#03edf9"', 'cursor = "#ff00ff"'),
+                 ["cursor #ff00ff #03edf9"]),
+                ("an upstream slot", lambda: plant_upstream("terminal.ansiGreen", "#18849a"),
+                 ["color2 #72f1b8 #18849a"]),
+                ("an upstream alpha channel", lambda: plant_upstream("terminal.selectionBackground", "#ffffff"),
+                 ["selection_background #543863 #ffffff"]),
+            ]
+            for label, plant, expected in rows:
+                plant()
+                assert_equal(upstream_terminal_comparison(planted)[1], expected,
+                             f"{name}: a planted defect in {label} is named")
+                theme_file.write_text(original_theme)
+                colors_file.write_text(original_colors)
+
+
 # A curated package's own UI tones, keyed by the role names `target_roles` emits.
 # The values are Horizon Bright's published surfaces, which is the palette whose
 # flat-grey render this file exists to stop; `muted` is deliberately unreadable
@@ -12379,6 +12480,7 @@ def main():
     test_dark_themes_read_in_a_terminal()
     test_dark_themes_draw_diffs_in_two_hues()
     test_horizon_packages_use_only_upstream_colours()
+    test_aligned_vendor_ports_take_the_upstream_terminal_palette()
     test_wallpaper_and_save_keep_terminal_slots()
     test_a_save_never_pairs_its_palette_with_a_curated_file_it_did_not_judge()
     test_wallpapers_all_lists_the_folder_then_every_theme()
