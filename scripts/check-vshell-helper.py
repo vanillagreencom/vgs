@@ -10148,6 +10148,14 @@ def test_a_save_never_pairs_its_palette_with_a_curated_file_it_did_not_judge():
         applied: list = []
         original_apply = helper.apply_theme_obj
         helper.cfg_dir().mkdir(parents=True, exist_ok=True)
+        # The btop target renders from a template and otherwise answers to whether
+        # the host has btop installed, which decides whether a save with no carry
+        # re-renders the package's hand-written `apps/btop.theme` and whether
+        # `theme regenerate --app btop` finds a file to regenerate at all. A user
+        # toggle wins over detection, so state it and the rows read the fixture
+        # rather than the machine.
+        (helper.cfg_dir() / "settings.json").write_text(
+            json.dumps({"themeApps": {"btop": True}}) + "\n")
 
         # A real apply runs hooks that reach the login session. This records the
         # blueprint and leaves behind what an apply leaves, through the apply's own
