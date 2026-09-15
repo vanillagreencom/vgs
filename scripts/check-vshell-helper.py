@@ -11561,7 +11561,7 @@ def test_package_colours_normalize_once_over_the_merged_layers():
     `colors_background` for the same slot.
     """
     builtin_colors = {"background": "#fafafa", "foreground": "#101010",
-                      "accent": "#8c1f4a", "cursor": "#101010",
+                      "accent": "#8c1f4a", "cursor": "#101010", "red": "#aa0000",
                       "selection_background": "#d0d0d0", "selection_foreground": "#101010"}
     edited = {**builtin_colors, "selection_background": "#3769f1",
               "selection_foreground": "#fafafa"}
@@ -11599,23 +11599,24 @@ def test_package_colours_normalize_once_over_the_merged_layers():
             for what, actual, expected in rows:
                 assert_equal(actual, expected, what)
 
-            # An overlay whose keys are spelled as matugen and as camelCase write
-            # them. The built-in layer states every slot outright, so nothing but
-            # a per-tier fold lets the overlay's spelling win.
+            # An overlay whose keys carry each prefix the reader strips and the
+            # camelCase spelling. The built-in layer states every one of these
+            # four slots outright, so each row fails unless the overlay's key
+            # reaches the same tier the built-in key did.
             (user / "colors.toml").write_text(
                 'colors_background = "#000099"\nansi_red = "#00ff00"\n'
-                'selectionBackground = "#3769f1"\n')
+                'palette_cursor = "#ff00ff"\nselectionBackground = "#3769f1"\n')
             spelled = helper.package_colors_map("mergefix")
             # (what, actual, expected)
             spelling_rows = [
-                ("an overlay's matugen-prefixed key wins the slot it names",
+                ("an overlay's colors-prefixed key wins the slot it names",
                  spelled["background"], "#000099"),
                 ("an overlay's ansi-prefixed key wins the slot it names",
                  spelled["red"], "#00ff00"),
+                ("an overlay's palette-prefixed key wins the slot it names",
+                 spelled["cursor"], "#ff00ff"),
                 ("an overlay's camelCase key wins the slot it names",
                  spelled["selection_background"], "#3769f1"),
-                ("a slot the overlay does not name keeps the built-in value",
-                 spelled["foreground"], "#101010"),
             ]
             for what, actual, expected in spelling_rows:
                 assert_equal(actual, expected, what)
@@ -11630,10 +11631,41 @@ def test_package_colours_normalize_once_over_the_merged_layers():
             assert_equal((inferred.get("background"), inferred.get("foreground")),
                          ("#d0d0d0", "#101010"),
                          "a fold stating no background infers one from the selection slots")
+
+            # A file's other name for the mode, which is not a slot and so does
+            # not travel in the alias table the colour edits share.
+            (package / "colors.toml").write_text(
+                helper.flat_toml_text(builtin_colors) + 'variant = "light"\n')
+            assert_equal(helper.package_colors_map("mergefix").get("mode"), "light",
+                         "a layer stating variant instead of mode names the mode")
         finally:
             helper.builtin_themes_dir = original_builtin
 
     with_temp_home(scenario)
+
+
+def test_colour_edit_keys_resolve_through_the_alias_table():
+    """`apply-colors --set` takes the second spellings of a slot through
+    `COLOR_KEY_ALIASES`, the same table the layer fold reads, so a spelling added
+    for one is reached by the other. `variant` stays outside the table because it
+    names the mode rather than a slot, and an edit naming it is refused under the
+    name it used rather than under `mode`."""
+    # (what, edit key, canonical slot)
+    rows = [
+        ("the underscore-free spelling", "selectionBackground", "selection_background"),
+        ("the hyphenated spelling", "selection-foreground", "selection_foreground"),
+        ("the short background spelling", "selection_bg", "selection_background"),
+        ("the short foreground spelling", "selection_fg", "selection_foreground"),
+    ]
+    for what, key, slot in rows:
+        assert_equal(helper.parse_color_edits([f"{key}=#112233"]), {slot: "#112233"}, what)
+    try:
+        helper.parse_color_edits(["variant=#112233"])
+        refusal = ""
+    except ValueError as exc:
+        refusal = str(exc)
+    assert_equal(refusal, "unsupported color role: variant",
+                 "a mode key is refused under the name the edit used")
 
 
 def test_unsaved_applied_theme_keeps_terminal_slots():
@@ -11888,6 +11920,7 @@ def main():
     test_save_keeps_app_overrides()
     test_theme_overlays_merge_key_by_key()
     test_package_colours_normalize_once_over_the_merged_layers()
+    test_colour_edit_keys_resolve_through_the_alias_table()
     test_unsaved_applied_theme_keeps_terminal_slots()
     test_terminal_app_overrides_show_on_their_editor_row()
     test_restyle_moves_terminal_slots()

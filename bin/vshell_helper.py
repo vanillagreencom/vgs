@@ -55,7 +55,7 @@ MATUGEN_SCHEMES = {
     "scheme-fruit-salad", "scheme-monochrome", "scheme-neutral", "scheme-rainbow", "scheme-vibrant",
 }
 THEME_MODES = {"auto", "dark", "light"}
-# The keys of a colours map that carry light or dark rather than a colour.
+# The keys of a colours map whose value is a name rather than a colour.
 COLOR_MODE_KEYS = {"theme_type", "mode", "variant", "scheme"}
 COLOR_KEYS = {
     "background", "bg", "foreground", "fg", "accent", "primary", "cursor",
@@ -776,12 +776,18 @@ adjustments_all_zero = _theme_color.adjustments_all_zero
 apply_adjustments = _theme_color.apply_adjustments
 
 
-# A second spelling of a key VGS already has a name for. Each tier carries the
-# canonical name beside the spelling, so a merge of several maps compares one
-# key rather than two names for one slot.
+# The second spellings of a palette slot VGS has its own name for, and the one
+# owner of that question: `color_map_tiers` carries the canonical name beside the
+# spelling so a fold of several maps compares one key rather than two names for
+# one slot, and `parse_color_edits` resolves an edit's key through it. The two
+# read the table differently, one adding the canonical name and one replacing the
+# key, so it is a shared table and not a shared function. A tier holds only
+# `COLOR_KEYS` members, so the spellings outside that set are reached by an edit
+# alone.
 COLOR_KEY_ALIASES = {"selectionbackground": "selection_background",
+                     "selection_bg": "selection_background",
                      "selectionforeground": "selection_foreground",
-                     "variant": "mode"}
+                     "selection_fg": "selection_foreground"}
 ColorTiers = Tuple[Dict[str, str], Dict[str, str]]
 
 
@@ -844,6 +850,11 @@ def color_map_tiers(data: Dict[str, str]) -> ColorTiers:
         for spelling, canonical in COLOR_KEY_ALIASES.items():
             if spelling in tier:
                 tier.setdefault(canonical, tier[spelling])
+        # A file's other name for the mode, which is not a slot and so is not in
+        # the table above: a colour edit naming it must be refused under the name
+        # it used rather than under `mode`.
+        if "variant" in tier:
+            tier.setdefault("mode", tier["variant"])
     return stated, inferred
 
 
@@ -883,9 +894,9 @@ class ColorsRead(enum.Enum):
     `PALETTE` is a whole palette in one file, returned under the palette slots
     `normalize_color_map` emits. `PALETTE_LAYER` is one layer of a package's
     palette, returned under the keys the file itself wrote, for a caller that
-    folds every layer through `color_map_tiers` and `merged_color_map`: resolving
-    a layer's keys on its own lets an overlay that omits a key contribute a value
-    inferred from its neighbours over the layer below that states the key
+    folds every layer through `color_map_tiers` and `merged_color_map`. Resolving
+    a layer's keys on its own let an overlay that omitted a key contribute a
+    value inferred from its neighbours over the layer below that stated the key
     outright. `ROLES` is a `ui-roles.toml`, keyed by role names
     `normalize_color_map` drops, and hand-written rather than matugen output, so
     it takes the strict TOML pass alone.
@@ -8514,10 +8525,7 @@ def parse_color_edits(edits: List[str]) -> Dict[str, str]:
             reverse = {v: k for k, v in CAMEL.items()}
             key = reverse[key]
         key = key.lower()
-        if key in {"selectionbackground", "selection_bg"}:
-            key = "selection_background"
-        if key in {"selectionforeground", "selection_fg"}:
-            key = "selection_foreground"
+        key = COLOR_KEY_ALIASES.get(key, key)
         if key not in valid_keys:
             raise ValueError(f"unsupported color role: {key}")
         parsed = parse_hex_strict(value, key)
