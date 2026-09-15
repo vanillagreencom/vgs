@@ -83,7 +83,7 @@ PluginComponent {
             VgsIcon {
                 name: root.pillIcon
                 size: root.iconSize
-                color: Theme.widgetIconColor
+                color: root.pillColor
                 anchors.verticalCenter: parent.verticalCenter
             }
 
@@ -105,7 +105,7 @@ PluginComponent {
             VgsIcon {
                 name: root.pillIcon
                 size: root.iconSize
-                color: Theme.widgetIconColor
+                color: root.pillColor
                 anchors.horizontalCenter: parent.horizontalCenter
             }
 
