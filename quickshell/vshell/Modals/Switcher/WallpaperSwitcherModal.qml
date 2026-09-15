@@ -89,6 +89,7 @@ FullScreenSwitcher {
                     thumb: entry.thumb || "",
                     label: all ? VGSThemeService.sourceTagFor(entry) : entry.file,
                     file: entry.file,
+                    origin: entry.origin || "",
                     key: entry.path,
                     marked: all && VGSThemeService.inThemeSet(entry, root.appliedTheme, root.wallpaperEntries, VGSThemeService.themeWallpapersTheme)
                 }));
@@ -218,7 +219,8 @@ FullScreenSwitcher {
                     list.push(menu.entry.marked === true ? {text: I18n.tr("Already in %1").arg(root.appliedTheme), action: ""} : {text: I18n.tr("Add to theme"), action: "add"});
                 if (root.appliedTheme && root.source !== "all")
                     list.push({text: I18n.tr("Remove from theme"), action: "remove"});
-                list.push({text: I18n.tr("Delete wallpaper"), action: "confirm"});
+                if (VGSThemeService.offersDelete(menu.entry))
+                    list.push({text: I18n.tr("Delete wallpaper"), action: "confirm"});
                 return list;
             }
 

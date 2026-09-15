@@ -585,6 +585,18 @@ Singleton {
     function sourceTag(entry, folderLabel) {
         return entry.source === "folder" ? folderLabel : String(entry.source || "");
     }
+
+    // Whether a surface offers Delete wallpaper for an entry. wallpaper-delete refuses a packaged wallpaper, so it
+    // is not offered; a folder image carries no origin and is.
+    function offersDelete(entry) {
+        return !!entry && entry.origin !== "builtin";
+    }
+
+    // The --applied flags wallpaper-delete refuses: one pair per image path in `paths`, in order. Empty values and
+    // colour backdrops, which start with "#", name no file.
+    function appliedArgs(paths) {
+        return (paths || []).filter(path => !!path && !String(path).startsWith("#")).reduce((args, path) => args.concat(["--applied", String(path)]), []);
+    }
     // END WALLPAPER MEMBERSHIP DECISION
 
     // The All-view caption both wallpaper surfaces draw for an entry.
@@ -754,11 +766,12 @@ Singleton {
         });
     }
 
-    // Delete a wallpaper file from disk. The helper refuses one any monitor shows, as SessionData reports it.
+    // Delete a wallpaper file from disk. The helper refuses one the session or the lock screen still names, so a
+    // mode switch, a reconnected monitor or a lock never draws a deleted file.
     function wallpaperDelete(path) {
         if (!path)
             return;
-        const applied = (Quickshell.screens || []).map(screen => SessionData.getMonitorWallpaper(screen.name)).filter(shown => !!shown).reduce((args, shown) => args.concat(["--applied", shown]), []);
+        const applied = root.appliedArgs(SessionData.referencedWallpapers().concat([SettingsData.lockScreenWallpaperPath]));
         _run("vgs-theme-wallpaper-delete", ["theme", "wallpaper-delete", path, "--folder", wallpaperFolderPath, "--json"].concat(applied), function(output, exitCode, stderr) {
             if (exitCode !== 0) {
                 root._toastWallpaperOutcome(false, stderr || output || ("Wallpaper delete failed: " + path));

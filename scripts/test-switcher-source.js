@@ -17,7 +17,8 @@ const FILES = {
     modal: ["WallpaperSwitcherModal.qml", path.join(QS, "Modals", "Switcher", "WallpaperSwitcherModal.qml")],
     catalog: ["VGSThemeCatalogService.qml", path.join(QS, "Services", "VGSThemeCatalogService.qml")],
     service: ["VGSThemeService.qml", path.join(QS, "Services", "VGSThemeService.qml")],
-    dash: ["Dash/WallpaperTab.qml", path.join(QS, "Modules", "Dash", "WallpaperTab.qml")]
+    dash: ["Dash/WallpaperTab.qml", path.join(QS, "Modules", "Dash", "WallpaperTab.qml")],
+    session: ["SessionData.qml", path.join(QS, "Common", "SessionData.qml")]
 };
 
 const { evaluateMarked, regionOf, guardChild } = require("./lib/qml-region.js");
@@ -32,7 +33,7 @@ const readers = Object.fromEntries(Object.entries(FILES).map(([id, [label]]) => 
 const REGIONS = [
     ["modal", "WALLPAPER SOURCE DECISION", ["activationRoute"]],
     ["catalog", "IMAGERY CARD DECISION", ["imageryCard", "cardOperation", "failureDetail", "themeRail"]],
-    ["service", "WALLPAPER MEMBERSHIP DECISION", ["inThemeSet", "sourceTag"]]
+    ["service", "WALLPAPER MEMBERSHIP DECISION", ["inThemeSet", "sourceTag", "offersDelete", "appliedArgs"]]
 ];
 const fns = {};
 for (const [id, marker, names] of REGIONS)
@@ -142,6 +143,26 @@ test("sourceTag captions an All entry with the set it comes from and never its f
         assert.equal(fns.sourceTag(entry, "My folder"), expected, why);
 });
 
+test("offersDelete offers Delete wallpaper for every entry but a packaged wallpaper", () => {
+    for (const [entry, expected, why] of [
+        [{ origin: "builtin" }, false, "wallpaper-delete refuses a packaged wallpaper, so it is not offered"],
+        [{ origin: "user" }, true, "a wallpaper in a user theme directory is offered"],
+        [{ source: "folder" }, true, "a folder image carries no origin and is offered"],
+        [null, false, "no entry offers nothing"]
+    ])
+        assert.equal(fns.offersDelete(entry), expected, why);
+});
+
+test("appliedArgs sends one --applied pair per image path and none for a colour or an empty value", () => {
+    for (const [paths, expected, why] of [
+        [["/w/a.jpg", "/w/b.png"], ["--applied", "/w/a.jpg", "--applied", "/w/b.png"], "each path is one pair, in order"],
+        [["", "/w/a.jpg"], ["--applied", "/w/a.jpg"], "an empty value names no file"],
+        [["#1e1e2e", "/w/a.jpg"], ["--applied", "/w/a.jpg"], "a colour backdrop names no file"],
+        [null, [], "no list sends no flag"]
+    ])
+        assert.deepEqual(fns.appliedArgs(paths), expected, why);
+});
+
 test("the switcher routes a card to the catalog and Add to theme to wallpaper-add", () => {
     const modal = readers.modal;
     modal.requires(sources.modal, "WallpaperSwitcherModal.qml", [
@@ -159,7 +180,11 @@ test("the switcher routes a card to the catalog and Add to theme to wallpaper-ad
             "the delete action is offered only by the question naming the file", 1],
         ['if (root.appliedTheme && root.source !== "all") list.push({text: I18n.tr("Remove from theme"), action: "remove"});',
             "the Theme view offers Remove from theme", 1],
-        ['list.push({text: I18n.tr("Delete wallpaper"), action: "confirm"});', "and both views offer Delete wallpaper, which asks first", 1],
+        ['if (VGSThemeService.offersDelete(menu.entry)) list.push({text: I18n.tr("Delete wallpaper"), action: "confirm"});',
+            "and both views offer Delete wallpaper, which asks first, for every entry the extracted decision allows", 1],
+        ['origin: entry.origin || "",', "the entry carries the origin that decision reads", 1],
+        ['readonly property bool confirming: menu.confirmKey !== "" && menu.confirmKey === menu.entry.key',
+            "the question holds only while the menu is on the entry it asked about, so a reused menu opens on its actions", 1],
         ['if (action === "confirm") { menu.confirmKey = menu.entry.key; return; }', "Delete wallpaper opens the question for this entry and deletes nothing", 1],
         ['if (action === "add") VGSThemeService.wallpaperAdd(menu.entry.key, true); else if (action === "remove") VGSThemeService.wallpaperRemove(menu.entry.file); else if (action === "delete") VGSThemeService.wallpaperDelete(menu.entry.key);',
             "each action reaches its service call with the entry's path or file", 1],
@@ -217,8 +242,8 @@ test("wallpaperRemove and wallpaperDelete toast their outcome and refresh both l
         ["refreshAllWallpapers();", "a success refreshes the All list, which shows the removed wallpaper unmarked", 1]
     ]);
     service.requires(service.body("wallpaperDelete"), "wallpaperDelete()", [
-        ['const applied = (Quickshell.screens || []).map(screen => SessionData.getMonitorWallpaper(screen.name))',
-            "what every monitor shows comes from SessionData, the owner of the wallpaper on screen", 1],
+        ["const applied = root.appliedArgs(SessionData.referencedWallpapers().concat([SettingsData.lockScreenWallpaperPath]));",
+            "every wallpaper the session names and the lock screen image become the extracted --applied flags", 1],
         ['["theme", "wallpaper-delete", path, "--folder", wallpaperFolderPath, "--json"].concat(applied)',
             "the helper hears the folder it may delete from and the wallpapers it must refuse", 1],
         ['root._toastWallpaperOutcome(false, stderr || output || ("Wallpaper delete failed: " + path));', "a refusal toasts the helper's reason", 1],
@@ -228,6 +253,11 @@ test("wallpaperRemove and wallpaperDelete toast their outcome and refresh both l
     ]);
     mustPrecedeIn(service.body("wallpaperDelete"), "wallpaperDelete()", /if \(exitCode !== 0\)[\s\S]*?return;/, /root\.requestThumbnailSweep\(\);/,
         "a refused delete returns before it reports success");
+    readers.session.requires(readers.session.body("referencedWallpapers"), "referencedWallpapers()", [
+        ["var values = [wallpaperPath, wallpaperPathLight, wallpaperPathDark];", "the shown path and both per-mode paths", 1],
+        ["[monitorWallpapers, monitorWallpapersLight, monitorWallpapersDark].forEach(",
+            "and every entry of the shown and per-mode monitor maps, disconnected monitors included", 1]
+    ]);
     service.requires(service.body("sourceTagFor"), "sourceTagFor()", [
         ['return root.sourceTag(entry, I18n.tr("My folder"));', "both surfaces caption through the extracted tag", 1]
     ]);
@@ -251,6 +281,7 @@ test("the Dash tab shares the card, the All list and Add to theme", () => {
         ["text: VGSThemeService.sourceTagFor(tile.modelData)", "the All tile caption is the shared source tag", 1],
         ["VGSThemeService.wallpaperRemove(root.actionsEntry.file);", "Remove from theme removes the entry's file from the set", 1],
         ["onClicked: root.deletePath = root.actionsEntry.path", "Delete wallpaper asks about the open entry and deletes nothing", 1],
+        ["visible: VGSThemeService.offersDelete(root.actionsEntry)", "and is offered for every entry the extracted decision allows", 1],
         ['readonly property bool confirmingDelete: actionsEntry !== null && deletePath !== "" && deletePath === actionsEntry.path',
             "the question holds only while the actions are open on the entry it names", 1],
         ['onActionsIndexChanged: deletePath = ""', "moving the actions to another entry drops the question", 1],

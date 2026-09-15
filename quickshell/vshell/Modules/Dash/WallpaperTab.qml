@@ -536,6 +536,7 @@ Item {
                 }
 
                 VgsButton {
+                    visible: VGSThemeService.offersDelete(root.actionsEntry)
                     height: 28
                     variant: "secondary"
                     textColor: Theme.error
