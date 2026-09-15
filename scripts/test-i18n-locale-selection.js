@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 
-// Drive I18n.qml's FolderListModel onStatusChanged handler and its FileView onLoadFailed handler,
-// with _loadPresentLocales(), _pickTranslation(), useLocale() and _fallbackToEnglish() as shipped,
-// against a modelled folder listing. Two producers repeat: FolderListModel re-reaches Ready for the
-// life of a shell session, and SessionData.set("locale", ...) runs its updateLocale hook on every
-// write, an unchanged value included (Common/settings/SessionSpec.js gives the locale key
-// onChange: "updateLocale"). Locale selection must read the folder once however many times Ready
-// arrives, and the fallback warning must report a resolved locale once, not once per repeat.
+// Drive I18n.qml's FolderListModel onStatusChanged handler, its on_CandidatesChanged handler and
+// its FileView handlers, with _loadPresentLocales(), _pickTranslation(), useLocale() and
+// _fallbackToEnglish() as shipped, against a modelled folder listing and the real
+// Common/settings/SessionSpec.js. Locale selection has one owner: nothing but a change of
+// SessionData.locale reaches it, whether a settings write (SessionSpec.js set()) or a disk load
+// (SessionStore.js parse()) assigns the property. It must read the folder once however many times
+// the model reaches Ready, switch once per change, and report the fallback once per locale asked
+// for.
 
 "use strict";
 
@@ -19,7 +20,14 @@ const { callInScope } = require("./lib/qml-block.js");
 
 const COMMON = path.join(__dirname, "..", "quickshell", "vshell", "Common");
 const i18n = qmlSource(fs.readFileSync(path.join(COMMON, "I18n.qml"), "utf8"), "I18n.qml");
-const session = qmlSource(fs.readFileSync(path.join(COMMON, "SessionData.qml"), "utf8"), "SessionData.qml");
+
+// The shipped settings module, evaluated whole: its set() is what a settings write runs.
+const specSource = fs.readFileSync(path.join(COMMON, "settings", "SessionSpec.js"), "utf8");
+const spec = new Function(`${specSource.replace(/^\s*\.pragma\s+library\s*$/m, "")}
+    return { SPEC: SPEC, set: set };`)();
+assert.equal("onChange" in spec.SPEC.locale, false,
+    "the locale key must run no hook of its own: a hook is a second selection policy running after " +
+    "the property change that on_CandidatesChanged already answers");
 
 const statusHandlers = i18n.objectBlocks("FolderListModel", 1)[0].q.handlers("onStatusChanged");
 assert.equal(statusHandlers.length, 1, "I18n.qml must define onStatusChanged once on its FolderListModel");
@@ -40,7 +48,6 @@ const loadBody = i18n.body("_loadPresentLocales");
 const pickBody = i18n.body("_pickTranslation");
 const useLocaleBody = i18n.body("useLocale");
 const fallbackBody = i18n.body("_fallbackToEnglish");
-const updateLocaleBody = session.body("updateLocale");
 
 // The journal line VGS-257 counted 10,199 of, and the line marking an actual switch. The rows count
 // both by their opening text, so a row's expected count fails if the shipped line stops starting
@@ -60,11 +67,11 @@ function evalExpr(expr, root, scope) {
 }
 
 // `files` is what the FolderListModel lists, `systemLocale` what Qt reports and `settingsLocale`
-// what session.json holds. Singletons and the sibling model are the outer scope, as in QML.
+// what session.json held at startup. Singletons and the sibling model are the outer scope, as in QML.
 function i18nWorld({ systemLocale, settingsLocale = "", files }) {
     const warnings = [];
     const infos = [];
-    const counts = { loads: 0, picks: 0 };
+    const counts = { loads: 0, picks: 0, saves: 0 };
     const dir = {
         status: LOADING,
         count: files.length,
@@ -85,7 +92,6 @@ function i18nWorld({ systemLocale, settingsLocale = "", files }) {
             warn: (...args) => warnings.push(args.join(" ")),
             info: (...args) => infos.push(args.join(" "))
         },
-        folder: FOLDER,
         translationsFolder: FOLDER,
         presentLocales: { en: scope.Qt.locale("en") },
         translations: {},
@@ -105,8 +111,8 @@ function i18nWorld({ systemLocale, settingsLocale = "", files }) {
         useLocale(localeTag, fileUrl) {
             return callInScope(useLocaleBody, root, scope, ["localeTag", "fileUrl"], [localeTag, fileUrl]);
         },
-        _fallbackToEnglish() {
-            return callInScope(fallbackBody, root, scope);
+        _fallbackToEnglish(requested) {
+            return callInScope(fallbackBody, root, scope, ["requested"], [requested]);
         }
     };
     // A binding re-evaluates only when a property it reads changes, and a var binding emits its
@@ -128,8 +134,8 @@ function i18nWorld({ systemLocale, settingsLocale = "", files }) {
     // A handler's own component is its inner scope, and the singleton's id resolves from there.
     dir.root = root;
     scope.log = root.log;
+    let translationFile = TRANSLATION_FILE;
     const translationLoader = { root, text: () => translationFile };
-    let translationFile = "{}";
     return {
         root,
         dir,
@@ -142,14 +148,14 @@ function i18nWorld({ systemLocale, settingsLocale = "", files }) {
             dir.status = status;
             callInScope(statusHandlers[0], dir, scope);
         },
-        // A settings write: Spec.set assigns the key, QML re-evaluates the bindings that read it,
-        // and the onChange hook runs whether or not the value differs.
+        // A settings write, through the shipped setter.
         writeLocale(tag) {
-            sessionData.locale = tag;
+            spec.set(sessionData, "locale", tag, () => {
+                counts.saves += 1;
+            });
             rebind();
-            callInScope(updateLocaleBody, sessionData, { I18n: root });
         },
-        // A settings file load: settings/SessionStore.js parse() assigns the property and runs no hook.
+        // A settings file load: settings/SessionStore.js parse() assigns the property directly.
         loadLocaleFromDisk(tag) {
             sessionData.locale = tag;
             rebind();
@@ -166,43 +172,49 @@ function i18nWorld({ systemLocale, settingsLocale = "", files }) {
 
 test("locale selection reads the translations folder once per session", () => {
     // [why, world, statuses the model passes through,
-    //  {picks, loads, fallback warnings, resolved locale, selected path, locales offered}]
+    //  {picks, loads, fallback reports, locale switches, resolved locale, file, locales offered}]
     for (const [why, world, statuses, want] of [
         ["a model that never reaches Ready selects nothing",
             { systemLocale: "de_DE", files: ["de.json"] }, ["loading", "loading"],
-            { picks: 0, loads: 0, fallbacks: 0, resolved: "en", path: "", present: ["en"] }],
+            { picks: 0, loads: 0, fallbacks: 0, uses: 0, resolved: "en", path: "", present: ["en"] }],
         ["the first Ready reads the folder and takes the system locale",
             { systemLocale: "de_DE", files: ["de.json", "fr.json"] }, ["loading", "ready"],
-            { picks: 1, loads: 1, fallbacks: 0, resolved: "de", path: `${FOLDER}/de.json`,
+            { picks: 1, loads: 1, fallbacks: 0, uses: 1, resolved: "de", path: `${FOLDER}/de.json`,
                 present: ["en", "de", "fr"] }],
         ["a session of repeated Ready transitions still reads the folder once",
             { systemLocale: "de_DE", files: ["de.json", "fr.json"] },
             ["loading"].concat(Array(140).fill("ready")),
-            { picks: 1, loads: 1, fallbacks: 0, resolved: "de", path: `${FOLDER}/de.json`,
+            { picks: 1, loads: 1, fallbacks: 0, uses: 1, resolved: "de", path: `${FOLDER}/de.json`,
                 present: ["en", "de", "fr"] }],
-        ["a system locale with no shipped file warns once, not once per Ready",
+        ["a system locale with no file of its own is reported once, not once per Ready",
             { systemLocale: "es_ES", files: ["de.json"] },
             ["ready", "loading", "ready", "ready"],
-            { picks: 1, loads: 1, fallbacks: 1, resolved: "en", path: "", present: ["en", "de"] }],
+            { picks: 1, loads: 1, fallbacks: 1, uses: 0, resolved: "en", path: "",
+                present: ["en", "de"] }],
         ["the settings locale outranks the system locale",
             { systemLocale: "de_DE", settingsLocale: "fr", files: ["de.json", "fr.json"] }, ["ready"],
-            { picks: 1, loads: 1, fallbacks: 0, resolved: "fr", path: `${FOLDER}/fr.json`,
+            { picks: 1, loads: 1, fallbacks: 0, uses: 1, resolved: "fr", path: `${FOLDER}/fr.json`,
                 present: ["en", "de", "fr"] }],
+        ["a chosen locale the listing does not name is attempted anyway",
+            { systemLocale: "de_DE", settingsLocale: "es", files: ["de.json"] }, ["ready"],
+            { picks: 1, loads: 1, fallbacks: 0, uses: 1, resolved: "es", path: `${FOLDER}/es.json`,
+                present: ["en", "de"] }],
         ["a regional file named with a hyphen answers the full tag",
             { systemLocale: "pt_BR", files: ["pt-BR.json"] }, ["ready"],
-            { picks: 1, loads: 1, fallbacks: 0, resolved: "pt-BR", path: `${FOLDER}/pt-BR.json`,
-                present: ["en", "pt-BR"] }],
+            { picks: 1, loads: 1, fallbacks: 0, uses: 1, resolved: "pt-BR",
+                path: `${FOLDER}/pt-BR.json`, present: ["en", "pt-BR"] }],
         ["an empty first listing offers English alone for the session",
             { systemLocale: "de_DE", files: [] }, ["ready", "ready"],
-            { picks: 1, loads: 1, fallbacks: 1, resolved: "en", path: "", present: ["en"] }]
+            { picks: 1, loads: 1, fallbacks: 1, uses: 0, resolved: "en", path: "", present: ["en"] }]
     ]) {
         const w = i18nWorld(world);
         for (const status of statuses)
             w.reach(status === "ready" ? READY : LOADING);
         assert.equal(w.counts.picks, want.picks, `${why}: locale selections`);
         assert.equal(w.counts.loads, want.loads, `${why}: folder reads`);
-        assert.equal(w.fallbacks(), want.fallbacks, `${why}: fallback warnings`);
+        assert.equal(w.fallbacks(), want.fallbacks, `${why}: fallback reports`);
         assert.equal(w.warnings.length, want.fallbacks, `${why}: total warnings`);
+        assert.equal(w.uses(), want.uses, `${why}: locale switches`);
         assert.equal(w.root._resolvedLocale, want.resolved, `${why}: resolved locale`);
         assert.equal(w.root._selectedPath, want.path, `${why}: translation file`);
         assert.deepEqual(Object.keys(w.root.presentLocales), want.present, `${why}: locales offered`);
@@ -210,33 +222,31 @@ test("locale selection reads the translations folder once per session", () => {
 });
 
 test("a repeated request neither switches the locale again nor reports the fallback again", () => {
-    // Every row starts on a system locale with no file of its own, so the first Ready falls back to
-    // English and reports it once. A write that names a locale with no file is reported twice: the
-    // property change re-selects and finds none, then the settings hook attempts the file anyway.
-    // [why, steps after that Ready,
-    //  {fallback reports, total warnings, resolved locale, locale switches, loaded, context count}]
+    // Every row starts on a system locale with no file of its own, so the first Ready reports the
+    // fallback once. [why, steps after that Ready,
+    //  {fallback reports, total warnings, resolved locale, switches, loaded, translated contexts}]
     for (const [why, steps, want] of [
-        ["the same missing locale written twice reports the fallback once",
-            ["write:es", "fail", "write:es", "fail"],
-            { fallbacks: 2, warnings: 4, resolved: "es", uses: 2, loaded: false, keys: 0 }],
+        ["writing the same missing locale twice attempts it once",
+            ["write:es", "fail", "write:es"],
+            { fallbacks: 2, warnings: 3, resolved: "en", uses: 1, loaded: false, keys: 0 }],
         ["a different missing locale is reported in its own right",
             ["write:es", "fail", "write:it", "fail"],
-            { fallbacks: 4, warnings: 6, resolved: "it", uses: 2, loaded: false, keys: 0 }],
-        ["the system default written twice reports nothing further",
-            ["write:", "write:"],
-            { fallbacks: 1, warnings: 1, resolved: "en", uses: 0, loaded: false, keys: 0 }],
-        ["returning to the system default after a failure is reported",
-            ["write:es", "fail", "write:"],
-            { fallbacks: 3, warnings: 4, resolved: "en", uses: 1, loaded: false, keys: 0 }],
+            { fallbacks: 3, warnings: 5, resolved: "en", uses: 2, loaded: false, keys: 0 }],
+        ["returning to a system default already reported adds no report",
+            ["write:de", "write:", "write:"],
+            { fallbacks: 1, warnings: 1, resolved: "en", uses: 1, loaded: false, keys: 0 }],
         ["a locale with a file switches once and reports no fallback",
             ["write:de"],
             { fallbacks: 1, warnings: 1, resolved: "de", uses: 1, loaded: false, keys: 0 }],
-        ["re-writing the locale already loaded keeps its translations",
-            ["write:de", "loaded", "write:de"],
+        ["a second spelling of the locale already loaded keeps its translations",
+            ["write:de_DE", "loaded", "write:de"],
             { fallbacks: 1, warnings: 1, resolved: "de", uses: 1, loaded: true, keys: 1 }],
         ["a locale that fails, loads elsewhere, then fails again is reported both times",
             ["write:de", "fail", "write:fr", "loaded", "write:de", "fail"],
-            { fallbacks: 3, warnings: 5, resolved: "de", uses: 3, loaded: false, keys: 0 }]
+            { fallbacks: 3, warnings: 5, resolved: "en", uses: 3, loaded: false, keys: 0 }],
+        ["falling back while translations are loaded drops them, and is reported after that load",
+            ["write:de", "loaded", "write:"],
+            { fallbacks: 2, warnings: 2, resolved: "en", uses: 1, loaded: false, keys: 0 }]
     ]) {
         const w = i18nWorld({ systemLocale: "es_ES", files: ["de.json", "fr.json"] });
         w.reach(READY);
@@ -265,24 +275,39 @@ test("a repeated request neither switches the locale again nor reports the fallb
     }
 });
 
+test("a fallback with nothing to drop keeps the translations object it has", () => {
+    // BlurService and SettingsSearchService act on the translations change signal, which a fresh
+    // object emits whatever its contents, so a fallback that finds nothing must assign nothing.
+    const w = i18nWorld({ systemLocale: "es_ES", files: ["de.json"] });
+    w.reach(READY);
+    w.writeLocale("es");
+    const before = w.root.translations;
+    w.loadFailed("Could not open file");
+    assert.equal(w.root.translations, before,
+        "the already empty translations object is kept, so no consumer is woken by a fallback that " +
+        "cleared nothing");
+});
+
 test("a locale that arrives from disk is applied, before or after the folder read", () => {
     // settings/SessionStore.js parse() assigns SessionData.locale and runs no hook, so nothing but
     // the property change reaches selection. In greeter mode that load is asynchronous and races
-    // the folder scan, so both orders must land on the saved locale.
-    for (const [why, diskFirst] of [
-        ["a locale read from disk before the folder is applied by the first Ready", true],
-        ["a locale read from disk after the folder re-selects", false]
+    // the folder scan, so both orders must land on the saved locale through one switch.
+    // [why, whether the disk load lands first, fallback reports]
+    for (const [why, diskFirst, fallbacks] of [
+        ["a locale read from disk before the folder is applied by the first Ready", true, 0],
+        ["a locale read from disk after the folder re-selects", false, 1]
     ]) {
         const w = i18nWorld({ systemLocale: "es_ES", files: ["de.json", "fr.json"] });
         if (diskFirst) {
-            w.loadLocaleFromDisk("de");
+            w.loadLocaleFromDisk("de_DE");
             w.reach(READY);
         } else {
             w.reach(READY);
-            w.loadLocaleFromDisk("de");
+            w.loadLocaleFromDisk("de_DE");
         }
         assert.equal(w.root._resolvedLocale, "de", `${why}: resolved locale`);
         assert.equal(w.root._selectedPath, `${FOLDER}/de.json`, `${why}: translation file`);
         assert.equal(w.uses(), 1, `${why}: locale switches`);
+        assert.equal(w.fallbacks(), fallbacks, `${why}: fallback reports`);
     }
 });

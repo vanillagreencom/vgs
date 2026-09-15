@@ -85,7 +85,7 @@ var SPEC = {
     hiddenOutputDeviceNames: { def: [] },
     hiddenInputDeviceNames: { def: [] },
 
-    locale: { def: "", onChange: "updateLocale" },
+    locale: { def: "" },
     timeLocale: { def: "" },
 
     launcherLastFileSearchType: { def: "all" },
@@ -101,12 +101,8 @@ function getValidKeys() {
     return Object.keys(SPEC).concat(["configVersion"]);
 }
 
-function set(root, key, value, saveFn, hooks) {
+function set(root, key, value, saveFn) {
     if (!(key in SPEC)) return;
     root[key] = value;
-    var hookName = SPEC[key].onChange;
-    if (hookName && hooks && hooks[hookName]) {
-        hooks[hookName](root);
-    }
     saveFn();
 }
