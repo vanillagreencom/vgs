@@ -601,8 +601,6 @@ Singleton {
     property bool iconThemePerMode: false
     property string lastAppliedIconTheme: ""
     readonly property string iconTheme: resolveIconTheme()
-    property var availableIconThemes: ["System Default"]
-    property string systemDefaultIconTheme: ""
     property bool qt5ctAvailable: false
     property bool qt6ctAvailable: false
     property bool gtkAvailable: false
@@ -1557,8 +1555,7 @@ Singleton {
     function updateCosmicIconTheme() {
         if (!cosmicIntegrationAvailable())
             return;
-        const resolved = resolveIconTheme();
-        let cosmicThemeName = (resolved === "System Default") ? systemDefaultIconTheme : resolved;
+        const cosmicThemeName = resolveIconTheme();
         if (!cosmicThemeName || cosmicThemeName === "System Default") {
             const detectScript = `if command -v gsettings >/dev/null 2>&1; then
             gsettings get org.gnome.desktop.interface icon-theme 2>/dev/null | sed "s/'//g"
@@ -1596,8 +1593,7 @@ Singleton {
     }
 
     function updateGtkIconTheme() {
-        const resolved = resolveIconTheme();
-        const gtkThemeName = (resolved === "System Default") ? systemDefaultIconTheme : resolved;
+        const gtkThemeName = resolveIconTheme();
         if (gtkThemeName === "System Default" || gtkThemeName === "")
             return;
         lastAppliedIconTheme = gtkThemeName;
@@ -1965,45 +1961,6 @@ Singleton {
         if (_pluginSettingsLoading || _pluginParseError)
             return;
         pluginSettingsFile.setText(JSON.stringify(pluginSettings, null, 2));
-    }
-
-    function detectAvailableIconThemes() {
-        const xdgDataDirs = Quickshell.env("XDG_DATA_DIRS") || "";
-        const localData = Paths.strip(StandardPaths.writableLocation(StandardPaths.GenericDataLocation));
-        const homeDir = Paths.strip(StandardPaths.writableLocation(StandardPaths.HomeLocation));
-
-        const dataDirs = xdgDataDirs.trim() !== "" ? xdgDataDirs.split(":").concat([localData]) : ["/usr/share", "/usr/local/share", localData];
-
-        const iconPaths = dataDirs.map(d => d + "/icons").concat([homeDir + "/.icons"]);
-        const pathsArg = iconPaths.join(" ");
-
-        const script = `
-            echo "SYSDEFAULT:$(gsettings get org.gnome.desktop.interface icon-theme 2>/dev/null | sed "s/'//g" || echo '')"
-            for dir in ${pathsArg}; do
-                [ -d "$dir" ] || continue
-                for theme in "$dir"/*/; do
-                    [ -d "$theme" ] || continue
-                    basename "$theme"
-                done
-            done | grep -v '^icons$' | grep -v '^default$' | grep -v '^hicolor$' | grep -v '^locolor$' | sort -u
-        `;
-
-        Proc.runCommand("detectIconThemes", ["sh", "-c", script], (output, exitCode) => {
-            const themes = ["System Default"];
-            if (output && output.trim()) {
-                const lines = output.trim().split('\n');
-                for (let i = 0; i < lines.length; i++) {
-                    const line = lines[i].trim();
-                    if (line.startsWith("SYSDEFAULT:")) {
-                        systemDefaultIconTheme = line.substring(11).trim();
-                        continue;
-                    }
-                    if (line)
-                        themes.push(line);
-                }
-            }
-            availableIconThemes = themes;
-        });
     }
 
     function detectAvailableCursorThemes() {

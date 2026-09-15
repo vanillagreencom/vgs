@@ -5516,12 +5516,13 @@ def apply_vscode_theme_hook(roles: Dict[str, str], bp: Dict[str, Any]) -> Dict[s
 def list_installed_icon_themes() -> List[str]:
     """Installed GTK/desktop icon themes (dirs with an index.theme that declares
     icon Directories), for the Icons settings picker. Excludes the hicolor
-    fallback base and cursor-only themes."""
+    fallback base and cursor-only themes.
+
+    icon_theme_base_dirs() is the one owner of where an icon theme can live, so every
+    set this lists is one the shell's own icon lookup reaches."""
     ensure_bundled_icon_themes()
     names: set[str] = set()
-    bases = ["/usr/share/icons", str(home() / ".local" / "share" / "icons"), str(home() / ".icons")]
-    for base in bases:
-        d = Path(base)
+    for d in icon_theme_base_dirs():
         if not d.is_dir():
             continue
         for entry in d.iterdir():
@@ -5540,9 +5541,16 @@ def list_installed_icon_themes() -> List[str]:
     return sorted(names, key=str.lower)
 
 
+def icon_theme_user_dir() -> Path:
+    """The user-writable icon directory. ensure_bundled_icon_themes() links the
+    bundled sets into it, and it is one of icon_theme_base_dirs(), so a linked set
+    always reaches both the picker and the shell's icon lookup."""
+    return _xdg_data_home() / "icons"
+
+
 def icon_theme_base_dirs() -> List[Path]:
     """Directories an icon theme can be installed under, in search order."""
-    data_home = Path(os.environ.get("XDG_DATA_HOME") or home() / ".local" / "share")
+    data_home = _xdg_data_home()
     xdg = os.environ.get("XDG_DATA_DIRS", "").strip()
     if xdg:
         data_dirs = [Path(d) for d in xdg.split(":") if d] + [data_home]
@@ -5653,6 +5661,38 @@ def icon_index(theme: str) -> Dict[str, str]:
     icons = build_icon_index(dirs)
     write_file(cache, json.dumps({"fingerprint": fingerprint, "icons": icons}, separators=(",", ":")))
     return icons
+
+
+# The icons the Icons settings picker draws as a sample of a set: a folder, a file
+# manager, a terminal and a settings icon. Yaru paints the folder, the file manager and
+# the settings icon in its accent colour, so the sample separates the shipped accents.
+ICON_PREVIEW_SAMPLES = ("folder", "system-file-manager", "utilities-terminal", "preferences-desktop")
+
+
+def icon_theme_samples(theme: str) -> List[str]:
+    """Absolute paths of ICON_PREVIEW_SAMPLES in `theme`, in that order.
+
+    The paths come out of icon_index(), so a sample is the file the shell would draw
+    for that name and a second read of the same set costs a fingerprint check rather
+    than another walk of its inherit chain. A name the chain lacks is omitted, which
+    leaves the picker a shorter sample rather than a broken image."""
+    found = icon_index(theme)
+    return [found[name] for name in ICON_PREVIEW_SAMPLES if name in found]
+
+
+def _icon_theme_samples_or_none(theme: str) -> List[str]:
+    """icon_theme_samples for one set of the picker's list, or no sample at all.
+
+    list_installed_icon_themes skips a theme directory it cannot read, so the list can
+    name a set whose inherit chain reaches an index.theme that is unreadable or a
+    directory that is not listable. One such set costs its own sample, not the whole
+    list: the picker keeps its tile and draws no icons on it."""
+    try:
+        return icon_theme_samples(theme)
+    except OSError as exc:
+        eprint(f"icon-theme-samples-unreadable: {theme}")
+        eprint(f"The picker draws this set without a sample: {exc}")
+        return []
 
 
 def cmd_icons(argv: List[str]) -> int:
@@ -5782,25 +5822,25 @@ def bundled_icons_dir() -> Path:
 
 
 def ensure_bundled_icon_themes() -> List[str]:
-    """Make VGS-bundled icon themes discoverable by symlinking them into
-    ~/.local/share/icons, so a theme's `icons.theme` pointer resolves even
-    without a system icon-theme package installed. Idempotent and
-    non-destructive: a real system/user install of the same name always wins,
-    and an existing real directory is never clobbered."""
+    """Make VGS-bundled icon themes discoverable by symlinking them into the user
+    icon directory, so a theme's `icons.theme` pointer resolves even without a system
+    icon-theme package installed. Idempotent and non-destructive: a real install of
+    the same name anywhere on the icon search path always wins, and an existing real
+    directory is never clobbered."""
     linked: List[str] = []
     src_root = bundled_icons_dir()
     if not src_root.is_dir():
         return linked
-    dest_root = home() / ".local" / "share" / "icons"
-    system_root = Path("/usr/share/icons")
+    dest_root = icon_theme_user_dir()
+    other_roots = [d for d in icon_theme_base_dirs() if d != dest_root]
     with contextlib.suppress(OSError):
         dest_root.mkdir(parents=True, exist_ok=True)
     for theme_dir in sorted(src_root.iterdir()):
         if not theme_dir.is_dir():
             continue
         name = theme_dir.name
-        if (system_root / name).is_dir():
-            continue  # a real system install of this theme wins
+        if any((root / name).is_dir() for root in other_roots):
+            continue  # a real install of this theme elsewhere on the search path wins
         link = dest_root / name
         if link.is_symlink():
             if link.resolve() == theme_dir.resolve():
@@ -5836,7 +5876,7 @@ def apply_icon_theme_hook(roles: Dict[str, str]) -> Dict[str, Any]:
     light = settings.get("iconThemeLight") or "System Default"
     if settings.get("iconThemePerMode") or dark not in ("", "System Default") or light not in ("", "System Default"):
         return {"hook": "icon-theme", "ok": True, "skipped": True, "reason": "icon theme managed in VGS settings"}
-    installed = any((Path(base).expanduser() / name).is_dir() for base in ("/usr/share/icons", "~/.local/share/icons"))
+    installed = any((base / name).is_dir() for base in icon_theme_base_dirs())
     if not installed:
         return {"hook": "icon-theme", "ok": True, "skipped": True, "reason": f"icon theme not installed: {name}"}
     return _run_hook_cmd("icon-theme", ["gsettings", "set", "org.gnome.desktop.interface", "icon-theme", name], timeout=5)
@@ -11767,9 +11807,8 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
         if pointer.exists():
             theme_icon = pointer.read_text().strip()
         result = {
-            "installed": installed,
+            "sets": [{"name": name, "samples": _icon_theme_samples_or_none(name)} for name in installed],
             "themeIcon": theme_icon,
-            "themeIconInstalled": theme_icon in installed,
         }
         print(json.dumps(result, indent=2) if args.json else "\n".join(installed))
         return 0

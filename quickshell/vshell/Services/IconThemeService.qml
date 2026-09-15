@@ -64,10 +64,6 @@ Singleton {
         const index = _index;
         if (!name || !Object.prototype.hasOwnProperty.call(index, name))
             return "";
-        // Route through Quickshell's icon image provider rather than a raw
-        // file:// URL: the provider renders at the device pixel ratio (crisp),
-        // whereas a plain file:// source is loaded at native size and mipmapped
-        // down, which visibly softened large themed icons on HiDPI (dock tiles).
-        return "image://icon/" + index[name];
+        return Paths.iconProviderUrl(index[name]);
     }
 }

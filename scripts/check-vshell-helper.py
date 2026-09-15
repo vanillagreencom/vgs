@@ -2825,6 +2825,152 @@ def test_icon_index_picks_each_name_through_the_inherit_chain():
             _restore_env(name, value)
 
 
+def test_icon_picker_lists_every_base_dir_and_samples_each_set():
+    """`theme icons --json` lists a set installed under any icon_theme_base_dirs() entry,
+    ships the bundled Yaru sets to the picker, and resolves each set's sample icons."""
+    def touch(path: Path, text: str = "") -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+
+    def icons() -> dict:
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            status = helper.cmd_theme(["icons", "--json"])
+        assert_equal(status, 0, "theme icons --json exit status")
+        return json.loads(buffer.getvalue())
+
+    # The names the repository ships, read from the directory the installers copy, so a
+    # set added to or dropped from it moves this floor with it.
+    bundled = sorted(d.name for d in helper.bundled_icons_dir().iterdir() if (d / "index.theme").is_file())
+    # An empty floor would leave both per-set loops below asserting nothing.
+    assert_equal(len(bundled) > 0, True, "config/vshell/icons ships at least one set with an index.theme")
+
+    def scenario(temp_home: Path):
+        # A data home away from ~/.local/share and a data dir away from /usr/share: the
+        # picker reaches both only by reading icon_theme_base_dirs().
+        os.environ["XDG_DATA_HOME"] = str(temp_home / "data-home")
+        os.environ["XDG_DATA_DIRS"] = str(temp_home / "data-dir")
+        shared = temp_home / "data-dir" / "icons"
+        # A theme only a data-dir entry carries, with a parent that supplies one sample.
+        touch(shared / "VgsProbeSet" / "index.theme", "[Icon Theme]\nInherits=VgsProbeParent\nDirectories=48x48/apps\n")
+        touch(shared / "VgsProbeParent" / "index.theme", "[Icon Theme]\nDirectories=48x48/apps\n")
+        touch(shared / "VgsProbeSet/48x48/places/folder.png")
+        touch(shared / "VgsProbeSet/48x48/apps/system-file-manager.png")
+        touch(shared / "VgsProbeSet/48x48/apps/preferences-desktop.png")
+        touch(shared / "VgsProbeParent/48x48/apps/utilities-terminal.png")
+        # A cursor-only theme declares no Directories and is not a set anyone can pick.
+        touch(shared / "VgsProbeCursors" / "index.theme", "[Icon Theme]\nName=VgsProbeCursors\n")
+        (shared / "VgsProbeCursors" / "cursors").mkdir(parents=True, exist_ok=True)
+        touch(helper.generated_dir() / "icons.theme", "Yaru-purple\n")
+
+        result = icons()
+        names = [entry["name"] for entry in result["sets"]]
+        # Over-inclusion from a host Flatpak export root stays open: those paths are
+        # absolute and a temporary home cannot move them.
+        for name in bundled:
+            assert_equal(name in names, True, f"the bundled set {name} reaches the picker")
+        assert_equal("VgsProbeSet" in names, True, "a set under an XDG_DATA_DIRS entry reaches the picker")
+        assert_equal("VgsProbeCursors" in names, False, "a cursor-only theme is not offered as an icon set")
+        assert_equal("hicolor" in names, False, "the hicolor fallback base is not offered as an icon set")
+
+        samples = {entry["name"]: entry["samples"] for entry in result["sets"]}
+        assert_equal(samples["VgsProbeSet"], [
+            str(shared / "VgsProbeSet/48x48/places/folder.png"),
+            str(shared / "VgsProbeSet/48x48/apps/system-file-manager.png"),
+            str(shared / "VgsProbeParent/48x48/apps/utilities-terminal.png"),
+            str(shared / "VgsProbeSet/48x48/apps/preferences-desktop.png"),
+        ], "each sample resolves through the set's own inherit chain, in ICON_PREVIEW_SAMPLES order")
+        for name in bundled:
+            assert_equal(len(samples[name]), len(helper.ICON_PREVIEW_SAMPLES),
+                         f"the bundled set {name} resolves every sample icon")
+        assert_equal(result["themeIcon"], "Yaru-purple", "the theme's own set is named")
+        assert_equal(sorted(result), ["sets", "themeIcon"],
+                     "the picker reads one list and one name; whether the theme's set is installed is the tab's to judge from that list")
+
+        # One set whose inherit chain reaches an index.theme this process cannot read,
+        # the class list_installed_icon_themes already skips for the listed theme itself:
+        # a root-owned 0600 index.theme, or a directory on a mount that went away.
+        real_samples = helper.icon_theme_samples
+
+        def refuse_one(theme: str) -> list[str]:
+            if theme == "VgsProbeSet":
+                raise PermissionError(13, "Permission denied", "index.theme")
+            return real_samples(theme)
+
+        err = io.StringIO()
+        with patch.object(helper, "icon_theme_samples", side_effect=refuse_one), \
+                contextlib.redirect_stderr(err):
+            partial = icons()
+        partial_samples = {entry["name"]: entry["samples"] for entry in partial["sets"]}
+        assert_equal(partial_samples.get("VgsProbeSet"), [],
+                     "a set that cannot be sampled keeps its tile and draws no icons")
+        assert_equal(partial_samples.get(bundled[0]), samples[bundled[0]],
+                     "one unreadable set costs its own sample, not every other set's")
+        assert_equal((err.getvalue().splitlines() or [""])[0], "icon-theme-samples-unreadable: VgsProbeSet",
+                     "the skipped sample names the set it dropped")
+
+    saved = {n: os.environ.get(n) for n in ("XDG_DATA_DIRS", "XDG_DATA_HOME")}
+    try:
+        with_temp_home(scenario)
+    finally:
+        for name, value in saved.items():
+            _restore_env(name, value)
+
+
+def test_a_real_icon_set_install_wins_over_the_bundled_copy_and_counts_as_installed():
+    """A set installed under any icon_theme_base_dirs() entry suppresses VGS's symlink for
+    that name, and the icon-theme hook counts it as installed rather than skipping."""
+    def touch(path: Path, text: str = "") -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+
+    bundled = sorted(d.name for d in helper.bundled_icons_dir().iterdir() if (d / "index.theme").is_file())
+    assert_equal(len(bundled) > 1, True, "config/vshell/icons ships more than one set with an index.theme")
+    shadowed, linked_too = bundled[0], bundled[1]
+
+    def scenario(temp_home: Path):
+        os.environ["XDG_DATA_HOME"] = str(temp_home / "data-home")
+        os.environ["XDG_DATA_DIRS"] = str(temp_home / "data-dir")
+        shared = temp_home / "data-dir" / "icons"
+        # A real install of one bundled set, on the search path but not in the user
+        # directory VGS links into.
+        touch(shared / shadowed / "index.theme", "[Icon Theme]\nDirectories=48x48/apps\n")
+        touch(shared / "VgsProbeSet" / "index.theme", "[Icon Theme]\nDirectories=48x48/apps\n")
+
+        linked = helper.ensure_bundled_icon_themes()
+        user_dir = helper.icon_theme_user_dir()
+        assert_equal((user_dir / shadowed).exists(), False,
+                     f"the real install of {shadowed} suppresses the bundled symlink, so it is not shadowed")
+        assert_equal(shadowed in linked, False, f"{shadowed} is not reported as linked")
+        assert_equal(linked_too in linked and (user_dir / linked_too).is_symlink(), True,
+                     f"{linked_too}, which nothing else installs, is still linked")
+
+        # The icon-theme hook applies a set installed only under an XDG_DATA_DIRS entry.
+        touch(helper.generated_dir() / "icons.theme", "VgsProbeSet\n")
+        written = []
+
+        def record(hook, command, **_kwargs):
+            written.append(tuple(command))
+            return {"hook": hook, "ok": True}
+
+        with patch.object(helper, "_sandboxed_home", return_value=False), \
+                patch.object(helper, "load_settings", return_value={}), \
+                patch.object(helper.shutil, "which", return_value="/usr/bin/gsettings"), \
+                patch.object(helper, "_run_hook_cmd", side_effect=record):
+            result = helper.apply_icon_theme_hook({"theme_type": "dark"})
+        assert_equal(result.get("reason"), None,
+                     "a set on the search path is not reported as not installed")
+        assert_equal(written, [("gsettings", "set", "org.gnome.desktop.interface", "icon-theme", "VgsProbeSet")],
+                     "the hook writes the set it found on the search path")
+
+    saved = {n: os.environ.get(n) for n in ("XDG_DATA_DIRS", "XDG_DATA_HOME")}
+    try:
+        with_temp_home(scenario)
+    finally:
+        for name, value in saved.items():
+            _restore_env(name, value)
+
+
 def test_theme_init_applies_only_without_state():
     """`theme init` applies the default theme when no theme.json exists, and nothing otherwise."""
     def init():
@@ -11944,6 +12090,8 @@ def main():
     test_current_theme_reads_without_applying()
     test_theme_init_applies_only_without_state()
     test_icon_index_picks_each_name_through_the_inherit_chain()
+    test_icon_picker_lists_every_base_dir_and_samples_each_set()
+    test_a_real_icon_set_install_wins_over_the_bundled_copy_and_counts_as_installed()
     test_cache_prune_bounds_imagecache_and_drops_unreferenced_notification_images()
     test_lint_checks_color0_in_light_mode_only()
     test_lint_reports_listed_shortfalls_as_known()
