@@ -10124,8 +10124,9 @@ def test_a_save_never_pairs_its_palette_with_a_curated_file_it_did_not_judge():
     --save`, including over a package whose `theme.json` an interrupted save left
     behind, `apply-colors --save`, `save-current`, and `theme regenerate`, which is
     handed part of a package. `theme import-colors` and `extract-wallpaper --save`
-    reach the same writer and have no row here; the decisions it makes read the
-    destination and not the caller.
+    reach the same writer and have no row here: both go through
+    `save_theme_package`, which reads the destination for its `vouched` list exactly
+    as the covered save routes do.
 
     Each row reads the revision the route's apply painted, the revision the reload
     renders, whether the curated file's own bytes are still there, whether the
@@ -10169,7 +10170,7 @@ def test_a_save_never_pairs_its_palette_with_a_curated_file_it_did_not_judge():
             assert_equal(status, 0, f"{' '.join(argv)} exit status")
 
         def save_after(name: str, move: str, source: str, save_argv: list,
-                       then: list | None, patched) -> tuple:
+                       then: list | None, patched, again: bool = False) -> tuple:
             """Apply the package, move the palette one way, then run the save route."""
             package = refreshed_curated_package(name, "#101010", "A", source=source)
             curated = package / "apps" / "claude-light.json"
@@ -10181,7 +10182,7 @@ def test_a_save_never_pairs_its_palette_with_a_curated_file_it_did_not_judge():
             stub_apply(loaded)
             if move == "refresh":
                 refreshed_curated_package(name, "#202020", "B", source=source)
-            if move == "edit":
+            if move in ("edit", "edit-twice"):
                 run(["apply-colors", "--name", name, "--set", "foreground=#303030"])
             if move == "mode":
                 stub_apply(helper.transformed_mode_blueprint(helper.find_theme(name), "dark", ""))
@@ -10192,6 +10193,8 @@ def test_a_save_never_pairs_its_palette_with_a_curated_file_it_did_not_judge():
             errors = io.StringIO()
             with patched:
                 run([arg.replace("<name>", name) for arg in save_argv], errors)
+                if again:
+                    run([arg.replace("<name>", name) for arg in save_argv])
             if then:
                 run([arg.replace("<name>", name) for arg in then])
             carried = (applied[-1].get("apps") if applied else {}) or {}
@@ -10225,6 +10228,11 @@ def test_a_save_never_pairs_its_palette_with_a_curated_file_it_did_not_judge():
                 ("an unsaved colour edit pairs with nothing and loses no bytes",
                  "carryedit", "edit", "curated", wallpaper_save, None,
                  contextlib.nullcontext(), ("", "", True, True, "")),
+                # The second save has itself moved nothing, so a rule keyed on the
+                # write in front of it refreshed the record and handed the file back.
+                ("a second save after a parted one leaves the record held",
+                 "carrytwice", "edit-twice", "curated", wallpaper_save, None,
+                 contextlib.nullcontext(), ("", "", True, True, "")),
                 ("a mode rebuild paints the counterpart file, saves none of it and says so",
                  "carrymode", "mode", "curated", wallpaper_save, None,
                  contextlib.nullcontext(), ("A", "", True, True, parted_notice)),
@@ -10246,13 +10254,13 @@ def test_a_save_never_pairs_its_palette_with_a_curated_file_it_did_not_judge():
                  "carrynometa", "no-metadata", "curated", wallpaper_save, None,
                  contextlib.nullcontext(), ("", "", True, False, "")),
                 # `regenerate` is handed one app's file and moves no palette, so it
-                # records the digest of what it wrote. On an untouched package that
-                # keeps a certified curated file certified, which is the point: it
-                # rewrites `colors.toml` from a blueprint stating derived roles the
-                # package left implicit, so a held-back record would drop the file
-                # from the renders after it. The second row is the cost of that: the
-                # record a parted save held back does not survive a regenerate, and
-                # the file comes back certified against the palette that save wrote.
+                # hands the writer the merge-style files the loader kept and records
+                # the digest of what it wrote. That keeps a certified curated file
+                # certified, which it must: regenerate rewrites `colors.toml` from a
+                # blueprint stating derived roles the package left implicit, so a
+                # held-back record would drop the file from the renders after it.
+                # After a parted save the loader has already dropped the file, so
+                # regenerate vouches for nothing and the record stays held.
                 ("regenerate on an untouched package keeps its file rendering",
                  "carryregenrest", "none", "curated",
                  ["regenerate", "<name>", "--app", "btop", "--yes"], None,
@@ -10260,16 +10268,17 @@ def test_a_save_never_pairs_its_palette_with_a_curated_file_it_did_not_judge():
                  ("", "A", True, False,
                   "note: <name> is curated; regenerating replaces curated files "
                   "with palette renders")),
-                ("regenerate records the palette it wrote over a held-back record",
+                ("regenerate after a held-back record does not revive the file",
                  "carryregen", "refresh", "curated", wallpaper_save,
                  ["regenerate", "<name>", "--app", "btop", "--yes"],
-                 contextlib.nullcontext(), ("", "B", True, False, "")),
+                 contextlib.nullcontext(), ("", "", True, False, "")),
                 ("without the palette agreement the stale pair comes back",
                  "carrycontrol", "refresh", "curated", wallpaper_save, None,
                  no_agreement, ("B", "B", True, True, "")),
             ]
             for label, name, move, source, save_argv, then, patched, expected in rows:
-                assert_equal(save_after(name, move, source, save_argv, then, patched),
+                assert_equal(save_after(name, move, source, save_argv, then, patched,
+                                        again=move == "edit-twice"),
                              tuple(part.replace("<name>", name) if isinstance(part, str) else part
                                    for part in expected),
                              label)
