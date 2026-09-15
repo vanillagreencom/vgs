@@ -157,8 +157,10 @@ Singleton {
         onTriggered: root.refreshMonitors()
     }
 
-    // Every toplevel-view producer shares this timer: the Hyprland fan-out, the two NiriService
-    // handlers, and ToplevelManager, which reaches it on every compositor.
+    // Every signal-driven producer of the toplevel view shares this timer: the Hyprland fan-out,
+    // the two NiriService handlers, and ToplevelManager, which reaches it on every compositor.
+    // Component.onCompleted and _applyCompositor seed the view directly instead, because a seed
+    // answers a read that is already waiting rather than coalescing a burst of events.
     Timer {
         id: toplevelViewTimer
         interval: 0

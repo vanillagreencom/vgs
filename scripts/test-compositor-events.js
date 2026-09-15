@@ -69,6 +69,22 @@ const NIRI_HANDLERS = {
     workspaces: extractBlock(source, "function onAllWorkspacesChanged()", NIRI_AT),
 };
 
+// Every signal-driven producer of the toplevel view is a handler inside a Connections block, so
+// read the blocks out of the file instead of listing the producers here: a block added later is
+// swept without editing this test. Component.onCompleted and _applyCompositor call
+// refreshToplevels directly to seed the view at construction and at detection, and neither sits
+// inside a block, so they fall outside this sweep without being named as exceptions.
+function connectionsBlocks() {
+    const blocks = [];
+    for (let at = source.indexOf("Connections {"); at !== -1; at = source.indexOf("Connections {", at + 1)) {
+        const body = extractBlock(source, "Connections {", at);
+        blocks.push({ target: (body.match(/^\s*target:.*$/m) ?? ["(no target)"])[0].trim(), body });
+    }
+    return blocks;
+}
+
+const CONNECTIONS = connectionsBlocks();
+
 const TIMERS = ["hyprMonitorRefreshTimer", "toplevelViewTimer"].map(timerBlock);
 
 // Model the zero-interval Timer: restart re-arms a pending trigger, and a turn fires it once.
@@ -123,14 +139,25 @@ test("every timer this shell arms fires once per turn and nothing more", () => {
     }
 });
 
-test("every toplevel-view producer shares one coalescing timer", () => {
+test("no Connections handler rebuilds the toplevel view outside the shared timer", () => {
+    // The negative half of the claim, swept over every block the file declares rather than over
+    // the three this suite names, so a handler added to a new block cannot reintroduce the
+    // double rebuild while the suite stays green.
+    assert.ok(CONNECTIONS.length >= 4,
+        `the Connections extractor is broken: it found ${CONNECTIONS.length} block(s) in a file that declares at least four`);
+    for (const [label, body] of [["ToplevelManager", VALUES_CHANGED], ["Hyprland raw event", RAW_EVENT], ...Object.entries(NIRI_HANDLERS)])
+        assert.ok(CONNECTIONS.some(block => block.body.includes(body)),
+            `the sweep misses the ${label} handler, so the extractor does not reach the known producers`);
+    for (const { target, body } of CONNECTIONS)
+        assert.ok(!body.includes("refreshToplevels("),
+            `the Connections block on ${target} rebuilds directly instead of arming the shared timer, which costs every consumer a second rebuild`);
+});
+
+test("the Hyprland, Wayland and Niri producers arm the shared coalescing timer", () => {
     const timerId = TIMERS.find(t => t.body.includes("refreshToplevels")).id;
-    for (const [label, body] of [["ToplevelManager", VALUES_CHANGED], ...Object.entries(NIRI_HANDLERS)]) {
+    for (const [label, body] of [["ToplevelManager", VALUES_CHANGED], ...Object.entries(NIRI_HANDLERS)])
         assert.ok(body.includes(`${timerId}.restart()`),
             `the ${label} handler must share the timer, or one window open rebuilds every consumer twice`);
-        assert.ok(!body.includes("refreshToplevels("),
-            `the ${label} handler must not rebuild directly, which is the call the timer replaced`);
-    }
     assert.deepEqual(shell().deliver({ wayland: true }), ["toplevelsChanged"],
         "the Wayland list alone rebuilds once");
 
@@ -146,6 +173,10 @@ test("one Niri window action costs one rebuild and remembers focus synchronously
     // and the ToplevelManager list. NiriService reassigns windows several times inside one Niri
     // event, and a window opening on a new workspace reaches the workspace handler as well.
     for (const [action, batch, expected] of [
+        // A focus change reassigns NiriService.windows without changing the Wayland toplevel set,
+        // so the windows handler is the only producer and carries the rebuild on its own.
+        ["focus change, which leaves the Wayland list alone", { niri: ["windows"] },
+            ["rememberNiriFocus", "toplevelsChanged"]],
         ["window open or close", { wayland: true, niri: ["windows"] },
             ["rememberNiriFocus", "toplevelsChanged"]],
         ["window open with a repeated windows assignment", { wayland: true, niri: ["windows", "windows"] },
