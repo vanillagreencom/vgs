@@ -17,7 +17,8 @@ const FILES = {
     modal: ["WallpaperSwitcherModal.qml", path.join(QS, "Modals", "Switcher", "WallpaperSwitcherModal.qml")],
     catalog: ["VGSThemeCatalogService.qml", path.join(QS, "Services", "VGSThemeCatalogService.qml")],
     service: ["VGSThemeService.qml", path.join(QS, "Services", "VGSThemeService.qml")],
-    dash: ["Dash/WallpaperTab.qml", path.join(QS, "Modules", "Dash", "WallpaperTab.qml")]
+    dash: ["Dash/WallpaperTab.qml", path.join(QS, "Modules", "Dash", "WallpaperTab.qml")],
+    session: ["SessionData.qml", path.join(QS, "Common", "SessionData.qml")]
 };
 
 const { evaluateMarked, regionOf, guardChild } = require("./lib/qml-region.js");
@@ -32,7 +33,7 @@ const readers = Object.fromEntries(Object.entries(FILES).map(([id, [label]]) => 
 const REGIONS = [
     ["modal", "WALLPAPER SOURCE DECISION", ["activationRoute"]],
     ["catalog", "IMAGERY CARD DECISION", ["imageryCard", "cardOperation", "failureDetail", "themeRail"]],
-    ["service", "WALLPAPER MEMBERSHIP DECISION", ["inThemeSet"]]
+    ["service", "WALLPAPER MEMBERSHIP DECISION", ["inThemeSet", "sourceTag", "offersDelete", "appliedArgs"]]
 ];
 const fns = {};
 for (const [id, marker, names] of REGIONS)
@@ -126,9 +127,40 @@ test("inThemeSet marks the theme's own entries and files the theme already holds
         [{ source: "folder", file: "added.jpg" }, "", "", false, "with no applied theme nothing is marked, even a file the set holds"],
         [{ source: "folder", file: "added.jpg" }, "bauhaus", "nord", false,
             "a set retained from the previously applied theme says nothing about the applied one"],
-        [{ source: "bauhaus", file: "x.jpg" }, "bauhaus", "nord", true, "the applied theme's own entry is marked whatever set is retained"]
+        [{ source: "bauhaus", file: "x.jpg" }, "bauhaus", "nord", true, "the applied theme's own entry is marked whatever set is retained"],
+        [{ source: "bauhaus", file: "x.jpg", removed: true }, "bauhaus", "bauhaus", false,
+            "a wallpaper removed from the applied theme's set is listed under it and not marked"]
     ])
         assert.equal(fns.inThemeSet(entry, theme, own, owner), expected, why);
+});
+
+test("sourceTag captions an All entry with the set it comes from and never its file name", () => {
+    for (const [entry, expected, why] of [
+        [{ file: "3-blue-eye.png", source: "catppuccin" }, "catppuccin", "a theme's wallpaper reads as its theme"],
+        [{ file: "mine.jpg", source: "folder" }, "My folder", "a folder image reads as the folder"],
+        [{ file: "3-blue-eye.png" }, "", "an entry naming no source has an empty caption, not its file name"]
+    ])
+        assert.equal(fns.sourceTag(entry, "My folder"), expected, why);
+});
+
+test("offersDelete offers Delete wallpaper for every entry but a packaged wallpaper", () => {
+    for (const [entry, expected, why] of [
+        [{ origin: "builtin" }, false, "wallpaper-delete refuses a packaged wallpaper, so it is not offered"],
+        [{ origin: "user" }, true, "a wallpaper in a user theme directory is offered"],
+        [{ source: "folder" }, true, "a folder image carries no origin and is offered"],
+        [null, false, "no entry offers nothing"]
+    ])
+        assert.equal(fns.offersDelete(entry), expected, why);
+});
+
+test("appliedArgs sends one --applied pair per image path and none for a colour or an empty value", () => {
+    for (const [paths, expected, why] of [
+        [["/w/a.jpg", "/w/b.png"], ["--applied", "/w/a.jpg", "--applied", "/w/b.png"], "each path is one pair, in order"],
+        [["", "/w/a.jpg"], ["--applied", "/w/a.jpg"], "an empty value names no file"],
+        [["#1e1e2e", "/w/a.jpg"], ["--applied", "/w/a.jpg"], "a colour backdrop names no file"],
+        [null, [], "no list sends no flag"]
+    ])
+        assert.deepEqual(fns.appliedArgs(paths), expected, why);
 });
 
 test("the switcher routes a card to the catalog and Add to theme to wallpaper-add", () => {
@@ -140,12 +172,26 @@ test("the switcher routes a card to the catalog and Add to theme to wallpaper-ad
         ["return VGSThemeCatalogService.themeRail(wallpapers, root.imageryCard)", "the Theme view is the shared extracted rail", 1],
         ["sourceToggle: sourcePill", "the Theme / All pill is loaded under the captions", 1],
         ['activeIndex: root.source === "all" ? 1 : 0', "the source pill lights the segment naming the view on screen", 1],
-        ['onPicked: index => { root.source = index === 1 ? "all" : "theme"; root.refreshSource(); }', "a pick selects the labelled source and reads its list", 1],
+        ['onPicked: index => root.showSource(index === 1 ? "all" : "theme")', "a pick shows the labelled source", 1],
+        ['onSourceFlipRequested: root.showSource(root.source === "all" ? "theme" : "all")', "S shows the other source", 1],
         ['root.source = SettingsData.wallpaperSource === "folder" ? "all" : "theme"; root.refreshSource();', "each open starts from the shared source setting and reads its list", 1],
-        ['itemMenu: root.source === "all" && root.appliedTheme ? addToThemeMenu : null', "the menu exists under All only", 1],
-        ["if (!menu.inTheme) VGSThemeService.wallpaperAdd(root.menuItem.key, true);", "Add to theme adds the entry's path and toasts its outcome here", 1],
+        ["itemMenu: wallpaperMenu", "both views have the menu", 1],
+        ['if (menu.confirming) return [{text: I18n.tr("Delete %1?").arg(menu.entry.file), action: ""}, {text: I18n.tr("Delete"), action: "delete"}',
+            "the delete action is offered only by the question naming the file", 1],
+        ['if (root.appliedTheme && root.source !== "all") list.push({text: I18n.tr("Remove from theme"), action: "remove"});',
+            "the Theme view offers Remove from theme", 1],
+        ['if (VGSThemeService.offersDelete(menu.entry)) list.push({text: I18n.tr("Delete wallpaper"), action: "confirm"});',
+            "and both views offer Delete wallpaper, which asks first, for every entry the extracted decision allows", 1],
+        ['origin: entry.origin || "",', "the entry carries the origin that decision reads", 1],
+        ['readonly property bool confirming: menu.confirmKey !== "" && menu.confirmKey === menu.entry.key',
+            "the question holds only while the menu is on the entry it asked about, so a reused menu opens on its actions", 1],
+        ['if (action === "confirm") { menu.confirmKey = menu.entry.key; return; }', "Delete wallpaper opens the question for this entry and deletes nothing", 1],
+        ['if (action === "add") VGSThemeService.wallpaperAdd(menu.entry.key, true); else if (action === "remove") VGSThemeService.wallpaperRemove(menu.entry.file); else if (action === "delete") VGSThemeService.wallpaperDelete(menu.entry.key);',
+            "each action reaches its service call with the entry's path or file", 1],
+        ["label: all ? VGSThemeService.sourceTagFor(entry) : entry.file", "the All caption is the shared source tag, with no file name", 1],
         ["marked: all && VGSThemeService.inThemeSet(entry, root.appliedTheme, root.wallpaperEntries, VGSThemeService.themeWallpapersTheme)", "the mark is the extracted membership", 1]
     ]);
+    modal.requires(modal.body("showSource"), "showSource()", [["root.source = next; root.refreshSource();", "the shown source reads its list", 1]]);
     const applied = modal.handlers("onApplied");
     assert.equal(applied.length, 1, "WallpaperSwitcherModal.qml declares one onApplied handler");
     mustPrecedeIn(applied[0], "onApplied", /if \(route !== "wallpaper"\)/, /VGSThemeService\.setWallpaper\(/,
@@ -177,10 +223,43 @@ test("the catalog runs the verb the card decision names and reports a failed run
 test("wallpaperAdd toasts its outcome for a caller outside Settings and announces it otherwise", () => {
     readers.service.requires(readers.service.body("wallpaperAdd"), "wallpaperAdd()", [
         ['["theme", "wallpaper-add", path, "--json"].concat(theme ? ["--theme", theme] : [])', "the add names the applied theme", 1],
-        ['if (!toast) applyCompleted(success, message); else if (success) ToastService.showInfo(message); else ToastService.showError(I18n.tr("VGS wallpaper error"), message);',
+        ["if (!toast) applyCompleted(success, message); else root._toastWallpaperOutcome(success, message);",
             "a failure reaches the user where the action started, and only once", 1],
         ['report(false, stderr || output || ("Wallpaper add failed: " + path));', "the failure branch goes through that report", 1],
         ["refreshAllWallpapers();", "and a success refreshes the All list the mark reads", 1]
+    ]);
+    readers.service.requires(readers.service.body("_toastWallpaperOutcome"), "_toastWallpaperOutcome()", [
+        ['if (success) ToastService.showInfo(message); else ToastService.showError(I18n.tr("VGS wallpaper error"), message);',
+            "a success toasts as information and a failure as an error", 1]
+    ]);
+});
+
+test("wallpaperRemove and wallpaperDelete toast their outcome and refresh both lists", () => {
+    const service = readers.service;
+    service.requires(service.body("wallpaperRemove"), "wallpaperRemove()", [
+        ['["theme", "wallpaper-remove", file, "--json"]', "removal goes to the helper by file name", 1],
+        ['root._toastWallpaperOutcome(false, stderr || output || ("Wallpaper remove failed: " + file));', "a failure toasts where the action started", 1],
+        ["refreshAllWallpapers();", "a success refreshes the All list, which shows the removed wallpaper unmarked", 1]
+    ]);
+    service.requires(service.body("wallpaperDelete"), "wallpaperDelete()", [
+        ["const applied = root.appliedArgs(SessionData.referencedWallpapers().concat([SettingsData.lockScreenWallpaperPath]));",
+            "every wallpaper the session names and the lock screen image become the extracted --applied flags", 1],
+        ['["theme", "wallpaper-delete", path, "--folder", wallpaperFolderPath, "--json"].concat(applied)',
+            "the helper hears the folder it may delete from and the wallpapers it must refuse", 1],
+        ['root._toastWallpaperOutcome(false, stderr || output || ("Wallpaper delete failed: " + path));', "a refusal toasts the helper's reason", 1],
+        ["root.requestThumbnailSweep();", "a deletion orphans a thumbnail the next sweep prunes", 1],
+        ["refreshWallpapers();", "both views refresh without the file", 1],
+        ["refreshAllWallpapers();", "both views refresh without the file", 1]
+    ]);
+    mustPrecedeIn(service.body("wallpaperDelete"), "wallpaperDelete()", /if \(exitCode !== 0\)[\s\S]*?return;/, /root\.requestThumbnailSweep\(\);/,
+        "a refused delete returns before it reports success");
+    readers.session.requires(readers.session.body("referencedWallpapers"), "referencedWallpapers()", [
+        ["var values = [wallpaperPath, wallpaperPathLight, wallpaperPathDark];", "the shown path and both per-mode paths", 1],
+        ["[monitorWallpapers, monitorWallpapersLight, monitorWallpapersDark].forEach(",
+            "and every entry of the shown and per-mode monitor maps, disconnected monitors included", 1]
+    ]);
+    service.requires(service.body("sourceTagFor"), "sourceTagFor()", [
+        ['return root.sourceTag(entry, I18n.tr("My folder"));', "both surfaces caption through the extracted tag", 1]
     ]);
 });
 
@@ -198,6 +277,14 @@ test("the Dash tab shares the card, the All list and Add to theme", () => {
             "the tile mark names whose set it compares against", 1],
         ["!VGSThemeService.inThemeSet(root.actionsEntry, root.appliedTheme, VGSThemeService.themeWallpapers, VGSThemeService.themeWallpapersTheme)",
             "and so does the Add to theme button it hides", 1],
-        ["VGSThemeService.wallpaperAdd(path, true);", "and so does the Theme view's Add", 1]
+        ["VGSThemeService.wallpaperAdd(path, true);", "and so does the Theme view's Add", 1],
+        ["text: VGSThemeService.sourceTagFor(tile.modelData)", "the All tile caption is the shared source tag", 1],
+        ["VGSThemeService.wallpaperRemove(root.actionsEntry.file);", "Remove from theme removes the entry's file from the set", 1],
+        ["onClicked: root.deletePath = root.actionsEntry.path", "Delete wallpaper asks about the open entry and deletes nothing", 1],
+        ["visible: VGSThemeService.offersDelete(root.actionsEntry)", "and is offered for every entry the extracted decision allows", 1],
+        ['readonly property bool confirmingDelete: actionsEntry !== null && deletePath !== "" && deletePath === actionsEntry.path',
+            "the question holds only while the actions are open on the entry it names", 1],
+        ['onActionsIndexChanged: deletePath = ""', "moving the actions to another entry drops the question", 1],
+        ["VGSThemeService.wallpaperDelete(root.actionsEntry.path);", "only the question's Delete deletes", 1]
     ]);
 });

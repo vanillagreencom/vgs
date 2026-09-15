@@ -58,7 +58,7 @@ const OFFER_MARKER = "DOWNLOAD OFFER DECISION";
 
 const sel = evaluateMarked(baseSource, MARKER, [
     "wrapIndex", "clampIndex", "seedIndex", "shouldReseed", "enterOutcome",
-    "latchesIntent", "navIndex", "wheelSteps", "preserveIndex"
+    "latchesIntent", "navIndex", "wheelSteps", "preserveIndex", "letterAction"
 ], "FullScreenSwitcher.qml");
 
 const offer = evaluateMarked(catalogSource, OFFER_MARKER, ["downloadOffer"], "VGSThemeCatalogService.qml");
@@ -333,6 +333,46 @@ test("handleKey routes Home, End and the arrows through the adapter and never la
     assert.doesNotMatch(qmlSource.stripComments(base.body("handleKey")), /userMoved/,
         "FullScreenSwitcher.qml: no key may set the intent latch directly — the guard lives in " +
         "navigate(), and a direct write is how Home and End latched against an empty pager");
+});
+
+test("letterAction maps A, D, W and S to their actions, and to none without the pill or in a filterable switcher", () => {
+    for (const [letter, filterable, hasScope, hasSource, expected, why] of [
+        ["a", false, true, true, "back", "A pages back like Left"],
+        ["d", false, true, true, "forward", "D pages forward like Right"],
+        ["w", false, true, true, "scope", "W flips the monitor scope pill like Tab"],
+        ["w", false, false, true, "", "W does nothing with no scope pill, as with one monitor"],
+        ["s", false, true, true, "source", "S flips the source pill"],
+        ["s", false, true, false, "", "S does nothing with no source pill"],
+        ["x", false, true, true, "", "another letter does nothing"],
+        ["", false, true, true, "", "a key that names no home-row letter does nothing"],
+        ["a", true, true, true, "", "a filterable switcher types A into its filter"],
+        ["d", true, true, true, "", "and D"],
+        ["w", true, true, true, "", "and W, with a scope pill loaded"],
+        ["s", true, true, true, "", "and S, with a source pill loaded"]
+    ]) {
+        assert.equal(sel.letterAction(letter, filterable, hasScope, hasSource), expected,
+            `letterAction(${JSON.stringify(letter)}, filterable ${filterable}, scope ${hasScope}, source ${hasSource}): ${why}`);
+    }
+});
+
+test("handleKey routes the home-row letters through letterAction to the pager and the pill signals", () => {
+    const base = q("FullScreenSwitcher.qml");
+    base.requires(base.body("handleKey"), "handleKey()", [
+        ["const letter = root.letterAction(root.homeRowLetter(event), root.filterable, !!root.scopeToggle, !!root.sourceToggle);",
+            "the letter's action is the extracted decision, over the loaded pills and the filter", 1],
+        ['if (letter === "back" || letter === "forward") { root.step(letter === "back" ? -1 : 1); return true; }',
+            "A and D page through the same adapter as Left and Right", 1],
+        ['if (letter === "scope") { root.scopeFlipRequested(); return true; }', "W raises the signal Tab raises", 1],
+        ['if (letter === "source") { root.sourceFlipRequested(); return true; }', "S raises the source pill's signal", 1]
+    ]);
+    base.requires(base.body("homeRowLetter"), "homeRowLetter()", [
+        ['if (event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)) return "";',
+            "a Ctrl, Alt or Meta chord names no letter", 1],
+        ['if (event.key === Qt.Key_A) return "a";', "Qt.Key_A names a", 1],
+        ['if (event.key === Qt.Key_D) return "d";', "Qt.Key_D names d", 1],
+        ['if (event.key === Qt.Key_W) return "w";', "Qt.Key_W names w", 1],
+        ['if (event.key === Qt.Key_S) return "s";', "Qt.Key_S names s", 1]
+    ]);
 });
 
 test("updateFilter latches unconditionally and every key edit routes through it", () => {
@@ -661,11 +701,11 @@ test("bare applyCompleted emissions are counted so a new operation must go throu
     const svc = q("VGSThemeService.qml");
     // Count bare applyCompleted emissions so added operations require explicit reporter coverage.
     // This count does not establish that every existing emission uses the tracked apply path.
-    const APPLY_COMPLETED_SITES = 43;
+    const APPLY_COMPLETED_SITES = 41;
     svc.requires(serviceSource, "VGSThemeService.qml", [
         ["applyCompleted(",
             `exactly ${APPLY_COMPLETED_SITES} mentions: one signal declaration, one emission inside ` +
-            "_finishApply, and 41 bare emissions across 19 operations that predate the correlated " +
+            "_finishApply, and 39 bare emissions across 18 operations that predate the correlated " +
             "signal. A NEW apply-like operation must emit through _finishApply and pass its request " +
             "id, not copy a neighbouring bare emission — that produces an operation a reporter can " +
             "start but whose reply never arrives. If you deliberately added or removed one, move " +
@@ -935,8 +975,9 @@ test("the entry menu closes before the filter on Esc, on every list change, open
     base.requires(handler("FullScreenSwitcher.qml", "onVisibleItemsChanged"), "onVisibleItemsChanged",
         [["menuItem = null;", "a menu opened on the previous list must not act on this one", 1]]);
     const context = handler("FullScreenSwitcher.qml", "onContextRequested");
-    base.requires(context, "onContextRequested", [["if (!root.itemMenu) return;", "a surface with no menu opens none", 1]]);
-    mustPrecedeIn(context, "onContextRequested", /if \(!root\.itemMenu\)/, /root\.menuItem = root\.visibleItems\[index\];/,
+    base.requires(context, "onContextRequested", [["if (!root.itemMenu || root.visibleItems[index].card) return;",
+        "a surface with no menu opens none, and a card entry opens none", 1]]);
+    mustPrecedeIn(context, "onContextRequested", /if \(!root\.itemMenu/, /root\.menuItem = root\.visibleItems\[index\];/,
         "the guard must come before the menu opens");
     q("SwitcherSlice.qml").requires(sliceSource, "SwitcherSlice.qml", [
         ["acceptedButtons: Qt.LeftButton | Qt.RightButton", "the slice hears the right button", 1],

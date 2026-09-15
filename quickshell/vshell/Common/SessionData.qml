@@ -1290,6 +1290,17 @@ Singleton {
         return undefined;
     }
 
+    // Every value session state can draw as a wallpaper: the shown and per-mode paths, and each per-monitor map
+    // entry, a disconnected monitor's included. Values can be colours or empty; the caller filters them.
+    function referencedWallpapers() {
+        var values = [wallpaperPath, wallpaperPathLight, wallpaperPathDark];
+        [monitorWallpapers, monitorWallpapersLight, monitorWallpapersDark].forEach(function (map) {
+            for (var key in (map || {}))
+                values.push(map[key]);
+        });
+        return values;
+    }
+
     function getMonitorWallpaper(screenName) {
         if (!perMonitorWallpaper)
             return wallpaperPath;
