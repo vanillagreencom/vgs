@@ -2617,6 +2617,11 @@ def read_user_app_overrides(pkg_dir_name: str) -> Dict[str, Dict[str, str]]:
 # list reports.
 CURRENT_APP_OVERRIDES_KEY = "appColorOverrides"
 
+# The merge-style curated files `carry_curated_apps` left out of a rebuild, for
+# the apply to name. The carry is the only producer and the apply the only reader,
+# so a blueprint from any other source carries none and the apply says nothing.
+WITHHELD_CURATED_KEY = "withheldCurated"
+
 
 def bp_app_overrides(bp: Dict[str, Any]) -> Dict[str, Dict[str, str]]:
     """Per-app overrides for a resolved blueprint (packages only)."""
@@ -2734,86 +2739,138 @@ def rebuilt_palette_identity(bp: Dict[str, Any]) -> Dict[str, str]:
     through it moves the palette. On the akane package `theme mode --transform`
     plus a save leaves behind, the roles that move are the six bright ANSI slots.
     Two blueprints are therefore comparable only at equal rebuild depth, which is
-    what the call in `override_dropped_curated` arranges.
+    what `applied_palette_parted`, the one caller that compares an applied
+    blueprint against a package, arranges.
     """
     theme = theme_json_from_blueprint(bp)
     return {**{str(key): str(value) for key, value in (theme.get("colors") or {}).items()},
             "mode": str(theme.get("mode") or "")}
 
 
-def override_dropped_curated(bp: Dict[str, Any]) -> List[str]:
-    """Merge-style curated files the per-app override layer alone keeps out of
-    `bp`'s render, for the save's prune to spare.
+def applied_palette_parted(bp: Dict[str, Any], package: Dict[str, Any]) -> bool:
+    """Whether the palette `bp` holds has parted from `package`'s own palette.
 
-    A per-app override is a reversible layer stored beside the palette, and no
-    save writes it into `colors.toml`. The file it drops still fits the palette
-    the save records and comes back the moment the override is cleared, so
-    pruning it deleted the only copy a user-created package has and
-    `theme app-colors claude --reset` could not bring it back.
+    The one owner of that question. Two steps ask it of the same pair:
+    `carry_curated_apps` decides which merge-style curated files the apply paints,
+    and `save_curated_terms` decides what the save writes, vouches for and
+    leaves alone. Answered two ways, one step paints a file the other refuses to
+    vouch for.
 
-    The question is asked here, against the package directory about to be written
-    over, rather than read off a key the loader put on the blueprint. No shipped
-    caller hands the save a loader blueprint: `set-wallpaper --save` passes
-    `carry_curated_apps` over a rebuild from the applied theme, which carries
-    `apps`, `package`, `path`, `builtin` and `userDir` and nothing else, so such
-    a key was dropped before the save ever read it.
+    The comparison needs both sides at equal rebuild depth, so `package` is given the
+    one trip out of a `theme.json` that a rebuild from the applied theme has already
+    taken: a package holds raw palette keys where a rebuild holds derived ones. That
+    equalises depth without normalising either side, and derivation is not idempotent
+    on the generated branch, so a package left declaring `source: generated` by `theme
+    mode --transform` plus a save reads as parted from itself when the trip is
+    missing. `save_curated_terms` may hand a blueprint of another provenance, as
+    `import-colors` and `extract-wallpaper --save` build one from colours of their own
+    at no rebuild depth; those read as parted from the destination, which is the
+    answer wanted, since the palette they write is not the destination's.
 
-    The drop question is asked over the package's own palette, the one the loader
-    put the file in or out of `apps` against, not over the palette this save is
-    about to write. Those are held in different forms: the save writes a
-    blueprint rebuilt from the applied theme, which holds derived roles where the
-    package holds raw ones, so asking the drop question over the written palette
-    answers that every file was dropped and exempts none.
+    They part on three reaches. `apply-colors --set` with no `--save` moves the
+    applied palette while the package keeps the `colors.toml` its recorded digest
+    names. A VGS update that changes a built-in theme's definition under an applied
+    theme moves the package with no re-apply. `theme mode --transform` leaves the
+    applied palette in the other mode from the package on disk.
+    """
+    return rebuilt_palette_identity(bp) != rebuilt_palette_identity(
+        blueprint_from_theme_json(theme_json_from_blueprint(package)))
 
-    Two guards stand in front of that question, and the exemption needs both,
-    because either one alone certifies a file nobody judged:
 
-    - The save lands under the source package's own name. Under any other name
-      the destination is a different package, and a merge-style file already
-      sitting there was picked for colours this save never saw.
-    - The palette the save writes is still the source package's own, compared
-      through `rebuilt_palette_identity` at equal rebuild depth so the two forms
-      above meet. They part whenever a control moves the applied palette without
-      writing `colors.toml`: `theme apply-colors --set foreground=#101010` with
-      no `--save`, then `set-wallpaper --save`. The package still matches the digest
-      recorded beside it, so the drop question alone reads the file as merely
-      overridden and spares it, while the save writes the edited palette and
-      records its digest, which certifies colours the file was never picked for.
-      On akane the kept file then painted its diff bands at 1.05:1 and 1.06:1
-      against the new background.
+class CuratedSaveTerms(NamedTuple):
+    """What a save may hand `materialize_theme_package` about merge-style curated files.
 
-    A restyle or a colour edit written into `colors.toml` needs no guard: it
-    moves the package's own palette away from the digest recorded beside it, so
-    both drop questions drop the file, the difference is empty, and the prune
-    still removes it.
+    `parted` says the palette the save is about to write is no longer the
+    destination package's own, so the save hands in none of those files: each was
+    picked against colours this save is not writing.
+
+    `vouched` names the files that do fit the palette being written and that the
+    save is nonetheless not handing in, so the record must go on certifying them. It
+    is empty whenever `parted`.
+
+    Neither field says whether a file is unlinked, which
+    `materialize_theme_package` settles from the destination alone, and neither
+    carries the route. Both decide the record it writes: a name in `vouched` keeps
+    that file certified, and `parted` is what holds the record back.
+    """
+    parted: bool
+    vouched: List[str]
+
+
+def writes_applied_theme_package(bp: Dict[str, Any]) -> bool:
+    """Whether writing `bp` out lands in the applied theme's own package directory.
+
+    The one owner of that question: `materialize_theme_package` asks it about
+    unlinking a merge-style curated file and `save_curated_terms` about the palette,
+    and answered two ways one route deleted a file the other would have kept.
+
+    Directory names, so it holds for a route carrying nothing about where `bp` came
+    from: `apply-colors --save` and `save-current` build out of the applied theme
+    with no `path` or `package` key. A name-less applied theme would read as a
+    package directory called `theme`, which the emptiness test refuses; no shipped
+    writer of the shell's `theme.json` leaves the name out.
+    """
+    applied = str(current_theme().get("name") or "")
+    return bool(applied) and theme_package_dir_name(bp) == theme_package_dir_name({"name": applied})
+
+
+def save_curated_terms(bp: Dict[str, Any]) -> CuratedSaveTerms:
+    """The terms a save over `bp`'s own package writes its merge-style files on.
+
+    Asked against the package directory about to be written over, and under no
+    exemption the carry grants the apply.
+
+    `parted` is the palette question. The save writes `colors.toml` from `bp`, so
+    once `bp`'s palette is no longer the package's own, every merge-style file in
+    the destination was picked against a palette this save is not writing.
+    `applied_palette_parted` owns that comparison and names the reaches.
+
+    `vouched` is `curated_apps_for_palette`'s own answer for the destination: the
+    merge-style files its palette vouches for. A file a per-app override alone keeps
+    out of the render is among them, the override being a reversible layer beside the
+    palette that no save writes into `colors.toml`, and left out `theme app-colors
+    claude --reset` could not bring it back.
+
+    It is asked over the package's own palette rather than the one this save is about
+    to write, which are held in different forms: the save writes a blueprint rebuilt
+    from the applied theme, holding derived roles where the package holds raw ones, so
+    asking over the written palette answers that every file was dropped. It is empty
+    whenever `parted`, because the package's palette is then not the one being written
+    and says nothing about what fits it.
+
+    Both answers need the destination to be the package `bp`'s palette belongs to,
+    because comparing it against an unrelated package's answers nothing. `bp`'s own
+    `path` says so where a route puts one there, and `writes_applied_theme_package`
+    says so for a route that does not: a colour edit and `save-current` build their
+    blueprint out of the applied theme and carry neither key, and read as another
+    package the record went on certifying a file picked for the palette the edit had
+    just replaced. A save under any other name answers neither, so it hands in the
+    curated files a copy wants.
+
+    A package whose metadata does not read is parted with nothing vouched: nothing
+    on disk then says what its files were picked against, so the save hands in none
+    of them and vouches for none.
     """
     source = Path(str(bp.get("path") or "")).name
     package = theme_package_dir_name(bp)
-    if not bp.get("package") or not source or source != package:
-        return []
-    files = compose_theme_files(package)
+    if not ((bp.get("package") and source and source == package)
+            or writes_applied_theme_package(bp)):
+        return CuratedSaveTerms(False, [])
     meta = None
     with contextlib.suppress(Exception):
         meta = package_meta(package)
     if meta is None:
-        return []
+        return CuratedSaveTerms(True, [])
     palette = package_palette(package_colors_map(package), meta,
                               package_declared_ui_roles(meta, package))
-    # `bp` arrived through one rebuild out of `theme.json` already, so the
-    # package side is given the one trip the applied side already took. This
-    # equalises depth; it does not normalise. Derivation is not idempotent on the
-    # generated branch, so a package written by `theme mode --transform` plus a
-    # save never matched a copy of itself rebuilt a different number of times,
-    # and the exemption it was owed was refused.
     pkg = palette_from_colors_map(palette, name=package, source=package_source(meta))
-    if rebuilt_palette_identity(bp) != rebuilt_palette_identity(
-            blueprint_from_theme_json(theme_json_from_blueprint(pkg))):
-        return []
+    if applied_palette_parted(bp, pkg):
+        return CuratedSaveTerms(True, [])
+    files = compose_theme_files(package)
     curated = {Path(rel).name: str(p) for rel, p in files.items() if rel.startswith("apps/")}
     layers = package_layer_palettes(package)
-    return sorted(set(curated_apps_for_palette(curated, palette, {}, layers))
-                  - set(curated_apps_for_palette(curated, palette,
-                                                 theme_app_overrides(package), layers)))
+    return CuratedSaveTerms(False, sorted(set(curated_apps_for_palette(curated, palette, {}, layers))
+                                          & CLAUDE_CURATED_FILES))
 
 
 def duplicate_theme_package(package: str, dest_name: str, new_name: str) -> None:
@@ -2868,14 +2925,17 @@ def save_theme_package(bp: Dict[str, Any], name: str | None = None) -> Path:
     """Persist a theme as a user package: curated apps/ files carry over
     verbatim; every other toggled-on app gets an editable rendered file.
 
-    The blueprint's curated files are already the ones its palette fits, because
-    the package loader dropped any the palette outgrew, so this copies what it is
-    given rather than judging again.
+    The blueprint's curated files are the ones the package's own palette fits,
+    because the loader dropped any that palette outgrew. This copies them verbatim
+    rather than judging their values again, and asks one question of its own
+    through `save_curated_terms`: whether the palette it is about to write is still
+    that package's, since the loader answered for the package and not for this save.
 
-    A file a per-app override alone keeps out of the render is kept on disk
-    rather than pruned; `override_dropped_curated` states that rule and names the
-    save path it reaches. Such a file is not carried in `apps`, so it is left
-    exactly as it is rather than rewritten.
+    What becomes of a merge-style curated file this save does not write is the rule
+    `materialize_theme_package` owns. This hands that writer the two facts
+    `save_curated_terms` reads off the destination: it drops from `apps` every
+    merge-style file whose palette has parted, including one the carry handed in
+    under its mode exemption, and it names in `vouched` the files that still fit.
 
     The package keeps, and renders its app files with, the per-app overrides of
     the first source that answers: those `with_current_terminal_slots` carried
@@ -2899,16 +2959,24 @@ def save_theme_package(bp: Dict[str, Any], name: str | None = None) -> Path:
         try:
             apps[filename] = Path(path).read_text()
         except OSError as exc:
-            # Declared but unreadable. It must still be preserved, because the
-            # prune removes what this caller deliberately did not hand in, and a
-            # file it could not read is not that. Dropping it silently deleted a
-            # user's only curated customisation on a save under the theme's own
-            # name. Refusing the whole save instead would be worse: one briefly
-            # unreadable curated file would block a colour edit.
+            # Declared but unreadable, so it is vouched for rather than dropped:
+            # the loader had already judged it against this palette, and a file
+            # this save could not read is not a file it decided against. Left out
+            # of `vouched` the record would stop certifying a user's only curated
+            # customisation over one briefly unreadable file. Refusing the whole
+            # save instead would be worse: it would block a colour edit.
             unreadable.append(filename)
             eprint(f"save {bp.get('name')}: keeping {filename}, which could not be read: {exc}")
+    terms = save_curated_terms(bp)
+    if terms.parted:
+        refused = sorted(set(apps) & CLAUDE_CURATED_FILES)
+        for filename in refused:
+            apps.pop(filename)
+        if refused:
+            eprint(f"save {bp.get('name')}: writing a palette {', '.join(refused)} "
+                   "was not picked against, so this save vouches for none of them")
     return materialize_theme_package(bp, apps=apps, prune_curated=True,
-                                     preserve=[*unreadable, *override_dropped_curated(bp)],
+                                     vouched=[*unreadable, *terms.vouched],
                                      app_overrides=overrides)
 
 
@@ -2938,7 +3006,7 @@ def rendered_apps_for(bp: Dict[str, Any], app_overrides: Dict[str, Dict[str, str
 
 def materialize_theme_package(bp: Dict[str, Any], apps: Dict[str, str] | None = None,
                               user: bool = True, prune_curated: bool = False,
-                              preserve: List[str] | None = None,
+                              vouched: List[str] | None = None,
                               app_overrides: Dict[str, Dict[str, str]] | None = None) -> Path:
     """Write a blueprint out as a v2 theme package directory.
 
@@ -2948,17 +3016,66 @@ def materialize_theme_package(bp: Dict[str, Any], apps: Dict[str, str] | None = 
     `app_overrides`, when given, replaces the user package's app-colors.toml; an
     empty map removes it. Left out, the file is untouched.
 
-    `prune_curated` additionally deletes any merge-style curated file in the
-    destination that `apps` does not carry and `preserve` does not name, and only
-    `save_theme_package` may ask for it, because only its map is the complete
-    intended contents. `preserve` is how that caller says a file it did not hand
-    in was not withheld: it could not read it, or the loader dropped it for a
-    reversible per-app override this save does not write. Every other
-    caller arrives with a map from `rendered_apps_for`, which can never hold a
-    claude file since that target has no template, so pruning unconditionally
-    deleted a file those callers were never asked about: `theme regenerate
-    <name> --app btop` removed the user's own `apps/claude-dark.json`, which for
-    a download or a user-created package is the only copy there is.
+    Two separate decisions govern a merge-style curated file already in the layer
+    being written that `apps` does not carry, and they rest on different facts.
+
+    Whether it is unlinked is settled here through `writes_applied_theme_package`: in
+    the applied theme's own package it is not. Read off keys on the blueprint instead,
+    `apply-colors --save`, `save-current` and a save over the package an interrupted
+    save left carried none of them, and the prune deleted the only copy a
+    user-created or downloaded package holds.
+
+    Whether the recorded digest still certifies it is `held` being non-empty, a fact
+    about the layer rather than about the write in front of it: this write neither
+    wrote nor vouched for a merge-style file sitting there, so refreshing the record
+    would certify a file nobody judged. Deleting is unsound for the only copy, so the
+    record is the half that gives way and stays the one the layer already carries.
+    Keyed on the write instead, the state lasted one write: a colour edit with no
+    `--save` then two `set-wallpaper --save` runs held the record on the first and
+    refreshed it on the second, because that second write had itself moved nothing,
+    and the file came back certified against the edited palette.
+
+    Held, the record names a palette the package no longer holds, so the loader keeps
+    the file out of the render and a later write finds it unvouched and holds the
+    record again. It comes back when a write vouches for it, which needs the loader to
+    keep it, which needs the package's palette to match the record. No shipped command
+    restores the `colors.toml` that record was taken from: the claude target declares
+    no curated file of its own, so `theme reset-app claude` and `theme edit-app claude`
+    refuse by name, `theme app-colors claude --reset` clears the override layer and
+    leaves the record where it is, and a colour edit saved back writes `colors.toml` in
+    derived form. Putting those values back in the file, or reinstalling or re-creating
+    the package, is what returns the file to the render.
+
+    `vouched` is how a caller names a merge-style file it did not hand in that the
+    destination's own palette still vouches for: the ones `curated_apps_for_palette`
+    keeps, which `save_curated_terms` reads for a save and `theme regenerate` takes
+    off the loader blueprint it was handed, plus one the caller could not read. Such
+    a file is neither unlinked nor left uncertified. That is what lets `theme
+    app-colors claude --reset` bring a file back, and what keeps a curated file
+    working across a write that moved no colour: `theme regenerate` rewrites
+    `colors.toml` from a blueprint stating derived roles the package left implicit,
+    so a record held back there dropped the file from the renders after it.
+
+    `theme migrate` and a `theme duplicate` of a legacy blueprint reach this writer
+    with a destination holding no merge-style file, each refusing an existing package
+    a step earlier, so `held` is empty and they record what they wrote.
+
+    The apply is deliberately not a gate here: it paints the counterpart mode's
+    curated file after `theme mode --transform` and reports nothing, because that
+    file is what the counterpart render wants.
+
+    `prune_curated` additionally deletes a merge-style curated file in the
+    destination that `apps` does not carry, `vouched` does not name and the unlink
+    rule above does not hold, and only `save_theme_package` may ask for it, because
+    only its map is the complete intended contents. Another caller arrives with a map
+    from `rendered_apps_for`, which holds no claude file since that target has no
+    template, so pruning unconditionally deleted a file those callers were never
+    asked about: `theme regenerate <name> --app btop` removed the user's own
+    `apps/claude-dark.json`.
+
+    `test_a_save_never_pairs_its_palette_with_a_curated_file_it_did_not_judge` in
+    `scripts/check-vshell-helper.py` pins both decisions at `set-wallpaper --save`,
+    `apply-colors --save`, `save-current` and `theme regenerate`.
     """
     ensure_dirs()
     name = theme_package_dir_name(bp)
@@ -2973,12 +3090,17 @@ def materialize_theme_package(bp: Dict[str, Any], apps: Dict[str, str] | None = 
     # digest is taken from the file this writes, read back the way the loader
     # reads it, so a reload of an untouched copy matches rather than nearly
     # matching.
+    own_package = writes_applied_theme_package(bp)
+    held = sorted(curated for curated in CLAUDE_CURATED_FILES
+                  if own_package and curated not in (apps or {})
+                  and curated not in (vouched or ())
+                  and (root / "apps" / curated).is_file())
     meta = {
         "name": bp.get("name") or name,
         "mode": mode,
         "pair": bp.get("pair") or "",
         "source": blueprint_source(bp),
-        "curatedPalette": palette_digest(
+        "curatedPalette": layer_curated_palette(root) if held else palette_digest(
             palette_identity(parse_colors_toml_text(colors_toml), mode, ui_roles=ui_roles)),
     }
     # The save states the list even when empty, so a save under a built-in
@@ -3025,21 +3147,19 @@ def materialize_theme_package(bp: Dict[str, Any], apps: Dict[str, str] | None = 
         if not dest.exists() or not Path(wallpaper).samefile(dest):
             shutil.copy2(wallpaper, dest)
         meta["wallpaper"] = dest.name
-    # The recorded digest certifies the curated files this package carries, so a
-    # merge-style file left behind from an earlier write would be certified
-    # without ever having been judged against the palette now being written.
-    # `save_theme_package` is called with a theme's own name by `set-wallpaper
-    # --save` and `apply-colors --save`, and for a downloaded theme that is the
-    # download's own directory, so the file the loader had just dropped survived
-    # there and came back on the next load.
+    # Outside the applied theme's own package a merge-style file here is the earlier
+    # write's, picked for colours this write never saw, so the new digest would
+    # certify it unjudged and it goes. `held` above is the applied theme's own file,
+    # which stays.
     #
     # This and the per-layer digest test in `curated_apps_for_palette` answer
-    # different questions and neither replaces the other: that one asks which
-    # layer vouches for a file, and reaches a built-in file this writer cannot
-    # touch; this one asks whether the writer ever saw the file, and reaches a
-    # user-layer file whose layer record the save itself has just rewritten.
+    # different questions and neither replaces the other: that one asks which layer
+    # vouches for a file, and reaches a built-in file this writer cannot touch; this
+    # one asks whether the writer ever saw the file, and reaches a user-layer file
+    # whose layer record the save itself has just rewritten.
     if prune_curated:
-        for stale in CLAUDE_CURATED_FILES - set(apps or {}) - set(preserve or ()):
+        for stale in (CLAUDE_CURATED_FILES - set(apps or {}) - set(vouched or ())
+                      - set(held)):
             (root / "apps" / stale).unlink(missing_ok=True)
     for filename, content in (apps or {}).items():
         write_file(root / "apps" / filename, content)
@@ -6860,14 +6980,17 @@ def applied_theme_state(bp: Dict[str, Any]) -> Dict[str, Any]:
     Where the package sits on disk is not part of the applied state. `path`,
     `builtin`, `userDir`, `backgrounds` and `packagedPreview` are re-resolved from
     the package by every reader that wants them, and a copy kept here would
-    outlive the directory it names once the package is removed or renamed.
+    outlive the directory it names once the package is removed or renamed. What one
+    rebuild withheld is not applied state either: `WITHHELD_CURATED_KEY` answers
+    for the apply that carried it, and the next rebuild asks the question again.
 
     One owner, so a fixture seeding an applied theme writes the file the apply
-    writes. `path` and `package` are the keys `override_dropped_curated` gates
+    writes. `path` and `package` are the keys `save_curated_terms` gates
     on, so a seeded state richer than the real one hides a refused exemption.
     """
     current = dict(bp)
-    for key in ("path", "builtin", "userDir", "backgrounds", "packagedPreview"):
+    for key in ("path", "builtin", "userDir", "backgrounds", "packagedPreview",
+                WITHHELD_CURATED_KEY):
         current.pop(key, None)
     current["appliedAt"] = int(time.time() * 1000)
     return current
@@ -7026,6 +7149,15 @@ def _apply_theme_obj_unlocked(bp: Dict[str, Any], only_app: str | None = None,
     inert = inert_declarations_path(bp)
     if inert:
         warn(f"declared UI roles: {inert} is not read for a generated palette")
+    # The curated files the rebuild withheld, named once in the shape the
+    # declarations line above uses and for the same reason: they are still on disk
+    # and this apply does not read them, so
+    # without this line a wallpaper change or an unsaved colour edit swapped a
+    # theme's hand-picked diff bands for the generated ones with nothing said.
+    withheld = [str(name) for name in (bp.get(WITHHELD_CURATED_KEY) or [])]
+    if withheld:
+        warn(f"curated app files: {', '.join(withheld)} not read, "
+             "picked against a palette this apply does not paint")
     declared_missed = ui_role_shortfalls(roles, declared_ui_roles(bp))
     if declared_missed:
         warn(f"declared UI roles: {len(declared_missed)} rule(s) below target: "
@@ -8150,13 +8282,43 @@ def carry_curated_apps(bp: Dict[str, Any]) -> Dict[str, Any]:
     """Restore current-package sources to a matching palette-only blueprint.
     Wallpaper changes must retain curated app files and package identity;
     otherwise apply falls back to generated app themes. Mutate and return bp.
-    Leave non-matching names and non-package themes unchanged."""
+    Leave non-matching names and non-package themes unchanged.
+
+    The curated files come from the package on disk, resolved through
+    `applied_theme_package`, which `with_current_terminal_slots` reads too so both
+    halves of a rebuild name one package. The palette is the rebuild's own, out of
+    the shell's `theme.json`. The two part on every reach `applied_palette_parted`
+    names, and a merge-style curated file from a parted palette was picked against
+    colours this blueprint does not hold, so the apply would paint its bands over
+    colours nobody chose them for.
+
+    Under the package's own mode such a file is left out of `apps` and named in
+    `WITHHELD_CURATED_KEY` for the apply to report; in the other mode it is carried
+    and the apply paints it and reports nothing, deliberately, because a rebuild
+    into the other mode is a transform of the package's palette rather than a
+    different revision of it and the counterpart mode's curated file is the file
+    that render wants. `theme mode --transform` is the shipped route there and
+    `transformed_mode_blueprint` owns it. This answers for the apply alone either
+    way: what becomes of the file on disk and of the record beside it is the rule
+    `materialize_theme_package` owns, which asks nothing of the mode or the route.
+
+    Only merge-style files. A replacing curated file is the whole output with no
+    palette-derived value under it to disagree with, and for a pointer-style target
+    such as icons there is no template behind it, so withholding one would leave
+    the apply nothing to write. The package identity keys carry either way: which
+    package this is has not changed, only which palette.
+    """
     if str(current_theme().get("name") or "") != str(bp.get("name") or ""):
         return bp
-    cur = current_theme_obj()
-    if not cur.get("package"):
+    cur = applied_theme_package()
+    if cur is None:
         return bp
     apps = cur.get("apps") or {}
+    if apps and blueprint_mode(cur) == blueprint_mode(bp) and applied_palette_parted(bp, cur):
+        withheld = sorted(set(apps) & CLAUDE_CURATED_FILES)
+        if withheld:
+            bp[WITHHELD_CURATED_KEY] = withheld
+            apps = {name: path for name, path in apps.items() if name not in withheld}
     if apps:
         bp["apps"] = apps
     for key in ("package", "path", "builtin", "userDir"):
@@ -11259,7 +11421,10 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
                 return 1
         if blueprint_source(bp) == "curated":
             eprint(f"note: {bp.get('name')} is curated; regenerating replaces curated files with palette renders")
-        root = materialize_theme_package(bp, apps=rendered_apps)
+        # The loader kept these against the package's own palette, and this write
+        # moves no colour, so they are files the record must go on certifying.
+        root = materialize_theme_package(bp, apps=rendered_apps,
+                                        vouched=sorted(set(bp.get("apps") or {}) & CLAUDE_CURATED_FILES))
         result = {"success": True, "package": str(root), "regenerated": sorted(rendered_apps.keys())}
         print(json.dumps(result, indent=2) if args.json else "\n".join(f"regenerated apps/{n}" for n in sorted(rendered_apps)))
         return 0

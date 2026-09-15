@@ -9729,8 +9729,10 @@ def test_curated_vscode_theme_takes_the_terminal_palette():
         )
         opposite_mode = "dark" if helper.blueprint_mode(active_bp) == "light" else "light"
         current_data = helper.theme_json_from_blueprint(active_bp)
-        with (patch.object(helper, "current_theme", return_value=current_data),
-              patch.object(helper, "current_theme_obj", return_value=active_bp)):
+        # The carry resolves the applied package through `applied_theme_package`,
+        # which reads the shell state's name, so this stands in for the applied
+        # theme and the package comes off disk as production resolves it.
+        with patch.object(helper, "current_theme", return_value=current_data):
             carried_same_mode = helper.carry_curated_apps(
                 helper.blueprint_from_current_theme(
                     name=labels[active], mode=helper.blueprint_mode(active_bp)))
@@ -10062,6 +10064,255 @@ def test_wallpaper_and_save_keep_terminal_slots():
             assert_equal(errors.getvalue(), "", "the masking overlay loads without an error")
         finally:
             helper.builtin_themes_dir, helper.apply_theme_obj = original_builtin, original_apply
+
+    with_temp_home(scenario)
+
+
+# One merge-style curated file per package revision. A reload naming either one
+# says which revision's curated values the save paired its palette with.
+REFRESHED_CURATED_REVISIONS = {
+    "A": json.dumps({"overrides": {"diffAdded": "#1e3a1e"}}, indent=2) + "\n",
+    "B": json.dumps({"overrides": {"diffAdded": "#24482c"}}, indent=2) + "\n",
+}
+# A replacing curated file: the whole output, with no palette-derived value under
+# it to disagree with, so the palette rule never reaches it.
+REFRESHED_REPLACING_CURATED = "[main]\ntheme[main_bg]=\"#101010\"\n"
+
+
+def refreshed_curated_package(name: str, foreground: str, revision: str,
+                              source: str = "curated") -> Path:
+    """Write theme package `name` into the user theme directory at one revision.
+
+    One directory, as a catalogued download is, so the save writes the layer the
+    curated files already sit in and its prune is the one that could delete them.
+    Its `theme.json` records the digest of its own palette, which is what the
+    loader asks each curated file about.
+    """
+    package = helper.user_themes_dir() / name
+    (package / "apps").mkdir(parents=True, exist_ok=True)
+    # Mid-tone ANSI slots, because role derivation re-runs contrast adjustment on
+    # the generated branch and is not a fixed point on them: a generated package
+    # built from slots the adjustment leaves alone matches itself however many times
+    # either side is rebuilt, and says nothing about the depth the comparison
+    # equalises.
+    (package / "colors.toml").write_text(
+        f'background = "#fafafa"\nforeground = "{foreground}"\n'
+        + "".join(f'color{index} = "#{0x60 + index * 6:02x}90{0xa8 - index * 4:02x}"\n'
+                  for index in range(16)))
+    (package / "apps" / "claude-light.json").write_text(REFRESHED_CURATED_REVISIONS[revision])
+    (package / "apps" / "btop.theme").write_text(REFRESHED_REPLACING_CURATED)
+    meta = {"name": name, "mode": "light", "source": source}
+    meta["curatedPalette"] = helper.palette_digest(helper.package_palette(
+        helper.package_colors_map(name), meta,
+        helper.package_declared_ui_roles(meta, name)))
+    (package / "theme.json").write_text(json.dumps(meta) + "\n")
+    return package
+
+
+def curated_revision_of(path: str | None) -> str:
+    """Which revision's merge-style curated file sits at `path`, or the empty string."""
+    body = Path(path).read_text() if path else ""
+    return next((revision for revision, text in REFRESHED_CURATED_REVISIONS.items()
+                 if text == body), "")
+
+
+def test_a_save_never_pairs_its_palette_with_a_curated_file_it_did_not_judge():
+    """A merge-style curated file is valid only for the palette it was picked
+    against, and the palette a save writes is not always the one the package on disk
+    holds. `materialize_theme_package` owns what happens to such a file, and the rows
+    below pin its two decisions at four of the routes that reach it: `set-wallpaper
+    --save`, including over a package whose `theme.json` an interrupted save left
+    behind, `apply-colors --save`, `save-current`, and `theme regenerate`, which is
+    handed part of a package. `theme import-colors` and `extract-wallpaper --save`
+    reach the same writer and have no row here: both go through
+    `save_theme_package`, which reads the destination for its `vouched` list exactly
+    as the covered save routes do.
+
+    Each row reads the revision the route's apply painted, the revision the reload
+    renders, whether the curated file's own bytes are still there, whether the
+    package's hand-written replacing file is still there, and what the save said on
+    stderr. The first is empty where the route runs no apply or paints no curated
+    file. The bytes column is the one that matters most: this package directory is
+    the only copy, as a download or a user-created theme has.
+
+    The untouched rows say each other row measures its own route and not the rule
+    itself, and one of them declares `source: generated`, the branch where role
+    derivation is not a fixed point and the palette comparison has to rebuild both
+    sides the same number of times.
+
+    The control row removes the palette agreement and the stale pair comes back.
+    """
+    def scenario(temp_home: Path):
+        wallpaper = temp_home / "wall.png"
+        wallpaper.write_bytes(b"\x89PNG\r\n\x1a\n")
+        applied: list = []
+        original_apply = helper.apply_theme_obj
+        helper.cfg_dir().mkdir(parents=True, exist_ok=True)
+        # The btop target renders from a template and otherwise answers to whether
+        # the host has btop installed, which decides whether a save with no carry
+        # re-renders the package's hand-written `apps/btop.theme` and whether
+        # `theme regenerate --app btop` finds a file to regenerate at all. A user
+        # toggle wins over detection, so state it and the rows read the fixture
+        # rather than the machine.
+        (helper.cfg_dir() / "settings.json").write_text(
+            json.dumps({"themeApps": {"btop": True}}) + "\n")
+
+        # A real apply runs hooks that reach the login session. This records the
+        # blueprint and leaves behind what an apply leaves, through the apply's own
+        # writer, so a colour edit with no `--save` moves the applied palette here
+        # exactly as it does in the session.
+        def stub_apply(bp, *args, **kwargs):
+            applied.append(bp)
+            (helper.cfg_dir() / "theme.json").write_text(helper.render_target_template(
+                "vgs-shell", "vgs-theme.json", helper.target_roles(bp)))
+            (helper.cfg_dir() / "theme-current.json").write_text(
+                json.dumps(helper.applied_theme_state(bp)) + "\n")
+            return {"success": True, "warnings": []}
+
+        helper.apply_theme_obj = stub_apply
+
+        def run(argv, errors=None):
+            with contextlib.redirect_stdout(io.StringIO()), \
+                 contextlib.redirect_stderr(errors or io.StringIO()):
+                status = helper.cmd_theme(argv)
+            assert_equal(status, 0, f"{' '.join(argv)} exit status")
+
+        def save_after(name: str, move: str, source: str, save_argv: list,
+                       then: list | None, patched, again: bool = False) -> tuple:
+            """Apply the package, move the palette one way, then run the save route."""
+            package = refreshed_curated_package(name, "#101010", "A", source=source)
+            curated = package / "apps" / "claude-light.json"
+            replacing = package / "apps" / "btop.theme"
+            loaded = helper.load_theme_package(name)
+            assert_equal(sorted((loaded or {}).get("apps") or {}),
+                         ["btop.theme", "claude-light.json"],
+                         f"{name}: the package loads both curated files")
+            stub_apply(loaded)
+            if move == "refresh":
+                refreshed_curated_package(name, "#202020", "B", source=source)
+            if move in ("edit", "edit-twice"):
+                run(["apply-colors", "--name", name, "--set", "foreground=#303030"])
+            if move == "mode":
+                stub_apply(helper.transformed_mode_blueprint(helper.find_theme(name), "dark", ""))
+            if move == "no-metadata":
+                (package / "theme.json").unlink()
+            expected_bytes = curated.read_bytes()
+            applied.clear()
+            errors = io.StringIO()
+            with patched:
+                run([arg.replace("<name>", name) for arg in save_argv], errors)
+                if again:
+                    run([arg.replace("<name>", name) for arg in save_argv])
+            if then:
+                run([arg.replace("<name>", name) for arg in then])
+            carried = (applied[-1].get("apps") if applied else {}) or {}
+            reloaded = (helper.load_theme_package(name) or {}).get("apps") or {}
+            return (curated_revision_of(carried.get("claude-light.json")),
+                    curated_revision_of(reloaded.get("claude-light.json")),
+                    curated.is_file() and curated.read_bytes() == expected_bytes,
+                    replacing.is_file() and replacing.read_text() == REFRESHED_REPLACING_CURATED,
+                    errors.getvalue().strip())
+
+        wallpaper_save = ["set-wallpaper", str(wallpaper), "--save"]
+        parted_notice = ("save <name>: writing a palette claude-light.json was not "
+                         "picked against, so this save vouches for none of them")
+        no_agreement = patch.object(helper, "applied_palette_parted", return_value=False)
+        try:
+            # (what the row measures, the package, how the palette parts, the source
+            #  the package declares, the save route, a writer run after it, the
+            #  production answer this row removes,
+            #  (revision the apply paints, revision the reload renders, the curated
+            #   file's own bytes intact, the replacing file intact, save stderr))
+            rows = [
+                ("an untouched package renders its own revision and says nothing",
+                 "carryrest", "none", "curated", wallpaper_save, None,
+                 contextlib.nullcontext(), ("A", "A", True, True, "")),
+                ("an untouched generated package renders its own revision",
+                 "carrygen", "none", "generated", wallpaper_save, None,
+                 contextlib.nullcontext(), ("A", "A", True, True, "")),
+                ("a refreshed definition pairs with nothing and loses no bytes",
+                 "carrymoved", "refresh", "curated", wallpaper_save, None,
+                 contextlib.nullcontext(), ("", "", True, True, "")),
+                ("an unsaved colour edit pairs with nothing and loses no bytes",
+                 "carryedit", "edit", "curated", wallpaper_save, None,
+                 contextlib.nullcontext(), ("", "", True, True, "")),
+                # The second save has itself moved nothing, so a rule keyed on the
+                # write in front of it refreshed the record and handed the file back.
+                ("a second save after a parted one leaves the record held",
+                 "carrytwice", "edit-twice", "curated", wallpaper_save, None,
+                 contextlib.nullcontext(), ("", "", True, True, "")),
+                ("a mode rebuild paints the counterpart file, saves none of it and says so",
+                 "carrymode", "mode", "curated", wallpaper_save, None,
+                 contextlib.nullcontext(), ("A", "", True, True, parted_notice)),
+                # A save route with no carry re-renders every enabled app file from
+                # the templates, so the package's hand-written replacing file goes.
+                # That is the pre-existing shape of those routes; the rule under test
+                # is the merge-style column beside it.
+                ("apply-colors --save under the theme's own name loses no bytes",
+                 "carryedited", "none", "curated",
+                 ["apply-colors", "--name", "<name>", "--set", "accent=#123456", "--save"], None,
+                 contextlib.nullcontext(), ("", "", True, False, "")),
+                # `save-current` writes the applied theme's own palette back into its
+                # own package, so nothing parted and the file stays certified.
+                ("save-current under the theme's own name keeps its file rendering",
+                 "carrysaved", "none", "curated",
+                 ["save-current", "--name", "<name>"], None,
+                 contextlib.nullcontext(), ("", "A", True, False, "")),
+                ("a save over the package an interrupted save left loses no bytes",
+                 "carrynometa", "no-metadata", "curated", wallpaper_save, None,
+                 contextlib.nullcontext(), ("", "", True, False, "")),
+                # `regenerate` is handed one app's file and moves no palette, so it
+                # hands the writer the merge-style files the loader kept and records
+                # the digest of what it wrote. That keeps a certified curated file
+                # certified, which it must: regenerate rewrites `colors.toml` from a
+                # blueprint stating derived roles the package left implicit, so a
+                # held-back record would drop the file from the renders after it.
+                # After a parted save the loader has already dropped the file, so
+                # regenerate vouches for nothing and the record stays held.
+                ("regenerate on an untouched package keeps its file rendering",
+                 "carryregenrest", "none", "curated",
+                 ["regenerate", "<name>", "--app", "btop", "--yes"], None,
+                 contextlib.nullcontext(),
+                 ("", "A", True, False,
+                  "note: <name> is curated; regenerating replaces curated files "
+                  "with palette renders")),
+                ("regenerate after a held-back record does not revive the file",
+                 "carryregen", "refresh", "curated", wallpaper_save,
+                 ["regenerate", "<name>", "--app", "btop", "--yes"],
+                 contextlib.nullcontext(), ("", "", True, False, "")),
+                ("without the palette agreement the stale pair comes back",
+                 "carrycontrol", "refresh", "curated", wallpaper_save, None,
+                 no_agreement, ("B", "B", True, True, "")),
+            ]
+            for label, name, move, source, save_argv, then, patched, expected in rows:
+                assert_equal(save_after(name, move, source, save_argv, then, patched,
+                                        again=move == "edit-twice"),
+                             tuple(part.replace("<name>", name) if isinstance(part, str) else part
+                                   for part in expected),
+                             label)
+
+            # The apply names what the carry withheld, in the shape the inert
+            # declarations warning uses, so the settings editor and the picker show a
+            # curated file gone quiet instead of swapping the bands in silence.
+            refreshed_curated_package("carrywarn", "#101010", "A")
+            stub_apply(helper.load_theme_package("carrywarn"))
+            refreshed_curated_package("carrywarn", "#202020", "B")
+            carried = helper.carry_curated_apps(
+                helper.blueprint_from_current_theme(name="carrywarn"))
+            assert_equal(carried.get(helper.WITHHELD_CURATED_KEY), ["claude-light.json"],
+                         "the carry records the file it withheld")
+            with contextlib.redirect_stderr(io.StringIO()):
+                result = helper._apply_theme_obj_unlocked(
+                    carried, only_target="no-such-target", run_hooks=False)
+            assert_equal([line for line in result["warnings"] if "claude-light.json" in line],
+                         ["curated app files: claude-light.json not read, "
+                          "picked against a palette this apply does not paint"],
+                         "the apply names the withheld curated file once")
+            assert_equal(result["partial"], True, "naming a withheld file makes the apply partial")
+            assert_equal(helper.WITHHELD_CURATED_KEY in helper.applied_theme_state(carried), False,
+                         "what one rebuild withheld is not recorded as applied state")
+        finally:
+            helper.apply_theme_obj = original_apply
 
     with_temp_home(scenario)
 
@@ -10551,8 +10802,20 @@ def test_declared_ui_roles_move_with_a_restyle_and_survive_a_save():
             rebuilt = helper.blueprint_from_theme_json(
                 helper.theme_json_from_blueprint(dropped), name="digestroles")
             rebuilt.update({"package": True, "path": str(helper.user_themes_dir() / "digestroles")})
-            assert_equal(helper.override_dropped_curated(rebuilt), ["claude-light.json"],
-                         "the save spares a file the override alone dropped")
+            assert_equal(helper.save_curated_terms(rebuilt),
+                         (False, ["claude-light.json"]),
+                         "the save vouches for a file the override alone dropped")
+            # A package whose theme.json does not read says nothing about what its
+            # curated files were picked against, so the save hands in none of them
+            # and vouches for none.
+            unreadable = helper.user_themes_dir() / "digestroles" / "theme.json"
+            readable = unreadable.read_text()
+            unreadable.write_text("{ not json")
+            try:
+                assert_equal(helper.save_curated_terms(rebuilt), (True, []),
+                             "a package whose metadata does not read is parted with nothing vouched")
+            finally:
+                unreadable.write_text(readable)
 
             # Clear the override first, or the next row would pass on the
             # override's own drop and say nothing about the digest.
@@ -11361,6 +11624,7 @@ def main():
     test_dark_themes_draw_diffs_in_two_hues()
     test_horizon_packages_use_only_upstream_colours()
     test_wallpaper_and_save_keep_terminal_slots()
+    test_a_save_never_pairs_its_palette_with_a_curated_file_it_did_not_judge()
     test_wallpapers_all_lists_the_folder_then_every_theme()
     test_declared_ui_roles_replace_the_derivation_without_a_contrast_rewrite()
     test_declared_ui_roles_move_with_a_restyle_and_survive_a_save()
