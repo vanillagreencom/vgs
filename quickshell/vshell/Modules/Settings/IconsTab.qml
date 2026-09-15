@@ -15,10 +15,14 @@ Item {
     // plus the theme's named set.
     property var iconSets: []
     property string themeIcon: ""
-    // How the last `vshell theme icons --json` call ended: "pending" before its first
-    // reply, "failed" with the reason in loadError, "ok" once a list landed.
+    // How the `vshell theme icons --json` call this tab is waiting for ended: "pending"
+    // while it runs, "failed" with the reason in loadError, "ok" once its list landed.
     property string readState: "pending"
     property string loadError: ""
+    // The read this tab is waiting for. refresh() raises it at launch, so a reply from an
+    // earlier read writes nothing: Proc lets same-id calls overlap once launched, and a
+    // slower older reply would otherwise become the final state.
+    property int readGeneration: 0
 
     readonly property bool followTheme: SettingsData.iconThemeDark === "System Default" && !SettingsData.iconThemePerMode
 
@@ -131,11 +135,20 @@ Item {
     }
 
     function refresh() {
+        root.readGeneration += 1;
+        const generation = root.readGeneration;
+        // Nothing this read has not established may stand while it runs. Every card line
+        // gates on readState, so raising it here withholds the previous read's names for
+        // the whole of this one, the refresh a theme change triggers included.
+        root.readState = "pending";
         Proc.runCommand("vgs-icons-list", [Paths.vshellCli, "theme", "icons", "--json"], function (output, exitCode, errorOutput) {
             // Settings destroys a tab when the user leaves its page, and Proc answers a
             // debounced call after that. A destroyed root reads as null here, and every
             // write below would raise on it; there is no longer a tab to report to.
             if (!root)
+                return;
+            // A reply from a read this tab has stopped waiting for publishes nothing.
+            if (generation !== root.readGeneration)
                 return;
             if (exitCode !== 0) {
                 const detail = (errorOutput || output || I18n.tr("Helper exited with code %1").arg(exitCode)).trim();

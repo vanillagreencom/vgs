@@ -30,26 +30,40 @@ const M = evaluateMarked(SOURCE, "ICON PICKER MODEL",
 const TILE_QML = path.join(__dirname, "..", "quickshell", "vshell", "Modules", "Settings", "Widgets", "IconSetTile.qml");
 const TILE = qmlSource(fs.readFileSync(TILE_QML, "utf8"), "IconSetTile.qml");
 
-// The body of the `vshell theme icons --json` callback, run against the tab's own
-// properties. Proc hands it captured stdout, the exit status and captured stderr.
+// The tab's own refresh() and the body of the `vshell theme icons --json` callback it
+// launches. Proc hands that callback captured stdout, the exit status and captured stderr.
+const REFRESH = extractBlock(SOURCE, "function refresh()");
 const CALLBACK = extractBlock(SOURCE, 'Proc.runCommand("vgs-icons-list"');
 
-// The tab as it stands before any reply.
-const tab = () => ({ iconSets: [], themeIcon: "", readState: "pending", loadError: "" });
+// The tab as it stands before any read.
+const tab = () => ({ iconSets: [], themeIcon: "", readState: "pending", loadError: "", readGeneration: 0, warned: [] });
+
+// Run the tab's real refresh() against a stub Proc and hand back the reply function it
+// launched with, so both halves run for real: the launch raises the generation and drops
+// the state to pending, and the reply compares the generation its own launch captured.
+function startRead(root) {
+    let reply = null;
+    // The harness wraps each body in `with (scope) { with (root) {`, so no scope key may
+    // be named root: one would shadow the component the bodies write to.
+    const scope = {
+        Paths: { vshellCli: "/usr/bin/vshell" },
+        Proc: { runCommand: (id, argv, callback) => { reply = callback; } },
+        I18n: { tr: text => ({ arg: value => text.replace("%1", value) }) },
+        Log: { scoped: () => ({ warn: (...parts) => root.warned.push(parts.join(" ")) }) },
+    };
+    callInScope(REFRESH, root, scope);
+    assert.ok(reply, "refresh() must launch the helper read");
+    return reply;
+}
 
 function answer(root, output, exitCode, errorOutput) {
-    const warned = [];
-    const scope = {
-        I18n: { tr: text => ({ arg: value => text.replace("%1", value) }) },
-        Log: { scoped: () => ({ warn: (...parts) => warned.push(parts.join(" ")) }) },
-    };
-    // The harness wraps the body in `with (scope) { with (root) {`, so no scope key may be
-    // named root: one would shadow the component the body writes to.
-    callInScope(CALLBACK, root, scope, ["output", "exitCode", "errorOutput"], [output, exitCode, errorOutput]);
-    return warned;
+    root.warned.length = 0;
+    startRead(root)(output, exitCode, errorOutput);
+    return root.warned;
 }
 
 const PAYLOAD = JSON.stringify({ sets: [{ name: "Yaru", samples: ["/u/Yaru/folder.png"] }], themeIcon: "Yaru" });
+const LATER_PAYLOAD = JSON.stringify({ sets: [{ name: "Adwaita", samples: [] }], themeIcon: "Adwaita" });
 
 // One `sets` payload as the helper prints it, which the tab's Repeater takes as its model:
 // two installed sets, the second one the helper could not sample.
@@ -172,6 +186,32 @@ test("a payload the tab can read clears the failure and fills the list", () => {
     assert.deepEqual(warned, [], "a good read logs nothing");
 });
 
+test("a read in flight claims nothing, and only its own reply may", () => {
+    const root = tab();
+    startRead(root)(PAYLOAD, 0, "");
+    assert.equal(root.readState, "ok", "the first read lands");
+
+    // refresh() runs on VGSThemeService.onCurrentLoaded, so this is the ordinary path
+    // after every theme change, not a race: until the new read answers, the previous
+    // theme's names are not this theme's.
+    const first = startRead(root);
+    const second = startRead(root);
+    assert.equal(root.readState, "pending", "a read in flight withholds what it has not established");
+
+    first(LATER_PAYLOAD, 0, "");
+    assert.equal(root.readState, "pending", "a reply from a read the tab stopped waiting for publishes nothing");
+    assert.deepEqual(root.iconSets.map(set => set.name), ["Yaru"], "and leaves the list it found alone");
+
+    first("", 1, "vshell-helper error: boom\n");
+    assert.deepEqual([root.readState, root.loadError], ["pending", ""],
+        "an older failure publishes no reason either");
+
+    second(LATER_PAYLOAD, 0, "");
+    assert.deepEqual([root.readState, root.themeIcon], ["ok", "Adwaita"],
+        "the reply the tab is waiting for publishes");
+    assert.deepEqual(root.iconSets.map(set => set.name), ["Adwaita"], "including its list");
+});
+
 test("a reply that outlives the tab returns before its writes", () => {
     // Settings destroys a tab when the user leaves its page and Proc answers afterwards;
     // a destroyed root reads as null there. `with (null)` throws in this harness, so the
@@ -186,6 +226,26 @@ test("a reply that outlives the tab returns before its writes", () => {
         "the guard must return, not fall through");
     assert.ok(guard < firstTouch,
         "the guard must stand before the callback first touches root, or a write reaches a destroyed component");
+
+    // The same rule for the generation: nothing is published before the reply has shown
+    // it is the one the tab is waiting for.
+    const generation = body.indexOf("if (generation !== root.readGeneration)");
+    const firstPublish = body.search(/root\.(readState|loadError|iconSets|themeIcon)\s*=/);
+    assert.notEqual(generation, -1, "the callback must compare its generation with the tab's");
+    assert.notEqual(firstPublish, -1, "the callback must publish something");
+    assert.match(body.slice(generation), /^if \(generation !== root\.readGeneration\)\s*return;/,
+        "the generation check must return, not fall through");
+    assert.ok(guard < generation && generation < firstPublish,
+        "both guards must stand before the callback publishes, or a stale reply becomes the final state");
+
+    // One owner for how fresh the tab's state is: refresh() raises the generation and
+    // nothing else touches it.
+    assert.deepEqual(Q.flat(SOURCE).match(/root\.readGeneration \+= 1/g), ["root.readGeneration += 1"],
+        "exactly one place raises the generation");
+    assert.ok(qmlSource.stripComments(REFRESH).includes("root.readGeneration += 1"),
+        "and it is refresh(), at launch, so every read carries the generation it was launched at");
+    assert.equal(Q.flat(SOURCE).match(/root\.readGeneration\s*=[^=]/g), null,
+        "nothing may set the generation to a value of its own");
 });
 
 test("picking a set does not re-read the list", () => {
