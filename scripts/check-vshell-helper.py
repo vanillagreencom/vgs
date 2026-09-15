@@ -11547,6 +11547,129 @@ def test_theme_overlays_merge_key_by_key():
     with_temp_home(scenario)
 
 
+def test_package_colours_normalize_once_over_the_merged_layers():
+    """A package's `colors.toml` layers are read under the keys their files wrote
+    and folded so that the slots a key names outright arbitrate apart from the
+    slots a compound key's last tokens infer.
+
+    Resolving each layer on its own let an overlay that edits only the selection
+    slots -- which omits `background` and `foreground`, because `write_user_layer`
+    drops what equals the built-in file -- infer both from its own selection
+    slots and overwrite the built-in layer's real ones. Folding the layers under
+    one pass over their raw keys then arbitrated by spelling instead of by layer,
+    so a built-in `background` stood over a matugen-shaped overlay's
+    `colors_background` for the same slot.
+    """
+    builtin_colors = {"background": "#fafafa", "foreground": "#101010",
+                      "accent": "#8c1f4a", "cursor": "#101010", "red": "#aa0000",
+                      "selection_background": "#d0d0d0", "selection_foreground": "#101010"}
+    edited = {**builtin_colors, "selection_background": "#3769f1",
+              "selection_foreground": "#fafafa"}
+
+    def scenario(temp_home: Path):
+        builtin = temp_home / "builtin"
+        package = builtin / "mergefix"
+        package.mkdir(parents=True)
+        (package / "colors.toml").write_text(helper.flat_toml_text(builtin_colors))
+        original_builtin = helper.builtin_themes_dir
+        helper.builtin_themes_dir = lambda: builtin
+        user = helper.user_themes_dir() / "mergefix"
+        try:
+            helper.write_user_layer("mergefix", "colors.toml", edited)
+            stored = helper.parse_colors_toml(user / "colors.toml",
+                                              kind=helper.ColorsRead.PALETTE_LAYER)
+            merged = helper.package_colors_map("mergefix")
+            helper.write_user_layer("mergefix", "colors.toml",
+                                    {**edited, "background": "#202020"})
+            stated = helper.package_colors_map("mergefix")["background"]
+            # (what, actual, expected)
+            rows = [
+                ("a save of edited selection slots stores no background or foreground",
+                 sorted(stored), ["selection_background", "selection_foreground"]),
+                ("the merged map keeps the built-in layer's background and foreground",
+                 (merged["background"], merged["foreground"]), ("#fafafa", "#101010")),
+                ("the merged map takes the overlay's selection slots",
+                 (merged["selection_background"], merged["selection_foreground"]),
+                 ("#3769f1", "#fafafa")),
+                ("the merged map is the palette the save meant",
+                 merged, helper.normalize_color_map(edited)),
+                ("an overlay that states background replaces the built-in value",
+                 stated, "#202020"),
+            ]
+            for what, actual, expected in rows:
+                assert_equal(actual, expected, what)
+
+            # An overlay whose keys carry each prefix the reader strips and the
+            # camelCase spelling. The built-in layer states every one of these
+            # four slots outright, so each row fails unless the overlay's key
+            # reaches the same tier the built-in key did.
+            (user / "colors.toml").write_text(
+                'colors_background = "#000099"\nansi_red = "#00ff00"\n'
+                'palette_cursor = "#ff00ff"\nselectionBackground = "#3769f1"\n')
+            spelled = helper.package_colors_map("mergefix")
+            # (what, actual, expected)
+            spelling_rows = [
+                ("an overlay's colors-prefixed key wins the slot it names",
+                 spelled["background"], "#000099"),
+                ("an overlay's ansi-prefixed key wins the slot it names",
+                 spelled["red"], "#00ff00"),
+                ("an overlay's palette-prefixed key wins the slot it names",
+                 spelled["cursor"], "#ff00ff"),
+                ("an overlay's camelCase key wins the slot it names",
+                 spelled["selection_background"], "#3769f1"),
+            ]
+            for what, actual, expected in spelling_rows:
+                assert_equal(actual, expected, what)
+
+            # The last-token fallback still runs, once, over the fold: a package
+            # whose layers between them state no background infers one.
+            (user / "colors.toml").unlink()
+            (package / "colors.toml").write_text(helper.flat_toml_text(
+                {key: value for key, value in builtin_colors.items()
+                 if key not in {"background", "foreground"}}))
+            inferred = helper.package_colors_map("mergefix")
+            assert_equal((inferred.get("background"), inferred.get("foreground")),
+                         ("#d0d0d0", "#101010"),
+                         "a fold stating no background infers one from the selection slots")
+
+            # A file's other name for the mode, carried by the same alias table
+            # as the second spellings of a slot.
+            (package / "colors.toml").write_text(
+                helper.flat_toml_text(builtin_colors) + 'variant = "light"\n')
+            assert_equal(helper.package_colors_map("mergefix").get("mode"), "light",
+                         "a layer stating variant instead of mode names the mode")
+        finally:
+            helper.builtin_themes_dir = original_builtin
+
+    with_temp_home(scenario)
+
+
+def test_colour_edit_keys_resolve_through_the_alias_table():
+    """`apply-colors --set` takes the second spellings of a slot through
+    `COLOR_KEY_ALIASES`, the same table the layer fold reads, so one table answers
+    what a slot's second spellings are. A spelling outside `COLOR_KEYS` never
+    reaches a tier, so `selection_bg` and `selection_fg` are reached by an edit
+    alone. An edit naming a key the table resolves to something outside the
+    editable roles, such as `variant` for the mode, is refused under the spelling
+    the edit used rather than under what it resolved to."""
+    # (what, edit key, canonical slot)
+    rows = [
+        ("the underscore-free spelling", "selectionBackground", "selection_background"),
+        ("the hyphenated spelling", "selection-foreground", "selection_foreground"),
+        ("the short background spelling", "selection_bg", "selection_background"),
+        ("the short foreground spelling", "selection_fg", "selection_foreground"),
+    ]
+    for what, key, slot in rows:
+        assert_equal(helper.parse_color_edits([f"{key}=#112233"]), {slot: "#112233"}, what)
+    try:
+        helper.parse_color_edits(["variant=#112233"])
+        refusal = ""
+    except ValueError as exc:
+        refusal = str(exc)
+    assert_equal(refusal, "unsupported color role: variant",
+                 "a mode key is refused under the name the edit used")
+
+
 def test_unsaved_applied_theme_keeps_terminal_slots():
     """`apply-colors --name X` without `--save` applies a theme no package carries,
     so its terminal slots survive only in theme-current.json. The next wallpaper
@@ -11798,6 +11921,8 @@ def main():
     test_declared_ui_roles_move_with_a_restyle_and_survive_a_save()
     test_save_keeps_app_overrides()
     test_theme_overlays_merge_key_by_key()
+    test_package_colours_normalize_once_over_the_merged_layers()
+    test_colour_edit_keys_resolve_through_the_alias_table()
     test_unsaved_applied_theme_keeps_terminal_slots()
     test_terminal_app_overrides_show_on_their_editor_row()
     test_restyle_moves_terminal_slots()
