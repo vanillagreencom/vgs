@@ -6,14 +6,18 @@ var SPEC = {
     doNotDisturbUntil: { def: 0 },
     terminalOverride: { def: "" },
 
-    wallpaperPath: { def: "" },
+    // `ref` and `refMap` keys hold a wallpaper path. On disk each is a portable
+    // reference (Paths.wallpaperRef); in memory each is the path on this machine.
+    // Without that, a theme applied from a checkout pins the checkout into
+    // session.json and every monitor loses its wallpaper once it is removed.
+    wallpaperPath: { def: "", ref: true },
     perMonitorWallpaper: { def: false },
-    monitorWallpapers: { def: {} },
+    monitorWallpapers: { def: {}, refMap: true },
     perModeWallpaper: { def: false },
-    wallpaperPathLight: { def: "" },
-    wallpaperPathDark: { def: "" },
-    monitorWallpapersLight: { def: {} },
-    monitorWallpapersDark: { def: {} },
+    wallpaperPathLight: { def: "", ref: true },
+    wallpaperPathDark: { def: "", ref: true },
+    monitorWallpapersLight: { def: {}, refMap: true },
+    monitorWallpapersDark: { def: {}, refMap: true },
     monitorWallpaperFillModes: { def: {} },
     wallpaperTransition: { def: "fade" },
     includedTransitions: { def: ["fade", "wipe", "disc", "stripes", "iris bloom", "pixelate", "portal"] },

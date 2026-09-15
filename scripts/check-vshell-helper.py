@@ -922,13 +922,15 @@ def test_every_target_hook_is_dispatched_and_classified():
 
 
 def test_the_shipped_wallpaper_templates_are_the_ones_the_documented_invariant_names():
-    """The shell reloads on a wallpaper pick because vgs-shell's template names
-    {wallpaper}. Nothing else makes it reload.
+    """The shell reloads on a wallpaper pick because vgs-shell's template names the
+    wallpaper role. Nothing else makes it reload.
 
     Before the gate every enabled target's hook ran regardless. Deleting the token
     from themes/targets/vgs-shell/vgs-theme.json now stops the shell reloading
     after a wallpaper change, with every synthetic case still green, so the set is
-    derived from the shipped targets rather than restated here.
+    derived from the shipped targets rather than restated here. The role is read
+    through the helper's own token syntax, so a template naming it with a modifier,
+    as the shell's does with `.ref`, counts the same as a bare one.
     """
     naming = []
     for config in sorted((REPO_ROOT / "themes" / "targets").glob("*/config.json")):
@@ -936,7 +938,7 @@ def test_the_shipped_wallpaper_templates_are_the_ones_the_documented_invariant_n
         if not template:
             continue
         path = config.parent / template
-        if "{wallpaper}" in path.read_text():
+        if any(match.group(1) == "wallpaper" for match in helper.TEMPLATE_RE.finditer(path.read_text())):
             naming.append(str(path.relative_to(REPO_ROOT)))
     assert_equal(naming, ["themes/targets/pywalfox-vgs/colors.json",
                           "themes/targets/vgs-shell/vgs-theme.json"],
@@ -2985,14 +2987,16 @@ def test_theme_init_applies_only_without_state():
     def scenario(temp_home: Path):
         state = temp_home / ".config" / "vshell" / "theme.json"
         result, hooks = init()
-        assert_equal(result, {"applied": True, "name": helper.DEFAULT_THEME_NAME}, "first run applies the default theme")
+        assert_equal(result, {"applied": True, "name": helper.DEFAULT_THEME_NAME, "repaired": []},
+                     "first run applies the default theme and has nothing to repair")
         assert_equal(json.loads(state.read_text()).get("name"), helper.DEFAULT_THEME_NAME,
                      "first run writes the default theme's state")
         assert_equal("shell-reload" in hooks, True, "the first-run apply runs the theme hooks")
         applied = '{"name": "applied", "mode": "light"}\n'
         state.write_text(applied)
         result, hooks = init()
-        assert_equal(result, {"applied": False, "name": "applied"}, "an applied theme is left in place")
+        assert_equal(result, {"applied": False, "name": "applied", "repaired": []},
+                     "an applied theme is left in place, with no wallpaper to repair")
         assert_equal(state.read_text(), applied, "theme init never rewrites an applied theme")
         assert_equal(hooks, [], "theme init runs no hook when a theme is applied")
 

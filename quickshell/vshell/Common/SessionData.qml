@@ -266,7 +266,7 @@ Singleton {
                 }
             }
 
-            Store.parse(root, obj);
+            _parseSession(obj);
             _applyDndExpirySanity();
 
             _loadedSessionSnapshot = getCurrentSessionJson();
@@ -276,6 +276,7 @@ Singleton {
                 WallpaperCyclingService.updateCyclingState();
 
             _checkSessionWritable();
+            _repairWallpapers();
         } catch (e) {
             _parseError = true;
             const msg = e.message;
@@ -309,8 +310,74 @@ Singleton {
         return current !== _loadedSessionSnapshot;
     }
 
+    // The one place the wallpaper reference rule is supplied to the store, in each
+    // direction. Every load and every save goes through these, so the mapping
+    // cannot be forgotten at a call site: the store takes no default.
+    function _parseSession(obj) {
+        Store.parse(root, obj, Paths.resolveRef);
+    }
+
+    function _sessionJson() {
+        return Store.toJson(root, Paths.wallpaperRef);
+    }
+
+    // A session written by an installation that is gone names package backgrounds
+    // this one may still hold. `recovered_package_ref` in the helper decides, because
+    // deciding means asking the filesystem; this hands it every absolute path the
+    // store holds and writes the answers back per key. Not through setWallpaper:
+    // that carries one image to every monitor and writes the active mode alone,
+    // which is exactly what the recorded failure needs kept apart.
+    function _repairWallpapers() {
+        if (!_canWrite())
+            return;
+        const paths = Store.refValues(root);
+        if (!paths.length)
+            return;
+        wallpaperRepairProcess.command = [Paths.vshellCli, "theme", "wallpaper-repair", "--json"].concat(paths);
+        wallpaperRepairProcess.running = true;
+    }
+
+    function _applyWallpaperRepairs(repaired) {
+        if (!repaired || !Object.keys(repaired).length || !_canWrite())
+            return;
+        if (Store.mapRefs(root, value => repaired[value] || value)) {
+            log.info("repaired", Object.keys(repaired).length, "wallpaper path(s) from durable state");
+            saveSettings();
+        }
+    }
+
+    Process {
+        id: wallpaperRepairProcess
+        running: false
+        stdout: StdioCollector {
+            onStreamFinished: {
+                try {
+                    root._applyWallpaperRepairs(JSON.parse(text || "{}").repaired);
+                } catch (e) {
+                    // A repair that cannot be read leaves every key naming what it
+                    // loaded, which on the path this exists for is a file that is not
+                    // there, so this line is the only trace the recovery did not happen.
+                    root.log.warn("Could not read the wallpaper repair:", e.message);
+                }
+            }
+        }
+        // A non-zero exit says nothing through stdout: an empty answer parses as {} and
+        // takes the early return in _applyWallpaperRepairs. Nothing here fails the load;
+        // the session keeps what it loaded either way. Collection can trail the exit, so
+        // the code is logged whether or not a message came with it.
+        stderr: StdioCollector {
+            id: wallpaperRepairStderr
+        }
+        onExited: function (exitCode) {
+            if (exitCode === 0)
+                return;
+            const detail = (wallpaperRepairStderr.text || "").trim().split("\n")[0];
+            root.log.warn("The wallpaper repair exited", exitCode, detail ? "- " + detail : "");
+        }
+    }
+
     function getCurrentSessionJson() {
-        return JSON.stringify(Store.toJson(root), null, 2);
+        return JSON.stringify(_sessionJson(), null, 2);
     }
 
     function parseSettings(content) {
@@ -345,7 +412,7 @@ Singleton {
                 }
             }
 
-            Store.parse(root, obj);
+            _parseSession(obj);
             _applyDndExpirySanity();
 
             _loadedSessionSnapshot = getCurrentSessionJson();
