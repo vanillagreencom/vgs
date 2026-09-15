@@ -24,7 +24,10 @@ const SOURCE = fs.readFileSync(TAB_QML, "utf8");
 const Q = qmlSource(SOURCE, "IconsTab.qml");
 
 const M = evaluateMarked(SOURCE, "ICON PICKER MODEL",
-    ["iconPickerState", "appliedSetName", "iconSetClaim", "setLine"], "IconsTab.qml");
+    ["iconPickerState", "appliedSetName", "iconSetClaim", "setLine", "canPickFixed"], "IconsTab.qml");
+
+const TILE_QML = path.join(__dirname, "..", "quickshell", "vshell", "Modules", "Settings", "Widgets", "IconSetTile.qml");
+const TILE = qmlSource(fs.readFileSync(TILE_QML, "utf8"), "IconSetTile.qml");
 
 // The body of the `vshell theme icons --json` callback, run against the tab's own
 // properties. Proc hands it captured stdout, the exit status and captured stderr.
@@ -154,9 +157,17 @@ test("a payload the tab can read clears the failure and fills the list", () => {
 test("a reply that outlives the tab returns before its writes", () => {
     // Settings destroys a tab when the user leaves its page and Proc answers afterwards;
     // a destroyed root reads as null there. `with (null)` throws in this harness, so the
-    // guard is pinned here as source text and its behaviour is not asserted.
-    Q.requires(CALLBACK, "IconsTab.qml the icon list callback",
-        [["if (!root)", "a reply reaching a destroyed tab returns before every write below"]]);
+    // guard is pinned here as source text and its behaviour is not asserted. Position is
+    // the whole point: a write moved above the guard raises on the destroyed component.
+    const body = qmlSource.stripComments(CALLBACK);
+    const guard = body.indexOf("if (!root)");
+    const firstTouch = body.indexOf("root.");
+    assert.notEqual(guard, -1, "the callback must guard on a destroyed root");
+    assert.notEqual(firstTouch, -1, "the callback must reach the component at all");
+    assert.match(body.slice(guard), /^if \(!root\)\s*return;/,
+        "the guard must return, not fall through");
+    assert.ok(guard < firstTouch,
+        "the guard must stand before the callback first touches root, or a write reaches a destroyed component");
 });
 
 test("picking a set does not re-read the list", () => {
@@ -207,9 +218,43 @@ test("a card line draws what the region decided and nothing of its own", () => {
     // Each line's relevance is the name it hands in, so the component keeps deciding
     // when a line is drawn. The component declaration carries a type, so only the two
     // instances match here.
+    const source = Q.objectBlocks("SettingsChoiceRow", 1)[0];
+    assert.equal(source.q.binding("visible").value, "root.canPickFixed(root.pickerState)",
+        "the Icon source row is drawn only where canPickFixed says a set can be applied");
+
     const lines = Q.objectBlocks("SetLine", 2);
     assert.equal(lines[0].q.binding("setName").value, "root.appliedIcon",
         "the first line is about the set the shell draws");
     assert.equal(lines[1].q.binding("setName").value, 'root.followTheme ? "" : root.themeIcon',
         "under Follow theme the theme's set is the applied set, which the line above names; a second line would state it twice");
+});
+
+test("the Icon source row is offered only where a set can be applied", () => {
+    // [why, picker state, offered]
+    for (const [why, pickerState, offered] of [
+        ["before the first list arrives there is no set to apply", "loading", false],
+        ["a failed read leaves no set to apply", "error", false],
+        ["nothing installed leaves no set to apply", "empty", false],
+        ["the theme owns the choice, and the user can take it", "follow-theme", true],
+        ["the user owns the choice already", "", true],
+    ])
+        assert.equal(M.canPickFixed(pickerState), offered, why);
+});
+
+test("every way of activating a tile raises the same signal", () => {
+    // The picker is the only way to choose a set, so a keyboard or screen-reader user
+    // reaches it through these three alongside the click.
+    for (const handler of ["Keys.onSpacePressed", "Keys.onReturnPressed", "Accessible.onPressAction", "onClicked"])
+        assert.deepEqual(TILE.handlers(handler).map(line => line.trim()), [`${handler}: root.activated()`],
+            `IconSetTile ${handler} must raise the one activation signal, so no path is left behind`);
+    assert.equal(TILE.binding("activeFocusOnTab").value, "true", "a tile must be reachable in tab order");
+    assert.equal(TILE.binding("Accessible.role").value, "Accessible.Button", "a tile announces itself as a button");
+});
+
+test("a focused tile is not read as the applied tile", () => {
+    const ring = TILE.objectBlocks("Rectangle", 1)[0].q;
+    const body = TILE.objectBlocks("StyledRect", 1)[0].q;
+    assert.equal(ring.binding("visible").value, "root.activeFocus", "the focus ring follows focus and nothing else");
+    assert.notEqual(ring.binding("border.color").value, body.binding("border.color").value,
+        "the focus ring takes its own colour, so focus and applied are two states on screen");
 });

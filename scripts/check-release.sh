@@ -50,9 +50,24 @@ tar -tzf "$archive" > "$tmp/archive.list"
 grep -q "/bin/vshell-backend$" "$tmp/archive.list"
 grep -q "/quickshell/vshell/shell.qml$" "$tmp/archive.list"
 grep -q "/packaging/install-system.sh$" "$tmp/archive.list"
-# The retired assets archive was the only carrier of the vendored icon themes.
-if ! grep -q "/config/vshell/icons/" "$tmp/archive.list"; then
-  echo "check-release: the release bundle carries no config/vshell/icons, so a tarball install has no vendored icon themes" >&2
+# The retired assets archive was the only carrier of the vendored icon themes, and
+# install.sh unpacks this archive rather than running packaging/install-system.sh, so
+# scripts/check-package-assets.sh says nothing about the tarball channel. The Icons
+# settings picker lists a set only when its index.theme is installed beside it, so the
+# bundle's set list is compared with the repository's, set by set.
+sed -n "s|^vgs-$version-linux-[^/]*/config/vshell/icons/\([^/]*\)/index\.theme$|\1|p" \
+  "$tmp/archive.list" | LC_ALL=C sort > "$tmp/icon-sets.have"
+( cd "$root/config/vshell/icons" && find . -mindepth 2 -maxdepth 2 -name index.theme -printf '%h\n' ) \
+  | sed 's|^\./||' | LC_ALL=C sort > "$tmp/icon-sets.want"
+# The reference is the repository tree, so an empty listing would compare equal to a
+# bundle that shipped none.
+if ! grep -qxF 'Yaru-purple' "$tmp/icon-sets.want"; then
+  echo "check-release: config/vshell/icons lists no Yaru-purple/index.theme, so the icon set comparison below has no reference" >&2
+  exit 1
+fi
+if ! icon_sets_diff="$(diff "$tmp/icon-sets.want" "$tmp/icon-sets.have")"; then
+  echo "check-release: the release bundle's icon sets differ from config/vshell/icons:" >&2
+  printf '%s\n' "$icon_sets_diff" >&2
   exit 1
 fi
 # The bundle carries exactly the theme package files install-system.sh keeps,

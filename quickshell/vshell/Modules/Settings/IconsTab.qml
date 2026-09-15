@@ -80,6 +80,13 @@ Item {
             return { text: copy.named + " — " + copy.notInstalled, warn: true };
         return { text: copy.named, warn: false };
     }
+
+    // Whether the card can hand the icon set choice to the user. Only the two states
+    // with a list in hand can; in the rest there is no set to apply, so the source row
+    // is not drawn at all rather than offered as a control that silently refuses.
+    function canPickFixed(pickerState) {
+        return pickerState === "" || pickerState === "follow-theme";
+    }
     // END ICON PICKER MODEL
 
     // One card line about an icon set. `label` carries a %1 for the set's name; every
@@ -181,6 +188,7 @@ Item {
                 }
 
                 SettingsChoiceRow {
+                    visible: root.canPickFixed(root.pickerState)
                     text: I18n.tr("Icon source")
                     model: [I18n.tr("Follow theme"), I18n.tr("Always use these")]
                     currentIndex: root.followTheme ? 0 : 1
@@ -189,7 +197,7 @@ Item {
                             return;
                         if (index === 0)
                             root.useFollowTheme();
-                        else if (root.iconSets.length > 0)
+                        else
                             root.useFixed(SettingsData.iconThemeDark !== "System Default" ? SettingsData.iconThemeDark : root.iconSets[0].name);
                     }
                 }
