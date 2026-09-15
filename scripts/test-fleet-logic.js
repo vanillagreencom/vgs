@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 
 // Pins the fleet plugin's decisions: the pill's state and text for a status read, the cost
-// arithmetic, and the command each action runs. It runs the shipped source, the region between
-// the FLEET LOGIC markers in config/vshell/plugins/fleet/FleetLogic.js, against the fixture the
-// plugin ships beside it.
+// arithmetic, the saved settings, and the command each action runs. It runs the shipped source,
+// the region between the FLEET LOGIC markers in config/vshell/plugins/fleet/FleetLogic.js,
+// against the fixture the plugin ships beside it.
 
 "use strict";
 
@@ -11,6 +11,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const { spawnSync } = require("node:child_process");
 
 const repoRoot = path.join(__dirname, "..");
 const PLUGIN = path.join(repoRoot, "config", "vshell", "plugins", "fleet");
@@ -20,29 +21,25 @@ const { evaluateMarked, guardChild } = require("./lib/qml-region.js");
 guardChild();
 
 const F = evaluateMarked(fs.readFileSync(path.join(PLUGIN, "FleetLogic.js"), "utf8"), "FLEET LOGIC", [
-    "decodeStatus", "failure", "commandProblem", "availableCommands", "statusArgv", "pillState",
-    "pillText", "laneRows", "controlRow", "monthToDateSpend", "moneyLabel", "rateLabel", "ageLabel",
-    "actionArgv"
+    "decodeStatus", "decodeProbe", "statusRead", "commandProblem", "pillState", "pillText", "laneRows",
+    "controlRow", "monthToDateSpend", "moneyLabel", "rateLabel", "ageLabel", "actionArgv", "actionCommand",
+    "optionValue", "settingNumber", "settingBool", "pillModeOptions"
 ], "FleetLogic.js");
 
 const FIXTURE_TEXT = fs.readFileSync(path.join(PLUGIN, "fleet-status.fixture.json"), "utf8");
 const fixture = () => JSON.parse(FIXTURE_TEXT);
-const read = status => F.decodeStatus(0, 0, JSON.stringify(status), "");
+const read = status => F.decodeStatus(0, JSON.stringify(status), "");
 // The fixture's youngest lane started 50 minutes before this and its oldest 210 minutes before.
 const NOW = Date.parse("2026-09-15T12:00:00Z");
 const MODES = ["icon", "count", "cost", "control"];
 const UNREACHABLE = MODES.map(() => "fleet: unreachable");
+const B = "/home/u/.local/bin";
 
 function withLane(index, fields) {
     const status = fixture();
     Object.assign(F.laneRows(status)[index], fields);
     return status;
 }
-
-test("the shipped fixture decodes as a status report", () => {
-    const result = F.decodeStatus(0, 0, FIXTURE_TEXT, "");
-    assert.equal(result.ok, true, result.error);
-});
 
 test("the pill's colour state and its text in every mode follow the status read", () => {
     // [why, result, stale hours, state, texts for icon, count, cost, control]
@@ -63,29 +60,50 @@ test("the pill's colour state and its text in every mode follow the status read"
             ["", "3 lanes", "3 lanes · $2.0/h", "control stopped"]],
         ["an archived lane is the warning",
             read(withLane(2, { state: "archived" })), 24, "warning", ["", "3 lanes", "3 lanes · $2.0/h", "control started"]],
+        ["a lane in error is the warning",
+            read(withLane(2, { state: "error" })), 24, "warning", ["", "3 lanes", "3 lanes · $2.0/h", "control started"]],
+        ["a lane whose build failed is the warning",
+            read(withLane(2, { state: "build_failed" })), 24, "warning", ["", "3 lanes", "3 lanes · $2.0/h", "control started"]],
+        ["a paused lane is the warning",
+            read(withLane(2, { state: "paused" })), 24, "warning", ["", "3 lanes", "3 lanes · $2.0/h", "control started"]],
         ["a lane at the stale age is the warning",
             read(fixture()), 3.5, "warning", ["", "3 lanes", "3 lanes · $2.0/h", "control started"]],
         ["a lane a minute under the stale age is not",
             read(withLane(0, { created: "2026-09-15T08:31:00Z" })), 3.5, "accent",
             ["", "3 lanes", "3 lanes · $2.0/h", "control started"]],
         ["a status command that exited nonzero is the error, in every mode",
-            F.decodeStatus(1, 0, "", "no DAYTONA_API_KEY\n"), 24, "error", UNREACHABLE],
-        ["a killed status command is the error", F.decodeStatus(0, 1, FIXTURE_TEXT, ""), 24, "error", UNREACHABLE],
-        ["output that is not JSON is the error", F.decodeStatus(0, 0, "Traceback", ""), 24, "error", UNREACHABLE],
+            F.decodeStatus(1, "", "no DAYTONA_API_KEY\n"), 24, "error", UNREACHABLE],
+        ["output that is not JSON is the error", F.decodeStatus(0, "Traceback", ""), 24, "error", UNREACHABLE],
         ["output with no sandboxes list is the error", read({ total_rate_per_hour: 0 }), 24, "error", UNREACHABLE],
         ["output with no total rate is the error", read({ sandboxes: [] }), 24, "error", UNREACHABLE],
         ["a sandbox with no rate is the error",
             read(withLane(0, { rate_per_hour: null })), 24, "error", UNREACHABLE],
-        ["a missing status command is the error",
-            F.failure(F.commandProblem("lane-host-daytona", {})), 24, "error", UNREACHABLE],
+        ["a missing status command is the error", F.statusRead({}, B), 24, "error", UNREACHABLE],
         ["no read yet is loading, never zero lanes", null, 24, "loading", ["…", "…", "…", "…"]]
     ]) {
-        assert.equal(F.pillState(result, NOW, staleHours), state, why);
-        assert.deepEqual(MODES.map(mode => F.pillText(mode, result, true)), texts, why);
+        const detail = result && !result.ok ? `${why} (read failed: ${result.error})` : why;
+        assert.equal(F.pillState(result, NOW, staleHours), state, detail);
+        assert.deepEqual(MODES.map(mode => F.pillText(mode, result, true)), texts, detail);
     }
     assert.equal(F.pillText("cost", read(fixture()), false), "3 lanes", "hiding cost drops the rate from the cost mode");
     assert.throws(() => F.pillText("tailnet", read(fixture()), true), /unvalidated pill mode tailnet/,
         "a mode outside the offered set is a caller error, not an empty pill");
+});
+
+test("a failed status read names its exit code and the reason on the last stderr line", () => {
+    const usage = "usage: lane-host-daytona [-h]\n                         {create,cat,put,close,list} ...\n";
+    const invalid = "lane-host-daytona: error: argument cmd: invalid choice: 'status' (choose from 'create', 'close')";
+    // [why, exit code, stdout, stderr, the failure the pill and popout report]
+    for (const [why, exitCode, out, err, error] of [
+        ["a nonzero exit quotes its reason", 1, "", "lane-host-daytona: no-api-key\n",
+            "lane-host-daytona status exited 1: lane-host-daytona: no-api-key"],
+        ["a nonzero exit is the error even after a valid report on stdout", 1, FIXTURE_TEXT, "",
+            "lane-host-daytona status exited 1"],
+        ["argparse writes its usage banner first and its error last, and the error is quoted", 2, "",
+            usage + invalid + "\n\n", "lane-host-daytona status exited 2: " + invalid],
+        ["a timed-out read arrives as exit 124", 124, "", "", "lane-host-daytona status exited 124"]
+    ])
+        assert.deepEqual(F.decodeStatus(exitCode, out, err), { ok: false, error }, why);
 });
 
 test("month-to-date spend is rate times running hours since the first of the month in UTC", () => {
@@ -109,32 +127,69 @@ test("month-to-date spend is rate times running hours since the first of the mon
         assert.equal(F.ageLabel(minutes), label, `${minutes} minutes`);
 });
 
+test("a hand-edited setting falls back to its default, or to its minimum when below it", () => {
+    const modes = F.pillModeOptions();
+    // [why, value read, expected]
+    for (const [why, got, expected] of [
+        ["an offered pill mode is kept", F.optionValue(modes, "count", "cost"), "count"],
+        ["a pill mode outside the offered set falls back to the default", F.optionValue(modes, "tailnet", "cost"), "cost"],
+        ["an unset pill mode is the default", F.optionValue(modes, undefined, "cost"), "cost"],
+        ["a poll interval in range is kept", F.settingNumber(45, 30, 10), 45],
+        ["a poll interval below the minimum is the minimum", F.settingNumber(0, 30, 10), 10],
+        ["a non-numeric poll interval is the default", F.settingNumber("soon", 30, 10), 30],
+        ["an empty poll interval is the default", F.settingNumber("", 30, 10), 30],
+        ["a saved false is kept", F.settingBool(false, true), false],
+        ["a non-boolean show-cost is the default", F.settingBool("false", true), true]
+    ])
+        assert.equal(got, expected, why);
+});
+
 test("each action runs its fleet command, assembled from the row", () => {
     const status = fixture();
     const control = F.controlRow(status);
     const lane = F.laneRows(status)[0];
     const V = "/usr/bin/vshell";
-    const B = "/home/u/.local/bin";
-    // [why, action, row, argv]
-    for (const [why, action, row, argv] of [
+    const attach = argv => [V, "terminal", "exec", "--tui", "--", "sh", "-c", HOLD, "fleet-attach", ...argv];
+    const HOLD = F.actionArgv("attachControl", control, V, B)[7];
+    // [why, action, row, the command the probe checks, argv]
+    for (const [why, action, row, command, argv] of [
         ["attaching to the control VM opens a terminal on fleet-attach and its default session",
-            "attachControl", control, [V, "terminal", "exec", "--tui", "--", `${B}/fleet-attach`]],
+            "attachControl", control, "fleet-attach", attach([`${B}/fleet-attach`])],
         ["attaching to a lane opens its repository's session, named without the owner",
-            "attachLane", lane, [V, "terminal", "exec", "--tui", "--", `${B}/fleet-attach`, "vgs"]],
-        ["opening in VSCodium runs fleet-code over every clone", "openCode", control, [`${B}/fleet-code`, "--all"]],
-        ["closing runs lane-host-daytona close for the row's item in a terminal held open for a refusal",
-            "closeLane", lane, [V, "terminal", "exec", "--tui", "--hold", "--", `${B}/lane-host-daytona`, "close", "--item", "VGS-376"]]
-    ])
+            "attachLane", lane, "fleet-attach", attach([`${B}/fleet-attach`, "vgs"])],
+        ["opening in VSCodium runs fleet-code over every clone", "openCode", control, "fleet-code", [`${B}/fleet-code`, "--all"]],
+        ["closing runs lane-host-daytona close for the row's item in a terminal held open after any exit",
+            "closeLane", lane, "lane-host-daytona",
+            [V, "terminal", "exec", "--tui", "--hold", "--", `${B}/lane-host-daytona`, "close", "--item", "VGS-376"]]
+    ]) {
         assert.deepEqual(F.actionArgv(action, row, V, B), argv, why);
+        assert.equal(F.actionCommand(action), command, `${why}: the probe checks the command it runs`);
+    }
     assert.throws(() => F.actionArgv("park", lane, V, B), /unknown action park/);
+    assert.throws(() => F.actionCommand("park"), /unknown action park/);
 
-    assert.deepEqual(F.statusArgv(false, "/p/fixture.json", B), [`${B}/lane-host-daytona`, "status", "--json"]);
-    assert.deepEqual(F.statusArgv(true, "/p/fixture.json", B), ["cat", "--", "/p/fixture.json"]);
+    // The attach wrapper runs in sh with the child's environment given explicitly. A failed
+    // attach prints its prompt and keeps the exit code; a clean detach prints nothing.
+    // [why, payload, exit status, whether the hold prompt printed]
+    for (const [why, payload, status, prompts] of [
+        ["a refused attach holds the terminal with its exit code", ["sh", "-c", "echo refused >&2; exit 1"], 1, true],
+        ["a clean detach closes the terminal", ["true"], 0, false]
+    ]) {
+        const run = spawnSync("sh", ["-c", HOLD, "fleet-attach", ...payload],
+            { input: "\n", encoding: "utf8", env: { PATH: process.env.PATH } });
+        assert.equal(run.status, status, why);
+        assert.equal(run.stdout !== "", prompts, `${why}: stdout ${JSON.stringify(run.stdout)}`);
+        if (prompts)
+            assert.ok(run.stdout.includes("fleet-attach exited 1"), `${why}: the prompt names the command and its code`);
+    }
 });
 
-test("a command the probe did not find disables its action and names the command", () => {
-    const available = F.availableCommands("fleet-attach\nunrelated-tool\n\n");
-    assert.deepEqual(available, { "fleet-attach": true }, "only the fleet's own commands are recorded");
+test("the probe records the fleet's own commands, and a command it did not find disables its use", () => {
+    assert.deepEqual(F.decodeProbe(0, "fleet-attach\nunrelated-tool\n\n"), { ok: true, available: { "fleet-attach": true } },
+        "only the fleet's own commands are recorded");
+    assert.deepEqual(F.decodeProbe(124, "fleet-attach\n"), { ok: false, error: "the fleet command probe exited 124" },
+        "a probe that timed out is a failure, never a fleet with commands missing");
+    const available = { "fleet-attach": true };
     // [command, available, whether it can run]
     for (const [command, avail, runs] of [
         ["fleet-attach", available, true],
@@ -147,4 +202,12 @@ test("a command the probe did not find disables its action and names the command
         if (!runs)
             assert.ok(problem.includes(command), `the reason names ${command}: ${problem}`);
     }
+    // [why, available, the status read]
+    for (const [why, avail, expected] of [
+        ["a found status command is read as JSON", { "lane-host-daytona": true },
+            { ok: true, argv: [`${B}/lane-host-daytona`, "status", "--json"] }],
+        ["a missing status command is a failure that names it", { "fleet-attach": true },
+            { ok: false, error: "lane-host-daytona not found in ~/.local/bin" }]
+    ])
+        assert.deepEqual(F.statusRead(avail, B), expected, why);
 });

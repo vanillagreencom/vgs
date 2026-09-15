@@ -279,9 +279,7 @@ const ROWS = [
         gated: [
             ["running: root.watched",
                 "the status poll runs only while a widget watches, so a shell with the pill on no bar " +
-                "runs no `lane-host-daytona status`"],
-            ["onUseFixtureChanged: { if (root.watched) root.refresh(); }",
-                "and switching the data source reads nothing while no widget watches"]]
+                "runs no `lane-host-daytona status`"]]
     },
     {
         plugin: "sysUpdate",

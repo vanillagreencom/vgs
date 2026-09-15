@@ -68,7 +68,7 @@ PluginComponent {
     function actionProblem(action) {
         if (!root.daemon)
             return "the fleet daemon has not started";
-        return Logic.commandProblem(Logic.actionCommand(action), root.daemon.available);
+        return root.daemon.actionProblem(action);
     }
 
     function openUrl(url) {

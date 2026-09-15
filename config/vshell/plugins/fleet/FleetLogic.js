@@ -17,17 +17,18 @@ var ATTACH_COMMAND = "fleet-attach";
 var CODE_COMMAND = "fleet-code";
 var BIN_DIR_LABEL = "~/.local/bin";
 
-// The Daytona sandbox state of a running sandbox, and the states a lane rests
-// in after a stop. A resting lane is present, so it was never closed.
+// The Daytona sandbox state of a running sandbox, and the states of a lane
+// that needs the owner: one resting after a stop or an archive is present, so
+// it was never closed, and one in error, a failed build or a pause is not
+// working.
 var RUNNING_STATE = "started";
-var RESTING_STATES = ["stopped", "archived"];
+var ATTENTION_STATES = ["stopped", "archived", "error", "build_failed", "paused"];
 
 var DEFAULTS = {
     pollSeconds: 30,
     pillMode: "cost",
     staleHours: 24,
-    showCost: true,
-    useFixture: false
+    showCost: true
 };
 
 function pillModeOptions() {
@@ -68,14 +69,12 @@ function settingBool(value, fallback) {
 
 // ---- reading ----
 
-function statusArgv(useFixture, fixturePath, binDir) {
-    if (useFixture)
-        return ["cat", "--", fixturePath];
-    return [binDir + "/" + STATUS_COMMAND, "status", "--json"];
-}
-
-// The probe prints one line per fleet command it found executable.
-function availableCommands(probeOut) {
+// One settled run of the probe: command name to true for each fleet command it
+// printed as executable. A probe that did not exit 0 (a timeout arrives as 124)
+// is a failure, never a fleet with every command missing.
+function decodeProbe(exitCode, probeOut) {
+    if (exitCode !== 0)
+        return failure("the fleet command probe exited " + exitCode);
     var found = {};
     var known = fleetCommands();
     var lines = String(probeOut || "").split("\n");
@@ -84,7 +83,7 @@ function availableCommands(probeOut) {
         if (known.indexOf(name) !== -1)
             found[name] = true;
     }
-    return found;
+    return { ok: true, available: found };
 }
 
 // Why a command cannot run, or "" when it can. `available` is null until the
@@ -101,9 +100,20 @@ function failure(reason) {
     return { ok: false, error: reason };
 }
 
-function firstLine(text) {
+// The argv of the status read once the probe has answered, or the failure that
+// names the missing status command.
+function statusRead(available, binDir) {
+    var problem = commandProblem(STATUS_COMMAND, available);
+    if (problem !== "")
+        return failure(problem);
+    return { ok: true, argv: [binDir + "/" + STATUS_COMMAND, "status", "--json"] };
+}
+
+// The status command, argparse and a Python traceback all write the reason on
+// the last stderr line, after any usage banner or stack.
+function lastLine(text) {
     var lines = String(text || "").split("\n");
-    for (var i = 0; i < lines.length; i++) {
+    for (var i = lines.length - 1; i >= 0; i--) {
         if (lines[i].trim() !== "")
             return lines[i].trim();
     }
@@ -120,13 +130,11 @@ function sandboxProblem(sandbox, index) {
     return "";
 }
 
-// One settled read of the status command. A failed, killed or unparsable read
-// is a failure the pill reports, never an empty fleet.
-function decodeStatus(exitCode, exitStatus, out, err) {
-    if (exitStatus !== 0)
-        return failure(STATUS_COMMAND + " status was killed");
+// One settled read of the status command. A failed, timed-out (exit 124) or
+// unparsable read is a failure the pill reports, never an empty fleet.
+function decodeStatus(exitCode, out, err) {
     if (exitCode !== 0) {
-        var reason = firstLine(err);
+        var reason = lastLine(err);
         return failure(STATUS_COMMAND + " status exited " + exitCode + (reason !== "" ? ": " + reason : ""));
     }
     var data;
@@ -165,7 +173,7 @@ function ageMinutes(created, nowMs) {
 }
 
 function laneNeedsAttention(lane, nowMs, staleHours) {
-    if (RESTING_STATES.indexOf(lane.state) !== -1)
+    if (ATTENTION_STATES.indexOf(lane.state) !== -1)
         return true;
     var age = ageMinutes(lane.created, nowMs);
     return age >= 0 && age >= staleHours * 60;
@@ -268,34 +276,58 @@ function repositorySession(repository) {
     return parts[parts.length - 1];
 }
 
-function actionCommand(action) {
-    switch (action) {
-    case "attachControl":
-    case "attachLane":
-        return ATTACH_COMMAND;
-    case "openCode":
-        return CODE_COMMAND;
-    case "closeLane":
-        return STATUS_COMMAND;
+// Keeps a terminal open only when its command exits nonzero, so a refusal stays
+// readable and a clean exit closes the window. `vshell terminal exec --hold`
+// holds after every exit.
+var HOLD_ON_FAILURE = 'code=0; "$@" || code=$?; if [ "$code" -ne 0 ]; then echo; ' +
+    'echo "$0 exited $code. Press Enter to close."; read _; fi; exit "$code"';
+
+// Each action, keyed by name: the fleet command the probe checks and the argv
+// that runs it, so a button is enabled only for the command it runs. Attach and
+// close open a terminal through `vshell terminal exec`; close holds it open
+// after any exit, so its result stays readable.
+var ACTIONS = {
+    attachControl: {
+        command: ATTACH_COMMAND,
+        argv: function (path, row, vshell) {
+            return [vshell, "terminal", "exec", "--tui", "--", "sh", "-c", HOLD_ON_FAILURE, ATTACH_COMMAND, path];
+        }
+    },
+    attachLane: {
+        command: ATTACH_COMMAND,
+        argv: function (path, row, vshell) {
+            return [vshell, "terminal", "exec", "--tui", "--", "sh", "-c", HOLD_ON_FAILURE, ATTACH_COMMAND, path,
+                repositorySession(row.repository)];
+        }
+    },
+    openCode: {
+        command: CODE_COMMAND,
+        argv: function (path) {
+            return [path, "--all"];
+        }
+    },
+    closeLane: {
+        command: STATUS_COMMAND,
+        argv: function (path, row, vshell) {
+            return [vshell, "terminal", "exec", "--tui", "--hold", "--", path, "close", "--item", row.item];
+        }
     }
-    throw new Error("fleet: unknown action " + action);
+};
+
+function actionEntry(action) {
+    if (!Object.prototype.hasOwnProperty.call(ACTIONS, action))
+        throw new Error("fleet: unknown action " + action);
+    return ACTIONS[action];
 }
 
-// The argv one action runs. Attach and close open a terminal through
-// `vshell terminal exec`; close holds it open so a refusal stays readable.
+function actionCommand(action) {
+    return actionEntry(action).command;
+}
+
+// The argv one action runs.
 function actionArgv(action, row, vshell, binDir) {
-    var command = binDir + "/" + actionCommand(action);
-    switch (action) {
-    case "attachControl":
-        return [vshell, "terminal", "exec", "--tui", "--", command];
-    case "attachLane":
-        return [vshell, "terminal", "exec", "--tui", "--", command, repositorySession(row.repository)];
-    case "openCode":
-        return [command, "--all"];
-    case "closeLane":
-        return [vshell, "terminal", "exec", "--tui", "--hold", "--", command, "close", "--item", row.item];
-    }
-    throw new Error("fleet: unknown action " + action);
+    var entry = actionEntry(action);
+    return entry.argv(binDir + "/" + entry.command, row, vshell);
 }
 
 // END FLEET LOGIC

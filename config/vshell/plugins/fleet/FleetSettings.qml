@@ -71,19 +71,12 @@ PluginSettings {
                 maximum: 168
                 unit: "h"
             }
-
-            ToggleSetting {
-                settingKey: "useFixture"
-                label: "Sample data"
-                description: "Show the sample fleet shipped with the plugin instead of reading lane-host-daytona"
-                defaultValue: Logic.DEFAULTS.useFixture
-            }
         }
     }
 
     StyledText {
         width: parent.width
-        text: "Needs the fleet repository's client commands in ~/.local/bin: lane-host-daytona for the status and Close, fleet-attach for Attach, and fleet-code for Open in VSCodium. The status command reads DAYTONA_API_KEY from the session environment. A missing command disables its button."
+        text: "Needs the fleet repository's client commands in ~/.local/bin: lane-host-daytona for the status and Close, fleet-attach for Attach, and fleet-code for Open in VSCodium. The status command reads DAYTONA_API_KEY from the environment or from ~/.fleet/env. A missing command disables its button."
         font.pixelSize: Theme.settingsFontSize
         color: Theme.surfaceVariantText
         wrapMode: Text.WordWrap

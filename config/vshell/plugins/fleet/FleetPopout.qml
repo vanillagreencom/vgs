@@ -58,9 +58,9 @@ PopoutComponent {
             root.confirmItem = "";
     }
 
-    function act(action, row, problem) {
-        if (problem !== "")
-            return;
+    // The daemon refuses an action whose command is missing, with a toast that
+    // names it; the button's colour and tooltip only show that answer.
+    function act(action, row) {
         if (action === "closeLane") {
             root.confirmItem = row.item;
             return;
@@ -76,8 +76,8 @@ PopoutComponent {
         return parts.join(" · ");
     }
 
-    // A disabled action stays hoverable, so its tooltip can say why it is
-    // disabled; the click does nothing.
+    // An action whose command is missing stays hoverable, so its tooltip can
+    // say why; a click reaches the daemon's refusal.
     component ActionIcon: VgsActionButton {
         id: actionIcon
 
@@ -90,7 +90,7 @@ PopoutComponent {
         iconSize: 16
         iconColor: actionIcon.problem === "" ? Theme.surfaceText : Theme.withAlpha(Theme.surfaceVariantText, 0.5)
         tooltipText: actionIcon.problem === "" ? actionIcon.label : actionIcon.label + ": " + actionIcon.problem
-        onClicked: root.act(actionIcon.action, actionIcon.row, actionIcon.problem)
+        onClicked: root.act(actionIcon.action, actionIcon.row)
     }
 
     StyledRect {
