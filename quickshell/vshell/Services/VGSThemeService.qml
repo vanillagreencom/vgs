@@ -1239,8 +1239,10 @@ Singleton {
                 refresh();
             }, 120000, true);
         } catch (e) {
-            // A launch that throws answers no callback, and an arm nothing clears
-            // holds the theme sync for the rest of the session, so it is cleared here.
+            // What this covers is a synchronous failure before the run is armed, which
+            // answers no callback; an arm nothing clears holds the theme sync for the
+            // rest of the session. A run that is armed and never starts belongs to
+            // Common/Proc.qml's timeout, which answers the callback itself.
             log.warn("Could not start theme init:", e);
             Theme.themeInitFinished("unreadable");
             refresh();

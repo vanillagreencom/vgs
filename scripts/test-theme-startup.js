@@ -37,8 +37,8 @@ function start(handler, initExit, initOutput) {
         },
         _run(id, args, callback) {
             events.push(args.join(" "));
-            if (initExit === "launch-throws")
-                throw new Error("could not start the theme helper");
+            if (initExit === "run-throws")
+                throw new Error("could not flush the session before the theme helper");
             running.push(() => callback(initOutput, initExit, ""));
         },
         refresh() {
@@ -81,10 +81,13 @@ test("startup arms the theme sync, runs theme init before the first reads, and r
     }
 });
 
-test("a launch that throws still answers the arm and still reads", () => {
+test("a synchronous failure in _run still answers the arm and still reads", () => {
+    // Common/Proc.qml arms a debounce timer and starts the process from that timer's own
+    // handler, so a failed start is its timeout's to answer, not this stack's. What throws
+    // here are the two flushes and the timer creation, before anything is armed.
     const handlers = service.handlers("Component.onCompleted");
-    const { afterExit } = start(handlers[0], "launch-throws", "");
+    const { afterExit } = start(handlers[0], "run-throws", "");
     assert.deepEqual(afterExit, ["armed", "theme init --json", "outcome unreadable", "refresh"],
-        "a launch failure answers no callback, so the handler must clear the arm itself — an arm " +
-        "nothing clears holds the theme sync for the rest of the session — and still load the theme");
+        "a throw out of _run answers no callback, so the handler must clear the arm itself — an " +
+        "arm nothing clears holds the theme sync for the rest of the session — and still load the theme");
 });

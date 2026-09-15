@@ -300,6 +300,7 @@ function shell(session, recordedRef) {
         SessionData: store,
         SettingsData: { wallpaperSource: "theme" }
     };
+    theme.settings = themeScope.SettingsData;
     const themeRun = (name, params, args) => callInScope(themeQ.body(name), theme, themeScope, params, args);
     theme._syncSessionWallpaper = value => themeRun("_syncSessionWallpaper", ["themeWallpaper"], [value]);
     theme.themeInitStarted = () => themeRun("themeInitStarted", [], []);
@@ -343,7 +344,7 @@ test("a repair that rewrote theme.json never reaches the session's setter", () =
     assert.equal(sh.seen.saves, 1, "and the repair is written once, so it survives the next start too");
 });
 
-test("a theme apply during startup still reaches every monitor", () => {
+test("a theme apply during startup still reaches every monitor, and so does the next one", () => {
     const sh = shell(staleSession(), toRef(HERE + "1-milad.jpg"));
     sh.service.start();
     sh.theme.parseTheme();
@@ -354,6 +355,33 @@ test("a theme apply during startup still reaches every monitor", () => {
     assert.deepEqual(sh.store.monitorWallpapers,
         { "DP-1": HERE + "1-milad.jpg", "DP-2": HERE + "1-milad.jpg", "DP-5": HERE + "1-milad.jpg" },
         "and under per-monitor mode it reaches every screen, which is what an apply means there");
+
+    // Startup is over, so the hold must be gone rather than merely released once. Left
+    // armed, the watcher files every later apply under the held value and nothing reads
+    // it again: the user's colours change and the background stays put, with no error.
+    sh.theme.recorded = toRef(HERE + "2-waves.png");
+    sh.theme.parseTheme();
+    assert.deepEqual(sh.seen.setWallpaper, [HERE + "1-milad.jpg", HERE + "2-waves.png"],
+        "an apply after startup must reach the session on its own, with nothing left to release it");
+});
+
+test("the sync leaves the session alone where the watcher has nothing to carry", () => {
+    // The three guards this function holds, each on its own. Without the first, a
+    // colour-only apply — which rewrites theme.json and leaves its wallpaper alone —
+    // calls the setter with the unchanged path, and under per-monitor mode that writes
+    // the one image to every screen: the flattening this gate exists to prevent, by
+    // another door.
+    for (const [why, wallpaper, source] of [
+        ["the wallpaper the session already holds", null, "theme"],
+        ["a theme that records no wallpaper", "", "theme"],
+        ["wallpaperSource folder, which decouples the wallpaper from theme applies",
+            HERE + "2-waves.png", "folder"]
+    ]) {
+        const sh = shell(staleSession(), "");
+        sh.theme.settings.wallpaperSource = source;
+        sh.theme._syncSessionWallpaper(wallpaper === null ? sh.store.wallpaperPath : wallpaper);
+        assert.deepEqual(sh.seen.setWallpaper, [], `${why}: the session must be left alone`);
+    }
 });
 
 test("a theme init whose answer cannot be read holds the sync", () => {

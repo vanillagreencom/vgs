@@ -1403,10 +1403,11 @@ Singleton {
         root._heldThemeWallpaper = "";
     }
 
-    // `clean` releases the held sync: no file was repaired, so the change came from an
-    // apply. `unreadable` releases nothing, because the sync it would run replaces every
-    // monitor's wallpaper and session.json then no longer names the files a repair needs;
-    // holding it costs the session this theme's wallpaper until the next apply.
+    // `VGSThemeService._themeInitOutcome` owns which outcome an init answer carries, and
+    // what it turns on is a rewrite of theme.json; this acts on the outcome. `unreadable`
+    // releases nothing, because the sync it would run replaces every monitor's wallpaper
+    // and session.json then no longer names the files a repair needs; holding it costs
+    // the session this theme's wallpaper until the next apply.
     function themeInitFinished(outcome) {
         root._themeInitRunning = false;
         const held = root._heldThemeWallpaper;
