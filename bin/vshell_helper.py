@@ -3038,9 +3038,13 @@ def materialize_theme_package(bp: Dict[str, Any], apps: Dict[str, str] | None = 
     Held, the record names a palette the package no longer holds, so the loader keeps
     the file out of the render and a later write finds it unvouched and holds the
     record again. It comes back when a write vouches for it, which needs the loader to
-    keep it, which needs the package's palette to match the record: no shipped command
-    restores the `colors.toml` that record was taken from, so a user reaches it by
-    picking that palette again or by resetting the file.
+    keep it, which needs the package's palette to match the record. No shipped command
+    restores the `colors.toml` that record was taken from: the claude target declares
+    no curated file of its own, so `theme reset-app claude` and `theme edit-app claude`
+    refuse by name, `theme app-colors claude --reset` clears the override layer and
+    leaves the record where it is, and a colour edit saved back writes `colors.toml` in
+    derived form. Putting those values back in the file, or reinstalling or re-creating
+    the package, is what returns the file to the render.
 
     `vouched` is how a caller names a merge-style file it did not hand in that the
     destination's own palette still vouches for: the ones `curated_apps_for_palette`
