@@ -283,6 +283,27 @@ QtObject {
         }
     ]
 
+    // Instantiate a plugin's widget to read its Control Center fields, or return null.
+    // createObject throws on a stale component. reloadPlugin sets the rebuilt component
+    // before it returns true, so one retry in the same pass reads the new one.
+    function createProbeInstance(pluginId) {
+        try {
+            return PluginService.pluginWidgetComponents[pluginId].createObject(null);
+        } catch (e) {
+            root.log.warn("stale plugin component for", pluginId, "- reloading:", e.message);
+        }
+        if (!PluginService.reloadPlugin(pluginId))
+            return null;
+        try {
+            return PluginService.pluginWidgetComponents[pluginId].createObject(null);
+        } catch (e) {
+            root.log.warn("reloaded plugin component still throws for", pluginId, "-", e.message);
+            return null;
+        }
+    }
+
+    // Plugin widgets the Control Center widget library offers. Call it from a handler, never
+    // a binding: a stale plugin's reload writes the PluginService state a binding would read.
     function getPluginWidgets() {
         const plugins = [];
         const loadedPlugins = PluginService.getLoadedPlugins();
@@ -294,19 +315,14 @@ QtObject {
                 continue;
             }
 
-            const pluginComponent = PluginService.pluginWidgetComponents[plugin.id];
-            if (!pluginComponent)
+            if (!PluginService.pluginWidgetComponents[plugin.id])
                 continue;
 
-            let tempInstance;
-            try {
-                tempInstance = pluginComponent.createObject(null);
-            } catch (e) {
-                PluginService.reloadPlugin(plugin.id);
+            const tempInstance = createProbeInstance(plugin.id);
+            if (!tempInstance) {
+                root.log.warn("plugin widget probe failed for", plugin.id, "- not offered in the widget library");
                 continue;
             }
-            if (!tempInstance)
-                continue;
 
             const hasCCWidget = tempInstance.ccWidgetIcon && tempInstance.ccWidgetIcon.length > 0;
             tempInstance.destroy();
