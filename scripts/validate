@@ -86,6 +86,7 @@ qml       | scripts/test-plugin-daemon-views.js
 -         | scripts/test-shell-runner-guard.js
 -         | scripts/test-proc-timeout.js
 -         | scripts/test-control-center-widget-library.js
+-         | scripts/test-i18n-locale-selection.js
 helper    | scripts/check-vshell-helper.py
 helper    | scripts/check-keybinds-display.py
 helper    | scripts/check-dev-tools.py

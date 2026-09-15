@@ -267,6 +267,7 @@ jobs:
           scripts/test-shell-runner-guard.js
           scripts/test-proc-timeout.js
           scripts/test-control-center-widget-library.js
+          scripts/test-i18n-locale-selection.js
           scripts/test-sudo-toggle-confirm.js
           scripts/test-pill-hover-safety.js
           scripts/test-launcher-hover-latch.js

@@ -35,6 +35,13 @@ Singleton {
 
     property url _selectedPath: ""
 
+    // True once a Ready transition has read the folder and chosen a locale.
+    property bool _localesRead: false
+
+    // The resolved locale the last fallback warning named. A resolved locale is never empty, so
+    // the initial value differs from every real one and the first fallback warns.
+    property string _lastFallbackLocale: ""
+
     FolderListModel {
         id: dir
         folder: root.translationsFolder
@@ -42,7 +49,13 @@ Singleton {
         showDirs: false
         showDotAndDotDot: false
 
-        onStatusChanged: if (status === FolderListModel.Ready) {
+        // The model re-reaches Ready for the life of the session. The folder it lists ships with
+        // the shell, so only the first pass carries new information; a locale the user picks later
+        // arrives through SessionData.updateLocale().
+        onStatusChanged: {
+            if (status !== FolderListModel.Ready || root._localesRead)
+                return;
+            root._localesRead = true;
             root._loadPresentLocales();
             root._pickTranslation();
         }
@@ -76,9 +89,6 @@ Singleton {
     }
 
     function _loadPresentLocales() {
-        if (Object.keys(presentLocales).length > 1) {
-            return;
-        }
         for (let i = 0; i < dir.count; i++) {
             const name = dir.get(i, "fileName");
             if (name && name.endsWith(".json")) {
@@ -114,6 +124,9 @@ Singleton {
         _selectedPath = "";
         translationsLoaded = false;
         translations = ({});
+        if (_lastFallbackLocale === _resolvedLocale)
+            return;
+        _lastFallbackLocale = _resolvedLocale;
         log.warn("Falling back to built-in English strings");
     }
 
