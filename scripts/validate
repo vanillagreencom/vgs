@@ -122,6 +122,7 @@ qml       | scripts/test-switcher-selection.js
 qml       | scripts/test-switcher-scope.js
 qml       | scripts/test-switcher-source.js
 qml       | scripts/test-thumb-sweep.js
+qml       | scripts/test-wallpaper-refs.js
 qml       | scripts/test-notification-history-trim.js
 qml       | scripts/test-theme-startup.js
 qml       | scripts/test-theme-apply-queue.js
@@ -132,6 +133,7 @@ qml       | scripts/test-settings-navigation.js
 qml       | scripts/test-store-write-coalescing.js
 qml       | scripts/test-open-connect-lifetime.js
 helper    | scripts/test-wallpaper-thumbs.py
+helper    | scripts/test-wallpaper-refs.py
 helper    | python3 -m py_compile bin/vshell-helper bin/vshell_helper.py
 helper    | python3 -m py_compile scripts/publish-theme-assets.py
 helper    | bash -n bin/vshell

@@ -2,7 +2,19 @@
 
     .import "./SessionSpec.js" as SpecModule
 
-function parse(root, jsonObj) {
+// Apply `mapRef` to a `ref` key's value or to every value of a `refMap` key.
+// SessionData passes Paths.resolveRef on the way in and Paths.wallpaperRef on the
+// way out, so the store itself stays free of QML and of the path rule.
+function mapped(spec, value, mapRef) {
+    if (!mapRef || value === undefined || value === null) return value;
+    if (spec.ref) return mapRef(value);
+    if (!spec.refMap) return value;
+    var out = {};
+    for (var key in value) out[key] = mapRef(value[key]);
+    return out;
+}
+
+function parse(root, jsonObj, mapRef) {
     var SPEC = SpecModule.SPEC;
 
     if (!jsonObj) return;
@@ -18,16 +30,17 @@ function parse(root, jsonObj) {
         var raw = jsonObj[k];
         var spec = SPEC[k];
         var coerce = spec.coerce;
-        root[k] = coerce ? (coerce(raw) !== undefined ? coerce(raw) : root[k]) : raw;
+        var value = coerce ? (coerce(raw) !== undefined ? coerce(raw) : root[k]) : raw;
+        root[k] = mapped(spec, value, mapRef);
     }
 }
 
-function toJson(root) {
+function toJson(root, mapRef) {
     var SPEC = SpecModule.SPEC;
     var out = {};
     for (var k in SPEC) {
         if (SPEC[k].persist === false) continue;
-        out[k] = root[k];
+        out[k] = mapped(SPEC[k], root[k], mapRef);
     }
     out.configVersion = root.sessionConfigVersion;
     return out;

@@ -1,0 +1,86 @@
+{
+  "why": "The one statement of the durable-wallpaper reference rule. bin/vshell_helper.py owns it as portable_ref and resolve_path; quickshell/vshell/Common/Paths.qml mirrors it for session.json, which the shell writes without the helper. scripts/check-vshell-helper.py and scripts/test-wallpaper-refs.js each run their own side against these rows, so the two implementations cannot drift apart without one of them going red.",
+  "roots": {
+    "repo": "/home/u/dev/.worktrees/vshell/vgs-273",
+    "userThemes": "/home/u/.config/vshell/themes",
+    "home": "/home/u"
+  },
+  "ref": [
+    {
+      "why": "a built-in package's background under the running root becomes a rooted reference",
+      "path": "/home/u/dev/.worktrees/vshell/vgs-273/themes/tokyo-night/backgrounds/1-milad.jpg",
+      "ref": "${VSHELL_ROOT}/themes/tokyo-night/backgrounds/1-milad.jpg",
+      "resolved": "/home/u/dev/.worktrees/vshell/vgs-273/themes/tokyo-night/backgrounds/1-milad.jpg"
+    },
+    {
+      "why": "anything else under the root is rooted too, such as the branding image a hook falls back to",
+      "path": "/home/u/dev/.worktrees/vshell/vgs-273/config/vshell/branding/fastfetch-logo.jpg",
+      "ref": "${VSHELL_ROOT}/config/vshell/branding/fastfetch-logo.jpg",
+      "resolved": "/home/u/dev/.worktrees/vshell/vgs-273/config/vshell/branding/fastfetch-logo.jpg"
+    },
+    {
+      "why": "a user package does not move with the shell, so its background stays absolute",
+      "path": "/home/u/.config/vshell/themes/catppuccin/backgrounds/2-waves.png",
+      "ref": "/home/u/.config/vshell/themes/catppuccin/backgrounds/2-waves.png",
+      "resolved": "/home/u/.config/vshell/themes/catppuccin/backgrounds/2-waves.png"
+    },
+    {
+      "why": "a package background recorded by a checkout that is gone is re-rooted on this installation",
+      "path": "/home/u/dev/vshell/themes/tokyo-night-moon/backgrounds/3-fakurian.jpg",
+      "ref": "${VSHELL_ROOT}/themes/tokyo-night-moon/backgrounds/3-fakurian.jpg",
+      "resolved": "/home/u/dev/.worktrees/vshell/vgs-273/themes/tokyo-night-moon/backgrounds/3-fakurian.jpg"
+    },
+    {
+      "why": "a picture the user chose outside VGS names no package and is left alone",
+      "path": "/home/u/Pictures/Wallpapers/anime-girl.png",
+      "ref": "/home/u/Pictures/Wallpapers/anime-girl.png",
+      "resolved": "/home/u/Pictures/Wallpapers/anime-girl.png"
+    },
+    {
+      "why": "a system wallpaper outside both roots is left alone",
+      "path": "/usr/share/backgrounds/default.png",
+      "ref": "/usr/share/backgrounds/default.png",
+      "resolved": "/usr/share/backgrounds/default.png"
+    },
+    {
+      "why": "the colour literal setWallpaperColor stores in the same field is not a path",
+      "path": "#1e1e2e",
+      "ref": "#1e1e2e",
+      "resolved": "#1e1e2e"
+    },
+    {
+      "why": "a reference already in reference form is recorded unchanged",
+      "path": "${VSHELL_ROOT}/themes/tokyo-night/backgrounds/1-milad.jpg",
+      "ref": "${VSHELL_ROOT}/themes/tokyo-night/backgrounds/1-milad.jpg",
+      "resolved": "/home/u/dev/.worktrees/vshell/vgs-273/themes/tokyo-night/backgrounds/1-milad.jpg"
+    },
+    {
+      "why": "no wallpaper records nothing",
+      "path": "",
+      "ref": "",
+      "resolved": ""
+    }
+  ],
+  "resolve": [
+    {
+      "why": "a rooted reference resolves against the root the shell is running from",
+      "ref": "${VSHELL_ROOT}/themes/tokyo-night/backgrounds/1-milad.jpg",
+      "path": "/home/u/dev/.worktrees/vshell/vgs-273/themes/tokyo-night/backgrounds/1-milad.jpg"
+    },
+    {
+      "why": "a home-relative reference, the form target destinations are written in, resolves too",
+      "ref": "~/.config/vshell/themes/catppuccin/backgrounds/2-waves.png",
+      "path": "/home/u/.config/vshell/themes/catppuccin/backgrounds/2-waves.png"
+    },
+    {
+      "why": "an absolute path is already resolved",
+      "ref": "/home/u/Pictures/Wallpapers/anime-girl.png",
+      "path": "/home/u/Pictures/Wallpapers/anime-girl.png"
+    },
+    {
+      "why": "no reference resolves to no path",
+      "ref": "",
+      "path": ""
+    }
+  ]
+}

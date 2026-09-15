@@ -26,6 +26,64 @@ Singleton {
     readonly property string repoRoot: Quickshell.env("VSHELL_ROOT") || (Quickshell.shellDir + "/../..")
     readonly property string vshellCli: repoRoot + "/bin/vshell"
 
+    // The token durable theme state roots a wallpaper path on, spelled as
+    // bin/vshell_helper.py writes and reads it.
+    readonly property string rootToken: "${VSHELL_ROOT}"
+
+    // BEGIN WALLPAPER REFERENCE DECISION
+    // Mirrors `portable_ref` and `resolve_path` in bin/vshell_helper.py, which owns
+    // the rule; session.json is the one durable file the shell writes without the
+    // helper, and its writer runs on a coalesced timer no subprocess can sit inside.
+    // scripts/lib/wallpaper-ref-cases.json is the single case table both run.
+    // Keep this region free of root., Theme., I18n. and Qt. references: scripts/test-wallpaper-refs.js extracts and executes it.
+
+    // A wallpaper path as durable state records it, given this installation's root
+    // and the user's theme package directory. A path inside the root becomes a
+    // rooted reference; one inside the user's packages is already durable; one that
+    // ends in a package background's tail was recorded by another installation and
+    // is re-rooted on this one. Anything else, a picture outside VGS or the colour
+    // literal setWallpaperColor stores in the same field, passes through.
+    function wallpaperRefFrom(path, repo, userThemes, token) {
+        if (!path || !path.startsWith("/"))
+            return path || "";
+        if (path.startsWith(repo + "/"))
+            return token + path.substring(repo.length);
+        if (path.startsWith(userThemes + "/"))
+            return path;
+        const tail = path.match(/\/themes\/([^/]+)\/backgrounds\/([^/]+)$/);
+        if (tail)
+            return token + "/themes/" + tail[1] + "/backgrounds/" + tail[2];
+        return path;
+    }
+
+    // The inverse, for the token alone; `expandTilde` owns the other form the helper
+    // writes into a target's destination.
+    function resolveRefFrom(ref, repo, token) {
+        if (!ref)
+            return "";
+        if (ref.startsWith(token))
+            return repo + ref.substring(token.length);
+        return ref;
+    }
+    // END WALLPAPER REFERENCE DECISION
+
+    function wallpaperRef(path: string): string {
+        return wallpaperRefFrom(path, root.repoRoot, strip(root.config) + "/themes", root.rootToken);
+    }
+
+    function resolveRef(ref: string): string {
+        return expandTilde(resolveRefFrom(ref, root.repoRoot, root.rootToken));
+    }
+
+    // A wallpaper as the shell holds it, out of whatever durable state recorded it.
+    // Normalising before resolving is what recovers a record an installation that is
+    // gone wrote: wallpaperRefFrom's third arm re-roots a package background on this
+    // installation, so a session written before references existed shows the same
+    // image rather than nothing. `resolved_wallpaper` is the helper's counterpart.
+    function resolveWallpaper(value: string): string {
+        return resolveRef(wallpaperRef(value));
+    }
+
     readonly property url imagecache: `${cache}/imagecache`
 
     function stringify(path: url): string {

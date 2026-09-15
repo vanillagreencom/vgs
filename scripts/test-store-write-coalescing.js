@@ -19,13 +19,7 @@ const { extractBlock } = require("./lib/qml-block.js");
 
 const VSHELL = path.join(__dirname, "..", "quickshell", "vshell");
 const read = rel => fs.readFileSync(path.join(VSHELL, rel), "utf8");
-
-// Load a `.pragma library` file as a module exposing the named top-level functions.
-function loadLibrary(rel, names) {
-    const body = read(rel).replace(/^\.pragma library\s*$/m, "");
-    // eslint-disable-next-line no-new-func
-    return new Function(`${body}\nreturn { ${names.join(", ")} };`)();
-}
+const { loadLibrary } = require("./lib/qml-library.js");
 
 // Evaluate an extracted QML body under `with`. Every name resolves in the stub map, so an
 // assignment lands on the stubs; a name the map lacks reads its global or undefined, and

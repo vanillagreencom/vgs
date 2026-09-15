@@ -2,7 +2,7 @@
   "name": "{name}",
   "source": "{source}",
   "mode": "{theme_type}",
-  "wallpaper": "{wallpaper}",
+  "wallpaper": "{wallpaper.ref}",
   "colors": {
     "background": "{background}",
     "foreground": "{foreground}",

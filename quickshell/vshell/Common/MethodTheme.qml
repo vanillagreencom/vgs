@@ -1406,10 +1406,13 @@ Singleton {
                 // CLI applies only touch theme.json; keep the session wallpaper in sync
                 // so `vshell theme apply` changes the background like UI applies do.
                 // wallpaperSource=folder decouples the wallpaper from theme applies.
-                if (root.methodThemeJson.wallpaper && typeof SessionData !== "undefined"
-                        && SessionData.wallpaperPath !== root.methodThemeJson.wallpaper
+                // The file records a portable reference, so this is where it becomes
+                // the path on this machine; SessionData holds resolved paths alone.
+                const themeWallpaper = Paths.resolveWallpaper(root.methodThemeJson.wallpaper || "");
+                if (themeWallpaper && typeof SessionData !== "undefined"
+                        && SessionData.wallpaperPath !== themeWallpaper
                         && (typeof SettingsData === "undefined" || SettingsData.wallpaperSource !== "folder"))
-                    SessionData.setWallpaper(root.methodThemeJson.wallpaper);
+                    SessionData.setWallpaper(themeWallpaper);
                 root.colorsFileLoadFailed = false;
             } catch (e) {
                 root.colorsFileLoadFailed = true;

@@ -922,13 +922,15 @@ def test_every_target_hook_is_dispatched_and_classified():
 
 
 def test_the_shipped_wallpaper_templates_are_the_ones_the_documented_invariant_names():
-    """The shell reloads on a wallpaper pick because vgs-shell's template names
-    {wallpaper}. Nothing else makes it reload.
+    """The shell reloads on a wallpaper pick because vgs-shell's template names the
+    wallpaper role. Nothing else makes it reload.
 
     Before the gate every enabled target's hook ran regardless. Deleting the token
     from themes/targets/vgs-shell/vgs-theme.json now stops the shell reloading
     after a wallpaper change, with every synthetic case still green, so the set is
-    derived from the shipped targets rather than restated here.
+    derived from the shipped targets rather than restated here. The role is read
+    through the helper's own token syntax, so a template naming it with a modifier,
+    as the shell's does with `.ref`, counts the same as a bare one.
     """
     naming = []
     for config in sorted((REPO_ROOT / "themes" / "targets").glob("*/config.json")):
@@ -936,7 +938,7 @@ def test_the_shipped_wallpaper_templates_are_the_ones_the_documented_invariant_n
         if not template:
             continue
         path = config.parent / template
-        if "{wallpaper}" in path.read_text():
+        if any(match.group(1) == "wallpaper" for match in helper.TEMPLATE_RE.finditer(path.read_text())):
             naming.append(str(path.relative_to(REPO_ROOT)))
     assert_equal(naming, ["themes/targets/pywalfox-vgs/colors.json",
                           "themes/targets/vgs-shell/vgs-theme.json"],

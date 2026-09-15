@@ -266,7 +266,7 @@ Singleton {
                 }
             }
 
-            Store.parse(root, obj);
+            Store.parse(root, obj, Paths.resolveWallpaper);
             _applyDndExpirySanity();
 
             _loadedSessionSnapshot = getCurrentSessionJson();
@@ -310,7 +310,7 @@ Singleton {
     }
 
     function getCurrentSessionJson() {
-        return JSON.stringify(Store.toJson(root), null, 2);
+        return JSON.stringify(Store.toJson(root, Paths.wallpaperRef), null, 2);
     }
 
     function parseSettings(content) {
@@ -345,7 +345,7 @@ Singleton {
                 }
             }
 
-            Store.parse(root, obj);
+            Store.parse(root, obj, Paths.resolveWallpaper);
             _applyDndExpirySanity();
 
             _loadedSessionSnapshot = getCurrentSessionJson();
