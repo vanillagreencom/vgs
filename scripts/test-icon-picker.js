@@ -24,7 +24,8 @@ const SOURCE = fs.readFileSync(TAB_QML, "utf8");
 const Q = qmlSource(SOURCE, "IconsTab.qml");
 
 const M = evaluateMarked(SOURCE, "ICON PICKER MODEL",
-    ["iconPickerState", "appliedSetName", "iconSetClaim", "setLine", "fixedPickTarget", "iconSourceRowShown"], "IconsTab.qml");
+    ["iconPickerState", "appliedSetName", "themeSetName", "iconSetClaim", "setLine", "fixedPickTarget", "iconSourceRowShown"],
+    "IconsTab.qml");
 
 const TILE_QML = path.join(__dirname, "..", "quickshell", "vshell", "Modules", "Settings", "Widgets", "IconSetTile.qml");
 const TILE = qmlSource(fs.readFileSync(TILE_QML, "utf8"), "IconSetTile.qml");
@@ -72,6 +73,20 @@ test("the tab draws copy instead of tiles whenever a tile would do nothing", () 
         ["sets are installed and the user owns the choice", "ok", false, 2, ""],
     ])
         assert.equal(M.iconPickerState(readState, followTheme, tileCount), state, why);
+});
+
+test("the theme's own set is named only from the read that produced it", () => {
+    // [why, read state, follow theme, theme's set, the name the card states]
+    for (const [why, readState, followTheme, themeIcon, stated] of [
+        ["a good read names the theme's set", "ok", false, "Yaru-purple", "Yaru-purple"],
+        // refresh() runs on VGSThemeService.onCurrentLoaded, and themeIcon keeps the
+        // previous theme's value when that read fails, so the name is withheld.
+        ["a failed read after a good one states nothing, not the set a theme ago", "failed", false, "Yaru-purple", ""],
+        ["a pending read states nothing", "pending", false, "Yaru-purple", ""],
+        ["a theme that names no set states nothing", "ok", false, "", ""],
+        ["under Follow theme the applied line names it instead", "ok", true, "Yaru-purple", ""],
+    ])
+        assert.equal(M.themeSetName(readState, followTheme, themeIcon), stated, why);
 });
 
 test("the set the shell draws is named only where the tab can establish it", () => {
@@ -229,12 +244,18 @@ test("a card line draws what the region decided and nothing of its own", () => {
         "the card names the set the shell is drawing, which SettingsData.iconTheme resolves per mode, not the stored dark name");
     assert.equal(Q.binding("fixedTarget").value, "fixedPickTarget(pickerState, SettingsData.iconTheme, iconSets)",
         "the fixed option applies the set the region names, so the row never offers one it cannot apply");
+    assert.equal(Q.binding("themeSet").value, "themeSetName(readState, followTheme, themeIcon)",
+        "the theme's name reaches the card only through the region, with the read state that produced it");
 
     const lines = Q.objectBlocks("SetLine", 2);
     assert.equal(lines[0].q.binding("setName").value, "root.appliedIcon",
         "the first line is about the set the shell draws");
-    assert.equal(lines[1].q.binding("setName").value, 'root.followTheme ? "" : root.themeIcon',
-        "under Follow theme the theme's set is the applied set, which the line above names; a second line would state it twice");
+    assert.equal(lines[1].q.binding("setName").value, "root.themeSet",
+        "the theme line takes its name from the region, never from the helper field directly");
+    // Neither line may reach a helper-provided name around the region: outside the one
+    // assignment that fills it, nothing may read root.themeIcon.
+    assert.equal(Q.flat(SOURCE).match(/root\.themeIcon\b(?! =)/g), null,
+        "root.themeIcon is the raw helper field; only the region may read it, through themeSetName and appliedSetName");
 });
 
 test("the fixed option offers only a set it can actually apply", () => {

@@ -26,6 +26,7 @@ Item {
     // SettingsData.iconTheme is resolveIconTheme(), the one rule for which of the stored
     // names the shell is drawing, so a per-mode light session names its light set here.
     readonly property string appliedIcon: appliedSetName(readState, followTheme, themeIcon, SettingsData.iconTheme)
+    readonly property string themeSet: themeSetName(readState, followTheme, themeIcon)
     readonly property string fixedTarget: fixedPickTarget(pickerState, SettingsData.iconTheme, iconSets)
 
     // BEGIN ICON PICKER MODEL
@@ -56,6 +57,16 @@ Item {
         if (readState !== "ok")
             return "";
         return themeIcon || "System Default";
+    }
+
+    // The set the theme names, or "" when the card cannot state it. Under Follow theme
+    // the applied line already names it, and the name arrives with the set list, so a
+    // read that is not ok leaves the previous theme's name standing: the card states
+    // nothing rather than the set a theme ago.
+    function themeSetName(readState, followTheme, themeIcon) {
+        if (followTheme || readState !== "ok")
+            return "";
+        return themeIcon;
     }
 
     // What the card may say about one icon set name, `sets` being the list a read
@@ -225,10 +236,9 @@ Item {
                 }
 
                 // What the theme would pick, while the user's own choice overrides it.
-                // Under Follow theme the applied line above already names it.
                 SetLine {
                     label: I18n.tr("This theme's icon set: %1")
-                    setName: root.followTheme ? "" : root.themeIcon
+                    setName: root.themeSet
                 }
 
                 // The picker's stand-in: one line saying why there is nothing to pick.
