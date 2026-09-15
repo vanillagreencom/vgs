@@ -83,6 +83,13 @@ Singleton {
         return appId;
     }
 
+    // The URL that draws an icon file through Quickshell's icon image provider, which
+    // renders at the device pixel ratio. A plain file:// source is loaded at native
+    // size and mipmapped down, which visibly softened large themed icons on HiDPI.
+    function iconProviderUrl(path: string): string {
+        return "image://icon/" + path;
+    }
+
     function themedIconPath(name: string): string {
         if (!name)
             return "";
@@ -118,7 +125,7 @@ Singleton {
         const themed = (typeof IconThemeService !== "undefined") ? IconThemeService.resolve(target) : "";
         if (themed)
             return themed;
-        return "image://icon/" + target;
+        return iconProviderUrl(target);
     }
 
     function getAppIcon(appId: string, desktopEntry: var): string {

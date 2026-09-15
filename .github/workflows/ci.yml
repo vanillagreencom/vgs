@@ -260,6 +260,7 @@ jobs:
           scripts/test-dock-scratchpad-identity.js
           scripts/test-overview-refetch.js
           scripts/test-bar-workspace-filter.js
+          scripts/test-icon-picker.js
           scripts/check-paste-injection.py
           scripts/test-launcher-search-gate.js
           scripts/check-notification-takeover.js
