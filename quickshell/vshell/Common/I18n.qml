@@ -108,21 +108,27 @@ Singleton {
         }
     }
 
+    // English is served from the built-in strings, so it names no file to load.
+    function _pathFor(tag) {
+        return tag.startsWith("en") ? "" : translationsFolder + "/" + tag + ".json";
+    }
+
     function _pickTranslation() {
         for (let i = 0; i < _candidates.length; i++) {
             const cand = _candidates[i];
             if (presentLocales[cand] === undefined)
                 continue;
-            useLocale(cand, cand.startsWith("en") ? "" : translationsFolder + "/" + cand + ".json");
+            useLocale(cand, _pathFor(cand));
             return;
         }
 
-        // The listing is read once and names only what the folder held then, so a locale the user
-        // chose is attempted even when the listing does not name it; a missing file reports itself
-        // through onLoadFailed. An English variant has no file to attempt.
+        // A locale the user chose is attempted even when the listing does not name it, because the
+        // listing is read once and can be stale, and a miss reports itself through onLoadFailed.
+        // A system locale is not attempted: an unsupported one would report a failed load on every
+        // boot, which is what falling back to English answers instead.
         const chosen = SessionData.locale;
         if (chosen) {
-            useLocale(chosen, chosen.startsWith("en") ? "" : translationsFolder + "/" + chosen + ".json");
+            useLocale(chosen, _pathFor(chosen));
             return;
         }
 
