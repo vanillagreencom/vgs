@@ -165,24 +165,26 @@ test("picking a set does not re-read the list", () => {
 });
 
 test("a claim becomes words in exactly one way", () => {
-    // The two strings the card hands in, as the component builds them for a set named
+    // The sentences the card hands in, as the component builds them for a set named
     // "Papirus" and for the desktop's own set.
     const NAMED = "Currently applied: Papirus";
     const UNNAMED = "Currently applied: the desktop's own icon set";
     const SUFFIX = "not installed on this system.";
+    const COPY = { named: NAMED, unnamed: UNNAMED, notInstalled: SUFFIX };
     // [why, claim, sentence, warns]
     for (const [why, claim, text, warn] of [
         ["no name draws no line at all", "absent", "", false],
-        ["the desktop's own set is named as such, never by the settings sentinel", "default", UNNAMED, false],
+        ["the desktop's own set is named as such", "default", UNNAMED, false],
         ["a set no list has checked is stated and nothing more", "unchecked", NAMED, false],
         ["a set the list carries is stated and nothing more", "installed", NAMED, false],
         ["only a set the read checked and did not find carries the suffix", "missing", NAMED + " — " + SUFFIX, true],
-    ]) {
-        assert.deepEqual(M.setLine(claim, NAMED, UNNAMED, SUFFIX), { text, warn }, why);
-        if (claim === "default")
-            assert.ok(!M.setLine(claim, NAMED, UNNAMED, SUFFIX).text.includes("System Default"),
-                "the desktop default never reaches the card as the settings sentinel");
-    }
+    ])
+        assert.deepEqual(M.setLine(claim, COPY), { text, warn }, why);
+
+    // appliedSetName returns the "System Default" sentinel for a theme that names no
+    // set, so that is the name the component's `named` sentence carries there.
+    assert.equal(M.setLine("default", { named: "Currently applied: System Default", unnamed: UNNAMED, notInstalled: SUFFIX }).text,
+        UNNAMED, "the settings sentinel never reaches the card as a set name");
 });
 
 test("a card line draws what the region decided and nothing of its own", () => {
@@ -190,6 +192,7 @@ test("a card line draws what the region decided and nothing of its own", () => {
         "IconsTab.qml SetLine");
     // [binding, value]
     for (const [name, value] of [
+        ["line", 'root.setLine(root.iconSetClaim(root.readState, root.iconSets, setName), { named: label.arg(setName), unnamed: label.arg(I18n.tr("the desktop\'s own icon set")), notInstalled: I18n.tr("not installed on this system.") })'],
         ["text", "line.text"],
         ["visible", 'line.text !== ""'],
         ["color", "line.warn ? Theme.warning : Theme.surfaceVariantText"],

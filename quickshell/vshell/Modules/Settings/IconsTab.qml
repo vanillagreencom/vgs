@@ -67,17 +67,18 @@ Item {
         return sets.some(set => set.name === name) ? "installed" : "missing";
     }
 
-    // The line a claim draws: its sentence, and whether it warns. `named`, `unnamed` and
-    // `notInstalled` arrive translated. Every SetLine's text, warning and visibility read
-    // this answer, so a claim becomes words only here.
-    function setLine(claim, named, unnamed, notInstalled) {
+    // The line a claim draws: its sentence, and whether it warns. `copy` carries the
+    // translated `named` and `unnamed` sentences and the `notInstalled` suffix, each
+    // named where it is supplied so no two can change places. Every SetLine's text,
+    // warning and visibility read this answer, so a claim becomes words only here.
+    function setLine(claim, copy) {
         if (claim === "absent")
             return { text: "", warn: false };
         if (claim === "default")
-            return { text: unnamed, warn: false };
+            return { text: copy.unnamed, warn: false };
         if (claim === "missing")
-            return { text: named + " — " + notInstalled, warn: true };
-        return { text: named, warn: false };
+            return { text: copy.named + " — " + copy.notInstalled, warn: true };
+        return { text: copy.named, warn: false };
     }
     // END ICON PICKER MODEL
 
@@ -86,7 +87,7 @@ Item {
     component SetLine: StyledText {
         required property string label
         required property string setName
-        readonly property var line: root.setLine(root.iconSetClaim(root.readState, root.iconSets, setName), label.arg(setName), label.arg(I18n.tr("the desktop's own icon set")), I18n.tr("not installed on this system."))
+        readonly property var line: root.setLine(root.iconSetClaim(root.readState, root.iconSets, setName), { named: label.arg(setName), unnamed: label.arg(I18n.tr("the desktop's own icon set")), notInstalled: I18n.tr("not installed on this system.") })
 
         width: parent.width
         wrapMode: Text.WordWrap
