@@ -103,7 +103,6 @@ Each entry below is a place where VGS code retains memory without a bound. Every
 Nothing in VGS code accounts for the Wayland event threads' share. Those threads run Qt's own Wayland client and no VGS code, so that share is either Quickshell's surface handling or Qt's, and reaching it needs the in-process profiler this file says is out of read-only range.
 
 - `Services/IconThemeService.qml`: `_cache` holds one entry per distinct icon name resolved and is cleared only when the icon theme changes. Notification icons come from arbitrary applications, so the key set is open.
-- `Modules/ControlCenter/Components/DetailHost.qml` and `Modules/Settings/WindowRulesTab.qml`: each open connects a fresh closure to a long-lived object and never disconnects. The handler count grows with the number of opens, and every accumulated handler runs on each later signal.
 - `Services/NotepadStorageService.qml`: `createEmptyFile` leaves its holder object parented to the singleton with no `destroy()`.
 
 ## Decisions

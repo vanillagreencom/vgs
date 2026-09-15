@@ -158,6 +158,24 @@ Item {
         }
     }
 
+    // The modal outlives every open, so connecting inside the three open paths below would
+    // leave one handler per open alive and re-read the rule list once per accumulated handler.
+    //
+    // The tab keeps its loader alive once visited and the modal also opens from IPC, so a
+    // submission can arrive while another settings tab is selected: the gate below drops the
+    // connection then, and onPageActiveChanged re-reads the list on return. pageActive reports
+    // only which settings tab is selected. Closing the settings window leaves this tab selected,
+    // because PopoutService defers the unload to session lock or monitors-off, so a submission
+    // with the window closed still re-reads the list and can still raise its error toast.
+    Connections {
+        target: PopoutService.windowRuleModalLoader?.item ?? null
+        enabled: root.pageActive
+
+        function onRuleSubmitted() {
+            root.loadWindowRules();
+        }
+    }
+
     function loadWindowRules() {
         const compositor = CompositorService.compositor;
         if (compositor !== "niri" && compositor !== "hyprland" && compositor !== "mango") {
@@ -276,7 +294,9 @@ Item {
         });
     }
 
-    function openRuleModal(window) {
+    // The refusal, the loader activation and the item guard every open path shares. `present`
+    // receives the loaded modal and is the only part each path decides for itself.
+    function _openModal(present) {
         if (readOnly) {
             showReadOnlyWarning();
             return;
@@ -284,38 +304,20 @@ Item {
         if (!PopoutService.windowRuleModalLoader)
             return;
         PopoutService.windowRuleModalLoader.active = true;
-        if (PopoutService.windowRuleModalLoader.item) {
-            PopoutService.windowRuleModalLoader.item.onRuleSubmitted.connect(loadWindowRules);
-            PopoutService.windowRuleModalLoader.item.show(window || null);
-        }
+        if (PopoutService.windowRuleModalLoader.item)
+            present(PopoutService.windowRuleModalLoader.item);
+    }
+
+    function openRuleModal(window) {
+        _openModal(item => item.show(window || null));
     }
 
     function editRule(rule) {
-        if (readOnly) {
-            showReadOnlyWarning();
-            return;
-        }
-        if (!PopoutService.windowRuleModalLoader)
-            return;
-        PopoutService.windowRuleModalLoader.active = true;
-        if (PopoutService.windowRuleModalLoader.item) {
-            PopoutService.windowRuleModalLoader.item.onRuleSubmitted.connect(loadWindowRules);
-            PopoutService.windowRuleModalLoader.item.showEdit(rule);
-        }
+        _openModal(item => item.showEdit(rule));
     }
 
     function copyRuleToVgs(rule) {
-        if (readOnly) {
-            showReadOnlyWarning();
-            return;
-        }
-        if (!PopoutService.windowRuleModalLoader)
-            return;
-        PopoutService.windowRuleModalLoader.active = true;
-        if (PopoutService.windowRuleModalLoader.item) {
-            PopoutService.windowRuleModalLoader.item.onRuleSubmitted.connect(loadWindowRules);
-            PopoutService.windowRuleModalLoader.item.showCopy(rule);
-        }
+        _openModal(item => item.showCopy(rule));
     }
 
     function showReadOnlyWarning() {
