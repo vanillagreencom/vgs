@@ -11632,8 +11632,8 @@ def test_package_colours_normalize_once_over_the_merged_layers():
                          ("#d0d0d0", "#101010"),
                          "a fold stating no background infers one from the selection slots")
 
-            # A file's other name for the mode, which is not a slot and so does
-            # not travel in the alias table the colour edits share.
+            # A file's other name for the mode, carried by the same alias table
+            # as the second spellings of a slot.
             (package / "colors.toml").write_text(
                 helper.flat_toml_text(builtin_colors) + 'variant = "light"\n')
             assert_equal(helper.package_colors_map("mergefix").get("mode"), "light",
@@ -11646,10 +11646,12 @@ def test_package_colours_normalize_once_over_the_merged_layers():
 
 def test_colour_edit_keys_resolve_through_the_alias_table():
     """`apply-colors --set` takes the second spellings of a slot through
-    `COLOR_KEY_ALIASES`, the same table the layer fold reads, so a spelling added
-    for one is reached by the other. `variant` stays outside the table because it
-    names the mode rather than a slot, and an edit naming it is refused under the
-    name it used rather than under `mode`."""
+    `COLOR_KEY_ALIASES`, the same table the layer fold reads, so one table answers
+    what a slot's second spellings are. A spelling outside `COLOR_KEYS` never
+    reaches a tier, so `selection_bg` and `selection_fg` are reached by an edit
+    alone. An edit naming a key the table resolves to something outside the
+    editable roles, such as `variant` for the mode, is refused under the spelling
+    the edit used rather than under what it resolved to."""
     # (what, edit key, canonical slot)
     rows = [
         ("the underscore-free spelling", "selectionBackground", "selection_background"),
