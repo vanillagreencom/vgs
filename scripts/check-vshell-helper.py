@@ -11548,13 +11548,17 @@ def test_theme_overlays_merge_key_by_key():
 
 
 def test_package_colours_normalize_once_over_the_merged_layers():
-    """A package's `colors.toml` layers merge under the keys their files wrote and
-    the merged map normalizes once. Normalizing per layer answered per layer, and
-    `normalize_color_map` fills an absent `background` from `selection_background`
-    and an absent `foreground` from `selection_foreground`: an overlay that edits
-    only the selection slots omits both keys, because `write_user_layer` drops
-    what equals the built-in file, so its synthesized values overwrote the
-    built-in layer's real background and foreground on every read of the package.
+    """A package's `colors.toml` layers are read under the keys their files wrote
+    and folded so that the slots a key names outright arbitrate apart from the
+    slots a compound key's last tokens infer.
+
+    Resolving each layer on its own let an overlay that edits only the selection
+    slots -- which omits `background` and `foreground`, because `write_user_layer`
+    drops what equals the built-in file -- infer both from its own selection
+    slots and overwrite the built-in layer's real ones. Folding the layers under
+    one pass over their raw keys then arbitrated by spelling instead of by layer,
+    so a built-in `background` stood over a matugen-shaped overlay's
+    `colors_background` for the same slot.
     """
     builtin_colors = {"background": "#fafafa", "foreground": "#101010",
                       "accent": "#8c1f4a", "cursor": "#101010",
@@ -11595,16 +11599,37 @@ def test_package_colours_normalize_once_over_the_merged_layers():
             for what, actual, expected in rows:
                 assert_equal(actual, expected, what)
 
-            # Normalization still runs, once, over the merge: a package whose
-            # layers between them state no background gets one synthesized.
+            # An overlay whose keys are spelled as matugen and as camelCase write
+            # them. The built-in layer states every slot outright, so nothing but
+            # a per-tier fold lets the overlay's spelling win.
+            (user / "colors.toml").write_text(
+                'colors_background = "#000099"\nansi_red = "#00ff00"\n'
+                'selectionBackground = "#3769f1"\n')
+            spelled = helper.package_colors_map("mergefix")
+            # (what, actual, expected)
+            spelling_rows = [
+                ("an overlay's matugen-prefixed key wins the slot it names",
+                 spelled["background"], "#000099"),
+                ("an overlay's ansi-prefixed key wins the slot it names",
+                 spelled["red"], "#00ff00"),
+                ("an overlay's camelCase key wins the slot it names",
+                 spelled["selection_background"], "#3769f1"),
+                ("a slot the overlay does not name keeps the built-in value",
+                 spelled["foreground"], "#101010"),
+            ]
+            for what, actual, expected in spelling_rows:
+                assert_equal(actual, expected, what)
+
+            # The last-token fallback still runs, once, over the fold: a package
+            # whose layers between them state no background infers one.
             (user / "colors.toml").unlink()
             (package / "colors.toml").write_text(helper.flat_toml_text(
                 {key: value for key, value in builtin_colors.items()
                  if key not in {"background", "foreground"}}))
-            synthesized = helper.package_colors_map("mergefix")
-            assert_equal((synthesized.get("background"), synthesized.get("foreground")),
+            inferred = helper.package_colors_map("mergefix")
+            assert_equal((inferred.get("background"), inferred.get("foreground")),
                          ("#d0d0d0", "#101010"),
-                         "a merged map stating no background takes one from the selection slots")
+                         "a fold stating no background infers one from the selection slots")
         finally:
             helper.builtin_themes_dir = original_builtin
 

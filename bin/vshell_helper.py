@@ -55,10 +55,12 @@ MATUGEN_SCHEMES = {
     "scheme-fruit-salad", "scheme-monochrome", "scheme-neutral", "scheme-rainbow", "scheme-vibrant",
 }
 THEME_MODES = {"auto", "dark", "light"}
+# The keys of a colours map that carry light or dark rather than a colour.
+COLOR_MODE_KEYS = {"theme_type", "mode", "variant", "scheme"}
 COLOR_KEYS = {
     "background", "bg", "foreground", "fg", "accent", "primary", "cursor",
     "selection_background", "selectionbackground", "selection_foreground", "selectionforeground",
-    "theme_type", "mode", "variant", "scheme",
+    *COLOR_MODE_KEYS,
     *{f"color{i}" for i in range(16)}, *ANSI_NAMES,
 }
 CAMEL = {
@@ -774,57 +776,103 @@ adjustments_all_zero = _theme_color.adjustments_all_zero
 apply_adjustments = _theme_color.apply_adjustments
 
 
-def normalize_color_map(data: Dict[str, str]) -> Dict[str, str]:
-    out: Dict[str, str] = {}
-    items = list(data.items())
+# A second spelling of a key VGS already has a name for. Each tier carries the
+# canonical name beside the spelling, so a merge of several maps compares one
+# key rather than two names for one slot.
+COLOR_KEY_ALIASES = {"selectionbackground": "selection_background",
+                     "selectionforeground": "selection_foreground",
+                     "variant": "mode"}
+ColorTiers = Tuple[Dict[str, str], Dict[str, str]]
 
-    def assign(candidate: str, value: str) -> bool:
-        ccompact = candidate.replace("_", "")
-        if candidate in COLOR_KEYS:
-            out.setdefault(candidate, value)
-            return True
-        if ccompact in COLOR_KEYS:
-            out.setdefault(ccompact, value)
-            return True
+
+def color_map_tiers(data: Dict[str, str]) -> ColorTiers:
+    """The palette slots `data`'s keys name, in the two tiers a fold of several
+    such maps arbitrates on separately.
+
+    `stated` holds the slots a key names outright: the key itself, its
+    underscore-free spelling, or either under a `colors_`, `palette_` or `ansi_`
+    prefix, which is how a matugen-shaped file writes them. `inferred` holds the
+    slots a compound key's last tokens name, such as `background` for
+    `active_tab_background` or `selection_background`. A stated slot beats an
+    inferred one.
+
+    Two tiers because a package's layers are folded after they are read, and a
+    single pass over the union of their raw keys arbitrates by spelling rather
+    than by layer: the exact pass claimed `background` from the built-in file's
+    key and refused the user overlay's `colors_background` for the same slot.
+    """
+    stated: Dict[str, str] = {}
+    inferred: Dict[str, str] = {}
+
+    def assign(tier: Dict[str, str], candidate: str, value: str) -> bool:
+        for name in (candidate, candidate.replace("_", "")):
+            if name in COLOR_KEYS:
+                tier.setdefault(name, value)
+                return True
         return False
 
+    items = [(key.replace("-", "_").lower(), value) for key, value in data.items()]
     # Exact role keys must claim their slots before compound keys such as
     # active_tab_background can use the fuzzy last-token fallback.
-    for key, value in items:
-        norm = key.replace("-", "_").lower()
-        if norm in {"theme_type", "mode", "variant", "scheme"}:
-            out[norm] = value
-        assign(norm, value)
+    for norm, value in items:
+        if norm in COLOR_MODE_KEYS:
+            # A mode key names itself, so the last spelling of it answers.
+            stated[norm] = value
+        assign(stated, norm, value)
 
     # Fuzzy fallbacks handle flattened nested keys, such as colors_primary_background,
     # without replacing exact matches.
-    for key, value in items:
-        norm = key.replace("-", "_").lower()
-        candidates: List[str] = []
+    for norm, value in items:
+        claimed = False
         for prefix in ("colors_", "palette_", "ansi_"):
-            if norm.startswith(prefix):
-                candidates.append(norm[len(prefix):])
+            if norm.startswith(prefix) and assign(stated, norm[len(prefix):], value):
+                claimed = True
+                break
+        if claimed:
+            continue
         parts = norm.split("_")
+        candidates: List[str] = []
         if len(parts) >= 3:
             candidates.append("_".join(parts[-2:]))
         if len(parts) >= 2:
             candidates.append(parts[-1])
         for candidate in candidates:
-            if assign(candidate, value):
+            if assign(inferred, candidate, value):
                 break
 
-    if "selectionbackground" in out and "selection_background" not in out:
-        out["selection_background"] = out["selectionbackground"]
-    if "selectionforeground" in out and "selection_foreground" not in out:
-        out["selection_foreground"] = out["selectionforeground"]
-    if "variant" in out and "mode" not in out:
-        out["mode"] = out["variant"]
+    for tier in (stated, inferred):
+        for spelling, canonical in COLOR_KEY_ALIASES.items():
+            if spelling in tier:
+                tier.setdefault(canonical, tier[spelling])
+    return stated, inferred
+
+
+def merged_color_map(layers: List[ColorTiers]) -> Dict[str, str]:
+    """`layers`, lowest first, folded into the palette slots they name together.
+
+    Each tier folds on its own, so the highest layer that states a slot answers
+    for it however the layer below spelled it, and a slot no layer states takes
+    what the compound keys infer.
+    """
+    stated: Dict[str, str] = {}
+    inferred: Dict[str, str] = {}
+    for layer_stated, layer_inferred in layers:
+        stated.update(layer_stated)
+        inferred.update(layer_inferred)
+    out = dict(stated)
+    for key, value in inferred.items():
+        out.setdefault(key, value)
     return out
+
+
+def normalize_color_map(data: Dict[str, str]) -> Dict[str, str]:
+    """The palette slots one colours map's keys name. One layer, folded alone."""
+    return merged_color_map([color_map_tiers(data)])
 
 
 def recognized_color_count(data: Dict[str, str]) -> int:
     normalized = normalize_color_map(data)
-    return len([k for k in normalized if k in COLOR_KEYS and k not in {"theme_type", "mode", "variant", "scheme"}])
+    return len([k for k in normalized if k in COLOR_KEYS and k not in COLOR_MODE_KEYS])
 
 
 class ColorsRead(enum.Enum):
@@ -834,13 +882,13 @@ class ColorsRead(enum.Enum):
 
     `PALETTE` is a whole palette in one file, returned under the palette slots
     `normalize_color_map` emits. `PALETTE_LAYER` is one layer of a package's
-    palette, returned under the keys the file itself wrote, so its caller merges
-    every layer and normalizes the merged map once: normalizing per layer lets an
-    overlay that omits a key contribute a value synthesized from its neighbours
-    over the layer below that states the key outright. `ROLES` is a
-    `ui-roles.toml`, keyed by role names `normalize_color_map` drops, and
-    hand-written rather than matugen output, so it takes the strict TOML pass
-    alone.
+    palette, returned under the keys the file itself wrote, for a caller that
+    folds every layer through `color_map_tiers` and `merged_color_map`: resolving
+    a layer's keys on its own lets an overlay that omits a key contribute a value
+    inferred from its neighbours over the layer below that states the key
+    outright. `ROLES` is a `ui-roles.toml`, keyed by role names
+    `normalize_color_map` drops, and hand-written rather than matugen output, so
+    it takes the strict TOML pass alone.
     """
 
     PALETTE = enum.auto()
@@ -898,7 +946,7 @@ def parse_colors_toml_text(raw_text: str, label: str = "colors.toml",
             if HEX_RE.match(val):
                 out[key] = clean_hex(val)
                 return
-            if key.replace("-", "_").lower() in {"theme_type", "mode", "variant", "scheme"}:
+            if key.replace("-", "_").lower() in COLOR_MODE_KEYS:
                 out[key] = val.lower()
                 return
         discard(key)
@@ -925,7 +973,7 @@ def parse_colors_toml_text(raw_text: str, label: str = "colors.toml",
                 out[m.group(1)] = clean_hex(m.group(2))
                 continue
             sm = re.match(r"^\s*([A-Za-z0-9_\-.]+)\s*=\s*['\"]([^'\"]+)['\"]", raw)
-            if sm and sm.group(1).replace("-", "_").lower() in {"theme_type", "mode", "variant", "scheme"}:
+            if sm and sm.group(1).replace("-", "_").lower() in COLOR_MODE_KEYS:
                 out[sm.group(1)] = sm.group(2).lower()
                 continue
 
@@ -933,8 +981,7 @@ def parse_colors_toml_text(raw_text: str, label: str = "colors.toml",
     # layer holding nothing a palette can use is refused with the same diagnostic
     # whether or not its caller normalizes here.
     if kind is ColorsRead.PALETTE:
-        normalized = normalize_color_map(out)
-        recognized = recognized_color_count(normalized)
+        normalized, recognized = normalize_color_map(out), recognized_color_count(out)
     elif kind is ColorsRead.PALETTE_LAYER:
         normalized, recognized = dict(out), recognized_color_count(out)
     elif kind is ColorsRead.ROLES:
@@ -1525,8 +1572,8 @@ class OverlayLayer(NamedTuple):
 def overlay_layer(path: Path, filename: str) -> OverlayLayer:
     """Read one layer of `filename`, a file `OVERLAY_MASK_TEXT` names.
 
-    A terminal layer holds its `colorN` slots. A `ui-roles.toml` layer is read
-    with `normalize` off, because `normalize_color_map` emits only `COLOR_KEYS`
+    A terminal layer holds its `colorN` slots. A `ui-roles.toml` layer is read as
+    `ColorsRead.ROLES`, because `normalize_color_map` emits only `COLOR_KEYS`
     and drops every role name, and every key it states is returned as a value or
     named: a key whose value is not a six-digit hex in `unreadable`, since such a
     value never enters the parsed map, and a key outside `DECLARABLE_UI_ROLES`
@@ -2801,23 +2848,23 @@ def package_colors_map(name: str) -> Dict[str, str]:
     name when it did not. A layer that does not read contributes no colours and
     the other layer still does.
 
-    The layers merge under the keys their files wrote and the merged map is
-    normalized once, so the question of what the package's colours are has one
+    The layers are read under the keys their files wrote and folded through
+    `merged_color_map`, so the question of what the package's colours are has one
     owner reading every layer at once. Normalizing per layer answered it per
-    layer, where `normalize_color_map` fills an absent `background` from
+    layer, where the fuzzy last-token fallback fills an absent `background` from
     `selection_background` and an absent `foreground` from `selection_foreground`:
     `write_user_layer` drops the keys equal to the built-in file's, so a user
-    overlay of a built-in theme routinely omits both, and the overlay's
-    synthesized values then overwrote the built-in layer's real ones on every
-    apply, save, lint and listing.
+    overlay of a built-in theme routinely omits both, and the overlay's inferred
+    values then overwrote the built-in layer's stated ones on every apply, save,
+    lint and listing.
     """
-    colors: Dict[str, str] = {}
+    layers: List[ColorTiers] = []
     for path in package_layer_paths(name, "colors.toml"):
         try:
-            colors.update(parse_colors_toml(path, kind=ColorsRead.PALETTE_LAYER))
+            layers.append(color_map_tiers(parse_colors_toml(path, kind=ColorsRead.PALETTE_LAYER)))
         except Exception as exc:
             eprint(f"theme package {name}: {exc}")
-    return normalize_color_map(colors)
+    return merged_color_map(layers)
 
 
 def declared_ui_roles(bp: Dict[str, Any]) -> Dict[str, str]:
