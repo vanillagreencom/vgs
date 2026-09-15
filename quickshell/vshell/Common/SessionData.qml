@@ -23,9 +23,6 @@ Singleton {
     property bool _isReadOnly: false
     property bool _hasUnsavedChanges: false
     property var _loadedSessionSnapshot: null
-    readonly property var _hooks: ({
-            "updateLocale": updateLocale
-        })
     readonly property string _stateUrl: StandardPaths.writableLocation(StandardPaths.GenericStateLocation)
     readonly property string _stateDir: Paths.strip(_stateUrl)
 
@@ -407,7 +404,7 @@ Singleton {
     Component.onDestruction: flushSettings()
 
     function set(key, value) {
-        Spec.set(root, key, value, saveSettings, _hooks);
+        Spec.set(root, key, value, saveSettings);
     }
 
     function migrateFromUndefinedToV1(settings) {
@@ -1209,14 +1206,6 @@ Singleton {
         delete updated[nodeName];
         deviceMaxVolumes = updated;
         saveSettings();
-    }
-
-    function updateLocale() {
-        if (!locale) {
-            I18n._pickTranslation();
-            return;
-        }
-        I18n.useLocale(locale, locale.startsWith("en") ? "" : I18n.folder + "/" + locale + ".json");
     }
 
     function setLauncherLastFileSearchType(type) {
