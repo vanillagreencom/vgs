@@ -323,4 +323,13 @@ function actionArgv(action, row, vshell, binDir) {
     return entry.argv(binDir + "/" + entry.command, row, vshell);
 }
 
+// What a click on an action launches: the argv, or the failure that names the
+// missing command, in which case nothing runs.
+function actionLaunch(action, row, available, vshell, binDir) {
+    var problem = commandProblem(actionCommand(action), available);
+    if (problem !== "")
+        return failure(problem);
+    return { ok: true, argv: actionArgv(action, row, vshell, binDir) };
+}
+
 // END FLEET LOGIC

@@ -71,12 +71,12 @@ PluginDaemonComponent {
     // Answers whether the action started, so a view changes what it shows only
     // for an action that did.
     function run(action, row) {
-        const problem = root.actionProblem(action);
-        if (problem !== "") {
-            ToastService.showWarning("Fleet action unavailable", problem);
+        const launch = Logic.actionLaunch(action, row, root.available, Paths.vshellCli, root.binDir);
+        if (!launch.ok) {
+            ToastService.showWarning("Fleet action unavailable", launch.error);
             return false;
         }
-        Quickshell.execDetached(Logic.actionArgv(action, row, Paths.vshellCli, root.binDir));
+        Quickshell.execDetached(launch.argv);
         return true;
     }
 

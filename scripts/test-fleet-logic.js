@@ -22,6 +22,7 @@ guardChild();
 const F = evaluateMarked(fs.readFileSync(path.join(PLUGIN, "FleetLogic.js"), "utf8"), "FLEET LOGIC", [
     "decodeStatus", "decodeProbe", "statusRead", "commandProblem", "pillState", "pillText", "laneRows",
     "controlRow", "monthToDateSpend", "moneyLabel", "rateLabel", "ageLabel", "actionArgv", "actionCommand",
+    "actionLaunch", "fleetCommands",
     "optionValue", "settingNumber", "settingBool", "pillModeOptions"
 ], "FleetLogic.js");
 
@@ -164,11 +165,25 @@ test("each action runs its fleet command, assembled from the row", () => {
     }
     assert.throws(() => F.actionArgv("park", lane, V, B), /unknown action park/);
     assert.throws(() => F.actionCommand("park"), /unknown action park/);
+
+    // [why, available, what a click launches]
+    for (const [why, avail, expected] of [
+        ["a found command launches its argv", { "fleet-code": true }, { ok: true, argv: [`${B}/fleet-code`, "--all"] }],
+        ["a missing command launches nothing and names the command", { "fleet-attach": true },
+            { ok: false, error: "fleet-code not found in ~/.local/bin" }],
+        ["before the first probe nothing launches", null, { ok: false, error: "checking for fleet-code in ~/.local/bin" }]
+    ])
+        assert.deepEqual(F.actionLaunch("openCode", control, avail, V, B), expected, why);
 });
 
 test("the probe records the fleet's own commands, and a command it did not find is named as the reason it cannot run", () => {
     assert.deepEqual(F.decodeProbe(0, "fleet-attach\nunrelated-tool\n\n"), { ok: true, available: { "fleet-attach": true } },
         "only the fleet's own commands are recorded");
+    assert.deepEqual(F.fleetCommands(), ["lane-host-daytona", "fleet-attach", "fleet-code"],
+        "the probe checks every command a read or an action runs");
+    assert.deepEqual(F.decodeProbe(0, "lane-host-daytona\nfleet-attach\nfleet-code\n"),
+        { ok: true, available: { "lane-host-daytona": true, "fleet-attach": true, "fleet-code": true } },
+        "a probe that found every command records all of them");
     assert.deepEqual(F.decodeProbe(124, "fleet-attach\n"), { ok: false, error: "the fleet command probe exited 124" },
         "a probe that timed out is a failure, never a fleet with commands missing");
     const available = { "fleet-attach": true };
