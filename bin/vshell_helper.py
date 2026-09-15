@@ -1994,26 +1994,6 @@ def catalog_imagery_installed(name: str) -> bool:
     return theme_dir_has_wallpapers(builtin_themes_dir() / name) or catalog_placed_wallpapers(name) is not None
 
 
-class ShippedPreview(NamedTuple):
-    """What can be painted for a theme with no rendering."""
-    # The package's full-size preview.jpg, or "" when the package has none.
-    preview: str
-    # The shipped 480 px thumbnail, or "" when none ships. A placeholder only:
-    # the full-screen switcher lays its selected frame out far wider than 480 px.
-    thumbnail: str
-
-
-def theme_shipped_preview(name: str, packaged: str = "") -> ShippedPreview:
-    """A theme's shipped screenshot and its thumbnail, as separate answers.
-
-    The one answer to "what can be painted for this theme with no work". The
-    thumbnail never stands in for the preview: a surface that paints a full-size
-    frame reads `preview`, which `theme_preview` fills with a palette card when
-    the package ships no screenshot.
-    """
-    return ShippedPreview(packaged, theme_thumbnail_path(name))
-
-
 # The card a theme with no shipped screenshot shows: its background, a foreground
 # and an accent bar, and its 16 colours as two rows of swatches. Encoded here with
 # zlib alone, so every install under either compositor draws it with no tool.
@@ -2069,9 +2049,10 @@ def theme_preview(bp: Dict[str, Any]) -> str:
     The package's shipped preview.jpg wins, edited or not, so a restyled or
     overlaid theme keeps its base screenshot. A theme with none gets its palette
     card, drawn once per palette into the preview cache. "" only when the theme
-    carries no palette.
+    carries no palette. The shipped 480 px thumbnail never stands in for the
+    preview: the full-screen switcher lays its selected frame out far wider.
     """
-    shipped = theme_shipped_preview(str(bp.get("name") or ""), bp.get("packagedPreview", "")).preview
+    shipped = bp.get("packagedPreview", "")
     if shipped:
         return shipped
     colors = palette_card_colors(bp)
@@ -2185,8 +2166,7 @@ def catalog_entries() -> List[Dict[str, Any]]:
             "builtin": (builtin_themes_dir() / name / "theme.json").is_file(),
             "downloaded": bool(marker),
             "downloadedRef": str(marker.get("ref") or ""),
-            "preview": theme_shipped_preview(
-                name, str(packaged) if packaged and packaged.is_file() else "").preview,
+            "preview": str(packaged) if packaged and packaged.is_file() else "",
         })
     entries.sort(key=lambda e: e["name"])
     return entries

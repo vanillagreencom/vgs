@@ -28,6 +28,7 @@ import tarfile
 import tempfile
 import time
 import traceback
+import zlib
 from unittest.mock import patch
 from pathlib import Path
 
@@ -3000,27 +3001,32 @@ def test_theme_list_reports_the_preview_and_the_thumbnail_apart():
     Every theme surface paints `preview`, and nothing in the shell renders one, so
     a theme the list reports no preview for shows "No preview" wherever it appears.
     """
-    # name -> (has its own preview.jpg, extra theme.json fields, user overlay, background)
+    # Every band of noshot's card is its own colour, so a decoded pixel names its band.
+    card_palette = {"background": "#102030", "foreground": "#e0d0c0", "accent": "#c04080",
+                    **{f"color{i}": f"#{i * 16 + 8:02x}{255 - i * 16:02x}80" for i in range(16)}}
+    # name -> (has its own preview.jpg, extra theme.json fields, user overlay, colors.toml)
     packages = {
-        "withshot": (True, {}, False, "#101010"),
-        "noshot": (False, {}, False, "#101010"),
-        "nothumb": (False, {}, False, "#202020"),
-        "restyled": (True, {"adjustments": {"brightness": 17}}, False, "#101010"),
-        "overlaid": (True, {}, True, "#101010"),
+        "withshot": (True, {}, False, {"background": "#101010", "foreground": "#eeeeee"}),
+        "noshot": (False, {}, False, card_palette),
+        "nothumb": (False, {}, False, {"background": "#202020", "foreground": "#eeeeee"}),
+        "restyled": (True, {"adjustments": {"brightness": 17}}, False, {"background": "#101010", "foreground": "#eeeeee"}),
+        "overlaid": (True, {}, True, {"background": "#101010", "foreground": "#eeeeee"}),
     }
+
+    def colors_toml(colors: dict) -> str:
+        return "".join(f'{key} = "{value}"\n' for key, value in colors.items())
 
     def scenario(temp_home: Path):
         builtin = temp_home / "builtin"
         thumbnails = builtin / "thumbnails"
         thumbnails.mkdir(parents=True)
-        for name, (packaged, extra, overlaid, background) in packages.items():
+        for name, (packaged, extra, overlaid, colors) in packages.items():
             package = builtin / name
             package.mkdir()
             meta = {"name": name, "mode": "dark", "source": "curated"}
             meta.update(extra)
             (package / "theme.json").write_text(json.dumps(meta) + "\n")
-            (package / "colors.toml").write_text(
-                f'background = "{background}"\nforeground = "#eeeeee"\n')
+            (package / "colors.toml").write_text(colors_toml(colors))
             if packaged:
                 (package / helper.THEME_PREVIEW_FILE).write_bytes(b"\xff\xd8\xff screenshot\n")
             if name != "nothumb":
@@ -3039,17 +3045,21 @@ def test_theme_list_reports_the_preview_and_the_thumbnail_apart():
         previews.mkdir(parents=True)
         orphan = previews / "noshot-000000000000.png"
         orphan.write_bytes(b"\x89PNG stale card\n")
-        original_builtin = helper.builtin_themes_dir
-        helper.builtin_themes_dir = lambda: builtin
-        saved_path = os.environ.get("PATH")
-        try:
-            # No tool on PATH and no Pillow: the card needs neither.
-            os.environ["PATH"] = str(temp_home / "empty-path")
-            with patch.dict(sys.modules, {"PIL": None, "PIL.Image": None}):
-                listed = _theme_list_entries()
-        finally:
-            helper.builtin_themes_dir = original_builtin
-            _restore_env("PATH", saved_path)
+
+        def list_with_no_tool() -> dict:
+            original_builtin = helper.builtin_themes_dir
+            helper.builtin_themes_dir = lambda: builtin
+            saved_path = os.environ.get("PATH")
+            try:
+                # No tool on PATH and no Pillow: the card needs neither.
+                os.environ["PATH"] = str(temp_home / "empty-path")
+                with patch.dict(sys.modules, {"PIL": None, "PIL.Image": None}):
+                    return _theme_list_entries()
+            finally:
+                helper.builtin_themes_dir = original_builtin
+                _restore_env("PATH", saved_path)
+
+        listed = list_with_no_tool()
 
         # A packaged screenshot is the preview, edited or not. A theme with none
         # gets a card drawn from its palette. The thumbnail is reported beside
@@ -3068,11 +3078,35 @@ def test_theme_list_reports_the_preview_and_the_thumbnail_apart():
         for name, card in cards.items():
             assert_equal((Path(card).parent, helper.png_size(Path(card))), (previews, helper.PALETTE_CARD_SIZE),
                          f"{name} paints a palette card drawn with no tool")
-        assert_equal(len(set(cards.values())), len(cards), "a card is keyed on its theme's colours")
 
         # A list prunes the cards no listed theme names.
         assert_equal((all(Path(card).is_file() for card in cards.values()), orphan.exists()), (True, False),
                      "theme list keeps every listed card and removes an orphaned one")
+
+        # Decoded with zlib alone, the card is one filter-0 byte and RGB triples per scanline.
+        png = Path(cards["noshot"]).read_bytes()
+        idat, pos = b"", 8
+        while pos < len(png):
+            length = int.from_bytes(png[pos:pos + 4], "big")
+            if png[pos + 4:pos + 8] == b"IDAT":
+                idat += png[pos + 8:pos + 8 + length]
+            pos += 12 + length
+        raw = zlib.decompress(idat)
+        width, height = helper.PALETTE_CARD_SIZE
+        stride = 1 + width * 3
+        assert_equal((len(raw), {raw[y * stride] for y in range(height)}), (height * stride, {0}),
+                     "the noshot card decodes to unfiltered RGB scanlines")
+        for band, x, y, key in (("background", 4, 4, "background"), ("foreground bar", 40, 50, "foreground"),
+                                ("accent bar", 40, 74, "accent"), ("first swatch", 40, 130, "color0"),
+                                ("ninth swatch", 40, 230, "color8")):
+            offset = y * stride + 1 + x * 3
+            assert_equal("#" + raw[offset:offset + 3].hex(), card_palette[key], f"the noshot card paints its {band}")
+
+        # A colour edit draws a new card, and the next list prunes the old one.
+        (builtin / "noshot" / "colors.toml").write_text(colors_toml({**card_palette, "background": "#302010"}))
+        redrawn = list_with_no_tool()["noshot"]["preview"]
+        assert_equal((redrawn != cards["noshot"], Path(redrawn).is_file(), Path(cards["noshot"]).exists()),
+                     (True, True, False), "a colour edit draws a new noshot card and prunes the old one")
 
     with_temp_home(scenario)
 

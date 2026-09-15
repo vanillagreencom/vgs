@@ -53,7 +53,7 @@ Each lock entry also carries `definitions`, one digest over the `(path, sha256)`
 
 **First paint offline**: every catalog tile paints its thumbnail from local disk with no network call, because the package every install carries holds them. A catalog entry with no thumbnail keeps the existing swatch treatment — `ThemeCatalogBrowser.qml:315` fills the frame with `cell.modelData.background`, `:330` labels it "No screenshot", and `:394` renders eight colour chips from the catalog's own palette.
 
-`themes/catalog-previews/` is deleted along with both sites that derived it (`scripts/build-release.sh`, `install_catalog_previews()` in `packaging/install-system.sh`). `thumbnails` replaces `catalog-previews` in `RESERVED_THEME_SUBDIRS`, and the shipped branch of the browser's screenshot lookup reads the thumbnail instead (`theme_shipped_preview()` since the imagery left the tree).
+`themes/catalog-previews/` is deleted along with both sites that derived it (`scripts/build-release.sh`, `install_catalog_previews()` in `packaging/install-system.sh`). `thumbnails` replaces `catalog-previews` in `RESERVED_THEME_SUBDIRS`, and the shipped branch of the browser's screenshot lookup reads the thumbnail instead (`theme_thumbnail_path()` since the imagery left the tree).
 
 ### 4. Archives cache in `~/.cache/vshell/theme-assets/`; installed themes stay in the config directory
 
