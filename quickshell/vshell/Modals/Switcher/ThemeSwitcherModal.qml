@@ -39,8 +39,8 @@ FullScreenSwitcher {
     // Keep this region free of root., Theme., I18n. and Qt. references: scripts/test-switcher-scope.js extracts and executes it.
 
     // The carousel entries for a theme list. The full-size preview is what the
-    // selected frame paints; the 480 px thumbnail stands in only while a theme
-    // has no preview yet, and generateMissingPreviews() renders one for it.
+    // selected frame paints; the 480 px thumbnail stands in only for a theme the
+    // helper reports no preview for.
     function themeItems(blueprints, starredOnly) {
         return (blueprints || []).filter(bp => !!bp.name && (!starredOnly || bp.starred === true)).map(bp => ({
                     image: bp.preview || bp.thumbnail || "",
@@ -57,9 +57,6 @@ FullScreenSwitcher {
 
     function show() {
         VGSThemeService.refresh();
-        // Render every theme with no full-size preview in the background so the
-        // switcher is not a run of blank or placeholder frames.
-        VGSThemeService.generateMissingPreviews();
         open();
     }
 

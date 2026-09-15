@@ -23,6 +23,7 @@ Records the significant path choices VGS has made, so a later reader can see wha
 | 2026-09-13 | D017 | — | A theme ported from an upstream takes every colour value from that upstream's published files | A derived or adjusted tone is a colour the vendor never published | An upstream value is unreadable beyond a named shortfall, or an upstream licence forbids redistribution | Active | [Full](D017-vendor-port-upstream-values.md) |
 | 2026-09-13 | D018 | — | A subscribe snapshot is a cached read; replacing a queued frame is opt-in per service and per key | A live query on the subscribe path stalls every event, and replacing a frame the newest does not subsume loses it outright | A client must tell "no state yet" from "service absent", which no frame cannot express | Active | [Full](D018-subscribe-snapshot-contract.md) |
 | 2026-09-14 | D019 | — | The shell owns the wallpaper on screen; the helper owns the palette's input | Three cancelled patches all asked who owns wallpaper state and in what order it is written | A wallpaper apply gains a shell step that runs while the helper works | Active | [Full](D019-wallpaper-state-ownership.md) |
+| 2026-09-15 | D020 | — | A theme with no shipped screenshot paints a drawn palette card; no install captures one | The capture needs Hyprland, ghostty and nvim, which most channels and every Niri session lack | Every channel ships the capture's tools and it runs under Niri | Active | [Full](D020-drawn-theme-preview-fallback.md) |
 
 ---
 

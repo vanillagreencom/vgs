@@ -2,8 +2,8 @@
 
 // Drive Proc.qml's runCommand and _launchProc with modelled Process and Timer objects.
 // Destroying a Quickshell Process SIGKILLs a child still running, so a timed-out command
-// keeps its Process until the child exits or the grace after its SIGTERM runs out. Theme
-// preview's teardown runs in that grace; nested smoke never times a command out.
+// keeps its Process until the child exits or the grace after its SIGTERM runs out. A child's
+// own teardown runs in that grace; nested smoke never times a command out.
 // The launch retires the debouncer entry it launched from, so the cases below also drive when
 // the deferred destroy of that entry's Timer lands, and what a finishing run must not reach.
 
@@ -144,12 +144,12 @@ function makeShell() {
     };
 }
 
-// The theme preview command, armed and launched: the run the timeout cases drive. The launch's
+// A long-running command, armed and launched: the run the timeout cases drive. The launch's
 // deferred Timer destroy is left queued, which those cases neither reach nor assert on.
 function launch() {
     const shell = makeShell();
     const exitCodes = [];
-    shell.runCommand("preview", ["vshell", "theme", "preview", "--all", "--json"],
+    shell.runCommand("long", ["vshell", "theme", "init", "--json"],
         (_out, code) => exitCodes.push(code), 0, TIMEOUT_MS);
     fire(shell.timers[0]);
     assert.equal(shell.processes.length, 1, "one Process per launch");

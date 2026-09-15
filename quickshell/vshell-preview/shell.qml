@@ -1,7 +1,7 @@
 // Minimal VGS preview shell: renders wallpaper, a bar, and an open
 // control-center flyout styled from the theme.json referenced by
-// $VGS_PREVIEW_THEME. Used only by `vshell theme preview` inside the nested
-// screenshot compositor; it must stay self-contained (no qs.* imports, no
+// $VGS_PREVIEW_THEME. Used only by scripts/capture-theme-previews.py inside the
+// nested screenshot compositor; it must stay self-contained (no qs.* imports, no
 // SettingsData/SessionData dependencies).
 import QtQuick
 import Quickshell
