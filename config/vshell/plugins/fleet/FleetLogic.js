@@ -276,28 +276,21 @@ function repositorySession(repository) {
     return parts[parts.length - 1];
 }
 
-// Keeps a terminal open only when its command exits nonzero, so a refusal stays
-// readable and a clean exit closes the window. `vshell terminal exec --hold`
-// holds after every exit.
-var HOLD_ON_FAILURE = 'code=0; "$@" || code=$?; if [ "$code" -ne 0 ]; then echo; ' +
-    'echo "$0 exited $code. Press Enter to close."; read _; fi; exit "$code"';
-
 // Each action, keyed by name: the fleet command the probe checks and the argv
-// that runs it, so a button is enabled only for the command it runs. Attach and
-// close open a terminal through `vshell terminal exec`; close holds it open
-// after any exit, so its result stays readable.
+// that runs it, so the probe checks the command the action runs. Attach and
+// close open a terminal through `vshell terminal exec --hold`, so a refusal
+// stays readable.
 var ACTIONS = {
     attachControl: {
         command: ATTACH_COMMAND,
         argv: function (path, row, vshell) {
-            return [vshell, "terminal", "exec", "--tui", "--", "sh", "-c", HOLD_ON_FAILURE, ATTACH_COMMAND, path];
+            return [vshell, "terminal", "exec", "--tui", "--hold", "--", path];
         }
     },
     attachLane: {
         command: ATTACH_COMMAND,
         argv: function (path, row, vshell) {
-            return [vshell, "terminal", "exec", "--tui", "--", "sh", "-c", HOLD_ON_FAILURE, ATTACH_COMMAND, path,
-                repositorySession(row.repository)];
+            return [vshell, "terminal", "exec", "--tui", "--hold", "--", path, repositorySession(row.repository)];
         }
     },
     openCode: {

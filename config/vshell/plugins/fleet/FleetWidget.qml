@@ -64,7 +64,7 @@ PluginComponent {
         return root.daemon.run(action, row);
     }
 
-    // Why an action button is disabled, or "" when it can run.
+    // Why an action cannot run, or "" when it can.
     function actionProblem(action) {
         if (!root.daemon)
             return "the fleet daemon has not started";

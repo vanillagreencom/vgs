@@ -11,7 +11,6 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-const { spawnSync } = require("node:child_process");
 
 const repoRoot = path.join(__dirname, "..");
 const PLUGIN = path.join(repoRoot, "config", "vshell", "plugins", "fleet");
@@ -149,42 +148,25 @@ test("each action runs its fleet command, assembled from the row", () => {
     const control = F.controlRow(status);
     const lane = F.laneRows(status)[0];
     const V = "/usr/bin/vshell";
-    const attach = argv => [V, "terminal", "exec", "--tui", "--", "sh", "-c", HOLD, "fleet-attach", ...argv];
-    const HOLD = F.actionArgv("attachControl", control, V, B)[7];
+    const terminal = argv => [V, "terminal", "exec", "--tui", "--hold", "--", ...argv];
     // [why, action, row, the command the probe checks, argv]
     for (const [why, action, row, command, argv] of [
-        ["attaching to the control VM opens a terminal on fleet-attach and its default session",
-            "attachControl", control, "fleet-attach", attach([`${B}/fleet-attach`])],
+        ["attaching to the control VM opens a held terminal on fleet-attach and its default session",
+            "attachControl", control, "fleet-attach", terminal([`${B}/fleet-attach`])],
         ["attaching to a lane opens its repository's session, named without the owner",
-            "attachLane", lane, "fleet-attach", attach([`${B}/fleet-attach`, "vgs"])],
+            "attachLane", lane, "fleet-attach", terminal([`${B}/fleet-attach`, "vgs"])],
         ["opening in VSCodium runs fleet-code over every clone", "openCode", control, "fleet-code", [`${B}/fleet-code`, "--all"]],
-        ["closing runs lane-host-daytona close for the row's item in a terminal held open after any exit",
-            "closeLane", lane, "lane-host-daytona",
-            [V, "terminal", "exec", "--tui", "--hold", "--", `${B}/lane-host-daytona`, "close", "--item", "VGS-376"]]
+        ["closing runs lane-host-daytona close for the row's item in a held terminal",
+            "closeLane", lane, "lane-host-daytona", terminal([`${B}/lane-host-daytona`, "close", "--item", "VGS-376"])]
     ]) {
         assert.deepEqual(F.actionArgv(action, row, V, B), argv, why);
         assert.equal(F.actionCommand(action), command, `${why}: the probe checks the command it runs`);
     }
     assert.throws(() => F.actionArgv("park", lane, V, B), /unknown action park/);
     assert.throws(() => F.actionCommand("park"), /unknown action park/);
-
-    // The attach wrapper runs in sh with the child's environment given explicitly. A failed
-    // attach prints its prompt and keeps the exit code; a clean detach prints nothing.
-    // [why, payload, exit status, whether the hold prompt printed]
-    for (const [why, payload, status, prompts] of [
-        ["a refused attach holds the terminal with its exit code", ["sh", "-c", "echo refused >&2; exit 1"], 1, true],
-        ["a clean detach closes the terminal", ["true"], 0, false]
-    ]) {
-        const run = spawnSync("sh", ["-c", HOLD, "fleet-attach", ...payload],
-            { input: "\n", encoding: "utf8", env: { PATH: process.env.PATH } });
-        assert.equal(run.status, status, why);
-        assert.equal(run.stdout !== "", prompts, `${why}: stdout ${JSON.stringify(run.stdout)}`);
-        if (prompts)
-            assert.ok(run.stdout.includes("fleet-attach exited 1"), `${why}: the prompt names the command and its code`);
-    }
 });
 
-test("the probe records the fleet's own commands, and a command it did not find disables its use", () => {
+test("the probe records the fleet's own commands, and a command it did not find is named as the reason it cannot run", () => {
     assert.deepEqual(F.decodeProbe(0, "fleet-attach\nunrelated-tool\n\n"), { ok: true, available: { "fleet-attach": true } },
         "only the fleet's own commands are recorded");
     assert.deepEqual(F.decodeProbe(124, "fleet-attach\n"), { ok: false, error: "the fleet command probe exited 124" },
