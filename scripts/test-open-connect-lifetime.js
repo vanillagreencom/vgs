@@ -27,16 +27,33 @@ const windowRulesTabText = fs.readFileSync(WINDOW_RULES_TAB, "utf8");
 const detailHost = qmlSource(detailHostText, "DetailHost.qml");
 const windowRulesTab = qmlSource(windowRulesTabText, "WindowRulesTab.qml");
 
-// Build a callable from a shipped function, under its own parameter names. Calling it with the
-// wrong name would leave the argument undefined and the case green on an untaken path.
+// Build a callable from a shipped block, under the parameter names the file itself declares.
+// Naming them here instead would leave a mistyped argument undefined and the case green on a
+// path it never took.
+function callable(params, body) {
+    // eslint-disable-next-line no-new-func -- with() models QML scope lookup, which needs non-strict
+    const fn = new Function("scope", params, `with (scope) ${body}`);
+    return (scope, ...args) => fn(scope, ...args);
+}
+
+// A named QML function: `function name(a, b) { ... }`.
 function shippedFunction(text, q, label, name) {
     const at = q.indexOf(`function ${name}(`);
     assert.notEqual(at, -1, `${label} must define ${name}()`);
-    const close = q.indexOf(")", at);
-    const params = text.slice(text.indexOf("(", at) + 1, close).trim();
-    // eslint-disable-next-line no-new-func -- with() models QML scope lookup, which needs non-strict
-    const fn = new Function("scope", params, `with (scope) ${q.body(name)}`);
-    return (scope, ...args) => fn(scope, ...args);
+    return callable(text.slice(text.indexOf("(", at) + 1, q.indexOf(")", at)).trim(), q.body(name));
+}
+
+// A QML signal handler: `onName: { ... }`, or `onName: function (a) { ... }` when the signal
+// carries arguments. The extracted block starts at the brace, so those names exist only in the
+// declaration ahead of it.
+function shippedHandler(text, q, label, name) {
+    const blocks = q.handlers(name);
+    assert.equal(blocks.length, 1, `${label} must declare ${name} once, found ${blocks.length}`);
+    const at = text.indexOf(blocks[0]);
+    assert.equal(at, text.lastIndexOf(blocks[0]),
+        `${label}: ${name}'s body also appears elsewhere, so its declaration cannot be located`);
+    const signature = /\bfunction\s*\(([^)]*)\)/.exec(text.slice(text.lastIndexOf("\n", at) + 1, at));
+    return callable(signature ? signature[1].trim() : "", blocks[0]);
 }
 
 // How many times each case opens before it emits. One open cannot tell a per-open connection from
@@ -45,11 +62,8 @@ const OPENS = 4;
 
 // The shipped handler that runs when the selected settings tab changes. It is the only path that
 // restores the rule list's freshness once the enabled gate has dropped the connection.
-const pageActiveHandlers = windowRulesTab.handlers("onPageActiveChanged");
-assert.equal(pageActiveHandlers.length, 1,
-    `WindowRulesTab.qml must declare onPageActiveChanged once, found ${pageActiveHandlers.length}`);
-// eslint-disable-next-line no-new-func -- with() models QML scope lookup, which needs non-strict
-const onPageActiveChanged = new Function("scope", `with (scope) ${pageActiveHandlers[0]}`);
+const onPageActiveChanged = shippedHandler(
+    windowRulesTabText, windowRulesTab, "WindowRulesTab.qml", "onPageActiveChanged");
 
 // A Qt signal: connect appends, disconnect removes one registration, emit runs what is registered.
 // Connecting the same function twice registers it twice, which is the accumulation under test.
@@ -135,11 +149,8 @@ function makeCodecHost() {
             updateDeviceCodecDisplay: (address, codec) => updates.push([address, codec]),
         },
     };
-    const blocks = detailHost.handlers("onShowCodecSelector");
-    assert.equal(blocks.length, 1,
-        `DetailHost.qml must declare onShowCodecSelector once, found ${blocks.length}`);
-    // eslint-disable-next-line no-new-func
-    const onShow = new Function("scope", "device", `with (scope) ${blocks[0]}`);
+    const onShow = shippedHandler(
+        detailHostText, detailHost, "DetailHost.qml", "onShowCodecSelector");
     // Creating the detail binds whatever the file connects declaratively; nothing else does.
     const bound = connectionsElement(
         detailHost, "DetailHost.qml", scope, "onCodecSelected", target => target.codecSelected)();
@@ -223,8 +234,10 @@ function makeRulesTab(pageActive = true) {
 test("one codec selection updates the detail once, however often the selector was shown", () => {
     const host = makeCodecHost();
     for (let i = 0; i < OPENS; i++)
-        host.showCodecSelector({ address: "AA:BB" });
-    assert.equal(host.selector.shown.length, OPENS, "every open still shows the selector");
+        host.showCodecSelector({ address: `AA:BB:${i}` });
+    assert.deepEqual(host.selector.shown.map(device => device?.address),
+        Array.from({ length: OPENS }, (_, i) => `AA:BB:${i}`),
+        "every open still shows the selector, and shows the device it was handed");
     assert.equal(host.selector.codecSelected.count, 1,
         `showing the selector ${OPENS} times left ${host.selector.codecSelected.count} handlers ` +
         "on a selector that outlives the detail; each later selection runs them all");
