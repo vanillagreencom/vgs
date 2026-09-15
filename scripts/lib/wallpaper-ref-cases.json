@@ -110,7 +110,7 @@
       "path": ""
     }
   ],
-  "recoverWhy": "resolved_wallpaper, which repairs before resolving. Each row names the package files the installation reading it holds, under `present`, relative to whichever root the row says. A row whose file is absent must come back untouched.",
+  "recoverWhy": "Reading: resolved_wallpaper, which repairs before resolving. Each row names the package files the reading installation holds, under `present`, relative to whichever root the row says. A path inside the user's packages answers as it stands; every other absolute path with a package background's tail is looked for under the running root and then under the user's packages, and a row whose file is in neither must come back untouched.",
   "recover": [
     {
       "why": "a background recorded by a checkout that is gone names this installation's copy",
@@ -159,7 +159,7 @@
       "recovered": "/home/u/dev/vshell/themes/tokyo-night/backgrounds/9-gone.jpg"
     },
     {
-      "why": "a user package the running root also carries answers from the user's own copy",
+      "why": "a path under the user's packages answers as it stands, whatever the running root carries",
       "path": "/home/u/.config/vshell/themes/catppuccin/backgrounds/2-waves.png",
       "present": {
         "userThemes": [
@@ -172,16 +172,33 @@
       "recovered": "/home/u/.config/vshell/themes/catppuccin/backgrounds/2-waves.png"
     },
     {
+      "why": "a path under neither root that both roots carry answers from the running root first",
+      "path": "/home/u/dev/vshell/themes/catppuccin/backgrounds/2-waves.png",
+      "present": {
+        "repo": [
+          "themes/catppuccin/backgrounds/2-waves.png"
+        ],
+        "userThemes": [
+          "catppuccin/backgrounds/2-waves.png"
+        ]
+      },
+      "recovered": "/home/u/dev/.worktrees/vshell/vgs-273/themes/catppuccin/backgrounds/2-waves.png"
+    },
+    {
       "why": "a user package is this installation's own and is never repaired",
       "path": "/home/u/.config/vshell/themes/catppuccin/backgrounds/2-waves.png",
       "present": {},
       "recovered": "/home/u/.config/vshell/themes/catppuccin/backgrounds/2-waves.png"
     },
     {
-      "why": "a background already under the running root is never repaired",
+      "why": "a background under the running root whose own file is gone answers from the user's copy",
       "path": "/home/u/dev/.worktrees/vshell/vgs-273/themes/tokyo-night/backgrounds/1-milad.jpg",
-      "present": {},
-      "recovered": "/home/u/dev/.worktrees/vshell/vgs-273/themes/tokyo-night/backgrounds/1-milad.jpg"
+      "present": {
+        "userThemes": [
+          "tokyo-night/backgrounds/1-milad.jpg"
+        ]
+      },
+      "recovered": "/home/u/.config/vshell/themes/tokyo-night/backgrounds/1-milad.jpg"
     },
     {
       "why": "a rooted reference needs no repair and resolves",

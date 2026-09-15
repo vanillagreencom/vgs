@@ -394,8 +394,8 @@ def portable_ref(value: str | None) -> str:
     nothing costs a wallpaper rather than replacing one that loads.
 
     `Common/Paths.qml` mirrors this for `session.json`, which the shell alone
-    writes. `scripts/lib/wallpaper-ref-cases.json` is the one case table both
-    implementations run.
+    writes. `scripts/lib/wallpaper-ref-cases.json` is the one statement of the rule;
+    its `ref` and `resolve` sections are what the JavaScript suite runs.
     """
     if not value or not value.startswith("/"):
         return value or ""
@@ -411,8 +411,11 @@ def recovered_package_ref(value: str | None) -> str:
     Emits a path only when the file it names is present here, which is why this is
     the rule's one owner: `Common/Paths.qml` cannot ask the filesystem synchronously
     and so carries no repair. A path already inside the user's packages answers as it
-    stands, since the copy it names is the one the user chose and the running root may
-    hold a package of the same name. `docs/architecture/wallpaper.md` states the rule.
+    stands, since the copy it names is the one the user chose. Every other absolute
+    path with a package background's tail is looked for under the running root and
+    then under the user's packages, and answers with the first that holds it; a path
+    under the running root whose own file is gone can therefore answer with the
+    user's copy. `docs/architecture/wallpaper.md` states the rule.
     """
     if not value or not value.startswith("/"):
         return value or ""
@@ -8395,6 +8398,41 @@ def resolved_shell_theme(theme: Dict[str, Any]) -> Dict[str, Any]:
     return {**theme, "wallpaper": resolved_wallpaper(str(theme["wallpaper"]))}
 
 
+def repair_theme_state() -> List[str]:
+    """Rewrite this helper's own durable files whose wallpaper this installation can
+    repair, and report which ones moved.
+
+    `current_theme` and `applied_blueprint` repair what they return, but a reader that
+    opens the file itself sees the bytes: `MethodTheme`'s watcher is such a reader, and
+    without this a session that pinned a removed checkout keeps naming it forever.
+    `theme init` runs this, and the shell runs `theme init` on every start.
+
+    A file whose wallpaper `recovered_package_ref` declines is left alone, so this
+    writes nothing on the ordinary start where every path already resolves.
+    """
+    moved: List[str] = []
+    for path, read_key in ((cfg_dir() / "theme.json", None), (cfg_dir() / "theme-current.json", "palette")):
+        try:
+            data = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        holder = data.get(read_key) if read_key else data
+        if not isinstance(holder, dict):
+            continue
+        recorded = str(holder.get("wallpaper") or "")
+        repaired = portable_ref(resolved_wallpaper(recorded))
+        if not recorded or repaired == recorded:
+            continue
+        holder["wallpaper"] = repaired
+        try:
+            write_file(path, json.dumps(data, indent=2) + "\n")
+        except OSError as exc:
+            eprint(f"{path.name}: {exc}")
+            continue
+        moved.append(path.name)
+    return moved
+
+
 def current_theme() -> Dict[str, Any]:
     """The applied theme's shell state, read-only.
 
@@ -10900,6 +10938,11 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
     p_wp_del.add_argument("--applied", action="append", default=[], metavar="PATH",
                           help="an image the session or lock screen still names, which is refused; repeat per image")
     p_wp_del.add_argument("--json", action="store_true")
+    p_wp_repair = sub.add_parser(
+        "wallpaper-repair",
+        help="answer, for each path, the wallpaper this installation holds for it")
+    p_wp_repair.add_argument("paths", nargs="*")
+    p_wp_repair.add_argument("--json", action="store_true")
     p_wp_def = sub.add_parser("wallpaper-default")
     p_wp_def.add_argument("file")
     p_wp_def.add_argument("--theme", default="", help="theme name (default: current)")
@@ -10996,9 +11039,12 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
         applied = not (cfg_dir() / "theme.json").exists()
         if applied:
             apply_theme_obj(default_theme_blueprint())
+        # After the apply, so a fresh install writes its own state before this reads
+        # it, and before the name below, which is what the shell waits on.
+        repaired = repair_theme_state()
         name = str(current_theme().get("name") or "")
         if args.json:
-            print(json.dumps({"applied": applied, "name": name}, indent=2))
+            print(json.dumps({"applied": applied, "name": name, "repaired": repaired}, indent=2))
         else:
             print(name)
         return 0
@@ -11221,6 +11267,15 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
             eprint(str(exc))
             return 1
         print(json.dumps(result, indent=2) if args.json else f"Deleted {result['deleted']}")
+        return 0
+    if args.cmd == "wallpaper-repair":
+        # The shell owns session.json and this owns the rule, so the answer crosses
+        # the boundary rather than the write: SessionData applies it per key, which
+        # keeps each monitor's and each mode's own value.
+        repaired = {path: resolved_wallpaper(path) for path in args.paths}
+        moved = {path: value for path, value in repaired.items() if value != path}
+        print(json.dumps({"repaired": moved}, indent=2) if args.json
+              else "\n".join(f"{path}\t{value}" for path, value in moved.items()))
         return 0
     if args.cmd == "wallpaper-default":
         bp = resolve_theme_package(args.theme)

@@ -2841,14 +2841,16 @@ def test_theme_init_applies_only_without_state():
     def scenario(temp_home: Path):
         state = temp_home / ".config" / "vshell" / "theme.json"
         result, hooks = init()
-        assert_equal(result, {"applied": True, "name": helper.DEFAULT_THEME_NAME}, "first run applies the default theme")
+        assert_equal(result, {"applied": True, "name": helper.DEFAULT_THEME_NAME, "repaired": []},
+                     "first run applies the default theme and has nothing to repair")
         assert_equal(json.loads(state.read_text()).get("name"), helper.DEFAULT_THEME_NAME,
                      "first run writes the default theme's state")
         assert_equal("shell-reload" in hooks, True, "the first-run apply runs the theme hooks")
         applied = '{"name": "applied", "mode": "light"}\n'
         state.write_text(applied)
         result, hooks = init()
-        assert_equal(result, {"applied": False, "name": "applied"}, "an applied theme is left in place")
+        assert_equal(result, {"applied": False, "name": "applied", "repaired": []},
+                     "an applied theme is left in place, with no wallpaper to repair")
         assert_equal(state.read_text(), applied, "theme init never rewrites an applied theme")
         assert_equal(hooks, [], "theme init runs no hook when a theme is applied")
 

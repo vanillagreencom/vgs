@@ -276,6 +276,7 @@ Singleton {
                 WallpaperCyclingService.updateCyclingState();
 
             _checkSessionWritable();
+            _repairWallpapers();
         } catch (e) {
             _parseError = true;
             const msg = e.message;
@@ -318,6 +319,47 @@ Singleton {
 
     function _sessionJson() {
         return Store.toJson(root, Paths.wallpaperRef);
+    }
+
+    // A session written by an installation that is gone names package backgrounds
+    // this one may still hold. `recovered_package_ref` in the helper decides, because
+    // deciding means asking the filesystem; this hands it every absolute path the
+    // store holds and writes the answers back per key. Not through setWallpaper:
+    // that carries one image to every monitor and writes the active mode alone,
+    // which is exactly what the recorded failure needs kept apart.
+    function _repairWallpapers() {
+        if (!_canWrite())
+            return;
+        const paths = Store.refValues(root);
+        if (!paths.length)
+            return;
+        wallpaperRepairProcess.command = [Paths.vshellCli, "theme", "wallpaper-repair", "--json"].concat(paths);
+        wallpaperRepairProcess.running = true;
+    }
+
+    function _applyWallpaperRepairs(repaired) {
+        if (!repaired || !Object.keys(repaired).length || !_canWrite())
+            return;
+        if (Store.mapRefs(root, value => repaired[value] || value)) {
+            log.info("repaired", Object.keys(repaired).length, "wallpaper path(s) from durable state");
+            saveSettings();
+        }
+    }
+
+    Process {
+        id: wallpaperRepairProcess
+        running: false
+        stdout: StdioCollector {
+            onStreamFinished: {
+                try {
+                    root._applyWallpaperRepairs(JSON.parse(text || "{}").repaired);
+                } catch (e) {
+                    // A repair that cannot be read leaves the session as it loaded,
+                    // which is what the shell showed before this ran.
+                    root.log.warn("Could not read the wallpaper repair:", e.message);
+                }
+            }
+        }
     }
 
     function getCurrentSessionJson() {

@@ -16,6 +16,40 @@ function mapped(spec, value, mapRef) {
     return out;
 }
 
+// Every absolute wallpaper path the store currently holds, once each. The repair
+// asks the helper about these; a value that is already a reference resolves without
+// help, and a colour literal is not a path.
+function refValues(root) {
+    var SPEC = SpecModule.SPEC;
+    var seen = {};
+    for (var k in SPEC) {
+        if (!SPEC[k].ref && !SPEC[k].refMap) continue;
+        var value = root[k];
+        var each = SPEC[k].ref ? [value] : [];
+        if (SPEC[k].refMap && value) for (var key in value) each.push(value[key]);
+        for (var i = 0; i < each.length; i++)
+            if (typeof each[i] === "string" && each[i].startsWith("/")) seen[each[i]] = true;
+    }
+    return Object.keys(seen);
+}
+
+// Replace every marked value the helper answered for, in place, and report whether
+// anything moved. In place because a setter would carry one image to every monitor
+// and write the active mode alone, losing exactly the per-monitor and per-mode
+// values the repair exists to bring back.
+function mapRefs(root, mapRef) {
+    var SPEC = SpecModule.SPEC;
+    var moved = false;
+    for (var k in SPEC) {
+        if (!SPEC[k].ref && !SPEC[k].refMap) continue;
+        var next = mapped(SPEC[k], root[k], mapRef);
+        if (JSON.stringify(next) === JSON.stringify(root[k])) continue;
+        root[k] = next;
+        moved = true;
+    }
+    return moved;
+}
+
 function parse(root, jsonObj, mapRef) {
     var SPEC = SpecModule.SPEC;
 

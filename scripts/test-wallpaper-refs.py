@@ -17,6 +17,7 @@ from __future__ import annotations
 import contextlib
 import importlib.machinery
 import importlib.util
+import io
 import json
 import re
 import sys
@@ -77,6 +78,15 @@ def installation(present=None, keep_repo=False):
                 patch.object(helper, "cfg_dir", lambda: dirs["cfg"]), \
                 patch.object(helper, "state_dir", lambda: dirs["state"]):
             yield dirs
+
+
+def run_theme(argv):
+    """`vshell theme ...` as the shell runs it, with its JSON answer parsed."""
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        code = helper.cmd_theme(argv)
+    assert code == 0, f"vshell theme {' '.join(argv)} exited {code}"
+    return json.loads(out.getvalue())
 
 
 def here(value, dirs):
@@ -191,8 +201,58 @@ def test_state_written_by_an_installation_that_is_gone_recovers():
             "theme-current.json holding a removed checkout's path must name this "
             "installation's copy of the same package background")
         assert helper.current_theme()["wallpaper"] == want, (
-            "the shell's theme.json must recover the same way, which is what carries the "
-            "repair into the session through MethodTheme")
+            "the shell's theme.json must recover the same way; what carries that into the "
+            "session is repair_theme_state rewriting the file, which the case below pins")
+
+
+def test_theme_init_rewrites_the_files_a_removed_checkout_named():
+    """The reported symptom, end to end on the helper's side.
+
+    `current_theme` repairing what it returns is not enough: `MethodTheme` opens
+    `theme.json` itself, so the repair has to land in the bytes. `theme init` runs
+    `repair_theme_state` on every shell start.
+    """
+    stale = CASES["recover"][0]
+    with installation(stale["present"]) as dirs:
+        path = here(stale["path"], dirs)
+        theme_file = dirs["cfg"] / "theme.json"
+        current_file = dirs["cfg"] / "theme-current.json"
+        theme_file.write_text(json.dumps({"name": "t", "wallpaper": path, "colors": {}}))
+        current_file.write_text(json.dumps({"name": "t", "palette": {"wallpaper": path}}))
+        # Through the command the shell actually runs, so the arm that calls the
+        # repair is what this exercises and not the function alone.
+        assert run_theme(["init", "--json"])["repaired"] == ["theme.json", "theme-current.json"]
+        want = helper.portable_ref(here(stale["recovered"], dirs))
+        assert json.loads(theme_file.read_text())["wallpaper"] == want, (
+            "theme.json must hold the repaired value on disk, or the watcher that reads it "
+            "hands the session the removed checkout's path again")
+        assert json.loads(current_file.read_text())["palette"]["wallpaper"] == want
+        assert json.loads(theme_file.read_text())["name"] == "t", "the rest of the file is untouched"
+
+
+def test_theme_init_rewrites_nothing_it_cannot_repair():
+    """An ordinary start writes no file, so the repair costs a read and nothing else."""
+    row = CASES["ref"][0]
+    with installation(row["present"]) as dirs:
+        for name, body in (("theme.json", {"name": "t", "wallpaper": here(row["ref"], dirs)}),
+                           ("theme-current.json", {"palette": {"wallpaper": here(row["ref"], dirs)}})):
+            (dirs["cfg"] / name).write_text(json.dumps(body))
+        before = {name: (dirs["cfg"] / name).read_text() for name in ("theme.json", "theme-current.json")}
+        assert run_theme(["init", "--json"])["repaired"] == []
+        for name, text in before.items():
+            assert (dirs["cfg"] / name).read_text() == text, f"{name} must be left alone"
+
+
+def test_wallpaper_repair_answers_only_for_what_it_moved():
+    """What the shell asks, for the session keys the helper must not write itself."""
+    stale = CASES["recover"][0]
+    outside = next(row for row in CASES["recover"] if row["path"].endswith("anime-girl.png"))
+    with installation(stale["present"]) as dirs:
+        moved, kept = here(stale["path"], dirs), here(outside["path"], dirs)
+        answer = run_theme(["wallpaper-repair", "--json", moved, kept])["repaired"]
+        assert answer == {moved: here(stale["recovered"], dirs)}, (
+            "the answer names what moved and nothing else: SessionData skips the whole repair "
+            "on an empty answer, so a path it did not move must not appear in it")
 
 
 def test_the_shell_theme_file_reads_back_as_a_path():
@@ -292,12 +352,13 @@ def test_the_greeter_cache_takes_its_state_from_the_resolving_readers():
     for call in [call for call in calls if call not in definitions]:
         assert "theme" in call and "session" in call, (
             f"sync_profile_cache({call}) must pass the theme and session the readers produced")
-    for body_name in ("sync_profile_cache_unprivileged", "cmd_greeter_sync"):
-        match = re.search(rf"def {body_name}\(.*?(?=\ndef )", source, re.DOTALL)
-        if not match:
-            continue
+    for body_name in ("sync_profile_cache_unprivileged", "cmd_greeter"):
+        match = re.search(rf"\ndef {body_name}\(.*?(?=\ndef )", source, re.DOTALL)
+        # A name that is not there disarms the check silently, which is how the
+        # privileged writer went unpinned for a round.
+        assert match, f"{body_name} must exist in bin/vshell_helper.py for this guard to pin it"
         body = match.group(0)
-        assert "current_theme_json()" in body and "current_session_json(" in body, (
+        assert "= current_theme_json()" in body and "= current_session_json(" in body, (
             f"{body_name} must take its theme and session from current_theme_json and "
             "current_session_json, which are where a reference becomes a path for the greeter")
     producers = len(re.findall(r"\bcurrent_session_json\(", source))

@@ -1406,11 +1406,14 @@ Singleton {
                 // CLI applies only touch theme.json; keep the session wallpaper in sync
                 // so `vshell theme apply` changes the background like UI applies do.
                 // wallpaperSource=folder decouples the wallpaper from theme applies.
-                // The file records a portable reference the helper has already
-                // repaired, so this is where it becomes the path on this machine.
-                // SessionData holds resolved paths alone, and setWallpaper carries
-                // this to every monitor under per-monitor mode, which is how a
-                // session that pinned a removed checkout comes back.
+                // The file records a portable reference, so this is where it becomes
+                // the path on this machine; SessionData holds resolved paths alone.
+                // `theme init` rewrites this file when the helper can repair what it
+                // names, and the watcher above re-reads it, which is how a terminal
+                // apply and a repaired file reach the session by the same route.
+                // Per-monitor and per-mode values are not carried here: setWallpaper
+                // writes one image to every monitor and the active mode alone, so
+                // SessionData._repairWallpapers restores those per key instead.
                 const themeWallpaper = Paths.resolveRef(root.methodThemeJson.wallpaper || "");
                 if (themeWallpaper && typeof SessionData !== "undefined"
                         && SessionData.wallpaperPath !== themeWallpaper
