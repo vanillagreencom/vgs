@@ -43,6 +43,14 @@ function shippedFunction(text, q, label, name) {
 // a per-lifetime one, so every accumulation case opens more than once.
 const OPENS = 4;
 
+// The shipped handler that runs when the selected settings tab changes. It is the only path that
+// restores the rule list's freshness once the enabled gate has dropped the connection.
+const pageActiveHandlers = windowRulesTab.handlers("onPageActiveChanged");
+assert.equal(pageActiveHandlers.length, 1,
+    `WindowRulesTab.qml must declare onPageActiveChanged once, found ${pageActiveHandlers.length}`);
+// eslint-disable-next-line no-new-func -- with() models QML scope lookup, which needs non-strict
+const onPageActiveChanged = new Function("scope", `with (scope) ${pageActiveHandlers[0]}`);
+
 // A Qt signal: connect appends, disconnect removes one registration, emit runs what is registered.
 // Connecting the same function twice registers it twice, which is the accumulation under test.
 function signal() {
@@ -141,8 +149,9 @@ function makeCodecHost() {
 
 // The window-rule modal lives in a LazyLoader outside the settings tab. The loader creates its
 // item on the first open and keeps it, so the item outlives every later open too. The tab's own
-// loader keeps it alive once visited, so `pageActive` — bound by SettingsContent to whether this
-// tab is the one on screen — is the only thing that says the user is looking at it.
+// loader keeps it alive once visited, so `pageActive` — which SettingsContent binds to whether
+// this tab is the selected one, not to whether the settings window is showing — is the only
+// thing that says another settings tab has the floor.
 function makeRulesTab(pageActive = true) {
     // QML reaches one signal under both spellings: `ruleSubmitted` and the handler property
     // `onRuleSubmitted`. Connecting through either registers on the same signal.
@@ -171,6 +180,7 @@ function makeRulesTab(pageActive = true) {
     const scope = {
         readOnly: false,
         pageActive: pageActive,
+        componentReady: true,
         PopoutService: { windowRuleModalLoader: loader },
         showReadOnlyWarning: () => warnings.push(true),
         loadWindowRules: countLoad,
@@ -199,11 +209,13 @@ function makeRulesTab(pageActive = true) {
         setReadOnly: value => {
             scope.readOnly = value;
         },
-        // SettingsContent binds pageActive to whether this tab is on screen; the element's
-        // enabled binding reads it, so Qt drops and restores the connection with it.
+        // Selecting another settings tab, or this one again. Two things read pageActive: the
+        // element's enabled binding, so Qt drops and restores the connection with it, and the
+        // shipped onPageActiveChanged handler, which is what re-reads the list on return.
         setPageActive: value => {
             scope.pageActive = value;
             retarget();
+            onPageActiveChanged(scope);
         },
     };
 }
@@ -257,19 +269,22 @@ test("the three open paths share one registration rather than one each", () => {
     assert.equal(tab.loads.length, 1, "one submission re-reads the rule list once");
 });
 
-test("a submission reaching a tab the user is not on re-reads nothing", () => {
+test("a submission reaching an unselected tab re-reads nothing, and returning catches up", () => {
     const tab = makeRulesTab();
     tab.open.editRule({ id: 1 });
+    tab.loads.length = 0;
     tab.setPageActive(false);
     assert.equal(tab.connectedCount(), 0,
-        "a tab the user left is not connected; the rule modal also opens from IPC, and a " +
-        "submission would otherwise spawn the list helper and could raise a toast off-screen");
-    tab.loads.length = 0;
+        "a tab another settings tab has displaced is not connected; the rule modal also opens " +
+        "from IPC, and a submission would otherwise spawn the list helper unprompted");
+    assert.equal(tab.loads.length, 0, "and leaving the tab re-reads nothing by itself");
     tab.modal.ruleSubmitted.emit();
-    assert.equal(tab.loads.length, 0, "so nothing re-reads the rule list");
-    // onPageActiveChanged re-reads the list on return, so the gate costs no freshness.
+    assert.equal(tab.loads.length, 0, "nor does a submission that arrives while it is away");
+    // The gate costs no freshness only because returning to the tab re-reads the list.
     tab.setPageActive(true);
     assert.equal(tab.connectedCount(), 1, "returning to the tab connects it again, once");
+    assert.equal(tab.loads.length, 1,
+        "and re-reads the list once, which is what makes the missed submission harmless");
 });
 
 test("a tab the user is on is connected for real, not declared and disabled", () => {

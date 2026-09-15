@@ -160,9 +160,13 @@ Item {
 
     // The modal outlives every open, so connecting inside the three open paths below would
     // leave one handler per open alive and re-read the rule list once per accumulated handler.
-    // The tab keeps its loader alive once visited, and the modal also opens from IPC, so a
-    // submission reaching a tab the user is not looking at would spawn the list helper and could
-    // raise a toast the user cannot attribute. onPageActiveChanged re-reads the list on return.
+    //
+    // The tab keeps its loader alive once visited and the modal also opens from IPC, so a
+    // submission can arrive while another settings tab is selected: the gate below drops the
+    // connection then, and onPageActiveChanged re-reads the list on return. pageActive reports
+    // only which settings tab is selected. Closing the settings window leaves this tab selected,
+    // because PopoutService defers the unload to session lock or monitors-off, so a submission
+    // with the window closed still re-reads the list and can still raise its error toast.
     Connections {
         target: PopoutService.windowRuleModalLoader?.item ?? null
         enabled: root.pageActive
