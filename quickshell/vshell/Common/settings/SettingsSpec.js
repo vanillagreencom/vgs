@@ -278,8 +278,6 @@ var SPEC = {
     iconThemeLight: { def: "System Default", onChange: "applyStoredIconTheme" },
     iconThemePerMode: { def: false, onChange: "applyStoredIconTheme" },
     lastAppliedIconTheme: { def: "" },
-    availableIconThemes: { def: ["System Default"], persist: false },
-    systemDefaultIconTheme: { def: "", persist: false },
     qt5ctAvailable: { def: false, persist: false },
     qt6ctAvailable: { def: false, persist: false },
     gtkAvailable: { def: false, persist: false },

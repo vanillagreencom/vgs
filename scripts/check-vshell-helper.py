@@ -2825,6 +2825,73 @@ def test_icon_index_picks_each_name_through_the_inherit_chain():
             _restore_env(name, value)
 
 
+def test_icon_picker_lists_every_base_dir_and_samples_each_set():
+    """`theme icons --json` lists a set installed under any icon_theme_base_dirs() entry,
+    ships the bundled Yaru sets to the picker, and resolves each set's sample icons."""
+    def touch(path: Path, text: str = "") -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+
+    def icons() -> dict:
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            status = helper.cmd_theme(["icons", "--json"])
+        assert_equal(status, 0, "theme icons --json exit status")
+        return json.loads(buffer.getvalue())
+
+    # The names the repository ships, read from the directory the installers copy, so a
+    # set added to or dropped from it moves this floor with it.
+    bundled = sorted(d.name for d in helper.bundled_icons_dir().iterdir() if (d / "index.theme").is_file())
+
+    def scenario(temp_home: Path):
+        # A data home away from ~/.local/share and a data dir away from /usr/share: the
+        # picker reaches both only by reading icon_theme_base_dirs().
+        os.environ["XDG_DATA_HOME"] = str(temp_home / "data-home")
+        os.environ["XDG_DATA_DIRS"] = str(temp_home / "data-dir")
+        shared = temp_home / "data-dir" / "icons"
+        # A theme only a data-dir entry carries, with a parent that supplies one sample.
+        touch(shared / "VgsProbeSet" / "index.theme", "[Icon Theme]\nInherits=VgsProbeParent\nDirectories=48x48/apps\n")
+        touch(shared / "VgsProbeParent" / "index.theme", "[Icon Theme]\nDirectories=48x48/apps\n")
+        touch(shared / "VgsProbeSet/48x48/places/folder.png")
+        touch(shared / "VgsProbeSet/48x48/apps/system-file-manager.png")
+        touch(shared / "VgsProbeSet/48x48/apps/preferences-desktop.png")
+        touch(shared / "VgsProbeParent/48x48/apps/utilities-terminal.png")
+        # A cursor-only theme declares no Directories and is not a set anyone can pick.
+        touch(shared / "VgsProbeCursors" / "index.theme", "[Icon Theme]\nName=VgsProbeCursors\n")
+        (shared / "VgsProbeCursors" / "cursors").mkdir(parents=True, exist_ok=True)
+        touch(helper.generated_dir() / "icons.theme", "Yaru-purple\n")
+
+        result = icons()
+        names = [entry["name"] for entry in result["sets"]]
+        # Over-inclusion from a host Flatpak export root stays open: those paths are
+        # absolute and a temporary home cannot move them.
+        for name in bundled:
+            assert_equal(name in names, True, f"the bundled set {name} reaches the picker")
+        assert_equal("VgsProbeSet" in names, True, "a set under an XDG_DATA_DIRS entry reaches the picker")
+        assert_equal("VgsProbeCursors" in names, False, "a cursor-only theme is not offered as an icon set")
+        assert_equal("hicolor" in names, False, "the hicolor fallback base is not offered as an icon set")
+
+        samples = {entry["name"]: entry["samples"] for entry in result["sets"]}
+        assert_equal(samples["VgsProbeSet"], [
+            str(shared / "VgsProbeSet/48x48/places/folder.png"),
+            str(shared / "VgsProbeSet/48x48/apps/system-file-manager.png"),
+            str(shared / "VgsProbeParent/48x48/apps/utilities-terminal.png"),
+            str(shared / "VgsProbeSet/48x48/apps/preferences-desktop.png"),
+        ], "each sample resolves through the set's own inherit chain, in ICON_PREVIEW_SAMPLES order")
+        for name in bundled:
+            assert_equal(len(samples[name]), len(helper.ICON_PREVIEW_SAMPLES),
+                         f"the bundled set {name} resolves every sample icon")
+        assert_equal((result["themeIcon"], result["themeIconInstalled"]), ("Yaru-purple", True),
+                     "the theme's own set is named and reported installed")
+
+    saved = {n: os.environ.get(n) for n in ("XDG_DATA_DIRS", "XDG_DATA_HOME")}
+    try:
+        with_temp_home(scenario)
+    finally:
+        for name, value in saved.items():
+            _restore_env(name, value)
+
+
 def test_theme_init_applies_only_without_state():
     """`theme init` applies the default theme when no theme.json exists, and nothing otherwise."""
     def init():
@@ -11944,6 +12011,7 @@ def main():
     test_current_theme_reads_without_applying()
     test_theme_init_applies_only_without_state()
     test_icon_index_picks_each_name_through_the_inherit_chain()
+    test_icon_picker_lists_every_base_dir_and_samples_each_set()
     test_cache_prune_bounds_imagecache_and_drops_unreferenced_notification_images()
     test_lint_checks_color0_in_light_mode_only()
     test_lint_reports_listed_shortfalls_as_known()

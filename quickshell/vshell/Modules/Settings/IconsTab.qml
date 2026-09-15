@@ -11,13 +11,45 @@ Item {
     id: root
     property var parentModal: null
 
-    // Icon aspect state (helper-provided): installed sets + the theme's named set.
-    property var installedThemes: []
+    // Icon aspect state (helper-provided): installed sets with their sample icons,
+    // plus the theme's named set.
+    property var iconSets: []
     property string themeIcon: ""
     property bool themeIconInstalled: false
 
     readonly property bool followTheme: SettingsData.iconThemeDark === "System Default" && !SettingsData.iconThemePerMode
     readonly property string effectiveIcon: followTheme ? (themeIcon || "System Default") : SettingsData.iconThemeDark
+
+    readonly property var tiles: iconSetTiles(iconSets, effectiveIcon)
+    readonly property string pickerState: iconPickerState(followTheme, tiles.length)
+
+    // BEGIN ICON PICKER MODEL
+    // Keep this region free of root., Theme., I18n. and Qt. references: scripts/test-icon-picker.js extracts and executes it.
+
+    // One tile per installed icon set. `sets` is the `sets` list of
+    // `vshell theme icons --json`: a name and the absolute paths of the sample icons
+    // the helper resolved through that set's own inherit chain. `applied` is the set
+    // the shell draws now, which marks its tile.
+    function iconSetTiles(sets, applied) {
+        return (sets || []).filter(set => !!set.name).map(set => ({
+                    name: set.name,
+                    samples: (set.samples || []).filter(path => !!path),
+                    applied: set.name === applied
+                }));
+    }
+
+    // Why the picker draws no tiles: "follow-theme" while the active theme owns the
+    // icon set, "empty" when no set is installed, "" when the tiles are drawn. The tab
+    // replaces the tiles with one line of copy for each non-empty state, so it never
+    // draws a control that does nothing.
+    function iconPickerState(followTheme, tileCount) {
+        if (followTheme)
+            return "follow-theme";
+        if (tileCount === 0)
+            return "empty";
+        return "";
+    }
+    // END ICON PICKER MODEL
 
     function refresh() {
         Proc.runCommand("vgs-icons-list", [Paths.vshellCli, "theme", "icons", "--json"], function (output, exitCode) {
@@ -25,7 +57,7 @@ Item {
                 return;
             try {
                 const data = JSON.parse(output || "{}");
-                root.installedThemes = data.installed || [];
+                root.iconSets = data.sets || [];
                 root.themeIcon = data.themeIcon || "";
                 root.themeIconInstalled = data.themeIconInstalled === true;
             } catch (e) {
@@ -99,8 +131,8 @@ Item {
                             return;
                         if (index === 0)
                             root.useFollowTheme();
-                        else if (root.installedThemes.length > 0)
-                            root.useFixed(SettingsData.iconThemeDark !== "System Default" ? SettingsData.iconThemeDark : root.installedThemes[0]);
+                        else if (root.tiles.length > 0)
+                            root.useFixed(SettingsData.iconThemeDark !== "System Default" ? SettingsData.iconThemeDark : root.tiles[0].name);
                     }
                 }
 
@@ -119,31 +151,37 @@ Item {
                     font.pixelSize: Theme.settingsFontSize
                 }
 
-
-                SettingsDropdownRow {
-                    width: parent.width
-                    text: I18n.tr("Icon set")
-                    description: I18n.tr("Applied when \"Always use these\" is selected")
-                    enabled: !root.followTheme && root.installedThemes.length > 0
-                    currentValue: SettingsData.iconThemeDark
-                    options: root.installedThemes
-                    onValueChanged: value => root.useFixed(value)
-                }
-
+                // The picker's stand-in: one line saying why there is nothing to pick,
+                // and, while the theme owns the choice, what the shell draws instead.
                 StyledText {
                     width: parent.width
-                    visible: root.installedThemes.length === 0
                     wrapMode: Text.WordWrap
-                    text: I18n.tr("No additional icon themes found in /usr/share/icons or ~/.local/share/icons. Install one (e.g. Papirus or the Yaru color set) to switch icons.")
+                    visible: root.pickerState !== ""
+                    text: {
+                        if (root.pickerState === "follow-theme")
+                            return I18n.tr("The active theme picks the icon set. Currently applied: %1. Choose \"Always use these\" to pick a set yourself.").arg(root.effectiveIcon);
+                        return I18n.tr("No icon sets are installed, so there is nothing to pick. Install an icon set to switch icons.");
+                    }
                     color: Theme.surfaceVariantText
                     font.pixelSize: Theme.settingsFontSize
                 }
 
-                StyledText {
+                Flow {
                     width: parent.width
-                    text: I18n.tr("Currently applied: %1").arg(root.effectiveIcon)
-                    color: Theme.surfaceVariantText
-                    font.pixelSize: Theme.settingsFontSize
+                    visible: root.pickerState === ""
+                    spacing: Theme.spacingS
+
+                    Repeater {
+                        model: root.tiles
+
+                        IconSetTile {
+                            required property var modelData
+                            setName: modelData.name
+                            samples: modelData.samples
+                            applied: modelData.applied
+                            onActivated: root.useFixed(modelData.name)
+                        }
+                    }
                 }
             }
         }

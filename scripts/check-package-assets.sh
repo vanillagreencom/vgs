@@ -47,8 +47,23 @@ if ! package_diff="$(diff "$tmp/package-files.want" "$tmp/package-files.have")";
   exit 1
 fi
 # The retired vgs-shell-assets package was the only carrier of the vendored
-# icon themes, so the one remaining install has to ship them.
+# icon themes, so the one remaining install has to ship them. Every distribution
+# channel installs through this script, so this covers each of them. The Icons
+# settings picker lists a set only when its index.theme installed beside it, so
+# the installed tree is compared with the repository's set by set.
 test -d "$core/usr/lib/vshell/config/vshell/icons"
+( cd "$root/config/vshell/icons" && find . -mindepth 2 -maxdepth 2 -name index.theme -printf '%P\n' ) \
+  | LC_ALL=C sort > "$tmp/icon-sets.want"
+( cd "$core/usr/lib/vshell/config/vshell/icons" && find . -mindepth 2 -maxdepth 2 -name index.theme -printf '%P\n' ) \
+  | LC_ALL=C sort > "$tmp/icon-sets.have"
+# The reference is the repository tree, so an empty listing would compare equal
+# to an install that shipped nothing.
+grep -qxF 'Yaru-purple/index.theme' "$tmp/icon-sets.want"
+if ! icon_diff="$(diff "$tmp/icon-sets.want" "$tmp/icon-sets.have")"; then
+  echo "packaging/install-system.sh: the installed icon sets differ from config/vshell/icons:" >&2
+  printf '%s\n' "$icon_diff" >&2
+  exit 1
+fi
 test -x "$core/usr/lib/vshell/bin/vshell-backend"
 # bin/vshell-helper is a stub that imports the helper body from the module beside it.
 test -x "$core/usr/lib/vshell/bin/vshell-helper"
