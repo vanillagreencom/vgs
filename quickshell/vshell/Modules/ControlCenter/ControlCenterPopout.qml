@@ -21,6 +21,10 @@ VgsPopout {
     property bool powerMenuOpen: powerMenuModalLoader?.item?.shouldBeVisible ?? false
     property real targetPopupHeight: 400
     property bool _heightUpdatePending: false
+    // Plugin widgets the widget library offers, probed once each time edit mode opens.
+    // The probe instantiates every plugin widget and reloads a plugin whose component is
+    // stale, which rewrites PluginService state; a binding that probes re-enters itself.
+    property var pluginWidgetDefinitions: []
 
     signal lockRequested
     signal switchUserRequested
@@ -63,6 +67,7 @@ VgsPopout {
     }
 
     onEditModeChanged: {
+        root.pluginWidgetDefinitions = editMode ? widgetModel.getPluginWidgets() : [];
         if (editMode) {
             collapseAll();
         }
@@ -286,7 +291,7 @@ VgsPopout {
                             if (!editMode)
                                 return [];
                             const existingIds = (SettingsData.controlCenterWidgets || []).map(w => w.id);
-                            const allWidgets = widgetModel.baseWidgetDefinitions.concat(widgetModel.getPluginWidgets());
+                            const allWidgets = widgetModel.baseWidgetDefinitions.concat(root.pluginWidgetDefinitions);
                             return allWidgets.filter(w => w.allowMultiple || !existingIds.includes(w.id));
                         }
                         onAddWidget: widgetId => widgetModel.addWidget(widgetId)
