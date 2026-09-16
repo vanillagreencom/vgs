@@ -388,7 +388,23 @@ harnesses = [
     "pi",
 ]
 
-[hooks.code-quality-load-check]
+[hooks.lane-mail-deliver]
+source = "kendex"
+harnesses = [
+    "claude",
+    "codex",
+    "pi",
+]
+
+[hooks.lane-mail-halt]
+source = "kendex"
+harnesses = [
+    "claude",
+    "codex",
+    "pi",
+]
+
+[hooks.skill-load-check]
 source = "kendex"
 harnesses = ["claude"]
 
@@ -1026,6 +1042,3 @@ pane = false
 
 [agent-additional-instructions]
 all = "Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first."
-
-[pi-extensions."@vanillagreen/pi-nested-agents-md"]
-source = "kendex"
