@@ -1,6 +1,6 @@
 # Theme changes
 
-Read [../docs/architecture/theme.md](../docs/architecture/theme.md) for palette, overlay and output-path contracts. Read [../docs/architecture/agent-cli-themes.md](../docs/architecture/agent-cli-themes.md) for the agent CLI targets and the curated Claude Code files.
+Read [../docs/architecture/theme.md](../docs/architecture/theme.md) for palette, overlay and output-path contracts. Read [../docs/architecture/agent-cli-themes.md](../docs/architecture/agent-cli-themes.md) for the agent CLI targets and the curated Claude Code files. An agent CLI target template writes the whole colour surface its harness reads; [../docs/reference/harness-theme-tokens.md](../docs/reference/harness-theme-tokens.md) is that surface, key by key.
 
 Per-theme app files intentionally share structure. Keep each package independently usable instead of extracting shared theme content.
 
