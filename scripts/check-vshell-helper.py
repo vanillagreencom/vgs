@@ -11156,34 +11156,65 @@ UPSTREAM_TERMINAL_PACKAGES = {
     "synthwave84": {
         "digest": "dd2ac76fc83ac79a9cc37c65615d49bb498f29859e2a66ed6148d95ce1b353ba",
         # The extension sets twelve `terminal.ansi*` keys and no black or white
-        # pair, so those four slots take the surfaces it paints them from.
+        # pair, no terminal selection foreground and no opaque terminal selection
+        # background, so these keys take the surfaces it paints them from.
         "extra_keys": {
             "color0": "editor.background",
             "color7": "foreground",
             "color8": "button.background",
             "color15": "foreground",
+            "selection_foreground": "foreground",
         },
         "checked": ("color0", "color1", "color10", "color11", "color12", "color13",
                     "color14", "color15", "color2", "color3", "color4", "color5",
-                    "color6", "color7", "color8", "color9", "cursor", "foreground"),
+                    "color6", "color7", "color8", "color9", "cursor", "foreground",
+                    "selection_foreground"),
         "terminal_slots": ("color10",),
     },
 }
 
 
-def upstream_terminal_map() -> dict[str, str]:
+def upstream_terminal_base_map() -> dict[str, str]:
     """Every colors.toml key that maps to a VS Code workbench terminal key."""
     mapped = dict(UPSTREAM_TERMINAL_KEYS)
     mapped.update({f"color{slot}": key for slot, key in enumerate(helper.VSCODE_ANSI_KEYS)})
     return mapped
 
 
+def upstream_terminal_map(pins: dict, upstream: dict) -> dict[str, str]:
+    """The workbench key answering each colors.toml key, for one package.
+
+    The terminal keys come first and `pins["extra_keys"]` fills the rest. An entry
+    there is admissible only where the vendor sets no usable terminal value for
+    that key, which is the whole reason the form exists; an entry that would
+    reroute a key the terminal palette already answers is refused by name, or a
+    table could quietly point a slot at a surface the vendor never painted it
+    from and still read as aligned."""
+    base = upstream_terminal_base_map()
+    mapped = dict(base)
+    for key, workbench in sorted((pins.get("extra_keys") or {}).items()):
+        answered = base.get(key)
+        value = upstream.get(answered) if answered else None
+        if isinstance(value, str) and helper.HEX_RE.match(value):
+            raise AssertionError(
+                f"extra_keys names {key}, which the upstream already answers at {answered}")
+        mapped[key] = workbench
+    return mapped
+
+
 def upstream_published_hexes(theme_file: Path) -> set:
     """Every colour literal the upstream VS Code file publishes, lowercased.
 
-    A literal that is not six digits comes back whole, so an eight-digit value is
-    never read as the opaque colour it merely starts with."""
-    return {value.lower() for value in re.findall(r"#[0-9A-Fa-f]+\b", theme_file.read_text())}
+    A three-digit literal is expanded, so `#D50` and `#dd5500` are one colour
+    rather than two strings. Any other length comes back whole, so an eight-digit
+    value is never read as the opaque colour it merely starts with."""
+    published = set()
+    for value in re.findall(r"#[0-9A-Fa-f]+\b", theme_file.read_text()):
+        value = value.lower()
+        if len(value) == 4:
+            value = "#" + "".join(channel * 2 for channel in value[1:])
+        published.add(value)
+    return published
 
 
 def upstream_port_findings(package: Path, pins: dict) -> tuple[list[str], list[str]]:
@@ -11206,8 +11237,7 @@ def upstream_port_findings(package: Path, pins: dict) -> tuple[list[str], list[s
     colors = helper.parse_colors_toml(package / "colors.toml")
     theme_file = package / "apps" / "vscode-theme.json"
     upstream = json.loads(helper._strip_jsonc(theme_file.read_text()))["colors"]
-    mapped = dict(upstream_terminal_map())
-    mapped.update(pins.get("extra_keys") or {})
+    mapped = upstream_terminal_map(pins, upstream)
     checked, findings = [], []
     for key, workbench in sorted(mapped.items()):
         value = upstream.get(workbench)
@@ -11249,12 +11279,12 @@ def test_aligned_vendor_ports_take_the_upstream_terminal_palette():
     for name, pins in sorted(UPSTREAM_TERMINAL_PACKAGES.items()):
         package = helper.builtin_themes_dir() / name
         allowed = pins["terminal_slots"]
-        mapped = dict(upstream_terminal_map())
-        mapped.update(pins.get("extra_keys") or {})
         theme_file = package / "apps" / "vscode-theme.json"
         # The digest first: every row below reads that file as the upstream.
         assert_equal(vscode_theme_digest(theme_file), pins["digest"],
                      f"{name}: apps/vscode-theme.json is the pinned upstream file")
+        mapped = upstream_terminal_map(
+            pins, json.loads(helper._strip_jsonc(theme_file.read_text()))["colors"])
         checked, findings = upstream_port_findings(package, pins)
         assert_equal(tuple(checked), pins["checked"],
                      f"{name}: the upstream terminal reader answers for the pinned keys")
@@ -11357,6 +11387,21 @@ def test_aligned_vendor_ports_take_the_upstream_terminal_palette():
             plant_upstream(mapped[slot_key], sentinel)
             if vscode_theme_digest(planted_theme) == pins["digest"]:
                 raise AssertionError(f"{name}: a changed upstream colour must move the digest")
+
+        # An extra_keys entry may only answer a key the terminal palette does not.
+        # Rerouting one it does answer would point the slot at a surface the
+        # vendor never painted it from, and the package would still read aligned.
+        rerouted = dict(pins, extra_keys=dict(pins.get("extra_keys") or {},
+                                              **{slot_key: "editor.background"}))
+        try:
+            upstream_terminal_map(rerouted, upstream)
+        except AssertionError as refusal:
+            assert_equal(str(refusal),
+                         f"extra_keys names {slot_key}, which the upstream already answers"
+                         f" at {upstream_terminal_base_map()[slot_key]}",
+                         f"{name}: an extra_keys entry for an answered key is refused by name")
+        else:
+            raise AssertionError(f"{name}: extra_keys rerouted {slot_key} without refusal")
 
 
 # A curated package's own UI tones, keyed by the role names `target_roles` emits.
