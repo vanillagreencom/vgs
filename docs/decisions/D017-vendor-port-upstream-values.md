@@ -12,7 +12,7 @@
 
 - Each value maps to a role the way the upstream itself uses it. Where the upstream publishes a VS Code theme, that file decides which tone each surface, border and status element takes.
 - Formatting is free: key order, indentation, pretty-printing and the file's top-level theme name may change. Values may not.
-- Four forms of VGS-owned difference are permitted. Outside them, a value the upstream publishes stays the upstream's, and a value it publishes nowhere is not invented. **Current state** below names every instance the VGS-318 and VGS-329 audits established for a package this decision has assessed.
+- Four forms of VGS-owned difference are permitted. Outside them, a value the upstream publishes stays the upstream's, and a value it publishes nowhere is not invented. **Current state** below names every instance for the vendor ports this record has assessed.
   - A reconciliation. The VS Code terminal-slot overwrite, `augment_vscode_colors` in `bin/vshell_helper.py`, is the one in place.
   - A VGS value for a key or role the upstream sets no usable value for. `synthwave84`'s `accent`, `background` and `selection_background` are these: the upstream publishes no terminal background, its terminal selection background carries an alpha channel that `colors.toml` may not hold, and the accent answers to no terminal key at all.
   - A VGS value in a package's `terminal-colors.toml`, whose hex appears in no upstream file. This file paints a terminal only; `colors.toml` still hands the upstream value to the shell's derived roles, to pi and to every app template, so the upstream palette reaches every other consumer intact. `synthwave84`'s `color10` is the one permitted so far.
@@ -21,7 +21,7 @@
 - Where no upstream value meets a lint floor, the package keeps the closest upstream value and names the shortfall in `theme.json` under `contrastShortfalls`, which `vshell theme lint` reports as known. A lint floor is never a reason to substitute a hex the upstream did not publish; the four permitted forms above are the only routes to a VGS value. `themes/thegreek/theme.json` shows the form.
 - `themes/THEMES-ATTRIBUTION.md` names, for each package built under this decision, the upstream palette file and the app files it was built from.
 
-**Current state**: `horizon`, `horizon-light` and `synthwave84` are the packages built and attributed under this decision so far. The VGS-318 audit covers the 24 vendor ports and VGS-329 the 45 community imports listed in `themes/THEMES-ATTRIBUTION.md`; neither added an attribution row, and the follow-ups they filed are the work that clears the pending list below.
+**Current state**: `horizon`, `horizon-light` and `synthwave84` are the packages built and attributed under this decision so far. The VGS-318 audit covers the 24 vendor ports. VGS-329 audited 45 community imports, of the 46 that `themes/THEMES-ATTRIBUTION.md` lists; the 46th, `synthwave84`, went to VGS-318. Neither added an attribution row. This record carries the vendor ports, plus the two community-import classes the lists below already name: the VGS-290 terminal overlays and the VGS-286 Claude files. VGS-329's other findings for the community imports are tracked by that audit's own follow-ups and are outside this record.
 
 These are permitted by the forms above and are not pending:
 
@@ -31,12 +31,12 @@ These are permitted by the forms above and are not pending:
 - Each Horizon package's `apps/btop.theme`, hand-mapped for an app Horizon publishes no file for, under the fourth form.
 - The `apps/claude-light.json` files VGS-286 added to akane, archwave, frankenstein, moon-orbit, reddcs and vice-city, under the fourth form: no upstream publishes a Claude Code theme.
 - `synthwave84`'s `apps/neovim.lua` and the tree it names, `config/vshell/nvim/colorschemes/vim-synthwave84`, under the fourth form: the upstream is a VS Code extension and publishes no Neovim file. The owner ruled licence arguments moot for theme values, so the tree stays as a VGS-held Neovim theme.
-- The `apps/vscode-theme.json` that `tokyo-night-moon` and `osaka-jade` ship, and the `apps/neovim.lua` that `osaka-jade` ships, under the fourth form: neither vendor publishes a file for that app. These were the only departures the audit recorded for those two packages.
+- The `apps/vscode-theme.json` that `tokyo-night-moon`, `osaka-jade` and `kanagawa-dragon` ship, and the `apps/neovim.lua` that `osaka-jade` ships, under the fourth form: no vendor among them publishes a file for that app. These were the only departures the audit recorded for `tokyo-night-moon` and `osaka-jade`.
 
 These departures on main are pending, not permitted by this decision:
 
 - The twelve vendor ports whose `colors.toml` the VGS-318 audit lists as diverging, `synthwave84` now excluded.
-- Any package's `terminal-colors.toml` holding a value this decision has not named as permitted, dark or light: the VGS-290 diff hues, such as `color2` in `themes/akane/terminal-colors.toml`, and the VGS-289 overlays in `catppuccin-latte`, `flexoki-light` and `rose-pine`. `rose-pine` and `kanagawa-dragon` reach this list by their overlay alone; their `colors.toml` already matches. Each becomes permitted when its package's `colors.toml` is aligned and **Current state** names the slot.
+- Any package's `terminal-colors.toml` holding a value this decision has not named as permitted, dark or light: the VGS-290 diff hues, such as `color2` in `themes/akane/terminal-colors.toml`, and the VGS-289 overlays in `catppuccin-latte`, `flexoki-light` and `rose-pine`. `rose-pine`'s `colors.toml` already matches, so its overlay is its only pending departure; `kanagawa-dragon`'s matches too, with its VS Code file permitted above. Each becomes permitted when its package's `colors.toml` is aligned and **Current state** names the slot.
 - A community Neovim port loaded where the vendor publishes an official Vim colorscheme: `dracula`, `nord`, `gruvbox`, `everforest`, `ayu` and `miasma`. The fourth form does not reach these; the vendor publishes a file for that app.
 - `ristretto`'s VS Code file, whose licence forbids redistribution. That is this decision's own Revisit When condition and is owner-gated.
 
