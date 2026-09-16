@@ -33,7 +33,7 @@
 		</dict>
 		<dict>
 			<key>scope</key>
-			<string>constant.numeric, constant.language, constant.other</string>
+			<string>constant</string>
 			<key>settings</key>
 			<dict>
 				<key>foreground</key>
@@ -69,7 +69,7 @@
 		</dict>
 		<dict>
 			<key>scope</key>
-			<string>storage.type, entity.name.type, support.type</string>
+			<string>storage.type, entity.name.type, support, support.type</string>
 			<key>settings</key>
 			<dict>
 				<key>foreground</key>
@@ -128,6 +128,60 @@
 			<dict>
 				<key>foreground</key>
 				<string>{syntaxDeleted}</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>scope</key>
+			<string>invalid</string>
+			<key>settings</key>
+			<dict>
+				<key>foreground</key>
+				<string>{syntaxDeleted}</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>scope</key>
+			<string>entity.other.attribute-name</string>
+			<key>settings</key>
+			<dict>
+				<key>foreground</key>
+				<string>{syntaxType}</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>scope</key>
+			<string>markup.raw, markup.inline.raw, markup.fenced_code</string>
+			<key>settings</key>
+			<dict>
+				<key>foreground</key>
+				<string>{syntaxString}</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>scope</key>
+			<string>markup.quote</string>
+			<key>settings</key>
+			<dict>
+				<key>foreground</key>
+				<string>{syntaxComment}</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>scope</key>
+			<string>markup.list, markup.list.numbered, markup.list.unnumbered</string>
+			<key>settings</key>
+			<dict>
+				<key>foreground</key>
+				<string>{syntaxPunctuation}</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>scope</key>
+			<string>meta.diff, meta.diff.header, meta.diff.range</string>
+			<key>settings</key>
+			<dict>
+				<key>foreground</key>
+				<string>{syntaxHeading}</string>
 			</dict>
 		</dict>
 	</array>

@@ -9983,6 +9983,67 @@ def test_codex_theme_paints_every_bundled_theme_readably():
                   "markup.heading, entity.name.section", "markup.underline.link"):
         if scope not in scopes_seen:
             raise AssertionError(f"Codex reads {scope}, which the theme does not set")
+    # Every TextMate scope root a bundled syntect syntax emits. A root the theme
+    # does not name falls through to the global entry above, so the tokens under
+    # it paint as plain text: `invalid` is where a Rust or Python syntax puts a
+    # malformed token, `meta` is where a diff syntax puts its file headers, and
+    # the `markup` leaves are what a Markdown syntax emits for the code spans,
+    # quotes and lists Codex renders in every assistant message.
+    roots = {selector.split(".", 1)[0].strip()
+             for scope in scopes_seen for selector in scope.split(",") if scope}
+    missing = {"comment", "constant", "entity", "invalid", "keyword", "markup",
+               "meta", "punctuation", "storage", "string", "support", "variable"} - roots
+    if missing:
+        raise AssertionError(
+            "the Codex theme leaves these scope roots on the global colour: "
+            + ", ".join(sorted(missing)))
+
+
+# Pi's own colour keys, read out of the theme schema shipped inside the 0.85.1
+# package. Pi falls back per key and says nothing, so a key the template omits
+# paints from Pi's default and a key Pi dropped goes on being written for
+# nothing; a rename on either side has to redden here rather than go unpainted:
+#   jq -r '.properties.colors.properties | keys[]' \
+#     "$(dirname "$(mise which pi)")/theme/theme-schema.json"
+PI_COLOR_KEYS = {
+    "accent", "border", "borderAccent", "borderMuted", "success", "error", "warning",
+    "muted", "dim", "text", "thinkingText", "selectedBg", "scrollbarTrack",
+    "scrollbarThumb", "searchMatchBg", "searchMatchText", "userMessageBg",
+    "userMessageText", "customMessageBg", "customMessageText", "customMessageLabel",
+    "toolPendingBg", "toolSuccessBg", "toolErrorBg", "toolTitle", "toolOutput",
+    "mdHeading", "mdLink", "mdLinkUrl", "mdCode", "mdCodeBlock", "mdCodeBlockBorder",
+    "mdQuote", "mdQuoteBorder", "mdHr", "mdListBullet", "toolDiffAdded",
+    "toolDiffRemoved", "toolDiffContext", "syntaxComment", "syntaxKeyword",
+    "syntaxFunction", "syntaxVariable", "syntaxString", "syntaxNumber", "syntaxType",
+    "syntaxOperator", "syntaxPunctuation", "thinkingOff", "thinkingMinimal",
+    "thinkingLow", "thinkingMedium", "thinkingHigh", "thinkingXhigh", "thinkingMax",
+    "bashMode",
+}
+# The same schema's HTML-export colours, which Pi derives from userMessageBg
+# when a theme omits them.
+PI_EXPORT_KEYS = {"pageBg", "cardBg", "infoBg"}
+
+
+def test_pi_theme_sets_every_key_the_installed_pi_reads():
+    """The Pi template writes Pi's whole colour surface and nothing outside it.
+
+    `colors` is closed to additional properties in Pi's schema, so an omission
+    and an extra are both defects rather than either being a matter of taste.
+    """
+    template = json.loads((helper.targets_dir() / "pi-vgs" / "vgs-theme.json").read_text())
+    declared = set(template["vars"])
+    referenced = set(template["colors"].values()) | set(template["export"].values())
+    assert_equal((sorted(referenced - declared), sorted(declared - referenced)), ([], []),
+                 "every pi var is defined and every defined var is used")
+    assert_equal((sorted(PI_COLOR_KEYS - set(template["colors"])),
+                  sorted(set(template["colors"]) - PI_COLOR_KEYS)), ([], []),
+                 "the pi template writes exactly the colour keys Pi reads")
+    assert_equal(sorted(PI_EXPORT_KEYS - set(template["export"])), [],
+                 "the pi template writes every HTML export colour Pi reads")
+    unresolved = [key for key, value in template["colors"].items()
+                  if not helper.TEMPLATE_RE.fullmatch(template["vars"][value])]
+    assert_equal(unresolved, [],
+                 "every pi colour key resolves to a VGS role rather than a literal")
 
 
 def test_codex_theme_selection_changes_only_the_tui_theme_key():
@@ -12365,6 +12426,7 @@ def main():
     test_curated_app_role_passthrough()
     test_codex_theme_paints_every_bundled_theme_readably()
     test_codex_theme_selection_changes_only_the_tui_theme_key()
+    test_pi_theme_sets_every_key_the_installed_pi_reads()
     test_write_file_gives_the_temporary_file_the_requested_mode_before_writing()
     test_write_file_leaves_no_temporary_behind_when_the_write_fails()
     test_write_file_reports_whether_the_destination_moved()
