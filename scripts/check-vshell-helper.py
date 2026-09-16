@@ -11143,17 +11143,29 @@ UPSTREAM_TERMINAL_KEYS = {
 #
 # - `digest` is `vscode_theme_digest` of that file, which is what makes it an
 #   upstream reference rather than a second VGS file agreeing with the first.
-# - `checked` is every colors.toml key the file sets a six-digit value for. The
-#   digest holds the file still, so a change here means the key map broke.
+# - `extra_keys` maps a colors.toml key to the non-terminal workbench key it
+#   takes its value from. A vendor that sets no `terminal.ansi*` key for a slot
+#   still publishes that colour elsewhere, and the port takes it from there.
+# - `checked` is every colors.toml key answered by a terminal key or an
+#   `extra_keys` entry. The digest holds the file still, so a change here means
+#   the key map broke.
 # - `terminal_slots` is the package's permitted terminal-colors.toml slots, the
 #   third form of VGS difference D017 names. Anything else there is a difference
 #   no decision records.
 UPSTREAM_TERMINAL_PACKAGES = {
     "synthwave84": {
         "digest": "dd2ac76fc83ac79a9cc37c65615d49bb498f29859e2a66ed6148d95ce1b353ba",
-        "checked": ("color1", "color10", "color11", "color12", "color13", "color14",
-                    "color2", "color3", "color4", "color5", "color6", "color9",
-                    "cursor", "foreground"),
+        # The extension sets twelve `terminal.ansi*` keys and no black or white
+        # pair, so those four slots take the surfaces it paints them from.
+        "extra_keys": {
+            "color0": "editor.background",
+            "color7": "foreground",
+            "color8": "button.background",
+            "color15": "foreground",
+        },
+        "checked": ("color0", "color1", "color10", "color11", "color12", "color13",
+                    "color14", "color15", "color2", "color3", "color4", "color5",
+                    "color6", "color7", "color8", "color9", "cursor", "foreground"),
         "terminal_slots": ("color10",),
     },
 }
@@ -11166,26 +11178,38 @@ def upstream_terminal_map() -> dict[str, str]:
     return mapped
 
 
-def upstream_port_findings(package: Path, allowed_slots: tuple) -> tuple[list[str], list[str]]:
+def upstream_published_hexes(theme_file: Path) -> set:
+    """Every colour literal the upstream VS Code file publishes, lowercased.
+
+    A literal that is not six digits comes back whole, so an eight-digit value is
+    never read as the opaque colour it merely starts with."""
+    return {value.lower() for value in re.findall(r"#[0-9A-Fa-f]+\b", theme_file.read_text())}
+
+
+def upstream_port_findings(package: Path, pins: dict) -> tuple[list[str], list[str]]:
     """The colors.toml keys `package`'s upstream VS Code file answers for, and every
     D017 difference found, as sorted `kind key value...` rows.
 
     `apps/vscode-theme.json` is the upstream file copied verbatim. The VGS-318
     audit established that for each listed package, and the caller's pinned digest
     is what keeps it true; without that pin this comparison would only prove two
-    VGS files agree. Its `terminal.*` and `terminalCursor.*` entries are therefore
-    the vendor's own terminal palette.
+    VGS files agree. Its `terminal.*` and `terminalCursor.*` entries are the
+    vendor's own terminal palette, and `pins["extra_keys"]` names the surface each
+    remaining slot takes its value from where the vendor sets no terminal key.
 
-    A key the upstream leaves unset is not checked, and neither is one whose
+    A key no workbench key answers is not checked, and neither is one whose
     upstream value carries an alpha channel, which `themes/AGENTS.md` forbids
-    colors.toml from holding: D017 lets VGS own a key the upstream sets no usable
-    value for. `terminal-colors.toml` is checked separately, because a slot there
-    paints a terminal only and D017 permits it by name."""
+    colors.toml from holding: D017's second form lets VGS own a key the upstream
+    sets no usable value for. `terminal-colors.toml` is checked against the slots
+    D017's third form permits, and a permitted slot holding a colour the upstream
+    does publish is reported: that slot is then no VGS difference at all."""
     colors = helper.parse_colors_toml(package / "colors.toml")
-    upstream = json.loads(helper._strip_jsonc(
-        (package / "apps" / "vscode-theme.json").read_text()))["colors"]
+    theme_file = package / "apps" / "vscode-theme.json"
+    upstream = json.loads(helper._strip_jsonc(theme_file.read_text()))["colors"]
+    mapped = dict(upstream_terminal_map())
+    mapped.update(pins.get("extra_keys") or {})
     checked, findings = [], []
-    for key, workbench in sorted(upstream_terminal_map().items()):
+    for key, workbench in sorted(mapped.items()):
         value = upstream.get(workbench)
         if not isinstance(value, str) or not helper.HEX_RE.match(value):
             continue
@@ -11194,13 +11218,18 @@ def upstream_port_findings(package: Path, allowed_slots: tuple) -> tuple[list[st
         if ours.lower() != value.lower():
             findings.append(f"palette {key} {ours} {value.lower()}")
 
+    allowed_slots = pins["terminal_slots"]
     overlay_path = package / helper.TERMINAL_COLORS_FILE
     overlay = helper.terminal_slot_overrides(
         helper.parse_colors_toml(overlay_path, allow_empty=True)) if overlay_path.is_file() else {}
+    published = upstream_published_hexes(theme_file)
     for slot in sorted(set(overlay) - set(allowed_slots)):
         findings.append(f"terminal-slot {slot} {overlay[slot]}")
     for slot in sorted(set(allowed_slots) - set(overlay)):
         findings.append(f"missing-terminal-slot {slot}")
+    for slot in sorted(set(allowed_slots) & set(overlay)):
+        if overlay[slot].lower() in published:
+            findings.append(f"upstream-terminal-slot {slot} {overlay[slot].lower()}")
     return checked, sorted(findings)
 
 
@@ -11217,15 +11246,16 @@ def test_aligned_vendor_ports_take_the_upstream_terminal_palette():
     if not UPSTREAM_TERMINAL_PACKAGES:
         raise AssertionError("no aligned vendor port is listed; this check would pass on nothing")
     sentinel, second_sentinel = "#18849a", "#4b0082"
-    mapped = upstream_terminal_map()
     for name, pins in sorted(UPSTREAM_TERMINAL_PACKAGES.items()):
         package = helper.builtin_themes_dir() / name
         allowed = pins["terminal_slots"]
+        mapped = dict(upstream_terminal_map())
+        mapped.update(pins.get("extra_keys") or {})
         theme_file = package / "apps" / "vscode-theme.json"
         # The digest first: every row below reads that file as the upstream.
         assert_equal(vscode_theme_digest(theme_file), pins["digest"],
                      f"{name}: apps/vscode-theme.json is the pinned upstream file")
-        checked, findings = upstream_port_findings(package, allowed)
+        checked, findings = upstream_port_findings(package, pins)
         assert_equal(tuple(checked), pins["checked"],
                      f"{name}: the upstream terminal reader answers for the pinned keys")
         assert_equal(findings, [], f"{name}: only the D017 differences this table names")
@@ -11266,25 +11296,45 @@ def test_aligned_vendor_ports_take_the_upstream_terminal_palette():
                     raise AssertionError(f"{name}: colors.toml holds no single {line} to plant")
                 colors_file.write_text(original_colors.replace(line, f'{key} = "{value}"'))
 
-            # The first ANSI slot and, where the upstream sets one, the cursor:
-            # a slot proves the ANSI map, the cursor proves the map beyond it.
-            slot_key = next(key for key in pins["checked"] if key.startswith("color"))
+            # One key per source of a value: an ANSI slot, the cursor, and a slot
+            # the upstream answers through a non-terminal surface. Each proves a
+            # different arm of the key map.
+            slot_key = next(key for key in pins["checked"]
+                            if key.startswith("color") and mapped[key].startswith("terminal.ansi"))
             palette_keys = [slot_key] + (["cursor"] if "cursor" in pins["checked"] else [])
+            palette_keys += sorted(pins.get("extra_keys") or {})[:1]
+            # A slot the package does not permit, so the row keeps working for a
+            # package whose permitted set later grows.
+            unlisted = next(f"color{index}" for index in range(16)
+                            if f"color{index}" not in allowed)
             # (what the defect changes, how, what the comparison must report)
             rows = [(f"the VGS {key}", (lambda k=key: plant_palette(k, sentinel)),
                      [f"palette {key} {sentinel} {colors[key]}"]) for key in palette_keys]
             rows += [
-                ("the upstream slot behind " + slot_key,
+                ("the upstream key behind " + slot_key,
                  lambda: plant_upstream(mapped[slot_key], sentinel),
                  [f"palette {slot_key} {colors[slot_key]} {sentinel}"]),
                 ("an unlisted terminal slot",
-                 lambda: overlay_file.write_text((original_overlay or "") + f'color7 = "{sentinel}"\n'),
-                 [f"terminal-slot color7 {sentinel}"]),
+                 lambda: overlay_file.write_text((original_overlay or "") + f'{unlisted} = "{sentinel}"\n'),
+                 [f"terminal-slot {unlisted} {sentinel}"]),
             ]
             if original_overlay is not None and allowed:
                 rows.append(("a dropped permitted terminal slot",
                              lambda: overlay_file.write_text("# masked\n"),
                              [f"missing-terminal-slot {slot}" for slot in sorted(allowed)]))
+                # A permitted slot holding a colour the upstream does publish is
+                # no VGS difference, so D017's third form does not cover it. The
+                # other permitted slots keep their values, or dropping them would
+                # report a missing slot instead of the one this row plants.
+                overlay_slots = helper.terminal_slot_overrides(
+                    helper.parse_colors_toml(overlay_file, allow_empty=True))
+                published_slot = sorted(allowed)[0]
+                published_hex = colors[published_slot].lower()
+                swapped = dict(overlay_slots, **{published_slot: published_hex})
+                rows.append((f"an upstream colour in permitted slot {published_slot}",
+                             lambda: overlay_file.write_text("".join(
+                                 f'{slot} = "{value}"\n' for slot, value in sorted(swapped.items()))),
+                             [f"upstream-terminal-slot {published_slot} {published_hex}"]))
             if alpha_keys:
                 key = alpha_keys[0]
                 rows.append((f"the alpha channel on {key}",
@@ -11292,11 +11342,15 @@ def test_aligned_vendor_ports_take_the_upstream_terminal_palette():
                              [f"palette {key} {colors.get(key, '')} {second_sentinel}"]))
             for label, plant, expected in rows:
                 plant()
-                assert_equal(upstream_port_findings(planted, allowed)[1], expected,
+                assert_equal(upstream_port_findings(planted, pins)[1], expected,
                              f"{name}: a planted defect in {label} is named")
                 planted_theme.write_text(original_theme)
                 colors_file.write_text(original_colors)
-                if original_overlay is not None:
+                # Unconditional: a row above creates this file for a package that
+                # ships none, and a leftover would leak into every later row.
+                if original_overlay is None:
+                    overlay_file.unlink(missing_ok=True)
+                else:
                     overlay_file.write_text(original_overlay)
 
             # The digest is the only thing holding the upstream reference still.
