@@ -2521,6 +2521,8 @@ _GAP_FAILURE_ROWS = [
      "an unreadable confirming read says so rather than claiming the gaps were lost"),
     ({"fail-reload": True}, _LIVE_GAPS, [], False, None, None,
      "a reload the session refused re-read nothing, so nothing is written back"),
+    ({"fail-getoption": ["1"], "fail-reload": True}, _LIVE_GAPS, [], False, None, None,
+     "a refused reload lost no gap, so an unreadable probe before it costs no warning"),
     ({"fail-getoption": ["3"]}, _LIVE_GAPS, _BOTH_GAPS, True, _LIVE_GAPS, None,
      "an unreadable post-reload read writes every snapshot value back"),
 ]
