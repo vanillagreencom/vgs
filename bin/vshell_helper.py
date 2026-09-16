@@ -5046,7 +5046,93 @@ def ensure_qtct_theme_config(version: int) -> Dict[str, Any]:
     return {"hook": f"{app}-config", "ok": True, "changed": changed, "config": str(config)}
 
 
-def run_hook(hook: Any, roles: Dict[str, str], bp: Dict[str, Any]) -> Dict[str, Any]:
+# `hyprctl reload` re-reads the whole Hyprland config, so it discards every option a
+# runtime `hyprctl keyword` set, not only the ones VGS renders. VGS owns the reload,
+# so VGS owns what the reload loses. These are the options it puts back.
+_HYPR_RESTORED_OPTIONS = ("general:gaps_in", "general:gaps_out")
+
+
+def _hypr_option_boxes(env: Dict[str, str]) -> Dict[str, str]:
+    """Each restored option's live `css` edge box, or `{}` when the compositor could
+    not report all of them.
+
+    A partial read is dropped whole: a box VGS could not read is not an empty box, and
+    writing a keyword from one would set gaps the user never chose."""
+    boxes: Dict[str, str] = {}
+    for option in _HYPR_RESTORED_OPTIONS:
+        try:
+            proc = subprocess.run(["hyprctl", "getoption", option, "-j"], text=True,
+                                  stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                  env=env, timeout=3)
+            box = str(json.loads(proc.stdout or "{}").get("css") or "").strip()
+        except Exception as exc:
+            eprint(f"hypr-reload: reading {option} failed: {exc}")
+            return {}
+        if proc.returncode != 0 or not box:
+            eprint(f"hypr-reload: {option} reports no css box")
+            return {}
+        boxes[option] = box
+    return boxes
+
+
+class HyprGapRestore:
+    """The live window gaps one apply must put back after its reload.
+
+    Under Gaps = Config and Gaps = Off, VGS renders no gap keys into
+    `~/.config/hypr/vgs/layout.lua`, which is the promise that the user's own Hyprland
+    config owns them. The reload a theme apply runs so the compositor picks up the new
+    colours re-reads that config whole, so until this a gap the user had set at runtime
+    with `hyprctl keyword` went back to the config file's value on every theme change.
+    Under Gaps = Custom the reload restores exactly the values VGS wrote, so nothing is
+    kept. Per-workspace gap rules set at runtime are not restored.
+
+    One instance carries one apply's snapshot. An apply can run the reload more than
+    once and only the values from before its first reload are the user's, so the
+    snapshot is read once and every later reload in that apply reuses it."""
+
+    def __init__(self) -> None:
+        self._before: Dict[str, str] = {}
+        self._read = False
+
+    def snapshot(self, env: Dict[str, str]) -> None:
+        """Read this apply's live gaps, once, and only where VGS leaves them alone."""
+        if self._read:
+            return
+        self._read = True
+        if _hyprland_manages_gaps(_hyprland_gap_override(load_settings())):
+            return
+        self._before = _hypr_option_boxes(env)
+
+    def restore(self, env: Dict[str, str]) -> Dict[str, Any]:
+        """Put back every snapshot value the reload changed, and report what stuck.
+
+        An option the post-reload read could not report counts as changed: the snapshot
+        is what the user set, and re-applying a value already in place costs one no-op
+        keyword. The writes are confirmed by reading the options again rather than by
+        `hyprctl`'s reply text, so a keyword the compositor refused is named as the lost
+        gap it is instead of passing on a zero exit status."""
+        if not self._before:
+            return {}
+        after = _hypr_option_boxes(env)
+        stale = [option for option, box in self._before.items() if after.get(option) != box]
+        if not stale:
+            return {}
+        for option in stale:
+            _run_hook_cmd("hypr-reload", ["hyprctl", "keyword", option, self._before[option]],
+                          env=env, timeout=5)
+        final = _hypr_option_boxes(env)
+        missed = [option for option in stale if final.get(option) != self._before[option]]
+        result: Dict[str, Any] = {
+            "restoredGaps": {option: self._before[option] for option in stale if option not in missed},
+        }
+        if missed:
+            result["warning"] = ("live gaps lost to the reload and not restored: "
+                                 + ", ".join(f"{option} {self._before[option]}" for option in missed))
+        return result
+
+
+def run_hook(hook: Any, roles: Dict[str, str], bp: Dict[str, Any],
+             gap_restore: HyprGapRestore | None = None) -> Dict[str, Any]:
     if isinstance(hook, dict):
         name = str(hook.get("name") or hook.get("type") or "hook")
         return {"hook": name, "ok": True, "skipped": True, "reason": "object hooks are not enabled by default"}
@@ -5078,7 +5164,15 @@ def run_hook(hook: Any, roles: Dict[str, str], bp: Dict[str, Any]) -> Dict[str, 
                 sockets = sorted(hypr_dir.glob("*/.socket.sock"), key=lambda p: p.stat().st_mtime, reverse=True)
                 if sockets:
                     env["HYPRLAND_INSTANCE_SIGNATURE"] = sockets[0].parent.name
-        return _run_hook_cmd(hook, ["hyprctl", "reload"], env=env, timeout=10)
+        # A caller with several reloads in one apply passes one snapshot holder for all
+        # of them; a lone call gets its own, so the restore never depends on the caller.
+        gaps = gap_restore if gap_restore is not None else HyprGapRestore()
+        gaps.snapshot(env)
+        result = _run_hook_cmd(hook, ["hyprctl", "reload"], env=env, timeout=10)
+        # A reload that failed changed nothing, so there is nothing to put back.
+        if result.get("ok"):
+            result.update(gaps.restore(env))
+        return result
     if hook == "gtk4-reload":
         # Nautilus answers on the login user's session bus whatever $HOME says.
         if _sandboxed_home():
@@ -7489,7 +7583,11 @@ def _apply_theme_obj_unlocked(bp: Dict[str, Any], only_app: str | None = None,
                        json.dumps(applied_theme_state(bp), indent=2) + "\n")
         except OSError as exc:
             warn(f"theme-current.json: {exc}")
-    hook_results = [run_hook(hook, roles, bp) for hook in hook_specs] if run_hooks else []
+    # One snapshot of the live gaps for the whole apply: the values from before its
+    # first compositor reload are the user's, whatever a later reload in the same apply
+    # finds.
+    gap_restore = HyprGapRestore()
+    hook_results = [run_hook(hook, roles, bp, gap_restore) for hook in hook_specs] if run_hooks else []
     # One line per apply, as the Claude Code hook's own shortfall warning is: the
     # user needs to know the declared chrome is compromised, not a list of every
     # role. The tones are already written as declared; this only names them.
@@ -13380,6 +13478,20 @@ def _lua_table(fields: Dict[str, Any], indent: str = "    ") -> List[str]:
     return lines
 
 
+def _hyprland_gap_override(settings: Dict[str, Any]) -> int:
+    """The Gaps setting: the inner gap VGS renders, or a negative mode."""
+    return _coerce_int(settings.get("hyprlandLayoutGapsOverride", -1), -1, -2, 50)
+
+
+def _hyprland_manages_gaps(gaps_mode: int) -> bool:
+    """Whether VGS renders `general:gaps_in` and `general:gaps_out` into layout.lua.
+
+    False for the two negative modes, Config and Off, where the user's own Hyprland
+    config owns both keys and VGS writes neither. One owner for the question, because
+    every path that reloads the compositor has to know whose values it is replacing."""
+    return gaps_mode >= 0
+
+
 def _hyprland_layout_payload(settings: Dict[str, Any], scale: float = 1) -> Tuple[str, Dict[str, Any]]:
     shell_radius = _coerce_int(settings.get("cornerRadius", 15), 15, 0, 20)
     shell_border = _coerce_int(settings.get("surfaceBorderWidth", 1), 1, 0, 10)
@@ -13390,9 +13502,9 @@ def _hyprland_layout_payload(settings: Dict[str, Any], scale: float = 1) -> Tupl
     radius = shell_radius
     border = shell_border
 
-    gaps_mode = _coerce_int(settings.get("hyprlandLayoutGapsOverride", -1), -1, -2, 50)
+    gaps_mode = _hyprland_gap_override(settings)
     general: Dict[str, Any] = {}
-    if gaps_mode >= 0:
+    if _hyprland_manages_gaps(gaps_mode):
         gaps_in = gaps_mode
         gaps_out_override = _optional_nonnegative_int(settings.get("hyprlandLayoutGapsOutOverride"), 0, 50)
         general["gaps_in"] = gaps_in
