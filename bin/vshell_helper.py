@@ -5165,11 +5165,20 @@ class HyprGapRestore:
                  if after is None or after.get(option) != box]
         if not stale:
             return {}
-        for option in stale:
-            _run_hook_cmd("hypr-reload", ["hyprctl", "keyword", option, self._before[option]],
-                          env=env, timeout=5)
+        writes = {option: _run_hook_cmd(
+            "hypr-reload", ["hyprctl", "keyword", option, self._before[option]],
+            env=env, timeout=5) for option in stale}
         final = _hypr_option_boxes(env)
         if final is None:
+            # With the confirming read gone the write results are the only witness left.
+            # A write the compositor refused outright put nothing back, so those gaps are
+            # lost rather than unconfirmed; a write that timed out reached it with only
+            # its reply late, which is the case the unconfirmed wording is for.
+            refused = [option for option in stale
+                       if not writes[option].get("ok") and not writes[option].get("timedOut")]
+            if refused == stale:
+                return {"restoredGaps": {}, "warning": _GAP_WARN_LOST.format(
+                    gaps=", ".join(f"{option} {self._before[option]}" for option in refused))}
             return {"restoredGaps": {}, "warning": _GAP_WARN_UNCONFIRMED.format(
                 options=", ".join(stale))}
         missed = [option for option in stale if final.get(option) != self._before[option]]

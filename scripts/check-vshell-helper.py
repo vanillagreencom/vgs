@@ -2440,35 +2440,38 @@ def test_theme_hooks_stay_out_of_the_login_session():
 
 # A Hyprland session for the reload hook. The reload is whole-config, so it puts every
 # option back to what `config/` holds, which is what discards a runtime `hyprctl keyword`
-# value; `live/` is what the compositor currently reports. The three refusal switches are
-# how a row drives a compositor that answers badly: `fail-getoption` holds the 1-based
-# numbers of the getoption calls that exit non-zero, counted across a whole hook run and
-# knowing that a read stops at its first refusal, `ignore-keyword` the options whose
-# keyword the session accepts and does not apply, and `fail-reload` makes the reload exit
-# non-zero without re-reading anything.
+# value; `live/` is what the compositor currently reports. `answers` is how a row drives a
+# session that answers badly: one `<verb>=<verdict>` line per call the row wants answered
+# otherwise, keyed `getoption:<n>` by 1-based call number across a whole hook run,
+# `keyword:<option>`, or `reload`. `fail` exits non-zero and `drop` accepts a keyword
+# without applying it. A session that reports no css box needs no verdict at all: it is a
+# `live/` box a row leaves empty.
 _FAKE_HYPRCTL = """#!/usr/bin/env bash
 set -euo pipefail
 state="$VGS_FAKE_HYPR_STATE"
 printf '%s\\n' "$*" >> "$state/calls"
+verdict() { grep -F -- "$1=" "$state/answers" | cut -d= -f2- || true; }
 case "${1:-}" in
   instances) printf '[{"instance":"fake","time":1}]\\n' ;;
   getoption)
     seen=$(( $(cat "$state/getoption-count") + 1 ))
     printf '%s' "$seen" > "$state/getoption-count"
-    if grep -Fxq -- "$seen" "$state/fail-getoption"; then exit 1; fi
+    if [ "$(verdict "getoption:$seen")" = fail ]; then exit 1; fi
     printf '{"css": "%s", "set": true}\\n' "$(cat "$state/live/${2}")"
     ;;
   keyword)
     shift
     option="$1"
     shift
-    if ! grep -Fxq -- "$option" "$state/ignore-keyword"; then
-      printf '%s' "$*" > "$state/live/$option"
-    fi
+    case "$(verdict "keyword:$option")" in
+      fail) exit 1 ;;
+      drop) ;;
+      *) printf '%s' "$*" > "$state/live/$option" ;;
+    esac
     printf 'ok\\n'
     ;;
   reload)
-    if [ -f "$state/fail-reload" ]; then exit 1; fi
+    if [ "$(verdict reload)" = fail ]; then exit 1; fi
     cp "$state"/config/* "$state"/live/
     printf 'ok\\n'
     ;;
@@ -2480,56 +2483,71 @@ esac
 _LIVE_GAPS = {"general:gaps_in": "5 5 5 5", "general:gaps_out": "8 8 8 8"}
 _CONFIG_GAPS = {"general:gaps_in": "1 1 1 1", "general:gaps_out": "10 10 10 10"}
 _ZERO_GAPS = {"general:gaps_in": "0 0 0 0", "general:gaps_out": "0 0 0 0"}
+_NO_CSS_BOX = {"general:gaps_in": "", "general:gaps_out": "8 8 8 8"}
 _BOTH_GAPS = ["general:gaps_in", "general:gaps_out"]
 
 # hyprlandLayoutGapsOverride, the gaps the compositor reports before the hook, the gaps
-# its config file holds, the gaps it must report after the hook, and the options the hook
-# wrote back. -1 is Config and -2 is Off: VGS renders a gap key under neither, so the
-# user's values are the ones that must survive. A value of 0 or more is Custom, where the
-# reloaded values are the ones VGS itself wrote into layout.lua. 0 is Custom's lower
-# bound, an inner gap of zero, and it decides the same way as any other Custom value.
+# its config file holds, the gaps it must report after the hook, the options the hook
+# wrote back, and how many times it read an option. -1 is Config and -2 is Off: VGS
+# renders a gap key under neither, so the user's values are the ones that must survive. A
+# value of 0 or more is Custom, where the reloaded values are the ones VGS itself wrote
+# into layout.lua. 0 is Custom's lower bound, an inner gap of zero, and it decides the
+# same way as any other Custom value. The read count is the rest of the contract: Custom
+# asks the compositor nothing at all, and a session whose reload changed no gap is read
+# before and after that reload and not a third time to confirm writes never made.
 _GAP_RESTORE_ROWS = [
-    (-1, _LIVE_GAPS, _CONFIG_GAPS, _LIVE_GAPS, _BOTH_GAPS,
+    (-1, _LIVE_GAPS, _CONFIG_GAPS, _LIVE_GAPS, _BOTH_GAPS, 6,
      "Config restores both gaps the reload discarded"),
-    (-2, _LIVE_GAPS, _CONFIG_GAPS, _LIVE_GAPS, _BOTH_GAPS,
+    (-2, _LIVE_GAPS, _CONFIG_GAPS, _LIVE_GAPS, _BOTH_GAPS, 6,
      "Off restores them too: neither negative mode renders a gap key"),
-    (6, _LIVE_GAPS, _CONFIG_GAPS, _CONFIG_GAPS, [],
+    (-1, _CONFIG_GAPS, _CONFIG_GAPS, _CONFIG_GAPS, [], 4,
+     "Config writes no keyword when the reload changed nothing"),
+    (6, _LIVE_GAPS, _CONFIG_GAPS, _CONFIG_GAPS, [], 0,
      "Custom lets the reloaded VGS values stand"),
-    (0, _LIVE_GAPS, _ZERO_GAPS, _ZERO_GAPS, [],
+    (0, _LIVE_GAPS, _ZERO_GAPS, _ZERO_GAPS, [], 0,
      "Custom at an inner gap of zero is still Custom: the rendered zero stands"),
 ]
 
-# One badly answering compositor per row, under Gaps = Config. Each names the refusals it
-# installs, then the gaps the session reports after the hook, the options a keyword was
-# attempted for, whether the hook reports ok, what it claims to have restored, and the one
-# warning it carries. The three shortfalls are separate outcomes and never share wording:
-# values never captured, values captured and not written back, and values written back
-# that the compositor did not confirm.
+# One badly answering compositor per row, under Gaps = Config. Each names the gaps the
+# session starts from and the answers it gives, then the gaps it reports after the hook,
+# the options a keyword was attempted for, whether the hook reports ok, what it claims to
+# have restored, and the one warning it carries. The three shortfalls are separate
+# outcomes and never share wording: values never captured, values captured and not written
+# back, and values written back that the compositor did not confirm.
 _GAP_FAILURE_ROWS = [
-    ({"ignore-keyword": ["general:gaps_in"]},
+    (_LIVE_GAPS, {"keyword:general:gaps_in": "drop"},
      {"general:gaps_in": "1 1 1 1", "general:gaps_out": "8 8 8 8"}, _BOTH_GAPS, True,
      {"general:gaps_out": "8 8 8 8"},
      "live gaps lost to the reload and not restored: general:gaps_in 5 5 5 5",
      "a keyword the session accepts and drops is named as the lost gap it is"),
-    ({"fail-getoption": ["1"]}, _CONFIG_GAPS, [], True, None,
+    (_LIVE_GAPS, {"getoption:1": "fail"}, _CONFIG_GAPS, [], True, None,
      "live gaps unprotected: the compositor did not report "
      "general:gaps_in, general:gaps_out before the reload",
      "an unreadable pre-reload gap is reported as unprotected, not as a clean apply"),
-    ({"fail-getoption": ["5"]}, _LIVE_GAPS, _BOTH_GAPS, True, {},
+    (_NO_CSS_BOX, {}, _CONFIG_GAPS, [], True, None,
+     "live gaps unprotected: the compositor did not report "
+     "general:gaps_in, general:gaps_out before the reload",
+     "an option reported with no css box is unprotected, not a gap of zero"),
+    (_LIVE_GAPS, {"getoption:5": "fail"}, _LIVE_GAPS, _BOTH_GAPS, True, {},
      "live gaps written back but not confirmed: the compositor did not report "
      "general:gaps_in, general:gaps_out after the restore",
      "an unreadable confirming read says so rather than claiming the gaps were lost"),
-    ({"fail-reload": True}, _LIVE_GAPS, [], False, None, None,
+    (_LIVE_GAPS, {"keyword:general:gaps_in": "fail", "keyword:general:gaps_out": "fail",
+                  "getoption:5": "fail"}, _CONFIG_GAPS, _BOTH_GAPS, True, {},
+     "live gaps lost to the reload and not restored: "
+     "general:gaps_in 5 5 5 5, general:gaps_out 8 8 8 8",
+     "writes the session refused and no confirming read leaves the gaps lost, not unconfirmed"),
+    (_LIVE_GAPS, {"reload": "fail"}, _LIVE_GAPS, [], False, None, None,
      "a reload the session refused re-read nothing, so nothing is written back"),
-    ({"fail-getoption": ["1"], "fail-reload": True}, _LIVE_GAPS, [], False, None, None,
+    (_LIVE_GAPS, {"getoption:1": "fail", "reload": "fail"}, _LIVE_GAPS, [], False, None, None,
      "a refused reload lost no gap, so an unreadable probe before it costs no warning"),
-    ({"fail-getoption": ["3"]}, _LIVE_GAPS, _BOTH_GAPS, True, _LIVE_GAPS, None,
+    (_LIVE_GAPS, {"getoption:3": "fail"}, _LIVE_GAPS, _BOTH_GAPS, True, _LIVE_GAPS, None,
      "an unreadable post-reload read writes every snapshot value back"),
 ]
 
 
-def _seed_hypr_state(root, live, config, refusals=None):
-    """A fake session's directories and refusal switches, and the environment naming them."""
+def _seed_hypr_state(root, live, config, answers=None):
+    """A fake session's directories and answers, and the environment naming them."""
     (root / "live").mkdir(parents=True)
     (root / "config").mkdir(parents=True)
     for option, box in live.items():
@@ -2538,11 +2556,8 @@ def _seed_hypr_state(root, live, config, refusals=None):
         (root / "config" / option).write_text(box)
     (root / "calls").write_text("")
     (root / "getoption-count").write_text("0")
-    installed = refusals or {}
-    for switch in ("fail-getoption", "ignore-keyword"):
-        (root / switch).write_text("".join(f"{entry}\n" for entry in installed.get(switch, [])))
-    if installed.get("fail-reload"):
-        (root / "fail-reload").write_text("")
+    (root / "answers").write_text("".join(f"{call}={verdict}\n"
+                                          for call, verdict in (answers or {}).items()))
     os.environ["VGS_FAKE_HYPR_STATE"] = str(root)
 
 
@@ -2587,7 +2602,7 @@ def test_hypr_reload_restores_the_live_gaps_the_whole_config_reload_discards():
         saved = _install_fake_hyprctl(home)
         try:
             for index, row in enumerate(_GAP_RESTORE_ROWS):
-                mode, live, config, expected, expected_written, label = row
+                mode, live, config, expected, expected_written, expected_reads, label = row
                 state = home / f"session-{index}"
                 _seed_hypr_state(state, live, config)
                 settings_path.write_text(json.dumps({"hyprlandLayoutGapsOverride": mode}))
@@ -2600,16 +2615,19 @@ def test_hypr_reload_restores_the_live_gaps_the_whole_config_reload_discards():
                 assert_equal(_hypr_live_gaps(state), expected, label)
                 assert_equal(_hypr_keyword_options(state), expected_written,
                              f"{label}: the options written back")
-                assert_equal(sorted(result.get("restoredGaps") or {}), expected_written,
+                assert_equal(result.get("restoredGaps"),
+                             {option: live[option] for option in expected_written} or None,
                              f"{label}: the hook reports what it restored")
                 assert_equal(result.get("warning"), None,
                              f"{label}: a session answering normally raises no warning")
+                assert_equal(int((state / "getoption-count").read_text()), expected_reads,
+                             f"{label}: the times the hook read an option")
 
             settings_path.write_text(json.dumps({"hyprlandLayoutGapsOverride": -1}))
             for index, row in enumerate(_GAP_FAILURE_ROWS):
-                refusals, expected, expected_written, expected_ok, restored, warning, label = row
+                live, answers, expected, expected_written, expected_ok, restored, warning, label = row
                 state = home / f"refusing-{index}"
-                _seed_hypr_state(state, _LIVE_GAPS, _CONFIG_GAPS, refusals)
+                _seed_hypr_state(state, live, _CONFIG_GAPS, answers)
                 with patch.object(helper, "_sandboxed_home", return_value=False):
                     result = helper.run_hook("hypr-reload", {}, {})
                 assert_equal(result["ok"], expected_ok, f"{label}: the hook's own verdict")
@@ -2704,7 +2722,7 @@ def test_a_lost_live_gap_makes_the_theme_apply_partial():
         try:
             state = home / "apply-session"
             _seed_hypr_state(state, _LIVE_GAPS, _CONFIG_GAPS,
-                             {"ignore-keyword": ["general:gaps_in"]})
+                             {"keyword:general:gaps_in": "drop"})
             blueprint = helper.load_theme_package("tokyo-night")
             with patch.object(helper, "targets_dir", lambda: targets), \
                     patch.object(helper, "_sandboxed_home", return_value=False):
