@@ -245,6 +245,11 @@ Column {
                     text: "Niri keybinds VGS generated are rewritten automatically; Hyprland binds live in your own config and must be updated by hand"
                 }
 
+                ChangelogUpgradeNote {
+                    width: parent.width
+                    text: "Desktop background and body text painted in your theme's selection colours come from a theme overlay an earlier version wrote: delete the background and foreground lines from ~/.config/vshell/themes/<name>/colors.toml and run vshell theme apply <name> to keep your other edits, or run vshell theme revert <name>, which drops that overlay whole and repaints when that theme is the applied one"
+                }
+
             }
         }
     }
