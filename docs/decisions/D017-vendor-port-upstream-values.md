@@ -2,7 +2,7 @@
 
 [← Decision Index](INDEX.md)
 
-**Date**: 2026-09-13 **Status**: Active **Research**: —
+**Date**: 2026-09-13 **Status**: Active **Research**: [VGS-318 vendor-port audit](../research/VGS-318-vendor-port-audit.md)
 
 **Applies to**: every theme package in `themes/` that ports a theme with an official upstream implementation: a vendor's own theme repository, or the community theme repository a port was imported from.
 
@@ -12,16 +12,20 @@
 
 - Each value maps to a role the way the upstream itself uses it. Where the upstream publishes a VS Code theme, that file decides which tone each surface, border and status element takes.
 - Formatting is free: key order, indentation, pretty-printing and the file's top-level theme name may change. Values may not.
-- A VGS-owned reconciliation is the only permitted difference, and `docs/architecture/theme.md` names each one. The VS Code terminal-slot overwrite, `augment_vscode_colors` in `bin/vshell_helper.py`, is one.
+- Three forms of VGS-owned difference are permitted, and `docs/architecture/theme.md` names each instance of all three. Outside them, a value the upstream publishes stays the upstream's.
+  - A reconciliation. The VS Code terminal-slot overwrite, `augment_vscode_colors` in `bin/vshell_helper.py`, is the one in place.
+  - A VGS value for a key, role or app file the upstream sets no usable value for. `synthwave84`'s `accent`, `background`, `selection_foreground` and `selection_background` are these: the upstream publishes no terminal background or selection foreground, and its terminal selection background carries an alpha channel, which `colors.toml` may not hold.
+  - A VGS value in a package's `terminal-colors.toml`, whose hex appears in no upstream file. This file paints a terminal only; `colors.toml` still hands the upstream value to the shell's derived roles, to pi and to every app template, so the upstream palette reaches every other consumer intact. `synthwave84`'s `color10` is the one permitted under this decision.
 - Where the upstream publishes no file for an app, the package ships none and the generated render stands. A hand-written file there would hold invented values.
 - Where no upstream value meets a lint floor, the package keeps the closest upstream value and names the shortfall in `theme.json` under `contrastShortfalls`, which `vshell theme lint` reports as known. VGS never substitutes a hex the upstream did not publish. `themes/thegreek/theme.json` shows the form.
 - `themes/THEMES-ATTRIBUTION.md` names, for each package built under this decision, the upstream palette file and the app files it was built from.
 
-**Current state**: `horizon` and `horizon-light` are the packages built and attributed under this decision so far. VGS-318 audits the vendor ports, and the community imports listed in `themes/THEMES-ATTRIBUTION.md` are not yet audited. These departures on main are pending that audit, not permitted by this decision:
+**Current state**: `horizon`, `horizon-light` and `synthwave84` are the packages built and attributed under this decision so far. The VGS-318 audit covers the vendor ports; the community imports listed in `themes/THEMES-ATTRIBUTION.md` are not yet audited. `synthwave84`'s `terminal-colors.toml` is permitted by the third form above and is no longer pending. These departures on main are pending, not permitted by this decision:
 
 - Each Horizon package's `apps/btop.theme`, mapped by hand from upstream palette values for an app the upstream publishes no file for.
-- The ANSI diff hues VGS-290 picked in the `terminal-colors.toml` of dark themes, such as `color2` in `themes/akane/terminal-colors.toml`.
+- The ANSI diff hues VGS-290 picked in the `terminal-colors.toml` of the other dark themes, such as `color2` in `themes/akane/terminal-colors.toml`. Each becomes permitted when its package's `colors.toml` is aligned and `docs/architecture/theme.md` names the slot.
 - The `apps/claude-light.json` files VGS-286 added to akane, archwave, frankenstein, moon-orbit, reddcs and vice-city.
+- The seventeen vendor ports the VGS-318 audit lists as departing whose `colors.toml` is not yet aligned.
 
 **Rationale**:
 
@@ -38,6 +42,12 @@
 
 **Revisit When**: an upstream value is unreadable in a way a named shortfall cannot answer, such as body text on its own background; an upstream licence forbids redistributing its files; or a checker covers every package this decision applies to.
 
-**Verification**: No checker covers every such package. `test_horizon_packages_use_only_upstream_colours` in `scripts/check-vshell-helper.py` checks the Horizon packages, and `test_lint_reports_listed_shortfalls_as_known` checks the shortfall list.
+**Verification**: No checker covers every such package. In `scripts/check-vshell-helper.py`, `test_horizon_packages_use_only_upstream_colours` checks the Horizon packages against the upstream globals, and `test_aligned_vendor_ports_take_the_upstream_terminal_palette` checks each package named in `UPSTREAM_TERMINAL_PACKAGES`: it pins the upstream VS Code file the package ships to a recorded digest, holds `colors.toml` to that file's terminal keys, and holds the package's `terminal-colors.toml` to the slots this decision permits, so a fourth difference reddens until this decision and `docs/architecture/theme.md` name it. `test_lint_reports_listed_shortfalls_as_known` checks the shortfall list.
 
 **References**: `themes/THEMES-ATTRIBUTION.md`, `docs/architecture/theme.md`.
+
+## Revisit Outcome (2026-09-15)
+
+The VGS-318 audit compared all 24 vendor ports with their upstreams and found 18 departing. The owner re-assessed this decision against that result and kept it, with one refinement: a file or value the vendor never publishes may be written by VGS where it improves the theme, and is not removed once written. A value the vendor does publish stays the vendor's unless the owner asks for a change. Community app mappings are preferred over generated renders, with missing keys filled by VGS. Contrast checks stay lightweight; AA ratios are not a goal. The owner also ruled licence arguments moot for theme values, so `config/vshell/nvim/colorschemes/vim-synthwave84` and `themes/synthwave84/apps/neovim.lua` stay as a VGS-held Neovim theme.
+
+The **Decision** section above records that refinement as the second and third permitted forms of difference. `synthwave84` is the first package aligned under it.

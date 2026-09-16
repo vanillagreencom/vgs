@@ -11070,8 +11070,13 @@ def horizon_invented_colours(package: Path, allowed: frozenset) -> list[str]:
                    if value not in allowed})
 
 
-def horizon_theme_digest(path: Path) -> str:
-    data = json.loads(path.read_text())
+def vscode_theme_digest(path: Path) -> str:
+    """sha256 of a VS Code theme's `colors` and `tokenColors`, canonically encoded.
+
+    Key order, indentation and the top-level `name` are outside it, because a
+    package pretty-prints the upstream file and renames the theme. JSONC comments
+    and trailing commas are stripped first; a curated file may carry either."""
+    data = json.loads(helper._strip_jsonc(path.read_text()))
     canonical = json.dumps({"colors": data["colors"], "tokenColors": data["tokenColors"]},
                            sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode()).hexdigest()
@@ -11093,7 +11098,7 @@ def test_horizon_packages_use_only_upstream_colours():
         assert_equal(horizon_invented_colours(package, allowed), [],
                      f"{name}: every picked colour is an upstream Horizon colour")
         theme_file = package / "apps" / "vscode-theme.json"
-        assert_equal(horizon_theme_digest(theme_file), HORIZON_UPSTREAM_THEME_DIGESTS[name],
+        assert_equal(vscode_theme_digest(theme_file), HORIZON_UPSTREAM_THEME_DIGESTS[name],
                      f"{name}: the VS Code theme's colors and tokenColors are upstream's")
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -11119,14 +11124,10 @@ def test_horizon_packages_use_only_upstream_colours():
             data = json.loads(planted_theme.read_text())
             data["tokenColors"][0]["settings"]["foreground"] = "#18849a"
             planted_theme.write_text(json.dumps(data, indent=4))
-            if horizon_theme_digest(planted_theme) == HORIZON_UPSTREAM_THEME_DIGESTS[name]:
+            if vscode_theme_digest(planted_theme) == HORIZON_UPSTREAM_THEME_DIGESTS[name]:
                 raise AssertionError(f"{name}: a changed token colour must move the VS Code theme digest")
 
 
-# Vendor ports whose colors.toml has been aligned with the upstream terminal
-# values, under D017, from the verbatim upstream VS Code file the package itself
-# ships. A package joins the list when its alignment lands.
-UPSTREAM_TERMINAL_PACKAGES = ("synthwave84",)
 # colors.toml keys and the VS Code workbench key each takes its value from,
 # outside the sixteen ANSI slots VSCODE_ANSI_KEYS already spells.
 UPSTREAM_TERMINAL_KEYS = {
@@ -11136,92 +11137,172 @@ UPSTREAM_TERMINAL_KEYS = {
     "selection_foreground": "terminal.selectionForeground",
     "selection_background": "terminal.selectionBackground",
 }
+# Vendor ports whose colors.toml has been aligned, under D017, with the upstream
+# VS Code file the package itself ships. A package joins when its alignment
+# lands, and every value here is read off the pinned upstream file once:
+#
+# - `digest` is `vscode_theme_digest` of that file, which is what makes it an
+#   upstream reference rather than a second VGS file agreeing with the first.
+# - `checked` is every colors.toml key the file sets a six-digit value for. The
+#   digest holds the file still, so a change here means the key map broke.
+# - `terminal_slots` is the package's permitted terminal-colors.toml slots, the
+#   third form of VGS difference D017 names. Anything else there is a difference
+#   no decision records.
+UPSTREAM_TERMINAL_PACKAGES = {
+    "synthwave84": {
+        "digest": "dd2ac76fc83ac79a9cc37c65615d49bb498f29859e2a66ed6148d95ce1b353ba",
+        "checked": ("color1", "color10", "color11", "color12", "color13", "color14",
+                    "color2", "color3", "color4", "color5", "color6", "color9",
+                    "cursor", "foreground"),
+        "terminal_slots": ("color10",),
+    },
+}
 
 
-def upstream_terminal_comparison(package: Path) -> tuple[list[str], list[str]]:
-    """The colors.toml keys checked against `package`'s upstream VS Code file, and
-    the mismatches among them as `key vgs upstream`.
+def upstream_terminal_map() -> dict[str, str]:
+    """Every colors.toml key that maps to a VS Code workbench terminal key."""
+    mapped = dict(UPSTREAM_TERMINAL_KEYS)
+    mapped.update({f"color{slot}": key for slot, key in enumerate(helper.VSCODE_ANSI_KEYS)})
+    return mapped
 
-    `apps/vscode-theme.json` is the upstream file, copied verbatim, so its
-    `terminal.*` and `terminalCursor.*` entries are the vendor's own terminal
-    palette. A key the upstream leaves unset is not checked: the owner's ruling
-    lets VGS write a value the vendor publishes nowhere. Neither is one whose
+
+def upstream_port_findings(package: Path, allowed_slots: tuple) -> tuple[list[str], list[str]]:
+    """The colors.toml keys `package`'s upstream VS Code file answers for, and every
+    D017 difference found, as sorted `kind key value...` rows.
+
+    `apps/vscode-theme.json` is the upstream file copied verbatim. The VGS-318
+    audit established that for each listed package, and the caller's pinned digest
+    is what keeps it true; without that pin this comparison would only prove two
+    VGS files agree. Its `terminal.*` and `terminalCursor.*` entries are therefore
+    the vendor's own terminal palette.
+
+    A key the upstream leaves unset is not checked, and neither is one whose
     upstream value carries an alpha channel, which `themes/AGENTS.md` forbids
-    colors.toml from holding at all."""
+    colors.toml from holding: D017 lets VGS own a key the upstream sets no usable
+    value for. `terminal-colors.toml` is checked separately, because a slot there
+    paints a terminal only and D017 permits it by name."""
     colors = helper.parse_colors_toml(package / "colors.toml")
     upstream = json.loads(helper._strip_jsonc(
         (package / "apps" / "vscode-theme.json").read_text()))["colors"]
-    mapped = dict(UPSTREAM_TERMINAL_KEYS)
-    mapped.update({f"color{slot}": key for slot, key in enumerate(helper.VSCODE_ANSI_KEYS)})
-    checked, mismatches = [], []
-    for key, workbench in sorted(mapped.items()):
+    checked, findings = [], []
+    for key, workbench in sorted(upstream_terminal_map().items()):
         value = upstream.get(workbench)
         if not isinstance(value, str) or not helper.HEX_RE.match(value):
             continue
         checked.append(key)
         ours = colors.get(key, "")
         if ours.lower() != value.lower():
-            mismatches.append(f"{key} {ours} {value.lower()}")
-    return checked, mismatches
+            findings.append(f"palette {key} {ours} {value.lower()}")
+
+    overlay_path = package / helper.TERMINAL_COLORS_FILE
+    overlay = helper.terminal_slot_overrides(
+        helper.parse_colors_toml(overlay_path, allow_empty=True)) if overlay_path.is_file() else {}
+    for slot in sorted(set(overlay) - set(allowed_slots)):
+        findings.append(f"terminal-slot {slot} {overlay[slot]}")
+    for slot in sorted(set(allowed_slots) - set(overlay)):
+        findings.append(f"missing-terminal-slot {slot}")
+    return checked, sorted(findings)
 
 
 def test_aligned_vendor_ports_take_the_upstream_terminal_palette():
-    """An aligned vendor port's colors.toml equals the terminal palette its own
-    verbatim upstream VS Code file publishes, on every key that file sets.
+    """An aligned vendor port carries the upstream terminal palette and only the
+    D017 differences this file and that decision name.
 
-    Each package is also checked as a copy carrying one planted defect, which the
-    comparison must name: a changed VGS slot, a changed VGS cursor, a changed
-    upstream slot, and an upstream slot whose alpha channel is dropped, which
-    brings a previously unchecked key into the comparison."""
-    for name in UPSTREAM_TERMINAL_PACKAGES:
+    Its `apps/vscode-theme.json` matches the pinned digest, its colors.toml equals
+    that file's terminal palette on every key the file sets, and its
+    terminal-colors.toml holds exactly the permitted slots. Each package is also
+    checked as a copy carrying one planted defect, which the comparison must name.
+    The planted values are read from the package's own files, so a package joins
+    the table without editing this function."""
+    if not UPSTREAM_TERMINAL_PACKAGES:
+        raise AssertionError("no aligned vendor port is listed; this check would pass on nothing")
+    sentinel, second_sentinel = "#18849a", "#4b0082"
+    mapped = upstream_terminal_map()
+    for name, pins in sorted(UPSTREAM_TERMINAL_PACKAGES.items()):
         package = helper.builtin_themes_dir() / name
-        checked, mismatches = upstream_terminal_comparison(package)
-        # Under-inclusion: the upstream file sets a terminal palette this wide.
-        # Over-inclusion: its selection background is `#ffffff20`, which the
-        # alpha rule drops, so a comparison holding it reads alpha as a colour.
-        if len(checked) < 14 or not {"cursor", "color2", "color10"} <= set(checked):
-            raise AssertionError(f"{name}: the upstream terminal reader is broken; it checked {checked}")
-        if "selection_background" in checked:
-            raise AssertionError(f"{name}: an alpha upstream value must not be checked")
-        assert_equal(mismatches, [], f"{name}: colors.toml is the upstream terminal palette")
+        allowed = pins["terminal_slots"]
+        theme_file = package / "apps" / "vscode-theme.json"
+        # The digest first: every row below reads that file as the upstream.
+        assert_equal(vscode_theme_digest(theme_file), pins["digest"],
+                     f"{name}: apps/vscode-theme.json is the pinned upstream file")
+        checked, findings = upstream_port_findings(package, allowed)
+        assert_equal(tuple(checked), pins["checked"],
+                     f"{name}: the upstream terminal reader answers for the pinned keys")
+        assert_equal(findings, [], f"{name}: only the D017 differences this table names")
+
+        upstream = json.loads(helper._strip_jsonc(theme_file.read_text()))["colors"]
+        colors = helper.parse_colors_toml(package / "colors.toml")
+        # A key the upstream sets but colors.toml may not hold, so the reader
+        # must leave it out; `#ffffff20` is synthwave84's. Absent for a package
+        # whose upstream writes no alpha, which drops that row rather than
+        # passing it.
+        alpha_keys = sorted(key for key, workbench in mapped.items()
+                            if isinstance(upstream.get(workbench), str)
+                            and not helper.HEX_RE.match(upstream[workbench]))
+        for key in alpha_keys:
+            if key in checked:
+                raise AssertionError(f"{name}: {key} carries an alpha channel and must not be checked")
 
         with tempfile.TemporaryDirectory() as tmp:
             planted = Path(tmp) / name
             shutil.copytree(package, planted)
-            theme_file = planted / "apps" / "vscode-theme.json"
+            planted_theme = planted / "apps" / "vscode-theme.json"
             colors_file = planted / "colors.toml"
-            original_theme = theme_file.read_text()
+            overlay_file = planted / helper.TERMINAL_COLORS_FILE
+            original_theme = planted_theme.read_text()
             original_colors = colors_file.read_text()
+            original_overlay = overlay_file.read_text() if overlay_file.is_file() else None
 
             def plant_upstream(workbench: str, value: str) -> None:
                 data = json.loads(helper._strip_jsonc(original_theme))
                 if workbench not in data["colors"]:
                     raise AssertionError(f"{name}: upstream sets no {workbench} to plant")
                 data["colors"][workbench] = value
-                theme_file.write_text(json.dumps(data, indent=4))
+                planted_theme.write_text(json.dumps(data, indent=4))
 
-            def plant_palette(line: str, replacement: str) -> None:
+            def plant_palette(key: str, value: str) -> None:
+                line = f'{key} = "{colors[key]}"'
                 if original_colors.count(line) != 1:
                     raise AssertionError(f"{name}: colors.toml holds no single {line} to plant")
-                colors_file.write_text(original_colors.replace(line, replacement))
+                colors_file.write_text(original_colors.replace(line, f'{key} = "{value}"'))
 
+            # The first ANSI slot and, where the upstream sets one, the cursor:
+            # a slot proves the ANSI map, the cursor proves the map beyond it.
+            slot_key = next(key for key in pins["checked"] if key.startswith("color"))
+            palette_keys = [slot_key] + (["cursor"] if "cursor" in pins["checked"] else [])
             # (what the defect changes, how, what the comparison must report)
-            rows = [
-                ("a VGS slot", lambda: plant_palette('color2 = "#72f1b8"', 'color2 = "#8f00ff"'),
-                 ["color2 #8f00ff #72f1b8"]),
-                ("a VGS cursor", lambda: plant_palette('cursor = "#03edf9"', 'cursor = "#ff00ff"'),
-                 ["cursor #ff00ff #03edf9"]),
-                ("an upstream slot", lambda: plant_upstream("terminal.ansiGreen", "#18849a"),
-                 ["color2 #72f1b8 #18849a"]),
-                ("an upstream alpha channel", lambda: plant_upstream("terminal.selectionBackground", "#ffffff"),
-                 ["selection_background #543863 #ffffff"]),
+            rows = [(f"the VGS {key}", (lambda k=key: plant_palette(k, sentinel)),
+                     [f"palette {key} {sentinel} {colors[key]}"]) for key in palette_keys]
+            rows += [
+                ("the upstream slot behind " + slot_key,
+                 lambda: plant_upstream(mapped[slot_key], sentinel),
+                 [f"palette {slot_key} {colors[slot_key]} {sentinel}"]),
+                ("an unlisted terminal slot",
+                 lambda: overlay_file.write_text((original_overlay or "") + f'color7 = "{sentinel}"\n'),
+                 [f"terminal-slot color7 {sentinel}"]),
             ]
+            if original_overlay is not None and allowed:
+                rows.append(("a dropped permitted terminal slot",
+                             lambda: overlay_file.write_text("# masked\n"),
+                             [f"missing-terminal-slot {slot}" for slot in sorted(allowed)]))
+            if alpha_keys:
+                key = alpha_keys[0]
+                rows.append((f"the alpha channel on {key}",
+                             (lambda k=key: plant_upstream(mapped[k], second_sentinel)),
+                             [f"palette {key} {colors.get(key, '')} {second_sentinel}"]))
             for label, plant, expected in rows:
                 plant()
-                assert_equal(upstream_terminal_comparison(planted)[1], expected,
+                assert_equal(upstream_port_findings(planted, allowed)[1], expected,
                              f"{name}: a planted defect in {label} is named")
-                theme_file.write_text(original_theme)
+                planted_theme.write_text(original_theme)
                 colors_file.write_text(original_colors)
+                if original_overlay is not None:
+                    overlay_file.write_text(original_overlay)
+
+            # The digest is the only thing holding the upstream reference still.
+            plant_upstream(mapped[slot_key], sentinel)
+            if vscode_theme_digest(planted_theme) == pins["digest"]:
+                raise AssertionError(f"{name}: a changed upstream colour must move the digest")
 
 
 # A curated package's own UI tones, keyed by the role names `target_roles` emits.
