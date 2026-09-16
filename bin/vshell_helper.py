@@ -4748,6 +4748,11 @@ def _run_hook_cmd(hook: str, cmd: List[str], **kwargs: Any) -> Dict[str, Any]:
     try:
         proc = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=kwargs.pop("timeout", 8), **kwargs)
         return {"hook": hook, "ok": proc.returncode == 0, "code": proc.returncode, "stdout": proc.stdout.strip(), "stderr": proc.stderr.strip()}
+    except subprocess.TimeoutExpired as exc:
+        # A timeout is reported apart from a refusal because the command reached its
+        # target and only the reply was late, so its effect has to be assumed to have
+        # landed. A caller that undoes such an effect reads this rather than `ok`.
+        return {"hook": hook, "ok": False, "timedOut": True, "error": str(exc)}
     except Exception as exc:
         return {"hook": hook, "ok": False, "error": str(exc)}
 
@@ -5051,13 +5056,26 @@ def ensure_qtct_theme_config(version: int) -> Dict[str, Any]:
 # so VGS owns what the reload loses. These are the options it puts back.
 _HYPR_RESTORED_OPTIONS = ("general:gaps_in", "general:gaps_out")
 
+# What the hook tells the user when the restore falls short. One place per message,
+# because the apply surfaces each verbatim and turns partial on it. They are three
+# different outcomes and never share wording: the values were never captured, they were
+# captured and could not be written back, or they were written back and the compositor
+# did not confirm it.
+_GAP_WARN_UNREADABLE = ("live gaps unprotected: the compositor did not report "
+                        "{options} before the reload")
+_GAP_WARN_LOST = "live gaps lost to the reload and not restored: {gaps}"
+_GAP_WARN_UNCONFIRMED = ("live gaps written back but not confirmed: the compositor did "
+                         "not report {options} after the restore")
 
-def _hypr_option_boxes(env: Dict[str, str]) -> Dict[str, str]:
-    """Each restored option's live `css` edge box, or `{}` when the compositor could
+
+def _hypr_option_boxes(env: Dict[str, str]) -> Dict[str, str] | None:
+    """Each restored option's live `css` edge box, or `None` when the compositor did
     not report all of them.
 
     A partial read is dropped whole: a box VGS could not read is not an empty box, and
-    writing a keyword from one would set gaps the user never chose."""
+    writing a keyword from one would set gaps the user never chose. `None` rather than
+    an empty map, because a caller comparing two reads has to tell an option whose
+    value changed from an option the compositor never reported."""
     boxes: Dict[str, str] = {}
     for option in _HYPR_RESTORED_OPTIONS:
         try:
@@ -5067,12 +5085,29 @@ def _hypr_option_boxes(env: Dict[str, str]) -> Dict[str, str]:
             box = str(json.loads(proc.stdout or "{}").get("css") or "").strip()
         except Exception as exc:
             eprint(f"hypr-reload: reading {option} failed: {exc}")
-            return {}
-        if proc.returncode != 0 or not box:
+            return None
+        if proc.returncode != 0:
+            eprint(f"hypr-reload: reading {option} exited {proc.returncode}")
+            return None
+        if not box:
             eprint(f"hypr-reload: {option} reports no css box")
-            return {}
+            return None
         boxes[option] = box
     return boxes
+
+
+class GapSnapshot(enum.Enum):
+    """What an apply's pre-reload gap read produced.
+
+    `NOT_TAKEN` is both "no reload has run yet" and "Gaps = Custom, so the reloaded
+    values are the ones VGS wrote": neither leaves the user anything to lose, and the
+    restore stays silent. `UNREADABLE` is a read the compositor refused or did not
+    answer in time, which loses the gaps as surely as no restore at all and has to say
+    so. `TAKEN` carries the boxes to write back."""
+
+    NOT_TAKEN = enum.auto()
+    UNREADABLE = enum.auto()
+    TAKEN = enum.auto()
 
 
 class HyprGapRestore:
@@ -5091,6 +5126,7 @@ class HyprGapRestore:
     snapshot is read once and every later reload in that apply reuses it."""
 
     def __init__(self) -> None:
+        self._state = GapSnapshot.NOT_TAKEN
         self._before: Dict[str, str] = {}
         self._read = False
 
@@ -5101,33 +5137,48 @@ class HyprGapRestore:
         self._read = True
         if _hyprland_manages_gaps(_hyprland_gap_override(load_settings())):
             return
-        self._before = _hypr_option_boxes(env)
+        boxes = _hypr_option_boxes(env)
+        if boxes is None:
+            self._state = GapSnapshot.UNREADABLE
+            return
+        self._state = GapSnapshot.TAKEN
+        self._before = boxes
 
     def restore(self, env: Dict[str, str]) -> Dict[str, Any]:
         """Put back every snapshot value the reload changed, and report what stuck.
 
-        An option the post-reload read could not report counts as changed: the snapshot
-        is what the user set, and re-applying a value already in place costs one no-op
+        The three shortfalls are reported apart, because they tell the user different
+        things: gaps never captured, gaps captured and not written back, and gaps
+        written back that the compositor did not confirm. A post-reload read the
+        compositor did not answer counts every option as changed, since the snapshot is
+        what the user set and re-applying a value already in place costs one no-op
         keyword. The writes are confirmed by reading the options again rather than by
         `hyprctl`'s reply text, so a keyword the compositor refused is named as the lost
         gap it is instead of passing on a zero exit status."""
-        if not self._before:
+        if self._state is GapSnapshot.NOT_TAKEN:
             return {}
+        if self._state is GapSnapshot.UNREADABLE:
+            return {"warning": _GAP_WARN_UNREADABLE.format(
+                options=", ".join(_HYPR_RESTORED_OPTIONS))}
         after = _hypr_option_boxes(env)
-        stale = [option for option, box in self._before.items() if after.get(option) != box]
+        stale = [option for option, box in self._before.items()
+                 if after is None or after.get(option) != box]
         if not stale:
             return {}
         for option in stale:
             _run_hook_cmd("hypr-reload", ["hyprctl", "keyword", option, self._before[option]],
                           env=env, timeout=5)
         final = _hypr_option_boxes(env)
+        if final is None:
+            return {"restoredGaps": {}, "warning": _GAP_WARN_UNCONFIRMED.format(
+                options=", ".join(stale))}
         missed = [option for option in stale if final.get(option) != self._before[option]]
         result: Dict[str, Any] = {
             "restoredGaps": {option: self._before[option] for option in stale if option not in missed},
         }
         if missed:
-            result["warning"] = ("live gaps lost to the reload and not restored: "
-                                 + ", ".join(f"{option} {self._before[option]}" for option in missed))
+            result["warning"] = _GAP_WARN_LOST.format(
+                gaps=", ".join(f"{option} {self._before[option]}" for option in missed))
         return result
 
 
@@ -5169,8 +5220,10 @@ def run_hook(hook: Any, roles: Dict[str, str], bp: Dict[str, Any],
         gaps = gap_restore if gap_restore is not None else HyprGapRestore()
         gaps.snapshot(env)
         result = _run_hook_cmd(hook, ["hyprctl", "reload"], env=env, timeout=10)
-        # A reload that failed changed nothing, so there is nothing to put back.
-        if result.get("ok"):
+        # A reload whose reply timed out still reached the compositor and re-read the
+        # config, so its gaps are already gone and the restore has to run. A reload that
+        # hyprctl refused or never started is the one case that leaves them alone.
+        if result.get("ok") or result.get("timedOut"):
             result.update(gaps.restore(env))
         return result
     if hook == "gtk4-reload":
@@ -13487,8 +13540,8 @@ def _hyprland_manages_gaps(gaps_mode: int) -> bool:
     """Whether VGS renders `general:gaps_in` and `general:gaps_out` into layout.lua.
 
     False for the two negative modes, Config and Off, where the user's own Hyprland
-    config owns both keys and VGS writes neither. One owner for the question, because
-    every path that reloads the compositor has to know whose values it is replacing."""
+    config owns both keys and VGS writes neither. One owner for the question, so the
+    layout renderer and the theme reload hook answer it the same way."""
     return gaps_mode >= 0
 
 

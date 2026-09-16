@@ -777,10 +777,12 @@ def test_theme_apply_lands_every_other_target_when_one_target_fails():
         (home / ".delta").write_text("not a directory\n")
         blueprint = _apply_blueprint(home, curated=False)
         seen_state = []
+        holders = []
         real_hook = helper.run_hook
 
         def watching_hook(hook, roles, bp, *gap_restore):
             seen_state.append((hook, (home / ".config" / "vshell" / "theme-current.json").is_file()))
+            holders.append(gap_restore)
             return real_hook(hook, roles, bp, *gap_restore)
 
         with patch.object(helper, "targets_dir", lambda: targets), \
@@ -798,6 +800,15 @@ def test_theme_apply_lands_every_other_target_when_one_target_fails():
                      "neither failed target sends the reload verb it declares")
         assert_equal(sorted({state for _hook, state in seen_state}), [True],
                      "the applied state must be on disk before the first hook runs")
+        # One gap snapshot per apply: the values from before the apply's first compositor
+        # reload are the user's, whatever a later reload in the same apply finds. A hook
+        # given no holder, or a fresh one each time, would read its own.
+        assert_equal([len(passed) for passed in holders], [1] * len(seen_state),
+                     "every hook of an apply is handed the apply's gap snapshot holder")
+        assert_equal(len({id(passed[0]) for passed in holders}), 1,
+                     "every hook of an apply is handed the same holder object")
+        assert_equal({type(passed[0]) for passed in holders}, {helper.HyprGapRestore},
+                     "the holder an apply hands its hooks is the gap snapshot holder")
 
     with_temp_home(check)
 
@@ -2429,16 +2440,38 @@ def test_theme_hooks_stay_out_of_the_login_session():
 
 # A Hyprland session for the reload hook. The reload is whole-config, so it puts every
 # option back to what `config/` holds, which is what discards a runtime `hyprctl keyword`
-# value; `live/` is what the compositor currently reports.
+# value; `live/` is what the compositor currently reports. The three refusal switches are
+# how a row drives a compositor that answers badly: `fail-getoption` holds the 1-based
+# numbers of the getoption calls that exit non-zero, counted across a whole hook run and
+# knowing that a read stops at its first refusal, `ignore-keyword` the options whose
+# keyword the session accepts and does not apply, and `fail-reload` makes the reload exit
+# non-zero without re-reading anything.
 _FAKE_HYPRCTL = """#!/usr/bin/env bash
 set -euo pipefail
 state="$VGS_FAKE_HYPR_STATE"
 printf '%s\\n' "$*" >> "$state/calls"
 case "${1:-}" in
   instances) printf '[{"instance":"fake","time":1}]\\n' ;;
-  getoption) printf '{"css": "%s", "set": true}\\n' "$(cat "$state/live/${2}")" ;;
-  keyword) shift; option="$1"; shift; printf '%s' "$*" > "$state/live/$option"; printf 'ok\\n' ;;
-  reload) cp "$state"/config/* "$state"/live/; printf 'ok\\n' ;;
+  getoption)
+    seen=$(( $(cat "$state/getoption-count") + 1 ))
+    printf '%s' "$seen" > "$state/getoption-count"
+    if grep -Fxq -- "$seen" "$state/fail-getoption"; then exit 1; fi
+    printf '{"css": "%s", "set": true}\\n' "$(cat "$state/live/${2}")"
+    ;;
+  keyword)
+    shift
+    option="$1"
+    shift
+    if ! grep -Fxq -- "$option" "$state/ignore-keyword"; then
+      printf '%s' "$*" > "$state/live/$option"
+    fi
+    printf 'ok\\n'
+    ;;
+  reload)
+    if [ -f "$state/fail-reload" ]; then exit 1; fi
+    cp "$state"/config/* "$state"/live/
+    printf 'ok\\n'
+    ;;
   *) printf 'unsupported: %s\\n' "$*" >&2; exit 1 ;;
 esac
 """
@@ -2446,13 +2479,15 @@ esac
 # The gaps the user set at runtime, and the ones their Hyprland config file holds.
 _LIVE_GAPS = {"general:gaps_in": "5 5 5 5", "general:gaps_out": "8 8 8 8"}
 _CONFIG_GAPS = {"general:gaps_in": "1 1 1 1", "general:gaps_out": "10 10 10 10"}
+_ZERO_GAPS = {"general:gaps_in": "0 0 0 0", "general:gaps_out": "0 0 0 0"}
 _BOTH_GAPS = ["general:gaps_in", "general:gaps_out"]
 
 # hyprlandLayoutGapsOverride, the gaps the compositor reports before the hook, the gaps
 # its config file holds, the gaps it must report after the hook, and the options the hook
 # wrote back. -1 is Config and -2 is Off: VGS renders a gap key under neither, so the
 # user's values are the ones that must survive. A value of 0 or more is Custom, where the
-# reloaded values are the ones VGS itself wrote into layout.lua.
+# reloaded values are the ones VGS itself wrote into layout.lua. 0 is Custom's lower
+# bound, an inner gap of zero, and it decides the same way as any other Custom value.
 _GAP_RESTORE_ROWS = [
     (-1, _LIVE_GAPS, _CONFIG_GAPS, _LIVE_GAPS, _BOTH_GAPS,
      "Config restores both gaps the reload discarded"),
@@ -2460,13 +2495,39 @@ _GAP_RESTORE_ROWS = [
      "Off restores them too: neither negative mode renders a gap key"),
     (6, _LIVE_GAPS, _CONFIG_GAPS, _CONFIG_GAPS, [],
      "Custom lets the reloaded VGS values stand"),
-    (-1, _CONFIG_GAPS, _CONFIG_GAPS, _CONFIG_GAPS, [],
-     "Config writes no keyword when the reload changed nothing"),
+    (0, _LIVE_GAPS, _ZERO_GAPS, _ZERO_GAPS, [],
+     "Custom at an inner gap of zero is still Custom: the rendered zero stands"),
+]
+
+# One badly answering compositor per row, under Gaps = Config. Each names the refusals it
+# installs, then the gaps the session reports after the hook, the options a keyword was
+# attempted for, whether the hook reports ok, what it claims to have restored, and the one
+# warning it carries. The three shortfalls are separate outcomes and never share wording:
+# values never captured, values captured and not written back, and values written back
+# that the compositor did not confirm.
+_GAP_FAILURE_ROWS = [
+    ({"ignore-keyword": ["general:gaps_in"]},
+     {"general:gaps_in": "1 1 1 1", "general:gaps_out": "8 8 8 8"}, _BOTH_GAPS, True,
+     {"general:gaps_out": "8 8 8 8"},
+     "live gaps lost to the reload and not restored: general:gaps_in 5 5 5 5",
+     "a keyword the session accepts and drops is named as the lost gap it is"),
+    ({"fail-getoption": ["1"]}, _CONFIG_GAPS, [], True, None,
+     "live gaps unprotected: the compositor did not report "
+     "general:gaps_in, general:gaps_out before the reload",
+     "an unreadable pre-reload gap is reported as unprotected, not as a clean apply"),
+    ({"fail-getoption": ["5"]}, _LIVE_GAPS, _BOTH_GAPS, True, {},
+     "live gaps written back but not confirmed: the compositor did not report "
+     "general:gaps_in, general:gaps_out after the restore",
+     "an unreadable confirming read says so rather than claiming the gaps were lost"),
+    ({"fail-reload": True}, _LIVE_GAPS, [], False, None, None,
+     "a reload the session refused re-read nothing, so nothing is written back"),
+    ({"fail-getoption": ["3"]}, _LIVE_GAPS, _BOTH_GAPS, True, _LIVE_GAPS, None,
+     "an unreadable post-reload read writes every snapshot value back"),
 ]
 
 
-def _seed_hypr_state(root, live, config):
-    """A fake session's directories, and the environment naming them."""
+def _seed_hypr_state(root, live, config, refusals=None):
+    """A fake session's directories and refusal switches, and the environment naming them."""
     (root / "live").mkdir(parents=True)
     (root / "config").mkdir(parents=True)
     for option, box in live.items():
@@ -2474,6 +2535,12 @@ def _seed_hypr_state(root, live, config):
     for option, box in config.items():
         (root / "config" / option).write_text(box)
     (root / "calls").write_text("")
+    (root / "getoption-count").write_text("0")
+    installed = refusals or {}
+    for switch in ("fail-getoption", "ignore-keyword"):
+        (root / switch).write_text("".join(f"{entry}\n" for entry in installed.get(switch, [])))
+    if installed.get("fail-reload"):
+        (root / "fail-reload").write_text("")
     os.environ["VGS_FAKE_HYPR_STATE"] = str(root)
 
 
@@ -2486,6 +2553,18 @@ def _hypr_keyword_options(root):
                   if line.startswith("keyword "))
 
 
+def _install_fake_hyprctl(home):
+    """Put the fake session's hyprctl first on PATH. Returns the environment to restore."""
+    bin_dir = home / "fake-bin"
+    bin_dir.mkdir()
+    hyprctl = bin_dir / "hyprctl"
+    hyprctl.write_text(_FAKE_HYPRCTL)
+    hyprctl.chmod(0o755)
+    saved = {name: os.environ.get(name) for name in ("PATH", "VGS_FAKE_HYPR_STATE")}
+    os.environ["PATH"] = str(bin_dir) + os.pathsep + (saved["PATH"] or "")
+    return saved
+
+
 def test_hypr_reload_restores_the_live_gaps_the_whole_config_reload_discards():
     """A theme apply's `hyprctl reload` re-reads the whole Hyprland config, so it put
     every gap the user had set at runtime back to the config file's value.
@@ -2495,17 +2574,15 @@ def test_hypr_reload_restores_the_live_gaps_the_whole_config_reload_discards():
     gaps; every theme change, wallpaper-derived apply and anything else running the hook
     broke that promise. Under Gaps = Custom the reloaded values are the ones VGS wrote,
     so the reload is right and nothing is put back.
+
+    A compositor that answers badly is the other half: the hook must never report a clean
+    apply over gaps it could not protect, and must never tell the user gaps were lost when
+    the writes went through unconfirmed.
     """
     def check(home):
         settings_path = home / ".config" / "vshell" / "settings.json"
         settings_path.parent.mkdir(parents=True, exist_ok=True)
-        bin_dir = home / "fake-bin"
-        bin_dir.mkdir()
-        hyprctl = bin_dir / "hyprctl"
-        hyprctl.write_text(_FAKE_HYPRCTL)
-        hyprctl.chmod(0o755)
-        saved = {name: os.environ.get(name) for name in ("PATH", "VGS_FAKE_HYPR_STATE")}
-        os.environ["PATH"] = str(bin_dir) + os.pathsep + (saved["PATH"] or "")
+        saved = _install_fake_hyprctl(home)
         try:
             for index, row in enumerate(_GAP_RESTORE_ROWS):
                 mode, live, config, expected, expected_written, label = row
@@ -2523,13 +2600,58 @@ def test_hypr_reload_restores_the_live_gaps_the_whole_config_reload_discards():
                              f"{label}: the options written back")
                 assert_equal(sorted(result.get("restoredGaps") or {}), expected_written,
                              f"{label}: the hook reports what it restored")
+                assert_equal(result.get("warning"), None,
+                             f"{label}: a session answering normally raises no warning")
+
+            settings_path.write_text(json.dumps({"hyprlandLayoutGapsOverride": -1}))
+            for index, row in enumerate(_GAP_FAILURE_ROWS):
+                refusals, expected, expected_written, expected_ok, restored, warning, label = row
+                state = home / f"refusing-{index}"
+                _seed_hypr_state(state, _LIVE_GAPS, _CONFIG_GAPS, refusals)
+                with patch.object(helper, "_sandboxed_home", return_value=False):
+                    result = helper.run_hook("hypr-reload", {}, {})
+                assert_equal(result["ok"], expected_ok, f"{label}: the hook's own verdict")
+                assert_equal(_hypr_live_gaps(state), expected, label)
+                assert_equal(_hypr_keyword_options(state), expected_written,
+                             f"{label}: the options a keyword was attempted for")
+                assert_equal(result.get("restoredGaps"), restored,
+                             f"{label}: the hook reports what it restored")
+                assert_equal(result.get("warning"), warning, f"{label}: the warning carried")
+
+            # A reload whose reply timed out still reached the compositor and re-read the
+            # config, so the gaps are already gone and the restore has to run. The timed-out
+            # result is produced by the real _run_hook_cmd against a command that genuinely
+            # outruns its timeout, so a rename of the field the gate reads reddens here.
+            state = home / "reload-timeout"
+            _seed_hypr_state(state, _LIVE_GAPS, _CONFIG_GAPS)
+            real_hook_cmd = helper._run_hook_cmd
+            timeouts = []
+
+            def slow_reply(hook, cmd, **kwargs):
+                if cmd[:2] != ["hyprctl", "reload"]:
+                    return real_hook_cmd(hook, cmd, **kwargs)
+                real_hook_cmd(hook, cmd, **kwargs)
+                timeouts.append(real_hook_cmd(hook, ["sleep", "5"], timeout=0.2))
+                return timeouts[-1]
+
+            with patch.object(helper, "_sandboxed_home", return_value=False), \
+                    patch.object(helper, "_run_hook_cmd", slow_reply):
+                timed_out = helper.run_hook("hypr-reload", {}, {})
+            assert_equal([entry.get("timedOut") for entry in timeouts], [True],
+                         "a command that outruns its timeout is reported apart from a refusal")
+            assert_equal(real_hook_cmd("probe", ["false"]).get("timedOut"), None,
+                         "a command the shell refused is not reported as a timeout")
+            assert_equal(timed_out["ok"], False, "a timed-out reload is still a failed hook")
+            assert_equal(_hypr_live_gaps(state), _LIVE_GAPS,
+                         "a timed-out reload took effect, so its gaps are put back")
+            assert_equal(timed_out.get("restoredGaps"), _LIVE_GAPS,
+                         "the timed-out reload's restore reports both options")
 
             # Must-fail control for the Config row: with the restore removed the same
             # fixture ends at the config file's gaps, so that row pins the restore and not
             # a fake reload that never discarded anything.
             state = home / "session-control"
             _seed_hypr_state(state, _LIVE_GAPS, _CONFIG_GAPS)
-            settings_path.write_text(json.dumps({"hyprlandLayoutGapsOverride": -1}))
             with patch.object(helper, "_sandboxed_home", return_value=False), \
                     patch.object(helper.HyprGapRestore, "restore", return_value={}):
                 helper.run_hook("hypr-reload", {}, {})
@@ -2553,6 +2675,52 @@ def test_hypr_reload_restores_the_live_gaps_the_whole_config_reload_discards():
                 _restore_env(name, value)
 
     with_temp_home(check)
+
+
+# One target whose reload verb is the hook under test, so an apply carries the hook's own
+# warning rather than a fixture hook's.
+_HYPR_APPLY_TARGET = {"zeta": {"app": "shell", "template": "zeta.txt",
+                              "destination": "~/.zeta/colors", "reloadHook": "hypr-reload"}}
+
+
+def test_a_lost_live_gap_makes_the_theme_apply_partial():
+    """A hook warning is what tells the user a theme landed with something else broken.
+
+    The gap restore returns its shortfall as a hook warning rather than a failed hook,
+    because the colours did land. Without the apply reading that warning the user sees a
+    clean success over gaps the reload discarded.
+    """
+    def check(home):
+        settings_path = home / ".config" / "vshell" / "settings.json"
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+        settings_path.write_text(json.dumps({"hyprlandLayoutGapsOverride": -1}))
+        targets = home / "targets"
+        (targets / "zeta").mkdir(parents=True)
+        (targets / "zeta" / "config.json").write_text(json.dumps(_HYPR_APPLY_TARGET["zeta"]))
+        (targets / "zeta" / "zeta.txt").write_text("background {background}\n")
+        saved = _install_fake_hyprctl(home)
+        try:
+            state = home / "apply-session"
+            _seed_hypr_state(state, _LIVE_GAPS, _CONFIG_GAPS,
+                             {"ignore-keyword": ["general:gaps_in"]})
+            blueprint = helper.load_theme_package("tokyo-night")
+            with patch.object(helper, "targets_dir", lambda: targets), \
+                    patch.object(helper, "_sandboxed_home", return_value=False):
+                result = helper.apply_theme_obj(blueprint)
+            assert_equal(result["partial"], True,
+                         "an apply that lost a live gap is partial, not a clean success")
+            assert_equal([w for w in result["warnings"] if w.startswith("hypr-reload:")],
+                         ["hypr-reload: live gaps lost to the reload and not restored: "
+                          "general:gaps_in 5 5 5 5"],
+                         "the lost gap is named in the apply's own warning")
+            assert_equal(_hypr_live_gaps(state)["general:gaps_out"], "8 8 8 8",
+                         "the gap the session did apply is still put back")
+        finally:
+            for name, value in saved.items():
+                _restore_env(name, value)
+
+    with_temp_home(check)
+
 
 def test_vshell_blur_cli_contract():
     with tempfile.TemporaryDirectory() as tmp:
@@ -12216,6 +12384,7 @@ def main():
     test_chromium_policy_refuses_a_sandbox_home()
     test_theme_hooks_stay_out_of_the_login_session()
     test_hypr_reload_restores_the_live_gaps_the_whole_config_reload_discards()
+    test_a_lost_live_gap_makes_the_theme_apply_partial()
     test_vshell_blur_cli_contract()
     test_generated_theme_consumer_wiring()
     test_shell_only_theme_preview()
