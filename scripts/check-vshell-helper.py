@@ -11365,6 +11365,19 @@ def test_aligned_vendor_ports_take_the_upstream_terminal_palette():
                              lambda: overlay_file.write_text("".join(
                                  f'{slot} = "{value}"\n' for slot, value in sorted(swapped.items()))),
                              [f"upstream-terminal-slot {published_slot} {published_hex}"]))
+                # The same, written as the expansion of a three-digit upstream
+                # literal, which the reader must recognise as the colour the
+                # vendor published in shorthand. No row for a package whose
+                # upstream writes none.
+                shorthand = sorted(literal for literal in
+                                   re.findall(r"#[0-9A-Fa-f]{3}\b", theme_file.read_text()))
+                if shorthand:
+                    expanded = "#" + "".join(ch * 2 for ch in shorthand[0][1:].lower())
+                    widened = dict(overlay_slots, **{published_slot: expanded})
+                    rows.append((f"the expansion of upstream shorthand {shorthand[0]}",
+                                 lambda: overlay_file.write_text("".join(
+                                     f'{slot} = "{value}"\n' for slot, value in sorted(widened.items()))),
+                                 [f"upstream-terminal-slot {published_slot} {expanded}"]))
             if alpha_keys:
                 key = alpha_keys[0]
                 rows.append((f"the alpha channel on {key}",
