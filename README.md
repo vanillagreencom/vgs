@@ -1,6 +1,6 @@
 # VGS — VanillaGreen Shell
 
-VGS is a desktop shell for the Hyprland and Niri compositors, built on Quickshell 0.3.0. It provides the bar, launcher, control centre, dock, notifications, lock screen and greeter, and a theme engine that recolours the shell and the applications you already run. Hyprland is the reference compositor; Niri is supported with native equivalents for its scrolling layout.
+VGS is a desktop shell for the Hyprland and Niri compositors, built on Quickshell 0.3.1. It provides the bar, launcher, control centre, dock, notifications, lock screen and greeter, and a theme engine that recolours the shell and the applications you already run. Hyprland is the reference compositor; Niri is supported with native equivalents for its scrolling layout.
 
 ![VGS demo](docs/media/vgs-demo-poster.jpg)
 
@@ -16,7 +16,7 @@ VGS is a desktop shell for the Hyprland and Niri compositors, built on Quickshel
 ## Requirements
 
 - Hyprland or Niri.
-- Quickshell 0.3.0.
+- Quickshell 0.3.1 or newer.
 - systemd user services.
 - Optional tools unlock optional features. A missing tool greys out its widget and leaves the rest of the shell running.
 
@@ -32,7 +32,7 @@ Native packages are the recommended method. They install VGS system-wide and pro
 | Debian 13 | OBS | [`packaging/README.md` § Channels](packaging/README.md#channels) |
 | Ubuntu 26.04 | Launchpad PPA | [`packaging/README.md` § Channels](packaging/README.md#channels) |
 | Gentoo | VanillaGreen overlay | [`packaging/README.md` § Channels](packaging/README.md#channels) |
-| Void | maintainer recipe, no packaged Quickshell 0.3.0 | [`packaging/`](packaging/) |
+| Void | maintainer recipe, no packaged Quickshell at the 0.3.1 baseline | [`packaging/`](packaging/) |
 | NixOS, Home Manager | flake | [`flake.nix`](flake.nix) |
 | Other systemd distributions | release bundle | `curl -fsSL https://raw.githubusercontent.com/vanillagreencom/vgs/v0.5.0/install.sh \| bash` |
 

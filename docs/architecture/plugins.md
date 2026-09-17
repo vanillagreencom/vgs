@@ -1,6 +1,6 @@
 # Plugins, overlays and dependencies
 
-Covers: config/vshell/, quickshell/vshell/Modules/Plugins/, quickshell/vshell/Services/
+Covers: config/vshell/, quickshell/vshell/Modules/Plugins/, quickshell/vshell/Services/, packaging/optional-packages.json
 
 Bundled plugins are product UI. User packages can replace them only through the loader's declared override policy.
 

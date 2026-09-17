@@ -57,7 +57,9 @@ osc checkout home:vanillagreen vgs-shell -o /tmp/obs
   # packaging/fedora/vgs-shell.spec: it takes Source0 from the orig tarball
   # _service downloads, uses openSUSE package names, and carries no %{?dist}.
   # Bump its version and changelog; replacing it with the Fedora spec fails
-  # the build on a missing source file.
+  # the build on a missing source file. Carry the Quickshell minimum there too:
+  # "Requires: quickshell >= 0.3.1". No generator reaches that spec, so the
+  # openSUSE package accepts any Quickshell until this is set by hand.
   osc commit -m "Update to vX.Y.Z" )
 osc results home:vanillagreen vgs-shell
 

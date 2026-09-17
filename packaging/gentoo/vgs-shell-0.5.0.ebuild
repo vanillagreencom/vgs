@@ -23,7 +23,7 @@ REQUIRED_USE="${PYTHON_REQUIRED_USE}"
 RDEPEND="
 	${PYTHON_DEPS}
 	app-misc/jq
-	gui-apps/quickshell
+	>=gui-apps/quickshell-0.3.1
 	gui-apps/grim
 	gui-apps/slurp
 	gui-apps/wl-clipboard

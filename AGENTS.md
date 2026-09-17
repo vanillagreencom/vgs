@@ -1,6 +1,6 @@
 # VGS
 
-VanillaGreen Shell is a desktop shell for Hyprland and Niri using Quickshell 0.3.0. Hyprland is the reference implementation; Niri support is additive. This checkout drives the live desktop session.
+VanillaGreen Shell is a desktop shell for Hyprland and Niri using Quickshell. The supported baseline is Quickshell 0.3.1, required as a minimum by every recipe this repository generates whose format has a version slot. Hyprland is the reference implementation; Niri support is additive. This checkout drives the live desktop session.
 
 The runtime and CLI are named `vshell`; `vgs` conflicts with the LVM command.
 
