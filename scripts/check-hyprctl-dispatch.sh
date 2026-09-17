@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Refuse the `hyprctl dispatch` forms below in a bin/ shell script other than
 # bin/vshell-hyprctl-dispatch. That program checks the reply of every dispatch, so a call
-# routed around it can lose a refused dispatch with no diagnostic. Selection is by resolved
-# interpreter name: a bin/ file is a shell script when its shebang, after a leading `env`
-# with its options and assignments is dropped, names a POSIX shell. Interpreter options
-# after that name are ignored by construction, so no spelling needs its own arm. The Python
-# helper modules resolve to python3 and stay outside this rule.
+# routed around it can lose a refused dispatch with no diagnostic. Selection fails closed:
+# every bin/ file whose first line starts with `#!` is scanned unless that line names
+# python, which excludes the Python helper modules. No interpreter name is resolved, so no
+# shebang spelling can be read wrongly and skipped; a file with no `#!` first line is not
+# a program this rule covers.
 # Forms matched: the word `hyprctl`, then the word `dispatch` with no `|`, `;` or `&`
 # between them; `hyprctl` with a `--batch` flag and `dispatch` anywhere after it on the
 # command, past `;`; either form continued across lines by an unescaped trailing backslash,
@@ -14,8 +14,8 @@
 # Usage: scripts/check-hyprctl-dispatch.sh [ROOT], where ROOT defaults to this checkout.
 #
 # Output protocol: one `hyprctl-dispatch-unchecked bin/<name>:<line>` line on stderr per
-# finding, then exit 1; `check-hyprctl-dispatch: ok (<N> shell scripts)` and exit 0 when
-# none; exit 2 when bin/ cannot be listed or holds no shell script to scan.
+# finding, then exit 1; `check-hyprctl-dispatch: ok (<N> scanned files)` and exit 0 when
+# none; exit 2 when bin/ cannot be listed or holds no file to scan.
 set -euo pipefail
 
 root="${1:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}"
@@ -24,33 +24,6 @@ owner="vshell-hyprctl-dispatch"
 pattern='(^|[^[:alnum:]_-])hyprctl[[:space:]][^|;&]*dispatch([^[:alnum:]_]|$)'
 # A batch string separates its commands with `;`, so a dispatch may follow another command.
 batch_pattern='(^|[^[:alnum:]_-])hyprctl([[:space:]]+[^[:space:]]+)*[[:space:]]+--batch([[:space:]]|=).*dispatch([^[:alnum:]_]|$)'
-
-# Resolve one shebang line to the interpreter's basename in REPLY. `env` runs the command
-# named after its own options, its `-S` string and any VAR=value assignments, so those are
-# dropped first. Returns nonzero when the line names no command.
-shell_interpreter() {
-  local line="$1" word
-  local -a words=()
-  [[ $line == '#!'* ]] || return 1
-  IFS=' ' read -r -a words <<<"${line#\#!}" || true
-  ((${#words[@]} > 0)) || return 1
-  if [[ ${words[0]##*/} == env ]]; then
-    words=("${words[@]:1}")
-    while ((${#words[@]} > 0)); do
-      word="${words[0]}"
-      case "$word" in
-        -S?*) words[0]="${word#-S}"; break ;;
-        --split-string=?*) words[0]="${word#--split-string=}"; break ;;
-        # Every other option, its separate argument included, and every assignment.
-        -* | *=*) words=("${words[@]:1}") ;;
-        *) break ;;
-      esac
-    done
-    ((${#words[@]} > 0)) || return 1
-  fi
-  REPLY="${words[0]##*/}"
-  [[ -n $REPLY ]]
-}
 
 listing="$(mktemp)"
 trap 'rm -f -- "${listing:?}"' EXIT
@@ -64,10 +37,9 @@ status=0
 while IFS= read -r -d '' file; do
   shebang=""
   IFS= read -r shebang <"$file" || true
-  interpreter=""
-  shell_interpreter "$shebang" && interpreter="$REPLY"
-  case "$interpreter" in
-    sh | bash | dash | ksh | zsh) ;;
+  case "$shebang" in
+    '#!'*python*) continue ;;
+    '#!'*) ;;
     *) continue ;;
   esac
   scanned=$((scanned + 1))
@@ -103,4 +75,4 @@ if [[ $status -ne 0 ]]; then
   printf 'Route each dispatch through bin/%s.\n' "$owner" >&2
   exit 1
 fi
-printf 'check-hyprctl-dispatch: ok (%d shell scripts)\n' "$scanned"
+printf 'check-hyprctl-dispatch: ok (%d scanned files)\n' "$scanned"
