@@ -763,7 +763,7 @@ func TestAnIndexPastItsWatchBudgetGivesUpItsWatchesAndStillAnswers(t *testing.T)
 	if !ix.unwatched.Load() || !ix.degraded.Load() {
 		t.Fatal("an index past its watch budget kept watching")
 	}
-	if held := ix.watches.Load(); held > budget+int64(walkWorkers()) {
+	if held := ix.watches.Load(); held > budget+int64(cpuWorkers()) {
 		t.Fatalf("the index took %d watches on a budget of %d", held, budget)
 	}
 	if _, err := ix.watch.add(root); err == nil {

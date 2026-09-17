@@ -4,7 +4,6 @@ import (
 	"container/heap"
 	"log/slog"
 	"os"
-	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -285,7 +284,9 @@ func (ix *index) search(query string, kind searchKind, limit int) []hit {
 	pool := limit * 4
 	ix.mu.RLock()
 	total := len(ix.entries)
-	workers := runtime.GOMAXPROCS(0)
+	// A query runs on the desktop's time as a walk does, so it takes the same
+	// share of the CPUs.
+	workers := cpuWorkers()
 	if workers > total/4096+1 {
 		workers = total/4096 + 1
 	}

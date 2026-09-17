@@ -35,9 +35,10 @@ type listing struct {
 	children []child
 }
 
-// walkWorkers bounds how many directories one walk lists at once. It leaves
-// half the machine's CPUs to the desktop that is drawing while the walk runs.
-func walkWorkers() int {
+// cpuWorkers bounds the goroutines one walk or one query runs at once: one per
+// two CPUs, and at least one, leaving the rest to the desktop that is drawing
+// meanwhile.
+func cpuWorkers() int {
 	return max(1, runtime.NumCPU()/2)
 }
 
@@ -106,7 +107,7 @@ func (ix *index) walk(ctx context.Context, starts []dirJob) error {
 	results := make(chan listing)
 	stop := make(chan struct{})
 	defer close(stop)
-	for i := 0; i < walkWorkers(); i++ {
+	for i := 0; i < cpuWorkers(); i++ {
 		go func() {
 			for job := range jobs {
 				// A panicking listing still answers, as an unread directory, so
