@@ -1,12 +1,13 @@
 # Helper CLI
 
-Covers: bin/, packaging/install-system.sh, packaging/arch/, packaging/debian/control, packaging/fedora/vgs-shell.spec, packaging/gentoo/, packaging/void/template, flake.nix
+Covers: bin/, packaging/install-system.sh, packaging/arch/, packaging/debian/, packaging/fedora/vgs-shell.spec, packaging/gentoo/, packaging/void/, flake.nix
 
 The helper owns parsing, generation and privileged operations. `bin/vshell` dispatches to `bin/vshell-helper`, a stub that imports `bin/vshell_helper.py`, which loads the other `bin/vshell_*.py` modules.
 
 ## Boundaries
 
 - Keep new helper behaviour behind the dispatcher. A helper module split is separate work, not a requirement of unrelated fixes.
+- `bin/vshell` owns the systemd unit lifecycle, `setup`, `restart`, `status` and `logs`, and the helper owns what those verbs report. No distribution enables a user unit on a package's behalf, so `vshell setup` is the one first-start step every install message names. `scripts/test-vshell-setup.sh` checks the verb and that no install instruction carries a second copy of the raw enable command.
 - Hyprland receives VGS-owned configuration fragments. Niri also permits an include update with a backup; see `bin/vshell_niri.py`.
 - External commands use argv arrays and must not log secrets or raw payloads. Review each changed call; `scripts/check-vshell-helper.py` tests named operations, not the absence of every unsafe call.
 
