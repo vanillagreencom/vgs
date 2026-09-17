@@ -122,12 +122,15 @@ rm -f "$service_path"
 cp "$version_root/systemd/user/vshell.service" "$service_path"
 systemctl --user daemon-reload
 echo "VGS $version installed."
-# The enable stays here rather than calling the bundle's own setup verb:
-# --version installs an older bundle, whose CLI need not carry that verb, and an
-# unknown command there would abort the installer after a complete install.
+# Neither the call nor the message may assume the bundle's CLI: --version
+# installs whichever bundle was named, and one older than the setup verb answers
+# that name with an unknown command and exit 2. So the enable runs here rather
+# than through setup, and the message names the systemd line too, which every
+# bundle accepts.
 if [[ "$start" == true ]]; then
   systemctl --user enable --now vshell.service
   echo "Run: vshell deps status"
 else
   echo "Start it with: vshell setup"
+  echo "  or, on a bundle whose CLI predates that verb: systemctl --user enable --now vshell.service"
 fi

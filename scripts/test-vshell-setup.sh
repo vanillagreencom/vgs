@@ -30,7 +30,9 @@
 #
 #   - Single owner: no file under packaging/ and no line of README.md repeats
 #     the raw enable command, because bin/vshell owns it. install.sh is outside
-#     this scan by design: it runs the enable rather than printing it.
+#     this scan by design: it both runs and names that command, because
+#     --version installs whichever bundle was asked for and one older than the
+#     setup verb rejects that name.
 #   - First-start step: each channel directory under packaging/ carries an
 #     install message naming the step its own channel can run. The six shipped
 #     channels are arch, debian, fedora, gentoo, ubuntu and void; arch
@@ -268,6 +270,7 @@ installer_anchor='if [[ "$start" == true ]]; then
   echo "Run: vshell deps status"
 else
   echo "Start it with: vshell setup"
+  echo "  or, on a bundle whose CLI predates that verb: systemctl --user enable --now vshell.service"
 fi'
 
 # dh_installsystemduser rides the default dh sequence from compat 12 and enables
