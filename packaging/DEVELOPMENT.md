@@ -18,7 +18,7 @@ Fedora uses `Suggests` to avoid installing optional compositors and login manage
 
 ### Publishing theme imagery
 
-The repository holds no wallpapers for most themes, so `publish-theme-assets.py` reads an asset working directory **outside** the checkout, laid out as `<name>/backgrounds/`. Point `--asset-root` or `VGS_THEME_ASSET_ROOT` at it; the default is `../vgs-theme-assets`. `scripts/publish-theme-assets.py --pull` rebuilds that directory from the published `themes-vN` releases, which is what keeps the releases the copy of record rather than one maintainer's disk. Run `--pull` before editing imagery on a machine that has never published.
+The repository holds no wallpapers for most themes, so `publish-theme-assets.py` reads an asset working directory **outside** the checkout, laid out as `<name>/backgrounds/`. Point `--asset-root` or `VGS_THEME_ASSET_ROOT` at it; the default is `../vgs-theme-assets`. `scripts/publish-theme-assets.py --pull` rebuilds that directory from the published `themes-vN` releases on the repository the lock names, which is what keeps the releases the copy of record rather than one maintainer's disk. Run `--pull` before editing imagery on a machine that has never published.
 
 A changed theme needs a new preview before it publishes, because the publish derives the thumbnail from `themes/<name>/preview.jpg`. `scripts/capture-theme-previews.py [NAME]...` renders each named theme, or every theme, over the asset working directory's wallpapers. It starts nested Hyprland sessions, so run it from the checkout that owns the desktop session.
 

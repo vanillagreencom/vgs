@@ -2,9 +2,9 @@
 
 [← Decision Index](INDEX.md)
 
-**Date**: 2026-09-09, amended 2026-09-13 **Status**: Active **Research**: —
+**Date**: 2026-09-09, amended 2026-09-13 and 2026-09-17 **Status**: Active **Research**: —
 
-**Applies to**: `themes/`, `scripts/gen-theme-catalog.py`, `bin/vshell_helper.py` theme-catalog functions, `packaging/`, `.github/workflows/release.yml`
+**Applies to**: `themes/`, `scripts/gen-theme-catalog.py`, `scripts/publish-theme-assets.py`, `bin/vshell_helper.py` theme-catalog functions, `packaging/`, `.github/workflows/release.yml`
 
 **Context**: `themes/` holds 1,072,264,046 bytes of wallpapers across 409 files and 23,199,264 bytes of screenshots across 79 `preview.png` files. `git count-objects -vH` reports `size-pack` at 1018.88 MiB, because every past revision of those binaries is retained. A contributor changing a QML panel pays all of it.
 
@@ -114,6 +114,20 @@ This amendment supersedes these parts of the decision:
 - **§7, the one theme set.** `packaging/install-system.sh` installs every theme package and only the default theme's wallpapers. Every distro recipe already calls that script, so only the Fedora `%files` list changes, to `/usr/lib/vshell/themes/*/`.
 
 The catalog pins imagery-only archives once every theme is republished with `scripts/publish-theme-assets.py`, which also derives each thumbnail from the committed preview. Until then, `scripts/gen-theme-catalog.py --check` fails on the lock version.
+
+## Amendment (2026-09-17): the store lives on `vanillagreencom/vgs-themes`, and a publish opens at most one release per interval
+
+The owner decided on 2026-09-17 that the theme-asset releases leave the shell repository. Numbered releases per publish filled the `vanillagreencom/vgs` releases page with `themes-vN` entries beside the shell versions, and one of them was marked latest.
+
+This amendment supersedes these parts of the decision:
+
+- **§1, store home.** `themes-vN` releases publish to `vanillagreencom/vgs-themes`. That repository holds releases and their archives only, and no code, so no worktree or agent lane targets it. `ASSET_REPO` in `scripts/gen-theme-catalog.py` names it, and `scripts/publish-theme-assets.py` creates, reads and uploads to that repository through `gh release`. Once `themes-v1` to `themes-v15` are deleted from `vanillagreencom/vgs` and `v0.5.0` is marked latest there, that repository's releases page lists shell versions only. Archive naming, revisions, resume and the never-delete rule for published assets are unchanged.
+- **§1, cadence.** `scripts/publish-theme-assets.py` refuses to open a new release while the newest release on `vanillagreencom/vgs-themes` is younger than `RELEASE_INTERVAL`, seven days. The refusal's first line is `release-too-recent <repo> <tag>`, and the lock that run leaves keeps no `publishing` record naming the release it did not open. `--force` opens the release anyway. Uploading into a release that already exists, which is how an interrupted run resumes, is never refused.
+- **§1, move between repositories.** The lock's `repo` field names the repository its pins live on. When it differs from `ASSET_REPO`, the publish script re-pins every theme, unpublished, to the release number after the highest `themes-vN` release on the asset repository, keeping each archive name and revision, and then uploads the batch as it uploads a dry run. The first publish after this amendment therefore uploads every archive to `themes-v1` on `vanillagreencom/vgs-themes`.
+- **§2, catalog source.** `source.repo` and `source.baseUrl` in `themes/catalog.json` come from the lock's `repo`, so the catalog downloads from the repository the pins live on. `--check-assets-published` asks that repository. `themes/asset-lock.json` and `themes/catalog.json` stay in `vanillagreencom/vgs`. The helper reads `baseUrl` from the catalog and needed no change.
+- **Alternatives, separate repository.** The rejection of a separate assets repository no longer holds. The new repository needs no credential beyond the `gh` login that already publishes, and it adds no infrastructure other than a repository.
+
+Releases `themes-v1` to `themes-v15` on `vanillagreencom/vgs` are deleted once the catalog pins the new repository and `--check-assets-published` passes against it. The catalog shipped in `v0.5.0` pins `themes-v1` and `themes-v2` there, so the deletion stops every theme download for a `v0.5.0` install; the owner ruled on 2026-09-17 that no external consumer depends on it. That deletion is the one exception to the never-delete rule.
 
 ## Rationale
 
