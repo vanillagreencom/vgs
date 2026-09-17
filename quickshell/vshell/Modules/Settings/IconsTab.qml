@@ -186,7 +186,6 @@ Item {
         SettingsData.set("iconThemeDark", name);
         SettingsData.set("iconThemeLight", name);
         SettingsData.saveSettings();
-        SettingsData.applyStoredIconTheme();
     }
 
     Component.onCompleted: refresh()

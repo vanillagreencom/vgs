@@ -16,10 +16,10 @@ function nonEmptyStringOr(def) {
 var SPEC = {
     currentThemeName: { def: "bauhaus", onChange: "applyStoredTheme" },
     currentThemeCategory: { def: "vgs" },
-    matugenScheme: { def: "scheme-tonal-spot", onChange: "regenSystemThemes" },
-    matugenContrast: { def: 0, onChange: "regenSystemThemes" },
+    matugenScheme: { def: "scheme-tonal-spot", onChange: "appThemeInputChanged" },
+    matugenContrast: { def: 0, onChange: "appThemeInputChanged" },
     matugenMode: { def: "auto" },
-    matugenTargetMonitor: { def: "", onChange: "regenSystemThemes" },
+    matugenTargetMonitor: { def: "", onChange: "appThemeInputChanged" },
 
     popupTransparency: { def: 1.0, coerce: percentToUnit },
     popupBlurStrength: { def: 0.65, coerce: percentToUnit },
@@ -43,7 +43,7 @@ var SPEC = {
     mangoLayoutGapsOutOverride: { def: -1, onChange: "updateCompositorLayout" },
     mangoLayoutRadiusOverride: { def: -1, onChange: "updateCompositorLayout" },
     mangoLayoutBorderSize: { def: -1, onChange: "updateCompositorLayout" },
-    mangoTrackpadNaturalScrolling: { def: true, onChange: "updateCompositorCursor" },
+    mangoTrackpadNaturalScrolling: { def: true, onChange: "cursorSettingChanged" },
 
     firstDayOfWeek: { def: -1 },
     showWeekNumber: { def: false },
@@ -274,15 +274,15 @@ var SPEC = {
 
     networkPreference: { def: "auto" },
 
-    iconThemeDark: { def: "System Default", onChange: "applyStoredIconTheme" },
-    iconThemeLight: { def: "System Default", onChange: "applyStoredIconTheme" },
-    iconThemePerMode: { def: false, onChange: "applyStoredIconTheme" },
+    iconThemeDark: { def: "System Default", onChange: "iconThemeSettingChanged" },
+    iconThemeLight: { def: "System Default", onChange: "iconThemeSettingChanged" },
+    iconThemePerMode: { def: false, onChange: "iconThemeSettingChanged" },
     lastAppliedIconTheme: { def: "" },
     qt5ctAvailable: { def: false, persist: false },
     qt6ctAvailable: { def: false, persist: false },
     gtkAvailable: { def: false, persist: false },
 
-    cursorSettings: { def: { theme: "System Default", size: 24, niri: { hideWhenTyping: false, hideAfterInactiveMs: 0 }, hyprland: { hideOnKeyPress: false, hideOnTouch: false, inactiveTimeout: 0 }, dwl: { cursorHideTimeout: 0 }, mango: { cursorHideTimeout: 0 } }, onChange: "updateCompositorCursor" },
+    cursorSettings: { def: { theme: "System Default", size: 24, niri: { hideWhenTyping: false, hideAfterInactiveMs: 0 }, hyprland: { hideOnKeyPress: false, hideOnTouch: false, inactiveTimeout: 0 }, dwl: { cursorHideTimeout: 0 }, mango: { cursorHideTimeout: 0 } }, onChange: "cursorSettingChanged" },
     availableCursorThemes: { def: ["System Default"], persist: false },
     systemDefaultCursorTheme: { def: "", persist: false },
 
@@ -392,10 +392,10 @@ var SPEC = {
     audioInputDevicePins: { def: {} },
     audioOutputDevicePins: { def: {} },
 
-    gtkThemingEnabled: { def: false, onChange: "regenSystemThemes" },
-    qtThemingEnabled: { def: false, onChange: "regenSystemThemes" },
+    gtkThemingEnabled: { def: false, onChange: "appThemeInputChanged" },
+    qtThemingEnabled: { def: false, onChange: "appThemeInputChanged" },
     syncModeWithPortal: { def: true },
-    terminalsAlwaysDark: { def: false, onChange: "regenSystemThemes" },
+    terminalsAlwaysDark: { def: false, onChange: "appThemeInputChanged" },
 
     muxType: { def: "tmux" },
     muxUseCustomCommand: { def: false },

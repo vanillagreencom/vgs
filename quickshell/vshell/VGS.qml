@@ -35,6 +35,8 @@ Item {
     readonly property var _themeServiceRef: VGSThemeService
     // Construct ScratchpadService eagerly so dismissOnFocusLoss works before Settings opens.
     readonly property var _scratchpadServiceRef: ScratchpadService
+    // Construct IconThemeService eagerly so it applies icon theme changes and checks icon theme drift at startup.
+    readonly property var _iconThemeServiceRef: IconThemeService
 
     property bool osdSurfacesLoaded: true
     property int pendingOsdResumeReloads: 0

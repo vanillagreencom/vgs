@@ -132,6 +132,7 @@ qml       | scripts/test-brightness-scan-ordering.js
 qml       | scripts/test-backend-capabilities.js
 qml       | scripts/test-settings-navigation.js
 qml       | scripts/test-store-write-coalescing.js
+qml       | scripts/test-settings-change-signals.js
 qml       | scripts/test-open-connect-lifetime.js
 helper    | scripts/test-wallpaper-thumbs.py
 helper    | scripts/test-wallpaper-refs.py

@@ -312,6 +312,38 @@ Singleton {
         }, 0, 3000);
     }
 
+    // SettingsData stores the cursor settings; the compositor cursor config they need is written here.
+    Connections {
+        target: SettingsData
+        function onCursorSettingChanged(key) {
+            cursorConfigTimer.restart();
+        }
+    }
+
+    Timer {
+        id: cursorConfigTimer
+        interval: 100
+        repeat: false
+        onTriggered: root.updateCompositorCursor()
+    }
+
+    // The cursor config helpers read settings.json, so the pending write lands first.
+    function updateCompositorCursor() {
+        SettingsData.flushSettings();
+        if (isNiri && typeof NiriService !== "undefined") {
+            NiriService.generateNiriCursorConfig();
+            return;
+        }
+        if (isHyprland && typeof HyprlandService !== "undefined") {
+            HyprlandService.generateCursorConfig();
+            return;
+        }
+        if (isMango && typeof MangoService !== "undefined") {
+            MangoService.generateCursorConfig();
+            return;
+        }
+    }
+
     function _applyCompositor(name) {
         isHyprland = name === "hyprland";
         isNiri = name === "niri";

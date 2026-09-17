@@ -39,6 +39,28 @@ function toJson(root) {
     return out;
 }
 
+// The serialised value of each key whose onChange hook is one of `hookNames`.
+function hookedValues(root, hookNames) {
+    var SPEC = SpecModule.SPEC;
+    var out = {};
+    for (var k in SPEC) {
+        if (hookNames.indexOf(SPEC[k].onChange) >= 0)
+            out[k] = JSON.stringify(root[k]);
+    }
+    return out;
+}
+
+// The keys of a hookedValues snapshot whose value in `root` now differs, each with its hook.
+function changedHooks(root, before) {
+    var SPEC = SpecModule.SPEC;
+    var out = [];
+    for (var k in before) {
+        if (JSON.stringify(root[k]) !== before[k])
+            out.push({ key: k, hook: SPEC[k].onChange });
+    }
+    return out;
+}
+
 function migrateToVersion(obj, targetVersion) {
     if (!obj) return null;
 
