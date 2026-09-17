@@ -11,13 +11,13 @@ theme[title]="#ffff66"
 theme[hi_fg]="#df00ff"
 
 # Background color of selected item in processes box
-theme[selected_bg]="#8f00ff"
+theme[selected_bg]="#f97e72"
 
 # Foreground color of selected item in processes box
 theme[selected_fg]="#ffff66"
 
 # Color of inactive/disabled text
-theme[inactive_fg]="#8f00ff"
+theme[inactive_fg]="#f97e72"
 
 # Color of text appearing on top of graphs, i.e uptime and current network graph scaling
 theme[graph_text]="#ffffff"
@@ -26,16 +26,16 @@ theme[graph_text]="#ffffff"
 theme[meter_bg]="#240037"
 
 # Misc colors for processes box including mini cpu graphs, details memory graph and details status text
-theme[proc_misc]="#8f00ff"
+theme[proc_misc]="#f97e72"
 
 # CPU, Memory, Network, Proc box outline colors
 theme[cpu_box]="#ff007f" #Hot Pink
 theme[mem_box]="#00ffff" #Cyan
 theme[net_box]="#fe347e" #Neon Pink
-theme[proc_box]="#8f00ff" #Electric Purple
+theme[proc_box]="#f97e72" #Coral
 
 # Box divider line and small boxes line color
-theme[div_line]="#8f00ff"
+theme[div_line]="#f97e72"
 
 # Temperature graph color (Cyan -> Pink -> Red)
 theme[temp_start]="#00ffff"

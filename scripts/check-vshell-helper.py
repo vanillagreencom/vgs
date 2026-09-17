@@ -11381,8 +11381,8 @@ UPSTREAM_TERMINAL_KEYS = {
 # - `digest` is `vscode_theme_digest` of that file, which is what makes it an
 #   upstream reference rather than a second VGS file agreeing with the first.
 # - `extra_keys` maps a colors.toml key to the non-terminal workbench key it
-#   takes its value from. A vendor that sets no `terminal.ansi*` key for a slot
-#   still publishes that colour elsewhere, and the port takes it from there.
+#   takes its value from. A vendor that sets no terminal key for a colors.toml
+#   key still paints that role elsewhere, and the port takes it from there.
 # - `checked` is every colors.toml key answered by a terminal key or an
 #   `extra_keys` entry. The digest holds the file still, so a change here means
 #   the key map broke.
@@ -11394,18 +11394,21 @@ UPSTREAM_TERMINAL_PACKAGES = {
         "digest": "dd2ac76fc83ac79a9cc37c65615d49bb498f29859e2a66ed6148d95ce1b353ba",
         # The extension sets twelve `terminal.ansi*` keys and no black or white
         # pair, no terminal selection foreground and no opaque terminal selection
-        # background, so these keys take the surfaces it paints them from.
+        # background, so these keys take the surfaces it paints them from. The
+        # accent answers to no terminal key at all and takes the badge the
+        # extension paints its accent role on.
         "extra_keys": {
+            "accent": "activityBarBadge.background",
             "color0": "editor.background",
             "color7": "foreground",
             "color8": "button.background",
             "color15": "foreground",
             "selection_foreground": "foreground",
         },
-        "checked": ("color0", "color1", "color10", "color11", "color12", "color13",
-                    "color14", "color15", "color2", "color3", "color4", "color5",
-                    "color6", "color7", "color8", "color9", "cursor", "foreground",
-                    "selection_foreground"),
+        "checked": ("accent", "color0", "color1", "color10", "color11", "color12",
+                    "color13", "color14", "color15", "color2", "color3", "color4",
+                    "color5", "color6", "color7", "color8", "color9", "cursor",
+                    "foreground", "selection_foreground"),
         "terminal_slots": ("color10",),
     },
 }
