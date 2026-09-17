@@ -216,6 +216,81 @@ def computed_pkgver(root: Path) -> str:
     )
 
 
+def source_ref(directory: Path) -> tuple[str, str]:
+    """The repository and ref a VCS recipe's build clones.
+
+    makepkg clones the `git+` source, so what a stamped version must describe is
+    a commit of that ref. With no `#branch=` fragment the clone takes the
+    remote's default branch, which is `HEAD` there.
+    """
+    fields, _ = parse_pkgbuild(directory / "PKGBUILD")
+    urls = [
+        value.split("::", 1)[-1][len("git+"):]
+        for value in fields.get("source", [])
+        if value.split("::", 1)[-1].startswith("git+")
+    ]
+    if len(urls) != 1:
+        raise CheckError(
+            f"{directory}/PKGBUILD names {len(urls)} git sources, so which repository "
+            "and branch its build clones cannot be read"
+        )
+    url, _, fragment = urls[0].partition("#")
+    if not fragment:
+        return url, "HEAD"
+    if fragment.startswith("branch="):
+        return url, f"refs/heads/{fragment[len('branch='):]}"
+    raise CheckError(
+        f"{directory}/PKGBUILD pins its source with {fragment}, which names no branch "
+        "this script can resolve, so which commit its build clones cannot be read"
+    )
+
+
+def remote_tip(root: Path, url: str, ref: str) -> tuple[str, str]:
+    """The (ref, commit) a clone of `url` would check out, read from `url` itself."""
+    name, tip = ref, None
+    for line in git(root, "ls-remote", "--symref", url, ref).splitlines():
+        if line.startswith("ref: "):
+            name = line.split()[1]
+        else:
+            tip = line.split("\t")[0]
+    if tip is None:
+        raise CheckError(f"{url} publishes no {ref}, so what a build of it clones is unknown")
+    return name, tip
+
+
+def on_source_branch(root: Path, directory: Path) -> None:
+    """Refuse a checkout whose HEAD the recipe's own build would not reach.
+
+    Nothing pins the ref a publish runs from: a workflow dispatch takes the ref
+    it was started on, a release run takes the tag's commit, and the by-hand
+    path takes whatever is checked out. A version stamped from a commit off the
+    cloned branch names something no build ever produces, and the downgrade
+    refusal then locks out the correction until the branch catches up with it.
+    """
+    url, ref = source_ref(directory)
+    name, tip = remote_tip(root, url, ref)
+    head = git(root, "rev-parse", "HEAD")
+    if head == tip:
+        return
+    # An ancestor of the tip is a commit of that branch, so a build reaches it;
+    # it under-advertises, which the downgrade refusal handles, rather than
+    # naming a commit that is not on the branch at all.
+    ancestry = git_result(root, "merge-base", "--is-ancestor", head, tip)
+    if ancestry.returncode == 0:
+        return
+    if ancestry.returncode != 1:
+        raise CheckError(
+            f"cannot tell whether {root} is on {name} of {url}, at {tip}: "
+            f"{ancestry.stderr.strip()}"
+        )
+    raise CheckError(
+        f"{root} is at {head}, which is not on {name} of {url}, at {tip}. A build of "
+        "this recipe clones that branch, so a version stamped here would name a commit "
+        f"no build reaches, and every client would sit on an update that never arrives. "
+        f"Publish from a checkout of {name}."
+    )
+
+
 def comment_start(line: str, masked: str) -> int:
     """Where a comment opens on `line`, given shell_scan's mask of it.
 
@@ -350,6 +425,11 @@ def stamp_vcs_version(directory: Path, root: Path = ROOT) -> str | None:
     problem = formula_problem(directory, body)
     if problem is not None:
         raise CheckError(f"{problem} NOTHING was written.")
+
+    try:
+        on_source_branch(root, directory)
+    except CheckError as refusal:
+        raise CheckError(f"{refusal} NOTHING was written.") from None
 
     fields, _ = parse_pkgbuild(directory / "PKGBUILD")
     pkgver = computed_pkgver(root)

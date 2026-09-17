@@ -107,8 +107,19 @@ def make_repo(path: Path, commits: int = 1, version: str = "0.5.0") -> tuple[str
 
 
 def recipe(directory: Path, pkgver: str = PLACEHOLDER, pkgrel: str = "4",
-           body: str = VCS_PKGVER) -> None:
-    """Write a PKGBUILD and an agreeing .SRCINFO into `directory`."""
+           body: str = VCS_PKGVER, source: Path | str | None = None) -> None:
+    """Write a PKGBUILD and an agreeing .SRCINFO into `directory`.
+
+    A case that stamps passes `source`, the repository its recipe clones: the
+    stamp reads that repository to learn which commits a build of the recipe
+    reaches. A case that only checks a recipe leaves it unreachable.
+    """
+    if source is None:
+        origin = "git+https://example.invalid/vgs.git"
+    else:
+        # A path is the repository itself; a string is the source entry's own
+        # URL, for a case about how that entry is read.
+        origin = f"git+file://{source}" if isinstance(source, Path) else f"git+{source}"
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "PKGBUILD").write_text(
         "pkgname=probe\n"
@@ -118,7 +129,7 @@ def recipe(directory: Path, pkgver: str = PLACEHOLDER, pkgrel: str = "4",
         "arch=('x86_64')\n"
         "url='https://example.invalid/vgs'\n"
         "license=('MIT')\n"
-        "source=('git+https://example.invalid/vgs.git')\n"
+        f"source=('{origin}')\n"
         "sha256sums=('SKIP')\n"
         "\n"
         f"{body}"
@@ -132,7 +143,7 @@ def recipe(directory: Path, pkgver: str = PLACEHOLDER, pkgrel: str = "4",
         "\turl = https://example.invalid/vgs\n"
         "\tarch = x86_64\n"
         "\tlicense = MIT\n"
-        "\tsource = git+https://example.invalid/vgs.git\n"
+        f"\tsource = {origin}\n"
         "\tsha256sums = SKIP\n"
         "\npkgname = probe\n"
     )
@@ -186,6 +197,49 @@ class LocalCheck(unittest.TestCase):
             self.assertIn("computes its pkgver with", problems[0])
 
 
+class SourceRef(unittest.TestCase):
+    """Which repository and ref a recipe's build clones, read from its source."""
+
+    CASES = (
+        ("an unpinned source takes the remote's default branch",
+         "file:///srv/vgs.git", ("file:///srv/vgs.git", "HEAD")),
+        ("a pinned branch is the ref",
+         "file:///srv/vgs.git#branch=next", ("file:///srv/vgs.git", "refs/heads/next")),
+    )
+
+    def test_cases(self):
+        for name, source, expected in self.CASES:
+            with self.subTest(name), tempfile.TemporaryDirectory() as tmp:
+                directory = Path(tmp) / "recipe"
+                recipe(directory, source=source)
+
+                self.assertEqual(CHECKER.source_ref(directory), expected)
+
+    def test_a_fragment_naming_no_branch_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp) / "recipe"
+            recipe(directory, source="file:///srv/vgs.git#commit=abc123")
+
+            with self.assertRaises(CHECKER.CheckError) as raised:
+                CHECKER.source_ref(directory)
+
+            self.assertIn("names no branch", str(raised.exception))
+
+    def test_a_branch_the_source_repository_does_not_have_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            origin = Path(tmp) / "origin"
+            make_repo(origin)
+            directory = Path(tmp) / "recipe"
+            recipe(directory, source=f"file://{origin}#branch=gone")
+            before = (directory / "PKGBUILD").read_text()
+
+            with self.assertRaises(CHECKER.CheckError) as raised:
+                CHECKER.stamp_vcs_version(directory, root=origin)
+
+            self.assertIn("publishes no refs/heads/gone", str(raised.exception))
+            self.assertEqual(before, (directory / "PKGBUILD").read_text())
+
+
 class NormalizedBody(unittest.TestCase):
     """Which text in a pkgver() body is a comment and which only looks like one.
 
@@ -217,7 +271,7 @@ class Stamp(unittest.TestCase):
             source = Path(tmp) / "source"
             count, head = make_repo(source)
             directory = Path(tmp) / "recipe"
-            recipe(directory)
+            recipe(directory, source=source)
 
             stamped = CHECKER.stamp_vcs_version(directory, root=source)
 
@@ -235,7 +289,7 @@ class Stamp(unittest.TestCase):
             source = Path(tmp) / "source"
             count, head = make_repo(source)
             directory = Path(tmp) / "recipe"
-            recipe(directory, pkgver=f"0.5.0.r{count}.g{head}", pkgrel="3")
+            recipe(directory, pkgver=f"0.5.0.r{count}.g{head}", pkgrel="3", source=source)
 
             CHECKER.stamp_vcs_version(directory, root=source)
 
@@ -252,7 +306,7 @@ class Stamp(unittest.TestCase):
             git("clone", "--quiet", "--depth", "1", f"file://{source}", str(clipped),
                 cwd=Path(tmp))
             directory = Path(tmp) / "recipe"
-            recipe(directory)
+            recipe(directory, source=source)
             before = (directory / "PKGBUILD").read_text()
 
             with self.assertRaises(CHECKER.CheckError) as raised:
@@ -260,6 +314,54 @@ class Stamp(unittest.TestCase):
 
             self.assertIn("is a shallow checkout", str(raised.exception))
             self.assertEqual(before, (directory / "PKGBUILD").read_text())
+
+    def working_clone(self, tmp: Path, origin: Path) -> Path:
+        """A checkout of `origin`, which keeps its own HEAD as the remote does."""
+        work = tmp / "work"
+        git("clone", "--quiet", f"file://{origin}", str(work), cwd=tmp)
+        return work
+
+    def test_a_head_off_the_cloned_branch_is_refused(self):
+        # What a publish from a dispatch, a release tag or a hand-run checkout
+        # can be sitting on. A build clones the branch, never this commit.
+        with tempfile.TemporaryDirectory() as tmp:
+            origin = Path(tmp) / "origin"
+            make_repo(origin, commits=2)
+            work = self.working_clone(Path(tmp), origin)
+            git("checkout", "--quiet", "-b", "side", cwd=work)
+            (work / "file").write_text("off the branch\n")
+            git("commit", "--quiet", "--all", "-m", "side", cwd=work)
+            directory = Path(tmp) / "recipe"
+            recipe(directory, source=origin)
+            before = (directory / "PKGBUILD").read_text()
+
+            with self.assertRaises(CHECKER.CheckError) as raised:
+                CHECKER.stamp_vcs_version(directory, root=work)
+
+            self.assertIn("is not on refs/heads/main", str(raised.exception))
+            self.assertEqual(before, (directory / "PKGBUILD").read_text())
+
+    def test_an_earlier_commit_of_the_cloned_branch_is_stamped(self):
+        # A commit a build of that branch reaches. It under-advertises, which
+        # the downgrade refusal answers, rather than naming a commit no build
+        # ever reaches.
+        with tempfile.TemporaryDirectory() as tmp:
+            origin = Path(tmp) / "origin"
+            make_repo(origin, commits=2)
+            work = self.working_clone(Path(tmp), origin)
+            git("checkout", "--quiet", "HEAD~1", cwd=work)
+            directory = Path(tmp) / "recipe"
+            recipe(directory, source=origin)
+
+            stamped = CHECKER.stamp_vcs_version(directory, root=work)
+
+            self.assertEqual(
+                stamped,
+                "0.5.0.r{}.g{}".format(
+                    git("rev-list", "--count", "HEAD", cwd=work),
+                    git("rev-parse", "--short", "HEAD", cwd=work),
+                ),
+            )
 
     def test_a_directory_with_no_recipe_is_refused_by_name(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -280,7 +382,7 @@ class Stamp(unittest.TestCase):
                 source = Path(tmp) / "source"
                 make_repo(source)
                 directory = Path(tmp) / "recipe"
-                recipe(directory, body=body)
+                recipe(directory, body=body, source=source)
                 before = (directory / "PKGBUILD").read_text()
 
                 with self.assertRaises(CHECKER.CheckError) as raised:
@@ -294,7 +396,7 @@ class Stamp(unittest.TestCase):
             source = Path(tmp) / "source"
             count, head = make_repo(source)
             directory = Path(tmp) / "recipe"
-            recipe(directory, body=ANNOTATED_PKGVER)
+            recipe(directory, body=ANNOTATED_PKGVER, source=source)
 
             self.assertEqual(
                 CHECKER.stamp_vcs_version(directory, root=source),
@@ -306,7 +408,7 @@ class Stamp(unittest.TestCase):
             source = Path(tmp) / "source"
             make_repo(source)
             directory = Path(tmp) / "recipe"
-            recipe(directory)
+            recipe(directory, source=source)
             srcinfo = directory / ".SRCINFO"
             srcinfo.write_text(srcinfo.read_text().replace("\tpkgrel = 4\n", ""))
             before = ((directory / "PKGBUILD").read_text(), srcinfo.read_text())
@@ -323,12 +425,13 @@ class Stamp(unittest.TestCase):
 class PublishedVersion(unittest.TestCase):
     """What the recipe's own git HEAD, the published state, decides about a stamp."""
 
-    def rendered(self, directory: Path, pkgver: str = "0.1.0.r1.gaaaaaaa") -> str:
+    def rendered(self, directory: Path, source: Path,
+                 pkgver: str = "0.1.0.r1.gaaaaaaa") -> str:
         """The PKGBUILD text a case edits before committing it as published."""
-        recipe(directory, pkgver=pkgver)
+        recipe(directory, pkgver=pkgver, source=source)
         return (directory / "PKGBUILD").read_text()
 
-    def publish(self, tmp: Path, pkgver: str, pkgrel: str = "4",
+    def publish(self, tmp: Path, pkgver: str, source: Path, pkgrel: str = "4",
                 committed: str | None = None, root: Path | None = None) -> Path:
         """A recipe directory whose committed state publishes these values.
 
@@ -339,21 +442,21 @@ class PublishedVersion(unittest.TestCase):
         directory = tmp / "recipe"
         directory.mkdir(parents=True)
         git("init", "--quiet", "--initial-branch", "master", cwd=root or directory)
-        recipe(directory, pkgver=pkgver, pkgrel=pkgrel)
+        recipe(directory, pkgver=pkgver, pkgrel=pkgrel, source=source)
         if committed is not None:
             (directory / "PKGBUILD").write_text(committed)
         git("add", "--all", cwd=root or directory)
         git("commit", "--quiet", "-m", "published", cwd=root or directory)
         # publish-aur.sh overwrites the working tree from this repository before
         # the stamp runs, so the published values live only in HEAD by then.
-        recipe(directory, pkgver=PLACEHOLDER, pkgrel="1")
+        recipe(directory, pkgver=PLACEHOLDER, pkgrel="1", source=source)
         return directory
 
     def test_a_lower_computed_version_is_refused_and_nothing_is_written(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "source"
             make_repo(source)
-            directory = self.publish(Path(tmp), "0.5.0.r900.gfeedbee")
+            directory = self.publish(Path(tmp), "0.5.0.r900.gfeedbee", source)
             before = (directory / "PKGBUILD").read_text()
 
             with self.assertRaises(CHECKER.CheckError) as raised:
@@ -371,7 +474,8 @@ class PublishedVersion(unittest.TestCase):
             directory = self.publish(
                 Path(tmp),
                 "0.1.0.r1.gaaaaaaa",
-                committed=self.rendered(Path(tmp) / "text").replace(
+                source,
+                committed=self.rendered(Path(tmp) / "text", source).replace(
                     "pkgver=0.1.0.r1.gaaaaaaa\n",
                     "pkgver=0.1.0.r1.gaaaaaaa\npkgver=0.9.0.r999.gfeedbee\n",
                 ),
@@ -391,7 +495,8 @@ class PublishedVersion(unittest.TestCase):
             directory = self.publish(
                 Path(tmp),
                 "0.1.0.r1.gaaaaaaa",
-                committed=self.rendered(Path(tmp) / "text").replace(
+                source,
+                committed=self.rendered(Path(tmp) / "text", source).replace(
                     "pkgver=0.1.0.r1.gaaaaaaa\n", "pkgver=(0.1.0.r1.gaaaaaaa 0.9.0.r9.gb)\n"
                 ),
             )
@@ -410,7 +515,7 @@ class PublishedVersion(unittest.TestCase):
             directory = Path(tmp) / "recipe"
             directory.mkdir()
             git("init", "--quiet", "--initial-branch", "master", cwd=directory)
-            recipe(directory)
+            recipe(directory, source=source)
 
             self.assertEqual(
                 CHECKER.stamp_vcs_version(directory, root=source),
@@ -429,7 +534,7 @@ class PublishedVersion(unittest.TestCase):
             (directory / "README").write_text("nothing published yet\n")
             git("add", "--all", cwd=directory)
             git("commit", "--quiet", "-m", "no recipe", cwd=directory)
-            recipe(directory)
+            recipe(directory, source=source)
 
             self.assertEqual(
                 CHECKER.stamp_vcs_version(directory, root=source),
@@ -443,7 +548,7 @@ class PublishedVersion(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "source"
             make_repo(source)
-            directory = self.publish(Path(tmp), "0.9.0.r999.gfeedbee")
+            directory = self.publish(Path(tmp), "0.9.0.r999.gfeedbee", source)
             tree = git("rev-parse", "HEAD^{tree}", cwd=directory)
             (directory / ".git" / "objects" / tree[:2] / tree[2:]).unlink()
             before = (directory / "PKGBUILD").read_text()
@@ -460,7 +565,7 @@ class PublishedVersion(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "source"
             make_repo(source)
-            directory = self.publish(Path(tmp), "0.9.0.r999.gfeedbee")
+            directory = self.publish(Path(tmp), "0.9.0.r999.gfeedbee", source)
             blob = git("rev-parse", "HEAD:./PKGBUILD", cwd=directory)
             (directory / ".git" / "objects" / blob[:2] / blob[2:]).unlink()
 
@@ -479,7 +584,7 @@ class PublishedVersion(unittest.TestCase):
             root = Path(tmp) / "tree"
             root.mkdir()
             recipe(root, pkgver="9.9.9.r999.gfeedbee", pkgrel="1")
-            directory = self.publish(root, "0.1.0.r1.gaaaaaaa", root=root)
+            directory = self.publish(root, "0.1.0.r1.gaaaaaaa", source, root=root)
 
             self.assertEqual(
                 CHECKER.stamp_vcs_version(directory, root=source),
@@ -490,7 +595,7 @@ class PublishedVersion(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "source"
             make_repo(source)
-            directory = self.publish(Path(tmp), "20260916")
+            directory = self.publish(Path(tmp), "20260916", source)
             before = (directory / "PKGBUILD").read_text()
 
             with self.assertRaises(CHECKER.CheckError) as raised:
@@ -503,7 +608,7 @@ class PublishedVersion(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "source"
             count, head = make_repo(source)
-            directory = self.publish(Path(tmp), "0.1.0.r0.g0000000")
+            directory = self.publish(Path(tmp), "0.1.0.r0.g0000000", source)
 
             stamped = CHECKER.stamp_vcs_version(directory, root=source)
 
@@ -516,7 +621,7 @@ class PublishedVersion(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "source"
             count, head = make_repo(source)
-            directory = self.publish(Path(tmp), f"0.5.0.r{count}.g{head}", pkgrel="4")
+            directory = self.publish(Path(tmp), f"0.5.0.r{count}.g{head}", source, pkgrel="4")
 
             CHECKER.stamp_vcs_version(directory, root=source)
 
@@ -530,7 +635,7 @@ class PublishedVersion(unittest.TestCase):
             source = Path(tmp) / "source"
             make_repo(source)
             directory = Path(tmp) / "recipe"
-            recipe(directory, pkgver="0.5.0", body="")
+            recipe(directory, pkgver="0.5.0", body="", source=source)
             before = (directory / "PKGBUILD").read_text()
 
             self.assertIsNone(CHECKER.stamp_vcs_version(directory, root=source))
@@ -723,7 +828,7 @@ class CommandLine(unittest.TestCase):
             source = Path(tmp) / "source"
             make_repo(source)
             directory = Path(tmp) / "recipe"
-            recipe(directory, body=OTHER_PKGVER)
+            recipe(directory, body=OTHER_PKGVER, source=source)
             before = (directory / "PKGBUILD").read_text()
 
             result = self.stamp(source, directory)
@@ -737,7 +842,7 @@ class CommandLine(unittest.TestCase):
             source = Path(tmp) / "source"
             count, head = make_repo(source)
             directory = Path(tmp) / "recipe"
-            recipe(directory)
+            recipe(directory, source=source)
 
             result = self.stamp(source, directory)
 
@@ -752,7 +857,7 @@ class CommandLine(unittest.TestCase):
             source = Path(tmp) / "source"
             make_repo(source)
             directory = Path(tmp) / "recipe"
-            recipe(directory, pkgver="0.5.0", body="")
+            recipe(directory, pkgver="0.5.0", body="", source=source)
             before = (directory / "PKGBUILD").read_text()
 
             result = self.stamp(source, directory)

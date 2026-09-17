@@ -30,7 +30,7 @@ Use the release signing key `C23A00D650F28E947AD8EEBA6CB466C12AA86B98`, configur
 
 AUR and Gentoo are separate publishing repositories. Changes here reach users through `scripts/publish-aur.sh` and `scripts/publish-gentoo.sh`; edits made directly in those repositories are overwritten.
 
-The AUR publisher defers missing release assets or mismatched published checksums. Other network and authentication failures fail the publish. It needs `AUR_SSH_PRIVATE_KEY` and `AUR_SSH_KNOWN_HOSTS`; verify the stored host-key fingerprint against Arch's published fingerprint. The Gentoo publisher requires overlay commit rights.
+The AUR publisher defers missing release assets or mismatched published checksums. Other network and authentication failures fail the publish. It refuses to publish `vgs-shell-git` from a checkout that is not on the branch that recipe clones, because the version it stamps has to name a commit a build reaches. It needs `AUR_SSH_PRIVATE_KEY` and `AUR_SSH_KNOWN_HOSTS`; verify the stored host-key fingerprint against Arch's published fingerprint. The Gentoo publisher requires overlay commit rights.
 
 `scripts/publish-ppa.sh` builds the Ubuntu source package from the release archive, signs it, uploads it, and waits until Launchpad lists it. `release.yml` runs it through `publish-ppa.yml`. It needs `PPA_SIGNING_KEY_ID` and `PPA_SIGNING_PRIVATE_KEY_PASSWORD`, and `PPA_SIGNING_PRIVATE_KEY` where the key is not in the keyring. The Ubuntu signing key is separate from the release tag key.
 
