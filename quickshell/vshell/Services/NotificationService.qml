@@ -90,29 +90,36 @@ Singleton {
         return imageCacheDir + "/notif_" + ts + "_" + id + ".png";
     }
 
-    function updateHistoryImage(wrapperId, imagePath) {
-        const idx = historyList.findIndex(n => n.sourceNotificationId === wrapperId || n.id === wrapperId);
-        if (idx < 0)
+    function updateHistoryImage(entryId, imagePath) {
+        const next = attachHistoryImage(historyList, entryId, imagePath);
+        if (!next)
             return;
-        const item = historyList[idx];
-        const updated = {
-            id: item.id,
-            sourceNotificationId: item.sourceNotificationId || item.id,
-            summary: item.summary,
-            body: item.body,
-            htmlBody: item.htmlBody,
-            appName: item.appName,
-            appIcon: item.appIcon,
-            image: "file://" + imagePath,
-            urgency: item.urgency,
-            timestamp: item.timestamp,
-            desktopEntry: item.desktopEntry
-        };
-        const newList = historyList.slice();
-        newList[idx] = updated;
-        historyList = newList;
+        historyList = next;
         saveHistory();
     }
+
+    // BEGIN HISTORY IMAGE ATTACH DECISION
+    // Keep attach decisions independent of QML objects; every input is an argument. scripts/test-notification-history-trim.js evaluates the code between these markers in Node; nothing here may reference root, SettingsData, or Qt.
+
+    // Name the entry that owns a saved popup image by its history entry id, which
+    // _makeHistoryEntryId makes unique per entry. The freedesktop notification id is not a
+    // key: replaces_id reuses it within a session and the daemon's counter restarts with the
+    // shell, so entries from different notifications share it. Copy the entry and change only
+    // its image, so no field the entry carries is dropped by attaching one. Returns null when
+    // the image belongs to no entry, which leaves the list untouched.
+    function attachHistoryImage(entries, entryId, imagePath) {
+        if (!entryId || !imagePath)
+            return null;
+        const idx = entries.findIndex(item => item.id === entryId);
+        if (idx < 0)
+            return null;
+        const next = entries.slice();
+        next[idx] = Object.assign({}, entries[idx], {
+            image: "file://" + imagePath
+        });
+        return next;
+    }
+    // END HISTORY IMAGE ATTACH DECISION
 
     // Pull a launchable URL out of a notification body at save time. Live
     // freedesktop actions die with the notification, so a persisted URL is the
@@ -131,13 +138,10 @@ Singleton {
         if (!wrapper)
             return;
         const urg = typeof wrapper.urgency === "number" ? wrapper.urgency : 1;
+        // A qsimage URL points into the live notification and dies with it, so it is not
+        // persistable; the popup saves that image to disk and updateHistoryImage attaches it.
         const imageUrl = wrapper.image || "";
-        let persistableImage = "";
-        if (wrapper.persistedImagePath) {
-            persistableImage = "file://" + wrapper.persistedImagePath;
-        } else if (imageUrl && !imageUrl.startsWith("image://qsimage/")) {
-            persistableImage = imageUrl;
-        }
+        const persistableImage = imageUrl && !imageUrl.startsWith("image://qsimage/") ? imageUrl : "";
         const sourceNotificationId = wrapper.notification?.id?.toString() || "";
         const timestamp = wrapper.time.getTime();
         const data = {
@@ -154,6 +158,9 @@ Singleton {
             desktopEntry: wrapper.desktopEntry || "",
             url: _extractUrl(wrapper.htmlBody || wrapper.body || "")
         };
+        // The popup persists this notification's image against this entry id; without it the
+        // popup has no key and saves an image no entry can ever name.
+        wrapper.historyEntryId = data.id;
         const trimmed = trimHistory([data, ...historyList], SettingsData.notificationHistoryMaxCount);
         for (const image of trimmed.orphanedImages)
             _deleteCachedImage(image);
@@ -1472,6 +1479,9 @@ Singleton {
         property bool isPersistent: true
         property int seq: 0
         property string persistedImagePath: ""
+        // Set by addToHistory to the entry this notification owns. It stays empty for a
+        // notification the history does not keep, and the popup then saves no image.
+        property string historyEntryId: ""
 
         onPopupChanged: {
             if (!popup) {
