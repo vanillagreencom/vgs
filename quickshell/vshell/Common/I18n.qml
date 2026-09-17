@@ -24,7 +24,12 @@ Singleton {
     readonly property var _rtlLanguages: ["ar", "he", "iw", "fa", "ur", "ps", "sd", "dv", "yi", "ku"]
     readonly property bool isRtl: _rtlLanguages.includes(_lang)
 
-    readonly property url translationsFolder: Qt.resolvedUrl("../translations/poexports")
+    // The directory that ships with the shell and holds its locale files. It has to carry a tracked
+    // file to reach every install channel: git holds no empty directory, so a folder reserved for
+    // exports that do not exist yet is absent from a fresh clone and from every bundle staged out
+    // of one. A folder that is not there is no error to FolderListModel either, which the model
+    // below answers.
+    readonly property url translationsFolder: Qt.resolvedUrl("../translations")
 
     property var presentLocales: ({
             "en": Qt.locale("en")
@@ -65,7 +70,19 @@ Singleton {
             if (status !== FolderListModel.Ready || root._localesRead)
                 return;
             root._localesRead = true;
-            root._loadPresentLocales();
+            // A missing folder is not an error to this model: it lists the process's working
+            // directory instead and reports the swap through its own folder property. Reading that
+            // listing would offer any JSON file there whose name has the shape of a locale tag as
+            // an installed language, and the model holds a filesystem watch on that directory for
+            // the session. Clearing folder drops the listing and the watch. Selection still runs
+            // afterwards, so a locale the user chose is still attempted and a fallback is still
+            // reported.
+            if (String(folder) !== String(root.translationsFolder)) {
+                root.log.warn(`I18n: no folder at ${root.translationsFolder}, and the listing was taken from ${folder} instead; no installed locales were read`);
+                folder = "";
+            } else {
+                root._loadPresentLocales();
+            }
             root._pickTranslation();
         }
     }
@@ -99,12 +116,19 @@ Singleton {
     }
 
     function _loadPresentLocales() {
+        // A locale file is named for its tag: a language subtag of two or three lowercase letters,
+        // then any script and region subtags. The folder holds JSON that names no locale, such as
+        // the settings search index, and Qt.locale() accepts any string, so a name that is not a
+        // tag would otherwise reach the language dropdown as a language.
+        const localeTagShape = /^[a-z][a-z][a-z]?([_-][A-Za-z0-9][A-Za-z0-9]+)*$/;
         for (let i = 0; i < dir.count; i++) {
             const name = dir.get(i, "fileName");
-            if (name && name.endsWith(".json")) {
-                const shortName = name.slice(0, -5);
-                presentLocales[shortName] = Qt.locale(shortName);
-            }
+            if (!name || !name.endsWith(".json"))
+                continue;
+            const shortName = name.slice(0, -5);
+            if (!localeTagShape.test(shortName))
+                continue;
+            presentLocales[shortName] = Qt.locale(shortName);
         }
     }
 
@@ -161,7 +185,9 @@ Singleton {
         if (_lastFallbackLocale === requested)
             return;
         _lastFallbackLocale = requested;
-        log.warn(`Falling back to built-in English strings (requested '${requested}', candidates ${_candidates.join(", ") || "none"}, ${dir.count} file(s) in ${translationsFolder})`);
+        // The listing holds files that name no locale, so the locales read out of it are what a
+        // reader of this line needs, not how many files the folder holds.
+        log.warn(`Falling back to built-in English strings (requested '${requested}', candidates ${_candidates.join(", ") || "none"}, locales ${Object.keys(presentLocales).join(", ")} in ${translationsFolder})`);
     }
 
     function tr(term, context) {
