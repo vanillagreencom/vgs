@@ -53,19 +53,15 @@ inputs.vgs.url = "github:vanillagreencom/vgs";
 
 ### After installing
 
-A native package cannot enable a user service for you. Enable it once per account, then VGS starts:
+A native package cannot enable a user service for you. Finish the setup once per account:
 
 ```bash
-systemctl --user enable --now vshell.service
+vshell setup
 ```
 
-Then see which optional features your system can run:
+It reports which optional features your system can run and which app owns `org.freedesktop.Notifications`, then enables and starts `vshell.service`. Each feature group that reports `missing` names the commands it needs. `vshell deps status` repeats that report at any time. [packaging/README.md § Activation](packaging/README.md#activation) gives the first start for each channel, including Void, which runs runit and starts VGS from the compositor instead.
 
-```bash
-vshell deps status
-```
-
-Each feature group that reports `missing` names the commands it needs. The Arch, Debian, Ubuntu, Fedora, openSUSE and Gentoo packages also declare those tools as optional dependencies, so your package manager can show them. The Void recipe cannot: xbps has no weak-dependency mechanism, so `vshell deps status` is the only list there.
+The Arch, Debian, Ubuntu, Fedora, openSUSE and Gentoo packages also declare those tools as optional dependencies, so your package manager can show them. The Void recipe cannot: xbps has no weak-dependency mechanism, so `vshell deps status` is the only list there.
 
 The release bundle supports x86-64 and ARM64 and starts the user service itself unless you pass `install.sh --no-start`. It carries every theme with a full-size screenshot, the `bauhaus` wallpapers, and the vendored icon themes. It checks `~/.local/bin/vshell`, `~/.config/quickshell/vshell` and `~/.config/systemd/user/vshell.service` before it writes. If another tool manages one of them, such as GNU Stow, chezmoi or yadm, it stops without changing anything, and `install.sh --force` replaces those externally managed symlinks. It refuses a plain file or directory at the two symlink paths, and it does overwrite a regular file at the service path, which is the file VGS owns.
 

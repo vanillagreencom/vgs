@@ -274,6 +274,49 @@ EOF
   return 1
 }
 
+# No VGS package enables vshell.service for the user. Arch, Fedora and Gentoo
+# policy each keep a package from enabling its own service, and the Debian
+# recipe passes dh_installsystemduser --no-enable rather than enable VGS for
+# every account on the machine. This verb is that one step, for one account.
+_setup() {
+  [[ $# -eq 0 ]] || { echo "Usage: vshell setup" >&2; return 2; }
+  # Report first, on every path. deps status is the single report of optional
+  # features and of who owns org.freedesktop.Notifications, and on a system
+  # without systemd it is the only list of optional tools there is. The unit is
+  # Type=simple, so a report taken after the start would answer while the shell
+  # is still loading and about to claim that name, and would name the owner the
+  # shell is in the middle of replacing. The report is advisory: a helper fault
+  # must not keep the first start from happening.
+  "$helper" deps status ||
+    echo "vshell setup: could not read the dependency report; enabling the unit anyway." >&2
+  # A missing systemctl is the one case the compositor route answers. Any
+  # status from systemctl itself means systemd is present and refused.
+  if ! command -v systemctl >/dev/null 2>&1; then
+    cat >&2 <<'EOF'
+vshell setup: this system has no systemctl, so there is no user service to enable.
+Void runs runit rather than systemd. Start VGS from your compositor config:
+  Hyprland  exec-once = vshell run
+  Niri      spawn-at-startup "vshell" "run"
+EOF
+    return 1
+  fi
+  if ! systemctl --user enable vshell.service; then
+    echo "vshell setup: systemctl could not enable vshell.service; its message above names the cause." >&2
+    return 1
+  fi
+  if ! systemctl --user start vshell.service; then
+    cat >&2 <<'EOF'
+vshell setup: vshell.service is enabled but did not start.
+systemctl's message above names the cause. Inspect it with:
+  vshell status
+  journalctl --user -u vshell.service
+EOF
+    return 1
+  fi
+  echo "vshell.service is enabled and started."
+  echo "Re-run vshell deps status once the shell is up to see the settled state."
+}
+
 case "${1:-run}" in
   version|--version)
     cat "$repo_root/VERSION"
@@ -332,6 +375,10 @@ case "${1:-run}" in
       exit 1
     fi
     printf '%s\n' "$out"
+    ;;
+  setup)
+    shift || true
+    _setup "$@"
     ;;
   lock)
     shift || true
@@ -410,6 +457,7 @@ case "${1:-run}" in
 Usage:
   vshell --version
   vshell run [qs args...]
+  vshell setup   (report features and notification ownership, then enable and start vshell.service)
   vshell backend run|serve|request <method> [json]|doctor|methods [--json]
   vshell open [--mime MIME] [--type url|file|uri] <target>
   vshell open --install-desktop

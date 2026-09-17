@@ -14,3 +14,10 @@ override_dh_auto_build:
 
 override_dh_auto_install:
 	DESTDIR=$(CURDIR)/debian/vgs-shell VGS_BACKEND_BINARY=$(CURDIR)/vshell-backend packaging/install-system.sh
+
+# dh_installsystemduser is in the default sequence from compat 12 and enables
+# the unit on first installation for every account on the machine. VGS is a
+# whole desktop shell that claims org.freedesktop.Notifications, so an account
+# running another desktop would get it too. vshell setup enables it per account.
+override_dh_installsystemduser:
+	dh_installsystemduser --no-enable

@@ -18666,9 +18666,14 @@ def vgs_notification_server_enabled() -> bool:
 
 
 def vgs_first_run_takeover_done() -> bool:
-    """Read whether settings.json records the automatic takeover as spent.
-    An in-memory setting does not establish that FileView saved it. Return
-    False on read errors so a failed save cannot permit repeated takeover."""
+    """Whether settings.json records the automatic takeover as spent.
+
+    An in-memory setting does not establish that FileView saved it, so a read
+    error reports the one-shot as unspent: a failed save must not permit
+    repeated takeover. No caller may read an unspent answer as a promise that
+    the shell will act, because whether it does is decided in
+    NotificationService.qml from state this function cannot see.
+    """
     try:
         value = load_settings().get("notificationFirstRunTakeoverDone", False)
     except Exception:
@@ -19093,10 +19098,21 @@ def _print_notification_status(status: Dict[str, Any]) -> None:
             detail.append("activation " + conflict["activationFile"] + (" (shadowed)" if conflict["shadowed"] else ""))
         print(f"  conflict: {conflict['daemon']}" + (": " + ", ".join(detail) if detail else ""))
     if vgs_wants_it and (status["state"] != "vgs" or status["atRisk"]):
+        # The actionable command is never withheld. Whether the shell's own
+        # first-run takeover fires is decided in NotificationService.qml, and
+        # rebuilding that decision here got it wrong a different way each time
+        # it was tried: an unreadable settings.json, a readable but unwritable
+        # one, a conflict no takeover can free, a name VGS already holds beside
+        # a live activation file. A manual takeover reads and writes only the
+        # undo record in the state directory and never settings.json, so it is
+        # valid in every one of those states. The one-shot therefore decides
+        # whether a further note is added, never what the user is told to run.
         if status["takeover"]["available"]:
             print("  fix: vshell notifications takeover")
         elif status["takeover"]["reason"]:
             print(f"  note: {status['takeover']['reason']}")
+        if not status["vgsFirstRunTakeoverDone"]:
+            print("  note: VGS may also claim this name itself the first time it starts")
 
 
 # Start Sunshine only after verifying the capture output. Without that output,
