@@ -6270,6 +6270,23 @@ def ensure_bundled_icon_themes() -> List[str]:
     return linked
 
 
+def _gsettings_interface_value(hook: str, key: str) -> Optional[str]:
+    """What ``org.gnome.desktop.interface`` currently holds for a string key.
+
+    ``None`` when the key cannot be read or does not hold a string. A caller
+    compares this against a value it is about to write, so an unreadable key
+    keeps it on its write path instead of skipping on a value nobody read.
+    """
+    result = _run_hook_cmd(hook, ["gsettings", "get", "org.gnome.desktop.interface", key], timeout=5)
+    if not result.get("ok"):
+        return None
+    try:
+        current = ast.literal_eval(result.get("stdout") or "")
+    except (ValueError, SyntaxError):
+        return None
+    return current if isinstance(current, str) else None
+
+
 def apply_icon_theme_hook(roles: Dict[str, str]) -> Dict[str, Any]:
     # The gsettings write below lands in the login user's dconf database over the
     # session bus, whatever $HOME says.
@@ -6294,6 +6311,8 @@ def apply_icon_theme_hook(roles: Dict[str, str]) -> Dict[str, Any]:
     installed = any((base / name).is_dir() for base in icon_theme_base_dirs())
     if not installed:
         return {"hook": "icon-theme", "ok": True, "skipped": True, "reason": f"icon theme not installed: {name}"}
+    if _gsettings_interface_value("icon-theme", "icon-theme") == name:
+        return {"hook": "icon-theme", "ok": True, "skipped": True, "reason": f"icon theme already set: {name}"}
     return _run_hook_cmd("icon-theme", ["gsettings", "set", "org.gnome.desktop.interface", "icon-theme", name], timeout=5)
 
 
@@ -6506,6 +6525,13 @@ def apply_gtk_settings_hook(roles: Dict[str, str]) -> Dict[str, Any]:
         gtk_theme = "Adwaita" if mode == "light" else "Adwaita-dark"
     if not shutil.which("gsettings"):
         return {"hook": "gtk-settings", "ok": True, "skipped": True, "reason": "gsettings not found"}
+    # Reading both keys first is what keeps an apply that moves neither off the
+    # sleep below, whose only purpose is to separate two writes this hook skips.
+    if (_gsettings_interface_value("gtk-settings", "gtk-theme") == gtk_theme
+            and _gsettings_interface_value("gtk-settings", "color-scheme") == color_scheme):
+        return {"hook": "gtk-settings", "ok": True, "skipped": True,
+                "reason": "gtk-theme and color-scheme already set",
+                "colorScheme": color_scheme, "gtkTheme": gtk_theme}
     failures: List[str] = []
     # Separate gtk-theme and color-scheme writes so their portal notifications
     # do not arrive together during the theme-apply burst.
@@ -7585,8 +7611,8 @@ class _TargetPlan(NamedTuple):
     btop's selected `color_theme`, a VS Code variant installed since the last
     apply — so it runs on every apply that reaches this target's commit. Most
     such hooks compare their own inputs and return without writing when the
-    state is already right; `icon-theme`, `gtk-settings` and `pi-theme-link`
-    re-assert their wiring unconditionally.
+    state is already right; `pi-theme-link` re-asserts its wiring
+    unconditionally.
     """
     target: str
     writes: List[_TargetWrite]
