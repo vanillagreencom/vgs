@@ -274,6 +274,33 @@ EOF
   return 1
 }
 
+# systemd never starts graphical-session.target on its own: a session target
+# binds it and carries it up with the session. vshell.service is WantedBy that
+# target, so a session with no producer for it leaves the unit enabled and never
+# started at the next login, while the explicit start in _setup still brings
+# this one up. A Wayland display is what says a graphical session is here to
+# judge; without one there is nothing to answer about, and an inactive target is
+# what that state looks like too.
+_report_session_target() {
+  [[ -n "${WAYLAND_DISPLAY:-}" ]] || return 0
+  systemctl --user is-active --quiet graphical-session.target && return 0
+  cat >&2 <<'EOF'
+vshell setup: this session does not run graphical-session.target, which is what
+starts the enabled unit. VGS is running now, and will not come back at your next
+login until the session produces that target. Either:
+  - launch Hyprland through uwsm, from the hyprland-uwsm.desktop session entry
+    or with: uwsm start hyprland
+  - or launch Niri through its own session entry (Niri's niri.desktop, which
+    runs niri-session) or with: niri-session
+  - or start VGS from your compositor config instead. vshell.service stays
+    enabled either way; if you later switch to a session-manager route, disable
+    it first (systemctl --user disable vshell.service) so the two do not both
+    try to run VGS:
+      Hyprland  exec-once = vshell run
+      Niri      spawn-at-startup "vshell" "run"
+EOF
+}
+
 # No VGS package enables vshell.service for the user. Arch, Fedora and Gentoo
 # policy each keep a package from enabling its own service, and the Debian
 # recipe passes dh_installsystemduser --no-enable rather than enable VGS for
@@ -315,6 +342,7 @@ EOF
   fi
   echo "vshell.service is enabled and started."
   echo "Re-run vshell deps status once the shell is up to see the settled state."
+  _report_session_target
 }
 
 case "${1:-run}" in
