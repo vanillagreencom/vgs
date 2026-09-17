@@ -66,22 +66,6 @@ Item {
         return "empty";
     }
 
-    // Show installation hints only for a missing tool on an active file-search path. Unknown tools require the probe error.
-    function fileHintKey(facts) {
-        const f = facts || {};
-        if (!f.legActive)
-            return "";
-        if (f.backendState === "missing")
-            return f.missingCommand === "rg" ? "install-rg" : "install-fd";
-        if (!f.declined)
-            return "";
-        // The initial probe has no failure to report yet, even though requests are declined while it runs.
-        if (f.probeState === "pending")
-            return "";
-        // Ask the user to retry only after automatic probe retries are exhausted.
-        return f.probeState === "failed" ? "probe-failed" : "probe-retrying";
-    }
-
     // Display file-search messages only for file mode or a searchable file query, never over plugin results.
     function fileLegActive(searchMode, searchable) {
         return searchMode === "files" || !!searchable;
@@ -661,17 +645,7 @@ Item {
 
 
                 function getDependencyHint() {
-                    switch (root.fileHintKey(root._emptyStateFacts)) {
-                    case "install-rg":
-                        return I18n.tr("Install the ripgrep package to search inside file contents.", "Overview search hint when the ripgrep binary is missing");
-                    case "install-fd":
-                        return I18n.tr("Install the fd package (fd-find on Debian and Fedora) to search files and folders by name.", "Overview search hint when the fd binary is missing");
-                    case "probe-retrying":
-                        return I18n.tr("Still checking which search tools are installed: %1", "Overview search hint while the launcher-search status probe is being retried").arg(DSearchService.statusError);
-                    case "probe-failed":
-                        return I18n.tr("Could not check which search tools are installed: %1. Reopen the launcher to try again.", "Overview search hint when the launcher-search status probe failed").arg(DSearchService.statusError);
-                    }
-                    return "";
+                    return DSearchService.dependencyHint(DSearchService.fileHintKey(root._emptyStateFacts));
                 }
             }
         }

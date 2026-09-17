@@ -6,7 +6,9 @@ import Quickshell
 import qs.Common
 import qs.Services
 
-// Launcher file search uses the VGS helper with fd and ripgrep.
+// Launcher file search. Name searches read the backend's launcher.search index
+// when the backend advertises it; everything else, and name searches without
+// it, runs the VGS helper with fd and ripgrep.
 Singleton {
     id: root
 
@@ -15,6 +17,8 @@ Singleton {
     property int indexVersion: 3
     property string backendName: "fd + ripgrep"
     property bool fdAvailable: false
+    // The backend's name index, which answers name searches without fd or a walk.
+    readonly property bool indexAvailable: VGSBackendService.has("launcher.search")
     property bool ripgrepAvailable: false
     // Tool flags are valid only in the ready state. Pending waits for the first probe response.
     // Retrying and failed mean availability is unknown, so text searches may reach the helper.
@@ -61,10 +65,29 @@ Singleton {
     // every tool. A launcher open is when a transient failure gets its second
     // chance, and when the user who just installed fd on our own instruction
     // gets the answer that instruction promised. Single-flight bounds it to one
-    // process per open, and the probe answer repaints the surface.
+    // process per open, and the probe answer repaints the surface. The open also
+    // starts the name index's walk, so it is usually done before the first query.
     function ensureStatus() {
         if (!probeSettled(_probeSnapshot()))
             rediscover();
+        _prepareIndex();
+    }
+
+    function _prepareIndex() {
+        if (!indexAvailable)
+            return;
+        VGSBackendService.sendRequest("launcher.search.prepare", _indexSettings(null), response => {
+            if (response.error)
+                root.log.warn("launcher search index could not start:", response.error);
+        });
+    }
+
+    function _indexSettings(params) {
+        return {
+            roots: params?.roots || SettingsData.launcherSearchRoots,
+            ignores: params?.ignores || SettingsData.launcherSearchIgnored,
+            ignoreMounts: params?.ignoreMounts ?? SettingsData.launcherSearchIgnoreMounts
+        };
     }
 
     function _probeStatus() {
@@ -170,12 +193,18 @@ Singleton {
         return queryIsDispatchable(query) || pathCompletion(kind, query);
     }
 
+    // Whether the backend's name index answers this search. It answers every
+    // fd-backed kind except a folder path completion, which the helper lists.
+    function usesIndex(kind, query, probe) {
+        return backendCommandFor(kind) === "fd" && !pathCompletion(kind, query) && !!(probe || {}).index;
+    }
+
     // "checking" | "available" | "missing" | "unknown". `probe` carries the
-    // status answer as { state, fd, ripgrep }. Unknown is never collapsed into
-    // missing: telling a user to install a tool they already have, because a
+    // status answer as { state, fd, ripgrep, index }. Unknown is never collapsed
+    // into missing: telling a user to install a tool they already have, because a
     // probe could not run, is the same dead end as saying nothing.
     function backendStateFor(kind, query, probe) {
-        if (pathCompletion(kind, query))
+        if (pathCompletion(kind, query) || usesIndex(kind, query, probe))
             return "available";
         const command = backendCommandFor(kind);
         if (command === "")
@@ -189,8 +218,9 @@ Singleton {
     }
 
     // Whether the helper can answer this kind without its tool. Only fd-backed
-    // kinds can: name search falls back to the helper's own directory walk,
-    // while text search shells out to ripgrep and raises without it. Derived
+    // kinds can: name search falls back to the helper's own directory walk, which
+    // only the CLI accepts, while text search shells out to ripgrep and raises
+    // without it. Derived
     // from the one table, so a kind cannot be fd-backed here and something else
     // there.
     function helperHasFallback(kind) {
@@ -216,8 +246,8 @@ Singleton {
     // Whether the SERVICE itself refuses the call, as opposed to a caller
     // declining at its own gate: only a kind whose tool is proven missing AND
     // which the helper cannot answer without it. Text search is the one such
-    // kind; a name search still reaches the helper's walk, which vgsMenu
-    // accepts.
+    // kind. Every caller that searches names declines the helper's walk at its
+    // own canDispatch gate.
     function serviceRefuses(kind, state) {
         return state === "missing" && !helperHasFallback(kind);
     }
@@ -249,10 +279,25 @@ Singleton {
             return { state: "retrying", retry: true, publishReason: true };
         return { state: "failed", retry: false, publishReason: true };
     }
+    // Show installation hints only for a missing tool on an active file-search path. Unknown tools require the probe error.
+    function fileHintKey(facts) {
+        const f = facts || {};
+        if (!f.legActive)
+            return "";
+        if (f.backendState === "missing")
+            return f.missingCommand === "rg" ? "install-rg" : "install-fd";
+        if (!f.declined)
+            return "";
+        // The initial probe has no failure to report yet, even though requests are declined while it runs.
+        if (f.probeState === "pending")
+            return "";
+        // Ask the user to retry only after automatic probe retries are exhausted.
+        return f.probeState === "failed" ? "probe-failed" : "probe-retrying";
+    }
     // END SEARCH BACKEND DECISION
 
     function _probeSnapshot() {
-        return { state: statusState, fd: fdAvailable, ripgrep: ripgrepAvailable };
+        return { state: statusState, fd: fdAvailable, ripgrep: ripgrepAvailable, index: indexAvailable };
     }
 
     function backendState(kind, query) {
@@ -261,6 +306,33 @@ Singleton {
 
     function canDispatch(kind, query) {
         return canDispatchFor(kind, query, _probeSnapshot());
+    }
+
+    // The hint key for a file search on a surface that is showing it.
+    function hintKeyFor(kind, query) {
+        const state = backendState(kind, query);
+        return fileHintKey({
+            legActive: true,
+            backendState: state,
+            missingCommand: state === "missing" ? backendCommandFor(kind) : "",
+            declined: queryIsSearchable(kind, query) && !canDispatch(kind, query),
+            probeState: statusState
+        });
+    }
+
+    // The line under a file search's empty state that says what would make it work.
+    function dependencyHint(key) {
+        switch (key) {
+        case "install-rg":
+            return I18n.tr("Install the ripgrep package to search inside file contents.", "Overview search hint when the ripgrep binary is missing");
+        case "install-fd":
+            return I18n.tr("Install the fd package (fd-find on Debian and Fedora) to search files and folders by name.", "Overview search hint when the fd binary is missing");
+        case "probe-retrying":
+            return I18n.tr("Still checking which search tools are installed: %1", "Overview search hint while the launcher-search status probe is being retried").arg(statusError);
+        case "probe-failed":
+            return I18n.tr("Could not check which search tools are installed: %1. Reopen the launcher to try again.", "Overview search hint when the launcher-search status probe failed").arg(statusError);
+        }
+        return "";
     }
 
     function refreshFolderOpeners() {
@@ -310,6 +382,11 @@ Singleton {
             return;
         }
 
+        if (usesIndex(kind, query, _probeSnapshot())) {
+            _searchIndex(kind, query.trim(), params, version, callback);
+            return;
+        }
+
         const args = [
             Paths.vshellCli, "launcher-search", "search",
             "--kind", kind,
@@ -345,7 +422,27 @@ Singleton {
                 root.errorOccurred(message);
                 callback?.({ error: message });
             }
-        }, 0, 12000);
+        }, 0, 12000, true);
+    }
+
+    function _searchIndex(kind, query, params, version, callback) {
+        VGSBackendService.sendRequest("launcher.search.query", Object.assign(_indexSettings(params), {
+            query: query,
+            kind: kind,
+            limit: params?.limit || 80
+        }), response => {
+            // A newer search of this kind replaced this one, before or after the
+            // backend answered it; that search's own callback answers the caller.
+            if ((_requestVersions[kind] || 0) !== version || response.result?.superseded)
+                return;
+            if (response.error) {
+                root.errorOccurred(response.error);
+                callback?.({ error: response.error });
+                return;
+            }
+            root.searchResultsReceived(response.result);
+            callback?.({ result: response.result });
+        });
     }
 
     function preview(path, line, query, callback) {

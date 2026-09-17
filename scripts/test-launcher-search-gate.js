@@ -41,7 +41,8 @@ qmlSource.selfTest();
 const backend = evaluateMarked(serviceSource, "SEARCH BACKEND DECISION", [
     "backendCommandFor", "kindForType", "pathCompletion", "queryIsDispatchable",
     "queryIsSearchable", "backendStateFor", "dispatchAllowed", "helperHasFallback",
-    "serviceRefuses", "canDispatchFor", "probeSettled", "probeFailureOutcome"
+    "serviceRefuses", "canDispatchFor", "probeSettled", "probeFailureOutcome", "usesIndex",
+    "fileHintKey"
 ], "DSearchService.qml");
 
 const appSearch = evaluateMarked(appSearchSource, "APPLICATION SEARCH RELEVANCE DECISION", [
@@ -58,7 +59,7 @@ const appSearch = evaluateMarked(appSearchSource, "APPLICATION SEARCH RELEVANCE 
 ], "AppSearchService.qml");
 
 const view = evaluateMarked(resultsSource, "EMPTY STATE DECISION", [
-    "fileEmptyStateKey", "fileHintKey", "fileEmptyIcon", "fileLegActive", "errorLine"
+    "fileEmptyStateKey", "fileEmptyIcon", "fileLegActive", "errorLine"
 ], "ResultsList.qml");
 
 const files = evaluateMarked(controllerSource, "FILE SEARCH DECISION", [
@@ -538,7 +539,7 @@ test("the helper routes a folder path query to its own walk before it looks up f
 test("helperHasFallback is true only for the fd-backed kinds", () => {
     for (const [kind, expected] of [["text", false], ["files", true], ["folders", true], ["all", true]]) {
         assert.equal(backend.helperHasFallback(kind), expected, expected ?
-            `${kind} falls back to the helper's own walk, which vgsMenu accepts` :
+            `${kind} falls back to the helper's own walk, which only the CLI accepts` :
             `${kind} shells out to ripgrep and raises without it — the service refuses it outright`);
     }
 });
@@ -593,6 +594,37 @@ test("canDispatchFor composes the probe state with the per-kind rule", () => {
     }
 });
 
+const withIndex = (state, fd, rg) => ({ state: state, fd: fd, ripgrep: rg, index: true });
+
+test("the backend index answers every name search but path completion, whatever the probe says", () => {
+    for (const [kind, query, expected, why] of [
+        ["files", "needle", true, "files names come from the index"],
+        ["folders", "needle", true, "so do folder names"],
+        ["all", "needle", true, "and both together"],
+        ["folders", "~/dev", false, "a folder path completion lists one directory in the helper"],
+        ["text", "needle", false, "text search reads contents, which the index does not hold"],
+        ["zoxide", "needle", false, "recent folders come from zoxide"]
+    ]) {
+        assert.equal(backend.usesIndex(kind, query, withIndex("ready", false, false)), expected, `${kind}: ${why}`);
+        assert.equal(backend.usesIndex(kind, query, ready(true, true)), false,
+            `${kind}: nothing reaches an index the backend does not advertise`);
+    }
+    for (const state of ["pending", "retrying", "failed", "ready"]) {
+        for (const [fd, rg] of TOOL_FLAGS) {
+            const snapshot = withIndex(state, fd, rg);
+            for (const kind of ["files", "folders", "all"]) {
+                assert.equal(backend.backendStateFor(kind, "needle", snapshot), "available",
+                    `${kind} is available with the index (state=${state}, fd=${fd}): no walk is at stake`);
+                assert.equal(backend.canDispatchFor(kind, "needle", snapshot), true,
+                    `and dispatches (state=${state}, fd=${fd})`);
+            }
+            assert.equal(backend.backendStateFor("text", "needle", snapshot),
+                backend.backendStateFor("text", "needle", probe(state, fd, rg)),
+                `text search ignores the index (state=${state}, rg=${rg})`);
+        }
+    }
+});
+
 // A failed reprobe must not replace an already successful tool discovery.
 test("probeFailureOutcome keeps a ready answer and publishes retrying or failed otherwise", () => {
     for (const [state, attempt, max, expected, why] of [
@@ -634,7 +666,7 @@ test("probeSettled is true only for a ready probe that found both tools", () => 
 test("serviceRefuses only a proven-missing tool with no fallback", () => {
     for (const [kind, state, expected, why] of [
         ["text", "missing", true, "text has no fallback, so the service refuses"],
-        ["files", "missing", false, "files still reaches the helper's walk from the service — vgsMenu depends on it"],
+        ["files", "missing", false, "files still reaches the helper's walk from the service — the gate belongs to each caller"],
         ["folders", "missing", false, "folders still reaches the helper's walk"],
         ["all", "missing", false, "all still reaches the helper's walk"],
         ["text", "available", false, "the service refuses only a PROVEN missing tool"],
@@ -698,7 +730,7 @@ test("fileHintKey names an install step or the probe's own state, and nothing be
         [facts({ legActive: false, backendState: "unknown", probeState: "failed" }), "",
             "no probe line where no file search would have run"]
     ]) {
-        assert.equal(view.fileHintKey(input), expected, `${JSON.stringify(input)}: ${why}`);
+        assert.equal(backend.fileHintKey(input), expected, `${JSON.stringify(input)}: ${why}`);
     }
 });
 
@@ -809,7 +841,7 @@ test("sortRanked preserves ranked sorting and grouped browsing", () => {
 test("DSearchService adapters call the executed rules whole", () => {
     const q = qmlSource(serviceSource, "DSearchService.qml");
     q.requires(q.body("_probeSnapshot"), "_probeSnapshot()", [
-        ["return { state: statusState, fd: fdAvailable, ripgrep: ripgrepAvailable };",
+        ["return { state: statusState, fd: fdAvailable, ripgrep: ripgrepAvailable, index: indexAvailable };",
             "the ONE place a property becomes a field. `fd: ripgrepAvailable` here reinstates " +
             "VGS-114 exactly — ripgrep installed, text search reported missing — and unlike a " +
             "transposed positional argument it is legible on sight"]
@@ -1117,7 +1149,7 @@ test("ResultsList calls the executed rules with the whole snapshot", () => {
     const code = qmlSource.flat(stripComments(resultsSource));
     for (const [call, why] of [
         ["fileEmptyStateKey(_emptyStateFacts)", "the message reads the whole snapshot"],
-        ["root.fileHintKey(root._emptyStateFacts)", "and so does the hint"],
+        ["DSearchService.fileHintKey(root._emptyStateFacts)", "and so does the hint"],
         ["fileLegActive(controller?.searchMode ?? \"\", _fileQuerySearchable)",
             "and whether a file search is on screen comes from the executed rule, not a constant"]
     ]) {
@@ -1158,9 +1190,9 @@ test("the empty-state message label is bounded", () => {
         }
     }
 });
-test("getDependencyHint has a retrying arm", () => {
-    const q = qmlSource(resultsSource, "ResultsList.qml");
-    q.requires(q.body("getDependencyHint"), "getDependencyHint()", [
+test("dependencyHint has a retrying arm", () => {
+    const q = qmlSource(serviceSource, "DSearchService.qml");
+    q.requires(q.body("dependencyHint"), "dependencyHint()", [
         ["case \"probe-retrying\":",
             "a retry in progress gets its own line: the reopen advice is a no-op while an " +
             "episode is in flight, so telling the user to reopen would be telling them to do " +
@@ -1273,6 +1305,130 @@ test("VGSMenu's dispatch site and files empty state agree through the shared pre
     for (const fn of ["refreshFileItems"]) {
         assert.ok(!/explicitFolderPath/.test(stripComments(q.body(fn))),
             `${fn} must not keep its own copy of the folder-path exemption beside the shared one`);
+    }
+});
+
+// Drive DSearchService.search() with the backend request and the helper run recorded.
+function serviceSearch(indexAvailable) {
+    const q = qmlSource(serviceSource, "DSearchService.qml");
+    const backendCalls = [];
+    const helperCalls = [];
+    const scope = {
+        _requestVersions: {},
+        indexAvailable: indexAvailable, statusState: "ready", fdAvailable: true, ripgrepAvailable: true,
+        SettingsData: { launcherSearchRoots: ["~"], launcherSearchIgnored: [".git"], launcherSearchIgnoreMounts: true },
+        Paths: { vshellCli: "vshell" },
+        I18n: { tr: text => text },
+        root: { errorOccurred() {}, searchResultsReceived() {} },
+        VGSBackendService: { sendRequest: (method, params, callback) => backendCalls.push({ method, params, callback }) },
+        Proc: { runCommand: (...args) => helperCalls.push(args) }
+    };
+    Object.assign(scope, backend);
+    for (const [name, params] of [
+        ["search", ["query", "params", "callback"]], ["_searchIndex", ["kind", "query", "params", "version", "callback"]],
+        ["_indexSettings", ["params"]], ["_appendListArgs", ["args", "flag", "values"]],
+        ["_probeSnapshot", []], ["backendState", ["kind", "query"]]
+    ]) {
+        // eslint-disable-next-line no-new-func
+        const fn = new Function("scope", ...params, `with (scope) ${q.body(name)}`);
+        scope[name] = (...args) => fn(scope, ...args);
+    }
+    return { scope, backendCalls, helperCalls };
+}
+
+test("search() sends name searches to the index when the backend has one, and replaces helper runs otherwise", () => {
+    for (const [label, index, kind, query, route] of [
+        ["files with the index", true, "files", "fire", "index"],
+        ["folders with the index", true, "folders", "fire", "index"],
+        ["all with the index", true, "all", "fire", "index"],
+        ["a folder path with the index", true, "folders", "~/dev", "helper"],
+        ["text with the index", true, "text", "fire", "helper"],
+        ["files without the index", false, "files", "fire", "helper"]
+    ]) {
+        const { scope, backendCalls, helperCalls } = serviceSearch(index);
+        scope.search(query, { kind: kind, limit: 120 }, () => {});
+        if (route === "index") {
+            assert.equal(helperCalls.length, 0, `${label}: no helper process`);
+            assert.equal(backendCalls.length, 1, `${label}: one backend query`);
+            assert.equal(backendCalls[0].method, "launcher.search.query", label);
+            assert.deepEqual(backendCalls[0].params, {
+                roots: ["~"], ignores: [".git"], ignoreMounts: true, query: query, kind: kind, limit: 120
+            }, `${label}: the query carries the search settings the index is built from`);
+        } else {
+            assert.equal(backendCalls.length, 0, `${label}: no backend query`);
+            assert.equal(helperCalls.length, 1, `${label}: one helper run`);
+            assert.equal(helperCalls[0][0], "launcher-search-" + kind, `${label}: one id per kind`);
+            assert.equal(helperCalls[0][5], true, `${label}: launched to replace the run of its id still going`);
+        }
+    }
+});
+
+test("an index answer reaches the caller only for the newest search of its kind", () => {
+    const { scope, backendCalls } = serviceSearch(true);
+    const answers = [];
+    scope.search("fi", { kind: "files" }, response => answers.push(["fi", response]));
+    scope.search("fire", { kind: "files" }, response => answers.push(["fire", response]));
+    backendCalls[0].callback({ result: { ok: true, hits: [{ path: "/stale" }] } });
+    backendCalls[1].callback({ result: { superseded: true } });
+    assert.deepEqual(answers, [], "a stale answer and a superseded one both stay silent");
+    backendCalls[1].callback({ result: { ok: true, hits: [{ path: "/fresh" }] } });
+    backendCalls[1].callback({ error: "boom" });
+    assert.deepEqual(answers, [
+        ["fire", { result: { ok: true, hits: [{ path: "/fresh" }] } }],
+        ["fire", { error: "boom" }]
+    ], "the newest search hears its hits and its error");
+});
+
+// Drive VGSMenu's file-search functions against the executed gate, with the service's search and the
+// debounce Timer recorded rather than run.
+function menuFileSearch(snapshot) {
+    const q = qmlSource(menuSource, "VGSMenu.qml");
+    const searches = [];
+    const scope = {
+        resettingState: false, routingPrefix: false, query: "", fileSearchType: "file",
+        fileSearchGeneration: 0, folderCompletion: "", visibleItems: [], selectedItemIndex: 0,
+        filePreviewRevealed: false, fileSearching: false, fileSearchDeclined: false,
+        fileSearchDebounce: { running: false, restart() { this.running = true; }, stop() { this.running = false; } },
+        DSearchService: {
+            kindForType: backend.kindForType,
+            queryIsSearchable: backend.queryIsSearchable,
+            canDispatch: (kind, query) => backend.canDispatchFor(kind, query, snapshot),
+            search: (query, params) => searches.push([params.kind, query])
+        }
+    };
+    for (const name of ["fileSearchDispatches", "refreshFileItems", "dispatchFileSearch"]) {
+        const params = name === "fileSearchDispatches" ? ["scope", "trimmed"] : ["scope"];
+        // eslint-disable-next-line no-new-func
+        const fn = new Function(...params, `with (scope) ${q.body(name)}`);
+        scope[name] = (...args) => fn(scope, ...args);
+    }
+    return { scope, searches };
+}
+
+test("VGSMenu applies the search gate and dispatches once typing pauses", () => {
+    for (const [label, snapshot, type, declined] of [
+        ["no index and fd missing", ready(false, true), "file", true],
+        ["no index and the probe pending", probe("pending", true, true), "file", true],
+        ["no index and fd present", ready(true, true), "file", false],
+        ["the backend index with no tools", withIndex("ready", false, false), "file", false],
+        ["text search with ripgrep missing", withIndex("ready", true, false), "text", true],
+        ["recent folders with no tools", probe("failed", false, false), "zoxide", false]
+    ]) {
+        const { scope, searches } = menuFileSearch(snapshot);
+        scope.fileSearchType = type;
+        for (const typed of ["fi", "fir", "fire"]) {
+            scope.query = typed;
+            scope.refreshFileItems();
+        }
+        assert.equal(scope.fileSearchDeclined, declined, `${label}: declined`);
+        assert.equal(scope.fileSearching, !declined, `${label}: the spinner shows only for a search that will run`);
+        assert.equal(scope.fileSearchDebounce.running, !declined, `${label}: only an allowed search is scheduled`);
+        assert.deepEqual(searches, [], `${label}: nothing dispatches while typing`);
+        if (!declined) {
+            scope.dispatchFileSearch();
+            assert.deepEqual(searches, [[backend.kindForType(type), "fire"]],
+                `${label}: the pause dispatches one search, for the query typed last`);
+        }
     }
 });
 

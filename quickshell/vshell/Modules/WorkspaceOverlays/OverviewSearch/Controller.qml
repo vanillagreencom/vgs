@@ -138,6 +138,9 @@ Item {
         function onFdAvailableChanged() {
             root._retryFileSearchAfterProbe();
         }
+        function onIndexAvailableChanged() {
+            root._retryFileSearchAfterProbe();
+        }
         function onRipgrepAvailableChanged() {
             root._retryFileSearchAfterProbe();
         }

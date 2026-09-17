@@ -17548,13 +17548,14 @@ def _launcher_search_name_hits(
     A folder query that starts at a path is answered below by
     `_launcher_folder_path_hits`, before fd is consulted at all.
 
-    Otherwise fd does the walking when it is installed. The os.walk branch is
-    the fallback for callers that accept a full walk of the roots: the
-    `vshell launcher-search` CLI, and the vgsMenu plugin, which runs a search
-    per keystroke. The overview never dispatches a name search that could land
-    here -- it requires fd to be positively detected, and says why instead --
-    because a full walk per query, with nothing cached between them, cannot
-    answer at typing speed.
+    Otherwise this walks the roots on every call: fd when it is installed, and
+    the os.walk branch for a caller that accepts a full walk without it, which
+    only the `vshell launcher-search` CLI does. The launcher and the overview
+    search names through the backend's `launcher.search` index, which walks
+    once and follows changes, and come here only while no backend advertises
+    it. Even then they dispatch a name search only once fd is positively
+    detected, one at a time, killing the previous run, because a full walk per
+    query, with nothing cached between them, cannot answer at typing speed.
     """
     if kind == "folders" and query.strip().startswith(("~", "/")):
         return _launcher_folder_path_hits(query, roots, ignores, limit)
@@ -18293,6 +18294,11 @@ def cmd_launcher_search(argv: List[str]) -> int:
         print(json.dumps({"ok": False, "error": "No searchable roots"}))
         return 1
     limit = max(1, min(args.limit, 300))
+    # The shell ends a search that a newer keystroke replaced with SIGTERM. Its
+    # default action would end this process and leave fd or ripgrep walking the
+    # roots; as SystemExit it unwinds through the subprocess calls below, which
+    # kill their child on the way out.
+    signal.signal(signal.SIGTERM, lambda signum, _frame: sys.exit(128 + signum))
     if args.kind == "text":
         hits = _launcher_search_text_hits(args.query, roots, args.ignore, limit, args.ignore_mounts)
     elif args.kind == "zoxide":
