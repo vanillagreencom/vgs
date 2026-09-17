@@ -905,11 +905,12 @@ test("the carousel releases sliver sources outside the band and decodes the orig
             "the rail without one, thumbUrlFor falls back to the source for all of them, and the " +
             "596 ms decode is back with the carousel's own pins still green", 1]
     ]);
-    q("VGSThemeService.qml").requires(serviceSource, "VGSThemeService.qml", [
+    const service = q("VGSThemeService.qml");
+    service.requires(service.body("refreshWallpapers"), "refreshWallpapers()", [
         ["root._sweepWallpaperThumbs();",
-            "the wallpaper read DISPATCHES the sweep. Drop this and nothing ever builds a " +
-            "thumbnail, so every entry falls back forever — the same regression, and the only " +
-            "call site that starts generation", 1]
+            "the wallpaper read DISPATCHES the sweep. Drop this and nothing builds a " +
+            "thumbnail after the session's discovery sweep, so a missing entry falls back " +
+            "for the rest of the session", 1]
     ]);
     mustNot("SwitcherCarousel.qml", /sourceActivated/,
         "the one-way source latch is what unbounded the rail's residency; `retained` replaced it");
