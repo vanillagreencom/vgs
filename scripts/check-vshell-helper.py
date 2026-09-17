@@ -10040,8 +10040,9 @@ def test_pi_theme_sets_every_key_the_installed_pi_reads():
     assert_equal((sorted(PI_COLOR_KEYS - set(template["colors"])),
                   sorted(set(template["colors"]) - PI_COLOR_KEYS)), ([], []),
                  "the pi template writes exactly the colour keys Pi reads")
-    assert_equal(sorted(PI_EXPORT_KEYS - set(template["export"])), [],
-                 "the pi template writes every HTML export colour Pi reads")
+    assert_equal((sorted(PI_EXPORT_KEYS - set(template["export"])),
+                  sorted(set(template["export"]) - PI_EXPORT_KEYS)), ([], []),
+                 "the pi template writes exactly the HTML export colours Pi reads")
     unresolved = [key for key, value in template["colors"].items()
                   if not helper.TEMPLATE_RE.fullmatch(template["vars"][value])]
     assert_equal(unresolved, [],
