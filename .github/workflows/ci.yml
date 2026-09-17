@@ -315,6 +315,12 @@ jobs:
           scripts/test-bench-shell-events.py
           # The recorder script runs against a stub recorder and needs no session.
           scripts/test-screenrecording-status.sh
+          # Refuse a direct hyprctl dispatch in bin/ shell scripts; bin/vshell-hyprctl-dispatch checks the reply.
+          scripts/check-hyprctl-dispatch.sh
+          scripts/test-hyprctl-dispatch.sh
+          scripts/test-check-hyprctl-dispatch.sh
+          # The screensaver launch runs against a stub hyprctl and needs no session.
+          scripts/test-screensaver-launch.sh
           scripts/test-validation-areas.sh
           scripts/test-validation-dump.sh
           scripts/test-validation-ci-coverage.sh
