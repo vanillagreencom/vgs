@@ -9,6 +9,12 @@
 // the property. A locale change arriving before that first Ready is applied by it rather than lost.
 // Selection must read the folder once however many times the model reaches Ready, switch once per
 // change, and report the fallback once per locale asked for.
+//
+// What the folder yields is the other half. Qt's FolderListModel does not fail on a folder that is
+// not there: it lists the process's working directory instead and reports the swap through its own
+// folder property, so the shell must name a folder that ships and must refuse a listing taken from
+// somewhere else. The folder also holds JSON that names no locale, which must not be offered as a
+// language.
 
 "use strict";
 
@@ -84,7 +90,28 @@ const fallbackBody = i18n.body("_fallbackToEnglish");
 const FALLBACK = "Falling back to built-in English strings";
 const USING = "I18n: Using locale";
 
-const FOLDER = "file:///opt/vshell/translations/poexports";
+// The folder the shipped file names must be a directory in the tree. Qt substitutes the process's
+// working directory for one that is missing, so a name no install creates is not caught at runtime.
+const folderExpr = i18n.binding("translationsFolder").value;
+const resolvedUrlArg = folderExpr.match(/^Qt\.resolvedUrl\("([^"]+)"\)$/);
+assert.ok(resolvedUrlArg,
+    "translationsFolder must be a Qt.resolvedUrl() of a path inside the shipped tree, so this " +
+    `suite can check that the path is there; found ${folderExpr}`);
+const SHIPPED_FOLDER = path.join(COMMON, resolvedUrlArg[1]);
+assert.ok(fs.existsSync(SHIPPED_FOLDER) && fs.statSync(SHIPPED_FOLDER).isDirectory(),
+    `translationsFolder names ${resolvedUrlArg[1]}, which is not a directory beside Common/: Qt's ` +
+    "FolderListModel lists the process's working directory in place of a folder that is missing, " +
+    "so any JSON file there named like a locale tag would be offered as an installed language");
+
+const FOLDER = "file:///opt/vshell/translations";
+// What Qt substitutes when the folder is missing. The shell runs with the user's home as its
+// working directory, which is the directory the substitution was first reproduced against.
+const SUBSTITUTED = "file:///home/someone";
+// The folder-mismatch report has to name the folder asked for, the folder actually read, and that
+// the listing was skipped. A report missing any of the three leaves a reader unable to tell a
+// broken install from a shell reading the right folder and finding nothing in it.
+const GUARD_REPORT =
+    /no folder at file:\/\/\/opt\/vshell\/translations, .*from file:\/\/\/home\/someone.*no installed locales were read/;
 const TRANSLATION_FILE = '{"Bar": {"Wi-Fi": "WLAN"}}';
 const READY = 1;
 const LOADING = 0;
@@ -96,14 +123,22 @@ function evalExpr(expr, root, scope) {
 }
 
 // `files` is what the FolderListModel lists, `systemLocale` what Qt reports and `settingsLocale`
-// what session.json held at startup. Singletons and the sibling model are the outer scope, as in QML.
-function i18nWorld({ systemLocale, settingsLocale = "", files }) {
+// what session.json held at startup. `substituted`, when given, is the folder Qt swapped in because
+// translationsFolder was not there; the listing is then that folder's, not the shell's.
+// Singletons and the sibling model are the outer scope, as in QML.
+function i18nWorld({ systemLocale, settingsLocale = "", files, substituted = "" }) {
     const warnings = [];
     const infos = [];
     const counts = { loads: 0, picks: 0, saves: 0 };
     const dir = {
         status: LOADING,
-        count: files.length,
+        // The model reports the folder it actually listed, which is how the swap is visible at all.
+        folder: substituted || FOLDER,
+        // Clearing folder empties the model: a qml6 probe (Qt 6.11.2) measured count 0 and no
+        // further Ready transition after the assignment.
+        get count() {
+            return this.folder === "" ? 0 : files.length;
+        },
         get(index, role) {
             assert.equal(role, "fileName", "_loadPresentLocales must read the fileName role");
             return files[index];
@@ -175,6 +210,8 @@ function i18nWorld({ systemLocale, settingsLocale = "", files }) {
         infos,
         counts,
         fallbacks: () => warnings.filter(line => line.startsWith(FALLBACK)).length,
+        // Every warning that is not a fallback report: today the folder-mismatch guard's own.
+        guards: () => warnings.filter(line => !line.startsWith(FALLBACK)),
         uses: () => infos.filter(line => line.startsWith(USING)).length,
         reach(status) {
             dir.status = status;
@@ -204,7 +241,8 @@ function i18nWorld({ systemLocale, settingsLocale = "", files }) {
 
 test("locale selection reads the translations folder once per session", () => {
     // [why, world, statuses the model passes through,
-    //  {picks, loads, fallback reports, locale switches, resolved locale, file, locales offered}]
+    //  {picks, loads, fallback reports, locale switches, resolved locale, file, locales offered,
+    //   total warnings when a guard adds one, folder the model is left on}]
     for (const [why, world, statuses, want] of [
         ["a model that never reaches Ready selects nothing",
             { systemLocale: "de_DE", files: ["de.json"] }, ["loading", "loading"],
@@ -231,9 +269,28 @@ test("locale selection reads the translations folder once per session", () => {
             { systemLocale: "pt_BR", files: ["pt-BR.json"] }, ["ready"],
             { picks: 1, loads: 1, fallbacks: 0, uses: 1, resolved: "pt-BR",
                 path: `${FOLDER}/pt-BR.json`, present: ["en", "pt-BR"] }],
+        ["a regional file named with an underscore answers the full tag too",
+            { systemLocale: "pt_BR", files: ["pt_BR.json"] }, ["ready"],
+            { picks: 1, loads: 1, fallbacks: 0, uses: 1, resolved: "pt_BR",
+                path: `${FOLDER}/pt_BR.json`, present: ["en", "pt_BR"] }],
         ["an empty first listing offers English alone for the session",
             { systemLocale: "de_DE", files: [] }, ["ready", "ready"],
-            { picks: 1, loads: 1, fallbacks: 1, uses: 0, resolved: "en", path: "", present: ["en"] }]
+            { picks: 1, loads: 1, fallbacks: 1, uses: 0, resolved: "en", path: "", present: ["en"] }],
+        ["a JSON file that names no locale is not offered as a language",
+            { systemLocale: "de_DE", files: ["de.json", "settings_search_index.json"] }, ["ready"],
+            { picks: 1, loads: 1, fallbacks: 0, uses: 1, resolved: "de", path: `${FOLDER}/de.json`,
+                present: ["en", "de"] }],
+        ["a listing taken from a folder that is not the shell's offers no language from it",
+            { systemLocale: "de_DE", files: ["de.json", "notes.json"], substituted: SUBSTITUTED },
+            ["ready"],
+            { picks: 1, loads: 0, fallbacks: 1, warnings: 2, uses: 0, resolved: "en", path: "",
+                present: ["en"], folder: "", guardWarning: GUARD_REPORT }],
+        ["a chosen locale is still attempted from the shell's own folder after a substitution",
+            { systemLocale: "de_DE", settingsLocale: "fr", files: ["fr.json"],
+                substituted: SUBSTITUTED }, ["ready"],
+            { picks: 1, loads: 0, fallbacks: 0, warnings: 1, uses: 1, resolved: "fr",
+                path: `${FOLDER}/fr.json`, present: ["en"], folder: "",
+                guardWarning: GUARD_REPORT }]
     ]) {
         const w = i18nWorld(world);
         for (const status of statuses)
@@ -241,11 +298,22 @@ test("locale selection reads the translations folder once per session", () => {
         assert.equal(w.counts.picks, want.picks, `${why}: locale selections`);
         assert.equal(w.counts.loads, want.loads, `${why}: folder reads`);
         assert.equal(w.fallbacks(), want.fallbacks, `${why}: fallback reports`);
-        assert.equal(w.warnings.length, want.fallbacks, `${why}: total warnings`);
+        assert.equal(w.warnings.length, want.warnings === undefined ? want.fallbacks : want.warnings,
+            `${why}: total warnings`);
         assert.equal(w.uses(), want.uses, `${why}: locale switches`);
         assert.equal(w.root._resolvedLocale, want.resolved, `${why}: resolved locale`);
         assert.equal(w.root._selectedPath, want.path, `${why}: translation file`);
         assert.deepEqual(Object.keys(w.root.presentLocales), want.present, `${why}: locales offered`);
+        // A substituted folder is released, not merely left unread: the model holds a filesystem
+        // watch on whatever it is pointed at for the life of the session.
+        assert.equal(w.dir.folder, want.folder === undefined ? FOLDER : want.folder,
+            `${why}: folder the model is left watching`);
+        const guards = w.guards();
+        assert.equal(guards.length, want.guardWarning ? 1 : 0,
+            `${why}: folder-mismatch reports`);
+        if (want.guardWarning)
+            assert.match(guards[0], want.guardWarning,
+                `${why}: the report names the folder asked for, the folder read and the skip`);
     }
 });
 
@@ -283,7 +351,7 @@ test("a repeated request neither switches the locale again nor reports the fallb
         ["a file that parses as nothing usable is reported against the locale that named it",
             ["write:de", "garbled"],
             { fallbacks: 2, warnings: 3, resolved: "en", path: "", uses: 1, loaded: false, keys: 0,
-                warning: /requested 'de'.*candidates de.*2 file\(s\).*poexports/ }]
+                warning: /requested 'de'.*candidates de.*locales en, de, fr in file:\/\/\/opt\/vshell\/translations/ }]
     ]) {
         const w = i18nWorld({ systemLocale: "es_ES", files: ["de.json", "fr.json"] });
         w.reach(READY);
@@ -317,6 +385,47 @@ test("a repeated request neither switches the locale again nor reports the fallb
             assert.match(w.warnings.filter(line => line.startsWith(FALLBACK)).at(-1), want.warning,
                 `${why}: the report names what was asked for, what was searched and where`);
     }
+});
+
+test("a file is offered as a language only when its name has the shape of a locale tag", () => {
+    // Every accepted spelling is one the shell already depends on: _candidates offers the
+    // underscore tag, the hyphen tag and the bare language for one system locale, and _pathFor
+    // composes the file name straight from whichever it picks. Narrowing the shape — dropping the
+    // underscore separator, or the three-letter language subtag — drops those exports from the
+    // dropdown, so each is a row here. The one rejected name is the one the folder really holds:
+    // settings_search_index.json, which SettingsSearchService reads. Over-inclusion is pinned by
+    // that row alone, because nothing else writes to this folder.
+    // [file name in the listing, the tag it is offered under or null]
+    for (const [name, tag] of [
+        ["de.json", "de"],
+        ["fil.json", "fil"],
+        ["pt-BR.json", "pt-BR"],
+        ["pt_BR.json", "pt_BR"],
+        ["zh-Hant.json", "zh-Hant"],
+        ["zh_Hans_CN.json", "zh_Hans_CN"],
+        ["settings_search_index.json", null]
+    ]) {
+        const w = i18nWorld({ systemLocale: "en_US", files: [name] });
+        w.reach(READY);
+        assert.deepEqual(Object.keys(w.root.presentLocales), tag ? ["en", tag] : ["en"],
+            tag ? `${name} names a locale and is offered under ${tag}`
+                : `${name} names no locale and never reaches the language dropdown`);
+    }
+});
+
+test("the folder the shell ships offers English alone as a language", () => {
+    // The real listing through the shipped reader: what it offers is what the Settings language
+    // dropdown shows today.
+    const shipped = fs.readdirSync(SHIPPED_FOLDER).filter(name => name.endsWith(".json"));
+    assert.ok(shipped.length > 0,
+        `found no JSON file under ${SHIPPED_FOLDER}, so this read is broken rather than the folder ` +
+        "bare: an empty listing offers English by construction and would pass whatever the reader does");
+    const w = i18nWorld({ systemLocale: "en_US", files: shipped });
+    w.reach(READY);
+    assert.deepEqual(Object.keys(w.root.presentLocales), ["en"],
+        `the dropdown offers ${Object.keys(w.root.presentLocales).join(", ")} for a folder ` +
+        `holding ${shipped.join(", ")}. No translation export ships yet, so English is the whole ` +
+        "list; a release that ships one updates this row with it");
 });
 
 test("a fallback with nothing to drop keeps the translations object it has", () => {
