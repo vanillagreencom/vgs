@@ -149,6 +149,28 @@ def recipe(directory: Path, pkgver: str = PLACEHOLDER, pkgrel: str = "4",
     )
 
 
+def published_recipe(tmp: Path, pkgver: str, source: Path, pkgrel: str = "4",
+                     committed: str | None = None, root: Path | None = None) -> Path:
+    """A recipe directory whose committed state publishes these values.
+
+    `committed` replaces the PKGBUILD text that is committed, for a case that
+    needs a published recipe the recipe writer cannot produce. `root` puts the
+    git repository above the recipe instead of at it.
+    """
+    directory = tmp / "recipe"
+    directory.mkdir(parents=True)
+    git("init", "--quiet", "--initial-branch", "master", cwd=root or directory)
+    recipe(directory, pkgver=pkgver, pkgrel=pkgrel, source=source)
+    if committed is not None:
+        (directory / "PKGBUILD").write_text(committed)
+    git("add", "--all", cwd=root or directory)
+    git("commit", "--quiet", "-m", "published", cwd=root or directory)
+    # publish-aur.sh overwrites the working tree from this repository before
+    # the stamp runs, so the published values live only in HEAD by then.
+    recipe(directory, pkgver=PLACEHOLDER, pkgrel="1", source=source)
+    return directory
+
+
 class LocalCheck(unittest.TestCase):
     """What `scripts/validate packaging` reports about a recipe's own pkgver."""
 
@@ -431,35 +453,16 @@ class PublishedVersion(unittest.TestCase):
         recipe(directory, pkgver=pkgver, source=source)
         return (directory / "PKGBUILD").read_text()
 
-    def publish(self, tmp: Path, pkgver: str, source: Path, pkgrel: str = "4",
-                committed: str | None = None, root: Path | None = None) -> Path:
-        """A recipe directory whose committed state publishes these values.
-
-        `committed` replaces the PKGBUILD text that is committed, for a case that
-        needs a published recipe the recipe writer cannot produce. `root` puts
-        the git repository above the recipe instead of at it.
-        """
-        directory = tmp / "recipe"
-        directory.mkdir(parents=True)
-        git("init", "--quiet", "--initial-branch", "master", cwd=root or directory)
-        recipe(directory, pkgver=pkgver, pkgrel=pkgrel, source=source)
-        if committed is not None:
-            (directory / "PKGBUILD").write_text(committed)
-        git("add", "--all", cwd=root or directory)
-        git("commit", "--quiet", "-m", "published", cwd=root or directory)
-        # publish-aur.sh overwrites the working tree from this repository before
-        # the stamp runs, so the published values live only in HEAD by then.
-        recipe(directory, pkgver=PLACEHOLDER, pkgrel="1", source=source)
-        return directory
-
     def test_a_lower_computed_version_is_refused_and_nothing_is_written(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "source"
             make_repo(source)
-            directory = self.publish(Path(tmp), "0.5.0.r900.gfeedbee", source)
+            directory = published_recipe(Path(tmp), "0.5.0.r900.gfeedbee", source)
             before = (directory / "PKGBUILD").read_text()
 
-            with self.assertRaises(CHECKER.CheckError) as raised:
+            # The class publish-aur.sh defers on. Read as any other refusal, the
+            # release run's own publish of vgs-shell-git fails the release.
+            with self.assertRaises(CHECKER.PublishedAhead) as raised:
                 CHECKER.stamp_vcs_version(directory, root=source)
 
             self.assertIn("0.5.0.r900.gfeedbee", str(raised.exception))
@@ -471,7 +474,7 @@ class PublishedVersion(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "source"
             make_repo(source)
-            directory = self.publish(
+            directory = published_recipe(
                 Path(tmp),
                 "0.1.0.r1.gaaaaaaa",
                 source,
@@ -492,7 +495,7 @@ class PublishedVersion(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "source"
             make_repo(source)
-            directory = self.publish(
+            directory = published_recipe(
                 Path(tmp),
                 "0.1.0.r1.gaaaaaaa",
                 source,
@@ -548,7 +551,7 @@ class PublishedVersion(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "source"
             make_repo(source)
-            directory = self.publish(Path(tmp), "0.9.0.r999.gfeedbee", source)
+            directory = published_recipe(Path(tmp), "0.9.0.r999.gfeedbee", source)
             tree = git("rev-parse", "HEAD^{tree}", cwd=directory)
             (directory / ".git" / "objects" / tree[:2] / tree[2:]).unlink()
             before = (directory / "PKGBUILD").read_text()
@@ -565,7 +568,7 @@ class PublishedVersion(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "source"
             make_repo(source)
-            directory = self.publish(Path(tmp), "0.9.0.r999.gfeedbee", source)
+            directory = published_recipe(Path(tmp), "0.9.0.r999.gfeedbee", source)
             blob = git("rev-parse", "HEAD:./PKGBUILD", cwd=directory)
             (directory / ".git" / "objects" / blob[:2] / blob[2:]).unlink()
 
@@ -584,7 +587,7 @@ class PublishedVersion(unittest.TestCase):
             root = Path(tmp) / "tree"
             root.mkdir()
             recipe(root, pkgver="9.9.9.r999.gfeedbee", pkgrel="1")
-            directory = self.publish(root, "0.1.0.r1.gaaaaaaa", source, root=root)
+            directory = published_recipe(root, "0.1.0.r1.gaaaaaaa", source, root=root)
 
             self.assertEqual(
                 CHECKER.stamp_vcs_version(directory, root=source),
@@ -595,7 +598,7 @@ class PublishedVersion(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "source"
             make_repo(source)
-            directory = self.publish(Path(tmp), "20260916", source)
+            directory = published_recipe(Path(tmp), "20260916", source)
             before = (directory / "PKGBUILD").read_text()
 
             with self.assertRaises(CHECKER.CheckError) as raised:
@@ -608,7 +611,7 @@ class PublishedVersion(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "source"
             count, head = make_repo(source)
-            directory = self.publish(Path(tmp), "0.1.0.r0.g0000000", source)
+            directory = published_recipe(Path(tmp), "0.1.0.r0.g0000000", source)
 
             stamped = CHECKER.stamp_vcs_version(directory, root=source)
 
@@ -621,7 +624,7 @@ class PublishedVersion(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "source"
             count, head = make_repo(source)
-            directory = self.publish(Path(tmp), f"0.5.0.r{count}.g{head}", source, pkgrel="4")
+            directory = published_recipe(Path(tmp), f"0.5.0.r{count}.g{head}", source, pkgrel="4")
 
             CHECKER.stamp_vcs_version(directory, root=source)
 
@@ -820,8 +823,39 @@ class CommandLine(unittest.TestCase):
         copied = scripts / CHECKER_PATH.name
         return subprocess.run(
             [sys.executable, str(copied), "--stamp-vcs-version", str(directory)],
-            capture_output=True, text=True,
+            env=GIT_ENV, capture_output=True, text=True,
         )
+
+    def test_a_published_version_above_this_checkout_exits_three(self):
+        # The release run's own publish of vgs-shell-git: main advanced past the
+        # tag since the last push publish, so this checkout computes a lower
+        # version than the AUR carries. publish-aur.sh reads 3 as a deferral, so
+        # a 2 here fails the release after vgs-shell published correctly.
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source"
+            make_repo(source)
+            directory = published_recipe(Path(tmp), "0.5.0.r900.gfeedbee", source)
+            before = (directory / "PKGBUILD").read_text()
+
+            result = self.stamp(source, directory)
+
+            self.assertEqual(result.returncode, 3, result.stderr)
+            self.assertIn("0.5.0.r900.gfeedbee", result.stderr)
+            self.assertEqual(before, (directory / "PKGBUILD").read_text())
+
+    def test_a_published_version_of_another_shape_exits_two(self):
+        # The deferral is the ordered-and-lower case alone. A published version
+        # this script cannot order is still a fault to report, and exiting 3 on
+        # it would skip the package and leave a green run.
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source"
+            make_repo(source)
+            directory = published_recipe(Path(tmp), "20260916", source)
+
+            result = self.stamp(source, directory)
+
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertIn("20260916", result.stderr)
 
     def test_a_refused_recipe_exits_nonzero_and_is_left_alone(self):
         with tempfile.TemporaryDirectory() as tmp:

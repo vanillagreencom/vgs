@@ -15,6 +15,7 @@
 # PKGBUILD and .SRCINFO must agree before publication.
 # Absent source archives defer the affected package.
 # Archive checksum mismatches also defer publication.
+# A recipe the AUR already publishes above this checkout's version defers too.
 # Network and metadata errors fail the run.
 # Edit recipes here; publication overwrites direct AUR edits.
 # A git recipe is published carrying the version of this checkout's head.
@@ -28,7 +29,7 @@ packages=()
 for argument in "$@"; do
   case "$argument" in
     --dry-run) dry_run=1 ;;
-    -h|--help) sed -n '2,21p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    -h|--help) sed -n '2,22p' "${BASH_SOURCE[0]}"; exit 0 ;;
     -*) echo "publish-aur: unknown option $argument" >&2; exit 2 ;;
     *) packages+=("$argument") ;;
   esac
@@ -175,11 +176,20 @@ for package in "${packages[@]}"; do
   # A git recipe's pkgver() runs only after makepkg clones the source, so whatever
   # version the published recipe carries is the one the AUR page and every helper
   # report before that clone. Publish the head this run publishes, not a stale value.
-  if ! "$root/scripts/check-aur-sync.py" --stamp-vcs-version "$clone"; then
-    echo "publish-aur: cannot stamp $package with the version of this checkout's head; NOTHING was published for it" >&2
-    status=1
-    continue
-  fi
+  "$root/scripts/check-aur-sync.py" --stamp-vcs-version "$clone" || case "$?" in
+    3)
+      # The stamp has named both versions. A release run reaches this for
+      # vgs-shell-git whenever main advanced past the tag since the last push
+      # publish: that publish owns the package, so this run has nothing to add.
+      echo "publish-aur: $package is NOT published: the AUR already carries a version above this checkout's." >&2
+      continue
+      ;;
+    *)
+      echo "publish-aur: cannot stamp $package with the version of this checkout's head; NOTHING was published for it" >&2
+      status=1
+      continue
+      ;;
+  esac
 
   # Intent-to-add includes new files in git diff and dry-run output.
   # Without it, matching tracked metadata could conceal a missing install scriptlet.
