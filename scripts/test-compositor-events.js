@@ -206,7 +206,7 @@ test("each list's stated reason is still a read in the tree", () => {
     // Both comments justify a list entry by naming a read. If a read goes, the entry is dead
     // weight and the comment is false; this is the premise those entries rest on.
     const compositor = fs.readFileSync(QML, "utf8");
-    assert.match(compositor, /_activeWorkspaceIdForScreen[\s\S]{0,400}Hyprland\.monitors/,
+    assert.match(compositor, /hyprlandActiveWorkspaceId[\s\S]{0,400}Hyprland\.monitors/,
         "the per-screen workspace filter must still resolve from Hyprland.monitors, or the hotplug entries do nothing");
     const dock = fs.readFileSync(path.join(__dirname, "..", "quickshell", "vshell", "Modules", "Dock", "DockAppButton.qml"), "utf8");
     assert.ok(dock.includes("lastIpcObject?.specialWorkspace?.name"),
