@@ -72,8 +72,8 @@ test("the drag key's onChange hook is deferred by SettingsData", () => {
     const hooksAt = source.indexOf("readonly property var _hooks: Coalescer.deferHooks(_writes, {");
     assert.notEqual(hooksAt, -1, "SettingsData must build _hooks through Coalescer.deferHooks");
     // The second map argument, after the immediate map closes, holds the deferred hooks.
-    const deferred = extractBlock(source, "}, {", hooksAt);
-    for (const name of ["applySystemFonts", "regenSystemThemes", "updateCompositorLayout"])
+    const deferred = extractBlock(source, "}, Object.assign({", hooksAt);
+    for (const name of ["applySystemFonts", "updateCompositorLayout"])
         assert.match(deferred, new RegExp(`"${name}"`), `${name} must be in SettingsData's deferred hook map`);
 });
 
@@ -168,10 +168,10 @@ test("settings.json onLoaded skips its own write only when the store loaded clea
             _loading: false,
             _hasUnsavedChanges: false,
             root: {},
-            Store: { parse: (r, obj) => parses.push(obj), toJson: () => ({}) },
+            Store: { parse: (r, obj) => parses.push(obj), toJson: () => ({}), hookedValues: () => ({}) },
+            _changeSignals: {},
+            _emitReloadedChanges() {},
             SessionData: { saveSettings() {} },
-            applyStoredTheme() {},
-            updateCompositorCursor() {},
             log: { error() {} },
             Qt: { callLater() {} }
         };

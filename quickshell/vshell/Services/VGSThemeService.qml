@@ -190,6 +190,28 @@ Singleton {
         SettingsData.set("currentThemeName", name);
     }
 
+    // SettingsData stores the app theme inputs; the regeneration they need runs here.
+    Connections {
+        target: SettingsData
+        function onAppThemeInputChanged(key) {
+            appThemeRegenerateTimer.restart();
+        }
+    }
+
+    Timer {
+        id: appThemeRegenerateTimer
+        interval: 100
+        repeat: false
+        onTriggered: root.regenerateAppThemes()
+    }
+
+    // The theme apply helper reads settings.json, so the pending write lands first.
+    function regenerateAppThemes() {
+        SettingsData.flushSettings();
+        if (typeof Theme !== "undefined")
+            Theme.generateSystemThemesFromCurrentTheme();
+    }
+
     function _markGreeterThemeSyncPending() {
         if (typeof SettingsData === "undefined" || SettingsData.isGreeterMode)
             return;
