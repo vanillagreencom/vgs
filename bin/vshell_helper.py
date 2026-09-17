@@ -5395,6 +5395,10 @@ def run_hook(hook: Any, roles: Dict[str, str], bp: Dict[str, Any],
         # and the quit is only a freshness nudge for the next Files window.
         return {"hook": hook, "ok": True, "nautilus": _quit_windowless_nautilus()}
     if hook == "niri-reload":
+        # NIRI_SOCKET is inherited from the login session, so from a throwaway HOME this
+        # branch makes the login user's compositor re-read its config.
+        if _sandboxed_home():
+            return {"hook": hook, "ok": True, "skipped": True, "reason": SANDBOX_REFUSAL}
         if not shutil.which("niri"):
             return {"hook": hook, "ok": True, "skipped": True, "reason": "niri not found"}
         if not os.environ.get("NIRI_SOCKET"):
@@ -5499,6 +5503,11 @@ def run_hook(hook: Any, roles: Dict[str, str], bp: Dict[str, Any],
 
 
 def apply_pywalfox_hook(roles: Dict[str, str]) -> Dict[str, Any]:
+    # Both commands below reach the browser extension running in the login session, and a
+    # PATH lookup says nothing about whose session that is, so from a throwaway HOME this
+    # hook would push the sandbox's palette into the login user's Firefox.
+    if _sandboxed_home():
+        return {"hook": "pywalfox-update", "ok": True, "skipped": True, "reason": SANDBOX_REFUSAL}
     if not shutil.which("pywalfox"):
         return {"hook": "pywalfox-update", "ok": True, "skipped": True, "reason": "pywalfox not found"}
     mode = (roles.get("theme_type") or "dark").lower()

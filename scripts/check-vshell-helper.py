@@ -2477,12 +2477,15 @@ def test_theme_hooks_stay_out_of_the_login_session():
                 # instance, and shell-reload finds the running shell through the real
                 # uid's runtime directory. gtk-settings and icon-theme write the login
                 # user's dconf database over the session bus, and gtk4-reload quits the
-                # login session's Nautilus service on it. None passes through a scan.
+                # login session's Nautilus service on it. niri-reload reaches the
+                # compositor through the inherited NIRI_SOCKET, and pywalfox-update
+                # reaches the browser extension through a PATH lookup. None passes
+                # through a scan.
                 trip = AssertionError("a sandboxed hook must not run a command")
                 with patch.object(helper, "_run_hook_cmd", side_effect=trip), \
                         patch.object(helper.subprocess, "run", side_effect=trip):
                     for hook in ("ghostty-reload", "hypr-reload", "shell-reload", "tmux-source", "nvim-reload",
-                                 "gtk-settings", "gtk4-reload", "icon-theme"):
+                                 "gtk-settings", "gtk4-reload", "icon-theme", "niri-reload", "pywalfox-update"):
                         skipped = helper.run_hook(hook, {"background": "#123456"}, {})
                         assert_equal(skipped.get("skipped"), True, f"{hook} reports a skip under a sandbox HOME")
                         assert_equal(skipped.get("reason"), helper.SANDBOX_REFUSAL,
@@ -2541,6 +2544,24 @@ def test_theme_hooks_stay_out_of_the_login_session():
                      "gtk4-reload reports what the quit returned")
         assert_equal("nautilus" in results["gtk-settings"], False,
                      "gtk-settings no longer carries the quit it was moved off")
+        # The two verbs whose only other gate is a PATH lookup: pinning the argv they
+        # issue from the login user's own home is what keeps the refusals above from
+        # passing on a machine that simply has neither program installed.
+        issued = []
+
+        def issue(hook_name, command, **_kwargs):
+            issued.append((hook_name, tuple(command)))
+            return {"hook": hook_name, "ok": True}
+
+        with patch.object(helper, "_run_hook_cmd", side_effect=issue), \
+                patch.object(helper.shutil, "which", return_value="/usr/bin/probe"), \
+                patch.dict(os.environ, {"NIRI_SOCKET": "/run/user/probe/niri.sock"}):
+            for hook in ("niri-reload", "pywalfox-update"):
+                helper.run_hook(hook, {"theme_type": "dark"}, {})
+        assert_equal(issued, [("niri-reload", ("niri", "msg", "action", "load-config-file")),
+                              ("pywalfox-update", ("pywalfox", "dark")),
+                              ("pywalfox-update", ("pywalfox", "update"))],
+                     "both verbs reach their program from the login user's own home")
 
 
 def _run_settings_hook(hook, current, icon_name="VgsProbeSet"):
