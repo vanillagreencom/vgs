@@ -15,13 +15,17 @@ fail() {
 tmp="$(mktemp -d)" || fail "could not create a temporary directory"
 trap 'rm -rf -- "${tmp:?}"' EXIT
 
-# name ~ file ~ shebang ~ body line (line 3) ~ expected exit ~ expected first stderr line
+# name ~ file ~ shebang ~ body from line 3, <NL> separating lines ~ expected exit ~ expected first stderr line
 # shellcheck disable=SC2016  # the bodies are shell source written verbatim into the fixtures
 rows=(
   'routed~vshell-a~#!/bin/bash~"$HYPR_DISPATCH" "hl.dsp.window.center()" || true~0~'
   'discarded~vshell-a~#!/bin/bash~hyprctl dispatch "hl.dsp.window.center()" >/dev/null 2>&1 || true~1~hyprctl-dispatch-unchecked bin/vshell-a:3'
   'instance flag~vshell-a~#!/usr/bin/env bash~  hyprctl -i 0 dispatch "hl.dsp.exit()"~1~hyprctl-dispatch-unchecked bin/vshell-a:3'
   'batch~vshell-a~#!/usr/bin/env bash~hyprctl --batch "dispatch hl.dsp.exit()"~1~hyprctl-dispatch-unchecked bin/vshell-a:3'
+  'batch after another command~vshell-a~#!/usr/bin/env bash~hyprctl --batch "keyword a b; dispatch exec foo"~1~hyprctl-dispatch-unchecked bin/vshell-a:3'
+  'continued line~vshell-a~#!/usr/bin/env bash~hyprctl \<NL>  dispatch exec foo~1~hyprctl-dispatch-unchecked bin/vshell-a:3'
+  'escaped backslash ends the line~vshell-a~#!/usr/bin/env bash~hyprctl clients -j \\<NL>dispatch exec foo~0~'
+  'query then separate dispatch word~vshell-a~#!/bin/bash~hyprctl clients -j; echo dispatch~0~'
   'env sh~vshell-a~#!/usr/bin/env sh~hyprctl dispatch "hl.dsp.exit()"~1~hyprctl-dispatch-unchecked bin/vshell-a:3'
   'posix sh~vshell-a~#!/bin/sh~reply=$(hyprctl dispatch "hl.dsp.exit()")~1~hyprctl-dispatch-unchecked bin/vshell-a:3'
   'owner~vshell-hyprctl-dispatch~#!/usr/bin/env bash~  reply="$(hyprctl dispatch "$1" 2>&1)" || status=$?~0~'
@@ -33,7 +37,7 @@ for row in "${rows[@]}"; do
   IFS='~' read -r name file shebang body want_exit want_key <<<"$row"
   fixture="$tmp/$name"
   mkdir -p "$fixture/bin"
-  printf '%s\nset -u\n%s\n' "$shebang" "$body" >"$fixture/bin/$file"
+  printf '%s\nset -u\n%s\n' "$shebang" "${body//<NL>/$'\n'}" >"$fixture/bin/$file"
   # A shell script beside every row keeps the owner row from being the only file scanned.
   [[ $file == vshell-a ]] || printf '#!/bin/bash\n:\n' >"$fixture/bin/vshell-a"
   got_exit=0

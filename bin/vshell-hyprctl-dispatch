@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Usage: vshell-hyprctl-dispatch REQUEST
 # Send one Hyprland dispatch for the shell scripts in bin/ and check the reply.
-# scripts/check-hyprctl-dispatch.sh refuses a `hyprctl dispatch` in any other bin/ shell script.
+# scripts/check-hyprctl-dispatch.sh refuses a direct `hyprctl dispatch` in the other bin/ shell
+# scripts; its header lists the forms it matches.
 #
 # These scripts support Hyprland only under its Lua config manager, like the shell's
 # HyprlandService and the Lua config fragments VGS generates. Every request is an hl.dsp

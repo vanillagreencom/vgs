@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
-# Refuse a `hyprctl dispatch` in a bin/ shell script other than bin/vshell-hyprctl-dispatch.
-# That program checks the reply of every dispatch, so a call routed around it can lose a
-# refused dispatch with no diagnostic. A shell script is a bin/ file whose shebang names
-# bash or sh; the Python helper modules are outside this rule. Whole-line comments are skipped.
+# Refuse the `hyprctl dispatch` forms below in a bin/ shell script other than
+# bin/vshell-hyprctl-dispatch. That program checks the reply of every dispatch, so a call
+# routed around it can lose a refused dispatch with no diagnostic. A shell script is a bin/
+# file whose shebang names bash or sh; the Python helper modules are outside this rule.
+# Forms matched: the word `hyprctl`, then the word `dispatch` with no `|`, `;` or `&`
+# between them; `hyprctl` with a `--batch` flag and `dispatch` anywhere after it on the
+# command, past `;`; either form continued across lines by an unescaped trailing backslash,
+# reported at the command's first line. A command name held in a variable or run through
+# eval is not followed. Whole-line comments are skipped.
 # Usage: scripts/check-hyprctl-dispatch.sh [ROOT], where ROOT defaults to this checkout.
 #
 # Output protocol: one `hyprctl-dispatch-unchecked bin/<name>:<line>` line on stderr per
@@ -12,8 +17,10 @@ set -euo pipefail
 
 root="${1:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}"
 owner="vshell-hyprctl-dispatch"
-# hyprctl, then its flags or batch quoting within the same command, then the dispatch word.
+# hyprctl, then its flags within the same command, then the dispatch word.
 pattern='(^|[^[:alnum:]_-])hyprctl[[:space:]][^|;&]*dispatch([^[:alnum:]_]|$)'
+# A batch string separates its commands with `;`, so a dispatch may follow another command.
+batch_pattern='(^|[^[:alnum:]_-])hyprctl([[:space:]]+[^[:space:]]+)*[[:space:]]+--batch([[:space:]]|=).*dispatch([^[:alnum:]_]|$)'
 
 listing="$(mktemp)"
 trap 'rm -f -- "${listing:?}"' EXIT
@@ -34,13 +41,25 @@ while IFS= read -r -d '' file; do
   scanned=$((scanned + 1))
   [[ ${file##*/} == "$owner" ]] && continue
   line_no=0
+  command_text=""
+  command_start=0
   while IFS= read -r line || [[ -n $line ]]; do
     line_no=$((line_no + 1))
-    [[ $line =~ ^[[:space:]]*# ]] && continue
-    if [[ $line =~ $pattern ]]; then
-      printf 'hyprctl-dispatch-unchecked bin/%s:%d\n' "${file##*/}" "$line_no" >&2
+    if [[ -z $command_text ]]; then
+      [[ $line =~ ^[[:space:]]*# ]] && continue
+      command_start=$line_no
+    fi
+    # An odd run of trailing backslashes escapes the newline, continuing the command.
+    if [[ $line =~ (\\+)$ ]] && ((${#BASH_REMATCH[1]} % 2 == 1)); then
+      command_text+="${line%\\} "
+      continue
+    fi
+    command_text+="$line"
+    if [[ $command_text =~ $pattern || $command_text =~ $batch_pattern ]]; then
+      printf 'hyprctl-dispatch-unchecked bin/%s:%d\n' "${file##*/}" "$command_start" >&2
       status=1
     fi
+    command_text=""
   done <"$file"
 done <"$listing"
 
