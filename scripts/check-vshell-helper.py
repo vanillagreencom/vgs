@@ -4005,16 +4005,20 @@ def test_preview_stage_retires_its_window_rule():
     # the reply to `hyprctl output create headless`, as (exit status, stdout); the hyprctl
     # subcommand a stop signal interrupts, or None; whether the preview stages its output;
     # the request that retires the rule, or None when the stage registered no rule at all;
-    # the refusals the stage must name, as (spelling, exit status, the compositor's reply).
+    # the refusals the stage must name, as (spelling, exit status, the compositor's reply),
+    # over the rule spellings and the output create alike.
     # The rule is registered before the output is created, so a refused output still retires it.
     for label, session, create_reply, stop_at, staged_expected, retirement, refusals_expected in (
         ("a compositor that accepts every request", "lua", (0, "ok"), None, True, retire, []),
-        ("a compositor that refuses the headless output", "lua", (1, ""), None, False, retire, []),
-        ("a pre-Lua compositor that refuses the headless output", "classic", (1, ""), None, False, reload, []),
+        # Nothing on either stream, so the notice falls back to naming no reply.
+        ("a compositor that refuses the headless output", "lua", (1, ""), None, False, retire,
+         [("output create", 1, "no reply")]),
+        ("a pre-Lua compositor that refuses the headless output", "classic", (1, ""), None, False, reload,
+         [("output create", 1, "no reply")]),
         # The refusal exits 0, so judging the create by its return code alone sizes an
         # output that was never made and removes it again on teardown.
         ("a compositor with no headless backend, which refuses the output at exit 0", "lua",
-         (0, NO_BACKEND), None, False, retire, []),
+         (0, NO_BACKEND), None, False, retire, [("output create", 0, NO_BACKEND)]),
         # The output exists by then but is not yet sized, so the stage is not handed over.
         ("a stop signal while the stage sizes its output", "lua", (0, "ok"), "getoption", True, retire, []),
         ("a pre-Lua compositor that stages its output", "classic", (0, "ok"), None, True, reload, []),
@@ -4088,14 +4092,15 @@ def test_preview_stage_retires_its_window_rule():
         assert_equal(["hyprctl", "dispatch", "movecursor", "0", "0"] in calls, session == "classic",
                      f"{label}: restores the cursor through the spelling this config manager accepts")
         # The notice is the whole reason the operator learns the compositor refused rather
-        # than that they are outside the session, so pin every field it carries. A row that
-        # registered a rule must stay quiet, or a working stage prints a failure to act on.
+        # than that they are outside the session, so pin every field it carries. A row whose
+        # stage came up must stay quiet, or a working stage prints a failure to act on.
         refused = []
         for notice in notices:
-            if not notice.startswith("preview staging rule refused (hyprctl "):
+            subject, _, request = notice.partition(" refused (hyprctl ")
+            if subject not in ("preview staging rule", "preview staging output"):
                 continue
-            head, seen, reply = notice.partition("): ")
-            spelling, _, status = head.rpartition(" (hyprctl ")[2].partition(" exit ")
+            head, seen, reply = request.partition("): ")
+            spelling, _, status = head.partition(" exit ")
             refused.append((spelling, int(status), reply) if seen and status.isdigit() else notice)
         assert_equal(refused, refusals_expected,
                      f"{label}: names each refused spelling with its exit status and the compositor's reply")
