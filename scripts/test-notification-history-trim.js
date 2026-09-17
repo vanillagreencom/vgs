@@ -4,7 +4,8 @@
 // deletes the cached images that only the dropped entries name. This suite evaluates
 // the marked split; the deletion call around it runs in QML and is not reached here.
 // updateHistoryImage attaches a saved popup image to one entry; its marked decision is
-// evaluated here and the popup wiring that supplies the entry id is pinned in source.
+// evaluated here, and the wiring that mints the entry id, hands it to the popup and applies
+// the result is pinned in source.
 // VGS.qml runs `vshell cache prune` at load for the images no entry names; this suite
 // pins that call in source.
 
@@ -70,14 +71,16 @@ test("attachHistoryImage attaches a saved image to the entry its own id names", 
         ["", "/c/e.png", null, "no entry id attaches nothing"],
         ["7_200_2", "", null, "no image path attaches nothing"]
     ]) {
-        const out = attachHistoryImage([newer, older], entryId, imagePath);
+        const list = [newer, older];
+        const out = attachHistoryImage(list, entryId, imagePath);
         if (images === null) {
             assert.equal(out, null, `no attach: ${why}`);
         } else {
             assert.deepEqual(out.map(item => item.image), images, `image: ${why}`);
+            assert.notEqual(out, list, `the attach returns a new list, not the caller's: ${why}`);
         }
-        assert.deepEqual([newer.image, older.image], ["", ""],
-            `the caller's entries are copied, not mutated: ${why}`);
+        assert.deepEqual(list.map(item => item.image), ["", ""],
+            `the caller's list is left as it was, or a binding reading it never sees the attach: ${why}`);
     }
 });
 
@@ -96,20 +99,35 @@ test("attachHistoryImage changes only the entry's image", () => {
     }, "attaching an image must not drop the entry's saved url, which is its only Open affordance");
 });
 
-test("the popup saves an image only against the history entry id addToHistory gave it", () => {
+test("a saved image reaches the history entry whose id named it", () => {
     const service = qmlSource(serviceText, "NotificationService.qml");
+    service.requires(service.body("_makeHistoryEntryId"), "_makeHistoryEntryId()", [
+        ['safeSource + "_" + (timestamp || Date.now()) + "_" + historyEntryCounter',
+            "without the per-entry counter two entries can carry one id, and an image attaches " +
+            "to whichever of them the search reaches first", 1]
+    ]);
     service.requires(service.body("addToHistory"), "addToHistory()", [
         ["wrapper.historyEntryId = data.id",
-            "without it the popup has no entry key and saves an image no entry can ever name", 1],
+            "without it the popup has no key, so it saves no image and the entry keeps none", 1],
         ['const persistableImage = imageUrl && !imageUrl.startsWith("image://qsimage/") ? imageUrl : "";',
             "a qsimage URL points into the live notification, so storing it gives the entry an " +
             "image that can never load again", 1]
     ]);
+    service.requires(service.body("updateHistoryImage"), "updateHistoryImage()", [
+        ["if (!next)",
+            "without it an image belonging to no entry empties historyList, and the History tab " +
+            "stays blank until history reloads", 1],
+        ["historyList = next;",
+            "without it the attached image never reaches the History tab", 1],
+        ["saveHistory();",
+            "without it the attached image is lost on the next shell start", 1]
+    ]);
     const popup = qmlSource(fs.readFileSync(POPUP, "utf8"), "NotificationPopup.qml");
     const icon = popup.objectBlocks("VgsCircularImage", 1)[0].q;
     popup.requires(icon.binding("needsImagePersist").value, "needsImagePersist", [
-        ['notificationData.historyEntryId !== ""',
-            "without it a popup-only notification saves an image no history entry references", 1]
+        ['&& !notificationData.persistedImagePath && notificationData.historyEntryId !== ""',
+            "as a disjunction the guard passes, and a popup-only notification saves an image no " +
+            "history entry references", 1]
     ]);
     popup.requires(popup.handlers("onImageSaved").join("\n"), "onImageSaved", [
         ["NotificationService.updateHistoryImage(notificationData.historyEntryId, filePath)",
