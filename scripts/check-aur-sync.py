@@ -553,8 +553,8 @@ def check_remote(package: str, directory: Path, files: tuple[str, ...]) -> list[
         return compare_published(package, directory, clone, files)
 
 
-def published_pkgvers(package: str, clone: Path) -> list[tuple[str, list[str]]]:
-    """The pkgver values each published file carries.
+def published_fields(package: str, clone: Path) -> list[tuple[str, dict[str, list[str]]]]:
+    """The metadata each published file carries.
 
     Both files are read: aurweb builds the package page and the metadata a
     helper queries from .SRCINFO, so a stale value there reaches every user
@@ -565,11 +565,47 @@ def published_pkgvers(package: str, clone: Path) -> list[tuple[str, list[str]]]:
         fields, _ = parse_pkgbuild_text(
             (clone / "PKGBUILD").read_text(), f"the published {package} PKGBUILD"
         )
-        found.append(("PKGBUILD", fields.get("pkgver") or []))
+        found.append(("PKGBUILD", fields))
     if (clone / ".SRCINFO").is_file():
         base, _ = parse_srcinfo(clone / ".SRCINFO")
-        found.append((".SRCINFO", base.get("pkgver") or []))
+        found.append((".SRCINFO", base))
     return found
+
+
+def carried_value(fields: dict[str, list[str]], key: str) -> str:
+    """How a published file states one field, for comparison and for the report.
+
+    A field assigned other than once has no single value to compare, so the
+    count stands in for it: two files stating a field differently disagree
+    whether or not either can be read.
+    """
+    values = fields.get(key) or []
+    return values[0] if len(values) == 1 else f"{len(values)} values"
+
+
+def published_pair_problems(
+    package: str, published: list[tuple[str, dict[str, list[str]]]]
+) -> list[str]:
+    """Where the published files disagree about the version they publish.
+
+    The comparison below drops pkgver and pkgrel from both published files,
+    because their distance from this tree's is by design; this is what holds
+    those two fields to each other.
+    """
+    if len(published) < 2:
+        return []
+    problems = []
+    for key in ("pkgver", "pkgrel"):
+        carried = {name: carried_value(fields, key) for name, fields in published}
+        if len(set(carried.values())) == 1:
+            continue
+        stated = ", ".join(f"{name} carries {value}" for name, value in carried.items())
+        problems.append(
+            f"{package}: the published files disagree about {key}: {stated}. aurweb "
+            "builds the package page and the metadata every helper reads from .SRCINFO, "
+            "so the AUR advertises a version the published PKGBUILD does not build."
+        )
+    return problems
 
 
 def published_pkgver_problems(package: str, clone: Path) -> list[str]:
@@ -578,8 +614,10 @@ def published_pkgver_problems(package: str, clone: Path) -> list[str]:
     Its distance from this tree's is expected and is dropped from the comparison
     below; what it is on its own still has to hold.
     """
+    published = published_fields(package, clone)
     problems = []
-    for name, values in published_pkgvers(package, clone):
+    for name, fields in published:
+        values = fields.get("pkgver") or []
         if len(values) != 1:
             problems.append(
                 f"{package}: the published {name} carries {len(values)} pkgver values, "
@@ -601,7 +639,7 @@ def published_pkgver_problems(package: str, clone: Path) -> list[str]:
                 "pacman orders it anyway: a value of another shape can sort above every "
                 "version the recipe's own build produces, leaving every client on it."
             )
-    return problems
+    return problems + published_pair_problems(package, published)
 
 
 def compare_published(package: str, directory: Path, clone: Path,

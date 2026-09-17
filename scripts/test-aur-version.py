@@ -617,7 +617,8 @@ class RemoteComparison(unittest.TestCase):
 
             problems = self.compared(tmp, directory, clone)
 
-            self.assertEqual(len(problems), 1, problems)
+            # The pair check reports the same clone a second time; this row is
+            # about the placeholder rule alone.
             self.assertIn(f"published .SRCINFO carries pkgver={PLACEHOLDER}", problems[0])
 
     def test_a_published_version_of_another_shape_is_reported(self):
@@ -631,6 +632,38 @@ class RemoteComparison(unittest.TestCase):
             self.assertEqual(len(problems), 2, problems)
             for problem in problems:
                 self.assertIn("20260916", problem)
+
+    def disagreeing(self, tmp: str, field: str, value: str) -> list[str]:
+        """Problems for a clone whose .SRCINFO states one field differently."""
+        directory, clone = Path(tmp) / "recipe", Path(tmp) / "clone"
+        recipe(directory, pkgver="0.5.0.r400.gbbbbbbb", pkgrel="1")
+        recipe(clone, pkgver="0.5.0.r335.ga945a5a0", pkgrel="1")
+        srcinfo = clone / ".SRCINFO"
+        srcinfo.write_text(
+            srcinfo.read_text().replace(
+                f"\t{field} = {'0.5.0.r335.ga945a5a0' if field == 'pkgver' else '1'}\n",
+                f"\t{field} = {value}\n",
+            )
+        )
+        return self.compared(tmp, directory, clone)
+
+    def test_the_published_files_disagreeing_about_pkgver_is_reported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            problems = self.disagreeing(tmp, "pkgver", "0.4.0.r10.gccccccc")
+
+            self.assertEqual(len(problems), 1, problems)
+            self.assertIn("disagree about pkgver", problems[0])
+            self.assertIn("PKGBUILD carries 0.5.0.r335.ga945a5a0", problems[0])
+            self.assertIn(".SRCINFO carries 0.4.0.r10.gccccccc", problems[0])
+
+    def test_the_published_files_disagreeing_about_pkgrel_is_reported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            problems = self.disagreeing(tmp, "pkgrel", "9")
+
+            self.assertEqual(len(problems), 1, problems)
+            self.assertIn("disagree about pkgrel", problems[0])
+            self.assertIn("PKGBUILD carries 1", problems[0])
+            self.assertIn(".SRCINFO carries 9", problems[0])
 
     def test_a_published_file_assigning_no_single_pkgver_is_reported(self):
         with tempfile.TemporaryDirectory() as tmp:
