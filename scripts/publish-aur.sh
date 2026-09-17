@@ -143,17 +143,21 @@ checksums_match() {
 
 status=0
 published=()
+# Every deferral exits 0, so a run that published nothing closes like one that
+# published everything. Name them at the end rather than in one line each.
+deferred=()
 for package in "${packages[@]}"; do
   source_dir="$root/$(directory_for "$package")"
   clone="$tmp/$package"
 
   sources_exist "$package" || case "$?" in
-    1) continue ;;          # Release publication owns this deferred package.
+    # Release publication owns this deferred package.
+    1) deferred+=("$package (no source archive yet)"); continue ;;
     *) status=1; continue ;;
   esac
 
   checksums_match "$package" || case "$?" in
-    1) continue ;;
+    1) deferred+=("$package (recipe checksums are not the release's)"); continue ;;
     *) status=1; continue ;;
   esac
 
@@ -182,6 +186,7 @@ for package in "${packages[@]}"; do
       # vgs-shell-git whenever main advanced past the tag since the last push
       # publish: that publish owns the package, so this run has nothing to add.
       echo "publish-aur: $package is NOT published: the AUR already carries a version above this checkout's." >&2
+      deferred+=("$package (the AUR is ahead of this checkout)")
       continue
       ;;
     *)
@@ -228,6 +233,11 @@ done
 # Verify only packages published by this run; deliberately deferred packages can still differ remotely.
 if [[ "$dry_run" -eq 0 && ${#published[@]} -gt 0 ]]; then
   "$root/scripts/check-aur-sync.py" --remote "${published[@]}" || status=1
+fi
+
+if [[ ${#deferred[@]} -gt 0 ]]; then
+  echo "publish-aur: deferred=${#deferred[@]}; the AUR still holds what it held for these:" >&2
+  printf 'publish-aur:   %s\n' "${deferred[@]}" >&2
 fi
 
 exit "$status"

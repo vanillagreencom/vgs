@@ -335,6 +335,9 @@ class Stamp(unittest.TestCase):
                 CHECKER.stamp_vcs_version(directory, root=clipped)
 
             self.assertIn("is a shallow checkout", str(raised.exception))
+            # A shallow count is below the published one too. Read as the
+            # deferral, it would skip the package and leave the run green.
+            self.assertNotIsInstance(raised.exception, CHECKER.PublishedAhead)
             self.assertEqual(before, (directory / "PKGBUILD").read_text())
 
     def working_clone(self, tmp: Path, origin: Path) -> Path:
