@@ -2523,8 +2523,13 @@ def test_theme_hooks_stay_out_of_the_login_session():
                     patch.object(helper.time, "sleep"):
                 for hook in ("gtk-settings", "icon-theme", "gtk4-reload"):
                     results[hook] = helper.run_hook(hook, {"theme_type": "dark"}, {})
-        interface = ("gsettings", "set", "org.gnome.desktop.interface")
-        assert_equal(written, [interface + ("gtk-theme",), interface + ("color-scheme",), interface + ("icon-theme",)],
+        write = ("gsettings", "set", "org.gnome.desktop.interface")
+        read = ("gsettings", "get", "org.gnome.desktop.interface")
+        # `record` answers every read with no stdout, which is a key neither hook could
+        # read, so every key stays on the write path.
+        assert_equal(written, [read + ("gtk-theme",), read + ("color-scheme",),
+                               write + ("gtk-theme",), write + ("color-scheme",),
+                               read + ("icon-theme",), write + ("icon-theme",)],
                      "the settings hooks write gsettings from the login user's own home")
         # Quitting the windowless Files service is gtk4-reload's whole payload:
         # GTK4 reads gtk.css once per process and that file belongs to gtk4-vgs,
@@ -2536,6 +2541,97 @@ def test_theme_hooks_stay_out_of_the_login_session():
                      "gtk4-reload reports what the quit returned")
         assert_equal("nautilus" in results["gtk-settings"], False,
                      "gtk-settings no longer carries the quit it was moved off")
+
+
+def _run_settings_hook(hook, current, icon_name="VgsProbeSet"):
+    """Run one always-run settings hook against a session whose interface keys hold `current`.
+
+    A key mapped to None answers its read the way a key the hook cannot read does.
+    `adw-gtk3-dark` is pinned as installed so the theme name the hook picks does not
+    depend on what /usr/share/themes holds on the machine running the suite. Returns
+    the hook result, the gsettings argv it issued, and the sleeps it took.
+    """
+    calls = []
+    sleeps = []
+
+    def answer(hook_name, command, **_kwargs):
+        calls.append(tuple(command))
+        if command[1] != "get":
+            return {"hook": hook_name, "ok": True, "code": 0, "stdout": "", "stderr": ""}
+        value = current.get(command[3])
+        if value is None:
+            return {"hook": hook_name, "ok": False, "code": 1, "stdout": "", "stderr": f"No such key: {command[3]}"}
+        return {"hook": hook_name, "ok": True, "code": 0, "stdout": repr(value), "stderr": ""}
+
+    real_exists = helper.Path.exists
+    real_is_dir = helper.Path.is_dir
+    with tempfile.TemporaryDirectory() as generated:
+        (Path(generated) / "icons.theme").write_text(icon_name + "\n")
+        with patch.object(helper, "_run_hook_cmd", side_effect=answer), \
+                patch.object(helper.shutil, "which", return_value="/usr/bin/gsettings"), \
+                patch.object(helper, "ensure_bundled_icon_themes", return_value=[]), \
+                patch.object(helper, "generated_dir", return_value=Path(generated)), \
+                patch.object(helper, "load_settings", return_value={}), \
+                patch.object(helper.Path, "exists",
+                             lambda self: self.name == "adw-gtk3-dark" or real_exists(self)), \
+                patch.object(helper.Path, "is_dir",
+                             lambda self: self.name == icon_name or real_is_dir(self)), \
+                patch.object(helper.time, "sleep", side_effect=sleeps.append):
+            result = helper.run_hook(hook, {"theme_type": "dark"}, {})
+    return result, calls, sleeps
+
+
+def test_the_settings_hooks_skip_the_writes_the_session_already_holds():
+    """Neither settings hook writes, and gtk-settings does not sleep, on values already held.
+
+    Both are declared under the always-run `hook` key, so they run on every apply that
+    reaches their target's commit, including one that moves nothing, where gtk-settings
+    would otherwise spend 300 ms in a sleep whose only purpose is to separate two writes
+    it is not making. gtk-settings writes only the keys that disagree, so one stale key
+    costs one write and no sleep. A key the hook cannot read keeps it on its write path:
+    skipping there would drop a write on a value nobody read.
+    """
+    login = Path(pwd.getpwuid(os.getuid()).pw_dir)
+    held = {"gtk-theme": "adw-gtk3-dark", "color-scheme": "prefer-dark"}
+    theme_write = ("gtk-theme", "adw-gtk3-dark")
+    scheme_write = ("color-scheme", "prefer-dark")
+    both = ["gtk-theme", "color-scheme"]
+    rows = [
+        ("gtk-settings on both values held", "gtk-settings", held,
+         "gtk-theme and color-scheme already set", both, [], 0),
+        ("gtk-settings on neither value held", "gtk-settings",
+         {"gtk-theme": "Adwaita", "color-scheme": "prefer-light"},
+         "", both, [theme_write, scheme_write], 1),
+        ("gtk-settings on another scheme", "gtk-settings", {**held, "color-scheme": "prefer-light"},
+         "", both, [scheme_write], 0),
+        ("gtk-settings on another theme", "gtk-settings", {**held, "gtk-theme": "Adwaita-dark"},
+         "", both, [theme_write], 0),
+        ("gtk-settings on an unreadable theme key", "gtk-settings", {**held, "gtk-theme": None},
+         "", both, [theme_write], 0),
+        ("gtk-settings on an unreadable scheme key", "gtk-settings", {**held, "color-scheme": None},
+         "", both, [scheme_write], 0),
+        ("icon-theme on the name held", "icon-theme", {"icon-theme": "VgsProbeSet"},
+         "icon theme already set: VgsProbeSet", ["icon-theme"], [], 0),
+        ("icon-theme on another name", "icon-theme", {"icon-theme": "Papirus"},
+         "", ["icon-theme"], [("icon-theme", "VgsProbeSet")], 0),
+        ("icon-theme on an unreadable key", "icon-theme", {"icon-theme": None},
+         "", ["icon-theme"], [("icon-theme", "VgsProbeSet")], 0),
+    ]
+    with as_home(login):
+        assert_equal(helper._sandboxed_home(), False, "the login user's own home is not a sandbox")
+        for label, hook, current, reason, reads, writes, sleeps in rows:
+            result, calls, slept = _run_settings_hook(hook, current)
+            # theme_apply reads `ok` to decide whether a hook needs a warning, so a skip
+            # that reported anything else would land as a partial apply.
+            assert_equal(result.get("ok"), True, f"{label}: the hook reports success")
+            assert_equal(result.get("reason", ""), reason, f"{label}: why it skipped, or that it did not")
+            # gtk-settings reads both keys on every run: the write list is exactly the
+            # keys whose read disagreed with the value the hook wants.
+            assert_equal([call[3] for call in calls if call[1] == "get"], reads,
+                         f"{label}: the keys it read before deciding")
+            assert_equal([(call[3], call[4]) for call in calls if call[1] == "set"], writes,
+                         f"{label}: the gsettings writes it issued")
+            assert_equal(slept, [0.3] * sleeps, f"{label}: the sleeps it took")
 
 
 # A Hyprland session for the reload hook. The reload is whole-config, so it puts every
@@ -3397,7 +3493,10 @@ def test_a_real_icon_set_install_wins_over_the_bundled_copy_and_counts_as_instal
             result = helper.apply_icon_theme_hook({"theme_type": "dark"})
         assert_equal(result.get("reason"), None,
                      "a set on the search path is not reported as not installed")
-        assert_equal(written, [("gsettings", "set", "org.gnome.desktop.interface", "icon-theme", "VgsProbeSet")],
+        # `record` answers the read with no stdout, which is a key the hook could not
+        # read, so it stays on its write path rather than skipping on an unread value.
+        assert_equal(written, [("gsettings", "get", "org.gnome.desktop.interface", "icon-theme"),
+                               ("gsettings", "set", "org.gnome.desktop.interface", "icon-theme", "VgsProbeSet")],
                      "the hook writes the set it found on the search path")
 
     saved = {n: os.environ.get(n) for n in ("XDG_DATA_DIRS", "XDG_DATA_HOME")}
@@ -13156,6 +13255,7 @@ def main():
     test_hyprland_blur_script()
     test_chromium_policy_refuses_a_sandbox_home()
     test_theme_hooks_stay_out_of_the_login_session()
+    test_the_settings_hooks_skip_the_writes_the_session_already_holds()
     test_hypr_reload_restores_the_live_gaps_the_whole_config_reload_discards()
     test_a_lost_live_gap_makes_the_theme_apply_partial()
     test_vshell_blur_cli_contract()
