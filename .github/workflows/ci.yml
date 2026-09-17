@@ -307,6 +307,8 @@ jobs:
           scripts/test-qml-smoke.sh
           # The sampler's --report mode reads a TSV fixture and needs no shell.
           scripts/test-sample-shell-memory.sh
+          # The heap profile attributor reads hand-written dumps and a stub symbolizer.
+          scripts/test-attribute-heap-profile.py
           # The recorder script runs against a stub recorder and needs no session.
           scripts/test-screenrecording-status.sh
           scripts/test-validation-areas.sh
