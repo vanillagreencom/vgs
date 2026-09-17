@@ -1,6 +1,7 @@
 pragma Singleton
 pragma ComponentBehavior: Bound
 
+import QtCore
 import QtQuick
 import Quickshell
 import qs.Common
@@ -9,6 +10,7 @@ import qs.Services
 Singleton {
     id: root
     readonly property var log: Log.scoped("IconThemeService")
+    readonly property string configDir: Paths.strip(StandardPaths.writableLocation(StandardPaths.ConfigLocation))
 
     readonly property string managedTheme: {
         if (typeof SettingsData === "undefined")
@@ -117,16 +119,16 @@ Singleton {
                 if (!detected || detected === "System Default")
                     return;
                 const detectedEscaped = detected.replace(/'/g, "'\\''");
-                const writeScript = `mkdir -p ${SettingsData._configDir}/cosmic/com.system76.CosmicTk/v1
-                printf '"%s"\\n' '${detectedEscaped}' > ${SettingsData._configDir}/cosmic/com.system76.CosmicTk/v1/icon_theme 2>/dev/null || true`;
+                const writeScript = `mkdir -p ${configDir}/cosmic/com.system76.CosmicTk/v1
+                printf '"%s"\\n' '${detectedEscaped}' > ${configDir}/cosmic/com.system76.CosmicTk/v1/icon_theme 2>/dev/null || true`;
                 Quickshell.execDetached(["sh", "-lc", writeScript]);
             });
             return;
         }
 
         const cosmicThemeNameEscaped = cosmicThemeName.replace(/'/g, "'\\''");
-        const script = `mkdir -p ${SettingsData._configDir}/cosmic/com.system76.CosmicTk/v1
-        printf '"%s"\\n' '${cosmicThemeNameEscaped}' > ${SettingsData._configDir}/cosmic/com.system76.CosmicTk/v1/icon_theme 2>/dev/null || true`;
+        const script = `mkdir -p ${configDir}/cosmic/com.system76.CosmicTk/v1
+        printf '"%s"\\n' '${cosmicThemeNameEscaped}' > ${configDir}/cosmic/com.system76.CosmicTk/v1/icon_theme 2>/dev/null || true`;
         Quickshell.execDetached(["sh", "-lc", script]);
     }
 
@@ -140,9 +142,9 @@ Singleton {
             PortalService.setSystemIconTheme(gtkThemeName);
         }
 
-        const configScript = `mkdir -p ${SettingsData._configDir}/gtk-3.0 ${SettingsData._configDir}/gtk-4.0
+        const configScript = `mkdir -p ${configDir}/gtk-3.0 ${configDir}/gtk-4.0
 
-        for config_dir in ${SettingsData._configDir}/gtk-3.0 ${SettingsData._configDir}/gtk-4.0; do
+        for config_dir in ${configDir}/gtk-3.0 ${configDir}/gtk-4.0; do
         settings_file="$config_dir/settings.ini"
         [ -f "$settings_file" ] && [ ! -w "$settings_file" ] && continue
         if [ -f "$settings_file" ]; then
@@ -178,7 +180,7 @@ Singleton {
             return;
         const qtThemeNameEscaped = qtThemeName.replace(/'/g, "'\\''");
 
-        const script = `mkdir -p ${SettingsData._configDir}/qt5ct ${SettingsData._configDir}/qt6ct ${SettingsData._configDir}/environment.d 2>/dev/null || true
+        const script = `mkdir -p ${configDir}/qt5ct ${configDir}/qt6ct ${configDir}/environment.d 2>/dev/null || true
         update_qt_icon_theme() {
         local config_file="$1"
         local theme_name="$2"
@@ -196,8 +198,8 @@ Singleton {
         printf "[Appearance]\\nicon_theme=%s\\n" "$theme_name" > "$config_file"
         fi
         }
-        update_qt_icon_theme ${SettingsData._configDir}/qt5ct/qt5ct.conf '${qtThemeNameEscaped}'
-        update_qt_icon_theme ${SettingsData._configDir}/qt6ct/qt6ct.conf '${qtThemeNameEscaped}'`;
+        update_qt_icon_theme ${configDir}/qt5ct/qt5ct.conf '${qtThemeNameEscaped}'
+        update_qt_icon_theme ${configDir}/qt6ct/qt6ct.conf '${qtThemeNameEscaped}'`;
 
         Quickshell.execDetached(["sh", "-lc", script]);
     }

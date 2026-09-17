@@ -75,6 +75,31 @@ test("SettingsData declares each change signal the spec routes a key to", () => 
     assert.deepEqual(emitted, SIGNALS.map(name => [name, "k"]), "each map entry emits its own signal");
 });
 
+// SettingsData's own `_hooks` expression, evaluated with every non-signal hook stubbed, so the
+// row follows where the store routes the signal map.
+function storeHooks(state, emitted) {
+    const opener = "readonly property var _hooks: ";
+    const at = SETTINGS.indexOf(opener + "Coalescer.deferHooks(");
+    assert.notEqual(at, -1, "SettingsData declares _hooks as a Coalescer.deferHooks call");
+    const start = at + opener.length;
+    let depth = 0;
+    let end = -1;
+    for (let i = SETTINGS.indexOf("(", start); i < SETTINGS.length; i++) {
+        if (SETTINGS[i] === "(")
+            depth += 1;
+        else if (SETTINGS[i] === ")" && --depth === 0) {
+            end = i + 1;
+            break;
+        }
+    }
+    assert.notEqual(end, -1, "the _hooks expression closes");
+    const stubs = { Coalescer, _writes: state, _changeSignals: changeSignals(emitted) };
+    for (const [, name] of SETTINGS.slice(start, end).matchAll(/"\w+":\s*(\w+)/g))
+        if (name !== "_changeSignals")
+            stubs[name] = () => {};
+    return evaluate(`return ${SETTINGS.slice(start, end)};`, stubs);
+}
+
 test("a setter emits its change signal after the coalesced write, not at assignment", () => {
     for (const [key, value, signal] of [
         ["gtkThemingEnabled", true, "appThemeInputChanged"],
@@ -83,7 +108,7 @@ test("a setter emits its change signal after the coalesced write, not at assignm
     ]) {
         const events = [];
         const state = Coalescer.create();
-        const hooks = Coalescer.deferHooks(state, {}, changeSignals(events));
+        const hooks = storeHooks(state, events);
         const root = defaults();
         Spec.set(root, key, value, () => Coalescer.markDirty(state), hooks);
         assert.deepEqual(events, [], `${key}: assignment emits nothing`);
@@ -207,5 +232,23 @@ test("each owning service debounces its signal and performs the effect after flu
         const scopeStubs = Object.assign({ root, SettingsData: { flushSettings: () => events.push("flush") } }, stubs(events));
         evaluate(trigger[1], { root });
         assert.deepEqual(events, expected, file);
+    }
+});
+
+test("per-mode icon themes are applied on a user light or dark switch only", () => {
+    const handler = extractBlock(read("Services/IconThemeService.qml"), "function onIsLightModeChanged()");
+    for (const [name, switching, perMode, light, dark, applied] of [
+        ["user switch, per-mode, distinct themes", true, true, "Papirus-Light", "Papirus-Dark", 1],
+        ["mode changed without a user switch", false, true, "Papirus-Light", "Papirus-Dark", 0],
+        ["per-mode off", true, false, "Papirus-Light", "Papirus-Dark", 0],
+        ["same theme in both modes", true, true, "Papirus", "Papirus", 0]
+    ]) {
+        let calls = 0;
+        evaluate(handler, {
+            SessionData: { isSwitchingMode: switching },
+            SettingsData: { iconThemePerMode: perMode, iconThemeLight: light, iconThemeDark: dark },
+            root: { applyStoredIconTheme: () => calls++ }
+        });
+        assert.equal(calls, applied, name);
     }
 });
