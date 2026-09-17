@@ -8429,10 +8429,7 @@ def preview_focus_target(monitors: List[Dict[str, Any]]) -> str | None:
 
 def preview_dispatch(lua_call: str, legacy: List[str]) -> None:
     # hl.dsp calls construct dispatches; hl.dispatch executes them.
-    # Lua and classic Hyprland command errors can appear on stdout with exit 0,
-    # so inspect the response text as well as the exit code.
-    res = run(["hyprctl", "eval", f"hl.dispatch({lua_call})"])
-    if res.returncode != 0 or "error" in (res.stdout or "").lower():
+    if not _hyprctl_eval_ok(run(["hyprctl", "eval", f"hl.dispatch({lua_call})"])):
         run(["hyprctl", "dispatch", *legacy])
 
 
@@ -8573,7 +8570,7 @@ def preview_stage():
     def restore_cursor(pos: Tuple[int, int] | None) -> None:
         # Output layout changes warp the cursor; put it back where the user had it.
         if pos:
-            run(["hyprctl", "eval", f"hl.dispatch(hl.dsp.cursor.move({{ x = {pos[0]}, y = {pos[1]} }}))"])
+            preview_dispatch(f"hl.dsp.cursor.move({{ x = {pos[0]}, y = {pos[1]} }})", ["movecursor", str(pos[0]), str(pos[1])])
 
     def focused_monitor() -> str | None:
         return next((m.get("name") for m in preview_hyprctl_json("monitors") if m.get("focused")), None)
@@ -8616,14 +8613,21 @@ def preview_stage():
                 rule = run(["hyprctl", "keyword", "windowrulev2", PREVIEW_WINDOW_RULE_LEGACY])
                 run(["hyprctl", "keyword", "windowrulev2", PREVIEW_WINDOW_RULE_LEGACY_NOFOCUS])
                 run(["hyprctl", "keyword", "windowrulev2", PREVIEW_WINDOW_RULE_LEGACY_TILE])
-                rules_ok = legacy_rule = rule.returncode == 0 and "error" not in (rule.stdout or "").lower()
+                rules_ok = legacy_rule = _hyprctl_eval_ok(rule)
+                if not rules_ok:
+                    # The caller's own diagnostic tells the operator to run from the
+                    # Hyprland session, which is where they already are. Name the
+                    # compositor's refusal of each spelling instead.
+                    for spelling, reply in (("eval", hook), ("keyword", rule)):
+                        text = (reply.stdout or reply.stderr or "").strip() or "no reply"
+                        eprint(f"preview staging rule refused (hyprctl {spelling} exit {reply.returncode}): {text}")
             if rules_ok and run(["hyprctl", "output", "create", "headless", PREVIEW_OUTPUT]).returncode == 0:
                 staged = True
                 # The output inherits the user's default scale; force scale 1 so the
                 # nested session sees the full logical resolution.
                 def set_mode(w: int, h: int) -> None:
                     mode = run(["hyprctl", "eval", f'hl.monitor({{ output = "{PREVIEW_OUTPUT}", mode = "{w}x{h}@60", position = "auto", scale = 1 }})'])
-                    if mode.returncode != 0 or "error" in (mode.stdout or "").lower():
+                    if not _hyprctl_eval_ok(mode):
                         run(["hyprctl", "keyword", "monitor", f"{PREVIEW_OUTPUT},{w}x{h}@60,auto,1"])
 
                 # Grow the output by whatever the parent spends on window chrome so
@@ -15741,13 +15745,15 @@ def _hyprctl_eval(script: str) -> subprocess.CompletedProcess[str]:
 
 
 def _hyprctl_eval_ok(proc: subprocess.CompletedProcess[str]) -> bool:
-    """Whether a `hyprctl eval` chunk actually ran.
+    """Whether a `hyprctl eval` chunk or `hyprctl keyword` request actually ran.
 
-    A session on a classic config answers "eval is only supported with the lua config
-    manager" on stdout and still exits 0, so a return code alone reports rules as applied
-    that never ran, and every caller then believes the compositor owns decoration it does
-    not draw. The Lua config manager answers exactly "ok", and prefixes a failed chunk
-    with "error:".
+    hyprctl answers an applied request with exactly "ok", and prefixes a failed Lua chunk
+    with "error:". Each spelling refuses on stdout with exit 0 on the config manager it
+    does not belong to: `eval` answers "eval is only supported with the lua config
+    manager" on a classic config, `keyword` answers "keyword can't work with non-legacy
+    parsers. Use eval." on a Lua config. A return code alone reads either refusal as
+    applied, so the caller believes the compositor owns decoration or a window rule it
+    never registered.
     """
     return proc.returncode == 0 and (proc.stdout or "").strip() == "ok"
 
