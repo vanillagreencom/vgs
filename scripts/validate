@@ -76,6 +76,7 @@ qml       | scripts/test-plugin-daemon-views.js
 -         | scripts/test-paste-lifecycle.js
 -         | scripts/test-compositor-focus.js
 -         | scripts/test-compositor-events.js
+-         | scripts/test-event-probe.js
 -         | scripts/test-dock-scratchpad-identity.js
 -         | scripts/test-overview-refetch.js
 qml       | scripts/test-bar-workspace-filter.js
@@ -110,6 +111,7 @@ go        | scripts/check-execbound-adoption-tests.py
 -         | scripts/test-validate.sh
 -         | scripts/test-sample-shell-memory.sh
 -         | scripts/test-attribute-heap-profile.py
+-         | scripts/test-bench-shell-events.py
 -         | scripts/test-screenrecording-status.sh
 -         | scripts/test-validation-inventory.sh
 -         | scripts/test-validation-areas.sh
@@ -147,6 +149,7 @@ always    | git diff --check
 -         | .agents/skills/doc-limits/scripts/doc-limits
 always    | .agents/skills/commit-guards/scripts/commit-guards all --base origin/main
 qml,may-skip | scripts/qml-smoke.sh --nested --require-static --require-nested
+qml,may-skip | scripts/qml-smoke.sh --require-nested --shell-env VSHELL_EVENT_PROBE=1 --driver scripts/bench-shell-events.py
 qml       | scripts/check-validation-safety.sh --require-static
 -         | scripts/check-label-taxonomy.py
 qml,may-skip,live | scripts/smoke-surfaces.sh

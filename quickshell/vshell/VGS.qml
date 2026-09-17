@@ -538,6 +538,12 @@ Item {
     }
 
     LazyLoader {
+        active: Quickshell.env("VSHELL_EVENT_PROBE") === "1"
+
+        EventProbe {}
+    }
+
+    LazyLoader {
         id: dockContextMenuLoader
 
         active: false
