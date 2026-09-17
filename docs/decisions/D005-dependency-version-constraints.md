@@ -104,4 +104,4 @@ scripts/check-command-declarations.py
 - VGS-78 — added the `$comment` this replaces, and established the jq 1.5 fact from `builtin.c` at tags `jq-1.4` / `jq-1.5` / `jq-1.6`
 - `bin/vshell_helper.py` — `CAPABILITY_PROBES`, `capability_probe_ok`, `_unusable_commands`
 - `config/vshell/dependencies.json` — `features.base.$comment`
-- [D001](D001-quickshell-0-3-0-upstream-defects.md) — the three Quickshell 0.3.0 session-lock defects and the decision not to vendor or patch. It was cited here as the reason Quickshell was a pin rather than a minimum; the VGS-371 correction above supersedes that reading.
+- [D001](D001-quickshell-0-3-0-upstream-defects.md) — the three Quickshell 0.3.0 defects and the decision not to vendor or patch. It was cited here as the reason Quickshell was a pin rather than a minimum; the VGS-371 correction above supersedes that reading.
