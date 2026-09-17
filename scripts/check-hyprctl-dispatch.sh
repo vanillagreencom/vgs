@@ -20,10 +20,16 @@ set -euo pipefail
 
 root="${1:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}"
 owner="vshell-hyprctl-dispatch"
-# hyprctl, then its flags within the same command, then the dispatch word.
-pattern='(^|[^[:alnum:]_-])hyprctl[[:space:]][^|;&]*dispatch([^[:alnum:]_]|$)'
+# The command word, bounded on both sides. The leading class already admits the quote or
+# the path separator a quoted or absolute command word puts there; the trailing class is
+# what a closing quote, a command substitution or both need. Neither side admits a letter,
+# a digit, `_` or `-`, so myhyprctl and hyprctl-foo stay out. A wider trailing class would
+# only add false refusals, which are fail-closed, so no row pins its width.
+command_word='(^|[^[:alnum:]_-])hyprctl'"['\"\`)]*"
+# The command word, then its flags within the same command, then the dispatch word.
+pattern="$command_word"'[[:space:]][^|;&]*dispatch([^[:alnum:]_]|$)'
 # A batch string separates its commands with `;`, so a dispatch may follow another command.
-batch_pattern='(^|[^[:alnum:]_-])hyprctl([[:space:]]+[^[:space:]]+)*[[:space:]]+--batch([[:space:]]|=).*dispatch([^[:alnum:]_]|$)'
+batch_pattern="$command_word"'([[:space:]]+[^[:space:]]+)*[[:space:]]+--batch([[:space:]]|=).*dispatch([^[:alnum:]_]|$)'
 
 listing="$(mktemp)"
 trap 'rm -f -- "${listing:?}"' EXIT
