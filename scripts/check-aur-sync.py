@@ -275,10 +275,18 @@ def version_order(value: str) -> tuple[tuple[int, ...], int] | None:
 def published_version(directory: Path) -> tuple[str, str] | None:
     """The (pkgver, pkgrel) the recipe's own git HEAD publishes.
 
-    None means nothing is published there, which is one of three states: the
-    directory is in no git repository, its repository has no commit, or its HEAD
-    holds no recipe beside `directory`. Any other git failure is raised, because
-    read as nothing published it would skip the downgrade refusal below.
+    None means nothing is published there: the directory is in no git repository
+    that git can open, its repository has no commit, or its HEAD holds no recipe
+    beside `directory`. A failure of the two reads below that address HEAD's own
+    content is raised instead, because read as nothing published it would skip
+    the downgrade refusal in the caller.
+
+    The two rev-parse calls still read every failure as nothing published, and
+    git gives no way to separate their states from a damaged repository: a
+    repository whose HEAD file is unreadable reports `not a git repository`, the
+    same as a plain directory. That costs nothing here, because publish-aur.sh
+    runs git in this same clone with errexit right after stamping it, so a clone
+    git cannot operate on publishes nothing whatever this returns.
     """
     inside = git_result(directory, "rev-parse", "--is-inside-work-tree")
     if inside.returncode != 0 or inside.stdout.strip() != "true":

@@ -403,6 +403,57 @@ class PublishedVersion(unittest.TestCase):
             self.assertIn("assigns pkgver 2 time(s)", str(raised.exception))
             self.assertEqual(before, (directory / "PKGBUILD").read_text())
 
+    def test_a_repository_with_no_commit_publishes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source"
+            count, head = make_repo(source)
+            directory = Path(tmp) / "recipe"
+            directory.mkdir()
+            git("init", "--quiet", "--initial-branch", "master", cwd=directory)
+            recipe(directory)
+
+            self.assertEqual(
+                CHECKER.stamp_vcs_version(directory, root=source),
+                f"0.5.0.r{count}.g{head}",
+            )
+
+    def test_a_head_holding_no_recipe_publishes_nothing(self):
+        # A package published for the first time: the AUR repository exists and
+        # has commits, and no recipe is in it yet.
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source"
+            count, head = make_repo(source)
+            directory = Path(tmp) / "recipe"
+            directory.mkdir()
+            git("init", "--quiet", "--initial-branch", "master", cwd=directory)
+            (directory / "README").write_text("nothing published yet\n")
+            git("add", "--all", cwd=directory)
+            git("commit", "--quiet", "-m", "no recipe", cwd=directory)
+            recipe(directory)
+
+            self.assertEqual(
+                CHECKER.stamp_vcs_version(directory, root=source),
+                f"0.5.0.r{count}.g{head}",
+            )
+
+    def test_a_head_that_cannot_be_listed_is_refused(self):
+        # With the tree gone, `git show HEAD:./PKGBUILD` reports that the path
+        # exists on disk but not in HEAD, which reads exactly like a first
+        # publication. Listing HEAD is what tells the two apart.
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source"
+            make_repo(source)
+            directory = self.publish(Path(tmp), "0.9.0.r999.gfeedbee")
+            tree = git("rev-parse", "HEAD^{tree}", cwd=directory)
+            (directory / ".git" / "objects" / tree[:2] / tree[2:]).unlink()
+            before = (directory / "PKGBUILD").read_text()
+
+            with self.assertRaises(CHECKER.CheckError) as raised:
+                CHECKER.stamp_vcs_version(directory, root=source)
+
+            self.assertIn("cannot list", str(raised.exception))
+            self.assertEqual(before, (directory / "PKGBUILD").read_text())
+
     def test_a_published_state_that_cannot_be_read_is_refused(self):
         # An unreadable published recipe is not an unpublished one: read as
         # nothing published, the downgrade refusal would be skipped entirely.
