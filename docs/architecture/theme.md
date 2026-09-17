@@ -2,7 +2,7 @@
 
 Covers: themes/, bin/, quickshell/vshell/Services/, quickshell/vshell/Modules/Settings/, packaging/install-system.sh, packaging/fedora/vgs-shell.spec
 
-The helper derives palette roles and renders app targets. Theme packages own colour and wallpaper data; shell geometry remains a VGS setting. Who owns the wallpaper on screen, and in what order applies reach the helper, is in [wallpaper.md](wallpaper.md). A curated package's declared UI roles are in [theme-ui-roles.md](theme-ui-roles.md). Agent CLI theme rendering and selection are in [agent-cli-themes.md](agent-cli-themes.md). Wallpaper downloads and updates from the catalog are in [theme-catalog.md](theme-catalog.md).
+The helper derives palette roles and renders app targets. Theme packages own colour and wallpaper data; shell geometry remains a VGS setting. Who owns the wallpaper on screen, and in what order applies reach the helper, is in [wallpaper.md](wallpaper.md). A curated package's declared UI roles are in [theme-ui-roles.md](theme-ui-roles.md). Agent CLI theme rendering and selection are in [agent-cli-themes.md](agent-cli-themes.md). Wallpaper publishing, downloads and updates from the catalog are in [theme-catalog.md](theme-catalog.md).
 
 ## Invariants
 

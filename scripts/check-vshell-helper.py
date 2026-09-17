@@ -6,6 +6,7 @@ import contextlib
 import argparse
 import ast
 import colorsys
+import datetime
 import fcntl
 import hashlib
 import importlib.machinery
@@ -6676,12 +6677,12 @@ def test_theme_asset_publisher():
         uploads = []
 
         class _Release:
-            REPO_SLUG = "vanillagreencom/vgs"
+            ASSET_REPO = "vanillagreencom/vgs-themes"
 
             def __init__(self, assets):
                 self.assets = assets
 
-            def gh_release(self, _tag):
+            def gh_release(self, _repo, _tag):
                 return None if self.assets is None else {"assets": [{"name": n} for n in self.assets]}
 
             def is_imagery(self, rel):
@@ -6770,7 +6771,7 @@ def test_theme_asset_publisher():
             # must say so rather than requesting a URL that returns 404.
             original_lock = publisher.LOCK_PATH
             unpublished = root / "unpublished-lock.json"
-            unpublished.write_text(json.dumps({"version": 1, "themes": {"demo": dict(
+            unpublished.write_text(json.dumps({"version": 1, "repo": "o/r", "themes": {"demo": dict(
                 entry, published=False)}}))
             publisher.LOCK_PATH = unpublished
             try:
@@ -6798,16 +6799,30 @@ def test_theme_asset_publisher():
                                         subprocess.CompletedProcess(a, code, '{"assets":[]}', stderr))
             if expect == "raise":
                 try:
-                    generator.gh_release("themes-v1")
+                    generator.gh_release("o/r", "themes-v1")
                     raise AssertionError(f"an {label} gh must not answer for the release")
                 except generator.GhUnavailable:
                     pass
             elif expect is None:
-                assert_equal(generator.gh_release("themes-v1"), None,
+                assert_equal(generator.gh_release("o/r", "themes-v1"), None,
                              f"a {label} release reads as absent")
             else:
-                assert_equal(generator.gh_release("themes-v1"), {"assets": []},
+                assert_equal(generator.gh_release("o/r", "themes-v1"), {"assets": []},
                              f"a {label} release reads as present")
+        # A listing gh could not produce never reads as a repository with no
+        # releases, which would let a publish open one inside the interval.
+        for label, code, expect in (("listed", 0, []), ("unauthenticated", 4, "raise"),
+                                    ("missing repository", 1, "raise")):
+            generator.subprocess.run = (lambda *a, code=code, **k:
+                                        subprocess.CompletedProcess(a, code, "[]", "gh failed"))
+            if expect == "raise":
+                try:
+                    generator.gh_releases("o/r")
+                    raise AssertionError(f"a {label} release listing must not answer")
+                except generator.GhUnavailable:
+                    pass
+            else:
+                assert_equal(generator.gh_releases("o/r"), expect, f"a {label} repository's releases")
     finally:
         generator.subprocess.run = original_run
 
@@ -6836,16 +6851,23 @@ def test_theme_asset_publish_records_what_is_on_the_release():
 
             def __init__(self):
                 self.assets: dict[str, list[str]] = {}
+                self.created: dict[str, str] = {}
                 self.lookups = 0
                 self.LOCK_VERSION = real.LOCK_VERSION
 
-            REPO_SLUG = "vanillagreencom/vgs"
+            ASSET_REPO = "vanillagreencom/vgs-themes"
 
-            def gh_release(self, tag):
+            def gh_release(self, repo, tag):
                 self.lookups += 1
+                repos.add(repo)
                 if tag not in self.assets:
                     return None
                 return {"assets": [{"name": n} for n in self.assets[tag]]}
+
+            def gh_releases(self, repo):
+                repos.add(repo)
+                return [{"tagName": tag, "createdAt": self.created[tag]}
+                        for tag in sorted(self.assets, key=lambda t: self.created[t], reverse=True)]
 
             def is_imagery(self, rel):
                 return real.is_imagery(rel)
@@ -6858,12 +6880,16 @@ def test_theme_asset_publish_records_what_is_on_the_release():
 
         repos: set[str] = set()
         shipped: dict[str, bytes] = {}
+        # Releases the fake opens are older than the cadence interval unless a
+        # row says otherwise.
+        created_at = "2000-01-01T00:00:00Z"
 
         def fake_gh(*args):
             if "--repo" in args:
                 repos.add(args[args.index("--repo") + 1])
             if args[:2] == ("release", "create"):
                 release.assets.setdefault(args[2], [])
+                release.created[args[2]] = created_at
             if args[:2] == ("release", "upload"):
                 staged = Path(args[3])
                 shipped[staged.name] = staged.read_bytes()
@@ -6879,8 +6905,8 @@ def test_theme_asset_publish_records_what_is_on_the_release():
         publisher.gh = fake_gh
         publisher.regenerate_catalog = lambda: None
 
-        def run(upload: bool) -> dict:
-            publisher.publish(argparse.Namespace(asset_root=str(tmp / "assets"), upload=upload))
+        def run(upload: bool, force: bool = False) -> dict:
+            publisher.publish(argparse.Namespace(asset_root=str(tmp / "assets"), upload=upload, force=force))
             return json.loads(publisher.LOCK_PATH.read_text())["themes"]
 
         try:
@@ -6937,7 +6963,7 @@ def test_theme_asset_publish_records_what_is_on_the_release():
                          "a publish looks the release up once, plus once per upload")
             # One repository. A second constant here would upload to one place
             # while the catalog's baseUrl named another, and every install 404s.
-            assert_equal(sorted(repos), [release.REPO_SLUG],
+            assert_equal(sorted(repos), [release.ASSET_REPO],
                          "uploads go to the repository the catalog downloads from")
 
             # Unchanged published content is skipped: a rerun must not orphan a
@@ -6979,8 +7005,11 @@ def test_theme_asset_publish_records_what_is_on_the_release():
             # a failure leaves no unpublished pin naming the release it was
             # filling. The lock records that release itself, and the rerun
             # continues into it instead of opening the next number and leaving a
-            # partly filled release behind.
+            # partly filled release behind. The release the failed run opened is
+            # inside the interval, and continuing into it opens nothing, so the
+            # rerun is not refused.
             (assets / "backgrounds" / "1-demo.jpg").write_bytes(b"third wallpaper\n")
+            created_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
             working_gh = publisher.gh
 
             def failing_gh(*args):
@@ -7008,6 +7037,9 @@ def test_theme_asset_publish_records_what_is_on_the_release():
                          "no release number is stranded by the failure")
             assert_equal("publishing" in json.loads(publisher.LOCK_PATH.read_text()), False,
                          "a run that finishes its batch clears the in-progress release")
+            old = "2000-01-01T00:00:00Z"
+            created_at = old
+            release.created = {tag: old for tag in release.created}
 
             # Everything the lock records about an archive comes from the one
             # read that packed it, so a wallpaper replaced while the run uploads
@@ -7034,6 +7066,42 @@ def test_theme_asset_publish_records_what_is_on_the_release():
             # The tree holds theme.json, colors.toml and the preview beside it.
             assert_equal(published, {"backgrounds/1-demo.jpg": b"fourth wallpaper\n"},
                          "a published archive holds only the wallpapers, as they were packed")
+
+            # A release opened inside the interval refuses the next one, and the
+            # refused run's lock names no release it did not open. --force opens it.
+            (assets / "backgrounds" / "1-demo.jpg").write_bytes(b"sixth wallpaper\n")
+            newest = "themes-v4"
+            release.created[newest] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            settled = json.loads(publisher.LOCK_PATH.read_text())
+            try:
+                run(True)
+                raise AssertionError("opening a release inside the interval must be refused")
+            except publisher.ReleaseTooRecent as exc:
+                refused = json.loads(publisher.LOCK_PATH.read_text())
+                assert_equal((str(exc).splitlines()[0], "publishing" in refused,
+                              refused["themes"]["demo"] == settled["themes"]["demo"], sorted(release.assets)),
+                             (f"release-too-recent {release.ASSET_REPO} {newest}", False, True,
+                              ["themes-v1", "themes-v2", "themes-v3", "themes-v4"]),
+                             "the refusal names the recent release, records no in-progress release and opens nothing")
+            forced = run(True, force=True)["demo"]
+            assert_equal((forced["release"], sorted(release.assets)[-1]), ("themes-v5", "themes-v5"),
+                         "--force opens the release inside the interval")
+
+            # A lock whose pins live on another repository republishes every
+            # archive into the release after the asset repository's highest,
+            # under the same archive name and revision.
+            moved = json.loads(publisher.LOCK_PATH.read_text())
+            moved["repo"] = "vanillagreencom/vgs"
+            publisher.LOCK_PATH.write_text(json.dumps(moved))
+            release.assets = {"themes-v2": []}
+            release.created = {"themes-v2": old}
+            rehomed = run(True)
+            assert_equal(
+                ({name: (pin["release"], pin["archive"], pin["published"]) for name, pin in rehomed.items()},
+                 json.loads(publisher.LOCK_PATH.read_text())["repo"], sorted(release.assets["themes-v3"])),
+                ({name: ("themes-v3", moved["themes"][name]["archive"], True) for name in moved["themes"]},
+                 release.ASSET_REPO, sorted(pin["archive"] for pin in moved["themes"].values())),
+                "a lock from another repository republishes every pin unchanged after the highest release there")
 
             # A theme dropped from the tree loses its pin and its thumbnail.
             shutil.rmtree(themes / "demo")
@@ -7083,10 +7151,12 @@ def test_theme_asset_publication_gate():
     catalog = {"themes": [{"name": "demo", "assets": {
         "release": "themes-v1", "archive": "vgs-theme-demo-r1.tar.gz"}}]}
 
+    asked: set[str] = set()
+
     def with_lock(entry: dict, listed):
         original_load, original_release = generator.load_lock, generator.gh_release
-        generator.load_lock = lambda: {"demo": entry}
-        generator.gh_release = lambda _tag: listed
+        generator.load_lock = lambda: {"repo": "o/lock-repo", "themes": {"demo": entry}}
+        generator.gh_release = lambda repo, _tag: asked.add(repo) or listed
         try:
             return generator.check_assets_published(catalog)
         finally:
@@ -7104,6 +7174,7 @@ def test_theme_asset_publication_gate():
          {"assets": [{"name": "vgs-theme-demo-r2.tar.gz"}]}, 1),
     ):
         assert_equal(with_lock(entry, release), expected, f"asset publication gate: {label}")
+    assert_equal(asked, {"o/lock-repo"}, "the gate asks the repository the lock's pins live on")
 
 
 def test_theme_catalog_generator():
@@ -7120,7 +7191,7 @@ def test_theme_catalog_generator():
             (themes / name / "apps" / "btop.theme").write_text("theme\n")
             (themes / name / "backgrounds" / "1.jpg").write_bytes(b"wallpaper")
             (themes / name / helper.THEME_PREVIEW_FILE).write_bytes(b"preview")
-        lock = {"version": generator.LOCK_VERSION, "themes": {name: {
+        lock = {"version": generator.LOCK_VERSION, "repo": "o/lock-repo", "themes": {name: {
             "release": "themes-v1", "archive": f"vgs-theme-{name}-r1.tar.gz", "rev": 1,
             "size": 1, "sha256": "a" * 64, "published": True} for name in (default, "other")}}
         (themes / "asset-lock.json").write_text(json.dumps(lock))
@@ -7132,7 +7203,11 @@ def test_theme_catalog_generator():
         try:
             assert_equal(generator.main(["--write"]), 0, "a catalog matching its lock is written")
             assert_equal(generator.main(["--check"]), 0, "the written catalog is up to date")
-            written = json.loads((themes / "catalog.json").read_text())["themes"][0]
+            written_catalog = json.loads((themes / "catalog.json").read_text())
+            assert_equal((written_catalog["source"]["repo"], written_catalog["source"]["baseUrl"]),
+                         ("o/lock-repo", "https://github.com/o/lock-repo/releases/download"),
+                         "the catalog downloads from the repository the lock's pins live on")
+            written = written_catalog["themes"][0]
             assert_equal(sorted(written), ["assets", "mode", "name", "pair", "size", "source"],
                          "a catalog entry pins the archive and carries no definition files or colours")
 

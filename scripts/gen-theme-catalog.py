@@ -27,8 +27,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 THEMES_DIR = REPO_ROOT / "themes"
 CATALOG_PATH = THEMES_DIR / "catalog.json"
 LOCK_PATH = THEMES_DIR / "asset-lock.json"
-REPO_SLUG = "vanillagreencom/vgs"
-RELEASE_BASE_URL = f"https://github.com/{REPO_SLUG}/releases/download"
+# The repository scripts/publish-theme-assets.py opens themes-vN releases on,
+# apart from the shell's own releases (D015 amendment). A lock records the
+# repository its pins live on, and the catalog downloads from that one.
+ASSET_REPO = "vanillagreencom/vgs-themes"
 CATALOG_VERSION = 2
 # The lock shape scripts/publish-theme-assets.py writes: one imagery-only
 # archive per theme. An older lock pins archives that also carry definitions,
@@ -84,7 +86,13 @@ def package_files(helper: Any) -> List[str]:
     return files
 
 
+def release_base_url(repo: str) -> str:
+    """The download root a theme archive on `repo` resolves under, as <root>/<release>/<archive>."""
+    return f"https://github.com/{repo}/releases/download"
+
+
 def load_lock() -> Dict[str, Any]:
+    """The whole lock: `repo` names where its pins live, `themes` holds one pin per theme."""
     if not LOCK_PATH.is_file():
         raise SystemExit(f"{LOCK_PATH} is missing; run scripts/publish-theme-assets.py")
     data = json.loads(LOCK_PATH.read_text())
@@ -94,7 +102,7 @@ def load_lock() -> Dict[str, Any]:
     if data.get("version") != LOCK_VERSION:
         raise SystemExit(f"{LOCK_PATH} is lock version {data.get('version')}, not {LOCK_VERSION}; "
                          f"republish every theme with scripts/publish-theme-assets.py")
-    return themes
+    return data
 
 
 def asset_entry(lock: Dict[str, Any], name: str) -> Dict[str, Any]:
@@ -144,14 +152,14 @@ def build_catalog(ref: str) -> Dict[str, Any]:
     lock = load_lock()
     themes = []
     for name in theme_names():
-        themes.append(theme_entry(helper, THEMES_DIR / name, lock))
+        themes.append(theme_entry(helper, THEMES_DIR / name, lock["themes"]))
     return {
         "version": CATALOG_VERSION,
         "source": {
             "type": "github-release",
-            "repo": REPO_SLUG,
+            "repo": lock["repo"],
             "ref": ref,
-            "baseUrl": RELEASE_BASE_URL,
+            "baseUrl": release_base_url(lock["repo"]),
         },
         "count": len(themes),
         "totalSize": sum(t["size"] for t in themes),
@@ -164,7 +172,7 @@ def git(*args: str) -> subprocess.CompletedProcess[str]:
                           capture_output=True, text=True, check=False)
 
 
-def gh_release(tag: str) -> Dict[str, Any] | None:
+def gh_release(repo: str, tag: str) -> Dict[str, Any] | None:
     """A release and its assets, or None when GitHub answers that it is not there.
 
     Any other failure raises. `gh` exits 1 with a not-found message for a release
@@ -173,7 +181,7 @@ def gh_release(tag: str) -> Dict[str, Any] | None:
     releases that are already there.
     """
     listed = subprocess.run(
-        ["gh", "release", "view", tag, "--repo", REPO_SLUG, "--json", "tagName,assets"],
+        ["gh", "release", "view", tag, "--repo", repo, "--json", "tagName,assets"],
         capture_output=True, text=True, check=False)
     if listed.returncode == 0:
         return json.loads(listed.stdout)
@@ -185,6 +193,23 @@ def gh_release(tag: str) -> Dict[str, Any] | None:
         f"release exists: {stderr or '(no stderr)'}")
 
 
+def gh_releases(repo: str) -> List[Dict[str, Any]]:
+    """Every release on `repo` with its tag and creation time; a repository with none is an empty list.
+
+    Any failure raises: an unreadable listing must never read as a repository
+    with no releases, which would let a publish open a release inside the
+    cadence interval or reuse a tag number.
+    """
+    listed = subprocess.run(
+        ["gh", "release", "list", "--repo", repo, "--limit", "1000", "--json", "tagName,createdAt"],
+        capture_output=True, text=True, check=False)
+    if listed.returncode != 0:
+        raise GhUnavailable(
+            f"gh release list --repo {repo} exited {listed.returncode}: "
+            f"{listed.stderr.strip() or '(no stderr)'}")
+    return json.loads(listed.stdout)
+
+
 def check_assets_published(catalog: Dict[str, Any]) -> int:
     """Check that every catalogued archive is an asset of a release that exists.
 
@@ -192,17 +217,18 @@ def check_assets_published(catalog: Dict[str, Any]) -> int:
     whose archive was never uploaded, and every install of that theme is a 404.
     """
     lock = load_lock()
+    pins = lock["themes"]
     problems: List[str] = []
     assets_by_tag: Dict[str, set[str] | None] = {}
     for theme in catalog.get("themes") or []:
         name = str(theme.get("name") or "")
         pin = theme.get("assets") or {}
         tag, archive = str(pin.get("release") or ""), str(pin.get("archive") or "")
-        if not (lock.get(name) or {}).get("published"):
+        if not (pins.get(name) or {}).get("published"):
             problems.append(f"{name}: {tag}/{archive} is pinned but was never published")
             continue
         if tag not in assets_by_tag:
-            release = gh_release(tag)
+            release = gh_release(lock["repo"], tag)
             assets_by_tag[tag] = None if release is None else {
                 str(asset.get("name") or "") for asset in (release.get("assets") or [])}
         published = assets_by_tag[tag]
@@ -216,7 +242,7 @@ def check_assets_published(catalog: Dict[str, Any]) -> int:
             print(f"  {problem}", file=sys.stderr)
         print("Publish them with scripts/publish-theme-assets.py.", file=sys.stderr)
         return 1
-    print(f"every catalogued theme archive is published ({len(assets_by_tag)} release(s))")
+    print(f"every catalogued theme archive is published ({len(assets_by_tag)} release(s) on {lock['repo']})")
     return 0
 
 

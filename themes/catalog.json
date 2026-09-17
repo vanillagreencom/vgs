@@ -2,9 +2,9 @@
   "version": 2,
   "source": {
     "type": "github-release",
-    "repo": "vanillagreencom/vgs",
+    "repo": "vanillagreencom/vgs-themes",
     "ref": "v0.5.0",
-    "baseUrl": "https://github.com/vanillagreencom/vgs/releases/download"
+    "baseUrl": "https://github.com/vanillagreencom/vgs-themes/releases/download"
   },
   "count": 81,
   "totalSize": 1046158625,
@@ -16,7 +16,7 @@
       "source": "curated",
       "size": 41617647,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-akane-r6.tar.gz",
         "rev": 6,
         "size": 41617647,
@@ -30,7 +30,7 @@
       "source": "curated",
       "size": 4035032,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-amberbyte-r2.tar.gz",
         "rev": 2,
         "size": 4035032,
@@ -44,7 +44,7 @@
       "source": "curated",
       "size": 10569984,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-arc-blueberry-r2.tar.gz",
         "rev": 2,
         "size": 10569984,
@@ -58,7 +58,7 @@
       "source": "curated",
       "size": 4827513,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-arc-raiders-r4.tar.gz",
         "rev": 4,
         "size": 4827513,
@@ -72,7 +72,7 @@
       "source": "curated",
       "size": 10242150,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-archwave-r4.tar.gz",
         "rev": 4,
         "size": 10242150,
@@ -86,7 +86,7 @@
       "source": "curated",
       "size": 16501638,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-artzen-r2.tar.gz",
         "rev": 2,
         "size": 16501638,
@@ -100,7 +100,7 @@
       "source": "curated",
       "size": 6221600,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-ayu-r2.tar.gz",
         "rev": 2,
         "size": 6221600,
@@ -114,7 +114,7 @@
       "source": "curated",
       "size": 9671614,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-bauhaus-r2.tar.gz",
         "rev": 2,
         "size": 9671614,
@@ -128,7 +128,7 @@
       "source": "curated",
       "size": 21310082,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-biscuit-de-mar-r3.tar.gz",
         "rev": 3,
         "size": 21310082,
@@ -142,7 +142,7 @@
       "source": "curated",
       "size": 13512448,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-brutalism-r2.tar.gz",
         "rev": 2,
         "size": 13512448,
@@ -156,7 +156,7 @@
       "source": "curated",
       "size": 12611113,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-catppuccin-r2.tar.gz",
         "rev": 2,
         "size": 12611113,
@@ -170,7 +170,7 @@
       "source": "curated",
       "size": 14889202,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-catppuccin-frappe-r2.tar.gz",
         "rev": 2,
         "size": 14889202,
@@ -184,7 +184,7 @@
       "source": "curated",
       "size": 2421541,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-catppuccin-latte-r4.tar.gz",
         "rev": 4,
         "size": 2421541,
@@ -198,7 +198,7 @@
       "source": "curated",
       "size": 19683427,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-catppuccin-macchiato-r2.tar.gz",
         "rev": 2,
         "size": 19683427,
@@ -212,7 +212,7 @@
       "source": "curated",
       "size": 18637787,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-coppernight-r2.tar.gz",
         "rev": 2,
         "size": 18637787,
@@ -226,7 +226,7 @@
       "source": "curated",
       "size": 25395414,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-cpunk-r4.tar.gz",
         "rev": 4,
         "size": 25395414,
@@ -240,7 +240,7 @@
       "source": "curated",
       "size": 14298944,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-delorean-r2.tar.gz",
         "rev": 2,
         "size": 14298944,
@@ -254,7 +254,7 @@
       "source": "curated",
       "size": 12375585,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-dracula-r2.tar.gz",
         "rev": 2,
         "size": 12375585,
@@ -268,7 +268,7 @@
       "source": "curated",
       "size": 12707832,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-eldritch-r2.tar.gz",
         "rev": 2,
         "size": 12707832,
@@ -282,7 +282,7 @@
       "source": "curated",
       "size": 16328146,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-ember-n-ash-r3.tar.gz",
         "rev": 3,
         "size": 16328146,
@@ -296,7 +296,7 @@
       "source": "curated",
       "size": 4593837,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-ethereal-r5.tar.gz",
         "rev": 5,
         "size": 4593837,
@@ -310,7 +310,7 @@
       "source": "curated",
       "size": 18283164,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-event-horizon-r2.tar.gz",
         "rev": 2,
         "size": 18283164,
@@ -324,7 +324,7 @@
       "source": "curated",
       "size": 690394,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-everforest-r2.tar.gz",
         "rev": 2,
         "size": 690394,
@@ -338,7 +338,7 @@
       "source": "curated",
       "size": 2853174,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-fireside-r2.tar.gz",
         "rev": 2,
         "size": 2853174,
@@ -352,7 +352,7 @@
       "source": "curated",
       "size": 1662588,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-flexoki-light-r4.tar.gz",
         "rev": 4,
         "size": 1662588,
@@ -366,7 +366,7 @@
       "source": "curated",
       "size": 11850789,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-frankenstein-r5.tar.gz",
         "rev": 5,
         "size": 11850789,
@@ -380,7 +380,7 @@
       "source": "curated",
       "size": 4265351,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-ghost-pastel-r2.tar.gz",
         "rev": 2,
         "size": 4265351,
@@ -394,7 +394,7 @@
       "source": "curated",
       "size": 2101318,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-greek-noir-r4.tar.gz",
         "rev": 4,
         "size": 2101318,
@@ -408,7 +408,7 @@
       "source": "curated",
       "size": 26777568,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-gruvbox-r2.tar.gz",
         "rev": 2,
         "size": 26777568,
@@ -422,7 +422,7 @@
       "source": "curated",
       "size": 49323048,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-gruvy-glass-r2.tar.gz",
         "rev": 2,
         "size": 49323048,
@@ -436,7 +436,7 @@
       "source": "curated",
       "size": 7243492,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-hackerman-r5.tar.gz",
         "rev": 5,
         "size": 7243492,
@@ -450,7 +450,7 @@
       "source": "curated",
       "size": 7797459,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-harbordark-r4.tar.gz",
         "rev": 4,
         "size": 7797459,
@@ -464,7 +464,7 @@
       "source": "curated",
       "size": 10069233,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-horizon-r6.tar.gz",
         "rev": 6,
         "size": 10069233,
@@ -478,7 +478,7 @@
       "source": "curated",
       "size": 7572391,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-horizon-light-r8.tar.gz",
         "rev": 8,
         "size": 7572391,
@@ -492,7 +492,7 @@
       "source": "curated",
       "size": 7846301,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-inkypinky-r2.tar.gz",
         "rev": 2,
         "size": 7846301,
@@ -506,7 +506,7 @@
       "source": "curated",
       "size": 4293718,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-kanagawa-r2.tar.gz",
         "rev": 2,
         "size": 4293718,
@@ -520,7 +520,7 @@
       "source": "curated",
       "size": 9091641,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-kanagawa-dragon-r4.tar.gz",
         "rev": 4,
         "size": 9091641,
@@ -534,7 +534,7 @@
       "source": "curated",
       "size": 7093648,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-kurayami-r3.tar.gz",
         "rev": 3,
         "size": 7093648,
@@ -548,7 +548,7 @@
       "source": "curated",
       "size": 6352163,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-last-horizon-r2.tar.gz",
         "rev": 2,
         "size": 6352163,
@@ -562,7 +562,7 @@
       "source": "curated",
       "size": 3225395,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-lowlight-r4.tar.gz",
         "rev": 4,
         "size": 3225395,
@@ -576,7 +576,7 @@
       "source": "curated",
       "size": 1917601,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-lumon-r2.tar.gz",
         "rev": 2,
         "size": 1917601,
@@ -590,7 +590,7 @@
       "source": "curated",
       "size": 6851697,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-lunar-r2.tar.gz",
         "rev": 2,
         "size": 6851697,
@@ -604,7 +604,7 @@
       "source": "curated",
       "size": 7569118,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-matte-black-r3.tar.gz",
         "rev": 3,
         "size": 7569118,
@@ -618,7 +618,7 @@
       "source": "curated",
       "size": 7157500,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-mechanoonna-r4.tar.gz",
         "rev": 4,
         "size": 7157500,
@@ -632,7 +632,7 @@
       "source": "curated",
       "size": 12801430,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-miasma-r3.tar.gz",
         "rev": 3,
         "size": 12801430,
@@ -646,7 +646,7 @@
       "source": "curated",
       "size": 4310118,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-monokai-r2.tar.gz",
         "rev": 2,
         "size": 4310118,
@@ -660,7 +660,7 @@
       "source": "curated",
       "size": 26577606,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-moon-orbit-r4.tar.gz",
         "rev": 4,
         "size": 26577606,
@@ -674,7 +674,7 @@
       "source": "curated",
       "size": 12111633,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-nagai-twilight-r2.tar.gz",
         "rev": 2,
         "size": 12111633,
@@ -688,7 +688,7 @@
       "source": "curated",
       "size": 8473651,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-nebulite-r3.tar.gz",
         "rev": 3,
         "size": 8473651,
@@ -702,7 +702,7 @@
       "source": "curated",
       "size": 23663492,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-noctalia-r2.tar.gz",
         "rev": 2,
         "size": 23663492,
@@ -716,7 +716,7 @@
       "source": "curated",
       "size": 11511835,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-nord-r2.tar.gz",
         "rev": 2,
         "size": 11511835,
@@ -730,7 +730,7 @@
       "source": "curated",
       "size": 8377770,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-osaka-jade-r2.tar.gz",
         "rev": 2,
         "size": 8377770,
@@ -744,7 +744,7 @@
       "source": "curated",
       "size": 11923554,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-oxford-r4.tar.gz",
         "rev": 4,
         "size": 11923554,
@@ -758,7 +758,7 @@
       "source": "curated",
       "size": 6526484,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-pmndrs-r2.tar.gz",
         "rev": 2,
         "size": 6526484,
@@ -772,7 +772,7 @@
       "source": "curated",
       "size": 24432023,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-reddcs-r6.tar.gz",
         "rev": 6,
         "size": 24432023,
@@ -786,7 +786,7 @@
       "source": "curated",
       "size": 40800216,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-retro-82-r2.tar.gz",
         "rev": 2,
         "size": 40800216,
@@ -800,7 +800,7 @@
       "source": "curated",
       "size": 4173569,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-reverie-r2.tar.gz",
         "rev": 2,
         "size": 4173569,
@@ -814,7 +814,7 @@
       "source": "curated",
       "size": 6110685,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-ristretto-r2.tar.gz",
         "rev": 2,
         "size": 6110685,
@@ -828,7 +828,7 @@
       "source": "curated",
       "size": 12394016,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-rose-pine-r4.tar.gz",
         "rev": 4,
         "size": 12394016,
@@ -842,7 +842,7 @@
       "source": "curated",
       "size": 15770469,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-rose-pine-main-r2.tar.gz",
         "rev": 2,
         "size": 15770469,
@@ -856,7 +856,7 @@
       "source": "curated",
       "size": 21205503,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-rose-pine-moon-r2.tar.gz",
         "rev": 2,
         "size": 21205503,
@@ -870,7 +870,7 @@
       "source": "curated",
       "size": 16935484,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-roseofdune-r3.tar.gz",
         "rev": 3,
         "size": 16935484,
@@ -884,7 +884,7 @@
       "source": "curated",
       "size": 13318129,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-saga-r2.tar.gz",
         "rev": 2,
         "size": 13318129,
@@ -898,7 +898,7 @@
       "source": "curated",
       "size": 13271510,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-sapphire-r2.tar.gz",
         "rev": 2,
         "size": 13271510,
@@ -912,7 +912,7 @@
       "source": "curated",
       "size": 5725893,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-snow-r2.tar.gz",
         "rev": 2,
         "size": 5725893,
@@ -926,7 +926,7 @@
       "source": "curated",
       "size": 9132712,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-soho-r2.tar.gz",
         "rev": 2,
         "size": 9132712,
@@ -940,7 +940,7 @@
       "source": "curated",
       "size": 43064984,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-solitude-r2.tar.gz",
         "rev": 2,
         "size": 43064984,
@@ -954,7 +954,7 @@
       "source": "curated",
       "size": 19122755,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-synthwave84-r3.tar.gz",
         "rev": 3,
         "size": 19122755,
@@ -968,7 +968,7 @@
       "source": "curated",
       "size": 3753953,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-thegreek-r7.tar.gz",
         "rev": 7,
         "size": 3753953,
@@ -982,7 +982,7 @@
       "source": "curated",
       "size": 15046592,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-tokyo-night-r2.tar.gz",
         "rev": 2,
         "size": 15046592,
@@ -996,7 +996,7 @@
       "source": "curated",
       "size": 25819318,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-tokyo-night-moon-r2.tar.gz",
         "rev": 2,
         "size": 25819318,
@@ -1010,7 +1010,7 @@
       "source": "curated",
       "size": 21213791,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-tokyo-night-storm-r2.tar.gz",
         "rev": 2,
         "size": 21213791,
@@ -1024,7 +1024,7 @@
       "source": "curated",
       "size": 964520,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-tycho-r4.tar.gz",
         "rev": 4,
         "size": 964520,
@@ -1038,7 +1038,7 @@
       "source": "curated",
       "size": 51814365,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-untitled-r2.tar.gz",
         "rev": 2,
         "size": 51814365,
@@ -1052,7 +1052,7 @@
       "source": "curated",
       "size": 3015998,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-vantablack-r2.tar.gz",
         "rev": 2,
         "size": 3015998,
@@ -1066,7 +1066,7 @@
       "source": "curated",
       "size": 7095423,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-vengeance-r4.tar.gz",
         "rev": 4,
         "size": 7095423,
@@ -1080,7 +1080,7 @@
       "source": "curated",
       "size": 6202765,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-vice-city-r4.tar.gz",
         "rev": 4,
         "size": 6202765,
@@ -1094,7 +1094,7 @@
       "source": "curated",
       "size": 7280156,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-void-r2.tar.gz",
         "rev": 2,
         "size": 7280156,
@@ -1108,7 +1108,7 @@
       "source": "curated",
       "size": 6435775,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-vurple-r2.tar.gz",
         "rev": 2,
         "size": 6435775,
@@ -1122,7 +1122,7 @@
       "source": "curated",
       "size": 2682159,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-white-r4.tar.gz",
         "rev": 4,
         "size": 2682159,
@@ -1136,7 +1136,7 @@
       "source": "curated",
       "size": 18757002,
       "assets": {
-        "release": "themes-v15",
+        "release": "themes-v1",
         "archive": "vgs-theme-x-1632-r4.tar.gz",
         "rev": 4,
         "size": 18757002,
