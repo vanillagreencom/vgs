@@ -47,6 +47,7 @@ packaging | scripts/gen-package-metadata.py
 packaging | scripts/check-package-assets.sh
 packaging | scripts/check-aur-sync.py
 packaging | scripts/check-prune-ppa.py
+packaging | scripts/test-vshell-setup.sh
 -         | scripts/check-command-declarations.py
 -         | node --check scripts/check-settings-migration.js
 -         | scripts/check-settings-migration.js

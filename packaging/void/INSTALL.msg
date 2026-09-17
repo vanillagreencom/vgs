@@ -1,7 +1,8 @@
-VGS installs the user service but does not enable it automatically.
-Start it for the current user with:
+VGS is installed. Void runs runit rather than systemd, so there is no user
+service to enable here. Start VGS from your compositor config:
 
-  systemctl --user enable --now vshell.service
+  Hyprland  exec-once = vshell run
+  Niri      spawn-at-startup "vshell" "run"
 
 Run vshell deps status to inspect optional feature dependencies. It also
 reports which app owns org.freedesktop.Notifications; if it is not VGS,

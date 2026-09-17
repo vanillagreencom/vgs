@@ -4,13 +4,25 @@ Native packages install VGS under `/usr/lib/vshell` with the `vshell` command an
 
 ## Activation
 
-After a native package installation, enable VGS for your account:
+After a native package installation, finish the setup for your account:
 
 ```bash
-systemctl --user enable --now vshell.service
+vshell setup
 ```
 
-The source installer starts the service unless given `--no-start`. Home Manager controls activation through its module.
+It enables and starts `vshell.service`, then reports the optional feature dependencies and which app owns `org.freedesktop.Notifications`.
+
+No package enables the unit for you. systemd reads a preset file only when `systemctl preset` runs, and no channel runs it for a user unit at install time. [`systemd.preset(5)`](https://www.freedesktop.org/software/systemd/man/latest/systemd.preset.html) also advises against shipping a preset from the package that implements the unit.
+
+| Channel | First start |
+|---|---|
+| Arch | `vshell setup`. Arch enables no service on installation and runs no preset hook. |
+| Debian, Ubuntu | `vshell setup`. `dh_installsystemduser` enables a user unit for every account on the machine, including accounts running another desktop. |
+| Fedora | `vshell setup`. Preset policy lives in `fedora-release`, and enabling a service by default needs FESCo approval, which requires that the unit not change the behaviour of other services. VGS claims `org.freedesktop.Notifications`. |
+| Gentoo | `vshell setup`. `pkg_postinst` reports the step and enables nothing. |
+| Void | `exec-once = vshell run` for Hyprland, `spawn-at-startup "vshell" "run"` for Niri. Void runs runit and has no user service to enable. |
+| Source installer | `install.sh` runs `vshell setup` unless given `--no-start`. |
+| Nix | Home Manager controls activation through its module. |
 
 ## Themes
 

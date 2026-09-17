@@ -58,12 +58,12 @@ src_install() {
 }
 
 pkg_postinst() {
-	elog "VGS installs the user service but does not enable it automatically."
-	elog "Start it for the current user with:"
+	elog "VGS is installed. Finish the setup for your account with:"
 	elog
-	elog "  systemctl --user enable --now vshell.service"
+	elog "  vshell setup"
 	elog
-	elog "Run 'vshell deps status' to inspect optional feature dependencies."
+	elog "That enables and starts vshell.service, then reports the optional"
+	elog "feature dependencies and which app owns org.freedesktop.Notifications."
 	elog
 
 	# BEGIN GENERATED OPTIONAL DEPENDENCIES

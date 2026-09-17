@@ -139,12 +139,13 @@ DESTDIR=%{buildroot} VGS_BACKEND_BINARY="$PWD/vshell-backend" packaging/install-
 
 %post
 cat <<'EOF'
-VGS installs the user service but does not enable it automatically.
-Start it for the current user with:
+VGS is installed. Finish the setup for your account with:
 
-  systemctl --user enable --now vshell.service
+  vshell setup
 
-Run vshell deps status to inspect optional feature dependencies.
+That enables and starts vshell.service, then reports the optional feature
+dependencies and which app owns org.freedesktop.Notifications; if it is not
+VGS, vshell notifications takeover hands the name back.
 EOF
 
 %files

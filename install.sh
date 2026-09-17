@@ -121,8 +121,12 @@ ln -sfn "$install_root/current/quickshell/vshell" "$shell_link"
 rm -f "$service_path"
 cp "$version_root/systemd/user/vshell.service" "$service_path"
 systemctl --user daemon-reload
-if [[ "$start" == true ]]; then
-  systemctl --user enable --now vshell.service
-fi
 
-echo "VGS $version installed. Run: vshell deps status"
+echo "VGS $version installed."
+# vshell setup owns enabling and starting the unit; a second copy here would
+# drift from the one the package messages name.
+if [[ "$start" == true ]]; then
+  "$cli_link" setup
+else
+  echo "Start it with: vshell setup"
+fi

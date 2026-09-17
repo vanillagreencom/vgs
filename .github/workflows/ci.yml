@@ -213,6 +213,7 @@ jobs:
           scripts/check-package-assets.sh
           scripts/check-aur-sync.py
           scripts/check-prune-ppa.py
+          scripts/test-vshell-setup.sh
 
       # Undeclared command probes can hide a feature dependency from deps status.
       - name: Probed-command declarations

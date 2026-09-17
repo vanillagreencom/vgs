@@ -274,6 +274,26 @@ EOF
   return 1
 }
 
+# No package can enable vshell.service on the user's behalf: systemd reads a
+# preset file only when systemctl preset runs (systemd.preset(5)), nothing runs
+# it for a user unit at package install, and Arch, Fedora and Gentoo policy each
+# keep a package from enabling its own service. This verb is that one step.
+_setup() {
+  [[ $# -eq 0 ]] || { echo "Usage: vshell setup" >&2; return 2; }
+  if ! systemctl --user enable --now vshell.service; then
+    cat >&2 <<'EOF'
+vshell setup: the systemd user manager did not enable vshell.service.
+Where there is none -- Void runs runit -- start VGS from the compositor instead:
+  Hyprland  exec-once = vshell run
+  Niri      spawn-at-startup "vshell" "run"
+EOF
+    return 1
+  fi
+  # deps status is the single report of optional features and of who owns
+  # org.freedesktop.Notifications, and it names the takeover command itself.
+  "$helper" deps status
+}
+
 case "${1:-run}" in
   version|--version)
     cat "$repo_root/VERSION"
@@ -332,6 +352,10 @@ case "${1:-run}" in
       exit 1
     fi
     printf '%s\n' "$out"
+    ;;
+  setup)
+    shift || true
+    _setup "$@"
     ;;
   lock)
     shift || true
@@ -410,6 +434,7 @@ case "${1:-run}" in
 Usage:
   vshell --version
   vshell run [qs args...]
+  vshell setup   (enable and start vshell.service, then report features and notification ownership)
   vshell backend run|serve|request <method> [json]|doctor|methods [--json]
   vshell open [--mime MIME] [--type url|file|uri] <target>
   vshell open --install-desktop
