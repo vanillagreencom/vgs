@@ -132,16 +132,7 @@ Item {
         target: DSearchService
 
         // Retry a query declined during the initial tool probe so results do not wait for another keystroke.
-        function onStatusStateChanged() {
-            root._retryFileSearchAfterProbe();
-        }
-        function onFdAvailableChanged() {
-            root._retryFileSearchAfterProbe();
-        }
-        function onIndexAvailableChanged() {
-            root._retryFileSearchAfterProbe();
-        }
-        function onRipgrepAvailableChanged() {
+        function onDispatchAnswerChanged() {
             root._retryFileSearchAfterProbe();
         }
     }

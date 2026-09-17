@@ -2,6 +2,7 @@ package launchersearch
 
 import (
 	"container/heap"
+	"log/slog"
 	"os"
 	"runtime"
 	"sort"
@@ -9,7 +10,10 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 	"unicode/utf8"
+
+	"vshell/backend/internal/recovery"
 )
 
 // searchKind is the request's kind: which entries a search may return.
@@ -79,11 +83,12 @@ type dirNode struct {
 	children []int32
 }
 
-// index is the in-memory name index of one config. Only the goroutine that
-// builds it, and after that its watch goroutine, write it; queries read under
-// mu.RLock and every write holds mu.
+// index is the in-memory name index of one config. The walk that builds it
+// writes it first; after that, only its deltas do, one at a time under
+// watcher.writer. Queries read under mu.RLock and every write holds mu.
 type index struct {
 	cfg     config
+	log     *slog.Logger
 	builtAt time.Time
 
 	mu      sync.RWMutex
@@ -95,20 +100,92 @@ type index struct {
 	dead    int
 
 	// degraded is set once the watches can no longer be trusted to report every
-	// change: the kernel's watch limit was reached, its event queue overflowed,
-	// or the event reader stopped. The index keeps answering, and the manager
-	// replaces it with a fresh walk.
+	// change. The index keeps answering, and the manager replaces it with a
+	// fresh walk.
 	degraded atomic.Bool
-	watch    *watcher
+	// watch is nil for an index built without watches. Once the index gives its
+	// watches up, the watcher is closed and every call on it fails.
+	watch *watcher
+	// watchBudget is the count of held watches at which the index stops adding
+	// them; watches counts the descriptors byWd holds.
+	watchBudget int64
+	watches     atomic.Int64
+	// unwatched is set when the index gave up its watches for the watch limit.
+	// A rebuild of the same settings then takes none.
+	unwatched atomic.Bool
 }
 
-func newIndex(cfg config) *index {
+func newIndex(cfg config, log *slog.Logger) *index {
 	return &index{
 		cfg:     cfg,
+		log:     log,
 		dirs:    map[int32]*dirNode{},
 		byWd:    map[int32][]int32{},
 		rootDev: map[int32]uint64{},
 	}
+}
+
+// degrade records that the index can no longer see every change, and logs why
+// the first time.
+func (ix *index) degrade(reason string, args ...any) {
+	if ix.degraded.CompareAndSwap(false, true) {
+		ix.log.Warn("launcher search index missed changes and will be walked again", append([]any{"reason", reason}, args...)...)
+	}
+}
+
+// giveUpWatches releases every watch the index holds. The kernel's watch limit
+// is shared by every program the user runs, so an index that reaches its share
+// stops watching rather than taking the rest.
+func (ix *index) giveUpWatches(reason string) {
+	if !ix.unwatched.CompareAndSwap(false, true) {
+		return
+	}
+	ix.degrade(reason, "budget", ix.watchBudget)
+	if ix.watch != nil {
+		ix.watch.close()
+	}
+}
+
+// bindWatch maps a directory to the watch that now reports it, releasing the
+// watch it had when no other position shares it. The caller holds mu.
+func (ix *index) bindWatch(pos int32, node *dirNode, wd int32) {
+	if node.wd == wd {
+		return
+	}
+	if node.wd >= 0 {
+		ix.unbindWatch(pos, node)
+	}
+	node.wd = wd
+	if wd < 0 {
+		return
+	}
+	if len(ix.byWd[wd]) == 0 {
+		ix.watches.Add(1)
+	}
+	ix.byWd[wd] = append(ix.byWd[wd], pos)
+}
+
+// unbindWatch drops pos from its watch, and removes the watch once no position
+// uses it: the same directory can be indexed under two paths, as a bind mount
+// shows it. The caller holds mu.
+func (ix *index) unbindWatch(pos int32, node *dirNode) {
+	positions := ix.byWd[node.wd]
+	for i, p := range positions {
+		if p == pos {
+			positions = append(positions[:i], positions[i+1:]...)
+			break
+		}
+	}
+	if len(positions) > 0 {
+		ix.byWd[node.wd] = positions
+	} else {
+		delete(ix.byWd, node.wd)
+		ix.watches.Add(-1)
+		if ix.watch != nil {
+			ix.watch.remove(node.wd)
+		}
+	}
+	node.wd = -1
 }
 
 // add appends one entry under parent and returns its position. The caller
@@ -187,23 +264,14 @@ type hit struct {
 // among the best candidates, a more recently modified entry ranks before an
 // older one and the path breaks what remains.
 func (ix *index) search(query string, kind searchKind, limit int) []hit {
-	needle := []rune(strings.ToLower(query))
-	if len(needle) == 0 || limit <= 0 {
+	q := newNeedle(query)
+	if len(q.runes) == 0 || limit <= 0 {
 		return []hit{}
 	}
 	// Only the candidates that could reach the result are stat'ed for their
 	// modification time, but ties on score are common, so the pool is wider
 	// than the limit.
 	pool := limit * 4
-	asciiNeedle := make([]byte, 0, len(needle))
-	for _, r := range needle {
-		if r >= utf8.RuneSelf {
-			asciiNeedle = nil
-			break
-		}
-		asciiNeedle = append(asciiNeedle, byte(r))
-	}
-
 	ix.mu.RLock()
 	total := len(ix.entries)
 	workers := runtime.GOMAXPROCS(0)
@@ -219,19 +287,24 @@ func (ix *index) search(query string, kind searchKind, limit int) []hit {
 		wg.Add(1)
 		go func(w, start, end int) {
 			defer wg.Done()
-			top := candidates{}
-			for pos := start; pos < end; pos++ {
-				e := ix.entries[pos]
-				if e.flags&flagDead != 0 || e.parent < 0 || !kind.admits(e.flags&flagDir != 0) {
-					continue
+			// A panicking worker contributes no candidates rather than ending
+			// the backend.
+			recovery.Run(ix.log, "launchersearch.search", func() {
+				top := candidates{}
+				var f folder
+				for pos := start; pos < end; pos++ {
+					e := ix.entries[pos]
+					if e.flags&flagDead != 0 || e.parent < 0 || !kind.admits(e.flags&flagDir != 0) {
+						continue
+					}
+					s, ok := f.score(ix.names[e.nameOff:e.nameOff+uint32(e.nameLen)], q)
+					if !ok {
+						continue
+					}
+					top.offer(candidate{score: s, pos: int32(pos)}, pool)
 				}
-				s, ok := score(ix.names[e.nameOff:e.nameOff+uint32(e.nameLen)], needle, asciiNeedle)
-				if !ok {
-					continue
-				}
-				top.offer(candidate{score: s, pos: int32(pos)}, pool)
-			}
-			tops[w] = top
+				tops[w] = top
+			})
 		}(w, start, end)
 	}
 	wg.Wait()
@@ -287,15 +360,58 @@ func (ix *index) search(query string, kind searchKind, limit int) []hit {
 	return hits
 }
 
+// needle is a query folded once for every name it is scored against. ascii is
+// nil when the query holds a character outside ASCII.
+type needle struct {
+	runes []rune
+	ascii []byte
+}
+
+func newNeedle(query string) needle {
+	n := needle{ascii: []byte{}}
+	for _, r := range query {
+		r = unicode.ToLower(r)
+		n.runes = append(n.runes, r)
+		if r >= utf8.RuneSelf {
+			n.ascii = nil
+		} else if n.ascii != nil {
+			n.ascii = append(n.ascii, byte(r))
+		}
+	}
+	return n
+}
+
+// folder is one search worker's scratch space: each name is folded into it, so
+// scoring a name allocates nothing.
+type folder struct {
+	bytes []byte
+	runes []rune
+}
+
 // score is the launcher's fuzzy name score, case-insensitive. A name holding
 // the query as a substring scores above any that holds it only as a
 // subsequence; earlier substrings, smaller gaps and shorter names score higher.
 // ok is false for a name that does not hold every query character in order.
-func score(name []byte, needle []rune, asciiNeedle []byte) (float64, bool) {
-	if asciiNeedle != nil && isASCII(name) {
-		return scoreASCII(name, asciiNeedle)
+// An ASCII name against an ASCII query is compared by byte, anything else by
+// rune; both go through the one scorer.
+func (f *folder) score(name []byte, q needle) (float64, bool) {
+	if q.ascii != nil && isASCII(name) {
+		f.bytes = f.bytes[:0]
+		for _, c := range name {
+			if 'A' <= c && c <= 'Z' {
+				c += 'a' - 'A'
+			}
+			f.bytes = append(f.bytes, c)
+		}
+		return scoreFolded(f.bytes, q.ascii)
 	}
-	return scoreRunes([]rune(strings.ToLower(string(name))), needle)
+	f.runes = f.runes[:0]
+	for len(name) > 0 {
+		r, size := utf8.DecodeRune(name)
+		f.runes = append(f.runes, unicode.ToLower(r))
+		name = name[size:]
+	}
+	return scoreFolded(f.runes, q.runes)
 }
 
 func isASCII(b []byte) bool {
@@ -307,42 +423,7 @@ func isASCII(b []byte) bool {
 	return true
 }
 
-func lowerASCII(c byte) byte {
-	if 'A' <= c && c <= 'Z' {
-		return c + ('a' - 'A')
-	}
-	return c
-}
-
-func scoreASCII(hay, needle []byte) (float64, bool) {
-	extra := float64(max(0, len(hay)-len(needle)))
-	for i := 0; i+len(needle) <= len(hay); i++ {
-		j := 0
-		for j < len(needle) && lowerASCII(hay[i+j]) == needle[j] {
-			j++
-		}
-		if j == len(needle) {
-			return 1000 - float64(i)*2 - extra*0.15, true
-		}
-	}
-	pos, gap := -1, 0
-	for _, want := range needle {
-		next := pos + 1
-		for next < len(hay) && lowerASCII(hay[next]) != want {
-			next++
-		}
-		if next >= len(hay) {
-			return 0, false
-		}
-		if pos >= 0 {
-			gap += next - pos - 1
-		}
-		pos = next
-	}
-	return 650 - float64(gap)*4 - extra*0.1, true
-}
-
-func scoreRunes(hay, needle []rune) (float64, bool) {
+func scoreFolded[T byte | rune](hay, needle []T) (float64, bool) {
 	extra := float64(max(0, len(hay)-len(needle)))
 	for i := 0; i+len(needle) <= len(hay); i++ {
 		j := 0

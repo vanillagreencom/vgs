@@ -42,7 +42,7 @@ const backend = evaluateMarked(serviceSource, "SEARCH BACKEND DECISION", [
     "backendCommandFor", "kindForType", "pathCompletion", "queryIsDispatchable",
     "queryIsSearchable", "backendStateFor", "dispatchAllowed", "helperHasFallback",
     "serviceRefuses", "canDispatchFor", "probeSettled", "probeFailureOutcome", "usesIndex",
-    "fileHintKey"
+    "fileHintKey", "fileSearchFactsFor"
 ], "DSearchService.qml");
 
 const appSearch = evaluateMarked(appSearchSource, "APPLICATION SEARCH RELEVANCE DECISION", [
@@ -1095,54 +1095,70 @@ test("ensureStatus runs from the launcher-opened branch only", () => {
     }
 });
 
-test("Controller re-runs the pending search on every probe signal", () => {
-    for (const signal of ["onStatusStateChanged", "onFdAvailableChanged", "onRipgrepAvailableChanged"]) {
-        assert.ok(qmlSource.flat(stripComments(controllerSource))
-            .includes(`function ${signal}() { root._retryFileSearchAfterProbe(); }`),
-            `Controller must re-run the pending search on ${signal}: the answer arrives after the ` +
-            "user has typed, and nothing else would run the search again");
+test("every property the dispatch answer reads raises one signal, and each surface re-runs on it", () => {
+    const q = qmlSource(serviceSource, "DSearchService.qml");
+    const read = [...stripComments(q.body("_probeSnapshot")).matchAll(/:\s*([A-Za-z_][A-Za-z0-9_]*)/g)].map(m => m[1]);
+    assert.ok(read.length >= 4 && read.includes("indexAvailable"),
+        `the snapshot reader found ${read.join(", ")}: the extractor is broken, not the snapshot`);
+    const code = qmlSource.flat(stripComments(serviceSource));
+    for (const property of read) {
+        const handler = "on" + property[0].toUpperCase() + property.slice(1) + "Changed: dispatchAnswerChanged()";
+        assert.ok(code.includes(handler),
+            `DSearchService must raise dispatchAnswerChanged when ${property} changes: canDispatch reads it, ` +
+            "and a declined search waits for that signal to run");
+    }
+    for (const [label, source, retry] of [
+        ["Controller.qml", controllerSource, "root._retryFileSearchAfterProbe();"],
+        ["VGSMenu.qml", menuSource, "root.retryDeclinedFileSearch();"]
+    ]) {
+        const flat = qmlSource.flat(stripComments(source));
+        assert.ok(flat.includes(`function onDispatchAnswerChanged() { ${retry} }`),
+            `${label} must re-run a declined search on dispatchAnswerChanged`);
+        for (const property of read) {
+            const own = "function on" + property[0].toUpperCase() + property.slice(1) + "Changed()";
+            assert.ok(!flat.includes(own), `${label} must not keep its own ${own} beside the one signal`);
+        }
     }
 });
 
+test("fileSearchFactsFor derives every dispatch fact from one probe snapshot", () => {
+    for (const [kind, query, snapshot, expected, why] of [
+        ["text", "needle", ready(true, false), { backendState: "missing", missingCommand: "rg", declined: true, probeState: "ready" },
+            "a missing tool names ripgrep for text"],
+        ["files", "needle", ready(false, true), { backendState: "missing", missingCommand: "fd", declined: true, probeState: "ready" },
+            "and fd for names"],
+        ["files", "needle", withIndex("pending", false, false), { backendState: "available", missingCommand: "", declined: false, probeState: "pending" },
+            "the index answers a name search before any probe"],
+        ["files", "needle", probe("failed", false, false), { backendState: "unknown", missingCommand: "", declined: true, probeState: "failed" },
+            "a failed probe declines a name search without naming a tool"],
+        ["files", "n", ready(false, false), { backendState: "missing", missingCommand: "fd", declined: false, probeState: "ready" },
+            "a query too short to search is never declined"]
+    ]) {
+        assert.deepEqual(backend.fileSearchFactsFor(kind, query, snapshot), expected, `${kind}/${query}: ${why}`);
+    }
+});
 
-    // Verify fact producers as well as consumers. A swapped kind/query or negation at the producer
-    // can produce incorrect view state with every consumer call unchanged.
-test("ResultsList computes its facts from the controller and the service per kind", () => {
-    const code = qmlSource.flat(stripComments(resultsSource));
+test("ResultsList and VGSMenu read the service's facts", () => {
+    const results = qmlSource.flat(stripComments(resultsSource));
     for (const [binding, why] of [
         ["readonly property string _fileQuery: controller ? controller.fileSearchQuery() : \"\"",
             "the query is the controller's one authority, not a re-derivation"],
         ["readonly property bool _fileQuerySearchable: !!controller && DSearchService.queryIsSearchable(controller.fileSearchKind(), _fileQuery)",
-            "and whether it searches at all is the service's answer for THIS kind — with the " +
-            "kindless form, folder-path completion is reported as a too-short query"],
-        ["readonly property string _fileBackendState: controller ? DSearchService.backendState(controller.fileSearchKind(), _fileQuery) : \"unknown\"",
-            "kind BEFORE query: swapped, backendCommandFor sees a query string, every state is " +
-            "permanently unknown, and no missing tool is ever named again"],
-        ["readonly property string _missingBackendCommand: controller && _fileBackendState === \"missing\" ? DSearchService.backendCommandFor(controller.fileSearchKind()) : \"\"",
-            "the command comes from the kind behind the missing test; hardcoded, every missing " +
-            "tool becomes fd and the ripgrep hint never renders"],
-        ["readonly property bool _fileSearchDeclined: !!controller && _fileQuerySearchable && !DSearchService.canDispatch(controller.fileSearchKind(), _fileQuery)",
-            "INCLUDING the negation: dropped, every search that ran and found nothing claims the " +
-            "tools could not be checked"]
+            "and whether it searches at all is the service's answer for THIS kind"],
+        ["DSearchService.fileSearchFacts(controller.fileSearchKind(), _fileQuery)",
+            "kind BEFORE query, from the one fact builder the launcher also reads"],
+        ["Object.assign({}, _dispatchFacts, {", "the snapshot starts from those facts"],
+        ["queryLength: _fileQuery.length", "and adds the overview's own"],
+        ["searchable: _fileQuerySearchable", "and adds the overview's own"],
+        ["searchError: controller?.fileSearchError ?? \"\"", "and adds the overview's own"],
+        ["legActive: _fileLegActive", "and adds the overview's own"]
     ]) {
-        assert.ok(code.includes(qmlSource.flat(binding)),
-            `ResultsList must compute \`${binding}\` — ${why}`);
+        assert.ok(results.includes(qmlSource.flat(binding)), `ResultsList must compute \`${binding}\` — ${why}`);
     }
-});
-
-
-test("every fact reaches the empty-state snapshot", () => {
-    const code = qmlSource.flat(stripComments(resultsSource));
-    for (const field of [
-        "backendState: _fileBackendState", "missingCommand: _missingBackendCommand",
-        "probeState: DSearchService.statusState", "queryLength: _fileQuery.length",
-        "searchable: _fileQuerySearchable", "declined: _fileSearchDeclined",
-        "searchError: controller?.fileSearchError ?? \"\"", "legActive: _fileLegActive"
-    ]) {
-        assert.ok(code.includes(qmlSource.flat(field)),
-            `the empty-state facts must carry \`${field}\`: a fact that never reaches the ` +
-            "snapshot is a decision arm that can never fire");
-    }
+    const menu = qmlSource.flat(stripComments(menuSource));
+    assert.ok(menu.includes("DSearchService.fileSearchFacts(DSearchService.kindForType(root.fileSearchType), root.query.trim()).backendState"),
+        "VGSMenu picks its declined message from the same facts");
+    assert.ok(!menu.includes("DSearchService.backendState("), "and does not read the backend state beside them");
 });
 
 test("ResultsList calls the executed rules with the whole snapshot", () => {

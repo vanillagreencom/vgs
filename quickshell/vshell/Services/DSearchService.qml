@@ -36,8 +36,16 @@ Singleton {
     readonly property var log: Log.scoped("DSearchService")
 
     signal searchResultsReceived(var results)
+    // Any property _probeSnapshot reads changed, so canDispatch may answer
+    // differently. A surface holding a declined search re-runs it on this.
+    signal dispatchAnswerChanged
     signal statsReceived(var stats)
     signal errorOccurred(string error)
+
+    onStatusStateChanged: dispatchAnswerChanged()
+    onFdAvailableChanged: dispatchAnswerChanged()
+    onRipgrepAvailableChanged: dispatchAnswerChanged()
+    onIndexAvailableChanged: dispatchAnswerChanged()
 
     Component.onCompleted: {
         rediscover();
@@ -279,6 +287,19 @@ Singleton {
             return { state: "retrying", retry: true, publishReason: true };
         return { state: "failed", retry: false, publishReason: true };
     }
+    // What the service knows about dispatching this search: the backend state,
+    // the tool a missing state names, whether the gate declines a searchable
+    // query, and the probe's state. A surface adds its own facts to these.
+    function fileSearchFactsFor(kind, query, probe) {
+        const state = backendStateFor(kind, query, probe);
+        return {
+            backendState: state,
+            missingCommand: state === "missing" ? backendCommandFor(kind) : "",
+            declined: queryIsSearchable(kind, query) && !canDispatchFor(kind, query, probe),
+            probeState: (probe || {}).state
+        };
+    }
+
     // Show installation hints only for a missing tool on an active file-search path. Unknown tools require the probe error.
     function fileHintKey(facts) {
         const f = facts || {};
@@ -308,16 +329,13 @@ Singleton {
         return canDispatchFor(kind, query, _probeSnapshot());
     }
 
+    function fileSearchFacts(kind, query) {
+        return fileSearchFactsFor(kind, query, _probeSnapshot());
+    }
+
     // The hint key for a file search on a surface that is showing it.
     function hintKeyFor(kind, query) {
-        const state = backendState(kind, query);
-        return fileHintKey({
-            legActive: true,
-            backendState: state,
-            missingCommand: state === "missing" ? backendCommandFor(kind) : "",
-            declined: queryIsSearchable(kind, query) && !canDispatch(kind, query),
-            probeState: statusState
-        });
+        return fileHintKey(Object.assign({ legActive: true }, fileSearchFacts(kind, query)));
     }
 
     // The line under a file search's empty state that says what would make it work.

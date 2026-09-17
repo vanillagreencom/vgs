@@ -438,3 +438,18 @@ test("a run that already answered is not signalled by the run replacing it", () 
     assert.deepEqual(answered, [["first", 0], ["second", 0]], "and both answers stand");
     assertNoDoubleDestroy(shell);
 });
+
+test("an ended run's exit leaves the run that replaced it replaceable", () => {
+    const shell = makeShell();
+    const answered = [];
+    const first = launchRun(shell, "launcher-search-files", true, answered, "first");
+    const second = launchRun(shell, "launcher-search-files", true, answered, "second");
+    exit(first, 143);
+    const third = launchRun(shell, "launcher-search-files", true, answered, "third");
+    assert.deepEqual(second.signals, ["SIGTERM"], "the third launch still ends the second run");
+    exit(second, 143);
+    exit(third, 0);
+    shell.flush();
+    assert.deepEqual(answered, [["third", 0]], "and only the third run answers");
+    assertNoDoubleDestroy(shell);
+});

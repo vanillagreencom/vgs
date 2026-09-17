@@ -1,12 +1,15 @@
 package launchersearch
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -125,12 +128,8 @@ func TestScoreRanksSubstringsAboveSubsequences(t *testing.T) {
 		{"Überblick", "über", 1000 - 5*0.15, true},
 		{"naïve.txt", "nve", 650 - 2*4 - 6*0.1, true},
 	} {
-		needle := []rune(strings.ToLower(tc.query))
-		ascii := []byte(nil)
-		if isASCII([]byte(tc.query)) {
-			ascii = []byte(strings.ToLower(tc.query))
-		}
-		got, ok := score([]byte(tc.name), needle, ascii)
+		var f folder
+		got, ok := f.score([]byte(tc.name), newNeedle(tc.query))
 		if ok != tc.match || (ok && got != tc.want) {
 			t.Errorf("score(%q, %q) = %v, %v; want %v, %v", tc.name, tc.query, got, ok, tc.want, tc.match)
 		}
@@ -249,10 +248,11 @@ func TestQueryRefusesAnUnknownKindAndMissingRoots(t *testing.T) {
 
 func TestChangesReachTheIndexWithoutAWalk(t *testing.T) {
 	restore := settleDelay
-	settleDelay = 10 * time.Millisecond
+	// Long enough that each step's changes land in one batch.
+	settleDelay = 150 * time.Millisecond
 	t.Cleanup(func() { settleDelay = restore })
 
-	root := tree(t, "docs/old-match", "moving/inner/match-inside", "gone/match-under")
+	root := tree(t, "docs/old-match", "moving/inner/match-inside", "gone/match-under", "hollow/")
 	m := testManager(t)
 	all := func(q string) request { return request{Roots: []string{root}, Query: q, Kind: "all"} }
 	m.eventually(t, root, all("match"), []string{"docs/old-match", "gone/match-under", "moving/inner/match-inside"})
@@ -277,6 +277,22 @@ func TestChangesReachTheIndexWithoutAWalk(t *testing.T) {
 			"match-", []string{"docs/moved/inner/match-inside", "fresh/a/b/match-deep", "fresh/a/b/match-later"}},
 		{"a change inside a moved directory is watched", func() { create(t, root, "docs/moved/inner/match-moved") },
 			"match-", []string{"fresh/a/b/match-deep", "fresh/a/b/match-later", "docs/moved/inner/match-inside", "docs/moved/inner/match-moved"}},
+		{"a directory removed and made again in one batch loses its old entries", func() {
+			os.RemoveAll(filepath.Join(root, "fresh/a/b"))
+			create(t, root, "fresh/a/b/")
+		}, "match-", []string{"docs/moved/inner/match-inside", "docs/moved/inner/match-moved"}},
+		{"and is watched again", func() { create(t, root, "fresh/a/b/match-remade") },
+			"match-", []string{"docs/moved/inner/match-inside", "docs/moved/inner/match-moved", "fresh/a/b/match-remade"}},
+		{"an empty directory removed and made again", func() {
+			os.Remove(filepath.Join(root, "hollow"))
+			create(t, root, "hollow/")
+		}, "hollow", []string{"hollow/"}},
+		{"is watched again", func() { create(t, root, "hollow/match-hollow") },
+			"hollow", []string{"hollow/", "hollow/match-hollow"}},
+		{"a file replaced by a directory of the same name", func() {
+			os.Remove(filepath.Join(root, "docs/new-match"))
+			create(t, root, "docs/new-match/match-within")
+		}, "new-match", []string{"docs/new-match/"}},
 	} {
 		step.change()
 		t.Log(step.name)
@@ -292,6 +308,47 @@ func TestChangesReachTheIndexWithoutAWalk(t *testing.T) {
 	if live := first.live(); live != onDisk {
 		t.Fatalf("the index holds %d live entries for %d on disk", live, onDisk)
 	}
+	if first.degraded.Load() {
+		t.Fatal("removing, moving and replacing directories marked the index as having missed changes")
+	}
+}
+
+func TestAnUnreadableDirectoryKeepsItsChildren(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a directory whatever its mode")
+	}
+	restore := settleDelay
+	settleDelay = 10 * time.Millisecond
+	t.Cleanup(func() { settleDelay = restore })
+	root := tree(t, "locked/match-one", "locked/match-two")
+	m := testManager(t)
+	req := request{Roots: []string{root}, Query: "match", Kind: "files"}
+	m.eventually(t, root, req, []string{"locked/match-one", "locked/match-two"})
+	locked := filepath.Join(root, "locked")
+	if err := os.Chmod(locked, 0o300); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(locked, 0o755) })
+	// Writable but unreadable: the new name raises an event, and the listing
+	// that follows fails.
+	create(t, root, "locked/other")
+	ix := m.serving()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		ix.watch.mu.Lock()
+		idle := len(ix.watch.pending) == 0 && ix.watch.timer == nil
+		ix.watch.mu.Unlock()
+		if idle {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	time.Sleep(50 * time.Millisecond)
+	ix.watch.writer.Lock()
+	ix.watch.writer.Unlock()
+	if live := ix.live(); live != 4 {
+		t.Fatalf("the index holds %d live entries; want the root, the directory and both files it held", live)
+	}
 }
 
 func sameSet(a, b []string) bool {
@@ -304,13 +361,268 @@ func sameSet(a, b []string) bool {
 func TestNewSettingsReplaceTheIndex(t *testing.T) {
 	root := tree(t, "one/match", "two/match")
 	m := testManager(t)
-	req := request{Roots: []string{filepath.Join(root, "one")}, Query: "match", Kind: "files"}
-	if got := m.relative(t, root, req); !slices.Equal(got, []string{"one/match"}) {
-		t.Fatalf("first roots: got %q", got)
+	req := request{Roots: []string{root}, Query: "match", Kind: "files"}
+	m.relative(t, root, req)
+	for _, step := range []struct {
+		name   string
+		change func(*request)
+		want   []string
+	}{
+		{"ignores", func(r *request) { r.Ignores = []string{"two"} }, []string{"one/match"}},
+		{"ignoring mounts", func(r *request) { r.IgnoreMounts = true }, []string{"one/match"}},
+		{"roots", func(r *request) { r.Roots = []string{filepath.Join(root, "one")} }, []string{"one/match"}},
+	} {
+		before := m.serving()
+		step.change(&req)
+		got := m.relative(t, root, req)
+		if !slices.Equal(got, step.want) || m.serving() == before {
+			t.Fatalf("changing %s: got %q from a replaced index %v; want %q from a new one", step.name, got, m.serving() != before, step.want)
+		}
 	}
-	req.Roots = []string{filepath.Join(root, "two")}
-	if got := m.relative(t, root, req); !slices.Equal(got, []string{"two/match"}) {
-		t.Fatalf("second roots: got %q", got)
+}
+
+func TestConfigResolvesHomeAndVariables(t *testing.T) {
+	home := tree(t, "sub/")
+	t.Setenv("HOME", home)
+	t.Setenv("VGS_TEST_SET", "set")
+	os.Unsetenv("VGS_TEST_UNSET")
+	for _, tc := range []struct {
+		name     string
+		roots    []string
+		ignores  []string
+		want     []string
+		prefixes []string
+	}{
+		{"a tilde root", []string{"~"}, nil, []string{home}, nil},
+		{"a root under the tilde", []string{"~/sub"}, nil, []string{filepath.Join(home, "sub")}, nil},
+		{"no roots", nil, nil, []string{home}, nil},
+		{"a set variable", []string{"~"}, []string{"$VGS_TEST_SET/x"}, []string{home}, []string{filepath.Join(home, "set/x")}},
+		{"an unset variable stays as written", []string{"~"}, []string{"$VGS_TEST_UNSET/x"}, []string{home}, []string{filepath.Join(home, "$VGS_TEST_UNSET/x")}},
+	} {
+		cfg, err := newConfig(tc.roots, tc.ignores, false)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if !slices.Equal(cfg.roots, tc.want) || !slices.Equal(cfg.ignores.prefixes, tc.prefixes) {
+			t.Errorf("%s: roots %q prefixes %q; want %q and %q", tc.name, cfg.roots, cfg.ignores.prefixes, tc.want, tc.prefixes)
+		}
+	}
+}
+
+func TestIgnoringMountsSkipsDirectoriesOnAnotherDevice(t *testing.T) {
+	root := tree(t, "sub/", "file")
+	var st unix.Stat_t
+	if err := unix.Stat(root, &st); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		ignoreMounts bool
+		want         []string
+	}{
+		{false, []string{"file", "sub"}},
+		{true, []string{"file"}},
+	} {
+		cfg, err := newConfig([]string{root}, nil, tc.ignoreMounts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ix := newIndex(cfg, discard())
+		// The root claims another device, as a mount point's parent does.
+		l := ix.list(dirJob{pos: 0, path: root, dev: st.Dev + 1})
+		var got []string
+		for _, c := range l.children {
+			got = append(got, c.name)
+		}
+		slices.Sort(got)
+		if !slices.Equal(got, tc.want) {
+			t.Errorf("ignoreMounts %v: got %q, want %q", tc.ignoreMounts, got, tc.want)
+		}
+	}
+}
+
+func TestAQueryReturnsAtMostTheLimitCap(t *testing.T) {
+	var paths []string
+	for i := 0; i < maxLimit+10; i++ {
+		paths = append(paths, "match-"+strconv.Itoa(i))
+	}
+	root := tree(t, paths...)
+	m := testManager(t)
+	if got := m.relative(t, root, request{Roots: []string{root}, Query: "match", Kind: "files", Limit: 1000}); len(got) != maxLimit {
+		t.Fatalf("got %d hits, want %d", len(got), maxLimit)
+	}
+}
+
+func TestQueryIsAKeepLatestRouteAndPrepareIsNot(t *testing.T) {
+	m := testManager(t)
+	keys := map[string]bool{}
+	for _, r := range m.routes() {
+		keys[r.method] = r.key != nil
+	}
+	if want := map[string]bool{"launcher.search.prepare": false, "launcher.search.query": true}; !maps.Equal(keys, want) {
+		t.Fatalf("routes %v; want %v", keys, want)
+	}
+}
+
+func discard() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+
+func TestAClosedWatcherNeverReachesAReusedDescriptor(t *testing.T) {
+	dir := t.TempDir()
+	w, err := newWatcher(discard())
+	if err != nil {
+		t.Fatal(err)
+	}
+	number := -1
+	w.raw.Control(func(fd uintptr) { number = int(fd) })
+	w.close()
+	// Another inotify instance takes the released number, as the next index's
+	// watcher or cloudsync's does.
+	other, err := unix.InotifyInit1(unix.IN_CLOEXEC)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if other != number {
+		if err := unix.Dup3(other, number, unix.O_CLOEXEC); err != nil {
+			t.Fatal(err)
+		}
+		unix.Close(other)
+	}
+	defer unix.Close(number)
+	if _, err := w.add(dir); err == nil {
+		t.Fatal("add on a closed watcher succeeded")
+	}
+	probe, err := unix.InotifyAddWatch(number, dir, unix.IN_CREATE)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if probe != 1 {
+		t.Fatalf("the reused instance's first own watch got descriptor %d: the closed watcher added one before it", probe)
+	}
+	w.remove(int32(probe))
+	if _, err := unix.InotifyRmWatch(number, uint32(probe)); err != nil {
+		t.Fatalf("the closed watcher removed the reused instance's watch: %v", err)
+	}
+}
+
+func TestAnIndexPastItsWatchBudgetGivesUpItsWatchesAndStillAnswers(t *testing.T) {
+	restoreLimit, restoreAfter := watchLimit, degradedRebuildAfter
+	t.Cleanup(func() { watchLimit, degradedRebuildAfter = restoreLimit, restoreAfter })
+	const budget = 3
+	watchLimit = func() (int64, error) { return 2 * budget, nil }
+	var paths []string
+	for i := 0; i < 40; i++ {
+		paths = append(paths, "d"+strconv.Itoa(i)+"/match")
+	}
+	root := tree(t, paths...)
+	var logged bytes.Buffer
+	m := newManager(slog.New(slog.NewTextHandler(&logged, nil)))
+	t.Cleanup(m.Close)
+	req := request{Roots: []string{root}, Query: "match", Kind: "files"}
+	if got := m.relative(t, root, req); len(got) != 40 {
+		t.Fatalf("got %d hits, want 40", len(got))
+	}
+	ix := m.serving()
+	if !ix.unwatched.Load() || !ix.degraded.Load() {
+		t.Fatal("an index past its watch budget kept watching")
+	}
+	if held := ix.watches.Load(); held > budget+int64(walkWorkers()) {
+		t.Fatalf("the index took %d watches on a budget of %d", held, budget)
+	}
+	if _, err := ix.watch.add(root); err == nil {
+		t.Fatal("the index still holds its inotify instance, and with it every watch")
+	}
+	if n := strings.Count(logged.String(), "level=WARN"); n != 1 {
+		t.Fatalf("logged %d warnings, want one: %s", n, logged.String())
+	}
+
+	degradedRebuildAfter = 0
+	m.relative(t, root, req)
+	deadline := time.Now().Add(5 * time.Second)
+	for m.serving() == ix && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if next := m.serving(); next == ix || next.watch != nil {
+		t.Fatal("the rebuild of an index that ran out of watches took watches again")
+	}
+}
+
+// event is one inotify event record for wd with mask.
+func event(wd int32, mask uint32) []byte {
+	buf := make([]byte, unix.SizeofInotifyEvent)
+	ev := (*unix.InotifyEvent)(unsafe.Pointer(&buf[0]))
+	ev.Wd = wd
+	ev.Mask = mask
+	return buf
+}
+
+func watchOf(ix *index, path string) int32 {
+	ix.mu.RLock()
+	defer ix.mu.RUnlock()
+	for wd, positions := range ix.byWd {
+		if ix.path(positions[0]) == path {
+			return wd
+		}
+	}
+	return -1
+}
+
+func TestAnUnmountMarksTheIndex(t *testing.T) {
+	root := tree(t, "kept/match")
+	m := testManager(t)
+	m.relative(t, root, request{Roots: []string{root}, Query: "match", Kind: "files"})
+	ix := m.serving()
+	ix.noteEvents(event(watchOf(ix, filepath.Join(root, "kept")), unix.IN_UNMOUNT))
+	if !ix.degraded.Load() {
+		t.Fatal("the index kept claiming to see every change under an unmounted file system")
+	}
+}
+
+func TestAWatchTheKernelEndsIsTakenAgain(t *testing.T) {
+	restore := settleDelay
+	settleDelay = 10 * time.Millisecond
+	t.Cleanup(func() { settleDelay = restore })
+	root := tree(t, "kept/match")
+	m := testManager(t)
+	req := request{Roots: []string{root}, Query: "match", Kind: "files"}
+	m.relative(t, root, req)
+	ix := m.serving()
+	// End the watch behind the index's back; the kernel reports it as it
+	// reports any watch it ends.
+	wd := watchOf(ix, filepath.Join(root, "kept"))
+	ix.watch.raw.Control(func(fd uintptr) { unix.InotifyRmWatch(int(fd), uint32(wd)) })
+	deadline := time.Now().Add(5 * time.Second)
+	for watchOf(ix, filepath.Join(root, "kept")) == wd && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	create(t, root, "kept/match-after")
+	m.eventually(t, root, req, []string{"kept/match", "kept/match-after"})
+	if ix.degraded.Load() || m.serving() != ix {
+		t.Fatal("a directory still there was answered by a fresh walk instead of being watched again")
+	}
+}
+
+func TestAWornOutIndexIsWalkedAgain(t *testing.T) {
+	restoreSettle, restoreAfter := settleDelay, degradedRebuildAfter
+	settleDelay = 10 * time.Millisecond
+	t.Cleanup(func() { settleDelay, degradedRebuildAfter = restoreSettle, restoreAfter })
+	root := tree(t, "a", "b", "c", "d", "e", "f", "match")
+	m := testManager(t)
+	req := request{Roots: []string{root}, Query: "match", Kind: "files"}
+	m.relative(t, root, req)
+	first := m.serving()
+	for _, name := range []string{"a", "b", "c", "d", "e", "f"} {
+		os.Remove(filepath.Join(root, name))
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for !first.wornOut() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	degradedRebuildAfter = 0
+	m.relative(t, root, req)
+	for m.serving() == first && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if first.degraded.Load() || m.serving() == first {
+		t.Fatalf("degraded %v, replaced %v; want an index that saw every change replaced for its dead entries", first.degraded.Load(), m.serving() != first)
 	}
 }
 

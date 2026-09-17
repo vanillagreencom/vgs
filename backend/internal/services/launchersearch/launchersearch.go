@@ -10,7 +10,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -71,11 +73,30 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 		log = slog.Default()
 	}
 	m := newManager(log)
-	srv.Register("launcher.search", "launcher.search.prepare", m.handlePrepare)
-	// A newer query replaces one of its kind still waiting, so typing never
-	// queues a search per keystroke behind the one running.
-	srv.RegisterLatest("launcher.search", "launcher.search.query", m.handleQuery, queryKey)
+	for _, r := range m.routes() {
+		if r.key == nil {
+			srv.Register("launcher.search", r.method, r.handle)
+		} else {
+			srv.RegisterLatest("launcher.search", r.method, r.handle, r.key)
+		}
+	}
 	return m, nil
+}
+
+// route is one method and, for a keep-latest method, its coalescing key.
+type route struct {
+	method string
+	handle server.HandlerFunc
+	key    server.LatestKeyFunc
+}
+
+func (m *Manager) routes() []route {
+	return []route{
+		{method: "launcher.search.prepare", handle: m.handlePrepare},
+		// A newer query replaces one of its kind still waiting, so typing never
+		// queues a search per keystroke behind the one running.
+		{method: "launcher.search.query", handle: m.handleQuery, key: queryKey},
+	}
 }
 
 // queryKey separates kinds: a surface that switches from files to folders is
@@ -204,6 +225,12 @@ func (m *Manager) startBuildLocked(cfg config) *build {
 		// kernel's watch budget they hold.
 		cur.close()
 	}
+	// A machine where the last index for these settings ran out of watches is
+	// walked without them; watching would only take the limit again.
+	watched := true
+	if cur := m.current; cur != nil && cur.cfg.key == cfg.key && cur.unwatched.Load() {
+		watched = false
+	}
 	b := &build{key: cfg.key}
 	m.building = b
 	go func() {
@@ -213,7 +240,7 @@ func (m *Manager) startBuildLocked(cfg config) *build {
 		// a failure rather than an index.
 		err := errors.New("launcher search index walk panicked")
 		recovery.Run(m.log, "launchersearch.build", func() {
-			ix, err = buildIndex(m.ctx, cfg, m.log)
+			ix, err = buildIndex(m.ctx, cfg, m.log, watched)
 		})
 		m.mu.Lock()
 		defer m.mu.Unlock()
@@ -241,9 +268,10 @@ func (m *Manager) startBuildLocked(cfg config) *build {
 	return b
 }
 
-// needsRebuild reports an index whose answers a fresh walk would improve: its
-// watches missed changes, or removals left it holding more dead entries than
-// live ones. A replacement is walked at most once per degradedRebuildAfter.
+// needsRebuild reports an index whose answers a fresh walk would improve: it
+// missed changes, including by holding no watches, or removals left it holding
+// more dead entries than live ones. A replacement is walked at most once per
+// degradedRebuildAfter.
 func (ix *index) needsRebuild() bool {
 	if time.Since(ix.builtAt) < degradedRebuildAfter {
 		return false
@@ -251,14 +279,37 @@ func (ix *index) needsRebuild() bool {
 	return ix.degraded.Load() || ix.wornOut()
 }
 
-// buildIndex walks cfg's roots into a new index and starts watching it.
-func buildIndex(ctx context.Context, cfg config, log *slog.Logger) (*index, error) {
-	ix := newIndex(cfg)
-	if w, err := newWatcher(log); err != nil {
-		log.Warn("launcher search index will not see changes", "err", err)
-		ix.degraded.Store(true)
+// watchLimit reads the per-user inotify watch limit, which every program the
+// user runs draws from. Tests replace it.
+var watchLimit = func() (int64, error) {
+	raw, err := os.ReadFile("/proc/sys/fs/inotify/max_user_watches")
+	if err != nil {
+		return 0, err
+	}
+	return strconv.ParseInt(strings.TrimSpace(string(raw)), 10, 64)
+}
+
+// buildIndex walks cfg's roots into a new index and, when watched, starts
+// watching it. The index stops adding watches at half the user's watch limit.
+func buildIndex(ctx context.Context, cfg config, log *slog.Logger, watched bool) (*index, error) {
+	ix := newIndex(cfg, log)
+	if watched {
+		limit, err := watchLimit()
+		switch {
+		case err != nil:
+			ix.unwatched.Store(true)
+			ix.degrade("the inotify watch limit could not be read", "err", err)
+		default:
+			ix.watchBudget = limit / 2
+			if w, err := newWatcher(log); err != nil {
+				ix.degrade("inotify is unavailable", "err", err)
+			} else {
+				ix.watch = w
+			}
+		}
 	} else {
-		ix.watch = w
+		ix.unwatched.Store(true)
+		ix.degraded.Store(true)
 	}
 	var starts []dirJob
 	for _, root := range cfg.roots {
@@ -282,7 +333,7 @@ func buildIndex(ctx context.Context, cfg config, log *slog.Logger) (*index, erro
 	ix.entries = slices.Clone(ix.entries)
 	ix.names = slices.Clone(ix.names)
 	ix.builtAt = time.Now()
-	if ix.watch != nil {
+	if ix.watch != nil && !ix.unwatched.Load() {
 		go ix.watchChanges()
 	}
 	return ix, nil

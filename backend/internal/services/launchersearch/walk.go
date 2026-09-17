@@ -7,6 +7,8 @@ import (
 	"runtime"
 
 	"golang.org/x/sys/unix"
+
+	"vshell/backend/internal/recovery"
 )
 
 // dirJob is one directory still to list. dev is its root's device, which a
@@ -45,13 +47,17 @@ func walkWorkers() int {
 // mounts, is left out.
 func (ix *index) list(job dirJob) listing {
 	out := listing{job: job, wd: -1}
-	if ix.watch != nil {
-		wd, err := ix.watch.add(job.path)
-		switch {
-		case err == nil:
-			out.wd = wd
-		case errors.Is(err, unix.ENOSPC):
-			ix.degraded.Store(true)
+	if ix.watch != nil && !ix.unwatched.Load() {
+		if ix.watches.Load() >= ix.watchBudget {
+			ix.giveUpWatches("the index reached its share of the inotify watch limit")
+		} else {
+			wd, err := ix.watch.add(job.path)
+			switch {
+			case err == nil:
+				out.wd = wd
+			case errors.Is(err, unix.ENOSPC):
+				ix.giveUpWatches("the user's inotify watch limit is exhausted")
+			}
 		}
 	}
 	dir, err := os.Open(job.path)
@@ -97,7 +103,10 @@ func (ix *index) walk(ctx context.Context, starts []dirJob) error {
 	for i := 0; i < walkWorkers(); i++ {
 		go func() {
 			for job := range jobs {
-				result := ix.list(job)
+				// A panicking listing still answers, as an unread directory, so
+				// the walk does not wait for it forever.
+				result := listing{job: job, wd: -1}
+				recovery.Run(ix.log, "launchersearch.list", func() { result = ix.list(job) })
 				select {
 				case results <- result:
 				case <-stop:
@@ -135,9 +144,10 @@ func (ix *index) walk(ctx context.Context, starts []dirJob) error {
 func (ix *index) record(result listing, queue []dirJob) []dirJob {
 	ix.mu.Lock()
 	defer ix.mu.Unlock()
-	if result.wd >= 0 {
-		ix.dirs[result.job.pos].wd = result.wd
-		ix.byWd[result.wd] = append(ix.byWd[result.wd], result.job.pos)
+	node := ix.dirs[result.job.pos]
+	ix.bindWatch(result.job.pos, node, result.wd)
+	if !result.read {
+		return queue
 	}
 	for _, c := range result.children {
 		pos := ix.add(result.job.pos, c.name, c.isDir)

@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"sync"
+	"syscall"
 	"time"
 	"unsafe"
 
@@ -23,15 +24,21 @@ const watchMask = unix.IN_CREATE | unix.IN_DELETE | unix.IN_MOVED_FROM | unix.IN
 	unix.IN_ONLYDIR | unix.IN_DONT_FOLLOW | unix.IN_EXCL_UNLINK
 
 type watcher struct {
-	fd   int
 	file *os.File
-	log  *slog.Logger
+	// raw issues every call on the inotify descriptor. Close waits for a call
+	// in progress and every later call fails, so a call can never reach
+	// another instance that reused the descriptor's number.
+	raw syscall.RawConn
+	log *slog.Logger
 
 	// writer is held for a whole delta, so one delta at a time writes the index.
 	writer sync.Mutex
 
-	mu      sync.Mutex
+	mu sync.Mutex
+	// pending holds the watches that reported a change; dropped, the watches
+	// the kernel ended on its own.
 	pending map[int32]bool
+	dropped map[int32]bool
 	timer   *time.Timer
 	closed  bool
 }
@@ -41,21 +48,35 @@ func newWatcher(log *slog.Logger) (*watcher, error) {
 	if err != nil {
 		return nil, err
 	}
+	file := os.NewFile(uintptr(fd), "vgs-launcher-search-inotify")
+	raw, err := file.SyscallConn()
+	if err != nil {
+		file.Close()
+		return nil, err
+	}
 	return &watcher{
-		fd:      fd,
-		file:    os.NewFile(uintptr(fd), "vgs-launcher-search-inotify"),
+		file:    file,
+		raw:     raw,
 		log:     log,
 		pending: map[int32]bool{},
+		dropped: map[int32]bool{},
 	}, nil
 }
 
 func (w *watcher) add(path string) (int32, error) {
-	wd, err := unix.InotifyAddWatch(w.fd, path, watchMask)
+	wd, err := -1, error(nil)
+	if cerr := w.raw.Control(func(fd uintptr) {
+		wd, err = unix.InotifyAddWatch(int(fd), path, watchMask)
+	}); cerr != nil {
+		return -1, cerr
+	}
 	return int32(wd), err
 }
 
 func (w *watcher) remove(wd int32) {
-	_, _ = unix.InotifyRmWatch(w.fd, uint32(wd))
+	_ = w.raw.Control(func(fd uintptr) {
+		_, _ = unix.InotifyRmWatch(int(fd), uint32(wd))
+	})
 }
 
 func (w *watcher) close() {
@@ -86,12 +107,11 @@ func (ix *index) watchChanges() {
 			closed := w.closed
 			w.mu.Unlock()
 			if !closed {
-				w.log.Warn("launcher search watcher stopped", "err", err)
-				ix.degraded.Store(true)
+				ix.degrade("the inotify event reader stopped", "err", err)
 			}
 			return
 		}
-		recovery.Run(w.log, "launchersearch.watchEvents", func() { ix.noteEvents(buf[:n]) })
+		recovery.Run(ix.log, "launchersearch.watchEvents", func() { ix.noteEvents(buf[:n]) })
 	}
 }
 
@@ -102,24 +122,40 @@ func (ix *index) noteEvents(buf []byte) {
 	for offset := 0; offset+unix.SizeofInotifyEvent <= len(buf); {
 		raw := (*unix.InotifyEvent)(unsafe.Pointer(&buf[offset]))
 		offset += unix.SizeofInotifyEvent + int(raw.Len)
-		if raw.Mask&unix.IN_Q_OVERFLOW != 0 {
-			ix.degraded.Store(true)
-			continue
+		switch {
+		case raw.Mask&unix.IN_Q_OVERFLOW != 0:
+			ix.degrade("the kernel's inotify event queue overflowed")
+		case raw.Mask&unix.IN_UNMOUNT != 0:
+			// The kernel ends every watch on the file system; a later mount at
+			// the same place sends nothing.
+			ix.degrade("a file system under the search roots was unmounted", "path", ix.watchedPath(raw.Wd))
+		case raw.Mask&unix.IN_IGNORED != 0:
+			w.dropped[raw.Wd] = true
+		default:
+			w.pending[raw.Wd] = true
 		}
-		if raw.Mask&unix.IN_IGNORED != 0 {
-			continue
-		}
-		w.pending[raw.Wd] = true
 	}
-	if len(w.pending) > 0 && w.timer == nil && !w.closed {
-		w.timer = recovery.AfterFunc(settleDelay, w.log, "launchersearch.applyChanges", ix.applyChanges)
+	if len(w.pending)+len(w.dropped) > 0 && w.timer == nil && !w.closed {
+		w.timer = recovery.AfterFunc(settleDelay, ix.log, "launchersearch.applyChanges", ix.applyChanges)
 	}
 }
 
+// watchedPath names a directory a watch reports, for a log line.
+func (ix *index) watchedPath(wd int32) string {
+	ix.mu.RLock()
+	defer ix.mu.RUnlock()
+	if positions := ix.byWd[wd]; len(positions) > 0 {
+		return ix.path(positions[0])
+	}
+	return ""
+}
+
 // applyChanges re-lists every directory that reported a change and brings its
-// entries in the index up to date. Every removal in the batch lands before any
-// new directory is walked: a directory moved within the roots keeps its inode,
-// and the kernel hands its new watch the descriptor the removal releases.
+// entries in the index up to date. Adding a watch on a directory that already
+// has one returns that same descriptor, so every removal in the batch lands
+// before any new directory is walked: a directory moved within the roots is
+// then watched afresh under its new position instead of keeping a descriptor
+// the removal is about to release.
 func (ix *index) applyChanges() {
 	w := ix.watch
 	w.writer.Lock()
@@ -131,8 +167,8 @@ func (ix *index) applyChanges() {
 		w.mu.Unlock()
 		return
 	}
-	dirty := w.pending
-	w.pending = map[int32]bool{}
+	dirty, dropped := w.pending, w.dropped
+	w.pending, w.dropped = map[int32]bool{}, map[int32]bool{}
 	w.mu.Unlock()
 
 	var jobs []dirJob
@@ -145,8 +181,6 @@ func (ix *index) applyChanges() {
 		}
 	}
 
-	// Listing re-adds each directory's own watch, which returns the descriptor
-	// it already has.
 	listings := make([]listing, 0, len(jobs))
 	for _, job := range jobs {
 		listings = append(listings, ix.list(job))
@@ -163,6 +197,69 @@ func (ix *index) applyChanges() {
 		// walk returns only its context's error, and this context has none.
 		panic("launchersearch: delta walk failed: " + err.Error())
 	}
+	ix.checkDropped(dropped)
+}
+
+// checkDropped handles the watches the kernel ended on its own. One whose
+// directory the batch already removed needs nothing. Any other directory is
+// listed again, which watches it afresh and brings its entries up to date, or,
+// when it is gone, re-lists its parent so the parent's listing removes it. A
+// root that is gone leaves nothing to watch it through.
+func (ix *index) checkDropped(dropped map[int32]bool) {
+	var jobs []dirJob
+	for wd := range dropped {
+		ix.mu.RLock()
+		var lost []int32
+		for _, pos := range ix.byWd[wd] {
+			if node := ix.dirs[pos]; node != nil && node.wd == wd {
+				lost = append(lost, pos)
+			}
+		}
+		ix.mu.RUnlock()
+		for _, pos := range lost {
+			jobs = append(jobs, ix.relistJob(pos))
+		}
+	}
+	if len(jobs) == 0 {
+		return
+	}
+	listings := make([]listing, 0, len(jobs))
+	for _, job := range jobs {
+		listings = append(listings, ix.list(job))
+	}
+	var walks []dirJob
+	var parents []int32
+	ix.mu.Lock()
+	for _, l := range listings {
+		if l.read {
+			walks = ix.reconcile(l, walks)
+			continue
+		}
+		parent := ix.entries[l.job.pos].parent
+		if parent < 0 || ix.dirs[parent] == nil || ix.dirs[parent].wd < 0 {
+			ix.mu.Unlock()
+			ix.degrade("a directory's watch ended and it can no longer be listed", "path", l.job.path)
+			ix.mu.Lock()
+			continue
+		}
+		parents = append(parents, ix.dirs[parent].wd)
+	}
+	ix.mu.Unlock()
+	if err := ix.walk(context.Background(), walks); err != nil {
+		panic("launchersearch: delta walk failed: " + err.Error())
+	}
+	if len(parents) == 0 {
+		return
+	}
+	w := ix.watch
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for _, wd := range parents {
+		w.pending[wd] = true
+	}
+	if w.timer == nil && !w.closed {
+		w.timer = recovery.AfterFunc(settleDelay, ix.log, "launchersearch.applyChanges", ix.applyChanges)
+	}
 }
 
 // relistJob is the job that lists an indexed directory again.
@@ -178,20 +275,23 @@ func (ix *index) relistJob(pos int32) dirJob {
 
 // reconcile applies one fresh listing to the directory it lists: entries gone
 // from disk are removed with everything under them, new ones are added, and
-// new directories are queued to be walked. The caller holds mu.
+// new directories are queued to be walked. A directory removed and made again
+// under the same name keeps its entry here; the kernel ends the old one's
+// watch, and checkDropped lists it afresh. The caller holds mu.
 func (ix *index) reconcile(l listing, walks []dirJob) []dirJob {
 	pos := l.job.pos
 	node, ok := ix.dirs[pos]
+	if !ok {
+		// Removed earlier in this batch along with an ancestor.
+		return walks
+	}
 	if !l.read {
 		// Unreadable now: the directory is gone, and its parent's own listing
 		// removes it, or it failed for a reason that says nothing about its
 		// children.
 		return walks
 	}
-	if !ok {
-		// Removed earlier in this batch along with an ancestor.
-		return walks
-	}
+	ix.bindWatch(pos, node, l.wd)
 	existing := make(map[string]int32, len(node.children))
 	for _, c := range node.children {
 		existing[string(ix.name(c))] = c
@@ -200,7 +300,7 @@ func (ix *index) reconcile(l listing, walks []dirJob) []dirJob {
 	for _, c := range l.children {
 		if old, found := existing[c.name]; found {
 			delete(existing, c.name)
-			if (ix.entries[old].flags&flagDir != 0) == c.isDir {
+			if (ix.dirs[old] != nil) == c.isDir {
 				kept = append(kept, old)
 				continue
 			}
@@ -233,28 +333,11 @@ func (ix *index) remove(pos int32) {
 	if !ok {
 		return
 	}
-	delete(ix.dirs, pos)
 	for _, c := range node.children {
 		ix.remove(c)
 	}
-	if node.wd < 0 {
-		return
+	if node.wd >= 0 {
+		ix.unbindWatch(pos, node)
 	}
-	positions := ix.byWd[node.wd]
-	for i, p := range positions {
-		if p == pos {
-			positions = append(positions[:i], positions[i+1:]...)
-			break
-		}
-	}
-	if len(positions) > 0 {
-		// The same directory is indexed under another path, as a bind mount
-		// shows it, and still needs its watch.
-		ix.byWd[node.wd] = positions
-		return
-	}
-	delete(ix.byWd, node.wd)
-	if ix.watch != nil {
-		ix.watch.remove(node.wd)
-	}
+	delete(ix.dirs, pos)
 }

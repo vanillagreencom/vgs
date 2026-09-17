@@ -1013,16 +1013,7 @@ PluginComponent {
     // A declined search runs once the answer that declined it changes.
     Connections {
         target: DSearchService
-        function onStatusStateChanged() {
-            root.retryDeclinedFileSearch();
-        }
-        function onFdAvailableChanged() {
-            root.retryDeclinedFileSearch();
-        }
-        function onRipgrepAvailableChanged() {
-            root.retryDeclinedFileSearch();
-        }
-        function onIndexAvailableChanged() {
+        function onDispatchAnswerChanged() {
             root.retryDeclinedFileSearch();
         }
     }
@@ -1877,7 +1868,7 @@ PluginComponent {
                                         : (root.categories[root.selectedCategoryIndex]?.id === "files" && !root.fileSearchDispatches(root.query.trim())
                                             ? "Type at least two characters"
                                             : root.fileSearchDeclined
-                                                ? (DSearchService.backendState(DSearchService.kindForType(root.fileSearchType), root.query.trim()) === "checking"
+                                                ? (DSearchService.fileSearchFacts(DSearchService.kindForType(root.fileSearchType), root.query.trim()).backendState === "checking"
                                                     ? "Checking search tools"
                                                     : "File search is unavailable")
                                                 : "No matching results")

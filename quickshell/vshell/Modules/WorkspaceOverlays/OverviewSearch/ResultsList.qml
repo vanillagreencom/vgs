@@ -22,22 +22,13 @@ Item {
     readonly property string _fileQuery: controller ? controller.fileSearchQuery() : ""
     readonly property bool _fileQuerySearchable: !!controller
         && DSearchService.queryIsSearchable(controller.fileSearchKind(), _fileQuery)
-    readonly property string _fileBackendState: controller
-        ? DSearchService.backendState(controller.fileSearchKind(), _fileQuery) : "unknown"
-    readonly property string _missingBackendCommand: controller && _fileBackendState === "missing"
-        ? DSearchService.backendCommandFor(controller.fileSearchKind()) : ""
-    // A search the gate refused for want of an answer, rather than one that ran
-    // and found nothing.
-    readonly property bool _fileSearchDeclined: !!controller && _fileQuerySearchable
-        && !DSearchService.canDispatch(controller.fileSearchKind(), _fileQuery)
+    readonly property var _dispatchFacts: controller
+        ? DSearchService.fileSearchFacts(controller.fileSearchKind(), _fileQuery)
+        : ({ backendState: "unknown", missingCommand: "", declined: false, probeState: DSearchService.statusState })
 
-    readonly property var _emptyStateFacts: ({
-        backendState: _fileBackendState,
-        missingCommand: _missingBackendCommand,
-        probeState: DSearchService.statusState,
+    readonly property var _emptyStateFacts: Object.assign({}, _dispatchFacts, {
         queryLength: _fileQuery.length,
         searchable: _fileQuerySearchable,
-        declined: _fileSearchDeclined,
         searchError: controller?.fileSearchError ?? "",
         legActive: _fileLegActive
     })
