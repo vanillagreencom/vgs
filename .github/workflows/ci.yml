@@ -259,6 +259,7 @@ jobs:
           scripts/test-paste-lifecycle.js
           scripts/test-compositor-focus.js
           scripts/test-compositor-events.js
+          scripts/test-event-probe.js
           scripts/test-dock-scratchpad-identity.js
           scripts/test-overview-refetch.js
           scripts/test-bar-workspace-filter.js
@@ -310,6 +311,8 @@ jobs:
           scripts/test-sample-shell-memory.sh
           # The heap profile attributor reads hand-written dumps and a stub symbolizer.
           scripts/test-attribute-heap-profile.py
+          # The latency benchmark's pairing and budget verdict run on recorded samples.
+          scripts/test-bench-shell-events.py
           # The recorder script runs against a stub recorder and needs no session.
           scripts/test-screenrecording-status.sh
           scripts/test-validation-areas.sh
