@@ -290,7 +290,12 @@ starts the enabled unit. VGS is running now, and will not come back at your next
 login until the session produces that target. Either:
   - launch Hyprland through uwsm, from the hyprland-uwsm.desktop session entry
     or with: uwsm start hyprland
-  - or start VGS from your compositor config instead:
+  - or launch Niri through its own session unit, from a niri-session desktop
+    entry or with: niri --session
+  - or start VGS from your compositor config instead. vshell.service stays
+    enabled either way; if you later switch to a session-manager route, disable
+    it first (systemctl --user disable vshell.service) so the two do not both
+    try to run VGS:
       Hyprland  exec-once = vshell run
       Niri      spawn-at-startup "vshell" "run"
 EOF

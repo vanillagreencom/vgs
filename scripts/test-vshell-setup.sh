@@ -123,11 +123,13 @@ stub_path="$stubs:/usr/bin:/bin"
 # Run $2's setup verb in case directory $1 with the stub systemctl exiting $3
 # for enable and $4 for start and the stub helper exiting $5, under PATH $6, in
 # session $7. The session is one token rather than a display and a target
-# status, because only three states exist and a free pair would spell states no
-# session can be in: `headless` for no Wayland display, `target-up` for a
-# Wayland session whose graphical-session.target is active, and `target-down`
-# for one where it is not. Remaining arguments follow the verb. Sets setup_rc,
-# call_log and err_out.
+# status: in _report_session_target the display check returns before the
+# target probe runs, so the target's state cannot change the outcome once no
+# display is set, which is why `headless` pairs with either target state
+# instead of splitting into two tokens. The other two tokens are `target-up`
+# for a Wayland session whose graphical-session.target is active and
+# `target-down` for one where it is not. Remaining arguments follow the verb.
+# Sets setup_rc, call_log and err_out.
 run_setup() {
   local dir="$tmp/$1" src="$2" enable_rc="$3" start_rc="$4" helper_rc="$5" path="$6" session="$7"
   shift 7
@@ -334,12 +336,21 @@ expect target-down-started "the unit is started for this session, whatever the n
 expect target-down-named "the missing target is named rather than passed over as a bare success" \
   "stderr: $(cat "$err_out")" \
   grep -qF -- 'does not run graphical-session.target' "$err_out"
-expect target-down-uwsm "the notice names the session manager that starts the target" \
+expect target-down-uwsm "the notice names Hyprland's session manager that starts the target" \
   "stderr: $(cat "$err_out")" \
   grep -qF -- 'uwsm start hyprland' "$err_out"
-expect target-down-compositor "the notice names the compositor route as the other way out" \
+expect target-down-niri-session "the notice names Niri's own session unit that starts the target" \
+  "stderr: $(cat "$err_out")" \
+  grep -qF -- 'niri --session' "$err_out"
+expect target-down-compositor "the notice names the Hyprland compositor route as the other way out" \
   "stderr: $(cat "$err_out")" \
   grep -qF -- 'exec-once = vshell run' "$err_out"
+expect target-down-compositor-niri "the notice names the Niri compositor route as the other way out" \
+  "stderr: $(cat "$err_out")" \
+  grep -qF -- 'spawn-at-startup "vshell" "run"' "$err_out"
+expect target-down-stays-enabled "the notice says the unit stays enabled under the compositor route" \
+  "stderr: $(cat "$err_out")" \
+  grep -qF -- 'systemctl --user disable vshell.service' "$err_out"
 
 # No Wayland display means no graphical session to answer about. An inactive
 # target looks the same there as on a session with no producer, so the verb must
