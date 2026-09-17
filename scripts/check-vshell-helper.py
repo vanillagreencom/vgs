@@ -5569,6 +5569,44 @@ def test_notification_status_respects_the_server_opt_out():
         helper.vgs_notification_server_enabled = original_enabled
 
 
+def test_notification_status_withholds_the_manual_fix_before_the_first_run():
+    """The shell claims the name itself the first time it runs.
+
+    Naming the manual command while that one-shot is unspent invites a takeover
+    racing the shell's own, and both write the undo record. vshell setup reports
+    before it starts the unit, which is squarely inside that window.
+    """
+    original_enabled = helper.vgs_notification_server_enabled
+    try:
+        helper.vgs_notification_server_enabled = lambda: True
+        status = {
+            "busName": helper.NOTIFICATION_BUS_NAME, "state": "foreign", "error": "",
+            "vgsServerEnabled": True, "vgsFirstRunTakeoverDone": False, "atRisk": False,
+            "owner": {"present": True, "pid": 42, "process": "mako", "exe": "/usr/bin/mako",
+                      "unit": "mako.service", "isVgs": False, "unique": ":1.7", "cmdline": "", "error": ""},
+            "conflicts": [], "takeover": {"available": True, "reason": ""},
+            "restore": {"available": False},
+        }
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            helper._print_notification_status(status)
+        unspent = buffer.getvalue()
+        assert "fix: vshell notifications takeover" not in unspent, \
+            "the manual command must not be named while the shell's own takeover is unspent"
+        assert "takes this name over itself" in unspent, \
+            "the report must say what will claim the name instead"
+
+        status["vgsFirstRunTakeoverDone"] = True
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            helper._print_notification_status(status)
+        spent = buffer.getvalue()
+        assert "fix: vshell notifications takeover" in spent, \
+            "once the one-shot is spent, the manual command is the only way back"
+    finally:
+        helper.vgs_notification_server_enabled = original_enabled
+
+
 def test_notification_probe_failure_is_not_an_unowned_bus():
     """A broken probe must never read as a settled session."""
     original_bus, original_systemctl = helper._session_bus_call, helper._systemctl_user
@@ -13070,6 +13108,7 @@ def main():
     test_notification_restore_starts_what_takeover_stopped()
     test_notification_takeover_records_who_asked()
     test_notification_status_respects_the_server_opt_out()
+    test_notification_status_withholds_the_manual_fix_before_the_first_run()
     test_requires_features_propagates_to_availability()
     test_sudo_toggle_status_stays_available_without_a_terminal()
     test_terminal_resolution_prefers_the_vgs_setting()

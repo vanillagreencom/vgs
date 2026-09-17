@@ -280,17 +280,9 @@ EOF
 # every account on the machine. This verb is that one step, for one account.
 _setup() {
   [[ $# -eq 0 ]] || { echo "Usage: vshell setup" >&2; return 2; }
-  # Report before starting. deps status is the single report of optional
-  # features and of who owns org.freedesktop.Notifications, and it names the
-  # takeover command itself. The unit is Type=simple, so a report taken after
-  # the start would answer while the shell is still loading and about to claim
-  # that name, and would name the owner the shell is in the middle of replacing.
-  "$helper" deps status
-  local status=0
-  systemctl --user enable vshell.service || status=$?
-  # 127 is bash reporting no systemctl at all, which is the one case the
-  # compositor route answers. Any other status means systemd refused.
-  if ((status == 127)); then
+  # A missing systemctl is the one case the compositor route answers. Any
+  # status from systemctl itself means systemd is present and refused.
+  if ! command -v systemctl >/dev/null 2>&1; then
     cat >&2 <<'EOF'
 vshell setup: this system has no systemctl, so there is no user service to enable.
 Void runs runit rather than systemd. Start VGS from your compositor config:
@@ -299,7 +291,15 @@ Void runs runit rather than systemd. Start VGS from your compositor config:
 EOF
     return 1
   fi
-  if ((status != 0)); then
+  # Report before starting. deps status is the single report of optional
+  # features and of who owns org.freedesktop.Notifications. The unit is
+  # Type=simple, so a report taken after the start would answer while the shell
+  # is still loading and about to claim that name, and would name the owner the
+  # shell is in the middle of replacing. The report is advisory: a helper fault
+  # must not keep the first start from happening.
+  "$helper" deps status ||
+    echo "vshell setup: could not read the dependency report; enabling the unit anyway." >&2
+  if ! systemctl --user enable vshell.service; then
     echo "vshell setup: systemctl could not enable vshell.service; its message above names the cause." >&2
     return 1
   fi
@@ -456,7 +456,7 @@ case "${1:-run}" in
 Usage:
   vshell --version
   vshell run [qs args...]
-  vshell setup   (enable and start vshell.service, then report features and notification ownership)
+  vshell setup   (report features and notification ownership, then enable and start vshell.service)
   vshell backend run|serve|request <method> [json]|doctor|methods [--json]
   vshell open [--mime MIME] [--type url|file|uri] <target>
   vshell open --install-desktop

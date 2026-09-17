@@ -121,11 +121,13 @@ ln -sfn "$install_root/current/quickshell/vshell" "$shell_link"
 rm -f "$service_path"
 cp "$version_root/systemd/user/vshell.service" "$service_path"
 systemctl --user daemon-reload
+echo "VGS $version installed."
 # The enable stays here rather than calling the bundle's own setup verb:
 # --version installs an older bundle, whose CLI need not carry that verb, and an
 # unknown command there would abort the installer after a complete install.
 if [[ "$start" == true ]]; then
   systemctl --user enable --now vshell.service
+  echo "Run: vshell deps status"
+else
+  echo "Start it with: vshell setup"
 fi
-
-echo "VGS $version installed. Run: vshell deps status"

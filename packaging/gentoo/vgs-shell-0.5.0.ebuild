@@ -62,8 +62,8 @@ pkg_postinst() {
 	elog
 	elog "  vshell setup"
 	elog
-	elog "That enables and starts vshell.service, then reports the optional"
-	elog "feature dependencies and which app owns org.freedesktop.Notifications."
+	elog "That reports the optional feature dependencies and which app owns"
+	elog "org.freedesktop.Notifications, then enables and starts vshell.service."
 	elog
 
 	# BEGIN GENERATED OPTIONAL DEPENDENCIES

@@ -10,7 +10,7 @@ After a native package installation, finish the setup for your account:
 vshell setup
 ```
 
-It enables and starts `vshell.service`, then reports the optional feature dependencies and which app owns `org.freedesktop.Notifications`.
+It reports the optional feature dependencies and which app owns `org.freedesktop.Notifications`, then enables and starts `vshell.service`. The report comes first because the unit is `Type=simple`: taken after the start, it would answer while the shell is still loading and about to claim that name.
 
 No VGS package ships a systemd preset. [`systemd.preset(5)`](https://www.freedesktop.org/software/systemd/man/latest/systemd.preset.html) advises against shipping a preset from the package that implements the unit, and asks that preset policy be centralised in a distribution's own default policy instead. No VGS package enables the unit either. Each channel's reason is its row.
 

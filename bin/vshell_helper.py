@@ -19093,7 +19093,12 @@ def _print_notification_status(status: Dict[str, Any]) -> None:
             detail.append("activation " + conflict["activationFile"] + (" (shadowed)" if conflict["shadowed"] else ""))
         print(f"  conflict: {conflict['daemon']}" + (": " + ", ".join(detail) if detail else ""))
     if vgs_wants_it and (status["state"] != "vgs" or status["atRisk"]):
-        if status["takeover"]["available"]:
+        if not status["vgsFirstRunTakeoverDone"]:
+            # The shell takes the name over itself the first time it runs.
+            # Naming the manual command while that one-shot is unspent invites a
+            # takeover racing the shell's own, and both write the undo record.
+            print("  note: VGS takes this name over itself the first time it runs")
+        elif status["takeover"]["available"]:
             print("  fix: vshell notifications takeover")
         elif status["takeover"]["reason"]:
             print(f"  note: {status['takeover']['reason']}")
