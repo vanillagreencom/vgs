@@ -51,7 +51,7 @@ VGS theme packages listed below were ported from community Omarchy theme reposit
 | `vurple` | https://github.com/tahfizhabib/omarchy-vurple-theme | no LICENSE file |
 | `x-1632` | https://github.com/OldJobobo/omarchy-x-1632-theme | no LICENSE file |
 
-`synthwave84` is the one exception to the palette and VS Code sentence above: those two files come from the upstream extension, not from the Omarchy source, and the Vendor ports table below records them. Its other files are the import's.
+`synthwave84` is the one exception to the palette and VS Code sentence above: those two files come from the upstream extension, not from the Omarchy source, and the Vendor ports table below records them.
 
 ## Vendor ports
 
@@ -67,4 +67,4 @@ For the two Horizon packages, every colour in `colors.toml`, `terminal-colors.to
 
 For `synthwave84`, nineteen `colors.toml` keys come from the extension. It sets twelve `terminal.ansi*` keys, and those answer `color1` to `color6` and `color9` to `color14`; `foreground` and `cursor` come from `terminal.foreground` and `terminalCursor.foreground`. It sets no black or white ANSI pair, no terminal selection foreground and no opaque terminal selection background, so the remaining five keys take the surfaces it paints them from: `color0` from `editor.background`, `color8` from `button.background`, and `color7`, `color15` and `selection_foreground` from the top-level `foreground`.
 
-The package's own values are `accent`, `background` and `selection_background`, which the extension sets no opaque value for, and one green in `terminal-colors.toml`. [D017](../docs/decisions/D017-vendor-port-upstream-values.md) permits each of those four and names them under Current state. `apps/vscode-theme.json` is the extension's theme file, pretty-printed and renamed. `test_aligned_vendor_ports_take_the_upstream_terminal_palette` in `scripts/check-vshell-helper.py` pins that file by digest and holds all nineteen keys and the overlay slot to it. The package's remaining files are outside this decision; the community-imports table above names their source, and `apps/btop.theme` is that import's file copied verbatim.
+The package's own values are `accent`, `background` and `selection_background`, which the extension sets no opaque value for, and one green in `terminal-colors.toml`. [D017](../docs/decisions/D017-vendor-port-upstream-values.md) permits each of those four and names them under Current state. `apps/vscode-theme.json` is the extension's theme file, pretty-printed and renamed. `test_aligned_vendor_ports_take_the_upstream_terminal_palette` in `scripts/check-vshell-helper.py` pins that file by digest and holds all nineteen keys and the overlay slot to it. `apps/btop.theme` is that import's file copied verbatim.
