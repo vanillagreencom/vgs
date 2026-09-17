@@ -24,6 +24,7 @@ Each resource has one owner. QML consumes the owner's state instead of starting 
 
 ## Invariants
 
+- The supported Quickshell baseline is 0.3.1. Every recipe this repository generates whose format has a version slot requires it as a minimum, from `packaging/optional-packages.json`; `scripts/gen-package-metadata.py` fails when a recipe drifts from that file. The openSUSE spec is kept by hand in the OBS project; [`../../packaging/DEVELOPMENT.md`](../../packaging/DEVELOPMENT.md) names the minimum it must carry. A behavioural claim about the Quickshell binary names the version it was read on.
 - Runtime paths use the `vshell` name. `scripts/check-naming.sh` checks the owned source set.
 - Registered backend methods require a capability entry. `scripts/check-backend-inventory.py` compares registration and caller references against `backend/methods.json`.
 - Backend one-shot commands use bounded execution. `scripts/check-execbound-adoption.py` checks adoption of `backend/internal/execbound`.

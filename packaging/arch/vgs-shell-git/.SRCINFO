@@ -9,7 +9,7 @@ pkgbase = vgs-shell-git
 	makedepends = git
 	makedepends = go
 	install = vgs-shell-git.install
-	depends = quickshell
+	depends = quickshell>=0.3.1
 	depends = jq
 	depends = python
 	depends = systemd

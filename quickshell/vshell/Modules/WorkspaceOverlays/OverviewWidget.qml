@@ -151,8 +151,9 @@ Item {
     // CompositorService fan-out issues no toplevel fetch, so the overview fetches its own.
     // One widget exists per screen and all three fetches hit shared singleton state, but
     // HyprlandIpc guards each on an in-flight flag, so N monitors still cost one round trip
-    // per endpoint. Verified in quickshell 0.3.1: HyprlandIpc::refreshToplevels,
-    // refreshWorkspaces and refreshMonitors each return early while their request is out.
+    // per endpoint. Verified on the supported baseline, quickshell 0.3.1: HyprlandIpc's
+    // refreshToplevels, refreshWorkspaces and refreshMonitors each return early while their
+    // request is out. The guard is internal to the binary, not a documented API.
     function refetchOverviewState() {
         Hyprland.refreshToplevels();
         Hyprland.refreshWorkspaces();

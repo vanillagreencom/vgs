@@ -9,7 +9,7 @@ Rules-Requires-Root: no
 
 Package: vgs-shell
 Architecture: any
-Depends: quickshell,
+Depends: quickshell (>= 0.3.1),
  jq,
  python3,
  systemd,

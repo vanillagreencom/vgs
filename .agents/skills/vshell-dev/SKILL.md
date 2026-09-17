@@ -1,7 +1,7 @@
 ---
 name: vshell-dev
 description: >
-  Work on VanillaGreen Shell (VGS / vshell), a Hyprland and Niri Quickshell 0.3.0 runtime.
+  Work on VanillaGreen Shell (VGS / vshell), a Hyprland and Niri Quickshell 0.3.1 runtime.
   Use for shell modules, services, bundled plugins, theme engine targets, wallpaper/palette
   flows, IPC, settings UI, or removing stale legacy upstream assumptions.
 compatibility: Designed for Claude Code, Pi, Codex, and similar agents
@@ -26,6 +26,6 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 
 Read the root `AGENTS.md` for validation and live-session safety. Read `docs/architecture/overview.md` to select the subsystem topic, then the nested `AGENTS.md` beside the changed files.
 
-For Quickshell API questions, use the CTX7 source `/websites/quickshell_v0_3_0`.
+For Quickshell API questions, use the CTX7 source `/websites/quickshell_v0_3_1`, which matches the supported baseline.
 
 Theme validation beyond the scoped suite uses `vshell theme list --json` and a theme apply in an isolated test configuration.

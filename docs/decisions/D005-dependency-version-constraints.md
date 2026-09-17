@@ -29,6 +29,10 @@ Facts established before choosing (2026-08-08):
 >
 > Drop `| unique` for the 95 probe entries; `.features | length` gives the 43 groups. The decision is unaffected: `jq` remains the sole entry with a documented minimum, and a version parser per probed command is *more* expensive at the true count, not less.
 
+> **Correction (2026-09-17, VGS-371):** the Quickshell half of the first bullet no longer holds. Quickshell was neither pinned nor `>=`-constrained by packaging on the decision date — every recipe named it bare — and it is now a `>=` minimum at the 0.3.1 baseline. That minimum lives in one file, `packaging/optional-packages.json`, as one `required.base` entry per channel written in that channel's own syntax, which the generator copies verbatim into each recipe. The Revisit When entry on Quickshell's minimum is what fired. The decision itself stands: the constraint lives in packaging, not in `dependencies.json`, which still declares presence only.
+>
+> The third bullet above is disproved in two of its three cases. Void and Gentoo did express the constraint: `packaging/void/template` carries `quickshell>=0.3.1_1` and `packaging/gentoo/vgs-shell-0.5.0.ebuild` carries `>=gui-apps/quickshell-0.3.1`. Neither needed the per-distro waiver facility that bullet priced, because the syntax is authored per channel in the base map rather than emitted by the generator. `pkgs.quickshell` in `flake.nix` is the one format still without a slot in the form used: it is an attribute path passed to `makeBinPath`, so the flake's nixpkgs input decides the version. What the bullet got right is the cost of a *general* facility, which is still unbuilt and still unneeded.
+
 ## Decision
 
 **`dependencies.json` gains no version-constraint syntax.** It declares presence, and its `$comment` now says so explicitly and points at where the real check lives, rather than implying a constraint nothing enforces.
@@ -92,7 +96,7 @@ scripts/check-command-declarations.py
 
 - A second command needs more than presence. One entry is a table; three or four with genuinely version-shaped constraints would be the signal that a real constraint facility has earned its cost.
 - A packaging target VGS ships to starts shipping a jq (or any dependency) below a floor VGS needs — at which point the packaging-side constraint stops being unrepresentable-and-pointless and becomes unrepresentable-and-needed.
-- Quickshell's minimum stops being a pin and becomes a range.
+- Quickshell's packaging minimum moves off the 0.3.1 baseline, or a channel stops being able to express it. See the VGS-371 correction above.
 
 ## References
 
@@ -100,4 +104,4 @@ scripts/check-command-declarations.py
 - VGS-78 — added the `$comment` this replaces, and established the jq 1.5 fact from `builtin.c` at tags `jq-1.4` / `jq-1.5` / `jq-1.6`
 - `bin/vshell_helper.py` — `CAPABILITY_PROBES`, `capability_probe_ok`, `_unusable_commands`
 - `config/vshell/dependencies.json` — `features.base.$comment`
-- [D001](D001-quickshell-0-3-0-upstream-defects.md) — why Quickshell is a pin rather than a minimum
+- [D001](D001-quickshell-0-3-0-upstream-defects.md) — the three Quickshell 0.3.0 defects and the decision not to vendor or patch. It was cited here as the reason Quickshell was a pin rather than a minimum; the VGS-371 correction above supersedes that reading.
