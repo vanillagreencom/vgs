@@ -429,7 +429,7 @@ Usage:
   vshell theme pick [all|dark|light]
   vshell theme lint [name|--all]
   vshell theme migrate <name>|--all
-  vshell theme apps [--enable <app>|--disable <app>]   (a toggle applies to this run and is not saved; Settings > Themes stores it)
+  vshell theme apps [--enable <app>|--disable <app>]   (a toggle applies to this run and is not saved; Settings > Colors stores it)
   vshell theme catalog list|updates|install <name>...|--all|update <name>...|--all|remove <name>...
   vshell theme regenerate <name> [--app <id>] [--yes]
   vshell icons index <theme>   (icon name-to-path map for an icon theme and its inherit chain)

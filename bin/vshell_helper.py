@@ -11987,7 +11987,7 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
         toggled = args.enable or args.disable
         # The shell owns settings.json, so the toggle is an argument: it applies to
         # this run, the resulting set is reported, and nothing is saved. Settings >
-        # Themes stores the toggle before it runs this.
+        # Colors stores the toggle before it runs this.
         theme_apps = theme_apps_settings()
         result: Dict[str, Any] = {}
         if toggled:
@@ -12012,7 +12012,7 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
                 print(f"{entry['app']}: {state}{origin}{detected}{curated}")
             if toggled:
                 print(f"not-saved: themeApps.{toggled}={'true' if args.enable else 'false'}\n"
-                      "The toggle applied to this run only and was not saved. Settings > Themes stores it.")
+                      "The toggle applied to this run only and was not saved. Settings > Colors stores it.")
         return 0
     if args.cmd == "regenerate":
         bp = find_theme(args.name)
