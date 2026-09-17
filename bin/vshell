@@ -274,24 +274,46 @@ EOF
   return 1
 }
 
-# No package can enable vshell.service on the user's behalf: systemd reads a
-# preset file only when systemctl preset runs (systemd.preset(5)), nothing runs
-# it for a user unit at package install, and Arch, Fedora and Gentoo policy each
-# keep a package from enabling its own service. This verb is that one step.
+# No VGS package enables vshell.service for the user. Arch, Fedora and Gentoo
+# policy each keep a package from enabling its own service, and the Debian
+# recipe passes dh_installsystemduser --no-enable rather than enable VGS for
+# every account on the machine. This verb is that one step, for one account.
 _setup() {
   [[ $# -eq 0 ]] || { echo "Usage: vshell setup" >&2; return 2; }
-  if ! systemctl --user enable --now vshell.service; then
+  # Report before starting. deps status is the single report of optional
+  # features and of who owns org.freedesktop.Notifications, and it names the
+  # takeover command itself. The unit is Type=simple, so a report taken after
+  # the start would answer while the shell is still loading and about to claim
+  # that name, and would name the owner the shell is in the middle of replacing.
+  "$helper" deps status
+  local status=0
+  systemctl --user enable vshell.service || status=$?
+  # 127 is bash reporting no systemctl at all, which is the one case the
+  # compositor route answers. Any other status means systemd refused.
+  if ((status == 127)); then
     cat >&2 <<'EOF'
-vshell setup: the systemd user manager did not enable vshell.service.
-Where there is none -- Void runs runit -- start VGS from the compositor instead:
+vshell setup: this system has no systemctl, so there is no user service to enable.
+Void runs runit rather than systemd. Start VGS from your compositor config:
   Hyprland  exec-once = vshell run
   Niri      spawn-at-startup "vshell" "run"
 EOF
     return 1
   fi
-  # deps status is the single report of optional features and of who owns
-  # org.freedesktop.Notifications, and it names the takeover command itself.
-  "$helper" deps status
+  if ((status != 0)); then
+    echo "vshell setup: systemctl could not enable vshell.service; its message above names the cause." >&2
+    return 1
+  fi
+  if ! systemctl --user start vshell.service; then
+    cat >&2 <<'EOF'
+vshell setup: vshell.service is enabled but did not start.
+systemctl's message above names the cause. Inspect it with:
+  vshell status
+  journalctl --user -u vshell.service
+EOF
+    return 1
+  fi
+  echo "vshell.service is enabled and started."
+  echo "Re-run vshell deps status once the shell is up to see the settled state."
 }
 
 case "${1:-run}" in

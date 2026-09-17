@@ -7,7 +7,7 @@ The helper owns parsing, generation and privileged operations. `bin/vshell` disp
 ## Boundaries
 
 - Keep new helper behaviour behind the dispatcher. A helper module split is separate work, not a requirement of unrelated fixes.
-- `bin/vshell` owns the systemd unit lifecycle, `setup`, `restart`, `status` and `logs`, and the helper owns what those verbs report. No distribution enables a user unit on a package's behalf, so `vshell setup` is the one first-start step every install message names. `scripts/test-vshell-setup.sh` checks the verb and that no install instruction carries a second copy of the raw enable command.
+- `bin/vshell` owns the systemd unit lifecycle: `setup`, `restart`, `status` and `logs`. `setup` reports through the helper's `deps status`; the other three report from systemd and journald directly. No VGS package enables the unit, so every install message in this repository names a first-start step, `vshell setup` on a systemd channel and the compositor route on Void, and `bin/vshell` is the single owner of the raw enable command. `scripts/test-vshell-setup.sh` checks the verb and both rules. The openSUSE spec lives in the OBS project rather than here, so no check in this repository reaches its message.
 - Hyprland receives VGS-owned configuration fragments. Niri also permits an include update with a backup; see `bin/vshell_niri.py`.
 - External commands use argv arrays and must not log secrets or raw payloads. Review each changed call; `scripts/check-vshell-helper.py` tests named operations, not the absence of every unsafe call.
 
