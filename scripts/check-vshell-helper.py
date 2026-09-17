@@ -4283,6 +4283,51 @@ def test_launcher_search_unicode_ranges_and_preview():
         assert_equal(folder_hits[0]["completion"], "~/dev/", "folder completion preserves tilde path")
 
 
+def test_launcher_search_sigterm_ends_its_walk():
+    """A search the shell ends with SIGTERM takes the fd walk it started with it.
+
+    The shell kills a superseded search's helper process, not its children, so
+    without this the walk it asked for runs on beside the search that replaced it.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_bin = Path(tmp) / "bin"
+        fake_bin.mkdir()
+        pid_file = Path(tmp) / "fd.pid"
+        fake_fd = fake_bin / "fd"
+        fake_fd.write_text(f'#!/bin/sh\necho $$ > "{pid_file}"\nexec sleep 30\n', encoding="utf-8")
+        fake_fd.chmod(0o755)
+        search = subprocess.Popen(
+            [str(helper.helper_entrypoint()), "launcher-search", "search", "--kind", "files",
+             "--root=" + tmp, "--", "ab"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            env={"PATH": f"{fake_bin}:{os.environ.get('PATH', '/usr/bin:/bin')}", "HOME": tmp},
+        )
+        try:
+            deadline = time.monotonic() + 10
+            while not pid_file.exists() or not pid_file.read_text(encoding="utf-8").strip():
+                if time.monotonic() >= deadline:
+                    raise AssertionError("fd-never-started: the search did not reach fd")
+                time.sleep(0.02)
+            fd_pid = int(pid_file.read_text(encoding="utf-8"))
+            search.send_signal(signal.SIGTERM)
+            status = search.wait(timeout=10)
+            deadline = time.monotonic() + 5
+            while True:
+                try:
+                    os.kill(fd_pid, 0)
+                except ProcessLookupError:
+                    break
+                if time.monotonic() >= deadline:
+                    os.kill(fd_pid, signal.SIGKILL)
+                    raise AssertionError(f"fd-still-walking: {fd_pid}")
+                time.sleep(0.02)
+            assert_equal(status, 128 + signal.SIGTERM, "the search exits for its SIGTERM")
+        finally:
+            if search.poll() is None:
+                search.kill()
+                search.wait()
+
+
 def test_instance_listing():
     """The listing holds live shells of this entrypoint, oldest first, and reports an unreadable registry."""
     shell_path = str(REPO_ROOT / "quickshell" / "vshell" / "shell.qml")
@@ -12920,6 +12965,7 @@ def main():
     test_greeter_runtime_helper_dependencies()
     test_greeter_sync_survives_a_missing_wallpaper()
     test_launcher_search_unicode_ranges_and_preview()
+    test_launcher_search_sigterm_ends_its_walk()
     test_launcher_folder_opener_agreement()
     test_launcher_zoxide_results()
     test_instance_listing()

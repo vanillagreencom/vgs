@@ -32,6 +32,9 @@ PluginComponent {
     property var devItems: []
     property string fileSearchType: "file"
     property bool fileSearching: false
+    // The search gate refused the current file query, so the empty state says
+    // why instead of reporting no matches.
+    property bool fileSearchDeclined: false
     property int fileSearchGeneration: 0
     property bool fileSettingsVisible: false
     property bool filePreviewRevealed: false
@@ -70,6 +73,7 @@ PluginComponent {
         }
 
         resetLauncherState();
+        DSearchService.ensureStatus();
         refreshItems();
         menuOpen = true;
         contentVisible = true;
@@ -131,6 +135,8 @@ PluginComponent {
         hoverGate.disarm();
         ++fileSearchGeneration;
         fileSearching = false;
+        fileSearchDeclined = false;
+        fileSearchDebounce.stop();
         query = "";
         selectedCategoryIndex = 0;
         selectedItemIndex = 0;
@@ -416,6 +422,8 @@ PluginComponent {
         folderCompletion = "";
         const trimmed = query.trim();
         ++fileSearchGeneration;
+        fileSearchDebounce.stop();
+        fileSearchDeclined = false;
         allImmediateItems = buildImmediateAllItems(trimmed);
         visibleItems = allImmediateItems;
         selectedItemIndex = 0;
@@ -483,6 +491,8 @@ PluginComponent {
         }
         ++fileSearchGeneration;
         fileSearching = false;
+        fileSearchDebounce.stop();
+        fileSearchDeclined = false;
         folderCompletion = "";
         if (selectedCategory === "apps") {
             const apps = AppSearchService.searchApplicationResults(query.trim());
@@ -537,21 +547,44 @@ PluginComponent {
             || fileSearchType === "zoxide";
     }
 
+    // Clears the results for the current query and schedules its search. The
+    // search waits for typing to pause, so a word typed at speed dispatches once.
     function refreshFileItems() {
         if (resettingState || routingPrefix)
             return;
         const trimmed = query.trim();
-        const generation = ++fileSearchGeneration;
+        ++fileSearchGeneration;
         folderCompletion = "";
         visibleItems = [];
         selectedItemIndex = 0;
         filePreviewRevealed = false;
+        fileSearchDebounce.stop();
+        fileSearchDeclined = false;
         if (!fileSearchDispatches(trimmed)) {
             fileSearching = false;
             return;
         }
+        // The same gate the overview applies: a name search without the index
+        // and without fd would walk every root per query.
+        if (!DSearchService.canDispatch(DSearchService.kindForType(fileSearchType), trimmed)) {
+            fileSearching = false;
+            fileSearchDeclined = true;
+            return;
+        }
         fileSearching = true;
+        fileSearchDebounce.restart();
+    }
+
+    function dispatchFileSearch() {
+        const trimmed = query.trim();
+        const generation = fileSearchGeneration;
         const kind = DSearchService.kindForType(fileSearchType);
+        // The gate can close during the debounce, as when the backend restarts.
+        if (!DSearchService.canDispatch(kind, trimmed)) {
+            fileSearching = false;
+            fileSearchDeclined = true;
+            return;
+        }
         DSearchService.search(trimmed, { kind: kind, limit: 120 }, response => {
             if (generation !== fileSearchGeneration
                     || categories[selectedCategoryIndex]?.id !== "files"
@@ -976,6 +1009,25 @@ PluginComponent {
     // visibleItems assignment. Rebuilds must assign a fresh array because
     // writing the same reference does not emit this signal.
     onVisibleItemsChanged: hoverGate.disarm()
+
+    Timer {
+        id: fileSearchDebounce
+        interval: 200
+        onTriggered: root.dispatchFileSearch()
+    }
+
+    // A declined search runs once the answer that declined it changes.
+    Connections {
+        target: DSearchService
+        function onDispatchAnswerChanged() {
+            root.retryDeclinedFileSearch();
+        }
+    }
+
+    function retryDeclinedFileSearch() {
+        if (menuOpen && fileSearchDeclined)
+            refreshItems();
+    }
     onQueryChanged: {
         if (resettingState || routingPrefix)
             return;
@@ -1821,11 +1873,27 @@ PluginComponent {
                                     text: root.fileSearching ? "Searching…"
                                         : (root.categories[root.selectedCategoryIndex]?.id === "files" && !root.fileSearchDispatches(root.query.trim())
                                             ? "Type at least two characters"
-                                            : "No matching results")
+                                            : root.fileSearchDeclined
+                                                ? (DSearchService.fileSearchFacts(DSearchService.kindForType(root.fileSearchType), root.query.trim()).backendState === "checking"
+                                                    ? "Checking search tools"
+                                                    : "File search is unavailable")
+                                                : "No matching results")
                                     font.pixelSize: Theme.fontSizeMedium
                                     font.weight: Font.Medium
                                     color: Theme.surfaceVariantText
                                     horizontalAlignment: Text.AlignHCenter
+                                }
+
+                                StyledText {
+                                    width: 260
+                                    visible: root.fileSearchDeclined && text.length > 0
+                                    text: root.fileSearchDeclined
+                                        ? DSearchService.dependencyHint(DSearchService.hintKeyFor(DSearchService.kindForType(root.fileSearchType), root.query.trim()))
+                                        : ""
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    color: Theme.surfaceVariantText
+                                    horizontalAlignment: Text.AlignHCenter
+                                    wrapMode: Text.WordWrap
                                 }
                             }
                         }
