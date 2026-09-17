@@ -2005,6 +2005,11 @@ def test_apply_system_fonts_temp_home():
         with contextlib.redirect_stdout(printed):
             assert_equal(helper.cmd_fonts(["reset", "--json"]), 0, "font reset exit status")
         reset = json.loads(printed.getvalue())
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            assert_equal(helper.cmd_fonts(["reset"]), 0, "text-mode font reset exit status")
+        assert_equal("not-saved: systemFontsManaged=false" in printed.getvalue().splitlines(), True,
+                     "a text-mode font reset names the unsaved setting")
         assert_equal(reset["partial"], False, "font reset should not warn")
         assert_equal(fc_path.exists(), False, "font reset should remove fontconfig")
         if helper.GTK_SETTINGS_BEGIN in gtk3_path.read_text():
@@ -2024,28 +2029,45 @@ def test_apply_system_fonts_temp_home():
 
 def test_theme_apps_toggle_reports_the_set_and_writes_no_settings():
     """The shell owns settings.json, so a toggle reaches the helper as an
-    argument: the run renders and lists with it, reports the resulting set for
-    the shell to store, and leaves settings.json as it found it."""
-    for flag, enabled, renders in (("--enable", True, True), ("--disable", False, False)):
-        def check(home, flag=flag, enabled=enabled, renders=renders):
+    argument: the run renders and lists with it, reports the resulting set, and
+    leaves settings.json as it found it. The render is judged where the apply
+    asks whether a target is enabled, so the set has to travel the whole way; a
+    terminal run says the toggle was not saved."""
+    for flag, enabled, as_json in (("--enable", True, True), ("--disable", False, True),
+                                   ("--disable", False, False)):
+        def check(home, flag=flag, enabled=enabled, as_json=as_json):
             settings = home / ".config" / "vshell" / "settings.json"
             settings.parent.mkdir(parents=True)
             settings.write_text(json.dumps({"themeApps": {"kitty": not enabled, "foot": True}, "other": 1}))
             before = settings.read_bytes()
-            applied = []
+            asked = []
+
+            def recording_target_enabled(cfg, theme_apps):
+                if cfg.get("app") == "kitty":
+                    asked.append(dict(theme_apps))
+                # No target renders, so the apply writes no destination.
+                return False
+
+            theme = helper.find_theme_exact("bauhaus")
             printed = io.StringIO()
-            with patch.object(helper, "apply_theme_obj",
-                              side_effect=lambda bp, **kw: applied.append(kw) or {"ok": True}), \
-                    patch.object(helper, "current_theme_obj", return_value={"name": "fixture"}), \
+            with patch.object(helper, "target_enabled", side_effect=recording_target_enabled), \
+                    patch.object(helper, "current_theme_obj", return_value=theme), \
                     contextlib.redirect_stdout(printed):
-                assert_equal(helper.cmd_theme(["apps", flag, "kitty", "--json"]), 0, f"{flag} exit status")
-            result = json.loads(printed.getvalue())
-            assert_equal(result["themeApps"], {"kitty": enabled, "foot": True}, f"{flag} reports the set")
-            assert_equal(next(a["enabled"] for a in result["apps"] if a["app"] == "kitty"), enabled,
-                         f"{flag} lists the app with the toggle applied")
-            assert_equal(applied, [{"only_app": "kitty", "theme_apps": {"kitty": True, "foot": True}}]
-                         if renders else [], f"{flag} renders with the toggle applied")
-            assert_equal(settings.read_bytes(), before, f"{flag} leaves settings.json unwritten")
+                argv = ["apps", flag, "kitty"] + (["--json"] if as_json else [])
+                assert_equal(helper.cmd_theme(argv), 0, f"{flag} exit status")
+            label = f"{flag} {'json' if as_json else 'text'}"
+            expected_set = {"kitty": enabled, "foot": True}
+            if as_json:
+                result = json.loads(printed.getvalue())
+                assert_equal(result["themeApps"], expected_set, f"{label} reports the set")
+                assert_equal(next(a["enabled"] for a in result["apps"] if a["app"] == "kitty"), enabled,
+                             f"{label} lists the app with the toggle applied")
+            else:
+                assert_equal(f"not-saved: themeApps.kitty={'true' if enabled else 'false'}"
+                             in printed.getvalue().splitlines(), True, f"{label} names the unsaved setting")
+            assert_equal(bool(asked) and all(seen == expected_set for seen in asked), enabled,
+                         f"{label} asks whether kitty is enabled with the toggle applied")
+            assert_equal(settings.read_bytes(), before, f"{label} leaves settings.json unwritten")
 
         with_temp_home(check)
 

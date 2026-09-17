@@ -6882,12 +6882,13 @@ def set_json_config_key(path: Path, keys: Tuple[str, ...], value: Any,
     no reason to bring into existence. An existing file keeps its own
     permissions; a created one starts at CREATED_CONFIG_MODE.
     """
-    mode = CREATED_CONFIG_MODE
+    # write_file keeps an existing file's mode, so only a created one names it.
+    mode: int | None = CREATED_CONFIG_MODE
     data: Dict[str, Any] = {}
     if path.exists():
+        mode = None
         try:
             data = json.loads(path.read_text() or "{}")
-            mode = path.stat().st_mode & 0o777
         except (OSError, ValueError, UnicodeError) as exc:
             return {"ok": False, "error": f"unreadable {path}: {exc}"}
         if not isinstance(data, dict):
@@ -6933,12 +6934,13 @@ def set_yaml_config_key(path: Path, parent: str, values: Dict[str, str]) -> Dict
     for key, value in values.items():
         if not _YAML_PLAIN_SCALAR_RE.match(value):
             return {"ok": False, "error": f"{parent}.{key}: {value!r} is not a plain YAML scalar"}
-    mode = CREATED_CONFIG_MODE
+    # write_file keeps an existing file's mode, so only a created one names it.
+    mode: int | None = CREATED_CONFIG_MODE
     text = ""
     if path.exists():
+        mode = None
         try:
             text = path.read_text()
-            mode = path.stat().st_mode & 0o777
         except (OSError, UnicodeError) as exc:
             return {"ok": False, "error": f"unreadable {path}: {exc}"}
     lines = text.splitlines()
@@ -7167,10 +7169,10 @@ def set_codex_tui_theme(config: Path, value: str = CODEX_THEME_NAME) -> Dict[str
     # config.toml carries [mcp_servers.*] env values and [model_providers]
     # http_headers, which hold API keys, so a file the user kept private must not
     # come back world-readable under this process's umask, and one VGS brings into
-    # existence must not start that way either.
+    # existence must not start that way either. write_file keeps an existing
+    # file's mode, so only a created one names it.
     try:
-        mode = config.stat().st_mode & 0o777 if config.exists() else CREATED_CONFIG_MODE
-        write_file(config, new_text, mode)
+        write_file(config, new_text, None if config.exists() else CREATED_CONFIG_MODE)
     except OSError as exc:
         return {"ok": False, "error": f"codex config write failed: {exc}"}
     return {"ok": True, "theme": value, "config": str(config)}
@@ -11091,10 +11093,13 @@ def cmd_fonts(argv: List[str]) -> int:
         print(json.dumps(result, indent=2) if args.json else ("System fonts applied" if result.get("success") else "System fonts partially applied"))
         return 0 if result.get("success") else 1
     if args.cmd == "reset":
-        # The shell owns settings.json: the result's `managed` is the value for
-        # it to store.
+        # The shell owns settings.json, so reset saves nothing and reports
+        # `managed`.
         result = apply_system_fonts(reset=True)
-        print(json.dumps(result, indent=2) if args.json else "VGS system font overrides removed")
+        print(json.dumps(result, indent=2) if args.json else
+              "VGS system font overrides removed\n"
+              "not-saved: systemFontsManaged=false\n"
+              "The reset applied to this run only and was not saved. Settings > Typography holds the setting.")
         return 0 if result.get("success") else 1
     return 2
 
@@ -11980,8 +11985,9 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
             eprint("Use either --enable or --disable, not both")
             return 2
         toggled = args.enable or args.disable
-        # The shell owns settings.json and stores the toggle; the helper takes it
-        # as an argument, applies it to this run, and reports the resulting set.
+        # The shell owns settings.json, so the toggle is an argument: it applies to
+        # this run, the resulting set is reported, and nothing is saved. Settings >
+        # Themes stores the toggle before it runs this.
         theme_apps = theme_apps_settings()
         result: Dict[str, Any] = {}
         if toggled:
@@ -12004,6 +12010,9 @@ def _cmd_theme_unlocked(argv: List[str]) -> int:
                 detected = "" if entry["detected"] or entry["always"] else " — not installed"
                 curated = " [curated]" if entry["curated"] else ""
                 print(f"{entry['app']}: {state}{origin}{detected}{curated}")
+            if toggled:
+                print(f"not-saved: themeApps.{toggled}={'true' if args.enable else 'false'}\n"
+                      "The toggle applied to this run only and was not saved. Settings > Themes stores it.")
         return 0
     if args.cmd == "regenerate":
         bp = find_theme(args.name)

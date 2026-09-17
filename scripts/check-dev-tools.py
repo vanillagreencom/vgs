@@ -682,8 +682,8 @@ def test_a_channel_the_catalog_dropped_falls_back_to_the_default():
 def test_setting_a_channel_reports_it_and_rewrites_the_stub():
     """The setting alone changes nothing: the stub carries the package spec, so
     a recorded channel that never reaches ~/.local/bin still installs the old
-    stream on the next launch. The shell owns settings.json, so the command
-    reports the picks for it to store and writes no setting itself."""
+    stream on the next launch. The shell owns settings.json, so the command runs
+    with the pick it is handed, reports the picks it ran with, and saves none."""
     catalog = mise.dev_tools_catalog()
     entry = next(e for e in channelled_entries(catalog) if e["id"] == "herdr")
     default = str(entry["channels"]["default"])
@@ -713,8 +713,6 @@ def test_setting_a_channel_reports_it_and_rewrites_the_stub():
             assert result["ok"], result
             assert_equal(result["devToolChannels"], {"herdr": other}, "the picks are reported as")
             assert_equal(stored, {}, "the command stores no setting")
-            assert_equal(mise.dev_tool_channels(), {}, "the settings read is restored after the run")
-            stored.update(devToolChannels=result["devToolChannels"])
             assert_equal(result["channel"], other, "and reported back as")
             assert options in stub.read_text(), \
                 f"the rewritten stub must install from {other}: " + stub.read_text()
@@ -722,10 +720,18 @@ def test_setting_a_channel_reports_it_and_rewrites_the_stub():
             # And back again, so the change is not one-way.
             back = mise.mise_set_channel("herdr", default)
             assert back["ok"], back
-            assert_equal(back["devToolChannels"], {"herdr": default}, "the second pick replaces the first")
-            stored.update(devToolChannels=back["devToolChannels"])
+            assert_equal(back["devToolChannels"], {"herdr": default}, "the second pick is reported as")
             assert options not in stub.read_text(), \
                 f"the stub must return to {default}: " + stub.read_text()
+
+            # A terminal run says the pick was not saved, naming the setting.
+            printed = io.StringIO()
+            with contextlib.redirect_stdout(printed):
+                assert_equal(mise.cmd_mise(["channel", "herdr", other]), 0, "a text-mode pick exits zero")
+            assert_equal(f"not-saved: devToolChannels.herdr={other}" in printed.getvalue().splitlines(), True,
+                         "a text-mode pick names the unsaved setting")
+            assert_equal(stored, {}, "a text-mode pick stores no setting")
+            assert mise.mise_set_channel("herdr", default)["ok"]
 
             # Refusals: each leaves the recorded pick and the stub alone.
             before = stub.read_text()

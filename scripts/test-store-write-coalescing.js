@@ -257,25 +257,27 @@ test("code that starts a helper reading the store files flushes the stores first
     }
 });
 
-test("the shell stores a helper-reported setting before the helper reads it back", () => {
-    // A theme app toggle is stored before the helper run that flushes it; a channel pick the
-    // helper reports is stored and flushed before the re-read, which reads it.
+test("the shell stores a toggle or a channel pick before the helper that reads it runs", () => {
+    // A theme app toggle is stored before the helper run that flushes it; a channel pick is
+    // stored and flushed before the channel command, which saves nothing.
     const themeService = extractBlock(read("Services/VGSThemeService.qml"), "function setAppEnabled(");
     const developerTab = extractBlock(read("Modules/Settings/DeveloperTab.qml"), "function setChannel(");
-    for (const [name, body, output, exitCode, call, expected] of [
-        ["VGSThemeService.setAppEnabled", themeService, "", 0, ["foot", false],
-            [["toggle", "foot", false], ["run", ["theme", "apps", "--disable", "foot", "--json"]]]],
-        ["DeveloperTab.setChannel", developerTab, JSON.stringify({ devToolChannels: { herdr: "preview" } }), 0, ["herdr", "preview"],
-            [["run", ["vshell", "mise", "channel", "herdr", "preview", "--json"]], ["set", "devToolChannels", { herdr: "preview" }], ["flush"], ["refresh"]]],
-        ["DeveloperTab.setChannel refused", developerTab, JSON.stringify({ ok: false, error: "no channel" }), 1, ["herdr", "retired"],
-            [["run", ["vshell", "mise", "channel", "herdr", "retired", "--json"]], ["refresh"]]]
+    for (const [name, body, exitCode, errorText, call, expected, channelError] of [
+        ["VGSThemeService.setAppEnabled", themeService, 0, "", ["foot", false],
+            [["toggle", "foot", false], ["run", ["theme", "apps", "--disable", "foot", "--json"]]], ""],
+        ["DeveloperTab.setChannel", developerTab, 0, "", ["herdr", "preview"],
+            [["pick", "herdr", "preview"], ["flush"], ["run", ["vshell", "mise", "channel", "herdr", "preview"]], ["refresh"]], ""],
+        ["DeveloperTab.setChannel refused", developerTab, 1, "herdr has no channel 'retired'", ["herdr", "retired"],
+            [["pick", "herdr", "retired"], ["flush"], ["run", ["vshell", "mise", "channel", "herdr", "retired"]], ["refresh"]],
+            "herdr has no channel 'retired'"]
     ]) {
         const events = [];
+        const root = { channelError: "", refresh: () => events.push(["refresh"]) };
         const stubs = {
-            app: call[0], enabled: call[1], id: call[0], channel: call[1],
+            app: call[0], enabled: call[1], id: call[0], channel: call[1], root,
             SettingsData: {
                 setThemeAppEnabled: (app, enabled) => events.push(["toggle", app, enabled]),
-                set: (key, value) => events.push(["set", key, value]),
+                setDevToolChannel: (id, channel) => events.push(["pick", id, channel]),
                 flushSettings: () => events.push(["flush"])
             },
             ThemeRequest: { appToggleArgs: (app, enabled) => ["theme", "apps", enabled ? "--enable" : "--disable", app, "--json"] },
@@ -284,13 +286,22 @@ test("the shell stores a helper-reported setting before the helper reads it back
             Paths: { vshellCli: "vshell" },
             Proc: { runCommand: (id, argv, callback) => {
                 events.push(["run", argv]);
-                callback(output, exitCode, "");
-            } },
-            root: { channelError: "", refresh: () => events.push(["refresh"]) }
+                callback("", exitCode, errorText);
+            } }
         };
         evaluate(body, stubs);
         assert.deepEqual(events, expected, name);
+        assert.equal(root.channelError, channelError, name);
     }
+});
+
+test("a stored channel pick for one tool survives a pick for another", () => {
+    const body = extractBlock(read("Common/SettingsData.qml"), "function setDevToolChannel(");
+    const stored = {};
+    const picked = { herdr: "preview" };
+    evaluate(body, { devToolChannels: picked, id: "t3code", channel: "nightly", set: (key, value) => { stored[key] = value; } });
+    assert.deepEqual(stored, { devToolChannels: { herdr: "preview", t3code: "nightly" } });
+    assert.deepEqual(picked, { herdr: "preview" }, "the stored map is replaced, not mutated in place");
 });
 
 test("the first-run takeover reads the read-only state after flushing its spent flag", () => {

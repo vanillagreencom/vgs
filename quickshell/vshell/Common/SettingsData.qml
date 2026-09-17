@@ -2780,6 +2780,16 @@ Singleton {
         set("themeApps", next);
     }
 
+    // Merges one entry's pick onto the stored map, so a pick for another entry
+    // made while this one runs is kept.
+    function setDevToolChannel(id, channel) {
+        if (!id || (devToolChannels || {})[id] === channel)
+            return;
+        const next = JSON.parse(JSON.stringify(devToolChannels || {}));
+        next[id] = channel;
+        set("devToolChannels", next);
+    }
+
     function setMatugenTargetMonitor(monitorName) {
         if (matugenTargetMonitor === monitorName)
             return;

@@ -14,7 +14,7 @@ import shlex
 import shutil
 import subprocess
 import tempfile
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Tuple
 
@@ -351,7 +351,7 @@ def buildable_here(entry: Dict[str, Any]) -> bool:
     return not arch or platform.machine() in arch
 
 
-def launchable(catalog: Dict[str, Any]) -> List[Dict[str, Any]]:
+def launchable(catalog: Dict[str, Any], channels: Dict[str, str] | None = None) -> List[Dict[str, Any]]:
     """Catalog entries with a launcher: coding agents and developer apps. One
     list so install, launch and removal have a single implementation; the
     `group` it stamps is what tells an Agent from an App wherever they show
@@ -361,8 +361,9 @@ def launchable(catalog: Dict[str, Any]) -> List[Dict[str, Any]]:
     channel in force installs, `channel` names that channel and `channels` the
     ids on offer, replacing the catalog's own object. Resolving once here is
     what keeps a stub, a launch and a removal from disagreeing about which
-    release stream a tool came from."""
-    chosen = dev_tool_channels()
+    release stream a tool came from. `channels` holds the picks in force;
+    None reads them from settings.json."""
+    chosen = dev_tool_channels() if channels is None else channels
     return [dict(entry,
                  group=group[:-1],
                  package=entry_package(entry, chosen),
@@ -373,18 +374,18 @@ def launchable(catalog: Dict[str, Any]) -> List[Dict[str, Any]]:
             if buildable_here(entry)]
 
 
-def manageable(catalog: Dict[str, Any]) -> List[Dict[str, Any]]:
+def manageable(catalog: Dict[str, Any], channels: Dict[str, str] | None = None) -> List[Dict[str, Any]]:
     """Every catalog entry VGS installs, removes and reports on: the launchable
     ones plus the `tools` CLIs, which have the same package and command but
     nothing to launch. Install, removal and state have one implementation for
     all three groups; only the launcher is narrower."""
     tools = [dict(entry, group="tool", package=entry_package(entry, {}), channel="", channels=[])
              for entry in catalog.get("tools") or [] if buildable_here(entry)]
-    return launchable(catalog) + tools
+    return launchable(catalog, channels) + tools
 
 
-def mise_catalog_stubs() -> List[Dict[str, Any]]:
-    return [stub_fields(entry) for entry in manageable(dev_tools_catalog())]
+def mise_catalog_stubs(channels: Dict[str, str] | None = None) -> List[Dict[str, Any]]:
+    return [stub_fields(entry) for entry in manageable(dev_tools_catalog(), channels)]
 
 
 EXPORT_SHADOW_KEY = "mise-export-shadow"
@@ -392,13 +393,14 @@ EXPORT_CHECK_FAILED_KEY = "mise-export-check-failed"
 DECLARE_FAILED_KEY = "mise-declare-failed"
 
 
-def installed_entries() -> Tuple[List[Dict[str, Any]], str]:
+def installed_entries(channels: Dict[str, str] | None = None) -> Tuple[List[Dict[str, Any]], str]:
     """The catalog entries mise holds an install of, and mise's error when it
     could not say. No mise means none, which is an answer and not a failure."""
     if not RT.command_exists("mise"):
         return [], ""
     installs, error = mise_installs()
-    return [e for e in manageable(dev_tools_catalog()) if package_key(str(e["package"])) in installs], error
+    return [e for e in manageable(dev_tools_catalog(), channels)
+            if package_key(str(e["package"])) in installs], error
 
 
 def install_exports(entry: Dict[str, Any]) -> Tuple[Dict[str, Path], frozenset[Path], str]:
@@ -470,13 +472,13 @@ def mise_settle(entry: Dict[str, Any], installed: bool) -> Tuple[str, str]:
     return state, "; ".join(filter(None, (error, declared)))
 
 
-def mise_sync() -> Dict[str, Any]:
+def mise_sync(channels: Dict[str, str] | None = None) -> Dict[str, Any]:
     """What `vshell mise refresh` runs (D016): every launcher settled, then the
     export check, as one outcome that passes only when both do, with the
     advice that clears a shadowing install whose launcher could not be
     written. Opt-in and a channel pick run it too, and report its outcome."""
-    entries, error = installed_entries()
-    stubs = mise_refresh(entries)
+    entries, error = installed_entries(channels)
+    stubs = mise_refresh(entries, channels)
     exports = mise_export_check(entries, error)
     shadowing = {c["id"] for c in exports["exports"]}
     advice = [launcher_advice(e) for e in entries if e["id"] in shadowing]
@@ -491,27 +493,27 @@ def outcome_status(result: Dict[str, Any]) -> int:
     return 0 if result["ok"] else 1
 
 
-def mise_refresh(installed: List[Dict[str, Any]]) -> Dict[str, Any]:
+def mise_refresh(installed: List[Dict[str, Any]], channels: Dict[str, str] | None = None) -> Dict[str, Any]:
     """Settle every catalog entry's launcher (`mise_settle`). Idempotent; with
     auto-install off it writes no new stub but an installed `exec` entry's
     launcher. `installed` is the entries mise holds."""
     ids = {e["id"] for e in installed}
     states: Dict[str, List[str]] = {"written": [], "foreign": [], "shadowed": [], "opted-out": []}
     errors: List[str] = []
-    for entry in manageable(dev_tools_catalog()):
+    for entry in manageable(dev_tools_catalog(), channels):
         state, error = mise_settle(entry, entry["id"] in ids)
         states[state].append(str(entry["command"]))
         errors += [f"{entry['id']}: {error}"] if error else []
     return {"ok": not errors, "error": f"{DECLARE_FAILED_KEY}: " + "; ".join(errors) if errors else "",
             "optedOut": mise_stubs_opted_out(), "written": states["written"], "foreign": states["foreign"],
-            "shadowed": states["shadowed"], "retired": mise_retire_stubs()}
+            "shadowed": states["shadowed"], "retired": mise_retire_stubs(channels)}
 
 
-def mise_retire_stubs() -> List[str]:
+def mise_retire_stubs(channels: Dict[str, str] | None = None) -> List[str]:
     """Delete stubs VGS wrote for commands the catalog no longer lists, so a
     tool dropped from the catalog stops launching after the next refresh.
     Only files carrying the marker go; the owner's own files stay."""
-    current = {stub["command"] for stub in mise_catalog_stubs()}
+    current = {stub["command"] for stub in mise_catalog_stubs(channels)}
     bin_dir = RT.home() / ".local" / "bin"
     retired: List[str] = []
     if not bin_dir.is_dir():
@@ -527,10 +529,11 @@ def mise_retire_stubs() -> List[str]:
 
 def mise_set_channel(entry_id: str, channel: str) -> Dict[str, Any]:
     """Run the refresh with one entry switched to another release stream, and
-    report the resulting picks as `devToolChannels` for the shell to store; the
-    shell owns settings.json. The refresh's outcome is this one's. A stub carries
-    the spec its channel selects, so the setting alone leaves the next launch on
-    the old stream."""
+    report the picks it ran with as `devToolChannels`. Nothing is saved: the
+    shell owns settings.json, and Settings > Developer stores the pick before it
+    runs this. The refresh's outcome is this one's. A stub carries the spec its
+    channel selects, so the setting alone leaves the next launch on the old
+    stream."""
     entries = launchable(dev_tools_catalog())
     entry = next((e for e in entries if e.get("id") == entry_id), None)
     if entry is None:
@@ -542,16 +545,10 @@ def mise_set_channel(entry_id: str, channel: str) -> Dict[str, Any]:
     if channel not in offered:
         return {"ok": False, "error": f"{entry_id} has no channel {channel!r}; one of: " + " ".join(offered)}
     channels = {**dev_tool_channels(), entry_id: channel}
-    stored = RT
-    settings = stored.load_settings
-    configure(replace(stored, load_settings=lambda: {**settings(), DEV_TOOL_CHANNELS_SETTING: channels}))
-    try:
-        synced = mise_sync()
-        # Re-read rather than predict: the stub just written is what the next
-        # launch runs, and it was built from the pick this call carries.
-        updated = next(e for e in launchable(dev_tools_catalog()) if e.get("id") == entry_id)
-    finally:
-        configure(stored)
+    synced = mise_sync(channels)
+    # Re-read rather than predict: the stub just written is what the next launch
+    # runs, and it was built from the picks this call carries.
+    updated = next(e for e in launchable(dev_tools_catalog(), channels) if e.get("id") == entry_id)
     return {"ok": synced["ok"], "error": synced["error"], "id": entry_id, "channel": str(updated["channel"]),
             "package": str(updated["package"]), "optedOut": bool(synced["stubs"]["optedOut"]),
             DEV_TOOL_CHANNELS_SETTING: channels}
@@ -745,6 +742,8 @@ def cmd_mise(argv: List[str]) -> int:
         elif "channel" in result:
             print(f"{result['id']} installs from {result['channel']}: {result['package']}"
                   + (" (launcher stubs are opted out)" if result["optedOut"] else ""))
+            print(f"not-saved: {DEV_TOOL_CHANNELS_SETTING}.{result['id']}={result['channel']}\n"
+                  "The pick applied to this run only and was not saved. Settings > Developer stores it.")
         return outcome_status(result)
     if sub == "refresh":
         synced = mise_sync()
