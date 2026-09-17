@@ -29,7 +29,7 @@ import tarfile
 import tempfile
 import urllib.request
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, Iterable, List, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 THEMES_DIR = REPO_ROOT / "themes"
@@ -111,6 +111,16 @@ def archive_name(theme: str, rev: int) -> str:
     return f"vgs-theme-{theme}-r{rev}.tar.gz"
 
 
+def after_highest_tag(tags: Iterable[str]) -> str:
+    """The release number after the highest ``themes-vN`` among `tags`; other tags are ignored."""
+    highest = 0
+    for tag in tags:
+        match = RELEASE_TAG_RE.match(tag)
+        if match:
+            highest = max(highest, int(match.group(1)))
+    return f"themes-v{highest + 1}"
+
+
 def next_release_tag(lock: Dict[str, Any]) -> str:
     """The release this publish uploads into.
 
@@ -134,30 +144,19 @@ def next_release_tag(lock: Dict[str, Any]) -> str:
     in_progress = str(lock.get("publishing") or "")
     if RELEASE_TAG_RE.match(in_progress):
         return in_progress
-    highest = 0
-    for entry in lock["themes"].values():
-        if not entry.get("published"):
-            continue
-        match = RELEASE_TAG_RE.match(str(entry.get("release") or ""))
-        if match:
-            highest = max(highest, int(match.group(1)))
-    return f"themes-v{highest + 1}"
+    return after_highest_tag(str(entry.get("release") or "") for entry in lock["themes"].values()
+                             if entry.get("published"))
 
 
 def rehome(lock: Dict[str, Any], repo: str, releases: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """The lock re-pinned to `repo`: every archive unpublished, in the first release number `repo` lacks.
+    """The lock re-pinned to `repo`: every archive unpublished, in the release after `repo`'s highest.
 
     A lock whose pins live on another repository cannot resume there, and its
     release numbers mean nothing on `repo`. Each entry keeps its archive name,
     revision and checksums, so unchanged content uploads under the same name, and
     the publish loop then treats the batch as a dry run it has to upload.
     """
-    highest = 0
-    for release in releases:
-        match = RELEASE_TAG_RE.match(str(release.get("tagName") or ""))
-        if match:
-            highest = max(highest, int(match.group(1)))
-    tag = f"themes-v{highest + 1}"
+    tag = after_highest_tag(str(release.get("tagName") or "") for release in releases)
     return {"version": lock["version"], "repo": repo,
             "themes": {name: dict(entry, release=tag, published=False)
                        for name, entry in lock["themes"].items()}}
@@ -354,7 +353,6 @@ def publish(args: argparse.Namespace) -> int:
                          f"(set VGS_THEME_ASSET_ROOT or pass --asset-root)")
     require_pillow()
     lock = load_lock()
-    before = LOCK_PATH.read_text() if LOCK_PATH.is_file() else None
     names = generator().theme_names(THEMES_DIR)
     # Every shipped theme carries a preview, and its thumbnail is derived from
     # it, so a theme without one stops the run before anything is uploaded.
@@ -376,7 +374,6 @@ def publish(args: argparse.Namespace) -> int:
 
     published = 0
     created = False
-    refused = False
     # Record the release this run is filling before anything is uploaded, so a
     # rerun after a failed upload continues into it instead of opening the next
     # number and leaving a partly filled release behind.
@@ -429,7 +426,9 @@ def publish(args: argparse.Namespace) -> int:
                     try:
                         ensure_release(tag, args.force)
                     except ReleaseTooRecent:
-                        refused = True
+                        # Nothing was uploaded, so the lock must not name a
+                        # release this run never opened.
+                        lock.pop("publishing", None)
                         raise
                     created = True
                 archive, rev = publish_archive(tag, name, rev, blob, digest, stage)
@@ -451,14 +450,7 @@ def publish(args: argparse.Namespace) -> int:
         lock.pop("publishing", None)
     finally:
         shutil.rmtree(stage, ignore_errors=True)
-        # A refused run uploaded nothing, so the lock goes back to what it was
-        # rather than naming a release that was never opened.
-        if not refused:
-            LOCK_PATH.write_text(render_lock(lock))
-        elif before is None:
-            LOCK_PATH.unlink()
-        else:
-            LOCK_PATH.write_text(before)
+        LOCK_PATH.write_text(render_lock(lock))
 
     if not published:
         print("theme assets: every theme is already published at its current content")

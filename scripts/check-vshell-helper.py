@@ -7005,8 +7005,11 @@ def test_theme_asset_publish_records_what_is_on_the_release():
             # a failure leaves no unpublished pin naming the release it was
             # filling. The lock records that release itself, and the rerun
             # continues into it instead of opening the next number and leaving a
-            # partly filled release behind.
+            # partly filled release behind. The release the failed run opened is
+            # inside the interval, and continuing into it opens nothing, so the
+            # rerun is not refused.
             (assets / "backgrounds" / "1-demo.jpg").write_bytes(b"third wallpaper\n")
+            created_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
             working_gh = publisher.gh
 
             def failing_gh(*args):
@@ -7034,6 +7037,9 @@ def test_theme_asset_publish_records_what_is_on_the_release():
                          "no release number is stranded by the failure")
             assert_equal("publishing" in json.loads(publisher.LOCK_PATH.read_text()), False,
                          "a run that finishes its batch clears the in-progress release")
+            old = "2000-01-01T00:00:00Z"
+            created_at = old
+            release.created = {tag: old for tag in release.created}
 
             # Everything the lock records about an archive comes from the one
             # read that packed it, so a wallpaper replaced while the run uploads
@@ -7062,39 +7068,40 @@ def test_theme_asset_publish_records_what_is_on_the_release():
                          "a published archive holds only the wallpapers, as they were packed")
 
             # A release opened inside the interval refuses the next one, and the
-            # refused run leaves the lock as it found it. --force opens it, and a
-            # rerun into a release that already exists is never refused.
-            created_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            # refused run's lock names no release it did not open. --force opens it.
             (assets / "backgrounds" / "1-demo.jpg").write_bytes(b"sixth wallpaper\n")
-            newest = max(release.created, key=lambda t: release.created[t])
-            release.created[newest] = created_at
-            settled = publisher.LOCK_PATH.read_text()
+            newest = "themes-v4"
+            release.created[newest] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            settled = json.loads(publisher.LOCK_PATH.read_text())
             try:
                 run(True)
                 raise AssertionError("opening a release inside the interval must be refused")
             except publisher.ReleaseTooRecent as exc:
-                assert_equal((str(exc).splitlines()[0], publisher.LOCK_PATH.read_text(), len(release.assets)),
-                             (f"release-too-recent {release.ASSET_REPO} {newest}", settled, 4),
-                             "the refusal names the recent release, keeps the lock and opens nothing")
+                refused = json.loads(publisher.LOCK_PATH.read_text())
+                assert_equal((str(exc).splitlines()[0], "publishing" in refused,
+                              refused["themes"]["demo"] == settled["themes"]["demo"], sorted(release.assets)),
+                             (f"release-too-recent {release.ASSET_REPO} {newest}", False, True,
+                              ["themes-v1", "themes-v2", "themes-v3", "themes-v4"]),
+                             "the refusal names the recent release, records no in-progress release and opens nothing")
             forced = run(True, force=True)["demo"]
             assert_equal((forced["release"], sorted(release.assets)[-1]), ("themes-v5", "themes-v5"),
                          "--force opens the release inside the interval")
 
             # A lock whose pins live on another repository republishes every
-            # archive into the first release number the asset repository lacks,
+            # archive into the release after the asset repository's highest,
             # under the same archive name and revision.
             moved = json.loads(publisher.LOCK_PATH.read_text())
             moved["repo"] = "vanillagreencom/vgs"
             publisher.LOCK_PATH.write_text(json.dumps(moved))
-            release.assets.clear()
-            release.created.clear()
+            release.assets = {"themes-v2": []}
+            release.created = {"themes-v2": old}
             rehomed = run(True)
             assert_equal(
                 ({name: (pin["release"], pin["archive"], pin["published"]) for name, pin in rehomed.items()},
-                 json.loads(publisher.LOCK_PATH.read_text())["repo"], sorted(release.assets["themes-v1"])),
-                ({name: ("themes-v1", moved["themes"][name]["archive"], True) for name in moved["themes"]},
+                 json.loads(publisher.LOCK_PATH.read_text())["repo"], sorted(release.assets["themes-v3"])),
+                ({name: ("themes-v3", moved["themes"][name]["archive"], True) for name in moved["themes"]},
                  release.ASSET_REPO, sorted(pin["archive"] for pin in moved["themes"].values())),
-                "a lock from another repository republishes every pin unchanged into themes-v1 there")
+                "a lock from another repository republishes every pin unchanged after the highest release there")
 
             # A theme dropped from the tree loses its pin and its thumbnail.
             shutil.rmtree(themes / "demo")
