@@ -3830,6 +3830,29 @@ def verify_hyprland_config(config: Path, what: str) -> None:
         )
 
 
+def test_preview_dispatch_falls_back_on_a_refused_lua_call():
+    """A dispatch the compositor refused must still reach the legacy spelling, or the
+    preview leaves the user's workspaces and keyboard focus on the invisible output."""
+    legacy = ["hyprctl", "dispatch", "focusmonitor", "DP-1"]
+    # the `hyprctl eval` reply and its exit status; whether the legacy dispatch must follow
+    for stdout, status, fallback_expected in (
+        ("ok", 0, False),
+        ("eval is only supported with the lua config manager", 0, True),
+        ("error: hl.dsp.focus failed", 0, True),
+        ("", 1, True),
+    ):
+        calls = []
+
+        def fake_run(argv, **_kwargs):
+            calls.append(list(argv))
+            return subprocess.CompletedProcess(argv, status, stdout, "")
+
+        with patch.object(helper, "run", fake_run):
+            helper.preview_dispatch('hl.dsp.focus({ monitor = "DP-1" })', ["focusmonitor", "DP-1"])
+        assert_equal(legacy in calls, fallback_expected,
+                     f"a reply of {stdout!r} at exit {status}: falls back to the legacy dispatch")
+
+
 def test_preview_stage_retires_its_window_rule():
     """The staging window rule matches every nested Hyprland window, so it must not outlive the stage."""
     register = ["hyprctl", "eval", helper.PREVIEW_STAGE_ON_LUA]
@@ -3838,16 +3861,22 @@ def test_preview_stage_retires_its_window_rule():
     reload = ["hyprctl", "reload"]
     remove = ["hyprctl", "output", "remove", helper.PREVIEW_OUTPUT]
 
-    # label; whether `hyprctl eval` runs Lua; exit status of `hyprctl output create
-    # headless`; the hyprctl subcommand a stop signal interrupts, or None; whether the
-    # preview stages its output; the request that retires the rule.
+    # label; whether `hyprctl eval` runs Lua; whether `hyprctl keyword` registers a legacy
+    # rule; exit status of `hyprctl output create headless`; the hyprctl subcommand a stop
+    # signal interrupts, or None; whether the preview stages its output; the request that
+    # retires the rule, or None when the stage registered no rule to retire.
     # The rule is registered before the output is created, so a refused output still retires it.
-    for label, lua, create_status, stop_at, staged_expected, retirement in (
-        ("a compositor that accepts every request", True, 0, None, True, retire),
-        ("a compositor that refuses the headless output", True, 1, None, False, retire),
-        ("a pre-Lua compositor that refuses the headless output", False, 1, None, False, reload),
+    for label, lua, keyword, create_status, stop_at, staged_expected, retirement in (
+        ("a compositor that accepts every request", True, True, 0, None, True, retire),
+        ("a compositor that refuses the headless output", True, True, 1, None, False, retire),
+        ("a pre-Lua compositor that refuses the headless output", False, True, 1, None, False, reload),
         # The output exists by then but is not yet sized, so the stage is not handed over.
-        ("a stop signal while the stage sizes its output", True, 0, "getoption", True, retire),
+        ("a stop signal while the stage sizes its output", True, True, 0, "getoption", True, retire),
+        ("a pre-Lua compositor that stages its output", False, True, 0, None, True, reload),
+        # A Lua session refuses both spellings: `eval` takes the chunk, but `keyword`
+        # answers the non-legacy-parser refusal with exit 0. Reading that as a registered
+        # rule reloads the user's live config to retire a rule that was never there.
+        ("a Lua compositor that refuses the keyword fallback", False, False, 0, None, False, None),
     ):
         calls = []
 
@@ -3858,6 +3887,8 @@ def test_preview_stage_retires_its_window_rule():
             stdout = "ok"
             if argv[1] == "eval" and not lua:
                 stdout = "eval is only supported with the lua config manager"
+            elif argv[1] == "keyword" and not keyword:
+                stdout = "keyword can't work with non-legacy parsers"
             elif argv[1:] == ["cursorpos"]:
                 stdout = "0, 0"
             elif argv[1:] == ["monitors", "-j"]:
@@ -3877,12 +3908,25 @@ def test_preview_stage_retires_its_window_rule():
                     assert_equal(staged, staged_expected, f"{label}: stages the preview")
                     assert_equal(register in calls, True, f"{label}: the stage registers its window rule")
                     # A capture needs the rule for as long as its nested session is mapped.
-                    assert_equal(retirement in calls, False, f"{label}: the window rule must stay enabled while the stage is up")
+                    assert_equal(any(request in calls for request in (retire, reload)), False,
+                                 f"{label}: the window rule must stay enabled while the stage is up")
             except SystemExit:
                 stopped = True
         assert_equal(stopped, stop_at is not None, f"{label}: the stage ends early only on a stop signal")
         teardown = calls[calls.index(register):]
-        assert_equal(retirement in teardown, True, f"{label}: the teardown must retire its window rule")
+        if retirement is None:
+            assert_equal(any(request in teardown for request in (retire, reload)), False,
+                         f"{label}: a refused rule is not registered, and reloading would reset the user's live config")
+        else:
+            assert_equal(retirement in teardown, True, f"{label}: the teardown must retire its window rule")
+        # A session whose `hyprctl eval` is refused sizes the staging output with the
+        # legacy keyword instead; a Lua session must not, or the keyword outlives the stage.
+        sized_by_keyword = any(
+            call[:3] == ["hyprctl", "keyword", "monitor"] and call[3].startswith(f"{helper.PREVIEW_OUTPUT},")
+            for call in calls if len(call) > 3
+        )
+        assert_equal(sized_by_keyword, staged_expected and not lua,
+                     f"{label}: sizes the staging output through the spelling this config manager accepts")
         if staged_expected:
             assert_equal(remove in teardown, True, f"{label}: the teardown must remove the staging output")
 
@@ -13094,6 +13138,7 @@ def main():
     test_theme_list_reports_the_preview_and_the_thumbnail_apart()
     test_theme_list_reports_installed_wallpapers_and_the_star()
     test_hyprland_preview_native_lua()
+    test_preview_dispatch_falls_back_on_a_refused_lua_call()
     test_preview_stage_retires_its_window_rule()
     test_theme_preview_stop_signal_tears_down_its_capture()
     test_preview_stage_lua_keeps_one_live_rule()
