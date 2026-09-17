@@ -4,13 +4,26 @@ Native packages install VGS under `/usr/lib/vshell` with the `vshell` command an
 
 ## Activation
 
-After a native package installation, enable VGS for your account:
+After a native package installation, finish the setup for your account:
 
 ```bash
-systemctl --user enable --now vshell.service
+vshell setup
 ```
 
-The source installer starts the service unless given `--no-start`. Home Manager controls activation through its module.
+It reports the optional feature dependencies and which app owns `org.freedesktop.Notifications`, then enables and starts `vshell.service`. The report comes first because the unit is `Type=simple`: taken after the start, it would answer while the shell is still loading and about to claim that name.
+
+No VGS package ships a systemd preset. [`systemd.preset(5)`](https://www.freedesktop.org/software/systemd/man/latest/systemd.preset.html) advises against shipping a preset from the package that implements the unit, and asks that preset policy be centralised in a distribution's own default policy instead. No VGS package enables the unit either. Each channel's reason is its row.
+
+| Channel | First start |
+|---|---|
+| Arch | `vshell setup`. Arch enables no service on installation. |
+| Debian, Ubuntu | `vshell setup`. `debian/rules` passes `dh_installsystemduser --no-enable`; the default sequence carries that helper from compat 12 and would otherwise enable VGS for every account on the machine. |
+| Fedora | `vshell setup`. Preset policy lives in `fedora-release`, and enabling a service by default needs FESCo approval, which requires that the unit not change the behaviour of other services. VGS claims `org.freedesktop.Notifications`. |
+| openSUSE | `vshell setup`. Its spec is an openSUSE variant kept in the OBS project rather than in this repository, so this row is kept in step by hand; [DEVELOPMENT.md](DEVELOPMENT.md) covers publication. |
+| Gentoo | `vshell setup`. `pkg_postinst` reports the step and enables nothing. |
+| Void | `exec-once = vshell run` for Hyprland, `spawn-at-startup "vshell" "run"` for Niri. Void runs runit and has no user service to enable. |
+| Source installer | `install.sh` enables and starts the unit unless given `--no-start`. It calls systemd directly, because `--version` installs an older bundle whose CLI need not carry the `setup` verb. |
+| Nix | Home Manager controls activation through its module. |
 
 ## Themes
 

@@ -5569,6 +5569,65 @@ def test_notification_status_respects_the_server_opt_out():
         helper.vgs_notification_server_enabled = original_enabled
 
 
+def test_notification_status_always_names_the_actionable_takeover():
+    """The actionable command is never withheld, whatever the one-shot says.
+
+    Whether the shell's own first-run takeover fires is decided in
+    NotificationService.qml, from state this helper cannot see: settings.json
+    may be unreadable, or readable but unwritable, and the conflict may be one
+    no takeover can free. Every attempt to rebuild that decision here suppressed
+    the command in a state where it was the only way out. A manual takeover
+    touches only the undo record in the state directory, so it is valid in all
+    of them, and the one-shot now decides a further note and nothing else.
+    """
+    original_enabled = helper.vgs_notification_server_enabled
+    try:
+        helper.vgs_notification_server_enabled = lambda: True
+        status = {
+            "busName": helper.NOTIFICATION_BUS_NAME, "state": "foreign", "error": "",
+            "vgsServerEnabled": True, "vgsFirstRunTakeoverDone": False, "atRisk": False,
+            "owner": {"present": True, "pid": 42, "process": "mako", "exe": "/usr/bin/mako",
+                      "unit": "mako.service", "isVgs": False, "unique": ":1.7", "cmdline": "", "error": ""},
+            "conflicts": [], "takeover": {"available": True, "reason": ""},
+            "restore": {"available": False},
+        }
+
+        def capture(**overrides):
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer):
+                helper._print_notification_status({**status, **overrides})
+            return buffer.getvalue()
+
+        # Every state a previous gate withheld the command in, plus the plain
+        # one. An actionable conflict names the command in all of them.
+        for label, overrides in (
+            ("the one-shot is unspent", {}),
+            ("the one-shot is spent", {"vgsFirstRunTakeoverDone": True}),
+            ("VGS holds the name beside a live activation file",
+             {"state": "vgs", "atRisk": True}),
+        ):
+            printed = capture(**overrides)
+            assert "fix: vshell notifications takeover" in printed, \
+                f"the command must be named when {label}"
+
+        # The note is supplementary: it rides alongside the command and only
+        # while the one-shot is unspent.
+        assert "may also claim this name itself" in capture(), \
+            "an unspent one-shot adds the note"
+        assert "may also claim this name itself" not in capture(vgsFirstRunTakeoverDone=True), \
+            "a spent one-shot has nothing further to add"
+
+        # Nothing actionable: the reason stands in place of the command, and the
+        # note must not crowd it out.
+        unfixable = capture(takeover={"available": False, "reason": "mako is not a unit VGS can stop"})
+        assert "mako is not a unit VGS can stop" in unfixable, \
+            "an unfixable conflict must still state why"
+        assert "fix: vshell notifications takeover" not in unfixable, \
+            "a takeover that cannot act must not be offered as the fix"
+    finally:
+        helper.vgs_notification_server_enabled = original_enabled
+
+
 def test_notification_probe_failure_is_not_an_unowned_bus():
     """A broken probe must never read as a settled session."""
     original_bus, original_systemctl = helper._session_bus_call, helper._systemctl_user
@@ -13070,6 +13129,7 @@ def main():
     test_notification_restore_starts_what_takeover_stopped()
     test_notification_takeover_records_who_asked()
     test_notification_status_respects_the_server_opt_out()
+    test_notification_status_always_names_the_actionable_takeover()
     test_requires_features_propagates_to_availability()
     test_sudo_toggle_status_stays_available_without_a_terminal()
     test_terminal_resolution_prefers_the_vgs_setting()
