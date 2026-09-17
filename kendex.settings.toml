@@ -15,10 +15,15 @@ LINEAR_FORMAT = "safe"
 ORCH_STATE_DIR = "tmp"
 
 # Extra test-path globs branch-size-check adds to its built-in test rule, which
-# names none of them. The Node suites `scripts/validate` runs, and the helpers
-# under `scripts/lib` they import, are validation code; counting their added
-# lines as production growth spends a branch's stated allowance on its tests.
-ORCH_SIZE_TEST_PATHS = "scripts/test-*.js scripts/lib/*.js"
+# names none of them. The suites `scripts/validate` runs, the Node helpers under
+# `scripts/lib` they import, and the Go package tests are validation code;
+# counting their added lines as production growth spends a branch's stated
+# allowance on its tests. A glob's `*` spans `/`, so `backend/*_test.go` reaches
+# every package. `scripts/lib/*.py` stays unmatched: that directory holds the
+# Python modules the validation scripts import beside their selftests, so only
+# the `_selftest.py` name is test code and the whole-directory glob the
+# JavaScript side can take would move production lines into the test allowance.
+ORCH_SIZE_TEST_PATHS = "scripts/test-*.js scripts/lib/*.js scripts/test-*.py scripts/test-*.sh scripts/check-*-tests.py scripts/lib/*_selftest.py backend/*_test.go"
 
 # File-size thresholds come from the shipped path classes. No DOC_LIMITS_*
 # key here: a repeated default goes stale when the class changes.
