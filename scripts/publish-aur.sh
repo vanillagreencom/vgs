@@ -17,6 +17,7 @@
 # Archive checksum mismatches also defer publication.
 # Network and metadata errors fail the run.
 # Edit recipes here; publication overwrites direct AUR edits.
+# A git recipe is published carrying the version of this checkout's head.
 # Published packages receive a remote synchronization check.
 set -euo pipefail
 
@@ -27,7 +28,7 @@ packages=()
 for argument in "$@"; do
   case "$argument" in
     --dry-run) dry_run=1 ;;
-    -h|--help) sed -n '2,20p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    -h|--help) sed -n '2,21p' "${BASH_SOURCE[0]}"; exit 0 ;;
     -*) echo "publish-aur: unknown option $argument" >&2; exit 2 ;;
     *) packages+=("$argument") ;;
   esac
@@ -170,6 +171,15 @@ for package in "${packages[@]}"; do
   for file in $(files_for "$package"); do
     install -m 644 "$source_dir/$file" "$clone/$file"
   done
+
+  # A git recipe's pkgver() runs only after makepkg clones the source, so whatever
+  # version the published recipe carries is the one the AUR page and every helper
+  # report before that clone. Publish the head this run publishes, not a stale value.
+  if ! "$root/scripts/check-aur-sync.py" --stamp-vcs-version "$clone"; then
+    echo "publish-aur: cannot stamp $package with the version of this checkout's head; NOTHING was published for it" >&2
+    status=1
+    continue
+  fi
 
   # Intent-to-add includes new files in git diff and dry-run output.
   # Without it, matching tracked metadata could conceal a missing install scriptlet.

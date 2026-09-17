@@ -4,6 +4,11 @@
 The local check compares PKGBUILD and .SRCINFO. The remote check requires
 network access and compares the published AUR repository with this tree.
 Without --remote, the script reports that publication was not checked.
+
+--stamp-vcs-version writes rather than checks: it replaces the head a VCS recipe
+carries with this checkout's head, which is the version every AUR client shows
+until it clones the source and the recipe computes one. The local check refuses
+a tracked recipe left on the placeholder.
 """
 
 from __future__ import annotations
@@ -16,6 +21,10 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+# Where a comment opens in shell is that scanner's question, not this file's.
+sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
+from shell_scan import code_mask  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 AUR_REMOTE = "https://aur.archlinux.org"
@@ -60,6 +69,25 @@ KEYS = PKGBASE_KEYS + tuple(
 # Fields a package_* function may override; .SRCINFO repeats them per pkgname.
 SPLIT_KEYS = ("pkgdesc", "depends", "optdepends", "provides", "conflicts", "install")
 
+# The pkgver a VCS recipe carries before anything computes one: no commits counted
+# and a null commit hash.
+PLACEHOLDER_PKGVER = re.compile(r"\.r0\.g0+$")
+# The pkgver and pkgrel assignments, in PKGBUILD spelling and .SRCINFO spelling.
+# The value class holds what a pacman version may hold, and at least one of it:
+# an empty or quoted value is not an assignment this script can rewrite or judge.
+VERSION_ASSIGNMENT = re.compile(
+    r"^(\s*)(pkgver|pkgrel)(=| = )([A-Za-z0-9._+:~-]+)$", re.MULTILINE
+)
+# The shape of a VCS pkgver: the source version, the commits counted, the head.
+VCS_PKGVER = re.compile(r"(\d+(?:\.\d+)*)\.r(\d+)\.g[0-9a-f]+")
+# The pkgver() body computed_pkgver below reproduces. A recipe computing anything
+# else must not be stamped with a value its own build contradicts.
+PKGVER_BODY = (
+    'cd vgs\n'
+    'printf \'%s.r%s.g%s\' "$(cat VERSION)" "$(git rev-list --count HEAD)" '
+    '"$(git rev-parse --short HEAD)"'
+)
+
 
 class CheckError(Exception):
     pass
@@ -81,13 +109,19 @@ def expand(value: str, scalars: dict[str, str]) -> str:
 
 
 def parse_pkgbuild(path: Path) -> tuple[dict[str, list[str]], dict[str, dict[str, list[str]]]]:
-    """Return (pkgbase fields, {pkgname: overridden fields}).
+    """Parse the PKGBUILD at `path`."""
+    return parse_pkgbuild_text(path.read_text(), path)
+
+
+def parse_pkgbuild_text(
+    text: str, label: str | Path
+) -> tuple[dict[str, list[str]], dict[str, dict[str, list[str]]]]:
+    """Return (pkgbase fields, {pkgname: overridden fields}), `label` naming the source.
 
     A deliberately small parser rather than `source`ing the file: this runs in
     CI over a file that produces a package, and sourcing it to read metadata is
     a needless execution of packaging code.
     """
-    text = path.read_text()
     scalars: dict[str, str] = {}
     fields: dict[str, list[str]] = {}
 
@@ -101,7 +135,7 @@ def parse_pkgbuild(path: Path) -> tuple[dict[str, list[str]], dict[str, dict[str
             scalars.setdefault(name, values[0])
 
     if "pkgname" not in fields:
-        raise CheckError(f"{path}: no pkgname assignment")
+        raise CheckError(f"{label}: no pkgname assignment")
 
     splits: dict[str, dict[str, list[str]]] = {}
     for match in re.finditer(
@@ -124,6 +158,313 @@ def parse_pkgbuild(path: Path) -> tuple[dict[str, list[str]], dict[str, dict[str
             splits[only] = {}
 
     return fields, splits
+
+
+def pkgver_body(directory: Path) -> str | None:
+    """The body of the recipe's pkgver(), or None for a recipe that has none.
+
+    A recipe with one recomputes its version from the cloned source at build
+    time; a recipe without one carries the version it builds.
+    """
+    match = re.search(
+        r"^pkgver\(\)\s*\{\n(.*?)^\}$",
+        (directory / "PKGBUILD").read_text(),
+        re.DOTALL | re.MULTILINE,
+    )
+    return match.group(1) if match else None
+
+
+def drop_computed_version(lines: list[str]) -> list[str]:
+    """Return `lines` without the pkgver and pkgrel assignments.
+
+    publish-aur.sh stamps the recipe it publishes with the head it publishes, so
+    those two fields are newer on the AUR than in this tree by design. Comparing
+    them would report drift for every commit made since the last publication.
+    """
+    return [line for line in lines if not VERSION_ASSIGNMENT.match(line.rstrip("\n"))]
+
+
+def git_result(root: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
+    """Run git in `root` and hand the caller its status to classify."""
+    return subprocess.run(
+        ["git", "-C", str(root), *arguments], capture_output=True, text=True
+    )
+
+
+def git(root: Path, *arguments: str) -> str:
+    result = git_result(root, *arguments)
+    if result.returncode != 0:
+        raise CheckError(
+            f"git {' '.join(arguments)} in {root} failed: {result.stderr.strip()}"
+        )
+    return result.stdout.strip()
+
+
+def computed_pkgver(root: Path) -> str:
+    """The pkgver a VCS recipe's pkgver() produces from the head checked out in `root`."""
+    if git(root, "rev-parse", "--is-shallow-repository") == "true":
+        raise CheckError(
+            f"{root} is a shallow checkout, so `git rev-list --count HEAD` counts only "
+            "the commits it fetched. A pkgver stamped from it would be lower than the "
+            "published one, and no AUR client offers an update to a lower version. "
+            "Check out the full history (actions/checkout fetch-depth: 0)."
+        )
+    return "{}.r{}.g{}".format(
+        (root / "VERSION").read_text().strip(),
+        git(root, "rev-list", "--count", "HEAD"),
+        git(root, "rev-parse", "--short", "HEAD"),
+    )
+
+
+def source_ref(directory: Path) -> tuple[str, str]:
+    """The repository and ref a VCS recipe's build clones.
+
+    makepkg clones the `git+` source, so what a stamped version must describe is
+    a commit of that ref. With no `#branch=` fragment the clone takes the
+    remote's default branch, which is `HEAD` there.
+    """
+    fields, _ = parse_pkgbuild(directory / "PKGBUILD")
+    urls = [
+        value.split("::", 1)[-1][len("git+"):]
+        for value in fields.get("source", [])
+        if value.split("::", 1)[-1].startswith("git+")
+    ]
+    if len(urls) != 1:
+        raise CheckError(
+            f"{directory}/PKGBUILD names {len(urls)} git sources, so which repository "
+            "and branch its build clones cannot be read"
+        )
+    url, _, fragment = urls[0].partition("#")
+    if not fragment:
+        return url, "HEAD"
+    if fragment.startswith("branch="):
+        return url, f"refs/heads/{fragment[len('branch='):]}"
+    raise CheckError(
+        f"{directory}/PKGBUILD pins its source with {fragment}, which names no branch "
+        "this script can resolve, so which commit its build clones cannot be read"
+    )
+
+
+def remote_tip(root: Path, url: str, ref: str) -> tuple[str, str]:
+    """The (ref, commit) a clone of `url` would check out, read from `url` itself."""
+    name, tip = ref, None
+    for line in git(root, "ls-remote", "--symref", url, ref).splitlines():
+        if line.startswith("ref: "):
+            name = line.split()[1]
+        else:
+            tip = line.split("\t")[0]
+    if tip is None:
+        raise CheckError(f"{url} publishes no {ref}, so what a build of it clones is unknown")
+    return name, tip
+
+
+def on_source_branch(root: Path, directory: Path) -> None:
+    """Refuse a checkout whose HEAD the recipe's own build would not reach.
+
+    Nothing pins the ref a publish runs from: a workflow dispatch takes the ref
+    it was started on, a release run takes the tag's commit, and the by-hand
+    path takes whatever is checked out. A version stamped from a commit off the
+    cloned branch names something no build ever produces, and the downgrade
+    refusal then locks out the correction until the branch catches up with it.
+    """
+    url, ref = source_ref(directory)
+    name, tip = remote_tip(root, url, ref)
+    head = git(root, "rev-parse", "HEAD")
+    if head == tip:
+        return
+    # An ancestor of the tip is a commit of that branch, so a build reaches it;
+    # it under-advertises, which the downgrade refusal handles, rather than
+    # naming a commit that is not on the branch at all.
+    ancestry = git_result(root, "merge-base", "--is-ancestor", head, tip)
+    if ancestry.returncode == 0:
+        return
+    if ancestry.returncode != 1:
+        raise CheckError(
+            f"cannot tell whether {root} is on {name} of {url}, at {tip}: "
+            f"{ancestry.stderr.strip()}"
+        )
+    raise CheckError(
+        f"{root} is at {head}, which is not on {name} of {url}, at {tip}. A build of "
+        "this recipe clones that branch, so a version stamped here would name a commit "
+        f"no build reaches, and every client would sit on an update that never arrives. "
+        f"Publish from a checkout of {name}."
+    )
+
+
+def comment_start(line: str, masked: str) -> int:
+    """Where a comment opens on `line`, given shell_scan's mask of it.
+
+    The mask blanks a comment to the end of its line and nothing else reaches
+    the end that way, so a `#` blanked with only blanks after it opened one. A
+    `#` the mask blanked inside a quoted string or a parameter expansion has
+    that construct's own closing character after it.
+    """
+    for index, char in enumerate(line):
+        if char == "#" and masked[index] == " " and not masked[index:].strip():
+            return index
+    return len(line)
+
+
+def normalized_body(body: str) -> str:
+    """The commands a function body runs, without comments, blank lines or layout.
+
+    The mask is read rather than used as the text: it blanks quoted bodies too,
+    and the commands a recipe's pkgver() runs live inside quotes.
+    """
+    commands = (
+        " ".join(line[: comment_start(line, masked)].split())
+        for line, masked in zip(body.splitlines(), code_mask(body).splitlines())
+    )
+    return "\n".join(command for command in commands if command)
+
+
+def formula_problem(directory: Path, body: str) -> str | None:
+    """Why a recipe's pkgver() cannot be stamped by this script, or None.
+
+    The local check reports it and the stamp refuses on it, so a recipe edit
+    that changes the formula is caught on the pull request rather than in the
+    publish job after it merges.
+    """
+    if normalized_body(body) == PKGVER_BODY:
+        return None
+    return (
+        f"{directory}/PKGBUILD computes its pkgver with\n{normalized_body(body)}\n"
+        f"and scripts/check-aur-sync.py computes it with\n{PKGVER_BODY}\n"
+        "so the version publication stamps into the recipe is not the one that "
+        "recipe's build produces. Make the two agree."
+    )
+
+
+def version_order(value: str) -> tuple[tuple[int, ...], int] | None:
+    """Order a VCS pkgver by its source version and the commits counted into it.
+
+    None for a value of another shape, which cannot be ordered against one of
+    this shape.
+    """
+    match = VCS_PKGVER.fullmatch(value)
+    if match is None:
+        return None
+    return tuple(int(part) for part in match.group(1).split(".")), int(match.group(2))
+
+
+def published_version(directory: Path) -> tuple[str, str] | None:
+    """The (pkgver, pkgrel) the recipe's own git HEAD publishes.
+
+    None means nothing is published there: the directory is in no git repository
+    that git can open, its repository has no commit, or its HEAD holds no recipe
+    beside `directory`. A failure of the two reads below that address HEAD's own
+    content is raised instead, because read as nothing published it would skip
+    the downgrade refusal in the caller.
+
+    The two rev-parse calls still read every failure as nothing published, and
+    git gives no way to separate their states from a damaged repository: a
+    repository whose HEAD file is unreadable reports `not a git repository`, the
+    same as a plain directory. That costs nothing here, because publish-aur.sh
+    runs git in this same clone with errexit right after stamping it, so a clone
+    git cannot operate on publishes nothing whatever this returns.
+    """
+    inside = git_result(directory, "rev-parse", "--is-inside-work-tree")
+    if inside.returncode != 0 or inside.stdout.strip() != "true":
+        return None
+    if git_result(directory, "rev-parse", "--verify", "--quiet", "HEAD").returncode != 0:
+        return None
+    # `./PKGBUILD` resolves beside the recipe; `PKGBUILD` would resolve at the
+    # repository root and could read another package's recipe.
+    listed = git_result(directory, "ls-tree", "--name-only", "HEAD", "./PKGBUILD")
+    if listed.returncode != 0:
+        raise CheckError(
+            f"cannot list what {directory}'s HEAD holds, so whether publishing would "
+            f"lower the version is unknown: {listed.stderr.strip()}"
+        )
+    if not listed.stdout.strip():
+        return None
+    shown = git_result(directory, "show", "HEAD:./PKGBUILD")
+    if shown.returncode != 0:
+        raise CheckError(
+            f"cannot read the PKGBUILD at {directory}'s HEAD, so whether publishing "
+            f"would lower the version is unknown: {shown.stderr.strip()}"
+        )
+    fields, _ = parse_pkgbuild_text(shown.stdout, f"the PKGBUILD at {directory}'s HEAD")
+    pkgver, pkgrel = fields.get("pkgver") or [], fields.get("pkgrel") or []
+    if len(pkgver) != 1 or len(pkgrel) != 1:
+        raise CheckError(
+            f"the PKGBUILD at {directory}'s HEAD assigns pkgver {len(pkgver)} time(s) and "
+            f"pkgrel {len(pkgrel)} time(s), so what it publishes cannot be read"
+        )
+    return pkgver[0], pkgrel[0]
+
+
+def replaced_version(path: Path, pkgver: str, pkgrel: str) -> str:
+    """The file's text with its pkgver and pkgrel assignments set to these values."""
+
+    def replace(match: re.Match[str]) -> str:
+        value = pkgver if match.group(2) == "pkgver" else pkgrel
+        return f"{match.group(1)}{match.group(2)}{match.group(3)}{value}"
+
+    text, count = VERSION_ASSIGNMENT.subn(replace, path.read_text())
+    if count != 2:
+        raise CheckError(
+            f"{path}: one pkgver and one pkgrel assignment expected, {count} matched"
+        )
+    return text
+
+
+def stamp_vcs_version(directory: Path, root: Path = ROOT) -> str | None:
+    """Write `root`'s computed pkgver into the recipe in `directory`.
+
+    Returns the value written, or None for a recipe whose pkgver is static and
+    therefore already the truth about what it builds. Every refusal below leaves
+    both files as they are, and neither is written until both can be.
+    """
+    if not (directory / "PKGBUILD").is_file():
+        raise CheckError(f"{directory} holds no PKGBUILD to stamp")
+    body = pkgver_body(directory)
+    if body is None:
+        return None
+
+    problem = formula_problem(directory, body)
+    if problem is not None:
+        raise CheckError(f"{problem} NOTHING was written.")
+
+    try:
+        on_source_branch(root, directory)
+    except CheckError as refusal:
+        raise CheckError(f"{refusal} NOTHING was written.") from None
+
+    fields, _ = parse_pkgbuild(directory / "PKGBUILD")
+    pkgver = computed_pkgver(root)
+    published = published_version(directory)
+    if published is not None and published[0] != pkgver:
+        order, published_order = version_order(pkgver), version_order(published[0])
+        if order is None or published_order is None:
+            raise CheckError(
+                f"{directory} publishes pkgver={published[0]} and this checkout computes "
+                f"{pkgver}; one of the two is not a version this script can order, so "
+                "whether publishing it would lower the version is unknown. NOTHING was "
+                "written."
+            )
+        if order < published_order:
+            raise CheckError(
+                f"{directory} already publishes pkgver={published[0]}, above the {pkgver} "
+                "this checkout computes. No AUR client offers a lower version as an "
+                "update, so publishing it would strand every user on the version they "
+                "have. NOTHING was written. Publish from a checkout of the branch the "
+                "package tracks."
+            )
+
+    # Another version's first package is pkgrel 1. An unchanged version keeps the
+    # pkgrel counting the recipe's own fixes, which lowering would itself be a
+    # downgrade. What is published decides that, where anything is published.
+    previous = published or ((fields.get("pkgver") or [""])[0],
+                             (fields.get("pkgrel") or ["1"])[0])
+    pkgrel = "1" if pkgver != previous[0] else previous[1]
+    written = {
+        name: replaced_version(directory / name, pkgver, pkgrel)
+        for name in ("PKGBUILD", ".SRCINFO")
+    }
+    for name, text in written.items():
+        (directory / name).write_text(text)
+    return pkgver
 
 
 def array_end(text: str, start: int) -> int:
@@ -249,6 +590,22 @@ def check_local(package: str, directory: Path) -> list[str]:
             compare(f"{package}/{name}", splits[name], srcsplits[name], SPLIT_KEYS)
         )
 
+    body = pkgver_body(directory)
+    if body is not None:
+        formula = formula_problem(directory, body)
+        if formula is not None:
+            problems.append(f"{package}: {formula}")
+        for value in pkgbuild.get("pkgver", []):
+            if PLACEHOLDER_PKGVER.search(value):
+                problems.append(
+                    f"{package}: pkgver={value} is the placeholder a VCS recipe carries "
+                    "before a build computes one. makepkg replaces it only after cloning "
+                    "the source, so published it is the version the AUR page and every "
+                    "helper report before that clone. Stamp this tree's head into it: "
+                    "scripts/check-aur-sync.py --stamp-vcs-version "
+                    f"{directory.relative_to(ROOT)}"
+                )
+
     for values in splits.values():
         for scriptlet in values.get("install", []):
             if not (directory / scriptlet).is_file():
@@ -273,24 +630,124 @@ def check_remote(package: str, directory: Path, files: tuple[str, ...]) -> list[
                 f"published package was checked: {result.stderr.strip()}"
             )
 
-        problems = []
-        for name in files:
-            published = clone / name
-            if not published.is_file():
-                problems.append(f"{package}: {name} is not published at all")
-                continue
-            want = (directory / name).read_text().splitlines(keepends=True)
-            have = published.read_text().splitlines(keepends=True)
-            if want == have:
-                continue
-            diff = "".join(
-                difflib.unified_diff(
-                    have, want, fromfile=f"aur/{package}/{name}",
-                    tofile=f"{directory.relative_to(ROOT)}/{name}",
-                )
+        return compare_published(package, directory, clone, files)
+
+
+def published_fields(package: str, clone: Path) -> list[tuple[str, dict[str, list[str]]]]:
+    """The metadata each published file carries.
+
+    Both files are read: aurweb builds the package page and the metadata a
+    helper queries from .SRCINFO, so a stale value there reaches every user
+    whatever the published PKGBUILD says.
+    """
+    found = []
+    if (clone / "PKGBUILD").is_file():
+        fields, _ = parse_pkgbuild_text(
+            (clone / "PKGBUILD").read_text(), f"the published {package} PKGBUILD"
+        )
+        found.append(("PKGBUILD", fields))
+    if (clone / ".SRCINFO").is_file():
+        base, _ = parse_srcinfo(clone / ".SRCINFO")
+        found.append((".SRCINFO", base))
+    return found
+
+
+def carried_value(fields: dict[str, list[str]], key: str) -> str:
+    """How a published file states one field, for comparison and for the report.
+
+    A field assigned other than once has no single value to compare, so the
+    count stands in for it: two files stating a field differently disagree
+    whether or not either can be read.
+    """
+    values = fields.get(key) or []
+    return values[0] if len(values) == 1 else f"{len(values)} values"
+
+
+def published_pair_problems(
+    package: str, published: list[tuple[str, dict[str, list[str]]]]
+) -> list[str]:
+    """Where the published files disagree about the version they publish.
+
+    The comparison below drops pkgver and pkgrel from both published files,
+    because their distance from this tree's is by design; this is what holds
+    those two fields to each other.
+    """
+    if len(published) < 2:
+        return []
+    problems = []
+    for key in ("pkgver", "pkgrel"):
+        carried = {name: carried_value(fields, key) for name, fields in published}
+        if len(set(carried.values())) == 1:
+            continue
+        stated = ", ".join(f"{name} carries {value}" for name, value in carried.items())
+        problems.append(
+            f"{package}: the published files disagree about {key}: {stated}. aurweb "
+            "builds the package page and the metadata every helper reads from .SRCINFO, "
+            "so the AUR advertises a version the published PKGBUILD does not build."
+        )
+    return problems
+
+
+def published_pkgver_problems(package: str, clone: Path) -> list[str]:
+    """What the published pkgver alone says, before any file is compared.
+
+    Its distance from this tree's is expected and is dropped from the comparison
+    below; what it is on its own still has to hold.
+    """
+    published = published_fields(package, clone)
+    problems = []
+    for name, fields in published:
+        values = fields.get("pkgver") or []
+        if len(values) != 1:
+            problems.append(
+                f"{package}: the published {name} carries {len(values)} pkgver values, "
+                "so the version it shows cannot be read"
             )
-            problems.append(f"{package}: {name} on the AUR is not this repo's\n{diff}")
-        return problems
+            continue
+        value = values[0]
+        if PLACEHOLDER_PKGVER.search(value):
+            problems.append(
+                f"{package}: the published {name} carries pkgver={value}, the "
+                "placeholder a VCS recipe holds before a build computes one, so that is "
+                "the version the AUR page and every helper show until they clone. "
+                "Publish with scripts/publish-aur.sh."
+            )
+        elif version_order(value) is None:
+            problems.append(
+                f"{package}: the published {name} carries pkgver={value}, which is not "
+                "the shape this recipe computes. This script cannot order it, and "
+                "pacman orders it anyway: a value of another shape can sort above every "
+                "version the recipe's own build produces, leaving every client on it."
+            )
+    return problems + published_pair_problems(package, published)
+
+
+def compare_published(package: str, directory: Path, clone: Path,
+                      files: tuple[str, ...]) -> list[str]:
+    """Problems between the recipe in `directory` and the published copy in `clone`."""
+    vcs = pkgver_body(directory) is not None
+    problems = []
+    if vcs:
+        problems.extend(published_pkgver_problems(package, clone))
+    for name in files:
+        published = clone / name
+        if not published.is_file():
+            problems.append(f"{package}: {name} is not published at all")
+            continue
+        want = (directory / name).read_text().splitlines(keepends=True)
+        have = published.read_text().splitlines(keepends=True)
+        if vcs:
+            want, have = drop_computed_version(want), drop_computed_version(have)
+        if want == have:
+            continue
+        diff = "".join(
+            difflib.unified_diff(
+                have, want, fromfile=f"aur/{package}/{name}",
+                tofile=f"{directory.relative_to(ROOT)}/{name}",
+            )
+        )
+        problems.append(f"{package}: {name} on the AUR is not this repo's\n{diff}")
+    return problems
 
 
 def remote_sources(directory: Path) -> list[str]:
@@ -349,6 +806,11 @@ def main() -> int:
         help="print the http(s) source URLs of the selected packages and exit",
     )
     parser.add_argument(
+        "--stamp-vcs-version",
+        metavar="DIRECTORY",
+        help="write this checkout's computed pkgver into the recipe in DIRECTORY and exit",
+    )
+    parser.add_argument(
         "--print-source-checksums",
         action="store_true",
         help="print each http(s) source URL and the sha256 the recipe declares for it",
@@ -361,6 +823,19 @@ def main() -> int:
     )
     args = parser.parse_args()
     selected = {name: PACKAGES[name] for name in (args.packages or PACKAGES)}
+
+    if args.stamp_vcs_version:
+        directory = Path(args.stamp_vcs_version)
+        try:
+            stamped = stamp_vcs_version(directory)
+        except CheckError as error:
+            print(f"check-aur-sync: {error}", file=sys.stderr)
+            return 2
+        if stamped is None:
+            print(f"{directory}: pkgver is not computed at build time; left as it is")
+        else:
+            print(f"{directory}: pkgver={stamped}")
+        return 0
 
     if args.print_source_checksums:
         try:
@@ -416,7 +891,18 @@ def main() -> int:
 
     packages = ", ".join(selected)
     if args.remote:
+        vcs = [
+            name for name, (relative, _) in selected.items()
+            if pkgver_body(ROOT / relative) is not None
+        ]
         print(f"AUR recipes match this repo ({packages})")
+        if vcs:
+            print(
+                f"Apart from pkgver and pkgrel in {', '.join(vcs)}: publication stamps "
+                "those with the head it publishes, so they are newer on the AUR than "
+                "here by design and are left out of the comparison. What is published "
+                "there is still checked for the placeholder."
+            )
     else:
         print(f"Arch PKGBUILD/.SRCINFO agree ({packages})")
         print(
