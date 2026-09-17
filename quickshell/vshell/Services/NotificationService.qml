@@ -140,7 +140,8 @@ Singleton {
         const urg = typeof wrapper.urgency === "number" ? wrapper.urgency : 1;
         // A qsimage URL points into the live notification and dies with it, so it is not
         // persistable. When a popup shows, it saves that image to disk and updateHistoryImage
-        // attaches it; an entry kept with no popup, as under do-not-disturb, keeps no image.
+        // attaches it; an entry kept with no popup, as under do-not-disturb, keeps no image from
+        // a qsimage URL. Every other image URL is stored here whatever the popup does.
         const imageUrl = wrapper.image || "";
         const persistableImage = imageUrl && !imageUrl.startsWith("image://qsimage/") ? imageUrl : "";
         const sourceNotificationId = wrapper.notification?.id?.toString() || "";
@@ -160,7 +161,7 @@ Singleton {
             url: _extractUrl(wrapper.htmlBody || wrapper.body || "")
         };
         // The popup persists this notification's image against this entry id; without it the
-        // popup has no key, so it saves no image and the entry keeps none.
+        // popup has no key, so it saves no file and the entry keeps no popup-saved image.
         wrapper.historyEntryId = data.id;
         const trimmed = trimHistory([data, ...historyList], SettingsData.notificationHistoryMaxCount);
         for (const image of trimmed.orphanedImages)

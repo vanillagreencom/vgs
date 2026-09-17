@@ -102,21 +102,25 @@ test("attachHistoryImage changes only the entry's image", () => {
 test("a saved image reaches the history entry whose id named it", () => {
     const service = qmlSource(serviceText, "NotificationService.qml");
     service.requires(service.body("_makeHistoryEntryId"), "_makeHistoryEntryId()", [
+        ["historyEntryCounter += 1;",
+            "with the counter frozen every entry from one notification id and one millisecond " +
+            "carries one id, which is the collision this id was introduced to end", 1],
         ['safeSource + "_" + (timestamp || Date.now()) + "_" + historyEntryCounter',
             "without the per-entry counter two entries can carry one id, and an image attaches " +
             "to whichever of them the search reaches first", 1]
     ]);
     service.requires(service.body("addToHistory"), "addToHistory()", [
         ["wrapper.historyEntryId = data.id",
-            "without it the popup has no key, so it saves no image and the entry keeps none", 1],
+            "without it the popup has no key, so it saves no file and the entry keeps no " +
+            "popup-saved image", 1],
         ['const persistableImage = imageUrl && !imageUrl.startsWith("image://qsimage/") ? imageUrl : "";',
             "a qsimage URL points into the live notification, so storing it gives the entry an " +
             "image that can never load again", 1]
     ]);
     service.requires(service.body("updateHistoryImage"), "updateHistoryImage()", [
-        ["if (!next)",
-            "without it an image belonging to no entry empties historyList, and the History tab " +
-            "stays blank until history reloads", 1],
+        ["if (!next)\n            return;",
+            "without the return an image belonging to no entry empties historyList, and the " +
+            "History tab stays blank until history reloads", 1],
         ["historyList = next;",
             "without it the attached image never reaches the History tab", 1],
         ["saveHistory();",
