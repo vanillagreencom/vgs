@@ -5956,6 +5956,9 @@ def cmd_icons(argv: List[str]) -> int:
 # they share. Any other name, such as a `.tmp` download still being written, is not pruned.
 _IMAGECACHE_NAME = re.compile(r"[0-9a-f]{8}@[0-9]+x[0-9]+\.png|remote_[0-9a-f]{8}")
 IMAGECACHE_MAX_BYTES = 64 * 1024 * 1024
+# icon_index names a cache file `<theme>.json`; write_file's `<theme>.json.tmp.<pid>.<ns>`
+# is a write still in progress and is not pruned.
+_ICON_INDEX_NAME = re.compile(r".+\.json")
 # NotificationService.getImageCachePath: `notif_<epoch ms>_<notification id>.png`.
 _NOTIFICATION_IMAGE_NAME = re.compile(r"notif_[0-9]+_[0-9]+\.png")
 # A popup saves its image before the debounced history write that names it lands, so a
@@ -6039,13 +6042,33 @@ def reconcile_notification_images(history_file: Path, now: float) -> int:
     return removed
 
 
+def prune_icon_index() -> int:
+    """Delete the icon-index cache of every theme list_installed_icon_themes() does not name.
+
+    The Icons settings picker indexes every installed set to draw its sample, so an index
+    is kept for each set that picker lists and a set the user uninstalls takes its index
+    with it. An index the shell still reads for a theme that list omits costs one rebuild
+    on its next load. Returns the files removed.
+    """
+    installed = set(list_installed_icon_themes())
+    removed = 0
+    for path, _stat_result in _owned_cache_files(cache_dir() / "icon-index", _ICON_INDEX_NAME):
+        if path.name[:-len(".json")] in installed:
+            continue
+        if _unlink_cache_file(path):
+            removed += 1
+    return removed
+
+
 def cmd_cache(argv: List[str]) -> int:
     parser = argparse.ArgumentParser(prog="vshell cache")
     sub = parser.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("prune", help="bound the image cache and delete notification images the history no longer names")
+    sub.add_parser("prune", help="bound the image cache, drop the icon index of uninstalled icon themes, "
+                   "and delete notification images the history no longer names")
     parser.parse_args(argv)
     files, size = prune_imagecache(IMAGECACHE_MAX_BYTES)
     print(f"imagecache-pruned: {files} files {size} bytes")
+    print(f"icon-index-pruned: {prune_icon_index()} files")
     history_file = cache_dir() / "notification_history.json"
     try:
         removed = reconcile_notification_images(history_file, time.time())
