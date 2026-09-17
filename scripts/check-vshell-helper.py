@@ -2471,18 +2471,25 @@ def test_theme_hooks_stay_out_of_the_login_session():
                 assert_equal(result["skipped"], True, "the reload hook reports a skip, not a signal")
                 assert_equal(result["reason"], helper.SANDBOX_REFUSAL,
                              "the skip names the refusal, not an absent kitty")
-                # Every hook that reaches the login session, refused as a whole rather
-                # than only where it scans: ghostty falls through to a session-bus reload
-                # with no pid to signal, hypr-reload picks the newest live compositor
-                # instance, and shell-reload finds the running shell through the real
-                # uid's runtime directory. gtk-settings and icon-theme write the login
-                # user's dconf database over the session bus, and gtk4-reload quits the
-                # login session's Nautilus service on it. None passes through a scan.
+                # Every reload verb, derived from _RELOAD_HOOKS rather than listed again
+                # here. A reload verb tells a running application to re-read a file, so
+                # each one reaches the login session and each must refuse; a verb added
+                # to that inventory is covered with no second list to update. The two
+                # names added to it are not reload verbs: gtk-settings and icon-theme
+                # write the login user's dconf database over the session bus.
+                #
+                # Each hook is refused whole rather than only where it scans, because
+                # none of them passes through a scan. ghostty falls through to a
+                # session-bus reload with no pid to signal. hypr-reload picks the newest
+                # live compositor instance and niri-reload reaches the compositor through
+                # the inherited NIRI_SOCKET. shell-reload finds the running shell through
+                # the real uid's runtime directory, gtk4-reload quits the login session's
+                # Nautilus service over the session bus, and pywalfox-update reaches the
+                # browser extension through a program it resolves on PATH.
                 trip = AssertionError("a sandboxed hook must not run a command")
                 with patch.object(helper, "_run_hook_cmd", side_effect=trip), \
                         patch.object(helper.subprocess, "run", side_effect=trip):
-                    for hook in ("ghostty-reload", "hypr-reload", "shell-reload", "tmux-source", "nvim-reload",
-                                 "gtk-settings", "gtk4-reload", "icon-theme"):
+                    for hook in sorted(_RELOAD_HOOKS | {"gtk-settings", "icon-theme"}):
                         skipped = helper.run_hook(hook, {"background": "#123456"}, {})
                         assert_equal(skipped.get("skipped"), True, f"{hook} reports a skip under a sandbox HOME")
                         assert_equal(skipped.get("reason"), helper.SANDBOX_REFUSAL,
@@ -2541,6 +2548,29 @@ def test_theme_hooks_stay_out_of_the_login_session():
                      "gtk4-reload reports what the quit returned")
         assert_equal("nautilus" in results["gtk-settings"], False,
                      "gtk-settings no longer carries the quit it was moved off")
+        # The inverse for the two verbs the loop above refuses through a guard of their
+        # own: from the login user's own home each still issues its command, so a guard
+        # that refused unconditionally could not satisfy that loop unnoticed. The argv is
+        # pinned because it is what reaches the compositor and the browser extension.
+        issued = []
+
+        def issue(hook_name, command, **_kwargs):
+            issued.append((hook_name, tuple(command)))
+            return {"hook": hook_name, "ok": True}
+
+        # Both verbs reach their program through _run_hook_cmd, so nothing here may run a
+        # command of its own. hypr-reload's instance probe is the shape that would.
+        direct = AssertionError("this block must issue every command through _run_hook_cmd")
+        with patch.object(helper, "_run_hook_cmd", side_effect=issue), \
+                patch.object(helper.subprocess, "run", side_effect=direct), \
+                patch.object(helper.shutil, "which", return_value="/usr/bin/probe"), \
+                patch.dict(os.environ, {"NIRI_SOCKET": "/run/user/probe/niri.sock"}):
+            for hook in ("niri-reload", "pywalfox-update"):
+                helper.run_hook(hook, {"theme_type": "dark"}, {})
+        assert_equal(issued, [("niri-reload", ("niri", "msg", "action", "load-config-file")),
+                              ("pywalfox-update", ("pywalfox", "dark")),
+                              ("pywalfox-update", ("pywalfox", "update"))],
+                     "both verbs reach their program from the login user's own home")
 
 
 def _run_settings_hook(hook, current, icon_name="VgsProbeSet"):
