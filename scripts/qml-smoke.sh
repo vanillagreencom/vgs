@@ -1789,8 +1789,8 @@ EOF
     if [[ "$plugins_loaded" == true ]]; then
       driver_check "$nested_signature" "$nested_socket" || true
     fi
-  # Run state-dependent phases only after seed verification and before teardown.
   elif [[ "$seeded" == true && "$plugins_loaded" == true ]]; then
+    # Run state-dependent phases only after seed verification and before teardown.
     if popout_check; then
       override_check || true
     fi

@@ -17,9 +17,9 @@ The rebuild ends on the callLater turn after every toplevelsChanged consumer ret
 Output is keyed lines:
   series name=NAME n=N p50=MS p95=MS p99=MS max=MS budget_p95=MS
   verdict=pass | verdict=over-budget series=NAME p95=MS budget_p95=MS
-Refusals print `bench-shell-events: <key>=<value>` on the first line and exit 1.
-Exit 0 means every series is within budget, 1 means one is over or the run failed, and
-2 means the script was started outside a sandbox.
+Refusals print `bench-shell-events: <key>=<value>` on the first line.
+Exit 0 means every series is within budget. Exit 1 means a series is over budget or the run
+refused. Exit 2 is the not-in-sandbox refusal.
 """
 
 from __future__ import annotations

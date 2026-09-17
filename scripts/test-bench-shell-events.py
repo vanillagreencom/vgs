@@ -7,7 +7,9 @@ script itself, so no case needs a compositor or a shell.
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import os
 import subprocess
 import sys
 import tempfile
@@ -97,6 +99,44 @@ def main() -> int:
         got_lines = bench.verdict(summaries, budgets)
         if got_lines != want:
             fail("verdict", f"{label}: expected {want}, got {got_lines}")
+
+    # Drive main() past the sandbox check with the shell and compositor calls replaced: its exit
+    # status is the row's only verdict.
+    def run_main(samples_for) -> int:
+        saved = (bench.drain, bench.switch_all, bench.os.environ.get("VSHELL_SANDBOX_DRIVER"))
+        dispatched: dict[str, float] = {}
+
+        def switch_all(base: int, count: int) -> dict[str, float]:
+            dispatched.clear()
+            dispatched.update({str(base + i): 1000.0 * i for i in range(count)})
+            return dict(dispatched)
+
+        bench.switch_all = switch_all
+        bench.drain = lambda: samples_for(dispatched)
+        bench.os.environ["VSHELL_SANDBOX_DRIVER"] = "1"
+        try:
+            with open(os.devnull, "w") as sink, contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
+                return bench.main()
+        finally:
+            bench.drain, bench.switch_all = saved[0], saved[1]
+            if saved[2] is None:
+                bench.os.environ.pop("VSHELL_SANDBOX_DRIVER", None)
+            else:
+                bench.os.environ["VSHELL_SANDBOX_DRIVER"] = saved[2]
+
+    def samples_taking(ms: int):
+        return lambda dispatched: [sample(name, int(started), int(started) + ms) for name, started in dispatched.items()]
+
+    # label; samples the probe answers per drain; expected exit status.
+    mains = [
+        ("in-budget samples pass", samples_taking(1), 0),
+        ("over-budget samples fail", samples_taking(bench.BUDGET_P95_MS["receipt_to_view"] + 1), 1),
+        ("a refusal fails", lambda dispatched: [], 1),
+    ]
+    for label, samples_for, want in mains:
+        got_exit = run_main(samples_for)
+        if got_exit != want:
+            fail("main exit", f"{label}: expected exit {want}, got {got_exit}")
 
     # An empty PATH and no compositor variables: if the refusal regressed, the script must find
     # no hyprctl or qs to move a live session's workspaces with.
