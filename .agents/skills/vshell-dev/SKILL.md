@@ -1,7 +1,7 @@
 ---
 name: vshell-dev
 description: >
-  Work on VanillaGreen Shell (VGS / vshell), a Hyprland and Niri Quickshell 0.3.0 runtime.
+  Work on VanillaGreen Shell (VGS / vshell), a Hyprland and Niri Quickshell 0.3.1 runtime.
   Use for shell modules, services, bundled plugins, theme engine targets, wallpaper/palette
   flows, IPC, settings UI, or removing stale legacy upstream assumptions.
 compatibility: Designed for Claude Code, Pi, Codex, and similar agents
