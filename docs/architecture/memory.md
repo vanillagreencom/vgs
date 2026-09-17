@@ -1,6 +1,6 @@
 # Runtime memory
 
-Covers: quickshell/vshell, scripts/sample-shell-memory.sh
+Covers: quickshell/vshell, scripts/sample-shell-memory.sh, scripts/attribute-heap-profile.py
 
 The shell's resident size grows for the life of a session. This file records where that memory sits, how to measure it, and what a measurement can and cannot attribute. `scripts/sample-shell-memory.sh` is the sampler; it reads `/proc` and never signals, restarts or drives the shell.
 
@@ -33,7 +33,7 @@ Class shares are read by matching the mapping name in `/proc/<pid>/smaps`. The s
 ## Invariants
 
 - Growth is in anonymous memory. Anonymous memory rises in every sample. The JavaScript heap holds one value for long stretches, moves by a couple of megabytes, and comes back, so it oscillates rather than trends. A QML object count or a JavaScript heap snapshot therefore measures none of the growth, and the native heap owns all of it.
-- Growth is on the main QML thread and the Wayland event threads. The scene-graph render threads are the CPU cost and not the growth, so a frame-rate or repaint change addresses neither.
+- Page faults that first touch new memory are on the main QML thread and the Wayland event threads. The scene-graph render threads are the CPU cost and not the growth, so a frame-rate or repaint change addresses neither. A fault count is not retained memory: the heap profile below puts the retained growth on the Wayland event threads.
 - The mapping count stays flat while memory grows. New bytes land inside extents jemalloc already holds, so a count of mappings is not a growth signal.
 - File descriptors and thread count stay flat. Neither is a growth signal.
 - A growth rate needs a window of at least 600 s. Per-minute deltas swing between negative and several megabytes, so a shorter window reports sampling noise. `--report` states one rate over the session span its log covers and one between each pair of marks, and reports `status=span-under-floor` in place of any rate whose span falls below that window.
@@ -79,6 +79,27 @@ Thread attribution over a 7-minute window in which anonymous memory grew 8.8 MiB
 
 The render threads spend the most CPU and touch almost no new memory. The main QML thread and the two Wayland event threads touch nearly all of it. Rendering is therefore the shell's continuous CPU cost and not its memory growth.
 
+### Heap profile
+
+One session ran under jemalloc heap profiling, with Quickshell 0.3.1, Qt 6.11.2, libwayland 1.26.0 and the NVIDIA 610.57.04 driver. The screen stayed unlocked with idle locking inhibited. The owner used the desktop for the first 8 minutes. Agent terminals kept running for the whole session, so the desktop was not idle. Quickshell reloaded its configuration at 8 minutes and twice at 34 minutes of uptime. Byte figures are jemalloc's sampled estimates at one sample per 512 KiB allocated on average; the samples column is the count at the later dump.
+
+Net growth between the dumps at 32 and 169 minutes of uptime:
+
+| Thread | Net growth | Samples |
+|---|---|---|
+| Wayland event threads (two) | 234.6 MiB | 543 |
+| `CPMMListener`, started by the NVIDIA EGL library | 255.4 MiB | 29 |
+| Main QML thread | -6.4 MiB | 281 |
+| All other threads | -3.5 MiB | 246 |
+
+The `CPMMListener` growth is one step between the dumps at 35 and 42 minutes, after the reloads at 34 minutes. It holds 256 to 258 MiB in every later dump.
+
+Every sampled Wayland event thread byte at 169 minutes sits in one call stack: `zalloc` in `wl_closure_init`, called from `wl_connection_demarshal`, under `wl_display_read_events` in `QtWaylandClient::EventThread::run()`. libwayland-client allocates that closure for each event it reads, puts it on the event queue of the receiving object, and frees it only when that queue is dispatched or released. The retained bytes are therefore events read from the compositor and not dispatched by the time of the dump. The profile does not name the queue that holds them.
+
+A reload released it. The Wayland event threads held 40.0 MiB in the dump at 05:48:16 UTC, two seconds after a reload began, and 0 in the dump one second later. From 42 to 169 minutes of uptime, after the last reload, they rose in each of the twelve dump intervals, from 17.5 MiB to 271.6 MiB. Over that span they grew 254.1 MiB, 120 MiB/h, which is 93.8% of the process's net heap growth of 270.7 MiB. Up to the first reload they held at most 0.5 MiB, but that stretch is also the one the owner used the desktop in, so this run does not separate the two causes.
+
+`jeprof --inuse_space --focus=wl_display_read_events` reports 234.6 MiB between the dumps at 32 and 169 minutes and 254.6 MiB between those at 42 and 169 minutes. Between the thread snapshots at 30 minutes and 3 hours, the threads alive in both took 194,881 minor faults: 72.6% on the main QML thread, whose live heap shrank between the dumps, and 18.5% on the Wayland event threads, which hold the growth.
+
 ## Sampling
 
 ```
@@ -94,13 +115,17 @@ Every sample row carries the sampled process and its start time, so one session 
 
 ## What sampling cannot attribute
 
-`/proc` says which memory class grows. It does not say which C++ type allocated it. Naming the owning allocation site needs a heap profiler in the process, which means either a jemalloc profiling build or an interposing allocator, and either one requires starting the shell under it. On the live desktop that is a restart, so no read-only method reaches it.
+`/proc` says which memory class grows. It does not say which C++ type allocated it. That needs jemalloc's heap profiler, which only runs in a shell started with profiling in its environment. On the live desktop that start is a restart, so no read-only method reaches it.
+
+`scripts/attribute-heap-profile.py BASE HEAD` reads two dumps from one profiled session. It prints each thread's net growth and share, then breaks one thread's growth down by call stack and by the library that made the allocation. `--thread` selects the thread by name, `WaylandEventThr` by default. It symbolizes through `eu-addr2line` against the dump's own mappings, so the packages on disk must be the ones that ran. The installed libraries are stripped: set `DEBUGINFOD_URLS` so local functions resolve, or they take the name of the nearest exported symbol.
+
+The profiler's own bookkeeping is anonymous memory, so resident size in a profiled session is not the shell's growth rate. Attribution reads dump bytes only.
 
 ## Candidates
 
 Each entry below is a place where VGS code retains memory without a bound. Every one runs on the main QML thread, which the thread attribution above names as a growth site, but none is yet tied by measurement to a share of that rate. The paths are relative to `quickshell/vshell/`.
 
-Nothing in VGS code accounts for the Wayland event threads' share. Those threads run Qt's own Wayland client and no VGS code, so that share is either Quickshell's surface handling or Qt's, and reaching it needs the in-process profiler this file says is out of read-only range.
+The Wayland event threads' growth is not VGS code. The heap profile puts it in libwayland-client event closures that Qt's Wayland event thread reads and nothing dispatches. VGS ships no native code in the shell process, so the queue belongs to Quickshell, Qt or a library they load, such as the GPU driver.
 
 - `Services/IconThemeService.qml`: `_cache` holds one entry per distinct icon name resolved and is cleared only when the icon theme changes. Notification icons come from arbitrary applications, so the key set is open.
 - `Services/NotepadStorageService.qml`: `createEmptyFile` leaves its holder object parented to the singleton with no `destroy()`.
