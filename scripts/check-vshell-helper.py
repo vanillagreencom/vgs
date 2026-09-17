@@ -3861,34 +3861,45 @@ def test_preview_stage_retires_its_window_rule():
     reload = ["hyprctl", "reload"]
     remove = ["hyprctl", "output", "remove", helper.PREVIEW_OUTPUT]
 
-    # label; whether `hyprctl eval` runs Lua; whether `hyprctl keyword` registers a legacy
-    # rule; exit status of `hyprctl output create headless`; the hyprctl subcommand a stop
-    # signal interrupts, or None; whether the preview stages its output; the request that
-    # retires the rule, or None when the stage registered no rule to retire.
+    # Each config manager refuses the spelling the other one owns, on stdout at exit 0, so
+    # one column decides both replies: no row can ask for a session that refuses both.
+    CLASSIC_REFUSES_EVAL = "eval is only supported with the lua config manager"
+    LUA_REFUSES_KEYWORD = "keyword can't work with non-legacy parsers. Use eval."
+    # A Lua session that took the staging chunk and failed inside it.
+    LUA_CHUNK_ERROR = "error: hl.window_rule unavailable"
+
+    # label; the config manager the session runs; whether the staging chunk itself fails
+    # (Lua sessions only); exit status of `hyprctl output create headless`; the hyprctl
+    # subcommand a stop signal interrupts, or None; whether the preview stages its output;
+    # the request that retires the rule, or None when the stage registered no rule at all.
     # The rule is registered before the output is created, so a refused output still retires it.
-    for label, lua, keyword, create_status, stop_at, staged_expected, retirement in (
-        ("a compositor that accepts every request", True, True, 0, None, True, retire),
-        ("a compositor that refuses the headless output", True, True, 1, None, False, retire),
-        ("a pre-Lua compositor that refuses the headless output", False, True, 1, None, False, reload),
+    for label, config, chunk_fails, create_status, stop_at, staged_expected, retirement in (
+        ("a compositor that accepts every request", "lua", False, 0, None, True, retire),
+        ("a compositor that refuses the headless output", "lua", False, 1, None, False, retire),
+        ("a pre-Lua compositor that refuses the headless output", "classic", False, 1, None, False, reload),
         # The output exists by then but is not yet sized, so the stage is not handed over.
-        ("a stop signal while the stage sizes its output", True, True, 0, "getoption", True, retire),
-        ("a pre-Lua compositor that stages its output", False, True, 0, None, True, reload),
-        # A Lua session refuses both spellings: `eval` takes the chunk, but `keyword`
-        # answers the non-legacy-parser refusal with exit 0. Reading that as a registered
-        # rule reloads the user's live config to retire a rule that was never there.
-        ("a Lua compositor that refuses the keyword fallback", False, False, 0, None, False, None),
+        ("a stop signal while the stage sizes its output", "lua", False, 0, "getoption", True, retire),
+        ("a pre-Lua compositor that stages its output", "classic", False, 0, None, True, reload),
+        # The Lua chunk fails and the keyword fallback is refused, because a Lua session
+        # owns no keyword parser. Reading that refusal as a registered rule reloads the
+        # user's live config to retire a rule that was never there.
+        ("a Lua compositor whose staging chunk fails", "lua", True, 0, None, False, None),
     ):
         calls = []
+        notices = []
 
         def fake_run(argv, **_kwargs):
             calls.append(list(argv))
             if argv[1] == stop_at:
                 raise SystemExit(128 + signal.SIGTERM)
             stdout = "ok"
-            if argv[1] == "eval" and not lua:
-                stdout = "eval is only supported with the lua config manager"
-            elif argv[1] == "keyword" and not keyword:
-                stdout = "keyword can't work with non-legacy parsers"
+            if argv[1] == "eval":
+                if config == "classic":
+                    stdout = CLASSIC_REFUSES_EVAL
+                elif chunk_fails and argv[2] == helper.PREVIEW_STAGE_ON_LUA:
+                    stdout = LUA_CHUNK_ERROR
+            elif argv[1] == "keyword" and config == "lua":
+                stdout = LUA_REFUSES_KEYWORD
             elif argv[1:] == ["cursorpos"]:
                 stdout = "0, 0"
             elif argv[1:] == ["monitors", "-j"]:
@@ -3900,6 +3911,7 @@ def test_preview_stage_retires_its_window_rule():
             return subprocess.CompletedProcess(argv, status, stdout, "")
 
         with patch.object(helper, "run", fake_run), \
+             patch.object(helper, "eprint", lambda *parts: notices.append(" ".join(str(part) for part in parts))), \
              patch.object(helper.shutil, "which", lambda name: "/usr/bin/hyprctl" if name == "hyprctl" else None), \
              patch.dict(os.environ, {"HYPRLAND_INSTANCE_SIGNATURE": "check-vshell-helper"}):
             stopped = False
@@ -3919,14 +3931,23 @@ def test_preview_stage_retires_its_window_rule():
                          f"{label}: a refused rule is not registered, and reloading would reset the user's live config")
         else:
             assert_equal(retirement in teardown, True, f"{label}: the teardown must retire its window rule")
-        # A session whose `hyprctl eval` is refused sizes the staging output with the
-        # legacy keyword instead; a Lua session must not, or the keyword outlives the stage.
+        # A pre-Lua session sizes the staging output and restores the warped cursor through
+        # the legacy spellings; a Lua session must not, or a stale `monitor` keyword and a
+        # dispatch the compositor never asked for outlive the stage.
         sized_by_keyword = any(
             call[:3] == ["hyprctl", "keyword", "monitor"] and call[3].startswith(f"{helper.PREVIEW_OUTPUT},")
             for call in calls if len(call) > 3
         )
-        assert_equal(sized_by_keyword, staged_expected and not lua,
+        assert_equal(sized_by_keyword, staged_expected and config == "classic",
                      f"{label}: sizes the staging output through the spelling this config manager accepts")
+        assert_equal(["hyprctl", "dispatch", "movecursor", "0", "0"] in calls, config == "classic",
+                     f"{label}: restores the cursor through the spelling this config manager accepts")
+        # Only a stage that registered neither spelling has a refusal to name; every other
+        # row must stay quiet, or a working stage prints a failure the operator acts on.
+        refused = [notice.split("(hyprctl ", 1)[1].split(" exit", 1)[0] for notice in notices
+                   if notice.startswith("preview staging rule refused")]
+        assert_equal(refused, [] if retirement is not None else ["eval", "keyword"],
+                     f"{label}: names each spelling the compositor refused")
         if staged_expected:
             assert_equal(remove in teardown, True, f"{label}: the teardown must remove the staging output")
 
