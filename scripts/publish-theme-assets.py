@@ -5,9 +5,9 @@ A theme's wallpapers live outside the repository, in an asset working directory
 laid out as ``<name>/backgrounds/`` (see D015). Its definitions and its full-size
 ``preview.jpg`` ship in the VGS package instead. This script packs each theme's
 wallpapers into one reproducible archive, uploads the archives whose content
-changed to the next ``themes-vN`` GitHub release, records what it published in
-``themes/asset-lock.json``, derives the 480 px thumbnails from the committed
-previews, and regenerates ``themes/catalog.json``.
+changed to the next ``themes-vN`` GitHub release on the theme-asset repository,
+records what it published in ``themes/asset-lock.json``, derives the 480 px
+thumbnails from the committed previews, and regenerates ``themes/catalog.json``.
 
 ``--pull`` rebuilds the asset working directory from the published releases, so
 the releases rather than a maintainer's disk are the copy of record.
@@ -15,6 +15,7 @@ the releases rather than a maintainer's disk are the copy of record.
 from __future__ import annotations
 
 import argparse
+import datetime
 import gzip
 import hashlib
 import io
@@ -40,6 +41,10 @@ RELEASE_TAG_RE = re.compile(r"^themes-v(\d+)$")
 THUMBNAIL_WIDTH = 480
 THUMBNAIL_QUALITY = 82
 DOWNLOAD_TIMEOUT = 300
+# The shortest gap between opening one release on the theme-asset repository and
+# opening the next, so a run of theme edits lands in one release instead of one
+# release each. --force overrides it.
+RELEASE_INTERVAL = datetime.timedelta(days=7)
 
 # scripts/gen-theme-catalog.py owns the imagery-versus-definition split, the
 # lock version and the gh release reader; this script calls them.
@@ -87,7 +92,7 @@ def load_module(name: str, path: Path) -> Any:
 
 def load_lock() -> Dict[str, Any]:
     if not LOCK_PATH.is_file():
-        return {"version": generator().LOCK_VERSION, "repo": generator().REPO_SLUG, "themes": {}}
+        return {"version": generator().LOCK_VERSION, "repo": generator().ASSET_REPO, "themes": {}}
     data = json.loads(LOCK_PATH.read_text())
     if not isinstance(data, dict) or not isinstance(data.get("themes"), dict):
         raise SystemExit(f"{LOCK_PATH} is not a theme asset lock")
@@ -95,7 +100,7 @@ def load_lock() -> Dict[str, Any]:
 
 
 def render_lock(lock: Dict[str, Any]) -> str:
-    ordered: Dict[str, Any] = {"version": generator().LOCK_VERSION, "repo": generator().REPO_SLUG}
+    ordered: Dict[str, Any] = {"version": generator().LOCK_VERSION, "repo": str(lock["repo"])}
     if lock.get("publishing"):
         ordered["publishing"] = str(lock["publishing"])
     ordered["themes"] = {name: lock["themes"][name] for name in sorted(lock["themes"])}
@@ -137,6 +142,38 @@ def next_release_tag(lock: Dict[str, Any]) -> str:
         if match:
             highest = max(highest, int(match.group(1)))
     return f"themes-v{highest + 1}"
+
+
+def rehome(lock: Dict[str, Any], repo: str, releases: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """The lock re-pinned to `repo`: every archive unpublished, in the first release number `repo` lacks.
+
+    A lock whose pins live on another repository cannot resume there, and its
+    release numbers mean nothing on `repo`. Each entry keeps its archive name,
+    revision and checksums, so unchanged content uploads under the same name, and
+    the publish loop then treats the batch as a dry run it has to upload.
+    """
+    highest = 0
+    for release in releases:
+        match = RELEASE_TAG_RE.match(str(release.get("tagName") or ""))
+        if match:
+            highest = max(highest, int(match.group(1)))
+    tag = f"themes-v{highest + 1}"
+    return {"version": lock["version"], "repo": repo,
+            "themes": {name: dict(entry, release=tag, published=False)
+                       for name, entry in lock["themes"].items()}}
+
+
+def recent_release(releases: List[Dict[str, Any]], now: datetime.datetime) -> str:
+    """The tag of a release opened less than RELEASE_INTERVAL before `now`, or "" when there is none."""
+    for release in releases:
+        created = datetime.datetime.fromisoformat(str(release["createdAt"]).replace("Z", "+00:00"))
+        if now - created < RELEASE_INTERVAL:
+            return str(release["tagName"])
+    return ""
+
+
+class ReleaseTooRecent(SystemExit):
+    """A publish that would open a release inside RELEASE_INTERVAL of the previous one."""
 
 
 def imagery_relpaths(assets: Path) -> List[str]:
@@ -232,15 +269,23 @@ def gh(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(["gh", *args], capture_output=True, text=True, check=False)
 
 
-def ensure_release(tag: str) -> None:
+def ensure_release(tag: str, force: bool) -> None:
     """Create the release only when GitHub says it is not there.
 
     `gh_release` raises when it could not ask at all, so a failed query never
-    turns into an attempt to create a release that already exists.
+    turns into an attempt to create a release that already exists. A release that
+    exists is an interrupted run resuming, which opens nothing and is never
+    refused; opening one inside RELEASE_INTERVAL of another needs `force`.
     """
-    if generator().gh_release(tag) is not None:
+    repo = generator().ASSET_REPO
+    if generator().gh_release(repo, tag) is not None:
         return
-    created = gh("release", "create", tag, "--repo", generator().REPO_SLUG, "--title", tag,
+    recent = recent_release(generator().gh_releases(repo), datetime.datetime.now(datetime.timezone.utc))
+    if recent and not force:
+        raise ReleaseTooRecent(f"release-too-recent {repo} {recent}\n"
+                               f"{recent} was opened less than {RELEASE_INTERVAL.days} days ago, so "
+                               f"{tag} is not opened. Publish after the interval, or pass --force.")
+    created = gh("release", "create", tag, "--repo", repo, "--title", tag,
                  "--notes", "Theme imagery archives. Assets are never replaced or deleted.")
     if created.returncode != 0:
         raise SystemExit(f"could not create release {tag}: {created.stderr.strip()}")
@@ -249,7 +294,7 @@ def ensure_release(tag: str) -> None:
 def published_asset_digest(tag: str, name: str) -> str:
     """The sha256 of an asset already on the release."""
     with tempfile.TemporaryDirectory() as scratch:
-        fetched = gh("release", "download", tag, "--repo", generator().REPO_SLUG,
+        fetched = gh("release", "download", tag, "--repo", generator().ASSET_REPO,
                      "--pattern", name, "--dir", scratch, "--clobber")
         if fetched.returncode != 0:
             raise SystemExit(f"could not read the published {tag}/{name}: {fetched.stderr.strip()}")
@@ -267,7 +312,7 @@ def publish_archive(tag: str, theme: str, rev: int, blob: bytes, digest: str,
     next free revision comes from — the lock alone cannot supply one, so deriving
     it from the lock leaves a rerun refusing the same name forever.
     """
-    release = generator().gh_release(tag)
+    release = generator().gh_release(generator().ASSET_REPO, tag)
     if release is None:
         raise SystemExit(f"{tag} does not exist, so {theme} cannot be uploaded to it")
     existing = {str(asset.get("name") or "") for asset in (release.get("assets") or [])}
@@ -281,7 +326,7 @@ def publish_archive(tag: str, theme: str, rev: int, blob: bytes, digest: str,
     path = stage / archive
     path.write_bytes(blob)
     try:
-        uploaded = gh("release", "upload", tag, str(path), "--repo", generator().REPO_SLUG)
+        uploaded = gh("release", "upload", tag, str(path), "--repo", generator().ASSET_REPO)
     finally:
         path.unlink()
     if uploaded.returncode != 0:
@@ -289,9 +334,9 @@ def publish_archive(tag: str, theme: str, rev: int, blob: bytes, digest: str,
     return archive, rev
 
 
-def asset_url(entry: Dict[str, Any]) -> str:
-    """Where a published archive is fetched from, off the generator's own base URL."""
-    return f"{generator().RELEASE_BASE_URL}/{entry['release']}/{entry['archive']}"
+def asset_url(repo: str, entry: Dict[str, Any]) -> str:
+    """Where a published archive on `repo` is fetched from, off the generator's own base URL."""
+    return f"{generator().release_base_url(repo)}/{entry['release']}/{entry['archive']}"
 
 
 def regenerate_catalog() -> None:
@@ -309,7 +354,7 @@ def publish(args: argparse.Namespace) -> int:
                          f"(set VGS_THEME_ASSET_ROOT or pass --asset-root)")
     require_pillow()
     lock = load_lock()
-    tag = next_release_tag(lock)
+    before = LOCK_PATH.read_text() if LOCK_PATH.is_file() else None
     names = generator().theme_names(THEMES_DIR)
     # Every shipped theme carries a preview, and its thumbnail is derived from
     # it, so a theme without one stops the run before anything is uploaded.
@@ -318,6 +363,10 @@ def publish(args: argparse.Namespace) -> int:
     if unpreviewed:
         raise SystemExit(f"preview-missing {' '.join(unpreviewed)}\n"
                          f"Capture them with scripts/capture-theme-previews.py before publishing.")
+    repo = generator().ASSET_REPO
+    if lock["repo"] != repo:
+        lock = rehome(lock, repo, generator().gh_releases(repo))
+    tag = next_release_tag(lock)
 
     for stale in sorted(set(lock["themes"]) - set(names)):
         del lock["themes"][stale]
@@ -327,6 +376,7 @@ def publish(args: argparse.Namespace) -> int:
 
     published = 0
     created = False
+    refused = False
     # Record the release this run is filling before anything is uploaded, so a
     # rerun after a failed upload continues into it instead of opening the next
     # number and leaving a partly filled release behind.
@@ -376,7 +426,11 @@ def publish(args: argparse.Namespace) -> int:
                 # and a git tag on the default branch that every clone fetches,
                 # on a rerun with nothing to publish.
                 if not created:
-                    ensure_release(tag)
+                    try:
+                        ensure_release(tag, args.force)
+                    except ReleaseTooRecent:
+                        refused = True
+                        raise
                     created = True
                 archive, rev = publish_archive(tag, name, rev, blob, digest, stage)
                 print(f"  published {tag}/{archive}")
@@ -397,7 +451,14 @@ def publish(args: argparse.Namespace) -> int:
         lock.pop("publishing", None)
     finally:
         shutil.rmtree(stage, ignore_errors=True)
-        LOCK_PATH.write_text(render_lock(lock))
+        # A refused run uploaded nothing, so the lock goes back to what it was
+        # rather than naming a release that was never opened.
+        if not refused:
+            LOCK_PATH.write_text(render_lock(lock))
+        elif before is None:
+            LOCK_PATH.unlink()
+        else:
+            LOCK_PATH.write_text(before)
 
     if not published:
         print("theme assets: every theme is already published at its current content")
@@ -419,7 +480,7 @@ def pull(args: argparse.Namespace) -> int:
         if not entry.get("published"):
             raise SystemExit(f"{name}: {entry.get('release')}/{entry.get('archive')} was never "
                              f"published, so there is nothing to pull")
-        url = asset_url(entry)
+        url = asset_url(str(lock["repo"]), entry)
         request = urllib.request.Request(url, headers={"User-Agent": "vgs-theme-assets"})
         with urllib.request.urlopen(request, timeout=DOWNLOAD_TIMEOUT) as response:  # noqa: S310 - https literal above
             blob = response.read()
@@ -465,6 +526,9 @@ def main(argv: List[str]) -> int:
                         help="rebuild the asset working directory from the published releases")
     parser.add_argument("--no-upload", dest="upload", action="store_false",
                         help="build and pin without uploading; the lock then names unpublished archives")
+    parser.add_argument("--force", action="store_true",
+                        help=f"open a new release even when the newest release on the theme-asset "
+                             f"repository is younger than {RELEASE_INTERVAL.days} days")
     args = parser.parse_args(argv)
     return pull(args) if args.pull else publish(args)
 
