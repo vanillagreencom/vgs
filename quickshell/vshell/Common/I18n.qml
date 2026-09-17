@@ -24,10 +24,11 @@ Singleton {
     readonly property var _rtlLanguages: ["ar", "he", "iw", "fa", "ur", "ps", "sd", "dv", "yi", "ku"]
     readonly property bool isRtl: _rtlLanguages.includes(_lang)
 
-    // The directory that ships with the shell and holds its locale files. It has to be one that
-    // carries tracked files, because a release is a `git archive` of HEAD and git holds no empty
-    // directory: a folder reserved for exports that do not exist yet would reach no install. A
-    // folder that is not there is not an error to FolderListModel either, which the model answers.
+    // The directory that ships with the shell and holds its locale files. It has to carry a tracked
+    // file to reach every install channel: git holds no empty directory, so a folder reserved for
+    // exports that do not exist yet is absent from a fresh clone and from every bundle staged out
+    // of one. A folder that is not there is no error to FolderListModel either, which the model
+    // below answers.
     readonly property url translationsFolder: Qt.resolvedUrl("../translations")
 
     property var presentLocales: ({
@@ -71,10 +72,11 @@ Singleton {
             root._localesRead = true;
             // A missing folder is not an error to this model: it lists the process's working
             // directory instead and reports the swap through its own folder property. Reading that
-            // listing would offer every JSON file in the working directory as an installed
-            // language, and the model holds a filesystem watch on that directory for the session.
-            // Clearing folder drops the listing and the watch. Selection still runs afterwards, so
-            // a locale the user chose is still attempted and a fallback is still reported.
+            // listing would offer any JSON file there whose name has the shape of a locale tag as
+            // an installed language, and the model holds a filesystem watch on that directory for
+            // the session. Clearing folder drops the listing and the watch. Selection still runs
+            // afterwards, so a locale the user chose is still attempted and a fallback is still
+            // reported.
             if (String(folder) !== String(root.translationsFolder)) {
                 root.log.warn(`I18n: no folder at ${root.translationsFolder}, and the listing was taken from ${folder} instead; no installed locales were read`);
                 folder = "";

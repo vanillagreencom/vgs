@@ -101,12 +101,17 @@ const SHIPPED_FOLDER = path.join(COMMON, resolvedUrlArg[1]);
 assert.ok(fs.existsSync(SHIPPED_FOLDER) && fs.statSync(SHIPPED_FOLDER).isDirectory(),
     `translationsFolder names ${resolvedUrlArg[1]}, which is not a directory beside Common/: Qt's ` +
     "FolderListModel lists the process's working directory in place of a folder that is missing, " +
-    "so every JSON file there would be offered as an installed language");
+    "so any JSON file there named like a locale tag would be offered as an installed language");
 
 const FOLDER = "file:///opt/vshell/translations";
 // What Qt substitutes when the folder is missing. The shell runs with the user's home as its
 // working directory, which is the directory the substitution was first reproduced against.
 const SUBSTITUTED = "file:///home/someone";
+// The folder-mismatch report has to name the folder asked for, the folder actually read, and that
+// the listing was skipped. A report missing any of the three leaves a reader unable to tell a
+// broken install from a shell reading the right folder and finding nothing in it.
+const GUARD_REPORT =
+    /no folder at file:\/\/\/opt\/vshell\/translations, .*from file:\/\/\/home\/someone.*no installed locales were read/;
 const TRANSLATION_FILE = '{"Bar": {"Wi-Fi": "WLAN"}}';
 const READY = 1;
 const LOADING = 0;
@@ -205,6 +210,8 @@ function i18nWorld({ systemLocale, settingsLocale = "", files, substituted = "" 
         infos,
         counts,
         fallbacks: () => warnings.filter(line => line.startsWith(FALLBACK)).length,
+        // Every warning that is not a fallback report: today the folder-mismatch guard's own.
+        guards: () => warnings.filter(line => !line.startsWith(FALLBACK)),
         uses: () => infos.filter(line => line.startsWith(USING)).length,
         reach(status) {
             dir.status = status;
@@ -262,6 +269,10 @@ test("locale selection reads the translations folder once per session", () => {
             { systemLocale: "pt_BR", files: ["pt-BR.json"] }, ["ready"],
             { picks: 1, loads: 1, fallbacks: 0, uses: 1, resolved: "pt-BR",
                 path: `${FOLDER}/pt-BR.json`, present: ["en", "pt-BR"] }],
+        ["a regional file named with an underscore answers the full tag too",
+            { systemLocale: "pt_BR", files: ["pt_BR.json"] }, ["ready"],
+            { picks: 1, loads: 1, fallbacks: 0, uses: 1, resolved: "pt_BR",
+                path: `${FOLDER}/pt_BR.json`, present: ["en", "pt_BR"] }],
         ["an empty first listing offers English alone for the session",
             { systemLocale: "de_DE", files: [] }, ["ready", "ready"],
             { picks: 1, loads: 1, fallbacks: 1, uses: 0, resolved: "en", path: "", present: ["en"] }],
@@ -273,12 +284,13 @@ test("locale selection reads the translations folder once per session", () => {
             { systemLocale: "de_DE", files: ["de.json", "notes.json"], substituted: SUBSTITUTED },
             ["ready"],
             { picks: 1, loads: 0, fallbacks: 1, warnings: 2, uses: 0, resolved: "en", path: "",
-                present: ["en"], folder: "" }],
+                present: ["en"], folder: "", guardWarning: GUARD_REPORT }],
         ["a chosen locale is still attempted from the shell's own folder after a substitution",
             { systemLocale: "de_DE", settingsLocale: "fr", files: ["fr.json"],
                 substituted: SUBSTITUTED }, ["ready"],
             { picks: 1, loads: 0, fallbacks: 0, warnings: 1, uses: 1, resolved: "fr",
-                path: `${FOLDER}/fr.json`, present: ["en"], folder: "" }]
+                path: `${FOLDER}/fr.json`, present: ["en"], folder: "",
+                guardWarning: GUARD_REPORT }]
     ]) {
         const w = i18nWorld(world);
         for (const status of statuses)
@@ -296,6 +308,12 @@ test("locale selection reads the translations folder once per session", () => {
         // watch on whatever it is pointed at for the life of the session.
         assert.equal(w.dir.folder, want.folder === undefined ? FOLDER : want.folder,
             `${why}: folder the model is left watching`);
+        const guards = w.guards();
+        assert.equal(guards.length, want.guardWarning ? 1 : 0,
+            `${why}: folder-mismatch reports`);
+        if (want.guardWarning)
+            assert.match(guards[0], want.guardWarning,
+                `${why}: the report names the folder asked for, the folder read and the skip`);
     }
 });
 
@@ -369,14 +387,39 @@ test("a repeated request neither switches the locale again nor reports the fallb
     }
 });
 
+test("a file is offered as a language only when its name has the shape of a locale tag", () => {
+    // Every accepted spelling is one the shell already depends on: _candidates offers the
+    // underscore tag, the hyphen tag and the bare language for one system locale, and _pathFor
+    // composes the file name straight from whichever it picks. Narrowing the shape — dropping the
+    // underscore separator, or the three-letter language subtag — drops those exports from the
+    // dropdown, so each is a row here. The one rejected name is the one the folder really holds:
+    // settings_search_index.json, which SettingsSearchService reads. Over-inclusion is pinned by
+    // that row alone, because nothing else writes to this folder.
+    // [file name in the listing, the tag it is offered under or null]
+    for (const [name, tag] of [
+        ["de.json", "de"],
+        ["fil.json", "fil"],
+        ["pt-BR.json", "pt-BR"],
+        ["pt_BR.json", "pt_BR"],
+        ["zh-Hant.json", "zh-Hant"],
+        ["zh_Hans_CN.json", "zh_Hans_CN"],
+        ["settings_search_index.json", null]
+    ]) {
+        const w = i18nWorld({ systemLocale: "en_US", files: [name] });
+        w.reach(READY);
+        assert.deepEqual(Object.keys(w.root.presentLocales), tag ? ["en", tag] : ["en"],
+            tag ? `${name} names a locale and is offered under ${tag}`
+                : `${name} names no locale and never reaches the language dropdown`);
+    }
+});
+
 test("the folder the shell ships offers English alone as a language", () => {
     // The real listing through the shipped reader: what it offers is what the Settings language
-    // dropdown shows. The folder holds JSON that names no locale beside any locale file, so a
-    // listing of it exercises the filter rather than an empty folder.
+    // dropdown shows today.
     const shipped = fs.readdirSync(SHIPPED_FOLDER).filter(name => name.endsWith(".json"));
-    assert.ok(shipped.length > 1,
-        `found ${shipped.length} JSON file(s) under ${SHIPPED_FOLDER}, so the read is broken ` +
-        "rather than the folder bare: a listing of one file or none passes whatever the filter does");
+    assert.ok(shipped.length > 0,
+        `found no JSON file under ${SHIPPED_FOLDER}, so this read is broken rather than the folder ` +
+        "bare: an empty listing offers English by construction and would pass whatever the reader does");
     const w = i18nWorld({ systemLocale: "en_US", files: shipped });
     w.reach(READY);
     assert.deepEqual(Object.keys(w.root.presentLocales), ["en"],
