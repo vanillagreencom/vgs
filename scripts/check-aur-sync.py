@@ -9,6 +9,10 @@ Without --remote, the script reports that publication was not checked.
 carries with this checkout's head, which is the version every AUR client shows
 until it clones the source and the recipe computes one. The local check refuses
 a tracked recipe left on the placeholder.
+
+--stamp-vcs-version exits 3, not 2, where the recipe already publishes a version
+above this checkout's. Its caller has nothing to publish there rather than a
+fault to report, and publish-aur.sh reads the two apart on that status.
 """
 
 from __future__ import annotations
@@ -91,6 +95,16 @@ PKGVER_BODY = (
 
 class CheckError(Exception):
     pass
+
+
+class PublishedAhead(CheckError):
+    """The recipe publishes a version above the one this checkout computes.
+
+    A refusal like any other here — nothing is written — but the reason is that
+    another publish already carries this package, not that this one is broken.
+    Separating it is what lets publish-aur.sh defer the package instead of
+    failing the run that finds it.
+    """
 
 
 def expand(value: str, scalars: dict[str, str]) -> str:
@@ -444,11 +458,13 @@ def stamp_vcs_version(directory: Path, root: Path = ROOT) -> str | None:
                 "written."
             )
         if order < published_order:
-            raise CheckError(
+            raise PublishedAhead(
                 f"{directory} already publishes pkgver={published[0]}, above the {pkgver} "
                 "this checkout computes. No AUR client offers a lower version as an "
                 "update, so publishing it would strand every user on the version they "
-                "have. NOTHING was written. Publish from a checkout of the branch the "
+                "have. NOTHING was written, so no recipe change in this checkout reached "
+                f"the AUR either: the publish that stamped {published[0]} owns this "
+                "package. Publish a change from here from the tip of the branch the "
                 "package tracks."
             )
 
@@ -828,6 +844,9 @@ def main() -> int:
         directory = Path(args.stamp_vcs_version)
         try:
             stamped = stamp_vcs_version(directory)
+        except PublishedAhead as ahead:
+            print(f"check-aur-sync: {ahead}", file=sys.stderr)
+            return 3
         except CheckError as error:
             print(f"check-aur-sync: {error}", file=sys.stderr)
             return 2

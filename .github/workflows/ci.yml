@@ -213,6 +213,7 @@ jobs:
           scripts/check-package-assets.sh
           scripts/check-aur-sync.py
           scripts/test-aur-version.py
+          scripts/test-publish-aur.py
           scripts/check-prune-ppa.py
           scripts/test-vshell-setup.sh
 
