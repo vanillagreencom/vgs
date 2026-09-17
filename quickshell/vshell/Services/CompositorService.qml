@@ -246,6 +246,66 @@ Singleton {
         });
     }
 
+    // Hyprland marks a special workspace by name, as "special" or a "special:" prefix. A negative
+    // id does not mark one: an ordinary named workspace carries a negative id too, so the name is
+    // what separates the two sets.
+    function _hyprlandWorkspaceIsSpecial(ws) {
+        const name = ws?.name ?? "";
+        return name === "special" || name.startsWith("special:");
+    }
+
+    // A screen with no workspace of its own still answers with one target.
+    function _hyprlandWorkspacePlaceholder() {
+        return [
+            {
+                "id": 1,
+                "name": "1"
+            }
+        ];
+    }
+
+    // A negative id is a named workspace, which sorts after every numbered one.
+    function hyprlandWorkspaceOrder(a, b) {
+        const keyA = a.id < 0 ? Number.MAX_SAFE_INTEGER : a.id;
+        const keyB = b.id < 0 ? Number.MAX_SAFE_INTEGER : b.id;
+        if (keyA !== keyB)
+            return keyA - keyB;
+        return (a.name ?? "").localeCompare(b.name ?? "");
+    }
+
+    // A named workspace is reachable by name only; its negative id is not a dispatch target.
+    function hyprlandWorkspaceSelector(ws) {
+        if (!ws)
+            return 1;
+        return ws.id > 0 ? ws.id : "name:" + (ws.name ?? "");
+    }
+
+    // The Hyprland workspaces a bar on `screenName` answers for. Every workspace consumer on that
+    // bar reads this one list, so its scroll target and its drawn row cannot disagree about which
+    // workspaces count. Quickshell rewrites a workspace's lastIpcObject only on an explicit fetch
+    // and tracks ws.monitor from the event stream, so the dedicated property is the one that names
+    // the screen a workspace sits on after it is moved between monitors.
+    function hyprlandWorkspacesForScreen(screenName, followFocus, occupiedOnly) {
+        const workspaces = Array.from(Hyprland.workspaces?.values || []);
+        const ordinary = workspaces.filter(ws => ws && !_hyprlandWorkspaceIsSpecial(ws));
+        const perScreen = !!screenName && !followFocus;
+        const scoped = perScreen ? ordinary.filter(ws => ws.monitor?.name === screenName) : ordinary;
+        if (scoped.length === 0)
+            return _hyprlandWorkspacePlaceholder();
+
+        const ordered = scoped.sort(hyprlandWorkspaceOrder);
+        if (!occupiedOnly)
+            return ordered;
+
+        const toplevels = Array.from(Hyprland.toplevels?.values || []);
+        const activeWsId = _activeWorkspaceIdForScreen(perScreen ? screenName : "");
+        return ordered.filter(ws => {
+            if (ws.id === activeWsId)
+                return true;
+            return toplevels.some(tl => tl.workspace?.id === ws.id);
+        });
+    }
+
     function hyprlandDockOverlapForSmartAutoHide(screen, edge) { return false; }
     function mangoDockOverlapForSmartAutoHide(screen, edge) { return false; }
 

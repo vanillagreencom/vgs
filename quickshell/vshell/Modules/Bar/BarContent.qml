@@ -115,36 +115,7 @@ Item {
             const workspaces = NiriService.allWorkspaces.filter(ws => ws.output === screenName);
             return workspaces.length > 0 ? workspaces : fallbackWorkspaces;
         } else if (CompositorService.isHyprland) {
-            const workspaces = Hyprland.workspaces?.values || [];
-
-            if (!screenName || SettingsData.workspaceFollowFocus) {
-                const sorted = workspaces.slice().sort((a, b) => a.id - b.id);
-                const filtered = sorted.filter(ws => ws.id > -1);
-                return filtered.length > 0 ? filtered : [
-                    {
-                        "id": 1,
-                        "name": "1"
-                    }
-                ];
-            }
-
-            // Quickshell rewrites a workspace's lastIpcObject only on an explicit fetch and
-            // tracks ws.monitor from the event stream, so the dedicated property is the one
-            // that names the screen a workspace sits on after it is moved between monitors.
-            const monitorWorkspaces = workspaces.filter(ws => {
-                return ws.monitor?.name === screenName && ws.id > -1;
-            });
-
-            if (monitorWorkspaces.length === 0) {
-                return [
-                    {
-                        "id": 1,
-                        "name": "1"
-                    }
-                ];
-            }
-
-            return monitorWorkspaces.sort((a, b) => a.id - b.id);
+            return CompositorService.hyprlandWorkspacesForScreen(screenName, SettingsData.workspaceFollowFocus, SettingsData.showOccupiedWorkspacesOnly);
         } else if (CompositorService.isMango) {
             if (!MangoService.available) {
                 return [0];
@@ -257,7 +228,7 @@ Item {
             const nextIndex = direction > 0 ? Math.min(validIndex + 1, realWorkspaces.length - 1) : Math.max(validIndex - 1, 0);
 
             if (nextIndex !== validIndex) {
-                HyprlandService.focusWorkspace(realWorkspaces[nextIndex].id);
+                HyprlandService.focusWorkspace(CompositorService.hyprlandWorkspaceSelector(realWorkspaces[nextIndex]));
             }
         } else if (CompositorService.isMango) {
             const currentTag = getCurrentWorkspace();

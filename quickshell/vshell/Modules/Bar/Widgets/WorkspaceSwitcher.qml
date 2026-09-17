@@ -160,7 +160,8 @@ Item {
             baseList = getNiriWorkspaces();
             break;
         case "hyprland":
-            return SettingsData.showWorkspacePadding ? padWorkspaces(getHyprlandWorkspaces()) : getHyprlandWorkspaces();
+            baseList = CompositorService.hyprlandWorkspacesForScreen(root.screenName, SettingsData.workspaceFollowFocus, SettingsData.showOccupiedWorkspacesOnly);
+            break;
         case "mango":
             if (root.mangoOverviewActive)
                 return [];
@@ -249,72 +250,6 @@ Item {
         return focusedWs ? swayWorkspaceKey(focusedWs) : 1;
     }
 
-
-    function hyprlandWorkspaceOrder(a, b) {
-        const keyA = a.id < 0 ? Number.MAX_SAFE_INTEGER : a.id;
-        const keyB = b.id < 0 ? Number.MAX_SAFE_INTEGER : b.id;
-        if (keyA !== keyB)
-            return keyA - keyB;
-        return (a.name ?? "").localeCompare(b.name ?? "");
-    }
-
-    function hyprlandWorkspaceSelector(ws) {
-        if (!ws)
-            return 1;
-        return ws.id > 0 ? ws.id : "name:" + (ws.name ?? "");
-    }
-
-    function getHyprlandWorkspaces() {
-        const workspaces = Hyprland.workspaces?.values || [];
-        if (workspaces.length === 0) {
-            return [
-                {
-                    id: 1,
-                    name: "1"
-                }
-            ];
-        }
-
-        // Hyprland gives named workspaces negative ids; special workspaces are named "special" or carry a "special:" prefix.
-        let filtered = workspaces.filter(ws => {
-            if (ws.id > 0)
-                return true;
-            const name = ws.name ?? "";
-            return name !== "special" && !name.startsWith("special:");
-        });
-        if (filtered.length === 0) {
-            return [
-                {
-                    id: 1,
-                    name: "1"
-                }
-            ];
-        }
-
-        if (!root.screenName || SettingsData.workspaceFollowFocus) {
-            filtered = filtered.slice().sort(hyprlandWorkspaceOrder);
-        } else {
-            const monitorWorkspaces = filtered.filter(ws => ws.monitor?.name === root.screenName);
-            filtered = monitorWorkspaces.length > 0 ? monitorWorkspaces.sort(hyprlandWorkspaceOrder) : [
-                {
-                    id: 1,
-                    name: "1"
-                }
-            ];
-        }
-
-        if (!SettingsData.showOccupiedWorkspacesOnly) {
-            return filtered;
-        }
-
-        const hyprlandToplevels = Array.from(Hyprland.toplevels?.values || []);
-        const activeWsId = root.currentWorkspace;
-        return filtered.filter(ws => {
-            if (ws.id === activeWsId)
-                return true;
-            return hyprlandToplevels.some(tl => tl.workspace?.id === ws.id);
-        });
-    }
 
     function getHyprlandActiveWorkspace() {
         if (!root.screenName || SettingsData.workspaceFollowFocus) {
@@ -654,7 +589,7 @@ Item {
             break;
         case "hyprland":
             if (data.id && data.id !== -1) {
-                HyprlandService.focusWorkspace(hyprlandWorkspaceSelector(data));
+                HyprlandService.focusWorkspace(CompositorService.hyprlandWorkspaceSelector(data));
             }
             break;
         case "mango":
@@ -741,7 +676,7 @@ Item {
                 return;
             }
 
-            HyprlandService.focusWorkspace(hyprlandWorkspaceSelector(realWorkspaces[nextIndex]));
+            HyprlandService.focusWorkspace(CompositorService.hyprlandWorkspaceSelector(realWorkspaces[nextIndex]));
         } else if (root.isMango) {
             const realWorkspaces = getRealWorkspaces();
             if (realWorkspaces.length < 2) {
@@ -1444,7 +1379,7 @@ Item {
                                     NiriService.switchToWorkspace(modelData.id);
                                 }
                             } else if (CompositorService.isHyprland && modelData?.id) {
-                                HyprlandService.focusWorkspace(root.hyprlandWorkspaceSelector(modelData));
+                                HyprlandService.focusWorkspace(CompositorService.hyprlandWorkspaceSelector(modelData));
                             } else if (root.isMango && modelData?.tag !== undefined) {
                                 MangoService.switchToTag(root.screenName, modelData.tag);
                             } else if ((CompositorService.isSway || CompositorService.isScroll || CompositorService.isMiracle) && modelData?.num !== undefined) {
