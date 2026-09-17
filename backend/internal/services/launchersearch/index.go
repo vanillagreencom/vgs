@@ -76,10 +76,17 @@ type entry struct {
 	flags   uint8
 }
 
+// fileID is a directory's identity. A directory made again under an indexed
+// name, or renamed aside with a new one made in its place, has another.
+type fileID struct {
+	dev, ino uint64
+}
+
 // dirNode is what a directory needs for deltas: the watch that reports its
-// changes and the children a re-listing compares against.
+// changes, its identity, and the children a re-listing compares against.
 type dirNode struct {
 	wd       int32
+	id       fileID
 	children []int32
 }
 
@@ -159,8 +166,12 @@ func (ix *index) bindWatch(pos int32, node *dirNode, wd int32) {
 	if wd < 0 {
 		return
 	}
-	if len(ix.byWd[wd]) == 0 {
+	if shared := ix.byWd[wd]; len(shared) == 0 {
 		ix.watches.Add(1)
+	} else if ix.dirs[shared[0]].id != node.id {
+		// One descriptor watches one inode: positions share it only as two paths
+		// to one directory, as a bind mount shows it.
+		ix.degrade("two different directories report through one watch", "path", ix.path(pos))
 	}
 	ix.byWd[wd] = append(ix.byWd[wd], pos)
 }
@@ -190,7 +201,7 @@ func (ix *index) unbindWatch(pos int32, node *dirNode) {
 
 // add appends one entry under parent and returns its position. The caller
 // holds mu.
-func (ix *index) add(parent int32, name string, isDir bool) int32 {
+func (ix *index) add(parent int32, name string, isDir bool, id fileID) int32 {
 	if len(name) > 0xffff {
 		name = name[:0xffff]
 	}
@@ -202,7 +213,7 @@ func (ix *index) add(parent int32, name string, isDir bool) int32 {
 	pos := int32(len(ix.entries))
 	ix.entries = append(ix.entries, e)
 	if isDir {
-		ix.dirs[pos] = &dirNode{wd: -1}
+		ix.dirs[pos] = &dirNode{wd: -1, id: id}
 	}
 	if parent >= 0 {
 		node := ix.dirs[parent]
@@ -381,10 +392,9 @@ func newNeedle(query string) needle {
 	return n
 }
 
-// folder is one search worker's scratch space: each name is folded into it, so
-// scoring a name allocates nothing.
+// folder is one search worker's scratch space for names outside ASCII, which
+// are decoded and folded into it so scoring allocates nothing.
 type folder struct {
-	bytes []byte
 	runes []rune
 }
 
@@ -392,18 +402,11 @@ type folder struct {
 // the query as a substring scores above any that holds it only as a
 // subsequence; earlier substrings, smaller gaps and shorter names score higher.
 // ok is false for a name that does not hold every query character in order.
-// An ASCII name against an ASCII query is compared by byte, anything else by
-// rune; both go through the one scorer.
+// An ASCII name against an ASCII query is scored byte by byte as it is stored;
+// anything else by rune; both go through the one scorer.
 func (f *folder) score(name []byte, q needle) (float64, bool) {
 	if q.ascii != nil && isASCII(name) {
-		f.bytes = f.bytes[:0]
-		for _, c := range name {
-			if 'A' <= c && c <= 'Z' {
-				c += 'a' - 'A'
-			}
-			f.bytes = append(f.bytes, c)
-		}
-		return scoreFolded(f.bytes, q.ascii)
+		return scoreFolded(name, q.ascii)
 	}
 	f.runes = f.runes[:0]
 	for len(name) > 0 {
@@ -423,11 +426,22 @@ func isASCII(b []byte) bool {
 	return true
 }
 
+// scoreFolded scores hay against an already folded needle, lower-casing ASCII
+// capitals in hay as it compares. A rune the caller already folded is left as
+// it is. The fold is written out at each comparison: this loop runs once per
+// indexed name per query.
 func scoreFolded[T byte | rune](hay, needle []T) (float64, bool) {
 	extra := float64(max(0, len(hay)-len(needle)))
 	for i := 0; i+len(needle) <= len(hay); i++ {
 		j := 0
-		for j < len(needle) && hay[i+j] == needle[j] {
+		for j < len(needle) {
+			c := hay[i+j]
+			if 'A' <= c && c <= 'Z' {
+				c += 'a' - 'A'
+			}
+			if c != needle[j] {
+				break
+			}
 			j++
 		}
 		if j == len(needle) {
@@ -437,8 +451,14 @@ func scoreFolded[T byte | rune](hay, needle []T) (float64, bool) {
 	pos, gap := -1, 0
 	for _, want := range needle {
 		next := pos + 1
-		for next < len(hay) && hay[next] != want {
-			next++
+		for ; next < len(hay); next++ {
+			c := hay[next]
+			if 'A' <= c && c <= 'Z' {
+				c += 'a' - 'A'
+			}
+			if c == want {
+				break
+			}
 		}
 		if next >= len(hay) {
 			return 0, false

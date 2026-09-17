@@ -73,30 +73,11 @@ func Register(srv *server.Server, log *slog.Logger) (*Manager, error) {
 		log = slog.Default()
 	}
 	m := newManager(log)
-	for _, r := range m.routes() {
-		if r.key == nil {
-			srv.Register("launcher.search", r.method, r.handle)
-		} else {
-			srv.RegisterLatest("launcher.search", r.method, r.handle, r.key)
-		}
-	}
+	srv.Register("launcher.search", "launcher.search.prepare", m.handlePrepare)
+	// A newer query replaces one of its kind still waiting, so typing never
+	// queues a search per keystroke behind the one running.
+	srv.RegisterLatest("launcher.search", "launcher.search.query", m.handleQuery, queryKey)
 	return m, nil
-}
-
-// route is one method and, for a keep-latest method, its coalescing key.
-type route struct {
-	method string
-	handle server.HandlerFunc
-	key    server.LatestKeyFunc
-}
-
-func (m *Manager) routes() []route {
-	return []route{
-		{method: "launcher.search.prepare", handle: m.handlePrepare},
-		// A newer query replaces one of its kind still waiting, so typing never
-		// queues a search per keystroke behind the one running.
-		{method: "launcher.search.query", handle: m.handleQuery, key: queryKey},
-	}
 }
 
 // queryKey separates kinds: a surface that switches from files to folders is
@@ -220,16 +201,18 @@ func (m *Manager) startBuildLocked(cfg config) *build {
 	if m.building != nil {
 		return m.building
 	}
-	if cur := m.current; cur != nil && cur.degraded.Load() {
-		// Its watches no longer report every change, and the walk needs the
-		// kernel's watch budget they hold.
-		cur.close()
-	}
 	// A machine where the last index for these settings ran out of watches is
 	// walked without them; watching would only take the limit again.
 	watched := true
 	if cur := m.current; cur != nil && cur.cfg.key == cfg.key && cur.unwatched.Load() {
 		watched = false
+	}
+	if cur := m.current; cur != nil {
+		// The budget is the service's, not each index's: the walk may take it
+		// all, so the index it replaces gives its watches up first and answers
+		// from memory until the replacement lands.
+		cur.degraded.Store(true)
+		cur.close()
 	}
 	b := &build{key: cfg.key}
 	m.building = b
@@ -320,7 +303,7 @@ func buildIndex(ctx context.Context, cfg config, log *slog.Logger, watched bool)
 		if err := unix.Stat(root, &st); err != nil {
 			continue
 		}
-		pos := ix.add(-1, root, true)
+		pos := ix.add(-1, root, true, fileID{dev: st.Dev, ino: st.Ino})
 		ix.rootDev[pos] = st.Dev
 		starts = append(starts, dirJob{pos: pos, path: root, dev: st.Dev})
 	}

@@ -23,6 +23,7 @@ type child struct {
 	name  string
 	path  string
 	isDir bool
+	id    fileID
 }
 
 type listing struct {
@@ -81,13 +82,18 @@ func (ix *index) list(job dirJob) listing {
 		if ix.cfg.ignores.ignored(path, name) {
 			continue
 		}
-		if mode.IsDir() && ix.cfg.ignoreMounts {
+		c := child{name: name, path: path, isDir: mode.IsDir()}
+		if c.isDir {
 			var st unix.Stat_t
-			if unix.Lstat(path, &st) != nil || st.Dev != job.dev {
+			if unix.Lstat(path, &st) != nil || st.Mode&unix.S_IFMT != unix.S_IFDIR {
 				continue
 			}
+			if ix.cfg.ignoreMounts && st.Dev != job.dev {
+				continue
+			}
+			c.id = fileID{dev: st.Dev, ino: st.Ino}
 		}
-		out.children = append(out.children, child{name: name, path: path, isDir: mode.IsDir()})
+		out.children = append(out.children, c)
 	}
 	return out
 }
@@ -145,12 +151,20 @@ func (ix *index) record(result listing, queue []dirJob) []dirJob {
 	ix.mu.Lock()
 	defer ix.mu.Unlock()
 	node := ix.dirs[result.job.pos]
+	if node == nil {
+		// Removed by a later listing in the same batch. Its watch is released
+		// unless another position holds it.
+		if result.wd >= 0 && len(ix.byWd[result.wd]) == 0 && ix.watch != nil {
+			ix.watch.remove(result.wd)
+		}
+		return queue
+	}
 	ix.bindWatch(result.job.pos, node, result.wd)
 	if !result.read {
 		return queue
 	}
 	for _, c := range result.children {
-		pos := ix.add(result.job.pos, c.name, c.isDir)
+		pos := ix.add(result.job.pos, c.name, c.isDir, c.id)
 		if c.isDir {
 			queue = append(queue, dirJob{pos: pos, path: c.path, dev: result.job.dev})
 		}
