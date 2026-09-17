@@ -108,6 +108,7 @@ go        | scripts/check-execbound-adoption-tests.py
 -         | scripts/test-smoke-surfaces.sh
 -         | scripts/test-validate.sh
 -         | scripts/test-sample-shell-memory.sh
+-         | scripts/test-attribute-heap-profile.py
 -         | scripts/test-screenrecording-status.sh
 -         | scripts/test-validation-inventory.sh
 -         | scripts/test-validation-areas.sh
