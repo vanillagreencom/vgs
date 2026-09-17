@@ -47,6 +47,7 @@ packaging | scripts/gen-package-metadata.py
 packaging | scripts/check-package-assets.sh
 packaging | scripts/check-aur-sync.py
 packaging | scripts/test-aur-version.py
+packaging | scripts/test-publish-aur.py
 packaging | scripts/check-prune-ppa.py
 helper,packaging | scripts/test-vshell-setup.sh
 -         | scripts/check-command-declarations.py
