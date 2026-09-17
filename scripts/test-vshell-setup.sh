@@ -341,7 +341,7 @@ expect target-down-uwsm "the notice names Hyprland's session manager that starts
   grep -qF -- 'uwsm start hyprland' "$err_out"
 expect target-down-niri-session "the notice names Niri's own session unit that starts the target" \
   "stderr: $(cat "$err_out")" \
-  grep -qF -- 'niri --session' "$err_out"
+  grep -qF -- 'niri-session' "$err_out"
 expect target-down-compositor "the notice names the Hyprland compositor route as the other way out" \
   "stderr: $(cat "$err_out")" \
   grep -qF -- 'exec-once = vshell run' "$err_out"
