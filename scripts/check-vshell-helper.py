@@ -2974,8 +2974,9 @@ def test_current_theme_reads_without_applying():
 
 
 def test_cache_prune_bounds_imagecache_and_drops_unreferenced_notification_images():
-    """`cache prune` deletes imagecache track art, then thumbnails, oldest-written first past the size cap, and the
-    notification images no history entry names once they are past the save grace."""
+    """`cache prune` deletes imagecache track art, then thumbnails, oldest-written first past the size cap, the icon
+    index of every theme that is no longer installed, and the notification images no history entry names once they
+    are past the save grace."""
     def prune() -> tuple:
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
@@ -3016,6 +3017,18 @@ def test_cache_prune_bounds_imagecache_and_drops_unreferenced_notification_image
             (put(notif / "notif_1000_4.png", 10, 5), None, True, "an unnamed image inside the save grace stays"),
             (put(notif / "keep.png", 10, 3600), None, True, "a file outside the notification image scheme stays"),
         ]
+        # Installed sets come only from the temporary data dirs, so no host theme keeps a probe index.
+        os.environ["XDG_DATA_HOME"] = str(temp_home / "data-home")
+        os.environ["XDG_DATA_DIRS"] = str(temp_home / "data-dir")
+        put(temp_home / "data-dir/icons/VgsProbeSet/index.theme", 0, 0).write_text(
+            "[Icon Theme]\nDirectories=48x48/apps\n")
+        index_dir = cache / "icon-index"
+        # (file, survives, why)
+        index_rows = [
+            (put(index_dir / "VgsProbeSet.json", 10, 3600), True, "the index of an installed set stays"),
+            (put(index_dir / "VgsProbeGone.json", 10, 3600), False, "the index of a set no longer installed is deleted"),
+            (put(index_dir / "VgsProbeGone.json.tmp.1.2", 10, 3600), True, "an index write still in progress stays"),
+        ]
         named = [{"image": image} for _path, image, _survives, _why in notif_rows if image]
         history.write_text(json.dumps({"notifications": [*named, {"image": "image://icon/app"}, {}]}))
 
@@ -3024,6 +3037,8 @@ def test_cache_prune_bounds_imagecache_and_drops_unreferenced_notification_image
         for path, survives, why in image_rows:
             assert_equal(path.exists(), survives, why)
         for path, _image, survives, why in notif_rows:
+            assert_equal(path.exists(), survives, why)
+        for path, survives, why in index_rows:
             assert_equal(path.exists(), survives, why)
 
         # (history text or None for no file, exit status, stderr key, why)
@@ -3050,7 +3065,12 @@ def test_cache_prune_bounds_imagecache_and_drops_unreferenced_notification_image
                      (1, f"notification-history-unreadable: {history}"),
                      "the vshell CLI routes cache prune to the helper")
 
-    with_temp_home(scenario)
+    saved = {n: os.environ.get(n) for n in ("XDG_DATA_DIRS", "XDG_DATA_HOME")}
+    try:
+        with_temp_home(scenario)
+    finally:
+        for name, value in saved.items():
+            _restore_env(name, value)
 
 
 def test_icon_index_picks_each_name_through_the_inherit_chain():
