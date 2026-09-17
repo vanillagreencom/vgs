@@ -1,0 +1,101 @@
+# Dev round schema
+
+The on-disk record of a fix round's delegated items, starting commit, and allowed protected additions. The orchestrator writes it with `dev-round-write` immediately after minting the round token and before sending the delegation.
+
+Before writing the record, `dev-round-write` stores the `branch-size-check` report in `size_check`. The issue's `**Expected delta**` line is optional. Every measured verdict permits a round. A malformed line exits 3; a read or measurement failure exits 2.
+
+For a chosen cut, see [§ Declared cuts](#declared-cuts).
+
+## Identity: the round id
+
+The record is `[WORKTREE_PATH]/tmp/dev-round-[ISSUE_ID]-[ROUND_ID].json` and carries `"round_id": ROUND_ID`; readers require a regular file — never a symlink — whose internal token, issue, and schema match what they were called with.
+
+The record sits inside the delegated worktree, so it is trusted the way every other instruction to that agent is: the orchestrator writes it before delegating, and the delegated agent is trusted not to edit it. Immutability is enforced against a second `dev-round-write` invocation, not against the agent holding the worktree.
+
+`[ISSUE_ID]` is the normalized workflow-state key — dev-side workflows name the same value `[ARTIFACT_KEY]`, and a bundled round uses the Parent ID. It and `[ROUND_ID]` must match `^[A-Za-z0-9._-]+$` with no `..`.
+
+## Schema
+
+```json
+{
+  "schema_version": 2,
+  "round_id": "1769600000123456789-1837",
+  "issue": "issue-1230",
+  "base_sha": "0123456789abcdef0123456789abcdef01234567",
+  "adds": ["tools/refresh-fixture"],
+  "cut": false,
+  "cut_comparison": null,
+  "size_check": {
+    "base_sha": "0123456789abcdef0123456789abcdef01234567",
+    "head_sha": "0123456789abcdef0123456789abcdef01234567",
+    "production_lines": 0,
+    "test_lines": 0,
+    "mirror_lines": 0,
+    "production_allowance": null,
+    "test_allowance": null,
+    "verdict": "allowance_missing",
+    "reason": "No Expected delta line."
+  },
+  "items": [
+    { "n": 1, "text": "#1 | security-review | src/auth.rs\nDescription: \"token refresh races\"\nRecommendation: \"serialize refresh behind the existing lock\"", "reach": "a concurrent refresh from two open sessions on one account" }
+  ]
+}
+```
+
+| Field | Required | Writer flag | Description |
+|-------|----------|-------------|-------------|
+| `schema_version` | Yes | constant `2` | Record schema version |
+| `round_id` | Yes | `--round-id` | Per-delegation token; equals the filename token and the round's `dev_round_id` |
+| `issue` | Yes | `--issue` | Normalized workflow-state key |
+| `base_sha` | Yes | captured from `HEAD` | Commit at delegation time; exactly 40 lowercase hex with nothing before or after, and readers refuse anything else — it reaches `git diff` as a revision argument |
+| `adds` | Yes | `--adds "PATH [PATH...]"` | Exact protected additions the round may make; an empty array allows none in the protected scope |
+| `cut` | Yes | `--cut` | Whether the round was declared a branch cut. Readers treat a missing or `null` `cut` as `false`, and refuse any other non-boolean value |
+| `size_check` | Yes | captured from `branch-size-check` | The current report defined by [workflow-state.md § Field Definitions](workflow-state.md#field-definitions), recorded at delegation |
+| `cut_comparison` | Yes | `--cut` or `--cut-from-round PATH` | A cut's comparison report; null for other rounds. A retry preserves the earlier comparison while `size_check` records current counts |
+| `items` | Yes (>=1) | `--items-file` or `--item N TEXT REACH` | `n` is the delegated item number (a unique integer >= 0), `text` the item's formatted block verbatim, `reach` the shipped producer, user action, or fixture that reaches the finding |
+
+`--items-file` is the default route: build the array with the harness file-write tool. The inline `--item N TEXT REACH` form is equivalent when every item's text is plain, with `N` a canonical integer. The two sources are mutually exclusive; `dev-round-write --help` is the flag reference.
+
+**`reach` is required per item, on both routes.** It names what reaches the finding: a command a person runs, a file a shipped writer emits, a test in the tree. An item with no reach is a `Declined:` reply, not a fix.
+
+An item that prescribes a mechanism tells the delegate to measure it first and report a mismatch instead of complying.
+
+What the writer itself refuses is a short list, not a scanner: an empty or whitespace-only reach, a `PRRT_` review-thread node id anywhere in the value, and a few literal values. A value outside those shapes is recorded, not approved. The classes [`../references/finding-disposition.md` § Decision flow](../references/finding-disposition.md#decision-flow) excludes at Step 0 are the orchestrator's judgement at disposition time, before any round is delegated; `skills/orch/tests/dev_round_write.sh` pins the writer's verdict.
+
+The `Adds:` delegation line and `--adds` carry the same blank-separated path list. A blank or tab separates, so a path containing whitespace is read as two paths and cannot be authorized as one. The writer rejects absolute paths, leading or trailing empty components, double slashes, `.` and `..` components, and duplicates. The reader refuses a recorded path beginning with `-` or carrying a space, tab, newline, carriage return, form feed or vertical tab. Omit the line and flag when no additions are allowed.
+
+**Immutable per round**: `dev-round-write --help` carries the contract. Mint a new round and never fall back to an unbound item list. While the ACTIVE round's record — the one whose token equals workflow state `dev_round_id` — has no matching `dev-return` receipt, `worktree-push` refuses to push and `worktree-push --check-live-round` refuses the restack: a rebase moves the branch off the commit that round is working from. Two things end that: the receipt landing, or a fresh `dev_round_id` whose token names no stamped record.
+
+## Declared cuts
+
+A reviewer or the orchestrator chooses a cut to bring the branch back to the Done-when. `dev-artifact-check --expect-items-from-round` checks its receipt against the round record.
+
+A cut round's items name work rather than a finding, so the `reach` row's definition reads differently for them: a cut item's reach is the branch this round shrinks. It is still required, and still refused when it is empty or one of the writer's listed shapes — `the finding` among them.
+
+`--cut` records `"cut": true` and stores the initial size report as `cut_comparison`. Acceptance uses that report's allowance, or its production and test counts when unsized. `dev-round-write --cut-from-round PATH` declares a fresh cut retry and preserves the comparison from that earlier round. Later tracker edits and retry measurements do not change the comparison. `dev-artifact-check` measures the branch again through `branch-size-check --cut-from-round`, which leaves `pr.size_check` unchanged. It returns `cut_not_shrunk` when the branch exceeds the recorded comparison, or `cut_unmeasurable` when measurement fails. The item set, reach, protected additions and immutability checks still apply. `skills/orch/tests/dev_round_gate.sh` exercises cut acceptance.
+
+## Readers
+
+- **`dev-artifact-check --expect-items-from-round`** derives the expected items and additions from the record; its gates and refusal reasons are that script's `--help`.
+- **A respawned dev agent** reads `items[]` to recover the item numbers, texts, and reaches.
+- **The tail-reconciliation nudge** points at the record.
+
+The record is input, never receipt: it proves what was delegated, not that anything completed. Completion stays with [`dev-return.md`](dev-return.md) and the A/B acceptance tables.
+
+## Protected additions
+
+The gate checks additions only. Git rename detection keeps moves and renames outside it.
+
+`base_sha` is the reference, and the only one: a file already in that tree is not this round's, which is what keeps a later round from re-refusing an addition an earlier one authorized. A rebase orphans it, and the orphaned tree reads every file the base branch advanced by as an addition this round made. Once `base_sha` is no longer an ancestor of `HEAD` the gate cannot run at all, and `dev-artifact-check` refuses the round with `reason: "additions_unattributable"` and an empty `files`: it names no path, because after a rebase no comparison can say which additions were this round's. The refusal is not a deferral. `dev-round-write` stamps the next round's `base_sha` at the worktree's current `HEAD`, so a round stamped after the rebase starts from a tree that already contains whatever this round added, and no later round can gate it. What the additions were is settled by reading that round's own commits against the scope below, and recorded where every other authorization is: the orchestrator mints a fresh round, names each deliberate path in its `Adds:` line, and cuts the rest before delegating it. Here that line is the authorization rather than something the fresh round's gate re-derives, because its base already carries those paths.
+
+Protected additions are:
+
+- root `crates/` and `tools/`;
+- `skills/*/scripts/` and `.agents/skills/*/scripts/`;
+- root or nested `src/test/`;
+- directories named `helper`, `helpers`, `test-helper`, `test-helpers`, `test_helper`, `test_helpers`, `test-util`, `test-utils`, `test_util`, or `test_utils`;
+- any later `helper`, `helpers`, `lib`, `support`, `util`, or `utils` directory component after a `test`, `tests`, or `__tests__` component, regardless of intervening suite directories;
+- repository-relative paths containing `test-helper`, `test_helper`, `test-util`, or `test_util`;
+- files below a `test/`, `tests/`, or `__tests__/` path component whose basename before the first extension contains lowercase `helper`, `test-util`, or `test_util`, including suffix forms and dotfiles.
+
+`unapproved_additions` returns every refused protected path in `files`.

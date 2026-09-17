@@ -1,0 +1,444 @@
+name: CI
+
+# Run the scripts/validate manifest as named steps in one job.
+# Keep CI / ci-ok stable because branch protection requires that context.
+# Runner-cost rationale: docs/decisions/D007-ci-single-job-economics.md.
+
+on:
+  # Review events can create competing runs for the same head and cancel
+  # the required check before the merge queue can use it.
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+  # Merge groups need their own required-check result to enter the queue.
+  merge_group:
+    types: [checks_requested]
+  # Post-merge check on main. A merge that bypasses the queue (the ruleset
+  # allows it) lands a tree no other run judged; without this a red check on
+  # main persists unnoticed.
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  # Only pull requests cancel superseded runs. Push and merge-group runs
+  # must finish to supply their required-check result.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # Harness engines are tested upstream. This job runs the committed engines.
+  # review-gate-writer.yml owns review-gate status writes.
+  validate:
+    # Branch protection requires CI / ci-ok.
+    name: ci-ok
+    # CI_RUNNER_2V is an org variable; the ubuntu-latest fallback must keep working.
+    runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          # The whitespace check below diffs against the pull request base.
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Keep classification inside the required job: a skipped workflow leaves
+      # the merge queue waiting for CI / ci-ok. The upstream classifier selects
+      # full validation when it cannot establish a harness-only diff.
+      - name: Classify the diff
+        id: classify
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.event.after || github.sha }}
+        run: >-
+          .agents/skills/harness-ci/scripts/harness-only
+          --event "$EVENT" --base "$BASE" --head "$HEAD"
+
+      # The default branch supplies executable validation code. The tested tree supplies its spec.
+      - name: Fetch trusted bot validator
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          REPOSITORY: ${{ github.repository }}
+        run: git clone --depth 1 --single-branch --branch "$DEFAULT_BRANCH" "https://github.com/$REPOSITORY.git" "$RUNNER_TEMP/vgs-bot-policy"
+
+      # The default-branch checker runs when its package copy is byte-identical to
+      # the candidate's. A pull request that upgrades the package renders what the
+      # older checker cannot reproduce, so the candidate's copy runs with a warning
+      # naming both versions (kendex #2187). The review gate's policy paths keep
+      # the upgrade honest: a push touching the package invalidates prior evidence.
+      - name: Bot instructions
+        run: |
+          set -euo pipefail
+          package=.agents/skills/bot-instructions
+          trusted="$RUNNER_TEMP/vgs-bot-policy"
+          version() { grep -m1 -oE '^  version: "[^"]*"' "$1/$package/SKILL.md" | cut -d'"' -f2 || echo unknown; }
+          # diff exits 0 for identical trees and 1 for differing ones; anything
+          # else is a comparison failure, and picking a checker on it would be a
+          # guess. Fail instead.
+          compared=0
+          diff -r "$trusted/$package" "$GITHUB_WORKSPACE/$package" >/dev/null || compared=$?
+          case "$compared" in
+            0) checker="$trusted" ;;
+            1)
+              checker="$GITHUB_WORKSPACE"
+              echo "::warning::bot-instructions package differs from the default branch ($(version "$trusted") there, $(version "$GITHUB_WORKSPACE") here); running the candidate's checker (kendex #2187)"
+              ;;
+            *)
+              echo "::error::could not compare the bot-instructions package copies (diff exited $compared), so no checker can be chosen"
+              exit 1
+              ;;
+          esac
+          (cd "$checker" && .agents/skills/bot-instructions/scripts/bot-instructions check --repo "$GITHUB_WORKSPACE" --spec "$GITHUB_WORKSPACE/.agents/skills/bot-instructions")
+
+      # The naming guard fails closed when its scanner cannot run. Install that
+      # scanner before the guard and its controls use it.
+      - name: Install naming guard scanner
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ripgrep
+
+      # Run text checks before installing the Go and Qt toolchains.
+      - name: Naming guard
+        run: scripts/check-naming.sh
+      - name: Naming guard controls
+        run: scripts/test-naming.sh
+
+      # Compare the workflow commands with the scripts/validate manifest.
+      - name: Validation inventory
+        run: scripts/check-validation-inventory.py
+
+      # The package checks bot policy; this check owns installed skill trees.
+      - name: Owned-skill register
+        run: scripts/check-owned-skills.py
+      # Run the guard in throwaway repositories to exercise its process wiring.
+      - name: Owned-skill register controls
+        run: scripts/test-owned-skills-e2e.py
+
+      # The label taxonomy is the allow-list the issue preflight consults; the
+      # guard itself needs Linear and cannot run here, but its parser can.
+      - name: Label taxonomy parser controls
+        run: scripts/test-label-taxonomy.py
+
+      # The upstream document classes set byte limits.
+      - name: Document limits
+        run: .agents/skills/doc-limits/scripts/doc-limits
+
+      # actionlint needs shellcheck to lint shell blocks. Install the pinned
+      # tools required by check-workflows.sh and check-format-lint.sh.
+      - name: Install actionlint, shellcheck and ruff (pinned)
+        if: steps.classify.outputs.harness_only != 'true'
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+        run: |
+          set -euo pipefail
+          SHELLCHECK_VERSION="$(sed -n 's/^SHELLCHECK_VERSION=//p' scripts/check-format-lint.sh)"
+          RUFF_VERSION="$(sed -n 's/^RUFF_VERSION=//p' scripts/check-format-lint.sh)"
+          if [ -z "$SHELLCHECK_VERSION" ] || [ -z "$RUFF_VERSION" ]; then
+            echo "::error::could not extract SHELLCHECK_VERSION/RUFF_VERSION from scripts/check-format-lint.sh — the single-source pins moved; fix the sed here in the same PR"
+            exit 1
+          fi
+          curl -fsSL -o "$RUNNER_TEMP/actionlint.tar.gz" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP" actionlint
+          curl -fsSL -o "$RUNNER_TEMP/shellcheck.tar.xz" \
+            "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          tar -xJf "$RUNNER_TEMP/shellcheck.tar.xz" -C "$RUNNER_TEMP" --strip-components=1 "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
+          curl -fsSL -o "$RUNNER_TEMP/ruff.tar.gz" \
+            "https://github.com/astral-sh/ruff/releases/download/${RUFF_VERSION}/ruff-x86_64-unknown-linux-gnu.tar.gz"
+          tar -xzf "$RUNNER_TEMP/ruff.tar.gz" -C "$RUNNER_TEMP" --strip-components=1 ruff-x86_64-unknown-linux-gnu/ruff
+          echo "$RUNNER_TEMP" >>"$GITHUB_PATH"
+
+      # The pre-commit batch judges staged lines only. This run judges every
+      # tracked file each enabled lane names, markdown references included;
+      # byte-ceiling judges the files this change adds or grows against main.
+      - name: Commit guards
+        run: .agents/skills/commit-guards/scripts/commit-guards all --base origin/main
+
+      # A clean checkout has no working-tree diff. Compare the event range so CI
+      # checks the whitespace introduced by the change.
+      - name: Whitespace errors introduced by this change
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          # An unresolved event base must fail; a substitute range could miss changes.
+          case "$EVENT_NAME" in
+            pull_request)
+              base="$PR_BASE_SHA"
+              source="the pull request base"
+              ;;
+            # HEAD is the merge commit the queue built, so its first parent is
+            # the queue base and the range is everything the group adds —
+            # including a combination of several PRs that no single PR's own
+            # range ever covered.
+            merge_group)
+              base="HEAD^1"
+              source="the merge commit's first parent"
+              ;;
+            push)
+              base="$PUSH_BEFORE"
+              source="the previous tip of the branch"
+              ;;
+            # Fail closed rather than guessing: adding a trigger must be a
+            # conscious decision about what this check compares against.
+            *)
+              echo "::error::whitespace check has no defined base for event $EVENT_NAME; define one before adding that trigger"
+              exit 1
+              ;;
+          esac
+          # Force-pushes, branch creation, or a root commit can make the selected
+          # base unavailable. Do not substitute a smaller range.
+          if [ -z "$base" ] || ! git rev-parse --verify --quiet "$base^{commit}" >/dev/null; then
+            echo "::error::cannot resolve $source ('$base') for event $EVENT_NAME, so the whitespace range is unknown and NOTHING was checked. Not falling back to a narrower range: that would pass while claiming coverage it does not have."
+            exit 1
+          fi
+          echo "whitespace range: $base...HEAD ($source)"
+          git diff --check "$base...HEAD"
+
+      # Check local recipe consistency here. publish-aur.yml owns remote drift
+      # checks so AUR availability does not gate unrelated pull requests.
+      - name: Packaging metadata and assets
+        run: |
+          python3 scripts/lib/shell_scan_selftest.py
+          python3 scripts/lib/qml_scrub_selftest.py
+          python3 scripts/lib/qml_source_selftest.py
+          scripts/gen-package-metadata.py
+          scripts/check-package-assets.sh
+          scripts/check-aur-sync.py
+          scripts/test-aur-version.py
+          scripts/test-publish-aur.py
+          scripts/check-prune-ppa.py
+          scripts/test-vshell-setup.sh
+
+      # Undeclared command probes can hide a feature dependency from deps status.
+      - name: Probed-command declarations
+        run: scripts/check-command-declarations.py
+
+      - name: Settings migration
+        run: |
+          node --check scripts/check-settings-migration.js
+          scripts/check-settings-migration.js
+
+      - name: Queue, theme-request and plugin-policy regressions
+        run: |
+          # errexit fails the step on the first failing suite; each suite exits nonzero on any failing case.
+          set -euo pipefail
+          scripts/test-restyle-queue.js
+          scripts/test-theme-requests.js
+          scripts/test-latest-transaction-queue.js
+          scripts/test-bundled-override.js
+          scripts/test-plugin-requirement-report.js
+          scripts/test-plugin-manifest-freshness.js
+          scripts/test-toast-actions.js
+          node scripts/lib/qml-region-selftest.js
+          node scripts/lib/qml-region-testkit-selftest.js
+          scripts/test-ai-usage-logic.js
+          scripts/test-ai-usage-entrypoint.js
+          scripts/test-ai-usage-wiring.js
+          scripts/test-ai-usage-lifecycle.js
+          scripts/test-ai-usage-sources.js
+          scripts/test-ai-usage-format.js
+          scripts/test-ai-usage-setup.js
+          scripts/test-mercury-logic.js
+          scripts/test-mercury-format.js
+          scripts/test-mercury-options.js
+          scripts/test-fleet-logic.js
+          scripts/test-plugin-daemon-views.js
+          scripts/check-qml-imports.py
+          scripts/check-settings-type.py
+          scripts/test-settings-type.py
+          scripts/test-qml-imports.sh
+          scripts/test-qml-import-collisions.sh
+          scripts/test-paste-target.js
+          scripts/test-paste-lifecycle.js
+          scripts/test-compositor-focus.js
+          scripts/test-compositor-events.js
+          scripts/test-event-probe.js
+          scripts/test-dock-scratchpad-identity.js
+          scripts/test-overview-refetch.js
+          scripts/test-bar-workspace-filter.js
+          scripts/test-icon-picker.js
+          scripts/check-paste-injection.py
+          scripts/test-launcher-search-gate.js
+          scripts/check-notification-takeover.js
+          scripts/test-remote-desktop-state.js
+          scripts/test-idle-reload-snapshot.js
+          scripts/test-idle-lock-request.js
+          scripts/test-shell-runner-guard.js
+          scripts/test-proc-timeout.js
+          scripts/test-control-center-widget-library.js
+          scripts/test-i18n-locale-selection.js
+          scripts/test-sudo-toggle-confirm.js
+          scripts/test-pill-hover-safety.js
+          scripts/test-launcher-hover-latch.js
+          scripts/test-popout-dismiss-envelope.js
+          scripts/test-switcher-selection.js
+          scripts/test-switcher-scope.js
+          scripts/test-switcher-source.js
+          scripts/test-thumb-sweep.js
+          scripts/test-wallpaper-refs.js
+          scripts/test-notification-history-trim.js
+          scripts/test-theme-startup.js
+          scripts/test-theme-apply-queue.js
+          scripts/test-flatline-controls.js
+          scripts/test-brightness-scan-ordering.js
+          scripts/test-backend-capabilities.js
+          scripts/test-settings-navigation.js
+          scripts/test-store-write-coalescing.js
+          scripts/test-settings-change-signals.js
+          scripts/test-open-connect-lifetime.js
+          scripts/test-capture-status-watch.js
+          scripts/test-wallpaper-thumbs.py
+          scripts/test-wallpaper-refs.py
+      - name: Fixture and capability regressions
+        run: |
+          scripts/check-display-config-fixtures.js
+          scripts/check-vgs-menu-capabilities.js
+          scripts/check-vshell-ipc.sh
+          # The live-session smoke needs Hyprland and VGS. Its precondition tests
+          # use stubs and can run in CI.
+          scripts/test-smoke-surfaces.sh
+          # Exercise the validation runner itself, including its skip status.
+          scripts/test-validate.sh
+          scripts/test-qml-smoke.sh
+          # The sampler's --report mode reads a TSV fixture and needs no shell.
+          scripts/test-sample-shell-memory.sh
+          # The heap profile attributor reads hand-written dumps and a stub symbolizer.
+          scripts/test-attribute-heap-profile.py
+          # The latency benchmark's pairing and budget verdict run on recorded samples.
+          scripts/test-bench-shell-events.py
+          # The recorder script runs against a stub recorder and needs no session.
+          scripts/test-screenrecording-status.sh
+          # Refuse a direct hyprctl dispatch in bin/ shell scripts; bin/vshell-hyprctl-dispatch checks the reply.
+          scripts/check-hyprctl-dispatch.sh
+          scripts/test-hyprctl-dispatch.sh
+          scripts/test-check-hyprctl-dispatch.sh
+          # The screensaver launch runs against a stub hyprctl and needs no session.
+          scripts/test-screensaver-launch.sh
+          scripts/test-validation-areas.sh
+          scripts/test-validation-dump.sh
+          scripts/test-validation-ci-coverage.sh
+          scripts/test-validation-inventory.sh
+          # test-validation-readers.sh runs in its own final step; see that step.
+
+      # The helper checks run `Hyprland --verify-config` on the generated preview
+      # and greeter Lua, so they fail without Hyprland. The runner's Ubuntu LTS
+      # packages no Hyprland recent enough to have the Lua config manager;
+      # nixpkgs at this pinned revision carries one in its binary cache. --max-jobs 0 refuses a local build, so
+      # a revision the cache lacks fails here in seconds rather than compiling
+      # Hyprland until the job times out. The helper step runs on every diff,
+      # so this install is not gated on the harness-only classification. Only
+      # the helper suite gets Hyprland on its PATH; every other command keeps
+      # the runner's own PATH.
+      - name: Install Hyprland (pinned nixpkgs)
+        id: hyprland
+        env:
+          NIX_VERSION: 2.35.2
+          NIX_INSTALL_SHA256: 9adda97297d9e8ab360df95c729eabff4f4f93d6db091953c3a68f29e3fb130c
+          NIXPKGS_REV: 8ce4ef6cb6f871616146b9fe26d2a5ae594e94fe
+        run: |
+          set -euo pipefail
+          sudo install -d -m 0755 -o "$(id -u)" -g "$(id -g)" /nix
+          curl -fsSL -o "$RUNNER_TEMP/nix-install" "https://releases.nixos.org/nix/nix-${NIX_VERSION}/install"
+          # The installer pins the SHA-256 of the Nix tarball it fetches.
+          echo "${NIX_INSTALL_SHA256}  $RUNNER_TEMP/nix-install" | sha256sum -c -
+          sh "$RUNNER_TEMP/nix-install" --no-daemon --no-channel-add --no-modify-profile --yes
+          # The archive URL, not a github: reference, which resolves through the
+          # rate-limited GitHub API.
+          hyprland="$("$HOME/.nix-profile/bin/nix" --extra-experimental-features 'nix-command flakes' \
+            build --max-jobs 0 --no-link --print-out-paths \
+            "https://github.com/NixOS/nixpkgs/archive/${NIXPKGS_REV}.tar.gz#hyprland^out")"
+          echo "bin=$hyprland/bin" >>"$GITHUB_OUTPUT"
+
+      # The helper checks run the preview staging Lua and parse generated Lua, so
+      # they fail without lua and luac. lua5.4 installs both under those names.
+      - name: Helper and CLI checks
+        env:
+          HYPRLAND_BIN: ${{ steps.hyprland.outputs.bin }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends lua5.4
+          python3 -m pip install --user --break-system-packages Pillow
+          : "${HYPRLAND_BIN:?the Hyprland install step set no bin output}"
+          PATH="$HYPRLAND_BIN:$PATH" scripts/check-vshell-helper.py
+          scripts/check-keybinds-display.py
+          scripts/check-dev-tools.py
+          scripts/test-bounded-run.py
+          scripts/check-brightness.py
+          scripts/test-claude-theme.py
+          python3 -m py_compile bin/vshell-helper bin/vshell_helper.py
+          python3 -m py_compile scripts/publish-theme-assets.py
+          bash -n bin/vshell
+
+      # A catalogued archive that was never uploaded makes every install of that
+      # theme a 404, and only GitHub can answer whether the asset is there.
+      - name: Theme asset publication
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: scripts/gen-theme-catalog.py --check-assets-published
+
+      - name: Backend capability inventory
+        run: |
+          scripts/check-backend-inventory.py
+          scripts/check-backend-inventory-tests.py
+
+      # Quickshell matches reload children by index. Lock child order must
+      # preserve the session lock across reloads.
+      - name: Lock reload order
+        run: scripts/check-lock-reload-order.py
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        if: steps.classify.outputs.harness_only != 'true'
+        with:
+          # Pinned to the version release.yml builds with, so a PR cannot pass
+          # here on a toolchain the release never uses.
+          go-version: 1.23.12
+          # Cache-cost rationale: docs/decisions/D007-ci-single-job-economics.md.
+          cache: false
+
+      - name: Go build, vet and race tests
+        if: steps.classify.outputs.harness_only != 'true'
+        run: |
+          scripts/check-execbound-adoption.py
+          scripts/check-execbound-adoption-tests.py
+          go -C backend build ./...
+          go -C backend vet ./...
+          go -C backend test -race ./...
+
+      - name: Workflow lint (YAML and every `run:` block)
+        if: steps.classify.outputs.harness_only != 'true'
+        run: scripts/check-workflows.sh
+
+      # These checks need the Go toolchain and pinned lint tools installed above.
+      - name: First-party format and lint floor
+        if: steps.classify.outputs.harness_only != 'true'
+        run: |
+          scripts/check-format-lint.sh
+          scripts/test-format-lint.sh
+
+      # The static smoke needs qmllint. Unresolved Quickshell imports are
+      # tolerated; syntax findings fail the check.
+      - name: Install qmllint (Qt 6 declarative tooling)
+        if: steps.classify.outputs.harness_only != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qt6-declarative-dev-tools
+
+      # Require the static QML check. The nested runtime smoke needs a compositor
+      # and Quickshell installation that this runner does not provide.
+      - name: Validation safety and QML static smoke
+        if: steps.classify.outputs.harness_only != 'true'
+        run: scripts/check-validation-safety.sh --require-static
+
+      # Keep this step last. Exit 77 means a control could not run and must fail
+      # the job. GitHub skips later steps after a failure, so last position lets
+      # the other checks finish. Do not convert the skip status into success.
+      - name: Reader agreement regressions
+        run: scripts/test-validation-readers.sh

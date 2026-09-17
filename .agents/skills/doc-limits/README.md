@@ -1,0 +1,30 @@
+# doc-limits
+
+A byte-size check for repository documents. It limits the Markdown that agents read and HTML references under `docs/`, and reports documents that exceed their path class.
+
+## Install
+
+```bash
+kendex add vanillagreencom/kendex --skill doc-limits
+```
+
+Requires Git, Bash, jq, the commit-guards skill and standard POSIX tools. Bash 3.2 is supported. The commit-guards pre-commit and pre-push hooks run the installed check.
+
+## Features
+
+- Check document sizes against byte limits.
+- Apply project limits by path pattern.
+- Exclude generated files through the render inventory and other exceptions through reasoned rows.
+- Check staged documents with staged policy.
+
+## How it works
+
+The checker selects tracked Markdown documents and HTML files under `docs/`. It selects each document's first matching size class. It compares the byte count with that limit and reports every oversized document. The check leaves the files and index unchanged.
+
+## Settings
+
+Set project values in `kendex.settings.toml` under `[env]`. Local overrides use `.kendex/settings.toml` or `.env.local`. Process values have priority. `doc-limits --help` lists the settings and flags.
+
+## Path classes
+
+Set `DOC_LIMITS_CLASSES` to override document limits. Each entry uses `pattern=Nk`, with semicolons between entries. The `k` suffix means 1024 bytes. [references/policy.md](references/policy.md) defines class selection and reasoned exclusions.

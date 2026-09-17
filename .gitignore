@@ -1,0 +1,89 @@
+# Kendex renders are tracked. The install ledger is machine-local.
+/.kendex-lock.json
+/.claude/settings.local.json
+# Session-continuation state, never shared.
+/.claude/RESUME.md
+.kendex-refreshed
+
+# Harness workspaces kendex does not render to — purely local editor state.
+.aider*/
+.continue/
+.roo/
+.windsurf/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.local.example
+
+# Directory patterns omit a trailing slash so they also ignore directory symlinks.
+tmp/
+.cache
+logs/
+*.log
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+
+# Python helper/tooling artifacts
+__pycache__
+*.py[cod]
+*$py.class
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+.venv
+venv
+
+# Node/QML tooling artifacts
+node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.qmlcache/
+qmlcache/
+*.qmlc
+*.jsc
+
+# Quickshell/vshell live state belongs in ~/.config/vshell, not source snapshots
+config/vshell/session.json
+config/vshell/cache.json
+config/vshell/theme.json
+config/vshell/generated/
+config/vshell/runtime/
+
+# Editor and OS metadata
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Local planning and research artifacts
+docs/plans/
+docs/research/
+# Session handoff (single file, never committed) — see AGENTS.md § Conventions
+docs/handoff/
+
+# Machine-local wiring belongs outside the tracked configuration.
+/AGENTS.local.md
+
+# Local git worktrees (kendex worktree skill)
+/trees/
+# kendex:local-state begin
+/tmp/
+/.kendex-lock.json
+/.cache/
+# kendex:local-state end

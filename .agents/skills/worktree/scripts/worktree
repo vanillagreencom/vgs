@@ -1,0 +1,3449 @@
+#!/bin/bash
+# stdout protocol: create/path return a worktree path, exists returns a boolean,
+# check returns JSON, and push emits rebase-map: <old-sha> <new-sha|dropped> for
+# skills/orch/scripts/worktree-push. A completed restack (create --reuse,
+# create --restack, restack continue|skip) reports the same map lines on
+# stderr, because create's stdout is the worktree path, and appends them to
+# the worktree-private kendex-rebase-map file that worktree-push consumes.
+# These data records remain separate from worktree-<key>: <value> notices.
+# English explanation is not a parsed protocol.
+# Portable git worktree manager. Run with --help for the command index,
+# layout, and configuration contract; each mutating command documents its own
+# contract under `<command> --help`.
+#
+# Session guard: `create` never claims a lease — see the "Session guard
+# lifecycle" block below for why, and the orchestrating workflow for who does.
+
+set -euo pipefail
+
+MESSAGE_DIR=${BASH_SOURCE[0]%/*}
+[[ "$MESSAGE_DIR" != "${BASH_SOURCE[0]}" ]] || MESSAGE_DIR=.
+if [[ ! -f "$MESSAGE_DIR/lib/messages.sh" ]]; then
+  MESSAGE_LIBRARY_PATH="$MESSAGE_DIR/lib/messages.sh"
+  MESSAGE_LIBRARY_VALUE="$MESSAGE_LIBRARY_PATH"
+  MESSAGE_LIBRARY_VALUE="${MESSAGE_LIBRARY_VALUE//\\/\\\\}"
+  MESSAGE_LIBRARY_VALUE="${MESSAGE_LIBRARY_VALUE//$'\n'/\\n}"
+  MESSAGE_LIBRARY_VALUE="${MESSAGE_LIBRARY_VALUE//$'\r'/\\r}"
+  MESSAGE_LIBRARY_VALUE="${MESSAGE_LIBRARY_VALUE//$'\t'/\\t}"
+  {
+    printf 'worktree-message-library: path=%s recovery=fix-links-from-main\n' "$MESSAGE_LIBRARY_VALUE"
+    printf '  Worktree support library is missing: %s\n' "$MESSAGE_LIBRARY_VALUE"
+    printf '  This can happen when a rebase replaces an installed harness link with tracked files.\n'
+    printf '  Recover from the main checkout: cd <main checkout> && .agents/skills/worktree/scripts/worktree fix-links %q\n' "$PWD"
+  } >&2
+  exit 1
+fi
+# shellcheck source=lib/messages.sh
+source "$MESSAGE_DIR/lib/messages.sh"
+
+readonly ACTIVE_WORK_EXIT=75
+
+# shellcheck source=lib/help.sh
+source "$MESSAGE_DIR/lib/help.sh"
+
+canonical_existing_dir() {
+  local path="$1"
+  [[ -d "$path" ]] || return 1
+  (cd "$path" && pwd -P)
+}
+
+# Canonical (physical) path equality: both sides resolve through pwd -P, so a
+# path reached via a compatibility symlink and its physical form compare
+# equal. False when either side is not an existing directory.
+same_canonical_dir() {
+  local a="" b=""
+  a="$(canonical_existing_dir "$1" 2>/dev/null)" || return 1
+  b="$(canonical_existing_dir "$2" 2>/dev/null)" || return 1
+  [[ "$a" == "$b" ]]
+}
+
+# Resolve PROJECT_ROOT via git (works at any depth, inside worktrees too).
+# The assignment sits in the condition on purpose: under `set -e` a
+# bare assignment's nonzero status escapes before the test below can run, so
+# the refusal never printed. The failure branch re-runs the lookup for the
+# stderr the first call discarded, so the message carries git's cause.
+if ! PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || [[ -z "$PROJECT_ROOT" ]]; then
+  GIT_LOOKUP_DIAG=""
+  if ! GIT_LOOKUP_DIAG="$(git rev-parse --show-toplevel 2>&1 >/dev/null)"; then
+    # Normalize a multi-line fatal to one line; "fatal: " is noise under a line
+    # that already says the lookup failed.
+    GIT_LOOKUP_DIAG="${GIT_LOOKUP_DIAG//$'\n'/ }"
+    GIT_LOOKUP_DIAG="${GIT_LOOKUP_DIAG#fatal: }"
+  fi
+  {
+    worktree_message repo-unavailable "$PWD" "Error: could not resolve a git repository from: $PWD"
+    if [[ -n "$GIT_LOOKUP_DIAG" ]]; then echo "  git said: $GIT_LOOKUP_DIAG"; fi
+    echo "  Run it from a checkout of the repository you mean:"
+    echo "    cd <main checkout> && .agents/skills/worktree/scripts/worktree <command>"
+  } >&2
+  exit 1
+fi
+
+# If inside a worktree, resolve to the main repo root
+_git_common_dir=$(git -C "$PROJECT_ROOT" rev-parse --git-common-dir 2>/dev/null)
+if [[ "$_git_common_dir" != ".git" && -n "$_git_common_dir" ]]; then
+  PROJECT_ROOT="$(cd "$PROJECT_ROOT" && cd "$(dirname "$_git_common_dir")" && pwd)"
+fi
+# Physical form so registry, base-dir, and guard comparisons all share one
+# canonical anchor even when the script is invoked through a symlinked path.
+PROJECT_ROOT="$(canonical_existing_dir "$PROJECT_ROOT")"
+
+git_common_dir_path() {
+  local checkout="$1" common_dir=""
+  common_dir="$(git -C "$checkout" rev-parse --git-common-dir 2>/dev/null)" || return 1
+  if [[ "$common_dir" == /* ]]; then
+    canonical_existing_dir "$common_dir"
+  else
+    canonical_existing_dir "$checkout/$common_dir"
+  fi
+}
+
+PROJECT_COMMON_GIT_DIR="$(git_common_dir_path "$PROJECT_ROOT")"
+if [[ -z "$PROJECT_COMMON_GIT_DIR" ]]; then
+  worktree_message common-dir-unavailable "$PROJECT_ROOT" "Error: Could not resolve the repository common Git directory" >&2
+  exit 1
+fi
+
+# Load project config and secrets; among project files, `.env.local` wins.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/kendex-env.sh
+# A rebase replaces a symlinked harness dir with a REAL directory holding only
+# the tracked subset, so the untracked skills under it — including this script's
+# own lib — silently vanish. Sourcing a missing lib exits 127 with Bash's own
+# message, which names neither the cause nor the recovery. Fail loudly instead.
+#
+# The remediation must say "from the main checkout": this script's own copy
+# inside the worktree can be among the missing files, so pointing the operator
+# at a worktree-local binary sends them to something that is not there.
+if [[ ! -f "$SCRIPT_DIR/lib/kendex-env.sh" ]]; then
+  {
+    worktree_message env-library-missing "$SCRIPT_DIR/lib/kendex-env.sh" "Error: worktree support library is missing: $SCRIPT_DIR/lib/kendex-env.sh"
+    echo "  This is the signature of a materialized harness directory: a rebase replaced"
+    echo "  the symlink with a real directory containing only the tracked files, dropping"
+    echo "  everything installed by kendex."
+    echo "  Recover by running fix-links FROM THE MAIN CHECKOUT (this copy is incomplete):"
+    echo "    cd <main checkout> && .agents/skills/worktree/scripts/worktree fix-links '$PWD'"
+  } >&2
+  exit 1
+fi
+source "$SCRIPT_DIR/lib/kendex-env.sh"
+kendex_load_project_env "$PROJECT_ROOT"
+
+GITHUB_AUTH_LIB="$SCRIPT_DIR/../../github/scripts/lib/gh-auth.sh"
+if [[ -f "$GITHUB_AUTH_LIB" ]]; then
+  # shellcheck source=../../github/scripts/lib/gh-auth.sh
+  source "$GITHUB_AUTH_LIB"
+fi
+
+git_with_github_https_auth() {
+  if declare -F kendex_github_git >/dev/null 2>&1; then
+    kendex_github_git "$@"
+  else
+    git "$@"
+  fi
+}
+
+restack_state_get() {
+  local wt="$1" key="$2"
+  git -C "$wt" config --worktree --get "kendex-restack.$key" 2>/dev/null || true
+}
+
+clear_restack_push_authorization() {
+  local wt="$1" key=""
+  for key in remote branch expectedRemoteOid originalHead baseOid authorizedHead pending stateToken mode; do
+    git -C "$wt" config --worktree --unset-all "kendex-restack.$key" >/dev/null 2>&1 || true
+  done
+}
+
+record_pending_restack_authorization() {
+  local wt="$1" remote="$2" branch="$3" expected_oid="$4"
+  local original_head="$5" base_oid="$6"
+  local previous_remote="" previous_branch="" previous_expected="" previous_authorized="" state_token=""
+
+  # Per-worktree config makes the authorization durable across a paused rebase
+  # while tying it to this exact checkout. Partial writes fail closed because
+  # authorization is valid only when every field and authorizedHead agree.
+  git -C "$PROJECT_ROOT" config extensions.worktreeConfig true
+  previous_remote="$(restack_state_get "$wt" remote)"
+  previous_branch="$(restack_state_get "$wt" branch)"
+  previous_expected="$(restack_state_get "$wt" expectedRemoteOid)"
+  previous_authorized="$(restack_state_get "$wt" authorizedHead)"
+  if [[ "$previous_remote" != "$remote" || "$previous_branch" != "$branch" || "$previous_expected" != "$expected_oid" ]] || \
+     [[ -z "$previous_authorized" ]] || \
+     ! git -C "$wt" merge-base --is-ancestor "$previous_authorized" "$original_head"; then
+    previous_authorized=""
+  fi
+  clear_restack_push_authorization "$wt"
+  git -C "$wt" config --worktree kendex-restack.remote "$remote"
+  git -C "$wt" config --worktree kendex-restack.branch "$branch"
+  git -C "$wt" config --worktree kendex-restack.expectedRemoteOid "$expected_oid"
+  git -C "$wt" config --worktree kendex-restack.originalHead "$original_head"
+  git -C "$wt" config --worktree kendex-restack.baseOid "$base_oid"
+  git -C "$wt" config --worktree kendex-restack.pending true
+  state_token="$(git -C "$wt" hash-object --stdin <<<"$remote:$branch:$expected_oid:$original_head:$base_oid:$$:$RANDOM")"
+  git -C "$wt" config --worktree kendex-restack.stateToken "$state_token"
+  if [[ -n "$previous_authorized" ]]; then
+    git -C "$wt" config --worktree kendex-restack.authorizedHead "$previous_authorized"
+  fi
+}
+
+# Every caller has already unwound the rewrite and put the branch back on its
+# recorded head, so the write-ahead record goes with the authorization.
+cancel_pending_restack_authorization() {
+  local wt="$1" authorized_head=""
+  warn_uncleared_pending_rewrite "$wt"
+  authorized_head="$(restack_state_get "$wt" authorizedHead)"
+  if [[ -z "$authorized_head" ]]; then
+    clear_restack_push_authorization "$wt"
+    return
+  fi
+  git -C "$wt" config --worktree --unset-all kendex-restack.originalHead >/dev/null 2>&1 || true
+  git -C "$wt" config --worktree --unset-all kendex-restack.baseOid >/dev/null 2>&1 || true
+  git -C "$wt" config --worktree --unset-all kendex-restack.pending >/dev/null 2>&1 || true
+  git -C "$wt" config --worktree --unset-all kendex-restack.stateToken >/dev/null 2>&1 || true
+  git -C "$wt" config --worktree --unset-all kendex-restack.mode >/dev/null 2>&1 || true
+}
+
+restack_original_head_authorized() {
+  local wt="$1" expected_oid="$2" original_head="$3" pending="$4"
+  local authorized_head=""
+
+  if [[ -z "$expected_oid" ]]; then
+    [[ "$pending" == true ]]
+    return
+  fi
+  if git -C "$wt" merge-base --is-ancestor "$expected_oid" "$original_head"; then
+    return 0
+  fi
+  authorized_head="$(restack_state_get "$wt" authorizedHead)"
+  [[ -n "$authorized_head" ]] || return 1
+  git -C "$wt" cat-file -e "${authorized_head}^{commit}" 2>/dev/null || return 1
+  git -C "$wt" merge-base --is-ancestor "$authorized_head" "$original_head"
+}
+
+restack_push_authorization_matches() {
+  local wt="$1" remote="$2" branch="$3" expected_oid="$4"
+  local stored_remote="" stored_branch="" stored_expected="" authorized_head=""
+
+  stored_remote="$(restack_state_get "$wt" remote)"
+  stored_branch="$(restack_state_get "$wt" branch)"
+  stored_expected="$(restack_state_get "$wt" expectedRemoteOid)"
+  authorized_head="$(restack_state_get "$wt" authorizedHead)"
+
+  [[ -n "$authorized_head" ]] || return 1
+  [[ "$stored_remote" == "$remote" && "$stored_branch" == "$branch" ]] || return 1
+  [[ "$stored_expected" == "$expected_oid" ]] || return 1
+  git -C "$wt" cat-file -e "${authorized_head}^{commit}" 2>/dev/null || return 1
+  git -C "$wt" merge-base --is-ancestor "$authorized_head" HEAD
+}
+
+finalize_pending_restack_authorization() {
+  local wt="$1" remote="$2" branch="$3" live_expected_oid="$4"
+  local stored_remote="" stored_branch="" stored_expected="" original_head="" base_oid=""
+  local current_head="" pending=""
+
+  stored_expected="$(restack_state_get "$wt" expectedRemoteOid)"
+  pending="$(restack_state_get "$wt" pending)"
+  if [[ -z "$stored_expected" && "$pending" != true ]]; then
+    return 0
+  fi
+  stored_remote="$(restack_state_get "$wt" remote)"
+  stored_branch="$(restack_state_get "$wt" branch)"
+  original_head="$(restack_state_get "$wt" originalHead)"
+  base_oid="$(restack_state_get "$wt" baseOid)"
+  if [[ -z "$original_head" && -z "$base_oid" ]]; then
+    if [[ "$pending" == true ]]; then
+      clear_restack_push_authorization "$wt"
+      worktree_message restack-authorization-incomplete "$wt" "Error: Pending restack authorization is incomplete; refusing to authorize a rewritten push." >&2
+      return 1
+    fi
+    return 0
+  fi
+
+  if [[ "$stored_remote" != "$remote" || "$stored_branch" != "$branch" || "$stored_expected" != "$live_expected_oid" ]]; then
+    clear_restack_push_authorization "$wt"
+    worktree_message restack-remote-moved "$remote/$branch" "Error: Remote '$remote/$branch' changed while the supported restack was in progress; refusing to authorize a rewritten push." >&2
+    echo "Fetch and rebase/merge '$remote/$branch' before retrying." >&2
+    return 1
+  fi
+  if rebase_in_progress "$wt"; then
+    worktree_message restack-running "$wt" "Error: Rebase is still in progress for $wt; finish or abort it before completing worktree setup." >&2
+    return 1
+  fi
+  if [[ -z "$original_head" || -z "$base_oid" ]] || \
+     ! restack_original_head_authorized "$wt" "$stored_expected" "$original_head" "$pending" || \
+     ! git -C "$wt" merge-base --is-ancestor "$base_oid" HEAD; then
+    clear_restack_push_authorization "$wt"
+    worktree_message restack-rewrite-unverified "$branch" "Error: Could not verify that '$branch' was rewritten by the supported restack; refusing force-push authorization." >&2
+    return 1
+  fi
+
+  current_head="$(git -C "$wt" rev-parse HEAD)"
+  if [[ -n "$stored_expected" ]]; then
+    git -C "$wt" config --worktree kendex-restack.authorizedHead "$current_head"
+  else
+    clear_restack_push_authorization "$wt"
+    return 0
+  fi
+  git -C "$wt" config --worktree --unset-all kendex-restack.originalHead >/dev/null 2>&1 || true
+  git -C "$wt" config --worktree --unset-all kendex-restack.baseOid >/dev/null 2>&1 || true
+  git -C "$wt" config --worktree --unset-all kendex-restack.pending >/dev/null 2>&1 || true
+  git -C "$wt" config --worktree --unset-all kendex-restack.stateToken >/dev/null 2>&1 || true
+  git -C "$wt" config --worktree --unset-all kendex-restack.mode >/dev/null 2>&1 || true
+}
+
+prepare_restack_authorization() {
+  local wt="$1" remote="$2" branch="$3" expected_oid="$4" base_oid="$5"
+  local original_head=""
+
+  original_head="$(git -C "$wt" rev-parse HEAD)"
+  if [[ -n "$expected_oid" ]] && \
+     ! git -C "$wt" merge-base --is-ancestor "$expected_oid" "$original_head" && \
+     ! restack_push_authorization_matches "$wt" "$remote" "$branch" "$expected_oid"; then
+    clear_restack_push_authorization "$wt"
+    worktree_message restack-remote-uncontained "$remote/$branch" "Error: Remote '$remote/$branch' points at $expected_oid, which is not contained in local branch '$branch'." >&2
+    echo "Fetch and rebase/merge '$remote/$branch' before using create --reuse/--restack." >&2
+    return 1
+  fi
+
+  record_pending_restack_authorization "$wt" "$remote" "$branch" "$expected_oid" "$original_head" "$base_oid"
+}
+
+remote_ref_lease_arg() {
+  local wt="$1" remote="$2" branch="$3"
+  local remote_head_ref="refs/heads/$branch"
+  local remote_tracking_ref="refs/remotes/$remote/$branch"
+  local expected_oid=""
+  local fetch_err=""
+  local fetch_status=0
+
+  expected_oid="$(git -C "$wt" show-ref --verify --hash "$remote_tracking_ref" 2>/dev/null || true)"
+
+  if [[ -z "$expected_oid" && "$remote" != "origin" ]]; then
+    fetch_err="$(mktemp "${TMPDIR:-/tmp}/worktree-lease-fetch.XXXXXX")"
+    if git_with_github_https_auth -C "$wt" fetch "$remote" "+${remote_head_ref}:${remote_tracking_ref}" >/dev/null 2>"$fetch_err"; then
+      expected_oid="$(git -C "$wt" show-ref --verify --hash "$remote_tracking_ref" 2>/dev/null || true)"
+    else
+      fetch_status=$?
+      if grep -qiE "couldn't find remote ref|could not find remote ref|remote ref does not exist|remote branch .* not found" "$fetch_err"; then
+        rm -f "$fetch_err"
+        printf '%s\n' "--force-with-lease=${remote_head_ref}:"
+        return 0
+      fi
+
+      worktree_message remote-fetch-failed "$remote/$branch" "Error: Could not fetch remote branch '$branch' from remote '$remote' for force-with-lease." >&2
+      sed 's/^/  /' "$fetch_err" >&2
+      rm -f "$fetch_err"
+      return "$fetch_status"
+    fi
+    rm -f "$fetch_err"
+  fi
+
+  if [[ -z "$expected_oid" ]]; then
+    # Empty expectation means the remote branch must not already exist. This
+    # keeps first pushes safe and prevents overwriting an existing branch that
+    # the local checkout has never observed.
+    printf '%s\n' "--force-with-lease=${remote_head_ref}:"
+    return 0
+  fi
+
+  if ! git -C "$wt" merge-base --is-ancestor "$expected_oid" HEAD && \
+     ! restack_push_authorization_matches "$wt" "$remote" "$branch" "$expected_oid"; then
+    worktree_message push-remote-uncontained "$remote/$branch" "Error: Remote '$remote/$branch' points at $expected_oid, which is not contained in local branch '$branch'." >&2
+    echo "Fetch and rebase/merge '$remote/$branch' before using worktree push." >&2
+    return 1
+  fi
+
+  printf '%s\n' "--force-with-lease=${remote_head_ref}:${expected_oid}"
+}
+
+# Which judge refused a push, read off the transcript, one predicate each.
+#
+# git exits 1 for a hook refusal and a rejected ref alike, so every arm keys
+# on a line somebody printed, never on the absence of one. Keying the lease
+# story on an unreadable hook verdict sent an operator to fetch and rebase
+# over a composed hook's refusal, its commit-guards lane clean and the
+# consumer's own hook rejecting under it, which is how the installer arms a
+# repository that already had one.
+#
+# That lane is one producer, and this reads the protocol it publishes rather
+# than restating how it decides: lines are `pre-push: <key>=<value>`, and a
+# completed run ends with `pre-push: result=<code>`, zero being the only clean
+# one. So a refusal is a nonzero verdict, or keyed lines that never reach one,
+# which is how its collection refusals exit. What neither predicate names
+# reaches the last arm, where git's own output states the cause.
+push_output_refused_by_hook() { # OUTPUT -> 0 when a pre-push hook refused
+  local line keyed=false verdict=false
+  while IFS= read -r line; do
+    case "$line" in
+      'pre-push: result='*)
+        verdict=true
+        [[ "${line#pre-push: result=}" == 0 ]] || return 0
+        ;;
+      'pre-push: '*) keyed=true ;;
+    esac
+  done <<<"$1"
+  [[ "$keyed" == true && "$verdict" == false ]]
+}
+
+# git is the other producer, and it translates these words, so the push whose
+# transcript both predicates read runs under LC_ALL=C. It prints `! [rejected]
+# <src> -> <dst> (stale info)` for a failed --force-with-lease, the
+# empty-expectation form this tool uses on a first push included, and
+# `(fetch first)` for an ordinary rejection — so the lease story is told where
+# git tells it and nowhere else.
+push_output_lease_rejected() { # OUTPUT -> 0 when git reports a stale lease
+  local line
+  while IFS= read -r line; do
+    case "$line" in
+      *'[rejected]'*'(stale info)'*) return 0 ;;
+    esac
+  done <<<"$1"
+  return 1
+}
+
+# Sets REBASE_SUBJECT_COUNT to how many entries of a
+# `git log --format='%H %s'` list carry exactly this subject. The subject is
+# everything past the first space, the same way the pairing below reads it.
+# The answer comes back in a variable rather than on stdout so its caller has
+# no command substitution whose own status it would have to tell apart from a
+# count of zero.
+REBASE_SUBJECT_COUNT=0
+rebase_subject_count() {
+  local list="$1" subject="$2" line=""
+  REBASE_SUBJECT_COUNT=0
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    [[ "${line#* }" == "$subject" ]] || continue
+    REBASE_SUBJECT_COUNT=$((REBASE_SUBJECT_COUNT + 1))
+  done <<<"$list"
+}
+
+# After a push auto-rebase rewrote the branch, print one machine-readable
+# "rebase-map: <old-sha> <new-sha>" line per rewritten commit on stdout so
+# callers (orch submit-pr) can remap commit SHAs recorded before the rebase.
+# A replayed commit that vanished (its patch was already upstream) maps to
+# "rebase-map: <old-sha> dropped". Inputs are the pre-rebase and post-rebase
+# outputs of `git log --reverse --format='%H %s'`
+# origin/<default>..HEAD`. Commits pair by position when the counts match
+# (rebase preserves order); on a count mismatch they pair by subject,
+# consuming each post-rebase line at most once. Bash 3.2: consumed indices
+# are tracked in a space-delimited string, no associative arrays.
+#
+# Subjects can only pair a group the rebase kept whole, which pairs in order,
+# or dropped whole, where every member maps to dropped. A group some of whose
+# members survived says nothing about WHICH survived, and the first-match scan
+# below would answer confidently and wrongly: two commits under one subject
+# with the earlier one's patch already upstream came back as the earlier one
+# mapped to the survivor and the later one dropped, the exact inverse of the
+# truth. Callers record that map over `fixed_items[].commit`, publish from it
+# and delete their copy, so a wrong map cites a real commit that is not the
+# recorded one and takes its own evidence with it. No map at all leaves the
+# recorded SHA visibly stale, so this refuses instead.
+emit_rebase_map() {
+  local pre_list="$1" post_list="$2"
+  if [[ -z "$pre_list" || "$pre_list" == "$post_list" ]]; then
+    return 0
+  fi
+  local pre_count=0 post_count=0
+  pre_count="$(printf '%s\n' "$pre_list" | grep -c '^')"
+  if [[ -n "$post_list" ]]; then
+    post_count="$(printf '%s\n' "$post_list" | grep -c '^')"
+  fi
+  local i=1 j=1 old_line="" old_sha="" old_subject="" new_line="" new_sha="" used_idx=""
+  local pre_group=0 post_group=0 map=""
+  while [[ "$i" -le "$pre_count" ]]; do
+    old_line="$(printf '%s\n' "$pre_list" | sed -n "${i}p")"
+    old_sha="${old_line%% *}"
+    old_subject="${old_line#* }"
+    new_sha=""
+    if [[ "$pre_count" -eq "$post_count" ]]; then
+      new_line="$(printf '%s\n' "$post_list" | sed -n "${i}p")"
+      new_sha="${new_line%% *}"
+    else
+      rebase_subject_count "$pre_list" "$old_subject"
+      pre_group="$REBASE_SUBJECT_COUNT"
+      rebase_subject_count "$post_list" "$old_subject"
+      post_group="$REBASE_SUBJECT_COUNT"
+      if [[ "$post_group" -gt 0 && "$post_group" -lt "$pre_group" ]]; then
+        worktree_message rebase-map-ambiguous "$old_subject" "Error: The rebase kept $post_group of the $pre_group branch commit(s) under this subject and dropped the rest, so which rewritten commit each one became cannot be derived; no rebase map was reported." >&2
+        return 1
+      fi
+      j=1
+      while [[ "$j" -le "$post_count" ]]; do
+        case " $used_idx " in
+          *" $j "*) j=$((j + 1)); continue ;;
+        esac
+        new_line="$(printf '%s\n' "$post_list" | sed -n "${j}p")"
+        if [[ "${new_line#* }" == "$old_subject" ]]; then
+          new_sha="${new_line%% *}"
+          used_idx="$used_idx $j"
+          break
+        fi
+        j=$((j + 1))
+      done
+    fi
+    if [[ -z "$new_sha" ]]; then
+      map="$map${map:+$'\n'}rebase-map: $old_sha dropped"
+    elif [[ "$new_sha" != "$old_sha" ]]; then
+      map="$map${map:+$'\n'}rebase-map: $old_sha $new_sha"
+    fi
+    i=$((i + 1))
+  done
+  # Announced only once the whole map is derived: a refusal above must leave
+  # no promise of lines that never come.
+  worktree_message rebase-count "$pre_count" "→ auto-rebase rewrote $pre_count branch commit(s); rebase-map lines follow (kendex#728)" >&2
+  [[ -z "$map" ]] || printf '%s\n' "$map"
+}
+
+# The line that opens one restack's hop in the map file. Each hop is the
+# rewrite of one restack, and a reader must apply the hops in order and one at
+# a time: a record that moved X -> Y in the first hop moves Y -> Z in the
+# second, and a reconciliation that saw both at once would compare Y against
+# the record's pre-hop value X and stop at Y. `worktree-push` splits the file
+# on this line.
+readonly RESTACK_HOP_MARK='rebase-hop:'
+
+registered_worktree_git_dir() {
+  local target="$1" canonical="" parent="" candidates="" entry="" recorded=""
+  candidates="${target%/}"
+  # A path that still exists answers for itself, which is what a symlink TO the
+  # worktree needs: its own canonical form is the path git recorded, and no
+  # spelling built from its parent and basename is.
+  if canonical="$(canonical_existing_dir "$target" 2>/dev/null)"; then
+    candidates="$candidates"$'\n'"$canonical"
+  fi
+  # A worktree that is gone cannot be canonicalised at all, but its parent can,
+  # so a symlinked base dir still matches the path git recorded.
+  if parent="$(canonical_existing_dir "$(dirname "$target")" 2>/dev/null)"; then
+    candidates="$candidates"$'\n'"$parent/$(basename "$target")"
+  fi
+  for entry in "$PROJECT_COMMON_GIT_DIR"/worktrees/*/; do
+    [[ -f "$entry/gitdir" ]] || continue
+    if ! recorded="$(head -n 1 "$entry/gitdir" 2>/dev/null)"; then
+      continue
+    fi
+    recorded="${recorded%/.git}"
+    recorded="${recorded%/}"
+    [[ -n "$recorded" ]] || continue
+    if grep -qxF -- "$recorded" <<<"$candidates"; then
+      printf '%s\n' "${entry%/}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Removing a worktree deletes the private Git directory that holds its rewrite
+# record, so a target this cannot resolve to a registration is not permission
+# to delete whatever is registered under it. Refusing is the default here, and
+# the arms that proceed have to establish why: an identified registration, a
+# live directory the ownership guard judges by identity, or nothing at the path
+# at all, which is nothing to protect.
+refuse_unidentified_worktree() {
+  local wt="$1"
+  worktree_message remove-unidentified "$wt" "Error: $wt could not be resolved to a registered worktree of this repository, so what removing it would delete cannot be established; refusing to remove it." >&2
+  echo "Nothing was released, removed or pruned." >&2
+  echo "Address it by the path Git recorded for it:" >&2
+  echo "  git -C \"$PROJECT_ROOT\" worktree list" >&2
+  return 1
+}
+
+# The worktree-private file a completed restack leaves its rebase map in. It
+# lives in the worktree's own git dir, so it is untracked, invisible to
+# `git status`, private to this checkout, and outlives the process that wrote
+# it. `skills/orch/scripts/worktree-push` asks git for the same path.
+restack_rebase_map_file() {
+  local wt="$1" path=""
+  path="$(git -C "$wt" rev-parse --git-path kendex-rebase-map 2>/dev/null)" || return 1
+  [[ -n "$path" ]] || return 1
+  [[ "$path" == /* ]] || path="$wt/$path"
+  printf '%s\n' "$path"
+}
+
+# The line a push auto-rebase leaves in the map file when it rewrote the branch
+# but could not derive a map for it. The rewrite outlives the process that
+# refused, and a retry finds the base already contained, so it rebases nothing,
+# derives nothing and would publish a rewrite no map ever described. The marker
+# is what carries the refusal across those processes. `worktree-push` reads the
+# same line.
+readonly RESTACK_UNMAPPED_MARK='rebase-unmapped:'
+
+# Record, BEFORE a rewrite starts, the head it is about to rewrite. Write-ahead
+# is the whole point: between git rewriting the first commit and a map reaching
+# disk there is a window where the branch is rewritten and nothing describes
+# it, and a process death there would leave the next run to find a contained
+# base, derive no map and publish over stale SHAs. With the record already
+# down, a death anywhere in that window leaves it standing and the next push
+# refuses. Its caller must not start the rewrite when this fails.
+record_pending_rewrite() {
+  local wt="$1" original_head="$2" map_file=""
+  # One unresolved record at a time. A second standing beside the first is
+  # indistinguishable from it, and the clear that ends the second would take
+  # the first with it, leaving that earlier rewrite unrecorded and publishable.
+  # Refusing to start the second rewrite is what keeps the single-record
+  # invariant the clear relies on; a record that cannot be read falls through
+  # to the append below, which fails on the same cause and says so.
+  if read_unmapped_rewrite "$wt" && [[ -n "$UNMAPPED_REWRITE_HEAD" ]]; then
+    worktree_message rebase-pending-standing "$UNMAPPED_REWRITE_HEAD" "Error: An earlier rewrite of this branch from the head named above is still unresolved, so a second one cannot be told from it; refusing to start one." >&2
+    echo "Reconcile every recorded SHA against the worktree reflog, then remove the record:" >&2
+    echo "  rm -f \"$(restack_rebase_map_file "$wt" 2>/dev/null || printf '<map file>')\"" >&2
+    return 1
+  fi
+  if ! map_file="$(restack_rebase_map_file "$wt")" || \
+     ! printf '%s %s\n' "$RESTACK_UNMAPPED_MARK" "$original_head" >>"$map_file"; then
+    worktree_message rebase-pending-unrecorded "$wt" "Error: Could not record the pending rewrite in $wt, so a rewrite interrupted here could not be refused later; refusing to start it." >&2
+    return 1
+  fi
+}
+
+# Drop that record, once the rewrite's map is durable or the rewrite was
+# cancelled and its head restored. Hop lines in the same file are kept: they
+# describe rewrites that did get mapped. A clear that fails leaves the record
+# standing, which refuses the next push — the direction this must fail, and why
+# every caller reports the failure rather than passing it on.
+clear_pending_rewrite() {
+  local wt="$1" map_file="" tmp="" line="" kept=0
+  map_file="$(restack_rebase_map_file "$wt")" || return 1
+  [[ -e "$map_file" ]] || return 0
+  tmp="$map_file.pending.$$"
+  : >"$tmp" || return 1
+  while IFS= read -r line; do
+    case "$line" in
+      "$RESTACK_UNMAPPED_MARK "*) ;;
+      *)
+        printf '%s\n' "$line" >>"$tmp" || { rm -f "$tmp"; return 1; }
+        kept=1
+        ;;
+    esac
+  done <"$map_file"
+  if [[ "$kept" -eq 0 ]]; then
+    rm -f "$tmp"
+    rm -f "$map_file" || return 1
+    return 0
+  fi
+  mv "$tmp" "$map_file" || { rm -f "$tmp"; return 1; }
+}
+
+# For every caller that finished with the rewrite and publishes nothing of its
+# own, so a record left behind is reported and the run carries on: what it
+# blocks is a later push, which is the safe direction. The push's own arm does
+# not use this — it refuses instead, because it is about to publish.
+warn_uncleared_pending_rewrite() {
+  local wt="$1"
+  clear_pending_rewrite "$wt" && return 0
+  worktree_message rebase-pending-uncleared "$wt" "Warning: The finished rewrite's pending record could not be cleared, so the next push refuses until it is removed." >&2
+  return 0
+}
+
+# Sets UNMAPPED_REWRITE_HEAD to the pre-rebase head an earlier push recorded
+# when it rewrote the branch without a derivable map, empty where there is no
+# such record. Returns non-zero when the record cannot be read at all: not
+# knowing is not permission to publish a rewrite.
+UNMAPPED_REWRITE_HEAD=""
+read_unmapped_rewrite() {
+  local wt="$1" map_file="" line=""
+  UNMAPPED_REWRITE_HEAD=""
+  map_file="$(restack_rebase_map_file "$wt")" || return 1
+  [[ -e "$map_file" ]] || return 0
+  while IFS= read -r line; do
+    case "$line" in
+      "$RESTACK_UNMAPPED_MARK "*) UNMAPPED_REWRITE_HEAD="${line#"$RESTACK_UNMAPPED_MARK" }" ;;
+    esac
+  done <"$map_file"
+}
+
+# Every way the map can fail leaves the branch rewritten with nothing
+# describing it, which is the state a later push must refuse on. The record
+# that makes it refuse is already on disk: it was written before the rewrite
+# started, so this arm only has to leave it there and clear the authorization.
+restack_map_refusal() {
+  local wt="$1" key="$2" value="$3" text="$4"
+  clear_restack_push_authorization "$wt"
+  worktree_message "$key" "$value" "$text" >&2
+  return 1
+}
+
+# Append one rewrite's map to the worktree's map file as its own hop, and set
+# REBASE_HOP_FILE to the file it wrote. This is the durable channel every door
+# uses: a map that was only printed lives in its reader's temporary capture,
+# which that reader does not act on until this process has already returned and
+# which its own exit trap then removes, so printing is not recording.
+# `orch/scripts/worktree-push` reconciles from this file.
+REBASE_HOP_FILE=""
+append_rebase_hop() {
+  local wt="$1" map_lines="$2"
+  REBASE_HOP_FILE=""
+  REBASE_HOP_FILE="$(restack_rebase_map_file "$wt")" || return 1
+  printf '%s\n%s\n' "$RESTACK_HOP_MARK" "$map_lines" >>"$REBASE_HOP_FILE"
+}
+
+# A completed guarded restack rewrote the same branch commits a push
+# auto-rebase rewrites, so it reports the same map from the same emitter.
+# `baseOid` is the new base, so `baseOid..originalHead` holds exactly the
+# branch's own commits as they stood before the rewrite — the set the push
+# path snapshots as `origin/<default>..HEAD` — and `baseOid..HEAD` holds them
+# after it. Both keys are read here because
+# finalize_pending_restack_authorization unsets them.
+#
+# The map goes to stderr, not stdout: `create --reuse/--restack` hands its
+# caller the worktree path on stdout and a map printed there would be read as
+# part of it. The machine channel for a restack is the appended file, which
+# the separate `worktree-push` process consumes. The append opens its own hop
+# under RESTACK_HOP_MARK, so two restacks before one push stay two hops that
+# the reader applies in order rather than one merged map that would strand
+# every record on the first restack's rewritten SHA. A restack whose map
+# cannot be recorded authorizes no push: the reconciliation input would be
+# gone while the recorded SHAs went stale.
+emit_restack_rebase_map() {
+  local wt="$1" base_oid="" original_head="" pre_list="" post_list="" map_lines=""
+
+  if ! base_oid="$(restack_state_get "$wt" baseOid)" || \
+     ! original_head="$(restack_state_get "$wt" originalHead)" || \
+     [[ -z "$base_oid" || -z "$original_head" ]] || \
+     ! pre_list="$(git -C "$wt" log --reverse --format='%H %s' "$base_oid..$original_head")" || \
+     ! post_list="$(git -C "$wt" log --reverse --format='%H %s' "$base_oid..HEAD")" || \
+     ! map_lines="$(emit_rebase_map "$pre_list" "$post_list")"; then
+    restack_map_refusal "$wt" restack-map-unreadable "$wt" \
+      "Error: Could not map the restacked commits of $wt from its recorded base and original head; no rebase map was reported and no rewritten push was authorized."
+    return 1
+  fi
+  # The rewrite provably changed nothing, so nothing needs describing.
+  [[ -n "$map_lines" ]] || { warn_uncleared_pending_rewrite "$wt"; return 0; }
+  printf '%s\n' "$map_lines" >&2
+  if ! append_rebase_hop "$wt" "$map_lines"; then
+    restack_map_refusal "$wt" restack-map-unrecorded "${REBASE_HOP_FILE:-$wt}" \
+      "Error: Could not record the rebase map for $wt; the lines above are the map's only copy and no rewritten push was authorized."
+    return 1
+  fi
+  # The hop is on disk, so the rewrite it describes no longer needs the record.
+  warn_uncleared_pending_rewrite "$wt"
+}
+
+# Parse `push`'s arguments. Sets PUSH_ARG, PUSH_SET_UPSTREAM and
+# PUSH_AUTO_REBASE; returns 1 with the usage error on stderr for anything it
+# does not accept.
+# Seen-ness is tracked separately from the value so an empty first positional
+# — itself refused, since resolution would silently fall back to $PWD and push
+# the current checkout — still counts against the single-target rule.
+parse_push_args() {
+  PUSH_ARG=""
+  PUSH_SET_UPSTREAM=""
+  PUSH_AUTO_REBASE=true
+  local arg_seen=false
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -u|--set-upstream) PUSH_SET_UPSTREAM="-u"; shift ;;
+      --no-rebase) PUSH_AUTO_REBASE=false; shift ;;
+      # An unknown --flag must fail rather than be dropped: a catch-all shift
+      # would turn a typo like `--no-rebse` into a silent default-behavior
+      # push, and force callers to pre-screen flags against a copy of this
+      # vocabulary.
+      -*)
+        worktree_message push-option-unknown "$1" "Error: unknown option '$1' for push" >&2
+        echo "Run: $0 push --help" >&2
+        return 1
+        ;;
+      *)
+        if [[ "$arg_seen" == true ]]; then
+          worktree_message push-target-count "2" "Error: push takes a single issue ID or path (got '$PUSH_ARG' and '$1')" >&2
+          return 1
+        fi
+        if [[ -z "$1" ]]; then
+          worktree_message push-target-empty "target" "Error: push target is empty — pass an issue ID or path, or no argument at all to push the current checkout" >&2
+          return 1
+        fi
+        PUSH_ARG="$1"
+        arg_seen=true
+        shift
+        ;;
+    esac
+  done
+}
+
+strip_trailing_slashes() {
+  local path="$1"
+  while [[ "$path" != "/" && "$path" == */ ]]; do
+    path="${path%/}"
+  done
+  printf '%s\n' "$path"
+}
+
+validate_issue_id() {
+  local issue="$1"
+  if [[ ! "$issue" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ || "$issue" == *..* ]]; then
+    worktree_message issue-invalid "$issue" "Error: invalid issue ID '$issue'. Use letters, numbers, '.', '_', or '-' only; start with a letter/number and do not include '..'." >&2
+    return 1
+  fi
+}
+
+normalize_worktree_config_path() {
+  local var="$1" path="$2"
+  path="$(strip_trailing_slashes "$path")"
+  if [[ -z "$path" || "$path" == "." || "$path" == /* || "$path" == *\\* || "$path" == *'*'* || "$path" == *\?* || "$path" == *'['* || "$path" == *']'* || "$path" == */../* || "$path" == ../* || "$path" == */.. || "$path" == ".." || "$path" == */./* || "$path" == ./* || "$path" == */. ]]; then
+    worktree_message config-path-invalid "$var=$2" "Error: invalid $var entry '$2'. Use a worktree-relative path without '.', '..', absolute, backslash, or glob metacharacter components." >&2
+    return 1
+  fi
+  printf '%s\n' "$path"
+}
+
+split_worktree_config_words() {
+  local value="$1"
+  local IFS=$' \t\n'
+  WORKTREE_CONFIG_WORDS=()
+  [[ -n "$value" ]] || return 0
+  read -r -a WORKTREE_CONFIG_WORDS <<<"$value"
+}
+
+path_is_under_path() {
+  local parent="$1" child="$2"
+  [[ "$child" == "$parent/"* ]]
+}
+
+validate_relative_symlink_target() {
+  local spec="$1" target="$2"
+  if [[ -z "$target" || "$target" == /* ]]; then
+    worktree_message relative-target-invalid "$spec" "Error: invalid WORKTREE_RELATIVE_SYMLINKS entry '$spec'. Target must be a non-empty relative path." >&2
+    return 1
+  fi
+}
+
+validate_worktree_setup_config() {
+  local path="" spec="" normalized="" target="" i j
+  local all_paths=()
+  local all_sources=()
+  local symlink_paths=()
+  local symlink_sources=()
+
+  split_worktree_config_words "${WORKTREE_MKDIRS:-}"
+  for path in ${WORKTREE_CONFIG_WORDS[@]+"${WORKTREE_CONFIG_WORDS[@]}"}; do
+    normalized="$(normalize_worktree_config_path WORKTREE_MKDIRS "$path")" || return 1
+    all_paths+=("$normalized")
+    all_sources+=("WORKTREE_MKDIRS")
+  done
+  split_worktree_config_words "${WORKTREE_SYMLINKS:-}"
+  for path in ${WORKTREE_CONFIG_WORDS[@]+"${WORKTREE_CONFIG_WORDS[@]}"}; do
+    normalized="$(normalize_worktree_config_path WORKTREE_SYMLINKS "$path")" || return 1
+    all_paths+=("$normalized")
+    all_sources+=("WORKTREE_SYMLINKS")
+    symlink_paths+=("$normalized")
+    symlink_sources+=("WORKTREE_SYMLINKS")
+  done
+  split_worktree_config_words "${WORKTREE_COPIES:-}"
+  for path in ${WORKTREE_CONFIG_WORDS[@]+"${WORKTREE_CONFIG_WORDS[@]}"}; do
+    normalized="$(normalize_worktree_config_path WORKTREE_COPIES "$path")" || return 1
+    all_paths+=("$normalized")
+    all_sources+=("WORKTREE_COPIES")
+  done
+  split_worktree_config_words "${WORKTREE_RELATIVE_SYMLINKS:-}"
+  for spec in ${WORKTREE_CONFIG_WORDS[@]+"${WORKTREE_CONFIG_WORDS[@]}"}; do
+    if [[ "$spec" != *=* ]]; then
+      worktree_message relative-spec-invalid "$spec" "Error: invalid WORKTREE_RELATIVE_SYMLINKS entry '$spec' (expected path=target)" >&2
+      return 1
+    fi
+    path="${spec%%=*}"
+    target="${spec#*=}"
+    normalized="$(normalize_worktree_config_path WORKTREE_RELATIVE_SYMLINKS "$path")" || return 1
+    validate_relative_symlink_target "$spec" "$target" || return 1
+    all_paths+=("$normalized")
+    all_sources+=("WORKTREE_RELATIVE_SYMLINKS")
+    symlink_paths+=("$normalized")
+    symlink_sources+=("WORKTREE_RELATIVE_SYMLINKS")
+  done
+
+  for ((i = 0; i < ${#symlink_paths[@]}; i++)); do
+    for ((j = 0; j < ${#all_paths[@]}; j++)); do
+      if [[ "${symlink_paths[$i]}" == "${all_paths[$j]}" ]]; then
+        if [[ "${symlink_sources[$i]}" != "${all_sources[$j]}" ]]; then
+          worktree_message config-path-overlap "${all_paths[$j]}" "Error: configured worktree path '${all_paths[$j]}' is both a symlink target (${symlink_sources[$i]}) and a ${all_sources[$j]} entry; refusing setup to avoid following the symlink target." >&2
+          return 1
+        fi
+        continue
+      fi
+      if path_is_under_path "${symlink_paths[$i]}" "${all_paths[$j]}"; then
+        worktree_message config-path-nested "${all_paths[$j]}" "Error: configured worktree path '${all_paths[$j]}' is inside symlink path '${symlink_paths[$i]}'; refusing setup to avoid following the symlink target." >&2
+        return 1
+      fi
+    done
+  done
+}
+
+worktree_symlink_prefix() {
+  local wt="$1" path="$2" include_leaf="${3:-false}"
+  local parts=() prefix="$wt" limit i
+  IFS='/' read -r -a parts <<<"$path"
+  limit="${#parts[@]}"
+  if [[ "$include_leaf" != true ]]; then
+    limit=$((limit - 1))
+  fi
+  for ((i = 0; i < limit; i++)); do
+    prefix="$prefix/${parts[$i]}"
+    if [[ -L "$prefix" ]]; then
+      printf '%s\n' "$prefix"
+      return 0
+    fi
+  done
+  return 1
+}
+
+ensure_worktree_path_safe() {
+  local wt="$1" path="$2" include_leaf="${3:-false}" link_path=""
+  link_path="$(worktree_symlink_prefix "$wt" "$path" "$include_leaf" 2>/dev/null || true)"
+  if [[ -n "$link_path" ]]; then
+    worktree_message path-symlink-parent "$path" "Error: refusing to write '$path' in $wt because '$link_path' is a symlink." >&2
+    return 1
+  fi
+}
+
+mkdir_inside_worktree() {
+  local wt="$1" path="$2"
+  ensure_worktree_path_safe "$wt" "$path" true || return 1
+  if ! mkdir -p "$wt/$path" 2>/dev/null; then
+    worktree_message mkdir-failed "$wt/$path" "Error: could not create worktree directory '$path' in $wt." >&2
+    return 1
+  fi
+}
+
+resolve_worktree_base_dir() {
+  local raw="${WORKTREE_BASE_DIR:-}"
+  local path
+  if [[ -z "$raw" ]]; then
+    # Default: an external per-repo dir beside the checkout. Worktrees (and
+    # their build outputs) must not live under the repo root — an editor
+    # recursively watching the repo would ingest every worktree's build
+    # artifacts and can exhaust the per-user inotify budget. A shared sibling
+    # like ../trees would collide across repos (two repos' issue-1 would
+    # resolve to the same path), so the repo name disambiguates.
+    path="$(dirname "$PROJECT_ROOT")/.worktrees/$(basename "$PROJECT_ROOT")"
+  else
+    if [[ "$raw" == "~" ]]; then
+      raw="${HOME:?WORKTREE_BASE_DIR uses ~ but HOME is not set}"
+    elif [[ "$raw" == "~/"* ]]; then
+      # ${raw:2}, not ${raw#~/}: an unquoted ~ in a strip pattern is itself
+      # tilde-expanded to $HOME, so the prefix would never match.
+      raw="${HOME:?WORKTREE_BASE_DIR uses ~ but HOME is not set}/${raw:2}"
+    fi
+
+    raw="$(strip_trailing_slashes "$raw")"
+
+    if [[ "$raw" == /* ]]; then
+      path="$raw"
+    else
+      path="$PROJECT_ROOT/$raw"
+    fi
+  fi
+
+  [[ "$path" == "/" ]] && { printf '/\n'; return; }
+
+  local parent name
+  parent="$(dirname "$path")"
+  name="$(basename "$path")"
+  if [[ -d "$parent" ]]; then
+    printf '%s/%s\n' "$(cd "$parent" && pwd -P)" "$name"
+  else
+    printf '%s\n' "$path"
+  fi
+}
+
+# Layout: project/main (repo) + configured parent dir (worktrees)
+TREES_DIR="$(resolve_worktree_base_dir)"
+
+# Detect default branch (configurable, auto-detected, fallback: main)
+detect_default_branch() {
+  if [[ -n "${WORKTREE_DEFAULT_BRANCH:-}" ]]; then
+    echo "$WORKTREE_DEFAULT_BRANCH"
+    return
+  fi
+  local detected
+  detected=$(git -C "$PROJECT_ROOT" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||')
+  echo "${detected:-main}"
+}
+DEFAULT_BRANCH="$(detect_default_branch)"
+
+# Refresh one remote for ownership discovery. initial-work claims must never treat
+# an outage or stale remote-tracking refs as proof that a branch is unowned.
+fetch_ownership_remote() {
+  local remote="$1" output=""
+  if output="$(git_with_github_https_auth -C "$PROJECT_ROOT" fetch --prune "$remote" 2>&1)"; then
+    return 0
+  fi
+  worktree_message ownership-fetch-failed "$remote" "Error: Could not refresh remote '$remote' for authoritative worktree ownership discovery." >&2
+  [[ -n "$output" ]] && sed 's/^/  /' <<<"$output" >&2
+  return 1
+}
+
+# Discovered ls-remote --heads output per remote. Bash 3.2 (macOS system
+# bash) has no associative arrays, so the map is a pair of parallel indexed
+# arrays scanned linearly; it stays tiny (one entry per reachable remote).
+OWNERSHIP_REMOTE_HEAD_NAMES=()
+OWNERSHIP_REMOTE_HEAD_REFS=()
+
+ownership_heads_for_remote() {
+  local remote="$1" i
+  for ((i = 0; i < ${#OWNERSHIP_REMOTE_HEAD_NAMES[@]}; i++)); do
+    if [[ "${OWNERSHIP_REMOTE_HEAD_NAMES[$i]}" == "$remote" ]]; then
+      printf '%s\n' "${OWNERSHIP_REMOTE_HEAD_REFS[$i]}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+discover_ownership_remote_heads() {
+  local remotes=()
+  local remote="" output="" have_origin=false i
+  while IFS= read -r remote; do
+    [[ -n "$remote" ]] || continue
+    remotes+=("$remote")
+    if [[ "$remote" == "origin" ]]; then
+      have_origin=true
+    fi
+  done < <(git -C "$PROJECT_ROOT" remote)
+  if [[ "$have_origin" != true ]]; then
+    worktree_message origin-required "origin" "Error: Remote 'origin' is required for authoritative worktree ownership discovery." >&2
+    return 1
+  fi
+
+  OWNERSHIP_REMOTE_HEAD_NAMES=()
+  OWNERSHIP_REMOTE_HEAD_REFS=()
+  for ((i = 0; i < ${#remotes[@]}; i++)); do
+    remote="${remotes[$i]}"
+    if ! output="$(git_with_github_https_auth -C "$PROJECT_ROOT" ls-remote --heads "$remote" 2>&1)"; then
+      if [[ "$remote" == "origin" ]]; then
+        worktree_message ownership-query-failed "origin" "Error: Could not query remote 'origin' for authoritative worktree ownership discovery." >&2
+        [[ -n "$output" ]] && sed 's/^/  /' <<<"$output" >&2
+        return 1
+      fi
+      # An unreachable secondary remote cannot receive another session's
+      # pushes, so skipping it cannot hide active ownership; only origin is
+      # authoritative for initial-work claims.
+      worktree_message remote-unreachable "$remote" "warning: skipping unreachable remote '$remote' for ownership discovery" >&2
+      continue
+    fi
+    OWNERSHIP_REMOTE_HEAD_NAMES+=("$remote")
+    OWNERSHIP_REMOTE_HEAD_REFS+=("$output")
+  done
+}
+
+# Explicit owner reuse requires a fresh origin before rebasing.
+fetch_origin() {
+  fetch_ownership_remote origin
+}
+
+worktree_path() {
+  validate_issue_id "$1" || return 1
+  echo "$TREES_DIR/$(echo "$1" | tr '[:upper:]' '[:lower:]')"
+}
+
+issue_branch_name() {
+  echo "$1" | tr '[:upper:]' '[:lower:]'
+}
+
+current_checkout_path_for_issue() {
+  local issue="$1"
+  local expected_branch current_root current_branch
+  expected_branch="$(issue_branch_name "$issue")"
+  current_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  [[ -n "$current_root" ]] || return 1
+  current_branch="$(git -C "$current_root" branch --show-current 2>/dev/null || true)"
+  [[ -n "$current_branch" && "$current_branch" == "$expected_branch" ]] || return 1
+  printf '%s\n' "$current_root"
+}
+
+# Worktree link setup, health and repair.
+# shellcheck source=lib/links.sh
+source "$SCRIPT_DIR/lib/links.sh"
+
+# ─── Git-hook auto-repair ────────────────────────────────────────────────────
+#
+# The clobber that materializes a configured symlink happens at git-operation
+# time — rebase, merge, branch checkout — from any harness or a plain human
+# shell, so the use-time warning above only catches the flows this script sees.
+# The universal interception point is git itself: worktrees resolve hooks to
+# the MAIN checkout's hooks directory (`git rev-parse --git-path hooks` from a
+# worktree yields main's hooks dir), so one installation covers every worktree
+# and every harness.
+#
+# `core.hooksPath` is deliberately NOT used — it replaces the hooks directory
+# wholesale and would disable a consumer's own hooks. Instead the three stock
+# hooks that follow the destructive operations (post-checkout, post-merge,
+# post-rewrite) are created, or appended-to when they already exist, with one
+# marked delegating line; the actual logic lives in a helper file this script
+# owns outright and rewrites on every install.
+
+readonly WORKTREE_AUTOREPAIR_HELPER="kendex-worktree-autorepair"
+readonly WORKTREE_AUTOREPAIR_HOOKS="post-checkout post-merge post-rewrite"
+
+# The helper is POSIX sh and self-contained: it resolves the main checkout
+# from the common git dir, no-ops there, and otherwise delegates to this
+# script's repair-links from the main checkout (the worktree's own copy may be
+# among the clobbered files). stdin is redirected away because post-rewrite
+# feeds the rewritten-commit list on stdin and the repair must not consume it
+# from any hook content composed after ours. It never fails the git operation.
+write_worktree_autorepair_helper() {
+  local helper="$1" tmp=""
+  # The name is kendex-namespaced, but the non-destructive contract holds
+  # even against a collision: never write through a symlink, never replace a
+  # non-regular file, and never overwrite content missing our marker. Our
+  # own helper is rewritten on every install, via atomic rename.
+  if [[ -L "$helper" ]] || [[ -e "$helper" && ! -f "$helper" ]]; then
+    worktree_message autorepair-helper-nonfile "$helper" "Warning: $helper exists and is not a regular file; refusing to replace it." >&2
+    return 1
+  fi
+  if [[ -f "$helper" ]] && ! grep -q "kendex worktree auto-repair" "$helper" 2>/dev/null; then
+    worktree_message autorepair-helper-foreign "$helper" "Warning: $helper exists but was not written by the worktree skill; refusing to overwrite it." >&2
+    return 1
+  fi
+  tmp="$helper.tmp.$$"
+  cat >"$tmp" <<'HELPER' || { rm -f "$tmp"; return 1; }
+#!/bin/sh
+# kendex worktree auto-repair. Managed by the worktree skill and
+# rewritten on every install — do not edit. Re-asserts configured
+# WORKTREE_SYMLINKS entries in a linked worktree after a git operation that
+# can re-materialize them as real directories. Never fails the git operation.
+common="$(git rev-parse --git-common-dir 2>/dev/null)" || exit 0
+[ -n "$common" ] || exit 0
+case "$common" in /*) ;; *) common="$PWD/$common" ;; esac
+main="$(dirname "$common")"
+top="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+[ -n "$top" ] || exit 0
+main_phys="$(cd "$main" 2>/dev/null && pwd -P)" || exit 0
+top_phys="$(cd "$top" 2>/dev/null && pwd -P)" || exit 0
+# The main checkout's configured paths are real directories by design.
+[ "$top_phys" = "$main_phys" ] && exit 0
+for script in "$main_phys/.agents/skills/worktree/scripts/worktree" \
+              "$main_phys/skills/worktree/scripts/worktree"; do
+  if [ -x "$script" ]; then
+    "$script" repair-links "$top_phys" </dev/null || :
+    break
+  fi
+done
+exit 0
+HELPER
+  chmod +x "$tmp" 2>/dev/null && mv -f "$tmp" "$helper" || {
+    rm -f "$tmp"
+    return 1
+  }
+}
+
+# Install (or refresh) the shared auto-repair hooks in the common hooks dir.
+# Best-effort by design: every failure is a warning and exit 0, because a repo
+# where the hooks cannot be written must still get a fully provisioned
+# worktree — it just keeps only the use-time materialization warning.
+install_worktree_autorepair_hooks() {
+  local hooks_dir="" hook="" hook_path="" custom_hooks=""
+  # The delegating line must be exit-status transparent when appended to an
+  # existing hook: post-checkout's exit status becomes git's, so a consumer
+  # hook whose final command deliberately returns nonzero must keep doing so.
+  # $? is captured first and re-asserted last (in a subshell, so hook content
+  # a later tool appends after this line still runs).
+  local call_line='kendex_wt_rc=$?; kendex_wt_hooks_dir="$(git rev-parse --git-path hooks 2>/dev/null)" && [ -x "$kendex_wt_hooks_dir/kendex-worktree-autorepair" ] && "$kendex_wt_hooks_dir/kendex-worktree-autorepair" "$@" || :; ( exit "$kendex_wt_rc" )  # kendex-worktree-autorepair'
+
+  custom_hooks="$(git -C "$PROJECT_ROOT" config --get core.hooksPath 2>/dev/null || true)"
+  if [[ -n "$custom_hooks" ]]; then
+    worktree_message hooks-path-custom "$custom_hooks" "Warning: core.hooksPath is set ('$custom_hooks'); the worktree auto-repair git hooks were NOT installed." >&2
+    echo "  Have your post-checkout/post-merge/post-rewrite hooks run: $0 repair-links" >&2
+    return 0
+  fi
+
+  hooks_dir="$PROJECT_COMMON_GIT_DIR/hooks"
+  if ! mkdir -p "$hooks_dir" 2>/dev/null; then
+    worktree_message hooks-directory-failed "$hooks_dir" "Warning: could not create $hooks_dir; the worktree auto-repair git hooks were NOT installed." >&2
+    return 0
+  fi
+  if ! write_worktree_autorepair_helper "$hooks_dir/$WORKTREE_AUTOREPAIR_HELPER"; then
+    worktree_message hook-helper-write-failed "$hooks_dir/$WORKTREE_AUTOREPAIR_HELPER" "Warning: could not write $hooks_dir/$WORKTREE_AUTOREPAIR_HELPER; the worktree auto-repair git hooks were NOT installed." >&2
+    return 0
+  fi
+
+  for hook in $WORKTREE_AUTOREPAIR_HOOKS; do
+    hook_path="$hooks_dir/$hook"
+    # A symlinked hook points at a shared or externally managed target —
+    # writing through it (live) or materializing its target (dangling, which
+    # passes `! -e`) would modify content this install does not own.
+    if [[ -L "$hook_path" ]]; then
+      worktree_message hook-symlink "$hook_path" "Warning: $hook_path is a symlink; not modifying its target." >&2
+      echo "  Have it run: $0 repair-links" >&2
+      continue
+    fi
+    if [[ ! -e "$hook_path" ]]; then
+      printf '#!/bin/sh\n%s\n' "$call_line" >"$hook_path" 2>/dev/null || {
+        worktree_message hook-write-failed "$hook_path" "Warning: could not write $hook_path; auto-repair will not run on $hook." >&2
+        continue
+      }
+      chmod +x "$hook_path" 2>/dev/null || true
+      continue
+    fi
+    # Compose with existing hook content, never overwrite it. The marker makes
+    # the append idempotent across create/fix-links runs.
+    if grep -qF "$WORKTREE_AUTOREPAIR_HELPER" "$hook_path" 2>/dev/null; then
+      continue
+    fi
+    if [[ ! -x "$hook_path" ]]; then
+      worktree_message hook-disabled "$hook_path" "Warning: $hook_path exists but is not executable (a disabled hook); not appending the auto-repair line to it." >&2
+      continue
+    fi
+    if ! head -n 1 "$hook_path" | grep -qE '^#!.*(sh|bash|dash|ksh|zsh)([[:space:]]|$)'; then
+      worktree_message hook-not-shell "$hook_path" "Warning: $hook_path is not a shell script; not appending the auto-repair line." >&2
+      echo "  Have it run: $0 repair-links" >&2
+      continue
+    fi
+    # Guarantee our line starts on its own line even when the existing hook
+    # has no trailing newline.
+    if [[ -s "$hook_path" && -n "$(tail -c 1 "$hook_path" 2>/dev/null)" ]]; then
+      printf '\n' >>"$hook_path"
+    fi
+    printf '%s\n' "$call_line" >>"$hook_path"
+  done
+  return 0
+}
+
+configure_worktree_git() {
+  local wt="$1"
+
+  # Required before writing per-worktree git config. Safe to repeat.
+  git -C "$PROJECT_ROOT" config extensions.worktreeConfig true 2>/dev/null || true
+
+  # Add bot remote for agent pushes (if configured).
+  if [[ -n "${BOT_REMOTE_NAME:-}" && -n "${BOT_REMOTE_URL:-}" ]]; then
+    git -C "$wt" remote add "$BOT_REMOTE_NAME" "$BOT_REMOTE_URL" 2>/dev/null || true
+  fi
+
+  # Set agent git identity (if configured).
+  if [[ -n "${BOT_NAME:-}" ]]; then
+    git -C "$wt" config --worktree user.name "$BOT_NAME"
+    git -C "$wt" config --worktree user.email "${BOT_EMAIL:-}"
+    if [[ -n "${BOT_SIGNING_KEY:-}" ]]; then
+      git -C "$wt" config --worktree gpg.format ssh
+      git -C "$wt" config --worktree user.signingkey "$BOT_SIGNING_KEY"
+      git -C "$wt" config --worktree commit.gpgsign true
+    fi
+  fi
+}
+
+# Provisioning applied to a worktree that some OTHER tool created — Codex
+# Desktop Environments, or Claude Code's WorktreeCreate hook. Nothing here is
+# app-specific; it is the same setup `create` applies once git has made the
+# worktree, which is why both entry points share it.
+setup_app_worktree() {
+  local wt="$1"
+
+  setup_worktree_links "$wt" || return 1
+  configure_worktree_git "$wt" || return 1
+  # Best-effort by contract: a repo where the hooks cannot be written
+  # still gets a fully provisioned worktree.
+  install_worktree_autorepair_hooks
+}
+
+is_git_worktree_path() {
+  local wt="$1"
+  [[ -f "$wt/.git" || -d "$wt/.git" ]]
+}
+
+registered_worktree_path() {
+  local target="$1" target_real="" line="" registered="" registered_real=""
+  target_real="$(canonical_existing_dir "$target" 2>/dev/null)" || return 1
+
+  while IFS= read -r -d '' line; do
+    [[ "$line" == worktree\ * ]] || continue
+    registered="${line#worktree }"
+    registered_real="$(canonical_existing_dir "$registered" 2>/dev/null || true)"
+    if [[ -n "$registered_real" && "$registered_real" == "$target_real" ]]; then
+      printf '%s\n' "$registered_real"
+      return 0
+    fi
+  done < <(git -C "$PROJECT_ROOT" worktree list --porcelain -z)
+  return 1
+}
+
+is_registered_project_worktree() {
+  local target="$1" registered="" common_dir=""
+  registered="$(registered_worktree_path "$target")" || return 1
+  common_dir="$(git_common_dir_path "$registered" 2>/dev/null)" || return 1
+  [[ "$common_dir" == "$PROJECT_COMMON_GIT_DIR" ]]
+}
+
+require_registered_project_worktree() {
+  local target="$1" action="$2"
+  if ! is_git_worktree_path "$target"; then
+    worktree_message path-not-worktree "$target" "Error: Not a git worktree: $target" >&2
+    return 1
+  fi
+  if ! is_registered_project_worktree "$target"; then
+    worktree_message path-unregistered "$target" "Error: $target is not a registered worktree of $PROJECT_ROOT; refusing to $action." >&2
+    return 1
+  fi
+}
+
+require_non_main_project_worktree() {
+  local target="$1" action="$2"
+  require_registered_project_worktree "$target" "$action" || return 1
+  if same_canonical_dir "$target" "$PROJECT_ROOT"; then
+    worktree_message path-main "$target" "Error: $target is the main checkout for $PROJECT_ROOT; refusing to $action." >&2
+    return 1
+  fi
+}
+
+worktree_for_branch() {
+  local branch="$1" line="" current_path=""
+  while IFS= read -r -d '' line; do
+    case "$line" in
+      worktree\ *) current_path="${line#worktree }" ;;
+      "branch refs/heads/$branch")
+        # A stanza without a worktree path is not ownership proof; success
+        # must always carry a usable path for command-substitution callers.
+        if [[ -n "$current_path" ]]; then
+          # Report the physical path when it resolves; git may have recorded
+          # a lexical (symlinked) spelling. A stale registration whose
+          # directory is gone is reported as recorded.
+          canonical_existing_dir "$current_path" 2>/dev/null || printf '%s\n' "$current_path"
+          return 0
+        fi
+        ;;
+      '') current_path="" ;;
+    esac
+  done < <(git -C "$PROJECT_ROOT" worktree list --porcelain -z)
+  return 1
+}
+
+# Resolve an issue ID to its worktree path. Prefers the configured
+# WORKTREE_BASE_DIR target; when nothing exists there, falls back to the
+# worktree registered for the issue branch so trees created under a different
+# WORKTREE_BASE_DIR keep working unmoved (no auto-migration). The main
+# checkout is never a fallback target.
+worktree_path_for_issue() {
+  local issue="$1" configured="" registered=""
+  validate_issue_id "$issue" || return 1
+  configured="$(worktree_path "$issue")"
+  if [[ -e "$configured" || -L "$configured" ]]; then
+    printf '%s\n' "$configured"
+    return 0
+  fi
+  registered="$(worktree_for_branch "$(issue_branch_name "$issue")" 2>/dev/null || true)"
+  if [[ -n "$registered" ]] && ! same_canonical_dir "$registered" "$PROJECT_ROOT"; then
+    printf '%s\n' "$registered"
+    return 0
+  fi
+  printf '%s\n' "$configured"
+}
+
+# Restack, replay and paused-restack state.
+# shellcheck source=lib/restack-state.sh
+source "$SCRIPT_DIR/lib/restack-state.sh"
+
+open_pr_for_branch() {
+  local branch="$1"
+  local result="" output=""
+  [[ -n "$branch" ]] || return 0
+  if ! command -v gh >/dev/null 2>&1; then
+    worktree_message gh-required "ownership" "Error: gh is required for authoritative pull-request ownership discovery." >&2
+    return 1
+  fi
+
+  if ! output="$(gh pr list --state open --head "$branch" --limit 1 --json number,url --jq '.[0] | select(.) | "\(.number)\t\(.url)"' 2>&1)"; then
+    worktree_message pr-query-failed "$branch" "Error: Could not query open pull requests for branch '$branch'; refusing to assume it is unowned." >&2
+    [[ -n "$output" ]] && sed 's/^/  /' <<<"$output" >&2
+    return 1
+  fi
+  result="$output"
+  printf '%s\n' "$result"
+}
+
+# Merge proof for a branch ancestry cannot see. Work that lands by squash — the
+# whole fleet, through the merge queue — is rewritten into a fresh commit, so
+# the branch tip is an ancestor of nothing and `merge-base --is-ancestor`
+# reports a merged branch as pending forever. The forge's merged PR is the
+# proof that survives the rewrite.
+#
+# The proof is COMMIT identity, never the branch name. `issue_branch_name`
+# derives one name per issue, so every worktree ever made for an issue reuses
+# it: a name-only match hands the merged record of last month's PR to today's
+# fresh work and force-deletes it. The tip this repository has right now must
+# be the exact commit some merged PR carried, and `--base` keeps the answer to
+# PRs that landed on the default branch.
+#
+# Exit 0: merged, PR number on stdout. Exit 1: provably NOT merged, either
+# because no merged PR carries the name or because none of the ones that do has
+# this tip as its head — an identity mismatch is a definite answer, so it reads
+# as unmerged rather than as a failed lookup. Exit 2 stays reserved for a lookup
+# that genuinely cannot answer: gh missing, gh failing, a response this cannot
+# read. 1 and 2 print a one-line reason on stdout; only exit 0 authorizes a
+# delete.
+merged_pr_for_branch() {
+  local branch="$1" tip="" rows="" err_file="" detail="" oid="" number="" seen="" rc=0
+  [[ -n "$branch" ]] || { printf 'no branch to look up\n'; return 2; }
+  if ! command -v gh >/dev/null 2>&1; then
+    printf 'gh is not installed\n'
+    return 2
+  fi
+  tip="$(git -C "$PROJECT_ROOT" rev-parse --verify --quiet "refs/heads/$branch" || true)"
+  if [[ -z "$tip" ]]; then
+    printf 'branch has no local tip to compare a merged pull request against\n'
+    return 2
+  fi
+  # A fork inspection branch is named fork-pr-<n> (see resolve_pr_head), and
+  # GitHub files that PR under the contributor's head name, so a --head query
+  # can never find it. The number in the name is the lookup key instead.
+  if [[ "$branch" =~ ^fork-pr-([0-9]+)$ ]]; then
+    merged_fork_pr_at_tip "${BASH_REMATCH[1]}" "$tip"
+    return $?
+  fi
+  if ! err_file="$(mktemp "${TMPDIR:-/tmp}/worktree-merged-pr.XXXXXX")"; then
+    printf 'could not create a scratch file for the gh diagnostic\n'
+    return 2
+  fi
+  # stdout and stderr are captured SEPARATELY. Folded together, gh's routine
+  # chatter — an update notice, an auth warning — would land beside the answer
+  # and fail the parse, turning the proof off for every branch at once.
+  # Every merged PR sharing the name is scanned, not just the newest row.
+  #
+  # The query answers for THIS checkout, the way reconcile-work-items does it:
+  # an inherited GH_REPO / GITHUB_REPOSITORY redirect would let another
+  # repository's same-named branch at the same commit authorize a delete here,
+  # and a fork's PR is someone else's merge, so cross-repository rows are cut.
+  rows="$( (cd "$PROJECT_ROOT" && env -u GH_REPO -u GITHUB_REPOSITORY \
+              gh pr list --state merged --head "$branch" \
+              --base "$DEFAULT_BRANCH" --limit 100 \
+              --json number,headRefOid,isCrossRepository \
+              --jq '.[] | select(.isCrossRepository | not) | "\(.headRefOid) \(.number)"') 2>"$err_file" )" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    detail="$(tr '\n' ' ' <"$err_file")"
+    rm -f "$err_file"
+    printf '%s\n' "${detail:-gh pr list failed (exit $rc)}"
+    return 2
+  fi
+  rm -f "$err_file"
+  if [[ -z "$rows" ]]; then
+    printf 'no pull request merged into %s carries this branch name\n' "$DEFAULT_BRANCH"
+    return 1
+  fi
+  # Each row is validated as it is read: a row that is not a commit id and a
+  # number returns 2, so contamination anywhere ahead of a match stops the
+  # scan. A validated row whose oid equals the tip is the proof, and the scan
+  # stops there.
+  while read -r oid number; do
+    [[ -n "$oid$number" ]] || continue
+    if ! [[ "$oid" =~ ^[0-9a-f]{7,64}$ ]] || ! [[ "$number" =~ ^[0-9]+$ ]]; then
+      printf 'gh returned a row this cannot read: %s %s\n' "$oid" "$number"
+      return 2
+    fi
+    seen="$seen #$number"
+    if [[ "$oid" == "$tip" ]]; then
+      printf '%s\n' "$number"
+      return 0
+    fi
+  done <<<"$rows"
+  printf 'carries work past its merged pull request (merged under this name:%s; none has this tip %s as its head)\n' \
+    "$seen" "$tip"
+  return 1
+}
+
+# The merged proof for a fork-pr-<n> branch: PR <n> is merged into the default
+# branch and the head it merged is this tip. Same exit contract as
+# merged_pr_for_branch; the proof is commit identity, and the PR number in the
+# branch name is only the lookup key.
+merged_fork_pr_at_tip() {
+  local pr="$1" tip="$2" err_file="" row="" detail="" state="" base="" oid="" rc=0
+  if ! err_file="$(mktemp "${TMPDIR:-/tmp}/worktree-merged-pr.XXXXXX")"; then
+    printf 'could not create a scratch file for the gh diagnostic\n'
+    return 2
+  fi
+  row="$( (cd "$PROJECT_ROOT" && env -u GH_REPO -u GITHUB_REPOSITORY \
+             gh pr view "$pr" --json state,baseRefName,headRefOid \
+             --jq '[.state, .baseRefName, .headRefOid] | @tsv') 2>"$err_file" )" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    detail="$(tr '\n' ' ' <"$err_file")"
+    rm -f "$err_file"
+    printf '%s\n' "${detail:-gh pr view $pr failed (exit $rc)}"
+    return 2
+  fi
+  rm -f "$err_file"
+  IFS=$'\t' read -r state base oid <<<"$row"
+  if [[ -z "$state" || -z "$base" ]] || ! [[ "$oid" =~ ^[0-9a-f]{7,64}$ ]]; then
+    printf 'gh returned a pull request #%s record this cannot read: %s\n' "$pr" "$row"
+    return 2
+  fi
+  if [[ "$state" != "MERGED" ]]; then
+    printf 'fork pull request #%s is %s, not merged\n' "$pr" "$state"
+    return 1
+  fi
+  if [[ "$base" != "$DEFAULT_BRANCH" ]]; then
+    printf 'fork pull request #%s merged into %s, not %s\n' "$pr" "$base" "$DEFAULT_BRANCH"
+    return 1
+  fi
+  if [[ "$oid" != "$tip" ]]; then
+    printf 'carries work past its merged pull request (#%s merged head %s, not this tip %s)\n' "$pr" "$oid" "$tip"
+    return 1
+  fi
+  printf '%s\n' "$pr"
+  return 0
+}
+
+# Sets BASE to the branch the PR checks out as. A same-repository PR leaves
+# PR_HEAD_OID empty, sets BASE to its head branch name and takes the plain
+# --base path. A fork PR sets PR_HEAD_OID and BASE to fork-pr-<n>: its head
+# branch lives in the contributor's repository, so origin carries no such
+# head and the commit is reachable only through origin's refs/pull/<n>/head.
+# The contributor's branch name is not reused locally; it shares a namespace
+# with the user's own branches (a fork PR opened from `main` would name the
+# main checkout's branch) and with origin's heads (a push from the inspection
+# worktree would land on an unrelated origin branch of that name).
+resolve_pr_head() {
+  local pr="$1" output="" name="" oid="" cross=""
+  if ! command -v gh >/dev/null 2>&1; then
+    worktree_message gh-required "$pr" "Error: gh is required to resolve PR #$pr" >&2
+    return 1
+  fi
+  if ! output="$(gh pr view "$pr" --json headRefName,headRefOid,isCrossRepository \
+                  -q '[.headRefName, .headRefOid, (.isCrossRepository | tostring)] | @tsv' 2>&1)"; then
+    worktree_message pr-branch-missing "$pr" "Error: Could not find branch for PR #$pr" >&2
+    [[ -n "$output" ]] && sed 's/^/  /' <<<"$output" >&2
+    return 1
+  fi
+  IFS=$'\t' read -r name oid cross <<<"$output"
+  if [[ -z "$name" ]] || ! [[ "$oid" =~ ^[0-9a-f]{40,64}$ ]]; then
+    worktree_message pr-branch-missing "$pr" "Error: Could not find branch for PR #$pr" >&2
+    return 1
+  fi
+  case "$cross" in
+    true)
+      PR_HEAD_OID="$oid"
+      BASE="fork-pr-$pr"
+      return 0
+      ;;
+    false) PR_HEAD_OID="" ;;
+    *)
+      worktree_message pr-cross-invalid "pr=$pr value=$cross" "Error: gh reported an isCrossRepository value this cannot read for PR #$pr: '$cross'" >&2
+      return 1
+      ;;
+  esac
+  BASE="$name"
+}
+
+# The start point for --base/--pr must exist before any mutation. A fork PR
+# head is fetched from origin's refs/pull/<n>/head, and the fetch counts only
+# if it delivered the commit gh reported as the head. No remote is added for
+# the fork, so nothing here can ever push to it.
+ensure_base_start_point() {
+  local pr="$1" base="$2" head_oid="$3" output=""
+  if [[ -z "$head_oid" ]]; then
+    if ! remote_branch_discovered origin "$base"; then
+      worktree_message base-unavailable "origin/$base" "Error: Cannot resolve remote branch 'origin/$base'" >&2
+      return 1
+    fi
+    return 0
+  fi
+  if ! output="$(git_with_github_https_auth -C "$PROJECT_ROOT" fetch origin "refs/pull/$pr/head" 2>&1)"; then
+    worktree_message fork-fetch-failed "$pr" "Error: Could not fetch refs/pull/$pr/head from origin for fork PR #$pr" >&2
+    [[ -n "$output" ]] && sed 's/^/  /' <<<"$output" >&2
+    return 1
+  fi
+  if ! git -C "$PROJECT_ROOT" rev-parse --verify --quiet "$head_oid^{commit}" >/dev/null; then
+    worktree_message fork-head-mismatch "pr=$pr head=$head_oid" "Error: refs/pull/$pr/head on origin did not deliver commit $head_oid, the head gh reports for PR #$pr" >&2
+    return 1
+  fi
+  ensure_fork_branch_resettable "$pr" "$base" "$head_oid"
+}
+
+# A fork PR's local branch fork-pr-<n> survives `remove` while the PR is
+# open, so a second inspection finds it. The fork add resets it to the PR
+# head; that is lossless only when every commit on the stale branch is in
+# the PR head. A branch that diverged (commits made in the inspection
+# worktree) is refused by name rather than reset.
+ensure_fork_branch_resettable() {
+  local pr="$1" base="$2" head_oid="$3"
+  git -C "$PROJECT_ROOT" rev-parse --verify --quiet "refs/heads/$base" >/dev/null || return 0
+  if git -C "$PROJECT_ROOT" merge-base --is-ancestor "refs/heads/$base" "$head_oid" 2>/dev/null; then
+    return 0
+  fi
+  worktree_message fork-branch-diverged "$base" "Error: Local branch '$base' has commits that are not in the head of fork PR #$pr; delete or rename that branch before inspecting the PR again." >&2
+  return 1
+}
+
+CANDIDATE_BRANCHES=()
+# Open-PR details per candidate branch; parallel indexed arrays for Bash 3.2
+# (see OWNERSHIP_REMOTE_HEAD_NAMES).
+CANDIDATE_OPEN_PR_BRANCHES=()
+CANDIDATE_OPEN_PR_DETAILS=()
+
+candidate_open_pr_details() {
+  local branch="$1" i
+  for ((i = 0; i < ${#CANDIDATE_OPEN_PR_BRANCHES[@]}; i++)); do
+    if [[ "${CANDIDATE_OPEN_PR_BRANCHES[$i]}" == "$branch" ]]; then
+      printf '%s\n' "${CANDIDATE_OPEN_PR_DETAILS[$i]}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+add_candidate_branch() {
+  local branch="$1" i
+  [[ -n "$branch" ]] || return 0
+  # Indexed loop: expanding an empty array with "${arr[@]}" is an unbound
+  # variable under Bash 3.2 with set -u.
+  for ((i = 0; i < ${#CANDIDATE_BRANCHES[@]}; i++)); do
+    [[ "${CANDIDATE_BRANCHES[$i]}" == "$branch" ]] && return 0
+  done
+  CANDIDATE_BRANCHES+=("$branch")
+}
+
+build_candidate_branches() {
+  local issue="$1" requested_branch="$2" issue_lower=""
+  issue_lower="$(issue_branch_name "$issue")"
+  CANDIDATE_BRANCHES=()
+  # The default branch always exists and is checked out in the main checkout;
+  # that is expected repository state, never evidence that issue work exists,
+  # so a requested branch naming it must not become an ownership candidate
+  # Only the unqualified spelling is filtered: requested_branch is a
+  # literal local branch name at every caller, and a local branch actually
+  # named "origin/<default>" must keep its ownership checks. The remote-
+  # qualified --base spelling is normalized separately in the create flow.
+  if [[ "${requested_branch:-}" == "$DEFAULT_BRANCH" ]]; then
+    requested_branch=""
+  fi
+  add_candidate_branch "${requested_branch:-$issue_lower}"
+  add_candidate_branch "$issue_lower"
+  if [[ -n "${BOT_NAME:-}" ]]; then
+    add_candidate_branch "$BOT_NAME/$issue_lower"
+  fi
+}
+
+discover_candidate_ownership() {
+  discover_ownership_remote_heads || return 1
+  CANDIDATE_OPEN_PR_BRANCHES=()
+  CANDIDATE_OPEN_PR_DETAILS=()
+
+  local branch pr_details
+  for branch in "${CANDIDATE_BRANCHES[@]}"; do
+    if ! pr_details="$(open_pr_for_branch "$branch")"; then
+      return 1
+    fi
+    CANDIDATE_OPEN_PR_BRANCHES+=("$branch")
+    CANDIDATE_OPEN_PR_DETAILS+=("$pr_details")
+  done
+}
+
+remote_ref_for_branch() {
+  local branch="$1" oid="" ref="" i
+  for ((i = 0; i < ${#OWNERSHIP_REMOTE_HEAD_NAMES[@]}; i++)); do
+    while read -r oid ref; do
+      if [[ -n "$oid" && "$ref" == "refs/heads/$branch" ]]; then
+        printf '%s/%s\n' "${OWNERSHIP_REMOTE_HEAD_NAMES[$i]}" "$branch"
+        return 0
+      fi
+    done <<<"${OWNERSHIP_REMOTE_HEAD_REFS[$i]}"
+  done
+  return 1
+}
+
+remote_branch_discovered() {
+  local remote="$1" branch="$2" heads="" oid="" ref=""
+  heads="$(ownership_heads_for_remote "$remote" || true)"
+  while read -r oid ref; do
+    [[ -n "$oid" && "$ref" == "refs/heads/$branch" ]] && return 0
+  done <<<"$heads"
+  return 1
+}
+
+remote_branch_oid_discovered() {
+  local remote="$1" branch="$2" heads="" oid="" ref=""
+  heads="$(ownership_heads_for_remote "$remote" || true)"
+  while read -r oid ref; do
+    if [[ -n "$oid" && "$ref" == "refs/heads/$branch" ]]; then
+      printf '%s\n' "$oid"
+      return 0
+    fi
+  done <<<"$heads"
+  return 1
+}
+
+scan_candidate_ownership() {
+  local issue="$1" branch="" existing_wt="" remote_ref="" pr_details="" pr_number=""
+  for branch in "${CANDIDATE_BRANCHES[@]}"; do
+    existing_wt="$(worktree_for_branch "$branch" 2>/dev/null || true)"
+    # The main checkout is never issue work, so it must never be rendered as
+    # a reusable worktree. It still blocks this id — git cannot check the
+    # branch out a second time — but the remedy is to move that work off the
+    # main checkout, not --reuse.
+    if [[ -n "$existing_wt" ]] && same_canonical_dir "$existing_wt" "$PROJECT_ROOT"; then
+      worktree_message branch-main-owned "$branch" "Active work already exists for '$issue'; refusing to create a duplicate worktree." >&2
+      echo "  Branch: $branch" >&2
+      echo "  Signal: checked out in the main checkout ($PROJECT_ROOT)" >&2
+      echo "No worktree was created and no local branch was rebased or modified." >&2
+      echo "The main checkout is never issue work and the branch cannot be checked out twice." >&2
+      echo "Move that work off the main checkout (or pick another issue id), then retry." >&2
+      return "$ACTIVE_WORK_EXIT"
+    fi
+    if [[ -n "$existing_wt" ]]; then
+      refuse_existing_worktree "$issue" "$existing_wt"
+      return "$ACTIVE_WORK_EXIT"
+    fi
+    pr_details="$(candidate_open_pr_details "$branch" || true)"
+    if [[ -n "$pr_details" ]]; then
+      pr_number="${pr_details%%$'\t'*}"
+      refuse_existing_branch "$issue" "$branch" pr "#$pr_number"
+      return "$ACTIVE_WORK_EXIT"
+    fi
+    if git -C "$PROJECT_ROOT" show-ref --verify --quiet "refs/heads/$branch"; then
+      refuse_existing_branch "$issue" "$branch" local
+      return "$ACTIVE_WORK_EXIT"
+    fi
+    remote_ref="$(remote_ref_for_branch "$branch" 2>/dev/null || true)"
+    if [[ -n "$remote_ref" ]]; then
+      refuse_existing_branch "$issue" "$branch" remote "$remote_ref"
+      return "$ACTIVE_WORK_EXIT"
+    fi
+  done
+  return 0
+}
+
+acquire_issue_claim_lock() {
+  local issue="$1" normalized_issue="" claim_key="" lock_path=""
+  if ! command -v flock >/dev/null 2>&1; then
+    worktree_message flock-required "claim" "Error: flock is required to serialize worktree claims." >&2
+    return 1
+  fi
+  normalized_issue="$(issue_branch_name "$issue")"
+  claim_key="$(printf '%s' "$normalized_issue" | git hash-object --stdin)"
+  lock_path="$PROJECT_COMMON_GIT_DIR/kendex-worktree-claim-$claim_key.lock"
+  # Fixed descriptor: Bash 3.2 cannot allocate a descriptor dynamically.
+  exec 9>"$lock_path"
+  ISSUE_CLAIM_LOCK_HELD=true
+  flock -x 9
+}
+
+release_issue_claim_lock() {
+  if [[ "${ISSUE_CLAIM_LOCK_HELD:-false}" == true ]]; then
+    flock -u 9 2>/dev/null || true
+    exec 9>&-
+    ISSUE_CLAIM_LOCK_HELD=false
+  fi
+}
+
+worktree_lock_reason() {
+  local wt="$1"
+  local lock_path="" reason=""
+  lock_path="$(registered_worktree_git_dir "$wt")" || return 1
+  lock_path="$lock_path/locked"
+  [[ -f "$lock_path" ]] || return 1
+  reason="$(head -n 1 "$lock_path" 2>/dev/null || true)"
+  printf '%s\n' "${reason:-locked}"
+}
+
+# ─── Session guard lifecycle ─────────────────────────────────────────────────
+#
+# `worktree-session-guard` wraps git's native worktree lock with owner/TTL lease
+# semantics. Claiming is deliberately NOT automatic — `create` never takes a
+# lease.
+#
+# The reason is that a lease means "a live session is working here", and only
+# something that knows a session's lifetime can say that truthfully. If `create`
+# claimed, every worktree would stay claimed for life (nothing but an explicit
+# `remove` releases), so a lease-aware `cleanup` would collect nothing without
+# `--stale` — trading a silent-destruction bug for a silent-accumulation one.
+# Claiming therefore stays with the caller that knows when work starts and ends
+# — the orchestrating workflow.
+#
+# What IS automatic is the destructive side, where an unguarded sweep collects
+# live worktrees under working sessions:
+#
+#   cleanup           never collects a worktree under a guard lease; `--stale`
+#                     collects leases past the TTL
+#   remove            releases only the caller's OWN lease, so a claiming
+#                     session can still tear down its own tree
+#   create --reuse    refuses a foreign lease by name, refreshes its own
+#
+SESSION_GUARD="$SCRIPT_DIR/worktree-session-guard"
+readonly SESSION_GUARD_DEFAULT_TTL_MINUTES=720
+
+# An unavailable guard must be loud: every lifecycle integration would
+# otherwise silently no-op, and cleanup would collect live worktrees, which is
+# what the guard exists to prevent. Warned once per invocation, not once per
+# worktree. The guard does not require flock — it falls back to a mkdir mutex
+# — so "the script is not executable" is the one way to lose the guard
+# silently; a guard that cannot take its lock fails its own commands loudly.
+SESSION_GUARD_WARNED=false
+session_guard_available() {
+  [[ -x "$SESSION_GUARD" ]] && return 0
+  if [[ "$SESSION_GUARD_WARNED" != true ]]; then
+    SESSION_GUARD_WARNED=true
+    worktree_message session-guard-unavailable "$SESSION_GUARD" "Warning: worktree-session-guard is not executable at $SESSION_GUARD; session leases were NOT checked or released, so worktrees are unguarded." >&2
+  fi
+  return 1
+}
+
+# The session's environment identity, mirroring the guard's own default owner
+# resolution. $USER is a login, not a session: two sessions on one machine
+# share it. This ladder is the fallback identity; issue-addressed commands
+# derive their primary identity from the issue ID via issue_session_owner.
+session_guard_owner() {
+  printf '%s' "${KENDEX_SESSION_OWNER:-${HT_SESSION_OWNER:-${USER:-}}}"
+}
+
+# Owner identity carried by an issue-addressed command (`remove <ID>`,
+# `create <ID> --reuse`). The documented claim the orchestrating workflow makes
+# is `claim [WORKTREE_PATH] --owner [ISSUE_ID]`, so on a default install — where no
+# session-owner env var is set — the issue ID IS the identity the lease
+# carries, and deriving it from the command's own argument is what makes claim
+# and release agree without any session env plumbing. Prints nothing
+# when the ID cannot be a lease owner: the guard caps owners at 64 characters
+# (the issue-ID charset is already a subset of the owner charset), and an
+# unusable owner would turn every probe into a usage failure.
+issue_session_owner() {
+  local issue="${1:-}"
+  [[ -n "$issue" && ${#issue} -le 64 && "$issue" =~ ^[A-Za-z0-9._:@+-]+$ ]] || return 0
+  printf '%s' "$issue"
+}
+
+# Read-only ownership probe. Sets SESSION_GUARD_PROBE_ERR to the guard's own
+# stderr so a caller can quote it verbatim (it names the owning session).
+# Returns the guard's status exit code: 0 ours, 3 no lock, 4 locked outside the
+# guard, 75 someone else's.
+#
+# `--repo` is passed deliberately: `status`/`release` accept it, so the probe
+# does not depend on the caller's cwd. `claim`/`refresh` REJECT it — see
+# refresh_own_session_lease.
+probe_session_lease() {
+  local wt="$1" owner="$2" rc=0
+  SESSION_GUARD_PROBE_ERR=""
+  SESSION_GUARD_PROBE_ERR="$("$SESSION_GUARD" status "$wt" --owner "$owner" --repo "$PROJECT_ROOT" 2>&1 >/dev/null)" || rc=$?
+  return "$rc"
+}
+
+# Release this session's OWN lease on a worktree it is about to remove. Without
+# this a session that claimed its worktree cannot tear it down — the lease is a
+# native git lock, so `refuse_locked_worktree` and git itself both refuse. It
+# must therefore run BEFORE that precheck, and after the ownership guard so a
+# foreign repository's lease is never touched.
+#
+# Ownership is proved by probe, once per identity the caller can claim: the
+# issue ID the command was addressed with first (the identity the orchestrating
+# workflow claims with), then the session env ladder. Only an owner-matching
+# guard lease is released. A foreign lease, a lock taken outside the guard,
+# and an unreadable state are all left exactly as they are and fall through to
+# the precheck, which names the owner and the way out.
+release_own_session_lease() {
+  local wt="$1" issue_owner="${2:-}" env_owner owner="" candidate rc
+  session_guard_available || return 0
+  env_owner="$(session_guard_owner)"
+  if [[ "$env_owner" == "$issue_owner" ]]; then
+    env_owner=""
+  fi
+  for candidate in "$issue_owner" "$env_owner"; do
+    [[ -n "$candidate" ]] || continue
+    rc=0
+    probe_session_lease "$wt" "$candidate" || rc=$?
+    # 0 alone means "a guard lease exists AND this identity owns it"; 75 is an
+    # identity mismatch the next candidate may still resolve. Anything else
+    # (no lease, foreign lock, unreadable) holds for every identity alike.
+    case "$rc" in
+      0) owner="$candidate"; break ;;
+      75) continue ;;
+      *) return 0 ;;
+    esac
+  done
+  [[ -n "$owner" ]] || return 0
+  if ! "$SESSION_GUARD" release "$wt" --owner "$owner" --repo "$PROJECT_ROOT" >/dev/null; then
+    worktree_message lease-release-failed "$wt" "Error: could not release this session's guard lease on $wt; refusing to remove it." >&2
+    echo "  Release it, then retry: $SESSION_GUARD release \"$wt\" --owner \"$owner\"" >&2
+    return 1
+  fi
+  worktree_message lease-released "path=$wt owner=$owner" "Released session guard lease (owner=$owner): $wt" >&2
+  return 0
+}
+
+# `--reuse`/`--restack` re-enter an existing worktree, which is the
+# second-implementer gap for the session-lifetime case. A foreign lease
+# is refused by name; our own is refreshed so a long reuse cycle cannot age past
+# the TTL and be swept while it is still working.
+reuse_respects_session_lease() {
+  local wt="$1" issue_owner="${2:-}" env_owner owner="" candidate rc=0
+  session_guard_available || return 0
+  env_owner="$(session_guard_owner)"
+  if [[ "$env_owner" == "$issue_owner" ]]; then
+    env_owner=""
+  fi
+  # Same identity order as release_own_session_lease: the issue ID the command
+  # was addressed with (the identity the orchestrating workflow claims with),
+  # then the session env ladder. A 75 only means "not this identity's lease" — the next
+  # candidate may still own it; every other state holds for all identities.
+  for candidate in "$issue_owner" "$env_owner"; do
+    [[ -n "$candidate" ]] || continue
+    rc=0
+    probe_session_lease "$wt" "$candidate" || rc=$?
+    case "$rc" in
+      3) return 0 ;;  # no lock at all
+      4) return 0 ;;  # locked outside the guard — refuse_locked_worktree's business
+      0) owner="$candidate"; break ;;
+      75) continue ;;
+      *)
+        worktree_message lease-read-failed "path=$wt exit=$rc" "Error: could not read the session guard state of $wt (exit $rc); refusing to reuse it." >&2
+        [[ -n "$SESSION_GUARD_PROBE_ERR" ]] && printf '%s\n' "$SESSION_GUARD_PROBE_ERR" >&2
+        return 1
+        ;;
+    esac
+  done
+  if [[ -z "$owner" ]]; then
+    # No identity at all (no issue-usable ID and an empty env ladder) means
+    # nothing was probed; proceed rather than refusing on silence.
+    [[ "$rc" -eq 75 ]] || return 0
+    worktree_message lease-foreign "$wt" "Error: $wt is claimed by another session; refusing to reuse it." >&2
+    [[ -n "$SESSION_GUARD_PROBE_ERR" ]] && printf '%s\n' "$SESSION_GUARD_PROBE_ERR" >&2
+    echo "Coordinate with the owning session instead of reusing its worktree." >&2
+    return 1
+  fi
+  if ! "$SESSION_GUARD" refresh "$wt" --owner "$owner" >/dev/null; then
+    worktree_message lease-refresh-failed "$wt" "Error: could not refresh the session guard lease on $wt." >&2
+    return 1
+  fi
+  return 0
+}
+
+# The guard state of a worktree as one word in CLEANUP_LEASE_STATE — none,
+# held, unmanaged or unreadable — with the probe's exit status in
+# CLEANUP_LEASE_RC. One probe answers it for every sweep, so the removal path
+# and the output prune can never disagree about who holds a tree. An install
+# with no guard answers `none`: it holds nothing, and session_guard_available
+# has already warned that leases went unchecked.
+#
+# The probe carries the issue identity derived from the worktree's branch when
+# one is derivable. It changes no answer here — a lease is a lease whether it is
+# ours or another session's — but keeps every lifecycle probe naming the
+# best-known identity rather than whatever the environment happens to hold.
+CLEANUP_LEASE_STATE=""
+CLEANUP_LEASE_RC=0
+cleanup_probe_lease() {
+  local wt="$1" issue_owner="${2:-}" rc=0
+  local -a owner_args=()
+  CLEANUP_LEASE_RC=0
+  if ! session_guard_available; then
+    CLEANUP_LEASE_STATE=none
+    return 0
+  fi
+  if [[ -n "$issue_owner" ]]; then
+    owner_args=(--owner "$issue_owner")
+  fi
+  "$SESSION_GUARD" status "$wt" ${owner_args[@]+"${owner_args[@]}"} --repo "$PROJECT_ROOT" >/dev/null 2>&1 || rc=$?
+  CLEANUP_LEASE_RC="$rc"
+  case "$rc" in
+    3) CLEANUP_LEASE_STATE=none ;;
+    0 | 75) CLEANUP_LEASE_STATE=held ;;
+    4) CLEANUP_LEASE_STATE=unmanaged ;;
+    *) CLEANUP_LEASE_STATE=unreadable ;;
+  esac
+}
+
+# `cleanup` is the untargeted sweeper, so it is the operation that would
+# destroy live worktrees without the guard. It never removes a
+# claimed worktree — not even one claimed by THIS session, since our own lease
+# still means work is in progress there.
+cleanup_lease_permits_removal() {
+  local wt="$1" issue_owner="${2:-}"
+  cleanup_probe_lease "$wt" "$issue_owner"
+  case "$CLEANUP_LEASE_STATE" in
+    none) return 0 ;;
+    held) ;;
+    unmanaged)
+      worktree_message cleanup-unmanaged-lock "$wt" "Skipped (locked outside the session guard): $wt" >&2
+      return 1
+      ;;
+    *)
+      worktree_message cleanup-lease-unreadable "path=$wt exit=$CLEANUP_LEASE_RC" "Skipped (session guard state could not be read, exit $CLEANUP_LEASE_RC): $wt" >&2
+      return 1
+      ;;
+  esac
+  if [[ "$CLEANUP_STALE" != true ]]; then
+    worktree_message cleanup-lease-held "$wt" "Skipped (a session holds a guard lease): $wt" >&2
+    echo "  Let that session release it, or pass --stale to collect leases past the ${CLEANUP_TTL_MINUTES}m TTL." >&2
+    return 1
+  fi
+  if "$SESSION_GUARD" release "$wt" --stale --ttl-minutes "$CLEANUP_TTL_MINUTES" --repo "$PROJECT_ROOT" >/dev/null 2>&1; then
+    worktree_message lease-stale-released "$wt" "Released stale session guard lease: $wt" >&2
+    return 0
+  fi
+  worktree_message cleanup-lease-fresh "$wt" "Skipped (guard lease is not past the ${CLEANUP_TTL_MINUTES}m TTL): $wt" >&2
+  return 1
+}
+
+# Every registered worktree except the main checkout, into CLEANUP_TREES. Both
+# cleanup sweeps read this one enumeration, so neither can inspect a set the
+# other would not.
+#
+# NUL-delimited porcelain parsing survives paths with spaces, and the main
+# checkout is excluded by canonical comparison — git may report it under a
+# lexical (symlinked) spelling that a textual match against $PROJECT_ROOT
+# would miss.
+#
+# The listing lands in a file so its exit status is READ. Fed through process
+# substitution, bash discards that status, so a failed or truncated list would
+# leave the candidate set empty and the sweep would report a clean result —
+# the silent keep this function exists to end. A file, not a variable: bash
+# cannot hold the NUL bytes -z depends on.
+cleanup_enumerate_worktrees() {
+  local list_file="" err_file="" rc=0 line="" wt=""
+  CLEANUP_TREES=()
+  if ! list_file="$(mktemp "${TMPDIR:-/tmp}/worktree-cleanup-list.XXXXXX")"; then
+    worktree_message cleanup-scratch-failed "$PROJECT_ROOT" "Error: could not create a scratch file to enumerate worktrees; nothing was inspected." >&2
+    return 1
+  fi
+  err_file="${list_file}.err"
+  git -C "$PROJECT_ROOT" worktree list --porcelain -z >"$list_file" 2>"$err_file" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    worktree_message cleanup-enumeration-failed "$rc" "Error: 'git -C \"$PROJECT_ROOT\" worktree list --porcelain -z' failed (exit $rc)." >&2
+    [[ -s "$err_file" ]] && sed 's/^/  git: /' <"$err_file" >&2
+    rm -f "$list_file" "$err_file" 2>/dev/null || true
+    echo "  No worktree was inspected and none was collected; this is not a clean sweep." >&2
+    return 1
+  fi
+  while IFS= read -r -d '' line; do
+    [[ "$line" == worktree\ * ]] || continue
+    wt="${line#worktree }"
+    same_canonical_dir "$wt" "$PROJECT_ROOT" && continue
+    CLEANUP_TREES+=("$wt")
+  done <"$list_file"
+  rm -f "$list_file" "$err_file"
+}
+
+# `cleanup --targets-only`: the build-output prune, its flags and its lease.
+# shellcheck source=lib/output-prune.sh
+source "$SCRIPT_DIR/lib/output-prune.sh"
+
+# Refuse to act on a worktree that carries a native `git worktree lock`.
+refuse_locked_worktree() {
+  local wt="$1" action="$2"
+  local lock_reason=""
+  lock_reason="$(worktree_lock_reason "$wt" || true)"
+  [[ -n "$lock_reason" ]] || return 0
+
+  worktree_message worktree-locked "$wt" "Error: $wt is a locked worktree; refusing to $action." >&2
+  echo "  Worktree: $wt" >&2
+  echo "  Lock reason: $lock_reason" >&2
+  echo "Nothing in the worktree was modified." >&2
+  echo "A lock usually means a live session owns this worktree; confirm it is finished first." >&2
+  echo "To release the lock and retry:" >&2
+  echo "  git -C \"$PROJECT_ROOT\" worktree unlock \"$wt\"" >&2
+  return 1
+}
+
+refuse_existing_worktree() {
+  local issue="$1" wt="$2"
+  local branch="" dirty="clean" upstream="" counts="" behind="0" ahead="0"
+  local lock_reason="" pr_details="" pr_number="" pr_url="" pr_lookup_failed=false
+
+  # Defence in depth: callers must treat the main checkout as no ownership
+  # before reaching this renderer ("The main checkout is never a fallback
+  # target"). Never present it as reusable issue work or advertise --reuse
+  # into it.
+  if same_canonical_dir "$wt" "$PROJECT_ROOT"; then
+    worktree_message ownership-main "$issue" "Error: An ownership scan for '$issue' resolved the main checkout ($PROJECT_ROOT)." >&2
+    echo "The main checkout is never issue work; refusing without a reuse remedy." >&2
+    echo "No worktree was created and nothing was modified." >&2
+    return "$ACTIVE_WORK_EXIT"
+  fi
+
+  branch="$(git -C "$wt" branch --show-current 2>/dev/null || true)"
+  if [[ -n "$(git -C "$wt" status --porcelain 2>/dev/null || true)" ]]; then
+    dirty="dirty"
+  fi
+
+  if [[ -n "$branch" ]]; then
+    upstream="$(git -C "$wt" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || true)"
+    if [[ -z "$upstream" ]] && git -C "$wt" rev-parse --verify "origin/$branch" >/dev/null 2>&1; then
+      upstream="origin/$branch"
+    fi
+    if [[ -n "$upstream" ]]; then
+      counts="$(git -C "$wt" rev-list --left-right --count "$upstream...HEAD" 2>/dev/null || true)"
+      if [[ -n "$counts" ]]; then
+        read -r behind ahead <<<"$counts"
+      fi
+    fi
+    if ! pr_details="$(open_pr_for_branch "$branch")"; then
+      pr_lookup_failed=true
+      pr_details=""
+    fi
+  fi
+  lock_reason="$(worktree_lock_reason "$wt" || true)"
+
+  worktree_message worktree-owned "$wt" "Active work already exists for '$issue'; refusing implicit reuse." >&2
+  echo "  Worktree: $wt" >&2
+  echo "  Branch: ${branch:-detached}" >&2
+  echo "  Working tree: $dirty" >&2
+  if [[ -n "$upstream" ]]; then
+    echo "  Upstream: $upstream (ahead $ahead, behind $behind)" >&2
+  elif [[ -n "$branch" ]]; then
+    echo "  Upstream: none (branch is unpublished or not tracking a remote)" >&2
+  fi
+  if [[ -n "$pr_details" ]]; then
+    pr_number="${pr_details%%$'\t'*}"
+    pr_url="${pr_details#*$'\t'}"
+    echo "  Open PR: #$pr_number $pr_url" >&2
+  elif [[ "$pr_lookup_failed" == true ]]; then
+    echo "  Open PR: lookup unavailable (local worktree ownership is already sufficient)" >&2
+  fi
+  if [[ -n "$lock_reason" ]]; then
+    echo "  Worktree lock: ${lock_reason:-locked}" >&2
+  fi
+  echo "No local branch was rebased or modified." >&2
+  echo "Inspect or monitor the existing work instead of spawning another implementer." >&2
+  echo "If this session owns the worktree, opt in explicitly:" >&2
+  echo "  $0 create $issue --reuse" >&2
+  echo "Use --restack instead only when intentionally resolving a rebase conflict." >&2
+  return "$ACTIVE_WORK_EXIT"
+}
+
+refuse_existing_branch() {
+  local issue="$1" branch="$2" signal="$3" details="${4:-}"
+
+  worktree_message branch-owned "branch=$branch source=$signal" "Active work already exists for '$issue'; refusing to create a duplicate worktree." >&2
+  echo "  Branch: $branch" >&2
+  echo "  Signal: $signal${details:+ ($details)}" >&2
+  echo "No worktree was created and no local branch was rebased or modified." >&2
+  echo "Inspect or monitor the existing work instead of spawning another implementer." >&2
+  if [[ "$signal" == pr ]]; then
+    echo "To inspect that PR in a worktree intentionally, pass --pr <number>." >&2
+  else
+    echo "To check out that branch intentionally, pass --base $branch." >&2
+  fi
+  return "$ACTIVE_WORK_EXIT"
+}
+
+refuse_incomplete_worktree() {
+  local issue="$1" wt="$2"
+  worktree_message path-incomplete "$wt" "Active or incomplete worktree path already exists for '$issue': $wt" >&2
+  echo "The exact path is not a registered worktree of $PROJECT_ROOT." >&2
+  echo "Refusing to delete, replace, or reuse it automatically. Inspect it, then remove it explicitly if abandoned." >&2
+  return "$ACTIVE_WORK_EXIT"
+}
+
+guard_new_target_path() {
+  local issue="$1" wt="$2"
+  [[ -e "$wt" || -L "$wt" ]] || return 0
+  if is_registered_project_worktree "$wt"; then
+    refuse_existing_worktree "$issue" "$wt"
+    return "$ACTIVE_WORK_EXIT"
+  fi
+  refuse_incomplete_worktree "$issue" "$wt"
+  return "$ACTIVE_WORK_EXIT"
+}
+
+case "${1:-}" in
+  restack)
+    ACTION="${2:-}"
+    ARG="${3:-}"
+    if [[ $# -gt 3 ]]; then
+      worktree_message restack-action-invalid "${ACTION:-}" "Usage: $0 restack continue|skip|abort [ID|/path]" >&2
+      exit 1
+    fi
+    case "$ACTION" in
+      continue|skip|abort) ;;
+      *)
+        worktree_message restack-target-count "2" "Usage: $0 restack continue|skip|abort [ID|/path]" >&2
+        exit 1
+        ;;
+    esac
+
+    WT_PATH="$(resolve_restack_worktree "$ARG")"
+    if [[ "$ACTION" == abort ]] && [[ "$(restack_state_get "$WT_PATH" pending)" == true ]] && \
+       ! restack_engine_in_progress "$WT_PATH"; then
+      ORPHAN_STATUS=0
+      abort_orphaned_restack_record "$WT_PATH" || ORPHAN_STATUS=$?
+      [[ "$ORPHAN_STATUS" -eq 2 ]] || exit "$ORPHAN_STATUS"
+    fi
+    validate_pending_restack_state "$WT_PATH" "$ACTION" || exit 1
+    RESTACK_BRANCH="$(restack_state_get "$WT_PATH" branch)"
+    acquire_issue_claim_lock "$RESTACK_BRANCH" || exit 1
+    # The first validation gives a useful error without taking a lock. Repeat
+    # under the branch claim lock immediately before controlling the rebase.
+    validate_pending_restack_state "$WT_PATH" "$ACTION" || exit 1
+    RESTACK_MODE="$(restack_state_get "$WT_PATH" mode)"
+
+    if [[ "$ACTION" == abort ]]; then
+      RESTACK_ORIGINAL_HEAD="$(restack_state_get "$WT_PATH" originalHead)"
+      if [[ "$RESTACK_MODE" == replay ]]; then
+        # The replay never moved the branch ref, so aborting the cherry-pick
+        # restores the detach point and reattaching restores everything.
+        if ! REBASE_OUTPUT="$(git -C "$WT_PATH" cherry-pick --abort 2>&1)"; then
+          [[ -n "$REBASE_OUTPUT" ]] && sed 's/^/  git: /' <<<"$REBASE_OUTPUT" >&2
+          worktree_message restack-abort-failed "$WT_PATH" "Error: Guarded restack abort failed; the pending state and authorization were preserved." >&2
+          exit 1
+        fi
+        if replay_in_progress "$WT_PATH" || \
+           ! git -C "$WT_PATH" checkout "$RESTACK_BRANCH" >/dev/null 2>&1 || \
+           [[ "$(git -C "$WT_PATH" rev-parse HEAD)" != "$RESTACK_ORIGINAL_HEAD" ]] || \
+           [[ "$(git -C "$WT_PATH" branch --show-current 2>/dev/null || true)" != "$RESTACK_BRANCH" ]]; then
+          worktree_message restack-abort-mismatch "$WT_PATH" "Error: Guarded restack abort did not restore the recorded branch and original HEAD; refusing to clear its state." >&2
+          exit 1
+        fi
+      else
+        if ! REBASE_OUTPUT="$(git -C "$WT_PATH" rebase --abort 2>&1)"; then
+          [[ -n "$REBASE_OUTPUT" ]] && sed 's/^/  git: /' <<<"$REBASE_OUTPUT" >&2
+          worktree_message restack-abort-failed "$WT_PATH" "Error: Guarded restack abort failed; the pending state and authorization were preserved." >&2
+          exit 1
+        fi
+        if rebase_in_progress "$WT_PATH" || \
+           [[ "$(git -C "$WT_PATH" rev-parse HEAD)" != "$RESTACK_ORIGINAL_HEAD" ]] || \
+           [[ "$(git -C "$WT_PATH" branch --show-current 2>/dev/null || true)" != "$RESTACK_BRANCH" ]]; then
+          worktree_message restack-abort-mismatch "$WT_PATH" "Error: Guarded restack abort did not restore the recorded branch and original HEAD; refusing to clear its state." >&2
+          exit 1
+        fi
+      fi
+      finish_guarded_restack_abort "$WT_PATH" aborted
+      exit 0
+    fi
+
+    validate_worktree_setup_config || exit 1
+    validate_pending_restack_remote "$WT_PATH" || exit 1
+    RESTACK_BASE_OID="$(restack_state_get "$WT_PATH" baseOid)"
+    REBASE_OUTPUT=""
+    REBASE_STATUS=0
+    if [[ "$RESTACK_MODE" == replay ]]; then
+      if [[ "$ACTION" == continue ]]; then
+        if REBASE_OUTPUT="$(GIT_EDITOR=true git -C "$WT_PATH" cherry-pick --continue 2>&1)"; then
+          :
+        else
+          REBASE_STATUS=$?
+        fi
+      else
+        if REBASE_OUTPUT="$(git -C "$WT_PATH" cherry-pick --skip 2>&1)"; then
+          :
+        else
+          REBASE_STATUS=$?
+        fi
+      fi
+    elif [[ "$ACTION" == continue ]]; then
+      if REBASE_OUTPUT="$(GIT_EDITOR=true git -C "$WT_PATH" rebase --continue 2>&1)"; then
+        :
+      else
+        REBASE_STATUS=$?
+      fi
+    else
+      if REBASE_OUTPUT="$(git -C "$WT_PATH" rebase --skip 2>&1)"; then
+        :
+      else
+        REBASE_STATUS=$?
+      fi
+    fi
+
+    if restack_engine_in_progress "$WT_PATH"; then
+      if ! validate_pending_restack_state "$WT_PATH" "$ACTION"; then
+        worktree_message restack-state-changed "$WT_PATH" "Error: Git changed the paused rebase outside the recorded restack boundary; refusing further control." >&2
+        exit 1
+      fi
+      report_paused_restack "$WT_PATH" "$RESTACK_BRANCH" "$REBASE_OUTPUT"
+      exit 1
+    fi
+    # The engine has stopped; every refusal below restores setup before exit.
+    if [[ "$REBASE_STATUS" -ne 0 ]]; then
+      clear_restack_push_authorization "$WT_PATH"
+      [[ -n "$REBASE_OUTPUT" ]] && sed 's/^/  git: /' <<<"$REBASE_OUTPUT" >&2
+      worktree_message restack-exit "$REBASE_STATUS" "Error: Git ended the rebase with status $REBASE_STATUS; no rewritten push was authorized." >&2
+      restore_unshadowed_worktree_setup "$WT_PATH"
+      exit 1
+    fi
+    if [[ "$RESTACK_MODE" == replay ]]; then
+      # A completed pick sequence is not yet a completed restack: the branch
+      # ref moves only now, after the whole replay succeeded.
+      if ! finish_replay_branch_move "$WT_PATH" "$RESTACK_BRANCH" "$RESTACK_BASE_OID"; then
+        clear_restack_push_authorization "$WT_PATH"
+        worktree_message restack-unauthorized "$WT_PATH" "No rewritten push was authorized." >&2
+        restore_unshadowed_worktree_setup "$WT_PATH"
+        exit 1
+      fi
+    elif [[ "$(git -C "$WT_PATH" branch --show-current 2>/dev/null || true)" != "$RESTACK_BRANCH" ]]; then
+      clear_restack_push_authorization "$WT_PATH"
+      worktree_message restack-branch-mismatch "$RESTACK_BRANCH" "Error: Git did not restore the recorded branch '$RESTACK_BRANCH'; no rewritten push was authorized." >&2
+      restore_unshadowed_worktree_setup "$WT_PATH"
+      exit 1
+    fi
+
+    if ! validate_pending_restack_remote "$WT_PATH"; then
+      clear_restack_push_authorization "$WT_PATH"
+      worktree_message restack-unauthorized "$WT_PATH" "No rewritten push was authorized." >&2
+      restore_unshadowed_worktree_setup "$WT_PATH"
+      exit 1
+    fi
+    RESTACK_REMOTE="$(restack_state_get "$WT_PATH" remote)"
+    if ! emit_restack_rebase_map "$WT_PATH" ||
+       ! finalize_pending_restack_authorization "$WT_PATH" "$RESTACK_REMOTE" "$RESTACK_BRANCH" "$RESTACK_LIVE_EXPECTED_OID"; then
+      restore_unshadowed_worktree_setup "$WT_PATH"
+      exit 1
+    fi
+    release_issue_claim_lock
+    setup_app_worktree "$WT_PATH"
+    worktree_message restack-complete "$WT_PATH" "Completed guarded restack for $RESTACK_BRANCH: $WT_PATH"
+    ;;
+
+  create)
+    ISSUE="${2:?Error: create requires an issue ID}"
+    # Reject an option-looking issue ID before it becomes the ISSUE and a
+    # trees/<id> path. Otherwise `create --typo` would compute trees/--typo and
+    # proceed to attempt creation instead of failing clearly.
+    if [[ "$ISSUE" == -* ]]; then
+      worktree_message create-option-unknown "$ISSUE" "Error: unknown option '$ISSUE' for create" >&2
+      echo "Run: $0 create --help" >&2
+      exit 1
+    fi
+    shift 2
+    BASE=""
+    BRANCH=""
+    FROM=""
+    PR=""
+    REUSE=false
+    RESTACK=false
+    REPLAY=false
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --base) BASE="$2"; shift 2 ;;
+        --from) FROM="$2"; shift 2 ;;
+        --pr) PR="$2"; shift 2 ;;
+        --reuse) REUSE=true; shift ;;
+        --restack) RESTACK=true; shift ;;
+        --replay) REPLAY=true; shift ;;
+        # An unknown --flag must fail rather than be silently captured as a
+        # branch name. A legitimate positional branch name (not leading with
+        # '-') still falls through to the permissive arm below.
+        -*)
+          worktree_message create-option-unknown "$1" "Error: unknown option '$1' for create" >&2
+          echo "Run: $0 create --help" >&2
+          exit 1
+          ;;
+        *) BRANCH="$1"; shift ;;
+      esac
+    done
+    if [[ "$REPLAY" == true && "$REUSE" != true && "$RESTACK" != true ]]; then
+      worktree_message replay-mode-required "--replay" "Error: --replay selects the restack engine for --reuse/--restack; combine it with one of them." >&2
+      exit 1
+    fi
+    # A positional branch name equal to the default branch can never become
+    # issue work: `git worktree add -b` would always refuse the existing
+    # branch. Fail loudly instead of dying inside the suppressed add.
+    if [[ -n "$BRANCH" && "$BRANCH" == "$DEFAULT_BRANCH" ]]; then
+      worktree_message branch-default "$BRANCH" "Error: '$BRANCH' is the default branch and cannot be claimed as an issue work branch." >&2
+      echo "To base new work on it, run: $0 create $ISSUE --base $DEFAULT_BRANCH" >&2
+      exit 1
+    fi
+    # --base names a fork point when it is the default branch. "Checkout an
+    # existing branch" semantics can never apply to it — it is always checked
+    # out in the main checkout — and it is not issue-ownership evidence, so
+    # base a fresh issue branch on it exactly like --from.
+    if [[ -z "$FROM" && -z "$PR" ]]; then
+      case "$BASE" in
+        "$DEFAULT_BRANCH" | "origin/$DEFAULT_BRANCH")
+          FROM="$DEFAULT_BRANCH"
+          BASE=""
+          ;;
+      esac
+    fi
+
+    # Prefer the configured target; fall back to the registered worktree for
+    # the issue branch so trees created under a different WORKTREE_BASE_DIR
+    # are recognized as active work and reusable in place.
+    WT_PATH="$(worktree_path_for_issue "$ISSUE")"
+    validate_worktree_setup_config || exit 1
+
+    # 1. Existing work is an ownership signal. Bare create only claims unowned
+    # work; reuse must be explicit so discovery cannot rewrite another
+    # session's branch. Exit 75 distinguishes active work from a broken
+    # repository or invalid arguments.
+    if [[ -d "$WT_PATH" ]] && is_registered_project_worktree "$WT_PATH"; then
+      if [[ "$REUSE" != true && "$RESTACK" != true ]]; then
+        refuse_existing_worktree "$ISSUE" "$WT_PATH" || exit "$ACTIVE_WORK_EXIT"
+      fi
+
+      # A guard lease is the session-lifetime half of that same ownership
+      # signal: refuse another session's tree by name, refresh our own so a
+      # long reuse cycle cannot age past the TTL. Before any mutation.
+      reuse_respects_session_lease "$WT_PATH" "$(issue_session_owner "$ISSUE")" \
+        || exit "$ACTIVE_WORK_EXIT"
+
+      REUSE_STATUS=""
+      REUSE_STATUS="$(git -C "$WT_PATH" status --porcelain 2>/dev/null)" || { worktree_message reuse-status-failed "$WT_PATH" "Error: could not read the worktree state before reusing $WT_PATH." >&2; exit 1; }
+      if [[ "$REUSE" == true && "$RESTACK" != true && "$REPLAY" != true && -n "$REUSE_STATUS" ]]; then
+        worktree_message reuse-dirty "$WT_PATH" "Reused $WT_PATH with uncommitted work; refreshed its lease and skipped the rebase." >&2
+        echo "$WT_PATH"; exit 0
+      fi
+
+      # Network/ref discovery must succeed before the claim lock or any setup
+      # mutation. Repeat it under the per-issue lock immediately before reuse.
+      discover_ownership_remote_heads || exit 1
+      acquire_issue_claim_lock "$ISSUE" || exit 1
+      if ! is_registered_project_worktree "$WT_PATH"; then
+        refuse_incomplete_worktree "$ISSUE" "$WT_PATH" || exit "$ACTIVE_WORK_EXIT"
+      fi
+      fetch_origin || exit 1
+      CURRENT_BRANCH=$(git -C "$WT_PATH" branch --show-current 2>/dev/null)
+      if [[ -n "$CURRENT_BRANCH" ]]; then
+        REUSE_REMOTE="${BOT_REMOTE_NAME:-origin}"
+        if ! git -C "$WT_PATH" remote get-url "$REUSE_REMOTE" >/dev/null 2>&1; then
+          REUSE_REMOTE="origin"
+        fi
+        REUSE_EXPECTED_OID="$(remote_branch_oid_discovered "$REUSE_REMOTE" "$CURRENT_BRANCH" 2>/dev/null || true)"
+        finalize_pending_restack_authorization "$WT_PATH" "$REUSE_REMOTE" "$CURRENT_BRANCH" "$REUSE_EXPECTED_OID" || exit 1
+        if git -C "$WT_PATH" merge-base --is-ancestor "origin/$DEFAULT_BRANCH" HEAD; then
+          : # origin/$DEFAULT_BRANCH already contained — nothing to rebase
+        else
+          REUSE_BASE_OID="$(git -C "$WT_PATH" rev-parse "origin/$DEFAULT_BRANCH")"
+          if [[ "$REPLAY" == true ]]; then
+            # The rebase engine lets git itself refuse a dirty tree; the
+            # replay must refuse before detaching. Merge commits cannot be
+            # represented by an ordered cherry-pick, so they are refused up
+            # front rather than mid-replay. No mutation before either check.
+            if [[ -n "$(git -C "$WT_PATH" status --porcelain 2>/dev/null || true)" ]]; then
+              worktree_message replay-dirty "$WT_PATH" "Error: $WT_PATH has uncommitted changes; refusing to replay over them." >&2
+              echo "Commit or discard them, then retry." >&2
+              exit 1
+            fi
+            if [[ "$(git -C "$WT_PATH" rev-list --merges --count "$REUSE_BASE_OID..HEAD" 2>/dev/null || echo 1)" -ne 0 ]]; then
+              worktree_message replay-merges "$WT_PATH" "Error: The replay range origin/$DEFAULT_BRANCH..$CURRENT_BRANCH in $WT_PATH contains merge commits, which an ordered cherry-pick replay cannot represent." >&2
+              echo "Use the rebase engine ($0 create $ISSUE --reuse) or reconcile the merge manually." >&2
+              exit 1
+            fi
+          fi
+          # Configured symlinks that shadow tracked files make git refuse to
+          # detach HEAD, so the rebase below cannot even start.
+          # Undo the shadowing first; every terminal path re-applies setup.
+          if ! unshadow_tracked_symlink_paths "$WT_PATH"; then
+            restore_unshadowed_worktree_setup "$WT_PATH"
+            exit 1
+          fi
+          prepare_restack_authorization "$WT_PATH" "$REUSE_REMOTE" "$CURRENT_BRANCH" "$REUSE_EXPECTED_OID" "$REUSE_BASE_OID" || exit 1
+          # One write-ahead for both engines, which start just below. It covers
+          # a paused restack too: the record outlives that process and the
+          # restack continue that completes the map is what clears it.
+          if ! record_pending_rewrite "$WT_PATH" "$(restack_state_get "$WT_PATH" originalHead)"; then
+            # Whatever stopped the record is not this attempt's to clean up: a
+            # record already standing belongs to an earlier rewrite, and
+            # cancelling would clear it along with this attempt. Drop only the
+            # authorization this attempt just prepared.
+            clear_restack_push_authorization "$WT_PATH"
+            restore_unshadowed_worktree_setup "$WT_PATH"
+            exit 1
+          fi
+          if [[ "$REPLAY" == true ]]; then
+            # Replay engine: detach at the base, cherry-pick the unique range
+            # in order, and let finish_replay_branch_move move the branch ref
+            # only after the whole replay succeeds. Same authorization
+            # lifecycle as the rebase engine, no rebase porcelain.
+            git -C "$WT_PATH" config --worktree kendex-restack.mode replay
+            REPLAY_ORIGINAL_HEAD="$(restack_state_get "$WT_PATH" originalHead)"
+            if ! REPLAY_OUTPUT="$(git -C "$WT_PATH" checkout --detach "$REUSE_BASE_OID" 2>&1)"; then
+              cancel_pending_restack_authorization "$WT_PATH"
+              restore_unshadowed_worktree_setup "$WT_PATH"
+              worktree_message replay-detach-failed "$WT_PATH" "Error: Could not detach at origin/$DEFAULT_BRANCH to start the replay in $WT_PATH:" >&2
+              sed 's/^/  /' <<<"$REPLAY_OUTPUT" >&2
+              exit 1
+            fi
+            REPLAY_STATUS=0
+            REPLAY_OUTPUT=""
+            if [[ "$(git -C "$WT_PATH" rev-list --count "$REUSE_BASE_OID..$REPLAY_ORIGINAL_HEAD")" -eq 0 ]]; then
+              : # branch is behind the target base; the replayed result is the base itself
+            elif REPLAY_OUTPUT="$(git -C "$WT_PATH" cherry-pick "$REUSE_BASE_OID..$REPLAY_ORIGINAL_HEAD" 2>&1)"; then
+              :
+            else
+              REPLAY_STATUS=$?
+            fi
+            if [[ "$REPLAY_STATUS" -ne 0 ]]; then
+              CONFLICT_FILES="$(git -C "$WT_PATH" diff --name-only --diff-filter=U 2>/dev/null || true)"
+              if ! replay_in_progress "$WT_PATH"; then
+                # Replay never started — reattach and surface git's message.
+                git -C "$WT_PATH" checkout "$CURRENT_BRANCH" >/dev/null 2>&1 || true
+                cancel_pending_restack_authorization "$WT_PATH"
+                restore_unshadowed_worktree_setup "$WT_PATH"
+                worktree_message replay-start-failed "$WT_PATH" "Error: Cherry-pick replay onto origin/$DEFAULT_BRANCH failed for $WT_PATH before it could start:" >&2
+                sed 's/^/  /' <<<"$REPLAY_OUTPUT" >&2
+                exit 1
+              fi
+              if ! mark_pending_restack_state "$WT_PATH"; then
+                MARKER_ABORT_OK=true
+                git -C "$WT_PATH" cherry-pick --abort >/dev/null 2>&1 || MARKER_ABORT_OK=false
+                git -C "$WT_PATH" checkout "$CURRENT_BRANCH" >/dev/null 2>&1 || MARKER_ABORT_OK=false
+                if [[ "$MARKER_ABORT_OK" == true ]] && ! replay_in_progress "$WT_PATH"; then
+                  cancel_pending_restack_authorization "$WT_PATH"
+                  restore_unshadowed_worktree_setup "$WT_PATH"
+                fi
+                worktree_message replay-token-failed "$WT_PATH" "Error: Could not bind the paused replay to its tool-created restack token; refusing guarded recovery." >&2
+                exit 1
+              fi
+              if [[ "$RESTACK" == true ]]; then
+                worktree_message replay-conflicts "$WT_PATH" "Error: Cherry-pick replay onto origin/$DEFAULT_BRANCH stopped on conflicts in $WT_PATH." >&2
+                if [[ -n "$CONFLICT_FILES" ]]; then
+                  echo "Conflicting files:" >&2
+                  sed 's/^/  /' <<<"$CONFLICT_FILES" >&2
+                fi
+                echo "The replay is paused in the worktree so the conflicts can be resolved:" >&2
+                echo "  1. Edit each conflicting file to remove the conflict markers." >&2
+                echo "  2. git -C \"$WT_PATH\" add <file>    (each resolved file)" >&2
+                echo "  3. $0 restack continue \"$WT_PATH\"    (repeat if it stops again)" >&2
+                echo "     If the resolved commit is empty: $0 restack skip \"$WT_PATH\"" >&2
+                echo "To back out instead: $0 restack abort \"$WT_PATH\"" >&2
+                exit 1
+              fi
+              ABORT_OK=true
+              git -C "$WT_PATH" cherry-pick --abort >/dev/null 2>&1 || ABORT_OK=false
+              if [[ "$ABORT_OK" == true ]]; then
+                git -C "$WT_PATH" checkout "$CURRENT_BRANCH" >/dev/null 2>&1 || ABORT_OK=false
+              fi
+              if [[ "$ABORT_OK" == true ]] && ! replay_in_progress "$WT_PATH"; then
+                cancel_pending_restack_authorization "$WT_PATH"
+                restore_unshadowed_worktree_setup "$WT_PATH"
+              fi
+              worktree_message replay-failed "$WT_PATH" "Error: Cherry-pick replay onto origin/$DEFAULT_BRANCH failed for $WT_PATH (conflicts)." >&2
+              if [[ -n "$CONFLICT_FILES" ]]; then
+                echo "Conflicting files:" >&2
+                sed 's/^/  /' <<<"$CONFLICT_FILES" >&2
+              fi
+              if [[ "$ABORT_OK" == true ]] && ! replay_in_progress "$WT_PATH"; then
+                echo "The replay was aborted; the worktree is back on its pre-replay state with no conflicts left to resolve." >&2
+              else
+                echo "Automatic abort of the failed replay did NOT complete; the worktree may still hold cherry-pick state." >&2
+                echo "Retry through the guarded tool path: $0 restack abort \"$WT_PATH\"" >&2
+              fi
+              echo "Recovery options:" >&2
+              echo "  1. Redo the replay and stop in the conflict state to resolve it:" >&2
+              echo "       $0 create $ISSUE --restack --replay" >&2
+              echo "  2. Discard local divergence and recreate fresh from origin/$DEFAULT_BRANCH:" >&2
+              echo "       $0 remove $ISSUE && $0 create $ISSUE" >&2
+              exit 1
+            fi
+            if ! finish_replay_branch_move "$WT_PATH" "$CURRENT_BRANCH" "$REUSE_BASE_OID"; then
+              clear_restack_push_authorization "$WT_PATH"
+              worktree_message restack-unauthorized "$WT_PATH" "No rewritten push was authorized." >&2
+              restore_unshadowed_worktree_setup "$WT_PATH"
+              exit 1
+            fi
+            # This block un-shadowed the configured symlinks so git could
+            # detach, and a refusal here is a terminal path of create: put the
+            # links back before leaving, as every other arm below does.
+            if ! emit_restack_rebase_map "$WT_PATH" ||
+               ! finalize_pending_restack_authorization "$WT_PATH" "$REUSE_REMOTE" "$CURRENT_BRANCH" "$REUSE_EXPECTED_OID"; then
+              restore_unshadowed_worktree_setup "$WT_PATH"
+              exit 1
+            fi
+          elif REBASE_OUTPUT="$(git -C "$WT_PATH" rebase "origin/$DEFAULT_BRANCH" 2>&1)"; then
+            if ! emit_restack_rebase_map "$WT_PATH" ||
+               ! finalize_pending_restack_authorization "$WT_PATH" "$REUSE_REMOTE" "$CURRENT_BRANCH" "$REUSE_EXPECTED_OID"; then
+              restore_unshadowed_worktree_setup "$WT_PATH"
+              exit 1
+            fi
+          else
+            # Capture conflict details before any abort erases the rebase state.
+            CONFLICT_FILES="$(git -C "$WT_PATH" diff --name-only --diff-filter=U 2>/dev/null || true)"
+            if ! rebase_in_progress "$WT_PATH"; then
+              # Rebase never started (e.g. uncommitted changes) — nothing to
+              # abort or resolve; surface git's own message.
+              cancel_pending_restack_authorization "$WT_PATH"
+              restore_unshadowed_worktree_setup "$WT_PATH"
+              worktree_message rebase-start-failed "$WT_PATH" "Error: Rebase onto origin/$DEFAULT_BRANCH failed for $WT_PATH before it could start:" >&2
+              sed 's/^/  /' <<<"$REBASE_OUTPUT" >&2
+              exit 1
+            fi
+            if ! mark_pending_restack_state "$WT_PATH"; then
+              MARKER_ABORT_OK=true
+              git -C "$WT_PATH" rebase --abort >/dev/null 2>&1 || MARKER_ABORT_OK=false
+              if [[ "$MARKER_ABORT_OK" == true ]] && ! rebase_in_progress "$WT_PATH"; then
+                cancel_pending_restack_authorization "$WT_PATH"
+                restore_unshadowed_worktree_setup "$WT_PATH"
+              fi
+              worktree_message rebase-token-failed "$WT_PATH" "Error: Could not bind the paused rebase to its tool-created restack token; refusing guarded recovery." >&2
+              exit 1
+            fi
+            if [[ "$RESTACK" == true ]]; then
+              worktree_message rebase-conflicts "$WT_PATH" "Error: Rebase onto origin/$DEFAULT_BRANCH stopped on conflicts in $WT_PATH." >&2
+              if [[ -n "$CONFLICT_FILES" ]]; then
+                echo "Conflicting files:" >&2
+                sed 's/^/  /' <<<"$CONFLICT_FILES" >&2
+              fi
+              echo "The rebase is paused in the worktree so the conflicts can be resolved:" >&2
+              echo "  1. Edit each conflicting file to remove the conflict markers." >&2
+              echo "  2. git -C \"$WT_PATH\" add <file>    (each resolved file)" >&2
+              echo "  3. $0 restack continue \"$WT_PATH\"    (repeat if it stops again)" >&2
+              echo "     If the resolved commit is empty: $0 restack skip \"$WT_PATH\"" >&2
+              echo "To back out instead: $0 restack abort \"$WT_PATH\"" >&2
+              exit 1
+            fi
+            ABORT_OK=true
+            git -C "$WT_PATH" rebase --abort >/dev/null 2>&1 || ABORT_OK=false
+            if [[ "$ABORT_OK" == true ]] && ! rebase_in_progress "$WT_PATH"; then
+              cancel_pending_restack_authorization "$WT_PATH"
+              restore_unshadowed_worktree_setup "$WT_PATH"
+            fi
+            worktree_message rebase-failed "$WT_PATH" "Error: Rebase onto origin/$DEFAULT_BRANCH failed for $WT_PATH (conflicts)." >&2
+            if [[ -n "$CONFLICT_FILES" ]]; then
+              echo "Conflicting files:" >&2
+              sed 's/^/  /' <<<"$CONFLICT_FILES" >&2
+            fi
+            if [[ "$ABORT_OK" == true ]] && ! rebase_in_progress "$WT_PATH"; then
+              echo "The rebase was aborted; the worktree is back on its pre-rebase state with no conflicts left to resolve." >&2
+            else
+              echo "Automatic abort of the failed rebase did NOT complete; the worktree may still hold rebase state." >&2
+              echo "Retry through the guarded tool path: $0 restack abort \"$WT_PATH\"" >&2
+            fi
+            echo "Recovery options:" >&2
+            echo "  1. Redo the rebase and stop in the conflict state to resolve it:" >&2
+            echo "       $0 create $ISSUE --restack" >&2
+            echo "  2. Discard local divergence and recreate fresh from origin/$DEFAULT_BRANCH:" >&2
+            echo "       $0 remove $ISSUE && $0 create $ISSUE" >&2
+            exit 1
+          fi
+        fi
+      fi
+      # Refresh setup (rebase may have replaced symlinks with tracked content)
+      release_issue_claim_lock
+      setup_app_worktree "$WT_PATH"
+      echo "$WT_PATH"
+      exit 0
+    fi
+
+    # A directory is reusable only when its exact canonical path is registered
+    # to this repository's common Git directory. Never let `git -C` discover a
+    # parent checkout and mistake an incomplete in-repository target for main.
+    if [[ -e "$WT_PATH" || -L "$WT_PATH" ]]; then
+      refuse_incomplete_worktree "$ISSUE" "$WT_PATH" || exit "$ACTIVE_WORK_EXIT"
+    fi
+
+    if [[ "$REUSE" == true || "$RESTACK" == true ]]; then
+      worktree_message reuse-missing "$WT_PATH" "Error: --reuse/--restack requires an existing worktree at $WT_PATH" >&2
+      exit 1
+    fi
+
+    # 2. --from creates a issue branch, so it uses the same complete
+    # candidate ownership scan as bare create. Discovery runs once before any
+    # lock/config/directory mutation, then again while the claim lock is held.
+    if [[ -n "$FROM" ]]; then
+      build_candidate_branches "$ISSUE" "$BRANCH"
+      discover_candidate_ownership || exit 1
+      scan_candidate_ownership "$ISSUE" || exit "$ACTIVE_WORK_EXIT"
+      acquire_issue_claim_lock "$ISSUE" || exit 1
+      guard_new_target_path "$ISSUE" "$WT_PATH" || exit "$ACTIVE_WORK_EXIT"
+      fetch_origin || exit 1
+      discover_candidate_ownership || exit 1
+      scan_candidate_ownership "$ISSUE" || exit "$ACTIVE_WORK_EXIT"
+
+      BRANCH="${BRANCH:-$(issue_branch_name "$ISSUE")}"
+      # Resolve: try origin/$FROM first (remote branch), then $FROM directly (local branch/tag/commit)
+      if git -C "$PROJECT_ROOT" rev-parse --verify "origin/$FROM" &>/dev/null; then
+        START_POINT="origin/$FROM"
+      elif git -C "$PROJECT_ROOT" rev-parse --verify "$FROM" &>/dev/null; then
+        START_POINT="$FROM"
+      else
+        worktree_message ref-unavailable "$FROM" "Error: Cannot resolve ref '$FROM'" >&2
+        exit 1
+      fi
+      mkdir -p "$TREES_DIR"
+      git -C "$PROJECT_ROOT" worktree add --no-track -b "$BRANCH" "$WT_PATH" "$START_POINT" >/dev/null 2>&1
+      release_issue_claim_lock
+      setup_app_worktree "$WT_PATH"
+      echo "$WT_PATH"
+      exit 0
+    fi
+
+    # 3. Explicit --pr/--base are inspection modes, not claims. Their
+    # authoritative branch/ref lookup must succeed before mutation, and the
+    # issue lock serializes their final check plus add.
+    PR_HEAD_OID=""
+    if [[ -n "$PR" ]]; then
+      resolve_pr_head "$PR" || exit 1
+    fi
+
+    if [[ -n "$BASE" ]]; then
+      discover_ownership_remote_heads || exit 1
+      ensure_base_start_point "$PR" "$BASE" "$PR_HEAD_OID" || exit 1
+      EXISTING_WT="$(worktree_for_branch "$BASE" 2>/dev/null || true)"
+      if [[ -n "$EXISTING_WT" ]]; then
+        # A base branch checked out in the main checkout is not issue work,
+        # and git cannot check a branch out twice anyway. Refuse plainly
+        # without ever recommending --reuse into the main checkout.
+        if same_canonical_dir "$EXISTING_WT" "$PROJECT_ROOT"; then
+          worktree_message branch-main-owned "$BASE" "Error: Branch '$BASE' is checked out in the main checkout ($PROJECT_ROOT); it cannot be checked out into a second worktree." >&2
+          exit 1
+        fi
+        refuse_existing_worktree "$ISSUE" "$EXISTING_WT" || exit "$ACTIVE_WORK_EXIT"
+      fi
+
+      acquire_issue_claim_lock "$ISSUE" || exit 1
+      guard_new_target_path "$ISSUE" "$WT_PATH" || exit "$ACTIVE_WORK_EXIT"
+      if [[ -n "$PR" ]]; then
+        resolve_pr_head "$PR" || exit 1
+      fi
+      fetch_origin || exit 1
+      discover_ownership_remote_heads || exit 1
+      ensure_base_start_point "$PR" "$BASE" "$PR_HEAD_OID" || exit 1
+      EXISTING_WT="$(worktree_for_branch "$BASE" 2>/dev/null || true)"
+      if [[ -n "$EXISTING_WT" ]]; then
+        # Same main-checkout guard as the pre-lock check above.
+        if same_canonical_dir "$EXISTING_WT" "$PROJECT_ROOT"; then
+          worktree_message branch-main-owned "$BASE" "Error: Branch '$BASE' is checked out in the main checkout ($PROJECT_ROOT); it cannot be checked out into a second worktree." >&2
+          exit 1
+        fi
+        refuse_existing_worktree "$ISSUE" "$EXISTING_WT" || exit "$ACTIVE_WORK_EXIT"
+      fi
+
+      mkdir -p "$TREES_DIR"
+      if [[ -n "$PR_HEAD_OID" ]]; then
+        # A fork head has no origin branch to track; the local branch is
+        # fork-pr-<n> with no upstream. -B resets the branch a previous
+        # inspection left behind; ensure_fork_branch_resettable has already
+        # refused a branch that reset would lose commits from. --no-track
+        # skips new tracking config, but -B keeps an upstream a pre-existing
+        # branch carried; drop it so a push cannot reach an origin branch of
+        # that name.
+        git -C "$PROJECT_ROOT" worktree add --no-track -B "$BASE" "$WT_PATH" "$PR_HEAD_OID" >/dev/null 2>&1
+        if git -C "$WT_PATH" config --get "branch.$BASE.merge" >/dev/null 2>&1; then
+          git -C "$WT_PATH" branch --unset-upstream "$BASE" >/dev/null 2>&1 || {
+            worktree_message upstream-clear-failed "$BASE" "Error: could not clear the upstream of branch '$BASE' in $WT_PATH" >&2
+            exit 1
+          }
+        fi
+      else
+        git -C "$PROJECT_ROOT" worktree add --track -b "$BASE" "$WT_PATH" "origin/$BASE" >/dev/null 2>&1 || \
+          git -C "$PROJECT_ROOT" worktree add "$WT_PATH" "$BASE" >/dev/null 2>&1
+      fi
+    else
+      build_candidate_branches "$ISSUE" "$BRANCH"
+      discover_candidate_ownership || exit 1
+      scan_candidate_ownership "$ISSUE" || exit "$ACTIVE_WORK_EXIT"
+      acquire_issue_claim_lock "$ISSUE" || exit 1
+      guard_new_target_path "$ISSUE" "$WT_PATH" || exit "$ACTIVE_WORK_EXIT"
+      fetch_origin || exit 1
+      discover_candidate_ownership || exit 1
+      scan_candidate_ownership "$ISSUE" || exit "$ACTIVE_WORK_EXIT"
+
+      BRANCH="${BRANCH:-$(issue_branch_name "$ISSUE")}"
+      mkdir -p "$TREES_DIR"
+      git -C "$PROJECT_ROOT" worktree add --no-track -b "$BRANCH" "$WT_PATH" "origin/$DEFAULT_BRANCH" >/dev/null 2>&1
+    fi
+
+    release_issue_claim_lock
+
+    # Set upstream tracking if remote branch exists. A fork PR branch keeps
+    # no upstream even when origin has an unrelated branch of the same name.
+    CREATED_BRANCH=$(git -C "$WT_PATH" branch --show-current 2>/dev/null)
+    if [[ -n "$CREATED_BRANCH" && -z "$PR_HEAD_OID" ]]; then
+      _REMOTE="${BOT_REMOTE_NAME:-origin}"
+      if git -C "$WT_PATH" rev-parse --verify "$_REMOTE/$CREATED_BRANCH" &>/dev/null; then
+        git -C "$WT_PATH" branch --set-upstream-to="$_REMOTE/$CREATED_BRANCH" "$CREATED_BRANCH" >/dev/null 2>&1 || true
+        git -C "$WT_PATH" merge --ff-only "$_REMOTE/$CREATED_BRANCH" >/dev/null 2>&1 || true
+      fi
+    fi
+
+    setup_app_worktree "$WT_PATH"
+    echo "$WT_PATH"
+    ;;
+
+  list)
+    git -C "$PROJECT_ROOT" worktree list
+    ;;
+
+  remove)
+    ARG=""
+    shift || true
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        # Reject stray option-looking arguments before they are treated as an
+        # identifier and turned into a trees/<id> path. Otherwise any typo'd
+        # flag would compute trees/<flag> and falsely report a removal, risking
+        # deletion of an oddly-named path/ref.
+        -*)
+          worktree_message remove-option-unknown "$1" "Error: unknown option '$1' for remove" >&2
+          echo "Run: $0 remove --help" >&2
+          exit 1
+          ;;
+        *)
+          if [[ -n "$ARG" ]]; then
+            worktree_message remove-target-count "2" "Error: remove takes a single issue ID or path (got '$ARG' and '$1')" >&2
+            exit 1
+          fi
+          ARG="$1"
+          shift
+          ;;
+      esac
+    done
+    if [[ -z "$ARG" ]]; then
+      worktree_message remove-target-required "target" "Error: remove requires an issue ID or path" >&2
+      exit 1
+    fi
+    # Accept either issue ID or direct path. An issue-addressed removal also
+    # carries the issue ID as an owner identity for the lease release;
+    # a path-addressed one has only the session env ladder.
+    REMOVE_ISSUE_OWNER=""
+    if [[ "$ARG" == */* ]]; then
+      WT_PATH="$ARG"
+    else
+      WT_PATH="$(worktree_path_for_issue "$ARG")"
+      REMOVE_ISSUE_OWNER="$(issue_session_owner "$ARG")"
+    fi
+    # Auto-relocate if cwd is inside the worktree being removed. Both sides
+    # are physical (pwd -P); the boundary-aware match avoids treating a
+    # sibling like .../issue-10 as inside .../issue-1.
+    WT_REAL="$(cd "$WT_PATH" 2>/dev/null && pwd -P)" || WT_REAL=""
+    CWD_REAL="$(pwd -P)"
+    CWD_INSIDE_WT=false
+    if [[ -n "$WT_REAL" ]] && [[ "$CWD_REAL" == "$WT_REAL" || "$CWD_REAL" == "$WT_REAL"/* ]]; then
+      CWD_INSIDE_WT=true
+      cd "$PROJECT_ROOT"
+      worktree_message cwd-relocated "$PROJECT_ROOT" "Relocated cwd to $PROJECT_ROOT" >&2
+    fi
+    REMOVE_MAP_FILE=""
+    REMOVE_GIT_DIR=""
+    if REMOVE_GIT_DIR="$(registered_worktree_git_dir "$WT_PATH")"; then
+      REMOVE_MAP_FILE="$REMOVE_GIT_DIR/kendex-rebase-map"
+    elif [[ ! -d "$WT_PATH" ]] && [[ -e "$WT_PATH" || -L "$WT_PATH" ]]; then
+      refuse_unidentified_worktree "$WT_PATH" || exit 1
+    fi
+    if [[ -n "$REMOVE_MAP_FILE" && -s "$REMOVE_MAP_FILE" ]]; then
+      worktree_message remove-rebase-map "$REMOVE_MAP_FILE" "Error: $WT_PATH still holds an unreconciled rebase map, the only record of a rewrite this removal would delete while keeping the branch; refusing to remove it." >&2
+      echo "Nothing was released, removed or pruned." >&2
+      echo "Let orch/scripts/worktree-push consume it, or reconcile every recorded SHA against the worktree reflog, then remove it:" >&2
+      echo "  rm -f \"$REMOVE_MAP_FILE\"" >&2
+      exit 1
+    fi
+    BRANCH=""
+    # Git keeps HEAD in the registration after the worktree directory is gone.
+    if [[ -n "$REMOVE_GIT_DIR" ]]; then
+      REMOVE_HEAD="$(cat -- "$REMOVE_GIT_DIR/HEAD")" || exit 1
+      case "$REMOVE_HEAD" in
+        "ref: refs/heads/"*) BRANCH="${REMOVE_HEAD#ref: refs/heads/}" ;;
+      esac
+    fi
+    if [[ -d "$WT_PATH" ]]; then
+      # Only a worktree registered to this repository (compared canonically,
+      # so a symlinked spelling still matches its physical form) may
+      # be mutated. A foreign repo's worktree reachable through a shared or
+      # symlinked base dir must not have its symlinks stripped or its
+      # registration touched.
+      if ! require_non_main_project_worktree "$WT_PATH" "remove it"; then
+        exit 1
+      fi
+      # Identity says this IS one of this repository's worktrees, and the
+      # resolution above could not name its private Git directory. Removing
+      # would delete a directory this cannot inspect, so it stops here too.
+      [[ -n "$REMOVE_GIT_DIR" ]] || refuse_unidentified_worktree "$WT_PATH" || exit 1
+    fi
+    if [[ -n "$REMOVE_GIT_DIR" ]]; then
+      # A session that claimed this worktree must be able to tear it down, and
+      # its lease IS a native git lock — so the release has to come before the
+      # lock precheck below, not after it. Only our own lease is
+      # released; a foreign one falls through and the precheck names its owner.
+      if ! release_own_session_lease "$WT_PATH" "$REMOVE_ISSUE_OWNER"; then
+        exit 1
+      fi
+      # Diagnostic precheck: a locked worktree cannot be removed, and git's own
+      # refusal names neither the owning session nor the unlock command.
+      # Runs after the ownership guard so a foreign or main checkout is rejected
+      # on identity, never on another repo's lock state.
+      if ! refuse_locked_worktree "$WT_PATH" "remove it"; then
+        exit 1
+      fi
+    fi
+    if [[ -d "$WT_PATH" ]]; then
+      BRANCH=$(git -C "$WT_PATH" branch --show-current 2>/dev/null)
+      # Let git remove the INTACT tree — it deletes the worktree contents itself,
+      # so there is nothing to pre-strip. Stripping the configured symlinks first
+      # would leave a live session's worktree without `.agents`, `.claude`, or `.env.local`
+      # whenever git then refuses the removal, and no precheck can close that
+      # window: a lock acquired between the check and the strip lands right back
+      # in that failure mode. Because nothing is mutated before git runs, a
+      # refusal issued BEFORE deletion begins — raced lock included — leaves the
+      # tree whole. Git's deletion is not transactional, so a failure partway
+      # through can still leave it partially removed; that is git's own window,
+      # not one this script widens. `cleanup` uses the same ordering, for the
+      # same reason.
+      REMOVE_OUTPUT=""
+      if ! REMOVE_OUTPUT="$(git -C "$PROJECT_ROOT" worktree remove --force "$WT_PATH" 2>&1)"; then
+        worktree_message remove-failed "$WT_PATH" "Error: Git could not remove the worktree; preserving it for manual recovery: $WT_PATH" >&2
+        [[ -n "$REMOVE_OUTPUT" ]] && printf '%s\n' "$REMOVE_OUTPUT" | sed 's/^/  git: /' >&2
+        echo "  Branch: ${BRANCH:-unknown} (not deleted)" >&2
+        echo "Nothing was removed before Git ran, so a refusal made before deletion started (a lock, for example) leaves the worktree exactly as it was." >&2
+        echo "Git's deletion is not atomic: if it failed partway through, the worktree may be partially removed — inspect its contents before retrying, and restore links with: $0 fix-links \"$WT_PATH\"" >&2
+        exit 1
+      fi
+      # Safety net: remove directory if git left it behind
+      [[ -d "$WT_PATH" ]] && rm -rf "$WT_PATH"
+    fi
+    if [[ -n "$REMOVE_GIT_DIR" && -d "$REMOVE_GIT_DIR" ]]; then
+      rm -rf -- "$REMOVE_GIT_DIR" || exit 1
+    fi
+    # Only delete the local branch if merged, proven exactly the way `cleanup`
+    # proves it: ancestry into the default branch, or a merged pull request
+    # carrying this tip when a squash erased that ancestry. `git branch -d` is
+    # NOT that proof and is not consulted — it deletes a branch merged into its
+    # configured UPSTREAM, and `push` sets one, so every pushed branch would
+    # satisfy it however far it is from the default branch.
+    # If the worktree was removed but neither proof holds, report exactly what
+    # remains instead of letting set -e exit silently after partial cleanup.
+    BRANCH_DELETE_FAILED=false
+    if [[ -n "$BRANCH" ]] && git -C "$PROJECT_ROOT" show-ref --verify --quiet "refs/heads/$BRANCH"; then
+      REMOVE_MERGE_TARGET="origin/$DEFAULT_BRANCH"
+      if ! git -C "$PROJECT_ROOT" rev-parse --verify "$REMOVE_MERGE_TARGET" >/dev/null 2>&1; then
+        REMOVE_MERGE_TARGET="$DEFAULT_BRANCH"
+      fi
+      REMOVE_MERGE_DETAIL=""
+      REMOVE_MERGE_PROOF=""
+      REMOVE_MERGE_RC=0
+      if git -C "$PROJECT_ROOT" merge-base --is-ancestor "$BRANCH" "$REMOVE_MERGE_TARGET" 2>/dev/null; then
+        REMOVE_MERGE_PROOF="merged into $REMOVE_MERGE_TARGET"
+      else
+        REMOVE_MERGE_DETAIL="$(merged_pr_for_branch "$BRANCH")" || REMOVE_MERGE_RC=$?
+        REMOVE_MERGE_PROOF="squash-merged in pull request #$REMOVE_MERGE_DETAIL"
+      fi
+      DELETE_OUTPUT=""
+      if [[ "$REMOVE_MERGE_RC" == "0" ]] && DELETE_OUTPUT="$(git -C "$PROJECT_ROOT" branch -D "$BRANCH" 2>&1)"; then
+        worktree_message branch-deleted "$BRANCH" "Deleted branch '$BRANCH' — $REMOVE_MERGE_PROOF." >&2
+      else
+        BRANCH_DELETE_FAILED=true
+        worktree_message branch-delete-failed "$BRANCH" "Error: Removed worktree but could not delete local branch '$BRANCH'." >&2
+        echo "  Remaining branch: $BRANCH" >&2
+        echo "  Worktree path removed/pruned: $WT_PATH" >&2
+        case "$REMOVE_MERGE_RC" in
+          0)
+            echo "  $REMOVE_MERGE_PROOF, but the delete itself failed." >&2
+            [[ -n "$DELETE_OUTPUT" ]] && printf '%s\n' "$DELETE_OUTPUT" | sed 's/^/  git: /' >&2
+            ;;
+          1) echo "  Not merged into $REMOVE_MERGE_TARGET, and $REMOVE_MERGE_DETAIL" >&2 ;;
+          *) echo "  Merged-pull-request lookup could not answer: ${REMOVE_MERGE_DETAIL:-no detail}" >&2 ;;
+        esac
+        echo "  After verifying it is safe, delete manually with: git -C \"$PROJECT_ROOT\" branch -D \"$BRANCH\"" >&2
+      fi
+    fi
+    worktree_message removed "$WT_PATH" "Removed: $WT_PATH"
+    if [[ "$CWD_INSIDE_WT" == true ]]; then
+      echo "" >&2
+      worktree_message cwd-removed "$PROJECT_ROOT" "Warning: Session cwd was inside deleted worktree. Start a new session from:" >&2
+      echo "  $PROJECT_ROOT" >&2
+    fi
+    if [[ "$BRANCH_DELETE_FAILED" == true ]]; then
+      exit 1
+    fi
+    ;;
+
+  cleanup)
+    CLEANUP_STALE=false
+    CLEANUP_TTL_MINUTES="$SESSION_GUARD_DEFAULT_TTL_MINUTES"
+    # The last lease flag supplied. Both describe releasing a stale lease, which
+    # only the removal path does, so output_prune_validate refuses whichever one
+    # accompanies --targets-only rather than accepting it and ignoring it.
+    CLEANUP_LEASE_FLAG=""
+    shift || true
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --stale) CLEANUP_STALE=true; CLEANUP_LEASE_FLAG="--stale"; shift ;;
+        --ttl-minutes)
+          if [[ $# -lt 2 ]]; then
+            worktree_message cleanup-ttl-required "--ttl-minutes" "Error: --ttl-minutes requires a value" >&2
+            exit 1
+          fi
+          if ! [[ "$2" =~ ^[0-9]{1,10}$ ]]; then
+            worktree_message cleanup-ttl-invalid "$2" "Error: --ttl-minutes must be a non-negative integer of at most 10 digits" >&2
+            exit 1
+          fi
+          CLEANUP_TTL_MINUTES="$2"
+          CLEANUP_LEASE_FLAG="--ttl-minutes"
+          shift 2
+          ;;
+        *)
+          if output_prune_parse_flag "$@"; then
+            shift "$OUTPUT_PRUNE_SHIFT"
+            continue
+          fi
+          worktree_message cleanup-option-unknown "$1" "Error: unknown option '$1' for cleanup" >&2
+          echo "Run: $0 cleanup --help" >&2
+          exit 1
+          ;;
+      esac
+    done
+    output_prune_validate
+    CLEANUP_FAILED=false
+    # --targets-only branches off before the fetch and the merge proof: nothing
+    # it does needs a branch, let alone a merged one. The worktrees holding the
+    # output are the ones still in use, so gating the prune on a merge would
+    # reclaim nothing on the machine that reports a full disk.
+    if [[ "$OUTPUT_PRUNE_MODE" == true ]]; then
+      cleanup_enumerate_worktrees || exit 1
+      output_prune_sweep ${CLEANUP_TREES[@]+"${CLEANUP_TREES[@]}"} || CLEANUP_FAILED=true
+      if [[ "$CLEANUP_FAILED" == true ]]; then
+        exit 1
+      fi
+      exit 0
+    fi
+    git_with_github_https_auth -C "$PROJECT_ROOT" fetch --prune origin
+    CLEANUP_MERGE_TARGET="origin/$DEFAULT_BRANCH"
+    if ! git -C "$PROJECT_ROOT" rev-parse --verify "$CLEANUP_MERGE_TARGET" >/dev/null 2>&1; then
+      CLEANUP_MERGE_TARGET="$DEFAULT_BRANCH"
+    fi
+    # The target's first-parent chain, for telling merged work from a fresh
+    # worktree. Ancestry alone cannot: a zero-commit branch is contained in
+    # the target the moment `create` makes it, so cleanup would collect a fresh
+    # worktree in the create→claim window. Work merged by ancestry
+    # reaches the target through a merge commit's side parent, so its tip is
+    # NOT on this chain; a tip that IS on it has no commits of its own —
+    # pending work, not merged work.
+    CLEANUP_MAINLINE="$(git -C "$PROJECT_ROOT" rev-list --first-parent "$CLEANUP_MERGE_TARGET" 2>/dev/null || true)"
+    cleanup_enumerate_worktrees || exit 1
+    for wt in ${CLEANUP_TREES[@]+"${CLEANUP_TREES[@]}"}; do
+      # Every arm below either removes the worktree or says on stderr why it is
+      # keeping it. Nothing falls through silently: the help promises that a
+      # quiet run held nothing back, and a silent keep lets merged worktrees
+      # accumulate unreported.
+      BRANCH=""
+      CLEANUP_BRANCH_RC=0
+      BRANCH=$(git -C "$wt" branch --show-current 2>/dev/null) || CLEANUP_BRANCH_RC=$?
+      if [[ "$CLEANUP_BRANCH_RC" != "0" ]]; then
+        worktree_message cleanup-branch-unreadable "path=$wt exit=$CLEANUP_BRANCH_RC" "Skipped (git could not read the checked-out branch, exit $CLEANUP_BRANCH_RC): $wt" >&2
+        echo "  Inspect the path, then drop it explicitly with: $0 remove \"$wt\"" >&2
+        continue
+      fi
+      if [[ -z "$BRANCH" ]]; then
+        worktree_message cleanup-detached "$wt" "Skipped (no branch checked out — detached HEAD, so there is nothing to prove merged): $wt" >&2
+        echo "  Drop it explicitly with: $0 remove \"$wt\"" >&2
+        continue
+      fi
+      if ! git -C "$PROJECT_ROOT" show-ref --verify --quiet "refs/heads/$BRANCH"; then
+        worktree_message cleanup-branch-missing "$BRANCH" "Skipped (branch '$BRANCH' has no ref in the main checkout): $wt" >&2
+        echo "  Drop it explicitly with: $0 remove \"$wt\"" >&2
+        continue
+      fi
+      # This runs BEFORE the merge and lease probes: a zero-commit branch is
+      # pending work whichever way it would have been proven merged, and
+      # --stale must not release the lease of a worktree the skip is keeping.
+      CLEANUP_TIP="$(git -C "$PROJECT_ROOT" rev-parse --verify --quiet "refs/heads/$BRANCH" || true)"
+      if [[ -z "$CLEANUP_TIP" ]] || grep -qxF "$CLEANUP_TIP" <<<"$CLEANUP_MAINLINE"; then
+        worktree_message cleanup-zero-commit "$wt" "Skipped (branch '$BRANCH' has no commits of its own — pending work, not merged): $wt" >&2
+        echo "  Zero-commit worktrees are never collected; drop it explicitly with: $0 remove \"$wt\"" >&2
+        continue
+      fi
+      if ! git -C "$PROJECT_ROOT" merge-base --is-ancestor "$BRANCH" "$CLEANUP_MERGE_TARGET"; then
+        CLEANUP_MERGE_DETAIL=""
+        CLEANUP_MERGE_RC=0
+        CLEANUP_MERGE_DETAIL="$(merged_pr_for_branch "$BRANCH")" || CLEANUP_MERGE_RC=$?
+        case "$CLEANUP_MERGE_RC" in
+          0) ;;
+          1)
+            worktree_message cleanup-unmerged "$wt" "Skipped (branch '$BRANCH' is not merged — not an ancestor of $CLEANUP_MERGE_TARGET, and $CLEANUP_MERGE_DETAIL): $wt" >&2
+            continue
+            ;;
+          *)
+            worktree_message cleanup-merge-unverified "$wt" "Skipped (merge status of branch '$BRANCH' could not be determined: ${CLEANUP_MERGE_DETAIL:-no detail}): $wt" >&2
+            echo "  A lookup that cannot answer never authorizes a removal; restore the gh query and re-run cleanup." >&2
+            continue
+            ;;
+        esac
+      fi
+      CLEANUP_GIT_DIR=""
+      if ! CLEANUP_GIT_DIR="$(registered_worktree_git_dir "$wt")"; then
+        CLEANUP_FAILED=true
+        worktree_message cleanup-registration-unreadable "$wt" "Error: Git listed $wt but its private registration could not be resolved; preserving it because an unreconciled rebase map cannot be ruled out." >&2
+        continue
+      fi
+      CLEANUP_MAP_FILE="$CLEANUP_GIT_DIR/kendex-rebase-map"
+      if [[ -s "$CLEANUP_MAP_FILE" ]]; then
+        worktree_message cleanup-rebase-map "$CLEANUP_MAP_FILE" "Skipped (an unreconciled rebase map still records a branch rewrite): $wt" >&2
+        continue
+      fi
+      # A merged branch does NOT mean an idle tree: uncommitted work in it is
+      # exactly what gets lost. Ask the lease, not the branch.
+      if ! cleanup_lease_permits_removal "$wt" "$(issue_session_owner "$BRANCH")"; then
+        continue
+      fi
+      CLEANUP_REMOVE_OUTPUT=""
+      if ! CLEANUP_REMOVE_OUTPUT="$(git -C "$PROJECT_ROOT" worktree remove --force "$wt" 2>&1)"; then
+        CLEANUP_FAILED=true
+        worktree_message cleanup-remove-failed "$wt" "Error: Git could not remove merged worktree; preserving it for manual recovery: $wt" >&2
+        [[ -n "$CLEANUP_REMOVE_OUTPUT" ]] && printf '%s\n' "$CLEANUP_REMOVE_OUTPUT" | sed 's/^/  git: /' >&2
+        continue
+      fi
+      if [[ -e "$wt" || -L "$wt" ]]; then
+        CLEANUP_FAILED=true
+        worktree_message cleanup-path-remains "$wt" "Error: Git reported successful worktree removal but the path remains; preserving it for manual recovery: $wt" >&2
+        continue
+      fi
+      if ! git -C "$PROJECT_ROOT" branch -D "$BRANCH" >/dev/null 2>&1; then
+        CLEANUP_FAILED=true
+        worktree_message cleanup-branch-delete-failed "$BRANCH" "Error: Removed merged worktree but could not delete local branch '$BRANCH'." >&2
+        echo "  Remaining branch: $BRANCH" >&2
+        echo "  Worktree path removed/pruned: $wt" >&2
+        continue
+      fi
+      worktree_message cleaned "$wt" "Cleaned: $wt"
+    done
+    if [[ "$CLEANUP_FAILED" == true ]]; then
+      exit 1
+    fi
+    ;;
+
+  path)
+    worktree_path_for_issue "${2:?Error: path requires an issue ID}"
+    ;;
+
+  exists)
+    WT_PATH="$(worktree_path_for_issue "${2:?Error: exists requires an issue ID}")"
+    [[ -d "$WT_PATH" ]] && echo "true" || echo "false"
+    ;;
+
+  check)
+    # check inspects only the main checkout; a target argument would be
+    # silently ignored and could report clean while the named worktree is
+    # dirty, so any argument is a usage error.
+    if [[ $# -gt 1 ]]; then
+      worktree_message check-arguments "$#" "Error: check takes no arguments — it inspects the main checkout" >&2
+      exit 1
+    fi
+    UNCOMMITTED="false"
+    UNPUSHED="false"
+    UNPUSHED_LIST=""
+    if ! git -C "$PROJECT_ROOT" diff --quiet HEAD 2>/dev/null || ! git -C "$PROJECT_ROOT" diff --cached --quiet HEAD 2>/dev/null; then
+      UNCOMMITTED="true"
+    fi
+    UNPUSHED_COMMITS=$(git -C "$PROJECT_ROOT" log "origin/$DEFAULT_BRANCH..$DEFAULT_BRANCH" --oneline 2>/dev/null)
+    if [[ -n "$UNPUSHED_COMMITS" ]]; then
+      UNPUSHED="true"
+      UNPUSHED_LIST=$(echo "$UNPUSHED_COMMITS" | jq -R -s -c 'split("\n") | map(select(. != ""))')
+    fi
+    echo "{\"uncommitted\": $UNCOMMITTED, \"unpushed\": $UNPUSHED, \"unpushed_commits\": ${UNPUSHED_LIST:-[]}}"
+    ;;
+
+  push)
+    shift || true
+    # ${1+"$@"}: under Bash 3.2 with set -u, "$@" with no positional
+    # parameters left is an unbound-variable error, and `push` with no
+    # arguments at all is the ordinary current-checkout call.
+    parse_push_args ${1+"$@"} || exit 1
+    ARG="$PUSH_ARG"
+    SET_UPSTREAM="$PUSH_SET_UPSTREAM"
+    AUTO_REBASE="$PUSH_AUTO_REBASE"
+    if [[ -z "$ARG" ]]; then
+      WT_PATH="$PWD"
+    elif [[ "$ARG" == */* ]]; then
+      WT_PATH="$ARG"
+    elif WT_PATH="$(current_checkout_path_for_issue "$ARG")"; then
+      :
+    else
+      WT_PATH="$(worktree_path_for_issue "$ARG")"
+    fi
+
+    if ! require_registered_project_worktree "$WT_PATH" "push it"; then
+      exit 1
+    fi
+    # Push is the usual first command after a MANUAL rebase — the case the
+    # script never sees, and so the case nothing repairs. `create --reuse` and
+    # the restack controls re-run setup themselves, so they self-heal and do
+    # not need the warning; this one does.
+    warn_if_links_materialized "$WT_PATH"
+    if [[ "$AUTO_REBASE" == true ]]; then
+      validate_worktree_setup_config || exit 1
+    fi
+
+    REMOTE="${BOT_REMOTE_NAME:-origin}"
+    if ! git -C "$WT_PATH" remote get-url "$REMOTE" >/dev/null 2>&1; then
+      worktree_message push-remote-fallback "$REMOTE" "Warning: Remote '$REMOTE' not found, falling back to origin" >&2
+      REMOTE="origin"
+    fi
+
+    CURRENT_BRANCH=$(git -C "$WT_PATH" branch --show-current 2>/dev/null)
+    PUSH_LEASE=()
+    if [[ "$AUTO_REBASE" == true && -n "$CURRENT_BRANCH" && "$CURRENT_BRANCH" != "$DEFAULT_BRANCH" ]]; then
+      if LEASE_ARG="$(remote_ref_lease_arg "$WT_PATH" "$REMOTE" "$CURRENT_BRANCH")"; then
+        PUSH_LEASE=("$LEASE_ARG")
+      else
+        exit 1
+      fi
+    fi
+
+    # An earlier push may have rewritten this branch without deriving a map and
+    # refused. That rewrite stands, and this run would find the base already
+    # contained, rebase nothing and derive nothing, so it must refuse too
+    # rather than publish a branch no map ever described. --no-rebase is no
+    # exception: the commits are already rewritten. It sits after the lease,
+    # which judges a diverged remote on its own and says so in its own words.
+    if ! read_unmapped_rewrite "$WT_PATH"; then
+      worktree_message push-unmapped-unreadable "$WT_PATH" "Error: Could not read $WT_PATH's rebase-map record, so whether an earlier rebase left this branch unmapped is unknown; refusing to push." >&2
+      exit 1
+    fi
+    if [[ -n "$UNMAPPED_REWRITE_HEAD" ]]; then
+      worktree_message push-rebase-unmapped "$UNMAPPED_REWRITE_HEAD" "Error: An earlier rebase rewrote this branch from the head named above without a derivable commit map, so SHAs recorded before it are still unreconciled; refusing to push." >&2
+      echo "The pre-rebase commits are in the reflog: git -C \"$WT_PATH\" reflog" >&2
+      echo "Reconcile every recorded SHA against that reflog, then remove the record to push:" >&2
+      echo "  rm -f \"$(restack_rebase_map_file "$WT_PATH" 2>/dev/null || printf '<map file>')\"" >&2
+      exit 1
+    fi
+
+    if [[ "$AUTO_REBASE" == true ]]; then
+      git_with_github_https_auth -C "$PROJECT_ROOT" fetch origin "+refs/heads/$DEFAULT_BRANCH:refs/remotes/origin/$DEFAULT_BRANCH" >/dev/null 2>&1 || true
+      if [[ -n "$CURRENT_BRANCH" && "$CURRENT_BRANCH" != "$DEFAULT_BRANCH" ]]; then
+        if git -C "$WT_PATH" merge-base --is-ancestor "origin/$DEFAULT_BRANCH" HEAD; then
+          worktree_message rebase-skipped "$CURRENT_BRANCH" "→ origin/$DEFAULT_BRANCH already contained in $CURRENT_BRANCH; skipping rebase" >&2
+        else
+          # Snapshot the branch-only commits before/after the rebase so a
+          # rewrite is reported as an old→new commit map.
+          PRE_REBASE_HEAD="$(git -C "$WT_PATH" rev-parse HEAD)"
+          PRE_REBASE_COMMITS="$(git -C "$WT_PATH" log --reverse --format='%H %s' "origin/$DEFAULT_BRANCH..HEAD")"
+          # Write-ahead, before git touches a commit: see record_pending_rewrite.
+          record_pending_rewrite "$WT_PATH" "$PRE_REBASE_HEAD" || exit 1
+          if ! git -C "$WT_PATH" rebase "origin/$DEFAULT_BRANCH" >/dev/null 2>&1; then
+            git -C "$WT_PATH" rebase --abort >/dev/null 2>&1 || true
+            # An abort that unwound the rewrite puts the branch back on the head
+            # the record names, so the record goes with it; one that did not
+            # leaves the branch mid-rewrite, where the record must stand.
+            rebase_in_progress "$WT_PATH" || warn_uncleared_pending_rewrite "$WT_PATH"
+            worktree_message push-rebase-failed "$CURRENT_BRANCH" "Error: Rebase onto origin/$DEFAULT_BRANCH failed (conflicts). Push with --no-rebase or resolve manually." >&2
+            exit 1
+          fi
+          # Rebase can replace symlinks with tracked content — restore them
+          setup_worktree_links "$WT_PATH"
+          POST_REBASE_COMMITS="$(git -C "$WT_PATH" log --reverse --format='%H %s' "origin/$DEFAULT_BRANCH..HEAD")"
+          if ! PUSH_MAP_LINES="$(emit_rebase_map "$PRE_REBASE_COMMITS" "$POST_REBASE_COMMITS")"; then
+            # The record written before the rebase stays: a retry reads it
+            # above and refuses rather than publishing an undescribed rewrite.
+            worktree_message push-rebase-unmapped "$PRE_REBASE_HEAD" "Error: The rebase onto origin/$DEFAULT_BRANCH is done but its commit map could not be derived, so SHAs recorded before it cannot be reconciled; refusing to push." >&2
+            echo "The branch is rebased; its pre-rebase commits are in the reflog: git -C \"$WT_PATH\" reflog" >&2
+            echo "Reconcile every recorded SHA against that reflog, then remove the record to push:" >&2
+            echo "  rm -f \"$(restack_rebase_map_file "$WT_PATH" 2>/dev/null || printf '<map file>')\"" >&2
+            exit 1
+          fi
+          if [[ -n "$PUSH_MAP_LINES" ]]; then
+            printf '%s\n' "$PUSH_MAP_LINES"
+            # Printing is not recording: the hop on disk is what reaches
+            # worktree-push, and the pending record stands until it lands.
+            if ! append_rebase_hop "$WT_PATH" "$PUSH_MAP_LINES"; then
+              worktree_message push-map-unrecorded "${REBASE_HOP_FILE:-$WT_PATH}" "Error: The rebase onto origin/$DEFAULT_BRANCH is done but its map could not be recorded, so SHAs recorded before it cannot be reconciled; refusing to push. The map's only copy is on stdout above." >&2
+              exit 1
+            fi
+          fi
+          # The only caller that refuses rather than reports: a record left
+          # standing here would publish the branch and then refuse the push
+          # after it, where a refusal now costs nothing because the branch is
+          # still local.
+          if ! clear_pending_rewrite "$WT_PATH"; then
+            worktree_message rebase-pending-uncleared "$WT_PATH" "Error: The finished rewrite's pending record could not be cleared, so this push would publish a branch whose record still refuses every push after it; refusing to push." >&2
+            echo "Reconcile every recorded SHA against the worktree reflog, then remove the record:" >&2
+            echo "  rm -f \"$(restack_rebase_map_file "$WT_PATH" 2>/dev/null || printf '<map file>')\"" >&2
+            exit 1
+          fi
+        fi
+      fi
+    fi
+
+    CURRENT_BRANCH=$(git -C "$WT_PATH" branch --show-current 2>/dev/null)
+    if [[ -z "$SET_UPSTREAM" && -n "$CURRENT_BRANCH" ]]; then
+      UPSTREAM=$(git -C "$WT_PATH" config "branch.${CURRENT_BRANCH}.remote" 2>/dev/null || true)
+      [[ -z "$UPSTREAM" ]] && SET_UPSTREAM="-u"
+    fi
+
+    PUSH_UPSTREAM_ARGS=()
+    PUSH_REF=HEAD
+    if [[ -n "$SET_UPSTREAM" ]]; then
+      PUSH_UPSTREAM_ARGS=("$SET_UPSTREAM")
+      PUSH_REF="HEAD:refs/heads/${CURRENT_BRANCH}"
+    fi
+    PUSH_OUTPUT=""
+    # Capture Git's vendor text so a failed push can emit its stable record
+    # first. A successful push is defined by its exit status and stays quiet.
+    if ! PUSH_OUTPUT="$(LC_ALL=C git_with_github_https_auth -C "$WT_PATH" push ${PUSH_UPSTREAM_ARGS[@]+"${PUSH_UPSTREAM_ARGS[@]}"} ${PUSH_LEASE[@]+"${PUSH_LEASE[@]}"} "$REMOTE" "$PUSH_REF" 2>&1)"; then
+      if push_output_refused_by_hook "$PUSH_OUTPUT"; then
+        worktree_message push-hook-rejected "$REMOTE/${CURRENT_BRANCH:-HEAD}" "Error: A pre-push hook refused the push. The hook's own keyed lines are in the git output below — fix what they name." >&2
+      elif push_output_lease_rejected "$PUSH_OUTPUT"; then
+        worktree_message push-rejected "$REMOTE/$CURRENT_BRANCH" "Error: Push rejected. Git reports the force-with-lease expectation for '$REMOTE/$CURRENT_BRANCH' stale; fetch and rebase/merge before retrying." >&2
+      else
+        worktree_message push-failed "$REMOTE/${CURRENT_BRANCH:-HEAD}" "Error: Push to '$REMOTE/${CURRENT_BRANCH:-HEAD}' failed; git's own output below states the cause." >&2
+      fi
+      [[ -n "$PUSH_OUTPUT" ]] && sed 's/^/  git: /' <<<"$PUSH_OUTPUT" >&2
+      exit 1
+    fi
+    clear_restack_push_authorization "$WT_PATH"
+    ;;
+
+  fix-links)
+    # Restore symlinks in a worktree (run after manual rebase/merge that clobbers them)
+    ARG="${2:-}"
+    if [[ -z "$ARG" ]]; then
+      WT_PATH="$PWD"
+    elif [[ "$ARG" == */* ]]; then
+      WT_PATH="$ARG"
+    else
+      WT_PATH="$(worktree_path_for_issue "$ARG")"
+    fi
+    if ! require_non_main_project_worktree "$WT_PATH" "restore links in it"; then
+      exit 1
+    fi
+    # A failed pass must still be REPORTED, not aborted by set -e with no
+    # word about which path is unhealthy — the postcondition below is what
+    # names them, so let the repair run to completion either way.
+    LINKS_SETUP_OK=true
+    setup_worktree_links "$WT_PATH" || LINKS_SETUP_OK=false
+    # Re-assert the shared auto-repair hooks too: a fix-links run is the
+    # natural refresh point after upgrading the skill or the config.
+    install_worktree_autorepair_hooks
+    # Never claim success for a path this run did not restore: the
+    # sync errors that name fix-links as their remediation are re-triggered by
+    # exactly these paths, so a success message here loops the operator.
+    UNRESTORED="$(collect_unrestored_links "$WT_PATH")"
+    if [[ -n "$UNRESTORED" || "$LINKS_SETUP_OK" != true ]]; then
+      {
+        worktree_message links-unrestored "$WT_PATH" "Error: fix-links did not restore every configured path in $WT_PATH."
+        if [[ -n "$UNRESTORED" ]]; then
+          echo "  Still unhealthy:"
+          sed 's/^/    - /' <<<"$UNRESTORED"
+        fi
+        echo "  Any warning above names why. A path holding data git does not track is"
+        echo "  left in place deliberately: move it into '$PROJECT_ROOT' (or delete it),"
+        echo "  then re-run this command."
+      } >&2
+      exit 1
+    fi
+    worktree_message links-restored "$WT_PATH" "Restored symlinks in $WT_PATH"
+    ;;
+
+  repair-links)
+    # Hook-driven sibling of fix-links: re-assert configured
+    # WORKTREE_SYMLINKS after a git operation, refusing to destroy any data
+    # git does not track that a materialized path has accumulated. Exits 0
+    # quietly for the main checkout or an unregistered path because its
+    # callers are shared git hooks that fire for every checkout of the repo.
+    ARG="${2:-}"
+    if [[ -z "$ARG" ]]; then
+      WT_PATH="$PWD"
+    elif [[ "$ARG" == */* ]]; then
+      WT_PATH="$ARG"
+    else
+      WT_PATH="$(worktree_path_for_issue "$ARG")"
+    fi
+    if ! is_git_worktree_path "$WT_PATH" || \
+       ! is_registered_project_worktree "$WT_PATH" || \
+       same_canonical_dir "$WT_PATH" "$PROJECT_ROOT"; then
+      exit 0
+    fi
+    repair_worktree_links "$WT_PATH"
+    ;;
+
+  codex-setup)
+    # Codex Desktop owns worktree creation. This command applies the same
+    # project-local setup that `create` applies after git has already created
+    # the worktree: env/config symlinks, configured copies/dirs, optional bot
+    # git config, and optional bot remote.
+    ARG="${2:-}"
+    if [[ -z "$ARG" ]]; then
+      WT_PATH="$PWD"
+    elif [[ "$ARG" == */* ]]; then
+      WT_PATH="$ARG"
+    else
+      WT_PATH="$(worktree_path_for_issue "$ARG")"
+    fi
+    if ! require_non_main_project_worktree "$WT_PATH" "configure it"; then
+      exit 1
+    fi
+    setup_app_worktree "$WT_PATH"
+    worktree_message codex-configured "$WT_PATH" "Configured Codex worktree: $WT_PATH"
+    ;;
+
+  codex-branch)
+    # Codex Desktop may create an app-managed branch name. Normalize the
+    # current worktree to the issue branch expected by orch before
+    # running `orch start <ISSUE>`.
+    ISSUE="${2:?Error: codex-branch requires an issue ID or branch name}"
+    ARG="${3:-}"
+    if [[ -z "$ARG" ]]; then
+      WT_PATH="$PWD"
+    elif [[ "$ARG" == */* ]]; then
+      WT_PATH="$ARG"
+    else
+      WT_PATH="$(worktree_path_for_issue "$ARG")"
+    fi
+    if ! require_non_main_project_worktree "$WT_PATH" "normalize its branch"; then
+      exit 1
+    fi
+    validate_worktree_setup_config || exit 1
+
+    TARGET_BRANCH="$(issue_branch_name "$ISSUE")"
+    CURRENT_BRANCH="$(git -C "$WT_PATH" branch --show-current 2>/dev/null || true)"
+    if [[ "$CURRENT_BRANCH" == "$TARGET_BRANCH" ]]; then
+      worktree_message codex-branch-current "$TARGET_BRANCH" "Codex worktree already on $TARGET_BRANCH: $WT_PATH"
+      exit 0
+    fi
+
+    # Branch normalization is best-effort; fail-closed ownership discovery is
+    # specific to `create` claims.
+    git_with_github_https_auth -C "$PROJECT_ROOT" fetch origin >/dev/null 2>&1 || true
+    _REMOTE="${BOT_REMOTE_NAME:-origin}"
+    if git -C "$PROJECT_ROOT" show-ref --verify --quiet "refs/heads/$TARGET_BRANCH"; then
+      git -C "$WT_PATH" switch "$TARGET_BRANCH" >/dev/null 2>&1 || {
+        worktree_message codex-branch-unavailable "$TARGET_BRANCH" "Error: Branch '$TARGET_BRANCH' already exists and cannot be checked out in $WT_PATH" >&2
+        exit 1
+      }
+    elif git -C "$PROJECT_ROOT" rev-parse --verify "$_REMOTE/$TARGET_BRANCH" >/dev/null 2>&1; then
+      git -C "$WT_PATH" switch -c "$TARGET_BRANCH" --track "$_REMOTE/$TARGET_BRANCH" >/dev/null 2>&1
+    elif [[ -n "$CURRENT_BRANCH" ]]; then
+      git -C "$WT_PATH" branch -m "$TARGET_BRANCH"
+    else
+      git -C "$WT_PATH" switch -c "$TARGET_BRANCH" >/dev/null 2>&1
+    fi
+
+    if git -C "$WT_PATH" rev-parse --verify "$_REMOTE/$TARGET_BRANCH" >/dev/null 2>&1; then
+      git -C "$WT_PATH" branch --set-upstream-to="$_REMOTE/$TARGET_BRANCH" "$TARGET_BRANCH" >/dev/null 2>&1 || true
+    fi
+    setup_app_worktree "$WT_PATH"
+    worktree_message codex-branch-ready "$TARGET_BRANCH" "Codex worktree branch ready: $TARGET_BRANCH ($WT_PATH)"
+    ;;
+
+  codex-cleanup)
+    # Codex Desktop owns worktree/branch deletion. This hook is intentionally
+    # non-destructive and does not remove symlinks: if the app fails to delete
+    # the worktree immediately after cleanup, mutating tracked symlink paths can
+    # leave the worktree dirty. Project-level teardown (containers, caches)
+    # belongs in the Codex environment cleanup script after this command.
+    ARG="${2:-}"
+    if [[ -z "$ARG" ]]; then
+      WT_PATH="$PWD"
+    elif [[ "$ARG" == */* ]]; then
+      WT_PATH="$ARG"
+    else
+      WT_PATH="$(worktree_path_for_issue "$ARG")"
+    fi
+    worktree_message codex-cleanup "$WT_PATH" "Codex cleanup hook complete; app owns worktree deletion: $WT_PATH"
+    ;;
+
+  claude-setup)
+    # Claude Code owns worktree creation for `--worktree` sessions, subagents
+    # with `isolation: worktree`, and desktop parallel sessions — all of which
+    # run a bare `git worktree add`, so tracked content arrives and the
+    # untracked machine-local layer does not. Wire this from a consumer repo's
+    # `.claude/settings.json` WorktreeCreate hook; because that hook lives in
+    # PROJECT-level settings it applies to every Claude config-dir variant on
+    # the machine (CLAUDE_CONFIG_DIR only moves user-level config).
+    #
+    # Same provisioning as codex-setup — see setup_app_worktree.
+    ARG="${2:-}"
+    if [[ -z "$ARG" ]]; then
+      WT_PATH="$PWD"
+    elif [[ "$ARG" == */* ]]; then
+      WT_PATH="$ARG"
+    else
+      WT_PATH="$(worktree_path_for_issue "$ARG")"
+    fi
+    if ! require_non_main_project_worktree "$WT_PATH" "configure it"; then
+      exit 1
+    fi
+    setup_app_worktree "$WT_PATH"
+    worktree_message claude-configured "$WT_PATH" "Configured Claude worktree: $WT_PATH"
+    ;;
+
+  claude-cleanup)
+    # Claude Code owns worktree/branch deletion. Non-destructive for the same
+    # reason as codex-cleanup: mutating tracked symlink paths before the app has
+    # actually removed the worktree can leave it dirty.
+    ARG="${2:-}"
+    if [[ -z "$ARG" ]]; then
+      WT_PATH="$PWD"
+    elif [[ "$ARG" == */* ]]; then
+      WT_PATH="$ARG"
+    else
+      WT_PATH="$(worktree_path_for_issue "$ARG")"
+    fi
+    worktree_message claude-cleanup "$WT_PATH" "Claude cleanup hook complete; app owns worktree deletion: $WT_PATH"
+    ;;
+
+  *)
+    worktree_message command-unknown "${1:-}" "Usage: $0 create|restack|list|remove|cleanup [--stale]|path|exists|check|push|fix-links|repair-links|codex-setup|codex-branch|codex-cleanup|claude-setup|claude-cleanup [ID|/path] [options]" >&2
+    echo "Run: $0 --help" >&2
+    exit 1
+    ;;
+esac

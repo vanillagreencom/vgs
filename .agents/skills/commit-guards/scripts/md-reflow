@@ -1,0 +1,183 @@
+#!/usr/bin/env bash
+# md-reflow — rewrite markdown to the format md-format judges: the lines of
+# a paragraph, a list item or a blockquote paragraph joined into one with
+# single spaces, trailing-double-space breaks joined away, and the missing
+# blank line put before a heading, a fence or a list that follows a
+# paragraph line. Fenced code, tables, HTML blocks, indented code and front
+# matter come out byte-identical, and so does a file that is already clean.
+# The grammar is lib/md-blocks.awk's, the one md-format reads by.
+#
+#   md-reflow [--check] PATH...     these work-tree files
+#   md-reflow [--check] --staged    the work-tree copy of every markdown
+#                                   file the staged diff adds or changes
+#   md-reflow [--check] --all       every tracked markdown file the path
+#                                   globs name
+#
+# --check writes nothing and exits 1 naming each file a reflow would change.
+# A CRLF file is refused, not converted. Exit codes: 0 clean or rewritten;
+# 1 --check found work; 2 usage/config/collection error.
+set -euo pipefail
+set -f
+
+GG_BOOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd; printf x)"
+GG_BOOT="${GG_BOOT%x}"
+# The trailing newline from `pwd` terminates its output; anything before it is the path.
+SCRIPT_DIR="${GG_BOOT%$'\n'}"
+GG_CHECK="md-reflow"
+# shellcheck source=lib/common.sh
+source "$SCRIPT_DIR/lib/common.sh"
+# shellcheck source=lib/settings.sh
+source "$SCRIPT_DIR/lib/settings.sh"
+# shellcheck source=lib/md-scope.sh
+source "$SCRIPT_DIR/lib/md-scope.sh"
+# shellcheck source=lib/atomic-install.sh
+source "$SCRIPT_DIR/lib/atomic-install.sh"
+
+PATHS_DEFAULT="*.md"
+BLOCKS_AWK="$SCRIPT_DIR/lib/md-blocks.awk"
+SHAPES_AWK="$SCRIPT_DIR/lib/md-shapes.awk"
+
+usage() {
+  gg_message usage md-reflow "Command usage follows."
+  cat <<EOF
+usage: md-reflow [--check] PATH... | [--check] --staged | [--check] --all
+
+Rewrites markdown to the format md-format judges: one paragraph per line,
+one list item per line, blank lines before a heading, fence or list that
+follows a paragraph line, no trailing-double-space break. Fenced code,
+tables, HTML blocks, indented code and front matter are untouched; a clean
+file is untouched; a CRLF file is refused rather than converted.
+
+PATH... names work-tree files. --staged takes the work-tree copy of every
+markdown file the staged diff adds or changes, --all every tracked markdown
+file COMMIT_GUARDS_MD_PATHS names minus COMMIT_GUARDS_MD_EXCLUDES; both
+resolve against the index the way md-format does. --check writes nothing
+and exits 1 naming each file a reflow would change.
+
+Exit codes: 0 clean or rewritten; 1 --check found work; 2 usage, config or
+collection error.
+EOF
+}
+
+CHECK=0
+STAGED=0
+ALL=0
+PATHS=()
+INVOKED_IN="$PWD"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --check) CHECK=1 ;;
+    --staged) STAGED=1 ;;
+    --all) ALL=1 ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    --) ;;
+    -*) gg_fail argument "$1" "Unknown argument. See --help." ;;
+    *)
+      case "$1" in
+        /*) PATHS+=("$1") ;;
+        *) PATHS+=("$INVOKED_IN/$1") ;;
+      esac
+      ;;
+  esac
+  shift
+done
+
+[ -r "$BLOCKS_AWK" ] || gg_fail dependency "$BLOCKS_AWK" "Reinstall the commit-guards skill to restore this file."
+[ -r "$SHAPES_AWK" ] || gg_fail dependency "$SHAPES_AWK" "Reinstall the commit-guards skill to restore this file."
+if [ "${#PATHS[@]}" -gt 0 ] && { [ "$STAGED" -eq 1 ] || [ "$ALL" -eq 1 ]; }; then
+  gg_fail path-scope "${#PATHS[@]}" "Path arguments and scope flags are exclusive."
+fi
+if [ "${#PATHS[@]}" -eq 0 ] && [ "$STAGED" -eq 0 ] && [ "$ALL" -eq 0 ]; then
+  gg_fail path-count 0 "Name files to reflow or pass --staged or --all."
+fi
+
+gg_repo_root_cd
+gg_tmpdir
+
+# The work-tree files to rewrite, NUL-delimited, repo-root-relative.
+: >"$GG_TMP/targets.z"
+if [ "${#PATHS[@]}" -gt 0 ]; then
+  root="$PWD"
+  for p in "${PATHS[@]}"; do
+    [ -f "$p" ] || gg_fail path-file "$p" "The path must name a file."
+    dir="$(cd -- "$(dirname -- "$p")" && pwd -P; printf x)" || gg_fail path-resolve "$p" "The path cannot be resolved."
+    dir="${dir%x}"
+    dir="${dir%$'\n'}"
+    abs="$dir/$(basename -- "$p")"
+    case "$abs" in
+      "$root"/*) printf '%s\0' "${abs#"$root"/}" >>"$GG_TMP/targets.z" ;;
+      *) gg_fail path-outside "$p" "The path is outside the repository." ;;
+    esac
+  done
+else
+  gg_md_load_paths md-reflow COMMIT_GUARDS_MD_PATHS "$PATHS_DEFAULT"
+  GG_MD_MODE=staged
+  [ "$ALL" -eq 0 ] || GG_MD_MODE=all
+  gg_md_select markdown
+  while IFS= read -r -d '' sha && IFS= read -r -d '' f; do
+    printf '%s\0' "$f" >>"$GG_TMP/targets.z"
+  done <"$GG_TMP/md-files.z"
+fi
+
+reflowed=0
+would=0
+checked=0
+while IFS= read -r -d '' f; do
+  [ -f "$f" ] || gg_fail worktree-file "$f" "Reflow requires a file in the checkout."
+  [ -L "$f" ] && gg_fail symlink "$f" "Reflow the file this symlink points at."
+  if gg_blob_is_binary "$f" "$f"; then
+    gg_fail binary "$f" "Reflow cannot rewrite a file that holds a NUL byte."
+  fi
+  checked=$((checked + 1))
+  status=0
+  block_stderr=""
+  LC_ALL=C awk -f "$SHAPES_AWK" -f "$BLOCKS_AWK" -v mode=reflow -- "$f" >"$GG_TMP/reflowed" 2>"$GG_TMP/reflow.err" || status=$?
+  if [ -s "$GG_TMP/reflow.err" ]; then
+    # not-a-path: the parser diagnostic is text, not a file name.
+    block_stderr="$(cat -- "$GG_TMP/reflow.err")" \
+      || gg_fail diagnostic-read "$GG_TMP/reflow.err" "Could not read parser diagnostics."
+  fi
+  if [ "$status" -ne 0 ]; then
+    refusal=""
+    while IFS= read -r row; do
+      case "$row" in R"$GG_TAB"*) refusal="$row"; break ;; esac
+    done <"$GG_TMP/reflowed"
+    [ -n "$refusal" ] \
+      || gg_fail_cause block-exit "$f:$status" "$GG_TMP/reflow.err" "The Markdown parser exited without a refusal record. No replacement was written."
+    refusal="${refusal#R"$GG_TAB"}"
+    gg_md_block_message "${refusal#*"$GG_TAB"}" "$f" "${refusal%%"$GG_TAB"*}"
+    gg_fail "$GG_MD_RULE" "$GG_MD_DETAIL" "$GG_MD_EXPLANATION No replacement was written.${block_stderr:+ $block_stderr}"
+  fi
+  [ -z "$block_stderr" ] || gg_message block-stderr "$f:$status" "$block_stderr" >&2
+  # awk prints a newline after the last line; a file that had none keeps
+  # having none, so a clean file stays byte-identical.
+  if [ -s "$f" ] && [ -n "$(tail -c 1 -- "$f")" ]; then
+    size="$(wc -c <"$GG_TMP/reflowed")"
+    head -c "$((size - 1))" -- "$GG_TMP/reflowed" >"$GG_TMP/reflowed.trim"
+    mv -f -- "$GG_TMP/reflowed.trim" "$GG_TMP/reflowed"
+  fi
+  if cmp -s -- "$f" "$GG_TMP/reflowed"; then
+    continue
+  fi
+  if [ "$CHECK" -eq 1 ]; then
+    gg_message would-reflow "$f" "Reflow would change this file."
+    would=$((would + 1))
+    continue
+  fi
+  gg_install_file "$GG_TMP/reflowed" "$f" "the reflowed markdown"
+  gg_message reflowed "$f" "The file was reflowed."
+  reflowed=$((reflowed + 1))
+done <"$GG_TMP/targets.z"
+
+if [ "$CHECK" -eq 1 ]; then
+  if [ "$would" -gt 0 ]; then
+    gg_message check-summary "changed=$would checked=$checked" "The reflow check found files that would change."
+    exit 1
+  fi
+  gg_message check-summary "changed=0 checked=$checked" "The checked files are already in the required format."
+  exit 0
+fi
+gg_message rewrite-summary "changed=$reflowed checked=$checked" "The reflow run is complete."

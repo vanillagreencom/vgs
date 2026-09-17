@@ -1,0 +1,18 @@
+backend/vendor/** -text -whitespace
+# Vendored kendex renders: upstream bytes, not this repo's whitespace to police.
+.agents/** -whitespace
+.claude/** -whitespace
+.codex/** -whitespace
+.pi/** -whitespace
+# Binary assets: declared binary so git keeps them out of textual diffs and
+# doc-limits does not read their NUL bytes as a text file gone binary.
+*.png binary
+*.jpg binary
+*.cur binary
+*.ani binary
+*.qsb binary
+*.wav binary
+*.ttf binary
+*.mp4 binary
+config/vshell/icons/Yaru/cursors/** binary
+bin/vshell-asdcontrol binary

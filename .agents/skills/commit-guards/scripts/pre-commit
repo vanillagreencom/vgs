@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+# pre-commit — the staged-scope guard chain, shaped for the git pre-commit
+# hook (the installed .git/hooks/kendex-guards shim execs it): doc-limits,
+# preflight and bot-instructions when the committing work tree or this
+# install carries those sibling skills, then `commit-guards all --staged`,
+# then the repo-local entry named by COMMIT_GUARDS_PRE_COMMIT_LOCAL. Every lane announces itself,
+# a skipped or unconfigured one included.
+#
+# Every step runs before the verdict, so one commit attempt reports every
+# blocker. Aggregation fails CLOSED: exit 2 if any step could not complete,
+# else 1 if any found violations, else 0. Both nonzero verdicts block.
+# Sibling resolution and the doc-limits lane, which the pre-push lane runs
+# too, are lib/siblings.sh's.
+set -euo pipefail
+
+GG_BOOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd; printf x)"
+GG_BOOT="${GG_BOOT%x}"
+# The trailing newline from `pwd` terminates its output; anything before it is the path.
+SCRIPT_DIR="${GG_BOOT%$'\n'}"
+GG_CHECK="pre-commit"
+# shellcheck source=lib/paths.sh
+source "$SCRIPT_DIR/lib/paths.sh"
+# shellcheck source=lib/common.sh
+source "$SCRIPT_DIR/lib/common.sh"
+# shellcheck source=lib/settings.sh
+source "$SCRIPT_DIR/lib/settings.sh"
+# shellcheck source=lib/siblings.sh
+source "$SCRIPT_DIR/lib/siblings.sh"
+
+usage() {
+  cat <<'EOF'
+usage: pre-commit
+
+Runs the staged-scope guard chain: doc-limits, preflight and bot-instructions
+check (each resolved from the committing work tree first, then from the
+install beside this skill), the commit-guards batch at commit scope, then the
+optional repo-local entry. Takes no arguments — git passes none to pre-commit. Wire it through
+the installed shim: `install-git-hooks --repo <root>`.
+
+Configuration (env > .env.local > .kendex/settings.toml >
+kendex.settings.toml [env] > default):
+  COMMIT_GUARDS_PRE_COMMIT_LOCAL   repo-root-relative executable to run last
+                                   (default "": no repo-local entry)
+Every COMMIT_GUARDS_* key the batch reads applies here unchanged.
+
+Exit codes: 0 clean; 1 violations; 2 usage/config/collection error. Both
+nonzero codes block the commit.
+EOF
+}
+
+case "${1-}" in
+  -h | --help)
+    usage
+    exit 0
+    ;;
+esac
+[ $# -eq 0 ] || gg_fail argument-count "$#" "takes no arguments (see --help)"
+
+gg_repo_root_cd
+
+gg_settings_index_mode
+
+had_violations=0
+had_errors=0
+
+run_step() { # LABEL COMMAND [ARGS...] — runs one step and folds its verdict
+  local label="$1" status=0
+  shift
+  gg_message step "$label" "=== pre-commit: $label"
+  "$@" || status=$?
+  case "$status" in
+    0) ;;
+    1) had_violations=1 ;;
+    *)
+      had_errors=1
+      gg_message step-incomplete "$label:$status" "pre-commit: step '$label' did not complete (exit $status)"
+      ;;
+  esac
+}
+
+# The doc-limits lane first, as the pre-push lane runs it first: sibling
+# resolution and the lane itself are lib/siblings.sh's, so the two hooks
+# cannot disagree about which copy of a gate judges a tree.
+doc_limits_status=0
+gg_doc_limits_lane "$SCRIPT_DIR" || doc_limits_status=$?
+case "$doc_limits_status" in
+  0) ;;
+  1) had_violations=1 ;;
+  *) had_errors=1 ;;
+esac
+
+# Same sibling contract for preflight: its --staged lanes judge the same
+# blobs, and a human committing outside any harness gets the deterministic
+# checks CI would otherwise report first.
+if PREFLIGHT_SKILL="$(gg_resolve_sibling "$SCRIPT_DIR" preflight)"; then
+  PREFLIGHT="$PREFLIGHT_SKILL/scripts/preflight"
+  [ -x "$PREFLIGHT" ] || gg_fail lane-missing "$PREFLIGHT" "the preflight skill is installed at $PREFLIGHT_SKILL but $PREFLIGHT is missing or not executable — reinstall it"
+  if git rev-parse --verify --quiet HEAD >/dev/null; then
+    run_step preflight "$PREFLIGHT" --staged
+  else
+    # The very first commit has nothing to diff --staged against; blocking
+    # a repository's birth is not this chain's job.
+    gg_message base-missing preflight "=== pre-commit: first commit — preflight --staged has no base; skipped"
+  fi
+else
+  gg_message lane-absent "preflight roots=$(gg_searched_roots "$SCRIPT_DIR") skills=$GG_SKILL_ROOTS fallback=$SCRIPT_DIR/../../preflight" "=== pre-commit: preflight not installed — skipped (no preflight skill under $(gg_searched_roots "$SCRIPT_DIR") ($GG_SKILL_ROOTS), nor at $SCRIPT_DIR/../../preflight)"
+fi
+
+# Same sibling contract for the bot-instructions check: the rendered review
+# bot instruction files are judged against the staged doctrine and manifest,
+# one coherent staged state, so no consumer wires a wrapper of its own.
+if BOT_SKILL="$(gg_resolve_sibling "$SCRIPT_DIR" bot-instructions)"; then
+  BOT_CHECK="$BOT_SKILL/scripts/bot-instructions"
+  [ -x "$BOT_CHECK" ] || gg_fail lane-missing "$BOT_CHECK" "the bot-instructions skill is installed at $BOT_SKILL but $BOT_CHECK is missing or not executable — reinstall it"
+  run_step "bot-instructions check --staged" "$BOT_CHECK" check --staged
+else
+  gg_message lane-absent "bot-instructions roots=$(gg_searched_roots "$SCRIPT_DIR") skills=$GG_SKILL_ROOTS fallback=$SCRIPT_DIR/../../bot-instructions" "=== pre-commit: bot-instructions not installed — skipped (no bot-instructions skill under $(gg_searched_roots "$SCRIPT_DIR") ($GG_SKILL_ROOTS), nor at $SCRIPT_DIR/../../bot-instructions)"
+fi
+
+BATCH="$SCRIPT_DIR/commit-guards"
+[ -x "$BATCH" ] || gg_fail lane-missing "$BATCH" "$BATCH is missing or not executable — reinstall the commit-guards skill"
+run_step "commit-guards all --staged" "$BATCH" all --staged
+
+LOCAL_RAW="$(gg_setting COMMIT_GUARDS_PRE_COMMIT_LOCAL "")" || exit 2
+if [ -n "$LOCAL_RAW" ]; then
+  LOCAL_ENTRY="$(gg_config_path "$LOCAL_RAW" COMMIT_GUARDS_PRE_COMMIT_LOCAL)" || exit 2
+  [ -x "$LOCAL_ENTRY" ] || gg_fail local-missing "$LOCAL_ENTRY" "COMMIT_GUARDS_PRE_COMMIT_LOCAL names '$LOCAL_ENTRY', which is missing or not executable"
+  # The family contract applies: 0 clean, 1 violations, anything else "could
+  # not complete". Every nonzero blocks either way.
+  run_step "repo-local: $LOCAL_ENTRY" "./$LOCAL_ENTRY"
+else
+  # Announced like every ran or skipped lane: silence here is
+  # indistinguishable from a lane the chain lost.
+  gg_message local-entry none "=== pre-commit: repo-local entry: none configured"
+fi
+
+if [ "$had_errors" -eq 1 ]; then
+  gg_message result 2 "pre-commit: a guard could not complete — commit blocked; fix the errors above (bypass only with git commit --no-verify)"
+  exit 2
+fi
+if [ "$had_violations" -eq 1 ]; then
+  gg_message result 1 "pre-commit: violations — commit blocked; see the failures above"
+  exit 1
+fi
+gg_message result 0 "pre-commit: OK — staged guard chain clean"
