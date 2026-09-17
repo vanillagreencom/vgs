@@ -309,7 +309,7 @@ function shell(session, recordedRef) {
 
     const handlers = serviceQ.handlers("Component.onCompleted");
     assert.equal(handlers.length, 1, "VGSThemeService.qml must define one Component.onCompleted handler");
-    const service = { log: { warn() {} }, Theme: theme, refresh() {}, answer: null };
+    const service = { log: { warn() {} }, Theme: theme, refresh() {}, _sweepWallpaperThumbs() {}, answer: null };
     service._themeInitOutcome = (output, exitCode) =>
         callInScope(serviceQ.body("_themeInitOutcome"), service, {}, ["output", "exitCode"], [output, exitCode]);
     service._run = (id, args, callback) => {

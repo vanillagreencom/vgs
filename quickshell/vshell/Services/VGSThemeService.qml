@@ -607,6 +607,12 @@ Singleton {
     readonly property int _thumbMaxAttempts: 2
     // Set by the flows that DELETE a wallpaper; cleared when a sweep runs.
     property bool _thumbSweepWanted: false
+    // The session's one discovery sweep: an `--all` that reconciles the cache
+    // against every installed theme, so a theme installed or removed outside
+    // this shell is built or pruned without a read ever finding a miss.
+    // Spent by the first sweep that dispatches and never set again; unlike
+    // `_thumbSweepWanted`, an unparseable answer does not restore it.
+    property bool _thumbDiscoveryPending: true
 
     // Force the next sweep even when the CURRENT theme is fully cached. `--all`
     // both builds and prunes, so this covers each side: a removal orphans
@@ -628,7 +634,9 @@ Singleton {
     // carry a thumbnail are FORGOTTEN, so a deleted thumbnail or a replaced
     // source starts from zero; counts for entries this read cannot see — every
     // other theme — are kept, or switching themes would refund them.
-    function thumbSweepPlan(entries, attempts, forced, maxAttempts) {
+    // `discovery` dispatches like `forced` but charges attempts the same way,
+    // and the returned `forced` is only the request a result may restore.
+    function thumbSweepPlan(entries, attempts, forced, discovery, maxAttempts) {
         const kept = {};
         for (const key in attempts)
             kept[key] = attempts[key];
@@ -642,13 +650,13 @@ Singleton {
             else
                 missing.push(key);
         });
-        if (!forced && !missing.some(key => (kept[key] || 0) < maxAttempts))
-            return {sweep: false, attempts: kept, missing: missing};
+        if (!forced && !discovery && !missing.some(key => (kept[key] || 0) < maxAttempts))
+            return {sweep: false, attempts: kept, missing: missing, forced: !!forced};
         const spent = {};
         for (const key in kept)
             spent[key] = kept[key];
         missing.forEach(key => spent[key] = (spent[key] || 0) + 1);
-        return {sweep: true, attempts: spent, missing: missing};
+        return {sweep: true, attempts: spent, missing: missing, forced: !!forced};
     }
 
     // What a finished command means. Exit status alone does not say whether the
@@ -685,17 +693,18 @@ Singleton {
     function _sweepWallpaperThumbs() {
         if (root._thumbSweepInFlight)
             return;
-        const forced = root._thumbSweepWanted;
         const plan = root.thumbSweepPlan(root.themeWallpapers || [], root._thumbAttempts,
-                                         forced, root._thumbMaxAttempts);
+                                         root._thumbSweepWanted, root._thumbDiscoveryPending, root._thumbMaxAttempts);
         root._thumbAttempts = plan.attempts;
         if (!plan.sweep)
             return;
+        // Any dispatched sweep runs `--all`, so it is the discovery pass too.
         root._thumbSweepWanted = false;
+        root._thumbDiscoveryPending = false;
         root._thumbSweepInFlight = true;
         _run("vgs-theme-wallpaper-thumbs", ["theme", "wallpaper-thumbs", "--all", "--json"], function(output, exitCode) {
             root._thumbSweepInFlight = false;
-            const outcome = root.thumbSweepResult(output, plan.missing, root._thumbAttempts, forced);
+            const outcome = root.thumbSweepResult(output, plan.missing, root._thumbAttempts, plan.forced);
             root._thumbAttempts = outcome.attempts;
             if (outcome.restoreForced)
                 root._thumbSweepWanted = true;
@@ -1238,6 +1247,8 @@ Singleton {
             _run("vgs-theme-init", ["theme", "init", "--json"], function(output, exitCode) {
                 Theme.themeInitFinished(_themeInitOutcome(output, exitCode));
                 refresh();
+                // The discovery sweep, after init has repaired theme state.
+                root._sweepWallpaperThumbs();
             }, 120000, true);
         } catch (e) {
             // What this covers is a synchronous failure before the run is armed, which
@@ -1247,6 +1258,7 @@ Singleton {
             log.warn("Could not start theme init:", e);
             Theme.themeInitFinished("unreadable");
             refresh();
+            root._sweepWallpaperThumbs();
         }
     }
 }
