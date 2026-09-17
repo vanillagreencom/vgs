@@ -204,7 +204,7 @@ Singleton {
     // apply slot, so it takes the helper's mutation flock alongside an apply
     // rather than behind it.
     function _run(id, args, callback, timeoutMs, backgroundTask, procId) {
-        // Theme helpers read settings.json and session.json, and some write settings.json back.
+        // Theme helpers read settings.json and session.json; only the shell writes them.
         SettingsData.flushSettings();
         SessionData.flushSettings();
         const coalesceId = (procId === undefined) ? id : procId;
@@ -302,8 +302,9 @@ Singleton {
     function setAppEnabled(app, enabled) {
         if (!app)
             return;
-        // The helper owns the settings.json write (re-rendering the target on
-        // enable); SettingsData picks the external edit up via its file watcher.
+        // SettingsData stores the toggle; the helper takes it as an argument and
+        // re-renders the target on enable.
+        SettingsData.setThemeAppEnabled(app, enabled);
         _setAppBusy(app, true);
         _run("vgs-theme-app-toggle-" + app, ThemeRequest.appToggleArgs(app, enabled), function(output, exitCode, stderr) {
             _setAppBusy(app, false);

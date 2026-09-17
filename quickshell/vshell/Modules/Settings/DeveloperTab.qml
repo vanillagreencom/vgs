@@ -77,11 +77,15 @@ Item {
         }, 0, 3600000);
     }
 
-    // Recording the channel also rewrites the launcher stubs, so the row has to
-    // re-read: its package, and whether the tool now reads as installed, both
-    // change with the stream it points at.
+    // SettingsData stores the pick and flushes it before the channel command
+    // runs, because the command saves nothing and a refresh started meanwhile
+    // reads the pick from disk. The command rewrites the launcher stubs, so the
+    // row has to re-read: its package, and whether the tool now reads as
+    // installed, both change with the stream it points at.
     function setChannel(id, channel) {
         root.channelError = "";
+        SettingsData.setDevToolChannel(id, channel);
+        SettingsData.flushSettings();
         Proc.runCommand("developer-channel-" + id, [Paths.vshellCli, "mise", "channel", id, channel], (output, exitCode, errorText) => {
             if (!root)
                 return;
