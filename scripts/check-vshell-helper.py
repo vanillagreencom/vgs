@@ -11471,7 +11471,7 @@ def upstream_port_findings(package: Path, pins: dict) -> tuple[list[str], list[s
     A key no workbench key answers is not checked, and neither is one whose
     upstream value carries an alpha channel, which `themes/AGENTS.md` forbids
     colors.toml from holding: D017's second form lets VGS own a key the upstream
-    sets no usable value for. `terminal-colors.toml` is checked against the slots
+    answers nowhere in its own files. `terminal-colors.toml` is checked against the slots
     D017's third form permits, and a permitted slot holding a colour the upstream
     does publish is reported: that slot is then no VGS difference at all."""
     colors = helper.parse_colors_toml(package / "colors.toml")
