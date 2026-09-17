@@ -78,7 +78,6 @@ Singleton {
         VeryHigh
     }
 
-    readonly property string _homeUrl: StandardPaths.writableLocation(StandardPaths.HomeLocation)
     readonly property string _configUrl: StandardPaths.writableLocation(StandardPaths.ConfigLocation)
     readonly property string _configDir: Paths.strip(_configUrl)
     readonly property string pluginSettingsPath: _configDir + "/vshell/plugin_settings.json"
@@ -1426,6 +1425,7 @@ Singleton {
             loadSettings();
             initializeListModels();
             refreshAuthAvailability();
+            Processes.detectQtTools();
             Processes.checkPluginSettings();
         }
     }
@@ -1444,12 +1444,6 @@ Singleton {
                         Theme.currentTheme = Theme.methodThemeJson.name;
                 }
             });
-        }
-    }
-
-    function regenSystemThemes() {
-        if (typeof Theme !== "undefined") {
-            Theme.generateSystemThemesFromCurrentTheme();
         }
     }
 
@@ -1495,12 +1489,6 @@ Singleton {
         return iconThemeDark;
     }
 
-    function applyStoredIconTheme() {
-        updateGtkIconTheme();
-        updateQtIconTheme();
-        updateCosmicIconTheme();
-    }
-
     function setIconThemeUnmanaged() {
         iconThemePerMode = false;
         iconThemeDark = "System Default";
@@ -1509,78 +1497,9 @@ Singleton {
         saveSettings();
     }
 
-    function checkIconThemeDrift() {
-        if (isGreeterMode)
-            return;
-        if (resolveIconTheme() === "System Default")
-            return;
-        if (!lastAppliedIconTheme)
-            return;
-        const script = `if command -v gsettings >/dev/null 2>&1; then
-        gsettings get org.gnome.desktop.interface icon-theme 2>/dev/null | sed "s/'//g"
-        elif command -v dconf >/dev/null 2>&1; then
-        dconf read /org/gnome/desktop/interface/icon-theme 2>/dev/null | sed "s/'//g"
-        fi`;
-
-        Proc.runCommand("iconThemeDriftCheck", ["sh", "-c", script], (output, exitCode) => {
-            const platform = (output || "").trim();
-            if (!platform)
-                return;
-            if (platform === root.lastAppliedIconTheme || platform === root.iconThemeDark || platform === root.iconThemeLight)
-                return;
-            root.setIconThemeUnmanaged();
-            ToastService.showWarning(I18n.tr("Icon theme changed outside VGS; switched to System Default", "shown when an external tool overrides the icon theme VGS applied"));
-        });
-    }
-
-    Connections {
-        target: typeof SessionData !== "undefined" ? SessionData : null
-        function onIsLightModeChanged() {
-            if (!SessionData.isSwitchingMode)
-                return;
-            if (!root.iconThemePerMode)
-                return;
-            if (root.iconThemeLight === root.iconThemeDark)
-                return;
-            root.applyStoredIconTheme();
-            root.saveSettings();
-        }
-    }
-
     function cosmicIntegrationAvailable() {
         const desktop = (Quickshell.env("XDG_CURRENT_DESKTOP") || "").toUpperCase();
         return desktop.includes("COSMIC");
-    }
-
-    function updateCosmicIconTheme() {
-        if (!cosmicIntegrationAvailable())
-            return;
-        const cosmicThemeName = resolveIconTheme();
-        if (!cosmicThemeName || cosmicThemeName === "System Default") {
-            const detectScript = `if command -v gsettings >/dev/null 2>&1; then
-            gsettings get org.gnome.desktop.interface icon-theme 2>/dev/null | sed "s/'//g"
-            elif command -v dconf >/dev/null 2>&1; then
-            dconf read /org/gnome/desktop/interface/icon-theme 2>/dev/null | sed "s/'//g"
-            fi`;
-
-            Proc.runCommand("detectCosmicIconTheme", ["sh", "-c", detectScript], (output, exitCode) => {
-                if (exitCode !== 0)
-                    return;
-                const detected = (output || "").trim();
-                if (!detected || detected === "System Default")
-                    return;
-                const detectedEscaped = detected.replace(/'/g, "'\\''");
-                const writeScript = `mkdir -p ${_configDir}/cosmic/com.system76.CosmicTk/v1
-                printf '"%s"\\n' '${detectedEscaped}' > ${_configDir}/cosmic/com.system76.CosmicTk/v1/icon_theme 2>/dev/null || true`;
-                Quickshell.execDetached(["sh", "-lc", writeScript]);
-            });
-            return;
-        }
-
-        const cosmicThemeNameEscaped = cosmicThemeName.replace(/'/g, "'\\''");
-        const script = `mkdir -p ${_configDir}/cosmic/com.system76.CosmicTk/v1
-        printf '"%s"\\n' '${cosmicThemeNameEscaped}' > ${_configDir}/cosmic/com.system76.CosmicTk/v1/icon_theme 2>/dev/null || true`;
-        Quickshell.execDetached(["sh", "-lc", script]);
     }
 
     function updateCosmicThemeMode(isLightMode) {
@@ -1589,78 +1508,6 @@ Singleton {
         const isDark = isLightMode ? "false" : "true";
         const script = `mkdir -p ${_configDir}/cosmic/com.system76.CosmicTheme.Mode/v1
         printf '%s\\n' ${isDark} > ${_configDir}/cosmic/com.system76.CosmicTheme.Mode/v1/is_dark 2>/dev/null || true`;
-        Quickshell.execDetached(["sh", "-lc", script]);
-    }
-
-    function updateGtkIconTheme() {
-        const gtkThemeName = resolveIconTheme();
-        if (gtkThemeName === "System Default" || gtkThemeName === "")
-            return;
-        lastAppliedIconTheme = gtkThemeName;
-        if (typeof VGSBackendService !== "undefined" && VGSBackendService.methods.includes("freedesktop.settings.setIconTheme") && typeof PortalService !== "undefined") {
-            PortalService.setSystemIconTheme(gtkThemeName);
-        }
-
-        const configScript = `mkdir -p ${_configDir}/gtk-3.0 ${_configDir}/gtk-4.0
-
-        for config_dir in ${_configDir}/gtk-3.0 ${_configDir}/gtk-4.0; do
-        settings_file="$config_dir/settings.ini"
-        [ -f "$settings_file" ] && [ ! -w "$settings_file" ] && continue
-        if [ -f "$settings_file" ]; then
-        if grep -q "^gtk-icon-theme-name=" "$settings_file"; then
-        sed -i 's/^gtk-icon-theme-name=.*/gtk-icon-theme-name=${gtkThemeName}/' "$settings_file"
-        else
-        if grep -q "\\[Settings\\]" "$settings_file"; then
-        sed -i '/\\[Settings\\]/a gtk-icon-theme-name=${gtkThemeName}' "$settings_file"
-        else
-        echo -e '\\n[Settings]\\ngtk-icon-theme-name=${gtkThemeName}' >> "$settings_file"
-        fi
-        fi
-        else
-        echo -e '[Settings]\\ngtk-icon-theme-name=${gtkThemeName}' > "$settings_file"
-        fi
-        done
-
-        if command -v gsettings >/dev/null 2>&1; then
-        gsettings set org.gnome.desktop.interface icon-theme '${gtkThemeName}' 2>/dev/null || true
-        elif command -v dconf >/dev/null 2>&1; then
-        dconf write /org/gnome/desktop/interface/icon-theme "'${gtkThemeName}'" 2>/dev/null || true
-        fi
-
-        pkill -HUP -f 'gtk' 2>/dev/null || true`;
-
-        Quickshell.execDetached(["sh", "-lc", configScript]);
-    }
-
-    function updateQtIconTheme() {
-        const resolved = resolveIconTheme();
-        const qtThemeName = (resolved === "System Default") ? "" : resolved;
-        if (!qtThemeName)
-            return;
-        const home = _homeUrl.replace("file://", "").replace(/'/g, "'\\''");
-        const qtThemeNameEscaped = qtThemeName.replace(/'/g, "'\\''");
-
-        const script = `mkdir -p ${_configDir}/qt5ct ${_configDir}/qt6ct ${_configDir}/environment.d 2>/dev/null || true
-        update_qt_icon_theme() {
-        local config_file="$1"
-        local theme_name="$2"
-        if [ -f "$config_file" ]; then
-        if grep -q "^\\[Appearance\\]" "$config_file"; then
-        if grep -q "^icon_theme=" "$config_file"; then
-        sed -i "s/^icon_theme=.*/icon_theme=$theme_name/" "$config_file"
-        else
-        sed -i "/^\\[Appearance\\]/a icon_theme=$theme_name" "$config_file"
-        fi
-        else
-        printf "\\n[Appearance]\\nicon_theme=%s\\n" "$theme_name" >> "$config_file"
-        fi
-        else
-        printf "[Appearance]\\nicon_theme=%s\\n" "$theme_name" > "$config_file"
-        fi
-        }
-        update_qt_icon_theme ${_configDir}/qt5ct/qt5ct.conf '${qtThemeNameEscaped}'
-        update_qt_icon_theme ${_configDir}/qt6ct/qt6ct.conf '${qtThemeNameEscaped}'`;
-
         Quickshell.execDetached(["sh", "-lc", script]);
     }
 
@@ -1711,6 +1558,19 @@ Singleton {
 
     readonly property var _writes: Coalescer.create()
 
+    // Settings whose effects an owning service performs. SettingsData only emits the change:
+    // after the coalesced write for a setter, and from a reload for each key an external edit
+    // changed. The first load emits none, so loading runs none of these effects.
+    signal appThemeInputChanged(string key)
+    signal iconThemeSettingChanged(string key)
+    signal cursorSettingChanged(string key)
+
+    readonly property var _changeSignals: ({
+            "appThemeInputChanged": (r, key) => root.appThemeInputChanged(key),
+            "iconThemeSettingChanged": (r, key) => root.iconThemeSettingChanged(key),
+            "cursorSettingChanged": (r, key) => root.cursorSettingChanged(key)
+        })
+
     // The first map runs at assignment: in-memory state other bindings read at once.
     // The second map runs from the coalesced commit: these start helpers or write compositor
     // and toolkit config, each too costly to run once per drag position, and the helpers read
@@ -1719,17 +1579,20 @@ Singleton {
             "applyStoredTheme": applyStoredTheme,
             "updateBarConfigs": updateBarConfigs,
             "markGreeterSyncPending": markGreeterSyncPending
-        }, {
-            "regenSystemThemes": regenSystemThemes,
+        }, Object.assign({
             "applySystemFonts": applySystemFonts,
             "updateCompositorLayout": updateCompositorLayout,
             "updateScratchpads": updateScratchpads,
-            "applyStoredIconTheme": applyStoredIconTheme,
-            "updateCompositorCursor": updateCompositorCursor,
             "scheduleAuthApply": scheduleAuthApply,
             "scheduleGreeterAutoLoginSync": scheduleGreeterAutoLoginSync,
             "runNotificationSoundHook": runNotificationSoundHook
-        })
+        }, _changeSignals))
+
+    // An external edit reloads the file; each key it changed emits its change signal.
+    function _emitReloadedChanges(before) {
+        for (const change of Store.changedHooks(root, before))
+            _changeSignals[change.hook](root, change.key);
+    }
 
     // Optional user hook fired when the notification-sound toggle flips, so
     // external tools (e.g. dictation feedback) can follow it. Runs
@@ -1782,10 +1645,6 @@ Singleton {
 
             _loadedSettingsSnapshot = JSON.stringify(Store.toJson(root));
             _hasLoaded = true;
-            applyStoredTheme();
-            updateCompositorCursor();
-            Processes.detectQtTools();
-            Qt.callLater(checkIconThemeDrift);
             // Covers hardware already known by the time settings land; the
             // shell re-runs this when detection completes later.
             Qt.callLater(reconcileHardwareBarWidgets);
@@ -1796,7 +1655,6 @@ Singleton {
             const msg = e.message;
             log.error("Failed to parse settings.json - file will not be overwritten. Error:", msg);
             Qt.callLater(() => ToastService.showError(I18n.tr("Failed to parse settings.json"), msg));
-            applyStoredTheme();
         } finally {
             _loading = false;
         }
@@ -2805,113 +2663,6 @@ Singleton {
         SessionData.setWeatherLocation(displayName, coordinates);
     }
 
-    function setIconTheme(themeName) {
-        const light = iconThemePerMode && typeof SessionData !== "undefined" && SessionData.isLightMode;
-        setIconThemeForMode(themeName, light);
-    }
-
-    function setIconThemeForMode(themeName, light) {
-        if (light)
-            iconThemeLight = themeName;
-        else
-            iconThemeDark = themeName;
-        applyStoredIconTheme();
-        saveSettings();
-        if (typeof Theme !== "undefined" && Theme.currentTheme === Theme.dynamic)
-            Theme.generateSystemThemesFromCurrentTheme();
-    }
-
-    function setIconThemePerMode(enabled) {
-        iconThemePerMode = enabled;
-        applyStoredIconTheme();
-        saveSettings();
-        if (typeof Theme !== "undefined" && Theme.currentTheme === Theme.dynamic)
-            Theme.generateSystemThemesFromCurrentTheme();
-    }
-
-    function setCursorTheme(themeName) {
-        const updated = JSON.parse(JSON.stringify(cursorSettings));
-        if (updated.theme === themeName)
-            return;
-        updated.theme = themeName;
-        cursorSettings = updated;
-        saveSettings();
-        updateXResources();
-        updateCompositorCursor();
-    }
-
-    function setCursorSize(size) {
-        const updated = JSON.parse(JSON.stringify(cursorSettings));
-        if (updated.size === size)
-            return;
-        updated.size = size;
-        cursorSettings = updated;
-        saveSettings();
-        updateXResources();
-        updateCompositorCursor();
-    }
-
-    function updateCompositorCursor() {
-        if (typeof CompositorService === "undefined")
-            return;
-        if (CompositorService.isNiri && typeof NiriService !== "undefined") {
-            NiriService.generateNiriCursorConfig();
-            return;
-        }
-        if (CompositorService.isHyprland && typeof HyprlandService !== "undefined") {
-            HyprlandService.generateCursorConfig();
-            return;
-        }
-        if (CompositorService.isMango && typeof MangoService !== "undefined") {
-            MangoService.generateCursorConfig();
-            return;
-        }
-    }
-
-    function updateXResources() {
-        const homeDir = Paths.strip(StandardPaths.writableLocation(StandardPaths.HomeLocation));
-        const xresourcesPath = homeDir + "/.Xresources";
-        const themeName = cursorSettings.theme === "System Default" ? systemDefaultCursorTheme : cursorSettings.theme;
-        const size = cursorSettings.size || 24;
-
-        if (!themeName)
-            return;
-
-        const script = `
-            xresources_file="${xresourcesPath}"
-            [ -f "$xresources_file" ] && [ ! -w "$xresources_file" ] && exit 0
-            theme_name="${themeName}"
-            cursor_size="${size}"
-
-            current_theme=""
-            current_size=""
-            if [ -f "$xresources_file" ]; then
-                current_theme=$(grep -E '^[[:space:]]*Xcursor\\.theme:' "$xresources_file" 2>/dev/null | sed 's/.*:[[:space:]]*//' | head -1)
-                current_size=$(grep -E '^[[:space:]]*Xcursor\\.size:' "$xresources_file" 2>/dev/null | sed 's/.*:[[:space:]]*//' | head -1)
-            fi
-
-            [ "$current_theme" = "$theme_name" ] && [ "$current_size" = "$cursor_size" ] && exit 0
-
-            if [ -f "$xresources_file" ]; then
-                cp "$xresources_file" "\${xresources_file}.backup$(date +%s)"
-            fi
-
-            temp_file="\${xresources_file}.tmp.$$"
-            if [ -f "$xresources_file" ]; then
-                grep -v '^[[:space:]]*Xcursor\\.theme:' "$xresources_file" | grep -v '^[[:space:]]*Xcursor\\.size:' > "$temp_file" 2>/dev/null || true
-            else
-                touch "$temp_file"
-            fi
-
-            echo "Xcursor.theme: $theme_name" >> "$temp_file"
-            echo "Xcursor.size: $cursor_size" >> "$temp_file"
-            mv "$temp_file" "$xresources_file"
-            xrdb -merge "$xresources_file" 2>/dev/null || true
-        `;
-
-        Quickshell.execDetached(["sh", "-c", script]);
-    }
-
     function getCursorEnvironment() {
         const isSystemDefault = cursorSettings.theme === "System Default";
         const isDefaultSize = !cursorSettings.size || cursorSettings.size === 24;
@@ -2932,20 +2683,6 @@ Singleton {
             env["HYPRCURSOR_THEME"] = themeName;
         }
         return env;
-    }
-
-    function setGtkThemingEnabled(enabled) {
-        set("gtkThemingEnabled", enabled);
-        if (enabled && typeof Theme !== "undefined") {
-            Theme.generateSystemThemesFromCurrentTheme();
-        }
-    }
-
-    function setQtThemingEnabled(enabled) {
-        set("qtThemingEnabled", enabled);
-        if (enabled && typeof Theme !== "undefined") {
-            Theme.generateSystemThemesFromCurrentTheme();
-        }
     }
 
     function setShowDock(enabled) {
@@ -3565,6 +3302,7 @@ Singleton {
                 }
                 const obj = JSON.parse(txt);
                 _parseError = false;
+                const before = Store.hookedValues(root, Object.keys(_changeSignals));
                 Store.parse(root, obj);
 
                 if (obj.weatherLocation !== undefined)
@@ -3579,8 +3317,8 @@ Singleton {
 
                 _loadedSettingsSnapshot = JSON.stringify(Store.toJson(root));
                 _hasLoaded = true;
-                applyStoredTheme();
-                updateCompositorCursor();
+                if (wasLoaded)
+                    _emitReloadedChanges(before);
             } catch (e) {
                 _parseError = true;
                 const msg = e.message;
@@ -3588,11 +3326,6 @@ Singleton {
                 Qt.callLater(() => ToastService.showError(I18n.tr("Failed to parse settings.json"), msg));
             } finally {
                 _loading = false;
-            }
-        }
-        onLoadFailed: error => {
-            if (!isGreeterMode) {
-                applyStoredTheme();
             }
         }
         onSaveFailed: error => {

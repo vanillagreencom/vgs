@@ -288,6 +288,7 @@ jobs:
           scripts/test-backend-capabilities.js
           scripts/test-settings-navigation.js
           scripts/test-store-write-coalescing.js
+          scripts/test-settings-change-signals.js
           scripts/test-open-connect-lifetime.js
           scripts/test-capture-status-watch.js
           scripts/test-wallpaper-thumbs.py
