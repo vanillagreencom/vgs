@@ -721,7 +721,9 @@ PanelWindow {
                         return icon.startsWith("material:") || icon.startsWith("svg:") || icon.startsWith("unicode:") || icon.startsWith("image:");
                     }
                     readonly property bool hasNotificationImage: rawImage !== "" && (!rawImage.startsWith("image://icon/") || iconFromImage.startsWith("/"))
-                    readonly property bool needsImagePersist: hasNotificationImage && (rawImage.startsWith("image://qsimage/") || iconFromImage.startsWith("/")) && !notificationData.persistedImagePath
+                    // An empty historyEntryId means the history keeps no entry for this
+                    // notification, so a saved image would have nothing to attach to.
+                    readonly property bool needsImagePersist: hasNotificationImage && (rawImage.startsWith("image://qsimage/") || iconFromImage.startsWith("/")) && !notificationData.persistedImagePath && notificationData.historyEntryId !== ""
 
                     width: popupIconSize
                     height: popupIconSize
@@ -774,9 +776,7 @@ PanelWindow {
                         if (!notificationData)
                             return;
                         notificationData.persistedImagePath = filePath;
-                        const wrapperId = notificationData.notification?.id?.toString() || "";
-                        if (wrapperId)
-                            NotificationService.updateHistoryImage(wrapperId, filePath);
+                        NotificationService.updateHistoryImage(notificationData.historyEntryId, filePath);
                     }
                 }
 
