@@ -4136,10 +4136,12 @@ def claude_reads_as_family(fill: str, anchor_hue: float) -> Tuple[bool, float]:
 
 
 def claude_diff_hues(roles: Dict[str, str]) -> Tuple[float, float]:
-    """The hues one theme's added and removed diff families are built on.
+    """The hues proposed for one theme's added and removed diff families.
 
     The palette's own green and red where each reads as its family and the two
-    read apart, and the anchors otherwise. Claude Code fills the whole width of a
+    read apart, and the anchors otherwise. This is a proposal:
+    `claude_diff_bands` owns the final choice and replaces it with the anchors
+    where a finished fill misses its family. Claude Code fills the whole width of a
     row with the band, so a palette that calls a purple green would paint an added
     row purple: that reads as neither added nor removed however far it sits from
     the removed row, and the theme's own hue is not worth that.
@@ -4267,20 +4269,14 @@ def claude_diff_band_set(bg: str, text: str, fill_color: str, word_color: str,
         strong = away_from_the_text(strong_chroma)
         dimmed = away_from_the_text(strong_chroma * CLAUDE_DIFF_DIMMED_CHROMA)
 
-    def word_toward(end: float) -> str:
-        """The changed word nearest the band it sits in that still clears it."""
-        return travel(bounded_chroma(word_color), color_to_oklab(strong)[0], end,
-                      lambda fill: contrast_ratio(fill, strong) >= CLAUDE_DIFF_WORD_SEPARATION,
-                      nearest=True)
-
     # A word sits inside a changed line, so it is measured against that line and
-    # not the background. Away from the background first, which is the
-    # conventional stronger word; where that end cannot clear the band the word
-    # goes the other way instead.
-    stronger, weaker = ((1.0 - margin, margin) if toward_text else (margin, 1.0 - margin))
-    word = word_toward(stronger)
-    if not claude_word_stands_out(word, strong, text):
-        word = word_toward(weaker)
+    # not the background: the nearest fill past the band, away from the
+    # background, that clears it. A word that still misses is named by
+    # `claude_diff_shortfalls`.
+    word = travel(bounded_chroma(word_color), color_to_oklab(strong)[0],
+                  1.0 - margin if toward_text else margin,
+                  lambda fill: contrast_ratio(fill, strong) >= CLAUDE_DIFF_WORD_SEPARATION,
+                  nearest=True)
     return strong, dimmed, word
 
 
@@ -4526,7 +4522,7 @@ def claude_diff_shortfalls(values: Dict[str, str]) -> List[str]:
                 f"body text {contrast_ratio(text, values[word]):.2f}:1 on it")
     apart, hue_gap, lightness_gap = claude_bands_apart(values["diffAdded"], values["diffRemoved"])
     if not apart:
-        # The generator builds the two families on hues `claude_diff_hues` holds
+        # `claude_diff_bands` builds the two families on hues at least
         # CLAUDE_DIFF_HUE_SEPARATION apart, and a curated file or per-app override
         # can set either band after that, so the finished pair is measured again.
         # Naming it beats refusing.
