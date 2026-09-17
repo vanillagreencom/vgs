@@ -16,7 +16,14 @@
 #     at status and the journal for a refused start, never at the compositor
 #     route, which only a missing systemctl earns;
 #   - an argument after the verb is refused with a usage line, before anything
-#     runs.
+#     runs;
+#   - a session whose graphical-session.target is not running gets the unit
+#     enabled and started all the same, and a notice that the next login will
+#     not start it, because nothing in that session produces the target the unit
+#     is WantedBy. A session already running the target gets no such notice, and
+#     one with no Wayland display is not asked about at all: there is no
+#     graphical session there to answer, and an inactive target looks the same
+#     in both states.
 #
 # Negative rows use file_lacks, never grep -v, which answers a different
 # question: -v selects the lines that do not match, so it succeeds whenever the
@@ -104,6 +111,7 @@ printf 'systemctl %s\n' "$*" >>"$CALL_LOG"
 case " $* " in
   *" enable "*) exit "$SYSTEMCTL_ENABLE_RC" ;;
   *" start "*) exit "$SYSTEMCTL_START_RC" ;;
+  *" is-active "*) exit "$SYSTEMCTL_IS_ACTIVE_RC" ;;
 esac
 exit 0
 EOF
@@ -113,11 +121,26 @@ chmod +x "$stubs/systemctl"
 stub_path="$stubs:/usr/bin:/bin"
 
 # Run $2's setup verb in case directory $1 with the stub systemctl exiting $3
-# for enable and $4 for start and the stub helper exiting $5, under PATH $6.
-# Remaining arguments follow the verb. Sets setup_rc, call_log and err_out.
+# for enable and $4 for start and the stub helper exiting $5, under PATH $6, in
+# session $7. The session is one token rather than a display and a target
+# status, because only three states exist and a free pair would spell states no
+# session can be in: `headless` for no Wayland display, `target-up` for a
+# Wayland session whose graphical-session.target is active, and `target-down`
+# for one where it is not. Remaining arguments follow the verb. Sets setup_rc,
+# call_log and err_out.
 run_setup() {
-  local dir="$tmp/$1" src="$2" enable_rc="$3" start_rc="$4" helper_rc="$5" path="$6"
-  shift 6
+  local dir="$tmp/$1" src="$2" enable_rc="$3" start_rc="$4" helper_rc="$5" path="$6" session="$7"
+  shift 7
+  local -a session_env
+  case "$session" in
+    headless) session_env=(SYSTEMCTL_IS_ACTIVE_RC=1) ;;
+    target-up) session_env=(WAYLAND_DISPLAY=wayland-0 SYSTEMCTL_IS_ACTIVE_RC=0) ;;
+    target-down) session_env=(WAYLAND_DISPLAY=wayland-0 SYSTEMCTL_IS_ACTIVE_RC=1) ;;
+    *)
+      printf 'test-vshell-setup: unknown session token %s\n' "$session" >&2
+      exit 1
+      ;;
+  esac
   mkdir -p "$dir/bin"
   cp "$src" "$dir/bin/vshell"
   cat >"$dir/bin/vshell-helper" <<'EOF'
@@ -132,6 +155,7 @@ EOF
   setup_rc=0
   env -i HOME="$dir" PATH="$path" CALL_LOG="$call_log" HELPER_RC="$helper_rc" \
     SYSTEMCTL_ENABLE_RC="$enable_rc" SYSTEMCTL_START_RC="$start_rc" \
+    "${session_env[@]}" \
     "$dir/bin/vshell" setup "$@" >"$dir/out" 2>"$err_out" || setup_rc=$?
 }
 
@@ -282,7 +306,7 @@ debian_anchor='override_dh_installsystemduser:
 
 echo "=== vshell setup ==="
 
-run_setup accepted "$script_under_test" 0 0 0 "$stub_path"
+run_setup accepted "$script_under_test" 0 0 0 "$stub_path" target-up
 expect accept-status "setup succeeds when the unit enables and starts" \
   "rc=$setup_rc calls: $(tr '\n' '|' <"$call_log")" test "$setup_rc" -eq 0
 expect accept-report-first "the report runs before the start, not inside it" \
@@ -294,8 +318,44 @@ expect accept-enable "setup enables vshell.service" \
 expect accept-start "setup starts vshell.service as its own call" \
   "calls: $(tr '\n' '|' <"$call_log")" \
   grep -qxF -- 'systemctl --user start vshell.service' "$call_log"
+expect accept-target-probed "setup asks whether the session runs the target that starts the unit" \
+  "calls: $(tr '\n' '|' <"$call_log")" \
+  grep -qxF -- 'systemctl --user is-active --quiet graphical-session.target' "$call_log"
+expect accept-target-quiet "a session already running the target gets no notice about it" \
+  "stderr: $(cat "$err_out")" \
+  file_lacks "$err_out" 'does not run graphical-session.target'
 
-run_setup report-failed "$script_under_test" 0 0 1 "$stub_path"
+run_setup target-down "$script_under_test" 0 0 0 "$stub_path" target-down
+expect target-down-status "a session with no producer for the target still enables and starts the unit" \
+  "rc=$setup_rc calls: $(tr '\n' '|' <"$call_log")" test "$setup_rc" -eq 0
+expect target-down-started "the unit is started for this session, whatever the next login does" \
+  "calls: $(tr '\n' '|' <"$call_log")" \
+  grep -qxF -- 'systemctl --user start vshell.service' "$call_log"
+expect target-down-named "the missing target is named rather than passed over as a bare success" \
+  "stderr: $(cat "$err_out")" \
+  grep -qF -- 'does not run graphical-session.target' "$err_out"
+expect target-down-uwsm "the notice names the session manager that starts the target" \
+  "stderr: $(cat "$err_out")" \
+  grep -qF -- 'uwsm start hyprland' "$err_out"
+expect target-down-compositor "the notice names the compositor route as the other way out" \
+  "stderr: $(cat "$err_out")" \
+  grep -qF -- 'exec-once = vshell run' "$err_out"
+
+# No Wayland display means no graphical session to answer about. An inactive
+# target looks the same there as on a session with no producer, so the verb must
+# not ask and must not claim: this is the row that keeps the notice off a setup
+# run from a TTY or over SSH before the compositor starts.
+run_setup headless "$script_under_test" 0 0 0 "$stub_path" headless
+expect headless-status "setup succeeds outside a graphical session" \
+  "rc=$setup_rc" test "$setup_rc" -eq 0
+expect headless-no-probe "setup does not ask about the target outside a graphical session" \
+  "calls: $(tr '\n' '|' <"$call_log")" \
+  file_lacks "$call_log" 'is-active'
+expect headless-quiet "setup claims nothing about the target outside a graphical session" \
+  "stderr: $(cat "$err_out")" \
+  file_lacks "$err_out" 'does not run graphical-session.target'
+
+run_setup report-failed "$script_under_test" 0 0 1 "$stub_path" target-up
 expect report-failed-status "a failing report does not fail setup" \
   "rc=$setup_rc stderr: $(cat "$err_out")" test "$setup_rc" -eq 0
 expect report-failed-still-starts "a failing report does not keep the unit from starting" \
@@ -305,7 +365,7 @@ expect report-failed-said-so "a failing report is named rather than passed over"
   "stderr: $(cat "$err_out")" \
   grep -qF -- 'could not read the dependency report' "$err_out"
 
-run_setup enable-refused "$script_under_test" 1 0 0 "$stub_path"
+run_setup enable-refused "$script_under_test" 1 0 0 "$stub_path" target-up
 expect enable-refused-status "a refused enable fails setup" \
   "rc=$setup_rc" test "$setup_rc" -eq 1
 expect enable-refused-cause "a refused enable points at systemctl's own message" \
@@ -318,7 +378,7 @@ expect enable-refused-no-start "a refused enable does not go on to start the uni
   "calls: $(tr '\n' '|' <"$call_log")" \
   file_lacks "$call_log" 'systemctl --user start'
 
-run_setup start-refused "$script_under_test" 0 1 0 "$stub_path"
+run_setup start-refused "$script_under_test" 0 1 0 "$stub_path" target-up
 expect start-refused-status "a refused start fails setup" \
   "rc=$setup_rc" test "$setup_rc" -eq 1
 expect start-refused-cause "a refused start points at status and the journal" \
@@ -328,7 +388,7 @@ expect start-refused-no-route "a refused start does not offer the compositor rou
   "stderr: $(cat "$err_out")" \
   file_lacks "$err_out" 'exec-once = vshell run'
 
-run_setup no-systemctl "$script_under_test" 0 0 0 "$nosystemd"
+run_setup no-systemctl "$script_under_test" 0 0 0 "$nosystemd" headless
 expect no-systemctl-status "a system with no systemctl fails setup" \
   "rc=$setup_rc" test "$setup_rc" -eq 1
 expect no-systemctl-route "a missing systemctl is the case that earns the compositor route" \
@@ -338,7 +398,7 @@ expect no-systemctl-report "a system without systemd still gets the report, its 
   "calls: $(tr '\n' '|' <"$call_log")" \
   test "$(first_call)" = 'helper deps status'
 
-run_setup extra-argument "$script_under_test" 0 0 0 "$stub_path" status
+run_setup extra-argument "$script_under_test" 0 0 0 "$stub_path" target-up status
 expect reject-argument-status "setup takes no argument" \
   "rc=$setup_rc" test "$setup_rc" -eq 2
 expect reject-argument-usage "a refused argument prints the usage line" \
@@ -421,7 +481,7 @@ tail_line='  echo "Re-run vshell deps status once the shell is up to see the set
 tail_reports='  "$helper" deps status'
 
 if build_mutant "$mutants/no-enable" "$enable_call" '  if false; then'; then
-  run_setup control-no-enable "$mutants/no-enable" 0 0 0 "$stub_path"
+  run_setup control-no-enable "$mutants/no-enable" 0 0 0 "$stub_path" target-up
   expect control-no-enable "dropping the enable call reddens the accepted case" \
     "calls: $(tr '\n' '|' <"$call_log")" \
     file_lacks "$call_log" 'systemctl --user enable'
@@ -429,16 +489,32 @@ fi
 
 if build_mutant "$mutants/report-last" "$report_first" '  :' \
   "$tail_line" "$tail_reports"; then
-  run_setup control-report-last "$mutants/report-last" 0 0 0 "$stub_path"
+  run_setup control-report-last "$mutants/report-last" 0 0 0 "$stub_path" target-up
   expect control-report-last "reporting after the start reddens the ordering case" \
     "first call: $(first_call)" \
     test "$(first_call)" != 'helper deps status'
 fi
 
 if build_mutant "$mutants/start-passes" "$start_refusal" "$start_refusal_passes"; then
-  run_setup control-start-passes "$mutants/start-passes" 0 1 0 "$stub_path"
+  run_setup control-start-passes "$mutants/start-passes" 0 1 0 "$stub_path" target-up
   expect control-start-passes "a refused start that returns success reddens its case" \
     "rc=$setup_rc" test "$setup_rc" -eq 0
+fi
+
+# The target probe read the wrong way round: the notice text stays in the file
+# and the probe still runs, so only the behaviour is gone. A control that
+# deleted the message instead would prove the grep works, not the guard.
+target_guard='  systemctl --user is-active --quiet graphical-session.target && return 0'
+target_guard_inverted='  systemctl --user is-active --quiet graphical-session.target || return 0'
+
+if build_mutant "$mutants/target-quiet" "$target_guard" "$target_guard_inverted"; then
+  run_setup control-target-quiet "$mutants/target-quiet" 0 0 0 "$stub_path" target-down
+  expect control-target-quiet "a guard that reads the probe the wrong way round reddens the missing-target case" \
+    "stderr: $(cat "$err_out")" \
+    file_lacks "$err_out" 'does not run graphical-session.target'
+  expect control-target-text-kept "that control keeps the notice in the file" \
+    "the notice text is gone, so the control proves nothing" \
+    grep -qF -- 'does not run graphical-session.target' "$mutants/target-quiet"
 fi
 
 mutant_tree="$tmp/tree"
