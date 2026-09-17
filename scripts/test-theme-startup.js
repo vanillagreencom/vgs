@@ -2,7 +2,8 @@
 
 // Execute VGSThemeService's startup handler against a recording command runner.
 // Reading the current theme never applies one, so startup runs `theme init` before its
-// first reads, and still reads when init fails.
+// first reads, and still reads when init fails. Either way it then dispatches the session's
+// thumbnail discovery sweep, which scripts/test-thumb-sweep.js plans.
 //
 // `theme init` also repairs the wallpaper theme.json records, which Theme's watcher sees
 // as an ordinary file change. What the handler carries to Theme is which change that was;
@@ -43,6 +44,9 @@ function start(handler, initExit, initOutput) {
         },
         refresh() {
             events.push("refresh");
+        },
+        _sweepWallpaperThumbs() {
+            events.push("thumbnail sweep");
         }
     };
     root._themeInitOutcome = (output, exitCode) =>
@@ -76,8 +80,9 @@ test("startup arms the theme sync, runs theme init before the first reads, and r
             `init exit ${initExit}: startup arms the sync before the launch — the repair rewrites theme.json ` +
             "partway through this run, so an arm taken in the callback is taken too late — and runs only " +
             "theme init until it answers, since a read that starts first shows the fallback palette on a fresh install");
-        assert.deepEqual(afterExit, ["armed", "theme init --json", `outcome ${outcome}`, "refresh"],
-            `init exit ${initExit}, output ${JSON.stringify(output)}: ${why}`);
+        assert.deepEqual(afterExit, ["armed", "theme init --json", `outcome ${outcome}`, "refresh", "thumbnail sweep"],
+            `init exit ${initExit}, output ${JSON.stringify(output)}: ${why}; and startup dispatches the discovery ` +
+            "sweep, or a theme installed or removed outside the shell stays unbuilt or unpruned while the current theme is cached");
     }
 });
 
@@ -87,7 +92,8 @@ test("a synchronous failure in _run still answers the arm and still reads", () =
     // here are the two flushes and the timer creation, before anything is armed.
     const handlers = service.handlers("Component.onCompleted");
     const { afterExit } = start(handlers[0], "run-throws", "");
-    assert.deepEqual(afterExit, ["armed", "theme init --json", "outcome unreadable", "refresh"],
+    assert.deepEqual(afterExit, ["armed", "theme init --json", "outcome unreadable", "refresh", "thumbnail sweep"],
         "a throw out of _run answers no callback, so the handler must clear the arm itself — an " +
-        "arm nothing clears holds the theme sync for the rest of the session — and still load the theme");
+        "arm nothing clears holds the theme sync for the rest of the session — and still load the theme " +
+        "and dispatch the discovery sweep");
 });
