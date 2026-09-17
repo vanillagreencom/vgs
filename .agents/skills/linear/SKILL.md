@@ -22,7 +22,7 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 
 ## Tracker policy: Linear is canonical; GitHub Issues is intake-only
 
-Create, label, and work issues ONLY in Linear (team vg-shell, identifiers VGS-<n>). GitHub Issues stays as intake, and nothing syncs back. Before creating a Linear issue, dedupe across BOTH trackers (`gh issue list --search` + Linear cache) — never file the same problem twice.
+Create, label, and work issues ONLY in Linear (team vgs, identifiers VGS-<n>). GitHub Issues stays as intake, and nothing syncs back. Before creating a Linear issue, dedupe across BOTH trackers (`gh issue list --search` + Linear cache) — never file the same problem twice.
 
 Mirroring GitHub intake into Linear is a MANUAL triage step. No automation does it: there is no sync workflow under `.github/` and no Linear-side GitHub integration creating issues, so an unmirrored GitHub issue never reaches the canonical tracker and can sit unseen indefinitely. Run the triage pass when picking up work:
 
@@ -34,7 +34,7 @@ gh issue list --state open --limit 50 --json number,title,url,createdAt \
 
 The two listings are chained: a `gh issue list` that fails prints nothing, and unchained the Linear listing's success becomes the block's — an empty GitHub column then reads as "nothing to mirror", the exact false-clean this pass exists to prevent.
 
-For each GitHub issue with no Linear counterpart, fetch title, body and url in one call and build the description — the full body plus a provenance line back to the GitHub issue — then create it in team vg-shell and work the Linear issue rather than the GitHub one:
+For each GitHub issue with no Linear counterpart, fetch title, body and url in one call and build the description — the full body plus a provenance line back to the GitHub issue — then create it in team vgs and work the Linear issue rather than the GitHub one:
 
 ```bash
 gh_json= gh_body= &&
