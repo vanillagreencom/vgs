@@ -4070,17 +4070,14 @@ CLAUDE_DIFF_DIMMED_CHROMA = 0.35
 # are 113 degrees apart: past it an added band is a cyan and a removed band an
 # olive, and the reader is back to counting the +/- glyphs.
 CLAUDE_DIFF_HUE_TOLERANCE = 40.0
-# Eight-bit output moves a finished band a degree or so off the hue it was built
-# on, so a palette slot keeps its own hue only this far inside the tolerance and
-# the band it produces still lands inside it.
-CLAUDE_DIFF_HUE_MARGIN = 2.0
 # A message block's fill is the panel body text is read on, not an accent band.
 # Claude Code's own dark preset fills its bash block at chroma 0.011 and its
 # memory block at 0.016, so only a trace of the hint role's chroma survives here.
 CLAUDE_SURFACE_CHROMA = 0.02
-# A dimmed band covers the context rows around a change. Below this against the
-# background it merges into the panel and the changed file loses its boundary.
-CLAUDE_DIFF_DIMMED_SEPARATION = 1.3
+# The floor every diff band clears against the background, the strong fill of a
+# changed row and the dimmed band of the context rows around it alike. Below it a
+# band merges into the panel and the changed file loses its boundary.
+CLAUDE_DIFF_BAND_FLOOR = 1.3
 # What generation aims for rather than the floor it must clear. Claude Code's own
 # presets hold their diff bands between 1.36:1 and 2.29:1 off the background they
 # are read on. Travelling further costs the band its own lightness and the text
@@ -4099,7 +4096,7 @@ CLAUDE_DIFF_TEXT_CONTRAST = 7.0
 # so every band and word is held this far short of pure black and pure white.
 CLAUDE_LIGHTNESS_MARGIN = 0.04
 # Body text carries the product of the two diff-band rules with room over it: a
-# dimmed band lies between the background and the text, so text on it reads at
+# diff band lies between the background and the text, so text on it reads at
 # roughly the text's own ratio divided by the band's separation, and below the
 # product no band is both readable and visible. Eight-bit output quantises that
 # separation upward off its floor, which the margin absorbs.
@@ -4112,8 +4109,8 @@ def claude_band_reads(text: str, band: str) -> bool:
 
 
 def claude_band_shows(band: str, bg: str) -> bool:
-    """Whether a dimmed band is visible against the panel behind it."""
-    return contrast_ratio(band, bg) >= CLAUDE_DIFF_DIMMED_SEPARATION
+    """Whether a diff band is visible against the panel behind it."""
+    return contrast_ratio(band, bg) >= CLAUDE_DIFF_BAND_FLOOR
 
 
 def claude_word_stands_out(word: str, band: str, text: str) -> bool:
@@ -4149,10 +4146,9 @@ def claude_diff_hues(roles: Dict[str, str]) -> Tuple[float, float]:
     """
     _added_lightness, _added_relative, _added_chroma, added_hue = _relative_oklch(roles["green"])
     _removed_lightness, _removed_relative, _removed_chroma, removed_hue = _relative_oklch(roles["red"])
-    _added_reads, added_gap = claude_reads_as_family(roles["green"], CLAUDE_DIFF_GREEN_HUE)
-    _removed_reads, removed_gap = claude_reads_as_family(roles["red"], CLAUDE_DIFF_RED_HUE)
-    inside = CLAUDE_DIFF_HUE_TOLERANCE - CLAUDE_DIFF_HUE_MARGIN
-    if (max(added_gap, removed_gap) <= inside
+    added_reads, _added_gap = claude_reads_as_family(roles["green"], CLAUDE_DIFF_GREEN_HUE)
+    removed_reads, _removed_gap = claude_reads_as_family(roles["red"], CLAUDE_DIFF_RED_HUE)
+    if (added_reads and removed_reads
             and _hue_distance(added_hue, removed_hue) >= CLAUDE_DIFF_HUE_SEPARATION):
         return added_hue, removed_hue
     return CLAUDE_DIFF_GREEN_HUE, CLAUDE_DIFF_RED_HUE
@@ -4170,6 +4166,150 @@ def claude_bands_apart(added: str, removed: str) -> Tuple[bool, float, float]:
     lightness_gap = abs(added_lightness - removed_lightness)
     return (hue_gap >= CLAUDE_DIFF_HUE_SEPARATION
             or lightness_gap >= CLAUDE_DIFF_LIGHTNESS_SEPARATION), hue_gap, lightness_gap
+
+
+# One diff family: the word the report names it by, the anchor hue every one of
+# its fills is judged on, the palette slots the strong and the word chroma come
+# from, and its three tokens in the order `claude_diff_band_set` returns them.
+# The builder and the judge read the same row, so a family cannot be built on one
+# hue and measured against another.
+CLAUDE_DIFF_FAMILIES = (
+    ("added", CLAUDE_DIFF_GREEN_HUE, ("green", "bright_green"),
+     ("diffAdded", "diffAddedDimmed", "diffAddedWord")),
+    ("removed", CLAUDE_DIFF_RED_HUE, ("red", "bright_red"),
+     ("diffRemoved", "diffRemovedDimmed", "diffRemovedWord")),
+)
+
+
+def claude_diff_band_set(bg: str, text: str, fill_color: str, word_color: str,
+                         hue_degrees: float) -> Tuple[str, str, str]:
+    """One diff family's strong row fill, dimmed context band and changed-word fill.
+
+    All three are built on `hue_degrees` in OKLCH rather than tinted out of `bg`:
+    blending the background toward a palette slot lands a weak band on the
+    background's own hue at almost no chroma, which is how catppuccin's removed
+    rows came out grey and its changed words brown. The strong fill carries
+    `fill_color`'s own chroma bounded into the range Claude Code's own presets
+    use, and the dimmed context band CLAUDE_DIFF_DIMMED_CHROMA of that, which is
+    the relation those presets hold between a changed row and the rows around it.
+
+    What the finished three still miss is `claude_diff_shortfalls`, which judges
+    every producer of these tokens and not this one alone.
+    """
+    background_lightness = color_to_oklab(bg)[0]
+    text_lightness = color_to_oklab(text)[0]
+    toward_text = text_lightness > background_lightness
+    # The gamut ends stop short of pure black and pure white: a fill pushed onto
+    # an end has no chroma left there and reads as neither family.
+    margin = CLAUDE_LIGHTNESS_MARGIN
+    away_lightness = margin if toward_text else 1.0 - margin
+
+    def bounded_chroma(color: str) -> float:
+        """The chroma one family's fills carry: the palette slot's own, bounded."""
+        _lightness, _relative, chroma, _hue = _relative_oklch(color)
+        return min(max(chroma, CLAUDE_DIFF_CHROMA_FLOOR), CLAUDE_DIFF_CHROMA_CEILING)
+
+    def travel(chroma: float, start: float, end: float,
+               predicate: Callable[[str], bool], nearest: bool) -> str:
+        """The fill on the run of lightness from `start` to `end` where `predicate` turns.
+
+        `nearest` takes the first point on the run where it holds, for a rule that
+        only strengthens with distance; otherwise the last point where it still
+        holds, for a rule that weakens with distance.
+        """
+        def at(fraction: float) -> str:
+            return oklch_to_hex(start + (end - start) * fraction, chroma, hue_degrees)
+        low, high = 0.0, 1.0
+        for _ in range(18):
+            fraction = (low + high) / 2.0
+            if predicate(at(fraction)) == nearest:
+                high = fraction
+            else:
+                low = fraction
+        return at(high if nearest else low)
+
+    def toward_the_text(chroma: float) -> str:
+        """A band on the text's side of the background.
+
+        Far enough from the background that the band shows and no further: every
+        further step costs the fill its own lightness and the body text on it its
+        contrast. The two rules turn in opposite directions along the run, so the
+        band stops at whichever turns first, the one nearer the background.
+        """
+        shows = travel(chroma, background_lightness, text_lightness,
+                       lambda fill: contrast_ratio(fill, bg) >= CLAUDE_DIFF_BAND_SEPARATION,
+                       nearest=True)
+        readable = travel(chroma, background_lightness, text_lightness,
+                          lambda fill: claude_band_reads(text, fill), nearest=False)
+        return min((shows, readable),
+                   key=lambda fill: abs(color_to_oklab(fill)[0] - background_lightness))
+
+    def away_from_the_text(chroma: float) -> str:
+        """A band on the side of the background away from the text, where both
+        rules only strengthen, so the nearest point meeting them keeps the most of
+        the family's chroma; the ends have none left."""
+        return travel(chroma, background_lightness, away_lightness,
+                      lambda fill: (contrast_ratio(fill, bg) >= CLAUDE_DIFF_BAND_SEPARATION
+                                    and claude_band_reads(text, fill)), nearest=True)
+
+    def holds(band: str) -> bool:
+        """Whether a band meets the two rules `claude_diff_shortfalls` measures on it."""
+        return claude_band_shows(band, bg) and claude_band_reads(text, band)
+
+    strong_chroma = bounded_chroma(fill_color)
+    # The text's side of the background is the conventional look and is taken
+    # wherever both bands hold there. Where the background sits too close to the
+    # text for that, both go to the other side rather than one each, so the dimmed
+    # band stays the strong fill's own context.
+    strong = toward_the_text(strong_chroma)
+    dimmed = toward_the_text(strong_chroma * CLAUDE_DIFF_DIMMED_CHROMA)
+    if not (holds(strong) and holds(dimmed)):
+        strong = away_from_the_text(strong_chroma)
+        dimmed = away_from_the_text(strong_chroma * CLAUDE_DIFF_DIMMED_CHROMA)
+
+    def word_toward(end: float) -> str:
+        """The changed word nearest the band it sits in that still clears it."""
+        return travel(bounded_chroma(word_color), color_to_oklab(strong)[0], end,
+                      lambda fill: contrast_ratio(fill, strong) >= CLAUDE_DIFF_WORD_SEPARATION,
+                      nearest=True)
+
+    # A word sits inside a changed line, so it is measured against that line and
+    # not the background. Away from the background first, which is the
+    # conventional stronger word; where that end cannot clear the band the word
+    # goes the other way instead.
+    stronger, weaker = ((1.0 - margin, margin) if toward_text else (margin, 1.0 - margin))
+    word = word_toward(stronger)
+    if not claude_word_stands_out(word, strong, text):
+        word = word_toward(weaker)
+    return strong, dimmed, word
+
+
+def claude_diff_bands(roles: Dict[str, str], bg: str, text: str) -> Dict[str, str]:
+    """Every diff token for one theme, and the one owner of the hues they are built on.
+
+    `claude_diff_hues` proposes the palette's own green and red, and the fills
+    built on them are measured again with `claude_reads_as_family`, the judge
+    `claude_diff_shortfalls` applies to the finished map. A proposal any fill
+    misses on is dropped for the anchors and the family rebuilt, so the hue a
+    slot is accepted at is the hue the finished band is held to. A slot inside
+    the tolerance can still build a band outside it: eight-bit output moves a
+    low-chroma fill off the hue it was built on, and the dimmed band carries a
+    fraction of an already floor-clamped chroma, so it drifts most. Rebuilding
+    here keeps a band the generator chose out of the apply warning.
+    """
+    def built(added_hue: float, removed_hue: float) -> Dict[str, str]:
+        fills: Dict[str, str] = {}
+        for (_family, _anchor, (fill_slot, word_slot), tokens), hue_degrees in zip(
+                CLAUDE_DIFF_FAMILIES, (added_hue, removed_hue)):
+            fills.update(zip(tokens, claude_diff_band_set(
+                bg, text, roles[fill_slot], roles[word_slot], hue_degrees)))
+        return fills
+
+    fills = built(*claude_diff_hues(roles))
+    if all(claude_reads_as_family(fills[token], anchor)[0]
+           for _family, anchor, _slots, tokens in CLAUDE_DIFF_FAMILIES for token in tokens):
+        return fills
+    return built(CLAUDE_DIFF_GREEN_HUE, CLAUDE_DIFF_RED_HUE)
 
 
 # The curated files that merge over a generated render rather than replacing it.
@@ -4361,39 +4501,38 @@ def claude_diff_shortfalls(values: Dict[str, str]) -> List[str]:
     shortfalls: List[str] = []
     bg = values["background"]
     text = values["text"]
-    for family, anchor in (("Added", CLAUDE_DIFF_GREEN_HUE),
-                           ("Removed", CLAUDE_DIFF_RED_HUE)):
-        for token in (f"diff{family}", f"diff{family}Dimmed", f"diff{family}Word"):
+    for family, anchor, _slots, tokens in CLAUDE_DIFF_FAMILIES:
+        for token in tokens:
             reads, gap = claude_reads_as_family(values[token], anchor)
             if not reads:
                 shortfalls.append(
                     f"diff {token} {values[token]}: {gap:.1f} degrees off the "
-                    f"{family.lower()} hue {anchor:.1f}")
-    for fill, dimmed in (("diffAdded", "diffAddedDimmed"),
-                         ("diffRemoved", "diffRemovedDimmed")):
-        if not (claude_band_shows(values[dimmed], bg) and claude_band_reads(text, values[dimmed])):
+                    f"{family} hue {anchor:.1f}")
+    # Both bands of a family carry both rules. `claude_diff_band_set` builds the
+    # strong fill and its dimmed band at different chromas, and a curated file can
+    # set either one alone, so neither band's visibility follows from the other's.
+    for _family, _anchor, _slots, (fill, dimmed, word) in CLAUDE_DIFF_FAMILIES:
+        for token in (fill, dimmed):
+            if not (claude_band_shows(values[token], bg)
+                    and claude_band_reads(text, values[token])):
+                shortfalls.append(
+                    f"diff band {values[token]}: "
+                    f"{contrast_ratio(values[token], bg):.2f}:1 off the background, "
+                    f"body text {contrast_ratio(text, values[token]):.2f}:1 on it")
+        if not claude_word_stands_out(values[word], values[fill], text):
             shortfalls.append(
-                f"diff band {values[dimmed]}: "
-                f"{contrast_ratio(values[dimmed], bg):.2f}:1 off the background, "
-                f"body text {contrast_ratio(text, values[dimmed]):.2f}:1 on it")
-        if not claude_band_reads(text, values[fill]):
-            # The strong fill carries no separation rule of its own: it is the
-            # dimmed band's tint twice over and visible by construction.
-            shortfalls.append(f"diff fill {values[fill]}: "
-                              f"body text {contrast_ratio(text, values[fill]):.2f}:1 on it")
+                f"diff word {values[word]} on band {values[fill]}: "
+                f"{contrast_ratio(values[word], values[fill]):.2f}:1 off the band, "
+                f"body text {contrast_ratio(text, values[word]):.2f}:1 on it")
     apart, hue_gap, lightness_gap = claude_bands_apart(values["diffAdded"], values["diffRemoved"])
     if not apart:
-        # A band is a weak tint, so a strongly hued background pulls both of them
-        # onto its own hue and no anchor can part them. Naming it beats refusing.
+        # The generator builds the two families on hues `claude_diff_hues` holds
+        # CLAUDE_DIFF_HUE_SEPARATION apart, and a curated file or per-app override
+        # can set either band after that, so the finished pair is measured again.
+        # Naming it beats refusing.
         shortfalls.append(
             f"diff bands {values['diffAdded']} and {values['diffRemoved']}: "
             f"{hue_gap:.1f} degrees and {lightness_gap:.3f} lightness apart")
-    for word, band in (("diffAddedWord", "diffAdded"), ("diffRemovedWord", "diffRemoved")):
-        if not claude_word_stands_out(values[word], values[band], text):
-            shortfalls.append(
-                f"diff word {values[word]} on band {values[band]}: "
-                f"{contrast_ratio(values[word], values[band]):.2f}:1 off the band, "
-                f"body text {contrast_ratio(text, values[word]):.2f}:1 on it")
     return shortfalls
 
 
@@ -4406,24 +4545,24 @@ def claude_theme_overrides(roles: Dict[str, str]) -> Dict[str, str]:
     tokens reach CLAUDE_BODY_CONTRAST on the background and bands carry body
     text at the same ratio; the diff bands take the rules above.
 
-    Every fill body text is drawn on is built in OKLCH from a hue and a chroma
-    rather than tinted out of the background: a tint of a background that carries
-    a hue lands on that hue at almost no chroma, which is what turned catppuccin's
-    removed rows grey and its selection a brown smear. What the finished map still
-    misses is `claude_diff_shortfalls`, measured there once over the values every
-    source has contributed to, since a curated file and a per-app override reach
-    the map after this.
+    A tint of a background that carries a hue lands on that hue at almost no
+    chroma, which is what turned catppuccin's removed rows grey and its selection
+    a brown smear, so the fills that carry a colour of their own are built from a
+    hue and a chroma instead: the diff family on its family's hue, a message
+    block on its hint role's, and `selectionBg` by moving its own role's
+    lightness. The three user-message surfaces are their theme's own surface
+    roles, and `band` is the one place a fill is still mixed toward the
+    background, where body text on such a role would otherwise fall short of
+    CLAUDE_BODY_CONTRAST. What the finished map still misses is
+    `claude_diff_shortfalls`, measured there once over the values every source
+    has contributed to, since a curated file and a per-app override reach the map
+    after this.
     """
     bg = roles["background"]
     mode = (roles.get("theme_type") or "dark").lower()
     prefer_text = "#000000" if mode == "light" else "#ffffff"
     text = _oklab_contrast_adjust(roles["foreground"], bg, CLAUDE_TEXT_CONTRAST, prefer_text)
-    toward_text = 1.0 if color_to_oklab(text)[0] > color_to_oklab(bg)[0] else 0.0
     background_lightness = color_to_oklab(bg)[0]
-    text_lightness = color_to_oklab(text)[0]
-    # The gamut ends stop short of pure black and pure white: a fill pushed onto
-    # an end has no chroma left there and reads as neither family.
-    away_lightness = CLAUDE_LIGHTNESS_MARGIN if toward_text else 1.0 - CLAUDE_LIGHTNESS_MARGIN
 
     def on_background(color: str, minimum: float = CLAUDE_BODY_CONTRAST) -> str:
         return _oklab_contrast_adjust(color, bg, minimum, prefer_text)
@@ -4477,141 +4616,7 @@ def claude_theme_overrides(roles: Dict[str, str]) -> Dict[str, str]:
         _hint_lightness, _hint_relative, hint_chroma, hint_hue = _relative_oklch(roles[hint])
         return band(oklch_to_hex(lightness, min(hint_chroma, CLAUDE_SURFACE_CHROMA), hint_hue))
 
-    def diff_fill(hue_degrees: float, chroma: float, lightness: float) -> str:
-        """One diff fill, built on `hue_degrees` rather than tinted out of `bg`.
-
-        Blending the background toward a palette slot lands a weak band on the
-        background's own hue at almost no chroma: that is how catppuccin's removed
-        rows came out grey and its changed words brown. Building the fill in OKLCH
-        keeps the family's hue whatever the background behind it is.
-        """
-        return oklch_to_hex(lightness, chroma, hue_degrees)
-
-    def diff_chroma(color: str) -> float:
-        """The chroma one family's fills carry: the palette slot's own, bounded."""
-        _lightness, _relative, chroma, _hue = _relative_oklch(color)
-        return min(max(chroma, CLAUDE_DIFF_CHROMA_FLOOR), CLAUDE_DIFF_CHROMA_CEILING)
-
-    def run_fraction(hue_degrees: float, chroma: float, end: float,
-                     predicate: Callable[[str], bool], nearest: bool) -> float:
-        """How far along the run from the background to `end` a fill travels.
-
-        `nearest` takes the first point on the run where `predicate` holds, for a
-        rule that only strengthens with distance; otherwise the last point where
-        it still holds, for a rule that weakens with distance. Either way the
-        answer is a fraction, so the two compare whichever side of the background
-        the run is on.
-        """
-        low, high = 0.0, 1.0
-        for _ in range(18):
-            fraction = (low + high) / 2.0
-            held = predicate(diff_fill(hue_degrees, chroma,
-                                       background_lightness + (end - background_lightness) * fraction))
-            if held == nearest:
-                high = fraction
-            else:
-                low = fraction
-        return high if nearest else low
-
-    def at_fraction(hue_degrees: float, chroma: float, end: float, fraction: float) -> str:
-        return diff_fill(hue_degrees, chroma,
-                         background_lightness + (end - background_lightness) * fraction)
-
-    def toward_the_text(hue_degrees: float, chroma: float) -> str:
-        """A diff fill on the text's side of the background.
-
-        Far enough from the background that the band shows and no further: every
-        further step costs the fill its own lightness and the body text on it its
-        contrast. Where the background sits so close to the text that the band
-        cannot reach the target, it stops where body text on it still reads.
-        """
-        shows = run_fraction(hue_degrees, chroma, text_lightness,
-                             lambda fill: contrast_ratio(fill, bg) >= CLAUDE_DIFF_BAND_SEPARATION,
-                             nearest=True)
-        readable = run_fraction(hue_degrees, chroma, text_lightness,
-                                lambda fill: claude_band_reads(text, fill), nearest=False)
-        return at_fraction(hue_degrees, chroma, text_lightness, min(shows, readable))
-
-    def away_from_the_text(hue_degrees: float, chroma: float) -> str:
-        """A diff fill on the side of the background away from the text.
-
-        Both rules only strengthen further out, so the nearest point meeting them
-        keeps the most of the family's chroma; the ends have none left.
-        """
-        fraction = run_fraction(
-            hue_degrees, chroma, away_lightness,
-            lambda fill: (contrast_ratio(fill, bg) >= CLAUDE_DIFF_BAND_SEPARATION
-                          and claude_band_reads(text, fill)), nearest=True)
-        return at_fraction(hue_degrees, chroma, away_lightness, fraction)
-
-    def diff_fills(color: str, hue_degrees: float) -> Tuple[str, str]:
-        """The strong and dimmed row fills for one diff family.
-
-        Both sit on the family's hue. The strong fill carries the palette slot's
-        own chroma bounded into the range Claude Code's own presets use; the dimmed
-        context band carries a fraction of that, which is the relation those presets
-        hold between a changed row and the rows around it.
-
-        A fill on the text's side of the background is the conventional look.
-        Where the background sits too close to the text to carry one, the fill goes
-        to the other side, where body text on it only gains contrast.
-        """
-        strong_chroma = diff_chroma(color)
-        dimmed_chroma = strong_chroma * CLAUDE_DIFF_DIMMED_CHROMA
-        candidates: List[Tuple[float, str, str]] = []
-        for side in (toward_the_text, away_from_the_text):
-            dimmed = side(hue_degrees, dimmed_chroma)
-            strong = side(hue_degrees, strong_chroma)
-            if claude_band_shows(dimmed, bg) and claude_band_reads(text, dimmed):
-                return strong, dimmed
-            # Score a side that misses by how far it misses, summed over both
-            # rules, so the side that comes closest wins. No sentinel candidate:
-            # a band equal to the background would be the worst answer of all.
-            candidates.append((
-                max(0.0, CLAUDE_DIFF_DIMMED_SEPARATION - contrast_ratio(dimmed, bg))
-                + max(0.0, CLAUDE_DIFF_TEXT_CONTRAST - contrast_ratio(text, dimmed)),
-                strong, dimmed))
-        _miss, strong, dimmed = min(candidates, key=lambda entry: entry[0])
-        return strong, dimmed
-
-    def diff_word(color: str, band_color: str, hue_degrees: float) -> str:
-        """A changed word's fill, on its family's hue and held off its own band.
-
-        A word sits inside a changed line, so it is measured against that line and
-        not the background. Away from the background first, which is the
-        conventional stronger word; where that end cannot clear the band the word
-        goes the other way instead.
-        """
-        chroma = diff_chroma(color)
-        band_lightness = color_to_oklab(band_color)[0]
-        margin = CLAUDE_LIGHTNESS_MARGIN
-        ends = ((1.0 - margin, margin) if toward_text else (margin, 1.0 - margin))
-        candidates: List[Tuple[float, str]] = []
-        for end in ends:
-            low, high = 0.0, 1.0
-            for _ in range(18):
-                fraction = (low + high) / 2.0
-                reached = band_lightness + (end - band_lightness) * fraction
-                if contrast_ratio(diff_fill(hue_degrees, chroma, reached),
-                                  band_color) >= CLAUDE_DIFF_WORD_SEPARATION:
-                    high = fraction
-                else:
-                    low = fraction
-            candidate = diff_fill(hue_degrees, chroma,
-                                  band_lightness + (end - band_lightness) * high)
-            if claude_word_stands_out(candidate, band_color, text):
-                return candidate
-            candidates.append((
-                max(0.0, CLAUDE_DIFF_WORD_SEPARATION - contrast_ratio(candidate, band_color))
-                + max(0.0, CLAUDE_BODY_CONTRAST - contrast_ratio(text, candidate)), candidate))
-        _miss, candidate = min(candidates, key=lambda entry: entry[0])
-        return candidate
-
-    added_hue, removed_hue = claude_diff_hues(roles)
-    added, added_dimmed = diff_fills(roles["green"], added_hue)
-    removed, removed_dimmed = diff_fills(roles["red"], removed_hue)
-    added_word = diff_word(roles["bright_green"], added, added_hue)
-    removed_word = diff_word(roles["bright_red"], removed, removed_hue)
+    diff = claude_diff_bands(roles, bg, text)
 
     accent = roles["accent"]
     bright_black = roles["bright_black"]
@@ -4660,12 +4665,7 @@ def claude_theme_overrides(roles: Dict[str, str]) -> Dict[str, str]:
         "fastMode": on_background(roles["bright_red"]),
         "fastModeShimmer": on_background(roles["bright_yellow"]),
         "chromeYellow": on_background(roles["yellow"]),
-        "diffAdded": added,
-        "diffRemoved": removed,
-        "diffAddedDimmed": added_dimmed,
-        "diffRemovedDimmed": removed_dimmed,
-        "diffAddedWord": added_word,
-        "diffRemovedWord": removed_word,
+        **diff,
         "userMessageBackground": band(roles["surfaceContainer"]),
         "userMessageBackgroundHover": band(roles["surfaceContainerHigh"]),
         "composerSidebarBackground": band(roles["surfaceContainerLow"]),

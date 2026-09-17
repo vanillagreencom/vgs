@@ -39,9 +39,10 @@ def load_helper():
 helper = load_helper()
 
 # Claude Code's own colour tokens, read out of the built-in theme tables in the
-# 2.1.267 bundle. Claude Code drops an override it does not carry without saying
+# 2.1.273 binary. Claude Code drops an override it does not carry without saying
 # so, so a rename on either side has to fail here rather than go unpainted:
-#   grep -ao '{[^{}]*autoAcceptShimmer:"rgb(208,180,255)"[^{}]*}' claude \
+#   strings "$(mise which claude)" \
+#     | grep -ao '{[^{}]*autoAcceptShimmer:"rgb(208,180,255)"[^{}]*}' \
 #     | head -1 | grep -o '[a-zA-Z_][a-zA-Z0-9_]*:' | tr -d ':'
 CLAUDE_CODE_TOKENS = {
     "autoAccept", "autoAcceptShimmer", "skill", "bashBorder", "claude",
@@ -85,7 +86,9 @@ SUBAGENT_TOKENS = tuple(
     f"{name}_FOR_SUBAGENTS_ONLY" for name in
     ("red", "blue", "green", "yellow", "purple", "orange", "pink", "cyan"))
 DIFF_BANDS = ("diffAdded", "diffRemoved", "diffAddedDimmed", "diffRemovedDimmed")
-DIMMED_BANDS = ("diffAddedDimmed", "diffRemovedDimmed")
+# The fills whose chroma comes from a palette slot. A dimmed band carries a
+# fraction of its strong fill's and is bounded by that fill, not on its own.
+DIFF_FILLS = ("diffAdded", "diffRemoved", "diffAddedWord", "diffRemovedWord")
 DIFF_WORDS = (("diffAddedWord", "diffAdded"), ("diffRemovedWord", "diffRemoved"))
 TEXT_TOKENS = tuple(sorted(CLAUDE_CODE_TOKENS - {
     "background", "inverseText", "rate_limit_empty",
@@ -97,7 +100,7 @@ TEXT_TOKENS = tuple(sorted(CLAUDE_CODE_TOKENS - {
 TEXT_CONTRAST = 4.5
 SUBAGENT_CONTRAST = 3.0
 DIFF_BAND_CONTRAST = 7.0
-DIMMED_BAND_SEPARATION = 1.3
+DIFF_BAND_FLOOR = 1.3
 WORD_BAND_SEPARATION = 1.5
 DIFF_HUE_SEPARATION = 20.0
 DIFF_LIGHTNESS_SEPARATION = 0.08
@@ -112,6 +115,14 @@ RED_ANCHOR = 29.23
 # block at 0.011 and its memory block at 0.016; a fill past this reads as an
 # accent band drawn across a whole message rather than as the panel under it.
 SURFACE_CHROMA = 0.025
+# The chroma a diff fill or a changed word stays under, in OKLCH units, plus the
+# same eight-bit slack SURFACE_CHROMA allows. Pinned here rather than read from
+# CLAUDE_DIFF_CHROMA_CEILING, which is the bound under test. Past this a changed
+# row paints in neon rather than in its family's colour. No floor sits beside it:
+# CLAUDE_DIFF_CHROMA_FLOOR bounds the chroma a fill is built at, and a fill near
+# the gamut end delivers less than it was built with, so no floor holds on the
+# finished colour.
+DIFF_FILL_CHROMA = 0.155
 # One row per contrast rule: the tokens it governs, the token they are measured
 # against, the ratio, and whether it holds on every case or only on the cases the
 # helper reports no shortfall for. A palette can put a diff rule out of reach and
@@ -122,8 +133,8 @@ CONTRAST_RULES = (
      SUBAGENT_CONTRAST, "every"),
     ("body text on a band", BAND_TOKENS, "text", TEXT_CONTRAST, "every"),
     ("body text on a diff band", DIFF_BANDS, "text", DIFF_BAND_CONTRAST, "clean"),
-    ("a dimmed band against the background", DIMMED_BANDS, "background",
-     DIMMED_BAND_SEPARATION, "clean"),
+    ("a diff band against the background", DIFF_BANDS, "background",
+     DIFF_BAND_FLOOR, "clean"),
 )
 THEME_NAMES = sorted(helper.theme_package_names())
 THEMES = helper.list_themes()
@@ -291,6 +302,24 @@ def rendered_file(blueprint: dict, mode: str) -> tuple[dict, list]:
         helper.mode_variant_blueprint(blueprint, mode, THEMES), mode)
 
 
+def generated_only(blueprint: dict, mode: str, merged: dict) -> dict:
+    """`merged` again with the package's own curated claude file taken away.
+
+    A curated file holds the theme author's own colours and passes through no
+    generator bound, so a rule on what the generator builds is measured before
+    that file merges. The file belongs to whichever package the mode resolves to,
+    which for a paired counterpart is the pair's and not the applied package's.
+    """
+    variant = helper.mode_variant_blueprint(blueprint, mode, THEMES)
+    curated = f"claude-{mode}.json"
+    if curated not in (variant.get("apps") or {}):
+        return merged
+    bare = dict(variant, apps={filename: path
+                               for filename, path in variant["apps"].items()
+                               if filename != curated})
+    return helper.claude_theme_file(bare, mode)[0]["overrides"]
+
+
 def ratio(a: str, b: str) -> float:
     return helper.contrast_ratio(a, b)
 
@@ -305,6 +334,7 @@ class BundledThemeColours(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.rendered = {}
+        cls.generated = {}
         cls.shortfalls = {}
         for name in THEME_NAMES:
             for adjustments in RESTYLE_STEPS:
@@ -314,6 +344,8 @@ class BundledThemeColours(unittest.TestCase):
                     content, missed = rendered_file(blueprint, mode)
                     cls.rendered[case] = content["overrides"]
                     cls.shortfalls[case] = missed
+                    cls.generated[case] = generated_only(
+                        blueprint, mode, content["overrides"])
         # The diff rules are the ones a palette can put out of reach, so they are
         # measured where the helper claims to have met them. A case it reports a
         # shortfall for is pinned by the two rows below instead.
@@ -408,6 +440,33 @@ class BundledThemeColours(unittest.TestCase):
                 if chroma > SURFACE_CHROMA]
         self.assertEqual(loud, [])
 
+    def test_a_diff_fill_carries_its_slot_chroma_bounded_rather_than_neon(self):
+        """Claude Code paints whole rows with these, and the chroma a fill is built
+        at is the palette slot's own, bounded. akane's bright_red slot at
+        brightness -25 in dark mode, a RESTYLE_STEPS case, carries more chroma
+        than a changed word can hold, and only the ceiling holds it down."""
+        neon = [(case, token, values[token], round(chroma, 3))
+                for case, values in self.generated.items() for token in DIFF_FILLS
+                for chroma in [helper._relative_oklch(values[token])[2]]
+                if chroma > DIFF_FILL_CHROMA]
+        self.assertEqual(neon, [])
+
+    def test_a_slot_kept_for_its_own_hue_builds_bands_that_read_as_its_family(self):
+        """The hue a slot is accepted at is the hue its finished band is judged on.
+
+        A slot inside the tolerance can still build a band outside it: eight-bit
+        output moves a low-chroma fill off the hue it was built on, and the dimmed
+        band carries a fraction of an already floor-clamped chroma, so it drifts
+        most. This is a
+        shipped theme at a slider value inside ADJUST_RANGE whose green slot sits
+        inside the tolerance and whose dimmed band landed outside it, and the apply
+        then named a band the generator had chosen for itself, which no curated
+        file or override reaches. The case is pinned by name, so it stays covered
+        whatever RESTYLE_STEPS samples.
+        """
+        _content, missed = rendered_file(restyled("noctalia", {"temperature": -76}), "light")
+        self.assertEqual(missed, [])
+
     def test_every_rendered_token_is_one_claude_code_carries(self):
         emitted = {token for values in self.rendered.values() for token in values}
         self.assertEqual(emitted, CLAUDE_CODE_TOKENS)
@@ -425,8 +484,8 @@ class BundledThemeColours(unittest.TestCase):
         """The shipped packages are what a user sees on a theme apply, and a slider
         is a shipped control that transforms the palette before the roles derive.
         A band is built on its family's hue at a lightness the background allows
-        rather than tinted out of that background, so no palette puts a rule out
-        of reach and every case here is met without a curated file."""
+        rather than tinted out of that background, and every case here meets the
+        rules; a slider value outside RESTYLE_STEPS is not sampled."""
         self.assertEqual({case: missed for case, missed in self.shortfalls.items()
                           if missed}, {})
 
@@ -562,19 +621,17 @@ class ModeCounterparts(unittest.TestCase):
 class CuratedBandsAreJudged(unittest.TestCase):
     """A theme package's curated claude-<mode>.json, judged after it merges.
 
-    No palette puts a diff rule out of reach any more, so a curated file is the
-    one shipped producer that can break one. Without a case here the shortfall
-    report never runs and deleting any of its lines leaves the suite green.
+    No bundled theme at a RESTYLE_STEPS setting breaks a diff rule without one,
+    so a curated file is the producer these cases use to break one. Without a
+    case here the shortfall report never runs.
     """
 
     BASE = "catppuccin"
 
     def rendered(self, overrides: dict) -> tuple:
         """`BASE` in dark mode with `overrides` merged from a curated file."""
-        curated = Path(tempfile.mkdtemp()) / "claude-dark.json"
-        curated.write_text(json.dumps({"overrides": overrides}))
         blueprint = dict(helper.find_theme(self.BASE, THEMES),
-                         apps={"claude-dark.json": str(curated)})
+                         apps={"claude-dark.json": curated_claude_file("dark", overrides)})
         content, missed = helper.claude_theme_file(blueprint, "dark")
         return content["overrides"], missed
 
@@ -600,13 +657,33 @@ class CuratedBandsAreJudged(unittest.TestCase):
 
     def test_a_curated_band_off_its_family_hue_is_named_with_the_gap(self):
         """A removed row painted blue reads as neither added nor removed, and the
-        line has to say which family it left and by how far."""
-        _values, missed = self.rendered({"diffRemoved": "#26476b"})
+        line has to say which family it left, by how far, and from what anchor.
+
+        Both families are pinned to their own line: the judge reads one row per
+        family, and a row dropped from it would otherwise leave the other family's
+        assertion green.
+        """
+        _added, added_missed = self.rendered({"diffAdded": "#8b1d5e"})
+        _removed, removed_missed = self.rendered({"diffRemoved": "#26476b"})
         self.assertEqual(
-            [line for line in missed
-             if line.startswith("diff diffRemoved #26476b") and "off the removed hue" in line
-             and line.endswith("29.2")],
-            [line for line in missed if line.startswith("diff diffRemoved ")])
+            ([line for line in added_missed if line.startswith("diff diffAdded ")],
+             [line for line in removed_missed if line.startswith("diff diffRemoved ")]),
+            (["diff diffAdded #8b1d5e: 152.9 degrees off the added hue 142.5"],
+             ["diff diffRemoved #26476b: 137.2 degrees off the removed hue 29.2"]))
+
+    def test_a_band_the_background_swallows_is_never_left_unnamed(self):
+        """A band equal to the background hides its rows completely, the strong
+        fill of a changed row as much as the dimmed band around it, so each of the
+        four is named on its own line when a curated file sets it alone. The
+        generated producer is held by
+        `test_no_bundled_theme_in_any_restyle_misses_a_diff_rule`, whose sweep
+        includes dracula at brightness 100 in dark mode."""
+        named = {token: [line for line in self.rendered({token: "#1e1e2e"})[1]
+                         if line.startswith("diff band")]
+                 for token in DIFF_BANDS}
+        self.assertEqual(named, {token: ["diff band #1e1e2e: 1.00:1 off the background, "
+                                         "body text 11.34:1 on it"]
+                                 for token in DIFF_BANDS})
 
     def test_a_curated_word_its_own_band_defeats_is_named(self):
         _values, missed = self.rendered({"diffRemovedWord": "#762240"})
@@ -688,8 +765,8 @@ class HookBehaviour(unittest.TestCase):
                          True)
 
     def test_a_curated_strong_fill_body_text_cannot_read_is_reported(self):
-        """The strong fill carries the body-text rule the dimmed band carries, and
-        this PR ships six curated files that set diffAdded, so a hand-picked fill
+        """The strong fill carries the same two rules its dimmed band carries, and
+        a theme package's curated file can set diffAdded, so a hand-picked fill
         too close to the text is reachable. The oracle in BundledThemeColours
         cannot cover it: it measures the clean cases, and a fill miss makes a case
         non-clean, so the case drops out before the rule is applied to it.
@@ -697,7 +774,7 @@ class HookBehaviour(unittest.TestCase):
         added rows' text on the rows themselves."""
         _content, missed = helper.claude_theme_file(
             self.curated('{"overrides": {"diffAdded": "#fdfdfd"}}'), "dark")
-        self.assertEqual([line for line in missed if line.startswith("diff fill #fdfdfd")] != [],
+        self.assertEqual([line for line in missed if line.startswith("diff band #fdfdfd")] != [],
                          True)
 
     def test_a_curated_file_claude_code_would_not_paint_is_refused_by_name(self):

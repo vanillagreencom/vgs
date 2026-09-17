@@ -1,8 +1,8 @@
 # Harness theme tokens
 
-The colour surface each agent CLI reads, and the VGS role that feeds it. Rendering, selection and the diff rules are in [../architecture/agent-cli-themes.md](../architecture/agent-cli-themes.md); the role names are [../architecture/theme.md](../architecture/theme.md).
+The colour surface Claude Code, Codex and Pi read, and the VGS role that feeds it. The gemini, hermes, omp and opencode targets have no table here: no inventory has been taken from an installed copy of them. Rendering, selection and the diff rules are in [../architecture/agent-cli-themes.md](../architecture/agent-cli-themes.md); the role names are [../architecture/theme.md](../architecture/theme.md).
 
-A role name in the tables below is a key of the map `target_roles` in `bin/vshell_helper.py` emits. Every table lists the whole surface of its harness at the version named, so a key with no row is a key the harness does not read.
+A role name in the tables below is a key of the map `target_roles` in `bin/vshell_helper.py` emits. The Claude Code and Pi tables list the whole surface of their harness at the version named, so a key with no row is a key that harness does not read. The Codex table lists the scopes VGS writes, not every scope Codex resolves.
 
 Each section states the same five things: the installed version, how the surface was established from that installed copy, the command that regenerates it, how much of the surface VGS writes, and what falls back where VGS writes nothing.
 
@@ -15,15 +15,15 @@ strings "$(mise which claude)" | grep -ao '{[^{}]*autoAcceptShimmer:"rgb(208,180
   | head -1 | grep -o '[a-zA-Z_][a-zA-Z0-9_]*:' | tr -d ':'
 ```
 
-VGS writes all 72, so no token falls back to a Claude Code default. `claude_theme_overrides` in `bin/vshell_helper.py` owns the values; `CLAUDE_CODE_TOKENS` in `scripts/test-claude-theme.py` holds the key set. Every text token is lifted to 4.5:1 on the background, every fill to the ratio body text on it needs, and the diff family takes the rules [../architecture/agent-cli-themes.md](../architecture/agent-cli-themes.md) states.
+VGS writes all 72, so no token falls back to a Claude Code default. `claude_theme_overrides` in `bin/vshell_helper.py` owns the values; `CLAUDE_CODE_TOKENS` in `scripts/test-claude-theme.py` holds the key set. `text` is lifted to `CLAUDE_TEXT_CONTRAST` on the background. Every text token reads at `CLAUDE_BODY_CONTRAST` or more on the background, and body text reads at that ratio or more on every fill `BAND_TOKENS` lists; `test_every_contrast_rule_holds_where_the_helper_claims_it` checks both floors. The diff family takes the rules [../architecture/agent-cli-themes.md](../architecture/agent-cli-themes.md) states.
 
 | Token | Fed by |
 | --- | --- |
-| `text` | `foreground`, lifted to 9.5:1 on the background |
+| `text` | `foreground`, lifted to `CLAUDE_TEXT_CONTRAST` on the background |
 | `inverseText` | `background` |
 | `subtle` | `outline` |
-| `inactive` | `bright_black`, or `muted` where `bright_black` is under 4.5:1 on the background |
-| `inactiveShimmer` | `inactive` half way to the body text |
+| `inactive` | `bright_black`, or `muted` where `bright_black` is under `CLAUDE_BODY_CONTRAST` on the background |
+| `inactiveShimmer` | `bright_black`, or `muted` where `bright_black` is under `CLAUDE_BODY_CONTRAST`, half way to the body text |
 | `claude` | `accent` |
 | `claudeShimmer` | `accent` one third of the way to the body text |
 | `clawd_body` | `accent` |
@@ -58,8 +58,8 @@ VGS writes all 72, so no token falls back to a Claude Code default. `claude_them
 | `chromeYellow` | `yellow` |
 | `diffAdded` | the added hue, at `green`'s chroma |
 | `diffRemoved` | the removed hue, at `red`'s chroma |
-| `diffAddedDimmed` | the added hue, at a third of that chroma |
-| `diffRemovedDimmed` | the removed hue, at a third of that chroma |
+| `diffAddedDimmed` | the added hue, at `CLAUDE_DIFF_DIMMED_CHROMA` of that chroma |
+| `diffRemovedDimmed` | the removed hue, at `CLAUDE_DIFF_DIMMED_CHROMA` of that chroma |
 | `diffAddedWord` | the added hue, at `bright_green`'s chroma |
 | `diffRemovedWord` | the removed hue, at `bright_red`'s chroma |
 | `userMessageBackground` | `surfaceContainer` |
@@ -103,7 +103,7 @@ strings "$(mise which codex)" | grep -F 'CODEX_HOME/themes/'
 
 Codex reads a syntax theme named by `tui.theme` in `~/.codex/config.toml` from `$CODEX_HOME/themes/<name>.tmTheme`. No other `[tui]` key carries a colour: the section's remaining keys are `animations`, `whimsy`, `show_tooltips`, `auto_recap`, `disable_paste_burst`, `question_esc_back`, `raw_output_mode`, `status_line`, `status_line_use_colors`, `terminal_title`, `pet`, `pet_anchor`, `session_picker_view`, `resume_cwd`, `keymap`, `model_availability_nux` and `terminal_resize_reflow_max_rows`, of which `status_line_use_colors` is a switch and not a colour. The rest of the TUI paints in the terminal's own ANSI colours.
 
-No configuration key outside `[tui]` carries a colour either; `NO_COLOR` and `CLICOLOR` are the standard environment switches and name no value. VGS writes the whole tmTheme surface Codex resolves. Codex resolves a scope by longest match and falls back to the theme's global settings entry. VGS writes a foreground for that entry and for every TextMate scope root a bundled syntax emits, so no token in a highlighted block paints from an unset value. The theme's other global settings, among them `background` and `selection`, are left unset: Codex paints code and diffs on the terminal's own background.
+No configuration key outside `[tui]` carries a colour either; `NO_COLOR` and `CLICOLOR` are the standard environment switches and name no value. VGS writes the whole tmTheme surface Codex resolves. Codex resolves a scope by longest match and falls back to the theme's global settings entry. VGS writes a foreground for that entry and at least one selector under each scope root `test_codex_theme_paints_every_bundled_theme_readably` in `scripts/check-vshell-helper.py` lists. The test holds roots, not leaves: under `entity`, `storage`, `markup` and `meta` the theme names specific leaves, and a scope outside the selectors below resolves to the global entry, so it paints in `syntaxVariable` rather than from an unset value. The theme's other global settings, among them `background` and `selection`, are left unset: Codex paints code and diffs on the terminal's own background.
 
 | Scope | Fed by |
 | --- | --- |
@@ -130,10 +130,11 @@ No configuration key outside `[tui]` carries a colour either; `NO_COLOR` and `CL
 
 ## Pi 0.85.1
 
-Source: `theme/theme-schema.json` in the installed package, which closes `colors` to the keys it names.
+Source: `theme/theme-schema.json` beside the `pi` executable `mise which pi` names, which closes `colors` to the keys it names and lists the `export` keys separately.
 
 ```
 jq -r '.properties.colors.properties | keys[]' "$(dirname "$(mise which pi)")/theme/theme-schema.json"
+jq -r '.properties.export.properties | keys[]' "$(dirname "$(mise which pi)")/theme/theme-schema.json"
 ```
 
 VGS writes all 56 colour keys and all 3 HTML-export keys, so none falls back to a Pi default. `PI_COLOR_KEYS` in `scripts/check-vshell-helper.py` holds the key set and `themes/targets/pi-vgs/vgs-theme.json` owns the mapping. Pi's own fallbacks, which VGS no longer reaches: `scrollbarTrack` to `muted`, `scrollbarThumb` to `text`, `searchMatchBg` to `selectedBg`, `searchMatchText` to `text`, `thinkingMax` to `thinkingXhigh`, and each `export` key to a shade derived from `userMessageBg`.

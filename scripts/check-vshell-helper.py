@@ -9983,12 +9983,14 @@ def test_codex_theme_paints_every_bundled_theme_readably():
                   "markup.heading, entity.name.section", "markup.underline.link"):
         if scope not in scopes_seen:
             raise AssertionError(f"Codex reads {scope}, which the theme does not set")
-    # Every TextMate scope root a bundled syntect syntax emits. A root the theme
-    # does not name falls through to the global entry above, so the tokens under
-    # it paint as plain text: `invalid` is where a Rust or Python syntax puts a
+    # Each scope root below carries at least one selector. A root with none falls
+    # through to the global entry above, so every token under it paints as plain
+    # text: `invalid` is where a Rust or Python syntax puts a
     # malformed token, `meta` is where a diff syntax puts its file headers, and
     # the `markup` leaves are what a Markdown syntax emits for the code spans,
-    # quotes and lists Codex renders in every assistant message.
+    # quotes and lists Codex renders in every assistant message. This holds roots,
+    # not leaves: a leaf under a named root that no selector covers still paints
+    # from the global entry.
     roots = {selector.split(".", 1)[0].strip()
              for scope in scopes_seen for selector in scope.split(",") if scope}
     missing = {"comment", "constant", "entity", "invalid", "keyword", "markup",
