@@ -15,15 +15,24 @@ LINEAR_FORMAT = "safe"
 ORCH_STATE_DIR = "tmp"
 
 # Extra test-path globs branch-size-check adds to its built-in test rule, which
-# names none of them. The suites `scripts/validate` runs, the Node helpers under
+# names none of them. The suites `scripts/validate` runs, the helpers under
 # `scripts/lib` they import, and the Go package tests are validation code;
 # counting their added lines as production growth spends a branch's stated
 # allowance on its tests. A glob's `*` spans `/`, so `backend/*_test.go` reaches
-# every package. `scripts/lib/*.py` stays unmatched: that directory holds the
-# Python modules the validation scripts import beside their selftests, so only
-# the `_selftest.py` name is test code and the whole-directory glob the
-# JavaScript side can take would move production lines into the test allowance.
-ORCH_SIZE_TEST_PATHS = "scripts/test-*.js scripts/lib/*.js scripts/test-*.py scripts/test-*.sh scripts/check-*-tests.py scripts/lib/*_selftest.py backend/*_test.go"
+# every package.
+#
+# `scripts/lib` is matched by name rather than wholesale, because it holds test
+# helpers beside production ones: `*_selftest.py` and `*-testkit.sh` are the
+# test helpers, while `session-snapshot.sh`, which `qml-smoke.sh` and
+# `check-validation-safety.sh` source, and the Python modules those scripts
+# import stay production.
+#
+# `scripts/lib/*.js` is the exception this rule keeps. It also matches the
+# checker modules `qml-block.js` and `qml-source.js`, which
+# `check-display-config-fixtures.js` imports, so their added lines score as
+# test. Narrowing it would re-measure every JavaScript branch against a
+# different split, which belongs to its own change.
+ORCH_SIZE_TEST_PATHS = "scripts/test-*.js scripts/lib/*.js scripts/test-*.py scripts/test-*.sh scripts/check-*-tests.py scripts/lib/*_selftest.py scripts/lib/*-testkit.sh backend/*_test.go"
 
 # File-size thresholds come from the shipped path classes. No DOC_LIMITS_*
 # key here: a repeated default goes stale when the class changes.
