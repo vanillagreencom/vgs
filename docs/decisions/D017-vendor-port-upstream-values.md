@@ -12,7 +12,7 @@
 
 - Each value maps to a role the way the upstream itself uses it. Where the upstream publishes a VS Code theme, that file decides which tone each surface, border and status element takes.
 - Formatting is free: key order, indentation, pretty-printing and the file's top-level theme name may change. Values may not.
-- Four forms of VGS-owned difference are permitted. Outside them, a value the upstream publishes stays the upstream's, and a value it publishes nowhere is not invented. **Current state** below names every instance for the vendor ports this record has assessed.
+- Four forms of VGS-owned difference are permitted. Outside them, a value the upstream publishes stays the upstream's, and a value it publishes nowhere is not invented. **Current state** below records the instances this decision has ruled on so far. A file or value it does not name is not yet ruled on, neither permitted nor pending, until a later pass names it.
   - A reconciliation. The VS Code terminal-slot overwrite, `augment_vscode_colors` in `bin/vshell_helper.py`, is the one in place.
   - A VGS value for a key or role the upstream sets no usable value for. `synthwave84`'s `accent`, `background` and `selection_background` are these: the upstream publishes no terminal background, its terminal selection background carries an alpha channel that `colors.toml` may not hold, and the accent answers to no terminal key at all.
   - A VGS value in a package's `terminal-colors.toml`, whose hex appears in no upstream file. This file paints a terminal only; `colors.toml` still hands the upstream value to the shell's derived roles, to pi and to every app template, so the upstream palette reaches every other consumer intact. `synthwave84`'s `color10` is the one permitted so far.
@@ -40,7 +40,7 @@ These departures on main are pending, not permitted by this decision:
 - A community Neovim port loaded where the vendor publishes an official Vim colorscheme: `dracula`, `nord`, `gruvbox`, `everforest`, `ayu` and `miasma`. The fourth form does not reach these; the vendor publishes a file for that app.
 - `ristretto`'s VS Code file, whose licence forbids redistribution. That is this decision's own Revisit When condition and is owner-gated.
 
-Neither audit compared every file: VGS-318 did not compare any vendor port's `apps/btop.theme` with its vendor's, which is why it added no attribution row for the six packages that otherwise matched. A file neither audit compared is unaudited. This decision judges it when that comparison lands, and its absence from both lists above is not a ruling either way.
+Neither list is exhaustive, and neither is meant to be. A file or value absent from both is not yet ruled on, and that absence says nothing either way: a later pass adds it to one list or the other. Two things put a file there. It may be unaudited, because neither audit compared it: VGS-318 compared no vendor port's `apps/btop.theme` with its vendor's, which is why it added no attribution row for the six packages that otherwise matched. Or an audit may have recorded it while this decision has not yet ruled on it.
 
 **Rationale**:
 
