@@ -130,7 +130,7 @@ Item {
         case "niri":
             return getNiriActiveWorkspace();
         case "hyprland":
-            return getHyprlandActiveWorkspace();
+            return CompositorService.hyprlandActiveWorkspaceId(root.screenName, SettingsData.workspaceFollowFocus);
         case "mango":
             const activeTags = getDwlActiveTags();
             return activeTags.length > 0 ? activeTags[0] : -1;
@@ -250,15 +250,6 @@ Item {
         return focusedWs ? swayWorkspaceKey(focusedWs) : 1;
     }
 
-
-    function getHyprlandActiveWorkspace() {
-        if (!root.screenName || SettingsData.workspaceFollowFocus) {
-            return Hyprland.focusedWorkspace?.id || 1;
-        }
-
-        const monitor = Hyprland.monitors?.values?.find(m => m.name === root.screenName);
-        return monitor?.activeWorkspace?.id || 1;
-    }
 
     function getWorkspaceIcons(ws) {
         _desktopEntriesUpdateTrigger;
@@ -391,7 +382,8 @@ Item {
         if (CompositorService.isHyprland)
             return {
                 "id": -1,
-                "name": ""
+                "name": "",
+                "_placeholder": true
             };
         if (root.isMango)
             return {
@@ -563,7 +555,7 @@ Item {
             if (CompositorService.isNiri)
                 return ws && ws.idx !== -1;
             if (CompositorService.isHyprland)
-                return ws && ws.id !== -1;
+                return ws && !ws._placeholder;
             if (root.isMango)
                 return ws && ws.tag !== -1;
             if (CompositorService.isSway || CompositorService.isScroll || CompositorService.isMiracle)
@@ -588,7 +580,7 @@ Item {
                 NiriService.switchToWorkspace(data.id);
             break;
         case "hyprland":
-            if (data.id && data.id !== -1) {
+            if (!data._placeholder && data.id !== undefined) {
                 HyprlandService.focusWorkspace(CompositorService.hyprlandWorkspaceSelector(data));
             }
             break;
@@ -731,7 +723,7 @@ Item {
         } else if (CompositorService.isNiri) {
             isPlaceholder = modelData?.idx === -1;
         } else if (CompositorService.isHyprland) {
-            isPlaceholder = modelData?.id === -1;
+            isPlaceholder = modelData?._placeholder === true;
         } else if (root.isMango) {
             isPlaceholder = modelData?.tag === -1;
         } else if (CompositorService.isSway || CompositorService.isScroll || CompositorService.isMiracle) {
@@ -1031,7 +1023,7 @@ Item {
                     if (CompositorService.isNiri)
                         return !!(modelData && modelData.idx === root.currentWorkspace);
                     if (CompositorService.isHyprland)
-                        return !!(modelData && modelData.id === root.currentWorkspace);
+                        return !!(modelData && !modelData._placeholder && modelData.id === root.currentWorkspace);
                     if (root.isMango)
                         return !!(modelData && root.dwlActiveTags.includes(modelData.tag));
                     if (CompositorService.isSway || CompositorService.isScroll || CompositorService.isMiracle)
@@ -1053,7 +1045,7 @@ Item {
                     if (CompositorService.isNiri)
                         return !!(modelData && modelData.idx === -1);
                     if (CompositorService.isHyprland)
-                        return !!(modelData && modelData.id === -1);
+                        return !!(modelData && modelData._placeholder);
                     if (root.isMango)
                         return !!(modelData && modelData.tag === -1);
                     if (CompositorService.isSway || CompositorService.isScroll || CompositorService.isMiracle)

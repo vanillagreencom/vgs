@@ -158,9 +158,7 @@ Item {
             const activeWs = NiriService.allWorkspaces.find(ws => ws.output === screenName && ws.is_active);
             return activeWs ? activeWs.idx : 1;
         } else if (CompositorService.isHyprland) {
-            const monitors = Hyprland.monitors?.values || [];
-            const currentMonitor = monitors.find(monitor => monitor.name === screenName);
-            return currentMonitor?.activeWorkspace?.id ?? 1;
+            return CompositorService.hyprlandActiveWorkspaceId(screenName, SettingsData.workspaceFollowFocus);
         } else if (CompositorService.isMango) {
             if (!MangoService.available)
                 return 0;

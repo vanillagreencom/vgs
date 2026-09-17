@@ -212,8 +212,12 @@ Singleton {
         return null;
     }
 
-    function _activeWorkspaceIdForScreen(screenName) {
-        if (screenName) {
+    // The Hyprland workspace a consumer on `screenName` treats as current. Under follow-focus, or
+    // before a bar knows its screen, that is the focused workspace rather than the one the bar's
+    // own monitor shows. Every consumer reads this one answer, so a list built from it and an
+    // index searched against it cannot name different workspaces.
+    function hyprlandActiveWorkspaceId(screenName, followFocus) {
+        if (screenName && !followFocus) {
             const mon = Hyprland.monitors?.values?.find(m => m.name === screenName);
             if (mon?.activeWorkspace?.id !== undefined)
                 return mon.activeWorkspace.id;
@@ -224,7 +228,9 @@ Singleton {
     function filterCurrentWorkspace(toplevels, screenName) {
         if (isNiri)
             return NiriService.filterCurrentWorkspace(toplevels, screenName);
-        const activeWs = _activeWorkspaceIdForScreen(screenName);
+        // Which windows sit on a screen's own current workspace. Follow-focus moves which
+        // workspaces a row draws, not which screen a window is on.
+        const activeWs = hyprlandActiveWorkspaceId(screenName, false);
         return Array.from(toplevels || []).filter(t => {
             const h = _hyprForToplevel(t);
             if (!h)
@@ -298,7 +304,7 @@ Singleton {
             return ordered;
 
         const toplevels = Array.from(Hyprland.toplevels?.values || []);
-        const activeWsId = _activeWorkspaceIdForScreen(perScreen ? screenName : "");
+        const activeWsId = hyprlandActiveWorkspaceId(screenName, followFocus);
         return ordered.filter(ws => {
             if (ws.id === activeWsId)
                 return true;
