@@ -370,6 +370,7 @@ Quickshell rules for this shell, learned from measured sessions of the previous 
 - FolderListModel substitutes the working directory for a missing folder: compare its folder property with the folder asked for before reading. Process.exited precedes running becoming false; a command that fails to start emits no exited.
 - Every figure in a docstring, comment or document was measured in the same PR and the text names how. A budget without its measurement is a blocker.
 - A new surface, service or plugin lands with its validation row in the same PR: nested smoke plus the latency and memory budgets docs/architecture/runtime.md names.
+- Quickshell API questions go to the Quickshell 0.3.1 reference on Context7 before any QML type, property or signal is used from memory: `ctx7 docs /websites/quickshell_v0_3_1 <query>` (the find-docs skill; the library id is given, so skip the resolve step). The browser page is https://context7.com/websites/quickshell_v0_3_1. Cite the page the answer came from.
 """
 linear = '''
 ## Tracker policy: Linear is canonical; GitHub Issues is intake-only
