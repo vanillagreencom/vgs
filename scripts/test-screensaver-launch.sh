@@ -3,7 +3,7 @@
 # and no saver windows. A refused focus move is best-effort and the launch still
 # exits 0; a refused exec_cmd leaves a monitor without a saver, so the launch exits
 # nonzero and names the refusal count. ScreensaverService clears its active state
-# only on that nonzero exit. Every run gets an explicit environment.
+# when the launch exits nonzero. Every run gets an explicit environment.
 set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
