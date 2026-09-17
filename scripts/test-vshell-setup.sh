@@ -21,7 +21,9 @@
 # Negative rows use file_lacks, never grep -v, which answers a different
 # question: -v selects the lines that do not match, so it succeeds whenever the
 # file holds any other line, and four rows here passed unconditionally on it.
-# Every helper takes the file first, so a swapped call is an error, not a pass.
+# Every helper takes the file first, and file_lacks demands the clean not-found
+# status rather than any failure, so neither a swapped call nor an unreadable
+# file can pass a negative row.
 #
 # Two message rules, each with its own reach. This comment is what
 # docs/architecture/helper.md points at for those, so keep it exact.
@@ -36,9 +38,10 @@
 #     its files and its step in one record, so neither a build recipe can
 #     answer for the message nor a systemd instruction pass on Void.
 #
-# What no rule here reaches: the non-directory rows of the packaging README's
-# channel table, flake.nix, and the openSUSE spec, which lives in the OBS
-# project rather than in this repository.
+# No first-start-step check reaches the non-directory rows of the packaging
+# README's channel table, flake.nix, or the openSUSE spec, which lives in the
+# OBS project rather than in this repository. The single-owner scan does read
+# every file under packaging/, that README included.
 #
 # Two recipe rows guard what no message names. Each anchor holds its line
 # together with the structure that makes it work, because every regression they
@@ -141,9 +144,15 @@ file_holds() {
   [[ $text == *"$2"* ]]
 }
 
-# True when file $1 does not hold the literal $2. expect runs its command as
-# argv, where a leading ! would be a command name rather than a negation.
-file_lacks() { ! file_holds "$1" "$2"; }
+# True when file $1 is readable and does not hold the literal $2. A bare
+# negation would also accept file_holds' unreadable-file status, turning a file
+# this suite could not open into a silent pass: the same vacuous shape that let
+# four rows here assert nothing. Only the clean not-found status counts.
+file_lacks() {
+  local status=0
+  file_holds "$1" "$2" || status=$?
+  ((status == 1))
+}
 
 # The install messages and READMEs that tell a user how VGS first starts.
 # bin/vshell holds the raw enable command and is deliberately outside this set,
@@ -222,6 +231,12 @@ packaging_gaps() {
       continue
     fi
     step="${record%%$'\n'*}"
+    if [[ -z $step ]]; then
+      # An empty step matches every file, so the channel would pass on any
+      # content at all. The record is broken, not the channel.
+      printf 'no-step-token %s\n' "${dir%/}"
+      continue
+    fi
     while IFS= read -r message; do
       matched=0
       # Unquoted so a channel may name its message by glob, as Gentoo does: its
@@ -479,6 +494,22 @@ expect control-contract-without-messages "a channel contract naming no message f
   "gaps: $(printf '%s' "$gaps_without_messages" | tr '\n' ' ')" \
   file_holds <(printf '%s\n' "$gaps_without_messages") \
   "no-message-files $repo_root/packaging/void"
+
+# A contract whose step is empty. The empty string is a substring of every file,
+# so the channel would pass on any content at all.
+gaps_without_step="$(
+  channel_contract() {
+    case "$1" in
+      void) printf '%s\n' '' 'INSTALL.msg' ;;
+      *) channel_contract_shipped "$1" ;;
+    esac
+  }
+  packaging_gaps "$repo_root"
+)"
+expect control-contract-without-step "a channel contract with an empty step reddens the channel rule" \
+  "gaps: $(printf '%s' "$gaps_without_step" | tr '\n' ' ')" \
+  file_holds <(printf '%s\n' "$gaps_without_step") \
+  "no-step-token $repo_root/packaging/void"
 
 empty_tree="$tmp/empty-tree"
 mkdir -p "$empty_tree/packaging"

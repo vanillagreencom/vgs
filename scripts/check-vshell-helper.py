@@ -5493,24 +5493,23 @@ def test_notification_takeover_records_who_asked():
         seed = json.loads((REPO_ROOT / "config" / "vshell" / "settings.default.json").read_text())
         assert_equal(seed["notificationFirstRunTakeoverDone"], False,
                      "the shipped seed must leave the one-shot unspent")
-        assert_equal(helper.vgs_first_run_takeover_state(), (False, True),
-                     "an absent settings.json reads as unspent, and settings still read")
+        assert_equal(helper.vgs_first_run_takeover_done(), False,
+                     "an absent settings.json must not read as a spent one-shot")
         assert_equal(helper.notification_status()["vgsFirstRunTakeoverDone"], False,
                      "status must surface the on-disk answer")
 
         settings.write_text("{ this is not json")
-        assert_equal(helper.vgs_first_run_takeover_state(), (False, False),
-                     "an unreadable settings.json is unspent AND unknown, which the "
-                     "report must not present as a one-shot still to come")
+        assert_equal(helper.vgs_first_run_takeover_done(), False,
+                     "an unreadable settings.json must not read as a spent one-shot")
 
         settings.write_text(json.dumps({"notificationFirstRunTakeoverDone": False}))
-        assert_equal(helper.vgs_first_run_takeover_state(), (False, True), "false is false")
+        assert_equal(helper.vgs_first_run_takeover_done(), False, "false is false")
         settings.write_text(json.dumps({"notificationFirstRunTakeoverDone": "yes"}))
-        assert_equal(helper.vgs_first_run_takeover_state(), (False, True),
+        assert_equal(helper.vgs_first_run_takeover_done(), False,
                      "a non-boolean must not be coerced into a spent one-shot")
 
         settings.write_text(json.dumps({"notificationFirstRunTakeoverDone": True}))
-        assert_equal(helper.vgs_first_run_takeover_state(), (True, True),
+        assert_equal(helper.vgs_first_run_takeover_done(), True,
                      "a persisted true is what the shell waits for")
         assert_equal(helper.notification_status()["vgsFirstRunTakeoverDone"], True,
                      "status must surface the on-disk answer")
@@ -5570,64 +5569,61 @@ def test_notification_status_respects_the_server_opt_out():
         helper.vgs_notification_server_enabled = original_enabled
 
 
-def test_notification_status_withholds_the_manual_fix_before_the_first_run():
-    """The shell claims the name itself the first time it runs.
+def test_notification_status_always_names_the_actionable_takeover():
+    """The actionable command is never withheld, whatever the one-shot says.
 
-    Naming the manual command while that one-shot is unspent invites a takeover
-    racing the shell's own, and both write the undo record. vshell setup reports
-    before it starts the unit, which is squarely inside that window.
+    Whether the shell's own first-run takeover fires is decided in
+    NotificationService.qml, from state this helper cannot see: settings.json
+    may be unreadable, or readable but unwritable, and the conflict may be one
+    no takeover can free. Every attempt to rebuild that decision here suppressed
+    the command in a state where it was the only way out. A manual takeover
+    touches only the undo record in the state directory, so it is valid in all
+    of them, and the one-shot now decides a further note and nothing else.
     """
     original_enabled = helper.vgs_notification_server_enabled
     try:
         helper.vgs_notification_server_enabled = lambda: True
         status = {
             "busName": helper.NOTIFICATION_BUS_NAME, "state": "foreign", "error": "",
-            "vgsServerEnabled": True, "vgsFirstRunTakeoverDone": False,
-            "vgsFirstRunTakeoverKnown": True, "atRisk": False,
+            "vgsServerEnabled": True, "vgsFirstRunTakeoverDone": False, "atRisk": False,
             "owner": {"present": True, "pid": 42, "process": "mako", "exe": "/usr/bin/mako",
                       "unit": "mako.service", "isVgs": False, "unique": ":1.7", "cmdline": "", "error": ""},
             "conflicts": [], "takeover": {"available": True, "reason": ""},
             "restore": {"available": False},
         }
 
-        def printed(**overrides):
-            helper._print_notification_status({**status, **overrides})
-
         def capture(**overrides):
             buffer = io.StringIO()
             with contextlib.redirect_stdout(buffer):
-                printed(**overrides)
+                helper._print_notification_status({**status, **overrides})
             return buffer.getvalue()
 
-        unspent = capture()
-        assert "fix: vshell notifications takeover" not in unspent, \
-            "the manual command must not be named while the shell's own takeover is unspent"
-        assert "takes this name over itself" in unspent, \
-            "the report must say what will claim the name instead"
-
-        spent = capture(vgsFirstRunTakeoverDone=True)
-        assert "fix: vshell notifications takeover" in spent, \
-            "once the one-shot is spent, the manual command is the only way back"
-
-        # Every state where the flag is false but the shell will never act on
-        # it. The note would promise a takeover that never comes, while
-        # withholding the one command that resolves the conflict.
+        # Every state a previous gate withheld the command in, plus the plain
+        # one. An actionable conflict names the command in all of them.
         for label, overrides in (
-            ("settings could not be read", {"vgsFirstRunTakeoverKnown": False}),
-            ("VGS holds the name but an activation file remains", {"state": "vgs", "atRisk": True}),
+            ("the one-shot is unspent", {}),
+            ("the one-shot is spent", {"vgsFirstRunTakeoverDone": True}),
+            ("VGS holds the name beside a live activation file",
+             {"state": "vgs", "atRisk": True}),
         ):
-            stuck = capture(**overrides)
-            assert "takes this name over itself" not in stuck, \
-                f"the shell does not claim the name when {label}"
-            assert "fix: vshell notifications takeover" in stuck, \
-                f"the manual command is the only way out when {label}"
+            printed = capture(**overrides)
+            assert "fix: vshell notifications takeover" in printed, \
+                f"the command must be named when {label}"
 
-        # Nothing actionable: the note must not stand in for the reason either.
+        # The note is supplementary: it rides alongside the command and only
+        # while the one-shot is unspent.
+        assert "may also claim this name itself" in capture(), \
+            "an unspent one-shot adds the note"
+        assert "may also claim this name itself" not in capture(vgsFirstRunTakeoverDone=True), \
+            "a spent one-shot has nothing further to add"
+
+        # Nothing actionable: the reason stands in place of the command, and the
+        # note must not crowd it out.
         unfixable = capture(takeover={"available": False, "reason": "mako is not a unit VGS can stop"})
-        assert "takes this name over itself" not in unfixable, \
-            "the shell does not claim a name no takeover can free"
         assert "mako is not a unit VGS can stop" in unfixable, \
             "an unfixable conflict must still state why"
+        assert "fix: vshell notifications takeover" not in unfixable, \
+            "a takeover that cannot act must not be offered as the fix"
     finally:
         helper.vgs_notification_server_enabled = original_enabled
 
@@ -13133,7 +13129,7 @@ def main():
     test_notification_restore_starts_what_takeover_stopped()
     test_notification_takeover_records_who_asked()
     test_notification_status_respects_the_server_opt_out()
-    test_notification_status_withholds_the_manual_fix_before_the_first_run()
+    test_notification_status_always_names_the_actionable_takeover()
     test_requires_features_propagates_to_availability()
     test_sudo_toggle_status_stays_available_without_a_terminal()
     test_terminal_resolution_prefers_the_vgs_setting()
