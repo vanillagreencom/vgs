@@ -22,6 +22,10 @@ import sys
 import tempfile
 from pathlib import Path
 
+# Where a comment opens in shell is that scanner's question, not this file's.
+sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
+from shell_scan import code_mask  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 AUR_REMOTE = "https://aur.archlinux.org"
 
@@ -180,10 +184,15 @@ def drop_computed_version(lines: list[str]) -> list[str]:
     return [line for line in lines if not VERSION_ASSIGNMENT.match(line.rstrip("\n"))]
 
 
-def git(root: Path, *arguments: str) -> str:
-    result = subprocess.run(
+def git_result(root: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
+    """Run git in `root` and hand the caller its status to classify."""
+    return subprocess.run(
         ["git", "-C", str(root), *arguments], capture_output=True, text=True
     )
+
+
+def git(root: Path, *arguments: str) -> str:
+    result = git_result(root, *arguments)
     if result.returncode != 0:
         raise CheckError(
             f"git {' '.join(arguments)} in {root} failed: {result.stderr.strip()}"
@@ -207,24 +216,48 @@ def computed_pkgver(root: Path) -> str:
     )
 
 
-def drop_comment(line: str) -> str:
-    """The line without its comment, a `#` inside quotes left alone."""
-    quote = ""
+def comment_start(line: str, masked: str) -> int:
+    """Where a comment opens on `line`, given shell_scan's mask of it.
+
+    The mask blanks a comment to the end of its line and nothing else reaches
+    the end that way, so a `#` blanked with only blanks after it opened one. A
+    `#` the mask blanked inside a quoted string or a parameter expansion has
+    that construct's own closing character after it.
+    """
     for index, char in enumerate(line):
-        if quote:
-            if char == quote:
-                quote = ""
-        elif char in "'\"":
-            quote = char
-        elif char == "#" and (index == 0 or line[index - 1].isspace()):
-            return line[:index]
-    return line
+        if char == "#" and masked[index] == " " and not masked[index:].strip():
+            return index
+    return len(line)
 
 
 def normalized_body(body: str) -> str:
-    """The commands a function body runs, without comments, blank lines or layout."""
-    commands = (" ".join(drop_comment(line).split()) for line in body.splitlines())
+    """The commands a function body runs, without comments, blank lines or layout.
+
+    The mask is read rather than used as the text: it blanks quoted bodies too,
+    and the commands a recipe's pkgver() runs live inside quotes.
+    """
+    commands = (
+        " ".join(line[: comment_start(line, masked)].split())
+        for line, masked in zip(body.splitlines(), code_mask(body).splitlines())
+    )
     return "\n".join(command for command in commands if command)
+
+
+def formula_problem(directory: Path, body: str) -> str | None:
+    """Why a recipe's pkgver() cannot be stamped by this script, or None.
+
+    The local check reports it and the stamp refuses on it, so a recipe edit
+    that changes the formula is caught on the pull request rather than in the
+    publish job after it merges.
+    """
+    if normalized_body(body) == PKGVER_BODY:
+        return None
+    return (
+        f"{directory}/PKGBUILD computes its pkgver with\n{normalized_body(body)}\n"
+        f"and scripts/check-aur-sync.py computes it with\n{PKGVER_BODY}\n"
+        "so the version publication stamps into the recipe is not the one that "
+        "recipe's build produces. Make the two agree."
+    )
 
 
 def version_order(value: str) -> tuple[tuple[int, ...], int] | None:
@@ -242,23 +275,32 @@ def version_order(value: str) -> tuple[tuple[int, ...], int] | None:
 def published_version(directory: Path) -> tuple[str, str] | None:
     """The (pkgver, pkgrel) the recipe's own git HEAD publishes.
 
-    None when nothing is published there: a directory that is not a git work
-    tree, or one whose HEAD holds no PKGBUILD beside the recipe.
+    None means nothing is published there, which is one of three states: the
+    directory is in no git repository, its repository has no commit, or its HEAD
+    holds no recipe beside `directory`. Any other git failure is raised, because
+    read as nothing published it would skip the downgrade refusal below.
     """
-    inside = subprocess.run(
-        ["git", "-C", str(directory), "rev-parse", "--is-inside-work-tree"],
-        capture_output=True, text=True,
-    )
+    inside = git_result(directory, "rev-parse", "--is-inside-work-tree")
     if inside.returncode != 0 or inside.stdout.strip() != "true":
         return None
-    # `HEAD:./PKGBUILD` resolves beside the recipe; `HEAD:PKGBUILD` would resolve
-    # at the repository root and could read another package's recipe.
-    shown = subprocess.run(
-        ["git", "-C", str(directory), "show", "HEAD:./PKGBUILD"],
-        capture_output=True, text=True,
-    )
-    if shown.returncode != 0:
+    if git_result(directory, "rev-parse", "--verify", "--quiet", "HEAD").returncode != 0:
         return None
+    # `./PKGBUILD` resolves beside the recipe; `PKGBUILD` would resolve at the
+    # repository root and could read another package's recipe.
+    listed = git_result(directory, "ls-tree", "--name-only", "HEAD", "./PKGBUILD")
+    if listed.returncode != 0:
+        raise CheckError(
+            f"cannot list what {directory}'s HEAD holds, so whether publishing would "
+            f"lower the version is unknown: {listed.stderr.strip()}"
+        )
+    if not listed.stdout.strip():
+        return None
+    shown = git_result(directory, "show", "HEAD:./PKGBUILD")
+    if shown.returncode != 0:
+        raise CheckError(
+            f"cannot read the PKGBUILD at {directory}'s HEAD, so whether publishing "
+            f"would lower the version is unknown: {shown.stderr.strip()}"
+        )
     fields, _ = parse_pkgbuild_text(shown.stdout, f"the PKGBUILD at {directory}'s HEAD")
     pkgver, pkgrel = fields.get("pkgver") or [], fields.get("pkgrel") or []
     if len(pkgver) != 1 or len(pkgrel) != 1:
@@ -297,13 +339,9 @@ def stamp_vcs_version(directory: Path, root: Path = ROOT) -> str | None:
     if body is None:
         return None
 
-    if normalized_body(body) != PKGVER_BODY:
-        raise CheckError(
-            f"{directory}/PKGBUILD computes its pkgver with\n{normalized_body(body)}\n"
-            f"and this script computes it with\n{PKGVER_BODY}\n"
-            "so the value stamped here is not the one that recipe's build produces. "
-            "NOTHING was written. Make the two agree."
-        )
+    problem = formula_problem(directory, body)
+    if problem is not None:
+        raise CheckError(f"{problem} NOTHING was written.")
 
     fields, _ = parse_pkgbuild(directory / "PKGBUILD")
     pkgver = computed_pkgver(root)
@@ -464,7 +502,11 @@ def check_local(package: str, directory: Path) -> list[str]:
             compare(f"{package}/{name}", splits[name], srcsplits[name], SPLIT_KEYS)
         )
 
-    if pkgver_body(directory) is not None:
+    body = pkgver_body(directory)
+    if body is not None:
+        formula = formula_problem(directory, body)
+        if formula is not None:
+            problems.append(f"{package}: {formula}")
         for value in pkgbuild.get("pkgver", []):
             if PLACEHOLDER_PKGVER.search(value):
                 problems.append(
@@ -503,34 +545,55 @@ def check_remote(package: str, directory: Path, files: tuple[str, ...]) -> list[
         return compare_published(package, directory, clone, files)
 
 
+def published_pkgvers(package: str, clone: Path) -> list[tuple[str, list[str]]]:
+    """The pkgver values each published file carries.
+
+    Both files are read: aurweb builds the package page and the metadata a
+    helper queries from .SRCINFO, so a stale value there reaches every user
+    whatever the published PKGBUILD says.
+    """
+    found = []
+    if (clone / "PKGBUILD").is_file():
+        fields, _ = parse_pkgbuild_text(
+            (clone / "PKGBUILD").read_text(), f"the published {package} PKGBUILD"
+        )
+        found.append(("PKGBUILD", fields.get("pkgver") or []))
+    if (clone / ".SRCINFO").is_file():
+        base, _ = parse_srcinfo(clone / ".SRCINFO")
+        found.append((".SRCINFO", base.get("pkgver") or []))
+    return found
+
+
 def published_pkgver_problems(package: str, clone: Path) -> list[str]:
     """What the published pkgver alone says, before any file is compared.
 
     Its distance from this tree's is expected and is dropped from the comparison
     below; what it is on its own still has to hold.
     """
-    fields, _ = parse_pkgbuild_text(
-        (clone / "PKGBUILD").read_text(), f"the published {package} PKGBUILD"
-    )
-    values = fields.get("pkgver") or []
-    if len(values) != 1:
-        return [
-            f"{package}: the published PKGBUILD assigns pkgver {len(values)} time(s), so "
-            "the version its page shows cannot be read"
-        ]
-    value = values[0]
-    if PLACEHOLDER_PKGVER.search(value):
-        return [
-            f"{package}: the published pkgver={value} is the placeholder a VCS recipe "
-            "carries before a build computes one, so that is the version the AUR page "
-            "and every helper show until they clone. Publish with scripts/publish-aur.sh."
-        ]
-    if version_order(value) is None:
-        return [
-            f"{package}: the published pkgver={value} is not the shape this recipe "
-            "computes, so no client can order it against the version a build produces"
-        ]
-    return []
+    problems = []
+    for name, values in published_pkgvers(package, clone):
+        if len(values) != 1:
+            problems.append(
+                f"{package}: the published {name} carries {len(values)} pkgver values, "
+                "so the version it shows cannot be read"
+            )
+            continue
+        value = values[0]
+        if PLACEHOLDER_PKGVER.search(value):
+            problems.append(
+                f"{package}: the published {name} carries pkgver={value}, the "
+                "placeholder a VCS recipe holds before a build computes one, so that is "
+                "the version the AUR page and every helper show until they clone. "
+                "Publish with scripts/publish-aur.sh."
+            )
+        elif version_order(value) is None:
+            problems.append(
+                f"{package}: the published {name} carries pkgver={value}, which is not "
+                "the shape this recipe computes. This script cannot order it, and "
+                "pacman orders it anyway: a value of another shape can sort above every "
+                "version the recipe's own build produces, leaving every client on it."
+            )
+    return problems
 
 
 def compare_published(package: str, directory: Path, clone: Path,
@@ -538,7 +601,7 @@ def compare_published(package: str, directory: Path, clone: Path,
     """Problems between the recipe in `directory` and the published copy in `clone`."""
     vcs = pkgver_body(directory) is not None
     problems = []
-    if vcs and (clone / "PKGBUILD").is_file():
+    if vcs:
         problems.extend(published_pkgver_problems(package, clone))
     for name in files:
         published = clone / name

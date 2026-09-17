@@ -138,7 +138,7 @@ def recipe(directory: Path, pkgver: str = PLACEHOLDER, pkgrel: str = "4",
     )
 
 
-class PlaceholderGuard(unittest.TestCase):
+class LocalCheck(unittest.TestCase):
     """What `scripts/validate packaging` reports about a recipe's own pkgver."""
 
     CASES = (
@@ -147,25 +147,66 @@ class PlaceholderGuard(unittest.TestCase):
         ("a recipe that computes no pkgver", PLACEHOLDER, "", False),
     )
 
+    def check(self, tmp: str, directory: Path) -> list[str]:
+        # The checker reports paths relative to the repository root, and a
+        # case's recipe is not under it; point the root at the case.
+        original = CHECKER.ROOT
+        CHECKER.ROOT = Path(tmp)
+        try:
+            return CHECKER.check_local("probe", directory)
+        finally:
+            CHECKER.ROOT = original
+
     def test_cases(self):
         for name, pkgver, body, reported in self.CASES:
             with self.subTest(name), tempfile.TemporaryDirectory() as tmp:
                 directory = Path(tmp) / "recipe"
                 recipe(directory, pkgver=pkgver, body=body)
-                # The checker reports paths relative to the repository root, and
-                # a case's recipe is not under it; point the root at the case.
-                original = CHECKER.ROOT
-                CHECKER.ROOT = Path(tmp)
-                try:
-                    problems = CHECKER.check_local("probe", directory)
-                finally:
-                    CHECKER.ROOT = original
+
+                problems = self.check(tmp, directory)
+
                 if not reported:
                     self.assertEqual(problems, [])
                     continue
                 self.assertEqual(len(problems), 1, problems)
                 self.assertIn(pkgver, problems[0])
                 self.assertIn("--stamp-vcs-version", problems[0])
+
+    def test_a_formula_the_stamp_cannot_reproduce_is_reported_here(self):
+        # The same refusal the stamp raises, so a recipe edit that changes the
+        # formula is caught on the pull request and not in the publish job.
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp) / "recipe"
+            recipe(directory, pkgver="0.5.0.r335.ga945a5a0",
+                   body=VCS_PKGVER.replace("cd vgs", 'cd "$srcdir/vgs"'))
+
+            problems = self.check(tmp, directory)
+
+            self.assertEqual(len(problems), 1, problems)
+            self.assertIn("computes its pkgver with", problems[0])
+
+
+class NormalizedBody(unittest.TestCase):
+    """Which text in a pkgver() body is a comment and which only looks like one.
+
+    Where a comment opens is scripts/lib/shell_scan.py's rule, read here through
+    its mask; these rows pin what this file does with that mask.
+    """
+
+    CASES = (
+        ("a comment at a word start", "cd vgs  # note\n", "cd vgs"),
+        ("a comment after a separator", "cd vgs;# note\n", "cd vgs;"),
+        ("a hash inside a word", "cd vgs#note\n", "cd vgs#note"),
+        ("a hash inside a quoted string", "printf 'a#b'\n", "printf 'a#b'"),
+        ("a hash in a parameter expansion", "printf ${v#pat}\n", "printf ${v#pat}"),
+        ("a whole-line comment", "  # note\n  cd vgs\n", "cd vgs"),
+        ("blank lines and indentation", "\n   \n  cd   vgs\n", "cd vgs"),
+    )
+
+    def test_cases(self):
+        for name, body, expected in self.CASES:
+            with self.subTest(name):
+                self.assertEqual(CHECKER.normalized_body(body), expected)
 
 
 class Stamp(unittest.TestCase):
@@ -282,14 +323,27 @@ class Stamp(unittest.TestCase):
 class PublishedVersion(unittest.TestCase):
     """What the recipe's own git HEAD, the published state, decides about a stamp."""
 
-    def publish(self, tmp: Path, pkgver: str, pkgrel: str = "4") -> Path:
-        """A recipe directory whose committed state publishes these values."""
+    def rendered(self, directory: Path, pkgver: str = "0.1.0.r1.gaaaaaaa") -> str:
+        """The PKGBUILD text a case edits before committing it as published."""
+        recipe(directory, pkgver=pkgver)
+        return (directory / "PKGBUILD").read_text()
+
+    def publish(self, tmp: Path, pkgver: str, pkgrel: str = "4",
+                committed: str | None = None, root: Path | None = None) -> Path:
+        """A recipe directory whose committed state publishes these values.
+
+        `committed` replaces the PKGBUILD text that is committed, for a case that
+        needs a published recipe the recipe writer cannot produce. `root` puts
+        the git repository above the recipe instead of at it.
+        """
         directory = tmp / "recipe"
-        directory.mkdir()
-        git("init", "--quiet", "--initial-branch", "master", cwd=directory)
+        directory.mkdir(parents=True)
+        git("init", "--quiet", "--initial-branch", "master", cwd=root or directory)
         recipe(directory, pkgver=pkgver, pkgrel=pkgrel)
-        git("add", "--all", cwd=directory)
-        git("commit", "--quiet", "-m", "published", cwd=directory)
+        if committed is not None:
+            (directory / "PKGBUILD").write_text(committed)
+        git("add", "--all", cwd=root or directory)
+        git("commit", "--quiet", "-m", "published", cwd=root or directory)
         # publish-aur.sh overwrites the working tree from this repository before
         # the stamp runs, so the published values live only in HEAD by then.
         recipe(directory, pkgver=PLACEHOLDER, pkgrel="1")
@@ -307,6 +361,79 @@ class PublishedVersion(unittest.TestCase):
 
             self.assertIn("0.5.0.r900.gfeedbee", str(raised.exception))
             self.assertEqual(before, (directory / "PKGBUILD").read_text())
+
+    def test_the_last_assignment_is_what_the_published_recipe_carries(self):
+        # bash takes the last assignment, so the stamp must order against that
+        # one. The first is low enough to stamp over and the last is not.
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source"
+            make_repo(source)
+            directory = self.publish(
+                Path(tmp),
+                "0.1.0.r1.gaaaaaaa",
+                committed=self.rendered(Path(tmp) / "text").replace(
+                    "pkgver=0.1.0.r1.gaaaaaaa\n",
+                    "pkgver=0.1.0.r1.gaaaaaaa\npkgver=0.9.0.r999.gfeedbee\n",
+                ),
+            )
+            before = (directory / "PKGBUILD").read_text()
+
+            with self.assertRaises(CHECKER.CheckError) as raised:
+                CHECKER.stamp_vcs_version(directory, root=source)
+
+            self.assertIn("0.9.0.r999.gfeedbee", str(raised.exception))
+            self.assertEqual(before, (directory / "PKGBUILD").read_text())
+
+    def test_a_published_recipe_assigning_no_single_version_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source"
+            make_repo(source)
+            directory = self.publish(
+                Path(tmp),
+                "0.1.0.r1.gaaaaaaa",
+                committed=self.rendered(Path(tmp) / "text").replace(
+                    "pkgver=0.1.0.r1.gaaaaaaa\n", "pkgver=(0.1.0.r1.gaaaaaaa 0.9.0.r9.gb)\n"
+                ),
+            )
+            before = (directory / "PKGBUILD").read_text()
+
+            with self.assertRaises(CHECKER.CheckError) as raised:
+                CHECKER.stamp_vcs_version(directory, root=source)
+
+            self.assertIn("assigns pkgver 2 time(s)", str(raised.exception))
+            self.assertEqual(before, (directory / "PKGBUILD").read_text())
+
+    def test_a_published_state_that_cannot_be_read_is_refused(self):
+        # An unreadable published recipe is not an unpublished one: read as
+        # nothing published, the downgrade refusal would be skipped entirely.
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source"
+            make_repo(source)
+            directory = self.publish(Path(tmp), "0.9.0.r999.gfeedbee")
+            blob = git("rev-parse", "HEAD:./PKGBUILD", cwd=directory)
+            (directory / ".git" / "objects" / blob[:2] / blob[2:]).unlink()
+
+            with self.assertRaises(CHECKER.CheckError) as raised:
+                CHECKER.stamp_vcs_version(directory, root=source)
+
+            self.assertIn("cannot read the PKGBUILD", str(raised.exception))
+
+    def test_the_recipe_beside_the_stamp_is_read_not_the_repository_root(self):
+        # The recipe is a subdirectory of its repository, as it is in this
+        # repository. A root PKGBUILD publishing a far higher version would
+        # refuse the stamp if the lookup were not scoped to the recipe.
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source"
+            count, head = make_repo(source)
+            root = Path(tmp) / "tree"
+            root.mkdir()
+            recipe(root, pkgver="9.9.9.r999.gfeedbee", pkgrel="1")
+            directory = self.publish(root, "0.1.0.r1.gaaaaaaa", root=root)
+
+            self.assertEqual(
+                CHECKER.stamp_vcs_version(directory, root=source),
+                f"0.5.0.r{count}.g{head}",
+            )
 
     def test_a_published_version_of_another_shape_is_refused(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -364,16 +491,19 @@ class RemoteComparison(unittest.TestCase):
 
     FILES = ("PKGBUILD", ".SRCINFO")
 
-    def compare(self, tmp: str, published: dict, tree: dict) -> list[str]:
-        directory, clone = Path(tmp) / "recipe", Path(tmp) / "clone"
-        recipe(directory, **tree)
-        recipe(clone, **published)
+    def compared(self, tmp: str, directory: Path, clone: Path) -> list[str]:
         original = CHECKER.ROOT
         CHECKER.ROOT = Path(tmp)
         try:
             return CHECKER.compare_published("probe", directory, clone, self.FILES)
         finally:
             CHECKER.ROOT = original
+
+    def compare(self, tmp: str, published: dict, tree: dict) -> list[str]:
+        directory, clone = Path(tmp) / "recipe", Path(tmp) / "clone"
+        recipe(directory, **tree)
+        recipe(clone, **published)
+        return self.compared(tmp, directory, clone)
 
     def test_only_the_two_stamped_assignments_are_dropped(self):
         lines = [
@@ -382,6 +512,7 @@ class RemoteComparison(unittest.TestCase):
             "pkgrel=1\n",
             "_pkgver=kept\n",
             "pkgver=\n",
+            "pkgver='0.5.0.r335.ga945a5a0'\n",
             "\tpkgver = 0.5.0.r335.ga945a5a0\n",
             "\tpkgrel = 1\n",
             "\tpkgrel = \n",
@@ -390,8 +521,8 @@ class RemoteComparison(unittest.TestCase):
 
         self.assertEqual(
             CHECKER.drop_computed_version(lines),
-            ["pkgname=probe\n", "_pkgver=kept\n", "pkgver=\n", "\tpkgrel = \n",
-             "pkgver() {\n"],
+            ["pkgname=probe\n", "_pkgver=kept\n", "pkgver=\n",
+             "pkgver='0.5.0.r335.ga945a5a0'\n", "\tpkgrel = \n", "pkgver() {\n"],
         )
 
     def test_a_published_version_apart_from_this_tree_s_is_not_drift(self):
@@ -405,7 +536,7 @@ class RemoteComparison(unittest.TestCase):
                 [],
             )
 
-    def test_a_published_placeholder_is_reported(self):
+    def test_a_published_placeholder_is_reported_for_each_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             problems = self.compare(
                 tmp,
@@ -413,8 +544,30 @@ class RemoteComparison(unittest.TestCase):
                 tree={"pkgver": "0.5.0.r400.gbbbbbbb", "pkgrel": "1"},
             )
 
+            self.assertEqual(len(problems), 2, problems)
+            self.assertEqual(
+                {"PKGBUILD", ".SRCINFO"},
+                {name for name in ("PKGBUILD", ".SRCINFO")
+                 if any(f"published {name} carries pkgver={PLACEHOLDER}" in problem
+                        for problem in problems)},
+            )
+
+    def test_a_placeholder_in_the_published_srcinfo_alone_is_reported(self):
+        # The AUR page and the metadata a helper queries are built from
+        # .SRCINFO, so a current PKGBUILD beside it hides nothing.
+        with tempfile.TemporaryDirectory() as tmp:
+            directory, clone = Path(tmp) / "recipe", Path(tmp) / "clone"
+            recipe(directory, pkgver="0.5.0.r400.gbbbbbbb", pkgrel="1")
+            recipe(clone, pkgver="0.5.0.r335.ga945a5a0", pkgrel="1")
+            srcinfo = clone / ".SRCINFO"
+            srcinfo.write_text(
+                srcinfo.read_text().replace("0.5.0.r335.ga945a5a0", PLACEHOLDER)
+            )
+
+            problems = self.compared(tmp, directory, clone)
+
             self.assertEqual(len(problems), 1, problems)
-            self.assertIn(PLACEHOLDER, problems[0])
+            self.assertIn(f"published .SRCINFO carries pkgver={PLACEHOLDER}", problems[0])
 
     def test_a_published_version_of_another_shape_is_reported(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -424,8 +577,25 @@ class RemoteComparison(unittest.TestCase):
                 tree={"pkgver": "0.5.0.r400.gbbbbbbb", "pkgrel": "1"},
             )
 
-            self.assertEqual(len(problems), 1, problems)
-            self.assertIn("20260916", problems[0])
+            self.assertEqual(len(problems), 2, problems)
+            for problem in problems:
+                self.assertIn("20260916", problem)
+
+    def test_a_published_file_assigning_no_single_pkgver_is_reported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory, clone = Path(tmp) / "recipe", Path(tmp) / "clone"
+            recipe(directory, pkgver="0.5.0.r400.gbbbbbbb", pkgrel="1")
+            recipe(clone, pkgver="0.5.0.r335.ga945a5a0", pkgrel="1")
+            pkgbuild = clone / "PKGBUILD"
+            pkgbuild.write_text(
+                pkgbuild.read_text().replace(
+                    "pkgver=0.5.0.r335.ga945a5a0\n", "pkgver=(0.5.0.r335.ga945a5a0 0.6.0.r1.gc)\n"
+                )
+            )
+
+            problems = self.compared(tmp, directory, clone)
+
+            self.assertIn("published PKGBUILD carries 2 pkgver values", problems[0])
 
     def test_a_published_difference_outside_the_version_is_still_drift(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -436,12 +606,8 @@ class RemoteComparison(unittest.TestCase):
             pkgbuild.write_text(
                 pkgbuild.read_text().replace("example.invalid/vgs", "example.invalid/old")
             )
-            original = CHECKER.ROOT
-            CHECKER.ROOT = Path(tmp)
-            try:
-                problems = CHECKER.compare_published("probe", directory, clone, self.FILES)
-            finally:
-                CHECKER.ROOT = original
+
+            problems = self.compared(tmp, directory, clone)
 
             self.assertEqual(len(problems), 1, problems)
             self.assertIn("PKGBUILD", problems[0])
@@ -457,9 +623,12 @@ class CommandLine(unittest.TestCase):
 
     def stamp(self, source: Path, directory: Path) -> subprocess.CompletedProcess:
         scripts = source / "scripts"
-        scripts.mkdir()
+        (scripts / "lib").mkdir(parents=True)
+        for path in (CHECKER_PATH, REPO_ROOT / "scripts" / "lib" / "shell_scan.py"):
+            (scripts / path.relative_to(REPO_ROOT / "scripts")).write_text(
+                path.read_text()
+            )
         copied = scripts / CHECKER_PATH.name
-        copied.write_text(CHECKER_PATH.read_text())
         return subprocess.run(
             [sys.executable, str(copied), "--stamp-vcs-version", str(directory)],
             capture_output=True, text=True,
