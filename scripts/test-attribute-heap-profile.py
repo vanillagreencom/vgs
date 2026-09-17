@@ -168,6 +168,7 @@ def main() -> int:
             ("thread-name-changed", [str(base), str(dump(tmp / "p.100.3.i3.heap", [], header="  t1: 0: 0 [0: 0] QThread\n"))], "thread-name-changed=t1"),
             ("thread-not-found", [str(base), str(head), "--thread", "QSGRenderThread"], "thread-not-found=QSGRenderThread"),
             ("truncated", [str(base), str(dump(tmp / "p.100.4.i4.heap", [], maps=""))], f"malformed-dump={tmp / 'p.100.4.i4.heap'}"),
+            ("marker-only-maps", [str(base), str(dump(tmp / "p.100.6.i6.heap", [], maps="MAPPED_LIBRARIES:\n"))], f"malformed-dump={tmp / 'p.100.6.i6.heap'}"),
             ("dump-name", [str(base), str(dump(tmp / "head.heap", []))], f"unrecognised-dump-name={tmp / 'head.heap'}"),
         ]
         for case, args, key in refusals:

@@ -118,8 +118,8 @@ def parse_dump(path: Path) -> Dump:
                 dump.stacks[stack][uid] = (int(objects), int(size))
         elif line.strip():
             raise Refusal("malformed-dump", f"{path}:{number}", "The line is neither a count, a stack nor a mapping.")
-    if not in_maps:
-        raise Refusal("malformed-dump", path, "The dump has no MAPPED_LIBRARIES section; it may be truncated.")
+    if not dump.maps:
+        raise Refusal("malformed-dump", path, "The dump's MAPPED_LIBRARIES section is missing or names no file; it may be truncated.")
     return dump
 
 
