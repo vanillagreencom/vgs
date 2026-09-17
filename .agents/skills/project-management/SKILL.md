@@ -25,7 +25,7 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 
 ## Linear projects
 
-Every new non-mirror issue gets exactly one project. The set (all team vg-shell):
+Every new non-mirror issue gets exactly one project. The set (all team vgs):
 
 | Project | Scope |
 |---------|-------|
