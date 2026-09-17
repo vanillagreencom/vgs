@@ -7,6 +7,8 @@ set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 smoke="$repo_root/scripts/qml-smoke.sh"
+# The PATH this suite started with; some cases narrow PATH inside their subshells.
+host_path="$PATH"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT INT TERM
 
@@ -43,6 +45,8 @@ slice keep_host_rendering
 slice wait_surface_focused
 slice send_escape
 slice cleanup
+slice shell_env_collisions
+slice driver_check
 
 # Cut a one-line helper definition out of the smoke script. Same contract as slice: a helper
 # that no longer has this shape is a broken fixture, not a failed case.
@@ -686,7 +690,112 @@ case_cleanup_keeps_evidence() {
   ok "every non-zero exit, a failed live-session check included, prints the sandbox log tails before cleanup deletes them"
 }
 
+# label; --shell-env entries joined by |, or - for none; expected status; expected names joined by |.
+COLLISIONS="an unset name passes;MALLOC_CONF=prof:true;1;
+no entries pass;-;1;
+a name the sandbox sets collides;HOME=/tmp/elsewhere;0;HOME
+a name a launch assignment sets collides;VSHELL_DISABLE_INSTANCE_GUARD=0;0;VSHELL_DISABLE_INSTANCE_GUARD
+a prefix of a set name does not collide;HOM=x;1;
+each colliding entry is named;MALLOC_CONF=x|XDG_RUNTIME_DIR=/run/user/1000|WAYLAND_DISPLAY=wayland-1;0;XDG_RUNTIME_DIR|WAYLAND_DISPLAY"
+
+case_shell_env_collisions() {
+  local label entries want_rc want_names out rc rows=0
+  local -a list=() assignments=(HOME=/sandbox XDG_RUNTIME_DIR=/run/user/1000/v1 WAYLAND_DISPLAY=wayland-2 VSHELL_DISABLE_INSTANCE_GUARD=1)
+  while IFS=';' read -r label entries want_rc want_names; do
+    [[ -n "$label" ]] || continue
+    rows=$((rows + 1))
+    list=()
+    [[ "$entries" == - ]] || IFS='|' read -r -a list <<<"$entries"
+    rc=0
+    out="$(
+      # shellcheck source=/dev/null
+      . "$tmp/shell_env_collisions.sh"
+      shell_env_collisions "${#list[@]}" "${list[@]}" "${assignments[@]}"
+    )" || rc=$?
+    [[ "$rc" == "$want_rc" ]] ||
+      fail "shell-env collisions" "$label: expected status $want_rc, got $rc"
+    [[ "${out//$'\n'/|}" == "$want_names" ]] ||
+      fail "shell-env collisions" "$label: expected names '$want_names', got '$out'"
+  done <<<"$COLLISIONS"
+  [[ $rows -eq 6 ]] || fail "shell-env collisions" "expected 6 table rows, drove $rows"
+  ok "a --shell-env name the sandbox launch also sets is named, and no other name is"
+}
+
+# Run driver_check with a stub driver that records its environment and exits with the given status.
+driver_with() {
+  local exit_code="$1" drv="$tmp/driver.sh"
+  # shellcheck disable=SC2016  # the variables expand in the stub, not here
+  printf '#!/bin/sh\nprintf "%%s|%%s|%%s\\n" "$VSHELL_SANDBOX_DRIVER" "$HYPRLAND_INSTANCE_SIGNATURE" "$WAYLAND_DISPLAY" >"%s"\nexit %s\n' \
+    "$tmp/driver.env" "$exit_code" >"$drv"
+  chmod +x "$drv"
+  rm -f -- "${tmp:?}/driver.env"
+  (
+    set +e
+    # shellcheck source=/dev/null
+    . "$tmp/fail.sh"
+    # shellcheck source=/dev/null
+    . "$tmp/unmeasured.sh"
+    # shellcheck source=/dev/null
+    . "$tmp/driver_check.sh"
+    # shellcheck disable=SC2317,SC2329  # called by the sliced function, not from here
+    note() { :; }
+    # shellcheck disable=SC2034  # read by the sliced functions
+    status=0 skip_status=77 nested_timeout=30 driver="$drv" sandbox_env=(env -i "PATH=$host_path")
+    not_measured=()
+    driver_check sig-1 wayland-9 2>/dev/null
+    printf 'status=%s unmeasured=%s\n' "$status" "${#not_measured[@]}"
+  )
+}
+
+# label; driver exit status; expected smoke status; expected unmeasured count.
+DRIVERS="a driver that passes leaves the run passing;0;0;0
+a driver that could not measure is recorded as not measured;77;0;1
+a driver that fails fails the run;1;1;0
+a driver that exits 2 fails the run;2;1;0"
+
+case_driver_verdicts() {
+  local label exit_code want_status want_unmeasured out rows=0
+  while IFS=';' read -r label exit_code want_status want_unmeasured; do
+    [[ -n "$label" ]] || continue
+    rows=$((rows + 1))
+    out="$(driver_with "$exit_code")"
+    [[ "$out" == "status=$want_status unmeasured=$want_unmeasured" ]] ||
+      fail "driver verdicts" "$label: expected status=$want_status unmeasured=$want_unmeasured, got '$out'"
+    [[ "$(cat "$tmp/driver.env" 2>/dev/null)" == "1|sig-1|wayland-9" ]] ||
+      fail "driver verdicts" "$label: the driver must run with the sandbox marker and the nested compositor's endpoints"
+  done <<<"$DRIVERS"
+  [[ $rows -eq 4 ]] || fail "driver verdicts" "expected 4 table rows, drove $rows"
+  ok "a driver's exit 0 passes, 77 is not measured, and anything else fails"
+}
+
+# label; arguments joined by |; expected stderr fragment.
+OPTION_REFUSALS="a --shell-env with no name;--shell-env|=x;--shell-env needs NAME=VALUE
+a --shell-env with no value separator;--shell-env|MALLOC_CONF;--shell-env needs NAME=VALUE
+a --shell-env name starting with a digit;--shell-env|1X=y;--shell-env needs NAME=VALUE
+a --driver that is not executable;--driver|${smoke%/*}/AGENTS.md;--driver needs an executable file
+a --driver that does not exist;--driver|$tmp/absent;--driver needs an executable file
+--driver with --settings;--settings|--driver|${smoke%/*}/bench-shell-events.py;cannot take --settings"
+
+case_option_refusals() {
+  local label args want out rc rows=0
+  local -a argv=()
+  while IFS=';' read -r label args want; do
+    [[ -n "$label" ]] || continue
+    rows=$((rows + 1))
+    IFS='|' read -r -a argv <<<"$args"
+    rc=0
+    out="$("$smoke" "${argv[@]}" 2>&1)" || rc=$?
+    [[ "$rc" -eq 2 && "$out" == *"$want"* ]] ||
+      fail "option refusals" "$label: expected exit 2 and '$want', got exit $rc: $out"
+  done <<<"$OPTION_REFUSALS"
+  [[ $rows -eq 6 ]] || fail "option refusals" "expected 6 table rows, drove $rows"
+  ok "a malformed --shell-env or --driver, or --driver with --settings, refuses before any check runs"
+}
+
 CASES=(
+  case_shell_env_collisions
+  case_driver_verdicts
+  case_option_refusals
   case_focus_wait
   case_escape_waits_for_focus
   case_cleanup_keeps_evidence

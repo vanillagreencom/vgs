@@ -52,6 +52,7 @@ NOT_A_SUITE_CHECK = {
 # Checks the suite runs but CI cannot, with the reason CI cannot run them.
 LOCAL_ONLY = {
     "smoke-surfaces.sh": "needs a live Hyprland VGS session and reads `hyprctl layers`",
+    "bench-shell-events.py": "a scripts/qml-smoke.sh --driver: needs a nested Hyprland inside a host Wayland session, which CI has not",
     "check-label-taxonomy.py": "reads live Linear label inventory; CI has no Linear credentials and no local cache",
 }
 

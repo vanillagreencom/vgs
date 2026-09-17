@@ -9,6 +9,9 @@
 # --require-static: fail if the QML parser is unavailable.
 # --timeout SECONDS: set the sandbox shell lifetime.
 # --settings: open every available Settings page and verify it loads.
+# --shell-env NAME=VALUE: add a variable to the sandbox shell's environment; repeatable.
+# --driver PATH: once the shell and its plugins load, run PATH inside the sandbox in place of
+#   the static parse and the smoke checks; its exit 0 passes, 77 is not measured, anything else fails.
 # -h, --help: print this help.
 #
 # Exit 0 means every check that ran passed. Exit 77 means they passed but at least one
@@ -34,6 +37,8 @@ check_settings=false
 require_nested=false
 require_static=false
 static_ran=false
+driver=""
+declare -a shell_env=()
 # Ceiling on the sandboxed shell's lifetime, not a schedule: teardown kills the process
 # group as soon as the phase finishes, so a healthy run never spends it. It has to cover
 # every nested check end to end; 40s reaped the shell mid-run on a loaded workstation and
@@ -41,12 +46,14 @@ static_ran=false
 # full sequence on a workstation running other work, which reaped the shell before the
 # Displays and window-border checks and left them unrun.
 nested_timeout=240
+# Spelled out rather than a range, which some locales widen past ASCII.
+env_name_start="_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 compositor_timeout=15
 # Plugin discovery is asynchronous. Core IPC readiness alone does not establish plugin loading.
 plugin_timeout=30
 
 usage() {
-  sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,24p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 while [[ $# -gt 0 ]]; do
@@ -56,11 +63,32 @@ while [[ $# -gt 0 ]]; do
     --require-nested) nested=true; require_nested=true ;;
     --require-static) require_static=true ;;
     --timeout) shift; nested_timeout="${1:?--timeout needs a value}" ;;
+    --shell-env)
+      shift
+      if [[ ! "${1:-}" =~ ^[$env_name_start][${env_name_start}0123456789]*= ]]; then
+        echo "qml-smoke: --shell-env needs NAME=VALUE, got '${1:-}'" >&2
+        exit 2
+      fi
+      shell_env+=("$1")
+      ;;
+    --driver)
+      shift
+      if [[ ! -f "${1:-}" || ! -x "${1:-}" ]]; then
+        echo "qml-smoke: --driver needs an executable file, got '${1:-}'" >&2
+        exit 2
+      fi
+      driver="$(realpath -- "$1")" || exit 2
+      nested=true
+      ;;
     -h|--help) usage; exit 0 ;;
     *) echo "qml-smoke: unknown option: $1" >&2; exit 2 ;;
   esac
   shift
 done
+if [[ -n "$driver" && "$check_settings" == true ]]; then
+  echo "qml-smoke: --driver runs in place of the smoke checks, so it cannot take --settings" >&2
+  exit 2
+fi
 
 status=0
 # Checks that could not obtain their evidence. A check here is neither a pass nor a
@@ -314,6 +342,42 @@ sandbox_ipc() {
     return 0
   fi
   printf '%s' "$reply"
+}
+
+# Print each NAME from the --shell-env entries that a later launch assignment also sets.
+# Arguments: the entry count, the entries, then the launch assignments. Status 0 means at
+# least one collision was printed, 1 means none.
+shell_env_collisions() {
+  local count="$1" entry assignment found=1
+  shift
+  local -a entries=("${@:1:count}") assignments=("${@:count+1}")
+  for entry in "${entries[@]}"; do
+    for assignment in "${assignments[@]}"; do
+      if [[ "${entry%%=*}" == "${assignment%%=*}" ]]; then
+        printf '%s\n' "${entry%%=*}"
+        found=0
+      fi
+    done
+  done
+  return "$found"
+}
+
+# Run --driver inside the sandbox, where hyprctl and qs ipc reach only the nested compositor
+# and shell. VSHELL_SANDBOX_DRIVER tells a driver it was started here and not in a live session.
+driver_check() {
+  local signature="$1" socket="$2" rc=0
+  note "running driver $driver inside the sandbox"
+  "${sandbox_env[@]}" \
+    HYPRLAND_INSTANCE_SIGNATURE="$signature" \
+    WAYLAND_DISPLAY="$socket" \
+    VSHELL_ROOT="$repo_root" \
+    VSHELL_SANDBOX_DRIVER=1 \
+    timeout --signal=TERM --kill-after=5 "$nested_timeout" "$driver" || rc=$?
+  case "$rc" in
+    0) note "driver passed: $driver" ;;
+    "$skip_status") unmeasured "driver could not measure: $driver" ;;
+    *) fail "driver exited $rc: $driver" ;;
+  esac
 }
 
 # env -i and the sandbox runtime directory keep hyprctl on the nested compositor.
@@ -1494,8 +1558,10 @@ nested_check() {
   sandbox="$(mktemp -d -t vshell-smoke.XXXXXX)"
   track_dir "$sandbox"
   pixel_error_log="$sandbox/grim.err"
-  # Keep the runtime directory short enough for Hyprland's IPC socket path.
-  rt_dir="${XDG_RUNTIME_DIR:?}/vs.$$"
+  # Keep the runtime directory short enough for Hyprland's IPC socket paths. The shell's event
+  # socket connection failed with ServerNotFoundError at a 107-byte .socket2.sock path and
+  # connected at 106; the instance signature's trailing number is not a fixed width.
+  rt_dir="${XDG_RUNTIME_DIR:?}/v$$"
   rm -rf -- "$rt_dir"
   mkdir -p -- "$rt_dir"
   chmod 700 -- "$rt_dir"
@@ -1634,13 +1700,24 @@ EOF
     fail "could not identify the isolated compositor for display control"
     return
   fi
+  # sandbox_env opens with 'env -i'; the launch below supplies its own.
+  local -a shell_assignments=(
+    "${sandbox_env[@]:2}"
+    HYPRLAND_INSTANCE_SIGNATURE="$nested_signature"
+    WAYLAND_DISPLAY="$nested_socket"
+    VSHELL_ROOT="$repo_root"
+    VSHELL_DISABLE_HOT_RELOAD=1
+    VSHELL_DISABLE_INSTANCE_GUARD=1
+  )
+  local collisions
+  if collisions="$(shell_env_collisions "${#shell_env[@]}" "${shell_env[@]}" "${shell_assignments[@]}")"; then
+    fail "--shell-env names a variable the sandbox sets itself: ${collisions//$'\n'/ }"
+    return
+  fi
+  # shell_env comes first: env applies assignments in order, and the check above keeps any of
+  # them from being overridden silently.
   if ! spawn_group "$sandbox/qs.pgid" \
-    "${sandbox_env[@]}" \
-    HYPRLAND_INSTANCE_SIGNATURE="$nested_signature" \
-    WAYLAND_DISPLAY="$nested_socket" \
-    VSHELL_ROOT="$repo_root" \
-    VSHELL_DISABLE_HOT_RELOAD=1 \
-    VSHELL_DISABLE_INSTANCE_GUARD=1 \
+    env -i "${shell_env[@]}" "${shell_assignments[@]}" \
     "${dbus_wrapper[@]}" \
     timeout --signal=TERM --kill-after=5 "$nested_timeout" \
     qs --no-color -p "$repo_root/quickshell/vshell" >"$log" 2>&1; then
@@ -1706,8 +1783,12 @@ EOF
     done
   fi
 
+  if [[ -n "$driver" ]]; then
+    if [[ "$plugins_loaded" == true ]]; then
+      driver_check "$nested_signature" "$nested_socket" || true
+    fi
   # Run state-dependent phases only after seed verification and before teardown.
-  if [[ "$seeded" == true && "$plugins_loaded" == true ]]; then
+  elif [[ "$seeded" == true && "$plugins_loaded" == true ]]; then
     if popout_check; then
       override_check || true
     fi
@@ -1715,7 +1796,7 @@ EOF
 
   # Switchers can run once the shell loads. Run them after seed-dependent phases because they write settings.
   # Their failure has already set exit status; keep teardown reachable.
-  if [[ "$loaded" == true ]]; then
+  if [[ "$loaded" == true && -z "$driver" ]]; then
     switcher_check || true
     local display_reply
     sandbox_ipc changelog close >/dev/null || fail "could not dismiss release notes before checking Displays"
@@ -1772,7 +1853,7 @@ EOF
   wait "$qs_launcher" || exit_code=$?
 
   # After the main shell is gone, so the admit row's IPC lookup can reach only its own shell.
-  instance_guard_check || true
+  [[ -n "$driver" ]] || instance_guard_check || true
 
   # Emit available diagnostics before verdicts so one failure does not hide another's evidence.
   # Missing live PipeWire and bus peers are expected sandbox environment gaps.
@@ -1856,7 +1937,8 @@ EOF
   note "isolated runtime check passed (shell loaded, all ${#expected_plugins[@]} bundled plugins loaded, answered IPC in the sandbox)"
 }
 
-static_check
+# A driver measures the shell, not its source, so the parse check is the smoke's own row.
+[[ -n "$driver" ]] || static_check
 if [[ "$nested" == true ]]; then
   nested_check
 else
