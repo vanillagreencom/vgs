@@ -74,7 +74,8 @@ The checks below compare the requested version with published repository metadat
 ```bash
 V=$(cat VERSION); bad=0
 
-# AUR — recipes match this repo byte for byte
+# AUR — recipes match this repo, apart from pkgver and pkgrel in vgs-shell-git,
+# which publication stamps with the head it publishes
 scripts/check-aur-sync.py --remote || bad=1
 
 # Fedora COPR — the chroot's DNF metadata, which is what dnf resolves against.

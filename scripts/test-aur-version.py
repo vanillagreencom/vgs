@@ -2,9 +2,15 @@
 """Controls for the VCS version surface of check-aur-sync.py.
 
 The stamp writes the version every AUR client displays before it clones the
-source, and the guard is what keeps the placeholder out of the published
-recipe. Each case here plants a defect one of those rules claims to catch and
-requires the rule to report it.
+source, so a rule that cannot fail here is a wrong version shown to every user.
+
+The file holds two kinds of case. Must-fail controls plant input a refusal
+claims to catch: a recipe on the placeholder, a pkgver() computing something
+else or carrying the expected commands only in a comment, a shallow source, a
+version below the published one, a file that cannot be rewritten, a directory
+with no recipe. Positive controls hold what the surface produces when nothing
+is wrong: the value stamped and the pkgrel beside it, the lines the published
+comparison drops and the ones it keeps, and the exit status the shell reads.
 """
 from __future__ import annotations
 
@@ -12,6 +18,7 @@ import importlib.machinery
 import importlib.util
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -198,18 +205,32 @@ class Stamp(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "source"
             make_repo(source, commits=2)
-            shallow = Path(tmp) / "shallow"
-            git("clone", "--quiet", "--depth", "1", f"file://{source}", str(shallow),
+            # Not named for the defect: the refusal interpolates this path, so a
+            # name carrying the clause would satisfy the assertion by itself.
+            clipped = Path(tmp) / "one-commit"
+            git("clone", "--quiet", "--depth", "1", f"file://{source}", str(clipped),
                 cwd=Path(tmp))
             directory = Path(tmp) / "recipe"
             recipe(directory)
             before = (directory / "PKGBUILD").read_text()
 
             with self.assertRaises(CHECKER.CheckError) as raised:
-                CHECKER.stamp_vcs_version(directory, root=shallow)
+                CHECKER.stamp_vcs_version(directory, root=clipped)
 
-            self.assertIn("shallow", str(raised.exception))
+            self.assertIn("is a shallow checkout", str(raised.exception))
             self.assertEqual(before, (directory / "PKGBUILD").read_text())
+
+    def test_a_directory_with_no_recipe_is_refused_by_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source"
+            make_repo(source)
+            empty = Path(tmp) / "empty"
+            empty.mkdir()
+
+            with self.assertRaises(CHECKER.CheckError) as raised:
+                CHECKER.stamp_vcs_version(empty, root=source)
+
+            self.assertIn("holds no PKGBUILD", str(raised.exception))
 
     def test_a_recipe_computing_another_version_is_refused(self):
         for name, body in (("another formula", OTHER_PKGVER),
@@ -426,11 +447,74 @@ class RemoteComparison(unittest.TestCase):
             self.assertIn("PKGBUILD", problems[0])
 
 
+class CommandLine(unittest.TestCase):
+    """The exit status publish-aur.sh reads before it publishes a recipe.
+
+    The checker is run as its own process against a copy whose repository root
+    is the case's source repository, so the status does not depend on how the
+    checkout running these tests was fetched.
+    """
+
+    def stamp(self, source: Path, directory: Path) -> subprocess.CompletedProcess:
+        scripts = source / "scripts"
+        scripts.mkdir()
+        copied = scripts / CHECKER_PATH.name
+        copied.write_text(CHECKER_PATH.read_text())
+        return subprocess.run(
+            [sys.executable, str(copied), "--stamp-vcs-version", str(directory)],
+            capture_output=True, text=True,
+        )
+
+    def test_a_refused_recipe_exits_nonzero_and_is_left_alone(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source"
+            make_repo(source)
+            directory = Path(tmp) / "recipe"
+            recipe(directory, body=OTHER_PKGVER)
+            before = (directory / "PKGBUILD").read_text()
+
+            result = self.stamp(source, directory)
+
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertIn("rev-list --count HEAD", result.stderr)
+            self.assertEqual(before, (directory / "PKGBUILD").read_text())
+
+    def test_a_stamped_recipe_exits_zero_and_names_the_version(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source"
+            count, head = make_repo(source)
+            directory = Path(tmp) / "recipe"
+            recipe(directory)
+
+            result = self.stamp(source, directory)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn(f"pkgver=0.5.0.r{count}.g{head}", result.stdout)
+            self.assertIn(
+                f"pkgver=0.5.0.r{count}.g{head}\n", (directory / "PKGBUILD").read_text()
+            )
+
+    def test_a_recipe_with_a_static_version_exits_zero_unchanged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source"
+            make_repo(source)
+            directory = Path(tmp) / "recipe"
+            recipe(directory, pkgver="0.5.0", body="")
+            before = (directory / "PKGBUILD").read_text()
+
+            result = self.stamp(source, directory)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(before, (directory / "PKGBUILD").read_text())
+
+
 class RepositoryState(unittest.TestCase):
     def test_the_shipped_git_recipe_carries_a_computed_pkgver(self):
-        directory = REPO_ROOT / "packaging" / "arch" / "vgs-shell-git"
-        self.assertIsNotNone(CHECKER.pkgver_body(directory))
-        self.assertEqual(CHECKER.check_local("vgs-shell-git", directory), [])
+        # That the shipped recipe agrees with its .SRCINFO and is off the
+        # placeholder is scripts/check-aur-sync.py's own row in this area.
+        self.assertIsNotNone(
+            CHECKER.pkgver_body(REPO_ROOT / "packaging" / "arch" / "vgs-shell-git")
+        )
 
 
 if __name__ == "__main__":

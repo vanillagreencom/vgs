@@ -702,7 +702,18 @@ def main() -> int:
 
     packages = ", ".join(selected)
     if args.remote:
+        vcs = [
+            name for name, (relative, _) in selected.items()
+            if pkgver_body(ROOT / relative) is not None
+        ]
         print(f"AUR recipes match this repo ({packages})")
+        if vcs:
+            print(
+                f"Apart from pkgver and pkgrel in {', '.join(vcs)}: publication stamps "
+                "those with the head it publishes, so they are newer on the AUR than "
+                "here by design and are left out of the comparison. What is published "
+                "there is still checked for the placeholder."
+            )
     else:
         print(f"Arch PKGBUILD/.SRCINFO agree ({packages})")
         print(
