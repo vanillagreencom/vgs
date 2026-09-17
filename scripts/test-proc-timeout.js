@@ -6,6 +6,7 @@
 // own teardown runs in that grace; nested smoke never times a command out.
 // The launch retires the debouncer entry it launched from, so the cases below also drive when
 // the deferred destroy of that entry's Timer lands, and what a finishing run must not reach.
+// A launch with replaceRunning ends the run its id launched before; the last cases drive that.
 
 "use strict";
 
@@ -121,6 +122,7 @@ function makeShell() {
             },
         },
         _procDebouncers: {},
+        _replaceableRuns: {},
     };
     // with models QML scope lookup, which needs a non-strict function.
     // eslint-disable-next-line no-new-func
@@ -128,14 +130,15 @@ function makeShell() {
     scope._launchProc = id => launchProc(scope, id);
     // eslint-disable-next-line no-new-func
     const runCommand = new Function(
-        "scope", "id", "command", "callback", "debounceMs", "timeoutMs",
+        "scope", "id", "command", "callback", "debounceMs", "timeoutMs", "replaceRunning",
         `with (scope) ${runCommandBody}`);
     return {
         entries: scope._procDebouncers,
         processes,
         timers,
-        runCommand: (id, command, callback, debounceMs, timeoutMs) =>
-            runCommand(scope, id, command, callback, debounceMs, timeoutMs),
+        runCommand: (id, command, callback, debounceMs, timeoutMs, replaceRunning) =>
+            runCommand(scope, id, command, callback, debounceMs, timeoutMs, replaceRunning),
+        replaceable: scope._replaceableRuns,
         // Everything QML deferred, in the order it was deferred.
         flush() {
             while (deferred.length)
@@ -377,4 +380,76 @@ test("a run that ends after another run of its id retires nothing", () => {
     exit(shell.processes[2], 0);
     shell.flush();
     assert.deepEqual(answered, ["second", "first", "third"], "and every command answers");
+});
+
+// Launch one run of id with or without replaceRunning, and hand back its Process.
+function launchRun(shell, id, replace, answered, label) {
+    const before = shell.timers.length;
+    shell.runCommand(id, ["search", label], (_out, code) => answered.push([label, code]), 0, TIMEOUT_MS, replace);
+    assert.equal(shell.timers.length, before + 1, "this call must open a window of its own");
+    fire(shell.timers[before]);
+    return shell.processes[shell.processes.length - 1];
+}
+
+test("replaceRunning ends the run its id launched before, and only with it", () => {
+    for (const [replace, signals, answers] of [
+        [true, ["SIGTERM"], [["second", 0]]],
+        [false, [], [["first", 143], ["second", 0]]],
+    ]) {
+        const shell = makeShell();
+        const answered = [];
+        const first = launchRun(shell, "launcher-search-files", replace, answered, "first");
+        const second = launchRun(shell, "launcher-search-files", replace, answered, "second");
+        assert.deepEqual(first.signals, signals, `replaceRunning ${replace}: the earlier run's signals`);
+        assert.deepEqual(second.signals, [], "the run that replaced it is left alone");
+        exit(first, 143);
+        exit(second, 0);
+        shell.flush();
+        assert.deepEqual(answered, answers, `replaceRunning ${replace}: the callbacks that fire`);
+        assert.equal(first.destroyed, true, "the ended run's exit releases its Process");
+        assert.deepEqual(Object.keys(shell.replaceable), [], "no finished run stays replaceable");
+        assertNoDoubleDestroy(shell);
+    }
+});
+
+test("a replaced run that ignores SIGTERM is killed when the grace runs out", () => {
+    const shell = makeShell();
+    const answered = [];
+    const first = launchRun(shell, "launcher-search-files", true, answered, "first");
+    const firstTimer = shell.timers[1];
+    launchRun(shell, "launcher-search-files", true, answered, "second");
+    assert.equal(firstTimer.interval, GRACE_MS, "the ended run waits terminateGraceMs");
+    assert.equal(first.destroyed, false, "and keeps its Process while it stops");
+    fire(firstTimer);
+    assert.deepEqual(first.signals, ["SIGTERM", "SIGKILL"], "the grace's end kills it");
+    assert.deepEqual(answered, [], "and its callback never fires");
+    assertNoDoubleDestroy(shell);
+});
+
+test("a run that already answered is not signalled by the run replacing it", () => {
+    const shell = makeShell();
+    const answered = [];
+    const first = launchRun(shell, "launcher-search-files", true, answered, "first");
+    exit(first, 0);
+    const second = launchRun(shell, "launcher-search-files", true, answered, "second");
+    exit(second, 0);
+    shell.flush();
+    assert.deepEqual(first.signals, [], "a finished run is sent nothing");
+    assert.deepEqual(answered, [["first", 0], ["second", 0]], "and both answers stand");
+    assertNoDoubleDestroy(shell);
+});
+
+test("an ended run's exit leaves the run that replaced it replaceable", () => {
+    const shell = makeShell();
+    const answered = [];
+    const first = launchRun(shell, "launcher-search-files", true, answered, "first");
+    const second = launchRun(shell, "launcher-search-files", true, answered, "second");
+    exit(first, 143);
+    const third = launchRun(shell, "launcher-search-files", true, answered, "third");
+    assert.deepEqual(second.signals, ["SIGTERM"], "the third launch still ends the second run");
+    exit(second, 143);
+    exit(third, 0);
+    shell.flush();
+    assert.deepEqual(answered, [["third", 0]], "and only the third run answers");
+    assertNoDoubleDestroy(shell);
 });

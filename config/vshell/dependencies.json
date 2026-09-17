@@ -173,18 +173,17 @@
     },
     "launcher-search-fast": {
       "$comment": [
-        "Launcher FILE and FOLDER search. Despite the name, fd is not an",
-        "optional accelerator: bin/vshell_helper.py keeps an os.walk fallback,",
-        "but the overview declines it and shows an install hint instead -- a",
-        "full walk of the search roots per query, with nothing cached between",
-        "them, cannot answer at typing speed. Missing fd/fdfind therefore",
-        "means no overview file or folder search, except folder completion",
-        "for a path query -- ~-rooted, or /-rooted through the '/d ' typed-type",
-        "prefix -- which the helper answers without fd. (A BARE leading / is",
-        "the launcher's own file-search trigger and is consumed before the",
-        "query reaches the helper; '/d ' consumes only itself.) Text search is",
-        "gated separately on rg and keeps working without fd. The vgsMenu",
-        "plugin is not gated and still reaches the walk."
+        "Launcher FILE and FOLDER search without the backend. With the",
+        "backend running, its launcher.search index answers name searches",
+        "and fd is not used. Without it, the launcher and the overview search",
+        "names through the helper only once fd is detected, and show an",
+        "install hint instead: bin/vshell_helper.py keeps an os.walk fallback",
+        "for the CLI, but a full walk of the search roots per query cannot",
+        "answer at typing speed. Folder completion for a path query --",
+        "~-rooted, or /-rooted through the '/d ' typed-type prefix -- needs",
+        "neither. (A BARE leading / is the launcher's own file-search trigger",
+        "and is consumed before the query reaches the helper; '/d ' consumes",
+        "only itself.) Text search is gated separately on rg."
       ],
       "anyCommands": [
         [

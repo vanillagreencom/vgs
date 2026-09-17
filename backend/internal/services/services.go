@@ -15,6 +15,7 @@ import (
 	"vshell/backend/internal/services/evdev"
 	"vshell/backend/internal/services/freedesktop"
 	"vshell/backend/internal/services/gamma"
+	"vshell/backend/internal/services/launchersearch"
 	"vshell/backend/internal/services/location"
 	"vshell/backend/internal/services/loginctl"
 	"vshell/backend/internal/services/mimeapps"
@@ -99,6 +100,7 @@ func RegisterAll(srv *server.Server, log *slog.Logger) func() {
 	register("sysupdate", func() (closer, error) { return sysupdate.Register(srv, log) })
 	register("cloudsync", func() (closer, error) { return cloudsync.Register(srv, log) })
 	register("evdev", func() (closer, error) { return evdev.Register(srv, log) })
+	register("launcher.search", func() (closer, error) { return launchersearch.Register(srv, log) })
 
 	return func() {
 		for i := len(closers) - 1; i >= 0; i-- {

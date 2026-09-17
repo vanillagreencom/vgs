@@ -17,10 +17,18 @@ Singleton {
     // is destroyed, which SIGKILLs it: the window a child has to run its own teardown.
     readonly property int terminateGraceMs: 10000
     property var _procDebouncers: ({})
+    // The run still going for each id launched with replaceRunning, as the
+    // function that ends it.
+    property var _replaceableRuns: ({})
 
-    function runCommand(id, command, callback, debounceMs, timeoutMs) {
+    // replaceRunning: launching this id ends the run the id launched before, if it
+    // is still going, and that run's callback never fires. A caller whose newer
+    // request makes the older one's answer worthless, such as a search per
+    // keystroke, passes it so only one of its commands runs at a time.
+    function runCommand(id, command, callback, debounceMs, timeoutMs, replaceRunning) {
         const wait = (typeof debounceMs === "number" && debounceMs >= 0) ? debounceMs : defaultDebounceMs;
         const timeout = (typeof timeoutMs === "number") ? timeoutMs : defaultTimeoutMs;
+        const replace = replaceRunning === true;
         let procId = id ? id : Math.random();
 
         if (!_procDebouncers[procId]) {
@@ -33,13 +41,15 @@ Singleton {
                 command: command,
                 callback: callback,
                 waitMs: wait,
-                timeoutMs: timeout
+                timeoutMs: timeout,
+                replaceRunning: replace
             };
         } else {
             _procDebouncers[procId].command = command;
             _procDebouncers[procId].callback = callback;
             _procDebouncers[procId].waitMs = wait;
             _procDebouncers[procId].timeoutMs = timeout;
+            _procDebouncers[procId].replaceRunning = replace;
         }
 
         const entry = _procDebouncers[procId];
@@ -54,11 +64,13 @@ Singleton {
         const launchedCommand = entry.command;
         const launchedCallback = entry.callback;
         const launchedTimeoutMs = entry.timeoutMs;
+        const launchedReplaces = entry.replaceRunning;
         // The entry and its Timer exist only to collapse the calls that arrive inside the
         // debounce window into one run, and this launch closes that window. Retiring them here
-        // rather than after the run is what stops a per-call id from growing the map: no code
-        // after this point reads the id, so a call arriving now opens its own window on its own
-        // entry and no finishing run can reach it. The Timer is destroyed through this captured
+        // rather than after the run is what stops a per-call id from growing the map: past this
+        // point the id is read only by a replaceRunning launch, to end its predecessor and
+        // take its place, so a call arriving now opens its own window on its own entry and no
+        // finishing run can reach it. The Timer is destroyed through this captured
         // reference and never a fresh lookup, which would find that new entry instead, and the
         // destroy is deferred: the launch below keeps running inside that Timer's own triggered
         // handler past this point.
@@ -81,6 +93,7 @@ Singleton {
         let outSeen = false;
         let errSeen = false;
         let timedOut = false;
+        let superseded = false;
         let processExited = false;
 
         let completed = false;
@@ -107,7 +120,7 @@ Singleton {
 
         timeoutTimer.interval = launchedTimeoutMs;
         timeoutTimer.triggered.connect(function () {
-            if (timedOut) {
+            if (timedOut || superseded) {
                 // The grace after SIGTERM ran out.
                 release();
                 return;
@@ -164,6 +177,8 @@ Singleton {
             if (released)
                 return;
             released = true;
+            if (_replaceableRuns[id] === supersede)
+                delete _replaceableRuns[id];
             try {
                 proc.destroy();
             } catch (_) {}
@@ -198,6 +213,31 @@ Singleton {
             } else {
                 release();
             }
+        }
+
+        // Ends this run for the one replacing it. A run whose callback already fired
+        // has nothing left to cancel; its release is already under way.
+        function supersede() {
+            if (completed)
+                return;
+            completed = true;
+            superseded = true;
+            timeoutTimer.stop();
+            if (processExited) {
+                release();
+                return;
+            }
+            // Released by its exit or the grace's end, as a timed-out run is.
+            proc.running = false;
+            timeoutTimer.interval = terminateGraceMs;
+            timeoutTimer.start();
+        }
+
+        if (launchedReplaces) {
+            const previous = _replaceableRuns[id];
+            if (previous)
+                previous();
+            _replaceableRuns[id] = supersede;
         }
 
         proc.running = true;

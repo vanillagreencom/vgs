@@ -22,22 +22,13 @@ Item {
     readonly property string _fileQuery: controller ? controller.fileSearchQuery() : ""
     readonly property bool _fileQuerySearchable: !!controller
         && DSearchService.queryIsSearchable(controller.fileSearchKind(), _fileQuery)
-    readonly property string _fileBackendState: controller
-        ? DSearchService.backendState(controller.fileSearchKind(), _fileQuery) : "unknown"
-    readonly property string _missingBackendCommand: controller && _fileBackendState === "missing"
-        ? DSearchService.backendCommandFor(controller.fileSearchKind()) : ""
-    // A search the gate refused for want of an answer, rather than one that ran
-    // and found nothing.
-    readonly property bool _fileSearchDeclined: !!controller && _fileQuerySearchable
-        && !DSearchService.canDispatch(controller.fileSearchKind(), _fileQuery)
+    readonly property var _dispatchFacts: controller
+        ? DSearchService.fileSearchFacts(controller.fileSearchKind(), _fileQuery)
+        : ({ backendState: "unknown", missingCommand: "", declined: false, probeState: DSearchService.statusState })
 
-    readonly property var _emptyStateFacts: ({
-        backendState: _fileBackendState,
-        missingCommand: _missingBackendCommand,
-        probeState: DSearchService.statusState,
+    readonly property var _emptyStateFacts: Object.assign({}, _dispatchFacts, {
         queryLength: _fileQuery.length,
         searchable: _fileQuerySearchable,
-        declined: _fileSearchDeclined,
         searchError: controller?.fileSearchError ?? "",
         legActive: _fileLegActive
     })
@@ -64,22 +55,6 @@ Item {
         if (f.searchError)
             return "error";
         return "empty";
-    }
-
-    // Show installation hints only for a missing tool on an active file-search path. Unknown tools require the probe error.
-    function fileHintKey(facts) {
-        const f = facts || {};
-        if (!f.legActive)
-            return "";
-        if (f.backendState === "missing")
-            return f.missingCommand === "rg" ? "install-rg" : "install-fd";
-        if (!f.declined)
-            return "";
-        // The initial probe has no failure to report yet, even though requests are declined while it runs.
-        if (f.probeState === "pending")
-            return "";
-        // Ask the user to retry only after automatic probe retries are exhausted.
-        return f.probeState === "failed" ? "probe-failed" : "probe-retrying";
     }
 
     // Display file-search messages only for file mode or a searchable file query, never over plugin results.
@@ -661,17 +636,7 @@ Item {
 
 
                 function getDependencyHint() {
-                    switch (root.fileHintKey(root._emptyStateFacts)) {
-                    case "install-rg":
-                        return I18n.tr("Install the ripgrep package to search inside file contents.", "Overview search hint when the ripgrep binary is missing");
-                    case "install-fd":
-                        return I18n.tr("Install the fd package (fd-find on Debian and Fedora) to search files and folders by name.", "Overview search hint when the fd binary is missing");
-                    case "probe-retrying":
-                        return I18n.tr("Still checking which search tools are installed: %1", "Overview search hint while the launcher-search status probe is being retried").arg(DSearchService.statusError);
-                    case "probe-failed":
-                        return I18n.tr("Could not check which search tools are installed: %1. Reopen the launcher to try again.", "Overview search hint when the launcher-search status probe failed").arg(DSearchService.statusError);
-                    }
-                    return "";
+                    return DSearchService.dependencyHint(DSearchService.fileHintKey(root._emptyStateFacts));
                 }
             }
         }
