@@ -3997,28 +3997,34 @@ def test_preview_stage_retires_its_window_rule():
     LUA_CHUNK_ERROR = "error: hl.window_rule unavailable"
     # A signature left over from a compositor that has exited: hyprctl reaches no socket.
     SOCKET_GONE = "Couldn't connect to the Hyprland socket"
+    # A session with no headless backend refuses the output on stdout, at exit 0.
+    NO_BACKEND = "no backend replied to the request"
 
     # label; the session the stage runs against, one tag per shipped compositor state, which
     # decides both spellings' replies so no row can ask for a session that refuses both;
-    # exit status of `hyprctl output create headless`; the hyprctl subcommand a stop signal
-    # interrupts, or None; whether the preview stages its output; the request that retires
-    # the rule, or None when the stage registered no rule at all; the refusals the stage
-    # must name, as (spelling, exit status, the compositor's reply).
+    # the reply to `hyprctl output create headless`, as (exit status, stdout); the hyprctl
+    # subcommand a stop signal interrupts, or None; whether the preview stages its output;
+    # the request that retires the rule, or None when the stage registered no rule at all;
+    # the refusals the stage must name, as (spelling, exit status, the compositor's reply).
     # The rule is registered before the output is created, so a refused output still retires it.
-    for label, session, create_status, stop_at, staged_expected, retirement, refusals_expected in (
-        ("a compositor that accepts every request", "lua", 0, None, True, retire, []),
-        ("a compositor that refuses the headless output", "lua", 1, None, False, retire, []),
-        ("a pre-Lua compositor that refuses the headless output", "classic", 1, None, False, reload, []),
+    for label, session, create_reply, stop_at, staged_expected, retirement, refusals_expected in (
+        ("a compositor that accepts every request", "lua", (0, "ok"), None, True, retire, []),
+        ("a compositor that refuses the headless output", "lua", (1, ""), None, False, retire, []),
+        ("a pre-Lua compositor that refuses the headless output", "classic", (1, ""), None, False, reload, []),
+        # The refusal exits 0, so judging the create by its return code alone sizes an
+        # output that was never made and removes it again on teardown.
+        ("a compositor with no headless backend, which refuses the output at exit 0", "lua",
+         (0, NO_BACKEND), None, False, retire, []),
         # The output exists by then but is not yet sized, so the stage is not handed over.
-        ("a stop signal while the stage sizes its output", "lua", 0, "getoption", True, retire, []),
-        ("a pre-Lua compositor that stages its output", "classic", 0, None, True, reload, []),
+        ("a stop signal while the stage sizes its output", "lua", (0, "ok"), "getoption", True, retire, []),
+        ("a pre-Lua compositor that stages its output", "classic", (0, "ok"), None, True, reload, []),
         # The Lua chunk fails and the keyword fallback is refused, because a Lua session
         # owns no keyword parser. Reading that refusal as a registered rule reloads the
         # user's live config to retire a rule that was never there.
-        ("a Lua compositor whose staging chunk fails", "chunk-fails", 0, None, False, None,
+        ("a Lua compositor whose staging chunk fails", "chunk-fails", (0, "ok"), None, False, None,
          [("eval", 0, LUA_CHUNK_ERROR), ("keyword", 0, LUA_REFUSES_KEYWORD)]),
         # Nothing answers, so both replies come off stderr at a non-zero exit.
-        ("a compositor that exited behind a stale instance signature", "gone", 1, None, False, None,
+        ("a compositor that exited behind a stale instance signature", "gone", (1, ""), None, False, None,
          [("eval", 1, SOCKET_GONE), ("keyword", 1, SOCKET_GONE)]),
     ):
         calls = []
@@ -4030,6 +4036,8 @@ def test_preview_stage_retires_its_window_rule():
                 raise SystemExit(128 + signal.SIGTERM)
             if session == "gone":
                 return subprocess.CompletedProcess(argv, 1, "", SOCKET_GONE)
+            if argv[1:3] == ["output", "create"]:
+                return subprocess.CompletedProcess(argv, create_reply[0], create_reply[1], "")
             stdout = "ok"
             if argv[1] == "eval":
                 if session == "classic":
@@ -4045,8 +4053,7 @@ def test_preview_stage_retires_its_window_rule():
                 stdout = json.dumps([{"name": helper.PREVIEW_OUTPUT, "reserved": [0, 32, 0, 0]}])
             elif argv[-1] == "-j":
                 stdout = "{}" if argv[1] == "getoption" else "[]"
-            status = create_status if argv[1:3] == ["output", "create"] else 0
-            return subprocess.CompletedProcess(argv, status, stdout, "")
+            return subprocess.CompletedProcess(argv, 0, stdout, "")
 
         with patch.object(helper, "run", fake_run), \
              patch.object(helper, "eprint", lambda *parts: notices.append(" ".join(str(part) for part in parts))), \
@@ -4092,8 +4099,10 @@ def test_preview_stage_retires_its_window_rule():
             refused.append((spelling, int(status), reply) if seen and status.isdigit() else notice)
         assert_equal(refused, refusals_expected,
                      f"{label}: names each refused spelling with its exit status and the compositor's reply")
-        if staged_expected:
-            assert_equal(remove in teardown, True, f"{label}: the teardown must remove the staging output")
+        # Removing an output this run never made is a request against whatever else holds
+        # that name, so the teardown removes one only when the create was accepted.
+        assert_equal(remove in teardown, staged_expected,
+                     f"{label}: the teardown removes the staging output only when the stage made one")
 
 
 # A parent compositor for a preview capture: logs each argv as a JSON line and answers the
@@ -4104,7 +4113,7 @@ import json, os, sys
 args = sys.argv[1:]
 with open(os.environ["PREVIEW_HYPRCTL_LOG"], "a") as log:
     log.write(json.dumps(args) + "\\n")
-if args[:1] == ["eval"]:
+if args[:1] in (["eval"], ["output"]):
     print("ok")
 elif args == ["cursorpos"]:
     print("0, 0")
